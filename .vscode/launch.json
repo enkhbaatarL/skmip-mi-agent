@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "[🌱]adxp-cli run (single)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "adxp_cli.cli",
+      "args": [
+        "agent",
+        "run",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "3002",
+        "--graph_yaml",
+        "./graph.yaml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "redirectOutput": true,
+      "outputCapture": "std",
+      "subProcess": true,
+      "justMyCode": false,
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "BOOT_TRACE": "1",
+        "PYTHONPATH": "${workspaceFolder}/apps:${workspaceFolder}"
+      },
+      "logToFile": true
+    }
+  ]
+}

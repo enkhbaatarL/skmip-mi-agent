@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**/*.py)",
+      "Read(**/*.pyi)",
+      "Read(**/*.md)",
+      "Read(**/*.yaml)",
+      "Read(**/*.yml)",
+      "Read(**/*.json)",
+
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(poetry run pytest:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(make test:*)",
+      "Bash(tox:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git grep:*)"
+    ],
+    "deny": [
+      "Bash(curl:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/env.txt)",
+      "Read(**/env.*)",
+      "Read(./secrets/**)",
+      "Read(**/secrets/**)",
+      "Read(./config/credentials.json)",
+      "Read(~/.aws/**)",
+      "Read(~/.ssh/**)"
+    ]
+  },
+
+  "disableBypassPermissionsMode": "disable"
+}
