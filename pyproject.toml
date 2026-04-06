@@ -1,0 +1,116 @@
+[project]
+name = "market-intelligence"
+version = "0.1.0"
+description = "Market Intelligence Chatbot Testboard"
+readme = "README.md"
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "adxp-cli>=0.1.1",
+    "adxp-sdk>=0.1.2",
+    "black>=25.1.0",
+    "botocore>=1.38.15",
+    "fastapi[standard]>=0.115.12",
+    "fastmcp>=2.3.3",
+    "gunicorn>=21.2.0; platform_system != 'Windows'",
+    "httpx[http2]>=0.27.2",
+    "langchain-community>=0.3.24,<0.4.0",
+    "langchain-openai>=0.3.16,<0.4.0",
+    "langgraph>=0.6.11,<0.7.0",
+    "loguru>=0.7.3",
+    "mcp>=1.9,<2",
+    "numpy>=2.3.3",
+    "openai>=1.78.1",
+    "pandas>=2.3.2",    
+    "pydantic-ai>=0.2.3",
+    "pymysql>=1.1.1",
+    "python-dotenv>=1.1.1",
+    "scipy>=1.16.2",
+    "sqlalchemy>=2.0.43",
+    "tabulate>=0.9.0",
+    "tavily-python>=0.7.17",
+    "uvicorn[standard]>=0.30.6,<0.31.0",
+    "sqlglot>=25.0.0,<26.0.0",
+]
+
+[tool.poetry.group.dev.dependencies]
+pygraphviz = "^1.11"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+indent-width = 4
+unsafe-fixes = true
+
+[tool.ruff.lint]
+select = [
+    "E","W","F","I","UP","B","S","A","Q","N","RUF","D",
+    "YTT","ANN","ASYNC","BLE","FBT","COM","C4","CPY","DTZ","T10","DJ","EM","EXE","INT",
+    "ISC","ICN","LOG","G","INP","PIE","T20","PT","RSE","RET","SLF","SIM","SLOT","TID","TD",
+    "TRIO","TCH","PTH","FLY","C90","PD","PERF","TRY","PGH"
+]
+ignore = [
+    "ANN101",
+    "D100","D101","D102","D103","D104","D105","D106","D107",
+    "D202","D203","D213","D401","D402","TC002","BLE001","TC001",
+    "TC003",
+]
+exclude = [
+    "migrations","build","dist","node_modules","site-packages","venv",
+    ".next",".pyenv",".pytest_cache",".pytype",".ruff_cache",".svn",".tox",".venv"
+]
+fixable = ["ALL"]
+unfixable = []
+
+
+[tool.ruff.isort]
+combine-as-imports = true
+force-sort-within-sections = true
+lines-after-imports = 2
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = false
+
+[tool.poetry]
+package-mode = false
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+exclude = '''
+/(
+      .git          # root of the project
+    | venv
+    | build
+    | dist
+  )/
+'''
+
+[tool.flake8]
+show-source = true
+exclude = [
+  ".git",
+  ".gitignore",
+  "__pycache__",
+  "venv",
+  ".env.*",
+  "build",
+  "dist"
+  ]
+ignore = ["E501", "W503", "F401"]
+#ignore = ["E501", "W503"]
+#E501: line too long
+#W503: line break occurred before binary operator
+extend-ignore = "E203"
+max-complexity = 10
+max-line-length = 88
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+
+#[tool.uv]
+#index-url="https://skpc-nexus.skpc.cloudzcp.net/repository/pypi-sre-proxy/simple"

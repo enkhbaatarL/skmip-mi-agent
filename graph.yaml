@@ -1,0 +1,4 @@
+package_directory: .
+graph_path: ./apps/agents/mi_agent/flows/mari_agent_runnable.py:runnable_graph
+env_file: /Users/sylee/Documents/00_Source/00_AIX/mi_project/envs/skmip_mi_agent/env.txt
+requirements_file: ./requirements.txt

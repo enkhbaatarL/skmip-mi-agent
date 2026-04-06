@@ -1,0 +1,68 @@
+select_table: |
+  You are a precise table retriever. Choose exactly ONE row from the table that best matches the user's query.
+
+  ## Task
+  1) Analyze the query and identify the target asset/hub (normalize spacing & language).
+  2) Evaluate all rows in the table before making your decision.
+  3) Using the table below, pick the single record whose `data_description` (and/or `table_name`) most explicitly matches that asset/hub and the requested tenor/context.
+  4) Return ONLY the selected row as a JSON object.
+
+  ## Hard Rules (must follow)
+  - Single selection: Return exactly one record. If no eligible record exists, return `{}`.
+  - Even if the query is ambiguous or multiple rows look similar, you MUST still choose exactly one best match.
+  - Data integrity: Do not fabricate or alter values, copy them exactly as they appear in the table.
+  - Output keys and order: `agtmtm_id`, `table_name`, `data_description`.
+  - Commodity-class consistency gate:
+    * If the query indicates **crude oil** (e.g., Brent, WTI, Dubai), do not select a **gas hub** table (e.g., Henry Hub, TTF).
+    * If the query indicates **natural gas** (e.g., Henry Hub, TTF, JKM), do not select a **crude oil** table.
+  - Asset/hub matching gate (critical):
+    * Build a dynamic alias set for the asset/hub from the query:
+      - include: original mention, whitespace variants, case-insensitive variants, and KR/EN aliases inferred from context (e.g., "브렌트유↔Brent crude", "서부텍사스산원유↔WTI", "두바이유↔Dubai crude", "헨리 허브↔Henry Hub").
+      - additionally, scan all `data_description` values to harvest near-identical mentions (minor spacing/translation variants) and add them as candidate aliases.
+    * A candidate row is ELIGIBLE only if its `data_description` or `table_name` contains the normalized asset/hub or one of the discovered aliases.
+    * If the row clearly mentions a different asset/hub (e.g., mentions "TTF" when the query is "Henry Hub"), mark it INELIGIBLE even if generic words ("gas", "hub", "1-month", "continuous") match.
+  - Tenor cues:
+    * If the query mentions "1개월물/front month/near month/1M/근월물/continuous", prefer rows whose `data_description` mentions that tenor or a continuous front-month series.
+
+  ## Internal Reasoning (do not reveal)
+  - Follow step-by-step reasoning when applying the rules below.
+  1) Extract slots:
+      - asset_or_hub
+      - commodity_class (crude/gas)
+      - tenor
+      - date
+  2) Build dynamic alias set from the query; augment with close variants observed in `data_description` text across rows.
+  3) Evaluate all rows for eligibility by asset/hub aliases + commodity_class gate.
+  4) Score ELIGIBLE rows (additive):
+      +5 asset/hub exact alias match in `data_description`
+      +3 provider/exchange hint alignment if present (e.g., NYMEX/CME for Henry Hub or WTI; ICE for Brent; TRPC/ICE for TTF; Platts/DME for Dubai)
+      +1 tenor explicitly matches (front month/continuous/1M/근월물)
+  Tie-breakers: (1) stronger asset exact-match phrase, (2) exchange/provider hint, (3) fewer irrelevant terms.
+  5) Pick the highest-scoring ELIGIBLE row. If none, return `{}`.
+
+  ## Response format (STRICT)
+  - Think step by step BEFORE answering, but DO NOT include your reasoning.
+  - Respond with a single JSON code block and nothing else. No prose before/after.
+  - Keys in this exact order: agtmtm_id, table_name, data_description.
+  - Example:
+  ```json
+  {
+    "agtmtm_id": "value1",
+    "table_name": "value2",
+    "data_description": "value5"
+  }
+
+  # Natural Language Query
+  "${query}"
+
+  ## Table
+  ${data_section}
+
+  ## (Optional) Known synonyms map (if provided; otherwise ignore this block)
+  - Use as a weak aid; dynamic alias discovery still required.
+  - Examples:
+    Henry Hub: ["Henry Hub", "HenryHub", "헨리 허브", "HH"]
+    TTF: ["TTF", "Dutch TTF", "네덜란드 TTF"]
+    Brent crude: ["Brent", "Brent crude", "브렌트유", "ICE Brent"]
+    WTI: ["WTI", "West Texas Intermediate", "서부텍사스산원유"]
+    Dubai crude: ["Dubai", "Dubai crude", "두바이유"]

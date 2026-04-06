@@ -1,0 +1,5 @@
+retrieval_mode: sparse
+semantic_configuration_name: null
+scoring_profile: null
+scoring_parameters: null
+top_k: 3

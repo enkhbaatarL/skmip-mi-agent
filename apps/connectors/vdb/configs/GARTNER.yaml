@@ -1,0 +1,10 @@
+# 공통 관리 필드 (content_provider별로 다르지 않음)
+top_k: 3
+order_by: null
+
+# provider별 yaml에 없을 때의 기본값
+retrieval_mode: dense
+text_search_fields: null
+semantic_configuration_name: null
+scoring_profile: null
+scoring_parameters: null

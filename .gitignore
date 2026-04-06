@@ -1,0 +1,102 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+
+.idea/
+
+# =========================
+# Python cache / compiled
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Python packaging / build
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# =========================
+# Virtual environment
+# =========================
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# Test / coverage / cache
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+*.pid
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Poetry
+# =========================
+poetry.lock
+
+# =========================
+# Local database / temp files
+# =========================
+*.sqlite3
+*.db
+tmp/
+temp/
+
+# =========================
+# Application generated files
+# =========================
+uploads/
+downloads/
+artifacts/
+cache/
+
+# =========================
+# macOS
+# =========================
+.AppleDouble
+.LSOverride
+
+# =========================
+# Optional: docs / mkdocs / sphinx build
+# =========================
+site/
+
+# =========================
+# Optional: PyInstaller
+# =========================
+*.manifest
+*.spec
+
+*.pyc
