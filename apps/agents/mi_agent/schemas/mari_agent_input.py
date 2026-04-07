@@ -91,10 +91,10 @@ class MariAgentInput(BaseModel):
             "examples": [
                 # SKENS
                 {
-                    "company_code": "2013",
+                    "company_code": "2021",
                     "user_num": 1000053,
                     "content_provider_rdb_accesses": {
-                        "authorized_product_nums": [70038, 70033, 70032, 70037, 70029, 70031, 70043, 70039, 70045, 70048, 70028, 70049]
+                        "authorized_product_nums": [70008, 70038, 70033, 70032, 70037, 70029, 70031, 70043, 70039, 70045, 70048, 70028, 70049]
                     },
                     "content_provider_vdb_accesses": [
                         {
