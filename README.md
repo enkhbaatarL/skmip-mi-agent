@@ -51,6 +51,7 @@
 ```
 ├── apps
 │   ├── agents                                                    # [Agent구성]
+│   │   ├── event_flow_agent                                        # Event Flow 에이전트,  kmj20260414화
 │   │   └── mi_agent                                                # mari 에이전트
 │   │       ├── flows                                                 # 메인 그래프 정의 & 런타임 실행 인터페이스
 │   │       ├── state                                                 # LangGraph 상태 정의
@@ -86,6 +87,7 @@
 ```
 ├── apps
 │   ├── agents                                                    # [Agent구성]
+│   │   ├── event_flow_agent                                        # Event Flow Agent,  kmj20260414화
 │   │   └── mi_agent                                                # MI Agent
 │   │       ├── flows                                               # 1. 그래프 빌드 & 런타임 진입점
 │   │       │   ├── mari_agent_graph.py                                 # a. LangGraph 메인 그래프 빌드
