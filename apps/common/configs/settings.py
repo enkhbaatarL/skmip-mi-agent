@@ -1,3 +1,4 @@
+#   skmip-mi-agent
 from collections.abc import Mapping
 import json
 import pathlib
@@ -19,6 +20,24 @@ class Settings(BaseSettings):
         extra="ignore",
         env_parse_none_str="null",
     )
+    
+    # DB    kmj20260415, db 필드들 추가
+    METADATA_DB_TYPE: str
+    METADATA_DB_HOST: str
+    METADATA_DB_PORT: int
+    METADATA_DB_NAME: str
+    METADATA_DB_USERNAME: str
+    METADATA_DB_PASSWORD: str
+
+    DB_CONNECTION_TIMEOUT_SECONDS: int = Field(default=10)
+    READ_TIMEOUT_SECONDS: int = Field(default=30)
+    IS_DB_ECHO_LOG: bool = Field(default=False)
+    DB_POOL_SIZE: int = Field(default=5)
+    DB_POOL_OVERFLOW: int = Field(default=10)
+    DB_POOL_TIMEOUT_SECONDS: int = Field(default=30)
+    POOL_RECYCLE_SECONDS: int = Field(default=1800)
+    POOL_PRE_PING: bool = Field(default=True)
+    IS_DB_EXPIRE_ON_COMMIT: bool = Field(default=False)
 
     # A.X Platform
     ai_platform_host_url: str
@@ -169,3 +188,5 @@ class Settings(BaseSettings):
 # @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+settings: Settings = get_settings()
