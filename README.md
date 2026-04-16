@@ -477,6 +477,14 @@ http://localhost:3002/docs
 | `/invoke` | 동기 호출 — 전체 응답을 한 번에 반환 |
 | `/stream` | 스트리밍 호출 — 처리 단계별 실시간 응답 반환 |
 
+
+# 실행 명령어
+venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --graph_yaml ./graph.yaml
+
+# 접속 URL
+http://localhost:3002/docs
+
+# 파일 구조,  20260416목 기준
 ```
 skmip-mi-agent
 ├─ .claude
@@ -500,12 +508,18 @@ skmip-mi-agent
 │  │  │  │  ├─ event_flow_runtime.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ nodes
+│  │  │  │  ├─ analyze_with_llm.py
 │  │  │  │  ├─ read_rdb.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ repositories
+│  │  │  │  ├─ sync_event_repository.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ schemas
 │  │  │  │  ├─ event_flow_input.py
 │  │  │  │  ├─ event_flow_output.py
 │  │  │  │  └─ __init__.py
+│  │  │  ├─ services
+│  │  │  │  └─ event_service.py
 │  │  │  ├─ state
 │  │  │  │  ├─ event_flow_state.py
 │  │  │  │  └─ __init__.py
@@ -746,11 +760,3 @@ skmip-mi-agent
    └─ __init__.py
 
 ```
-
-
-# 실행 명령어
-venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --graph_yaml ./graph.yaml
-
-# 접속 URL
-http://localhost:3002/docs
-
