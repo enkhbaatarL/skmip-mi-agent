@@ -1,4 +1,4 @@
 package_directory: .
-graph_path: ./apps/agents/mi_agent/flows/mari_agent_runnable.py:runnable_graph
+graph_path: ./apps/agents/event_flow_agent/flows/event_flow_runnable.py:runnable_graph
 env_file: ../envs/skmip_mi_agent/env.txt
 requirements_file: ./requirements.txt
