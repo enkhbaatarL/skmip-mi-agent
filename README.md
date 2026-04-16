@@ -476,3 +476,281 @@ http://localhost:3002/docs
 |-----------|------|
 | `/invoke` | 동기 호출 — 전체 응답을 한 번에 반환 |
 | `/stream` | 스트리밍 호출 — 처리 단계별 실시간 응답 반환 |
+
+```
+skmip-mi-agent
+├─ .claude
+│  ├─ CLAUDE.md
+│  ├─ rules
+│  │  ├─ architecture.md
+│  │  ├─ logging.md
+│  │  └─ python-conventions.md
+│  ├─ settings.json
+│  └─ skills
+│     ├─ add-node.md
+│     ├─ add-subgraph.md
+│     └─ review-node.md
+├─ apps
+│  ├─ agents
+│  │  ├─ event_flow_agent
+│  │  │  ├─ flows
+│  │  │  │  ├─ event_flow_adapters.py
+│  │  │  │  ├─ event_flow_graph.py
+│  │  │  │  ├─ event_flow_runnable.py
+│  │  │  │  ├─ event_flow_runtime.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ nodes
+│  │  │  │  ├─ read_rdb.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ schemas
+│  │  │  │  ├─ event_flow_input.py
+│  │  │  │  ├─ event_flow_output.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ state
+│  │  │  │  ├─ event_flow_state.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ tools
+│  │  │  │  └─ __init__.py
+│  │  │  └─ __init__.py
+│  │  ├─ mi_agent
+│  │  │  ├─ components
+│  │  │  │  ├─ combine.py
+│  │  │  │  ├─ context.py
+│  │  │  │  ├─ guards.py
+│  │  │  │  ├─ metrics.py
+│  │  │  │  ├─ policies.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ flows
+│  │  │  │  ├─ mari_agent_adapters.py
+│  │  │  │  ├─ mari_agent_graph.py
+│  │  │  │  ├─ mari_agent_runnable.py
+│  │  │  │  ├─ mari_agent_runtime.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ nodes
+│  │  │  │  ├─ analyze.py
+│  │  │  │  ├─ classify_intent.py
+│  │  │  │  ├─ planner.py
+│  │  │  │  ├─ rewrite_query.py
+│  │  │  │  ├─ search.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ orchestration
+│  │  │  │  ├─ policies
+│  │  │  │  │  ├─ search_policy.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ routers
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ supervisors
+│  │  │  │  │  ├─ search_supervisor.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ prompts
+│  │  │  │  ├─ analysis_search_result.py
+│  │  │  │  ├─ builders
+│  │  │  │  │  ├─ analysis.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ chart_similarity_prompt.py
+│  │  │  │  ├─ chart_timeseries_prompt.py
+│  │  │  │  ├─ classify_analysis_type.py
+│  │  │  │  ├─ language_translation.py
+│  │  │  │  ├─ loader.py
+│  │  │  │  ├─ rdb_search_nl_to_sql.py
+│  │  │  │  ├─ rdb_search_rewrite_queries.py
+│  │  │  │  ├─ rdb_search_select_target_table.py
+│  │  │  │  ├─ rdb_search_sql_column_fix.py
+│  │  │  │  ├─ rewrite_queries.py
+│  │  │  │  ├─ templates
+│  │  │  │  │  ├─ analysis.yaml
+│  │  │  │  │  ├─ chart.yaml
+│  │  │  │  │  ├─ classify.yaml
+│  │  │  │  │  ├─ language.yaml
+│  │  │  │  │  ├─ nl_to_sql.yaml
+│  │  │  │  │  ├─ rdb_queries.yaml
+│  │  │  │  │  ├─ rdb_search.yaml
+│  │  │  │  │  ├─ rdb_sql_column_fix.yaml
+│  │  │  │  │  ├─ rewrite_queries.yaml
+│  │  │  │  │  ├─ vdb_queries.yaml
+│  │  │  │  │  ├─ web_search.yaml
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ vdb_search_rewrite_queries.py
+│  │  │  │  ├─ web_search_guide.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ schemas
+│  │  │  │  ├─ mari_agent_input.py
+│  │  │  │  ├─ mari_agent_output.py
+│  │  │  │  ├─ schemas.py
+│  │  │  │  ├─ search_input.py
+│  │  │  │  ├─ search_output.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ state
+│  │  │  │  ├─ enums.py
+│  │  │  │  ├─ search_state.py
+│  │  │  │  ├─ state.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ subgraphs
+│  │  │  │  ├─ rdb_search
+│  │  │  │  │  ├─ schemas.py
+│  │  │  │  │  ├─ stages
+│  │  │  │  │  │  ├─ execute
+│  │  │  │  │  │  │  ├─ execute_rdb_search.py
+│  │  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  │  ├─ prepare
+│  │  │  │  │  │  │  ├─ candidate_tables.py
+│  │  │  │  │  │  │  ├─ search_queries.py
+│  │  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  ├─ state.py
+│  │  │  │  │  ├─ subgraph_adapter.py
+│  │  │  │  │  ├─ subgraph_builder.py
+│  │  │  │  │  ├─ tools
+│  │  │  │  │  │  ├─ search_candidates.py
+│  │  │  │  │  │  ├─ search_execution.py
+│  │  │  │  │  │  ├─ search_queries.py
+│  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ vdb_search
+│  │  │  │  │  ├─ schemas.py
+│  │  │  │  │  ├─ stages
+│  │  │  │  │  │  ├─ execute
+│  │  │  │  │  │  │  ├─ search_documents_node.py
+│  │  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  │  ├─ plan
+│  │  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  │  ├─ prepare
+│  │  │  │  │  │  │  ├─ rewrite_query_node.py
+│  │  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  ├─ state.py
+│  │  │  │  │  ├─ subgraph_adapter.py
+│  │  │  │  │  ├─ subgraph_builder.py
+│  │  │  │  │  ├─ tools
+│  │  │  │  │  │  ├─ search_documents.py
+│  │  │  │  │  │  ├─ search_queries.py
+│  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ web_search
+│  │  │  │  │  ├─ schemas.py
+│  │  │  │  │  ├─ stages
+│  │  │  │  │  │  ├─ execute
+│  │  │  │  │  │  │  ├─ search_web_node.py
+│  │  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  ├─ state.py
+│  │  │  │  │  ├─ subgraph_adapter.py
+│  │  │  │  │  ├─ subgraph_builder.py
+│  │  │  │  │  ├─ tools
+│  │  │  │  │  │  ├─ web_search.py
+│  │  │  │  │  │  └─ __init__.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ tools
+│  │  │  │  ├─ analyze.py
+│  │  │  │  ├─ classify_intent.py
+│  │  │  │  ├─ generate_chart.py
+│  │  │  │  ├─ rewrite_query.py
+│  │  │  │  ├─ search_queries.py
+│  │  │  │  └─ __init__.py
+│  │  │  └─ __init__.py
+│  │  └─ __init__.py
+│  ├─ common
+│  │  ├─ configs
+│  │  │  ├─ database
+│  │  │  │  ├─ async_database
+│  │  │  │  │  ├─ base.py
+│  │  │  │  │  ├─ connection.py
+│  │  │  │  │  ├─ repository.py
+│  │  │  │  │  ├─ session.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  ├─ sync_database
+│  │  │  │  │  ├─ base.py
+│  │  │  │  │  ├─ connection.py
+│  │  │  │  │  ├─ repository.py
+│  │  │  │  │  ├─ session.py
+│  │  │  │  │  └─ __init__.py
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ settings.py
+│  │  │  └─ __init__.py
+│  │  ├─ exceptions
+│  │  │  ├─ custom.py
+│  │  │  └─ __init__.py
+│  │  ├─ logging
+│  │  │  ├─ decorators.py
+│  │  │  ├─ logger_config.py
+│  │  │  └─ __init__.py
+│  │  ├─ middleware
+│  │  │  ├─ exception_handler.py
+│  │  │  └─ __init__.py
+│  │  ├─ runtime
+│  │  │  ├─ runtime.py
+│  │  │  ├─ runtime_context.py
+│  │  │  ├─ shutdown_hooks.py
+│  │  │  ├─ usage_context.py
+│  │  │  └─ __init__.py
+│  │  ├─ streaming
+│  │  │  ├─ decorators.py
+│  │  │  ├─ texts.py
+│  │  │  └─ __init__.py
+│  │  ├─ utils
+│  │  │  ├─ timeseries_similarity_utils.py
+│  │  │  ├─ time_utils.py
+│  │  │  └─ __init__.py
+│  │  ├─ values
+│  │  │  ├─ constants.py
+│  │  │  ├─ enums.py
+│  │  │  ├─ error_codes.py
+│  │  │  └─ __init__.py
+│  │  └─ __init__.py
+│  ├─ connectors
+│  │  ├─ http
+│  │  │  ├─ http_client.py
+│  │  │  ├─ http_client_manager.py
+│  │  │  └─ __init__.py
+│  │  ├─ llm
+│  │  │  ├─ llm_client.py
+│  │  │  └─ __init__.py
+│  │  ├─ mcp
+│  │  │  ├─ mcp_adapter.py
+│  │  │  ├─ mcp_client_manager.py
+│  │  │  ├─ mcp_client_pool.py
+│  │  │  └─ __init__.py
+│  │  ├─ vdb
+│  │  │  ├─ configs
+│  │  │  │  ├─ DEFAULT.yaml
+│  │  │  │  ├─ GARTNER.yaml
+│  │  │  │  ├─ LSEG.yaml
+│  │  │  │  ├─ OMDIA.yaml
+│  │  │  │  ├─ WOODMAC.yaml
+│  │  │  │  └─ __init__.py
+│  │  │  ├─ config_loader.py
+│  │  │  ├─ constants.py
+│  │  │  ├─ enums.py
+│  │  │  ├─ schemas.py
+│  │  │  ├─ vector_db.py
+│  │  │  └─ __init__.py
+│  │  ├─ web
+│  │  │  ├─ base.py
+│  │  │  ├─ factory.py
+│  │  │  ├─ tavily_provider.py
+│  │  │  └─ __init__.py
+│  │  └─ __init__.py
+│  └─ __init__.py
+├─ Dockerfile
+├─ docs
+│  └─ images
+│     └─ mari_agent_flow.png
+├─ graph.yaml
+├─ pyproject.toml
+├─ README.md
+├─ requirements.txt
+└─ scripts
+   ├─ export_langgraph_png.py
+   └─ __init__.py
+
+```
+
+
+# 실행 명령어
+venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --graph_yaml ./graph.yaml
+
+# 접속 URL
+http://localhost:3002/docs
+
