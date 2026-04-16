@@ -109,7 +109,7 @@ class MariAgentInput(BaseModel):
                         }
                     ],
                     "user_query": "최근12개월간 Brent Crude 1개월물 가격이 급변동한 시점을 알려줘",
-                    "search_sources": ["rdb"],
+                    "search_sources": ["vdb"],
                 },                
                 # SKHY
                 # {
