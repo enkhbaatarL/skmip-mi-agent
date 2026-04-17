@@ -1,11 +1,10 @@
+#   apps/common/configs/database/sync_database/session.py
+
 """Sync Database 세션 DI 프로바이더 (FastAPI Depends 전용)."""
 
 from __future__ import annotations
-
 from collections.abc import Generator
-
 from sqlalchemy.orm import Session
-
 from apps.common.configs.database.sync_database.connection import get_sync_session
 
 

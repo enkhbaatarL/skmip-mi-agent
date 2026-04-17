@@ -41,7 +41,7 @@ async def analyze_with_llm_node(state: EventFlowState) -> EventFlowState:
 2. 핵심 키워드 3개
 3. 중요한 이벤트 2개
 
-를 한국어로 작성해줘.
+를 한국어로 작성해라.
 
 {text}
 """,

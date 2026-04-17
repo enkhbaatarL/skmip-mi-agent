@@ -1,4 +1,4 @@
-#   skmip-mi-agent
+#   apps/common/configs/settings.py
 from collections.abc import Mapping
 import json
 import pathlib

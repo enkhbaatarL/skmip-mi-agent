@@ -1,3 +1,5 @@
+#   apps/common/configs/database/sync_database/connection.py
+
 """Sync Database 연결 설정 (Airflow 등 비-FastAPI 환경용)."""
 
 from __future__ import annotations
