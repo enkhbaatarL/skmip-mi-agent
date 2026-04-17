@@ -1,9 +1,12 @@
 # apps/agents/event_flow_agent/services/record_analysis_service.py
 
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
+import httpx
+from openai import OpenAI
 from apps.agents.event_flow_agent.schemas.record_analysis import RecordAnalysis
-from apps.connectors.llm.llm_client import invoke_llm_structured_output
+from apps.common.configs.settings import get_settings
 
 
 SYSTEM_PROMPT = """\
@@ -15,6 +18,8 @@ SYSTEM_PROMPT = """\
 - 각 category마다 level_1, level_2, entities, event_timing, regions, supply_demand_side, score, reason을 채워라.
 - score는 0~10 범위이다.
 - JSON schema를 반드시 준수해라.
+- 빈 리스트([])를 반환하지 마라.
+- 가장 관련도 높은 카테고리 1개라도 반드시 포함해라.
 """
 
 USER_TEMPLATE = """\
@@ -29,19 +34,49 @@ USER_TEMPLATE = """\
 
 
 class RecordAnalysisService:
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._model_endpoint = settings.model_endpoint
+        self._api_key = settings.api_key
+        self._model_name = settings.model_api_deployment_name
+
     async def analyze(self, title: str, body: str) -> RecordAnalysis:
         prompt = USER_TEMPLATE.format(title=title, body=body)
 
-        result = await invoke_llm_structured_output(
-            output_schema=RecordAnalysis,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.0,
-        )
+        def _call_llm() -> RecordAnalysis:
+            client = OpenAI(
+                base_url=self._model_endpoint,
+                api_key=self._api_key,
+                http_client=httpx.Client(
+                    verify=False,
+                    timeout=30.0,
+                ),
+                max_retries=2,
+            )
 
-        parsed = result.result
-        parsed.analysis_time = datetime.now(timezone.utc).isoformat()
+            resp = client.chat.completions.create(
+                model=self._model_name,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.0,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "RecordAnalysis",
+                        "schema": RecordAnalysis.model_json_schema(),
+                        "strict": False,
+                    },
+                },
+            )
 
-        return parsed
+            content = resp.choices[0].message.content
+            if not content:
+                raise ValueError("LLM 응답 content가 비어 있습니다.")
+
+            parsed = RecordAnalysis.model_validate_json(content)
+            parsed.analysis_time = datetime.now(timezone.utc).isoformat()
+            return parsed
+
+        return await asyncio.to_thread(_call_llm)
