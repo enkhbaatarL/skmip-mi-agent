@@ -484,7 +484,7 @@ venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --g
 # 접속 URL
 http://localhost:3002/docs
 
-# 파일 구조,  20260416목 기준
+# skmip-mi-agent 프로젝트 파일 구조,  20260416목 기준
 ```
 skmip-mi-agent
 ├─ .claude
