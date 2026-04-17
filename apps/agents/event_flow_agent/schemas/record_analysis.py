@@ -1,9 +1,18 @@
 # apps/agents/event_flow_agent/schemas/record_analysis.py
+# kmj20260417금
 
 from __future__ import annotations
+
 from enum import Enum
 from typing import List
+
 from pydantic import BaseModel, Field, model_validator
+
+from apps.agents.event_flow_agent.configs.event_type_taxonomy import (
+    ALLOWED_CATEGORY_PAIRS,
+    CATEGORY_GUIDE,
+)
+
 
 class EntityType(str, Enum):
     country = "country"
@@ -12,9 +21,11 @@ class EntityType(str, Enum):
     organization = "organization"
     other = "other"
 
+
 class Entity(BaseModel):
     name: str = Field(description="엔티티 정규 명칭")
     entity_type: EntityType = Field(description="엔티티 유형")
+
 
 class OccurrencePrecision(str, Enum):
     exact = "exact"
@@ -24,12 +35,14 @@ class OccurrencePrecision(str, Enum):
     year = "year"
     unknown = "unknown"
 
+
 class SupplyDemandSide(str, Enum):
     supply = "supply"
     demand = "demand"
     both = "both"
     none = "none"
     unclear = "unclear"
+
 
 class EventTiming(BaseModel):
     occurrence_time: str = Field(
@@ -41,6 +54,7 @@ class EventTiming(BaseModel):
         description="occurrence_time 정밀도",
     )
 
+
 class CategoryAnalysis(BaseModel):
     level_1: str = Field(description="이벤트 유형 대분류 코드")
     level_2: str = Field(description="이벤트 유형 소분류 코드")
@@ -50,6 +64,16 @@ class CategoryAnalysis(BaseModel):
     supply_demand_side: SupplyDemandSide = Field(default=SupplyDemandSide.unclear)
     score: float = Field(default=0.0, ge=0, le=10)
     reason: str = Field(default="")
+
+    @model_validator(mode="after")
+    def validate_category_pair(self) -> "CategoryAnalysis":
+        if (self.level_1, self.level_2) not in ALLOWED_CATEGORY_PAIRS:
+            raise ValueError(
+                f"유효하지 않은 category 조합: ({self.level_1}, {self.level_2}). "
+                "event_type_taxonomy.json의 level_1_code + level_2_code 조합만 허용됩니다."
+            )
+        return self
+
 
 class RecordAnalysis(BaseModel):
     categories: List[CategoryAnalysis] = Field(default_factory=list)

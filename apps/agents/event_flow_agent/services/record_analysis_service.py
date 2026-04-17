@@ -1,15 +1,19 @@
 # apps/agents/event_flow_agent/services/record_analysis_service.py
 
 from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timezone
+
 import httpx
 from openai import OpenAI
+
+from apps.agents.event_flow_agent.configs.event_type_taxonomy import CATEGORY_GUIDE
 from apps.agents.event_flow_agent.schemas.record_analysis import RecordAnalysis
 from apps.common.configs.settings import get_settings
 
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = f"""\
 당신은 LNG 시장 분석 전문가이다.
 주어진 뉴스 기사/요약을 분석하여 LNG 가격 예측에 활용할 구조화된 분석 태그를 추출해라.
 
@@ -20,6 +24,12 @@ SYSTEM_PROMPT = """\
 - JSON schema를 반드시 준수해라.
 - 빈 리스트([])를 반환하지 마라.
 - 가장 관련도 높은 카테고리 1개라도 반드시 포함해라.
+- level_1 / level_2는 아래 taxonomy 코드만 사용해야 한다.
+- 한국어 라벨이 아니라 반드시 코드값을 사용해라.
+- 아래에 없는 임의의 분류명은 절대 만들지 마라.
+
+## 허용 taxonomy
+{CATEGORY_GUIDE}
 """
 
 USER_TEMPLATE = """\
