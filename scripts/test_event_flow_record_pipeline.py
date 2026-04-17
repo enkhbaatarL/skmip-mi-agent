@@ -1,8 +1,6 @@
 #   scripts/test_event_flow_record_pipeline.py
-# 이 스크립트는 event flow의 record 처리 파이프라인을 테스트하기 위한 간단한 실행 예시입니다.
-#   실행명령어 bash 창에 아래 2줄 입력 후 실행
-# export ANTHROPIC_API_KEY="여기에_실제_키"
-# python -m scripts.test_event_flow_record_pipeline
+#   kmj20260417금,  이 스크립트는 event_flow_agent의 record 처리 파이프라인을 테스트하기 위한 간단한 실행 예시입니다.
+#   실행명령어 bash: python -m scripts.test_event_flow_record_pipeline   
 
 from __future__ import annotations
 
