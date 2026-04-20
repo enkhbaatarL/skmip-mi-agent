@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
-
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
 
 
 def _new_event_id() -> str:
     return f"ev_{uuid.uuid4().hex[:12]}"
+
+
+def _normalize_occurred_at(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    raw = value.strip()
+    if not raw:
+        return None
+
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        return f"{raw} 00:00:00"
+
+    if re.fullmatch(r"\d{4}-\d{2}", raw):
+        return f"{raw}-01 00:00:00"
+
+    if re.fullmatch(r"\d{4}", raw):
+        return f"{raw}-01-01 00:00:00"
+
+    # ISO datetime이면 그대로 두되, Z는 MySQL DATETIME용으로 제거
+    if raw.endswith("Z"):
+        raw = raw[:-1]
+
+    try:
+        dt = datetime.fromisoformat(raw)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def save_events(state: EventFlowState, repository) -> EventFlowState:
@@ -28,7 +56,7 @@ def save_events(state: EventFlowState, repository) -> EventFlowState:
                 "mi_event_title_ko": event["event_title_ko"],
                 "mi_event_summary_ko": event["detail_analysis"],
                 "estimated_impact_id": None,    # kmj20260417,  아직 상태를 모르므로 일단 null로 저장, 추후 상태 결정 로직이 생기면 업데이트 예정
-                "occurred_at": event.get("occurred_at") or None,
+                "occurred_at": _normalize_occurred_at(event.get("occurred_at")),
                 "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                 "probability": None,    # kmj20260417,  아직 상태를 모르므로 일단 null로 저장, 추후 상태 결정 로직이 생기면 업데이트 예정
                 "language": "ko",
