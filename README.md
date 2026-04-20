@@ -446,7 +446,7 @@
 MCP 서버(`skmip_mcp_server`)가 먼저 실행되어 있어야 합니다.
 
 ### 실행 순서
-
+# 방법1 (kmj20260420월, 방법1이 어려울 경우 방법2로 수행하세요)
 **1) conda 환경 생성 및 활성화**
 ```bash
 conda create -n skmip_mi_agent python=3.13.0 -y
@@ -477,15 +477,53 @@ http://localhost:3002/docs
 | `/invoke` | 동기 호출 — 전체 응답을 한 번에 반환 |
 | `/stream` | 스트리밍 호출 — 처리 단계별 실시간 응답 반환 |
 
-
-# 실행 명령어 (skmip_mcp_server 활성화 후 skmip-mi-agent 활성화 하시면 됩니다.)
-venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --graph_yaml ./graph.yaml
-
-# 접속 URL (skmip-mi-agent 활성화 되었다면 아래 url로 접속하시면 swagger로 api test 가능합니다.)
+# 방법2 (kmj20260420월)
+**1) mcp 서버 실행  
+skmip_mcp_server 프로젝트 활성화, (F5를 누르거나 '실행 및 디버그' 버튼을 누르세요)  
+  
+**2) agent 실행  
+skmip-mi-agent 프로젝트 활성화, (F5를 누르거나 '실행 및 디버그' 버튼을 누르세요. 안된다면 아래 명령어를 수행하거나 readme.md문서 하단에 '오류 해결'의 1번을 수행하세요)  
+venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --graph_yaml ./graph.yaml  
+  
+**3) Swagger 접속 (아래 URL을 브라우저에 붙여 넣으세요.)  
 http://localhost:3002/docs
 
-# event_flow_agent test (만약 event_flow_agent만 test하고 싶으시다면 아래 명령어 입력하시면 됩니다.)
+**4) API 호출  
+보통 아래 API를 호출합니다.  
+| 엔드포인트 | 설명 |  
+| `/invoke` | 동기 호출 — 전체 응답을 한 번에 반환 |  
+4-1. Authorize를 클릭하면 API키를 달라고 하는데 Value 창에 env.txt의 #A.XPlatform의 API_KEY 값을 넣으면 됩니다.
+4-2. invoke api로 가서 Try it out을 클릭하고 Request body는 아래처럼 넣으면 됩니다. (보통 기본으로 아래와 같을 겁니다. limit는 읽을 원천데이터 레코드 개수입니다. 늘렸다 줄였다해보셔도 됩니다.)
+```
+{
+  "input": {
+    "limit": 5
+  },
+  "config": {},
+  "kwargs": {
+    "additionalProp1": {}
+  }
+}
+```
+4-3. Execute 누르면 실행됩니다. limit 값이 크면 오래걸립니다.
+4-4. 끝
+
+
+# 오류 해결
+**1) event_flow_agent test (만약 event_flow_agent만 test하고 싶으시다면 아래 명령어 입력하시면 됩니다.)
 python -m scripts.test_event_flow_record_pipeline
+
+# 오류 해결
+```
+1.  만약 IDE(통합개발환경)에서 F5 또는 '실행 및 디버그' 버튼을 눌렀을 때 오류가 발생한다면 대부분 __pycache__, .pyc 때문에 발생하는 문제입니다.
+    1-1.  아래 명령어 수행하세요.
+        find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+        find . -type f -name "*.pyc" -delete
+        find venv -type d -name "__pycache__" -prune -exec rm -rf {} +
+        find venv -type f -name "*.pyc" -delete
+    1-2.  이제 다시 F5 또는 '실행 및 디버그' 버튼 눌러보세요. 해결 될겁니다.
+```
+
 
 # skmip-mi-agent 프로젝트 파일 구조,  20260416목 기준
 ```
