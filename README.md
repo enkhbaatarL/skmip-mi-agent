@@ -527,7 +527,7 @@ python -m scripts.test_event_flow_record_pipeline
 ```
 
 
-# skmip-mi-agent 프로젝트 파일 구조,  20260416목 기준
+# skmip-mi-agent 프로젝트 파일 구조,  20260420월 기준
 ```
 skmip-mi-agent
 ├─ .claude
@@ -544,6 +544,9 @@ skmip-mi-agent
 ├─ apps
 │  ├─ agents
 │  │  ├─ event_flow_agent
+│  │  │  ├─ configs
+│  │  │  │  ├─ event_type_taxonomy.py
+│  │  │  │  └─ __init__.py
 │  │  │  ├─ flows
 │  │  │  │  ├─ event_flow_adapters.py
 │  │  │  │  ├─ event_flow_graph.py
@@ -551,18 +554,27 @@ skmip-mi-agent
 │  │  │  │  ├─ event_flow_runtime.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ nodes
+│  │  │  │  ├─ analyze_records_with_llm.py
 │  │  │  │  ├─ analyze_with_llm.py
+│  │  │  │  ├─ extract_events_with_llm.py
 │  │  │  │  ├─ read_rdb.py
+│  │  │  │  ├─ read_record_source.py
+│  │  │  │  ├─ save_events.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ repositories
 │  │  │  │  ├─ sync_event_repository.py
+│  │  │  │  ├─ sync_record_repository.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ schemas
 │  │  │  │  ├─ event_flow_input.py
 │  │  │  │  ├─ event_flow_output.py
+│  │  │  │  ├─ mi_event_models.py
+│  │  │  │  ├─ record_analysis.py
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ services
-│  │  │  │  └─ event_service.py
+│  │  │  │  ├─ event_extraction_service.py
+│  │  │  │  ├─ event_service.py
+│  │  │  │  └─ record_analysis_service.py
 │  │  │  ├─ state
 │  │  │  │  ├─ event_flow_state.py
 │  │  │  │  └─ __init__.py
@@ -724,6 +736,7 @@ skmip-mi-agent
 │  │  │  │  │  ├─ session.py
 │  │  │  │  │  └─ __init__.py
 │  │  │  │  └─ __init__.py
+│  │  │  ├─ event_type_taxonomy.json
 │  │  │  ├─ settings.py
 │  │  │  └─ __init__.py
 │  │  ├─ exceptions
@@ -795,11 +808,14 @@ skmip-mi-agent
 │  └─ images
 │     └─ mari_agent_flow.png
 ├─ graph.yaml
+├─ initialize_local_db.sh
 ├─ pyproject.toml
 ├─ README.md
 ├─ requirements.txt
 └─ scripts
    ├─ export_langgraph_png.py
+   ├─ test_event_flow_agent_invoke.py
+   ├─ test_event_flow_record_pipeline.py
    └─ __init__.py
 
 ```
