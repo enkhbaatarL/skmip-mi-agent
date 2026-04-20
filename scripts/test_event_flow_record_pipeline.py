@@ -1,6 +1,6 @@
 #   scripts/test_event_flow_record_pipeline.py
-#   kmj20260417금,  이 스크립트는 event_flow_agent의 record 처리 파이프라인을 테스트하기 위한 간단한 실행 예시입니다.
-#   실행명령어 bash: python -m scripts.test_event_flow_record_pipeline   
+#   kmj20260417금, event_flow_agent의 record -> event 파이프라인 테스트
+#   실행명령어 bash: python -m scripts.test_event_flow_record_pipeline
 
 from __future__ import annotations
 
@@ -10,9 +10,15 @@ import json
 from apps.agents.event_flow_agent.nodes.analyze_records_with_llm import (
     analyze_records_with_llm,
 )
+from apps.agents.event_flow_agent.nodes.extract_events_with_llm import (
+    extract_events_with_llm,
+)
 from apps.agents.event_flow_agent.nodes.read_record_source import read_record_source
 from apps.agents.event_flow_agent.repositories.sync_record_repository import (
     SyncRecordRepository,
+)
+from apps.agents.event_flow_agent.services.event_extraction_service import (
+    EventExtractionService,
 )
 from apps.agents.event_flow_agent.services.record_analysis_service import (
     RecordAnalysisService,
@@ -27,10 +33,11 @@ async def main() -> None:
     try:
         record_repository = SyncRecordRepository(session=session)
         record_analysis_service = RecordAnalysisService()
+        event_extraction_service = EventExtractionService()
 
         state = EventFlowState(
             market_category="LNG",
-            limit=1,
+            limit=3,
         )
 
         print("\n=== STEP 1. read_record_source ===")
@@ -53,11 +60,12 @@ async def main() -> None:
         else:
             print("source_records is empty")
 
-        print("\n=== STEP 2. analyze_records_with_llm ===")
+        print("\n=== STEP 2-1. analyze_records_with_llm started ===")
         state = await analyze_records_with_llm(
             state=state,
             service=record_analysis_service,
         )
+        print("=== STEP 2-2. analyze_records_with_llm finished ===")
 
         print(f"record_analyses count: {len(state.record_analyses)}")
         if state.record_analyses:
@@ -73,7 +81,28 @@ async def main() -> None:
         else:
             print("record_analyses is empty")
 
-        print("\n=== STEP 3. errors ===")
+        print("\n=== STEP 3-1. extract_events_with_llm started ===")
+        state = await extract_events_with_llm(
+            state=state,
+            service=event_extraction_service,
+        )
+        print("=== STEP 3-2. extract_events_with_llm finished ===")
+
+        print(f"extracted_events count: {len(state.extracted_events)}")
+        if state.extracted_events:
+            print("first extracted event:")
+            print(
+                json.dumps(
+                    state.extracted_events[0],
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            )
+        else:
+            print("extracted_events is empty")
+
+        print("\n=== STEP 4. errors ===")
         print(
             json.dumps(
                 state.errors,
@@ -82,6 +111,8 @@ async def main() -> None:
                 default=str,
             )
         )
+
+        print("\n=== SCRIPT FINISHED ===")
 
     finally:
         session.close()
