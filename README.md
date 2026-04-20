@@ -443,7 +443,9 @@
 
 ### 전제 조건
 
-MCP 서버(`skmip_mcp_server`)가 먼저 실행되어 있어야 합니다.
+- MCP 서버(`skmip_mcp_server`)가 먼저 실행되어 있어야 합니다.
+- Local MySQL를 이용하고자 할때는 initialize_local_db.sh를 실행한다. (DB 현행화는 Local -> 외부개발DB 순서로 진행)
+  - https://github.com/sk-mi-platform/skmip-mi-agent/pull/2 
 
 ### 실행 순서
 # 방법1 (kmj20260420월, 방법1이 어려울 경우 방법2로 수행하세요)
