@@ -101,3 +101,5 @@ site/
 *.spec
 
 *.pyc
+
+mysql_data/
