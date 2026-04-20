@@ -26,10 +26,15 @@ from apps.agents.event_flow_agent.services.record_analysis_service import (
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
 from apps.common.configs.database.sync_database.connection import get_sync_session
 
+from apps.agents.event_flow_agent.nodes.save_events import save_events
+from apps.agents.event_flow_agent.repositories.sync_event_repository import (
+    SyncEventRepository,
+)
 
 async def main() -> None:
     session = get_sync_session()
-
+    event_repository = SyncEventRepository(session=session)
+    
     try:
         record_repository = SyncRecordRepository(session=session)
         record_analysis_service = RecordAnalysisService()
@@ -102,7 +107,28 @@ async def main() -> None:
         else:
             print("extracted_events is empty")
 
-        print("\n=== STEP 4. errors ===")
+        print("\n=== STEP 4-1. save_events started ===")
+        state = save_events(
+            state=state,
+            repository=event_repository,
+        )
+        print("=== STEP 4-2. save_events finished ===")
+
+        print(f"saved_event_ids count: {len(state.saved_event_ids)}")
+        if state.saved_event_ids:
+            print("saved_event_ids:")
+            print(
+                json.dumps(
+                    state.saved_event_ids,
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                )
+            )
+        else:
+            print("saved_event_ids is empty")
+            
+        print("\n=== STEP 5. errors ===")
         print(
             json.dumps(
                 state.errors,
