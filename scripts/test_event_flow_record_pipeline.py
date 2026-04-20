@@ -112,6 +112,7 @@ async def main() -> None:
             state=state,
             repository=event_repository,
         )
+        # session.commit()    # kmj20260420월, 추출된 event들이 DB에 저장되는 것을 확인하기 위해 commit() 추가, 지속 test하려면 본 라인은 주석처리할것
         print("=== STEP 4-2. save_events finished ===")
 
         print(f"saved_event_ids count: {len(state.saved_event_ids)}")
