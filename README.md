@@ -478,11 +478,14 @@ http://localhost:3002/docs
 | `/stream` | 스트리밍 호출 — 처리 단계별 실시간 응답 반환 |
 
 
-# 실행 명령어
+# 실행 명령어 (skmip_mcp_server 활성화 후 skmip-mi-agent 활성화 하시면 됩니다.)
 venv/Scripts/python.exe -m adxp_cli.cli agent run --host 0.0.0.0 --port 3002 --graph_yaml ./graph.yaml
 
-# 접속 URL
+# 접속 URL (skmip-mi-agent 활성화 되었다면 아래 url로 접속하시면 swagger로 api test 가능합니다.)
 http://localhost:3002/docs
+
+# event_flow_agent test (만약 event_flow_agent만 test하고 싶으시다면 아래 명령어 입력하시면 됩니다.)
+python -m scripts.test_event_flow_record_pipeline
 
 # skmip-mi-agent 프로젝트 파일 구조,  20260416목 기준
 ```
