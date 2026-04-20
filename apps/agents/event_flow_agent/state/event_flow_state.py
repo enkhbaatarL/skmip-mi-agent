@@ -1,5 +1,5 @@
 #   agents/event_flow_agent/state/event_flow_state.py
-#   kmj20260414화
+#   kmj20260420월 수정
 
 from __future__ import annotations
 from typing import Any
@@ -65,4 +65,13 @@ class EventFlowState(EventFlowInput):
     saved_event_ids: list[str] = Field(
         default_factory=list,
         description="DB에 저장한 mi_event_id 목록",
+    )
+    
+    llm_result: str | None = Field(
+        default=None,
+        description="LLM 요약 결과 원문",
+    )
+    llm_prompt: str | None = Field(
+        default=None,
+        description="LLM 호출에 사용한 프롬프트",
     )
