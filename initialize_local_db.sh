@@ -10,7 +10,7 @@ MYSQL_VERSION="8.0.40"
 MYSQL_PORT="13306"
 MYSQL_ROOT_PASSWORD="miagent"
 DUMP_DIR="./tmp/dumps"
-DUMP_FILE="20260420_local.sql"
+DUMP_FILE="dump-local-midb-20260421.sql"
 VOLUME_DIR="./mysql_data"
 
 # Colors for output
@@ -116,19 +116,45 @@ grant_root_privileges() {
 # Wait for MySQL to be ready
 wait_for_mysql() {
     log_info "Waiting for MySQL to be ready..."
-    local timeout=30
+    local timeout=300  # Increased timeout to 5 minutes
     local count=0
+    local retry_count=0
+    local max_retries=3
 
-    until docker exec mysql-local mysqladmin ping -h 127.0.0.1 -P 3306 --silent; do
+    # First check if container is running
+    if ! docker ps --filter "name=mysql-local" | grep -q mysql-local; then
+        log_error "MySQL container is not running"
+        exit 1
+    fi
+
+    # Give container some time to start before first health check
+    sleep 10
+
+    while [ $count -lt $timeout ]; do
+        if docker exec mysql-local mysqladmin ping -h 127.0.0.1 -P 3306 --silent; then
+            log_info "MySQL is ready!"
+            return 0
+        fi
+
         sleep 1
         ((count++))
-        if [ $count -gt $timeout ]; then
-            log_error "MySQL failed to start within $timeout seconds"
+
+        # Show progress every 30 seconds
+        if [ $((count % 30)) -eq 0 ]; then
+            log_info "Still waiting for MySQL to be ready... ($count seconds elapsed)"
+        fi
+
+        # Check container status periodically
+        if ! docker ps --filter "name=mysql-local" | grep -q mysql-local; then
+            log_error "MySQL container stopped unexpectedly"
             exit 1
         fi
     done
 
-    log_info "MySQL is ready!"
+    log_error "MySQL failed to start within $timeout seconds"
+    log_error "Container logs:"
+    docker logs mysql-local
+    exit 1
 }
 
 # Main execution
