@@ -77,9 +77,7 @@ class EventPersistenceService:
 
                 repository.insert_event(payload)
                 saved_ids.append(payload["mi_event_id"])
-            print(f"[EventPersistenceService] saving_count={len(events)}")
             session.commit()
-            print("[EventPersistenceService] commit done")
             return saved_ids
 
         except Exception as exc:

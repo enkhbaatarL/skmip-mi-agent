@@ -17,7 +17,6 @@ async def extract_events_with_llm_node(state: EventFlowState) -> EventFlowState:
         service = EventExtractionService()
         result = await service.extract(state.record_analyses)
         state.extracted_events = [event.model_dump(mode="json") for event in result.events]
-        print(f"[extract_events_with_llm] extracted_events_count={len(state.extracted_events)}")
         return state
 
     except Exception as exc:

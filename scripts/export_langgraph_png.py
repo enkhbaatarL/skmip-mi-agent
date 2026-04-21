@@ -27,7 +27,6 @@ def _draw_png(compiled: object, name: str, out_dir: Path) -> None:
 
     out_path = out_dir / f"{name}.png"
     out_path.write_bytes(png_bytes)
-    print(f"✅ saved: {out_path.resolve()}")
 
 
 def main() -> None:

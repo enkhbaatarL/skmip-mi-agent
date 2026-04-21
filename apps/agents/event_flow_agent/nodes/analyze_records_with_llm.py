@@ -18,7 +18,6 @@ async def analyze_records_with_llm_node(state: EventFlowState) -> EventFlowState
 
     for idx, record in enumerate(state.source_records, start=1):
         mi_record_id = record.get("mi_record_id")
-        print(f"[analyze_records_with_llm] start idx={idx}, mi_record_id={mi_record_id}")
 
         try:
             title = record.get("title", "") or ""
@@ -35,12 +34,10 @@ async def analyze_records_with_llm_node(state: EventFlowState) -> EventFlowState
                     "record_analysis": analysis.model_dump(mode="json"),
                 }
             )
-            print(f"[analyze_records_with_llm] success idx={idx}, mi_record_id={mi_record_id}")
 
         except Exception as exc:
             msg = f"mi_record_id={mi_record_id} record 분석 실패: {exc}"
             state.errors.append(msg)
-            print(f"[analyze_records_with_llm] fail idx={idx}, mi_record_id={mi_record_id}, error={exc}")
 
     state.record_analyses = analyzed_records
     return state
