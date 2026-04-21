@@ -1,3 +1,5 @@
+#   apps/common/configs/database/sync_database/repository.py
+
 """Sync Repository DI 팩토리 (FastAPI Depends 전용)."""
 
 from __future__ import annotations

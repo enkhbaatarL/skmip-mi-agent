@@ -1,3 +1,5 @@
+#   apps/common/exceptions/custom.py
+
 from apps.common.values.error_codes import ErrorCode
 
 

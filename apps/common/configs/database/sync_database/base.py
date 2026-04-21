@@ -1,3 +1,5 @@
+#   apps/common/configs/database/sync_database/base.py
+
 from sqlalchemy.orm import Session as SQLAlchemySession
 
 

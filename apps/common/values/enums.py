@@ -1,3 +1,5 @@
+#   apps/common/values/enums.py
+
 from enum import StrEnum
 
 
