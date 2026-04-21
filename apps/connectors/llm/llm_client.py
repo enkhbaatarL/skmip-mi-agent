@@ -169,3 +169,50 @@ async def invoke_llm_structured_output[T: BaseModel](
             return LLMStructuredResult[T](result=parsed_result, usage=usage)
     except Exception as ex:
         raise LLMInvocationError(detail=str(ex)) from ex
+
+@log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
+async def invoke_llm_text(
+    messages: list[dict[str, str]],
+    model_name: str | None = None,
+    *,
+    preference: ModelPreference | None = None,
+    temperature: float = 0.0,
+    max_retries: int = 2,
+) -> dict[str, Any]:
+    await ensure_runtime_context_ready()
+
+    settings: BaseSettings = get_settings()
+    client = OpenAI(
+        base_url=settings.model_endpoint,
+        api_key=settings.api_key,
+        http_client=httpx.Client(verify=False),
+        max_retries=max_retries,
+    )
+
+    model = _resolve_model_name(model_name, preference)
+    llm_sem = get_llm_semaphore()
+    http_sem = get_http_semaphore()
+
+    try:
+        async with llm_sem, http_sem:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+            )
+
+            content = resp.choices[0].message.content
+            if not content:
+                raise ValueError("LLM 응답 content가 비어 있습니다.")
+
+            usage = UsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
+            accumulate_usage(usage)
+
+            return {
+                "id": resp.id,
+                "content": content.strip(),
+                "usage": usage.model_dump() if usage else None,
+                "model": model,
+            }
+    except Exception as ex:
+        raise LLMInvocationError(detail=str(ex)) from ex
