@@ -1,3 +1,5 @@
+#   apps/connectors/web/factory.py
+
 """Factory for creating web search provider instances."""
 
 from typing import Any

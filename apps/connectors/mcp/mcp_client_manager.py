@@ -1,4 +1,5 @@
-# mcp_client_manager.py
+#   apps/connectors/mcp/mcp_client_manager.py
+
 from __future__ import annotations
 
 import asyncio

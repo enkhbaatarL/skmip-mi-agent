@@ -1,3 +1,5 @@
+#   apps/connectors/mcp/mcp_adapter.py
+
 from __future__ import annotations
 
 from collections.abc import Callable

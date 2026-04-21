@@ -1,3 +1,5 @@
+#   apps/connectors/web/base.py
+
 """Base interface for web search providers."""
 
 from abc import ABC, abstractmethod
