@@ -527,7 +527,8 @@ python -m scripts.test_event_flow_record_pipeline
 ```
 
 
-# skmip-mi-agent 프로젝트 파일 구조,  20260420월 기준
+# skmip-mi-agent 프로젝트 파일 구조,  20260421화 기준
+
 ```
 skmip-mi-agent
 ├─ .claude
@@ -573,8 +574,10 @@ skmip-mi-agent
 │  │  │  │  └─ __init__.py
 │  │  │  ├─ services
 │  │  │  │  ├─ event_extraction_service.py
+│  │  │  │  ├─ event_persistence_service.py
 │  │  │  │  ├─ event_service.py
-│  │  │  │  └─ record_analysis_service.py
+│  │  │  │  ├─ record_analysis_service.py
+│  │  │  │  └─ record_source_service.py
 │  │  │  ├─ state
 │  │  │  │  ├─ event_flow_state.py
 │  │  │  │  └─ __init__.py
