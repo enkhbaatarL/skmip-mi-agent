@@ -1,16 +1,12 @@
 #   apps/agents/event_flow_agent/nodes/analyze_with_llm.py
-#   kmj20260420월 수정, RDB에서 조회된 이벤트 데이터를 LLM으로 분석하는 노드
+#   kmj20260421화 수정, RDB에서 조회된 이벤트 데이터를 LLM으로 분석하는 노드
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 
-import httpx
-from openai import OpenAI
-
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
-from apps.common.configs.settings import get_settings
+from apps.connectors.llm.llm_client import invoke_llm_text
 
 
 SYSTEM_PROMPT = """\
@@ -64,45 +60,27 @@ async def analyze_with_llm_node(state: EventFlowState) -> EventFlowState:
             state.summary = "분석할 데이터가 없습니다."
             return state
 
-        settings = get_settings()
-        client = OpenAI(
-            base_url=settings.model_endpoint,
-            api_key=settings.api_key,
-            http_client=httpx.Client(
-                verify=False,
-                timeout=30.0,
-            ),
-            max_retries=2,
-        )
-
         events_text = _build_events_text(state.rdb_result)
         user_prompt = USER_TEMPLATE.format(events_text=events_text)
 
-        def _call_llm() -> str:
-            resp = client.chat.completions.create(
-                model=settings.model_api_deployment_name,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.0,
-            )
-
-            content = resp.choices[0].message.content
-            if not content:
-                raise ValueError("LLM 응답 content가 비어 있습니다.")
-            return content.strip()
-
-        result_text = await asyncio.to_thread(_call_llm)
+        result = await invoke_llm_text(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+        )
 
         state.llm_prompt = user_prompt
-        state.llm_result = result_text
-        state.summary = result_text
+        state.llm_result = result["content"]
+        state.summary = result["content"]
+
         if state.usage is None:
             state.usage = {}
         state.usage["analyze_with_llm_completed_at"] = datetime.now(
             timezone.utc
         ).isoformat()
+        state.usage["analyze_with_llm_usage"] = result.get("usage")
 
         return state
 

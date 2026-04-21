@@ -16,7 +16,7 @@ def to_state(input_data: EventFlowInput | dict[str, Any], **_: object) -> EventF
         limit=parsed.limit,
     )
 
-
+#   kmj20260421화 수정 (임시)
 def to_output(state: EventFlowState | dict[str, Any]) -> EventFlowOutput:
     if isinstance(state, dict):
         state = EventFlowState.model_validate(state)
@@ -25,4 +25,10 @@ def to_output(state: EventFlowState | dict[str, Any]) -> EventFlowOutput:
         summary=state.summary or "",
         llm_result=state.llm_result or "",
         rdb_result=state.rdb_result,
+        errors=state.errors,
+        executed_nodes=state.executed_nodes,
+        saved_event_ids=state.saved_event_ids,
+        source_records_count=len(state.source_records),
+        record_analyses_count=len(state.record_analyses),
+        extracted_events_count=len(state.extracted_events),
     )

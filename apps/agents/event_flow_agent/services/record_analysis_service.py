@@ -1,16 +1,13 @@
 # apps/agents/event_flow_agent/services/record_analysis_service.py
+#   kmj20260421화 수정
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
-
-import httpx
-from openai import OpenAI
 
 from apps.agents.event_flow_agent.configs.event_type_taxonomy import CATEGORY_GUIDE
 from apps.agents.event_flow_agent.schemas.record_analysis import RecordAnalysis
-from apps.common.configs.settings import get_settings
+from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
 
 SYSTEM_PROMPT = f"""\
@@ -44,49 +41,18 @@ USER_TEMPLATE = """\
 
 
 class RecordAnalysisService:
-    def __init__(self) -> None:
-        settings = get_settings()
-        self._model_endpoint = settings.model_endpoint
-        self._api_key = settings.api_key
-        self._model_name = settings.model_api_deployment_name
-
     async def analyze(self, title: str, body: str) -> RecordAnalysis:
         prompt = USER_TEMPLATE.format(title=title, body=body)
 
-        def _call_llm() -> RecordAnalysis:
-            client = OpenAI(
-                base_url=self._model_endpoint,
-                api_key=self._api_key,
-                http_client=httpx.Client(
-                    verify=False,
-                    timeout=30.0,
-                ),
-                max_retries=2,
-            )
+        llm_result = await invoke_llm_structured_output(
+            output_schema=RecordAnalysis,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+        )
 
-            resp = client.chat.completions.create(
-                model=self._model_name,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.0,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "RecordAnalysis",
-                        "schema": RecordAnalysis.model_json_schema(),
-                        "strict": False,
-                    },
-                },
-            )
-
-            content = resp.choices[0].message.content
-            if not content:
-                raise ValueError("LLM 응답 content가 비어 있습니다.")
-
-            parsed = RecordAnalysis.model_validate_json(content)
-            parsed.analysis_time = datetime.now(timezone.utc).isoformat()
-            return parsed
-
-        return await asyncio.to_thread(_call_llm)
+        parsed = llm_result.result
+        parsed.analysis_time = datetime.now(timezone.utc).isoformat()
+        return parsed
