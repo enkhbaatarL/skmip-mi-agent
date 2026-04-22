@@ -1,10 +1,9 @@
 #   apps/agents/event_flow_agent/services/event_persistence_service.py
-#   kmj20260421화 생성
+#   kmj20260422수 수정
 
 from __future__ import annotations
 
 import re
-import uuid
 from datetime import datetime
 
 from apps.agents.event_flow_agent.repositories.sync_event_repository import (
@@ -12,10 +11,6 @@ from apps.agents.event_flow_agent.repositories.sync_event_repository import (
 )
 from apps.common.configs.database.sync_database.connection import get_sync_session
 from apps.common.exceptions.custom import RdbDataFetchError
-
-
-def _new_event_id() -> str:
-    return f"ev_{uuid.uuid4().hex[:12]}"
 
 
 def _normalize_occurred_at(value: str | None) -> str | None:
@@ -46,37 +41,41 @@ def _normalize_occurred_at(value: str | None) -> str | None:
 
 
 class EventPersistenceService:
-    def save_events(self, events: list[dict]) -> list[str]:
+    def save_events(self, events: list[dict]) -> list[int]:
         session = get_sync_session()
 
         try:
             repository = SyncEventRepository(session=session)
-            saved_ids: list[str] = []
+            saved_ids: list[int] = []
 
             for event in events:
+                level_1 = event["event_type"]["level_1"]
+                level_2 = event["event_type"]["level_2"]
+
                 payload = {
-                    "mi_event_id": _new_event_id(),
-                    "crt_user_id": "SYSTEM",
-                    "mod_user_id": "SYSTEM",
+                    "first_created": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                    "crt_usr_logn_id": "SYSTEM",
+                    "mod_usr_logn_id": "SYSTEM",
                     "del_yn": "N",
-                    "mi_event_title_ko": event["event_title_ko"],
-                    "mi_event_summary_ko": event["detail_analysis"],
-                    "estimated_impact_id": None,
-                    "occurred_at": _normalize_occurred_at(event.get("occurred_at")),
-                    "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                    "probability": None,
+                    "event_title_ko": event["event_title_ko"],
+                    "one_line_summary": event.get("one_line_summary", "")[:200],
+                    "detail_analysis": event.get("detail_analysis"),
+                    "market_and_institution_view": event.get("market_and_institution_view"),
                     "language": "ko",
+                    "occurred_at": _normalize_occurred_at(event.get("occurred_at")),
+                    "probability": None,
                     "dedup_state": "raw",
-                    "merged_into_mi_event_id": None,
-                    "mi_event_type_l1_code": event["event_type"]["level_1"],
-                    "mi_event_type_l2_code": event["event_type"]["level_2"],
-                    "mi_event_status_code": None,
-                    "signal_noise_label": None,
-                    "signal_noise_confidence": None,
+                    "level_1_code": level_1,
+                    "level_2_code": level_2,
+                    "taxonomy_version": "0.1.0",
+                    "status_code": None,
+                    "status_label_ko": None,
+                    "status_taxonomy_version": None,
                 }
 
-                repository.insert_event(payload)
-                saved_ids.append(payload["mi_event_id"])
+                saved_id = repository.insert_event(payload)
+                saved_ids.append(saved_id)
+
             session.commit()
             return saved_ids
 

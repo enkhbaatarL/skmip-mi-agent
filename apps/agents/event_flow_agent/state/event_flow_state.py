@@ -62,7 +62,7 @@ class EventFlowState(EventFlowInput):
         default_factory=list,
         description="record 분석 결과로부터 추출한 event 목록",
     )
-    saved_event_ids: list[str] = Field(
+    saved_event_ids: list[int] = Field(
         default_factory=list,
         description="DB에 저장한 mi_event_id 목록",
     )

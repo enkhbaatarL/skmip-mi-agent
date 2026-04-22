@@ -1,5 +1,5 @@
 #   apps/agents/event_flow_agent/repositories/sync_event_repository.py
-#   kmj20260420월 수정
+#   kmj20260422수 수정
 
 from __future__ import annotations
 
@@ -13,22 +13,25 @@ class SyncEventRepository(BaseSyncSQLRepository):
         sql = """
         select
             mi_event_id,
+            first_created,
             crt_dtm,
-            mi_event_title_ko,
-            mi_event_summary_ko,
+            event_title_ko,
+            one_line_summary,
+            detail_analysis,
+            market_and_institution_view,
             occurred_at,
-            updated_at,
             probability,
             language,
             dedup_state,
-            mi_event_type_l1_code,
-            mi_event_type_l2_code,
-            mi_event_status_code,
-            signal_noise_label,
-            signal_noise_confidence
+            level_1_code,
+            level_2_code,
+            taxonomy_version,
+            status_code,
+            status_label_ko,
+            status_taxonomy_version
         from tmm_mieventm
         where del_yn = 'N'
-        order by crt_dtm desc
+        order by first_created desc, mi_event_id desc
         limit :limit
         """
         rows = self.session.execute(
@@ -37,46 +40,47 @@ class SyncEventRepository(BaseSyncSQLRepository):
         ).mappings().all()
         return [dict(row) for row in rows]
 
-    def insert_event(self, payload: dict) -> None:
+    def insert_event(self, payload: dict) -> int:
         sql = """
         insert into tmm_mieventm (
-            mi_event_id,
-            crt_user_id,
-            mod_user_id,
+            first_created,
+            crt_usr_logn_id,
+            mod_usr_logn_id,
             del_yn,
-            mi_event_title_ko,
-            mi_event_summary_ko,
-            estimated_impact_id,
-            occurred_at,
-            updated_at,
-            probability,
+            event_title_ko,
+            one_line_summary,
+            detail_analysis,
+            market_and_institution_view,
             language,
+            occurred_at,
+            probability,
             dedup_state,
-            merged_into_mi_event_id,
-            mi_event_type_l1_code,
-            mi_event_type_l2_code,
-            mi_event_status_code,
-            signal_noise_label,
-            signal_noise_confidence
+            level_1_code,
+            level_2_code,
+            taxonomy_version,
+            status_code,
+            status_label_ko,
+            status_taxonomy_version
         ) values (
-            :mi_event_id,
-            :crt_user_id,
-            :mod_user_id,
+            :first_created,
+            :crt_usr_logn_id,
+            :mod_usr_logn_id,
             :del_yn,
-            :mi_event_title_ko,
-            :mi_event_summary_ko,
-            :estimated_impact_id,
-            :occurred_at,
-            :updated_at,
-            :probability,
+            :event_title_ko,
+            :one_line_summary,
+            :detail_analysis,
+            :market_and_institution_view,
             :language,
+            :occurred_at,
+            :probability,
             :dedup_state,
-            :merged_into_mi_event_id,
-            :mi_event_type_l1_code,
-            :mi_event_type_l2_code,
-            :mi_event_status_code,
-            :signal_noise_label,
-            :signal_noise_confidence
+            :level_1_code,
+            :level_2_code,
+            :taxonomy_version,
+            :status_code,
+            :status_label_ko,
+            :status_taxonomy_version
         )
         """
-        self.session.execute(text(sql), payload)
+        result = self.session.execute(text(sql), payload)
+        return int(result.lastrowid)

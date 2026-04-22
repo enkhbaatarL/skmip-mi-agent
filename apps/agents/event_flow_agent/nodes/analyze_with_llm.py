@@ -26,18 +26,17 @@ USER_TEMPLATE = """\
 {events_text}
 """
 
-
 def _build_events_text(rows: list[dict]) -> str:
     if not rows:
         return "이벤트 없음"
 
     lines: list[str] = []
     for idx, row in enumerate(rows, start=1):
-        title = row.get("mi_event_title_ko") or ""
-        summary = row.get("mi_event_summary_ko") or ""
+        title = row.get("event_title_ko") or ""
+        summary = row.get("detail_analysis") or row.get("one_line_summary") or ""
         occurred_at = row.get("occurred_at") or ""
-        level_1 = row.get("mi_event_type_l1_code") or ""
-        level_2 = row.get("mi_event_type_l2_code") or ""
+        level_1 = row.get("level_1_code") or ""
+        level_2 = row.get("level_2_code") or ""
 
         lines.append(
             f"[이벤트 {idx}]\n"
@@ -48,7 +47,6 @@ def _build_events_text(rows: list[dict]) -> str:
         )
 
     return "\n".join(lines)
-
 
 async def analyze_with_llm_node(state: EventFlowState) -> EventFlowState:
     state.current_node = "analyze_with_llm"
