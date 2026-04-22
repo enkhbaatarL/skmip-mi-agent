@@ -14,7 +14,7 @@ class EventFlowOutput(BaseModel):
 
     errors: list[str] = Field(default_factory=list, description="실행 중 발생한 오류")
     executed_nodes: list[str] = Field(default_factory=list, description="실행된 노드")
-    saved_event_ids: list[str] = Field(default_factory=list, description="저장된 event id 목록")
+    saved_event_ids: list[int] = Field(default_factory=list,description="저장된 event id 목록")
 
     source_records_count: int = Field(default=0)
     record_analyses_count: int = Field(default=0)
