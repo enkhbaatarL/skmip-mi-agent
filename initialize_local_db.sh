@@ -9,9 +9,10 @@ set -e  # Exit on any error
 MYSQL_VERSION="8.0.40"
 MYSQL_PORT="13306"
 MYSQL_ROOT_PASSWORD="miagent"
-DUMP_DIR="./tmp/dumps"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DUMP_DIR="$SCRIPT_DIR/tmp/dumps"
 DUMP_FILE="20260420_local.sql"
-VOLUME_DIR="./mysql_data"
+VOLUME_DIR="$SCRIPT_DIR/mysql_data"
 
 # Colors for output
 RED='[0;31m'
@@ -55,23 +56,23 @@ check_port() {
     fi
 }
 
-# Extract database name from dump file
+# Extract database name from dump file, kmj20260421화, USE midb를 우선적으로 읽도록 수정
 extract_db_name() {
     if [ ! -f "$DUMP_DIR/$DUMP_FILE" ]; then
         log_error "Dump file $DUMP_DIR/$DUMP_FILE not found"
         exit 1
     fi
 
-    # Look for CREATE DATABASE or USE statements in the dump
-    DB_NAME=$(grep -i '^CREATE DATABASE' "$DUMP_DIR/$DUMP_FILE" | head -1 | awk '{print $3}' | sed 's/;//')
-    
+    # Prefer USE statement because it is simpler and less error-prone
+    DB_NAME=$(grep -i '^USE ' "$DUMP_DIR/$DUMP_FILE" | head -1 | sed -E 's/^USE[[:space:]]+`?([^` ;]+)`?;?/\1/I')
+
     if [ -z "$DB_NAME" ]; then
-        DB_NAME=$(grep -i '^USE' "$DUMP_DIR/$DUMP_FILE" | head -1 | awk '{print $2}' | sed 's/;//')
+        DB_NAME=$(grep -i '^CREATE DATABASE' "$DUMP_DIR/$DUMP_FILE" | head -1 | sed -E 's/^CREATE DATABASE[[:space:]]+(IF NOT EXISTS[[:space:]]+)?`?([^` ;]+)`?.*/\2/I')
     fi
 
     if [ -z "$DB_NAME" ]; then
         log_warning "Could not automatically detect database name from dump file"
-        DB_NAME="miagent_db"
+        DB_NAME="midb"
         log_info "Using default database name: $DB_NAME"
     else
         log_info "Detected database name from dump file: $DB_NAME"
