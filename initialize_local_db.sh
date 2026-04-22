@@ -9,16 +9,10 @@ set -e  # Exit on any error
 MYSQL_VERSION="8.0.40"
 MYSQL_PORT="13306"
 MYSQL_ROOT_PASSWORD="miagent"
-<<<<<<< HEAD
-DUMP_DIR="./tmp/dumps"
-DUMP_FILE="dump-local-midb-20260421.sql"
-VOLUME_DIR="./mysql_data"
-=======
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DUMP_DIR="$SCRIPT_DIR/tmp/dumps"
 DUMP_FILE="20260420_local.sql"
 VOLUME_DIR="$SCRIPT_DIR/mysql_data"
->>>>>>> dev
 
 # Colors for output
 RED='[0;31m'
