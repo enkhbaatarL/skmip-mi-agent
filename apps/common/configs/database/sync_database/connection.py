@@ -1,4 +1,32 @@
 #   apps/common/configs/database/sync_database/connection.py
+#   kmj20260423목,  주석추가
+"""
+Sync DB 연결 및 SQLAlchemy 엔진/세션 팩토리 생성 모듈
+
+역할:
+- 환경설정(Settings)을 기반으로 DB 연결 정보(DSN)를 구성
+- SQLAlchemy Engine 및 SessionFactory를 싱글톤으로 생성/관리
+- DB 세션을 생성하는 진입점(get_sync_session) 제공
+
+주요 기능:
+- DB 타입에 따른 driver 자동 선택 (Postgres/MySQL/MariaDB)
+- Engine 생성 (pool 설정 포함)
+- SessionFactory 생성
+- Session 생성
+- DB healthcheck 기능
+
+설계 의도:
+- DB 연결 객체를 애플리케이션 전체에서 싱글톤으로 재사용
+- 커넥션 풀 및 타임아웃 정책을 중앙에서 관리
+- 서비스/레포지토리에서 DB 연결 세부 구현을 몰라도 되도록 추상화
+
+주의사항:
+- get_sync_session()으로 생성한 세션은 반드시 close 필요
+- context manager 또는 try-finally 패턴 사용 권장
+
+아키텍처 위치:
+- DB 연결의 단일 진입점 (Infrastructure Layer)
+"""
 
 """Sync Database 연결 설정 (Airflow 등 비-FastAPI 환경용)."""
 
