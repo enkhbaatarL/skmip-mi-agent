@@ -1,5 +1,23 @@
 # apps/agents/event_flow_agent/schemas/record_analysis.py
 # kmj20260417금
+"""
+record 분석 결과 스키마 모듈
+
+역할:
+- 개별 원천 record를 LLM으로 분석한 결과 구조를 정의한다.
+- category, entity, timing, region, supply/demand 관점 등의 구조화 정보를 표현한다.
+
+포함 정보:
+- 엔티티 정보(Entity)
+- 이벤트 시점(EventTiming)
+- category 분석(CategoryAnalysis)
+- record 전체 분석 결과(RecordAnalysis)
+
+설계 의도:
+- 비정형 뉴스/기사 텍스트를 event 추출 가능한 구조화 데이터로 변환
+- 허용 taxonomy 조합을 검증하고, 중복 category를 정리하는 규칙 포함
+- 이후 event 추출 단계에서 여러 record를 비교/통합할 수 있도록 표준 구조 제공
+"""
 
 from __future__ import annotations
 

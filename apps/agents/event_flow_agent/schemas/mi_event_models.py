@@ -1,4 +1,23 @@
 # apps/agents/event_flow_agent/schemas/mi_event_models.py
+#   kmj20260423목
+"""
+추출 event 구조 스키마 모듈
+
+역할:
+- LLM이 생성하는 event 단위 결과의 구조를 정의한다.
+- event 제목, 한 줄 요약, 상세 분석, event type, 근거 record ID 등
+  저장 가능한 event 데이터 모델을 표준화한다.
+
+포함 정보:
+- 개별 event(MIEvent)
+- event type 참조(EventTypeRef)
+- event 목록(MIEventList)
+
+설계 의도:
+- event 추출 단계의 structured output 스키마로 사용
+- LLM 응답을 저장 가능한 도메인 객체 형태로 강제
+- event 저장/후처리 단계에서 일관된 데이터 구조 보장
+"""
 
 from __future__ import annotations
 from typing import Annotated, List
