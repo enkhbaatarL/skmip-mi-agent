@@ -1,5 +1,5 @@
 # apps/agents/event_flow_agent/nodes/save_events.py
-#   kmj20260421화 수정
+#   kmj20260423목 수정
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ def save_events_node(state: EventFlowState) -> EventFlowState:
     state.executed_nodes.append("save_events")
 
     try:
-        state.saved_event_ids = EventPersistenceService().save_events(
+        saved_ids, save_errors = EventPersistenceService().save_events(
             state.extracted_events
         )
+        state.saved_event_ids = saved_ids
+        state.errors.extend(save_errors)
         return state
 
     except Exception as exc:

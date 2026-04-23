@@ -1,16 +1,16 @@
 #   apps/agents/event_flow_agent/services/event_persistence_service.py
-#   kmj20260422수 수정
+#   kmj20260423목 수정
 
 from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Any
 
 from apps.agents.event_flow_agent.repositories.sync_event_repository import (
     SyncEventRepository,
 )
 from apps.common.configs.database.sync_database.connection import get_sync_session
-from apps.common.exceptions.custom import RdbDataFetchError
 
 
 def _normalize_occurred_at(value: str | None) -> str | None:
@@ -41,47 +41,57 @@ def _normalize_occurred_at(value: str | None) -> str | None:
 
 
 class EventPersistenceService:
-    def save_events(self, events: list[dict]) -> list[int]:
+    def save_events(self, events: list[dict[str, Any]]) -> tuple[list[int], list[str]]:
         session = get_sync_session()
 
         try:
             repository = SyncEventRepository(session=session)
             saved_ids: list[int] = []
+            errors: list[str] = []
 
-            for event in events:
-                level_1 = event["event_type"]["level_1"]
-                level_2 = event["event_type"]["level_2"]
+            for idx, event in enumerate(events, start=1):
+                try:
+                    level_1 = event["event_type"]["level_1"]
+                    level_2 = event["event_type"]["level_2"]
 
-                payload = {
-                    "first_created": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                    "crt_usr_logn_id": "SYSTEM",
-                    "mod_usr_logn_id": "SYSTEM",
-                    "del_yn": "N",
-                    "event_title_ko": event["event_title_ko"],
-                    "one_line_summary": event.get("one_line_summary", "")[:200],
-                    "detail_analysis": event.get("detail_analysis"),
-                    "market_and_institution_view": event.get("market_and_institution_view"),
-                    "language": "ko",
-                    "occurred_at": _normalize_occurred_at(event.get("occurred_at")),
-                    "probability": None,
-                    "dedup_state": "raw",
-                    "level_1_code": level_1,
-                    "level_2_code": level_2,
-                    "taxonomy_version": "0.1.0",
-                    "status_code": None,
-                    "status_label_ko": None,
-                    "status_taxonomy_version": None,
-                }
+                    payload = {
+                        "first_created": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        "crt_usr_logn_id": "SYSTEM",
+                        "mod_usr_logn_id": "SYSTEM",
+                        "del_yn": "N",
+                        "event_title_ko": event["event_title_ko"],
+                        "one_line_summary": event.get("one_line_summary", "")[:200],
+                        "detail_analysis": event.get("detail_analysis"),
+                        "market_and_institution_view": event.get("market_and_institution_view"),
+                        "language": "ko",
+                        "occurred_at": _normalize_occurred_at(event.get("occurred_at")),
+                        "probability": None,
+                        "dedup_state": "raw",
+                        "level_1_code": level_1,
+                        "level_2_code": level_2,
+                        "taxonomy_version": "0.1.0",
+                        "status_code": None,
+                        "status_label_ko": None,
+                        "status_taxonomy_version": None,
+                    }
 
-                saved_id = repository.insert_event(payload)
-                saved_ids.append(saved_id)
+                    saved_id = repository.insert_event(payload)
+                    session.commit()
+                    saved_ids.append(saved_id)
 
-            session.commit()
-            return saved_ids
+                except Exception as exc:
+                    session.rollback()
+                    event_title = event.get("event_title_ko", "")
+                    errors.append(
+                        f"[{idx}] event 저장 실패"
+                        f" | title={event_title}"
+                        f" | level_1={event.get('event_type', {}).get('level_1')}"
+                        f" | level_2={event.get('event_type', {}).get('level_2')}"
+                        f" | error={exc}"
+                    )
+                    continue
 
-        except Exception as exc:
-            session.rollback()
-            raise RdbDataFetchError(detail=str(exc)) from exc
+            return saved_ids, errors
 
         finally:
             session.close()
