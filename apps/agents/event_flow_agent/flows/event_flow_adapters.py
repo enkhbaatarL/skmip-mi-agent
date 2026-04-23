@@ -1,4 +1,21 @@
 #   agents/event_flow_agent/flows/event_flow_adapters.py
+#   kmj20260423목
+"""
+Event Flow Adapter 모듈
+
+역할:
+- 외부 입력(EventFlowInput 또는 dict)을 내부 실행 상태(EventFlowState)로 변환
+- 내부 실행 결과(EventFlowState)를 최종 응답(EventFlowOutput)으로 변환
+
+설계 의도:
+- Flow(Graph)는 항상 State 기반으로 동작하도록 강제
+- 외부 인터페이스(Input/Output)와 내부 상태(State)를 명확히 분리
+- LangGraph / Runnable 구조에서 입출력 포맷을 표준화
+
+구성:
+- to_state  : 입력 → 내부 상태 변환 (Entry Point Adapter)
+- to_output : 내부 상태 → 출력 변환 (Exit Point Adapter)
+"""
 
 from __future__ import annotations
 
