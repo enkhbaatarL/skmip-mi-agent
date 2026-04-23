@@ -1,4 +1,28 @@
 # apps/agents/event_flow_agent/repositories/sync_record_repository.py
+#   kmj20260423목
+"""
+원천 record 조회용 Repository 모듈
+
+역할:
+- event_flow_agent가 분석 대상으로 사용할 원천 뉴스/레코드를 DB에서 조회한다.
+- tmd_mi_record를 중심으로 요약문, 제목, 상품, 시장구분 등 관련 테이블을 조인하여
+  분석에 필요한 형태의 원천 데이터를 반환한다.
+
+입력:
+- market_category
+- limit
+- from_first_created
+- to_first_created
+
+출력:
+- 원천 record 목록(list[dict])
+
+설계 의도:
+- 도메인별 SQL 책임을 repository 계층에 집중
+- service/node가 SQL 세부 구현을 알지 않도록 분리
+- 공통 DB 세션/베이스는 common 패키지를 사용하고,
+  실제 조회 쿼리는 event_flow_agent 도메인 repository가 담당
+"""
 
 from __future__ import annotations
 from typing import Any
