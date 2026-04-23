@@ -1,5 +1,25 @@
 # apps/agents/event_flow_agent/services/record_analysis_service.py
 #   kmj20260421화 수정
+"""
+record 단위 LLM 분석 서비스 모듈
+
+역할:
+- 개별 뉴스/레코드의 제목과 본문을 입력받아
+  LNG 시장 관점의 구조화된 분석 결과를 생성한다.
+- category, entity, timing, region, score 등의 정보를 포함한 RecordAnalysis를 반환한다.
+
+입력:
+- record 제목
+- record 본문
+
+출력:
+- RecordAnalysis 객체
+
+설계 의도:
+- 비정형 뉴스 텍스트를 event 추출에 적합한 구조화 데이터로 변환
+- LLM 호출 구현은 connector 계층에 위임하고,
+  service는 프롬프트 구성과 도메인 후처리에 집중
+"""
 
 from __future__ import annotations
 

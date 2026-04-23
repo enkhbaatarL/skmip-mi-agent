@@ -1,5 +1,25 @@
 #   apps/agents/event_flow_agent/services/record_source_service.py
 #   kmj20260421화 생성
+"""
+원천 record 조회 서비스 모듈
+
+역할:
+- event_flow_agent가 분석할 원천 뉴스/레코드를 DB에서 조회한다.
+- 조회 조건(market_category, 기간, limit)에 맞는 record 목록을 반환한다.
+
+입력:
+- 시장 구분
+- 조회 기간
+- 조회 건수 제한
+
+출력:
+- 원천 record 목록(list[dict])
+
+설계 의도:
+- node는 흐름 제어만 담당하고,
+  실제 DB 세션 생성/종료 및 repository 호출은 service 계층에서 처리
+- 원천 데이터 조회 책임을 독립된 서비스로 분리하여 재사용성과 테스트 용이성 확보
+"""
 
 from __future__ import annotations
 

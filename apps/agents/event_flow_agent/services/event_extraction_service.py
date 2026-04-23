@@ -1,5 +1,24 @@
 # apps/agents/event_flow_agent/services/event_extraction_service.py
 #   kmj20260421화 수정
+"""
+event 추출 서비스 모듈
+
+역할:
+- record별 분석 결과를 입력받아,
+  서로 연관된 분석 결과를 통합하여 event 단위 결과를 생성한다.
+- 여러 record를 하나 이상의 시장 event로 재구성한다.
+
+입력:
+- record 분석 결과 목록
+
+출력:
+- MIEventList 객체
+
+설계 의도:
+- record 단위 분석을 실제 저장 가능한 event 단위 데이터로 변환
+- 동일 사건을 여러 record에서 감지했을 때 하나의 event로 통합할 수 있도록 설계
+- LLM 호출은 connector를 사용하고, service는 입력 정리와 프롬프트 책임만 담당
+"""
 
 from __future__ import annotations
 

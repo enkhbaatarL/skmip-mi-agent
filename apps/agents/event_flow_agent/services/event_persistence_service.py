@@ -1,5 +1,25 @@
 #   apps/agents/event_flow_agent/services/event_persistence_service.py
 #   kmj20260423목 수정
+"""
+event 저장 서비스 모듈
+
+역할:
+- 추출된 event 목록을 DB 스키마에 맞는 payload로 변환하여 저장한다.
+- 저장 성공한 event의 ID 목록과 실패 정보를 반환한다.
+
+입력:
+- 추출된 event 목록
+
+출력:
+- 저장 성공한 event ID 목록
+- 저장 실패 메시지 목록
+
+설계 의도:
+- node에서 직접 DB 저장/트랜잭션을 처리하지 않도록 분리
+- 추출 결과를 실제 DB 테이블 구조에 맞게 매핑하는 책임 담당
+- 현재는 건별 commit 방식으로 동작하여,
+  일부 event 저장 실패 시에도 나머지 성공 건은 유지
+"""
 
 from __future__ import annotations
 
