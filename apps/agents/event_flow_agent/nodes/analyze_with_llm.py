@@ -1,5 +1,24 @@
 #   apps/agents/event_flow_agent/nodes/analyze_with_llm.py
 #   kmj20260421화 수정, RDB에서 조회된 이벤트 데이터를 LLM으로 분석하는 노드
+"""
+최종 event 요약/분석 노드
+
+역할:
+- DB에서 조회한 event 목록을 바탕으로 최종 요약문을 생성한다.
+- 전체 event 흐름을 한국어 summary와 llm_result 형태로 정리한다.
+
+입력:
+- state.rdb_result
+
+출력:
+- state.summary
+- state.llm_result
+- state.llm_prompt
+
+설계 의도:
+- 개별 event 저장 결과를 사람이 읽기 쉬운 최종 요약으로 변환
+- API 응답에서 사용자에게 직접 제공되는 최종 분석 단계
+"""
 
 from __future__ import annotations
 
@@ -8,7 +27,7 @@ from datetime import datetime, timezone
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
 from apps.connectors.llm.llm_client import invoke_llm_text
 
-
+#  kmj20260423, 프롬프트는 명령문으로 작성하세요. 질문문이 아니라, "다음 이벤트들을 분석해라"와 같이 지시문 형태로 작성하는 것이 좋습니다.
 SYSTEM_PROMPT = """\
 너는 데이터 분석 전문가다.
 주어진 이벤트 목록을 바탕으로 아래 형식으로 한국어 요약을 작성해라.

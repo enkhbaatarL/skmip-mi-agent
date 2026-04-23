@@ -1,5 +1,22 @@
 #   apps/agents/event_flow_agent/nodes/analyze_records_with_llm.py
 #   kmj20260420월
+"""
+원천 record별 LLM 분석 노드
+
+역할:
+- 조회된 각 source record를 개별적으로 LLM에 전달하여 구조화된 분석 결과를 생성한다.
+- record별 category, entity, timing 등의 분석 정보를 state에 누적한다.
+
+입력:
+- state.source_records
+
+출력:
+- state.record_analyses 에 record별 분석 결과 저장
+
+설계 의도:
+- record 단위의 비정형 텍스트를 event 추출에 적합한 구조화 정보로 변환
+- 이후 event 추출 단계에서 여러 record를 통합 판단할 수 있도록 중간 분석 결과 생성
+"""
 
 from __future__ import annotations
 
