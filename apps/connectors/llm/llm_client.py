@@ -1,4 +1,39 @@
 #   apps/connectors/llm/llm_client.py
+#   kmj20260423목,    주석문 추가
+"""
+LLM 호출 공통 클라이언트 모듈
+
+역할:
+- 외부 LLM API(A.X Platform Gateway)를 호출하는 공통 인터페이스를 제공한다.
+- 단순 텍스트 응답 호출과 structured output(JSON 기반) 호출을 모두 지원한다.
+- 모델 선택(속도/품질), 타임아웃, 동시성 제어 등을 일관된 방식으로 처리한다.
+
+주요 기능:
+- invoke_llm: 일반 텍스트 기반 LLM 호출
+- invoke_llm_structured_output: Pydantic 스키마 기반 structured output 호출
+- 모델 선택 로직 (ModelPreference 기반)
+- LLM 사용량(토큰) 추적 및 누적 (usage_context 연동)
+
+입력:
+- 프롬프트 (system/user)
+- 모델 선호도 (speed / quality)
+- 출력 스키마 (structured output 시)
+- 기타 LLM 호출 옵션
+
+출력:
+- 텍스트 응답 또는 구조화된 객체 (Pydantic model)
+
+설계 의도:
+- 서비스 계층에서 LLM 호출 로직을 직접 구현하지 않도록 추상화
+- 다양한 LLM 호출 패턴(텍스트/구조화)을 하나의 인터페이스로 통합
+- 향후 모델 교체, 멀티 모델 전략, fallback 전략 등을 쉽게 확장 가능
+- 공통 로깅, 에러 처리, 타임아웃, 세마포어 제어를 중앙에서 관리
+
+아키텍처 위치:
+- connectors 계층에 위치하여 외부 LLM API와 직접 통신
+- services → llm_client → 외부 LLM 구조로 의존성 방향 유지
+"""
+
 from __future__ import annotations
 
 import asyncio
