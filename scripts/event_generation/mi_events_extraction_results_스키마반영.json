@@ -1,0 +1,289 @@
+[
+  {
+    "mi_event_id": "ev_2a58da7f4ff2",
+    "event_title_ko": "미국-이란 전쟁으로 호르무즈 해협 봉쇄, LNG 공급 차질 심화",
+    "one_line_summary": "[미국-이란 전쟁] 호르무즈 해협 45일째 사실상 봉쇄 → 중동 LNG 수송 차단으로 JKM/TTF 급등",
+    "key_bullets": [
+      "2월 말 발발한 미·이스라엘-이란 전쟁으로 호르무즈 해협 통항량 전쟁 전 대비 급감",
+      "전 세계 LNG 물동량 20% 통과 경로 차단으로 카타르 등 중동산 LNG 공급 차질",
+      "원유 140달러 돌파, 천연가스 40% 급등 등 에너지 가격 전반 상승",
+      "4월 15일 트럼프 대통령 '전쟁 거의 끝' 발언으로 평화협상 재개 기대감 부상",
+      "호르무즈 리스크 프리미엄 완화 시 JKM/TTF 하락 압력 예상"
+    ],
+    "detail_analysis": "2026년 2월 28일 미국·이스라엘과 이란 간 군사 충돌이 발생하여 호르무즈 해협이 사실상 봉쇄됨. 이란 혁명수비대가 해협 폐쇄를 선언하고 선박 통행을 제한하면서 45일 이상 통항량이 전쟁 전 수준을 크게 밑돌고 있음. 호르무즈 해협은 전 세계 LNG 물동량의 약 20%가 통과하는 핵심 수송로로, 카타르를 비롯한 중동 주요 LNG 생산국의 수출에 직접적 타격을 가함. 수백 척의 유조선과 2만 명의 선원이 페르시아만에 발이 묶인 상태이며, 이란 항구 출항 선박에 대한 미국의 봉쇄로 해상 교역이 중단됨. 이로 인해 원유 가격이 배럴당 140달러를 돌파했고 천연가스 가격도 40% 급등함. 영국 등 유럽 국가들의 경제성장률 전망이 하향 조정되었으며, IMF는 에너지 충격으로 인한 글로벌 성장 둔화를 경고함. 4월 15일 트럼프 대통령이 이란과의 전쟁이 '거의 끝났다'고 발언하며 평화협상 재개 가능성을 시사함. 오만 측 항로 자유 통항 허용 검토 등 긴장 완화 조치가 논의되고 있으나 실제 통항량 회복까지는 시간이 필요할 것으로 예상됨.",
+    "market_and_institution_view": "IMF는 전쟁발 에너지 가격 충격으로 글로벌 성장 전망을 하향 조정했으며, 분쟁 악화 시 경기침체 위험을 경고함. 영국 재무장관 등 11개국 재무장관들이 에너지 안보 위험과 경제·금융 안정성 위협을 우려함.",
+    "source_mi_record_ids": [
+      7181,
+      7191,
+      7192,
+      7193,
+      7194,
+      7195,
+      7203,
+      7225,
+      7247,
+      7251,
+      7278,
+      7282,
+      7296,
+      7301,
+      7302
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "geopolitical_risk",
+      "level_2_code": "war_military_conflict",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "2026-04-15T00:00:00Z",
+    "probability": 0,
+    "tags": [
+      "호르무즈해협",
+      "이란전쟁",
+      "LNG공급차질"
+    ]
+  },
+  {
+    "mi_event_id": "ev_39f392ebb004",
+    "event_title_ko": "카타르 LNG 불가항력 선언으로 유럽향 공급 중단",
+    "one_line_summary": "[카타르 공급 차질] 전쟁 영향 불가항력으로 이탈리아향 10카고 중단 → 유럽 대체 조달 경쟁 심화",
+    "key_bullets": [
+      "카타르에너지, 4월~6월 중순 이탈리아 에디슨향 LNG 10카고(14억㎥) 공급 중단",
+      "중동 전쟁 영향으로 불가항력 선언, 6월 이후 연장 가능성도 제기됨",
+      "에디슨, 미국산 LNG 7카고로 대체 조달하며 대서양 지역 수급 타이트",
+      "카타르 재무장관 '에너지 공급 자체 부족' 경고, 돈 있어도 조달 어려운 상황 예상"
+    ],
+    "detail_analysis": "카타르에너지가 2026년 4월부터 6월 중순까지 이탈리아 에디슨에 대한 LNG 공급을 중단함. 중동 전쟁의 영향으로 불가항력을 선언했으며, 총 10카고(약 14억 입방미터)의 공급 차질이 발생함. 에디슨은 카타르 공급 중단분을 미국산 LNG 7카고로 대체 구매했으나, 이로 인해 대서양 지역 LNG 수급이 타이트해짐. 카타르 재무장관은 이란 전쟁의 전면적 확대가 임박했으며, 에너지 공급 자체가 부족해질 수 있다고 경고함. '돈이 있어도 조달이 어려운' 상황이 올 수 있다는 우려가 제기됨. 6월 중순 이후에도 공급 차질이 연장될 가능성이 언급되어 유럽의 LNG 조달 불확실성이 증가함. 파키스탄 등 다른 아시아 수입국들도 카타르 공급 차질로 대체 공급원을 모색하고 있어 글로벌 LNG 현물 프리미엄이 급등하는 상황임.",
+    "market_and_institution_view": "",
+    "source_mi_record_ids": [
+      7286,
+      7287,
+      7291,
+      7300
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "infrastructure_facility",
+      "level_2_code": "liquefaction_terminal_facility_capacity_utilization_change",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "2026-04-01T00:00:00Z",
+    "probability": 0,
+    "tags": [
+      "카타르",
+      "불가항력",
+      "유럽LNG"
+    ]
+  },
+  {
+    "mi_event_id": "ev_b366b78ca034",
+    "event_title_ko": "EU 러시아산 LNG 수입 금지로 연 200억㎥ 대체 수요 발생",
+    "one_line_summary": "[EU 제재] 2025년 초 러시아 LNG 금지 시행 → 연 200억㎥ 대체 수요로 JKM/TTF 상승 압력",
+    "key_bullets": [
+      "EU, 2025년 1분기부터 러시아산 LNG 수입 금지 계획 시행 예정",
+      "연간 200억 입방미터 규모의 러시아산 LNG 대체 필요",
+      "스페인 등 주요 수입국 대체 공급원 확보 불확실성 지속",
+      "유럽의 미국·카타르·호주산 LNG 수요 증가로 아시아와 경쟁 심화 예상"
+    ],
+    "detail_analysis": "EU가 2025년 1분기부터 러시아산 가스 수입 금지를 시행할 예정임. 연간 200억 입방미터에 달하는 러시아산 LNG를 대체해야 하는 상황으로, 스페인 등 주요 수입국들이 대체 공급원 확보에 어려움을 겪고 있음. 이탈리아 Eni 등 유럽 기업들이 러시아 가스 의존도를 줄이기 위해 노력 중이나, 단기간 내 완전한 대체는 어려운 상황임. 유럽이 미국, 카타르, 호주 등으로부터 추가 LNG를 확보하려 하면서 아시아 수입국들과의 경쟁이 심화될 것으로 예상됨. 특히 겨울철 난방 수요 시즌을 앞두고 가스 저장 충전에 어려움이 예상되며, 이는 TTF 가격 상승 압력으로 작용할 전망임.",
+    "market_and_institution_view": "",
+    "source_mi_record_ids": [
+      7049
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "geopolitical_risk",
+      "level_2_code": "economic_sanctions_trade_restrictions",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "",
+    "probability": 0,
+    "tags": [
+      "EU제재",
+      "러시아LNG",
+      "공급대체"
+    ]
+  },
+  {
+    "mi_event_id": "ev_1242af2c8063",
+    "event_title_ko": "미국 천연가스 생산 감소와 온화한 날씨로 HH 17개월 최저",
+    "one_line_summary": "[미국 수급] 텍사스·루이지애나 생산 감소, 봄철 온화한 날씨 → HH 17개월 최저 및 일부 마이너스",
+    "key_bullets": [
+      "텍사스·루이지애나 생산 감소로 미국 가스 생산량 106.6bcfd로 하락",
+      "4월 온화한 날씨로 난방·냉방 수요 감소, HH 17개월 최저치 기록",
+      "텍사스·캘리포니아 일부 지역 현물 가격 마이너스까지 하락",
+      "와하 허브 47일 연속 음수권, APA 1분기 88MMcf/d 감산",
+      "재생에너지 발전 증가로 가스 발전 수요 추가 감소"
+    ],
+    "detail_analysis": "2026년 4월 중순 미국 천연가스 시장이 공급 과잉과 수요 부진으로 약세를 보임. 텍사스와 루이지애나의 생산 감소로 미국 본토 48개 주 천연가스 생산량이 106.6bcfd로 하락함. 동시에 4월 온화한 봄 날씨로 난방 수요가 크게 감소하여 Henry Hub 가격이 17개월 최저치를 기록함. 텍사스와 캘리포니아 일부 지역에서는 전력 및 가스 현물 가격이 마이너스 수준까지 하락함. 특히 퍼미안 분지의 파이프라인 제약으로 와하 허브 가격이 47일 연속 음수권을 유지함. APA Corporation은 와하 허브의 약세 가격으로 인해 1분기에 천연가스 88MMcf/d와 NGL 6,800bpd를 감산함. 재생에너지 및 수력 발전 증가로 천연가스 발전 수요가 추가로 감소하여 PG&E 시티게이트 가스 가격이 사상 최저치를 기록함. 충분한 재고 수준이 가격 하락 압력을 지속시키고 있으며, 미국 LNG 수출 설비는 최대 가동 중이나 추가 수출 여력은 제한적임.",
+    "market_and_institution_view": "",
+    "source_mi_record_ids": [
+      7111,
+      7130,
+      7159,
+      7166,
+      7262,
+      7316
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "infrastructure_facility",
+      "level_2_code": "upstream_production_facility_capacity_utilization_change",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "2026-04-14T00:00:00Z",
+    "probability": 0,
+    "tags": [
+      "미국생산",
+      "HH약세",
+      "와하허브"
+    ]
+  },
+  {
+    "mi_event_id": "ev_d1717d01cde3",
+    "event_title_ko": "캐나다 태평양 LNG 프로젝트에 유럽 구매자 장기계약 체결",
+    "one_line_summary": "[캐나다 LNG] Ksi Lisims 등 신규 프로젝트 → 유럽 에너지 안보 위한 공급원 다변화",
+    "key_bullets": [
+      "Uniper, Shell, TotalEnergies 등 유럽 기업들이 캐나다 LNG 장기계약 추진",
+      "Ksi Lisims LNG 등 캐나다 태평양 연안 신규 터미널 개발 진행",
+      "파나마 운하 경유 유럽향 새로운 LNG 수송 경로 구축",
+      "이란 전쟁과 호르무즈 리스크로 공급원 다변화 필요성 증대"
+    ],
+    "detail_analysis": "유럽 에너지 기업들이 캐나다 서부 해안의 LNG 프로젝트와 장기 공급 계약을 체결하고 있음. 독일 Uniper, Shell, TotalEnergies 등이 Western LNG, Rockies LNG, Ksi Lisims LNG 프로젝트와 협상을 진행 중임. 캐나다 태평양 연안에서 파나마 운하를 통해 유럽으로 LNG를 운송하는 새로운 물류 경로가 구축될 예정임. 이는 러시아 가스 의존도 감소와 중동 지정학적 리스크에 대응하기 위한 유럽의 공급원 다변화 전략의 일환임. 특히 이란 전쟁과 호르무즈 해협 봉쇄 우려가 유럽의 대체 공급원 확보 노력을 가속화시키는 배경으로 작용함. 캐나다 LNG는 미국에 이어 북미 지역의 새로운 LNG 공급원으로 부상하고 있으며, 향후 글로벌 LNG 공급 능력 증대에 기여할 전망임.",
+    "market_and_institution_view": "",
+    "source_mi_record_ids": [
+      7317
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "supply_demand_balance",
+      "level_2_code": "regional_demand_competition",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "",
+    "probability": 0,
+    "tags": [
+      "캐나다LNG",
+      "유럽다변화",
+      "장기계약"
+    ]
+  },
+  {
+    "mi_event_id": "ev_776d608b4701",
+    "event_title_ko": "미국 Constitution 파이프라인 2027년 말 재추진으로 동북부 가스 공급 확대",
+    "one_line_summary": "[미국 인프라] Constitution 파이프라인 0.65bcfd 2027년 가동 → 펜실베이니아-뉴욕 가스 수송 증대",
+    "key_bullets": [
+      "Williams사 Constitution 파이프라인(0.65bcfd) 2027년 말 가동 예정",
+      "펜실베이니아-뉴욕 구간 연결로 미국 동북부 가스 공급 인프라 확충",
+      "기존 취소됐던 프로젝트 재추진으로 지역 가스 수송 능력 증대",
+      "펜실베이니아 셰일가스를 뉴욕/뉴저지 수요처로 연결"
+    ],
+    "detail_analysis": "Williams사가 펜실베이니아와 뉴욕을 연결하는 Constitution 파이프라인 프로젝트를 재추진함. 일일 0.65bcfd(billion cubic feet per day) 용량의 이 파이프라인은 2027년 말 가동을 목표로 함. 과거 환경 규제 등으로 취소되었던 프로젝트가 재추진되면서 미국 동북부 지역의 천연가스 공급 인프라가 확충될 전망임. 펜실베이니아의 풍부한 셰일가스를 뉴욕 및 뉴저지 등 주요 수요처로 연결하는 이 파이프라인은 지역 간 가스 수급 균형 개선에 기여할 것으로 예상됨. Northeast Supply Enhancement 프로젝트와 함께 추진되어 미국 동북부 지역의 가스 수송 병목 현상을 완화하고 지역 간 가격 차이를 줄이는 효과가 기대됨.",
+    "market_and_institution_view": "",
+    "source_mi_record_ids": [
+      7133,
+      7143
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "infrastructure_facility",
+      "level_2_code": "pipeline_transport_infrastructure_capacity_utilization_change",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "",
+    "probability": 0,
+    "tags": [
+      "Constitution",
+      "파이프라인",
+      "미국인프라"
+    ]
+  },
+  {
+    "mi_event_id": "ev_c35d3baf84c1",
+    "event_title_ko": "영국 경제성장률 0.8%로 하향, 가스 가격 급등 영향",
+    "one_line_summary": "[영국 경제] IMF 성장률 1.3%→0.8% 하향 → 천연가스 40% 급등으로 인플레 압력",
+    "key_bullets": [
+      "IMF, 영국 2026년 GDP 성장률 전망 1.3%에서 0.8%로 대폭 하향",
+      "이란 전쟁으로 천연가스 가격 40% 급등이 직접적 원인",
+      "영란은행 금리 인하 속도 둔화 예상, 2년물 국채 수익률 4.2% 상승",
+      "차입비용 상승과 인플레이션 압력으로 산업·가정 가스 수요 감소 예상"
+    ],
+    "detail_analysis": "IMF가 영국의 2026년 경제성장률 전망을 1.3%에서 0.8%로 대폭 하향 조정함. 이란 전쟁으로 인한 천연가스 가격 40% 급등이 영국 경제에 직접적인 타격을 가함. 에너지 가격 상승으로 인한 인플레이션 압력이 증가하여 영란은행의 금리 인하 속도가 늦어질 것으로 예상됨. 영국 2년물 국채 수익률이 4.2%로 상승하는 등 차입비용이 증가함. 경제 둔화와 높은 에너지 비용으로 산업 부문과 가정의 천연가스 수요가 감소할 것으로 전망됨. 11개국 재무장관들이 에너지 안보 위험과 경제·금융 안정성에 대한 우려를 표명함.",
+    "market_and_institution_view": "IMF는 영국 성장률을 1.3%에서 0.8%로 하향 조정했으며, 11개국 재무장관들이 에너지 가격 충격이 경제·금융 안정과 성장·물가에 미칠 영향을 우려함.",
+    "source_mi_record_ids": [
+      7080,
+      7229,
+      7266,
+      7267
+    ],
+    "created_at": "2026-04-20T05:39:01.963293Z",
+    "updated_at": "2026-04-20T05:39:01.963293Z",
+    "event_type": {
+      "level_1_code": "macroeconomy_policy",
+      "level_2_code": "country_economic_condition_change",
+      "taxonomy_version": ""
+    },
+    "event_status": {
+      "status_code": "raw",
+      "status_label_ko": "",
+      "taxonomy_version": ""
+    },
+    "dedup_state": "raw",
+    "language": "ko",
+    "occurred_at": "2026-04-15T00:00:00Z",
+    "probability": 0,
+    "tags": [
+      "영국경제",
+      "인플레이션",
+      "성장둔화"
+    ]
+  }
+]

@@ -4,11 +4,14 @@ MI Record Analysis Pipeline
 LangChain + Claude 기반으로 LNG 뉴스 기사에서 record_analysis 태그를 일괄 추출합니다.
 스키마: mi_record.schema.yaml > MIRecord > record_analysis
 
+입력:
+    Query_샘플_260417.json  (DB 쿼리 결과 샘플 — tmd_mi_record JOIN 결과)
+
 Usage:
     ANTHROPIC_API_KEY=sk-ant-xxx python mi_record_analysis.py
 
 Output:
-    mi_record_analysis_results.yaml  ← IDE에서 바로 열기 가능
+    mi_record_analysis_results.json  ← IDE에서 바로 열기 가능
 """
 
 import asyncio
@@ -22,7 +25,6 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Set, Tuple
 
-import yaml
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, model_validator
@@ -195,8 +197,8 @@ USER_PROMPT = """\
 ## 기사 제목
 {title}
 
-## 기사 본문
-{body}
+## 기사 본문(요약)
+{smry}
 """
 
 PROMPT = ChatPromptTemplate.from_messages([
@@ -215,350 +217,52 @@ HARD_OUTPUT_CONSTRAINTS = """\
 
 
 # ══════════════════════════════════════════════════════════════
-# 3. 10개 기사 데이터 (ARTICLES)
-#     DB 테이블 `tmd_mi_record` 스키마에 맞춘 dict 리스트.
-#     - mi_record_id        : int unsigned
-#     - first_created       : datetime (Record 최초생성일시)
-#     - crt_usr_logn_id     : varchar(50)
-#     - crt_dtm             : datetime
-#     - mod_usr_logn_id     : varchar(50)
-#     - mod_dtm             : datetime
-#     - del_yn              : char(1)  (Y/N)
-#     - record_type         : varchar(20)  (NEWS / REPORT / EMAIL)
-#     - source_obj_id       : int unsigned (원문 소스 객체 FK)
+# 3. Input Loader  (Query_샘플_260417.json)
+#     DB 테이블 `tmd_mi_record` 관련 JOIN 쿼리 결과를 로드한다.
+#     JSON 최상위는 단일 SQL 쿼리 문자열을 키로 갖는 dict 이며,
+#     값은 아래 필드들의 레코드 배열이다.
+#       - mi_record_id    : int unsigned
+#       - first_created   : datetime (Record 최초생성일시)
+#       - record_type     : varchar(20)  (NEWS / REPORT / EMAIL)
+#       - source_obj_id   : int unsigned (원문 소스 객체 FK)
+#       - gds_no          : int (상품 번호)
+#       - title           : 기사 제목
+#       - smry            : 기사 본문(한국어 요약)  ← 과거 `body` 를 대체
 #
-#     NOTE: `source`, `title`, `body` 필드는 `tmd_mi_record` 컬럼에는 존재하지 않는다.
+#     NOTE: `title`, `smry` 는 `tmd_mi_record` 컬럼에는 존재하지 않으며,
 #     실제 운영에서는 `source_obj_id` 가 가리키는 별도 소스 객체 테이블
-#     (예: `tmd_news_article`) 에서 조회된다. 여기서는 LLM 분석 입력으로 쓰기 위해
-#     스키마 외 보조 정보로 동일 dict 안에 포함해 둔다.
+#     (tmd_nws_smry 등) 에서 조회된다. 여기서는 LLM 분석 입력으로 활용한다.
 # ══════════════════════════════════════════════════════════════
 
-ARTICLES = [
-    # ── Record #1 ──────────────────────────────────────────────
-    {
-        # tmd_mi_record 컬럼
-        "mi_record_id":      1,
-        "first_created":     "2026-03-23T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-23T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-23T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "NEWS",
-        "source_obj_id":     1,
-        # 스키마 외 (source_obj_id가 가리키는 원문 소스 객체에서 조회되는 값)
-        "source":            "American Press",
-        "title": "U.S. Gulf LNG poised to fill gap after Qatar plant damage",
-        "body": """\
-Iranian missile strikes late Wednesday caused extensive damage to the Ras Laffan
-Industrial City, the world's largest LNG export hub capable of loading several
-super-sized tankers simultaneously and processing over 77 million tons of gas annually.
-The disruption has wiped out approximately 17% of Qatar's LNG capacity, leading to
-forced suspensions on long-term contracts to Italy, Belgium, South Korea and China.
-Qatar officials estimate LNG production units with 12.8 million tons of annual capacity
-that were expected to come online in 2026 will instead take three to five years to repair.
+INPUT_JSON_FILENAME = "Query_샘플_260417.json"
 
-U.S. Henry Hub natural gas futures for delivery in April settled Friday at $3.01/MMBtu.
-The benchmark Japan-Korea market traded Friday at $22.35/MMBtu.
-LNG plants in Texas and Louisiana already account for about 25% of all global export capacity.
 
-In 2026, Houston-based Venture Global expects to bring LNG production units online at its
-Plaquemines plant in Louisiana, while Golden Pass LNG, a joint venture between ExxonMobil
-and state-owned QatarEnergy, commenced operations in December and will continue to ramp up
-output through the end of 2026.
+def load_articles_from_query_json(json_path: Path) -> List[dict]:
+    """Query_샘플_260417.json 을 로드하여 파이프라인 입력용 article dict 리스트로 변환.
 
-On March 13, U.S. Secretary of Energy Chris Wright authorized an immediate 13% increase
-in exports at the Plaquemines plant, allowing additional LNG shipments of up to
-0.45 billion cubic feet per day.
-""",
-    },
+    최상위는 `{SQL 쿼리: [record, ...]}` 구조이므로 값(리스트)을 모두 평탄화해 반환한다.
+    각 record 는 DB JOIN 결과 컬럼(mi_record_id / first_created / record_type /
+    source_obj_id / gds_no / title / smry) 을 그대로 보존한다.
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    # ── Record #2 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      2,
-        "first_created":     "2026-03-11T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-11T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-11T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "REPORT",
-        "source_obj_id":     2,
-        "source":            "Wood Mackenzie",
-        "title": "The Strait of Hormuz closure pressures LNG spot prices, threatens Northeast Asia demand",
-        "body": """\
-Northeast Asia's LNG market faces a major supply shock following the closure of the Strait
-of Hormuz, with regional demand expected to fall by 4-5 million tonnes through Q3 2026 if
-supply disruptions last for two months, according to new analysis from Wood Mackenzie.
+    if not isinstance(data, dict):
+        raise ValueError(f"{json_path.name} 최상위는 dict 이어야 합니다. (실제: {type(data).__name__})")
 
-The closure has removed 1.5 million tonnes per week (2.2 bcm) from global LNG supply,
-equivalent to 19% of global exports. With around 90% of LNG exports from Qatar and the UAE
-destined for Asia, the region is most exposed to the disruption.
+    articles: List[dict] = []
+    for _query, rows in data.items():
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            articles.append(row)
 
-Asian LNG spot prices have surged above USD 20/MMBtu, shifting from a discount to a premium
-relative to European prices. South Korea faces greater exposure at elevated prices. While its
-LNG stocks provide a temporary buffer, moderate supply gaps and over 20% spot LNG exposure
-strain power utilities. Coal switching can reduce spot needs.
+    if not articles:
+        raise ValueError(f"{json_path.name} 에서 Record를 찾을 수 없습니다.")
 
-Wood Mackenzie previously projected 4.4 Mt growth in Northeast Asian LNG demand in 2026,
-but the Strait of Hormuz disruption is likely to halt that expansion.
-Taiwan region could be one of the most exposed LNG importers globally.
-Qatar and the UAE accounted for 8.4 Mt, or 35%, of Taiwan region's LNG imports in 2025.
-""",
-    },
-
-    # ── Record #3 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      3,
-        "first_created":     "2026-03-09T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-09T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-09T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "NEWS",
-        "source_obj_id":     3,
-        "source":            "Bloomberg / Morgan Stanley",
-        "title": "Qatar LNG Outage Erases 2026 Supply Surplus, Morgan Stanley Says",
-        "body": """\
-The halt of production in major liquefied natural gas exporter Qatar is likely to remove
-most of a glut forecast for this year, according to Morgan Stanley.
-
-Any extension in the Qatar LNG outage beyond one month quickly brings a deficit,
-analysts including Devin McDermott said in a note dated March 8.
-
-Before the escalation of the conflict in the Middle East, Morgan Stanley predicted that
-the global LNG market, with a volume of approximately 420 million tons per year in 2026,
-would face a surplus of up to 6 million tons amid the launch of new projects in the US.
-
-The bank also moved its forecast for the first shipments from Qatar's North Field expansion
-project to the first quarter of 2027, removing about 1 million tons from its 2026 supply
-forecast. The country's energy minister told the Financial Times that any restart and
-resumption of supplies could take weeks or even months.
-""",
-    },
-
-    # ── Record #4 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      4,
-        "first_created":     "2026-03-22T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-22T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-22T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "NEWS",
-        "source_obj_id":     4,
-        "source":            "Anadolu Agency / Rystad Energy",
-        "title": "Damaged Qatar LNG facility may take up to 5 years to recover",
-        "body": """\
-Restoring output at Qatar's Ras Laffan is not primarily a question of funding but of supply
-chain constraints, as only three global manufacturers produce the large-frame turbines required
-for LNG operations. These suppliers entered 2026 with order books already stretched by strong
-demand linked to data center expansion and the global shift away from coal.
-
-Even with immediate capital deployment, procurement delays alone could push meaningful recovery
-several years out, with full restoration timelines extending up to five years.
-
-The scale of damage and long lead times for critical equipment could result in slow recovery
-at Ras Laffan, said Audun Martinsen, head of supply chain research at Rystad Energy.
-
-The disruption forms part of a broader regional energy shock triggered by the conflict, which
-has damaged LNG plants, refineries and fuel infrastructure across the Middle East.
-The prolonged outage is expected to have lasting implications for global LNG supply,
-particularly for European and Asian markets that rely heavily on Qatari exports.
-""",
-    },
-
-    # ── Record #5 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      5,
-        "first_created":     "2026-03-20T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-20T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-20T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "REPORT",
-        "source_obj_id":     5,
-        "source":            "World Oil / Wood Mackenzie",
-        "title": "Ras Laffan attacks could reshape global LNG supply as outage timeline extends",
-        "body": """\
-Attacks on Qatar's Ras Laffan hub have removed nearly 20% of global LNG supply, with Wood
-Mackenzie warning the disruption could last months or longer, tightening markets, delaying
-new capacity and reshaping global gas flows.
-
-The disruption also threatens to delay Qatar's North Field East expansion, which was expected
-to add 32 MMtpa of capacity. Any slippage into 2027 or beyond could constrain global LNG
-supply growth through 2028.
-
-Asian buyers, which account for roughly 90% of Qatar's LNG exports, are expected to be most
-affected, with demand likely to weaken amid higher prices. In Europe, reduced LNG availability
-may limit storage injections and accelerate fuel switching.
-
-Qatar produced an average of 6.7 MMt of LNG per month in 2025, meaning even a five- to
-six-month disruption would push global supply into year-on-year decline. Each additional month
-of downtime could remove roughly 1.5% of annual LNG availability.
-""",
-    },
-
-    # ── Record #6 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      6,
-        "first_created":     "2026-03-18T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-18T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-18T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "NEWS",
-        "source_obj_id":     6,
-        "source":            "PGJ Online / Reuters",
-        "title": "U.S. Gas Futures Stall as Freeport LNG Outage Counters Supply Drop",
-        "body": """\
-U.S. natural gas futures held steady on March 17 as a decrease in demand from the temporary
-shutdown of a liquefaction train at Freeport LNG's export plant in Texas offset a bullish
-drop in supply likely due to freezing pipes in North Dakota.
-
-Front-month gas futures for April delivery rose one cent, or 0.3%, to settle at $3.033/MMBtu.
-That lack of price movement also came despite bearish forecasts for milder weather and lower
-heating demand over the next couple of weeks.
-
-Average gas flows to the nine big U.S. LNG export plants slid to 18.5 bcfd so far in March,
-down from a record 18.7 bcfd in February.
-
-In the U.S. cash market, average prices at the Waha Hub in West Texas remained in negative
-territory for a record 28 days in a row as pipeline constraints trapped gas in the Permian,
-the nation's biggest oil-producing shale basin.
-""",
-    },
-
-    # ── Record #7 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      7,
-        "first_created":     "2026-03-27T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-27T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-27T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "NEWS",
-        "source_obj_id":     7,
-        "source":            "Bloomberg / Hydrocarbon Processing",
-        "title": "Australia's biggest LNG plants suffer outages due to cyclone, straining global supply",
-        "body": """\
-A powerful tropical cyclone in Western Australia has disrupted production at the country's two
-biggest liquefied natural gas plants run by Chevron and Woodside, exacerbating a global supply
-crunch caused by the conflict in the Middle East.
-
-Chevron said it was working to restore production at its Gorgon (15.6 MMtpy, 3 trains) and
-Wheatstone (8.9 MMtpy, 2 trains) LNG facilities following outages due to Tropical Cyclone
-Narelle, a Category 3 storm that made landfall on Friday. Woodside also said production at
-its North West Shelf project (14.3 MMtpy) was disrupted.
-
-Santos confirmed its 3.7-MMtpy Darwin LNG project was also temporarily offline.
-MST Marquee analyst Saul Kavonic estimated the cyclone was disrupting more than 30 MMtpy of
-Australian LNG supply. Combined with the Middle East shock, more than a quarter of global LNG
-supply was currently affected.
-
-Australia became the world's second-largest LNG exporter after Qatar shut down production.
-Asian LNG prices rose more than 90% since the US and Israel first struck Iran.
-""",
-    },
-
-    # ── Record #8 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      8,
-        "first_created":     "2026-03-09T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-09T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-09T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "REPORT",
-        "source_obj_id":     8,
-        "source":            "Global LNG Hub (JOGMEC)",
-        "title": "Natural gas prices weekly update - JKM, TTF and Henry Hub (9 March 2026)",
-        "body": """\
-The Northeast Asian assessed spot LNG price JKM (April delivery) for the week of 2-6 March
-rose to low-USD 20s/MMBtu on 6 March from high-USD 10s/MMBtu the previous weekend.
-JKM surged to low-USD 15s/MMBtu on 2 March amid rising supply concerns following escalating
-tensions in the Middle East after Israeli and U.S. attacks on Iran starting on 28 February.
-On 3 March, the price jumped by more than USD 10 to mid-USD 20s/MMBtu after an air strike on
-Qatar's Ras Laffan forced the shutdown of LNG export facilities, marking the highest level
-in more than three years.
-
-The U.S. gas price HH rose to USD 3.2/MMBtu on 6 March from USD 2.9/MMBtu, driven by
-expectations that Middle East tensions could increase demand for U.S. LNG exports.
-
-EIA reported U.S. natural gas inventories as of 27 February at 1,886 Bcf, down 132 Bcf from
-the previous week, up 6.5% from the same period last year, and down 2.2% from the five-year average.
-""",
-    },
-
-    # ── Record #9 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      9,
-        "first_created":     "2026-04-06T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-04-06T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-04-06T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "REPORT",
-        "source_obj_id":     9,
-        "source":            "Canada LNG Group (JOGMEC)",
-        "title": "Natural gas prices weekly update - JKM, TTF and Henry Hub (6 April 2026)",
-        "body": """\
-Natural gas prices fell across Asia, Europe and the United States last week, with JKM, TTF and
-Henry Hub all declining amid recovering LNG supply, milder weather expectations and softer demand.
-
-The Northeast Asian assessed spot LNG price JKM (May delivery) fell to high-USD 17s/MMBtu on
-2 April from mid-USD 20s/MMBtu the previous weekend. JKM fell sharply as Australian LNG
-production facilities that were shut due to cyclones resumed operations and expectations grew
-for an easing of geopolitical tensions in the Middle East.
-
-METI announced that Japan's LNG inventories for power generation as of 29 March stood at
-2.19 million tonnes, down 0.19 million tonnes from the previous week.
-
-The European gas price TTF (May delivery) fell to USD 16.9/MMBtu on 2 April from
-USD 18.3/MMBtu. HH also declined, settling around USD 3.0/MMBtu.
-""",
-    },
-
-    # ── Record #10 ──────────────────────────────────────────────
-    {
-        "mi_record_id":      10,
-        "first_created":     "2026-03-16T00:00:00",
-        "crt_usr_logn_id":   "system",
-        "crt_dtm":           "2026-03-16T00:00:00",
-        "mod_usr_logn_id":   "system",
-        "mod_dtm":           "2026-03-16T00:00:00",
-        "del_yn":            "N",
-        "record_type":       "REPORT",
-        "source_obj_id":     10,
-        "source":            "ING Think",
-        "title": "Energy markets brace for a prolonged supply disruption",
-        "body": """\
-Energy markets are having to continuously price in a more prolonged disruption to oil and gas
-flows through the Strait of Hormuz, with little sign of de-escalation.
-
-For the global LNG market, there is even less flexibility on the supply side, with the disruption
-in Persian Gulf flows hitting around 20% of global LNG trade. New capacity ramping up in the US
-this year at just 15 bcm of annual capacity falls short of the 110 bcm of annual production
-currently disrupted. The only real solution in the short term is demand destruction.
-
-ING outlined three scenarios:
-- Scenario 1 (Base): Hormuz flows remain cut off until end of March, gradual recovery in Q2.
-  Near-normal flows by start of Q3 2026.
-- Scenario 2 (Optimistic): Quick de-escalation, energy flows back to near-normal by May 2026.
-- Scenario 3 (Aggressive): Intense conflict continues into April, gradual recovery June-August.
-
-A more prolonged disruption means producers will reduce upstream production to manage storage
-constraints, further prolonging recovery even after the Strait reopens.
-""",
-    },
-]
+    return articles
 
 
 # ══════════════════════════════════════════════════════════════
@@ -620,20 +324,20 @@ def _shorten_text_for_retry(text: str, attempt: int) -> str:
         shortened += "\n\n[알림] 출력 안정성을 위해 본문을 핵심 위주로 축약했습니다."
     return shortened
 
-def _build_body_for_attempt(body: str, attempt: int, last_exc: Exception | None) -> str:
+def _build_smry_for_attempt(smry: str, attempt: int, last_exc: Exception | None) -> str:
     """재시도 시 출력 제약을 점진 강화."""
-    body_for_attempt = body
+    smry_for_attempt = smry
     if last_exc is not None and _is_max_tokens_incomplete_error(last_exc):
-        body_for_attempt = _shorten_text_for_retry(body_for_attempt, attempt)
+        smry_for_attempt = _shorten_text_for_retry(smry_for_attempt, attempt)
 
     hint = HARD_OUTPUT_CONSTRAINTS
     if last_exc is not None and attempt >= 3:
         hint += f"\n[직전 실패 원인]\n- {str(last_exc)[:240]}\n"
-    return f"{body_for_attempt}\n\n{hint}"
+    return f"{smry_for_attempt}\n\n{hint}"
 
 def _guess_fallback_category_pair(article: dict) -> Tuple[str, str]:
     """기사 텍스트와 taxonomy 코드 토큰 겹침으로 최선의 fallback 카테고리 선택."""
-    text = f"{article.get('title', '')} {article.get('body', '')}".lower()
+    text = f"{article.get('title', '')} {article.get('smry', '')}".lower()
     words = set(re.findall(r"[a-z0-9_]{3,}", text))
     sorted_pairs = sorted(ALLOWED_CATEGORY_PAIRS)
     if not sorted_pairs:
@@ -673,17 +377,18 @@ def _build_fallback_result(article: dict, last_exc: Exception | None) -> RecordA
 
 async def analyze_one(chain, article: dict, idx: int, total: int) -> dict:
     mi_id = _mi_record_id_from_article(article, idx - 1)
-    print(f"  [{idx:02d}/{total}] 분석 중 (mi_record_id={mi_id}): {article['title'][:50]}...")
+    title = article.get("title", "")
+    print(f"  [{idx:02d}/{total}] 분석 중 (mi_record_id={mi_id}): {str(title)[:50]}...")
     max_retries = 9
     last_exc: Exception | None = None
     result: RecordAnalysis | None = None
 
     for attempt in range(1, max_retries + 1):
         try:
-            body = _build_body_for_attempt(article["body"], attempt, last_exc)
+            smry = _build_smry_for_attempt(article.get("smry", ""), attempt, last_exc)
             result: RecordAnalysis = await chain.ainvoke({
-                "title": article["title"],
-                "body":  body,
+                "title": title,
+                "smry":  smry,
             })
             if not result.categories:
                 raise ValueError("LLM 출력에서 categories가 비어 있음")
@@ -719,7 +424,7 @@ async def analyze_one(chain, article: dict, idx: int, total: int) -> dict:
         result = _build_fallback_result(article, last_exc)
 
     result.analysis_time = datetime.now(timezone.utc).isoformat()
-    # Enum 등을 순수 scalar로 변환해 YAML 직렬화 호환성 유지
+    # Enum 등을 순수 scalar 로 변환해 JSON 직렬화 호환성 유지
     return result.model_dump(mode="json")
 
 async def run_batch(articles: list) -> list:
@@ -736,31 +441,11 @@ async def run_batch(articles: list) -> list:
 
 
 # ══════════════════════════════════════════════════════════════
-# 5. YAML 결과 저장  (IDE 가독성 최적화)
+# 5. JSON 결과 저장
 # ══════════════════════════════════════════════════════════════
 
-class _IdeDumper(yaml.Dumper):
-    def ignore_aliases(self, data):
-        return True   # 중복 참조 앵커(&id001) 비활성화 → 가독성 향상
-
-def _str_list_representer(dumper, data):
-    """짧은 문자열 리스트 → 한 줄 인라인"""
-    if data and all(isinstance(x, str) for x in data):
-        return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
-    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
-
-def _str_representer(dumper, data):
-    """빈 문자열 → '' 명시 출력"""
-    if data == "":
-        return dumper.represent_scalar("tag:yaml.org,2002:str", "", style="'")
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-_IdeDumper.add_representer(list, _str_list_representer)
-_IdeDumper.add_representer(str,  _str_representer)
-
-
 def _mi_record_id_from_article(article: dict, index: int) -> int:
-    """ARTICLES dict → tmd_mi_record.mi_record_id 정수."""
+    """Article dict → tmd_mi_record.mi_record_id 정수."""
     raw = article.get("mi_record_id")
     if isinstance(raw, int):
         return raw
@@ -773,13 +458,14 @@ def _mi_record_id_from_article(article: dict, index: int) -> int:
     return index + 1
 
 
-def build_yaml_doc(articles: list, analyses: list) -> dict:
-    """record_analysis 중간 YAML 문서를 조립.
+def build_result_doc(articles: list, analyses: list) -> dict:
+    """record_analysis 중간 결과 문서를 조립 (JSON 직렬화 대상).
 
     records[] 구성:
-      1) tmd_mi_record 컬럼 (mi_record_id ~ source_obj_id) — DB 스키마 정합
-      2) source / title / body — tmd_mi_record 에는 없는 컬럼이지만, 본 파이프라인이
-         실제로 활용하는 핵심 입력 데이터이므로 1급 필드로 함께 출력한다.
+      1) tmd_mi_record 관련 컬럼 (mi_record_id / first_created / record_type /
+         source_obj_id / gds_no) — Query_샘플_260417.json 값 보존
+      2) title / smry — tmd_mi_record 에는 없지만 본 파이프라인이 실제로 활용하는
+         핵심 입력 데이터이므로 1급 필드로 함께 출력한다.
          (운영 환경에서는 source_obj_id 가 가리키는 별도 소스 객체 테이블에서 조회됨)
       3) analysis_time, categories — LLM 분석 결과. 다음 단계(mi_event_extraction.py)
          입력으로 사용되는 본 파이프라인 산출물.
@@ -788,20 +474,15 @@ def build_yaml_doc(articles: list, analyses: list) -> dict:
     for i, (art, ana) in enumerate(zip(articles, analyses)):
         mi_id = _mi_record_id_from_article(art, i)
         records.append({
-            # ── tmd_mi_record 컬럼 ──────────────────────────────
+            # ── tmd_mi_record 관련 컬럼 ──────────────────────────
             "mi_record_id":      mi_id,
             "first_created":     art.get("first_created", ""),
-            "crt_usr_logn_id":   art.get("crt_usr_logn_id", ""),
-            "crt_dtm":           art.get("crt_dtm", ""),
-            "mod_usr_logn_id":   art.get("mod_usr_logn_id", ""),
-            "mod_dtm":           art.get("mod_dtm", ""),
-            "del_yn":            art.get("del_yn", "N"),
             "record_type":       art.get("record_type", "NEWS"),
             "source_obj_id":     art.get("source_obj_id", mi_id),
+            "gds_no":            art.get("gds_no", ""),
             # ── 원문 소스 객체 데이터 (스키마 외, LLM 분석 입력으로 활용) ──
-            "source":            art.get("source", ""),
             "title":             art.get("title", ""),
-            "body":              art.get("body", ""),
+            "smry":              art.get("smry", ""),
             # ── LLM 분석 결과 (다음 단계 입력) ──────────────────
             "analysis_time":     ana.get("analysis_time", ""),
             "categories":        ana.get("categories", []),
@@ -813,7 +494,6 @@ def build_yaml_doc(articles: list, analyses: list) -> dict:
         summary.append({
             "mi_record_id": _mi_record_id_from_article(art, i),
             "record_type":  art.get("record_type", ""),
-            "source":       art.get("source", ""),
             "title":        art.get("title", ""),
             "categories": [
                 {
@@ -829,8 +509,9 @@ def build_yaml_doc(articles: list, analyses: list) -> dict:
         "_meta": {
             "description":  "MI Record 배치 분석 결과 — LNG(JKM/HH) 가격 예측용 태그",
             "input_table":  "tmd_mi_record",
+            "input_file":   INPUT_JSON_FILENAME,
             "schema_note":  "records[].mi_record_id..source_obj_id 컬럼은 tmd_mi_record 스키마 정합. "
-                            "source/title/body 는 스키마 외 원문 소스 객체 데이터 (LLM 입력으로 활용). "
+                            "title/smry 는 스키마 외 원문 소스 객체 데이터 (LLM 입력으로 활용). "
                             "analysis_time/categories 는 본 파이프라인 중간 산출물(DB 미저장).",
             "generated":    datetime.now(timezone.utc).isoformat(),
             "total":        len(records),
@@ -840,21 +521,9 @@ def build_yaml_doc(articles: list, analyses: list) -> dict:
     }
 
 
-def save_yaml(doc: dict, path: Path) -> None:
+def save_json(doc: dict, path: Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        f.write("# ════════════════════════════════════════════════════════════\n")
-        f.write("# MI Record Analysis Results  —  LNG Price Tag Extraction\n")
-        f.write("# ════════════════════════════════════════════════════════════\n\n")
-        yaml.dump(
-            doc,
-            f,
-            Dumper=_IdeDumper,
-            allow_unicode=True,
-            default_flow_style=False,
-            sort_keys=False,
-            indent=2,
-            width=100,
-        )
+        json.dump(doc, f, ensure_ascii=False, indent=2)
     print(f"\n  => 저장 완료: {path.resolve()}")
 
 
@@ -883,24 +552,29 @@ def print_summary(articles: list, analyses: list) -> None:
 # ══════════════════════════════════════════════════════════════
 
 async def main():
-    OUTPUT_PATH = Path("mi_record_analysis_results.yaml")
+    base_dir    = Path(__file__).parent
+    input_path  = base_dir / INPUT_JSON_FILENAME
+    output_path = base_dir / "mi_record_analysis_results.json"
+
+    articles = load_articles_from_query_json(input_path)
 
     print("═" * 65)
     print("  MI Record Batch Analysis  —  LNG Price Tag Extraction")
-    print(f"  총 {len(ARTICLES)}개 기사  →  {OUTPUT_PATH.name}")
+    print(f"  input:  {input_path.name}  (records={len(articles)})")
+    print(f"  output: {output_path.name}")
     print("═" * 65)
 
     t0       = time.time()
-    analyses = await run_batch(ARTICLES)
+    analyses = await run_batch(articles)
     elapsed  = time.time() - t0
 
-    print(f"\n✅ 분석 완료  ({elapsed:.1f}s / {len(ARTICLES)}건)")
+    print(f"\n✅ 분석 완료  ({elapsed:.1f}s / {len(articles)}건)")
 
-    print_summary(ARTICLES, analyses)
+    print_summary(articles, analyses)
 
-    doc = build_yaml_doc(ARTICLES, analyses)
-    save_yaml(doc, OUTPUT_PATH)
-    print("  IDE에서 mi_record_analysis_results.yaml 파일을 여세요.\n")
+    doc = build_result_doc(articles, analyses)
+    save_json(doc, output_path)
+    print(f"  IDE에서 {output_path.name} 파일을 여세요.\n")
 
 
 if __name__ == "__main__":

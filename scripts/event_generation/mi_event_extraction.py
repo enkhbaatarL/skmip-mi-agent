@@ -1,7 +1,7 @@
 """
 MI Event Extraction Pipeline
 ────────────────────────────
-LangChain + Claude 기반으로 Record 분석 결과(`mi_record_analysis_results.yaml`)를
+LangChain + Claude 기반으로 Record 분석 결과(`mi_record_analysis_results.json`)를
 입력받아, LNG 관련 Event들을 정의합니다.
 
 관계 구조:
@@ -22,7 +22,7 @@ Usage:
     ANTHROPIC_API_KEY=sk-ant-xxx python mi_event_extraction.py
 
 Output:
-    mi_event_extraction_results.yaml  ← IDE에서 바로 열기 가능
+    mi_event_extraction_results.json  ← IDE에서 바로 열기 가능
 """
 
 import json
@@ -30,11 +30,10 @@ import os
 import random
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Set, Tuple
 
-import yaml
 from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, conlist, model_validator
@@ -127,6 +126,9 @@ class MIEvent(BaseModel):
         description=(
             "key_bullets를 풀어쓴 상세 설명. 정량 수치·고유명사·가정·출처를 포함하여 작성."
             " 기사/Record에 언급되지 않은 숫자는 임의로 생성하지 말 것."
+            " 반드시 개조식(명사형 종결) 문체로 작성: 모든 문장은 '...함', '...임', '...됨',"
+            " '...음' 등으로 끝내야 하며, '...한다.', '...이다.', '...했다.' 와 같은"
+            " 서술형(종결어미) 문장은 사용 금지."
         )
     )
     market_and_institution_view: str = Field(
@@ -205,6 +207,18 @@ LNG 가격(JKM/TTF/HH/NBP) 예측에 유의미한 **Event** 단위로 재구성�
 3. 이벤트의 범위는 "동일한 핵심 사건"을 기준으로 정의합니다.
    - 같은 이슈라도 기사마다 각도가 다르면 evidence 로 모두 묶어 하나의 Event로.
    - 서로 다른 실물 사건(예: 카타르 공습 vs 호주 사이클론)은 별도 Event로.
+4. **"현재 시점(reference_time)" 기준 최신성 원칙**
+   - USER 프롬프트에 주어지는 reference_time 은 입력 Record 들의 `first_created`(뉴스 보도 시점)
+     중 가장 최근 값이며, 이를 "현재"로 간주합니다.
+   - reference_time 기준 **{MAX_PAST_DAYS}일 이상 과거**의 사건이 핵심인 Event 는 생성하지 마세요.
+     (예: reference_time 이 2026-04-14 인데 2024년 사건을 중심으로 하는 Event 는 제외)
+   - 과거 사건이 "현재 진행 중인 더 큰 사건"의 배경/전개 일부로만 언급되는 경우에는,
+     그 사건의 **현재(reference_time 근처) 에피소드**를 중심 Event 로 삼고 과거는
+     detail_analysis 본문에서 맥락으로만 언급하세요.
+   - 각 Event 의 `occurred_at` 은 해당 이벤트의 **가장 최근(=현재 시점에 가까운) 전개 시점**을
+     기준으로 기재하세요. 오래 전 촉발 시점(예: 몇 년 전 사건 발생일)을 적지 마세요.
+   - 근거 Record(evidence_record_ids) 는 가능한 한 reference_time 에 가까운 `first_created` 의
+     Record 를 우선 선택하세요.
 
 ## event_type taxonomy (허용된 level_1 → level_2)
 {CATEGORY_GUIDE}
@@ -231,6 +245,12 @@ LNG 가격(JKM/TTF/HH/NBP) 예측에 유의미한 **Event** 단위로 재구성�
 - key_bullets 를 풀어쓴 상세 설명.
 - 정량 수치·고유명사·가정·출처를 최대한 포함.
 - **Record 에 언급되지 않은 숫자는 임의로 생성하지 말 것.**
+- **문체 규칙 (반드시 준수)**: 개조식(명사형 종결)으로만 작성.
+  - 모든 문장은 `...함.`, `...임.`, `...됨.`, `...음.` 과 같은 명사형 어미로 끝낼 것.
+  - `...한다.`, `...이다.`, `...있다.`, `...했다.`, `...된다.`, `...이었다.` 등
+    서술형(종결어미) 문장은 **절대 사용 금지**.
+  - 예) (X) "카타르 수출은 영향이 없다." → (O) "카타르 수출은 영향 없음."
+  - 예) (X) "JKM 가격이 상승했다." → (O) "JKM 가격 상승함."
 
 ### market_and_institution_view  (선택)
 - Record에 스팟/선물 가격 또는 기관 전망(Morgan Stanley, Wood Mackenzie, ING 등)이 언급된 경우에만 작성.
@@ -242,6 +262,9 @@ LNG 가격(JKM/TTF/HH/NBP) 예측에 유의미한 **Event** 단위로 재구성�
 
 ### occurred_at
 - 이벤트 실제 발생 시점이 특정 가능한 경우 ISO-8601 문자열, 아니면 빈 문자열.
+- 이벤트가 여러 시점에 걸쳐 전개된 경우, **가장 최근 전개 시점**(reference_time 에 가까운 시점)을
+  기준으로 기재하세요. reference_time 기준 {MAX_PAST_DAYS}일 이상 과거가 되면 해당 Event 자체를
+  만들지 마세요.
 
 ## 출력 가짓수 가이드
 - 입력 Record 10건 기준, 통상 4~8개의 Event 가 추출됩니다.
@@ -252,12 +275,23 @@ USER_PROMPT = """\
 아래는 총 {n_records}개의 Record 분석 결과입니다.
 이를 기반으로 LNG 시장 Event 들을 추출하여 MIEventList 로 반환하세요.
 
+## 현재 시점 (reference_time)
+- reference_time: {reference_time}
+- 이는 입력 Record 들의 `first_created`(뉴스 보도 시점) 중 가장 최근 값이며, "지금"으로 간주합니다.
+- 이 시점 기준 너무 과거의 일들을 중심으로 하는 Event 는 만들지 마세요. (시스템 프롬프트 원칙 4 참조)
+
 ## Record 분석 결과 (JSON)
+- 각 Record 에는 `first_created`(뉴스 보도 시점) 가 포함되어 있습니다.
+- reference_time 에 가까운 Record 들을 우선적으로 참조해 Event 를 구성하세요.
+
 {records_json}
 """
 
+# MAX_PAST_DAYS 값은 최신성 필터 기준과 함께 프롬프트에도 주입한다.
+MAX_PAST_DAYS: int = int(os.getenv("MI_EVENT_MAX_PAST_DAYS", "90"))
+
 PROMPT = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM_PROMPT.format(CATEGORY_GUIDE=CATEGORY_GUIDE)),
+    ("system", SYSTEM_PROMPT.format(CATEGORY_GUIDE=CATEGORY_GUIDE, MAX_PAST_DAYS=MAX_PAST_DAYS)),
     ("human",  USER_PROMPT),
 ])
 
@@ -270,25 +304,119 @@ HARD_OUTPUT_CONSTRAINTS = """\
 - 각 event 의 evidence_record_ids 는 1개 이상이어야 하며, 입력된 mi_record_id 범위 안이어야 합니다.
 - key_bullets 는 반드시 3~5개이며, (A)/(B)/(C) 관점이 모두 포함되어야 합니다.
 - market_and_institution_view 는 Record에 근거가 없으면 빈 문자열("")로 두세요.
+- detail_analysis 는 반드시 개조식(명사형 종결) 문체로 작성하세요.
+  모든 문장은 '...함.', '...임.', '...됨.', '...음.' 으로 끝나야 하며,
+  '...한다.', '...이다.', '...했다.', '...된다.' 등 서술형 종결어미는 금지합니다.
 """
 
 
 # ══════════════════════════════════════════════════════════════
-# 4. Input Loader  (mi_record_analysis_results.yaml)
+# 4. Input Loader  (mi_record_analysis_results.json)
 # ══════════════════════════════════════════════════════════════
 
-def load_records(yaml_path: Path) -> List[dict]:
-    """mi_record_analysis_results.yaml 의 records 블록을 로드."""
-    with open(yaml_path, "r", encoding="utf-8") as f:
-        doc = yaml.safe_load(f)
+def load_records(json_path: Path) -> List[dict]:
+    """mi_record_analysis_results.json 의 records 블록을 로드."""
+    with open(json_path, "r", encoding="utf-8") as f:
+        doc = json.load(f)
 
     records = doc.get("records", [])
     if not records:
-        raise ValueError(f"{yaml_path} 에 records 블록이 비어 있습니다.")
+        raise ValueError(f"{json_path} 에 records 블록이 비어 있습니다.")
 
     # 정렬(안정성)
     records.sort(key=lambda r: r.get("mi_record_id", 0))
     return records
+
+
+def _parse_datetime_loose(s) -> datetime | None:
+    """Query 원본(`YYYY-MM-DD HH:MM:SS`) / ISO-8601 / Z 접미 등 다양한 포맷을 느슨하게 파싱.
+
+    파싱 실패 시 None. tz-aware/naive 혼재 가능하므로 비교 시 naive 화하여 사용한다.
+    """
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _as_naive(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def _compute_reference_time(records: List[dict]) -> str:
+    """입력 Record 들의 `first_created` 중 가장 최근 값을 "현재 시점"으로 채택.
+
+    - 파싱 가능한 값 중 최댓값을 원본 문자열 그대로 반환(프롬프트/로그에 그대로 노출).
+    - 파싱 가능한 값이 하나도 없으면 실행 시점(UTC)을 ISO-8601 로 반환.
+    """
+    best_dt: datetime | None = None
+    best_raw: str = ""
+    for r in records:
+        raw = r.get("first_created", "")
+        dt = _parse_datetime_loose(raw)
+        if dt is None:
+            continue
+        dt_n = _as_naive(dt)
+        if best_dt is None or dt_n > best_dt:
+            best_dt = dt_n
+            best_raw = str(raw)
+    if best_raw:
+        return best_raw
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _filter_outdated_events(
+    result: MIEventList,
+    reference_time: str,
+    max_past_days: int,
+) -> MIEventList:
+    """reference_time 대비 `occurred_at` 이 max_past_days 초과 과거인 Event 를 제거.
+
+    - occurred_at 이 비어있거나 파싱 불가능하면 보존(판단 유보).
+    - 모든 이벤트가 제거되면 하나도 남지 않는 불안정 상태가 되므로, 이 경우 원본을 유지한다.
+    """
+    if max_past_days <= 0:
+        return result
+    ref = _parse_datetime_loose(reference_time)
+    if ref is None:
+        return result
+    threshold = _as_naive(ref) - timedelta(days=max_past_days)
+
+    kept: List[MIEvent] = []
+    dropped: List[MIEvent] = []
+    for ev in result.events:
+        occ = _parse_datetime_loose(ev.occurred_at)
+        if occ is not None and _as_naive(occ) < threshold:
+            dropped.append(ev)
+        else:
+            kept.append(ev)
+
+    if dropped:
+        print(
+            f"  ↳ 최신성 필터: reference_time={reference_time}, max_past_days={max_past_days}일 "
+            f"기준으로 {len(dropped)}건의 과거 Event 제거"
+        )
+        for ev in dropped:
+            print(f"    - drop (occurred_at={ev.occurred_at}): {ev.event_title_ko}")
+
+    if not kept:
+        # 필터로 전부 날아가면 다음 단계가 실패하므로 원본 유지.
+        print("  ↳ 경고: 최신성 필터 결과 남는 Event 가 없어 필터를 건너뜁니다.")
+        return result
+
+    result.events = kept
+    return result
 
 
 def _compact_records_for_prompt(records: List[dict]) -> str:
@@ -297,6 +425,8 @@ def _compact_records_for_prompt(records: List[dict]) -> str:
     for r in records:
         compact.append({
             "mi_record_id": r.get("mi_record_id"),
+            # first_created: Record(뉴스) 보도 시점. "현재 시점" 기준의 근거로 사용.
+            "first_created": r.get("first_created", ""),
             "analysis_time": r.get("analysis_time", ""),
             "categories": [
                 {
@@ -417,9 +547,11 @@ def _build_fallback_result(records: List[dict], last_exc: Exception | None) -> M
 
 
 def extract_events(records: List[dict]) -> MIEventList:
-    """10건 전체를 한 번의 LLM 호출로 Event 리스트 추출 (N:M 병합 자연 처리)."""
+    """전체를 한 번의 LLM 호출로 Event 리스트 추출 (N:M 병합 자연 처리)."""
     chain = build_chain()
     records_json = _compact_records_for_prompt(records)
+    reference_time = _compute_reference_time(records)
+    print(f"  ▸ reference_time(현재 시점 기준): {reference_time}  (max_past_days={MAX_PAST_DAYS})")
 
     max_retries = 6
     last_exc: Exception | None = None
@@ -430,6 +562,7 @@ def extract_events(records: List[dict]) -> MIEventList:
             payload = _build_records_payload(records_json, attempt, last_exc)
             result = chain.invoke({
                 "n_records": len(records),
+                "reference_time": reference_time,
                 "records_json": payload,
             })
             if not result.events:
@@ -467,6 +600,9 @@ def extract_events(records: List[dict]) -> MIEventList:
         ev.evidence_record_ids = [i for i in ev.evidence_record_ids if i in valid_ids]  # type: ignore[assignment]
         if not ev.evidence_record_ids:
             ev.evidence_record_ids = [min(valid_ids)] if valid_ids else [0]
+
+    # reference_time 기준 최신성 필터 (너무 과거의 Event 제거)
+    result = _filter_outdated_events(result, reference_time, MAX_PAST_DAYS)
 
     return result
 
@@ -571,7 +707,7 @@ def build_event_document(
                 "estimated_impact_id / merged_into_mi_event_id / signal_noise_label / "
                 "signal_noise_confidence 는 본 파이프라인 범위 밖이라 기본값으로 출력됨."
             ),
-            "source":        "mi_record_analysis_results.yaml (← tmd_mi_record)",
+            "source":        "mi_record_analysis_results.json (← tmd_mi_record)",
             "generated":     now_iso,
             "total_events":  len(mi_events),
             "total_records": len(records),
@@ -592,53 +728,12 @@ def build_event_document(
 
 
 # ══════════════════════════════════════════════════════════════
-# 7. YAML 결과 저장  (IDE 가독성 최적화)
+# 7. JSON 결과 저장
 # ══════════════════════════════════════════════════════════════
 
-class _IdeDumper(yaml.Dumper):
-    def ignore_aliases(self, data):
-        return True
-
-
-def _str_list_representer(dumper, data):
-    """짧은 스칼라 리스트 → 한 줄 인라인. 단 key_bullets 처럼 긴 문자열은 블록으로."""
-    if data and all(isinstance(x, str) for x in data):
-        if all(len(x) <= 24 for x in data):
-            return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
-    if data and all(isinstance(x, (int, float, bool)) for x in data):
-        return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
-    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
-
-
-def _str_representer(dumper, data):
-    if data == "":
-        return dumper.represent_scalar("tag:yaml.org,2002:str", "", style="'")
-    # 줄바꿈 있는 긴 문자열은 literal block 으로
-    if "\n" in data:
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-
-_IdeDumper.add_representer(list, _str_list_representer)
-_IdeDumper.add_representer(str,  _str_representer)
-
-
-def save_yaml(doc: dict, path: Path) -> None:
+def save_json(doc: dict, path: Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        f.write("# ════════════════════════════════════════════════════════════\n")
-        f.write("# MI Event Extraction Results  —  LNG Event Definition\n")
-        f.write("# source: mi_record_analysis_results.yaml\n")
-        f.write("# ════════════════════════════════════════════════════════════\n\n")
-        yaml.dump(
-            doc,
-            f,
-            Dumper=_IdeDumper,
-            allow_unicode=True,
-            default_flow_style=False,
-            sort_keys=False,
-            indent=2,
-            width=100,
-        )
+        json.dump(doc, f, ensure_ascii=False, indent=2)
     print(f"\n  => 저장 완료: {path.resolve()}")
 
 
@@ -684,8 +779,8 @@ def print_summary(doc: dict) -> None:
 
 def main():
     base_dir   = Path(__file__).parent
-    input_path = base_dir / "mi_record_analysis_results.yaml"
-    output_path = base_dir / "mi_event_extraction_results.yaml"
+    input_path = base_dir / "mi_record_analysis_results.json"
+    output_path = base_dir / "mi_event_extraction_results.json"
 
     print("═" * 65)
     print("  MI Event Extraction  —  Record → Event (N:M)")
@@ -703,7 +798,7 @@ def main():
 
     doc = build_event_document(events, records)
     print_summary(doc)
-    save_yaml(doc, output_path)
+    save_json(doc, output_path)
     print(f"  IDE에서 {output_path.name} 파일을 여세요.\n")
 
 
