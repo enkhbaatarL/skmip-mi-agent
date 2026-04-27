@@ -28,8 +28,6 @@ Sync DB 연결 및 SQLAlchemy 엔진/세션 팩토리 생성 모듈
 - DB 연결의 단일 진입점 (Infrastructure Layer)
 """
 
-"""Sync Database 연결 설정 (Airflow 등 비-FastAPI 환경용)."""
-
 from __future__ import annotations
 
 from sqlalchemy import Engine, create_engine, text
