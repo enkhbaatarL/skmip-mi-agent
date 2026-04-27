@@ -1,0 +1,1049 @@
+# ════════════════════════════════════════════════════════════
+# MI Record Analysis Results  —  LNG Price Tag Extraction
+# ════════════════════════════════════════════════════════════
+
+_meta:
+  description: MI Record 배치 분석 결과 — LNG(JKM/HH) 가격 예측용 태그
+  input_table: tmd_mi_record
+  schema_note: records[].mi_record_id..source_obj_id 컬럼은 tmd_mi_record 스키마 정합. source/title/body 는 스키마
+    외 원문 소스 객체 데이터 (LLM 입력으로 활용). analysis_time/categories 는 본 파이프라인 중간 산출물(DB 미저장).
+  generated: '2026-04-17T06:08:01.293783+00:00'
+  total: 10
+summary:
+- mi_record_id: 1
+  record_type: NEWS
+  source: American Press
+  title: U.S. Gulf LNG poised to fill gap after Qatar plant damage
+  categories:
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    score: 10.0
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 10.0
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    score: 9.0
+  - level_1: market_trading_structure
+    level_2: inter_index_spread_gap
+    score: 8.0
+- mi_record_id: 2
+  record_type: REPORT
+  source: Wood Mackenzie
+  title: The Strait of Hormuz closure pressures LNG spot prices, threatens Northeast Asia demand
+  categories:
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    score: 10.0
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    score: 9.0
+  - level_1: logistics_shipping
+    level_2: cargo_flow_change_port_canal_disruption
+    score: 10.0
+  - level_1: market_trading_structure
+    level_2: inter_index_spread_gap
+    score: 8.0
+- mi_record_id: 3
+  record_type: NEWS
+  source: Bloomberg / Morgan Stanley
+  title: Qatar LNG Outage Erases 2026 Supply Surplus, Morgan Stanley Says
+  categories:
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 9.0
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    score: 8.0
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    score: 7.0
+- mi_record_id: 4
+  record_type: NEWS
+  source: Anadolu Agency / Rystad Energy
+  title: Damaged Qatar LNG facility may take up to 5 years to recover
+  categories:
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 9.0
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    score: 8.0
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    score: 7.0
+- mi_record_id: 5
+  record_type: REPORT
+  source: World Oil / Wood Mackenzie
+  title: Ras Laffan attacks could reshape global LNG supply as outage timeline extends
+  categories:
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    score: 10.0
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 9.0
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    score: 8.0
+- mi_record_id: 6
+  record_type: NEWS
+  source: PGJ Online / Reuters
+  title: U.S. Gas Futures Stall as Freeport LNG Outage Counters Supply Drop
+  categories:
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 8.0
+  - level_1: infrastructure_facility
+    level_2: upstream_production_facility_capacity_utilization_change
+    score: 7.0
+  - level_1: infrastructure_facility
+    level_2: pipeline_transport_infrastructure_capacity_utilization_change
+    score: 6.0
+- mi_record_id: 7
+  record_type: NEWS
+  source: Bloomberg / Hydrocarbon Processing
+  title: Australia's biggest LNG plants suffer outages due to cyclone, straining global supply
+  categories:
+  - level_1: weather_climate
+    level_2: natural_disaster
+    score: 9.0
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 10.0
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    score: 8.0
+- mi_record_id: 8
+  record_type: REPORT
+  source: Global LNG Hub (JOGMEC)
+  title: Natural gas prices weekly update - JKM, TTF and Henry Hub (9 March 2026)
+  categories:
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    score: 10.0
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    score: 10.0
+  - level_1: supply_demand_balance
+    level_2: inventory_storage_level
+    score: 4.0
+- mi_record_id: 9
+  record_type: REPORT
+  source: Canada LNG Group (JOGMEC)
+  title: Natural gas prices weekly update - JKM, TTF and Henry Hub (6 April 2026)
+  categories:
+  - level_1: infrastructure_facility
+    level_2: upstream_production_facility_capacity_utilization_change
+    score: 8.0
+  - level_1: weather_climate
+    level_2: natural_disaster
+    score: 7.0
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    score: 6.0
+  - level_1: supply_demand_balance
+    level_2: inventory_storage_level
+    score: 5.0
+- mi_record_id: 10
+  record_type: REPORT
+  source: ING Think
+  title: Energy markets brace for a prolonged supply disruption
+  categories:
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    score: 9.0
+  - level_1: infrastructure_facility
+    level_2: upstream_production_facility_capacity_utilization_change
+    score: 7.0
+  - level_1: logistics_shipping
+    level_2: cargo_flow_change_port_canal_disruption
+    score: 9.0
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    score: 6.0
+records:
+- mi_record_id: 1
+  first_created: '2026-03-23T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-23T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-23T00:00:00'
+  del_yn: N
+  record_type: NEWS
+  source_obj_id: 1
+  source: American Press
+  title: U.S. Gulf LNG poised to fill gap after Qatar plant damage
+  body: 'Iranian missile strikes late Wednesday caused extensive damage to the Ras Laffan
+
+    Industrial City, the world''s largest LNG export hub capable of loading several
+
+    super-sized tankers simultaneously and processing over 77 million tons of gas annually.
+
+    The disruption has wiped out approximately 17% of Qatar''s LNG capacity, leading to
+
+    forced suspensions on long-term contracts to Italy, Belgium, South Korea and China.
+
+    Qatar officials estimate LNG production units with 12.8 million tons of annual capacity
+
+    that were expected to come online in 2026 will instead take three to five years to repair.
+
+
+    U.S. Henry Hub natural gas futures for delivery in April settled Friday at $3.01/MMBtu.
+
+    The benchmark Japan-Korea market traded Friday at $22.35/MMBtu.
+
+    LNG plants in Texas and Louisiana already account for about 25% of all global export capacity.
+
+
+    In 2026, Houston-based Venture Global expects to bring LNG production units online at its
+
+    Plaquemines plant in Louisiana, while Golden Pass LNG, a joint venture between ExxonMobil
+
+    and state-owned QatarEnergy, commenced operations in December and will continue to ramp up
+
+    output through the end of 2026.
+
+
+    On March 13, U.S. Secretary of Energy Chris Wright authorized an immediate 13% increase
+
+    in exports at the Plaquemines plant, allowing additional LNG shipments of up to
+
+    0.45 billion cubic feet per day.
+
+    '
+  analysis_time: '2026-04-17T06:06:50.610909+00:00'
+  categories:
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    entities:
+    - name: Iran
+      entity_type: country
+    - name: Qatar
+      entity_type: country
+    - name: Ras Laffan Industrial City
+      entity_type: facility
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: day
+    regions: [중동]
+    supply_demand_side: supply
+    score: 10.0
+    reason: 이란의 미사일 공격으로 세계 최대 LNG 수출 허브인 카타르 Ras Laffan 시설이 심각한 피해를 입어 카타르 LNG 생산능력의 17%가 손실되고 장기계약 공급
+      중단 발생
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Qatar
+      entity_type: country
+    - name: Ras Laffan Industrial City
+      entity_type: facility
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: day
+    regions: [중동]
+    supply_demand_side: supply
+    score: 10.0
+    reason: 연간 7,700만톤 처리 능력의 Ras Laffan 시설 중 1,280만톤 규모 생산설비가 파괴되어 3-5년간 복구 필요
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    entities:
+    - name: Italy
+      entity_type: country
+    - name: Belgium
+      entity_type: country
+    - name: South Korea
+      entity_type: country
+    - name: China
+      entity_type: country
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [유럽, 동북아]
+    supply_demand_side: demand
+    score: 9.0
+    reason: 카타르의 장기계약 공급 중단으로 이탈리아, 벨기에, 한국, 중국이 대체 공급원 확보 경쟁 예상
+  - level_1: market_trading_structure
+    level_2: inter_index_spread_gap
+    entities: []
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: day
+    regions: [북미, 동북아]
+    supply_demand_side: both
+    score: 8.0
+    reason: Henry Hub $3.01/MMBtu vs JKM $22.35/MMBtu로 극심한 가격 격차 발생, 미국 LNG 수출 수익성 극대화
+- mi_record_id: 2
+  first_created: '2026-03-11T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-11T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-11T00:00:00'
+  del_yn: N
+  record_type: REPORT
+  source_obj_id: 2
+  source: Wood Mackenzie
+  title: The Strait of Hormuz closure pressures LNG spot prices, threatens Northeast Asia demand
+  body: 'Northeast Asia''s LNG market faces a major supply shock following the closure of the Strait
+
+    of Hormuz, with regional demand expected to fall by 4-5 million tonnes through Q3 2026 if
+
+    supply disruptions last for two months, according to new analysis from Wood Mackenzie.
+
+
+    The closure has removed 1.5 million tonnes per week (2.2 bcm) from global LNG supply,
+
+    equivalent to 19% of global exports. With around 90% of LNG exports from Qatar and the UAE
+
+    destined for Asia, the region is most exposed to the disruption.
+
+
+    Asian LNG spot prices have surged above USD 20/MMBtu, shifting from a discount to a premium
+
+    relative to European prices. South Korea faces greater exposure at elevated prices. While its
+
+    LNG stocks provide a temporary buffer, moderate supply gaps and over 20% spot LNG exposure
+
+    strain power utilities. Coal switching can reduce spot needs.
+
+
+    Wood Mackenzie previously projected 4.4 Mt growth in Northeast Asian LNG demand in 2026,
+
+    but the Strait of Hormuz disruption is likely to halt that expansion.
+
+    Taiwan region could be one of the most exposed LNG importers globally.
+
+    Qatar and the UAE accounted for 8.4 Mt, or 35%, of Taiwan region''s LNG imports in 2025.
+
+    '
+  analysis_time: '2026-04-17T06:06:46.362359+00:00'
+  categories:
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    entities:
+    - name: Qatar
+      entity_type: country
+    - name: UAE
+      entity_type: country
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 10.0
+    reason: 호르무즈 해협 폐쇄로 카타르와 UAE의 LNG 수출이 차단되어 글로벌 LNG 공급의 19%가 중단됨. 주당 150만톤(2.2bcm) 공급 차질 발생
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    entities:
+    - name: South Korea
+      entity_type: country
+    - name: Taiwan
+      entity_type: country
+    - name: Wood Mackenzie
+      entity_type: company
+    event_timing:
+      occurrence_time: '2026-09-30T00:00:00Z'
+      occurrence_time_precision: quarter
+    regions: [동북아]
+    supply_demand_side: demand
+    score: 9.0
+    reason: 동북아시아 LNG 수요가 2026년 3분기까지 400-500만톤 감소 예상. 대만은 카타르/UAE 의존도 35%로 가장 큰 타격, 한국도 현물 노출 20% 이상으로
+      전력회사 압박
+  - level_1: logistics_shipping
+    level_2: cargo_flow_change_port_canal_disruption
+    entities: []
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동, 동북아]
+    supply_demand_side: both
+    score: 10.0
+    reason: 호르무즈 해협 폐쇄로 중동발 아시아향 LNG 화물 흐름이 완전 차단. 카타르/UAE LNG 수출의 90%가 아시아향이었으나 운송 불가능
+  - level_1: market_trading_structure
+    level_2: inter_index_spread_gap
+    entities: []
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [동북아, 유럽]
+    supply_demand_side: both
+    score: 8.0
+    reason: 아시아 LNG 현물가격이 20달러/MMBtu 이상 급등하여 유럽 대비 디스카운트에서 프리미엄으로 전환. 지역간 가격 스프레드 역전 발생
+- mi_record_id: 3
+  first_created: '2026-03-09T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-09T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-09T00:00:00'
+  del_yn: N
+  record_type: NEWS
+  source_obj_id: 3
+  source: Bloomberg / Morgan Stanley
+  title: Qatar LNG Outage Erases 2026 Supply Surplus, Morgan Stanley Says
+  body: 'The halt of production in major liquefied natural gas exporter Qatar is likely to remove
+
+    most of a glut forecast for this year, according to Morgan Stanley.
+
+
+    Any extension in the Qatar LNG outage beyond one month quickly brings a deficit,
+
+    analysts including Devin McDermott said in a note dated March 8.
+
+
+    Before the escalation of the conflict in the Middle East, Morgan Stanley predicted that
+
+    the global LNG market, with a volume of approximately 420 million tons per year in 2026,
+
+    would face a surplus of up to 6 million tons amid the launch of new projects in the US.
+
+
+    The bank also moved its forecast for the first shipments from Qatar''s North Field expansion
+
+    project to the first quarter of 2027, removing about 1 million tons from its 2026 supply
+
+    forecast. The country''s energy minister told the Financial Times that any restart and
+
+    resumption of supplies could take weeks or even months.
+
+    '
+  analysis_time: '2026-04-17T06:06:41.078300+00:00'
+  categories:
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Qatar
+      entity_type: country
+    - name: North Field
+      entity_type: facility
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 9.0
+    reason: 카타르 LNG 생산 중단이 2026년 공급 과잉을 제거할 정도로 시장에 큰 영향을 미치며, North Field 확장 프로젝트의 첫 선적이 2027년 1분기로 연기되어
+      2026년 공급량이 100만톤 감소
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    entities:
+    - name: Morgan Stanley
+      entity_type: company
+    - name: 미국
+      entity_type: country
+    event_timing:
+      occurrence_time: '2026-01-01T00:00:00Z'
+      occurrence_time_precision: year
+    regions: [북미, 중동]
+    supply_demand_side: both
+    score: 8.0
+    reason: 2026년 글로벌 LNG 시장(연간 4.2억톤 규모)에서 미국 신규 프로젝트 가동으로 최대 600만톤 공급 과잉이 예상되었으나, 카타르 생산 중단으로 대부분 상쇄되어
+      수급 균형에 중대한 변화 발생
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    entities:
+    - name: Qatar
+      entity_type: country
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 7.0
+    reason: 중동 지역 갈등 확대가 언급되어 카타르 LNG 생산 중단의 배경으로 지정학적 불안정성이 작용했을 가능성 시사
+- mi_record_id: 4
+  first_created: '2026-03-22T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-22T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-22T00:00:00'
+  del_yn: N
+  record_type: NEWS
+  source_obj_id: 4
+  source: Anadolu Agency / Rystad Energy
+  title: Damaged Qatar LNG facility may take up to 5 years to recover
+  body: 'Restoring output at Qatar''s Ras Laffan is not primarily a question of funding but of supply
+
+    chain constraints, as only three global manufacturers produce the large-frame turbines required
+
+    for LNG operations. These suppliers entered 2026 with order books already stretched by strong
+
+    demand linked to data center expansion and the global shift away from coal.
+
+
+    Even with immediate capital deployment, procurement delays alone could push meaningful recovery
+
+    several years out, with full restoration timelines extending up to five years.
+
+
+    The scale of damage and long lead times for critical equipment could result in slow recovery
+
+    at Ras Laffan, said Audun Martinsen, head of supply chain research at Rystad Energy.
+
+
+    The disruption forms part of a broader regional energy shock triggered by the conflict, which
+
+    has damaged LNG plants, refineries and fuel infrastructure across the Middle East.
+
+    The prolonged outage is expected to have lasting implications for global LNG supply,
+
+    particularly for European and Asian markets that rely heavily on Qatari exports.
+
+    '
+  analysis_time: '2026-04-17T06:06:54.195639+00:00'
+  categories:
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Qatar
+      entity_type: country
+    - name: Ras Laffan
+      entity_type: facility
+    - name: Rystad Energy
+      entity_type: company
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 9.0
+    reason: 카타르 Ras Laffan LNG 시설의 심각한 손상으로 생산 복구에 최대 5년이 소요될 것으로 예상되며, 이는 글로벌 LNG 공급에 장기적 영향을 미칠 것임
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    entities:
+    - name: Qatar
+      entity_type: country
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 8.0
+    reason: 중동 지역 분쟁으로 인해 LNG 플랜트, 정유시설 및 연료 인프라가 광범위하게 손상되어 지역 에너지 공급 충격 발생
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    entities: []
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [유럽, 동북아]
+    supply_demand_side: demand
+    score: 7.0
+    reason: 카타르 수출에 크게 의존하는 유럽과 아시아 시장이 장기간의 공급 중단으로 영향을 받을 것으로 예상됨
+- mi_record_id: 5
+  first_created: '2026-03-20T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-20T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-20T00:00:00'
+  del_yn: N
+  record_type: REPORT
+  source_obj_id: 5
+  source: World Oil / Wood Mackenzie
+  title: Ras Laffan attacks could reshape global LNG supply as outage timeline extends
+  body: 'Attacks on Qatar''s Ras Laffan hub have removed nearly 20% of global LNG supply, with Wood
+
+    Mackenzie warning the disruption could last months or longer, tightening markets, delaying
+
+    new capacity and reshaping global gas flows.
+
+
+    The disruption also threatens to delay Qatar''s North Field East expansion, which was expected
+
+    to add 32 MMtpa of capacity. Any slippage into 2027 or beyond could constrain global LNG
+
+    supply growth through 2028.
+
+
+    Asian buyers, which account for roughly 90% of Qatar''s LNG exports, are expected to be most
+
+    affected, with demand likely to weaken amid higher prices. In Europe, reduced LNG availability
+
+    may limit storage injections and accelerate fuel switching.
+
+
+    Qatar produced an average of 6.7 MMt of LNG per month in 2025, meaning even a five- to
+
+    six-month disruption would push global supply into year-on-year decline. Each additional month
+
+    of downtime could remove roughly 1.5% of annual LNG availability.
+
+    '
+  analysis_time: '2026-04-17T06:07:02.313569+00:00'
+  categories:
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    entities:
+    - name: Qatar
+      entity_type: country
+    - name: Ras Laffan
+      entity_type: facility
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 10.0
+    reason: Ras Laffan 시설 공격으로 전 세계 LNG 공급의 20% 가까이 차질 발생, 수개월 이상 지속 가능성으로 시장 타이트닝 예상
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Qatar
+      entity_type: country
+    - name: Ras Laffan
+      entity_type: facility
+    - name: Wood Mackenzie
+      entity_type: company
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 9.0
+    reason: Ras Laffan 액화 터미널 가동 중단으로 월 6.7 MMt 생산 차질, North Field East 확장 프로젝트(32 MMtpa) 지연 가능성
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    entities:
+    - name: Qatar
+      entity_type: country
+    event_timing:
+      occurrence_time: '2027-01-01T00:00:00Z'
+      occurrence_time_precision: year
+    regions: [동북아, 유럽]
+    supply_demand_side: both
+    score: 8.0
+    reason: 아시아 구매자들이 카타르 LNG 수출의 90%를 차지하며 가장 큰 영향 예상, 유럽은 저장 주입 제한 및 연료 전환 가속화
+- mi_record_id: 6
+  first_created: '2026-03-18T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-18T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-18T00:00:00'
+  del_yn: N
+  record_type: NEWS
+  source_obj_id: 6
+  source: PGJ Online / Reuters
+  title: U.S. Gas Futures Stall as Freeport LNG Outage Counters Supply Drop
+  body: 'U.S. natural gas futures held steady on March 17 as a decrease in demand from the temporary
+
+    shutdown of a liquefaction train at Freeport LNG''s export plant in Texas offset a bullish
+
+    drop in supply likely due to freezing pipes in North Dakota.
+
+
+    Front-month gas futures for April delivery rose one cent, or 0.3%, to settle at $3.033/MMBtu.
+
+    That lack of price movement also came despite bearish forecasts for milder weather and lower
+
+    heating demand over the next couple of weeks.
+
+
+    Average gas flows to the nine big U.S. LNG export plants slid to 18.5 bcfd so far in March,
+
+    down from a record 18.7 bcfd in February.
+
+
+    In the U.S. cash market, average prices at the Waha Hub in West Texas remained in negative
+
+    territory for a record 28 days in a row as pipeline constraints trapped gas in the Permian,
+
+    the nation''s biggest oil-producing shale basin.
+
+    '
+  analysis_time: '2026-04-17T06:07:05.738616+00:00'
+  categories:
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Freeport LNG
+      entity_type: company
+    - name: Texas
+      entity_type: other
+    event_timing:
+      occurrence_time: '2024-03-17T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [북미]
+    supply_demand_side: supply
+    score: 8.0
+    reason: Freeport LNG 액화 트레인의 일시적 가동 중단으로 미국 LNG 수출 능력이 감소하여 국내 가스 수요가 줄어들고 가격 상승 압력을 완화시킴
+  - level_1: infrastructure_facility
+    level_2: upstream_production_facility_capacity_utilization_change
+    entities:
+    - name: North Dakota
+      entity_type: other
+    event_timing:
+      occurrence_time: '2024-03-17T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [북미]
+    supply_demand_side: supply
+    score: 7.0
+    reason: 노스다코타 지역의 파이프 동결로 인한 가스 공급 감소가 가격 상승 압력으로 작용
+  - level_1: infrastructure_facility
+    level_2: pipeline_transport_infrastructure_capacity_utilization_change
+    entities:
+    - name: Waha Hub
+      entity_type: facility
+    - name: Permian
+      entity_type: other
+    - name: West Texas
+      entity_type: other
+    event_timing:
+      occurrence_time: '2024-03-17T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [북미]
+    supply_demand_side: supply
+    score: 6.0
+    reason: 파이프라인 제약으로 Permian 지역에 가스가 갇혀 Waha Hub 가격이 28일 연속 마이너스를 기록, 지역적 공급 과잉 상황 발생
+- mi_record_id: 7
+  first_created: '2026-03-27T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-27T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-27T00:00:00'
+  del_yn: N
+  record_type: NEWS
+  source_obj_id: 7
+  source: Bloomberg / Hydrocarbon Processing
+  title: Australia's biggest LNG plants suffer outages due to cyclone, straining global supply
+  body: 'A powerful tropical cyclone in Western Australia has disrupted production at the country''s two
+
+    biggest liquefied natural gas plants run by Chevron and Woodside, exacerbating a global supply
+
+    crunch caused by the conflict in the Middle East.
+
+
+    Chevron said it was working to restore production at its Gorgon (15.6 MMtpy, 3 trains) and
+
+    Wheatstone (8.9 MMtpy, 2 trains) LNG facilities following outages due to Tropical Cyclone
+
+    Narelle, a Category 3 storm that made landfall on Friday. Woodside also said production at
+
+    its North West Shelf project (14.3 MMtpy) was disrupted.
+
+
+    Santos confirmed its 3.7-MMtpy Darwin LNG project was also temporarily offline.
+
+    MST Marquee analyst Saul Kavonic estimated the cyclone was disrupting more than 30 MMtpy of
+
+    Australian LNG supply. Combined with the Middle East shock, more than a quarter of global LNG
+
+    supply was currently affected.
+
+
+    Australia became the world''s second-largest LNG exporter after Qatar shut down production.
+
+    Asian LNG prices rose more than 90% since the US and Israel first struck Iran.
+
+    '
+  analysis_time: '2026-04-17T06:07:12.599035+00:00'
+  categories:
+  - level_1: weather_climate
+    level_2: natural_disaster
+    entities:
+    - name: Australia
+      entity_type: country
+    - name: Chevron
+      entity_type: company
+    - name: Woodside
+      entity_type: company
+    - name: Santos
+      entity_type: company
+    - name: Gorgon LNG
+      entity_type: facility
+    - name: Wheatstone LNG
+      entity_type: facility
+    - name: North West Shelf
+      entity_type: facility
+    - name: Darwin LNG
+      entity_type: facility
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: day
+    regions: [호주]
+    supply_demand_side: supply
+    score: 9.0
+    reason: 사이클론으로 인해 호주 최대 LNG 생산시설들(Gorgon 15.6MMtpy, Wheatstone 8.9MMtpy, North West Shelf 14.3MMtpy,
+      Darwin 3.7MMtpy)이 가동 중단되어 총 30MMtpy 이상의 공급 차질 발생
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Gorgon LNG
+      entity_type: facility
+    - name: Wheatstone LNG
+      entity_type: facility
+    - name: North West Shelf
+      entity_type: facility
+    - name: Darwin LNG
+      entity_type: facility
+    - name: Chevron
+      entity_type: company
+    - name: Woodside
+      entity_type: company
+    - name: Santos
+      entity_type: company
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: day
+    regions: [호주]
+    supply_demand_side: supply
+    score: 10.0
+    reason: 호주 주요 LNG 액화시설 4곳이 동시에 가동 중단되어 전 세계 LNG 공급의 1/4 이상에 영향을 미치는 대규모 공급 차질
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    entities:
+    - name: United States
+      entity_type: country
+    - name: Israel
+      entity_type: country
+    - name: Iran
+      entity_type: country
+    - name: Qatar
+      entity_type: country
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 8.0
+    reason: 중동 분쟁으로 카타르가 생산을 중단하고, 미국과 이스라엘의 이란 공격 이후 아시아 LNG 가격이 90% 이상 급등
+- mi_record_id: 8
+  first_created: '2026-03-09T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-09T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-09T00:00:00'
+  del_yn: N
+  record_type: REPORT
+  source_obj_id: 8
+  source: Global LNG Hub (JOGMEC)
+  title: Natural gas prices weekly update - JKM, TTF and Henry Hub (9 March 2026)
+  body: 'The Northeast Asian assessed spot LNG price JKM (April delivery) for the week of 2-6 March
+
+    rose to low-USD 20s/MMBtu on 6 March from high-USD 10s/MMBtu the previous weekend.
+
+    JKM surged to low-USD 15s/MMBtu on 2 March amid rising supply concerns following escalating
+
+    tensions in the Middle East after Israeli and U.S. attacks on Iran starting on 28 February.
+
+    On 3 March, the price jumped by more than USD 10 to mid-USD 20s/MMBtu after an air strike on
+
+    Qatar''s Ras Laffan forced the shutdown of LNG export facilities, marking the highest level
+
+    in more than three years.
+
+
+    The U.S. gas price HH rose to USD 3.2/MMBtu on 6 March from USD 2.9/MMBtu, driven by
+
+    expectations that Middle East tensions could increase demand for U.S. LNG exports.
+
+
+    EIA reported U.S. natural gas inventories as of 27 February at 1,886 Bcf, down 132 Bcf from
+
+    the previous week, up 6.5% from the same period last year, and down 2.2% from the five-year average.
+
+    '
+  analysis_time: '2026-04-17T06:07:18.424429+00:00'
+  categories:
+  - level_1: geopolitical_risk
+    level_2: war_military_conflict
+    entities:
+    - name: 이스라엘
+      entity_type: country
+    - name: 미국
+      entity_type: country
+    - name: 이란
+      entity_type: country
+    - name: 카타르
+      entity_type: country
+    event_timing:
+      occurrence_time: '2026-02-28T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [중동]
+    supply_demand_side: supply
+    score: 10.0
+    reason: 이스라엘과 미국의 이란 공격으로 중동 긴장이 고조되고, 카타르 Ras Laffan LNG 수출시설 공습으로 가동 중단. JKM이 3년 만에 최고치인 USD 20대
+      중반까지 급등
+  - level_1: infrastructure_facility
+    level_2: liquefaction_terminal_facility_capacity_utilization_change
+    entities:
+    - name: Ras Laffan
+      entity_type: facility
+    - name: 카타르
+      entity_type: country
+    event_timing:
+      occurrence_time: '2026-03-03T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [중동]
+    supply_demand_side: supply
+    score: 10.0
+    reason: 카타르 Ras Laffan LNG 수출시설이 공습으로 가동 중단되어 JKM 가격이 하루 만에 USD 10 이상 급등
+  - level_1: supply_demand_balance
+    level_2: inventory_storage_level
+    entities:
+    - name: 미국
+      entity_type: country
+    - name: EIA
+      entity_type: organization
+    event_timing:
+      occurrence_time: '2026-02-27T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [북미]
+    supply_demand_side: supply
+    score: 4.0
+    reason: 미국 천연가스 재고가 전주 대비 132 Bcf 감소했으나, 전년 동기 대비 6.5% 증가한 수준으로 가격 영향은 제한적
+- mi_record_id: 9
+  first_created: '2026-04-06T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-04-06T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-04-06T00:00:00'
+  del_yn: N
+  record_type: REPORT
+  source_obj_id: 9
+  source: Canada LNG Group (JOGMEC)
+  title: Natural gas prices weekly update - JKM, TTF and Henry Hub (6 April 2026)
+  body: 'Natural gas prices fell across Asia, Europe and the United States last week, with JKM, TTF and
+
+    Henry Hub all declining amid recovering LNG supply, milder weather expectations and softer demand.
+
+
+    The Northeast Asian assessed spot LNG price JKM (May delivery) fell to high-USD 17s/MMBtu on
+
+    2 April from mid-USD 20s/MMBtu the previous weekend. JKM fell sharply as Australian LNG
+
+    production facilities that were shut due to cyclones resumed operations and expectations grew
+
+    for an easing of geopolitical tensions in the Middle East.
+
+
+    METI announced that Japan''s LNG inventories for power generation as of 29 March stood at
+
+    2.19 million tonnes, down 0.19 million tonnes from the previous week.
+
+
+    The European gas price TTF (May delivery) fell to USD 16.9/MMBtu on 2 April from
+
+    USD 18.3/MMBtu. HH also declined, settling around USD 3.0/MMBtu.
+
+    '
+  analysis_time: '2026-04-17T06:08:01.293136+00:00'
+  categories:
+  - level_1: infrastructure_facility
+    level_2: upstream_production_facility_capacity_utilization_change
+    entities:
+    - name: Australia
+      entity_type: country
+    event_timing:
+      occurrence_time: '2026-03-29T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [호주]
+    supply_demand_side: supply
+    score: 8.0
+    reason: 호주 LNG 생산시설이 사이클론으로 인한 가동 중단 후 재가동되어 공급이 회복되면서 JKM 가격이 USD 20대 중반에서 USD 17대 후반으로 급락
+  - level_1: weather_climate
+    level_2: natural_disaster
+    entities:
+    - name: Australia
+      entity_type: country
+    event_timing:
+      occurrence_time: '2026-03-25T00:00:00Z'
+      occurrence_time_precision: month
+    regions: [호주]
+    supply_demand_side: supply
+    score: 7.0
+    reason: 사이클론으로 인한 호주 LNG 생산시설 가동 중단이 공급 차질을 야기했으나, 이후 정상화되면서 가격 하락 압력으로 작용
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    entities: []
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 6.0
+    reason: 중동 지정학적 긴장 완화 기대감이 형성되면서 공급 리스크 프리미엄이 감소하여 가격 하락에 기여
+  - level_1: supply_demand_balance
+    level_2: inventory_storage_level
+    entities:
+    - name: Japan
+      entity_type: country
+    - name: METI
+      entity_type: organization
+    event_timing:
+      occurrence_time: '2026-03-29T00:00:00Z'
+      occurrence_time_precision: day
+    regions: [동북아]
+    supply_demand_side: demand
+    score: 5.0
+    reason: 일본의 발전용 LNG 재고가 219만톤으로 전주 대비 19만톤 감소했으나, 여전히 충분한 수준을 유지하여 수요 압력이 제한적
+- mi_record_id: 10
+  first_created: '2026-03-16T00:00:00'
+  crt_usr_logn_id: system
+  crt_dtm: '2026-03-16T00:00:00'
+  mod_usr_logn_id: system
+  mod_dtm: '2026-03-16T00:00:00'
+  del_yn: N
+  record_type: REPORT
+  source_obj_id: 10
+  source: ING Think
+  title: Energy markets brace for a prolonged supply disruption
+  body: "Energy markets are having to continuously price in a more prolonged disruption to oil and gas\n\
+    flows through the Strait of Hormuz, with little sign of de-escalation.\n\nFor the global LNG market,\
+    \ there is even less flexibility on the supply side, with the disruption\nin Persian Gulf flows hitting\
+    \ around 20% of global LNG trade. New capacity ramping up in the US\nthis year at just 15 bcm of annual\
+    \ capacity falls short of the 110 bcm of annual production\ncurrently disrupted. The only real solution\
+    \ in the short term is demand destruction.\n\nING outlined three scenarios:\n- Scenario 1 (Base):\
+    \ Hormuz flows remain cut off until end of March, gradual recovery in Q2.\n  Near-normal flows by\
+    \ start of Q3 2026.\n- Scenario 2 (Optimistic): Quick de-escalation, energy flows back to near-normal\
+    \ by May 2026.\n- Scenario 3 (Aggressive): Intense conflict continues into April, gradual recovery\
+    \ June-August.\n\nA more prolonged disruption means producers will reduce upstream production to manage\
+    \ storage\nconstraints, further prolonging recovery even after the Strait reopens.\n"
+  analysis_time: '2026-04-17T06:07:30.593688+00:00'
+  categories:
+  - level_1: geopolitical_risk
+    level_2: geopolitical_tension_instability
+    entities:
+    - name: Strait of Hormuz
+      entity_type: other
+    - name: Persian Gulf
+      entity_type: other
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 9.0
+    reason: 호르무즈 해협을 통한 석유 및 가스 흐름의 장기간 중단이 지속되고 있으며, 긴장 완화 조짐이 거의 없음. 전 세계 LNG 거래의 20%에 영향
+  - level_1: infrastructure_facility
+    level_2: upstream_production_facility_capacity_utilization_change
+    entities: []
+    event_timing:
+      occurrence_time: ''
+      occurrence_time_precision: unknown
+    regions: [중동]
+    supply_demand_side: supply
+    score: 7.0
+    reason: 저장 제약을 관리하기 위해 생산자들이 상류 생산을 감소시킬 것으로 예상되며, 해협 재개 후에도 회복이 지연될 것
+  - level_1: logistics_shipping
+    level_2: cargo_flow_change_port_canal_disruption
+    entities:
+    - name: Strait of Hormuz
+      entity_type: other
+    event_timing:
+      occurrence_time: '2026-03-31T00:00:00Z'
+      occurrence_time_precision: quarter
+    regions: [중동]
+    supply_demand_side: supply
+    score: 9.0
+    reason: 호르무즈 해협을 통한 LNG 화물 흐름이 중단되어 전 세계 LNG 거래의 약 20%(연간 110 bcm)가 영향받음
+  - level_1: supply_demand_balance
+    level_2: regional_demand_competition
+    entities:
+    - name: United States
+      entity_type: country
+    event_timing:
+      occurrence_time: '2026-01-01T00:00:00Z'
+      occurrence_time_precision: year
+    regions: [북미]
+    supply_demand_side: both
+    score: 6.0
+    reason: 미국의 신규 LNG 생산능력(연간 15 bcm)이 중단된 물량(110 bcm)을 대체하기에 크게 부족하여 단기적으로 수요 파괴가 유일한 해결책
