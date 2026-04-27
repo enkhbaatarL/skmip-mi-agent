@@ -1,3 +1,5 @@
+#   apps/common/configs/database/sync_database/__init__.py
+
 """Sync Database 모듈."""
 
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
