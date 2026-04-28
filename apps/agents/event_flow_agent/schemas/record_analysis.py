@@ -37,6 +37,7 @@ class EntityType(str, Enum):
     company = "company"
     facility = "facility"
     organization = "organization"
+    region = "region"
     other = "other"
 
 

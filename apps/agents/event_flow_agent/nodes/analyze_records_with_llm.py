@@ -24,8 +24,10 @@ from apps.agents.event_flow_agent.services.record_analysis_service import (
     RecordAnalysisService,
 )
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
+from apps.common.logging.decorators import log_node
 
 
+@log_node
 async def analyze_records_with_llm_node(state: EventFlowState) -> EventFlowState:
     state.current_node = "analyze_records_with_llm"
     state.executed_nodes.append("analyze_records_with_llm")
