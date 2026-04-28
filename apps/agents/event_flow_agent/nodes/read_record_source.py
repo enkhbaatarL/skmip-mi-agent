@@ -22,8 +22,10 @@ from __future__ import annotations
 
 from apps.agents.event_flow_agent.services.record_source_service import RecordSourceService
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
+from apps.common.logging.decorators import log_node
 
 
+@log_node
 def read_record_source_node(state: EventFlowState) -> EventFlowState:
     state.current_node = "read_record_source"
     state.executed_nodes.append("read_record_source")
