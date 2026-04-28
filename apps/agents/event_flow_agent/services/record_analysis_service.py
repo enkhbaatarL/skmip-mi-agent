@@ -22,12 +22,14 @@ record 단위 LLM 분석 서비스 모듈
 """
 
 from __future__ import annotations
+import json
 
 from datetime import datetime, timezone
 
 from apps.agents.event_flow_agent.configs.event_type_taxonomy import CATEGORY_GUIDE
 from apps.agents.event_flow_agent.schemas.record_analysis import RecordAnalysis
 from apps.connectors.llm.llm_client import invoke_llm_structured_output
+from apps.common.logging.decorators import log_tool
 
 
 SYSTEM_PROMPT = f"""\
@@ -61,6 +63,7 @@ USER_TEMPLATE = """\
 
 
 class RecordAnalysisService:
+    @log_tool
     async def analyze(self, title: str, body: str) -> RecordAnalysis:
         prompt = USER_TEMPLATE.format(title=title, body=body)
 
@@ -72,7 +75,12 @@ class RecordAnalysisService:
             ],
             temperature=0.0,
         )
-
         parsed = llm_result.result
         parsed.analysis_time = datetime.now(timezone.utc).isoformat()
+        
+        # Save analysis result to demo file
+        with open('./docs/demos/record_analysis.json', 'w', encoding='utf-8') as f:
+            json.dump(parsed.model_dump(), f, ensure_ascii=False, indent=2)
+        
+        print('Saved record analysis to ./docs/demos/record_analysis.json')
         return parsed
