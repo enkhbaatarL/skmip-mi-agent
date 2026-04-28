@@ -36,7 +36,7 @@
       ],
       "supply_demand_side": "both",
       "score": 8.0,
-      "reason": "유럽 구매자들이 캐나다 LNG를 파나마운하 경유로 운송하는 방안을 논의 중이며, 이는 기존 중동 공급 경로(호르무즈 해협) 리스크에 대응하는 공급 다변화 전략이다. 파나마운하의 물류 흐름 변화가 유럽 LNG 가격에 영향을 줄 수 있다."
+      "reason": "유럽 구매자들이 캐나다 LNG를 파나마운하 경유로 운송하는 방안을 논의 중이며, 이는 기존 중동 공급 경로(호르무즈 해협) 리스크에 대응하는 공급망 다변화 전략이다. 파나마운하의 물류 흐름 변화가 유럽 LNG 가격에 중장기적으로 영향을 줄 수 있다."
     },
     {
       "level_1": "geopolitical_risk",
@@ -56,11 +56,12 @@
         "occurrence_time_precision": "unknown"
       },
       "regions": [
-        "Middle East"
+        "Middle East",
+        "Europe"
       ],
       "supply_demand_side": "supply",
       "score": 7.0,
-      "reason": "이란 전쟁과 호르무즈 해협 폐쇄 리스크가 유럽의 LNG 공급원 다변화 논의에 직접적인 영향을 주고 있다. 중동 공급 차질 가능성이 가격 상승 압력으로 작용할 수 있다."
+      "reason": "이란 전쟁과 호르무즈 해협 폐쇄 가능성이 유럽의 LNG 공급원 다변화 논의에 직접적인 영향을 주고 있다. 중동 공급 리스크가 유럽 LNG 가격 상승 압력으로 작용할 수 있다."
     },
     {
       "level_1": "infrastructure_facility",
@@ -92,7 +93,7 @@
       ],
       "supply_demand_side": "supply",
       "score": 6.0,
-      "reason": "Ksi Lisims LNG 터미널은 아직 건설 중이며, Shell과 TotalEnergies가 20년 장기 계약을 체결했다. 캐나다 정부의 신속 심사로 공급 확대 가능성이 있으나, 단기 영향은 제한적이다."
+      "reason": "Ksi Lisims LNG 터미널은 아직 건설 단계이며, Shell과 TotalEnergies가 20년 장기 구매 계약을 체결했다. 캐나다 정부의 신속 심사로 프로젝트 진행이 빨라질 수 있으나, 단기 공급에는 영향이 제한적이고 중장기 공급 확대 가능성이 있다."
     },
     {
       "level_1": "supply_demand_balance",
@@ -116,8 +117,8 @@
       ],
       "supply_demand_side": "demand",
       "score": 5.0,
-      "reason": "유럽의 LNG 수요가 중동 리스크로 인해 캐나다 등 신규 공급원으로 이동할 가능성이 높아지고 있다. 이는 지역 간 경쟁과 가격 변동에 영향을 줄 수 있다."
+      "reason": "유럽 LNG 구매자들이 공급원 다변화와 장기 계약을 추진하며, 지역 간 LNG 수요 경쟁이 심화될 가능성이 있다. 이는 유럽 내 LNG 가격 변동성에 영향을 줄 수 있다."
     }
   ],
-  "analysis_time": "2026-04-28T05:10:03.072436+00:00"
+  "analysis_time": "2026-04-28T05:57:22.196170+00:00"
 }
