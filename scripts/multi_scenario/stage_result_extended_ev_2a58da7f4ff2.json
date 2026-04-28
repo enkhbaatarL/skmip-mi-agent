@@ -1,0 +1,889 @@
+{
+  "scenario_group_id": "sg_미국_이란_전쟁으로_호르무즈_해협_봉쇄_ln_2026_04_15",
+  "created_at": "2026-04-27T02:39:11Z",
+  "stage1_context_pack": {
+    "C1_base_event": {
+      "event_id": "ev_2a58da7f4ff2",
+      "title": "미국-이란 전쟁으로 호르무즈 해협 봉쇄, LNG 공급 차질 심화",
+      "event_type_l1_l2": "geopolitical_risk::war_military_conflict",
+      "summary": "[미국-이란 전쟁] 호르무즈 해협 45일째 사실상 봉쇄 → 중동 LNG 수송 차단으로 JKM/TTF 급등",
+      "driver": "2월 말 발발한 미·이스라엘-이란 전쟁으로 호르무즈 해협 통항량 전쟁 전 대비 급감"
+    },
+    "C2_linked_records": {
+      "window_days": 30,
+      "records": []
+    },
+    "C3_historical_analogs": [],
+    "C4_related_events": []
+  },
+  "stage2_dimension_selection": {
+    "template_id": "geopolitical_risk::war_military_conflict",
+    "template_dimensions_total": 8,
+    "selected_dimensions": [
+      {
+        "dimension_id": "conflict_duration",
+        "rationale": "(a) 본문에 '45일째 사실상 봉쇄' 명시되어 충돌 지속 기간이 핵심 변수임."
+      },
+      {
+        "dimension_id": "strait_shipping_impact",
+        "rationale": "(a)(c) 호르무즈 해협 봉쇄가 본문 핵심이며 LNG 물동량 20% 차단으로 가격 급등 직결."
+      },
+      {
+        "dimension_id": "risk_premium",
+        "rationale": "(a)(c) 본문 JKM/TTF 급등 직접 언급 + 천연가스 40% 급등으로 리스크 프리미엄 핵심."
+      },
+      {
+        "dimension_id": "crude_disruption",
+        "rationale": "(a) 본문에 원유 가격 배럴당 140달러 돌파 명시로 원유 공급 차질 중요."
+      },
+      {
+        "dimension_id": "supply_response",
+        "rationale": "(c) 평화협상 재개 및 오만 측 항로 허용 검토 등 공급 대응이 향후 시장 정상화 경로 결정."
+      }
+    ],
+    "excluded_dimensions": [
+      {
+        "dimension_id": "escalation_level",
+        "reason": "현재 호르무즈 봉쇄 상태에서 추가 에스컬레이션 시그널 없음."
+      },
+      {
+        "dimension_id": "lng_facility_damage",
+        "reason": "Base Event에 LNG 시설 물리적 피해 언급 없음."
+      },
+      {
+        "dimension_id": "sanctions_scope",
+        "reason": "제재보다 물리적 봉쇄가 핵심이며 제재 확대 언급 없음."
+      }
+    ]
+  },
+  "stage3_value_selection": {
+    "per_dimension": [
+      {
+        "dimension_id": "conflict_duration",
+        "template_enum_full": [
+          "1M_under",
+          "1_3M",
+          "3_6M",
+          "6_12M",
+          "1Y_plus"
+        ],
+        "selected_enum": [
+          "1_3M",
+          "3_6M",
+          "6_12M",
+          "1Y_plus"
+        ],
+        "tail_risk_kept": "6_12M"
+      },
+      {
+        "dimension_id": "strait_shipping_impact",
+        "template_enum_full": [
+          "none",
+          "intermittent",
+          "partial_blockade",
+          "full_blockade",
+          "prolonged_closure"
+        ],
+        "selected_enum": [
+          "partial_blockade",
+          "full_blockade",
+          "prolonged_closure"
+        ],
+        "tail_risk_kept": "full_blockade"
+      },
+      {
+        "dimension_id": "risk_premium",
+        "template_enum_full": [
+          "flat",
+          "low",
+          "mid",
+          "high",
+          "extreme"
+        ],
+        "selected_enum": [
+          "low",
+          "mid",
+          "high",
+          "extreme"
+        ],
+        "tail_risk_kept": "extreme"
+      },
+      {
+        "dimension_id": "crude_disruption",
+        "template_enum_full": [
+          "none",
+          "mild",
+          "moderate",
+          "severe",
+          "critical"
+        ],
+        "selected_enum": [
+          "moderate",
+          "severe",
+          "critical"
+        ],
+        "tail_risk_kept": "severe"
+      },
+      {
+        "dimension_id": "supply_response",
+        "template_enum_full": [
+          "none",
+          "jawboning",
+          "spr_partial",
+          "spr_full",
+          "producer_swing"
+        ],
+        "selected_enum": [
+          "jawboning",
+          "spr_partial",
+          "spr_full",
+          "producer_swing"
+        ],
+        "tail_risk_kept": "spr_full"
+      }
+    ]
+  },
+  "stage4_scenario_synthesis": {
+    "cartesian_total": 576,
+    "filtered_by_compatibility": 468,
+    "scenarios": [
+      {
+        "scenario_id": "S_01",
+        "title": "단기 충돌 후 3개월 내 정상화 예상, 제한적 공급 차질",
+        "dimension_values": {
+          "conflict_duration": "1_3M",
+          "strait_shipping_impact": "partial_blockade",
+          "risk_premium": "low",
+          "crude_disruption": "moderate",
+          "supply_response": "jawboning"
+        },
+        "description": "미국-이란 충돌이 1-3개월 내 종료되고 호르무즈 해협은 부분 봉쇄 상태로 일부 선박만 통항 가능. 원유 공급은 중간 수준 차질이 발생하나 각국 정부의 구두 개입으로 시장 안정화 시도. LNG 리스크 프리미엄은 낮은 수준으로 유지되며, 대체 공급처 확보와 재고 활용으로 단기 충격 흡수 가능.",
+        "derivation_rationale": "충돌 기간 1-3개월, 부분 봉쇄, 낮은 리스크 프리미엄, 중간 수준 원유 차질, 구두 개입 조합으로부터 도출",
+        "price_direction": {
+          "brent": "mild_bull",
+          "jkm": "bull",
+          "ttf": "mild_bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S01_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "이란 혁명수비대 호르무즈 해협 부분 통항 허용 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "해협의 부분 봉쇄 상태가 직접 확인되어 시나리오의 핵심 조건인 '부분 통항 가능' 상태가 실현됨을 증명.",
+            "role_tag": null,
+            "keyword_hints": [
+              "혁명수비대",
+              "호르무즈",
+              "통항 허용",
+              "이란",
+              "발표"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "카타르 에너지 Ras Laffan 터미널 LNG 선적 50% 재개",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "중동 LNG 공급이 절반 수준으로 회복되어 '제한적 공급 차질' 시나리오가 현실화되었음을 직접 입증.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Ras Laffan",
+              "QatarEnergy",
+              "LNG 선적",
+              "재개",
+              "터미널"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 국무부 이란과 3개월 내 휴전 협상 진행 확인",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "3개월 내 종료 시나리오의 실현 가능성을 높이는 공식 외교 신호이나, 협상 결과는 아직 미확정.",
+            "role_tag": null,
+            "keyword_hints": [
+              "국무부",
+              "휴전 협상",
+              "이란",
+              "확인"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "IEA 전략비축유 방출 계획 없다고 공식 성명",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "정부 개입이 구두 수준에 머물러 있음을 시사하나, 향후 정책 변화 가능성은 열려있는 간접 신호.",
+            "role_tag": null,
+            "keyword_hints": [
+              "IEA",
+              "전략비축유",
+              "방출",
+              "공식 성명"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_02",
+        "title": "장기 전면 봉쇄로 글로벌 에너지 위기 심화",
+        "dimension_values": {
+          "conflict_duration": "6_12M",
+          "strait_shipping_impact": "full_blockade",
+          "risk_premium": "high",
+          "crude_disruption": "severe",
+          "supply_response": "spr_full"
+        },
+        "description": "충돌이 6-12개월 지속되며 호르무즈 해협 완전 봉쇄로 중동 LNG 수송 전면 중단. 원유 공급 심각한 차질과 높은 지정학적 리스크 프리미엄이 결합되어 에너지 가격 폭등. 각국이 전략비축유를 전면 방출하나 장기 봉쇄로 인한 구조적 공급 부족 해소에는 한계. 아시아와 유럽의 LNG 확보 경쟁 격화로 JKM과 TTF 역사적 고점 경신.",
+        "derivation_rationale": "충돌 기간 6-12개월, 완전 봉쇄, 높은 리스크 프리미엄, 심각한 원유 차질, SPR 전면 방출 조합으로부터 도출",
+        "price_direction": {
+          "brent": "strong_bull",
+          "jkm": "strong_bull",
+          "ttf": "strong_bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S02_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "호르무즈 해협 통과 LNG 선박 6개월간 0척 기록",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "6개월간 LNG 선박 통행이 완전히 중단된 것은 시나리오의 '장기 전면 봉쇄'가 실제로 실현되었음을 직접 증명하는 결정적 관측치입니다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "호르무즈",
+              "LNG 선박",
+              "통과 중단",
+              "6개월",
+              "0척"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "카타르 Ras Laffan 터미널 가동 중단 6개월 경과",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "세계 최대 LNG 수출 터미널의 6개월 가동 중단은 중동 LNG 수송 전면 중단이 현실화되었음을 확증하는 핵심 지표입니다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Ras Laffan",
+              "카타르",
+              "가동 중단",
+              "LNG 터미널"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "IEA 전략비축유 4차 방출 결정 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "반복적인 전략비축유 방출은 에너지 위기 심화의 명확한 신호이나, 아직 비축량 고갈 단계는 아니므로 중간 강도로 평가됩니다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "IEA",
+              "전략비축유",
+              "4차 방출",
+              "발표"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "JKM 현물가격 $50/MMBtu 돌파",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "JKM의 역사적 고점 돌파는 시나리오가 예측한 '에너지 가격 폭등'과 'JKM 역사적 고점 경신'이 실제로 발생했음을 입증합니다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "JKM",
+              "$50",
+              "MMBtu",
+              "돌파",
+              "현물가격"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "중국 CNOOC 미국산 LNG 장기계약 100% 인수 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "아시아 국가의 대체 공급원 확보 움직임은 LNG 확보 경쟁 격화를 시사하나, 간접적 신호로 단독 영향력은 제한적입니다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "CNOOC",
+              "미국산 LNG",
+              "장기계약",
+              "인수",
+              "중국"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_03",
+        "title": "중기 해협 폐쇄 지속, 부분적 비축유 방출로 제한적 완화",
+        "dimension_values": {
+          "conflict_duration": "3_6M",
+          "strait_shipping_impact": "prolonged_closure",
+          "risk_premium": "mid",
+          "crude_disruption": "critical",
+          "supply_response": "spr_partial"
+        },
+        "description": "3-6개월간 충돌 지속되며 호르무즈 해협 장기 폐쇄 상태 유지. 원유 공급은 위기 수준에 도달하고 중간 수준의 LNG 리스크 프리미엄 형성. 전략비축유 부분 방출로 일시적 완화 시도하나 근본적 공급 차질 해결 불가. 대체 공급원 확보 노력에도 불구하고 물류 병목과 인프라 한계로 가격 상승 압력 지속.",
+        "derivation_rationale": "충돌 기간 3-6개월, 장기 폐쇄, 중간 리스크 프리미엄, 위기 수준 원유 차질, SPR 부분 방출 조합으로부터 도출",
+        "price_direction": {
+          "brent": "bull",
+          "jkm": "strong_bull",
+          "ttf": "bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S03_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "IEA 회원국 전략비축유 3천만 배럴 방출 결정 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "전략비축유 부분 방출이 실제 실행되어 시나리오의 '부분적 비축유 방출' 요소가 실현됨. 3천만 배럴 규모는 제한적 완화 수준에 부합.",
+            "role_tag": null,
+            "keyword_hints": [
+              "IEA",
+              "전략비축유",
+              "3천만 배럴",
+              "방출",
+              "결정"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "카타르 Ras Laffan LNG 터미널 불가항력 선언 90일 연장",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "중동 최대 LNG 수출 터미널의 3개월 추가 차단은 '3-6개월 장기 폐쇄' 시나리오를 직접 입증. 공급 차질이 중기적으로 지속됨을 확정.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Ras Laffan",
+              "카타르",
+              "불가항력",
+              "연장",
+              "LNG 터미널"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미 국무부 호르무즈 해협 통항 재개 협상 4차 시도 실패",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "외교적 해결 실패 반복은 충돌 장기화 신호이나, 향후 협상 가능성은 열려있어 완전 확정은 아님.",
+            "role_tag": null,
+            "keyword_hints": [
+              "호르무즈",
+              "미 국무부",
+              "통항 재개",
+              "협상",
+              "실패"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "JKM 현물가격 MMBtu당 35달러 돌파",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "35달러는 극단적 수준으로 '중간 수준 리스크 프리미엄'을 넘어섬. 시나리오의 가격 상승 압력 지속이 현실화됨.",
+            "role_tag": null,
+            "keyword_hints": [
+              "JKM",
+              "현물가격",
+              "35달러",
+              "돌파",
+              "MMBtu"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "일본 JERA 미국산 LNG 긴급 스팟 계약 월 200만톤 체결",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "대체 공급원 확보 노력의 초기 신호이나, 월 200만톤은 중동 차질분 대비 제한적이며 물류 병목 해결 여부 불확실.",
+            "role_tag": null,
+            "keyword_hints": [
+              "JERA",
+              "미국산 LNG",
+              "스팟 계약",
+              "체결",
+              "200만톤"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_04",
+        "title": "단기 전면 봉쇄에 극단적 공포 확산, 생산국 증산으로 대응",
+        "dimension_values": {
+          "conflict_duration": "1_3M",
+          "strait_shipping_impact": "full_blockade",
+          "risk_premium": "extreme",
+          "crude_disruption": "critical",
+          "supply_response": "producer_swing"
+        },
+        "description": "1-3개월 단기 충돌이나 호르무즈 완전 봉쇄와 극단적 리스크 프리미엄으로 시장 패닉 상태. 원유 공급 위기 수준 도달하며 즉각적인 가격 급등. 주요 생산국들이 긴급 증산으로 대응하나 물류 재편에 시간 소요. 단기적 극심한 변동성 후 생산국 대응이 효과를 보이면서 점진적 안정화 전망.",
+        "derivation_rationale": "충돌 기간 1-3개월, 완전 봉쇄, 극단적 리스크 프리미엄, 위기 수준 원유 차질, 생산국 증산 조합으로부터 도출",
+        "price_direction": {
+          "brent": "strong_bull",
+          "jkm": "strong_bull",
+          "ttf": "strong_bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S04_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "이란 혁명수비대 호르무즈 해협 기뢰 설치 공식 확인",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "호르무즈 완전 봉쇄가 실제 군사작전으로 실현되었음을 직접 증명하는 결정적 관측으로, 시나리오의 '전면 봉쇄' 조건이 충족됨.",
+            "role_tag": null,
+            "keyword_hints": [
+              "혁명수비대",
+              "호르무즈",
+              "기뢰",
+              "설치",
+              "공식화"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "사우디 아람코 일일 원유 생산량 1200만 배럴 돌파 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "주요 생산국의 긴급 증산 대응이 실제로 실행되고 있음을 보여주는 직접적 증거로, 시나리오의 'producer_swing' 대응이 실현됨.",
+            "role_tag": null,
+            "keyword_hints": [
+              "아람코",
+              "사우디",
+              "1200만",
+              "돌파",
+              "증산"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "카타르 에너지 Ras Laffan LNG 시설 불가항력 선언",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "중동 최대 LNG 수출시설의 운영 중단으로 공급 위기가 현실화되었음을 확증하며, 극단적 시장 패닉의 직접적 원인.",
+            "role_tag": null,
+            "keyword_hints": [
+              "QatarEnergy",
+              "Ras Laffan",
+              "불가항력",
+              "선언"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "UAE 푸자이라 항 LNG 선박 대기 100척 초과",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "물류 재편 과정의 혼란과 병목현상을 보여주는 초기 신호로, 단기 극심한 변동성의 명확한 징후.",
+            "role_tag": null,
+            "keyword_hints": [
+              "푸자이라",
+              "UAE",
+              "100척",
+              "대기",
+              "초과"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "IEA 전략비축유 7000만 배럴 방출 결정",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "국제사회의 위기 대응 의지를 보여주나, 실제 시장 안정화 효과는 아직 불확실한 간접적 신호.",
+            "role_tag": null,
+            "keyword_hints": [
+              "IEA",
+              "전략비축유",
+              "7000만",
+              "방출",
+              "결정"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_05",
+        "title": "1년 이상 장기화되나 부분 통항 유지, 생산국 증산으로 균형",
+        "dimension_values": {
+          "conflict_duration": "1Y_plus",
+          "strait_shipping_impact": "partial_blockade",
+          "risk_premium": "mid",
+          "crude_disruption": "severe",
+          "supply_response": "producer_swing"
+        },
+        "description": "충돌이 1년 이상 장기화되나 호르무즈는 부분 봉쇄로 제한적 통항 가능. 원유 공급 심각한 차질과 중간 수준 LNG 리스크 프리미엄 형성. 주요 생산국들의 지속적 증산으로 공급 부족분 상당 부분 상쇄. 시장은 새로운 균형점을 찾아가며 초기 충격 대비 안정화되나, 구조적으로 높은 가격 수준 유지.",
+        "derivation_rationale": "충돌 기간 1년 이상, 부분 봉쇄, 중간 리스크 프리미엄, 심각한 원유 차질, 생산국 증산 조합으로부터 도출",
+        "price_direction": {
+          "brent": "bull",
+          "jkm": "bull",
+          "ttf": "bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S05_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "이란 혁명수비대 호르무즈 해협 일일 2회 호송 체제 공식 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "호르무즈 해협의 제한적 통항이 공식 체계화되어 '부분 봉쇄' 상태가 실현됨. 1년 이상 지속 가능한 준항구적 통제 체제 확립을 직접 증명.",
+            "role_tag": null,
+            "keyword_hints": [
+              "혁명수비대",
+              "호르무즈",
+              "호송",
+              "공식화",
+              "통항체제"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "카타르 에너지 Ras Laffan LNG 터미널 생산량 20% 증산 달성",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "주요 LNG 생산국의 실질적 증산 달성으로 공급 부족분 상쇄 시작. 시나리오의 '생산국 증산으로 균형' 부분이 구체적으로 실현됨.",
+            "role_tag": null,
+            "keyword_hints": [
+              "QatarEnergy",
+              "Ras Laffan",
+              "증산",
+              "LNG터미널",
+              "달성"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 Cheniere Energy 월간 LNG 수출량 사상 최대 기록",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "미국 LNG 수출 확대로 공급 대응 강화되나, 단일 기업 실적으로는 전체 시장 균형 회복의 초기 신호. 지속성 확인 필요.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Cheniere",
+              "미국",
+              "수출량",
+              "최대기록",
+              "LNG"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "호주 North West Shelf 프로젝트 풀가동 1년째 지속",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "아시아 태평양 주요 공급원의 안정적 가동으로 공급 기반 유지. 장기화 상황에서 비중동 공급원 역할 강화의 명확한 신호.",
+            "role_tag": null,
+            "keyword_hints": [
+              "North West Shelf",
+              "호주",
+              "풀가동",
+              "지속",
+              "LNG프로젝트"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "사우디 아람코 원유 생산 일일 200만 배럴 감산 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "원유 시장 충격이 LNG 시장에 간접 압력으로 작용하나, 시나리오의 '원유 공급 심각한 차질' 측면을 부분적으로만 시사.",
+            "role_tag": null,
+            "keyword_hints": [
+              "아람코",
+              "사우디",
+              "감산",
+              "원유생산",
+              "발표"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_06",
+        "title": "장기 해협 폐쇄에도 원유 영향 제한적, LNG 극단적 프리미엄",
+        "dimension_values": {
+          "conflict_duration": "1Y_plus",
+          "strait_shipping_impact": "prolonged_closure",
+          "risk_premium": "extreme",
+          "crude_disruption": "moderate",
+          "supply_response": "spr_full"
+        },
+        "description": "1년 이상 충돌 지속되며 호르무즈 장기 폐쇄 상태이나 원유는 대체 경로와 공급원으로 중간 수준 차질에 그침. 반면 LNG는 극단적 리스크 프리미엄과 물류 재편 어려움으로 가격 급등 지속. 전략비축유 전면 방출에도 불구하고 LNG 시장의 구조적 취약성 노출. 특히 아시아 지역 LNG 수급 불균형 심화로 JKM 프리미엄 확대.",
+        "derivation_rationale": "충돌 기간 1년 이상, 장기 폐쇄, 극단적 리스크 프리미엄, 중간 원유 차질, SPR 전면 방출 조합으로부터 도출",
+        "price_direction": {
+          "brent": "mild_bull",
+          "jkm": "strong_bull",
+          "ttf": "bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S06_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "일본 JERA, 호르무즈 우회 LNG 운송 경로 1년 계약 체결 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "1년 장기 우회 계약은 호르무즈 장기 폐쇄가 현실화되었음을 보여주는 결정적 증거. LNG 물류 재편의 구조적 어려움과 극단적 비용 상승을 직접 입증.",
+            "role_tag": null,
+            "keyword_hints": [
+              "JERA",
+              "호르무즈",
+              "우회",
+              "LNG 운송",
+              "계약 체결"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S06_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "중국 CNOOC, 러시아 Arctic LNG 2 프로젝트 지분 20% 추가 인수",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "중동 LNG 대체를 위한 공급원 다변화 움직임의 명확한 신호. 아직 생산까지 시간이 필요하나 구조적 공급 재편 방향성 확인.",
+            "role_tag": null,
+            "keyword_hints": [
+              "CNOOC",
+              "Arctic LNG 2",
+              "러시아",
+              "지분 인수",
+              "20%"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S06_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "IEA, 전략비축유 4차 방출 완료 및 추가 방출 불가 선언",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "SPR 전면 방출 소진은 시나리오의 핵심 요소인 '전략비축 한계 도달'을 직접 확인. 원유는 어느 정도 대응했으나 LNG는 여전히 취약함을 증명.",
+            "role_tag": null,
+            "keyword_hints": [
+              "IEA",
+              "전략비축유",
+              "4차 방출",
+              "완료",
+              "불가 선언"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S06_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "싱가포르 LNG 현물 거래소, JKM-TTF 스프레드 역대 최고치 경신",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "아시아 LNG 프리미엄 극대화는 시나리오가 예측한 '극단적 리스크 프리미엄'과 '아시아 수급 불균형 심화'를 정확히 실현.",
+            "role_tag": null,
+            "keyword_hints": [
+              "싱가포르",
+              "JKM",
+              "TTF",
+              "스프레드",
+              "최고치 경신"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S06_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "파키스탄 정부, LNG 수입 중단 및 국가 에너지 비상사태 선포",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "LNG 시장 취약성의 간접적 증거이나, 파키스탄은 원래 가격 민감 수요처로 극단 상황의 부분적 신호에 그침.",
+            "role_tag": null,
+            "keyword_hints": [
+              "파키스탄",
+              "LNG 수입",
+              "중단",
+              "비상사태 선포"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      }
+    ]
+  },
+  "stage5_validation": {
+    "mece_check": {
+      "mutually_exclusive": true
+    },
+    "likelihood_prior": {
+      "S_01": "high",
+      "S_02": "low",
+      "S_03": "medium",
+      "S_04": "medium",
+      "S_05": "low",
+      "S_06": "very_low"
+    }
+  }
+}
