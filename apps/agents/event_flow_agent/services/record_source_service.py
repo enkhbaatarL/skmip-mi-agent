@@ -22,6 +22,7 @@
 """
 
 from __future__ import annotations
+from datetime import datetime
 
 from apps.agents.event_flow_agent.repositories.sync_record_repository import (
     SyncRecordRepository,
@@ -42,12 +43,19 @@ class RecordSourceService:
 
         try:
             repository = SyncRecordRepository(session=session)
-            return repository.fetch_news_records(
+            records = repository.fetch_news_records(
                 market_category=market_category,
                 limit=limit,
                 from_first_created=from_first_created,
                 to_first_created=to_first_created,
             )
+            
+            # Convert datetime objects to ISO strings (prevent JSON serialization errors)
+            for record in records:
+                if isinstance(record.get('first_created'), datetime):
+                    record['first_created'] = record['first_created'].isoformat()
+            
+            return records
         except Exception as exc:
             raise RdbDataFetchError(detail=str(exc)) from exc
         finally:
