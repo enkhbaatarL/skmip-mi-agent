@@ -1,0 +1,142 @@
+
+{
+  "version": "0.1.0",
+  "taxonomy": [
+    {
+      "level_1_code": "geopolitical_risk",
+      "label_ko": "지정학적 리스크",
+      "children": [
+        {
+          "level_2_code": "war_military_conflict",
+          "label_ko": "전쟁 / 군사 분쟁"
+        },
+        {
+          "level_2_code": "geopolitical_tension_instability",
+          "label_ko": "지정학적 긴장 / 불안정"
+        },
+        {
+          "level_2_code": "economic_sanctions_trade_restrictions",
+          "label_ko": "경제 제재 / 무역 제한"
+        },
+        {
+          "level_2_code": "regime_change_political_transition",
+          "label_ko": "정권 교체 / 정치 전환"
+        }
+      ]
+    },
+    {
+      "level_1_code": "weather_climate",
+      "label_ko": "기상 / 기후",
+      "children": [
+        {
+          "level_2_code": "winter_cold_wave",
+          "label_ko": "겨울 한파"
+        },
+        {
+          "level_2_code": "summer_heat_wave",
+          "label_ko": "여름 고온"
+        },
+        {
+          "level_2_code": "natural_disaster",
+          "label_ko": "자연재해"
+        }
+      ]
+    },
+    {
+      "level_1_code": "infrastructure_facility",
+      "label_ko": "인프라 / 설비",
+      "children": [
+        {
+          "level_2_code": "upstream_production_facility_capacity_utilization_change",
+          "label_ko": "상류 생산 시설 Capa/가동률 변화"
+        },
+        {
+          "level_2_code": "liquefaction_terminal_facility_capacity_utilization_change",
+          "label_ko": "액화 / 터미널 시설 Capa/가동률 변화"
+        },
+        {
+          "level_2_code": "pipeline_transport_infrastructure_capacity_utilization_change",
+          "label_ko": "파이프라인/수송 인프라 Capa/가동률 변화"
+        },
+        {
+          "level_2_code": "power_plant_facility_capacity_utilization_change",
+          "label_ko": "발전소 (원전, 화력) 설비 Capa/가동률 변화"
+        }
+      ]
+    },
+    {
+      "level_1_code": "supply_demand_balance",
+      "label_ko": "수급 밸런스",
+      "children": [
+        {
+          "level_2_code": "inventory_storage_level",
+          "label_ko": "재고 / 저장 수준"
+        },
+        {
+          "level_2_code": "regional_demand_competition",
+          "label_ko": "지역간 수요 경쟁 (유럽 vs. 아시아)"
+        }
+      ]
+    },
+    {
+      "level_1_code": "logistics_shipping",
+      "label_ko": "물류 / 해운",
+      "children": [
+        {
+          "level_2_code": "ocean_freight_charter_rate_change",
+          "label_ko": "해상 운임 / 용선료 변동"
+        },
+        {
+          "level_2_code": "cargo_flow_change_port_canal_disruption",
+          "label_ko": "화물 흐름 변화 / 항만·운하 차질"
+        }
+      ]
+    },
+    {
+      "level_1_code": "energy_mix_transition",
+      "label_ko": "에너지 믹스 전환",
+      "children": [
+        {
+          "level_2_code": "nuclear_power_expansion_reduction",
+          "label_ko": "원자력 발전 확대 / 축소"
+        },
+        {
+          "level_2_code": "renewable_power_expansion_reduction",
+          "label_ko": "재생에너지 발전 확대 / 축소"
+        },
+        {
+          "level_2_code": "alternative_fuel_availability",
+          "label_ko": "대체 연료 가용성"
+        }
+      ]
+    },
+    {
+      "level_1_code": "macroeconomy_policy",
+      "label_ko": "거시경제 / 정책",
+      "children": [
+        {
+          "level_2_code": "interest_rate_fx_policy_change",
+          "label_ko": "금리 / 통화정책 변화"
+        },
+        {
+          "level_2_code": "country_economic_condition_change",
+          "label_ko": "국가별 경기 변화"
+        }
+      ]
+    },
+    {
+      "level_1_code": "market_trading_structure",
+      "label_ko": "시장 / 거래 구조",
+      "children": [
+        {
+          "level_2_code": "transaction_hedging_cost_change",
+          "label_ko": "거래 / 헷징 비용 변동"
+        },
+        {
+          "level_2_code": "inter_index_spread_gap",
+          "label_ko": "인덱스별 스프레드 Gap"
+        }
+      ]
+    }
+  ]
+}

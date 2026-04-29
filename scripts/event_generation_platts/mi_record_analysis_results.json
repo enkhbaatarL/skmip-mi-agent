@@ -1,0 +1,2104 @@
+{
+  "_meta": {
+    "description": "MI Record 배치 분석 결과 — LNG 시장 리포트 섹션 단위 태그",
+    "input_table": "tmd_mi_record",
+    "input_file": "리포트_샘플_Final1.json",
+    "input_files": [
+      "리포트_샘플_Final1.json"
+    ],
+    "schema_note": "records[].mi_record_id..origin_source_id 컬럼은 tmd_mi_record 스키마 정합. title/smry 는 스키마 외 원문(리포트 섹션) 데이터 (LLM 입력으로 활용). analysis_time/categories 는 본 파이프라인 중간 산출물(DB 미저장). 여러 건의 리포트(JSON)를 한 번에 처리할 경우, Record 들은 리포트별 섹션 단위로 분할된 뒤 리포트 순서를 유지하며 이어붙고 mi_record_id 는 전역 순차로 재부여됨.",
+    "generated": "2026-04-29T01:40:46.240891+00:00",
+    "total": 25
+  },
+  "summary": [
+    {
+      "mi_record_id": 1,
+      "record_type": "REPORT",
+      "title": "전체 스토리라인",
+      "categories": [
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "score": 7.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "score": 8.0
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 9.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 2,
+      "record_type": "REPORT",
+      "title": "시장 코멘터리 — 아시아·JKM·인도 수요",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        },
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "score": 3.0
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "transaction_hedging_cost_change",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 3,
+      "record_type": "REPORT",
+      "title": "시장 코멘터리 — 대서양·유럽·차익거래",
+      "categories": [
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "score": 8.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "score": 6.0
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 4,
+      "record_type": "REPORT",
+      "title": "시장 코멘터리 — 운임·선복",
+      "categories": [
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "ocean_freight_charter_rate_change",
+          "score": 10.0
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 5,
+      "record_type": "REPORT",
+      "title": "가격 평가 근거 — JKM 평가",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "transaction_hedging_cost_change",
+          "score": 9.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 6,
+      "record_type": "REPORT",
+      "title": "가격 평가 근거 — WIM 평가",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 8.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 7,
+      "record_type": "REPORT",
+      "title": "가격 평가 근거 — FOB Gulf Coast Marker 평가",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 9.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 8,
+      "record_type": "REPORT",
+      "title": "가격 평가 근거 — DES NWE·MED·EMM 평가",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 9.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 9,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 아르헨티나 Enarsa·수입자 선정 및 겨울 조달",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "transaction_hedging_cost_change",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 10,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 인도 RLNG·현물 조달",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 11,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — JKM-NWE 스프레드·여름 경쟁",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 9.0
+        },
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "cargo_flow_change_port_canal_disruption",
+          "score": 8.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 12,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 대만 수입·소비",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "power_plant_facility_capacity_utilization_change",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 13,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 중국 수입 감소",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        },
+        {
+          "level_1": "weather_climate",
+          "level_2": "winter_cold_wave",
+          "score": 6.0
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 14,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 영국 여름 수급 전망",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "upstream_production_facility_capacity_utilization_change",
+          "score": 7.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 15,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 체코 바이오메탄 보조금",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "alternative_fuel_availability",
+          "score": 9.0
+        },
+        {
+          "level_1": "macroeconomy_policy",
+          "level_2": "country_economic_condition_change",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 16,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 저탄소 메탄·해운 규제",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "alternative_fuel_availability",
+          "score": 9.0
+        },
+        {
+          "level_1": "macroeconomy_policy",
+          "level_2": "country_economic_condition_change",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 17,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 싱가포르 항행 자유·에너지 우려",
+      "categories": [
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "score": 8.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 7.0
+        },
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "cargo_flow_change_port_canal_disruption",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 18,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 일본 원전 재가동·호르무즈 의존도",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "nuclear_power_expansion_reduction",
+          "score": 9.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 19,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — LNG 벙커·GHG 연구",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "alternative_fuel_availability",
+          "score": 9.0
+        },
+        {
+          "level_1": "macroeconomy_policy",
+          "level_2": "country_economic_condition_change",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 20,
+      "record_type": "REPORT",
+      "title": "뉴스 요약 — 미국 LNG 주간·신규 공급",
+      "categories": [
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "liquefaction_terminal_facility_capacity_utilization_change",
+          "score": 9.0
+        },
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "cargo_flow_change_port_canal_disruption",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 21,
+      "record_type": "REPORT",
+      "title": "지역별 수급 스냅샷 — 동북아",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "power_plant_facility_capacity_utilization_change",
+          "score": 7.0
+        },
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "nuclear_power_expansion_reduction",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 22,
+      "record_type": "REPORT",
+      "title": "지역별 수급 스냅샷 — 남아시아",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 9.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 23,
+      "record_type": "REPORT",
+      "title": "지역별 수급 스냅샷 — 유럽",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "score": 9.0
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 7.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 24,
+      "record_type": "REPORT",
+      "title": "지역별 수급 스냅샷 — 미주",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 8.0
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "upstream_production_facility_capacity_utilization_change",
+          "score": 6.0
+        }
+      ]
+    },
+    {
+      "mi_record_id": 25,
+      "record_type": "REPORT",
+      "title": "지역별 수급 스냅샷 — 중동·아프리카",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "score": 8.0
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "upstream_production_facility_capacity_utilization_change",
+          "score": 6.0
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "mi_record_id": 1,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "전체 스토리라인",
+      "smry": "[리포트 섹션: overall_storyline]\n[리포트 발행일: 2026-04-14]\n\n중동 봉쇄·휴전 협상 불확실성이 유지되는 가운데 아시아와 대서양 LNG 현물 가격이 동반 하락했고, **EU 가스저장률은 4월 13일 기준 29.54%**로 낮은 수준이지만 유럽 숏 포지션과 동쪽(아시아) 차익거래 재개 신호가 할인 축소를 유도해 여름 추가 물량 경쟁 우려를 남겼다.",
+      "analysis_time": "2026-04-29T01:38:47.530771+00:00",
+      "categories": [
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "entities": [
+            {
+              "name": "중동",
+              "entity_type": "other"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "unknown"
+          },
+          "regions": [
+            "중동"
+          ],
+          "supply_demand_side": "supply",
+          "score": 7.0,
+          "reason": "중동 봉쇄·휴전 협상 불확실성이 유지되고 있어 공급 측면의 지정학적 리스크가 지속되고 있음. 이는 LNG 공급 안정성에 영향을 미치는 주요 요인"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "entities": [
+            {
+              "name": "EU",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-13T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "demand",
+          "score": 8.0,
+          "reason": "EU 가스저장률이 4월 13일 기준 29.54%로 낮은 수준을 기록. 이는 유럽의 재고 상황이 타이트함을 보여주며 향후 수요 증가 가능성을 시사"
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아",
+            "유럽"
+          ],
+          "supply_demand_side": "both",
+          "score": 9.0,
+          "reason": "아시아와 대서양 LNG 현물 가격이 동반 하락했고, 유럽 숏 포지션과 동쪽(아시아) 차익거래 재개 신호가 할인 축소를 유도. 지역 간 스프레드 변화와 차익거래 기회가 시장 구조에 영향을 미치고 있음"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "quarter"
+          },
+          "regions": [
+            "동북아",
+            "유럽"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "여름 추가 물량 경쟁 우려가 제기됨. 아시아와 유럽 간 LNG 물량 확보 경쟁이 예상되며, 이는 지역 간 수요 경쟁 심화를 시사"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 2,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "시장 코멘터리 — 아시아·JKM·인도 수요",
+      "smry": "[리포트 섹션: market_commentaries.아시아·JKM·인도 수요]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"아시아 현물은 중동 지정학 리스크가 이어졌지만 동북아 최종수요가 약해 하락했다. 동북아 재고는 여전히 여유롭고, 시장에서는 최종수요보다 트레이딩하우스와 메이저의 거래만 들린다는 평가가 나왔다.\",\n  \"싱가포르 **16:00** 물리 MOC에서는 **7건의 bid와 9건의 offer**가 보고됐다. Engie는 TotalEnergies에 **5월 21–23일 인도** 카고를 **JKM 6월 월평균 대비 +2센트/MMBtu**에 매도했다. PetroChina는 BP로부터 **5월 15–17일 인도** 카고를 **JKM 6월 월평균 대비 -1센트/MMBtu**에 매수했다.\",\n  \"파생 MOC에서는 **JKM 6월 계약 17건**이 체결됐다. 중국 바이어 목표가격은 최근 파이프가스 경매를 기준으로 **$8–8.50/MMBtu** 수준으로 JKM보다 크게 낮게 제시됐다.\",\n  \"인도에서는 고가 오퍼로 현물 입찰이 다수 유찰됐다. IOCL의 **5월 3·5·6일 및 16·18·19일** 인도분, BPCL의 **4월 23–27일** 인도분, GAIL의 **4월 21일–5월 10일** 인도분이 모두 낙찰되지 않았다. 반면 Empowered Pool Management Committee는 약 **2.7카고 상당 RLNG**를 **약 $16.6/MMBtu ex-terminal**에 낙찰했다.\"\n]",
+      "analysis_time": "2026-04-29T01:38:49.438001+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "Engie",
+              "entity_type": "company"
+            },
+            {
+              "name": "TotalEnergies",
+              "entity_type": "company"
+            },
+            {
+              "name": "PetroChina",
+              "entity_type": "company"
+            },
+            {
+              "name": "BP",
+              "entity_type": "company"
+            },
+            {
+              "name": "IOCL",
+              "entity_type": "company"
+            },
+            {
+              "name": "BPCL",
+              "entity_type": "company"
+            },
+            {
+              "name": "GAIL",
+              "entity_type": "company"
+            },
+            {
+              "name": "Empowered Pool Management Committee",
+              "entity_type": "organization"
+            },
+            {
+              "name": "중국",
+              "entity_type": "country"
+            },
+            {
+              "name": "인도",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아",
+            "남아시아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "동북아 최종수요 약세로 아시아 현물 하락, 동북아 재고 여유로운 상황. 중국 바이어 목표가격 $8-8.50/MMBtu로 JKM보다 크게 낮음. 인도는 고가 오퍼로 IOCL(5월 3·5·6일 및 16·18·19일), BPCL(4월 23-27일), GAIL(4월 21일-5월 10일) 입찰 모두 유찰. 반면 Empowered Pool Management Committee는 2.7카고 RLNG를 약 $16.6/MMBtu ex-terminal에 낙찰"
+        },
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "unknown"
+          },
+          "regions": [
+            "중동"
+          ],
+          "supply_demand_side": "unclear",
+          "score": 3.0,
+          "reason": "중동 지정학 리스크가 이어지고 있으나 동북아 수요 약세로 인해 가격 하락 압력이 더 강함"
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "transaction_hedging_cost_change",
+          "entities": [
+            {
+              "name": "Engie",
+              "entity_type": "company"
+            },
+            {
+              "name": "TotalEnergies",
+              "entity_type": "company"
+            },
+            {
+              "name": "PetroChina",
+              "entity_type": "company"
+            },
+            {
+              "name": "BP",
+              "entity_type": "company"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "both",
+          "score": 7.0,
+          "reason": "싱가포르 16:00 물리 MOC에서 7건 bid, 9건 offer. Engie-TotalEnergies 거래(5월 21-23일 인도, JKM 6월 +2센트/MMBtu), PetroChina-BP 거래(5월 15-17일 인도, JKM 6월 -1센트/MMBtu). 파생 MOC에서 JKM 6월 계약 17건 체결. 시장에서는 최종수요보다 트레이딩하우스와 메이저의 거래만 들린다는 평가"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 3,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "시장 코멘터리 — 대서양·유럽·차익거래",
+      "smry": "[리포트 섹션: market_commentaries.대서양·유럽·차익거래]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"대서양 현물은 미국-이란 평화회담 가능성이 심리를 완화시키며 약세를 보였다. 시장은 **미국 봉쇄 첫 완전 영업일**에도 이란 기항 선박 2척이 해협을 통과했다는 보도와, **다음 주 휴전 만료 전** 2차 대면 협상 가능성을 주시했다.\",\n  \"유럽 트레이더들은 5월보다 후행 월물 조달 관심이 커졌다고 전했다. 현물 회피 심리가 커지며 몇 달 뒤 물량을 미리 확보하려는 움직임이 언급됐다.\",\n  \"유럽 내 숏 포지션과 동쪽(아시아) 차익거래 개방 신호가 허브 대비 DES NWE 할인 축소 압력으로 거론됐다. **4월 13일 기준 EU 가스저장률은 29.54%**, 전일 대비 **0.19% 순주입**이었다.\"\n]",
+      "analysis_time": "2026-04-29T01:38:44.310779+00:00",
+      "categories": [
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "entities": [
+            {
+              "name": "United States",
+              "entity_type": "country"
+            },
+            {
+              "name": "Iran",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "북미",
+            "중동"
+          ],
+          "supply_demand_side": "supply",
+          "score": 8.0,
+          "reason": "미국-이란 평화회담 가능성이 대서양 현물 시장 심리를 완화시켜 약세를 유발. 미국 봉쇄 첫 완전 영업일에도 이란 기항 선박 2척이 해협 통과. 다음 주 휴전 만료 전 2차 대면 협상 가능성 주시"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "entities": [
+            {
+              "name": "EU",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-13T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "demand",
+          "score": 6.0,
+          "reason": "4월 13일 기준 EU 가스저장률 29.54%, 전일 대비 0.19% 순주입. 유럽 내 숏 포지션과 동쪽(아시아) 차익거래 개방 신호가 허브 대비 DES NWE 할인 축소 압력으로 작용"
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "유럽",
+            "동북아"
+          ],
+          "supply_demand_side": "both",
+          "score": 7.0,
+          "reason": "유럽 트레이더들이 5월보다 후행 월물 조달 관심 증가. 현물 회피 심리로 몇 달 뒤 물량 미리 확보 움직임. 동쪽(아시아) 차익거래 개방 신호가 허브 대비 DES NWE 할인 축소 압력으로 작용"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 4,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "시장 코멘터리 — 운임·선복",
+      "smry": "[리포트 섹션: market_commentaries.운임·선복]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"대서양 LNG선 운임은 수요와 고가 성약 소식으로 상승했다. **Atlantic TFDE는 $65,000/일**, **Atlantic two-stroke는 $97,000/일**로 two-stroke는 전일 대비 **$7,000/일 상승**했다.\",\n  \"태평양 운임은 소폭 하락했다. **Asia Pacific TFDE는 $53,000/일**, **Asia Pacific two-stroke는 $73,000/일**로 각각 전일 대비 **$1,000/일 하락**했다.\",\n  \"시장에서는 부활절 이후 활동 재개로 **\\\"5월이 바빠질 것\\\"**이라는 기대가 나왔다. Glencore 선박 1척이 **미국 걸프 5월 17일 적재**, **15일+10일**, **NWE/지중해 재인도** 조건으로 Uniper에 **$105,000/일** 수준에서 subject라는 얘기가 돌았다. Oman LNG는 **Qalhat 5월 13–16일 적재**, **17일 ±7일**, **인도-일본-한국-대만-중국 범위 재인도** 조건의 **160,000–174,000㎥** 선박을 찾은 것으로 전해졌다.\",\n  \"브로커들은 차익거래가 열렸다고 봤지만, 실제로는 **5월 적재·5월 인도** 같은 매우 타이트한 창구에서만 유효하다는 신중론도 있었다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:02.317472+00:00",
+      "categories": [
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "ocean_freight_charter_rate_change",
+          "entities": [
+            {
+              "name": "Glencore",
+              "entity_type": "company"
+            },
+            {
+              "name": "Uniper",
+              "entity_type": "company"
+            },
+            {
+              "name": "Oman LNG",
+              "entity_type": "company"
+            },
+            {
+              "name": "Qalhat",
+              "entity_type": "facility"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "대서양",
+            "태평양",
+            "북미",
+            "유럽",
+            "중동",
+            "동북아",
+            "남아시아"
+          ],
+          "supply_demand_side": "none",
+          "score": 10.0,
+          "reason": "대서양 운임이 상승세를 보였으며 Atlantic TFDE $65,000/일, Atlantic two-stroke $97,000/일(전일 대비 $7,000/일 상승), 태평양 운임은 소폭 하락하여 Asia Pacific TFDE $53,000/일, Asia Pacific two-stroke $73,000/일(각각 $1,000/일 하락). Glencore-Uniper 간 미국 걸프 5월 17일 적재 건이 $105,000/일 수준에서 subject 상태. Oman LNG는 Qalhat 5월 13-16일 적재 선박을 찾고 있음. 브로커들은 차익거래 기회가 열렸다고 평가했으나 5월 적재·5월 인도의 타이트한 창구에서만 유효하다는 신중론도 존재"
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-05-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "대서양",
+            "태평양"
+          ],
+          "supply_demand_side": "none",
+          "score": 6.0,
+          "reason": "브로커들이 차익거래(arbitrage) 기회가 열렸다고 평가했으나, 실제로는 5월 적재·5월 인도 같은 매우 타이트한 창구에서만 유효하다는 신중론이 제기됨. 시장 참가자들은 부활절 이후 활동 재개로 '5월이 바빠질 것'이라는 기대를 표명"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 5,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "가격 평가 근거 — JKM 평가",
+      "smry": "[리포트 섹션: assessment_rationale.JKM 평가]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"Platts는 **5월 JKM을 $17.110/MMBtu**, **JKM 6월 파생을 $17.110/MMBtu**로 평가했다. H1 5월은 **$17.100/MMBtu**로 **6월 파생 대비 -1.0센트/MMBtu**, H2 5월은 **$17.119/MMBtu**로 **+0.9센트/MMBtu**였다.\",\n  \"PetroChina의 BP산 **3.3–3.5 TBtu** 카고 매수는 **5월 15–17일 인도**, **JKM 6월 월평균 -1센트/MMBtu**, 절대가 **$17.10/MMBtu**였다. Shell의 **3.5 TBtu** 카고 bid는 **5월 16–18일 인도**, **$17.28/MMBtu**였고 비표준 물량을 반영해 **7센트/MMBtu 하향 정규화**됐다. ExxonMobil의 **3.3–3.5 TBtu** offer는 **5월 20–22일 인도**, **JKM 6월 월평균 0센트**, 절대가 **$17.11/MMBtu**였다.\",\n  \"파생 MOC에서 JKM 6월의 최고 bid는 **$17.10/MMBtu**, 최고 offer는 **$17.11/MMBtu**였고 연장 구간에서 체결됐다. 종가 부근에서도 **$17.11/MMBtu** 체결이 나와 평가가가 거래 수준에 맞춰졌다.\"\n]",
+      "analysis_time": "2026-04-29T01:38:59.500515+00:00",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "transaction_hedging_cost_change",
+          "entities": [
+            {
+              "name": "PetroChina",
+              "entity_type": "company"
+            },
+            {
+              "name": "BP",
+              "entity_type": "company"
+            },
+            {
+              "name": "Shell",
+              "entity_type": "company"
+            },
+            {
+              "name": "ExxonMobil",
+              "entity_type": "company"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-05-15T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "both",
+          "score": 9.0,
+          "reason": "JKM 5월 $17.110/MMBtu, 6월 파생 $17.110/MMBtu로 평가. PetroChina가 BP산 3.3-3.5 TBtu 카고를 5월 15-17일 인도 조건으로 JKM 6월 월평균 -1센트/MMBtu(절대가 $17.10/MMBtu)에 매수. Shell은 5월 16-18일 인도 3.5 TBtu를 $17.28/MMBtu에 bid(7센트/MMBtu 하향 정규화). ExxonMobil은 5월 20-22일 인도 3.3-3.5 TBtu를 JKM 6월 월평균 0센트(절대가 $17.11/MMBtu)에 offer. 파생 MOC에서 JKM 6월 최고 bid $17.10/MMBtu, 최고 offer $17.11/MMBtu로 체결"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 6,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "가격 평가 근거 — WIM 평가",
+      "smry": "[리포트 섹션: assessment_rationale.WIM 평가]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"WIM 5월은 **$16.859/MMBtu**로 **JKM 대비 -25.1센트/MMBtu**였다. H1 5월은 **$16.850/MMBtu**, H2 5월은 **$16.869/MMBtu**였다.\"\n]",
+      "analysis_time": "2026-04-29T01:38:59.671729+00:00",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-05-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "서아시아"
+          ],
+          "supply_demand_side": "none",
+          "score": 8.0,
+          "reason": "WIM(West India Marker) 5월물이 $16.859/MMBtu로 JKM 대비 -25.1센트/MMBtu 디스카운트를 보이고 있으며, H1 5월 $16.850/MMBtu, H2 5월 $16.869/MMBtu로 상세 가격 평가가 제시됨. 인도 서부 지역 LNG 가격 지표인 WIM과 동북아 벤치마크 JKM 간의 스프레드 갭이 명확히 나타나 지역 간 가격 차이 구조를 보여줌"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 7,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "가격 평가 근거 — FOB Gulf Coast Marker 평가",
+      "smry": "[리포트 섹션: assessment_rationale.FOB Gulf Coast Marker 평가]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"FOB Gulf Coast Marker는 **$13.320/MMBtu**로 전일 대비 **-$1.14/MMBtu**였다. 이는 **5월 TTF 대비 -$1.497/MMBtu** 할인이다. **5월 TTF 선물은 $14.817/MMBtu**, 전일 대비 **-$1.09/MMBtu**였다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:07.268769+00:00",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "북미",
+            "유럽"
+          ],
+          "supply_demand_side": "none",
+          "score": 9.0,
+          "reason": "FOB Gulf Coast Marker가 5월 TTF 대비 -$1.497/MMBtu 할인으로 거래되고 있으며, FOB Gulf Coast는 $13.320/MMBtu(전일 대비 -$1.14), 5월 TTF는 $14.817/MMBtu(전일 대비 -$1.09)로 두 지수 간 스프레드 갭이 명확히 나타남"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 8,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "가격 평가 근거 — DES NWE·MED·EMM 평가",
+      "smry": "[리포트 섹션: assessment_rationale.DES NWE·MED·EMM 평가]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"DES NWE 5월은 **$14.407/MMBtu**로 전일 대비 **-$1.01/MMBtu**였다. **5월 TTF 대비 -41센트/MMBtu** 할인이다. H1 5월은 **$14.387/MMBtu**, **-43센트/MMBtu** 할인이다. H2 5월은 **$14.427/MMBtu**, **-39센트/MMBtu** 할인이다.\",\n  \"NWE 6월 오퍼는 **6월 TTF 대비 -20센트/MMBtu에서 -10센트/MMBtu** 사이로 들렸다. 6월 bid는 **약 -40센트/MMBtu** 수준으로 들렸다. MED 5월은 **$14.307/MMBtu**로 **NWE 대비 -10센트/MMBtu**였고, EMM 5월은 **$14.707/MMBtu**로 **NWE 대비 +30센트/MMBtu**였다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:09.163370+00:00",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-05-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "none",
+          "score": 9.0,
+          "reason": "DES NWE 5월 가격이 $14.407/MMBtu로 TTF 대비 -41센트/MMBtu 할인 거래되고 있으며, H1 5월은 -43센트/MMBtu, H2 5월은 -39센트/MMBtu 할인을 보임. 6월 오퍼는 TTF 대비 -20~-10센트/MMBtu, bid는 -40센트/MMBtu 수준. MED는 NWE 대비 -10센트/MMBtu, EMM은 +30센트/MMBtu로 지역간 스프레드 차이가 명확히 나타남"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 9,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 아르헨티나 Enarsa·수입자 선정 및 겨울 조달",
+      "smry": "[리포트 섹션: news_summary.아르헨티나 Enarsa·수입자 선정 및 겨울 조달]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"Enarsa는 최근 입찰 참가 2곳에 민간 LNG 수입자 선정을 위한 가격 개선을 요구했다. 개선 오퍼 제출은 **4월 15일 10:00–10:30 부에노스아이레스 시간**, 개봉은 **10:35**로 예정됐다.\",\n  \"Trafigura와 Naturgy의 제안 차이는 약 **1%**였다. Trafigura는 **TTF 대비 $4.91/MMBtu 프리미엄**, Naturgy는 **TTF 대비 $4.95/MMBtu 프리미엄**을 제시했다. 계약 낙찰은 **4월 16일**로 예상됐다.\",\n  \"Enarsa의 별도 **2카고 매입 입찰**도 **4월 15일**이 제출 마감이며 개봉은 **11:00 현지시간**이다. 첫 카고 인도창은 **5월 8–13일**, 두 번째는 **5월 15–19일**이다. 아르헨티나는 올해 남반구 겨울 수요 대응에 **약 24–25개 부분 카고**가 필요할 수 있다는 관측이 제시됐다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:20.816219+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "Enarsa",
+              "entity_type": "company"
+            },
+            {
+              "name": "Trafigura",
+              "entity_type": "company"
+            },
+            {
+              "name": "Naturgy",
+              "entity_type": "company"
+            },
+            {
+              "name": "아르헨티나",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-15T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "중남미"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "아르헨티나 국영 Enarsa가 민간 LNG 수입자 선정을 위한 입찰을 진행 중이며, Trafigura(TTF+$4.91/MMBtu)와 Naturgy(TTF+$4.95/MMBtu)가 경쟁. 4월 15일 가격 개선 오퍼 제출, 4월 16일 낙찰 예정. 별도 2카고 매입 입찰도 5월 8-13일, 5월 15-19일 인도창으로 진행. 남반구 겨울 수요 대응에 약 24-25개 부분 카고 필요 전망으로 아르헨티나의 강한 LNG 수요가 확인됨"
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "transaction_hedging_cost_change",
+          "entities": [
+            {
+              "name": "Enarsa",
+              "entity_type": "company"
+            },
+            {
+              "name": "Trafigura",
+              "entity_type": "company"
+            },
+            {
+              "name": "Naturgy",
+              "entity_type": "company"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-15T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "중남미"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "TTF 벤치마크 대비 프리미엄 구조로 거래가 진행되며, Trafigura는 TTF+$4.91/MMBtu, Naturgy는 TTF+$4.95/MMBtu 프리미엄을 제시. 두 제안 간 차이는 약 1%로 근소하며, Enarsa가 가격 개선을 요구하는 등 거래 구조와 가격 형성 메커니즘이 명확히 드러남"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 10,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 인도 RLNG·현물 조달",
+      "smry": "[리포트 섹션: news_summary.인도 RLNG·현물 조달]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"Empowered Pool Management Committee는 **4월 16–30일 공급** 단기 RLNG 입찰을 **4월 13일** 낙찰했다. 총 **9.3 TBtu** 중 **6.6 TBtu는 GAIL에 $16.44/MMBtu ex-terminal**, **2.7 TBtu는 Indian Oil Corporation에 $18.23/MMBtu ex-terminal**로 배분됐다.\",\n  \"직전 **4월 1–15일** EPMC 입찰은 **3월 25일 $19.20–19.47/MMBtu**에 낙찰됐다. 비료업체의 계약가스 축소가 추가 RLNG 수요를 만들고 있지만, 인도 바이어들은 가격 급등과 가용성 불확실성 때문에 **15일 단위**의 짧은 조달 창구에 머물고 있다는 평가가 나왔다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:18.730238+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "GAIL",
+              "entity_type": "company"
+            },
+            {
+              "name": "Indian Oil Corporation",
+              "entity_type": "company"
+            },
+            {
+              "name": "Empowered Pool Management Committee",
+              "entity_type": "organization"
+            },
+            {
+              "name": "India",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-13T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "남아시아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "인도 EPMC가 4월 13일 단기 RLNG 입찰을 낙찰했으며, 총 9.3 TBtu 중 GAIL에 6.6 TBtu를 $16.44/MMBtu ex-terminal, IOC에 2.7 TBtu를 $18.23/MMBtu ex-terminal로 배분. 직전 4월 1-15일 입찰 대비 가격이 하락($19.20-19.47 → $16.44-18.23). 비료업체의 계약가스 축소로 추가 RLNG 수요 발생, 그러나 가격 급등과 가용성 불확실성으로 인도 바이어들이 15일 단위 짧은 조달 창구 유지"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 11,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — JKM-NWE 스프레드·여름 경쟁",
+      "smry": "[리포트 섹션: news_summary.JKM-NWE 스프레드·여름 경쟁]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"**4월 13일 런던 클로즈 기준** JKM 6월 파생은 **$17.377/MMBtu**, NWE 6월 파생은 **$15.412/MMBtu**였다. JKM-NWE 6월 스프레드는 **$1.965/MMBtu**로 **3월 19일 $2.19/MMBtu 이후 가장 넓은 수준**에 근접했다.\",\n  \"서아프리카 적재의 북아시아-대서양 차익은 **+$0.388/MMBtu**, 미국 적재의 북아시아-대서양 차익은 **파나마 경유 +$0.548/MMBtu**, **희망봉 경유 -$0.671/MMBtu**로 평가됐다. 이는 서아프리카와 미국-파나마 물량은 동북아행 차익이 열려 있지만, 희망봉 경유는 여전히 닫혀 있음을 시사했다.\",\n  \"**4월 누적 서아프리카 수출은 1.29 million mt**였다. 이 중 **아시아 33%**, **유럽 17%**였다. **2025년 4월 0.84 million mt**와 비교하면 당시 비중은 **아시아 40%**, **유럽 50%**였다.\",\n  \"**4월 누적 미국 수출은 4.91 million mt**였다. 이 중 **아시아 13%**, **유럽 29%**였다. **2025년 4월 4.34 million mt**와 비교하면 당시 비중은 **아시아 24%**, **유럽 65%**였다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:30.937327+00:00",
+      "categories": [
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-04-13T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아",
+            "유럽"
+          ],
+          "supply_demand_side": "both",
+          "score": 9.0,
+          "reason": "4월 13일 런던 클로즈 기준 JKM 6월 파생 $17.377/MMBtu vs NWE 6월 파생 $15.412/MMBtu로 JKM-NWE 스프레드가 $1.965/MMBtu를 기록, 3월 19일 $2.19/MMBtu 이후 가장 넓은 수준에 근접. 서아프리카 적재 북아시아-대서양 차익 +$0.388/MMBtu, 미국-파나마 경유 +$0.548/MMBtu로 동북아행 차익 열림, 희망봉 경유는 -$0.671/MMBtu로 차익 닫힘"
+        },
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "cargo_flow_change_port_canal_disruption",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-04-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "서아프리카",
+            "북미",
+            "동북아",
+            "유럽"
+          ],
+          "supply_demand_side": "supply",
+          "score": 8.0,
+          "reason": "4월 누적 서아프리카 수출 1.29 million mt 중 아시아 33%, 유럽 17% (2025년 4월 대비 아시아 비중 감소 40%→33%, 유럽 비중 대폭 감소 50%→17%). 4월 누적 미국 수출 4.91 million mt 중 아시아 13%, 유럽 29% (2025년 4월 대비 아시아 비중 감소 24%→13%, 유럽 비중 대폭 감소 65%→29%). 전년 대비 카고 플로우의 뚜렷한 변화 관찰"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "2026-04-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동북아",
+            "유럽"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "JKM-NWE 스프레드 확대($1.965/MMBtu)와 함께 서아프리카 및 미국 LNG의 아시아/유럽 간 배분 비중이 전년 대비 크게 변화. 특히 유럽의 미국산 LNG 수입 비중이 65%에서 29%로 급감하고, 서아프리카산도 50%에서 17%로 감소하여 여름철 수요 경쟁 양상 변화"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 12,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 대만 수입·소비",
+      "smry": "[리포트 섹션: news_summary.대만 수입·소비]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"대만의 **3월 LNG 수입은 2.1 million mt**로 전년 동월 대비 **+2.4%**였다. 전월 **1.55 million mt**보다 크게 늘었다.\",\n  \"공급국별로 호주가 **746,673 mt**로 1위였다. 전년 대비 **-16.3%**였지만 전월 **294,868 mt** 대비 **+153.2%**였다. 카타르는 **439,640 mt**로 전년 대비 **-20.1%**, 전월 대비 **-20.7%**였다. 미국은 **206,847 mt**로 전년 대비 **+79%**, 전월 대비 **-25.9%**였다. 오만 **206,197 mt**, 파푸아뉴기니 **158,076 mt**, 캐나다 **141,948 mt**, 브루나이 **130,788 mt**, 적도기니 **72,808 mt**도 공급했다.\",\n  \"대만 경제부는 **3월·4월 인도 예정 22카고**를 모두 확보했다고 **3월 10일** 확인했다. **5월 대체 공급 계획**도 가동했고, **6월부터 미국산 수입 확대**를 예고했다. CPC는 **2월** Cheniere Energy와 **25년 SPA**를 체결했고, **2027년부터 연간 최대 1.2 million mt**를 받기로 했다.\",\n  \"대만의 **2월 LNG 총소비는 2.04 Bcm**으로 전년 대비 **-0.1%**, 전월 대비 **-15.1%**였다. **1–2월 누적은 4.44 Bcm**, 전년 대비 **+5.8%**였다. 이 중 전력부문은 **2월 1.76 Bcm**, **1–2월 3.79 Bcm**으로 각각 전년 대비 **+4.2%**, **+8.6%**였다. **2월 LNG 발전량은 9.9 TWh**로 전년 대비 **+6%**, 전월 대비 **-13.1%**였고 총 발전의 **51%**를 차지했다. 산업부문 LNG 소비는 **2월 -21.2%**, **1–2월 -8.4%**였다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:39.232798+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "Taiwan",
+              "entity_type": "country"
+            },
+            {
+              "name": "Australia",
+              "entity_type": "country"
+            },
+            {
+              "name": "Qatar",
+              "entity_type": "country"
+            },
+            {
+              "name": "United States",
+              "entity_type": "country"
+            },
+            {
+              "name": "Oman",
+              "entity_type": "country"
+            },
+            {
+              "name": "Papua New Guinea",
+              "entity_type": "country"
+            },
+            {
+              "name": "Canada",
+              "entity_type": "country"
+            },
+            {
+              "name": "Brunei",
+              "entity_type": "country"
+            },
+            {
+              "name": "Equatorial Guinea",
+              "entity_type": "country"
+            },
+            {
+              "name": "CPC",
+              "entity_type": "company"
+            },
+            {
+              "name": "Cheniere Energy",
+              "entity_type": "company"
+            },
+            {
+              "name": "대만 경제부",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동북아",
+            "호주",
+            "중동",
+            "북미",
+            "동남아",
+            "아프리카"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "대만의 3월 LNG 수입이 2.1 million mt로 전년 대비 +2.4% 증가했고, 전월 1.55 million mt 대비 크게 증가. 호주가 746,673 mt로 최대 공급국이며 전월 대비 +153.2% 급증. 카타르 439,640 mt, 미국 206,847 mt(전년 대비 +79%) 등 다양한 공급원에서 수입. 대만 경제부는 3-4월 인도 예정 22카고를 모두 확보했고, CPC는 Cheniere Energy와 25년 SPA 체결로 2027년부터 연간 최대 1.2 million mt 확보"
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "power_plant_facility_capacity_utilization_change",
+          "entities": [
+            {
+              "name": "Taiwan",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-02-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "대만의 2월 LNG 발전량이 9.9 TWh로 전년 대비 +6% 증가했고 총 발전의 51%를 차지. 전력부문 LNG 소비는 2월 1.76 Bcm(전년 대비 +4.2%), 1-2월 누적 3.79 Bcm(전년 대비 +8.6%)로 지속적인 증가세를 보이며 LNG 발전 의존도가 높음"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 13,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 중국 수입 감소",
+      "smry": "[리포트 섹션: news_summary.중국 수입 감소]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"중국의 **3월 천연가스 수입은 8.18 million mt**, 또는 **11.28 Bcm**으로 전년 대비 **-10.6%**였다. **1–3월 누적은 28.15 million mt**로 전년 대비 **-4.0%**였다.\",\n  \"시장에서는 부진한 다운스트림 수요와 공급 차질을 원인으로 지목했다. **1–2월 겉보기 가스소비는 69.35 Bcm**으로 전년 대비 **-0.9%**였고, **3월 중순 난방 종료**와 봄철 기온 상승이 수요를 약화시켰다.\",\n  \"카타르발 중국 유입은 **3월 1.03 million mt**로 전년 대비 **-45%**로 추정됐다. 호주발은 **1.23 million mt**로 전년 대비 **-22%**였다. CERA는 **3월 중국 LNG 도착량이 3.9 million mt**, 전년 대비 **-20%**로 본다.\",\n  \"Platts 계산 기준 **3월 평균 천연가스 수입단가는 $392/mt**, 또는 **$7.55/MMBtu**로 전년 대비 **-12.8%**였다. 같은 달 **JKM 평균은 $10.99/MMBtu**였다. 이 격차는 중국 바이어가 장기계약 물량에 크게 의존했음을 시사한다는 평가가 나왔다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:41.263678+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "중국",
+              "entity_type": "country"
+            },
+            {
+              "name": "카타르",
+              "entity_type": "country"
+            },
+            {
+              "name": "호주",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동북아",
+            "중동",
+            "호주"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "중국의 3월 천연가스 수입이 8.18 million mt로 전년 대비 -10.6% 감소, 1-3월 누적 -4.0% 감소. 부진한 다운스트림 수요와 공급 차질이 원인. 1-2월 겉보기 가스소비 69.35 Bcm로 전년 대비 -0.9%, 3월 중순 난방 종료와 봄철 기온 상승으로 수요 약화. 카타르발 중국 유입 3월 1.03 million mt로 전년 대비 -45%, 호주발 1.23 million mt로 -22%. CERA는 3월 중국 LNG 도착량 3.9 million mt로 전년 대비 -20% 추정"
+        },
+        {
+          "level_1": "weather_climate",
+          "level_2": "winter_cold_wave",
+          "entities": [
+            {
+              "name": "중국",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-15T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 6.0,
+          "reason": "3월 중순 난방 종료와 봄철 기온 상승이 중국의 가스 수요를 약화시킴. 겨울 난방 시즌 종료가 수입 감소의 한 요인"
+        },
+        {
+          "level_1": "market_trading_structure",
+          "level_2": "inter_index_spread_gap",
+          "entities": [
+            {
+              "name": "중국",
+              "entity_type": "country"
+            },
+            {
+              "name": "Platts",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "3월 평균 천연가스 수입단가 $7.55/MMBtu vs JKM 평균 $10.99/MMBtu의 격차. 중국 바이어가 장기계약 물량에 크게 의존했음을 시사. 수입단가는 전년 대비 -12.8% 하락"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 14,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 영국 여름 수급 전망",
+      "smry": "[리포트 섹션: news_summary.영국 여름 수급 전망]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"National Gas는 영국의 **2026년 여름 가스수요를 18.6 Bcm**으로 전년과 대체로 비슷하게 봤다. 전력용 수요는 **5.1 Bcm**으로 **-6%**, 비일일계량 수요는 **10.1 Bcm**으로 **+2%**, 산업·일일계량 수요는 **3.4 Bcm**으로 보합 전망이다.\",\n  \"공급 측면에서 영국 대륙붕 공급은 **13.1 Bcm**으로 **-6%**가 예상된다. 노르웨이 수입은 **12.2 Bcm**으로 **+24%**, LNG 수입은 **2.7 Bcm**으로 전년 **1.6 Bcm**에서 증가, 저장 인출은 **1.5 Bcm**으로 전년 **2 Bcm**에서 감소 전망이다. 아일랜드 수출은 **2.6 Bcm**, 유럽대륙 수출은 **6.6 Bcm**, 저장 주입은 **1.8 Bcm**으로 대체로 전년과 비슷할 전망이다.\",\n  \"National Gas는 중동 사태 이전에 전망을 작성했지만 재검토 후에도 시장 수용능력은 충분하다고 봤다. 다만 고가스 가격은 영국·노르웨이 대륙붕 정비를 지연시켜 생산을 높일 수 있고, 그 경우 LNG 수입은 예상보다 줄 수 있다고 했다. 반대로 글로벌 경쟁 심화는 영국 LNG 수입을 낮출 수 있으며, EU 저장 재충전 방식 변화는 때때로 영국향 LNG 유입을 늘릴 수 있다고 덧붙였다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:51.123141+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "National Gas",
+              "entity_type": "organization"
+            },
+            {
+              "name": "United Kingdom",
+              "entity_type": "country"
+            },
+            {
+              "name": "Norway",
+              "entity_type": "country"
+            },
+            {
+              "name": "Ireland",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-06-01T00:00:00Z",
+            "occurrence_time_precision": "quarter"
+          },
+          "regions": [
+            "유럽",
+            "북해"
+          ],
+          "supply_demand_side": "both",
+          "score": 9.0,
+          "reason": "National Gas의 영국 2026년 여름 수급 전망이 핵심. 수요 18.6 Bcm(전년 대비 보합), 전력용 -6%, 비일일계량 +2%. 공급 측면에서 영국 대륙붕 -6%(13.1 Bcm), 노르웨이 수입 +24%(12.2 Bcm), LNG 수입 증가(1.6→2.7 Bcm), 저장 인출 감소(2→1.5 Bcm). 아일랜드 수출 2.6 Bcm, 유럽대륙 수출 6.6 Bcm, 저장 주입 1.8 Bcm 전망"
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "upstream_production_facility_capacity_utilization_change",
+          "entities": [
+            {
+              "name": "United Kingdom",
+              "entity_type": "country"
+            },
+            {
+              "name": "Norway",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-06-01T00:00:00Z",
+            "occurrence_time_precision": "quarter"
+          },
+          "regions": [
+            "북해",
+            "유럽"
+          ],
+          "supply_demand_side": "supply",
+          "score": 7.0,
+          "reason": "영국 대륙붕 공급 13.1 Bcm으로 전년 대비 -6% 감소 전망. 고가스 가격이 영국·노르웨이 대륙붕 정비를 지연시켜 생산을 높일 가능성 언급. 노르웨이 수입은 12.2 Bcm으로 +24% 증가 예상"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "entities": [
+            {
+              "name": "United Kingdom",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-06-01T00:00:00Z",
+            "occurrence_time_precision": "quarter"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "both",
+          "score": 6.0,
+          "reason": "저장 인출 1.5 Bcm으로 전년 2 Bcm에서 감소, 저장 주입 1.8 Bcm으로 전년과 비슷. EU 저장 재충전 방식 변화가 영국향 LNG 유입에 영향 가능성 언급"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 15,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 체코 바이오메탄 보조금",
+      "smry": "[리포트 섹션: news_summary.체코 바이오메탄 보조금]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"유럽연합 집행위원회는 체코 바이오메탄 개발을 위한 **37억유로** 국가보조금 제도를 **4월 14일** 승인했다. 제도는 **2030년 말까지** 운영되며, 체코 내 면허 보유 생산자에게 **양방향 차액계약(CfD)** 방식으로 지원한다.\",\n  \"선정 사업자는 경쟁입찰로 뽑히며, 생산된 바이오메탄 **MWh당** 시장가가 행사가보다 낮으면 차액을 받고 높으면 초과분을 정부에 반환한다. 계약 기간은 **15년**이다.\",\n  \"이 제도는 신규 바이오메탄 설비와 바이오가스 설비의 전환을 지원한다. 총 **3억5,000만㎥** 생산 설비를 뒷받침할 것으로 예상되며, 주로 중소 농가가 수혜 대상이다. EU는 **2030년 바이오메탄 35 Bcm** 생산을 목표로 하고 있다. 유럽의 **2024년 바이오가스·바이오메탄 총생산은 22 Bcm**, 이 중 바이오메탄은 **5.2 Bcm**이었다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:55.353987+00:00",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "alternative_fuel_availability",
+          "entities": [
+            {
+              "name": "European Commission",
+              "entity_type": "organization"
+            },
+            {
+              "name": "Czech Republic",
+              "entity_type": "country"
+            },
+            {
+              "name": "EU",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "supply",
+          "score": 9.0,
+          "reason": "유럽연합 집행위원회가 4월 14일 체코 바이오메탄 개발을 위한 37억유로 규모 국가보조금 제도를 승인. 2030년 말까지 운영되며 양방향 차액계약(CfD) 방식으로 지원. 총 3억5,000만㎥ 생산 설비 지원 예상. EU는 2030년 바이오메탄 35 Bcm 생산 목표 (2024년 실적: 바이오메탄 5.2 Bcm). 천연가스 대체 연료인 바이오메탄 생산 확대로 LNG 수요 감소 압력 가능"
+        },
+        {
+          "level_1": "macroeconomy_policy",
+          "level_2": "country_economic_condition_change",
+          "entities": [
+            {
+              "name": "Czech Republic",
+              "entity_type": "country"
+            },
+            {
+              "name": "European Commission",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "supply",
+          "score": 6.0,
+          "reason": "체코 정부가 37억유로 규모의 대규모 바이오메탄 보조금 제도 도입. 15년 장기 계약으로 중소 농가 지원. 에너지 정책 변화를 통한 경제 구조 전환 추진"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 16,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 저탄소 메탄·해운 규제",
+      "smry": "[리포트 섹션: news_summary.저탄소 메탄·해운 규제]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"DNV는 LNG 추진선 확대와 강화되는 배출 규제로 저온실가스 메탄 수요가 장기적으로 늘 수 있다고 봤다. 현재 **LNG 대응 선박 약 800척**이 운항 중이고 **600척**이 추가 발주돼 있다.\",\n  \"DNV는 FuelEU Maritime만으로도 **2040년 저온실가스 메탄 수요가 약 2–11 million mt** 발생할 수 있다고 추산했다. IMO Net-Zero Framework의 초기 Base 목표 충족에는 **2040년 40–95 million mt**가 필요할 수 있다고 봤다.\",\n  \"싱가포르 해사항만청은 **2024년 12월** 해상 LNG 재적재와 e/바이오메탄 공급 확대를 위한 EOI를 개시했다. **2025년 4월**에는 **14개 제안서**, **18개 기업 참여**, 이 중 **8건이 바이오메탄·e-메탄 솔루션 포함**이라고 밝혔다.\",\n  \"비용은 여전히 제약이다. Platts 글로벌 벙커 연료비 계산기 기준 **3월 로테르담 인도 평균가격**은 **VLSFO $739.46/mt**, **LNG 벙커 $767.30/mtVLSFOe**, **bio-LNG 벙커 $1,573.72/mtVLSFOe**였다.\"\n]",
+      "analysis_time": "2026-04-29T01:39:58.642200+00:00",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "alternative_fuel_availability",
+          "entities": [
+            {
+              "name": "DNV",
+              "entity_type": "organization"
+            },
+            {
+              "name": "싱가포르 해사항만청",
+              "entity_type": "organization"
+            },
+            {
+              "name": "IMO",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2040-01-01T00:00:00Z",
+            "occurrence_time_precision": "year"
+          },
+          "regions": [
+            "유럽",
+            "동남아시아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "DNV는 LNG 추진선 확대(현재 800척 운항, 600척 추가 발주)와 FuelEU Maritime 규제로 2040년 저온실가스 메탄 수요가 2-11 million mt 발생 예상. IMO Net-Zero Framework 충족 시 2040년 40-95 million mt 필요. 싱가포르는 2025년 4월 기준 14개 제안서 중 8건이 바이오메탄·e-메탄 솔루션 포함. 단, 3월 로테르담 기준 bio-LNG 벙커 가격($1,573.72/mtVLSFOe)이 VLSFO($739.46/mt) 대비 2배 이상으로 비용 제약 존재"
+        },
+        {
+          "level_1": "macroeconomy_policy",
+          "level_2": "country_economic_condition_change",
+          "entities": [
+            {
+              "name": "싱가포르",
+              "entity_type": "country"
+            },
+            {
+              "name": "로테르담",
+              "entity_type": "facility"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2024-12-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동남아시아",
+            "유럽"
+          ],
+          "supply_demand_side": "both",
+          "score": 6.0,
+          "reason": "싱가포르 해사항만청이 2024년 12월 해상 LNG 재적재와 e/바이오메탄 공급 확대를 위한 EOI 개시. 해운 규제 강화에 따른 정책적 대응으로 LNG 벙커링 인프라 및 대체연료 공급망 구축 추진"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 17,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 싱가포르 항행 자유·에너지 우려",
+      "smry": "[리포트 섹션: news_summary.싱가포르 항행 자유·에너지 우려]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"싱가포르는 **4월 13일** 호르무즈 해협을 포함한 국제 수로의 자유 항행을 지지한다고 밝혔다. K Shanmugam 장관은 분쟁 전 호르무즈를 통해 **세계 해상 원유의 1/4**, **가스의 1/5**가 통과했고, 당시 **하루 약 80척**이 지났다고 말했다.\",\n  \"싱가포르는 에너지의 거의 전량을 수입한다. 전력의 **약 95%**가 수입 천연가스로 생산된다. S&P Global Energy CERA 기준 싱가포르의 **2025년 LNG 수입은 약 6.71 million mt/년**으로 추정된다. 정부는 연료·전기요금 상승 가능성을 경고하면서 상황을 면밀히 모니터링하고 있다고 밝혔다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:14.042892+00:00",
+      "categories": [
+        {
+          "level_1": "geopolitical_risk",
+          "level_2": "geopolitical_tension_instability",
+          "entities": [
+            {
+              "name": "싱가포르",
+              "entity_type": "country"
+            },
+            {
+              "name": "K Shanmugam",
+              "entity_type": "other"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-13T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동남아시아",
+            "중동"
+          ],
+          "supply_demand_side": "both",
+          "score": 8.0,
+          "reason": "싱가포르가 4월 13일 호르무즈 해협을 포함한 국제 수로의 자유 항행을 지지한다고 밝힌 것은 지정학적 긴장 상황을 반영. 호르무즈 해협은 세계 해상 원유의 1/4, 가스의 1/5가 통과하는 핵심 에너지 수송로이며, 하루 약 80척이 통과. 싱가포르 정부가 연료·전기요금 상승 가능성을 경고하며 상황을 면밀히 모니터링한다고 밝힌 것은 지정학적 불안정성이 에너지 시장에 미칠 영향을 우려하는 것"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "싱가포르",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "unknown"
+          },
+          "regions": [
+            "동남아시아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "싱가포르는 에너지의 거의 전량을 수입하며, 전력의 약 95%가 수입 천연가스로 생산. S&P Global Energy CERA 기준 싱가포르의 2025년 LNG 수입은 약 6.71 million mt/년으로 추정되어 상당한 LNG 수요국임을 보여줌"
+        },
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "cargo_flow_change_port_canal_disruption",
+          "entities": [],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "unknown"
+          },
+          "regions": [
+            "중동"
+          ],
+          "supply_demand_side": "supply",
+          "score": 6.0,
+          "reason": "호르무즈 해협을 통한 에너지 수송 흐름의 중요성 강조. 분쟁 전 호르무즈를 통해 세계 해상 원유의 1/4, 가스의 1/5가 통과했고 하루 약 80척이 지나갔다는 구체적 수치 제시. 이 수로의 자유 항행 문제는 글로벌 LNG 물류에 직접적 영향"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 18,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 일본 원전 재가동·호르무즈 의존도",
+      "smry": "[리포트 섹션: news_summary.일본 원전 재가동·호르무즈 의존도]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"도쿄전력의 가시와자키-가리와 **6호기 1.356GW**는 **4월 16일** 상업운전 재개가 예정됐다. 일본 경제산업상은 이 원전이 정격출력으로 계속 가동되면 호르무즈 경유 LNG 수입의 **약 30%**를 절감하는 효과가 있다고 밝혔다.\",\n  \"일본의 **2025년 호르무즈 경유 LNG 수입은 약 4 million mt**로 전체의 **6.3%**였다. 카타르가 **5.3%**, UAE가 **1.0%**를 차지했다. 오만 **4.5%**를 포함한 중동 비중은 **10.8%**였다.\",\n  \"이 재가동은 후쿠시마 사태 이후 도쿄전력 원전의 첫 상업운전 복귀다. 2013년 새 규제기준 도입 후 일본에서 재가동된 **15번째 원전**이 된다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:10.663402+00:00",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "nuclear_power_expansion_reduction",
+          "entities": [
+            {
+              "name": "도쿄전력",
+              "entity_type": "company"
+            },
+            {
+              "name": "가시와자키-가리와 6호기",
+              "entity_type": "facility"
+            },
+            {
+              "name": "일본",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-16T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "도쿄전력 가시와자키-가리와 6호기(1.356GW)가 4월 16일 상업운전 재개 예정. 후쿠시마 이후 도쿄전력 첫 원전 재가동이자 2013년 새 규제기준 도입 후 일본 15번째 재가동 원전. 일본 경제산업상은 정격출력 가동 시 호르무즈 경유 LNG 수입의 약 30% 절감 효과 전망"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "일본",
+              "entity_type": "country"
+            },
+            {
+              "name": "카타르",
+              "entity_type": "country"
+            },
+            {
+              "name": "UAE",
+              "entity_type": "country"
+            },
+            {
+              "name": "오만",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2025-01-01T00:00:00Z",
+            "occurrence_time_precision": "year"
+          },
+          "regions": [
+            "동북아",
+            "중동"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "일본의 2025년 호르무즈 경유 LNG 수입 약 4 million mt(전체의 6.3%). 카타르 5.3%, UAE 1.0%, 오만 4.5% 포함 중동 전체 비중 10.8%. 원전 재가동으로 이 의존도가 크게 감소할 전망"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 19,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — LNG 벙커·GHG 연구",
+      "smry": "[리포트 섹션: news_summary.LNG 벙커·GHG 연구]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"SGMF는 헤드라인 기준 LNG 벙커링이 온실가스 배출을 **29%** 줄인다고 제시했다. 본문에서는 **2행정 저속 Otto 엔진**, **0.1% 황 marine gasoil 대비** LNG 사용 시 **well-to-wake 배출이 최대 25% 감소**한다고 밝혔다. 2022년 연구의 감소폭은 **14–23%**였다.\",\n  \"같은 연구에서 화석 LNG의 upstream 공급망 배출은 **16.9 gCO2e/MJ**로 marine gasoil보다 **15% 높지만**, 2022년 SGMF 평가보다 **4% 낮았다**. 엔진별 well-to-wake 배출은 **519–581 gCO2e/kWh**였고, 비교 기준인 marine gasoil은 **689 gCO2e/kWh**였다. 메탄 슬립은 엔진 설계에 따라 well-to-wake의 **5–10%**를 차지할 수 있다고 했다.\",\n  \"바이오-LNG는 혐기소화 경로에서 **56%** 감축, 탄소포집을 결합한 매립가스 경로에서 **113%** 감축을 보였다. 합성 LNG는 biogenic 또는 ambient CO2 사용 시 **45–80%** 감축이 가능했지만, fossil CO2 사용 시 기존 해상연료 대비 **최대 20% 배출 증가**가 가능하다고 했다.\",\n  \"IMO 회원국은 **4월 20일부터 2주간** Net-Zero Framework의 기술 세부사항을 논의할 예정이다. 이 규제는 **2028년부터** 해운사의 GHG 배출에 비용을 부과하도록 설계돼 있어, 연료별 기준 배출계수가 향후 연료 선택에 중요하다고 지적됐다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:13.911863+00:00",
+      "categories": [
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "alternative_fuel_availability",
+          "entities": [
+            {
+              "name": "SGMF",
+              "entity_type": "organization"
+            },
+            {
+              "name": "IMO",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "unknown"
+          },
+          "regions": [],
+          "supply_demand_side": "both",
+          "score": 9.0,
+          "reason": "SGMF 연구에서 LNG 벙커링이 온실가스 배출을 29% 감축, 2행정 저속 Otto 엔진 기준 marine gasoil 대비 well-to-wake 배출 최대 25% 감소. 바이오-LNG는 혐기소화 경로 56% 감축, 탄소포집 결합 매립가스 경로 113% 감축. 합성 LNG는 biogenic/ambient CO2 사용 시 45-80% 감축 가능. LNG가 해운 부문 대체연료로서 GHG 감축 잠재력을 보여주는 핵심 연구 결과"
+        },
+        {
+          "level_1": "macroeconomy_policy",
+          "level_2": "country_economic_condition_change",
+          "entities": [
+            {
+              "name": "IMO",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-20T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [],
+          "supply_demand_side": "both",
+          "score": 7.0,
+          "reason": "IMO 회원국이 4월 20일부터 2주간 Net-Zero Framework 기술 세부사항 논의 예정. 2028년부터 해운사 GHG 배출에 비용 부과하는 규제로 연료별 기준 배출계수가 향후 연료 선택에 중요. 이는 LNG 벙커링 수요와 해운 부문 LNG 사용에 직접적 정책 영향"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 20,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "뉴스 요약 — 미국 LNG 주간·신규 공급",
+      "smry": "[리포트 섹션: news_summary.미국 LNG 주간·신규 공급]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"미국 걸프 LNG 주간 평균은 **$14.48/MMBtu**로 전주 **$15.55/MMBtu**에서 하락했다. GCM은 **4월 14일 $13.32/MMBtu**로 주간 기준 **-$2.93/MMBtu**, **-18%**였다.\",\n  \"**4월 7–14일** 미국 주요 액화터미널 feedgas는 평균 **20.5 Bcf/d**로 전주 대비 **+29.5 MMcf/d**였다. Corpus Christi는 **3.5 Bcf/d**로 **+177 MMcf/d**, Cameron은 **2.17 Bcf/d**로 감소했다.\",\n  \"**4월 14일 기준** 미국 적재는 **4.91 million mt**, **66카고**였다. 이 중 **약 19카고(28%)**가 유럽행, **5카고**가 아시아행이었고, **32카고**는 아직 목적지가 미지정이었다.\",\n  \"Golden Pass LNG는 **4월 중 첫 시운전 카고** 적재를 준비 중이다. 첫 카고는 **4월 22일 전후** 적재 가능성이 거론됐고, ExxonMobil이 용선한 **HL Sea Eagle** 도착 시점과 맞물릴 수 있다. ConocoPhillips 발표에 따르면 Corpus Christi 확장, Golden Pass, 내년 Rio Grande, 이후 Port Arthur LNG가 합쳐 **약 7 Bcf/d**의 가스수요를 추가할 수 있다. 멕시코 Costa Azul LNG는 **올해 후반**, Woodfibre LNG는 **2028년경**, Cedar LNG는 **2029년** 가동이 예상됐다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:30.644706+00:00",
+      "categories": [
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "liquefaction_terminal_facility_capacity_utilization_change",
+          "entities": [
+            {
+              "name": "Golden Pass LNG",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Corpus Christi",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Cameron",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Rio Grande",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Port Arthur LNG",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Costa Azul LNG",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Woodfibre LNG",
+              "entity_type": "facility"
+            },
+            {
+              "name": "Cedar LNG",
+              "entity_type": "facility"
+            },
+            {
+              "name": "ExxonMobil",
+              "entity_type": "company"
+            },
+            {
+              "name": "ConocoPhillips",
+              "entity_type": "company"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-22T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "북미"
+          ],
+          "supply_demand_side": "supply",
+          "score": 9.0,
+          "reason": "Golden Pass LNG가 4월 22일 전후 첫 시운전 카고 적재 준비 중이며, 미국 주요 액화터미널 feedgas가 평균 20.5 Bcf/d로 전주 대비 +29.5 MMcf/d 증가. Corpus Christi는 3.5 Bcf/d로 +177 MMcf/d 증가, Cameron은 2.17 Bcf/d로 감소. ConocoPhillips 발표에 따르면 Corpus Christi 확장, Golden Pass, Rio Grande, Port Arthur LNG가 약 7 Bcf/d의 가스수요 추가 예상. Costa Azul LNG 올해 후반, Woodfibre LNG 2028년경, Cedar LNG 2029년 가동 예상"
+        },
+        {
+          "level_1": "logistics_shipping",
+          "level_2": "cargo_flow_change_port_canal_disruption",
+          "entities": [
+            {
+              "name": "미국",
+              "entity_type": "country"
+            },
+            {
+              "name": "HL Sea Eagle",
+              "entity_type": "other"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "북미",
+            "유럽",
+            "동북아"
+          ],
+          "supply_demand_side": "supply",
+          "score": 7.0,
+          "reason": "4월 14일 기준 미국 적재는 4.91 million mt, 66카고였으며, 약 19카고(28%)가 유럽행, 5카고가 아시아행, 32카고는 목적지 미지정. 미국 걸프 LNG 주간 평균은 $14.48/MMBtu로 전주 $15.55/MMBtu에서 하락, GCM은 4월 14일 $13.32/MMBtu로 주간 기준 -$2.93/MMBtu, -18% 하락"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 21,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "지역별 수급 스냅샷 — 동북아",
+      "smry": "[리포트 섹션: regional_supply_demand_snapshot.동북아]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"중국의 **3월 천연가스 수입 8.18 million mt(11.28 Bcm)**, **-10.6% YoY**로 둔화했다. 대만의 **3월 LNG 수입은 2.1 million mt**, **+2.4% YoY**였고, **2월 총소비 2.04 Bcm** 중 전력부문이 **1.76 Bcm**을 차지했다. 일본은 **4월 16일** 가시와자키-가리와 6호기 재가동으로 호르무즈 경유 LNG 의존 절감이 기대된다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:32.220171+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "중국",
+              "entity_type": "country"
+            },
+            {
+              "name": "대만",
+              "entity_type": "country"
+            },
+            {
+              "name": "일본",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-01T00:00:00Z",
+            "occurrence_time_precision": "month"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "동북아 3개국의 LNG/천연가스 수입 현황을 상세히 다룸. 중국 3월 천연가스 수입 8.18 million mt로 YoY -10.6% 감소, 대만 3월 LNG 수입 2.1 million mt로 YoY +2.4% 증가, 일본의 LNG 수요 변화 전망 포함. 지역별 수요 경쟁 상황을 명확히 보여줌"
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "power_plant_facility_capacity_utilization_change",
+          "entities": [
+            {
+              "name": "일본",
+              "entity_type": "country"
+            },
+            {
+              "name": "가시와자키-가리와",
+              "entity_type": "facility"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-16T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 7.0,
+          "reason": "일본 가시와자키-가리와 원전 6호기가 4월 16일 재가동 예정. 이로 인해 호르무즈 경유 LNG 의존도 감소 기대. 원전 재가동이 LNG 수요에 직접적 영향"
+        },
+        {
+          "level_1": "energy_mix_transition",
+          "level_2": "nuclear_power_expansion_reduction",
+          "entities": [
+            {
+              "name": "일본",
+              "entity_type": "country"
+            },
+            {
+              "name": "가시와자키-가리와",
+              "entity_type": "facility"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-16T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "동북아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 6.0,
+          "reason": "가시와자키-가리와 6호기 재가동으로 일본의 에너지 믹스 변화. 원자력 발전 확대로 LNG 의존도 감소 전망"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 22,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "지역별 수급 스냅샷 — 남아시아",
+      "smry": "[리포트 섹션: regional_supply_demand_snapshot.남아시아]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"인도 현물 매입은 고가 오퍼로 IOCL·BPCL·GAIL 입찰이 유찰됐다. 반면 EPMC는 **4월 16–30일** RLNG **9.3 TBtu**를 **$16.44–18.23/MMBtu ex-terminal**에 낙찰했다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:23.652614+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "IOCL",
+              "entity_type": "company"
+            },
+            {
+              "name": "BPCL",
+              "entity_type": "company"
+            },
+            {
+              "name": "GAIL",
+              "entity_type": "company"
+            },
+            {
+              "name": "EPMC",
+              "entity_type": "company"
+            },
+            {
+              "name": "인도",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-16T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "남아시아"
+          ],
+          "supply_demand_side": "demand",
+          "score": 9.0,
+          "reason": "인도 주요 바이어들(IOCL, BPCL, GAIL)의 현물 입찰이 고가 오퍼로 유찰되었으나, EPMC는 4월 16-30일 물량 9.3 TBtu를 $16.44-18.23/MMBtu ex-terminal 가격에 낙찰받아 남아시아 지역의 수요 경쟁과 가격 민감도를 보여줌"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 23,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "지역별 수급 스냅샷 — 유럽",
+      "smry": "[리포트 섹션: regional_supply_demand_snapshot.유럽]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"**EU 가스저장률 29.54%**, 전일 대비 **0.19% 순주입**이다. 영국은 **여름 수요 18.6 Bcm**을 예상하며, 노르웨이 수입 증가와 LNG **2.7 Bcm** 유입으로 수급 충족이 가능하다고 봤다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:35.667842+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "inventory_storage_level",
+          "entities": [
+            {
+              "name": "EU",
+              "entity_type": "organization"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "both",
+          "score": 9.0,
+          "reason": "EU 가스저장률이 29.54%로 전일 대비 0.19% 순주입을 기록했다는 구체적인 재고 수준 데이터를 제시. 이는 유럽 지역의 가스 수급 균형을 직접적으로 나타내는 핵심 지표"
+        },
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "영국",
+              "entity_type": "country"
+            },
+            {
+              "name": "노르웨이",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "",
+            "occurrence_time_precision": "unknown"
+          },
+          "regions": [
+            "유럽"
+          ],
+          "supply_demand_side": "both",
+          "score": 7.0,
+          "reason": "영국이 여름 수요 18.6 Bcm을 예상하며, 노르웨이 파이프라인 수입 증가와 LNG 2.7 Bcm 유입으로 수급 충족 가능하다고 전망. 유럽 내 지역별 수급 경쟁과 공급원 다변화 상황을 보여줌"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 24,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "지역별 수급 스냅샷 — 미주",
+      "smry": "[리포트 섹션: regional_supply_demand_snapshot.미주]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"미국 feedgas는 **20.2 Bcf/d**로 전일 보합, **4월 누적 적재 4.91 million mt(66카고)**다. 아르헨티나는 겨울용 **24–25개 부분 카고** 필요 가능성을 전제로 Enarsa 입찰을 진행 중이다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:42.772158+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "United States",
+              "entity_type": "country"
+            },
+            {
+              "name": "Argentina",
+              "entity_type": "country"
+            },
+            {
+              "name": "Enarsa",
+              "entity_type": "company"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "북미",
+            "중남미"
+          ],
+          "supply_demand_side": "both",
+          "score": 8.0,
+          "reason": "미국 feedgas 20.2 Bcf/d 유지, 4월 누적 적재 4.91 million mt(66카고) 기록. 아르헨티나 Enarsa가 겨울 대비 24-25개 부분 카고 입찰 진행 중으로 미주 지역 내 수급 동향을 구체적으로 보여줌"
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "upstream_production_facility_capacity_utilization_change",
+          "entities": [
+            {
+              "name": "United States",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-04-14T00:00:00Z",
+            "occurrence_time_precision": "day"
+          },
+          "regions": [
+            "북미"
+          ],
+          "supply_demand_side": "supply",
+          "score": 6.0,
+          "reason": "미국 feedgas 20.2 Bcf/d로 전일 대비 보합 수준 유지. LNG 생산 시설 가동률 안정적"
+        }
+      ]
+    },
+    {
+      "mi_record_id": 25,
+      "first_created": "2026-04-14 00:00:00",
+      "record_type": "REPORT",
+      "origin_source_id": 1,
+      "gds_no": 0,
+      "title": "지역별 수급 스냅샷 — 중동·아프리카",
+      "smry": "[리포트 섹션: regional_supply_demand_snapshot.중동·아프리카]\n[리포트 발행일: 2026-04-14]\n\n[\n  \"아제르바이잔의 **1분기 유럽 수출은 3 Bcm**으로 전년과 같았다. 총가스 생산은 **12.6 Bcm**으로 보합, 총수출은 **6.5 Bcm**으로 전년 **6 Bcm**에서 증가했다.\"\n]",
+      "analysis_time": "2026-04-29T01:40:46.239595+00:00",
+      "categories": [
+        {
+          "level_1": "supply_demand_balance",
+          "level_2": "regional_demand_competition",
+          "entities": [
+            {
+              "name": "아제르바이잔",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-31T00:00:00Z",
+            "occurrence_time_precision": "quarter"
+          },
+          "regions": [
+            "중동",
+            "유럽"
+          ],
+          "supply_demand_side": "supply",
+          "score": 8.0,
+          "reason": "아제르바이잔의 1분기 가스 생산 및 수출 실적이 구체적으로 제시됨. 유럽 수출 3 Bcm(전년 동일), 총 가스 생산 12.6 Bcm(보합), 총 수출 6.5 Bcm(전년 6 Bcm 대비 증가). 유럽 향 파이프라인 가스 공급이 LNG와 경쟁하는 주요 공급원으로서 LNG 가격에 영향을 미칠 수 있음"
+        },
+        {
+          "level_1": "infrastructure_facility",
+          "level_2": "upstream_production_facility_capacity_utilization_change",
+          "entities": [
+            {
+              "name": "아제르바이잔",
+              "entity_type": "country"
+            }
+          ],
+          "event_timing": {
+            "occurrence_time": "2026-03-31T00:00:00Z",
+            "occurrence_time_precision": "quarter"
+          },
+          "regions": [
+            "중동"
+          ],
+          "supply_demand_side": "supply",
+          "score": 6.0,
+          "reason": "아제르바이잔의 1분기 총 가스 생산량이 12.6 Bcm으로 전년 대비 보합 수준을 유지. 생산 시설의 가동률이 안정적으로 유지되고 있음을 시사"
+        }
+      ]
+    }
+  ]
+}
