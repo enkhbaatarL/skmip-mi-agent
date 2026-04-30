@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     # LLM
     llm_concurrency: int
     llm_timeout_sec: float = Field(default=90.0)
+    analyze_records_max_parallel: int = Field(default=4, alias="MAX_PARALLEL_REQUESTS")
 
     # WEB (Legacy - for backward compatibility)
     bing_endpoint: str = Field(default="")
