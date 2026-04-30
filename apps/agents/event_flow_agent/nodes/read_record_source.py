@@ -23,7 +23,7 @@ from __future__ import annotations
 from apps.agents.event_flow_agent.services.record_source_service import RecordSourceService
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
 from apps.common.logging.decorators import log_node
-
+import json
 
 @log_node
 def read_record_source_node(state: EventFlowState) -> EventFlowState:
@@ -38,6 +38,13 @@ def read_record_source_node(state: EventFlowState) -> EventFlowState:
             to_first_created=state.to_first_created,
         )
         state.source_records = records
+
+        # Save analysis result to demo file
+        with open('./docs/demos/record_read.json', 'w', encoding='utf-8') as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+        
+        print('Saved read record to ./docs/demos/record_read.json')      
+
         return state
 
     except Exception as exc:

@@ -21,12 +21,14 @@
 
 from __future__ import annotations
 
+from apps.common.logging.decorators import log_tool
 from apps.agents.event_flow_agent.services.event_persistence_service import (
     EventPersistenceService,
 )
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
 
 
+@log_tool
 def save_events_node(state: EventFlowState) -> EventFlowState:
     state.current_node = "save_events"
     state.executed_nodes.append("save_events")

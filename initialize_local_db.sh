@@ -11,7 +11,7 @@ MYSQL_PORT="13306"
 MYSQL_ROOT_PASSWORD="miagent"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DUMP_DIR="$SCRIPT_DIR/tmp/dumps"
-DUMP_FILE="20260420_local.sql"
+DUMP_FILE="dump-midb-20260429.sql"
 VOLUME_DIR="$SCRIPT_DIR/mysql_data"
 
 # Colors for output
