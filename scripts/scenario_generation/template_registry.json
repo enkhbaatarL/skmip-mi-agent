@@ -1,0 +1,195 @@
+{
+  "_meta": {
+    "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
+    "schema_version": "0.1.0",
+    "registry_keys": "event_type_l1_l2 (예: 'geopolitical_risk::war_military_conflict')"
+  },
+
+  "templates": {
+    "geopolitical_risk::war_military_conflict": {
+      "label_ko": "지정학 리스크 / 전쟁·군사충돌",
+      "template_dimensions_total": 8,
+      "dimensions": [
+        {
+          "dimension_id": "conflict_duration",
+          "label_ko": "충돌 지속 기간",
+          "description": "물리적 충돌(또는 그에 준하는 봉쇄 상태)이 유지되는 총 기간",
+          "enum": [
+            { "id": "1M_under", "label": "1개월 미만",  "tail": false },
+            { "id": "1_3M",     "label": "1~3개월",     "tail": false },
+            { "id": "3_6M",     "label": "3~6개월",     "tail": false },
+            { "id": "6_12M",    "label": "6~12개월",    "tail": true  },
+            { "id": "1Y_plus",  "label": "1년 이상",    "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "escalation_level",
+          "label_ko": "에스컬레이션 강도",
+          "description": "충돌의 강도/형태 (외교 → 대리전 → 재래전 → 고강도전 → 전면전)",
+          "enum": [
+            { "id": "diplomatic",            "label": "외교 마찰 수준",       "tail": false },
+            { "id": "proxy_limited",         "label": "대리전·제한 충돌",     "tail": false },
+            { "id": "regional_conventional", "label": "역내 재래전",          "tail": false },
+            { "id": "high_intensity",        "label": "고강도 정규전",        "tail": true  },
+            { "id": "existential",           "label": "전면전·존재 위협",     "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "strait_shipping_impact",
+          "label_ko": "주요 해협 통항 영향",
+          "description": "호르무즈·바브엘만뎁 등 핵심 해협의 통항량 변화",
+          "enum": [
+            { "id": "none",              "label": "영향 없음",        "tail": false },
+            { "id": "intermittent",      "label": "간헐적 차질",      "tail": false },
+            { "id": "partial_blockade",  "label": "부분 봉쇄",        "tail": false },
+            { "id": "full_blockade",     "label": "전면 봉쇄",        "tail": true  },
+            { "id": "prolonged_closure", "label": "장기 폐쇄",        "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "lng_facility_damage",
+          "label_ko": "LNG 시설 피해",
+          "description": "LNG 액화·저장·항만 시설의 물리적 피해 정도",
+          "enum": [
+            { "id": "none",       "label": "피해 없음",            "tail": false },
+            { "id": "moderate",   "label": "부분 가동 차질",       "tail": false },
+            { "id": "severe",     "label": "주요 시설 가동 중단",  "tail": false },
+            { "id": "permanent",  "label": "시설 영구 손상",       "tail": true  },
+            { "id": "cascading",  "label": "인근 인프라 연쇄 피해", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "risk_premium",
+          "label_ko": "지정학 리스크 프리미엄 (LNG)",
+          "description": "JKM/TTF에 반영되는 지정학 프리미엄 폭 ($/MMBtu)",
+          "enum": [
+            { "id": "flat",    "label": "프리미엄 소거",      "tail": false },
+            { "id": "low",     "label": "$1~3/MMBtu",         "tail": false },
+            { "id": "mid",     "label": "$3~5/MMBtu",         "tail": false },
+            { "id": "high",    "label": "$5~10/MMBtu",        "tail": true  },
+            { "id": "extreme", "label": "$10/MMBtu 이상",     "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "crude_disruption",
+          "label_ko": "원유 공급 차질",
+          "description": "충돌이 글로벌 원유 공급에 미치는 양적 차질",
+          "enum": [
+            { "id": "none",     "label": "영향 없음",        "tail": false },
+            { "id": "mild",     "label": "5% 미만 감소",     "tail": false },
+            { "id": "moderate", "label": "5~15% 감소",       "tail": false },
+            { "id": "severe",   "label": "15~30% 감소",      "tail": true  },
+            { "id": "critical", "label": "30% 이상 감소",    "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "sanctions_scope",
+          "label_ko": "제재 범위",
+          "description": "충돌 당사국·관련국에 부과되는 제재 강도/범위",
+          "enum": [
+            { "id": "none",          "label": "제재 부재",         "tail": false },
+            { "id": "bilateral",     "label": "양자 제한 제재",    "tail": false },
+            { "id": "multilateral",  "label": "다자 제재",         "tail": false },
+            { "id": "secondary",     "label": "2차 제재 포함",     "tail": true  },
+            { "id": "comprehensive", "label": "전면적 제재",       "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "supply_response",
+          "label_ko": "공급 측 대응",
+          "description": "SPR·OPEC+ 증산·정책 공조 등 공급 측 충격 완화 대응",
+          "enum": [
+            { "id": "none",            "label": "대응 부재",            "tail": false },
+            { "id": "jawboning",       "label": "구두 개입",            "tail": false },
+            { "id": "spr_partial",     "label": "부분 SPR 발동",        "tail": false },
+            { "id": "spr_full",        "label": "대규모 SPR·공조",      "tail": true  },
+            { "id": "producer_swing",  "label": "OPEC+ 증산 동참",      "tail": true  }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "WAR_C1",
+          "type": "intensity_contradiction",
+          "description": "낮은 에스컬레이션 강도와 심각/영구 시설 피해는 동시 성립 불가",
+          "forbid": {
+            "escalation_level": ["diplomatic", "proxy_limited"],
+            "lng_facility_damage": ["severe", "permanent", "cascading"]
+          }
+        },
+        {
+          "rule_id": "WAR_C2",
+          "type": "physical_contradiction",
+          "description": "1개월 미만 단기 충돌에서 영구·연쇄 시설 피해는 물리적으로 성립 불가",
+          "forbid": {
+            "conflict_duration": ["1M_under"],
+            "lng_facility_damage": ["permanent", "cascading"]
+          }
+        },
+        {
+          "rule_id": "WAR_C3",
+          "type": "duration_contradiction",
+          "description": "1개월 미만 단기 충돌에서 전면/장기 해협 봉쇄는 정의상 모순",
+          "forbid": {
+            "conflict_duration": ["1M_under"],
+            "strait_shipping_impact": ["full_blockade", "prolonged_closure"]
+          }
+        },
+        {
+          "rule_id": "WAR_C4",
+          "type": "intensity_contradiction",
+          "description": "전면 봉쇄·장기 폐쇄에서 LNG 리스크 프리미엄이 평탄(flat)/저(low) 이라는 조합은 시장 통념상 모순",
+          "forbid": {
+            "strait_shipping_impact": ["full_blockade", "prolonged_closure"],
+            "risk_premium": ["flat", "low"]
+          }
+        },
+        {
+          "rule_id": "WAR_C5",
+          "type": "intensity_contradiction",
+          "description": "원유 공급이 심각/위기 수준으로 차질인데 LNG 리스크 프리미엄이 평탄(flat) 인 것은 모순",
+          "forbid": {
+            "crude_disruption": ["severe", "critical"],
+            "risk_premium": ["flat"]
+          }
+        },
+        {
+          "rule_id": "WAR_C6",
+          "type": "physical_contradiction",
+          "description": "전면 봉쇄·장기 폐쇄에서 원유 공급 차질이 없음(none)/경미(mild) 라는 조합은 물리적으로 모순",
+          "forbid": {
+            "strait_shipping_impact": ["full_blockade", "prolonged_closure"],
+            "crude_disruption": ["none", "mild"]
+          }
+        },
+        {
+          "rule_id": "WAR_C7",
+          "type": "physical_contradiction",
+          "description": "본 템플릿(전쟁·해협 봉쇄형) 이벤트에서 해협 영향 없음(none)·간헐적(intermittent) 인데 원유가 심각/위기 차질이라는 조합은 인과 경로상 모순",
+          "forbid": {
+            "strait_shipping_impact": ["none", "intermittent"],
+            "crude_disruption": ["severe", "critical"]
+          }
+        },
+        {
+          "rule_id": "WAR_C8",
+          "type": "duration_contradiction",
+          "description": "6개월 이상 장기 충돌에서 제재가 전혀 부과되지 않는(none) 것은 정책적으로 비현실적",
+          "forbid": {
+            "conflict_duration": ["6_12M", "1Y_plus"],
+            "sanctions_scope": ["none"]
+          }
+        },
+        {
+          "rule_id": "WAR_C9",
+          "type": "intensity_contradiction",
+          "description": "1년 이상 장기 충돌에서 LNG 리스크 프리미엄이 평탄(flat)/저(low) 인 것은 시장 통념상 비현실적",
+          "forbid": {
+            "conflict_duration": ["1Y_plus"],
+            "risk_premium": ["flat", "low"]
+          }
+        }
+      ]
+    }
+  }
+}
