@@ -33,6 +33,9 @@ CREATE TABLE `tmm_mieventm` (
     `status_label_ko`         VARCHAR(100) COMMENT '이벤트 상태 라벨 (한국어)',
     `status_taxonomy_version` VARCHAR(30) COMMENT '상태 분류체계 버전',
 
+    `key_bullets`             JSON COMMENT 'Event 핵심 포인트 3~5개 배열',
+    `tags`                    JSON COMMENT 'Event 추가 분류용 자유 태그(키워드) 배열',
+
     PRIMARY KEY (`mi_event_id`, `first_created`),
     INDEX `tmm_mieventm_ix01` (`occurred_at`),
     INDEX `tmm_mieventm_ix02` (`level_1_code`),
