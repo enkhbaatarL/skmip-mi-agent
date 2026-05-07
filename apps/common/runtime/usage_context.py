@@ -6,26 +6,26 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-from apps.agents.mi_agent.schemas.mari_agent_output import UsageModel
+from apps.common.values.llm_usage import LLMUsageModel
 
 
 # 요청별 격리된 usage 컨텍스트
-_usage_context: ContextVar[UsageModel | None] = ContextVar("usage_context", default=None)
+_usage_context: ContextVar[LLMUsageModel | None] = ContextVar("usage_context", default=None)
 
 
 def reset_usage() -> None:
     """새 요청 시작 시 usage 초기화."""
-    _usage_context.set(UsageModel())
+    _usage_context.set(LLMUsageModel())
 
 
-def accumulate_usage(usage: UsageModel | None) -> None:
+def accumulate_usage(usage: LLMUsageModel | None) -> None:
     """LLM 호출 시 토큰 사용량 누적."""
     if usage is None:
         return
 
     current = _usage_context.get()
     if current is None:
-        current = UsageModel()
+        current = LLMUsageModel()
         _usage_context.set(current)
 
     current.prompt_tokens += usage.prompt_tokens
@@ -33,7 +33,7 @@ def accumulate_usage(usage: UsageModel | None) -> None:
     current.total_tokens += usage.total_tokens
 
 
-def get_accumulated_usage() -> UsageModel:
+def get_accumulated_usage() -> LLMUsageModel:
     """현재 요청의 누적 토큰 사용량 반환."""
     current = _usage_context.get()
-    return current if current else UsageModel()
+    return current if current else LLMUsageModel()
