@@ -1,0 +1,2667 @@
+{
+  "pipeline_version": "vShare01c",
+  "mapping_source": "/mnt/user-data/uploads/vShare01c_260426_시나리오가정_MI수급모델_input_매핑.xlsx",
+  "base_event_id": "ev_9cd1de578499",
+  "event_type": "weather_climate::summer_heat_wave",
+  "generated_at": "2026-05-06T23:55:25.806728+00:00",
+  "model_inputs": [
+    {
+      "input_id": "mi_S_01_single_ne_short",
+      "source_scenario_id": "S_01",
+      "state": "Draft",
+      "needs_re_propose": false,
+      "needs_re_execute": false,
+      "proposed_dims": [
+        {
+          "dim_id": "temperature_anomaly",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "role": "direct",
+          "enum_value_id": "mild",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        {
+          "dim_id": "affected_region_scope",
+          "label_ko": "C. 영향 지역",
+          "role": "indirect",
+          "enum_value_id": "single_ne",
+          "parameter_candidates_summary": []
+        },
+        {
+          "dim_id": "cooling_power_demand_increase",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "role": "direct",
+          "enum_value_id": "s2_1_3mt",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_file": "Demand",
+              "model_sheet": "PowerMixAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_file": "Trade",
+              "model_sheet": "DemandModelInput-Output",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      ],
+      "source_assumptions": [
+        {
+          "dimension_id": "duration_months",
+          "enum_value_id": "short"
+        },
+        {
+          "dimension_id": "temperature_anomaly",
+          "enum_value_id": "mild"
+        },
+        {
+          "dimension_id": "affected_region_scope",
+          "enum_value_id": "single_ne"
+        },
+        {
+          "dimension_id": "cooling_power_demand_increase",
+          "enum_value_id": "s2_1_3mt"
+        }
+      ],
+      "source_event_type_id": "weather_climate::summer_heat_wave",
+      "parameter_candidates_full": {
+        "temperature_anomaly": {
+          "role": "direct",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "평년/예보 대비 +℃ 편차로 변환되어 model에 입력",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "-",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        "cooling_power_demand_increase": {
+          "role": "direct",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_sheet": "PowerMixAdjustment",
+              "model_file": "Demand",
+              "unit": "%",
+              "unit_note": null,
+              "comment": "발전용 가스 수요 증가 → 해당국 Power 부문 가스 비중 상향 조정 (Coal 대비 발전 mix 변동 반영)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "에너지원",
+                  "level": "enum (Liquids, Hydro, Solar, Wind, Bioenergy, Gas, Coal, Nuclear, Geothermal, Other)",
+                  "enum": [
+                    "Liquids",
+                    "Hydro",
+                    "Solar",
+                    "Wind",
+                    "Bioenergy",
+                    "Gas",
+                    "Coal",
+                    "Nuclear",
+                    "Geothermal",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "시간",
+                  "level": "연",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_sheet": "DemandModelInput-Output",
+              "model_file": "Trade",
+              "unit": "Mt LNG",
+              "unit_note": "직접 Demand 출력을 수정하여 사용하는지 확인 필요",
+              "comment": "E를 직접 지정할 경우 — 해당 국가·Power/Commercial 섹터 수요 출력 overwrite (Mt 단위 직접 입력)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Continent > Region > Country",
+                  "enum": null
+                },
+                {
+                  "name": "수요처 성격",
+                  "level": "Demand Category > Sector > Sub-Sector",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      },
+      "input_parameters": [
+        {
+          "parameter_slot_id": "Demand.WeatherAdjustment.CDD.single_ne.short",
+          "model_file": "Demand",
+          "model_sheet": "WeatherAdjustment",
+          "parameter_name": "CDD",
+          "source_dim_id": "temperature_anomaly",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea"
+              ]
+            },
+            {
+              "axis_name": "year-month",
+              "axis_values": [
+                "2026-06",
+                "2026-07"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "(TBU)",
+            "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요"
+          },
+          "value_grid": [
+            [
+              39.6,
+              45.0
+            ],
+            [
+              39.6,
+              45.0
+            ]
+          ],
+          "cell_annotations": [
+            {
+              "cell_index": [
+                0,
+                1
+              ],
+              "rationale_ko": "WMO 엘니뇨 예보: 피크월(2026-07) 증분. temp_anomaly=mild (Δ+1.5°C 기준)",
+              "confidence": "low"
+            }
+          ],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\"",
+          "rationale_ko_overall": "[엘니뇨 기상] 아시아·유럽 일부 고온 예상 → 냉방 전력 수요로 가스발전 증가. scope=single_ne(2개국), duration=short(2026-06~2026-07). temp_anomaly=mild → Δ+1.5°C × 30일 × 계절성 보정.",
+          "source_assumption_refs_overall": [
+            "temperature_anomaly",
+            "affected_region_scope",
+            "duration_months"
+          ],
+          "confidence_overall": "low"
+        },
+        {
+          "parameter_slot_id": "Demand.PowerMixAdjustment.PowerMix.single_ne.short",
+          "model_file": "Demand",
+          "model_sheet": "PowerMixAdjustment",
+          "parameter_name": "PowerMix",
+          "source_dim_id": "cooling_power_demand_increase",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea"
+              ]
+            },
+            {
+              "axis_name": "에너지원",
+              "axis_values": [
+                "Hydro",
+                "Gas"
+              ],
+              "axis_enum_full": [
+                "Liquids",
+                "Hydro",
+                "Solar",
+                "Wind",
+                "Bioenergy",
+                "Gas",
+                "Coal",
+                "Nuclear",
+                "Geothermal",
+                "Other"
+              ],
+              "axis_values_note": "context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요."
+            },
+            {
+              "axis_name": "year",
+              "axis_values": [
+                "2026"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "%"
+          },
+          "value_grid": [
+            [
+              [
+                -0.6
+              ],
+              [
+                1.2
+              ]
+            ],
+            [
+              [
+                -0.6
+              ],
+              [
+                1.2
+              ]
+            ]
+          ],
+          "cell_annotations": [],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\"",
+          "rationale_ko_overall": "cooling_demand=s2_1_3mt × temp_anomaly=mild → 변동 에너지원: ['Hydro', 'Gas'] (base_delta=1.2%p). 추론 근거: context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요.. scope=single_ne(2개국), 시간축=연(2026).",
+          "source_assumption_refs_overall": [
+            "cooling_power_demand_increase",
+            "temperature_anomaly",
+            "affected_region_scope"
+          ],
+          "confidence_overall": "low"
+        }
+      ],
+      "input_param_changes": [],
+      "active_result_id": null,
+      "created_at": "2026-05-06T23:55:25.805562+00:00",
+      "last_updated_at": "2026-05-06T23:55:25.805562+00:00"
+    },
+    {
+      "input_id": "mi_S_02_multi_region_extended",
+      "source_scenario_id": "S_02",
+      "state": "Draft",
+      "needs_re_propose": false,
+      "needs_re_execute": false,
+      "proposed_dims": [
+        {
+          "dim_id": "temperature_anomaly",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "role": "direct",
+          "enum_value_id": "severe",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        {
+          "dim_id": "affected_region_scope",
+          "label_ko": "C. 영향 지역",
+          "role": "indirect",
+          "enum_value_id": "multi_region",
+          "parameter_candidates_summary": []
+        },
+        {
+          "dim_id": "cooling_power_demand_increase",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "role": "direct",
+          "enum_value_id": "s4_6_12mt",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_file": "Demand",
+              "model_sheet": "PowerMixAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_file": "Trade",
+              "model_sheet": "DemandModelInput-Output",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      ],
+      "source_assumptions": [
+        {
+          "dimension_id": "duration_months",
+          "enum_value_id": "extended"
+        },
+        {
+          "dimension_id": "temperature_anomaly",
+          "enum_value_id": "severe"
+        },
+        {
+          "dimension_id": "affected_region_scope",
+          "enum_value_id": "multi_region"
+        },
+        {
+          "dimension_id": "cooling_power_demand_increase",
+          "enum_value_id": "s4_6_12mt"
+        }
+      ],
+      "source_event_type_id": "weather_climate::summer_heat_wave",
+      "parameter_candidates_full": {
+        "temperature_anomaly": {
+          "role": "direct",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "평년/예보 대비 +℃ 편차로 변환되어 model에 입력",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "-",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        "cooling_power_demand_increase": {
+          "role": "direct",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_sheet": "PowerMixAdjustment",
+              "model_file": "Demand",
+              "unit": "%",
+              "unit_note": null,
+              "comment": "발전용 가스 수요 증가 → 해당국 Power 부문 가스 비중 상향 조정 (Coal 대비 발전 mix 변동 반영)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "에너지원",
+                  "level": "enum (Liquids, Hydro, Solar, Wind, Bioenergy, Gas, Coal, Nuclear, Geothermal, Other)",
+                  "enum": [
+                    "Liquids",
+                    "Hydro",
+                    "Solar",
+                    "Wind",
+                    "Bioenergy",
+                    "Gas",
+                    "Coal",
+                    "Nuclear",
+                    "Geothermal",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "시간",
+                  "level": "연",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_sheet": "DemandModelInput-Output",
+              "model_file": "Trade",
+              "unit": "Mt LNG",
+              "unit_note": "직접 Demand 출력을 수정하여 사용하는지 확인 필요",
+              "comment": "E를 직접 지정할 경우 — 해당 국가·Power/Commercial 섹터 수요 출력 overwrite (Mt 단위 직접 입력)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Continent > Region > Country",
+                  "enum": null
+                },
+                {
+                  "name": "수요처 성격",
+                  "level": "Demand Category > Sector > Sub-Sector",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      },
+      "input_parameters": [
+        {
+          "parameter_slot_id": "Demand.WeatherAdjustment.CDD.multi_region.extended",
+          "model_file": "Demand",
+          "model_sheet": "WeatherAdjustment",
+          "parameter_name": "CDD",
+          "source_dim_id": "temperature_anomaly",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China",
+                "Germany",
+                "UK",
+                "Kuwait"
+              ]
+            },
+            {
+              "axis_name": "year-month",
+              "axis_values": [
+                "2026-05",
+                "2026-06",
+                "2026-07",
+                "2026-08",
+                "2026-09"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "(TBU)",
+            "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요"
+          },
+          "value_grid": [
+            [
+              66.0,
+              105.6,
+              120.0,
+              114.0,
+              78.0
+            ],
+            [
+              66.0,
+              105.6,
+              120.0,
+              114.0,
+              78.0
+            ],
+            [
+              66.0,
+              105.6,
+              120.0,
+              114.0,
+              78.0
+            ],
+            [
+              66.0,
+              105.6,
+              120.0,
+              114.0,
+              78.0
+            ],
+            [
+              66.0,
+              105.6,
+              120.0,
+              114.0,
+              78.0
+            ],
+            [
+              66.0,
+              105.6,
+              120.0,
+              114.0,
+              78.0
+            ]
+          ],
+          "cell_annotations": [
+            {
+              "cell_index": [
+                0,
+                2
+              ],
+              "rationale_ko": "WMO 엘니뇨 예보: 피크월(2026-07) 증분. temp_anomaly=severe (Δ+4.0°C 기준)",
+              "confidence": "medium"
+            }
+          ],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\"",
+          "rationale_ko_overall": "[엘니뇨 기상] 아시아·유럽 일부 고온 예상 → 냉방 전력 수요로 가스발전 증가. scope=multi_region(6개국), duration=extended(2026-05~2026-09). temp_anomaly=severe → Δ+4.0°C × 30일 × 계절성 보정.",
+          "source_assumption_refs_overall": [
+            "temperature_anomaly",
+            "affected_region_scope",
+            "duration_months"
+          ],
+          "confidence_overall": "medium"
+        },
+        {
+          "parameter_slot_id": "Demand.PowerMixAdjustment.PowerMix.multi_region.extended",
+          "model_file": "Demand",
+          "model_sheet": "PowerMixAdjustment",
+          "parameter_name": "PowerMix",
+          "source_dim_id": "cooling_power_demand_increase",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China",
+                "Germany",
+                "UK",
+                "Kuwait"
+              ]
+            },
+            {
+              "axis_name": "에너지원",
+              "axis_values": [
+                "Hydro",
+                "Gas"
+              ],
+              "axis_enum_full": [
+                "Liquids",
+                "Hydro",
+                "Solar",
+                "Wind",
+                "Bioenergy",
+                "Gas",
+                "Coal",
+                "Nuclear",
+                "Geothermal",
+                "Other"
+              ],
+              "axis_values_note": "context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요."
+            },
+            {
+              "axis_name": "year",
+              "axis_values": [
+                "2026"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "%"
+          },
+          "value_grid": [
+            [
+              [
+                -3.3
+              ],
+              [
+                6.6
+              ]
+            ],
+            [
+              [
+                -3.3
+              ],
+              [
+                6.6
+              ]
+            ],
+            [
+              [
+                -3.3
+              ],
+              [
+                6.6
+              ]
+            ],
+            [
+              [
+                -3.3
+              ],
+              [
+                6.6
+              ]
+            ],
+            [
+              [
+                -3.3
+              ],
+              [
+                6.6
+              ]
+            ],
+            [
+              [
+                -3.3
+              ],
+              [
+                6.6
+              ]
+            ]
+          ],
+          "cell_annotations": [],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\"",
+          "rationale_ko_overall": "cooling_demand=s4_6_12mt × temp_anomaly=severe → 변동 에너지원: ['Hydro', 'Gas'] (base_delta=6.6%p). 추론 근거: context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요.. scope=multi_region(6개국), 시간축=연(2026).",
+          "source_assumption_refs_overall": [
+            "cooling_power_demand_increase",
+            "temperature_anomaly",
+            "affected_region_scope"
+          ],
+          "confidence_overall": "low"
+        }
+      ],
+      "input_param_changes": [],
+      "active_result_id": null,
+      "created_at": "2026-05-06T23:55:25.805827+00:00",
+      "last_updated_at": "2026-05-06T23:55:25.805827+00:00"
+    },
+    {
+      "input_id": "mi_S_03_ne_asia_multi_mid_peak",
+      "source_scenario_id": "S_03",
+      "state": "Draft",
+      "needs_re_propose": false,
+      "needs_re_execute": false,
+      "proposed_dims": [
+        {
+          "dim_id": "temperature_anomaly",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "role": "direct",
+          "enum_value_id": "moderate",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        {
+          "dim_id": "affected_region_scope",
+          "label_ko": "C. 영향 지역",
+          "role": "indirect",
+          "enum_value_id": "ne_asia_multi",
+          "parameter_candidates_summary": []
+        },
+        {
+          "dim_id": "cooling_power_demand_increase",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "role": "direct",
+          "enum_value_id": "s3_3_6mt",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_file": "Demand",
+              "model_sheet": "PowerMixAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_file": "Trade",
+              "model_sheet": "DemandModelInput-Output",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      ],
+      "source_assumptions": [
+        {
+          "dimension_id": "duration_months",
+          "enum_value_id": "mid_peak"
+        },
+        {
+          "dimension_id": "temperature_anomaly",
+          "enum_value_id": "moderate"
+        },
+        {
+          "dimension_id": "affected_region_scope",
+          "enum_value_id": "ne_asia_multi"
+        },
+        {
+          "dimension_id": "cooling_power_demand_increase",
+          "enum_value_id": "s3_3_6mt"
+        }
+      ],
+      "source_event_type_id": "weather_climate::summer_heat_wave",
+      "parameter_candidates_full": {
+        "temperature_anomaly": {
+          "role": "direct",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "평년/예보 대비 +℃ 편차로 변환되어 model에 입력",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "-",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        "cooling_power_demand_increase": {
+          "role": "direct",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_sheet": "PowerMixAdjustment",
+              "model_file": "Demand",
+              "unit": "%",
+              "unit_note": null,
+              "comment": "발전용 가스 수요 증가 → 해당국 Power 부문 가스 비중 상향 조정 (Coal 대비 발전 mix 변동 반영)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "에너지원",
+                  "level": "enum (Liquids, Hydro, Solar, Wind, Bioenergy, Gas, Coal, Nuclear, Geothermal, Other)",
+                  "enum": [
+                    "Liquids",
+                    "Hydro",
+                    "Solar",
+                    "Wind",
+                    "Bioenergy",
+                    "Gas",
+                    "Coal",
+                    "Nuclear",
+                    "Geothermal",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "시간",
+                  "level": "연",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_sheet": "DemandModelInput-Output",
+              "model_file": "Trade",
+              "unit": "Mt LNG",
+              "unit_note": "직접 Demand 출력을 수정하여 사용하는지 확인 필요",
+              "comment": "E를 직접 지정할 경우 — 해당 국가·Power/Commercial 섹터 수요 출력 overwrite (Mt 단위 직접 입력)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Continent > Region > Country",
+                  "enum": null
+                },
+                {
+                  "name": "수요처 성격",
+                  "level": "Demand Category > Sector > Sub-Sector",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      },
+      "input_parameters": [
+        {
+          "parameter_slot_id": "Demand.WeatherAdjustment.CDD.ne_asia_multi.mid_peak",
+          "model_file": "Demand",
+          "model_sheet": "WeatherAdjustment",
+          "parameter_name": "CDD",
+          "source_dim_id": "temperature_anomaly",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China"
+              ]
+            },
+            {
+              "axis_name": "year-month",
+              "axis_values": [
+                "2026-06",
+                "2026-07",
+                "2026-08"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "(TBU)",
+            "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요"
+          },
+          "value_grid": [
+            [
+              66.0,
+              75.0,
+              71.2
+            ],
+            [
+              66.0,
+              75.0,
+              71.2
+            ],
+            [
+              66.0,
+              75.0,
+              71.2
+            ]
+          ],
+          "cell_annotations": [
+            {
+              "cell_index": [
+                0,
+                1
+              ],
+              "rationale_ko": "WMO 엘니뇨 예보: 피크월(2026-07) 증분. temp_anomaly=moderate (Δ+2.5°C 기준)",
+              "confidence": "medium"
+            }
+          ],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\"",
+          "rationale_ko_overall": "[엘니뇨 기상] 아시아·유럽 일부 고온 예상 → 냉방 전력 수요로 가스발전 증가. scope=ne_asia_multi(3개국), duration=mid_peak(2026-06~2026-08). temp_anomaly=moderate → Δ+2.5°C × 30일 × 계절성 보정.",
+          "source_assumption_refs_overall": [
+            "temperature_anomaly",
+            "affected_region_scope",
+            "duration_months"
+          ],
+          "confidence_overall": "medium"
+        },
+        {
+          "parameter_slot_id": "Demand.PowerMixAdjustment.PowerMix.ne_asia_multi.mid_peak",
+          "model_file": "Demand",
+          "model_sheet": "PowerMixAdjustment",
+          "parameter_name": "PowerMix",
+          "source_dim_id": "cooling_power_demand_increase",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China"
+              ]
+            },
+            {
+              "axis_name": "에너지원",
+              "axis_values": [
+                "Hydro",
+                "Gas"
+              ],
+              "axis_enum_full": [
+                "Liquids",
+                "Hydro",
+                "Solar",
+                "Wind",
+                "Bioenergy",
+                "Gas",
+                "Coal",
+                "Nuclear",
+                "Geothermal",
+                "Other"
+              ],
+              "axis_values_note": "context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요."
+            },
+            {
+              "axis_name": "year",
+              "axis_values": [
+                "2026"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "%"
+          },
+          "value_grid": [
+            [
+              [
+                -1.5
+              ],
+              [
+                3.0
+              ]
+            ],
+            [
+              [
+                -1.5
+              ],
+              [
+                3.0
+              ]
+            ],
+            [
+              [
+                -1.5
+              ],
+              [
+                3.0
+              ]
+            ]
+          ],
+          "cell_annotations": [],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\"",
+          "rationale_ko_overall": "cooling_demand=s3_3_6mt × temp_anomaly=moderate → 변동 에너지원: ['Hydro', 'Gas'] (base_delta=3.0%p). 추론 근거: context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요.. scope=ne_asia_multi(3개국), 시간축=연(2026).",
+          "source_assumption_refs_overall": [
+            "cooling_power_demand_increase",
+            "temperature_anomaly",
+            "affected_region_scope"
+          ],
+          "confidence_overall": "low"
+        }
+      ],
+      "input_param_changes": [],
+      "active_result_id": null,
+      "created_at": "2026-05-06T23:55:25.806018+00:00",
+      "last_updated_at": "2026-05-06T23:55:25.806018+00:00"
+    },
+    {
+      "input_id": "mi_S_04_ne_asia_multi_short",
+      "source_scenario_id": "S_04",
+      "state": "Draft",
+      "needs_re_propose": false,
+      "needs_re_execute": false,
+      "proposed_dims": [
+        {
+          "dim_id": "temperature_anomaly",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "role": "direct",
+          "enum_value_id": "extreme",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        {
+          "dim_id": "affected_region_scope",
+          "label_ko": "C. 영향 지역",
+          "role": "indirect",
+          "enum_value_id": "ne_asia_multi",
+          "parameter_candidates_summary": []
+        },
+        {
+          "dim_id": "cooling_power_demand_increase",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "role": "direct",
+          "enum_value_id": "s4_6_12mt",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_file": "Demand",
+              "model_sheet": "PowerMixAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_file": "Trade",
+              "model_sheet": "DemandModelInput-Output",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      ],
+      "source_assumptions": [
+        {
+          "dimension_id": "duration_months",
+          "enum_value_id": "short"
+        },
+        {
+          "dimension_id": "temperature_anomaly",
+          "enum_value_id": "extreme"
+        },
+        {
+          "dimension_id": "affected_region_scope",
+          "enum_value_id": "ne_asia_multi"
+        },
+        {
+          "dimension_id": "cooling_power_demand_increase",
+          "enum_value_id": "s4_6_12mt"
+        }
+      ],
+      "source_event_type_id": "weather_climate::summer_heat_wave",
+      "parameter_candidates_full": {
+        "temperature_anomaly": {
+          "role": "direct",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "평년/예보 대비 +℃ 편차로 변환되어 model에 입력",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "-",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        "cooling_power_demand_increase": {
+          "role": "direct",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_sheet": "PowerMixAdjustment",
+              "model_file": "Demand",
+              "unit": "%",
+              "unit_note": null,
+              "comment": "발전용 가스 수요 증가 → 해당국 Power 부문 가스 비중 상향 조정 (Coal 대비 발전 mix 변동 반영)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "에너지원",
+                  "level": "enum (Liquids, Hydro, Solar, Wind, Bioenergy, Gas, Coal, Nuclear, Geothermal, Other)",
+                  "enum": [
+                    "Liquids",
+                    "Hydro",
+                    "Solar",
+                    "Wind",
+                    "Bioenergy",
+                    "Gas",
+                    "Coal",
+                    "Nuclear",
+                    "Geothermal",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "시간",
+                  "level": "연",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_sheet": "DemandModelInput-Output",
+              "model_file": "Trade",
+              "unit": "Mt LNG",
+              "unit_note": "직접 Demand 출력을 수정하여 사용하는지 확인 필요",
+              "comment": "E를 직접 지정할 경우 — 해당 국가·Power/Commercial 섹터 수요 출력 overwrite (Mt 단위 직접 입력)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Continent > Region > Country",
+                  "enum": null
+                },
+                {
+                  "name": "수요처 성격",
+                  "level": "Demand Category > Sector > Sub-Sector",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      },
+      "input_parameters": [
+        {
+          "parameter_slot_id": "Demand.WeatherAdjustment.CDD.ne_asia_multi.short",
+          "model_file": "Demand",
+          "model_sheet": "WeatherAdjustment",
+          "parameter_name": "CDD",
+          "source_dim_id": "temperature_anomaly",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China"
+              ]
+            },
+            {
+              "axis_name": "year-month",
+              "axis_values": [
+                "2026-06",
+                "2026-07"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "(TBU)",
+            "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요"
+          },
+          "value_grid": [
+            [
+              158.4,
+              180.0
+            ],
+            [
+              158.4,
+              180.0
+            ],
+            [
+              158.4,
+              180.0
+            ]
+          ],
+          "cell_annotations": [
+            {
+              "cell_index": [
+                0,
+                1
+              ],
+              "rationale_ko": "WMO 엘니뇨 예보: 피크월(2026-07) 증분. temp_anomaly=extreme (Δ+6.0°C 기준)",
+              "confidence": "low"
+            }
+          ],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\"",
+          "rationale_ko_overall": "[엘니뇨 기상] 아시아·유럽 일부 고온 예상 → 냉방 전력 수요로 가스발전 증가. scope=ne_asia_multi(3개국), duration=short(2026-06~2026-07). temp_anomaly=extreme → Δ+6.0°C × 30일 × 계절성 보정.",
+          "source_assumption_refs_overall": [
+            "temperature_anomaly",
+            "affected_region_scope",
+            "duration_months"
+          ],
+          "confidence_overall": "low"
+        },
+        {
+          "parameter_slot_id": "Demand.PowerMixAdjustment.PowerMix.ne_asia_multi.short",
+          "model_file": "Demand",
+          "model_sheet": "PowerMixAdjustment",
+          "parameter_name": "PowerMix",
+          "source_dim_id": "cooling_power_demand_increase",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China"
+              ]
+            },
+            {
+              "axis_name": "에너지원",
+              "axis_values": [
+                "Hydro",
+                "Gas"
+              ],
+              "axis_enum_full": [
+                "Liquids",
+                "Hydro",
+                "Solar",
+                "Wind",
+                "Bioenergy",
+                "Gas",
+                "Coal",
+                "Nuclear",
+                "Geothermal",
+                "Other"
+              ],
+              "axis_values_note": "context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요."
+            },
+            {
+              "axis_name": "year",
+              "axis_values": [
+                "2026"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "%"
+          },
+          "value_grid": [
+            [
+              [
+                -4.12
+              ],
+              [
+                8.25
+              ]
+            ],
+            [
+              [
+                -4.12
+              ],
+              [
+                8.25
+              ]
+            ],
+            [
+              [
+                -4.12
+              ],
+              [
+                8.25
+              ]
+            ]
+          ],
+          "cell_annotations": [],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\"",
+          "rationale_ko_overall": "cooling_demand=s4_6_12mt × temp_anomaly=extreme → 변동 에너지원: ['Hydro', 'Gas'] (base_delta=8.25%p). 추론 근거: context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요.. scope=ne_asia_multi(3개국), 시간축=연(2026).",
+          "source_assumption_refs_overall": [
+            "cooling_power_demand_increase",
+            "temperature_anomaly",
+            "affected_region_scope"
+          ],
+          "confidence_overall": "low"
+        }
+      ],
+      "input_param_changes": [],
+      "active_result_id": null,
+      "created_at": "2026-05-06T23:55:25.806194+00:00",
+      "last_updated_at": "2026-05-06T23:55:25.806194+00:00"
+    },
+    {
+      "input_id": "mi_S_05_single_ne_extended",
+      "source_scenario_id": "S_05",
+      "state": "Draft",
+      "needs_re_propose": false,
+      "needs_re_execute": false,
+      "proposed_dims": [
+        {
+          "dim_id": "temperature_anomaly",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "role": "direct",
+          "enum_value_id": "extreme",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        {
+          "dim_id": "affected_region_scope",
+          "label_ko": "C. 영향 지역",
+          "role": "indirect",
+          "enum_value_id": "single_ne",
+          "parameter_candidates_summary": []
+        },
+        {
+          "dim_id": "cooling_power_demand_increase",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "role": "direct",
+          "enum_value_id": "s3_3_6mt",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_file": "Demand",
+              "model_sheet": "PowerMixAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_file": "Trade",
+              "model_sheet": "DemandModelInput-Output",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      ],
+      "source_assumptions": [
+        {
+          "dimension_id": "duration_months",
+          "enum_value_id": "extended"
+        },
+        {
+          "dimension_id": "temperature_anomaly",
+          "enum_value_id": "extreme"
+        },
+        {
+          "dimension_id": "affected_region_scope",
+          "enum_value_id": "single_ne"
+        },
+        {
+          "dimension_id": "cooling_power_demand_increase",
+          "enum_value_id": "s3_3_6mt"
+        }
+      ],
+      "source_event_type_id": "weather_climate::summer_heat_wave",
+      "parameter_candidates_full": {
+        "temperature_anomaly": {
+          "role": "direct",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "평년/예보 대비 +℃ 편차로 변환되어 model에 입력",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "-",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        "cooling_power_demand_increase": {
+          "role": "direct",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_sheet": "PowerMixAdjustment",
+              "model_file": "Demand",
+              "unit": "%",
+              "unit_note": null,
+              "comment": "발전용 가스 수요 증가 → 해당국 Power 부문 가스 비중 상향 조정 (Coal 대비 발전 mix 변동 반영)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "에너지원",
+                  "level": "enum (Liquids, Hydro, Solar, Wind, Bioenergy, Gas, Coal, Nuclear, Geothermal, Other)",
+                  "enum": [
+                    "Liquids",
+                    "Hydro",
+                    "Solar",
+                    "Wind",
+                    "Bioenergy",
+                    "Gas",
+                    "Coal",
+                    "Nuclear",
+                    "Geothermal",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "시간",
+                  "level": "연",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_sheet": "DemandModelInput-Output",
+              "model_file": "Trade",
+              "unit": "Mt LNG",
+              "unit_note": "직접 Demand 출력을 수정하여 사용하는지 확인 필요",
+              "comment": "E를 직접 지정할 경우 — 해당 국가·Power/Commercial 섹터 수요 출력 overwrite (Mt 단위 직접 입력)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Continent > Region > Country",
+                  "enum": null
+                },
+                {
+                  "name": "수요처 성격",
+                  "level": "Demand Category > Sector > Sub-Sector",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      },
+      "input_parameters": [
+        {
+          "parameter_slot_id": "Demand.WeatherAdjustment.CDD.single_ne.extended",
+          "model_file": "Demand",
+          "model_sheet": "WeatherAdjustment",
+          "parameter_name": "CDD",
+          "source_dim_id": "temperature_anomaly",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea"
+              ]
+            },
+            {
+              "axis_name": "year-month",
+              "axis_values": [
+                "2026-05",
+                "2026-06",
+                "2026-07",
+                "2026-08",
+                "2026-09"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "(TBU)",
+            "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요"
+          },
+          "value_grid": [
+            [
+              99.0,
+              158.4,
+              180.0,
+              171.0,
+              117.0
+            ],
+            [
+              99.0,
+              158.4,
+              180.0,
+              171.0,
+              117.0
+            ]
+          ],
+          "cell_annotations": [
+            {
+              "cell_index": [
+                0,
+                2
+              ],
+              "rationale_ko": "WMO 엘니뇨 예보: 피크월(2026-07) 증분. temp_anomaly=extreme (Δ+6.0°C 기준)",
+              "confidence": "low"
+            }
+          ],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\"",
+          "rationale_ko_overall": "[엘니뇨 기상] 아시아·유럽 일부 고온 예상 → 냉방 전력 수요로 가스발전 증가. scope=single_ne(2개국), duration=extended(2026-05~2026-09). temp_anomaly=extreme → Δ+6.0°C × 30일 × 계절성 보정.",
+          "source_assumption_refs_overall": [
+            "temperature_anomaly",
+            "affected_region_scope",
+            "duration_months"
+          ],
+          "confidence_overall": "low"
+        },
+        {
+          "parameter_slot_id": "Demand.PowerMixAdjustment.PowerMix.single_ne.extended",
+          "model_file": "Demand",
+          "model_sheet": "PowerMixAdjustment",
+          "parameter_name": "PowerMix",
+          "source_dim_id": "cooling_power_demand_increase",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea"
+              ]
+            },
+            {
+              "axis_name": "에너지원",
+              "axis_values": [
+                "Hydro",
+                "Gas"
+              ],
+              "axis_enum_full": [
+                "Liquids",
+                "Hydro",
+                "Solar",
+                "Wind",
+                "Bioenergy",
+                "Gas",
+                "Coal",
+                "Nuclear",
+                "Geothermal",
+                "Other"
+              ],
+              "axis_values_note": "context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요."
+            },
+            {
+              "axis_name": "year",
+              "axis_values": [
+                "2026"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "%"
+          },
+          "value_grid": [
+            [
+              [
+                -2.25
+              ],
+              [
+                4.5
+              ]
+            ],
+            [
+              [
+                -2.25
+              ],
+              [
+                4.5
+              ]
+            ]
+          ],
+          "cell_annotations": [],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\"",
+          "rationale_ko_overall": "cooling_demand=s3_3_6mt × temp_anomaly=extreme → 변동 에너지원: ['Hydro', 'Gas'] (base_delta=4.5%p). 추론 근거: context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요.. scope=single_ne(2개국), 시간축=연(2026).",
+          "source_assumption_refs_overall": [
+            "cooling_power_demand_increase",
+            "temperature_anomaly",
+            "affected_region_scope"
+          ],
+          "confidence_overall": "low"
+        }
+      ],
+      "input_param_changes": [],
+      "active_result_id": null,
+      "created_at": "2026-05-06T23:55:25.806454+00:00",
+      "last_updated_at": "2026-05-06T23:55:25.806454+00:00"
+    },
+    {
+      "input_id": "mi_S_06_ne_asia_multi_short",
+      "source_scenario_id": "S_06",
+      "state": "Draft",
+      "needs_re_propose": false,
+      "needs_re_execute": false,
+      "proposed_dims": [
+        {
+          "dim_id": "temperature_anomaly",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "role": "direct",
+          "enum_value_id": "mild",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        {
+          "dim_id": "affected_region_scope",
+          "label_ko": "C. 영향 지역",
+          "role": "indirect",
+          "enum_value_id": "ne_asia_multi",
+          "parameter_candidates_summary": []
+        },
+        {
+          "dim_id": "cooling_power_demand_increase",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "role": "direct",
+          "enum_value_id": "s3_3_6mt",
+          "parameter_candidates_summary": [
+            {
+              "parameter_name": "CDD",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_file": "Demand",
+              "model_sheet": "WeatherAdjustment",
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_file": "Demand",
+              "model_sheet": "PowerMixAdjustment",
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_file": "Trade",
+              "model_sheet": "DemandModelInput-Output",
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      ],
+      "source_assumptions": [
+        {
+          "dimension_id": "duration_months",
+          "enum_value_id": "short"
+        },
+        {
+          "dimension_id": "temperature_anomaly",
+          "enum_value_id": "mild"
+        },
+        {
+          "dimension_id": "affected_region_scope",
+          "enum_value_id": "ne_asia_multi"
+        },
+        {
+          "dimension_id": "cooling_power_demand_increase",
+          "enum_value_id": "s3_3_6mt"
+        }
+      ],
+      "source_event_type_id": "weather_climate::summer_heat_wave",
+      "parameter_candidates_full": {
+        "temperature_anomaly": {
+          "role": "direct",
+          "label_ko": "B. 기온 강도 (고온, +℃)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "평년/예보 대비 +℃ 편차로 변환되어 model에 입력",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\""
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "-",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        },
+        "cooling_power_demand_increase": {
+          "role": "direct",
+          "label_ko": "E. 냉방·발전용 가스 수요 증가 (B와 동시 선택 금지)",
+          "indirect_note": null,
+          "candidates": [
+            {
+              "parameter_name": "CDD",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "Temperature",
+              "model_sheet": "WeatherAdjustment",
+              "model_file": "Demand",
+              "unit": "(TBU)",
+              "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요",
+              "comment": "B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": true,
+              "blocked_reason": "앞선 Dim 선택에 의해 차단. 매핑 엑셀 comment: 'B(기온강도)와 동시 선택 금지 — B 지정 시 모델이 자동 계산'",
+              "selection_basis": null
+            },
+            {
+              "parameter_name": "PowerMix",
+              "model_sheet": "PowerMixAdjustment",
+              "model_file": "Demand",
+              "unit": "%",
+              "unit_note": null,
+              "comment": "발전용 가스 수요 증가 → 해당국 Power 부문 가스 비중 상향 조정 (Coal 대비 발전 mix 변동 반영)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Country",
+                  "enum": null
+                },
+                {
+                  "name": "에너지원",
+                  "level": "enum (Liquids, Hydro, Solar, Wind, Bioenergy, Gas, Coal, Nuclear, Geothermal, Other)",
+                  "enum": [
+                    "Liquids",
+                    "Hydro",
+                    "Solar",
+                    "Wind",
+                    "Bioenergy",
+                    "Gas",
+                    "Coal",
+                    "Nuclear",
+                    "Geothermal",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "시간",
+                  "level": "연",
+                  "enum": null
+                }
+              ],
+              "selected": true,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\""
+            },
+            {
+              "parameter_name": "DemandModelOuptut",
+              "model_sheet": "DemandModelInput-Output",
+              "model_file": "Trade",
+              "unit": "Mt LNG",
+              "unit_note": "직접 Demand 출력을 수정하여 사용하는지 확인 필요",
+              "comment": "E를 직접 지정할 경우 — 해당 국가·Power/Commercial 섹터 수요 출력 overwrite (Mt 단위 직접 입력)",
+              "axes": [
+                {
+                  "name": "지역",
+                  "level": "Continent > Region > Country",
+                  "enum": null
+                },
+                {
+                  "name": "수요처 성격",
+                  "level": "Demand Category > Sector > Sub-Sector",
+                  "enum": null
+                },
+                {
+                  "name": "시간",
+                  "level": "연 > 월",
+                  "enum": null
+                }
+              ],
+              "selected": false,
+              "blocked": false,
+              "blocked_reason": null,
+              "selection_basis": null
+            }
+          ]
+        }
+      },
+      "input_parameters": [
+        {
+          "parameter_slot_id": "Demand.WeatherAdjustment.CDD.ne_asia_multi.short",
+          "model_file": "Demand",
+          "model_sheet": "WeatherAdjustment",
+          "parameter_name": "CDD",
+          "source_dim_id": "temperature_anomaly",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China"
+              ]
+            },
+            {
+              "axis_name": "year-month",
+              "axis_values": [
+                "2026-06",
+                "2026-07"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "(TBU)",
+            "unit_note": "Dashboard' 시트 기반 동작 확인 필요 단위 미확정(TBU) — 실제 모델 단위 확인 필요"
+          },
+          "value_grid": [
+            [
+              39.6,
+              45.0
+            ],
+            [
+              39.6,
+              45.0
+            ],
+            [
+              39.6,
+              45.0
+            ]
+          ],
+          "cell_annotations": [
+            {
+              "cell_index": [
+                0,
+                1
+              ],
+              "rationale_ko": "WMO 엘니뇨 예보: 피크월(2026-07) 증분. temp_anomaly=mild (Δ+1.5°C 기준)",
+              "confidence": "low"
+            }
+          ],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'CDD'. rationale: \"(a)(c) WMO의 '고온 현상' 직접 언급 + Driver Tree 냉방 수요 직결....\"",
+          "rationale_ko_overall": "[엘니뇨 기상] 아시아·유럽 일부 고온 예상 → 냉방 전력 수요로 가스발전 증가. scope=ne_asia_multi(3개국), duration=short(2026-06~2026-07). temp_anomaly=mild → Δ+1.5°C × 30일 × 계절성 보정.",
+          "source_assumption_refs_overall": [
+            "temperature_anomaly",
+            "affected_region_scope",
+            "duration_months"
+          ],
+          "confidence_overall": "low"
+        },
+        {
+          "parameter_slot_id": "Demand.PowerMixAdjustment.PowerMix.ne_asia_multi.short",
+          "model_file": "Demand",
+          "model_sheet": "PowerMixAdjustment",
+          "parameter_name": "PowerMix",
+          "source_dim_id": "cooling_power_demand_increase",
+          "slot_axes": [
+            {
+              "axis_name": "Country",
+              "axis_values": [
+                "Japan",
+                "South Korea",
+                "China"
+              ]
+            },
+            {
+              "axis_name": "에너지원",
+              "axis_values": [
+                "Hydro",
+                "Gas"
+              ],
+              "axis_enum_full": [
+                "Liquids",
+                "Hydro",
+                "Solar",
+                "Wind",
+                "Bioenergy",
+                "Gas",
+                "Coal",
+                "Nuclear",
+                "Geothermal",
+                "Other"
+              ],
+              "axis_values_note": "context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요."
+            },
+            {
+              "axis_name": "year",
+              "axis_values": [
+                "2026"
+              ]
+            }
+          ],
+          "value_meta": {
+            "mode": "delta",
+            "unit": "%"
+          },
+          "value_grid": [
+            [
+              [
+                -1.2
+              ],
+              [
+                2.4
+              ]
+            ],
+            [
+              [
+                -1.2
+              ],
+              [
+                2.4
+              ]
+            ],
+            [
+              [
+                -1.2
+              ],
+              [
+                2.4
+              ]
+            ]
+          ],
+          "cell_annotations": [],
+          "selection_basis": "rationale/context 키워드 매칭으로 선택: 'PowerMix'. rationale: \"(a)(c) 본문 '냉방용 LNG 수요 증가' 직접 언급 + 가격 영향 핵심 동인....\"",
+          "rationale_ko_overall": "cooling_demand=s3_3_6mt × temp_anomaly=mild → 변동 에너지원: ['Hydro', 'Gas'] (base_delta=2.4%p). 추론 근거: context 키워드 매칭으로 결정: ['Hydro', 'Gas']. 나머지 에너지원의 offset 처리는 모델 내부 동작 확인 필요.. scope=ne_asia_multi(3개국), 시간축=연(2026).",
+          "source_assumption_refs_overall": [
+            "cooling_power_demand_increase",
+            "temperature_anomaly",
+            "affected_region_scope"
+          ],
+          "confidence_overall": "low"
+        }
+      ],
+      "input_param_changes": [],
+      "active_result_id": null,
+      "created_at": "2026-05-06T23:55:25.806637+00:00",
+      "last_updated_at": "2026-05-06T23:55:25.806637+00:00"
+    }
+  ]
+}
