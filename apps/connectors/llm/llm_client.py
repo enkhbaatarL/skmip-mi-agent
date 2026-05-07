@@ -43,8 +43,8 @@ import httpx
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
-from apps.agents.mi_agent.schemas.mari_agent_output import UsageModel
 from apps.common.configs.settings import BaseSettings, get_settings
+from apps.common.values.llm_usage import LLMUsageModel
 from apps.common.exceptions.custom import LLMInvocationError
 from apps.common.logging.decorators import log_connector
 from apps.common.runtime.runtime import (
@@ -67,7 +67,7 @@ class LLMStructuredResult[T: BaseModel](BaseModel):
     """Structured output 결과와 usage 정보를 함께 반환하는 모델."""
 
     result: T
-    usage: UsageModel | None = None
+    usage: LLMUsageModel | None = None
 
 
 async def _ensure_openai_client() -> AsyncOpenAI:
@@ -139,7 +139,7 @@ async def invoke_llm_function_call(
                 temperature=temperature,
             )
             choice = resp.choices[0]
-            usage = UsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
+            usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
             accumulate_usage(usage)
             return {
                 "id": resp.id,
@@ -199,7 +199,7 @@ async def invoke_llm_structured_output[T: BaseModel](
             )
             content = resp.choices[0].message.content
             parsed_result = output_schema.model_validate_json(content)
-            usage = UsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
+            usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
             accumulate_usage(usage)
             return LLMStructuredResult[T](result=parsed_result, usage=usage)
     except Exception as ex:
@@ -240,7 +240,7 @@ async def invoke_llm_text(
             if not content:
                 raise ValueError("LLM 응답 content가 비어 있습니다.")
 
-            usage = UsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
+            usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
             accumulate_usage(usage)
 
             return {
