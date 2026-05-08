@@ -14,7 +14,7 @@
         "--port",
         "3002",
         "--graph_yaml",
-        "./graph_scenario_flow_agent.yaml"
+        "./graph.yaml"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

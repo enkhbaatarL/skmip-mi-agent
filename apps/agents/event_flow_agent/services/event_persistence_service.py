@@ -23,6 +23,7 @@ event 저장 서비스 모듈
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -74,6 +75,9 @@ class EventPersistenceService:
                     level_1 = event["event_type"]["level_1"]
                     level_2 = event["event_type"]["level_2"]
 
+                    key_bullets = event.get("key_bullets") or []
+                    tags = event.get("tags") or []
+
                     payload = {
                         "first_created": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                         "crt_usr_logn_id": "SYSTEM",
@@ -93,6 +97,8 @@ class EventPersistenceService:
                         "status_code": None,
                         "status_label_ko": None,
                         "status_taxonomy_version": None,
+                        "key_bullets": json.dumps(key_bullets, ensure_ascii=False) if key_bullets else None,
+                        "tags": json.dumps(tags, ensure_ascii=False) if tags else None,
                     }
 
                     saved_id = repository.insert_event(payload)
