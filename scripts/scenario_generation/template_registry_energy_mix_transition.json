@@ -1,0 +1,405 @@
+{
+  "_meta": {
+    "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
+    "schema_version": "0.1.0",
+    "registry_keys": "event_type_l1_l2 (예: 'energy_mix_transition::nuclear_power_change')"
+  },
+
+  "templates": {
+    "energy_mix_transition::nuclear_power_change": {
+      "label_ko": "에너지 믹스 전환 / 원자력 발전 확대·축소",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "outage_duration",
+          "label_ko": "가동 중단 기간",
+          "description": "원전 가동 중단 또는 신규 가동 지연이 유지되는 총 기간",
+          "enum": [
+            { "id": "under_1w", "label": "1주 이내",  "tail": false },
+            { "id": "1_3M",     "label": "1~3개월",   "tail": false },
+            { "id": "3_6M",     "label": "3~6개월",   "tail": false },
+            { "id": "6_12M",    "label": "6~12개월",  "tail": true  },
+            { "id": "1Y_plus",  "label": "1년 이상",  "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "capacity_impact",
+          "label_ko": "Capa 영향 규모",
+          "description": "원전 가동 변화로 영향받는 발전 용량 (단위: GW)",
+          "enum": [
+            { "id": "under_1gw", "label": "1 GW 미만", "tail": false },
+            { "id": "1_3gw",     "label": "1~3 GW",    "tail": false },
+            { "id": "3_10gw",    "label": "3~10 GW",   "tail": false },
+            { "id": "10_20gw",   "label": "10~20 GW",  "tail": true  },
+            { "id": "20gw_plus", "label": "20 GW 이상", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "policy_direction",
+          "label_ko": "정책 방향성",
+          "description": "원전 정책의 방향 변화 강도 (유지↔완전 전환)",
+          "enum": [
+            { "id": "maintain",            "label": "유지",                   "tail": false },
+            { "id": "minor_adjust",        "label": "소폭 조정",              "tail": false },
+            { "id": "direction_shift",     "label": "방향 전환",              "tail": false },
+            { "id": "rapid_restructure",   "label": "급격 재편 (확대 or 축소)", "tail": true  },
+            { "id": "complete_transition", "label": "완전 정책 전환",         "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "alternative_fuel_demand",
+          "label_ko": "대체 연료 수요 (Gas 수요 영향)",
+          "description": "원전 가동 변화에 따른 가스·석탄 등 대체 연료 수요 증감 규모",
+          "enum": [
+            { "id": "minimal",     "label": "변동 미미",                       "tail": false },
+            { "id": "minor",       "label": "소폭 (Gas or 석탄)",              "tail": false },
+            { "id": "moderate",    "label": "중간 (Gas 또는 석탄 대폭)",       "tail": false },
+            { "id": "substantial", "label": "대폭",                            "tail": true  },
+            { "id": "extreme",     "label": "극단 (완전 Gas 의존 or 석탄 병행)", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "regional_power_mix_shift",
+          "label_ko": "지역 전력 믹스 변화",
+          "description": "원전 비중의 변화로 인한 해당 지역 전력 믹스 구조 변화 (단위: %P)",
+          "enum": [
+            { "id": "none",       "label": "없음",        "tail": false },
+            { "id": "1_3pp",      "label": "1~3%P 변화",  "tail": false },
+            { "id": "3_7pp",      "label": "3~7%P 변화",  "tail": false },
+            { "id": "7_15pp",     "label": "7~15%P 변화", "tail": true  },
+            { "id": "15pp_plus",  "label": "15%P+ 변화",  "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "political_followup",
+          "label_ko": "정치 후속 조치",
+          "description": "원전 정책 변화에 대한 정치권·입법 후속 조치 강도",
+          "enum": [
+            { "id": "none",             "label": "없음",       "tail": false },
+            { "id": "monitoring",       "label": "관망",       "tail": false },
+            { "id": "review",           "label": "정책 검토",  "tail": false },
+            { "id": "change",           "label": "정책 변경",  "tail": true  },
+            { "id": "legal_amendment",  "label": "법 개정",    "tail": true  }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "NUC_C1",
+          "type": "intensity_contradiction",
+          "description": "Capa 영향이 1GW 미만인데 대체 연료 수요가 대폭/극단인 것은 인과적으로 모순",
+          "forbid": {
+            "capacity_impact": ["under_1gw"],
+            "alternative_fuel_demand": ["substantial", "extreme"]
+          }
+        },
+        {
+          "rule_id": "NUC_C2",
+          "type": "intensity_contradiction",
+          "description": "정책 방향성이 유지인데 정치 후속이 법 개정 수준이라는 조합은 정책 논리상 모순",
+          "forbid": {
+            "policy_direction": ["maintain"],
+            "political_followup": ["legal_amendment"]
+          }
+        },
+        {
+          "rule_id": "NUC_C3",
+          "type": "duration_contradiction",
+          "description": "1주 이내 단기 가동 중단에서 Capa 영향이 10GW 이상이라는 조합은 물리적으로 비현실적",
+          "forbid": {
+            "outage_duration": ["under_1w"],
+            "capacity_impact": ["10_20gw", "20gw_plus"]
+          }
+        },
+        {
+          "rule_id": "NUC_C4",
+          "type": "intensity_contradiction",
+          "description": "Capa 영향이 20GW+인데 전력 믹스 변화가 없음/1~3%P 수준인 것은 정의상 모순",
+          "forbid": {
+            "capacity_impact": ["20gw_plus"],
+            "regional_power_mix_shift": ["none", "1_3pp"]
+          }
+        },
+        {
+          "rule_id": "NUC_C5",
+          "type": "intensity_contradiction",
+          "description": "완전 정책 전환 상황에서 정치 후속이 없음/관망이라는 조합은 정책적으로 비현실적",
+          "forbid": {
+            "policy_direction": ["complete_transition"],
+            "political_followup": ["none", "monitoring"]
+          }
+        },
+        {
+          "rule_id": "NUC_C6",
+          "type": "physical_contradiction",
+          "description": "대체 연료 수요가 극단인데 Capa 영향이 1~3GW에 불과한 것은 인과 경로상 모순",
+          "forbid": {
+            "alternative_fuel_demand": ["extreme"],
+            "capacity_impact": ["under_1gw", "1_3gw"]
+          }
+        }
+      ]
+    },
+
+    "energy_mix_transition::renewable_power_change": {
+      "label_ko": "에너지 믹스 전환 / 재생에너지 발전 확대·축소",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "renewable_volatility",
+          "label_ko": "풍력·태양광 변동폭",
+          "description": "재생에너지 발전량의 YoY 변동 규모 (단위: %)",
+          "enum": [
+            { "id": "minimal",     "label": "YoY ±5% 이내", "tail": false },
+            { "id": "mild",        "label": "±5~15%",       "tail": false },
+            { "id": "moderate",    "label": "±15~25%",      "tail": false },
+            { "id": "significant", "label": "±25~40%",      "tail": true  },
+            { "id": "extreme",     "label": "±40% 이상",    "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "dunkelflaute_intensity",
+          "label_ko": "둔켈플라우테 강도",
+          "description": "풍력·태양광이 동시 저조한 극한 event 지속 기간",
+          "enum": [
+            { "id": "none",     "label": "없음",            "tail": false },
+            { "id": "minor",    "label": "경미 (1~2주)",    "tail": false },
+            { "id": "moderate", "label": "중간 (2~4주)",    "tail": false },
+            { "id": "severe",   "label": "심각 (1~2개월)",  "tail": true  },
+            { "id": "extreme",  "label": "극단 (2개월+)",   "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "gas_backup_demand",
+          "label_ko": "가스 백업 수요",
+          "description": "재생에너지 변동성에 대응하는 가스 발전 백업 수요 증가 규모",
+          "enum": [
+            { "id": "normal",      "label": "평상",             "tail": false },
+            { "id": "minor",       "label": "소폭 (3~5%)",      "tail": false },
+            { "id": "moderate",    "label": "중간 (5~10%)",     "tail": false },
+            { "id": "substantial", "label": "대폭 (10~20%)",    "tail": true  },
+            { "id": "extreme",     "label": "극단 (20%+)",      "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "seasonality",
+          "label_ko": "계절성",
+          "description": "재생에너지 변동·백업 수요 영향이 집중되는 계절",
+          "enum": [
+            { "id": "na",             "label": "무관",         "tail": false },
+            { "id": "spring_fall",    "label": "봄/가을",      "tail": false },
+            { "id": "partial_winter", "label": "동절기 일부",  "tail": false },
+            { "id": "winter_peak",    "label": "동절기 Peak",  "tail": true  },
+            { "id": "multi_season",   "label": "Multi-season", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "storage_response",
+          "label_ko": "저장 기술 대응",
+          "description": "ESS·양수발전 등 저장 기술의 변동성 흡수 능력 수준",
+          "enum": [
+            { "id": "adequate",     "label": "충분",       "tail": false },
+            { "id": "partial",      "label": "부분 대응",  "tail": false },
+            { "id": "limited",      "label": "제한적",     "tail": false },
+            { "id": "insufficient", "label": "부족",       "tail": true  },
+            { "id": "unable",       "label": "대응 불가",  "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "policy",
+          "label_ko": "정책 대응",
+          "description": "재생에너지 변동·백업 관련 정책 개입 강도",
+          "enum": [
+            { "id": "none",                 "label": "없음",                  "tail": false },
+            { "id": "monitoring",           "label": "관망",                  "tail": false },
+            { "id": "emergency_discussion", "label": "비상 대응 논의",        "tail": false },
+            { "id": "capacity_market",      "label": "Capacity Market 조정",  "tail": true  },
+            { "id": "urgent_legislation",   "label": "긴급 법령·보조금",      "tail": true  }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "REN_C1",
+          "type": "intensity_contradiction",
+          "description": "변동폭이 ±5% 이내인데 가스 백업 수요가 대폭/극단인 것은 인과적으로 모순",
+          "forbid": {
+            "renewable_volatility": ["minimal"],
+            "gas_backup_demand": ["substantial", "extreme"]
+          }
+        },
+        {
+          "rule_id": "REN_C2",
+          "type": "physical_contradiction",
+          "description": "둔켈플라우테가 없음(none)인데 저장 기술 대응이 대응 불가 수준이라는 조합은 모순",
+          "forbid": {
+            "dunkelflaute_intensity": ["none"],
+            "storage_response": ["unable"]
+          }
+        },
+        {
+          "rule_id": "REN_C3",
+          "type": "intensity_contradiction",
+          "description": "둔켈플라우테가 심각/극단인데 가스 백업 수요가 평상/소폭이라는 조합은 시장 통념상 모순",
+          "forbid": {
+            "dunkelflaute_intensity": ["severe", "extreme"],
+            "gas_backup_demand": ["normal", "minor"]
+          }
+        },
+        {
+          "rule_id": "REN_C4",
+          "type": "intensity_contradiction",
+          "description": "가스 백업 수요가 극단(20%+)인데 정책이 없음/관망이라는 조합은 정책적으로 비현실적",
+          "forbid": {
+            "gas_backup_demand": ["extreme"],
+            "policy": ["none", "monitoring"]
+          }
+        },
+        {
+          "rule_id": "REN_C5",
+          "type": "physical_contradiction",
+          "description": "저장 기술이 충분(adequate)인데 가스 백업 수요가 극단이라는 조합은 인과 경로상 모순",
+          "forbid": {
+            "storage_response": ["adequate"],
+            "gas_backup_demand": ["extreme"]
+          }
+        }
+      ]
+    },
+
+    "energy_mix_transition::alternative_fuel_availability": {
+      "label_ko": "에너지 믹스 전환 / 대체 연료 가용성",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "supply_expansion",
+          "label_ko": "대체 연료 공급 확대",
+          "description": "수소·바이오가스·e-Methane 등 대체 연료의 연간 공급 확대율 (단위: %/년)",
+          "enum": [
+            { "id": "stagnant",  "label": "정체",                "tail": false },
+            { "id": "minor",     "label": "소폭 확대 (<5%/년)",  "tail": false },
+            { "id": "moderate",  "label": "중간 (5~10%/년)",     "tail": false },
+            { "id": "rapid",     "label": "빠른 확대 (10~20%/년)", "tail": true  },
+            { "id": "explosive", "label": "급속 (20%+/년)",      "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "price_competitiveness",
+          "label_ko": "가격 경쟁력 (LNG 대비)",
+          "description": "대체 연료의 LNG 대비 가격 비율",
+          "enum": [
+            { "id": "2x_plus",         "label": "2배 이상 비쌈",         "tail": false },
+            { "id": "1_5_to_2x",       "label": "1.5~2배",               "tail": false },
+            { "id": "1_2_to_1_5x",     "label": "1.2~1.5배",             "tail": false },
+            { "id": "competitive",     "label": "1.0~1.2배 (경쟁)",      "tail": true  },
+            { "id": "equal_or_lower",  "label": "LNG와 동등 또는 저렴",  "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "policy_support",
+          "label_ko": "정책 지원",
+          "description": "대체 연료 전환 관련 정부 지원·의무화 강도",
+          "enum": [
+            { "id": "none",            "label": "없음",         "tail": false },
+            { "id": "pilot",           "label": "파일럿 지원",  "tail": false },
+            { "id": "tax_benefit",     "label": "세제 혜택",    "tail": false },
+            { "id": "partial_mandate", "label": "의무화 일부",  "tail": true  },
+            { "id": "full_mandate",    "label": "완전 의무화",  "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "infrastructure_readiness",
+          "label_ko": "인프라 준비도",
+          "description": "대체 연료 인프라(배관·충전소·전환 설비) 준비 수준",
+          "enum": [
+            { "id": "early",       "label": "초기 (<10%)", "tail": false },
+            { "id": "10_30pct",    "label": "10~30%",      "tail": false },
+            { "id": "30_50pct",    "label": "30~50%",      "tail": false },
+            { "id": "50_70pct",    "label": "50~70%",      "tail": true  },
+            { "id": "70pct_plus",  "label": "70%+ (상용화)", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "market_acceptance",
+          "label_ko": "시장 수용",
+          "description": "대체 연료에 대한 시장·산업의 수용 수준",
+          "enum": [
+            { "id": "minimal",             "label": "관심 미미",         "tail": false },
+            { "id": "niche",               "label": "특정 산업만",       "tail": false },
+            { "id": "gradual",             "label": "점진 수용",         "tail": false },
+            { "id": "mainstream_starting", "label": "주류 전환 시작",    "tail": true  },
+            { "id": "dominant",            "label": "시장 지배 전환",    "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "long_term_outlook",
+          "label_ko": "장기 전망 (LNG 수요)",
+          "description": "대체 연료 확산이 LNG 수요에 미치는 중장기 영향 전망",
+          "enum": [
+            { "id": "lng_dominant_persistent", "label": "LNG 우위 지속",    "tail": false },
+            { "id": "lng_10y_plus",            "label": "LNG 10년+ 우위",   "tail": false },
+            { "id": "lng_peak_imminent",       "label": "LNG 피크 임박",    "tail": false },
+            { "id": "lng_decline",             "label": "LNG 수요 감소",    "tail": true  },
+            { "id": "lng_stranded",            "label": "LNG Stranded 위험", "tail": true  }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "ALT_C1",
+          "type": "intensity_contradiction",
+          "description": "공급 확대가 정체인데 시장 수용이 주류 전환/지배 수준이라는 조합은 인과적으로 모순",
+          "forbid": {
+            "supply_expansion": ["stagnant"],
+            "market_acceptance": ["mainstream_starting", "dominant"]
+          }
+        },
+        {
+          "rule_id": "ALT_C2",
+          "type": "intensity_contradiction",
+          "description": "가격 경쟁력이 2배 이상 비쌈인데 장기 전망이 LNG 수요 감소/Stranded인 것은 시장 통념상 모순",
+          "forbid": {
+            "price_competitiveness": ["2x_plus"],
+            "long_term_outlook": ["lng_decline", "lng_stranded"]
+          }
+        },
+        {
+          "rule_id": "ALT_C3",
+          "type": "physical_contradiction",
+          "description": "정책이 완전 의무화인데 인프라 준비도가 초기/10~30% 수준이라는 조합은 실현 불가능",
+          "forbid": {
+            "policy_support": ["full_mandate"],
+            "infrastructure_readiness": ["early", "10_30pct"]
+          }
+        },
+        {
+          "rule_id": "ALT_C4",
+          "type": "intensity_contradiction",
+          "description": "공급이 급속(20%+/년) 확대 중인데 정책 지원이 전무한 것은 정책적으로 비현실적",
+          "forbid": {
+            "supply_expansion": ["explosive"],
+            "policy_support": ["none"]
+          }
+        },
+        {
+          "rule_id": "ALT_C5",
+          "type": "intensity_contradiction",
+          "description": "시장 지배 전환 단계인데 인프라 준비도가 초기인 것은 정의상 모순",
+          "forbid": {
+            "market_acceptance": ["dominant"],
+            "infrastructure_readiness": ["early", "10_30pct"]
+          }
+        },
+        {
+          "rule_id": "ALT_C6",
+          "type": "intensity_contradiction",
+          "description": "가격이 LNG와 동등/저렴한데 장기 전망이 LNG 우위 지속이라는 조합은 시장 통념상 모순",
+          "forbid": {
+            "price_competitiveness": ["equal_or_lower"],
+            "long_term_outlook": ["lng_dominant_persistent", "lng_10y_plus"]
+          }
+        }
+      ]
+    }
+  }
+}

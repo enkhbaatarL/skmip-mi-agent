@@ -1,0 +1,288 @@
+{
+  "_meta": {
+    "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
+    "schema_version": "0.1.0",
+    "registry_keys": "event_type_l1_l2 (예: 'supply_demand_balance::storage_inventory_level')"
+  },
+
+  "templates": {
+    "supply_demand_balance::storage_inventory_level": {
+      "label_ko": "수급 밸런스 / 재고·저장 수준",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "current_inventory_level",
+          "label_ko": "현 재고 수준 (평년 대비)",
+          "description": "현 시점의 재고가 평년 수준 대비 얼마나 차이나는지 (단위: %P)",
+          "enum": [
+            { "id": "abundant",      "label": "평년+10%P 이상",     "tail": false },
+            { "id": "normal",        "label": "평년 수준",          "tail": false },
+            { "id": "below_normal",  "label": "평년-5~10%P",        "tail": false },
+            { "id": "low",           "label": "평년-10~15%P",       "tail": true  },
+            { "id": "critical",      "label": "평년-15%P 이상 (위기)", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "inventory_trend",
+          "label_ko": "재고 추세",
+          "description": "재고 수준의 시간적 변화 방향 (증가↔소진)",
+          "enum": [
+            { "id": "increasing",    "label": "증가 중",     "tail": false },
+            { "id": "stable",        "label": "평이",        "tail": false },
+            { "id": "decreasing",    "label": "감소 추세",   "tail": false },
+            { "id": "rapid_decline", "label": "급감",        "tail": true  },
+            { "id": "depleting",     "label": "급속 소진",   "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "storage_target_gap",
+          "label_ko": "비축 목표 Gap",
+          "description": "비축 목표 대비 실제 비축률의 격차 (단위: %P)",
+          "enum": [
+            { "id": "exceeded",         "label": "목표 초과",          "tail": false },
+            { "id": "on_track",         "label": "달성 궤도",          "tail": false },
+            { "id": "minor_gap",        "label": "소폭 Gap (5~10%P)",  "tail": false },
+            { "id": "significant_gap",  "label": "중대 Gap (10~15%P)", "tail": true  },
+            { "id": "severe_gap",       "label": "심각 Gap (15%P+)",   "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "supply_availability",
+          "label_ko": "공급 여력",
+          "description": "재고 보충에 동원 가능한 공급 측 여력 수준",
+          "enum": [
+            { "id": "ample",    "label": "충분", "tail": false },
+            { "id": "normal",   "label": "정상", "tail": false },
+            { "id": "tight",    "label": "긴축", "tail": false },
+            { "id": "limited",  "label": "제한", "tail": true  },
+            { "id": "shortage", "label": "부족", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "market_concern_level",
+          "label_ko": "시장 우려 수준",
+          "description": "시장 참여자의 재고 부족·수급 긴장에 대한 우려 강도",
+          "enum": [
+            { "id": "none",       "label": "없음",              "tail": false },
+            { "id": "monitoring", "label": "관망",              "tail": false },
+            { "id": "emerging",   "label": "Risk Premium 부상", "tail": false },
+            { "id": "spreading",  "label": "우려 확산",         "tail": true  },
+            { "id": "panic",      "label": "패닉/사재기",       "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "policy_response",
+          "label_ko": "정책 대응",
+          "description": "정부·규제의 비축·재고 관련 개입 강도",
+          "enum": [
+            { "id": "none",        "label": "없음",                "tail": false },
+            { "id": "monitoring",  "label": "관망/시장 모니터링",  "tail": false },
+            { "id": "discussion",  "label": "비축 규정 논의",      "tail": false },
+            { "id": "relaxation",  "label": "규정 완화·보조금",    "tail": true  },
+            { "id": "emergency",   "label": "비상 수입·강제 배분", "tail": true  }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "STO_C1",
+          "type": "intensity_contradiction",
+          "description": "재고가 평년+10%P 이상으로 여유로운데 시장이 우려 확산/패닉 상태인 것은 모순",
+          "forbid": {
+            "current_inventory_level": ["abundant"],
+            "market_concern_level": ["spreading", "panic"]
+          }
+        },
+        {
+          "rule_id": "STO_C2",
+          "type": "intensity_contradiction",
+          "description": "공급 여력이 충분한데 정부가 규정 완화·비상 조치를 취하는 것은 정책적으로 비현실적",
+          "forbid": {
+            "supply_availability": ["ample"],
+            "policy_response": ["relaxation", "emergency"]
+          }
+        },
+        {
+          "rule_id": "STO_C3",
+          "type": "physical_contradiction",
+          "description": "재고 추세가 증가 중인데 비축 목표 Gap이 중대/심각이라는 조합은 물리적으로 모순",
+          "forbid": {
+            "inventory_trend": ["increasing"],
+            "storage_target_gap": ["significant_gap", "severe_gap"]
+          }
+        },
+        {
+          "rule_id": "STO_C4",
+          "type": "intensity_contradiction",
+          "description": "현 재고가 위기(평년-15%P+) 수준인데 시장 우려가 없음/관망인 것은 시장 통념상 모순",
+          "forbid": {
+            "current_inventory_level": ["critical"],
+            "market_concern_level": ["none", "monitoring"]
+          }
+        },
+        {
+          "rule_id": "STO_C5",
+          "type": "physical_contradiction",
+          "description": "비축 목표 Gap이 심각(15%P+)인데 공급 여력이 충분/정상이라는 조합은 인과적으로 모순",
+          "forbid": {
+            "storage_target_gap": ["severe_gap"],
+            "supply_availability": ["ample", "normal"]
+          }
+        },
+        {
+          "rule_id": "STO_C6",
+          "type": "intensity_contradiction",
+          "description": "시장이 패닉/사재기 상태인데 정책 대응이 전혀 없음(none)인 것은 정책적으로 비현실적",
+          "forbid": {
+            "market_concern_level": ["panic"],
+            "policy_response": ["none"]
+          }
+        },
+        {
+          "rule_id": "STO_C7",
+          "type": "physical_contradiction",
+          "description": "재고가 급속 소진 추세인데 비축 목표를 초과·달성 궤도에 있다는 것은 모순",
+          "forbid": {
+            "inventory_trend": ["depleting"],
+            "storage_target_gap": ["exceeded", "on_track"]
+          }
+        }
+      ]
+    },
+
+    "supply_demand_balance::interregional_competition": {
+      "label_ko": "수급 밸런스 / 지역간 수급 경쟁",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "asia_europe_spread",
+          "label_ko": "아시아-유럽 Spread (JKM-TTF)",
+          "description": "아시아(JKM)와 유럽(TTF)의 가격 격차 ($/MMBtu)",
+          "enum": [
+            { "id": "balanced", "label": "$0~0.5", "tail": false },
+            { "id": "minor",    "label": "$0.5~1.5", "tail": false },
+            { "id": "moderate", "label": "$1.5~3", "tail": false },
+            { "id": "strong",   "label": "$3~5",   "tail": true  },
+            { "id": "extreme",  "label": "$5+",    "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "arbitrage_direction",
+          "label_ko": "Arbitrage 방향",
+          "description": "지역간 카고 흐름의 방향성 강도",
+          "enum": [
+            { "id": "balanced",              "label": "균형",                  "tail": false },
+            { "id": "mild_directional",      "label": "한 방향 소폭 (Asia or EU)", "tail": false },
+            { "id": "distinct_directional",  "label": "뚜렷한 한 방향",        "tail": false },
+            { "id": "strong_directional",    "label": "강한 한 방향",          "tail": true  },
+            { "id": "exclusive_directional", "label": "극단 (한 방향 전용)",   "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "forward_curve_shape",
+          "label_ko": "Forward Curve 형태",
+          "description": "선물 곡선 구조 (Contango↔Backwardation)",
+          "enum": [
+            { "id": "contango",            "label": "정상 Contango",          "tail": false },
+            { "id": "flat",                "label": "평탄",                   "tail": false },
+            { "id": "mild_backwardation",  "label": "약한 Backwardation",     "tail": false },
+            { "id": "deep_backwardation",  "label": "Backwardation 심화",     "tail": true  },
+            { "id": "inverted",            "label": "역전/극단 Back",         "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "demand_competition_intensity",
+          "label_ko": "수요 경쟁 강도",
+          "description": "지역간 카고 확보를 둘러싼 수요 측 경쟁 강도",
+          "enum": [
+            { "id": "none",     "label": "없음", "tail": false },
+            { "id": "weak",     "label": "약함", "tail": false },
+            { "id": "moderate", "label": "중간", "tail": false },
+            { "id": "strong",   "label": "강함", "tail": true  },
+            { "id": "extreme",  "label": "극단", "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "redistribution_period",
+          "label_ko": "재배분 기간",
+          "description": "글로벌 카고 재배분이 정상화되기까지 소요 기간",
+          "enum": [
+            { "id": "na",        "label": "해당 없음 (즉시)", "tail": false },
+            { "id": "short",     "label": "1~3개월",          "tail": false },
+            { "id": "medium",    "label": "3~6개월",          "tail": false },
+            { "id": "long",      "label": "6~12개월",         "tail": true  },
+            { "id": "very_long", "label": "1년+",             "tail": true  }
+          ]
+        },
+        {
+          "dimension_id": "policy_intervention",
+          "label_ko": "정책 개입",
+          "description": "정부·규제의 수출 통제·재배분 관련 개입 강도",
+          "enum": [
+            { "id": "none",                       "label": "없음",            "tail": false },
+            { "id": "monitoring",                 "label": "관망",            "tail": false },
+            { "id": "market_monitoring",          "label": "시장 모니터링",   "tail": false },
+            { "id": "export_control_discussion",  "label": "수출 통제 논의",  "tail": true  },
+            { "id": "export_restriction",         "label": "수출 제한 조치",  "tail": true  }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "IRC_C1",
+          "type": "intensity_contradiction",
+          "description": "Spread가 $0~0.5(균형)인데 수요 경쟁이 강함/극단인 것은 시장 통념상 모순",
+          "forbid": {
+            "asia_europe_spread": ["balanced"],
+            "demand_competition_intensity": ["strong", "extreme"]
+          }
+        },
+        {
+          "rule_id": "IRC_C2",
+          "type": "physical_contradiction",
+          "description": "Arbitrage 방향이 균형인데 Forward Curve가 Backwardation 심화/역전이라는 조합은 모순",
+          "forbid": {
+            "arbitrage_direction": ["balanced"],
+            "forward_curve_shape": ["deep_backwardation", "inverted"]
+          }
+        },
+        {
+          "rule_id": "IRC_C3",
+          "type": "intensity_contradiction",
+          "description": "Spread가 $5+ 극단인데 수요 경쟁이 없음/약함이라는 조합은 인과적으로 모순",
+          "forbid": {
+            "asia_europe_spread": ["extreme"],
+            "demand_competition_intensity": ["none", "weak"]
+          }
+        },
+        {
+          "rule_id": "IRC_C4",
+          "type": "intensity_contradiction",
+          "description": "수출 제한 조치가 발동된 상황에서 Spread가 $0~1.5(균형/소폭)인 것은 정책 발동 임계와 모순",
+          "forbid": {
+            "policy_intervention": ["export_restriction"],
+            "asia_europe_spread": ["balanced", "minor"]
+          }
+        },
+        {
+          "rule_id": "IRC_C5",
+          "type": "intensity_contradiction",
+          "description": "수요 경쟁이 극단인데 정책 개입이 없음/관망인 것은 정책적으로 비현실적",
+          "forbid": {
+            "demand_competition_intensity": ["extreme"],
+            "policy_intervention": ["none", "monitoring"]
+          }
+        },
+        {
+          "rule_id": "IRC_C6",
+          "type": "duration_contradiction",
+          "description": "Arbitrage가 극단 한 방향 전용인데 재배분 기간이 즉시/단기(1~3M)인 것은 시간 구조상 모순",
+          "forbid": {
+            "arbitrage_direction": ["exclusive_directional"],
+            "redistribution_period": ["na", "short"]
+          }
+        }
+      ]
+    }
+  }
+}
