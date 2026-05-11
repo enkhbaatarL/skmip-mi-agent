@@ -25,11 +25,11 @@ from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFl
 
 
 def to_state(input_data: ScenarioFlowInput | dict[str, Any], **_: object) -> ScenarioFlowState:
-    """Convert external input to internal state. This is where event_file_path is set."""
+    """Convert external input to internal state. This is where mi_event_id is set."""
     parsed = ScenarioFlowInput.model_validate(input_data)
 
     return ScenarioFlowState(
-        event_file_path=parsed.event_file_path,
+        mi_event_id=str(parsed.mi_event_id),
     )
 
 

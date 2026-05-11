@@ -176,23 +176,29 @@ COMMENT='Time Bucket Master';
 -- =========================================================
 DROP TABLE IF EXISTS `tmm_scenariom`;
 CREATE TABLE `tmm_scenariom` (
-  `scenario_id`           INT             NOT NULL AUTO_INCREMENT COMMENT '시나리오 ID PK',
-  `crt_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `user_id`               INT             NULL COMMENT '시나리오 생성 사용자 ID',
-  `name`                  VARCHAR(200)    NOT NULL COMMENT '시나리오 명칭',
-  `description`           TEXT            NULL COMMENT '시나리오 설명',
-  `status`                VARCHAR(20)     NOT NULL DEFAULT 'draft' COMMENT '시나리오 상태 draft/active/archived',
-  `valid_from`            DATETIME        NULL COMMENT '유효기간 시작 일시',
-  `valid_to`              DATETIME        NULL COMMENT '유효기간 종료 일시',
-  `base_event_context`    TEXT            NULL COMMENT '기본 이벤트 컨텍스트',
-  PRIMARY KEY (`scenario_id`),
-  INDEX `tmm_scenariom_ix01` (`status`)
+    `scenario_id`           INT UNSIGNED    NOT NULL AUTO_INCREMENT COMMENT '시나리오 일련번호 (PK)',
+    `crt_dtm`               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '시나리오 최초생성일시',
+    `scenario_group_id`     VARCHAR(200)    NOT NULL COMMENT '시나리오 그룹 키 (scg_[A-Za-z0-9]{10})',
+    `crt_usr_logn_id`       VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성사용자로그인ID',
+    `mod_usr_logn_id`       VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정사용자로그인ID',
+    `mod_dtm`               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '수정일시',
+    `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제여부 (Y/N)',
+    `name`                  VARCHAR(500)    NOT NULL COMMENT '시나리오 명칭 (Base Event title 기반)',
+    `description`           TEXT            NOT NULL COMMENT '시나리오 설명 / one_line_summary',
+    `mi_event_id`           INT UNSIGNED    NOT NULL COMMENT 'Base MI Event FK (tmm_mieventm)',
+    `status_code`           VARCHAR(30)     NOT NULL DEFAULT 'draft' COMMENT '시나리오 상태 (draft/active/archived)',
+    `valid_from`            DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '유효기간 시작 일시',
+    `valid_to`              DATETIME        NULL COMMENT '유효기간 종료 일시',
+    `language`              VARCHAR(10)     NOT NULL DEFAULT 'ko' COMMENT '문서 언어',
+    `dimension_values`      JSON            NOT NULL COMMENT 'Stage 4 결과 (dimension_values + price_direction)',
+    `likelihood`            VARCHAR(10)     NOT NULL COMMENT '시나리오 발생 가능성 (very_high/high/medium/low/very_low 5단계)',
+    `price_direction`       JSON            NOT NULL COMMENT '시나리오 가격 영향 강도 (strong_bull/bull/…/strong_bear 7단계)',
+    PRIMARY KEY (`scenario_id`, `crt_dtm`),
+    INDEX `tmm_scenariom_ix01` (`scenario_group_id`),
+    INDEX `tmm_scenariom_ix02` (`mi_event_id`),
+    INDEX `tmm_scenariom_ix03` (`status_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Scenario Master';
+COMMENT='시나리오 마스터 (5-Stage Pipeline 산출물 저장)';
 
 -- =========================================================
 -- Table: tmm_scenarioversionm
