@@ -49,7 +49,9 @@ class SyncEventRepository(BaseSyncSQLRepository):
             taxonomy_version,
             status_code,
             status_label_ko,
-            status_taxonomy_version
+            status_taxonomy_version,
+            key_bullets,
+            tags
         from tmm_mieventm
         where del_yn = 'N'
         order by first_created desc, mi_event_id desc
@@ -81,7 +83,9 @@ class SyncEventRepository(BaseSyncSQLRepository):
             taxonomy_version,
             status_code,
             status_label_ko,
-            status_taxonomy_version
+            status_taxonomy_version,
+            key_bullets,
+            tags
         ) values (
             :first_created,
             :crt_usr_logn_id,
@@ -100,7 +104,9 @@ class SyncEventRepository(BaseSyncSQLRepository):
             :taxonomy_version,
             :status_code,
             :status_label_ko,
-            :status_taxonomy_version
+            :status_taxonomy_version,
+            :key_bullets,
+            :tags
         )
         """
         result = self.session.execute(text(sql), payload)
