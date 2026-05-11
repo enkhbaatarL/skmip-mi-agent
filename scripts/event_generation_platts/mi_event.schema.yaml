@@ -1,0 +1,215 @@
+# NOTE: mi_event.schema.yaml defines the MI Event entity.
+# MI Event is the decision unit extracted from MI Records.
+# It references event_type_taxonomy.json for event classification
+# and is linked 1:1 to impact.schema.yaml for impact analysis.
+#
+# Key relationships:
+#   MIRecord ──(N:M)──> MIEvent ──(1:1)──> Impact
+#   - N:M with MIRecord: multiple records may reference the same event,
+#     and one record (e.g., daily report) may yield multiple events.
+#   - 1:1 with Impact: each event has exactly one impact assessment
+#     (which internally contains sub-impacts per target: JKM, TTF, etc.)
+#
+# Dedup behavior:
+#   - New events are compared against existing events (30-day window).
+#   - If a similar event exists: evidence_record_ids is extended,
+#     status may be updated, and impact is recalculated.
+#   - Merged events retain dedup_state="merged" for undo capability.
+#   - Pre-merge state (individual events + impacts) must be preserved.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "mi_event.schema.yaml"
+definition_version: "0.2.0"
+title: MI Event Schema
+description: >
+  Schema for MI Event — the decision unit extracted from MI Records.
+  An MI Event represents a market-relevant incident or topic that
+  AI interprets for its impact on LNG prices/spreads.
+  MI Record is 'data'; MI Event is the 'incident' mentioned in that data.
+type: object
+required:
+  - schema_ref
+  - mi_events
+additionalProperties: false
+properties:
+  schema_ref:
+    $ref: "#/$defs/SchemaRef"
+  mi_events:
+    type: array
+    items:
+      $ref: "#/$defs/MIEvent"
+
+$defs:
+  SchemaRef:
+    type: object
+    additionalProperties: false
+    required:
+      - schema_id
+      - definition_version
+    properties:
+      schema_id:
+        type: string
+      definition_version:
+        type: string
+
+  IsoDateTimeOrEmpty:
+    type: string
+    description: ISO-8601 datetime string or empty string when not set.
+
+  # ─── MI Event ───────────────────────────────────────
+
+  MIEvent:
+    type: object
+    additionalProperties: false
+    required:
+      - event_id
+      - created_at
+      - updated_at
+      - event_title_ko
+      - event_summary_ko
+      - evidence_record_ids
+      - estimated_impact_id
+      - event_type
+      - event_status
+      - dedup_state
+      - language
+    properties:
+
+      # --- Identity ---
+      event_id:
+        type: string
+        pattern: "^ev_[a-f0-9]{12}$"
+        description: Unique event identifier.
+
+      # --- Timestamps ---
+      created_at:
+        $ref: "#/$defs/IsoDateTimeOrEmpty"
+        description: When this event was first created.
+      updated_at:
+        $ref: "#/$defs/IsoDateTimeOrEmpty"
+        description: When this event was last updated (new evidence, status change, etc.).
+
+      # --- Content (AI-generated, based on aggregated evidence records) ---
+      event_title_ko:
+        type: string
+        description: >
+          One-line Korean title summarizing the event.
+          Typically includes the core fact and directional market implication.
+      event_summary_ko:
+        type: string
+        description: >
+          Detailed Korean summary of the event.
+          Free-text format; no rigid structure enforced.
+          Commonly includes: event overview, fact vs sentiment classification,
+          and price/spread implication. Format may evolve over time.
+
+      # --- Entity references ---
+      evidence_record_ids:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          pattern: "^mi_[a-f0-9]{12}$"
+        description: >
+          N:M linkage to MI Records. One event may reference multiple records
+          (e.g., same topic covered across multiple daily reports),
+          and one record may be linked to multiple events.
+      estimated_impact_id:
+        type: string
+        pattern: "^impact_ev_[a-z0-9_]+$"
+        description: >
+          1:1 reference to the Impact entity.
+          Each event has exactly one Impact, which contains sub-impacts
+          per target (JKM, TTF, JKM-HH spread, etc.).
+
+      # --- Event type classification ---
+      event_type:
+        $ref: "event_type_ref.schema.yaml"
+        description: >
+          Structured reference to event_type_taxonomy.json.
+          Classifies the event into a 2-level hierarchy (level_1 + level_2).
+
+      # --- Status lifecycle ---
+      event_status:
+        $ref: "event_status_ref.schema.yaml"
+        description: >
+          Structured reference to event_status_taxonomy.
+          Tracks event lifecycle with taxonomy_id, taxonomy_version,
+          status_code, and status_label_ko.
+
+      # --- Signal/Noise assessment (optional) ---
+      # NOTE: This field is optional. Definition is subject to further refinement
+      # as the planning/specification evolves.
+      signal_noise_assessment:
+        $ref: "signal_noise_assessment.schema.yaml"
+        description: >
+          (Optional) Assessment of whether this event is a meaningful market signal or noise.
+          Contains label, reason, and confidence internally.
+          NOTE: further planning/definition update is needed for this field.
+
+      # --- Fundamental/Sentiment assessment (optional) ---
+      # NOTE: This field is optional. Definition is subject to further refinement
+      # as the planning/specification evolves.
+      fundamental_sentiment_assessment:
+        $ref: "fundamental_sentiment_assessment.schema.yaml"
+        description: >
+          (Optional) Assessment of whether this event is driven by fundamentals or sentiment.
+          Contains label, reason, and confidence internally.
+          NOTE: further planning/definition update is needed for this field.
+
+      # --- Dedup ---
+      dedup_state:
+        $ref: "#/$defs/DedupState"
+        description: >
+          Deduplication state. When similar events are merged,
+          the canonical event keeps dedup_state="canonical" and inherits
+          all evidence_record_ids. Merged events retain dedup_state="merged"
+          with merged_into_event_id set, preserving undo capability.
+      merged_into_event_id:
+        type: string
+        pattern: "^ev_[a-f0-9]{12}$|^$"
+        default: ""
+        description: If dedup_state is "merged", points to the canonical event.
+      dedup_candidate_event_ids:
+        type: array
+        items:
+          type: string
+          pattern: "^ev_[a-f0-9]{12}$"
+        default: []
+        description: Candidate events shown when dedup is triggered.
+
+      # --- Optional fields ---
+      occurred_at:
+        $ref: "#/$defs/IsoDateTimeOrEmpty"
+        default: ""
+        description: When the event actually occurred (if known).
+      probability:
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0
+        description: Estimated probability of the event occurring/materializing.
+      tags:
+        type: array
+        items:
+          type: string
+        default: []
+        description: Free-form tags for additional categorization.
+      language:
+        type: string
+        enum:
+          - ko
+        default: ko
+        description: Language of event_title_ko and event_summary_ko.
+
+  # ─── External schema refs ────────────────────────────
+  # EventTypeRef → see event_type_ref.schema.yaml
+  # EventStatusRef → see event_status_ref.schema.yaml
+  # SignalNoiseAssessment → see signal_noise_assessment.schema.yaml
+  # FundamentalSentimentAssessment → see fundamental_sentiment_assessment.schema.yaml
+
+  DedupState:
+    type: string
+    enum:
+      - raw
+      - canonical
+      - merged
