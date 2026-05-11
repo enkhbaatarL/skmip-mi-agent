@@ -2,11 +2,11 @@
   "_meta": {
     "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
     "schema_version": "0.1.0",
-    "registry_keys": "event_type_l1_l2 (예: 'infrastructure::liquefaction_terminal')"
+    "registry_keys": "event_type_l1_l2 (예: 'infrastructure_facility::liquefaction_terminal_facility_capacity_utilization_change')"
   },
 
   "templates": {
-    "infrastructure::liquefaction_terminal": {
+    "infrastructure_facility::liquefaction_terminal_facility_capacity_utilization_change": {
       "label_ko": "인프라·설비 / 액화·터미널 시설 Capa·가동률 변화",
       "template_dimensions_total": 7,
       "dimensions": [
@@ -162,7 +162,7 @@
       ]
     },
 
-    "infrastructure::pipeline_transport": {
+    "infrastructure_facility::pipeline_transport_infrastructure_capacity_utilization_change": {
       "label_ko": "인프라·설비 / 파이프라인·수송 인프라 Capa·가동률 변화",
       "template_dimensions_total": 6,
       "dimensions": [
@@ -306,7 +306,7 @@
       ]
     },
 
-    "infrastructure::power_plant": {
+    "infrastructure_facility::power_plant_facility_capacity_utilization_change": {
       "label_ko": "인프라·설비 / 발전소 설비 Capa·가동률 변화",
       "template_dimensions_total": 6,
       "dimensions": [

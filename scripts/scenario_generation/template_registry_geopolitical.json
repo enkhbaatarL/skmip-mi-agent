@@ -400,7 +400,7 @@
         }
       ]
     },
-    "geopolitical_risk::geopolitical_tension": {
+    "geopolitical_risk::geopolitical_tension_instability": {
       "label_ko": "지정학 리스크 / 지정학적 긴장·불안정",
       "template_dimensions_total": 6,
       "dimensions": [
@@ -708,7 +708,7 @@
         }
       ]
     },
-    "geopolitical_risk::economic_sanctions": {
+    "geopolitical_risk::economic_sanctions_trade_restrictions": {
       "label_ko": "지정학 리스크 / 경제 제재·무역 제한",
       "template_dimensions_total": 6,
       "dimensions": [
@@ -1018,7 +1018,7 @@
         }
       ]
     },
-    "geopolitical_risk::regime_change": {
+    "geopolitical_risk::regime_change_political_transition": {
       "label_ko": "지정학 리스크 / 정권 교체·정치 전환",
       "template_dimensions_total": 6,
       "dimensions": [

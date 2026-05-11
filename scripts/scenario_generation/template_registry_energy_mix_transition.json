@@ -2,11 +2,11 @@
   "_meta": {
     "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
     "schema_version": "0.1.0",
-    "registry_keys": "event_type_l1_l2 (예: 'energy_mix_transition::nuclear_power_change')"
+    "registry_keys": "event_type_l1_l2 (예: 'energy_mix_transition::nuclear_power_expansion_reduction')"
   },
 
   "templates": {
-    "energy_mix_transition::nuclear_power_change": {
+    "energy_mix_transition::nuclear_power_expansion_reduction": {
       "label_ko": "에너지 믹스 전환 / 원자력 발전 확대·축소",
       "template_dimensions_total": 6,
       "dimensions": [
@@ -141,7 +141,7 @@
       ]
     },
 
-    "energy_mix_transition::renewable_power_change": {
+    "energy_mix_transition::renewable_power_expansion_reduction": {
       "label_ko": "에너지 믹스 전환 / 재생에너지 발전 확대·축소",
       "template_dimensions_total": 6,
       "dimensions": [

@@ -2,11 +2,11 @@
   "_meta": {
     "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
     "schema_version": "0.1.0",
-    "registry_keys": "event_type_l1_l2 (예: 'supply_demand_balance::storage_inventory_level')"
+    "registry_keys": "event_type_l1_l2 (예: 'supply_demand_balance::inventory_storage_level')"
   },
 
   "templates": {
-    "supply_demand_balance::storage_inventory_level": {
+    "supply_demand_balance::inventory_storage_level": {
       "label_ko": "수급 밸런스 / 재고·저장 수준",
       "template_dimensions_total": 6,
       "dimensions": [
@@ -150,7 +150,7 @@
       ]
     },
 
-    "supply_demand_balance::interregional_competition": {
+    "supply_demand_balance::regional_demand_competition": {
       "label_ko": "수급 밸런스 / 지역간 수급 경쟁",
       "template_dimensions_total": 6,
       "dimensions": [
