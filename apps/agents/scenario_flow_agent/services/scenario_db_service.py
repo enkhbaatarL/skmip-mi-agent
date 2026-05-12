@@ -29,6 +29,15 @@ from apps.common.configs.database.sync_database.connection import get_sync_sessi
 class ScenarioDbService:
     """scenario DB interaction service layer."""
 
+    def check_scenarios_exist(self, mi_event_id: int) -> bool:
+        """Check if scenarios already exist for the given mi_event_id."""
+        session = get_sync_session()
+        try:
+            repository = SyncScenarioRepository(session=session)
+            return repository.check_scenarios_exist(mi_event_id)
+        finally:
+            session.close()
+
     def load_event(self, mi_event_id: int) -> dict[str, Any] | None:
         """Base Event를 DB에서 로드.
 

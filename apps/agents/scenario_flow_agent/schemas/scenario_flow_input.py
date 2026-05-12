@@ -1,13 +1,15 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List
 
 
 class ScenarioFlowInput(BaseModel):
     """Scenario Flow Agent Input Schema
     
     Input for the scenario generation pipeline.
-    Requires mi_event_id to load the base event from database.
+    Accepts a list of mi_event_ids. For each event, if scenarios already exist, 
+    it is skipped. Otherwise, the pipeline processes and saves the generated scenarios.
+    After completion, returns a list of per-event results.
     """
-    mi_event_id: int = Field(
-        description="MI Event ID to generate scenarios for (loaded from tmm_mieventm)"
+    mi_event_ids: List[int] = Field(
+        description="List of MI Event IDs to generate scenarios for"
     )

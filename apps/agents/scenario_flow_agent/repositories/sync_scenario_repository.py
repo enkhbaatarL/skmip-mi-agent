@@ -136,6 +136,20 @@ class SyncScenarioRepository(BaseSyncSQLRepository):
         ).mappings().all()
         return [int(r["mi_record_id"]) for r in rows if r.get("mi_record_id")]
 
+    def check_scenarios_exist(self, mi_event_id: int) -> bool:
+        """tmm_scenariom에서 해당 mi_event_id에 시나리오가 이미 존재하는지 확인."""
+        sql = """
+        select count(*) as cnt
+        from tmm_scenariom
+        where mi_event_id = :mi_event_id
+          and del_yn = 'N'
+        """
+        row = self.session.execute(
+            text(sql),
+            {"mi_event_id": mi_event_id},
+        ).mappings().one()
+        return int(row["cnt"]) > 0
+
     def insert_scenario(self, payload: dict) -> int:
         """tmm_scenariom에 시나리오 1건을 저장하고 PK(scenario_id)를 반환."""
         sql = """
