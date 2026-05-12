@@ -47,15 +47,15 @@
       "label_ko": "인프라 / 설비",
       "children": [
         {
-          "level_2_code": "upstream_production_facility_capacity_utilization_",
+          "level_2_code": "upstream_production_facility_capacity_utilization_change",
           "label_ko": "상류 생산 시설 Capa/가동률 변화"
         },
         {
-          "level_2_code": "liquefaction_terminal_facility_capacity_utilizatio",
+          "level_2_code": "liquefaction_terminal_facility_capacity_utilization_change",
           "label_ko": "액화 / 터미널 시설 Capa/가동률 변화"
         },
         {
-          "level_2_code": "pipeline_transport_infrastructure_capacity_utiliza",
+          "level_2_code": "pipeline_transport_infrastructure_capacity_utilization_change",
           "label_ko": "파이프라인/수송 인프라 Capa/가동률 변화"
         },
         {
