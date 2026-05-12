@@ -1,14 +1,15 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List
 
 
 class ScenarioFlowInput(BaseModel):
     """Scenario Flow Agent Input Schema
     
     Input for the scenario generation pipeline.
-    For Stage 1, only event_file_path is required (file based execution).
+    Accepts a list of mi_event_ids. For each event, if scenarios already exist, 
+    it is skipped. Otherwise, the pipeline processes and saves the generated scenarios.
+    After completion, returns a list of per-event results.
     """
-    event_file_path: str = Field(
-        default="./tmp/sample_event_ev_2a58da7f4ff2.json",
-        description="Path to event JSON file (used for Stage 1 file based execution)"
+    mi_event_ids: List[int] = Field(
+        description="List of MI Event IDs to generate scenarios for"
     )

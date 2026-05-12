@@ -30,21 +30,25 @@ class ScenarioGenerationService:
         self.llm_invoke_text = invoke_llm_text
         self.ModelPreference = ModelPreference
     
-    @log_tool
     def generate_scenario_group(self, event_file_path: str) -> Dict[str, Any]:
         """
-        Run complete scenario generation pipeline for a given event file.
+        Run complete scenario generation pipeline from a file path.
+        """
+        # Load event from file
+        with open(event_file_path, "r", encoding="utf-8") as f:
+            event = json.load(f)
+        return self.generate_scenario_group_from_event(event)
+
+    def generate_scenario_group_from_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run complete scenario generation pipeline from an event dict.
         
         Args:
-            event_file_path: Path to event JSON file
+            event: Event dict (loaded from DB in sample_event format)
             
         Returns:
             Complete scenario group result
         """
-        # Load event
-        with open(event_file_path, "r", encoding="utf-8") as f:
-            event = json.load(f)
-            
         # Generate scenario group ID
         scenario_group_id = f"scg_{uuid.uuid4().hex[:10]}"
         

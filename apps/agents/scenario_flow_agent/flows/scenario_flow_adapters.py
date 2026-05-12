@@ -12,52 +12,58 @@ Scenario Flow Adapter 모듈
 
 구성:
 - to_state  : 입력 → 내부 상태 변환 (Entry Point Adapter)
-- to_output : 내부 상태 → 출력 변환 (Exit Point Adapter)
+- to_output : 내부 상태 → 최종 출력 변환 (Exit Point Adapter)
 """
 from __future__ import annotations
 
 from typing import Any
-from datetime import datetime
 
-from apps.agents.scenario_flow_agent.schemas.scenario_flow_input import ScenarioFlowInput
-from apps.agents.scenario_flow_agent.schemas.scenario_flow_output import ScenarioFlowOutput
+from apps.agents.scenario_flow_agent.schemas.scenario_flow_output import (
+    EventResult,
+    ScenarioFlowOutput,
+)
 from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
 
 
-def to_state(input_data: ScenarioFlowInput | dict[str, Any], **_: object) -> ScenarioFlowState:
-    """Convert external input to internal state. This is where event_file_path is set."""
-    parsed = ScenarioFlowInput.model_validate(input_data)
-
+def to_state(mi_event_id: int, **_: object) -> ScenarioFlowState:
+    """Convert a single mi_event_id to internal state for one event."""
     return ScenarioFlowState(
-        event_file_path=parsed.event_file_path,
+        mi_event_id=str(mi_event_id),
     )
 
 
-def to_output(state: ScenarioFlowState | dict[str, Any]) -> ScenarioFlowOutput:
-    """Convert internal state to final output response."""
+def to_output(state: ScenarioFlowState | dict[str, Any]) -> dict[str, Any]:
+    """Convert internal state to a per-event result dict for aggregation."""
     if isinstance(state, dict):
         state = ScenarioFlowState.model_validate(state)
-    
-    # Calculate execution time
-    execution_time_ms = 0
-    if state.completed_at and state.started_at:
-        delta = state.completed_at - state.started_at
-        execution_time_ms = int(delta.total_seconds() * 1000)
-    
+
+    if state.error:
+        return {
+            "mi_event_id": int(state.mi_event_id),
+            "status": "failure",
+            "message": state.error,
+        }
+
+    return {
+        "mi_event_id": int(state.mi_event_id),
+        "status": "success",
+        "message": f"Generated {state.scenario_count or 0} scenarios",
+    }
+
+
+def build_batch_output(results: list[dict[str, Any]]) -> ScenarioFlowOutput:
+    """Aggregate per-event results into a single batch output with summary."""
+    total = len(results)
+    success = sum(1 for r in results if r["status"] == "success")
+    already_exist = sum(1 for r in results if r["status"] == "already_exist")
+    failure = sum(1 for r in results if r["status"] == "failure")
+
     return ScenarioFlowOutput(
-        scenario_group_id=state.scenario_group_id,
-        mi_event_id=state.mi_event_id,
-        event_type_l1_l2=state.event_type_l1_l2,
-        template_id=state.template_id,
-        cartesian_total=state.cartesian_total or 0,
-        filtered_by_compatibility=state.filtered_by_compatibility or 0,
-        scenario_count=state.scenario_count or 0,
-        mece_passed=state.mece_passed or False,
-        scenarios=state.stage4_scenario_synthesis.get("scenarios", []) if state.stage4_scenario_synthesis else [],
-        likelihood_prior=state.stage4_scenario_synthesis.get("likelihood_prior", {}) if state.stage4_scenario_synthesis else {},
-        success=state.error is None,
-        error=state.error,
-        execution_time_ms=execution_time_ms,
-        completed_at=state.completed_at or datetime.utcnow(),
-        output_file_path=state.output_file_path,
+        results=[EventResult(**r) for r in results],
+        summary={
+            "total": total,
+            "success": success,
+            "already_exist": already_exist,
+            "failure": failure,
+        },
     )

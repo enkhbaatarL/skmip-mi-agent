@@ -1,8 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Dict, List, Optional
-
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
 
 
 class ScenarioFlowState(BaseModel):
@@ -14,11 +12,11 @@ class ScenarioFlowState(BaseModel):
     # --- Input ---
     mi_event_id: Optional[str] = Field(
         default=None,
-        description="Base MI Event ID. Loaded from event file during execution."
+        description="Base MI Event ID (from API parameter mi_event_id)"
     )
-    event_file_path: Optional[str] = Field(
+    event_data: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Path to event JSON file (for Stage 1 file based)"
+        description="Loaded event data dict (reconstructed from DB in sample_event format)"
     )
     
     # --- Metadata ---
@@ -78,7 +76,11 @@ class ScenarioFlowState(BaseModel):
     # --- Output ---
     output_file_path: Optional[str] = Field(
         default=None,
-        description="Path where result JSON was saved"
+        description="Path where result JSON was saved (debug file)"
+    )
+    saved_scenario_ids: Optional[List[int]] = Field(
+        default=None,
+        description="IDs of scenarios saved to tmm_scenariom"
     )
     
     # --- Execution Metadata ---
