@@ -9,10 +9,7 @@ import uuid
 
 from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
 from apps.agents.scenario_flow_agent.services.scenario_generation_service import ScenarioGenerationService
-from apps.common.logging.decorators import log_node
 
-
-@log_node
 def run_scenario_pipeline(state: ScenarioFlowState) -> Dict[str, Any]:
     """
     Execute complete scenario generation pipeline.

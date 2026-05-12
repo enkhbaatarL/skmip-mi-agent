@@ -30,7 +30,6 @@ class ScenarioGenerationService:
         self.llm_invoke_text = invoke_llm_text
         self.ModelPreference = ModelPreference
     
-    @log_tool
     def generate_scenario_group(self, event_file_path: str) -> Dict[str, Any]:
         """
         Run complete scenario generation pipeline from a file path.
@@ -40,7 +39,6 @@ class ScenarioGenerationService:
             event = json.load(f)
         return self.generate_scenario_group_from_event(event)
 
-    @log_tool
     def generate_scenario_group_from_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run complete scenario generation pipeline from an event dict.
