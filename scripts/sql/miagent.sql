@@ -204,6 +204,31 @@ CREATE TABLE `tmm_scenariom` (
 COMMENT='시나리오 마스터 (5-Stage Pipeline 산출물 저장)';
 
 -- =========================================================
+-- Table: tmm_signpostm
+-- =========================================================
+DROP TABLE IF EXISTS `tmm_signpostm`;
+CREATE TABLE `tmm_signpostm` (
+    `signpost_id`             BIGINT          NOT NULL AUTO_INCREMENT COMMENT 'Signpost 일련번호 (PK)',
+    `crt_dtm`                 DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '최초생성일시',
+    `scenario_id`             INT UNSIGNED    NOT NULL COMMENT '시나리오 FK (tmm_scenariom)',
+    `crt_usr_logn_id`         VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성사용자로그인ID',
+    `mod_usr_logn_id`         VARCHAR(50)     DEFAULT 'SYSTEM' COMMENT '수정사용자로그인ID',
+    `mod_dtm`                 DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '수정일시',
+    `del_yn`                  CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제여부 (Y/N)',
+    `status_code`             VARCHAR(30)     NOT NULL DEFAULT 'draft' COMMENT 'Signpost 상태 (draft/active/triggered/expired/archived)',
+    `language`                VARCHAR(10)     NOT NULL DEFAULT 'ko' COMMENT '문서 언어',
+    `label`                   VARCHAR(500)    NOT NULL COMMENT 'Signpost 레이블 (관측 가능한 사건 기술)',
+    `signpost_class`          VARCHAR(30)     DEFAULT 'observation' COMMENT 'Signpost 분류 (observation 등)',
+    `signpost_source`         VARCHAR(30)     NOT NULL DEFAULT 'mi_record' COMMENT 'Signpost 출처 유형 (mi_record 등)',
+    `direction`               VARCHAR(10)     NOT NULL DEFAULT 'SUP' COMMENT '시나리오 영향 방향 (SUP=지지)',
+    `strength`                VARCHAR(10)     COMMENT '신호 강도 (STRONG/MEDIUM/WEAK 3단계)',
+    `keyword_hints`           JSON            NOT NULL COMMENT '모니터링용 검색 키워드 리스트',
+    PRIMARY KEY (`signpost_id`, `crt_dtm`),
+    INDEX `tmm_signpostm_ix01` (`scenario_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='Signpost 마스터 (관측 가능한 사건 신호 저장)';
+
+-- =========================================================
 -- Table: tmm_scenarioversionm
 -- =========================================================
 DROP TABLE IF EXISTS `tmm_scenarioversionm`;
@@ -336,6 +361,10 @@ FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
 
 DROP TRIGGER IF EXISTS `tr_tmm_scenariom_upd` //
 CREATE TRIGGER `tr_tmm_scenariom_upd` BEFORE UPDATE ON `tmm_scenariom`
+FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
+
+DROP TRIGGER IF EXISTS `tr_tmm_signpostm_upd` //
+CREATE TRIGGER `tr_tmm_signpostm_upd` BEFORE UPDATE ON `tmm_signpostm`
 FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
 
 DROP TRIGGER IF EXISTS `tr_tmm_scenarioversionm_upd` //
