@@ -1,0 +1,4 @@
+package_directory: .
+graph_path: ./apps/agents/signpost_flow_agent/flows/signpost_flow_runnable.py:runnable_graph
+env_file: ../envs/skmip_mi_agent/env.txt
+requirements_file: ./requirements.txt
