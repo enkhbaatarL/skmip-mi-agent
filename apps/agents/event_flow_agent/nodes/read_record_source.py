@@ -39,12 +39,6 @@ def read_record_source_node(state: EventFlowState) -> EventFlowState:
         )
         state.source_records = records
 
-        # Save analysis result to demo file
-        with open('./docs/demos/record_read.json', 'w', encoding='utf-8') as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
-        
-        print('Saved read record to ./docs/demos/record_read.json')      
-
         return state
 
     except Exception as exc:

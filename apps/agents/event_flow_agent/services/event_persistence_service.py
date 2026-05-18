@@ -6,6 +6,7 @@ event 저장 서비스 모듈
 역할:
 - 추출된 event 목록을 DB 스키마에 맞는 payload로 변환하여 저장한다.
 - 저장 성공한 event의 ID 목록과 실패 정보를 반환한다.
+- LLM 출력의 level_1/level_2 코드를 새 정규화된 event_type_l2_id FK로 변환한다.
 
 입력:
 - 추출된 event 목록
@@ -75,30 +76,37 @@ class EventPersistenceService:
                     level_1 = event["event_type"]["level_1"]
                     level_2 = event["event_type"]["level_2"]
 
+                    # Resolve event_type_l2_id from level_1/level_2 codes
+                    event_type_l2_id = repository.resolve_event_type_l2_id(level_1, level_2)
+                    if event_type_l2_id is None:
+                        errors.append(
+                            f"[{idx}] event_type 코드 미등록"
+                            f" | level_1={level_1}"
+                            f" | level_2={level_2}"
+                        )
+                        continue
+
                     key_bullets = event.get("key_bullets") or []
                     tags = event.get("tags") or []
 
                     payload = {
-                        "first_created": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                         "crt_usr_logn_id": "SYSTEM",
                         "mod_usr_logn_id": "SYSTEM",
                         "del_yn": "N",
-                        "event_title_ko": event["event_title_ko"],
-                        "one_line_summary": event.get("one_line_summary", "")[:200],
-                        "detail_analysis": event.get("detail_analysis"),
+                        "event_title": event["event_title_ko"],
+                        "one_line_summary": event.get("one_line_summary", "")[:300],
+                        "event_summary": event.get("detail_analysis"),
                         "market_and_institution_view": event.get("market_and_institution_view"),
-                        "language": "ko",
                         "occurred_at": _normalize_occurred_at(event.get("occurred_at")),
-                        "probability": None,
+                        "probability": 1.0,
                         "dedup_state": "raw",
-                        "level_1_code": level_1,
-                        "level_2_code": level_2,
-                        "taxonomy_version": "0.1.0",
-                        "status_code": None,
-                        "status_label_ko": None,
-                        "status_taxonomy_version": None,
-                        "key_bullets": json.dumps(key_bullets, ensure_ascii=False) if key_bullets else None,
-                        "tags": json.dumps(tags, ensure_ascii=False) if tags else None,
+                        "mi_event_status_code": None,
+                        "key_bullets_json": json.dumps(key_bullets, ensure_ascii=False) if key_bullets else None,
+                        "tags_json": json.dumps(tags, ensure_ascii=False) if tags else None,
+                        "event_type_l2_id": event_type_l2_id,
+                        "signal_yn": "Y",
+                        "signal_confidence": 0,
+                        "signal_reason": None,
                     }
 
                     saved_id = repository.insert_event(payload)

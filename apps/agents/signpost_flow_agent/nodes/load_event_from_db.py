@@ -1,7 +1,7 @@
 """
 Node: Load Event and Scenarios from Database
 
-Loads base event info and scenarios from tmm_mieventm and tmm_scenariom.
+Loads base event info and scenarios from tmm_mi_mievent_m and tmm_scenariom.
 This replaces the file-based input used in the reference script.
 """
 from datetime import datetime
