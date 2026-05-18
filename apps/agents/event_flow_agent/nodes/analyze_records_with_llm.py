@@ -47,12 +47,13 @@ async def analyze_records_with_llm_node(state: EventFlowState) -> EventFlowState
             mi_record_id = record.get("mi_record_id")
             
             try:
+                first_created = record.get("first_created", "") or ""
                 title = record.get("title", "") or ""
                 body = record.get("smry", "") or ""
 
                 # Individual request timeout: 30 seconds
                 analysis = await asyncio.wait_for(
-                    service.analyze(title=title, body=body),
+                    service.analyze(first_created=first_created, title=title, body=body),
                     timeout=30
                 )
 

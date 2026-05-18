@@ -66,11 +66,13 @@ class SupplyDemandSide(str, Enum):
 class EventTiming(BaseModel):
     occurrence_time: str = Field(
         default="",
-        description="이벤트 실제 발생 시점. ISO-8601 또는 빈 문자열",
+        description=(
+            "이벤트 실제 발생 시점. ISO-8601 또는 빈 문자열. 예: '2026-03-03T00:00:00Z'"
+        )
     )
     occurrence_time_precision: OccurrencePrecision = Field(
         default=OccurrencePrecision.unknown,
-        description="occurrence_time 정밀도",
+        description="occurrence_time_precision: exact / day / month / quarter / year / unknown",
     )
 
 

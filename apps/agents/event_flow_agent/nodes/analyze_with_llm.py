@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from apps.agents.event_flow_agent.state.event_flow_state import EventFlowState
 from apps.connectors.llm.llm_client import invoke_llm_text
 
+from apps.common.logging.decorators import log_node
+
 #  kmj20260423, 프롬프트는 명령문으로 작성하세요. 질문문이 아니라, "다음 이벤트들을 분석해라"와 같이 지시문 형태로 작성하는 것이 좋습니다.
 SYSTEM_PROMPT = """\
 너는 데이터 분석 전문가다.
@@ -67,6 +69,7 @@ def _build_events_text(rows: list[dict]) -> str:
 
     return "\n".join(lines)
 
+@log_node
 async def analyze_with_llm_node(state: EventFlowState) -> EventFlowState:
     state.current_node = "analyze_with_llm"
     state.executed_nodes.append("analyze_with_llm")

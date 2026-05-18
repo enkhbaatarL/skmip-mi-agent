@@ -1,7 +1,7 @@
 """
 Node: Load Event from Database
 
-Loads base event from tmm_mieventm by mi_event_id,
+Loads base event from tmm_mi_mievent_m by mi_event_id,
 replacing the previous file-based loader.
 """
 from typing import Dict, Any
