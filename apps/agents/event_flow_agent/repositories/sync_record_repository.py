@@ -25,15 +25,26 @@
 """
 
 from __future__ import annotations
+from datetime import datetime
 from typing import Any
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+
+from apps.agents.event_flow_agent.models.record_models_orm import (
+    MiRecordModel,
+    NewsSummaryModel,
+    RefineNewsDataModel,
+    GoodsMasterModel,
+    NewsSignalModel,
+)
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
+
 
 class SyncRecordRepository(BaseSyncSQLRepository):
     """MI Record 원천 조회용 Repository."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Any) -> None:
         super().__init__(session)
 
     def fetch_news_records(
@@ -43,48 +54,56 @@ class SyncRecordRepository(BaseSyncSQLRepository):
         from_first_created: str | None = None,
         to_first_created: str | None = None,
     ) -> list[dict[str, Any]]:
-        where_clauses = [
-            "r.record_type = 'NEWS'",
-            "i.nws_mrkt_ctgr_cd = :market_category",
-        ]
-        params: dict[str, Any] = {
-            "market_category": market_category,
-            "limit": limit,
-        }
+        """ORM을 사용하여 원천 record를 조회한다."""
+        stmt = (
+            select(
+                MiRecordModel.mi_record_id,
+                MiRecordModel.first_created,
+                MiRecordModel.record_type,
+                MiRecordModel.source_obj_id,
+                GoodsMasterModel.gds_no,
+                RefineNewsDataModel.title,
+                NewsSummaryModel.smry,
+                NewsSignalModel.nws_mrkt_ctgr_cd,
+            )
+            .join(NewsSummaryModel, MiRecordModel.source_obj_id == NewsSummaryModel.nws_smry_id)
+            .join(
+                RefineNewsDataModel,
+                (NewsSummaryModel.data_reg_sn == RefineNewsDataModel.data_reg_sn)
+                & (NewsSummaryModel.first_created == RefineNewsDataModel.first_created),
+            )
+            .join(GoodsMasterModel, GoodsMasterModel.gds_id == NewsSummaryModel.gds_id)
+            .join(NewsSignalModel, NewsSummaryModel.nws_smry_id == NewsSignalModel.nws_smry_id)
+            .where(
+                MiRecordModel.record_type == "NEWS",
+                NewsSignalModel.nws_mrkt_ctgr_cd == market_category,
+            )
+            .order_by(MiRecordModel.first_created.desc())
+            .limit(limit)
+        )
 
         if from_first_created:
-            where_clauses.append("r.first_created >= :from_first_created")
-            params["from_first_created"] = from_first_created
-
+            stmt = stmt.where(MiRecordModel.first_created >= from_first_created)
         if to_first_created:
-            where_clauses.append("r.first_created <= :to_first_created")
-            params["to_first_created"] = to_first_created
+            stmt = stmt.where(MiRecordModel.first_created <= to_first_created)
 
-        sql = f"""
-        select
-            r.mi_record_id,
-            r.first_created,
-            r.record_type,
-            r.source_obj_id,
-            g.gds_no,
-            d.title,
-            s.smry,
-            i.nws_mrkt_ctgr_cd
-        from tmd_mi_record as r
-        join tmd_nws_smry as s
-            on r.source_obj_id = s.nws_smry_id
-           and r.record_type = 'NEWS'
-        join tif_refinewsdatar as d
-            on s.data_reg_sn = d.data_reg_sn
-           and s.first_created = d.first_created
-        join tmd_gdsm as g
-            on g.gds_id = s.gds_id
-        join tmd_nws_sig as i
-            on s.nws_smry_id = i.nws_smry_id
-        where {" and ".join(where_clauses)}
-        order by r.first_created desc
-        limit :limit
-        """
+        rows = self.session.execute(stmt).all()
 
-        rows = self.session.execute(text(sql), params).mappings().all()
-        return [dict(row) for row in rows]
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            first_created = row.first_created
+            if isinstance(first_created, datetime):
+                first_created = first_created.isoformat()
+
+            results.append({
+                "mi_record_id": row.mi_record_id,
+                "first_created": first_created,
+                "record_type": row.record_type,
+                "source_obj_id": row.source_obj_id,
+                "gds_no": row.gds_no,
+                "title": row.title,
+                "smry": row.smry,
+                "nws_mrkt_ctgr_cd": row.nws_mrkt_ctgr_cd,
+            })
+
+        return results

@@ -13,7 +13,6 @@ Signpost DB Service 모듈
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from apps.agents.signpost_flow_agent.repositories.sync_signpost_repository import (
@@ -80,10 +79,6 @@ class SignpostDbService:
 
             for sp in signposts:
                 keyword_hints = sp.get("keyword_hints", [])
-                if isinstance(keyword_hints, list):
-                    keyword_hints_json = json.dumps(keyword_hints, ensure_ascii=False)
-                else:
-                    keyword_hints_json = "[]"
 
                 payload = {
                     "scenario_id": sp.get("scenario_id"),
@@ -97,7 +92,7 @@ class SignpostDbService:
                     "signpost_source": sp.get("signpost_source", "mi_record"),
                     "direction": sp.get("direction", "SUP"),
                     "strength": sp.get("strength"),
-                    "keyword_hints": keyword_hints_json,
+                    "keyword_hints": keyword_hints,
                 }
 
                 saved_id = repository.insert_signpost(payload)

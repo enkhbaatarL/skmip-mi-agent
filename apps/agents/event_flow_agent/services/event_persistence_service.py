@@ -24,7 +24,6 @@ event 저장 서비스 모듈
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime
 from typing import Any
@@ -101,8 +100,8 @@ class EventPersistenceService:
                         "probability": 1.0,
                         "dedup_state": "raw",
                         "mi_event_status_code": None,
-                        "key_bullets_json": json.dumps(key_bullets, ensure_ascii=False) if key_bullets else None,
-                        "tags_json": json.dumps(tags, ensure_ascii=False) if tags else None,
+                        "key_bullets_json": key_bullets if key_bullets else None,
+                        "tags_json": tags if tags else None,
                         "event_type_l2_id": event_type_l2_id,
                         "signal_yn": "Y",
                         "signal_confidence": 0,
