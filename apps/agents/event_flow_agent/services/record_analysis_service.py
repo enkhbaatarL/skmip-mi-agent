@@ -101,9 +101,4 @@ class RecordAnalysisService:
         parsed = llm_result.result
         parsed.analysis_time = datetime.now(timezone.utc).isoformat()
         
-        # Save analysis result to demo file
-        with open('./docs/demos/record_analysis.json', 'w', encoding='utf-8') as f:
-            json.dump(parsed.model_dump(), f, ensure_ascii=False, indent=2)
-        
-        print('Saved record analysis to ./docs/demos/record_analysis.json')
         return parsed

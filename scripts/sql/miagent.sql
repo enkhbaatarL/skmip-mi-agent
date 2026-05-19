@@ -12,43 +12,20 @@ DROP TABLE IF EXISTS `tmm_mi_record_metacuration_m`;
 DROP TABLE IF EXISTS `tmm_mi_event_type_l2_m`;
 DROP TABLE IF EXISTS `tmm_mi_event_type_l1_m`;
 
+DROP TABLE IF EXISTS `tmm_signpostm`;
+DROP TABLE IF EXISTS `tmm_scenarioversionm`;
+DROP TABLE IF EXISTS `tmm_scenariom`;
 DROP TABLE IF EXISTS `tmm_drivertagm`;
 DROP TABLE IF EXISTS `tmm_timebucketm`;
 DROP TABLE IF EXISTS `tmm_priceforecastm`;
 DROP TABLE IF EXISTS `tmm_drivertreenodem`;
-DROP TABLE IF EXISTS `tmm_scenarioversionm`;
-DROP TABLE IF EXISTS `tmm_scenariom`;
-DROP TABLE IF EXISTS `tmm_signpostm`;
-DROP TABLE IF EXISTS `tmd_mievent_key_bulletsm`;
-DROP TABLE IF EXISTS `tmd_mievent_source_mapm`;
-DROP TABLE IF EXISTS `tmm_mieventm`;
 DROP TABLE IF EXISTS `tmm_impactresultm`;
 DROP TABLE IF EXISTS `tmm_impactm`;
 DROP TABLE IF EXISTS `tmd_drivertreem`;
 
 -- =========================================================
--- Table: tmd_drivertreem
+-- GROUP 1: Core MI Event Tables (COLLATE utf8mb4_bin)
 -- =========================================================
-DROP TABLE IF EXISTS `tmd_drivertreem`;
-CREATE TABLE `tmd_drivertreem` (
-  `lv1_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 1단계 코드 PK',
-  `lv2_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 2단계 코드 PK',
-  `lv3_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 3단계 코드 PK',
-  `crt_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `lv1_label_ko`          VARCHAR(100)    NULL COMMENT 'Driver Tree 1단계 한국어 명칭',
-  `lv2_label_ko`          VARCHAR(100)    NULL COMMENT 'Driver Tree 2단계 한국어 명칭',
-  `lv3_label_ko`          VARCHAR(100)    NULL COMMENT 'Driver Tree 3단계 한국어 명칭',
-  `lv1_label_en`          VARCHAR(100)    NULL COMMENT 'Driver Tree 1단계 영어 명칭',
-  `lv2_label_en`          VARCHAR(100)    NULL COMMENT 'Driver Tree 2단계 영어 명칭',
-  `lv3_label_en`          VARCHAR(100)    NULL COMMENT 'Driver Tree 3단계 영어 명칭',
-  `direction_hint`        VARCHAR(50)     NULL COMMENT '방향 힌트 bullish_if_up/bearish_if_up/contextual',
-  PRIMARY KEY (`lv1_id`, `lv2_id`, `lv3_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Driver Tree Master';
 
 -- =========================================================
 -- Table: tmm_mi_event_type_l1_m
@@ -66,7 +43,7 @@ CREATE TABLE `tmm_mi_event_type_l1_m` (
     UNIQUE KEY `uk_tmm_mi_event_type_l1_m_01` (`level_1_code`)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
+  COLLATE=utf8mb4_bin
   COMMENT='MI 이벤트 유형 L1 마스터';
 
 -- =========================================================
@@ -90,8 +67,141 @@ CREATE TABLE `tmm_mi_event_type_l2_m` (
         REFERENCES `tmm_mi_event_type_l1_m` (`event_type_l1_id`)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
+  COLLATE=utf8mb4_bin
   COMMENT='MI 이벤트 유형 L2 마스터';
+
+-- =========================================================
+-- Table: tmm_mi_record_metacuration_m
+-- =========================================================
+CREATE TABLE `tmm_mi_record_metacuration_m` (
+    `mi_record_metacuration_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Record metadata curation PK',
+    `mi_record_id` INT UNSIGNED NOT NULL COMMENT '원본 MI Record ID',
+    `curation_dtm` DATETIME(6) NOT NULL COMMENT '메타 큐레이션 생성 시각',
+    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`mi_record_metacuration_id`),
+
+    UNIQUE KEY `uk_tmm_mi_record_metacuration_m_01` (`mi_record_id`),
+    KEY `idx_tmm_mi_record_metacuration_m_01` (`curation_dtm`),
+
+    CONSTRAINT `fk_tmm_mi_record_metacuration_m_01`
+        FOREIGN KEY (`mi_record_id`)
+        REFERENCES `tmd_mi_record` (`mi_record_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Record Metadata Curation 마스터';
+
+-- =========================================================
+-- Table: tmm_mi_record_metacuration_item
+-- =========================================================
+CREATE TABLE `tmm_mi_record_metacuration_item` (
+    `mi_record_metacuration_item_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Record metadata curation item PK',
+    `mi_record_metacuration_id` INT UNSIGNED NOT NULL COMMENT 'Record metadata curation FK',
+    `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
+    `supply_demand_side` VARCHAR(20) NOT NULL DEFAULT 'unclear' COMMENT 'supply/demand/both/none/unclear',
+    `score` DECIMAL(4,1) NOT NULL COMMENT 'Record와 이벤트 유형 후보의 연관 점수',
+    `reason` TEXT NULL COMMENT '점수 근거',
+    `entities_json` JSON NULL COMMENT '엔티티 목록 JSON',
+    `regions_json` JSON NULL COMMENT '지역 목록 JSON',
+    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+    PRIMARY KEY (`mi_record_metacuration_item_id`),
+    UNIQUE KEY `uk_tmm_mi_record_metacuration_item_01`
+        (`mi_record_metacuration_id`, `event_type_l2_id`),
+    KEY `idx_tmm_mi_record_metacuration_item_01`
+        (`mi_record_metacuration_id`),
+    KEY `idx_tmm_mi_record_metacuration_item_02`
+        (`event_type_l2_id`),
+    KEY `idx_tmm_mi_record_metacuration_item_03`
+        (`score`),
+    KEY `idx_tmm_mi_record_metacuration_item_04`
+        (`supply_demand_side`),
+    CONSTRAINT `fk_tmm_mi_record_metacuration_item_01`
+        FOREIGN KEY (`mi_record_metacuration_id`)
+        REFERENCES `tmm_mi_record_metacuration_m` (`mi_record_metacuration_id`),
+    CONSTRAINT `fk_tmm_mi_record_metacuration_item_02`
+        FOREIGN KEY (`event_type_l2_id`)
+        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Record Metadata Curation Item';
+
+-- =========================================================
+-- Table: tmm_mi_mievent_m
+-- =========================================================
+CREATE TABLE `tmm_mi_mievent_m` (
+    `mi_event_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'MI Event PK',
+    `event_title` VARCHAR(500) NOT NULL COMMENT '이벤트 제목',
+    `one_line_summary` VARCHAR(300) NULL COMMENT '한줄 요약',
+    `key_bullets_json` JSON NULL COMMENT '핵심 bullet 목록 JSON',
+    `event_summary` LONGTEXT NOT NULL COMMENT '이벤트 상세 분석 본문',
+    `market_and_institution_view` LONGTEXT NULL COMMENT '시장 반응 및 기관 전망',
+    `tags_json` JSON NULL COMMENT '이벤트 태그 목록 JSON',
+    `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
+    `mi_event_status_code` VARCHAR(50) NULL COMMENT '이벤트 상태 코드(rumored, expected, announced, in_progress, occurred, confirmed, resolved, cancelled). NULL 허용',
+    `estimated_impact_id` VARCHAR(100) NULL COMMENT 'Impact ID',
+    `occurred_at` DATETIME(6) NULL COMMENT '이벤트 실제 발생 일시',
+    `probability` DECIMAL(5,4) NOT NULL DEFAULT 0 COMMENT '이벤트 발생 확률 0.00 ~ 1.00',
+    `dedup_state` VARCHAR(20) NOT NULL COMMENT '중복처리 상태 (canonical, duplicate, merged)',
+    `signal_yn` CHAR(1) NOT NULL DEFAULT 'Y' COMMENT '신호 여부',
+    `signal_confidence` DECIMAL(5,4) NOT NULL DEFAULT 0 COMMENT '신호 신뢰도',
+    `signal_reason` VARCHAR(500) NULL COMMENT '신호 판정 근거',
+    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+    PRIMARY KEY (`mi_event_id`),
+    KEY `idx_tmm_mi_mievent_m_01` (`event_type_l2_id`),
+    KEY `idx_tmm_mi_mievent_m_02` (`mi_event_status_code`),
+    KEY `idx_tmm_mi_mievent_m_03` (`occurred_at`),
+    KEY `idx_tmm_mi_mievent_m_04` (`dedup_state`),
+    CONSTRAINT `fk_tmm_mi_mievent_m_01`
+        FOREIGN KEY (`event_type_l2_id`)
+        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Event 마스터';
+
+-- =========================================================
+-- Table: tmm_mi_mievent_record_map
+-- =========================================================
+CREATE TABLE `tmm_mi_mievent_record_map` (
+    `mi_event_record_map_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Event-Record 매핑 PK',
+    `mi_event_id` INT UNSIGNED NOT NULL COMMENT 'MI Event ID',
+    `mi_record_id` INT UNSIGNED NOT NULL COMMENT 'MI Record ID',
+    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+    PRIMARY KEY (`mi_event_record_map_id`),
+    UNIQUE KEY `uk_tmm_mi_mievent_record_map_01` (`mi_event_id`, `mi_record_id`),
+    KEY `idx_tmm_mi_mievent_record_map_01` (`mi_record_id`),
+    CONSTRAINT `fk_tmm_mi_mievent_record_map_01`
+        FOREIGN KEY (`mi_event_id`)
+        REFERENCES `tmm_mi_mievent_m` (`mi_event_id`),
+    CONSTRAINT `fk_tmm_mi_mievent_record_map_02`
+        FOREIGN KEY (`mi_record_id`)
+        REFERENCES `tmd_mi_record` (`mi_record_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Event - MI Record 매핑';
+
+-- =========================================================
+-- GROUP 2: Impact / Scenario / Driver Tables
+-- =========================================================
 
 -- =========================================================
 -- Table: tmm_impactm
@@ -135,109 +245,6 @@ CREATE TABLE `tmm_impactresultm` (
   INDEX `tmm_impactresultm_ix02` (`target_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='Impact Result Master';
-
--- =========================================================
--- Table: tmm_mi_record_metacuration_m
--- =========================================================
-CREATE TABLE `tmm_mi_record_metacuration_m` (
-    `mi_record_metacuration_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Record metadata curation PK',
-    `mi_record_id` INT UNSIGNED NOT NULL COMMENT '원본 MI Record ID',
-    `curation_dtm` DATETIME(6) NOT NULL COMMENT '메타 큐레이션 생성 시각',
-    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
-    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
-    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
-    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
-    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
-
-    PRIMARY KEY (`mi_record_metacuration_id`),
-
-    UNIQUE KEY `uk_tmm_mi_record_metacuration_m_01` (`mi_record_id`),
-    KEY `idx_tmm_mi_record_metacuration_m_01` (`curation_dtm`),
-
-    CONSTRAINT `fk_tmm_mi_record_metacuration_m_01`
-        FOREIGN KEY (`mi_record_id`)
-        REFERENCES `tmd_mi_record` (`mi_record_id`)
-) ENGINE=InnoDB
-  DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
-  COMMENT='MI Record Metadata Curation 마스터';
-
--- =========================================================
--- Table: tmm_mi_record_metacuration_item
--- =========================================================
-CREATE TABLE `tmm_mi_record_metacuration_item` (
-    `mi_record_metacuration_item_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Record metadata curation item PK',
-    `mi_record_metacuration_id` INT UNSIGNED NOT NULL COMMENT 'Record metadata curation FK',
-    `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
-    `supply_demand_side` VARCHAR(20) NOT NULL DEFAULT 'unclear' COMMENT 'supply/demand/both/none/unclear',
-    `score` DECIMAL(4,1) NOT NULL COMMENT 'Record와 이벤트 유형 후보의 연관 점수',
-    `reason` TEXT NULL COMMENT '점수 근거',
-    `entities_json` JSON NULL COMMENT '엔티티 목록 JSON',
-    `regions_json` JSON NULL COMMENT '지역 목록 JSON',
-    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
-    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
-    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
-    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
-    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
-    PRIMARY KEY (`mi_record_metacuration_item_id`),
-    UNIQUE KEY `uk_tmm_mi_record_metacuration_item_01`
-        (`mi_record_metacuration_id`, `event_type_l2_id`),
-    KEY `idx_tmm_mi_record_metacuration_item_01`
-        (`mi_record_metacuration_id`),
-    KEY `idx_tmm_mi_record_metacuration_item_02`
-        (`event_type_l2_id`),
-    KEY `idx_tmm_mi_record_metacuration_item_03`
-        (`score`),
-    KEY `idx_tmm_mi_record_metacuration_item_04`
-        (`supply_demand_side`),
-    CONSTRAINT `fk_tmm_mi_record_metacuration_item_01`
-        FOREIGN KEY (`mi_record_metacuration_id`)
-        REFERENCES `tmm_mi_record_metacuration_m` (`mi_record_metacuration_id`),
-    CONSTRAINT `fk_tmm_mi_record_metacuration_item_02`
-        FOREIGN KEY (`event_type_l2_id`)
-        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
-) ENGINE=InnoDB
-  DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
-  COMMENT='MI Record Metadata Curation Item';
-
--- =========================================================
--- Table: tmm_mi_mievent_m
--- =========================================================
-CREATE TABLE `tmm_mi_mievent_m` (
-    `mi_event_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'MI Event PK',
-    `event_title` VARCHAR(500) NOT NULL COMMENT '이벤트 제목',
-    `one_line_summary` VARCHAR(300) NULL COMMENT '한줄 요약',
-    `key_bullets_json` JSON NULL COMMENT '핵심 bullet 목록 JSON',
-    `event_summary` LONGTEXT NOT NULL COMMENT '이벤트 상세 분석 본문',
-    `market_and_institution_view` LONGTEXT NULL COMMENT '시장 반응 및 기관 전망',
-    `tags_json` JSON NULL COMMENT '이벤트 태그 목록 JSON',
-    `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
-    `mi_event_status_code` VARCHAR(50) NULL COMMENT '이벤트 상태 코드(rumored, expected, announced, in_progress, occurred, confirmed, resolved, cancelled). NULL 허용',
-    `estimated_impact_id` VARCHAR(100) NULL COMMENT 'Impact ID',
-    `occurred_at` DATETIME(6) NULL COMMENT '이벤트 실제 발생 일시',
-    `probability` DECIMAL(5,4) NOT NULL DEFAULT 0 COMMENT '이벤트 발생 확률 0.00 ~ 1.00',
-    `dedup_state` VARCHAR(20) NOT NULL COMMENT '중복처리 상태 (canonical, duplicate, merged)',
-    `signal_yn` CHAR(1) NOT NULL DEFAULT 'Y' COMMENT '신호 여부',
-    `signal_confidence` DECIMAL(5,4) NOT NULL DEFAULT 0 COMMENT '신호 신뢰도',
-    `signal_reason` VARCHAR(500) NULL COMMENT '신호 판정 근거',
-    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
-    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
-    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
-    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
-    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
-    PRIMARY KEY (`mi_event_id`),
-    KEY `idx_tmm_mi_mievent_m_01` (`event_type_l2_id`),
-    KEY `idx_tmm_mi_mievent_m_02` (`mi_event_status_code`),
-    KEY `idx_tmm_mi_mievent_m_03` (`occurred_at`),
-    KEY `idx_tmm_mi_mievent_m_04` (`dedup_state`),
-    CONSTRAINT `fk_tmm_mi_mievent_m_01`
-        FOREIGN KEY (`event_type_l2_id`)
-        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
-) ENGINE=InnoDB
-  DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
-  COMMENT='MI Event 마스터';
 
 -- =========================================================
 -- Table: tmm_drivertagm
@@ -418,30 +425,27 @@ CREATE TABLE `tmm_priceforecastm` (
 COMMENT='Price Forecast Master';
 
 -- =========================================================
--- Table: tmm_mi_mievent_record_map
+-- Table: tmd_drivertreem
 -- =========================================================
-CREATE TABLE `tmm_mi_mievent_record_map` (
-    `mi_event_record_map_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Event-Record 매핑 PK',
-    `mi_event_id` INT UNSIGNED NOT NULL COMMENT 'MI Event ID',
-    `mi_record_id` INT UNSIGNED NOT NULL COMMENT 'MI Record ID',
-    `crt_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '생성자',
-    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
-    `mod_usr_logn_id` VARCHAR(100) NOT NULL DEFAULT 'system' COMMENT '수정자',
-    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
-    `del_yn` CHAR(1) NOT NULL DEFAULT 'N' COMMENT '삭제여부',
-    PRIMARY KEY (`mi_event_record_map_id`),
-    UNIQUE KEY `uk_tmm_mi_mievent_record_map_01` (`mi_event_id`, `mi_record_id`),
-    KEY `idx_tmm_mi_mievent_record_map_01` (`mi_record_id`),
-    CONSTRAINT `fk_tmm_mi_mievent_record_map_01`
-        FOREIGN KEY (`mi_event_id`)
-        REFERENCES `tmm_mi_mievent_m` (`mi_event_id`),
-    CONSTRAINT `fk_tmm_mi_mievent_record_map_02`
-        FOREIGN KEY (`mi_record_id`)
-        REFERENCES `tmd_mi_record` (`mi_record_id`)
-) ENGINE=InnoDB
-  DEFAULT CHARSET=utf8mb4
-  COLLATE=utf8mb4_unicode_ci
-  COMMENT='MI Event - MI Record 매핑';
+CREATE TABLE `tmd_drivertreem` (
+  `lv1_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 1단계 코드 PK',
+  `lv2_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 2단계 코드 PK',
+  `lv3_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 3단계 코드 PK',
+  `crt_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
+  `crt_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '생성 일시',
+  `mod_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
+  `mod_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '수정 일시',
+  `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
+  `lv1_label_ko`          VARCHAR(100)    NULL COMMENT 'Driver Tree 1단계 한국어 명칭',
+  `lv2_label_ko`          VARCHAR(100)    NULL COMMENT 'Driver Tree 2단계 한국어 명칭',
+  `lv3_label_ko`          VARCHAR(100)    NULL COMMENT 'Driver Tree 3단계 한국어 명칭',
+  `lv1_label_en`          VARCHAR(100)    NULL COMMENT 'Driver Tree 1단계 영어 명칭',
+  `lv2_label_en`          VARCHAR(100)    NULL COMMENT 'Driver Tree 2단계 영어 명칭',
+  `lv3_label_en`          VARCHAR(100)    NULL COMMENT 'Driver Tree 3단계 영어 명칭',
+  `direction_hint`        VARCHAR(50)     NULL COMMENT '방향 힌트 bullish_if_up/bearish_if_up/contextual',
+  PRIMARY KEY (`lv1_id`, `lv2_id`, `lv3_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='Driver Tree Master';
 
 -- =========================================================
 -- Auto Update Triggers (all tables)
