@@ -17,48 +17,34 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, exists
 
+from apps.agents.scenario_flow_agent.models.scenario_models_orm import ScenarioModel
+from apps.agents.signpost_flow_agent.models.signpost_models_orm import SignpostModel
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
 class SyncSignpostRepository(BaseSyncSQLRepository):
     def fetch_scenarios_by_mi_event_id(self, mi_event_id: int) -> list[dict[str, Any]]:
-        """tmm_scenariom에서 mi_event_id로 시나리오 목록을 조회.
+        """tmm_scenariom에서 mi_event_id로 시나리오 목록을 ORM 조회.
 
         반환 형식은 stage4_scenario_synthesis.scenarios 배열과 유사한 dict 구조.
         각 시나리오 dict에는 실제 PK scenario_id가 포함된다.
         """
-        sql = """
-        select
-            scenario_id,
-            scenario_group_id,
-            name,
-            description,
-            mi_event_id,
-            status_code,
-            valid_from,
-            valid_to,
-            language,
-            dimension_values,
-            likelihood,
-            price_direction
-        from tmm_scenariom
-        where mi_event_id = :mi_event_id
-          and del_yn = 'N'
-        order by scenario_id
-        """
-        rows = self.session.execute(
-            text(sql),
-            {"mi_event_id": mi_event_id},
-        ).mappings().all()
+        stmt = (
+            select(ScenarioModel)
+            .where(
+                ScenarioModel.mi_event_id == mi_event_id,
+                ScenarioModel.del_yn == "N",
+            )
+            .order_by(ScenarioModel.scenario_id)
+        )
+        rows = self.session.execute(stmt).scalars().all()
 
         scenarios: list[dict[str, Any]] = []
-        for row in rows:
-            row_dict = dict(row)
-
-            # Parse JSON fields
-            dim_values = row_dict.get("dimension_values")
+        for scenario in rows:
+            # JSON fields — handle both already-parsed dict and raw string
+            dim_values = scenario.dimension_values
             if isinstance(dim_values, str):
                 try:
                     dim_values = json.loads(dim_values)
@@ -67,7 +53,7 @@ class SyncSignpostRepository(BaseSyncSQLRepository):
             elif dim_values is None:
                 dim_values = {}
 
-            price_dir = row_dict.get("price_direction")
+            price_dir = scenario.price_direction
             if isinstance(price_dir, str):
                 try:
                     price_dir = json.loads(price_dir)
@@ -77,14 +63,14 @@ class SyncSignpostRepository(BaseSyncSQLRepository):
                 price_dir = {}
 
             scenarios.append({
-                "scenario_id": int(row_dict["scenario_id"]),
-                "title": row_dict["name"] or "",
-                "description": row_dict["description"] or "",
+                "scenario_id": int(scenario.scenario_id),
+                "title": scenario.name or "",
+                "description": scenario.description or "",
                 "dimension_values": dim_values,
                 "price_direction": price_dir,
-                "likelihood": row_dict["likelihood"] or "medium",
-                "language": row_dict["language"] or "ko",
-                "status_code": row_dict["status_code"] or "draft",
+                "likelihood": scenario.likelihood or "medium",
+                "language": scenario.language or "ko",
+                "status_code": scenario.status_code or "draft",
                 # Fields not persisted in DB — provide defaults
                 "derivation_rationale": "",
                 "compatibility_passed": True,
@@ -94,71 +80,29 @@ class SyncSignpostRepository(BaseSyncSQLRepository):
 
     def fetch_scenario_group_id_by_mi_event_id(self, mi_event_id: int) -> str | None:
         """mi_event_id로 scenario_group_id를 조회."""
-        sql = """
-        select scenario_group_id
-        from tmm_scenariom
-        where mi_event_id = :mi_event_id
-          and del_yn = 'N'
-        limit 1
-        """
-        row = self.session.execute(
-            text(sql),
-            {"mi_event_id": mi_event_id},
-        ).mappings().one_or_none()
-
+        stmt = (
+            select(ScenarioModel.scenario_group_id)
+            .where(
+                ScenarioModel.mi_event_id == mi_event_id,
+                ScenarioModel.del_yn == "N",
+            )
+            .limit(1)
+        )
+        row = self.session.execute(stmt).one_or_none()
         if row is None:
             return None
-        return str(row["scenario_group_id"])
+        return str(row[0])
 
     def check_signposts_exist(self, scenario_id: int) -> bool:
         """tmm_signpostm에서 해당 scenario_id에 signpost가 이미 존재하는지 확인."""
-        sql = """
-        select count(*) as cnt
-        from tmm_signpostm
-        where scenario_id = :scenario_id
-          and del_yn = 'N'
-        """
-        row = self.session.execute(
-            text(sql),
-            {"scenario_id": scenario_id},
-        ).mappings().one()
-        return int(row["cnt"]) > 0
+        stmt = select(
+            exists().where(SignpostModel.scenario_id == scenario_id)
+        )
+        return bool(self.session.execute(stmt).scalar())
 
     def insert_signpost(self, payload: dict) -> int:
-        """tmm_signpostm에 signpost 1건을 저장하고 PK(signpost_id)를 반환.
-
-        tmm_signpostm PK 구성:
-            signpost_id (BIGINT, AUTO_INCREMENT) + crt_dtm (DATETIME)
-        FK: scenario_id -> tmm_scenariom.scenario_id
-        """
-        sql = """
-        insert into tmm_signpostm (
-            scenario_id,
-            crt_usr_logn_id,
-            mod_usr_logn_id,
-            del_yn,
-            status_code,
-            language,
-            label,
-            signpost_class,
-            signpost_source,
-            direction,
-            strength,
-            keyword_hints
-        ) values (
-            :scenario_id,
-            :crt_usr_logn_id,
-            :mod_usr_logn_id,
-            :del_yn,
-            :status_code,
-            :language,
-            :label,
-            :signpost_class,
-            :signpost_source,
-            :direction,
-            :strength,
-            :keyword_hints
-        )
-        """
-        result = self.session.execute(text(sql), payload)
-        return int(result.lastrowid)
+        """tmm_signpostm에 signpost 1건을 저장하고 PK(signpost_id)를 반환."""
+        signpost = SignpostModel(**payload)
+        self.session.add(signpost)
+        self.session.flush()
+        return int(signpost.signpost_id)

@@ -8,8 +8,11 @@ from typing import Dict, Any
 
 from apps.agents.scenario_flow_agent.services.scenario_db_service import ScenarioDbService
 from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
+from apps.common.logging.decorators import log_tool
+from apps.common.logging.logger_config import logger as app_logger
 
 
+@log_tool
 def load_event_from_db(state: ScenarioFlowState) -> Dict[str, Any]:
     """
     Load base event from database by mi_event_id.
@@ -27,8 +30,19 @@ def load_event_from_db(state: ScenarioFlowState) -> Dict[str, Any]:
             "error": "mi_event_id is required but not provided in state"
         }
 
-    db_service = ScenarioDbService()
-    event = db_service.load_event(int(mi_event_id))
+    try:
+        db_service = ScenarioDbService()
+        event = db_service.load_event(int(mi_event_id))
+    except Exception as e:
+        app_logger.error(
+            "[SCENARIO_BATCH] load_event_from_db failed for mi_event_id=%s: %s",
+            mi_event_id,
+            e,
+            exc_info=True,
+        )
+        return {
+            "error": f"Failed to load event from DB: {e}"
+        }
 
     if event is None:
         return {
