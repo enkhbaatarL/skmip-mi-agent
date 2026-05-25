@@ -78,21 +78,20 @@ CREATE TABLE `tmm_mi_event_type_l2_m` (
 CREATE TABLE `tmm_mi_record_metacuration_m` (
     `mi_record_metacuration_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Record metadata curation PK',
     `mi_record_id` INT UNSIGNED NOT NULL COMMENT '원본 MI Record ID',
-
     `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
     `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
     `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
     `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
-
     PRIMARY KEY (`mi_record_metacuration_id`),
     UNIQUE KEY `uk_tmm_mi_record_metacuration_m_01` (`mi_record_id`),
-
     CONSTRAINT `fk_tmm_mi_record_metacuration_m_01`
         FOREIGN KEY (`mi_record_id`)
-        REFERENCES `tmd_mi_record` (`mi_record_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='MI Record Metadata Curation 마스터';
+        REFERENCES `midb`.`tmd_mi_record` (`mi_record_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Record Metadata Curation 마스터';
 
 
 -- =========================================================
@@ -106,10 +105,10 @@ CREATE TABLE `tmm_mi_record_metacuration_item` (
     `supply_demand_side` VARCHAR(20) COLLATE utf8mb4_bin NOT NULL DEFAULT 'unclear' COMMENT 'supply/demand/both/none/unclear',
     `score` DECIMAL(4, 1) NOT NULL COMMENT 'Record와 이벤트 유형 후보의 연관 점수',
     `reason` TEXT COLLATE utf8mb4_bin NULL COMMENT '점수 근거',
+
     `entities_json` JSON NULL COMMENT '엔티티 목록 JSON',
     `regions_json` JSON NULL COMMENT '지역 목록 JSON',
     `event_signature_json` JSON NULL COMMENT 'Event 매칭/중복 제거를 위한 식별 정보 JSON',
-    `event_signature_hash` VARCHAR(64) COLLATE utf8mb4_bin NULL COMMENT 'Event signature JSON 기반 해시',
     `event_timing_json` JSON NULL COMMENT '사건 발생 시각 정보 JSON',
 
     `lng_relevance` VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'unclear' COMMENT 'LNG 관련성 (direct_lng/gas_market_direct/energy_indirect/non_lng_noise)',
@@ -123,8 +122,10 @@ CREATE TABLE `tmm_mi_record_metacuration_item` (
 
     PRIMARY KEY (`mi_record_metacuration_item_id`),
 
-    UNIQUE KEY `uk_tmm_mi_record_metacuration_item_01`
-        (`mi_record_metacuration_id`, `event_type_l2_id`, `event_signature_hash`),
+    UNIQUE KEY `uk_tmm_mi_record_metacuration_item_01` (
+        `mi_record_metacuration_id`,
+        `event_type_l2_id`
+    ),
 
     KEY `idx_tmm_mi_record_metacuration_item_01` (`mi_record_metacuration_id`),
     KEY `idx_tmm_mi_record_metacuration_item_02` (`event_type_l2_id`),
@@ -134,13 +135,15 @@ CREATE TABLE `tmm_mi_record_metacuration_item` (
 
     CONSTRAINT `fk_tmm_mi_record_metacuration_item_01`
         FOREIGN KEY (`mi_record_metacuration_id`)
-        REFERENCES `tmm_mi_record_metacuration_m` (`mi_record_metacuration_id`),
+        REFERENCES `midb`.`tmm_mi_record_metacuration_m` (`mi_record_metacuration_id`),
 
     CONSTRAINT `fk_tmm_mi_record_metacuration_item_02`
         FOREIGN KEY (`event_type_l2_id`)
-        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='MI Record Metadata Curation Item';
+        REFERENCES `midb`.`tmm_mi_event_type_l2_m` (`event_type_l2_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Record Metadata Curation Item';
 
 
 -- =========================================================
@@ -151,17 +154,15 @@ CREATE TABLE `tmm_mi_mievent_candidate_m` (
     `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
 
     `event_title` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 제목',
-    `one_line_summary` VARCHAR(300) COLLATE utf8mb4_bin NULL COMMENT '한줄 요약',
-    `key_bullets_json` JSON NULL COMMENT '핵심 bullet 목록 JSON',
-    `event_summary` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 상세 분석 본문',
+    `one_line_summary` VARCHAR(300) COLLATE utf8mb4_bin NOT NULL COMMENT '한줄 요약',
+    `key_bullets_json` JSON NOT NULL COMMENT '핵심 bullet 목록 JSON',
+    `detail_analysis` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 상세 분석 본문',
     `market_and_institution_view` LONGTEXT COLLATE utf8mb4_bin NULL COMMENT '시장 반응 및 기관 전망',
     `tags_json` JSON NULL COMMENT '이벤트 태그 목록 JSON',
-    `mi_event_status_code` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '이벤트 상태 코드(rumored, expected, announced, in_progress, occurred, confirmed, resolved, cancelled). NULL 허용',
     `occurred_at` DATETIME(6) NULL COMMENT '이벤트 실제 발생 일시',
-    `probability` DECIMAL(5, 4) NOT NULL DEFAULT 0 COMMENT '이벤트 발생 확률 0.00 ~ 1.00',
 
-    `candidate_status` VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'raw' COMMENT '후보 처리 상태(raw/matched_existing/created_new/merged/dropped/review_required)',
-    `final_mi_event_id` INT UNSIGNED NULL COMMENT '최종 반영된 MI Event ID',
+    `decision` VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'raw' COMMENT '후보 처리 상태(RAW, MATCH_EXISTING, CREATE_NEW, AMBIGUOUS_REVIEW)',
+    `mi_event_id` INT UNSIGNED NULL COMMENT '최종 반영된 MI Event ID',
     `match_confidence` DECIMAL(3, 2) NULL COMMENT '후보 처리/매칭 신뢰도 (0.00~1.00)',
     `match_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT '후보 처리/매칭 판단 근거',
     `same_event_check_json` JSON NULL COMMENT '기존 Event와 동일 사건 여부 판단 체크리스트 JSON',
@@ -178,19 +179,21 @@ CREATE TABLE `tmm_mi_mievent_candidate_m` (
     PRIMARY KEY (`mi_event_candidate_id`),
 
     KEY `idx_tmm_mi_mievent_candidate_m_01` (`event_type_l2_id`),
-    KEY `idx_tmm_mi_mievent_candidate_m_02` (`candidate_status`),
-    KEY `idx_tmm_mi_mievent_candidate_m_03` (`final_mi_event_id`),
+    KEY `idx_tmm_mi_mievent_candidate_m_02` (`decision`),
+    KEY `idx_tmm_mi_mievent_candidate_m_03` (`mi_event_id`),
     KEY `idx_tmm_mi_mievent_candidate_m_04` (`occurred_at`),
 
     CONSTRAINT `fk_tmm_mi_mievent_candidate_m_01`
         FOREIGN KEY (`event_type_l2_id`)
-        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`),
+        REFERENCES `midb`.`tmm_mi_event_type_l2_m` (`event_type_l2_id`),
 
     CONSTRAINT `fk_tmm_mi_mievent_candidate_m_02`
-        FOREIGN KEY (`final_mi_event_id`)
-        REFERENCES `tmm_mi_mievent_m` (`mi_event_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='MI Event 후보';
+        FOREIGN KEY (`mi_event_id`)
+        REFERENCES `midb`.`tmm_mi_mievent_m` (`mi_event_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Event 후보';
 
 -- =========================================================
 -- Table: tmm_mi_mievent_candidate_record_map
@@ -214,8 +217,10 @@ CREATE TABLE `tmm_mi_mievent_candidate_record_map` (
 
     PRIMARY KEY (`mi_event_candidate_record_map_id`),
 
-    UNIQUE KEY `uk_tmm_mi_mievent_candidate_record_map_01`
-        (`mi_event_candidate_id`, `mi_record_id`),
+    UNIQUE KEY `uk_tmm_mi_mievent_candidate_record_map_01` (
+        `mi_event_candidate_id`,
+        `mi_record_id`
+    ),
 
     KEY `idx_tmm_mi_mievent_candidate_record_map_01` (`mi_event_candidate_id`),
     KEY `idx_tmm_mi_mievent_candidate_record_map_02` (`mi_record_id`),
@@ -223,14 +228,15 @@ CREATE TABLE `tmm_mi_mievent_candidate_record_map` (
 
     CONSTRAINT `fk_tmm_mi_mievent_candidate_record_map_01`
         FOREIGN KEY (`mi_event_candidate_id`)
-        REFERENCES `tmm_mi_mievent_candidate_m` (`mi_event_candidate_id`),
+        REFERENCES `midb`.`tmm_mi_mievent_candidate_m` (`mi_event_candidate_id`),
 
     CONSTRAINT `fk_tmm_mi_mievent_candidate_record_map_02`
         FOREIGN KEY (`mi_record_id`)
-        REFERENCES `tmd_mi_record` (`mi_record_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='MI Event 후보 - MI Record 매핑';
-
+        REFERENCES `midb`.`tmd_mi_record` (`mi_record_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Event 후보 - MI Record 매핑';
 
 -- =========================================================
 -- Table: tmm_mi_mievent_m
@@ -238,20 +244,25 @@ COMMENT='MI Event 후보 - MI Record 매핑';
 CREATE TABLE `tmm_mi_mievent_m` (
     `mi_event_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'MI Event PK',
     `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
+
     `event_title` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 제목',
-    `one_line_summary` VARCHAR(300) COLLATE utf8mb4_bin NULL COMMENT '한줄 요약',
-    `key_bullets_json` JSON NULL COMMENT '핵심 bullet 목록 JSON',
-    `event_summary` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 상세 분석 본문',
+    `one_line_summary` VARCHAR(300) COLLATE utf8mb4_bin NOT NULL COMMENT '한줄 요약',
+    `key_bullets_json` JSON NOT NULL COMMENT '핵심 bullet 목록 JSON',
+    `detail_analysis` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 상세 분석 본문',
     `market_and_institution_view` LONGTEXT COLLATE utf8mb4_bin NULL COMMENT '시장 반응 및 기관 전망',
     `tags_json` JSON NULL COMMENT '이벤트 태그 목록 JSON',
-    `mi_event_status_code` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '이벤트 상태 코드(rumored, expected, announced, in_progress, occurred, confirmed, resolved, cancelled). NULL 허용',
     `occurred_at` DATETIME(6) NULL COMMENT '이벤트 실제 발생 일시',
-    `probability` DECIMAL(5, 4) NOT NULL DEFAULT 0 COMMENT '이벤트 발생 확률 0.00 ~ 1.00',
 
     `estimated_impact_id` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT 'Impact ID',
+
     `signal_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'Y' COMMENT '신호 여부',
-    `signal_confidence` DECIMAL(5, 4) NOT NULL DEFAULT 0 COMMENT '신호 신뢰도',
-    `signal_reason` VARCHAR(500) COLLATE utf8mb4_bin NULL COMMENT '신호 판정 근거',
+    `signal_confidence` DECIMAL(5, 4) NULL DEFAULT 0 COMMENT '신호 신뢰도',
+    `signal_reason` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '신호 판정 근거',
+
+    `scenario_suggest_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '시나리오화 추천 여부',
+    `scenario_suggest_reason` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '시나리오화 추천 근거',
+
+    `new_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'Y' COMMENT '신규생성 여부 (Y: 신규생성, N: 갱신)',
 
     `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
     `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
@@ -262,14 +273,15 @@ CREATE TABLE `tmm_mi_mievent_m` (
     PRIMARY KEY (`mi_event_id`),
 
     KEY `idx_tmm_mi_mievent_m_01` (`event_type_l2_id`),
-    KEY `idx_tmm_mi_mievent_m_02` (`mi_event_status_code`),
-    KEY `idx_tmm_mi_mievent_m_03` (`occurred_at`),
+    KEY `idx_tmm_mi_mievent_m_02` (`occurred_at`),
 
     CONSTRAINT `fk_tmm_mi_mievent_m_01`
         FOREIGN KEY (`event_type_l2_id`)
-        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='MI Event 마스터';
+        REFERENCES `midb`.`tmm_mi_event_type_l2_m` (`event_type_l2_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Event 마스터';
 
 -- =========================================================
 -- Table: tmm_mi_mievent_record_map
@@ -279,14 +291,6 @@ CREATE TABLE `tmm_mi_mievent_record_map` (
     `mi_event_id` INT UNSIGNED NOT NULL COMMENT 'MI Event ID',
     `mi_record_id` INT UNSIGNED NOT NULL COMMENT 'MI Record ID',
 
-    `match_decision` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '매핑 판단 결과 (MATCH_EXISTING/CREATE_NEW/UPDATE_EXISTING_STATUS/AMBIGUOUS_REVIEW)',
-    `match_confidence` DECIMAL(3, 2) NULL COMMENT '매칭 신뢰도 (0.00~1.00)',
-    `match_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT '매칭/생성 판단 이유',
-    `same_event_check_json` JSON NULL COMMENT '매칭 판단 체크리스트 JSON (SameEventCheck)',
-
-    `lng_relevance` VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'unclear' COMMENT 'LNG 관련성 (direct_lng/gas_market_direct/energy_indirect/non_lng_noise)',
-    `lng_relevance_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT 'LNG 관련성 판단 근거',
-
     `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
     `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
     `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
@@ -295,21 +299,24 @@ CREATE TABLE `tmm_mi_mievent_record_map` (
 
     PRIMARY KEY (`mi_event_record_map_id`),
 
-    UNIQUE KEY `uk_tmm_mi_mievent_record_map_01` (`mi_event_id`, `mi_record_id`),
+    UNIQUE KEY `uk_tmm_mi_mievent_record_map_01` (
+        `mi_event_id`,
+        `mi_record_id`
+    ),
 
     KEY `idx_tmm_mi_mievent_record_map_01` (`mi_record_id`),
-    KEY `idx_tmm_mi_mievent_record_map_02` (`match_decision`),
-    KEY `idx_tmm_mi_mievent_record_map_03` (`lng_relevance`),
 
     CONSTRAINT `fk_tmm_mi_mievent_record_map_01`
         FOREIGN KEY (`mi_event_id`)
-        REFERENCES `tmm_mi_mievent_m` (`mi_event_id`),
+        REFERENCES `midb`.`tmm_mi_mievent_m` (`mi_event_id`),
 
     CONSTRAINT `fk_tmm_mi_mievent_record_map_02`
         FOREIGN KEY (`mi_record_id`)
-        REFERENCES `tmd_mi_record` (`mi_record_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='MI Event - MI Record 매핑';
+        REFERENCES `midb`.`tmd_mi_record` (`mi_record_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='MI Event - MI Record 매핑';
 
 -- =========================================================
 -- GROUP 2: Impact / Scenario / Driver Tables
