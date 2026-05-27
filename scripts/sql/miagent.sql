@@ -23,6 +23,10 @@ DROP TABLE IF EXISTS `tmm_priceforecastm`;
 DROP TABLE IF EXISTS `tmm_drivertreenodem`;
 DROP TABLE IF EXISTS `tmm_impactresultm`;
 DROP TABLE IF EXISTS `tmm_impactm`;
+DROP TABLE IF EXISTS `tmm_mi_impact_driver_m`;
+DROP TABLE IF EXISTS `tmm_mi_impact_result_m`;
+DROP TABLE IF EXISTS `tmm_mi_impact_base_case_m`;
+DROP TABLE IF EXISTS `tmm_mi_impact_m`;
 DROP TABLE IF EXISTS `tmd_drivertreem`;
 
 -- =========================================================
@@ -323,77 +327,113 @@ CREATE TABLE `tmm_mi_mievent_record_map` (
 -- =========================================================
 
 -- =========================================================
--- Table: tmm_impactm
+-- Table: tmm_mi_impact_m
 -- =========================================================
-DROP TABLE IF EXISTS `tmm_impactm`;
-CREATE TABLE `tmm_impactm` (
-  `impact_id`             VARCHAR(64)     NOT NULL COMMENT 'Impact ID PK impact_ev_[a-z0-9_]+',
-  `crt_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `mi_event_id`           INT UNSIGNED    NOT NULL COMMENT 'MI Event ID FK',
-  `updated_at`            DATETIME        NULL COMMENT '업데이트 일시 ISO-8601',
+DROP TABLE IF EXISTS `tmm_mi_impact_m`;
+CREATE TABLE `tmm_mi_impact_m` (
+  `impact_id`          VARCHAR(40)   NOT NULL                   COMMENT 'Impact ID PK impact_ev_[a-z0-9_]+',
+  `mi_event_id`        VARCHAR(20)   NOT NULL                   COMMENT 'MI Event ID FK',
+  `base_case_id`       VARCHAR(60)   NULL                       COMMENT 'MI Event Base Case ID FK',
+  `base_case_skip`     TINYINT(1)    NOT NULL DEFAULT 0         COMMENT 'Base Case 미명시로 단기만 산출한 경우 1',
+  `crt_usr_logn_id`    VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM'  COMMENT '생성자',
+  `crt_dtm`            DATETIME      NOT NULL DEFAULT NOW()     COMMENT '생성 일시',
+  `mod_usr_logn_id`    VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM'  COMMENT '수정 사용자 ID',
+  `mod_dtm`            DATETIME      NULL DEFAULT NOW()         COMMENT '수정 일시',
+  `del_yn`             CHAR(1)       NOT NULL DEFAULT 'N'       COMMENT '삭제 여부 Y/N',
   PRIMARY KEY (`impact_id`),
-  INDEX `tmm_impactm_ix01` (`mi_event_id`)
+  INDEX `tmm_mi_impact_m_ix01` (`mi_event_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Impact Master';
+  COMMENT='MI Event Impact Master';
+
+-- ============================================================
+-- Table: tmm_mi_impact_base_case_m
+-- ============================================================
+DROP TABLE IF EXISTS `tmm_mi_impact_base_case_m`;
+CREATE TABLE `tmm_mi_impact_base_case_m` (
+  `base_case_id`            VARCHAR(60)   NOT NULL               COMMENT 'Base Case 고유 ID PK',
+  `impact_id`               VARCHAR(40)   NOT NULL               COMMENT 'Impact ID FK',
+  `base_case_available`     TINYINT(1)    NOT NULL DEFAULT 0     COMMENT 'Base Case 명시 여부 (0=미명시, 1=명시)',
+  `base_case_text`          TEXT                                 COMMENT '추출된 Base Case 전망 텍스트',
+  `source_record_ids`       JSON                                 COMMENT '근거 Record ID 목록 (최대 5건)',
+  `uncertainty_level`       ENUM('n/a','none','low','medium','high') NOT NULL DEFAULT 'n/a'              COMMENT 'Base Case 충돌 수준',
+  `conflict_detected`       TINYINT(1)    NOT NULL DEFAULT 0     COMMENT '충돌 감지 여부',
+  `conflict_detail`         JSON                                 COMMENT '충돌 claim 목록 [{record_id, publish_date, claim}]',
+  `reconciliation_note`     VARCHAR(500)                         COMMENT '충돌 해소 방식 설명',
+  `scenario_recommended`    TINYINT(1)    NOT NULL DEFAULT 0     COMMENT 'uncertainty medium/high → 1',
+  `scenario_recommend_reason` VARCHAR(500)                       COMMENT '충돌 정보 기반 자동 생성 사유 텍스트',
+  `crt_usr_logn_id`         VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
+  `crt_dtm`                 DATETIME      NOT NULL DEFAULT NOW() COMMENT '생성 일시',
+  `mod_usr_logn_id`         VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
+  `mod_dtm`                 DATETIME      NOT NULL DEFAULT NOW() COMMENT '수정 일시',
+  `del_yn`                  CHAR(1)       NOT NULL DEFAULT 'N'   COMMENT '삭제 여부 Y/N',
+  PRIMARY KEY (`base_case_id`),
+  INDEX `tmm_mi_impact_base_case_m_ix01`    (`uncertainty_level`),
+  INDEX `tmm_mi_impact_base_case_m_ix02`    (`base_case_available`),
+  INDEX `tmm_mi_impact_base_case_m_ix03`    (`scenario_recommended`)     COMMENT '시나리오화 추천 대상 조회'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='MI Event Impact Base Case Master';
 
 -- =========================================================
--- Table: tmm_impactresultm
+-- Table: tmm_mi_impact_result_m
 -- =========================================================
-DROP TABLE IF EXISTS `tmm_impactresultm`;
-CREATE TABLE `tmm_impactresultm` (
-  `impact_result_id`      VARCHAR(64)     NOT NULL COMMENT 'Impact Result ID PK',
-  `crt_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `impact_id`             VARCHAR(64)     NOT NULL COMMENT 'Impact ID FK impact_ev_*',
-  `target_type`           VARCHAR(20)     NOT NULL COMMENT '대상 유형 price|spread',
-  `target_id`             VARCHAR(20)     NOT NULL COMMENT '대상 ID JKM|TTF|HH|JKM-HH',
-  `direction`             VARCHAR(20)     NULL COMMENT '방향 bullish|bearish|negligible',
-  `confidence`            DECIMAL(5,4)    NULL COMMENT '신뢰도 0~1',
-  `impact_assessment_reason` TEXT         NULL COMMENT '임팩트 평가 사유',
-  `completed`             CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '분석 완료 여부 Y/N',
-  `analysis_time`         DATETIME        NULL COMMENT '분석 완료 일시 ISO-8601',
+DROP TABLE IF EXISTS `tmm_mi_impact_result_m`;
+CREATE TABLE `tmm_mi_impact_result_m` (
+  `impact_result_id`       VARCHAR(64)   NOT NULL               COMMENT 'Impact Result ID PK',
+  `impact_id`              VARCHAR(64)   NOT NULL               COMMENT 'Impact ID FK impact_ev_*',
+  `target_type`            VARCHAR(20)   NOT NULL               COMMENT '대상 유형 price|spread',
+  `target_id`              VARCHAR(20)   NOT NULL               COMMENT 'JKM / TTF / HH',
+  `impact_short`           ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') NOT NULL DEFAULT '영향없음'          COMMENT '단기 영향 (0~1M)',
+  `impact_mid`             ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') NULL DEFAULT NULL                  COMMENT '중기 영향 (6M). Base Case 없으면 NULL',
+  `impact_long`            ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') NULL DEFAULT NULL                  COMMENT '장기 영향 (1Y+). Base Case 없으면 NULL',
+  `confidence`             DECIMAL(5,4)  NULL                   COMMENT '신뢰도 0~1',
+  `rationale_base_case`    TEXT                                 COMMENT '사용한 Base Case 가정',
+  `rationale_driver_map`   TEXT                                 COMMENT 'Step 1 driver 영향 요약',
+  `rationale_synthesis`    TEXT                                 COMMENT '종합 판단 logic',
+  `completed`              CHAR(1)       NOT NULL DEFAULT 'N'   COMMENT '분석 완료 여부 Y/N',
+  `analysis_time`          DATETIME      NULL                   COMMENT '분석 완료 일시 ISO-8601',
+  `crt_usr_logn_id`        VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
+  `crt_dtm`                DATETIME      NOT NULL DEFAULT NOW() COMMENT '생성 일시',
+  `mod_usr_logn_id`        VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
+  `mod_dtm`                DATETIME      NOT NULL DEFAULT NOW() COMMENT '수정 일시',
+  `del_yn`                 CHAR(1)       NOT NULL DEFAULT 'N'   COMMENT '삭제 여부 Y/N',
   PRIMARY KEY (`impact_result_id`),
-  INDEX `tmm_impactresultm_ix01` (`impact_id`),
-  INDEX `tmm_impactresultm_ix02` (`target_id`)
+  INDEX `tmm_mi_impact_result_m_ix01` (`impact_id`),
+  INDEX `tmm_mi_impact_result_m_ix02` (`target_id`),
+  INDEX `tmm_mi_impact_result_m_ix03` (`target_id`, `impact_short`),
+  INDEX `tmm_mi_impact_result_m_ix04` (`target_id`, `impact_mid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Impact Result Master';
+  COMMENT='Impact Result Master';
 
 -- =========================================================
--- Table: tmm_drivertagm
+-- Table: tmm_mi_impact_driver_m
 -- =========================================================
-DROP TABLE IF EXISTS `tmm_drivertagm`;
-CREATE TABLE `tmm_drivertagm` (
-  `driver_id`             VARCHAR(64)     NOT NULL COMMENT 'Driver Tag ID PK',
-  `crt_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50)     NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME        NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1)         NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `impact_result_id`      VARCHAR(64)     NOT NULL COMMENT 'Impact Result ID FK',
-  `lv1_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 1단계 코드',
-  `lv1_label`             VARCHAR(100)    NULL COMMENT 'Driver Tree 1단계 명칭',
-  `lv2_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 2단계 코드',
-  `lv2_label`             VARCHAR(100)    NULL COMMENT 'Driver Tree 2단계 명칭',
-  `lv3_id`                VARCHAR(50)     NOT NULL COMMENT 'Driver Tree 3단계 코드',
-  `lv3_label`             VARCHAR(100)    NULL COMMENT 'Driver Tree 3단계 명칭',
-  `direction_hint`        VARCHAR(50)     NULL COMMENT '방향 힌트 bullish_if_up/bearish_if_up/contextual',
-  `direction`             VARCHAR(20)     NULL COMMENT '실제 영향 방향 bullish/bearish/negligible',
-  `match_score`           DECIMAL(5,4)    NULL COMMENT 'Event-Driver 매핑 신뢰도 점수 0~1',
-  `driver_magnitude`      VARCHAR(20)     NULL COMMENT 'Driver 영향 강도 low/medium/high/extreme',
-  `driver_reason`         TEXT            NULL COMMENT 'Driver 영향 발생 사유',
-  `matched_keywords`      JSON            NULL COMMENT '매칭된 키워드 목록',
+DROP TABLE IF EXISTS `tmm_mi_impact_driver_m`;
+CREATE TABLE tmm_mi_impact_driver_m (
+  `driver_id`        VARCHAR(64)   NOT NULL               COMMENT 'Driver Tag ID PK',
+  `impact_result_id` VARCHAR(64)   NOT NULL               COMMENT 'Impact Result ID FK',
+  `lv1_id`           VARCHAR(50)   NOT NULL               COMMENT 'Driver Tree 1단계 코드',
+  `lv1_label`        VARCHAR(100)  NULL                   COMMENT 'Driver Tree 1단계 명칭',
+  `lv2_id`           VARCHAR(50)   NOT NULL               COMMENT 'Driver Tree 2단계 코드',
+  `lv2_label`        VARCHAR(100)  NULL                   COMMENT 'Driver Tree 2단계 명칭',
+  `lv3_id`           VARCHAR(50)   NOT NULL               COMMENT 'Driver Tree 3단계 코드',
+  `lv3_label`        VARCHAR(100)  NULL                   COMMENT 'Driver Tree 3단계 명칭',
+  `direction_hint`   VARCHAR(50)   NULL                   COMMENT '방향 힌트 bullish_if_up/bearish_if_up/contextual',
+  `match_score`      DECIMAL(5,4)  NULL                   COMMENT 'Event-Driver 매핑 신뢰도 점수 0~1',
+  `matched_keywords` JSON          NULL                   COMMENT '매칭된 키워드 목록',
+  `driver_reason`    TEXT          NULL                   COMMENT 'Driver 영향 발생 사유',
+  `impact_short`     ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') NOT NULL DEFAULT '영향없음'          COMMENT 'driver의 단기 영향',
+  `impact_mid`       ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') NULL DEFAULT NULL                    COMMENT 'driver의 중기 영향',
+  `impact_long`      ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') NULL DEFAULT NULL                    COMMENT 'driver의 장기 영향',
+  `crt_usr_logn_id`  VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
+  `crt_dtm`          DATETIME      NOT NULL DEFAULT NOW() COMMENT '생성 일시',
+  `mod_usr_logn_id`  VARCHAR(50)   NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
+  `mod_dtm`          DATETIME      NOT NULL DEFAULT NOW() COMMENT '수정 일시',
+  `del_yn`           CHAR(1)       NOT NULL DEFAULT 'N'   COMMENT '삭제 여부 Y/N',
   PRIMARY KEY (`driver_id`),
-  INDEX `tmm_drivertagm_ix01` (`impact_result_id`),
-  INDEX `tmm_drivertagm_ix02` (`lv3_id`)
+  INDEX `tmm_mi_impact_driver_m_ix01` (`impact_result_id`),
+  INDEX `tmm_mi_impact_driver_m_ix02` (`lv3_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Driver Tag Master';
+  COMMENT='Driver Tag Master';
 
 -- =========================================================
 -- Table: tmm_timebucketm

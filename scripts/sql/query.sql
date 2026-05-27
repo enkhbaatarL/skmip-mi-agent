@@ -82,3 +82,101 @@ GROUP BY
     evt.crt_dtm,
     evt.mod_dtm
 ORDER BY evt.mod_dtm DESC;
+
+
+-- =========================================================
+-- 이벤트별 단기/중기/장기 분석 결과 전체 (9셀)
+--      : 이벤트 1건의 JKM·TTF·HH × 단기·중기·장기를 행으로 조회
+-- =========================================================
+SELECT
+    i.mi_event_id
+  , i.impact_id
+  , r.target_id
+  , r.impact_short   AS 단기
+  , r.impact_mid     AS 중기
+  , r.impact_long    AS 장기
+  , r.confidence     AS 신뢰도
+  , r.completed
+  , r.analysis_time
+FROM tmm_mi_impact_m         i
+JOIN tmm_mi_impact_result_m  r  ON r.impact_id = i.impact_id
+WHERE i.del_yn  = 'N'
+  AND r.del_yn  = 'N'
+  AND r.completed = 'Y'
+ORDER BY i.mi_event_id
+       , FIELD(r.target_id, 'JKM', 'TTF', 'HH');
+
+-- =========================================================
+-- 시나리오화 추천 이벤트 + 9셀 결과 함께 조회 (REQ-15)
+--     : scenario_recommended = 1
+-- =========================================================
+SELECT
+    i.mi_event_id
+  , bc.uncertainty_level
+  , bc.conflict_detected
+  , bc.scenario_recommend_reason
+  , r.target_id
+  , r.impact_short   AS 단기
+  , r.impact_mid     AS 중기
+  , r.impact_long    AS 장기
+  , r.confidence
+FROM tmm_mi_impact_base_case_m     bc
+JOIN tmm_mi_impact_m               i   ON i.impact_id  = bc.impact_id
+JOIN tmm_mi_impact_result_m        r   ON r.impact_id  = i.impact_id
+WHERE bc.scenario_recommended = 1
+  AND bc.del_yn = 'N'
+  AND i.del_yn  = 'N'
+  AND r.del_yn  = 'N'
+ORDER BY bc.uncertainty_level DESC
+       , i.mi_event_id
+       , FIELD(r.target_id, 'JKM', 'TTF', 'HH');
+
+-- =========================================================
+-- Driver 기여 목록 조회 (REQ-6 Traceability)
+--     : 특정 이벤트의 가격별 driver 평가 내역
+-- =========================================================
+SELECT
+    i.mi_event_id
+  , r.target_id
+  , d.lv1_id
+  , d.lv1_label
+  , d.lv2_id
+  , d.lv2_label
+  , d.lv3_id
+  , d.lv3_label
+  , d.direction_hint
+  , d.match_score
+  , d.impact_short   AS driver_단기
+  , d.impact_mid     AS driver_중기
+  , d.impact_long    AS driver_장기
+  , d.driver_reason
+FROM tmm_mi_impact_m          i
+JOIN tmm_mi_impact_result_m   r  ON r.impact_id       = i.impact_id
+JOIN tmm_mi_impact_driver_m   d  ON d.impact_result_id = r.impact_result_id
+WHERE i.del_yn = 'N'
+  AND r.del_yn = 'N'
+  AND d.del_yn = 'N'
+  AND i.mi_event_id = :mi_event_id   -- 파라미터 바인딩
+ORDER BY FIELD(r.target_id, 'JKM', 'TTF', 'HH')
+       , d.match_score DESC;
+
+-- =========================================================
+-- lv3 driver별 영향 집계
+--     : 특정 driver가 어떤 이벤트에서 얼마나 자주 상승/하락에 기여했는지
+-- =========================================================
+SELECT
+    d.lv3_id
+  , d.lv3_label
+  , d.direction_hint
+  , COUNT(*)                                        AS 사용횟수
+  , SUM(CASE WHEN d.impact_short LIKE '상승%' THEN 1 ELSE 0 END) AS 단기_상승
+  , SUM(CASE WHEN d.impact_short LIKE '하락%' THEN 1 ELSE 0 END) AS 단기_하락
+  , SUM(CASE WHEN d.impact_short = '영향없음'  THEN 1 ELSE 0 END) AS 단기_영향없음
+  , ROUND(AVG(d.match_score), 2)                   AS 평균_match_score
+FROM tmm_mi_impact_driver_m  d
+JOIN tmm_mi_impact_result_m  r  ON r.impact_result_id = d.impact_result_id
+WHERE d.del_yn = 'N'
+  AND r.del_yn = 'N'
+  AND r.target_id = 'JKM'   -- 원하는 가격 지표 지정
+GROUP BY d.lv3_id, d.lv3_label, d.direction_hint
+ORDER BY 사용횟수 DESC, 평균_match_score DESC;
