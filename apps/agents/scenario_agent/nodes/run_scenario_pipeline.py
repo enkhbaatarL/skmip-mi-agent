@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Dict, Any
 import uuid
 
-from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
-from apps.agents.scenario_flow_agent.services.scenario_generation_service import ScenarioGenerationService
+from apps.agents.scenario_agent.state.scenario_flow_state import ScenarioFlowState
+from apps.agents.scenario_agent.services.scenario_generation_service import ScenarioGenerationService
 
 def run_scenario_pipeline(state: ScenarioFlowState) -> Dict[str, Any]:
     """

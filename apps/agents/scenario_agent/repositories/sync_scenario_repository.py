@@ -18,16 +18,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select, exists
+from sqlalchemy import exists, select
 from sqlalchemy.orm import joinedload
 
 from apps.agents.event_flow_agent.models.mi_event_models_orm import (
     MiEventModel,
-    MiEventTypeL1Model,
-    MiEventTypeL2Model,
     MiEventRecordMapModel,
+    MiEventTypeL2Model,
 )
-from apps.agents.scenario_flow_agent.models.scenario_models_orm import ScenarioModel
+from apps.agents.scenario_agent.models.scenario_models_orm import ScenarioModel
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
@@ -123,21 +122,16 @@ class SyncScenarioRepository(BaseSyncSQLRepository):
             "event_title_ko": event.event_title or "",
             "one_line_summary": event.one_line_summary or "",
             "key_bullets": key_bullets,
-            "detail_analysis": event.event_summary or "",
+            "detail_analysis": event.detail_analysis or "",
             "market_and_institution_view": event.market_and_institution_view or "",
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
-            "updated_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
+            "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
             "event_type": {
                 "level_1_code": l1.level_1_code if l1 else "",
                 "level_2_code": l2.level_2_code if l2 else "",
             },
-            "event_status": {
-                "status_code": event.mi_event_status_code or "",
-            },
-            "dedup_state": event.dedup_state or "raw",
             "language": "ko",
             "occurred_at": event.occurred_at.isoformat() if event.occurred_at else "",
-            "probability": float(event.probability) if event.probability else 0,
             "tags": tags,
         }

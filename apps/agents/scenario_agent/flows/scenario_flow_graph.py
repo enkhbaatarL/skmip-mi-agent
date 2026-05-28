@@ -1,15 +1,9 @@
-"""
-Scenario Flow Agent Graph
-
-LangGraph StateGraph definition for scenario generation pipeline.
-Follows same architecture pattern as event_flow_agent.
-"""
 from langgraph.graph import StateGraph
 
-from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
-from apps.agents.scenario_flow_agent.nodes.load_event_from_db import load_event_from_db
-from apps.agents.scenario_flow_agent.nodes.run_scenario_pipeline import run_scenario_pipeline
-from apps.agents.scenario_flow_agent.nodes.save_scenarios_to_db import save_scenarios_to_db
+from apps.agents.scenario_agent.state.scenario_flow_state import ScenarioFlowState
+from apps.agents.scenario_agent.nodes.load_event_from_db import load_event_from_db
+from apps.agents.scenario_agent.nodes.run_scenario_pipeline import run_scenario_pipeline
+from apps.agents.scenario_agent.nodes.save_scenarios_to_db import save_scenarios_to_db
 
 
 def build_scenario_flow_graph() -> StateGraph:

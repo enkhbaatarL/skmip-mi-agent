@@ -9,12 +9,12 @@ from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-ROOT_DIR = pathlib.Path(__file__).resolve().parents[4]
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[5]
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(ROOT_DIR / "envs" / "skmip_mi_agent" / "env.txt"),
+        env_file=str(ROOT_DIR / "envs" / "skgas_agent" / "env.txt"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

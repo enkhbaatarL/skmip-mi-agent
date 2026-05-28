@@ -19,7 +19,7 @@ from typing import Any
 
 from sqlalchemy import select, exists
 
-from apps.agents.scenario_flow_agent.models.scenario_models_orm import ScenarioModel
+from apps.agents.scenario_agent.models.scenario_models_orm import ScenarioModel
 from apps.agents.signpost_flow_agent.models.signpost_models_orm import SignpostModel
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 

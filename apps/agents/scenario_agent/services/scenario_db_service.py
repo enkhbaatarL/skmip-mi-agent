@@ -20,7 +20,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from apps.common.configs.settings import Settings, get_settings
-from apps.agents.scenario_flow_agent.repositories.sync_scenario_repository import (
+from apps.agents.scenario_agent.repositories.sync_scenario_repository import (
     SyncScenarioRepository,
 )
 from apps.common.configs.database.sync_database.connection import get_sync_session

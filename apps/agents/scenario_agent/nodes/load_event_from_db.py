@@ -6,8 +6,8 @@ replacing the previous file-based loader.
 """
 from typing import Dict, Any
 
-from apps.agents.scenario_flow_agent.services.scenario_db_service import ScenarioDbService
-from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
+from apps.agents.scenario_agent.services.scenario_db_service import ScenarioDbService
+from apps.agents.scenario_agent.state.scenario_flow_state import ScenarioFlowState
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger as app_logger
 

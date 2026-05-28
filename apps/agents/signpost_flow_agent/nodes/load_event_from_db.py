@@ -1,15 +1,9 @@
-"""
-Node: Load Event and Scenarios from Database
-
-Loads base event info and scenarios from tmm_mi_mievent_m and tmm_scenariom.
-This replaces the file-based input used in the reference script.
-"""
 from datetime import datetime
 from typing import Any, Dict
 
 from apps.agents.signpost_flow_agent.services.signpost_db_service import SignpostDbService
 from apps.agents.signpost_flow_agent.state.signpost_flow_state import SignpostFlowState
-from apps.agents.scenario_flow_agent.services.scenario_db_service import ScenarioDbService
+from apps.agents.scenario_agent.services.scenario_db_service import ScenarioDbService
 
 
 def load_event_from_db(state: SignpostFlowState) -> Dict[str, Any]:

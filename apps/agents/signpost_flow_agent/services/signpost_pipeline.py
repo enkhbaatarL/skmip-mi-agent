@@ -6,11 +6,12 @@ with proper LLM client injection support using the project's invoke_llm_structur
 
 Reference: ./tmp/stage_integrated_signpost_openai.py
 """
+from __future__ import annotations
+
 import asyncio
 import os
 import random
 import re
-import time
 from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import BaseModel, Field, conlist, model_validator
@@ -136,25 +137,22 @@ def _is_retryable_schema_error(exc: Exception) -> bool:
     return "validation" in name or any(k in msg for k in keywords)
 
 
-def _invoke_structured(
+async def _invoke_structured(
     schema_cls: type[BaseModel],
     messages: List[Dict[str, str]],
     temperature: float = 0.0,
 ) -> BaseModel | None:
-    """Synchronous structured output LLM call via the project's invoke_llm_structured_output connector."""
-    async def _call():
-        result = await invoke_llm_structured_output(
-            output_schema=schema_cls,
-            messages=messages,
-            temperature=temperature,
-            max_retries=2,
-        )
-        return result.result
-
-    return asyncio.run(_call())
+    """Async structured output LLM call via the project's invoke_llm_structured_output connector."""
+    result = await invoke_llm_structured_output(
+        output_schema=schema_cls,
+        messages=messages,
+        temperature=temperature,
+        max_retries=2,
+    )
+    return result.result
 
 
-def _invoke_with_retry(
+async def _invoke_with_retry(
     stage_label: str,
     schema_cls: type[BaseModel],
     system_prompt: str,
@@ -185,7 +183,7 @@ def _invoke_with_retry(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ]
-            result = _invoke_structured(schema_cls, messages, temperature=temperature)
+            result = await _invoke_structured(schema_cls, messages, temperature=temperature)
             if result is None:
                 raise ValueError("LLM returned None result")
             validate_fn(result)
@@ -220,7 +218,7 @@ def _invoke_with_retry(
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
             app_logger.info("[{}] 재시도 ({}/{}) — {}, {:.1f}s 후", stage_label, attempt, REF_MAX_RETRIES, reason, wait_sec)
-            time.sleep(wait_sec)
+            await asyncio.sleep(wait_sec)
 
     app_logger.warning("[{}] 재시도 소진 — fallback 진입", stage_label)
     return None
@@ -279,7 +277,7 @@ def _shorten(text: str, n: int) -> str:
     return text[:n] + " …(생략)"
 
 
-def stage2_observability_filter(
+async def stage2_observability_filter(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
 ) -> List[str]:
@@ -334,7 +332,7 @@ def stage2_observability_filter(
                 f"[{REF_SIGNPOSTS_PER_SCENARIO_MIN}, {REF_SIGNPOSTS_PER_SCENARIO_MAX}] 밖."
             )
 
-    out = _invoke_with_retry(
+    out = await _invoke_with_retry(
         stage_label="Stage 2",
         schema_cls=_Stage2LLMOutput,
         system_prompt=STAGE2_SYSTEM,
@@ -439,7 +437,7 @@ STAGE4_HARD = """\
 """
 
 
-def stage4_assign_direction_strength(
+async def stage4_assign_direction_strength(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
     labels: List[str],
@@ -502,7 +500,7 @@ def stage4_assign_direction_strength(
                 f"(허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})"
             )
 
-    out = _invoke_with_retry(
+    out = await _invoke_with_retry(
         stage_label="Stage 4",
         schema_cls=_Stage4LLMOutput,
         system_prompt=STAGE4_SYSTEM,
@@ -584,7 +582,7 @@ STAGE5_HARD = """\
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-]+|[가-힣]+")
 
 
-def stage5_mint_keywords(
+async def stage5_mint_keywords(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
     labels: List[str],
@@ -634,7 +632,7 @@ def stage5_mint_keywords(
             if any(not str(kw).strip() for kw in h.keyword_hints):
                 raise ValueError("keyword_hints 안에 빈 문자열 존재.")
 
-    out = _invoke_with_retry(
+    out = await _invoke_with_retry(
         stage_label="Stage 5",
         schema_cls=_Stage5LLMOutput,
         system_prompt=STAGE5_SYSTEM,
@@ -679,7 +677,7 @@ def _build_signpost_id(scenario_pk: int, idx: int) -> str:
     return f"sgp_{scenario_pk}_{idx:02d}"
 
 
-def build_signposts_for_scenario(
+async def build_signposts_for_scenario(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
 ) -> List[Dict[str, Any]]:
@@ -688,13 +686,13 @@ def build_signposts_for_scenario(
     scenario_pk = int(sid) if isinstance(sid, (int, str)) and str(sid).isdigit() else 0
 
     # ── Stage 2 ────────────────────────────────────────────────
-    labels = stage2_observability_filter(scenario, base_event_summary)
+    labels = await stage2_observability_filter(scenario, base_event_summary)
     if not labels:
         app_logger.info("[{}] Stage 2 통과 0건 — signposts 비어있음", scenario_pk)
         return []
 
     # ── Stage 4 ────────────────────────────────────────────────
-    s4_assigns = stage4_assign_direction_strength(scenario, base_event_summary, labels)
+    s4_assigns = await stage4_assign_direction_strength(scenario, base_event_summary, labels)
     app_logger.info(
         "[{}] Stage 4 strong={} med={} weak={}",
         scenario_pk,
@@ -704,7 +702,7 @@ def build_signposts_for_scenario(
     )
 
     # ── Stage 5 ────────────────────────────────────────────────
-    s5_keywords = stage5_mint_keywords(scenario, base_event_summary, labels)
+    s5_keywords = await stage5_mint_keywords(scenario, base_event_summary, labels)
 
     # ── Stage 3 + 조립 ─────────────────────────────────────────
     signposts: List[Dict[str, Any]] = []

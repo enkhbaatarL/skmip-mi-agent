@@ -28,16 +28,21 @@ from typing import Any, Sequence
 
 from langchain_core.runnables import Runnable
 
-from apps.agents.scenario_flow_agent.flows.scenario_flow_adapters import (
+from apps.agents.scenario_agent.flows.scenario_flow_adapters import (
     build_batch_output,
     to_output,
     to_state,
 )
-from apps.agents.scenario_flow_agent.flows.scenario_flow_graph import scenario_flow_graph
-from apps.agents.scenario_flow_agent.flows.scenario_flow_runtime import ensure_runtime
-from apps.agents.scenario_flow_agent.schemas.scenario_flow_input import ScenarioFlowInput
-from apps.agents.scenario_flow_agent.schemas.scenario_flow_output import ScenarioFlowOutput
-from apps.agents.scenario_flow_agent.services.scenario_db_service import ScenarioDbService
+from apps.agents.scenario_agent.flows.scenario_flow_graph import scenario_flow_graph
+from apps.agents.scenario_agent.flows.scenario_flow_runtime import ensure_runtime
+from apps.agents.scenario_agent.schemas.scenario_flow_input import ScenarioFlowInput
+from apps.agents.scenario_agent.schemas.scenario_flow_output import ScenarioFlowOutput
+from apps.agents.scenario_agent.services.scenario_db_service import ScenarioDbService
+from apps.agents.signpost_flow_agent.flows.signpost_flow_adapters import (
+    to_output as signpost_to_output,
+    to_state as signpost_to_state,
+)
+from apps.agents.signpost_flow_agent.flows.signpost_flow_graph import signpost_flow_graph
 from apps.common.configs.settings import get_settings
 from apps.common.logging.logger_config import logger as app_logger
 
@@ -88,11 +93,13 @@ class ScenarioFlowRunnable(Runnable):
                     "[SCENARIO_BATCH] Already exist, skipping mi_event_id=%s",
                     mi_event_id,
                 )
-                results.append({
+                per_event: dict[str, Any] = {
                     "mi_event_id": mi_event_id,
                     "status": "already_exist",
                     "message": "Scenarios already exist",
-                })
+                }
+                results.append(per_event)
+                await self._run_signpost_pipeline(mi_event_id, config)
                 continue
 
             # Step 2: Process pipeline for this event
@@ -112,9 +119,33 @@ class ScenarioFlowRunnable(Runnable):
                     "status": "failure",
                     "message": str(e),
                 })
+                continue
+
+            # Step 3: Run signpost pipeline after scenario success
+            if per_event.get("status") == "success":
+                await self._run_signpost_pipeline(mi_event_id, config)
 
         # Step 3: Aggregate results
         return build_batch_output(results)
+
+
+    async def _run_signpost_pipeline(self, mi_event_id: int, config: dict | None) -> None:
+        app_logger.info("[SCENARIO_BATCH] Starting signpost pipeline for mi_event_id=%s", mi_event_id)
+        try:
+            signpost_state = signpost_to_state(mi_event_id)
+            signpost_final_state = await signpost_flow_graph.ainvoke(signpost_state, config=config)
+            signpost_result = signpost_to_output(signpost_final_state)
+            app_logger.info(
+                "[SCENARIO_BATCH] Signpost pipeline completed for mi_event_id=%s: status=%s",
+                mi_event_id,
+                signpost_result.get("status"),
+            )
+        except Exception as e:
+            app_logger.error(
+                "[SCENARIO_BATCH] Signpost pipeline failed for mi_event_id=%s: %s",
+                mi_event_id,
+                e,
+            )
 
 
 def build_runnable_graph(stream_modes: Sequence[str] | str | None = None) -> Runnable:

@@ -44,7 +44,6 @@ from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
 from apps.common.configs.settings import BaseSettings, get_settings
-from apps.common.values.llm_usage import LLMUsageModel
 from apps.common.exceptions.custom import LLMInvocationError
 from apps.common.logging.decorators import log_connector
 from apps.common.runtime.runtime import (
@@ -55,6 +54,7 @@ from apps.common.runtime.runtime import (
 )
 from apps.common.runtime.usage_context import accumulate_usage
 from apps.common.values.enums import ModelPreference
+from apps.common.values.llm_usage import LLMUsageModel
 
 
 _openai_client: AsyncOpenAI | None = None
@@ -136,7 +136,7 @@ async def invoke_llm_function_call(
                 messages=messages,
                 functions=functions,
                 function_call=function_call,
-                temperature=temperature,
+                # temperature=temperature,
             )
             choice = resp.choices[0]
             usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
@@ -187,7 +187,7 @@ async def invoke_llm_structured_output[T: BaseModel](
             resp = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=temperature,
+                # temperature=temperature,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {

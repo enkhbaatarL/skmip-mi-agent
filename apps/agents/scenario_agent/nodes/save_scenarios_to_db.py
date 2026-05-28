@@ -9,8 +9,8 @@ import json
 from typing import Dict, Any
 from pathlib import Path
 
-from apps.agents.scenario_flow_agent.services.scenario_db_service import ScenarioDbService
-from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
+from apps.agents.scenario_agent.services.scenario_db_service import ScenarioDbService
+from apps.agents.scenario_agent.state.scenario_flow_state import ScenarioFlowState
 
 
 def save_scenarios_to_db(state: ScenarioFlowState) -> Dict[str, Any]:

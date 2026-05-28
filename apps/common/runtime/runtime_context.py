@@ -78,15 +78,7 @@ class RuntimeContext:
             if self._initialized:
                 return self
 
-            if not self.cfg.mcp_pool_urls:
-                logger.warning(
-                    "MCP_POOL_URLS is empty; falling back to default MCP URL",
-                )
-
             self._init_global_semaphores()
-            default_url = self._resolve_mcp_pool_url(None)
-            await self._ensure_default_mcp_pool(default_url)
-            await self._ensure_mcp_client_pool(default_url)
 
             # TODO: 위치 옮기는거 검토
             search_policy_set: SearchPolicySet = build_search_policy_set()

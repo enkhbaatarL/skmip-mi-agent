@@ -18,11 +18,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.agents.scenario_flow_agent.schemas.scenario_flow_output import (
+from apps.agents.scenario_agent.schemas.scenario_flow_output import (
     EventResult,
     ScenarioFlowOutput,
 )
-from apps.agents.scenario_flow_agent.state.scenario_flow_state import ScenarioFlowState
+from apps.agents.scenario_agent.state.scenario_flow_state import ScenarioFlowState
 
 
 def to_state(mi_event_id: int, **_: object) -> ScenarioFlowState:
