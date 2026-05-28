@@ -27,7 +27,10 @@ SELECT
         ELSE '갱신'
     END AS event_change_type,
     evt_tp_l2.level_2_label,
-    evt.event_title
+    evt.event_title,
+    CASE 
+    	WHEN evt.scenario_suggest_yn = 'Y' THEN '시나리오화 추천'
+    END
 FROM tmm_mi_mievent_m evt
 JOIN tmm_mi_event_type_l2_m evt_tp_l2
     ON evt.event_type_l2_id = evt_tp_l2.event_type_l2_id
@@ -51,8 +54,10 @@ SELECT
     evt_type_l2.level_2_label AS '이벤트 유형 레벨2',
     evt.event_title AS '이벤트 제목',
     evt.key_bullets_json AS '이벤트 핵심요약',
-    evt.detail_analysis  AS '이벤트 상세분석',
-    evt.market_and_institution_view AS '기관전망 (확인 후, 다시 공지 예정)',
+    evt.detail_analysis AS '이벤트 상세분석',
+    inst_view.view_date AS '기관전망 (일시)',
+    inst_view.institution_name AS '기관전망 (기관명)',
+    inst_view.view_summary AS '기관전망 (전망 요약)',
     GROUP_CONCAT(
         DISTINCT evt_record_map.mi_record_id
         ORDER BY evt_record_map.mi_record_id
@@ -70,6 +75,10 @@ JOIN tmm_mi_event_type_l1_m evt_type_l1
 LEFT JOIN tmm_mi_mievent_record_map evt_record_map
     ON evt.mi_event_id = evt_record_map.mi_event_id
    AND evt_record_map.del_yn = 'N'
+LEFT JOIN tmm_mi_institution_view inst_view
+    ON inst_view.mi_event_id = evt.mi_event_id
+   AND inst_view.mi_record_id = evt_record_map.mi_record_id
+   AND inst_view.del_yn = 'N'
 WHERE evt.del_yn = 'N'
 GROUP BY
     evt.mi_event_id,
@@ -77,11 +86,14 @@ GROUP BY
     evt_type_l2.level_2_label,
     evt.event_title,
     evt.key_bullets_json,
-    evt.detail_analysis ,
-    evt.market_and_institution_view,
+    evt.detail_analysis,
+    inst_view.view_date,
+    inst_view.institution_name,
+    inst_view.view_summary,
     evt.crt_dtm,
     evt.mod_dtm
 ORDER BY evt.mod_dtm DESC;
+
 
 
 -- =========================================================
