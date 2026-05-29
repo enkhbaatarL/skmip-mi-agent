@@ -373,7 +373,7 @@ CREATE TABLE `tmm_mi_institution_view` (
 DROP TABLE IF EXISTS `tmm_mi_impact_m`;
 CREATE TABLE `tmm_mi_impact_m` (
   `impact_id`          VARCHAR(40) COLLATE utf8mb4_bin NOT NULL COMMENT 'Impact ID PK impact_ev_[a-z0-9_]+',
-  `mi_event_id`        VARCHAR(20) COLLATE utf8mb4_bin NOT NULL COMMENT 'MI Event ID FK',
+  `mi_event_id`        INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'MI Event ID FK'
   `base_case_id`       VARCHAR(60) COLLATE utf8mb4_bin NULL COMMENT 'MI Event Base Case ID FK',
   `base_case_skip`     TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Base Case 미명시로 단기만 산출한 경우 1',
   `impact_summary`     TEXT COLLATE utf8mb4_bin COMMENT 'JKM/TTF/HH 영향도 분석 결과 종합 요약 텍스트',
@@ -659,16 +659,20 @@ DROP TRIGGER IF EXISTS `tr_tmm_mi_mievent_m_upd` //
 CREATE TRIGGER `tr_tmm_mi_mievent_m_upd` BEFORE UPDATE ON `tmm_mi_mievent_m`
 FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
 
-DROP TRIGGER IF EXISTS `tr_tmm_impactm_upd` //
-CREATE TRIGGER `tr_tmm_impactm_upd` BEFORE UPDATE ON `tmm_impactm`
+DROP TRIGGER IF EXISTS `tr_tmm_mi_impact_m_upd` //
+CREATE TRIGGER `tr_tmm_mi_impact_m_upd` BEFORE UPDATE ON `tmm_mi_impact_m`
 FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
 
-DROP TRIGGER IF EXISTS `tr_tmm_impactresultm_upd` //
-CREATE TRIGGER `tr_tmm_impactresultm_upd` BEFORE UPDATE ON `tmm_impactresultm`
+DROP TRIGGER IF EXISTS `tr_tmm_mi_impact_base_case_m_upd` //
+CREATE TRIGGER `tr_tmm_mi_impact_base_case_m_upd` BEFORE UPDATE ON `tmm_mi_impact_base_case_m`
+FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
+    
+DROP TRIGGER IF EXISTS `tr_tmm_mi_impact_result_m_upd` //
+CREATE TRIGGER `tr_tmm_mi_impact_result_m_upd` BEFORE UPDATE ON `tmm_mi_impact_result_m`
 FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
 
-DROP TRIGGER IF EXISTS `tr_tmm_drivertagm_upd` //
-CREATE TRIGGER `tr_tmm_drivertagm_upd` BEFORE UPDATE ON `tmm_drivertagm`
+DROP TRIGGER IF EXISTS `tr_tmm_mi_impact_driver_m_upd` //
+CREATE TRIGGER `tr_tmm_mi_impact_driver_m_upd` BEFORE UPDATE ON `tmm_mi_impact_driver_m`
 FOR EACH ROW BEGIN SET NEW.mod_dtm = NOW(); END //
 
 DROP TRIGGER IF EXISTS `tr_tmm_timebucketm_upd` //
