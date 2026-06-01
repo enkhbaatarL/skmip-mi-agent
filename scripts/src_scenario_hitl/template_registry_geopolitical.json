@@ -1,0 +1,1330 @@
+{
+  "_meta": {
+    "description": "Multi-Scenario Template Registry — Event Type별 Dimension/Enum/Compatibility Rule",
+    "schema_version": "0.1.0",
+    "registry_keys": "event_type_l1_l2 (예: 'geopolitical_risk::war_military_conflict')"
+  },
+  "templates": {
+    "geopolitical_risk::war_military_conflict": {
+      "label_ko": "지정학 리스크 / 전쟁·군사충돌",
+      "template_dimensions_total": 8,
+      "dimensions": [
+        {
+          "dimension_id": "conflict_duration",
+          "label_ko": "충돌 지속 기간",
+          "description": "물리적 충돌(또는 그에 준하는 봉쇄 상태)이 유지되는 총 기간",
+          "enum": [
+            {
+              "id": "1M_under",
+              "label": "1개월 미만",
+              "tail": false
+            },
+            {
+              "id": "1_3M",
+              "label": "1~3개월",
+              "tail": false
+            },
+            {
+              "id": "3_6M",
+              "label": "3~6개월",
+              "tail": false
+            },
+            {
+              "id": "6_12M",
+              "label": "6~12개월",
+              "tail": true
+            },
+            {
+              "id": "1Y_plus",
+              "label": "1년 이상",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "escalation_level",
+          "label_ko": "에스컬레이션 강도",
+          "description": "충돌의 강도/형태 (외교 → 대리전 → 재래전 → 고강도전 → 전면전)",
+          "enum": [
+            {
+              "id": "diplomatic",
+              "label": "외교 마찰 수준",
+              "tail": false
+            },
+            {
+              "id": "proxy_limited",
+              "label": "대리전·제한 충돌",
+              "tail": false
+            },
+            {
+              "id": "regional_conventional",
+              "label": "역내 재래전",
+              "tail": false
+            },
+            {
+              "id": "high_intensity",
+              "label": "고강도 정규전",
+              "tail": true
+            },
+            {
+              "id": "existential",
+              "label": "전면전·존재 위협",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "strait_shipping_impact",
+          "label_ko": "주요 해협 통항 영향",
+          "description": "호르무즈·바브엘만뎁 등 핵심 해협의 통항량 변화",
+          "enum": [
+            {
+              "id": "none",
+              "label": "영향 없음",
+              "tail": false
+            },
+            {
+              "id": "intermittent",
+              "label": "간헐적 차질",
+              "tail": false
+            },
+            {
+              "id": "partial_blockade",
+              "label": "부분 봉쇄",
+              "tail": false
+            },
+            {
+              "id": "full_blockade",
+              "label": "전면 봉쇄",
+              "tail": true
+            },
+            {
+              "id": "prolonged_closure",
+              "label": "장기 폐쇄",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "lng_facility_damage",
+          "label_ko": "LNG 시설 피해",
+          "description": "LNG 액화·저장·항만 시설의 물리적 피해 정도",
+          "enum": [
+            {
+              "id": "none",
+              "label": "피해 없음",
+              "tail": false
+            },
+            {
+              "id": "moderate",
+              "label": "부분 가동 차질",
+              "tail": false
+            },
+            {
+              "id": "severe",
+              "label": "주요 시설 가동 중단",
+              "tail": false
+            },
+            {
+              "id": "permanent",
+              "label": "시설 영구 손상",
+              "tail": true
+            },
+            {
+              "id": "cascading",
+              "label": "인근 인프라 연쇄 피해",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "risk_premium",
+          "label_ko": "지정학 리스크 프리미엄 (LNG)",
+          "description": "JKM/TTF에 반영되는 지정학 프리미엄 폭 ($/MMBtu)",
+          "enum": [
+            {
+              "id": "flat",
+              "label": "프리미엄 소거",
+              "tail": false
+            },
+            {
+              "id": "low",
+              "label": "$1~3/MMBtu",
+              "tail": false
+            },
+            {
+              "id": "mid",
+              "label": "$3~5/MMBtu",
+              "tail": false
+            },
+            {
+              "id": "high",
+              "label": "$5~10/MMBtu",
+              "tail": true
+            },
+            {
+              "id": "extreme",
+              "label": "$10/MMBtu 이상",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "crude_disruption",
+          "label_ko": "원유 공급 차질",
+          "description": "충돌이 글로벌 원유 공급에 미치는 양적 차질",
+          "enum": [
+            {
+              "id": "none",
+              "label": "영향 없음",
+              "tail": false
+            },
+            {
+              "id": "mild",
+              "label": "5% 미만 감소",
+              "tail": false
+            },
+            {
+              "id": "moderate",
+              "label": "5~15% 감소",
+              "tail": false
+            },
+            {
+              "id": "severe",
+              "label": "15~30% 감소",
+              "tail": true
+            },
+            {
+              "id": "critical",
+              "label": "30% 이상 감소",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "sanctions_scope",
+          "label_ko": "제재 범위",
+          "description": "충돌 당사국·관련국에 부과되는 제재 강도/범위",
+          "enum": [
+            {
+              "id": "none",
+              "label": "제재 부재",
+              "tail": false
+            },
+            {
+              "id": "bilateral",
+              "label": "양자 제한 제재",
+              "tail": false
+            },
+            {
+              "id": "multilateral",
+              "label": "다자 제재",
+              "tail": false
+            },
+            {
+              "id": "secondary",
+              "label": "2차 제재 포함",
+              "tail": true
+            },
+            {
+              "id": "comprehensive",
+              "label": "전면적 제재",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "supply_response",
+          "label_ko": "공급 측 대응",
+          "description": "SPR·OPEC+ 증산·정책 공조 등 공급 측 충격 완화 대응",
+          "enum": [
+            {
+              "id": "none",
+              "label": "대응 부재",
+              "tail": false
+            },
+            {
+              "id": "jawboning",
+              "label": "구두 개입",
+              "tail": false
+            },
+            {
+              "id": "spr_partial",
+              "label": "부분 SPR 발동",
+              "tail": false
+            },
+            {
+              "id": "spr_full",
+              "label": "대규모 SPR·공조",
+              "tail": true
+            },
+            {
+              "id": "producer_swing",
+              "label": "OPEC+ 증산 동참",
+              "tail": true
+            }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "WAR_C1",
+          "type": "intensity_contradiction",
+          "description": "낮은 에스컬레이션 강도와 심각/영구 시설 피해는 동시 성립 불가",
+          "forbid": {
+            "escalation_level": [
+              "diplomatic",
+              "proxy_limited"
+            ],
+            "lng_facility_damage": [
+              "severe",
+              "permanent",
+              "cascading"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C2",
+          "type": "physical_contradiction",
+          "description": "1개월 미만 단기 충돌에서 영구·연쇄 시설 피해는 물리적으로 성립 불가",
+          "forbid": {
+            "conflict_duration": [
+              "1M_under"
+            ],
+            "lng_facility_damage": [
+              "permanent",
+              "cascading"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C3",
+          "type": "duration_contradiction",
+          "description": "1개월 미만 단기 충돌에서 전면/장기 해협 봉쇄는 정의상 모순",
+          "forbid": {
+            "conflict_duration": [
+              "1M_under"
+            ],
+            "strait_shipping_impact": [
+              "full_blockade",
+              "prolonged_closure"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C4",
+          "type": "intensity_contradiction",
+          "description": "전면 봉쇄·장기 폐쇄에서 LNG 리스크 프리미엄이 평탄(flat)/저(low) 이라는 조합은 시장 통념상 모순",
+          "forbid": {
+            "strait_shipping_impact": [
+              "full_blockade",
+              "prolonged_closure"
+            ],
+            "risk_premium": [
+              "flat",
+              "low"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C5",
+          "type": "intensity_contradiction",
+          "description": "원유 공급이 심각/위기 수준으로 차질인데 LNG 리스크 프리미엄이 평탄(flat) 인 것은 모순",
+          "forbid": {
+            "crude_disruption": [
+              "severe",
+              "critical"
+            ],
+            "risk_premium": [
+              "flat"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C6",
+          "type": "physical_contradiction",
+          "description": "전면 봉쇄·장기 폐쇄에서 원유 공급 차질이 없음(none)/경미(mild) 라는 조합은 물리적으로 모순",
+          "forbid": {
+            "strait_shipping_impact": [
+              "full_blockade",
+              "prolonged_closure"
+            ],
+            "crude_disruption": [
+              "none",
+              "mild"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C7",
+          "type": "physical_contradiction",
+          "description": "본 템플릿(전쟁·해협 봉쇄형) 이벤트에서 해협 영향 없음(none)·간헐적(intermittent) 인데 원유가 심각/위기 차질이라는 조합은 인과 경로상 모순",
+          "forbid": {
+            "strait_shipping_impact": [
+              "none",
+              "intermittent"
+            ],
+            "crude_disruption": [
+              "severe",
+              "critical"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C8",
+          "type": "duration_contradiction",
+          "description": "6개월 이상 장기 충돌에서 제재가 전혀 부과되지 않는(none) 것은 정책적으로 비현실적",
+          "forbid": {
+            "conflict_duration": [
+              "6_12M",
+              "1Y_plus"
+            ],
+            "sanctions_scope": [
+              "none"
+            ]
+          }
+        },
+        {
+          "rule_id": "WAR_C9",
+          "type": "intensity_contradiction",
+          "description": "1년 이상 장기 충돌에서 LNG 리스크 프리미엄이 평탄(flat)/저(low) 인 것은 시장 통념상 비현실적",
+          "forbid": {
+            "conflict_duration": [
+              "1Y_plus"
+            ],
+            "risk_premium": [
+              "flat",
+              "low"
+            ]
+          }
+        }
+      ]
+    },
+    "geopolitical_risk::geopolitical_tension_instability": {
+      "label_ko": "지정학 리스크 / 지정학적 긴장·불안정",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "tension_duration",
+          "label_ko": "긴장 지속 기간",
+          "description": "지정학적 긴장 상태가 유지되는 총 기간",
+          "enum": [
+            {
+              "id": "1W_under",
+              "label": "1주 이내",
+              "tail": false
+            },
+            {
+              "id": "1_3M",
+              "label": "1~3개월",
+              "tail": false
+            },
+            {
+              "id": "3_6M",
+              "label": "3~6개월",
+              "tail": false
+            },
+            {
+              "id": "6_12M",
+              "label": "6~12개월",
+              "tail": true
+            },
+            {
+              "id": "1Y_plus",
+              "label": "1년 이상",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "tension_level",
+          "label_ko": "긴장 고조 수준",
+          "description": "긴장의 강도 단계 (외교 마찰 → 무역 위협 → 대리전 → 군사 위협 → 물리적 충돌)",
+          "enum": [
+            {
+              "id": "diplomatic",
+              "label": "외교적 긴장",
+              "tail": false
+            },
+            {
+              "id": "trade_threat",
+              "label": "무역 제재 위협",
+              "tail": false
+            },
+            {
+              "id": "proxy",
+              "label": "대리전",
+              "tail": false
+            },
+            {
+              "id": "direct_military_threat",
+              "label": "직접 군사 위협",
+              "tail": true
+            },
+            {
+              "id": "physical_clash",
+              "label": "물리적 충돌",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "shipping_impact",
+          "label_ko": "수송·경로 영향",
+          "description": "긴장으로 인한 해상·파이프라인 등 수송 경로의 차질 정도",
+          "enum": [
+            {
+              "id": "normal",
+              "label": "정상",
+              "tail": false
+            },
+            {
+              "id": "partial_monitoring",
+              "label": "부분 모니터링",
+              "tail": false
+            },
+            {
+              "id": "intermittent",
+              "label": "간헐적 차질",
+              "tail": false
+            },
+            {
+              "id": "continuous",
+              "label": "지속 차질",
+              "tail": true
+            },
+            {
+              "id": "full_stop",
+              "label": "전면 중단",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "supply_side_impact",
+          "label_ko": "공급측 영향 (피영향 공급국)",
+          "description": "긴장 영향 받는 공급국의 가동·생산 차질 최대 강도 (체크된 국가 중 최대값 기준)",
+          "enum": [
+            {
+              "id": "none",
+              "label": "영향 없음 (모니터링만)",
+              "tail": false
+            },
+            {
+              "id": "mild",
+              "label": "경미·부분 모니터링",
+              "tail": false
+            },
+            {
+              "id": "moderate",
+              "label": "보통 (일부 시설 정지·생산 부분 감소)",
+              "tail": false
+            },
+            {
+              "id": "severe",
+              "label": "심각 (대규모 차질)",
+              "tail": true
+            },
+            {
+              "id": "critical",
+              "label": "영구 손실/수출 전면 불가",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "supply_response",
+          "label_ko": "공급 측 대응 (소비국)",
+          "description": "주요 소비국의 SPR·대체 공급 등 공급 측 대응 동원 강도",
+          "enum": [
+            {
+              "id": "none",
+              "label": "관망",
+              "tail": false
+            },
+            {
+              "id": "alternative_search",
+              "label": "대체 공급원 모색",
+              "tail": false
+            },
+            {
+              "id": "spr_discussion",
+              "label": "SPR 방출 논의",
+              "tail": false
+            },
+            {
+              "id": "spr_release",
+              "label": "SPR 실제 방출",
+              "tail": true
+            },
+            {
+              "id": "emergency_measures",
+              "label": "국가 비상 조치",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "risk_premium",
+          "label_ko": "지정학 리스크 프리미엄 (LNG)",
+          "description": "JKM/TTF에 반영되는 지정학 프리미엄 폭 ($/MMBtu)",
+          "enum": [
+            {
+              "id": "flat",
+              "label": "프리미엄 소거",
+              "tail": false
+            },
+            {
+              "id": "low",
+              "label": "$1~3/MMBtu",
+              "tail": false
+            },
+            {
+              "id": "mid",
+              "label": "$3~5/MMBtu",
+              "tail": false
+            },
+            {
+              "id": "high",
+              "label": "$5~10/MMBtu",
+              "tail": true
+            },
+            {
+              "id": "extreme",
+              "label": "$10/MMBtu 이상",
+              "tail": true
+            }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "TEN_C1",
+          "type": "intensity_contradiction",
+          "description": "외교적 긴장·무역 위협 수준에서 공급측이 심각/영구 손실 수준이라는 조합은 모순",
+          "forbid": {
+            "tension_level": [
+              "diplomatic",
+              "trade_threat"
+            ],
+            "supply_side_impact": [
+              "severe",
+              "critical"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C2",
+          "type": "duration_contradiction",
+          "description": "1주 이내 단기 긴장에서 공급측 영구 손실은 물리적으로 성립 불가",
+          "forbid": {
+            "tension_duration": [
+              "1W_under"
+            ],
+            "supply_side_impact": [
+              "critical"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C3",
+          "type": "intensity_contradiction",
+          "description": "수송·경로 전면 중단에서 LNG 리스크 프리미엄이 평탄/저인 것은 시장 통념상 모순",
+          "forbid": {
+            "shipping_impact": [
+              "full_stop"
+            ],
+            "risk_premium": [
+              "flat",
+              "low"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C4",
+          "type": "intensity_contradiction",
+          "description": "물리적 충돌 단계에서 공급 측 대응이 관망(none)인 것은 정책적으로 비현실적",
+          "forbid": {
+            "tension_level": [
+              "physical_clash"
+            ],
+            "supply_response": [
+              "none"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C5",
+          "type": "intensity_contradiction",
+          "description": "물리적 충돌 단계에서 리스크 프리미엄이 평탄(flat)인 것은 시장 통념상 모순",
+          "forbid": {
+            "tension_level": [
+              "physical_clash"
+            ],
+            "risk_premium": [
+              "flat"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C6",
+          "type": "physical_contradiction",
+          "description": "수송 경로가 전면 중단인데 공급 대응이 관망/대체 공급원 모색 수준에 머무는 것은 인과적으로 비현실적",
+          "forbid": {
+            "shipping_impact": [
+              "full_stop"
+            ],
+            "supply_response": [
+              "none",
+              "alternative_search"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C7",
+          "type": "duration_contradiction",
+          "description": "1년 이상 장기 긴장에서 LNG 리스크 프리미엄이 평탄(flat)인 것은 시장 통념상 비현실적",
+          "forbid": {
+            "tension_duration": [
+              "1Y_plus"
+            ],
+            "risk_premium": [
+              "flat"
+            ]
+          }
+        },
+        {
+          "rule_id": "TEN_C8",
+          "type": "duration_contradiction",
+          "description": "1주 이내 단기 긴장에서 리스크 프리미엄 $10+ 극단은 단기 spike 외 정상적 형성이 어려움",
+          "forbid": {
+            "tension_duration": [
+              "1W_under"
+            ],
+            "risk_premium": [
+              "extreme"
+            ]
+          }
+        }
+      ]
+    },
+    "geopolitical_risk::economic_sanctions_trade_restrictions": {
+      "label_ko": "지정학 리스크 / 경제 제재·무역 제한",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "sanctions_duration",
+          "label_ko": "제재 지속 기간",
+          "description": "제재가 유지되는 총 기간 (연장·재부과 포함)",
+          "enum": [
+            {
+              "id": "1_3M",
+              "label": "1~3개월",
+              "tail": false
+            },
+            {
+              "id": "3_6M",
+              "label": "3~6개월",
+              "tail": false
+            },
+            {
+              "id": "6_12M",
+              "label": "6~12개월",
+              "tail": false
+            },
+            {
+              "id": "1_2Y",
+              "label": "1~2년",
+              "tail": true
+            },
+            {
+              "id": "permanent",
+              "label": "영구적",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "sanctions_scope",
+          "label_ko": "제재 범위",
+          "description": "제재 대상의 범위 (개별 기업 → 섹터 → 2차 제재)",
+          "enum": [
+            {
+              "id": "symbolic",
+              "label": "상징적",
+              "tail": false
+            },
+            {
+              "id": "individual_companies",
+              "label": "개별 기업",
+              "tail": false
+            },
+            {
+              "id": "partial_sector",
+              "label": "섹터 일부",
+              "tail": false
+            },
+            {
+              "id": "full_sector",
+              "label": "섹터 전체",
+              "tail": true
+            },
+            {
+              "id": "secondary",
+              "label": "2차 제재 포함",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "enforcement_strength",
+          "label_ko": "이행 강도",
+          "description": "제재의 실제 집행 강도 (유예 다수 → 자산 동결·형사)",
+          "enum": [
+            {
+              "id": "exemptions",
+              "label": "유예/예외 다수",
+              "tail": false
+            },
+            {
+              "id": "basic",
+              "label": "기본 이행",
+              "tail": false
+            },
+            {
+              "id": "strict",
+              "label": "엄격 이행",
+              "tail": false
+            },
+            {
+              "id": "penalty_fines",
+              "label": "위반 시 벌금",
+              "tail": true
+            },
+            {
+              "id": "asset_freeze",
+              "label": "자산 동결/형사",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "circumvention_capacity",
+          "label_ko": "우회 역량 (피제재국)",
+          "description": "피제재국이 제재를 우회하여 수출·결제를 유지할 수 있는 역량 비율",
+          "enum": [
+            {
+              "id": "none",
+              "label": "거의 없음",
+              "tail": false
+            },
+            {
+              "id": "partial_10_30",
+              "label": "부분적 (10~30%)",
+              "tail": false
+            },
+            {
+              "id": "moderate_30_50",
+              "label": "중간 (30~50%)",
+              "tail": false
+            },
+            {
+              "id": "substantial_50_70",
+              "label": "상당 (50~70%)",
+              "tail": true
+            },
+            {
+              "id": "full",
+              "label": "완전 우회",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "alternative_supply_formation",
+          "label_ko": "대체 공급원 형성 시간",
+          "description": "제재 강화 후 시장이 대체 공급원을 확보하기까지 소요 시간",
+          "enum": [
+            {
+              "id": "immediate",
+              "label": "즉시 대응",
+              "tail": false
+            },
+            {
+              "id": "3M",
+              "label": "3개월 내",
+              "tail": false
+            },
+            {
+              "id": "6M",
+              "label": "6개월 내",
+              "tail": false
+            },
+            {
+              "id": "1Y",
+              "label": "1년 내",
+              "tail": true
+            },
+            {
+              "id": "over_1Y",
+              "label": "1년 이상",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "risk_premium",
+          "label_ko": "지정학 리스크 프리미엄 (LNG)",
+          "description": "JKM/TTF에 반영되는 지정학 프리미엄 폭 ($/MMBtu)",
+          "enum": [
+            {
+              "id": "flat",
+              "label": "프리미엄 소거",
+              "tail": false
+            },
+            {
+              "id": "low",
+              "label": "$1~3/MMBtu",
+              "tail": false
+            },
+            {
+              "id": "mid",
+              "label": "$3~5/MMBtu",
+              "tail": false
+            },
+            {
+              "id": "high",
+              "label": "$5~10/MMBtu",
+              "tail": true
+            },
+            {
+              "id": "extreme",
+              "label": "$10/MMBtu 이상",
+              "tail": true
+            }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "SAN_C1",
+          "type": "intensity_contradiction",
+          "description": "제재 범위가 상징적인데 LNG 리스크 프리미엄이 고/극단인 것은 시장 통념상 모순",
+          "forbid": {
+            "sanctions_scope": [
+              "symbolic"
+            ],
+            "risk_premium": [
+              "high",
+              "extreme"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C2",
+          "type": "intensity_contradiction",
+          "description": "피제재국이 완전 우회 가능한 상황에서 LNG 리스크 프리미엄이 고/극단인 것은 모순",
+          "forbid": {
+            "circumvention_capacity": [
+              "full"
+            ],
+            "risk_premium": [
+              "high",
+              "extreme"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C3",
+          "type": "intensity_contradiction",
+          "description": "이행 강도가 유예 다수인데 LNG 리스크 프리미엄이 고/극단인 것은 모순",
+          "forbid": {
+            "enforcement_strength": [
+              "exemptions"
+            ],
+            "risk_premium": [
+              "high",
+              "extreme"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C4",
+          "type": "intensity_contradiction",
+          "description": "제재 범위가 2차 제재 포함인데 이행 강도가 유예 다수인 것은 정책 통념상 모순",
+          "forbid": {
+            "sanctions_scope": [
+              "secondary"
+            ],
+            "enforcement_strength": [
+              "exemptions"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C5",
+          "type": "physical_contradiction",
+          "description": "이행 강도가 자산 동결/형사 수준인데 피제재국이 완전 우회 가능하다는 조합은 인과적으로 모순",
+          "forbid": {
+            "enforcement_strength": [
+              "asset_freeze"
+            ],
+            "circumvention_capacity": [
+              "full"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C6",
+          "type": "duration_contradiction",
+          "description": "1~3개월 단기 제재에서 대체 공급원 형성에 1년 이상 소요라는 조합은 시간 구조상 모순",
+          "forbid": {
+            "sanctions_duration": [
+              "1_3M"
+            ],
+            "alternative_supply_formation": [
+              "over_1Y"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C7",
+          "type": "duration_contradiction",
+          "description": "영구적 제재에서 대체 공급원이 즉시 대응 수준인 것은 정의상 의미 약화 (이미 형성된 경우만 가능)",
+          "forbid": {
+            "sanctions_duration": [
+              "permanent"
+            ],
+            "alternative_supply_formation": [
+              "immediate"
+            ]
+          }
+        },
+        {
+          "rule_id": "SAN_C8",
+          "type": "intensity_contradiction",
+          "description": "2차 제재 포함 + 자산 동결 수준인데 LNG 리스크 프리미엄이 평탄(flat)인 것은 시장 통념상 비현실적",
+          "forbid": {
+            "sanctions_scope": [
+              "secondary"
+            ],
+            "enforcement_strength": [
+              "asset_freeze"
+            ],
+            "risk_premium": [
+              "flat"
+            ]
+          }
+        }
+      ]
+    },
+    "geopolitical_risk::regime_change_political_transition": {
+      "label_ko": "지정학 리스크 / 정권 교체·정치 전환",
+      "template_dimensions_total": 6,
+      "dimensions": [
+        {
+          "dimension_id": "stabilization_duration",
+          "label_ko": "정권 안정화 기간",
+          "description": "신정권이 정책·인사·외교 측면에서 안정화에 도달하기까지 소요 기간",
+          "enum": [
+            {
+              "id": "1M_under",
+              "label": "1개월 이내",
+              "tail": false
+            },
+            {
+              "id": "1_3M",
+              "label": "1~3개월",
+              "tail": false
+            },
+            {
+              "id": "3_6M",
+              "label": "3~6개월",
+              "tail": false
+            },
+            {
+              "id": "6_12M",
+              "label": "6~12개월",
+              "tail": true
+            },
+            {
+              "id": "1Y_plus_unstable",
+              "label": "1년+ 불안정",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "policy_shift",
+          "label_ko": "정책 변화",
+          "description": "에너지 정책의 변화 강도 (연속성 → 조정 → 방향 전환 → 급격 재편 → 국유화 극단)",
+          "enum": [
+            {
+              "id": "continuity",
+              "label": "연속성",
+              "tail": false
+            },
+            {
+              "id": "adjustment",
+              "label": "조정",
+              "tail": false
+            },
+            {
+              "id": "direction_change",
+              "label": "방향 전환",
+              "tail": false
+            },
+            {
+              "id": "rapid_restructure",
+              "label": "급격한 재편",
+              "tail": true
+            },
+            {
+              "id": "nationalization_extreme",
+              "label": "국유화 등 극단",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "external_relations",
+          "label_ko": "대외 제재·관계",
+          "description": "신정권의 대외 관계 변화 (관계 개선 → 전면 제재까지)",
+          "enum": [
+            {
+              "id": "improved",
+              "label": "개선",
+              "tail": false
+            },
+            {
+              "id": "continuity",
+              "label": "연속성",
+              "tail": false
+            },
+            {
+              "id": "tension",
+              "label": "긴장",
+              "tail": false
+            },
+            {
+              "id": "new_sanctions",
+              "label": "신규 제재",
+              "tail": true
+            },
+            {
+              "id": "comprehensive_sanctions",
+              "label": "전면 제재",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "state_company_operations",
+          "label_ko": "공급측 영향 (국영사 운영)",
+          "description": "정권 교체국 국영 에너지사의 운영 변화 강도 (정상 → 해체/분할까지)",
+          "enum": [
+            {
+              "id": "normal",
+              "label": "정상",
+              "tail": false
+            },
+            {
+              "id": "personnel_change",
+              "label": "인사 교체",
+              "tail": false
+            },
+            {
+              "id": "executive_change",
+              "label": "경영진 전면 교체",
+              "tail": false
+            },
+            {
+              "id": "restructuring",
+              "label": "구조조정",
+              "tail": true
+            },
+            {
+              "id": "breakup",
+              "label": "해체/분할",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "contract_reliability",
+          "label_ko": "계약 이행 신뢰도",
+          "description": "기존 LNG·에너지 수출 계약의 이행 신뢰도 (완전 이행 → 전면 파기)",
+          "enum": [
+            {
+              "id": "full_compliance",
+              "label": "완전 이행",
+              "tail": false
+            },
+            {
+              "id": "partial_delay",
+              "label": "부분 지연",
+              "tail": false
+            },
+            {
+              "id": "renegotiation",
+              "label": "재협상 요구",
+              "tail": false
+            },
+            {
+              "id": "partial_breach",
+              "label": "일부 파기",
+              "tail": true
+            },
+            {
+              "id": "full_breach",
+              "label": "전면 파기",
+              "tail": true
+            }
+          ]
+        },
+        {
+          "dimension_id": "risk_premium",
+          "label_ko": "리스크 프리미엄 (정성형)",
+          "description": "정권 교체에 대한 시장·투자자 반응 강도. 다른 지정학 L2 템플릿($/MMBtu)과 달리 MD 원문에 따라 정성형 척도 사용",
+          "enum": [
+            {
+              "id": "none",
+              "label": "없음",
+              "tail": false
+            },
+            {
+              "id": "monitoring",
+              "label": "관망",
+              "tail": false
+            },
+            {
+              "id": "emerging",
+              "label": "Risk Premium 부상",
+              "tail": false
+            },
+            {
+              "id": "divestment",
+              "label": "투자 철수",
+              "tail": true
+            },
+            {
+              "id": "systemic",
+              "label": "Systemic",
+              "tail": true
+            }
+          ]
+        }
+      ],
+      "compatibility_rules": [
+        {
+          "rule_id": "REG_C1",
+          "type": "intensity_contradiction",
+          "description": "정책이 연속성 유지인데 시장 반응이 투자 철수/Systemic 수준이라는 조합은 시장 통념상 모순",
+          "forbid": {
+            "policy_shift": [
+              "continuity"
+            ],
+            "risk_premium": [
+              "divestment",
+              "systemic"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C2",
+          "type": "intensity_contradiction",
+          "description": "대외 관계가 전면 제재인데 계약 이행이 완전 이행/부분 지연 수준이라는 조합은 인과 경로상 모순",
+          "forbid": {
+            "external_relations": [
+              "comprehensive_sanctions"
+            ],
+            "contract_reliability": [
+              "full_compliance",
+              "partial_delay"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C3",
+          "type": "intensity_contradiction",
+          "description": "정책이 국유화 등 극단 수준인데 국영사 운영이 정상/인사 교체에 머무는 것은 정의상 모순",
+          "forbid": {
+            "policy_shift": [
+              "nationalization_extreme"
+            ],
+            "state_company_operations": [
+              "normal",
+              "personnel_change"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C4",
+          "type": "intensity_contradiction",
+          "description": "정책이 국유화 등 극단 수준인데 대외 관계가 개선/연속성이라는 조합은 정책 통념상 비현실적",
+          "forbid": {
+            "policy_shift": [
+              "nationalization_extreme"
+            ],
+            "external_relations": [
+              "improved",
+              "continuity"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C5",
+          "type": "duration_contradiction",
+          "description": "1개월 이내 단기 안정화 상황에서 정책이 국유화 극단까지 진행되는 것은 시간 구조상 비현실적",
+          "forbid": {
+            "stabilization_duration": [
+              "1M_under"
+            ],
+            "policy_shift": [
+              "nationalization_extreme"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C6",
+          "type": "physical_contradiction",
+          "description": "국영사가 해체/분할되었는데 계약이 완전 이행되는 것은 물리적으로 성립 불가",
+          "forbid": {
+            "state_company_operations": [
+              "breakup"
+            ],
+            "contract_reliability": [
+              "full_compliance"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C7",
+          "type": "intensity_contradiction",
+          "description": "정책 연속성 유지인데 국영사가 해체/분할되는 것은 정의상 모순",
+          "forbid": {
+            "policy_shift": [
+              "continuity"
+            ],
+            "state_company_operations": [
+              "breakup"
+            ]
+          }
+        },
+        {
+          "rule_id": "REG_C8",
+          "type": "intensity_contradiction",
+          "description": "대외 관계가 개선되었는데 시장이 Systemic 수준의 반응을 보이는 것은 시장 통념상 모순",
+          "forbid": {
+            "external_relations": [
+              "improved"
+            ],
+            "risk_premium": [
+              "systemic"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
