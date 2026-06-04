@@ -106,6 +106,7 @@ CREATE TABLE `tmm_mi_record_metacuration_m` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`mi_record_metacuration_id`),
+
     UNIQUE KEY `uk_tmm_mi_record_metacuration_m_01` (`mi_record_id`),
 
     CONSTRAINT `fk_tmm_mi_record_metacuration_m_01`
@@ -125,13 +126,10 @@ CREATE TABLE `tmm_mi_record_metacuration_item` (
     `mi_record_metacuration_item_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Record metadata curation item PK',
     `mi_record_metacuration_id` INT UNSIGNED NOT NULL COMMENT 'Record metadata curation FK',
     `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
-    `supply_demand_side` VARCHAR(20) COLLATE utf8mb4_bin NOT NULL DEFAULT 'unclear' COMMENT 'supply/demand/both/none/unclear',
+
+    `signature_text` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT '정규화된 사건 식별 텍스트',
     `score` DECIMAL(4, 1) NOT NULL COMMENT 'Record와 이벤트 유형 후보의 연관 점수',
     `reason` TEXT COLLATE utf8mb4_bin NULL COMMENT '점수 근거',
-    `entities_json` JSON NULL COMMENT '엔티티 목록 JSON',
-    `regions_json` JSON NULL COMMENT '지역 목록 JSON',
-    `event_signature_json` JSON NULL COMMENT 'Event 매칭/중복 제거를 위한 식별 정보 JSON',
-    `event_timing_json` JSON NULL COMMENT '사건 발생 시각 정보 JSON',
     `lng_relevance` VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'unclear' COMMENT 'LNG 관련성 (direct_lng/gas_market_direct/energy_indirect/non_lng_noise)',
     `lng_relevance_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT 'LNG 관련성 판단 근거',
 
@@ -142,12 +140,12 @@ CREATE TABLE `tmm_mi_record_metacuration_item` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`mi_record_metacuration_item_id`),
+
     UNIQUE KEY `uk_tmm_mi_record_metacuration_item_01` (`mi_record_metacuration_id`, `event_type_l2_id`),
     KEY `idx_tmm_mi_record_metacuration_item_01` (`mi_record_metacuration_id`),
     KEY `idx_tmm_mi_record_metacuration_item_02` (`event_type_l2_id`),
     KEY `idx_tmm_mi_record_metacuration_item_03` (`score`),
-    KEY `idx_tmm_mi_record_metacuration_item_04` (`supply_demand_side`),
-    KEY `idx_tmm_mi_record_metacuration_item_05` (`lng_relevance`),
+    KEY `idx_tmm_mi_record_metacuration_item_04` (`lng_relevance`),
 
     CONSTRAINT `fk_tmm_mi_record_metacuration_item_01`
         FOREIGN KEY (`mi_record_metacuration_id`)
@@ -168,7 +166,8 @@ CREATE TABLE `tmm_mi_record_metacuration_item` (
 CREATE TABLE `tmm_mi_mievent_m` (
     `mi_event_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'MI Event PK',
     `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 FK',
-    `event_title` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 제목 ',
+
+    `event_title` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 제목',
     `one_line_summary` VARCHAR(300) COLLATE utf8mb4_bin NOT NULL COMMENT '한줄 요약',
     `key_bullets_json` JSON NOT NULL COMMENT '핵심 bullet 목록 JSON',
     `detail_analysis` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 상세 분석 본문',
@@ -190,6 +189,7 @@ CREATE TABLE `tmm_mi_mievent_m` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`mi_event_id`),
+
     KEY `idx_tmm_mi_mievent_m_01` (`event_type_l2_id`),
     KEY `idx_tmm_mi_mievent_m_02` (`occurred_at`),
 
@@ -218,6 +218,7 @@ CREATE TABLE `tmm_mi_mievent_record_map` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`mi_event_record_map_id`),
+
     UNIQUE KEY `uk_tmm_mi_mievent_record_map_01` (`mi_event_id`, `mi_record_id`),
     KEY `idx_tmm_mi_mievent_record_map_01` (`mi_record_id`),
 
@@ -264,6 +265,7 @@ CREATE TABLE `tmm_mi_mievent_candidate_m` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`mi_event_candidate_id`),
+
     KEY `idx_tmm_mi_mievent_candidate_m_01` (`event_type_l2_id`),
     KEY `idx_tmm_mi_mievent_candidate_m_02` (`decision`),
     KEY `idx_tmm_mi_mievent_candidate_m_03` (`mi_event_id`),
@@ -293,7 +295,6 @@ CREATE TABLE `tmm_mi_mievent_candidate_record_map` (
 
     `mapping_confidence` DECIMAL(3, 2) NULL COMMENT '후보 Event-Record 매핑 신뢰도 (0.00~1.00)',
     `mapping_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT '후보 Event-Record 매핑 근거',
-
     `lng_relevance` VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'unclear' COMMENT 'LNG 관련성 (direct_lng/gas_market_direct/energy_indirect/non_lng_noise)',
     `lng_relevance_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT 'LNG 관련성 판단 근거',
 
@@ -304,6 +305,7 @@ CREATE TABLE `tmm_mi_mievent_candidate_record_map` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`mi_event_candidate_record_map_id`),
+
     UNIQUE KEY `uk_tmm_mi_mievent_candidate_record_map_01` (`mi_event_candidate_id`, `mi_record_id`),
     KEY `idx_tmm_mi_mievent_candidate_record_map_01` (`mi_event_candidate_id`),
     KEY `idx_tmm_mi_mievent_candidate_record_map_02` (`mi_record_id`),
@@ -330,6 +332,7 @@ CREATE TABLE `tmm_mi_institution_view` (
     `institution_view_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '기관전망 PK',
     `mi_event_id` INT UNSIGNED NOT NULL COMMENT 'MI Event ID',
     `mi_record_id` INT UNSIGNED NOT NULL COMMENT '추출 원본 MI Record ID',
+
     `institution_name` VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT '기관명',
     `view_date` DATE NOT NULL COMMENT '기관전망일자',
     `view_summary` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '기관전망 요약',
@@ -341,6 +344,7 @@ CREATE TABLE `tmm_mi_institution_view` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`institution_view_id`),
+
     UNIQUE KEY `uk_tmm_mi_institution_view_01` (
         `mi_event_id`,
         `mi_record_id`,
@@ -361,6 +365,7 @@ CREATE TABLE `tmm_mi_institution_view` (
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_bin
   COMMENT='MI Event 기관전망 상세 (이벤트/원본레코드 연결)';
+;
 
 
 -- =========================================================
