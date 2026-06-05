@@ -461,8 +461,8 @@ CREATE TABLE `tmm_mi_impact_result_m` (
 -- =========================================================
 DROP TABLE IF EXISTS `tmm_mi_impact_driver_m`;
 CREATE TABLE `tmm_mi_impact_driver_m` (
-  `driver_id`         VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT 'Driver Tag ID PK',
-  `impact_result_id`  VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT 'Impact Result ID FK',
+  `driver_id`         VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT 'Driver Tag ID PK',
+  `impact_result_id`  VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT 'Impact Result ID FK',
   `lv1_id`            VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT 'Driver Tree 1단계 코드',
   `lv1_label`         VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT 'Driver Tree 1단계 명칭',
   `lv2_id`            VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT 'Driver Tree 2단계 코드',
