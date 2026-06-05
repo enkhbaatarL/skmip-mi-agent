@@ -192,3 +192,111 @@ WHERE d.del_yn = 'N'
   AND r.target_id = 'JKM'   -- 원하는 가격 지표 지정
 GROUP BY d.lv3_id, d.lv3_label, d.direction_hint
 ORDER BY 사용횟수 DESC, 평균_match_score DESC;
+
+
+-- #########################################################
+-- # 시나리오 / Signpost (화면별 조회 쿼리)
+-- #########################################################
+
+-- =========================================================
+-- 1) mi_event_id 기준 시나리오 그룹 + 시나리오 목록 조회
+-- =========================================================
+SELECT
+    sg.scenario_group_id,
+    sg.event_type_l2_id,
+    sg.title         AS group_title,
+    sg.summary,
+    sg.dimension_selected,
+    s.*
+FROM tmm_mi_scenario_group_m sg
+JOIN tmm_mi_scenario_m s
+    ON s.scenario_group_id = sg.scenario_group_id
+WHERE sg.mi_event_id = :mi_event_id
+  AND sg.del_yn = 'N'
+  AND s.del_yn = 'N'
+ORDER BY s.display_order, s.scenario_id;
+
+-- =========================================================
+-- 2) 시나리오 그룹 생성 화면: dimension template 조회
+--     : template_json 기준으로 사용자가 선택한 dim_key 목록을
+--       tmm_mi_scenario_group_m.dimension_selected 에 저장
+-- =========================================================
+SELECT
+    dt.template_json
+FROM tmm_mi_scenario_dimension_template_m dt
+WHERE dt.event_type_l2_id = :event_type_l2_id
+  AND dt.del_yn = 'N';
+
+-- =========================================================
+-- 3) 시나리오 그룹 리스트 + 시나리오 수
+-- =========================================================
+SELECT
+    sg.scenario_group_id,
+    sg.mi_event_id,
+    sg.event_type_l2_id,
+    sg.title,
+    sg.summary,
+    sg.dimension_selected,
+    sg.scenario_count,
+    sg.crt_dtm
+FROM tmm_mi_scenario_group_m sg
+WHERE sg.del_yn = 'N'
+ORDER BY sg.crt_dtm DESC;
+
+-- =========================================================
+-- 4) 시나리오 그룹 상세: 그룹 + base event + event type
+-- =========================================================
+SELECT
+    sg.*,
+    e.*,
+    et2.level_2_code,
+    et2.level_2_label
+FROM tmm_mi_scenario_group_m sg
+JOIN tmm_mi_mievent_m e
+    ON e.mi_event_id = sg.mi_event_id
+JOIN tmm_mi_event_type_l2_m et2
+    ON et2.event_type_l2_id = sg.event_type_l2_id
+WHERE sg.scenario_group_id = :scenario_group_id
+  AND sg.del_yn = 'N';
+
+-- =========================================================
+-- 5) 시나리오 그룹 상세 하단: 가정 및 실현가능성 (scenario list)
+-- =========================================================
+SELECT *
+FROM tmm_mi_scenario_m
+WHERE scenario_group_id = :scenario_group_id
+  AND del_yn = 'N'
+ORDER BY display_order, scenario_id;
+
+-- =========================================================
+-- 6) 시나리오 상세: scenario + signpost + signpost_event
+-- =========================================================
+SELECT
+    s.scenario_id,
+    s.title                         AS scenario_title,
+    s.narrative,
+    s.dimension_values,
+    s.probability_score,
+    s.probability_level,
+    s.probability_delta,
+    sp.signpost_id,
+    sp.label                        AS signpost_label,
+    sp.probability_direction_code,
+    sp.probability_impact_score,
+    sp.signpost_reason,
+    spe.signpost_event_id,
+    spe.mod_dtm                     AS signpost_event_updated_at,
+    spe.summary                     AS signpost_event_summary,
+    spe.probability_score,
+    spe.probability_delta           AS signpost_event_probability_delta,
+    spe.matching_reason
+FROM tmm_mi_scenario_m s
+LEFT JOIN tmm_mi_signpost_m sp
+    ON sp.scenario_id = s.scenario_id
+    AND sp.del_yn = 'N'
+LEFT JOIN tmm_mi_signpost_event_m spe
+    ON spe.signpost_id = sp.signpost_id
+    AND spe.del_yn = 'N'
+WHERE s.scenario_id = :scenario_id
+  AND s.del_yn = 'N'
+ORDER BY sp.display_order, spe.mod_dtm DESC;

@@ -31,6 +31,15 @@ DROP TABLE IF EXISTS `tmm_mi_impact_base_case_m`;
 DROP TABLE IF EXISTS `tmm_mi_impact_m`;
 DROP TABLE IF EXISTS `tmd_drivertreem`;
 
+DROP TABLE IF EXISTS `tmm_mi_signpost_snap_m`;
+DROP TABLE IF EXISTS `tmm_mi_scenario_snap_m`;
+DROP TABLE IF EXISTS `tmm_mi_snapshot_m`;
+DROP TABLE IF EXISTS `tmm_mi_signpost_event_m`;
+DROP TABLE IF EXISTS `tmm_mi_signpost_m`;
+DROP TABLE IF EXISTS `tmm_mi_scenario_m`;
+DROP TABLE IF EXISTS `tmm_mi_scenario_dimension_template_m`;
+DROP TABLE IF EXISTS `tmm_mi_scenario_group_m`;
+
 -- =========================================================
 -- GROUP 1: Core MI Event Tables (COLLATE utf8mb4_bin)
 -- =========================================================
@@ -652,6 +661,288 @@ CREATE TABLE `tmd_drivertreem` (
   PRIMARY KEY (`lv1_id`, `lv2_id`, `lv3_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 COMMENT='Driver Tree Master';
+
+
+-- =========================================================
+-- GROUP 3: Scenario Group / Snapshot Tables (COLLATE utf8mb4_bin)
+-- =========================================================
+
+-- =========================================================
+-- Table: tmm_mi_scenario_group_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_scenario_group_m` (
+    `scenario_group_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시나리오 그룹 ID',
+    `mi_event_id` INT UNSIGNED NOT NULL COMMENT 'MI 이벤트 ID (1:1 기준 키)',
+    `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 ID (분류 기준)',
+    `title` VARCHAR(255) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 그룹명',
+    `summary` TEXT COLLATE utf8mb4_bin NULL COMMENT '시나리오 그룹 요약',
+    `description` TEXT COLLATE utf8mb4_bin NULL COMMENT '시나리오 그룹 설명',
+    `dimension_selected` JSON NOT NULL COMMENT '표시 컬럼 선택 (dim_key 배열)',
+    `scenario_count` INT NOT NULL DEFAULT 0 COMMENT '시나리오 수',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`scenario_group_id`),
+    UNIQUE KEY `uk_tmm_mi_scenario_group_m_01` (`mi_event_id`),
+    KEY `idx_tmm_mi_scenario_group_m_01` (`event_type_l2_id`),
+
+    CONSTRAINT `ck_tmm_mi_scenario_group_m_01`
+        CHECK (JSON_TYPE(dimension_selected) = 'ARRAY'),
+    CONSTRAINT `fk_tmm_mi_scenario_group_m_01`
+        FOREIGN KEY (`mi_event_id`)
+        REFERENCES `tmm_mi_mievent_m` (`mi_event_id`),
+    CONSTRAINT `fk_tmm_mi_scenario_group_m_02`
+        FOREIGN KEY (`event_type_l2_id`)
+        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='시나리오 그룹';
+
+
+-- =========================================================
+-- Table: tmm_mi_scenario_dimension_template_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_scenario_dimension_template_m` (
+    `scenario_dimension_template_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시나리오 Dimension Template ID',
+    `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 ID',
+    `template_json` JSON NOT NULL COMMENT 'Dimension 정의 배열 JSON',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`scenario_dimension_template_id`),
+    UNIQUE KEY `uk_tmm_mi_scenario_dimension_template_m_01` (`event_type_l2_id`),
+
+    CONSTRAINT `ck_tmm_mi_scenario_dimension_template_m_01`
+        CHECK (JSON_TYPE(template_json) = 'ARRAY'),
+    CONSTRAINT `fk_tmm_mi_scenario_dimension_template_m_01`
+        FOREIGN KEY (`event_type_l2_id`)
+        REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='시나리오 Dimension Template';
+
+
+-- =========================================================
+-- Table: tmm_mi_scenario_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_scenario_m` (
+    `scenario_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시나리오 ID',
+    `scenario_group_id` INT UNSIGNED NOT NULL COMMENT '시나리오 그룹 ID',
+    `title` VARCHAR(255) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오명',
+    `narrative` TEXT COLLATE utf8mb4_bin NULL COMMENT '시나리오 내러티브',
+    `dimension_values` JSON NOT NULL COMMENT '시나리오 주요 가정 (dimension values)',
+    `probability_score` DECIMAL(5,2) NULL COMMENT '시나리오 발생확률',
+    `probability_level` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '시나리오 확률 레벨',
+    `probability_delta` DECIMAL(5,2) NULL COMMENT '시나리오 확률 증감',
+    `impact_jkm` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '이벤트 임팩트(JKM)',
+    `impact_ttf` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '이벤트 임팩트(TTF)',
+    `impact_hh` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '이벤트 임팩트(HH)',
+    `feasibility_score` SMALLINT NULL COMMENT '실현가능성 점수',
+    `judgment_status_code` VARCHAR(50) COLLATE utf8mb4_bin NULL DEFAULT '대기' COMMENT '판정 상태 코드',
+    `display_order` INT NOT NULL DEFAULT 0 COMMENT '표시 순서',
+    `baseline_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '기준 시나리오 여부',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`scenario_id`),
+    KEY `idx_tmm_mi_scenario_m_01` (`scenario_group_id`),
+
+    CONSTRAINT `ck_tmm_mi_scenario_m_01`
+        CHECK (JSON_TYPE(dimension_values) = 'ARRAY'),
+    CONSTRAINT `fk_tmm_mi_scenario_m_01`
+        FOREIGN KEY (`scenario_group_id`)
+        REFERENCES `tmm_mi_scenario_group_m` (`scenario_group_id`)
+        ON DELETE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='시나리오';
+
+
+-- =========================================================
+-- Table: tmm_mi_signpost_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_signpost_m` (
+    `signpost_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Signpost ID',
+    `scenario_id` INT UNSIGNED NOT NULL COMMENT '시나리오 ID',
+    `label` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT 'signpost label',
+    `probability_direction_code` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '확률 변화 방향',
+    `probability_impact_score` DECIMAL(5,2) NULL COMMENT '확률 변화 강도',
+    `signpost_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT 'signpost 근거',
+    `display_order` INT NOT NULL DEFAULT 0 COMMENT '표시 순서',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`signpost_id`),
+    KEY `idx_tmm_mi_signpost_m_01` (`scenario_id`),
+
+    CONSTRAINT `fk_tmm_mi_signpost_m_01`
+        FOREIGN KEY (`scenario_id`)
+        REFERENCES `tmm_mi_scenario_m` (`scenario_id`)
+        ON DELETE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='Signpost';
+
+
+-- =========================================================
+-- Table: tmm_mi_signpost_event_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_signpost_event_m` (
+    `signpost_event_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Signpost 이벤트 ID',
+    `signpost_id` INT UNSIGNED NOT NULL COMMENT 'Signpost ID',
+    `mi_event_id` INT UNSIGNED NULL COMMENT '연결 MI 이벤트 ID',
+    `occurred_at` DATETIME NULL COMMENT 'Signpost 이벤트 발생일시',
+    `summary` TEXT COLLATE utf8mb4_bin NOT NULL COMMENT 'signpost 이벤트 요약',
+    `probability_score` DECIMAL(5,2) NULL COMMENT '시나리오 확률 업데이트 확률',
+    `probability_delta` DECIMAL(5,2) NULL COMMENT '시나리오 확률 업데이트 조정',
+    `matching_reason` TEXT COLLATE utf8mb4_bin NULL COMMENT '상세내역 (signpost 매칭 근거)',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`signpost_event_id`),
+    KEY `idx_tmm_mi_signpost_event_m_01` (`signpost_id`),
+    KEY `idx_tmm_mi_signpost_event_m_02` (`mi_event_id`),
+
+    CONSTRAINT `fk_tmm_mi_signpost_event_m_01`
+        FOREIGN KEY (`signpost_id`)
+        REFERENCES `tmm_mi_signpost_m` (`signpost_id`)
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_tmm_mi_signpost_event_m_02`
+        FOREIGN KEY (`mi_event_id`)
+        REFERENCES `tmm_mi_mievent_m` (`mi_event_id`)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='Signpost 이벤트';
+
+
+-- =========================================================
+-- Table: tmm_mi_snapshot_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_snapshot_m` (
+    `snapshot_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '스냅샷 ID',
+    `scenario_group_id` INT UNSIGNED NOT NULL COMMENT '시나리오 그룹 ID',
+    `stage_no` SMALLINT NOT NULL COMMENT '단계 번호 (1·2)',
+    `phase_code` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT '단계 구분 (BEFORE/AFTER)',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`snapshot_id`),
+    UNIQUE KEY `uk_tmm_mi_snapshot_m_01` (`scenario_group_id`, `stage_no`, `phase_code`),
+
+    CONSTRAINT `fk_tmm_mi_snapshot_m_01`
+        FOREIGN KEY (`scenario_group_id`)
+        REFERENCES `tmm_mi_scenario_group_m` (`scenario_group_id`)
+        ON DELETE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='스냅샷';
+
+
+-- =========================================================
+-- Table: tmm_mi_scenario_snap_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_scenario_snap_m` (
+    `scenario_snap_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시나리오 스냅샷 ID',
+    `snapshot_id` INT UNSIGNED NOT NULL COMMENT '스냅샷 ID',
+    `src_scenario_id` INT UNSIGNED NOT NULL COMMENT '원본 시나리오 ID (추적용, FK 미설정)',
+    `dimension_values` JSON NOT NULL COMMENT 'dimension 값 (스냅샷 시점 동결)',
+    `probability_score` DECIMAL(5,2) NULL COMMENT '발생확률 (동결)',
+    `judgment_status_code` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '판정 상태 코드 (동결)',
+    `baseline_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '기준 시나리오 여부 (동결)',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`scenario_snap_id`),
+    KEY `idx_tmm_mi_scenario_snap_m_01` (`snapshot_id`),
+
+    CONSTRAINT `ck_tmm_mi_scenario_snap_m_01`
+        CHECK (JSON_TYPE(dimension_values) = 'ARRAY'),
+    CONSTRAINT `fk_tmm_mi_scenario_snap_m_01`
+        FOREIGN KEY (`snapshot_id`)
+        REFERENCES `tmm_mi_snapshot_m` (`snapshot_id`)
+        ON DELETE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='시나리오 스냅샷';
+
+
+-- =========================================================
+-- Table: tmm_mi_signpost_snap_m
+-- =========================================================
+
+CREATE TABLE `tmm_mi_signpost_snap_m` (
+    `signpost_snap_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'Signpost 스냅샷 ID',
+    `snapshot_id` INT UNSIGNED NOT NULL COMMENT '스냅샷 ID',
+    `scenario_snap_id` INT UNSIGNED NOT NULL COMMENT '시나리오 스냅샷 ID (스냅샷 내부 부모)',
+    `src_signpost_id` INT UNSIGNED NOT NULL COMMENT '원본 Signpost ID (추적용, FK 미설정)',
+    `label` VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT 'signpost label (동결)',
+    `probability_direction_code` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '확률 변화 방향 (동결)',
+    `probability_impact_score` DECIMAL(5,2) NULL COMMENT '확률 변화 강도 (동결)',
+
+    `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
+    `crt_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성일시',
+    `mod_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '수정자',
+    `mod_dtm` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정일시',
+    `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
+
+    PRIMARY KEY (`signpost_snap_id`),
+    KEY `idx_tmm_mi_signpost_snap_m_01` (`snapshot_id`),
+    KEY `idx_tmm_mi_signpost_snap_m_02` (`scenario_snap_id`),
+
+    CONSTRAINT `fk_tmm_mi_signpost_snap_m_01`
+        FOREIGN KEY (`snapshot_id`)
+        REFERENCES `tmm_mi_snapshot_m` (`snapshot_id`)
+        ON DELETE CASCADE,
+    CONSTRAINT `fk_tmm_mi_signpost_snap_m_02`
+        FOREIGN KEY (`scenario_snap_id`)
+        REFERENCES `tmm_mi_scenario_snap_m` (`scenario_snap_id`)
+        ON DELETE CASCADE
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_bin
+  COMMENT='Signpost 스냅샷';
 
 
 -- =========================================================
