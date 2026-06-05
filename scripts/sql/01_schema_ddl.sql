@@ -16,11 +16,7 @@ DROP TABLE IF EXISTS `tmm_mi_record_metacuration_m`;
 DROP TABLE IF EXISTS `tmm_mi_event_type_l2_m`;
 DROP TABLE IF EXISTS `tmm_mi_event_type_l1_m`;
 
-DROP TABLE IF EXISTS `tmm_signpostm`;
-DROP TABLE IF EXISTS `tmm_scenarioversionm`;
-DROP TABLE IF EXISTS `tmm_scenariom`;
 DROP TABLE IF EXISTS `tmm_drivertagm`;
-DROP TABLE IF EXISTS `tmm_timebucketm`;
 DROP TABLE IF EXISTS `tmm_priceforecastm`;
 DROP TABLE IF EXISTS `tmm_drivertreenodem`;
 DROP TABLE IF EXISTS `tmm_impactresultm`;
@@ -492,103 +488,6 @@ CREATE TABLE `tmm_mi_impact_driver_m` (
   COMMENT='Driver Tag Master';
 
 -- =========================================================
--- Table: tmm_timebucketm
--- =========================================================
-DROP TABLE IF EXISTS `tmm_timebucketm`;
-CREATE TABLE `tmm_timebucketm` (
-  `time_bucket_id`        VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT 'Time Bucket ID PK',
-  `crt_user_id`           VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `qualitative_impact_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT 'Qualitative Impact ID FK',
-  `horizon`               VARCHAR(20) COLLATE utf8mb4_bin NULL COMMENT '시간대 구분 immediate/short/medium/long',
-  `expected_peak`         VARCHAR(20) COLLATE utf8mb4_bin NULL COMMENT '최대 영향 크기 low/medium/high/extreme',
-  `start_at`              DATETIME NULL COMMENT '기간 시작 일시',
-  `end_at`                DATETIME NULL COMMENT '기간 종료 일시',
-  `notes`                 TEXT COLLATE utf8mb4_bin NULL COMMENT '특이사항 설명',
-  PRIMARY KEY (`time_bucket_id`),
-  INDEX `tmm_timebucketm_ix01` (`qualitative_impact_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='Time Bucket Master';
-
--- =========================================================
--- Table: tmm_scenariom
--- =========================================================
-DROP TABLE IF EXISTS `tmm_scenariom`;
-CREATE TABLE `tmm_scenariom` (
-    `scenario_id`           INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시나리오 일련번호 (PK)',
-    `crt_dtm`               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '시나리오 최초생성일시',
-    `scenario_group_id`     VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 그룹 키 (scg_[A-Za-z0-9]{10})',
-    `crt_usr_logn_id`       VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '생성사용자로그인ID',
-    `mod_usr_logn_id`       VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '수정사용자로그인ID',
-    `mod_dtm`               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '수정일시',
-    `del_yn`                CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부 (Y/N)',
-    `name`                  VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 명칭 (Base Event title 기반)',
-    `description`           TEXT COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 설명 / one_line_summary',
-    `mi_event_id`           INT UNSIGNED NOT NULL COMMENT 'Base MI Event FK (tmm_mi_mievent_m)',
-    `status_code`           VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'draft' COMMENT '시나리오 상태 (draft/active/archived)',
-    `valid_from`            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '유효기간 시작 일시',
-    `valid_to`              DATETIME NULL COMMENT '유효기간 종료 일시',
-    `language`              VARCHAR(10) COLLATE utf8mb4_bin NOT NULL DEFAULT 'ko' COMMENT '문서 언어',
-    `dimension_values`      JSON NOT NULL COMMENT 'Stage 4 결과 (dimension_values + price_direction)',
-    `likelihood`            VARCHAR(10) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 발생 가능성 (very_high/high/medium/low/very_low 5단계)',
-    `price_direction`       JSON NOT NULL COMMENT '시나리오 가격 영향 강도 (strong_bull/bull/…/strong_bear 7단계)',
-    PRIMARY KEY (`scenario_id`, `crt_dtm`),
-    INDEX `tmm_scenariom_ix01` (`scenario_group_id`),
-    INDEX `tmm_scenariom_ix02` (`mi_event_id`),
-    INDEX `tmm_scenariom_ix03` (`status_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='시나리오 마스터 (5-Stage Pipeline 산출물 저장)';
-
--- =========================================================
--- Table: tmm_signpostm
--- =========================================================
-DROP TABLE IF EXISTS `tmm_signpostm`;
-CREATE TABLE `tmm_signpostm` (
-    `signpost_id`             BIGINT NOT NULL AUTO_INCREMENT COMMENT 'Signpost 일련번호 (PK)',
-    `crt_dtm`                 DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '최초생성일시',
-    `scenario_id`             INT UNSIGNED NOT NULL COMMENT '시나리오 FK (tmm_scenariom)',
-    `crt_usr_logn_id`         VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '생성사용자로그인ID',
-    `mod_usr_logn_id`         VARCHAR(50) COLLATE utf8mb4_bin DEFAULT 'SYSTEM' COMMENT '수정사용자로그인ID',
-    `mod_dtm`                 DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '수정일시',
-    `del_yn`                  CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부 (Y/N)',
-    `status_code`             VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'draft' COMMENT 'Signpost 상태 (draft/active/triggered/expired/archived)',
-    `language`                VARCHAR(10) COLLATE utf8mb4_bin NOT NULL DEFAULT 'ko' COMMENT '문서 언어',
-    `label`                   VARCHAR(500) COLLATE utf8mb4_bin NOT NULL COMMENT 'Signpost 레이블 (관측 가능한 사건 기술)',
-    `signpost_class`          VARCHAR(30) COLLATE utf8mb4_bin DEFAULT 'observation' COMMENT 'Signpost 분류 (observation 등)',
-    `signpost_source`         VARCHAR(30) COLLATE utf8mb4_bin NOT NULL DEFAULT 'mi_record' COMMENT 'Signpost 출처 유형 (mi_record 등)',
-    `direction`               VARCHAR(10) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SUP' COMMENT '시나리오 영향 방향 (SUP=지지)',
-    `strength`                VARCHAR(10) COLLATE utf8mb4_bin COMMENT '신호 강도 (STRONG/MEDIUM/WEAK 3단계)',
-    `keyword_hints`           JSON NOT NULL COMMENT '모니터링용 검색 키워드 리스트',
-    PRIMARY KEY (`signpost_id`, `crt_dtm`),
-    INDEX `tmm_signpostm_ix01` (`scenario_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='Signpost 마스터 (관측 가능한 사건 신호 저장)';
-
--- =========================================================
--- Table: tmm_scenarioversionm
--- =========================================================
-DROP TABLE IF EXISTS `tmm_scenarioversionm`;
-CREATE TABLE `tmm_scenarioversionm` (
-  `version_id`            INT NOT NULL AUTO_INCREMENT COMMENT '시나리오 버전 ID PK',
-  `crt_user_id`           VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '생성 사용자 ID',
-  `crt_dtm`               DATETIME NOT NULL DEFAULT NOW() COMMENT '생성 일시',
-  `mod_user_id`           VARCHAR(50) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SYSTEM' COMMENT '수정 사용자 ID',
-  `mod_dtm`               DATETIME NOT NULL DEFAULT NOW() COMMENT '수정 일시',
-  `del_yn`                CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제 여부 Y/N',
-  `scenario_id`           INT NOT NULL COMMENT '시나리오 ID FK',
-  `version_number`        INT NOT NULL COMMENT '버전 번호',
-  `scenario_snapshot`     JSON NULL COMMENT '시나리오 스냅샷 데이터',
-  `change_summary`        VARCHAR(1000) COLLATE utf8mb4_bin NULL COMMENT '변경 사항 요약',
-  `created_by`            VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '버전 생성 사용자',
-  PRIMARY KEY (`version_id`),
-  INDEX `tmm_scenarioversionm_ix01` (`scenario_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-COMMENT='Scenario Version Master';
-
--- =========================================================
 -- Table: tmm_drivertreenodem
 -- =========================================================
 DROP TABLE IF EXISTS `tmm_drivertreenodem`;
@@ -967,22 +866,6 @@ FOR EACH ROW SET NEW.mod_dtm = NOW();
 
 DROP TRIGGER IF EXISTS `tr_tmm_mi_impact_driver_m_upd`;
 CREATE TRIGGER `tr_tmm_mi_impact_driver_m_upd` BEFORE UPDATE ON `tmm_mi_impact_driver_m`
-FOR EACH ROW SET NEW.mod_dtm = NOW();
-
-DROP TRIGGER IF EXISTS `tr_tmm_timebucketm_upd`;
-CREATE TRIGGER `tr_tmm_timebucketm_upd` BEFORE UPDATE ON `tmm_timebucketm`
-FOR EACH ROW SET NEW.mod_dtm = NOW();
-
-DROP TRIGGER IF EXISTS `tr_tmm_scenariom_upd`;
-CREATE TRIGGER `tr_tmm_scenariom_upd` BEFORE UPDATE ON `tmm_scenariom`
-FOR EACH ROW SET NEW.mod_dtm = NOW();
-
-DROP TRIGGER IF EXISTS `tr_tmm_signpostm_upd`;
-CREATE TRIGGER `tr_tmm_signpostm_upd` BEFORE UPDATE ON `tmm_signpostm`
-FOR EACH ROW SET NEW.mod_dtm = NOW();
-
-DROP TRIGGER IF EXISTS `tr_tmm_scenarioversionm_upd`;
-CREATE TRIGGER `tr_tmm_scenarioversionm_upd` BEFORE UPDATE ON `tmm_scenarioversionm`
 FOR EACH ROW SET NEW.mod_dtm = NOW();
 
 DROP TRIGGER IF EXISTS `tr_tmm_drivertreenodem_upd`;
