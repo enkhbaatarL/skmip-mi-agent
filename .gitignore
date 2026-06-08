@@ -103,3 +103,5 @@ site/
 *.pyc
 
 mysql_data/
+local/
+.omc/
