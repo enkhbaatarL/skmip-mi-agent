@@ -9,19 +9,15 @@ INSERT INTO `tmm_mi_event_type_l1_m` (
     `mod_usr_logn_id`,
     `del_yn`
 ) VALUES
-('geopolitical_risk',       '지정학적 리스크',   'system', 'system', 'N'),
-('weather_climate',         '기상 / 기후',       'system', 'system', 'N'),
-('infrastructure_facility', '인프라 / 설비',     'system', 'system', 'N'),
-('supply_demand_balance',   '수급 밸런스',       'system', 'system', 'N'),
-('logistics_shipping',      '물류 / 해운',       'system', 'system', 'N'),
-('energy_mix_transition',   '에너지 믹스 전환',  'system', 'system', 'N'),
-('macroeconomy_policy',     '거시경제 / 정책',   'system', 'system', 'N'),
-('market_trading_structure','시장 / 거래 구조',  'system', 'system', 'N')
+('supply',              '공급',           'system', 'system', 'N'),
+('demand',              '수요',           'system', 'system', 'N'),
+('inventory_logistics', '재고/운송/시장', 'system', 'system', 'N'),
+('exogenous_shock',     '외생충격',       'system', 'system', 'N')
 ON DUPLICATE KEY UPDATE
-    `level_1_label` = VALUES(`level_1_label`),
+    `level_1_label`   = VALUES(`level_1_label`),
     `mod_usr_logn_id` = VALUES(`mod_usr_logn_id`),
-    `del_yn` = VALUES(`del_yn`),
-    `mod_dtm` = CURRENT_TIMESTAMP(6);
+    `del_yn`          = VALUES(`del_yn`),
+    `mod_dtm`         = CURRENT_TIMESTAMP(6);
 
 -- =========================================================
 -- Initialize tmm_mi_event_type_l2_m
@@ -43,37 +39,43 @@ SELECT
     'system',
     'N'
 FROM (
-    SELECT 'geopolitical_risk' AS level_1_code, 'geopolitical_tension_instability' AS level_2_code, '지정학적 긴장 / 불안정' AS level_2_label
-    UNION ALL SELECT 'geopolitical_risk', 'economic_sanctions_trade_restrictions', '경제 제재 / 무역 제한'
-    UNION ALL SELECT 'geopolitical_risk', 'regime_change_political_transition', '정권 교체 / 정치 전환'
-    UNION ALL SELECT 'geopolitical_risk', 'war_military_conflict', '전쟁 / 군사 분쟁'
-    UNION ALL SELECT 'weather_climate', 'winter_cold_wave', '겨울 한파'
-    UNION ALL SELECT 'weather_climate', 'summer_heat_wave', '여름 고온'
-    UNION ALL SELECT 'weather_climate', 'natural_disaster', '자연재해'
-    UNION ALL SELECT 'infrastructure_facility', 'upstream_production_facility_capacity_utilization_change', '상류 생산 시설 Capa / 가동률 변화'
-    UNION ALL SELECT 'infrastructure_facility', 'liquefaction_terminal_facility_capacity_utilization_change', '액화 / 터미널 시설 Capa / 가동률 변화'
-    UNION ALL SELECT 'infrastructure_facility', 'pipeline_transport_infrastructure_capacity_utilization_change', '파이프라인 / 수송 인프라 Capa / 가동률 변화'
-    UNION ALL SELECT 'infrastructure_facility', 'power_plant_facility_capacity_utilization_change', '발전소 (원전, 화력) 설비 Capa / 가동률 변화'
-    UNION ALL SELECT 'supply_demand_balance', 'inventory_storage_level', '재고 / 저장 수준'
-    UNION ALL SELECT 'supply_demand_balance', 'regional_demand_competition', '지역간 수요 경쟁 (유럽 vs. 아시아)'
-    UNION ALL SELECT 'logistics_shipping', 'ocean_freight_charter_rate_change', '해상 운임 / 용선료 변동'
-    UNION ALL SELECT 'logistics_shipping', 'cargo_flow_change_port_canal_disruption', '화물 흐름 변화 / 항만·운하 차질'
-    UNION ALL SELECT 'energy_mix_transition', 'nuclear_power_expansion_reduction', '원자력 발전 확대 / 축소'
-    UNION ALL SELECT 'energy_mix_transition', 'renewable_power_expansion_reduction', '재생에너지 발전 확대 / 축소'
-    UNION ALL SELECT 'energy_mix_transition', 'alternative_fuel_availability', '대체 연료 가용성'
-    UNION ALL SELECT 'macroeconomy_policy', 'interest_rate_fx_policy_change', '금리 / 통화정책 변화'
-    UNION ALL SELECT 'macroeconomy_policy', 'country_economic_condition_change', '국가별 경기 변화'
-    UNION ALL SELECT 'market_trading_structure', 'transaction_hedging_cost_change', '거래 / 헷징 비용 변동'
-    UNION ALL SELECT 'market_trading_structure', 'inter_index_spread_gap', '인덱스별 스프레드 Gap'
+    -- 공급
+    SELECT 'supply' AS level_1_code, 'upstream_utilization_change'     AS level_2_code, 'Upstream Utilization 변동'        AS level_2_label
+    UNION ALL SELECT 'supply', 'terminal_utilization_change',                            '터미널 Utilization 변동'
+    UNION ALL SELECT 'supply', 'new_terminal_cod_rampup_change',                         '신규 터미널 COD 및 Ramp-up 계획 변경'
+    UNION ALL SELECT 'supply', 'pipeline_utilization_change',                            '파이프라인 Utilization 변동'
+
+    -- 수요
+    UNION ALL SELECT 'demand', 'power_plant_utilization_change',                         '발전소 Utilization 변동'
+    UNION ALL SELECT 'demand', 'winter_cold_wave',                                       '겨울 한파'
+    UNION ALL SELECT 'demand', 'summer_heat_wave',                                       '여름 폭염'
+    UNION ALL SELECT 'demand', 'nuclear_power',                                          '원자력 발전'
+    UNION ALL SELECT 'demand', 'renewable_energy',                                       '재생에너지'
+    UNION ALL SELECT 'demand', 'coal_power',                                             '석탄 발전'
+    UNION ALL SELECT 'demand', 'natural_disaster',                                       '자연재해'
+
+    -- 재고/운송/시장
+    UNION ALL SELECT 'inventory_logistics', 'inventory_level',                           '재고 수준'
+    UNION ALL SELECT 'inventory_logistics', 'ocean_freight',                             '해상 운임'
+    UNION ALL SELECT 'inventory_logistics', 'supply_chain_cargo_flow',                   '공급망 및 화물 흐름'
+    UNION ALL SELECT 'inventory_logistics', 'transaction_hedging',                       '거래 및 헷징'
+    UNION ALL SELECT 'inventory_logistics', 'index_spread',                              '인덱스 Spread'
+
+    -- 외생충격
+    UNION ALL SELECT 'exogenous_shock', 'geopolitical_tension_war',                      '지정학적 긴장 및 전쟁·군사분쟁'
+    UNION ALL SELECT 'exogenous_shock', 'economic_sanctions_trade_restrictions',          '경제 제재 및 무역 제한'
+    UNION ALL SELECT 'exogenous_shock', 'policy_regulatory_change',                      '정책/규제 변화'
+    UNION ALL SELECT 'exogenous_shock', 'interest_rate_fx',                              '금리 및 통화'
+    UNION ALL SELECT 'exogenous_shock', 'country_economic_condition',                    '국가별 경기'
 ) v
 JOIN `tmm_mi_event_type_l1_m` l1
   ON l1.level_1_code = v.level_1_code
  AND l1.del_yn = 'N'
 ON DUPLICATE KEY UPDATE
-    `level_2_label` = VALUES(`level_2_label`),
+    `level_2_label`   = VALUES(`level_2_label`),
     `mod_usr_logn_id` = VALUES(`mod_usr_logn_id`),
-    `del_yn` = VALUES(`del_yn`),
-    `mod_dtm` = CURRENT_TIMESTAMP(6);
+    `del_yn`          = VALUES(`del_yn`),
+    `mod_dtm`         = CURRENT_TIMESTAMP(6);
 
 
 -- =========================================================
