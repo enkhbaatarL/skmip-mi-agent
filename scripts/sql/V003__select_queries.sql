@@ -168,7 +168,7 @@ JOIN tmm_mi_impact_driver_m   d  ON d.impact_result_id = r.impact_result_id
 WHERE i.del_yn = 'N'
   AND r.del_yn = 'N'
   AND d.del_yn = 'N'
-  AND i.mi_event_id = :mi_event_id   -- 파라미터 바인딩
+  AND i.mi_event_id = IFNULL(@mi_event_id, i.mi_event_id)
 ORDER BY FIELD(r.target_id, 'JKM', 'TTF', 'HH')
        , d.match_score DESC;
 
@@ -211,7 +211,7 @@ SELECT
 FROM tmm_mi_scenario_group_m sg
 JOIN tmm_mi_scenario_m s
     ON s.scenario_group_id = sg.scenario_group_id
-WHERE sg.mi_event_id = :mi_event_id
+WHERE sg.mi_event_id = IFNULL(@mi_event_id, sg.mi_event_id)
   AND sg.del_yn = 'N'
   AND s.del_yn = 'N'
 ORDER BY s.display_order, s.scenario_id;
@@ -224,7 +224,7 @@ ORDER BY s.display_order, s.scenario_id;
 SELECT
     dt.template_json
 FROM tmm_mi_scenario_dimension_template_m dt
-WHERE dt.event_type_l2_id = :event_type_l2_id
+WHERE dt.event_type_l2_id = IFNULL(@event_type_l2_id, dt.event_type_l2_id)
   AND dt.del_yn = 'N';
 
 -- =========================================================
@@ -256,7 +256,7 @@ JOIN tmm_mi_mievent_m e
     ON e.mi_event_id = sg.mi_event_id
 JOIN tmm_mi_event_type_l2_m et2
     ON et2.event_type_l2_id = sg.event_type_l2_id
-WHERE sg.scenario_group_id = :scenario_group_id
+WHERE sg.scenario_group_id = IFNULL(@scenario_group_id, sg.scenario_group_id)
   AND sg.del_yn = 'N';
 
 -- =========================================================
@@ -264,7 +264,7 @@ WHERE sg.scenario_group_id = :scenario_group_id
 -- =========================================================
 SELECT *
 FROM tmm_mi_scenario_m
-WHERE scenario_group_id = :scenario_group_id
+WHERE scenario_group_id = IFNULL(@scenario_group_id, scenario_group_id)
   AND del_yn = 'N'
 ORDER BY display_order, scenario_id;
 
@@ -297,6 +297,6 @@ LEFT JOIN tmm_mi_signpost_m sp
 LEFT JOIN tmm_mi_signpost_event_m spe
     ON spe.signpost_id = sp.signpost_id
     AND spe.del_yn = 'N'
-WHERE s.scenario_id = :scenario_id
+WHERE s.scenario_id = IFNULL(@scenario_id, s.scenario_id)
   AND s.del_yn = 'N'
 ORDER BY sp.display_order, spe.mod_dtm DESC;

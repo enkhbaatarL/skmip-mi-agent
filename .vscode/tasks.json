@@ -7,6 +7,30 @@
             "command": "python ${workspaceFolder}/simple_graph/graph.py",
             "problemMatcher": [],
             "group": "build"
+        },
+        {
+            "label": "compose-down-delete-volumes",
+            "type": "shell",
+            "command": "docker compose -f docker/local/midb-docker-compose.yml down -v",
+            "problemMatcher": []
+        },
+        {
+            "label": "compose-down",
+            "type": "shell",
+            "command": "docker compose -f docker/local/midb-docker-compose.yml down",
+            "problemMatcher": []
+        },
+        {
+            "label": "compose-up-mysql",
+            "type": "shell",
+            "command": "docker compose -f docker/local/midb-docker-compose.yml up -d mysql",
+            "problemMatcher": []
+        },
+        {
+            "label": "compose-run-flyway",
+            "type": "shell",
+            "command": "docker compose -f docker/local/midb-docker-compose.yml run --rm flyway",
+            "problemMatcher": []
         }
     ]
 }
