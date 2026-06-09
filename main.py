@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError, WebSocketRequestValidatio
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from apps.agents.scenario_design_agent.api import router as scenario_design_router
+from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.common.exceptions.custom import MIBaseError, UnknownMIError
 from apps.common.logging.logger_config import logger
 
@@ -79,9 +79,9 @@ def set_global_exception_handlers(app: FastAPI) -> FastAPI:
 
 
 app.include_router(
-    scenario_design_router,
+    scenario_group_router,
     prefix="",
-    tags=["scenario-design"],
+    tags=["scenario-group"],
 )
 
 app = set_global_exception_handlers(app)
