@@ -1,33 +1,78 @@
 {
   "version": "0.2.0",
   "configurations": [
+    // {
+    //   "name": "[🌱]adxp-cli run (single)",
+    //   "type": "debugpy",
+    //   "request": "launch",
+    //   "module": "adxp_cli.cli",
+    //   "args": [
+    //     "agent",
+    //     "run",
+    //     "--host",
+    //     "0.0.0.0",
+    //     "--port",
+    //     "3002",
+    //     "--graph_yaml",
+    //     "./graph.yaml"
+    //   ],
+    //   "cwd": "${workspaceFolder}",
+    //   "console": "integratedTerminal",
+    //   "redirectOutput": true,
+    //   "outputCapture": "std",
+    //   "subProcess": true,
+    //   "justMyCode": false,
+    //   "env": {
+    //     "PYTHONUNBUFFERED": "1",
+    //     "BOOT_TRACE": "1",
+    //     "PYTHONPATH": "${workspaceFolder}/apps:${workspaceFolder}"
+    //   },
+    //   "logToFile": true
+    // }
     {
-      "name": "[🌱]adxp-cli run (single)",
+      "name": "[🌱]backend: uvicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
-      "module": "adxp_cli.cli",
+      "python": "${command:python.interpreterPath}",
+      "module": "uvicorn",
       "args": [
-        "agent",
-        "run",
+        "main:app",
+        "--reload",
         "--host",
-        "0.0.0.0",
+        "127.0.0.1",
         "--port",
-        "3002",
-        "--graph_yaml",
-        "./graph.yaml"
+        "8000"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "redirectOutput": true,
-      "outputCapture": "std",
-      "subProcess": true,
-      "justMyCode": false,
+      "console": "internalConsole",
       "env": {
-        "PYTHONUNBUFFERED": "1",
-        "BOOT_TRACE": "1",
-        "PYTHONPATH": "${workspaceFolder}/apps:${workspaceFolder}"
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}"
       },
-      "logToFile": true
+      "justMyCode": false
+    },
+    {
+      "name": "[🌱🌱]backend: gunicorn (main.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${command:python.interpreterPath}",
+      "module": "gunicorn",
+      "args": [
+        "main:app",
+        "-k=uvicorn.workers.UvicornWorker",
+        "--bind",
+        "127.0.0.1:8000",
+        "--timeout",
+        "3600",
+        "--keep-alive",
+        "3600",
+        "--reload"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}"
+      },
+      "justMyCode": false
     }
   ]
 }
