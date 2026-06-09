@@ -18,9 +18,10 @@
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "preLaunchTask": "Poetry Install",
+      "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/config.yaml",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
         "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/apps/common/configs/template_registry.json"
 
       },
@@ -42,9 +43,10 @@
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
+      "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/config.yaml",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
         "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/apps/common/configs/template_registry.json"
 
       },
@@ -69,9 +71,10 @@
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
+      "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/config.yaml",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
         "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/scripts/scenario_generation/template_registry.json"
       },
       "justMyCode": false
