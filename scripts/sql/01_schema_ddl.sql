@@ -470,7 +470,7 @@ CREATE TABLE `tmm_mi_impact_driver_m` (
   `lv3_id`            VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT 'Driver Tree 3단계 코드',
   `lv3_label`         VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT 'Driver Tree 3단계 명칭',
   `direction_hint`    VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '방향 힌트 bullish_if_up/bearish_if_up/contextual',
-  `match_score`       DECIMAL(5,4) NULL COMMENT 'Event-Driver 매핑 신뢰도 점수 0~1',
+  `match_score`       DECIMAL(4,2) NULL COMMENT 'Event-Driver 매핑 신뢰도 점수 0~10',
   `matched_keywords`  JSON NULL COMMENT '매칭된 키워드 목록',
   `driver_reason`     TEXT COLLATE utf8mb4_bin NULL COMMENT 'Driver 영향 발생 사유',
   `impact_short`      ENUM('상승_상','상승_중','상승_하','영향없음','하락_하','하락_중','하락_상') COLLATE utf8mb4_bin NOT NULL DEFAULT '영향없음' COMMENT 'driver의 단기 영향',
