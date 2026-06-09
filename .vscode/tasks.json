@@ -6,9 +6,7 @@
             "type": "process",
             "command": "poetry",
             "args": [
-                "install",
-                "--no-root",
-                "--sync"
+                "install"
             ],
             "options": {
                 "cwd": "${workspaceFolder}",

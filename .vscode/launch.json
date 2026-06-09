@@ -2,6 +2,31 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "[🚀]launcher: poetry install + uvicorn",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${command:python.interpreterPath}",
+      "module": "uvicorn",
+      "args": [
+        "main:app",
+        "--reload",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "preLaunchTask": "Poetry Install",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "APP_CONFIG": "${workspaceFolder}/config.yaml",
+        "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/apps/common/configs/template_registry.json"
+
+      },
+      "justMyCode": false
+    },
+    {
       "name": "[🌱]backend: uvicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
@@ -19,7 +44,7 @@
       "console": "internalConsole",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "SKGAS_AGENT_ENV_FILE": "${workspaceFolder}/envs/skgas_agent/env.txt",
+        "APP_CONFIG": "${workspaceFolder}/config.yaml",
         "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/apps/common/configs/template_registry.json"
 
       },
@@ -46,7 +71,7 @@
       "console": "internalConsole",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "SKGAS_AGENT_ENV_FILE": "${workspaceFolder}/envs/skgas_agent/env.txt",
+        "APP_CONFIG": "${workspaceFolder}/config.yaml",
         "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/scripts/scenario_generation/template_registry.json"
       },
       "justMyCode": false
