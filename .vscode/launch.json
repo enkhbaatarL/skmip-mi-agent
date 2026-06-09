@@ -1,34 +1,6 @@
 {
   "version": "0.2.0",
   "configurations": [
-    // {
-    //   "name": "[🌱]adxp-cli run (single)",
-    //   "type": "debugpy",
-    //   "request": "launch",
-    //   "module": "adxp_cli.cli",
-    //   "args": [
-    //     "agent",
-    //     "run",
-    //     "--host",
-    //     "0.0.0.0",
-    //     "--port",
-    //     "3002",
-    //     "--graph_yaml",
-    //     "./graph.yaml"
-    //   ],
-    //   "cwd": "${workspaceFolder}",
-    //   "console": "integratedTerminal",
-    //   "redirectOutput": true,
-    //   "outputCapture": "std",
-    //   "subProcess": true,
-    //   "justMyCode": false,
-    //   "env": {
-    //     "PYTHONUNBUFFERED": "1",
-    //     "BOOT_TRACE": "1",
-    //     "PYTHONPATH": "${workspaceFolder}/apps:${workspaceFolder}"
-    //   },
-    //   "logToFile": true
-    // }
     {
       "name": "[🌱]backend: uvicorn (main.py)",
       "type": "debugpy",
@@ -46,7 +18,10 @@
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}"
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "SKGAS_AGENT_ENV_FILE": "${workspaceFolder}/envs/skgas_agent/env.txt",
+        "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/apps/common/configs/template_registry.json"
+
       },
       "justMyCode": false
     },
@@ -70,7 +45,9 @@
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}"
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "SKGAS_AGENT_ENV_FILE": "${workspaceFolder}/envs/skgas_agent/env.txt",
+        "REF_TEMPLATE_REGISTRY_PATH": "${workspaceFolder}/scripts/scenario_generation/template_registry.json"
       },
       "justMyCode": false
     }

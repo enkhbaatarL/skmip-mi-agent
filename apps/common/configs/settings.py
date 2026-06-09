@@ -1,6 +1,7 @@
 #   apps/common/configs/settings.py
 from collections.abc import Mapping
 import json
+import os
 import pathlib
 from typing import Any
 from uuid import UUID
@@ -10,11 +11,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[5]
+DEFAULT_ENV_FILE = ROOT_DIR / "envs" / "skgas_agent" / "env.txt"
+ENV_FILE_PATH = pathlib.Path(os.getenv("SKGAS_AGENT_ENV_FILE", str(DEFAULT_ENV_FILE))).expanduser()
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(ROOT_DIR / "envs" / "skgas_agent" / "env.txt"),
+        env_file=str(ENV_FILE_PATH),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

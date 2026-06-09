@@ -61,25 +61,20 @@ class MiEventContentColumnsMixin:
         nullable=False,
         comment="이벤트 제목",
     )
-    one_line_summary: Mapped[str | None] = mapped_column(
+    one_line_summary: Mapped[str] = mapped_column(
         sqlalchemy.String(300, collation="utf8mb4_bin"),
-        nullable=True,
+        nullable=False,
         comment="한줄 요약",
     )
-    key_bullets_json: Mapped[Any | None] = mapped_column(
+    key_bullets_json: Mapped[Any] = mapped_column(
         sqlalchemy.JSON,
-        nullable=True,
+        nullable=False,
         comment="핵심 bullet 목록 JSON",
     )
     detail_analysis: Mapped[str] = mapped_column(
         mysql_types.LONGTEXT(collation="utf8mb4_bin"),
         nullable=False,
         comment="이벤트 상세 분석 본문",
-    )
-    market_and_institution_view: Mapped[str | None] = mapped_column(
-        mysql_types.LONGTEXT(collation="utf8mb4_bin"),
-        nullable=True,
-        comment="시장 반응 및 기관 전망",
     )
     tags_json: Mapped[Any | None] = mapped_column(
         sqlalchemy.JSON,
@@ -225,6 +220,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
     record_maps: Mapped[list[MiEventRecordMapModel]] = relationship(
         "MiEventRecordMapModel", back_populates="event"
     )
+
+    @property
+    def market_and_institution_view(self) -> str | None:
+        """Compatibility shim for legacy code paths."""
+        return None
 
 
 class MiEventRecordMapModel(AuditColumnsMixin, ORMBase):

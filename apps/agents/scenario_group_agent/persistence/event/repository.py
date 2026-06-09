@@ -54,7 +54,6 @@ class EventRepository(BaseSyncSQLRepository):
             "one_line_summary": event.one_line_summary or "",
             "key_bullets": [str(item).strip() for item in self._parse_json_list(event.key_bullets_json) if item],
             "detail_analysis": event.detail_analysis or "",
-            "market_and_institution_view": event.market_and_institution_view or "",
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
             "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",

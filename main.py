@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from http import HTTPStatus
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
@@ -8,11 +11,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
+from apps.common.configs.database.application_tables import APPLICATION_TABLES
+from apps.common.configs.database.schema_validation import validate_schema
+from apps.common.configs.database.sync_database.connection import get_sync_engine
 from apps.common.exceptions.custom import MIBaseError, UnknownMIError
 from apps.common.logging.logger_config import logger
 
 
-app = FastAPI(title="SKMIP MI Agent API")
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    logger.info("Validating ORM models against the database schema")
+    await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
+    logger.info("ORM/DB schema validation completed")
+    yield
+
+
+app = FastAPI(title="SKMIP MI Agent API", lifespan=lifespan)
 
 origins = ["*"]
 
