@@ -495,9 +495,6 @@ Request Body:
 
 ```json
 {
-  "status": "success",
-  "message": "성공",
-  "data": {
     "scenarioGroup": {
       "scenarioGroupId": 12345,
       "miEventId": 998877,
@@ -564,10 +561,8 @@ Request Body:
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroup` | object | Y | 확정 대상 시나리오 그룹 |
-| `data.table` | object | Y | 확정 대상 시나리오 테이블(행 + signposts 포함) |
+| `scenarioGroup` | object | Y | 확정 대상 시나리오 그룹 |
+| `table` | object | Y | 확정 대상 시나리오 테이블(행 + signposts 포함) |
 
 Response (`ConfirmGenerationOut`)
 
