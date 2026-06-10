@@ -13,8 +13,10 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenario_group,
     save_scenarios,
 )
+from apps.agents.scenario_group_agent.presentation import (
+    build_scenario_group_table_data,
+)
 from apps.agents.scenario_group_agent.schemas.create_scenarios import (
-    CreateScenariosData,
     CreateScenariosIn,
     CreateScenariosOut,
 )
@@ -39,7 +41,9 @@ def build_graph() -> Runnable:
 
 def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     parsed = CreateScenariosIn.model_validate(payload)
-    return ScenarioDesignState(mi_event_id=parsed.mi_event_id, include_details=True)
+    return ScenarioDesignState(
+        mi_event_id=parsed.mi_event_id, user_id=parsed.user_id, include_details=True
+    )
 
 
 def _resolve_status(raw_status: Any) -> str:
@@ -48,22 +52,23 @@ def _resolve_status(raw_status: Any) -> str:
 
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    scenarios = data.get("scenarios") or []
+    status = _resolve_status(data.get("status"))
+    group = data.get("scenario_group")
     return CreateScenariosOut(
-        status=_resolve_status(data.get("status")),
+        status=status,
         message=data.get("message") or "",
-        data=CreateScenariosData(
-            mi_event_id=data.get("mi_event_id") or 0,
-            scenario_group_id=data.get("scenario_group_id"),
-            scenario_count=len(scenarios),
-            saved_scenario_ids=data.get("saved_scenario_ids") or [],
-            scenario_result=data.get("scenario_result"),
+        data=(
+            build_scenario_group_table_data(group, data.get("scenarios") or [])
+            if status == "success" and group
+            else None
         ),
     )
 
 
 def build_runnable_graph() -> Runnable:
-    return (RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)).with_types(
+    return (
+        RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)
+    ).with_types(
         input_type=CreateScenariosIn,
         output_type=CreateScenariosOut,
     )

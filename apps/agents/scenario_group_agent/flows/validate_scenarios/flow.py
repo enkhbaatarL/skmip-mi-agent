@@ -38,7 +38,9 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     parsed = ValidateScenariosIn.model_validate(payload)
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
-        include_details=parsed.include_details,
+        user_id=parsed.user_id,
+        request_scenario_group=parsed.scenario_group.model_dump(),
+        request_table=parsed.table.model_dump(),
     )
 
 
@@ -48,20 +50,29 @@ def _resolve_status(raw_status: Any) -> str:
 
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
+    status = _resolve_status(data.get("status"))
+    group = data.get("scenario_group") or {}
     return ValidateScenariosOut(
-        status=_resolve_status(data.get("status")),
+        status=status,
         message=data.get("message") or "",
-        data=ValidateScenariosData(
-            scenario_group_id=data.get("scenario_group_id") or 0,
-            is_valid=data.get("is_valid") or False,
-            reason=data.get("reason") or data.get("message") or "",
-            validation_result=data.get("validation_result") if data.get("include_details", True) else None,
+        data=(
+            ValidateScenariosData(
+                scenario_group_id=data.get("scenario_group_id") or 0,
+                is_valid=data.get("is_valid") or False,
+                reason=data.get("reason") or data.get("message") or "",
+                status=group.get("status") or "creating",
+                stage=group.get("stage") or "scenario_created",
+            )
+            if status == "success"
+            else None
         ),
     )
 
 
 def build_runnable_graph() -> Runnable:
-    return (RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)).with_types(
+    return (
+        RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)
+    ).with_types(
         input_type=ValidateScenariosIn,
         output_type=ValidateScenariosOut,
     )

@@ -9,7 +9,6 @@
       "module": "uvicorn",
       "args": [
         "main:app",
-        "--reload",
         "--host",
         "127.0.0.1",
         "--port",
@@ -35,7 +34,6 @@
       "module": "uvicorn",
       "args": [
         "main:app",
-        "--reload",
         "--host",
         "127.0.0.1",
         "--port",
@@ -66,8 +64,7 @@
         "--timeout",
         "3600",
         "--keep-alive",
-        "3600",
-        "--reload"
+        "3600"
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",

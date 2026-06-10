@@ -12,7 +12,11 @@ from apps.agents.scenario_group_agent.flows.confirm_generation.nodes import (
     load_scenarios,
     load_signposts,
 )
-from apps.agents.scenario_group_agent.schemas.confirm_generation import ConfirmGenerationData, ConfirmGenerationOut
+from apps.agents.scenario_group_agent.schemas.confirm_generation import (
+    ConfirmGenerationData,
+    ConfirmGenerationIn,
+    ConfirmGenerationOut,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 
 
@@ -31,7 +35,12 @@ def build_graph() -> Runnable:
 
 
 def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
-    return ScenarioDesignState(scenario_group_id=int(payload["scenario_group_id"]))
+    parsed = ConfirmGenerationIn.model_validate(payload)
+    return ScenarioDesignState(
+        scenario_group_id=int(payload["scenario_group_id"]),
+        request_scenario_group=parsed.scenario_group.model_dump(exclude_unset=True),
+        request_table=parsed.table.model_dump(exclude_unset=True),
+    )
 
 
 def _resolve_status(raw_status: Any) -> str:
@@ -40,22 +49,28 @@ def _resolve_status(raw_status: Any) -> str:
 
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> ConfirmGenerationOut:
     data = state if isinstance(state, dict) else state.model_dump()
+    status = _resolve_status(data.get("status"))
+    group = data.get("scenario_group") or {}
     return ConfirmGenerationOut(
-        status=_resolve_status(data.get("status")),
+        status=status,
         message=data.get("message") or "",
-        data=ConfirmGenerationData(
-            scenario_group_id=data.get("scenario_group_id") or 0,
-            confirmed=data.get("confirmed") or False,
-            confirmed_at=data.get("completed_at"),
-            snapshot_id=data.get("snapshot_id"),
-            scenario_count=len(data.get("scenarios") or []),
-            signpost_count=len(data.get("signposts") or []),
+        data=(
+            ConfirmGenerationData(
+                scenario_group_id=data.get("scenario_group_id") or 0,
+                status=group.get("status") or "created",
+                stage=group.get("stage") or "completed",
+            )
+            if status == "success"
+            else None
         ),
     )
 
 
 def build_runnable_graph() -> Runnable:
-    return (RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)).with_types(
+    return (
+        RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)
+    ).with_types(
+        input_type=ConfirmGenerationIn,
         output_type=ConfirmGenerationOut,
     )
 

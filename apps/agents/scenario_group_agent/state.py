@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class ScenarioDesignState(BaseModel):
     mi_event_id: int | None = None
     scenario_group_id: int | None = None
+    user_id: str | None = None
     include_details: bool = False
 
     event_data: dict[str, Any] | None = None
@@ -19,6 +20,8 @@ class ScenarioDesignState(BaseModel):
     scenario_result: dict[str, Any] | None = None
     validation_result: dict[str, Any] | None = None
     signpost_result: dict[str, Any] | None = None
+    request_scenario_group: dict[str, Any] | None = None
+    request_table: dict[str, Any] | None = None
 
     saved_scenario_ids: list[int] = Field(default_factory=list)
     saved_signpost_ids: list[int] = Field(default_factory=list)

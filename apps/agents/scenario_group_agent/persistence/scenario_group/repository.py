@@ -36,11 +36,30 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         self.session.flush()
         return int(group.scenario_group_id)
 
-    def update_scenario_count(self, scenario_group_id: int, scenario_count: int) -> None:
+    def update_scenario_count(
+        self, scenario_group_id: int, scenario_count: int
+    ) -> None:
         group = self.fetch_by_id(scenario_group_id)
         if group is None:
             return
         group.scenario_count = scenario_count
+
+    def update_group(
+        self, group: MiScenarioGroupModel, payload: dict[str, Any]
+    ) -> None:
+        for field in (
+            "title",
+            "summary",
+            "description",
+            "dimension_selected",
+            "scenario_count",
+            "status",
+            "stage",
+            "mod_usr_logn_id",
+        ):
+            if field in payload:
+                setattr(group, field, payload[field])
+        self.session.flush()
 
     def create_confirmation_snapshot(
         self,
@@ -65,12 +84,13 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
                 src_scenario_id=scenario.scenario_id,
                 dimension_values=scenario.dimension_values,
                 probability_score=scenario.probability_score,
-                judgment_status_code=scenario.judgment_status_code,
                 baseline_yn=scenario.baseline_yn,
             )
             self.session.add(scenario_snap)
             self.session.flush()
-            scenario_snap_ids[int(scenario.scenario_id)] = int(scenario_snap.scenario_snap_id)
+            scenario_snap_ids[int(scenario.scenario_id)] = int(
+                scenario_snap.scenario_snap_id
+            )
 
         for scenario in scenarios:
             scenario_snap_id = scenario_snap_ids[int(scenario.scenario_id)]
@@ -99,4 +119,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "description": group.description,
             "dimension_selected": group.dimension_selected,
             "scenario_count": int(group.scenario_count or 0),
+            "status": group.status,
+            "stage": group.stage,
         }

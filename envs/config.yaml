@@ -20,9 +20,9 @@ api_key: ${MODEL_API_KEY}
 
 model_endpoint: https://aip-stg.sktai.io/api/v1/gateway
 model_api_key: ${MODEL_API_KEY}
-model_api_deployment_name: "..."
-lightly_thinking_model_api_deployment_name: "..."
-deeply_thinking_model_api_deployment_name: "..."
+model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+lightly_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
+deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 
 MCP_POOL_URLS: {}
 COMPANY_MCP_MAP: {}

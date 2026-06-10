@@ -22,7 +22,10 @@ class ScenarioRepository(BaseSyncSQLRepository):
     def fetch_models_by_group_id(self, scenario_group_id: int) -> list[MiScenarioModel]:
         stmt = (
             select(MiScenarioModel)
-            .where(MiScenarioModel.scenario_group_id == scenario_group_id, MiScenarioModel.del_yn == "N")
+            .where(
+                MiScenarioModel.scenario_group_id == scenario_group_id,
+                MiScenarioModel.del_yn == "N",
+            )
             .order_by(MiScenarioModel.display_order, MiScenarioModel.scenario_id)
         )
         return list(self.session.execute(stmt).scalars().all())
@@ -33,12 +36,32 @@ class ScenarioRepository(BaseSyncSQLRepository):
         self.session.flush()
         return int(scenario.scenario_id)
 
-    def update_judgment_status(self, scenario_group_id: int, status_code: str) -> int:
+    def update_status(self, scenario_group_id: int, status: str) -> int:
         scenarios = self.fetch_models_by_group_id(scenario_group_id)
         for scenario in scenarios:
-            scenario.judgment_status_code = status_code
+            scenario.status = status
         self.session.flush()
         return len(scenarios)
+
+    def update_from_payload(
+        self, scenario: MiScenarioModel, payload: dict[str, Any]
+    ) -> None:
+        for field in (
+            "title",
+            "narrative",
+            "dimension_values",
+            "probability_score",
+            "probability_delta",
+            "impact_jkm",
+            "impact_ttf",
+            "impact_hh",
+            "display_order",
+            "baseline_yn",
+            "mod_usr_logn_id",
+        ):
+            if field in payload:
+                setattr(scenario, field, payload[field])
+        self.session.flush()
 
     def model_to_dict(self, scenario: MiScenarioModel) -> dict[str, Any]:
         dimension_values = scenario.dimension_values or []
@@ -58,18 +81,15 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "title": scenario.title,
             "description": scenario.narrative or "",
             "narrative": scenario.narrative,
+            "status": scenario.status,
             "dimension_values": dim_dict,
             "dimension_values_array": dimension_values,
             "price_direction": price_direction,
-            "likelihood": scenario.probability_level,
             "probability_score": scenario.probability_score,
-            "probability_level": scenario.probability_level,
             "probability_delta": scenario.probability_delta,
             "impact_jkm": scenario.impact_jkm,
             "impact_ttf": scenario.impact_ttf,
             "impact_hh": scenario.impact_hh,
-            "feasibility_score": scenario.feasibility_score,
-            "judgment_status_code": scenario.judgment_status_code,
             "display_order": scenario.display_order,
             "baseline_yn": scenario.baseline_yn,
         }

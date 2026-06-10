@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic import BaseModel, Field
-
+from apps.agents.scenario_group_agent.schemas.common import (
+    ApiModel,
+    ScenarioGroupPayload,
+    ScenarioTable,
+)
 from apps.common.values.response import CommonResponse
 
 
-class ValidateScenariosIn(BaseModel):
-    include_details: bool = Field(
-        default=True,
-        description="Whether to include the detailed validation result in the response",
-    )
+class ValidateScenariosIn(ApiModel):
+    user_id: str
+    scenario_group: ScenarioGroupPayload
+    table: ScenarioTable
 
 
-class ValidateScenariosData(BaseModel):
+class ValidateScenariosData(ApiModel):
     scenario_group_id: int
     is_valid: bool = False
     reason: str = ""
-    validation_result: dict[str, Any] | None = None
+    status: str
+    stage: str
 
 
 class ValidateScenariosOut(CommonResponse):

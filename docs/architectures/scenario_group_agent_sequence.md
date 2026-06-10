@@ -5,7 +5,7 @@
 
 다만, 6/12일까지 callback 로직을 구현하기에는 촉박하여 우선 Sync 방식으로 통신하도록 구현 예정이며, 추후 callback API 논의 완료되면 Async 방식으로 전환 예정입니다.
 
-Sync 방식의 Response Body는 Callback Body를 참고해주세요.
+Sync 방식의 Response Body는 아래 Response Body를 참고해주세요.
 
 </aside>
 
@@ -96,37 +96,7 @@ Request
 | `miEventId` | number | Y | MI Event 식별자 |
 | `userId` | string | Y | 요청 사용자 식별자 |
 
-Response
-
-```json
-{
-  "status": "success", //success , error
-  "message": "성공",
-  "data": {
-    "scenarioGroupId": 1,
-    "status":"creating",
-    "stage": "ready",
-  }
-}
-```
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroupId` | number | Y | 생성된 시나리오 그룹 ID |
-| `data.status` | string | Y | Scenario Group status |
-| `data.stage` | string | Y | Scenario Group stage |
-
-```json
-{
-  "status": "error",
-  "message": "Event not found for miEventId=113",
-  "data": null,
-}
-```
-
-CallBack Body (`CreateScenariosOut`)
+Response Body (`CreateScenariosOut`)
 
 > Platform Team에서 정의 예정
 > 
@@ -233,7 +203,7 @@ Request body
 
 ```json
 {
-  "user_id": "...",
+  "userId": "...",
   "scenarioGroup": {
     "scenarioGroupId": 12345,
     "miEventId": 998877,
@@ -276,7 +246,7 @@ Request body
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `user_id` | string | Y | 요청 사용자 식별자 |
+| `userId` | string | Y | 요청 사용자 식별자 |
 | `scenarioGroup` | object | Y | 검증 대상 시나리오 그룹 정보 |
 | `scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
 | `scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
@@ -289,39 +259,7 @@ Request body
 | `table.rows[].scenarioId` | number | Y | 시나리오 ID |
 | `table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
 
-Response (`ValidateScenariosOut`)
-
-```json
-{
-  "status": "success", //success , error
-  "message": "성공",
-  "data": {
-    "scenarioGroupId": 1,
-    "status":"creating",
-    "stage": "scenario_created",
-  }
-}
-```
-
-| Path | Type | Required | Description |
-| --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
-| `data.isValid` | boolean | N | 검증 결과(상세 포함 시) |
-| `data.reason` | string | N | 검증 사유(상세 포함 시) |
-| `data.status` | string | Y | Scenario Group status |
-| `data.stage` | string | Y | Scenario Group stage |
-
-```json
-{
-  "status": "error"
-  "message": "Event not found for ScenarioGroupId=113"
-  "data": null
-}
-```
-
-Callback Body
+Response Body
 
 ```json
 {
@@ -366,37 +304,7 @@ Request (body optional)
 | --- | --- | --- | --- |
 | `userId` | string | N | 요청 사용자 식별자 |
 
-Response (`CreateSignpostsOut`)
-
-```json
-{
-  "status": "success", //success , error
-  "message": "성공",
-  "data": {
-    "scenarioGroupId": 1001,
-    "status":"creating",
-    "stage": "scenario_validated",
-  }
-}
-```
-
-| Path | Type | Required | Description |
-| --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
-| `data.status` | string | Y | Scenario Group status |
-| `data.stage` | string | Y | Scenario Group stage |
-
-```json
-{
-  "status": "error"
-  "message": "Event not found for ScenarioGroupId=1001"
-  "data": null
-}
-```
-
-Callback Body
+Response Body
 
 ```json
 {

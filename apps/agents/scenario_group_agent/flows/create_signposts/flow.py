@@ -13,8 +13,10 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     run_signpost_generation,
     save_signposts,
 )
+from apps.agents.scenario_group_agent.presentation import (
+    build_scenario_group_table_data,
+)
 from apps.agents.scenario_group_agent.schemas.create_signposts import (
-    CreateSignpostsData,
     CreateSignpostsIn,
     CreateSignpostsOut,
 )
@@ -38,9 +40,10 @@ def build_graph() -> Runnable:
 
 
 def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
-    CreateSignpostsIn.model_validate(payload)
+    parsed = CreateSignpostsIn.model_validate(payload)
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
+        user_id=parsed.user_id,
         include_details=True,
     )
 
@@ -51,20 +54,27 @@ def _resolve_status(raw_status: Any) -> str:
 
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateSignpostsOut:
     data = state if isinstance(state, dict) else state.model_dump()
+    status = _resolve_status(data.get("status"))
+    group = data.get("scenario_group")
     return CreateSignpostsOut(
-        status=_resolve_status(data.get("status")),
+        status=status,
         message=data.get("message") or "",
-        data=CreateSignpostsData(
-            scenario_group_id=data.get("scenario_group_id") or 0,
-            signpost_count=len(data.get("signposts") or []),
-            saved_signpost_ids=data.get("saved_signpost_ids") or [],
-            signpost_result=data.get("signpost_result"),
+        data=(
+            build_scenario_group_table_data(
+                group,
+                data.get("scenarios") or [],
+                data.get("signposts") or [],
+            )
+            if status == "success" and group
+            else None
         ),
     )
 
 
 def build_runnable_graph() -> Runnable:
-    return (RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)).with_types(
+    return (
+        RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)
+    ).with_types(
         input_type=CreateSignpostsIn,
         output_type=CreateSignpostsOut,
     )

@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime
-
-from pydantic import BaseModel
-
+from apps.agents.scenario_group_agent.schemas.common import (
+    ApiModel,
+    ScenarioGroupPayload,
+    ScenarioTable,
+)
 from apps.common.values.response import CommonResponse
 
 
-class ConfirmGenerationData(BaseModel):
+class ConfirmGenerationIn(ApiModel):
+    scenario_group: ScenarioGroupPayload
+    table: ScenarioTable
+
+
+class ConfirmGenerationData(ApiModel):
     scenario_group_id: int
-    confirmed: bool = False
-    confirmed_at: datetime | None = None
-    snapshot_id: int | None = None
-    scenario_count: int = 0
-    signpost_count: int = 0
+    status: str
+    stage: str
 
 
 class ConfirmGenerationOut(CommonResponse):
