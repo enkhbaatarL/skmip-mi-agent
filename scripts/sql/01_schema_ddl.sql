@@ -184,7 +184,7 @@ CREATE TABLE `tmm_mi_mievent_m` (
     `signal_confidence` DECIMAL(5, 4) NULL DEFAULT 0 COMMENT '신호 신뢰도',
     `signal_reason` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '신호 판정 근거',
     `scenario_suggest_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '시나리오화 추천 여부',
-    `scenario_suggest_reason` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '시나리오화 추천 근거',
+    `scenario_suggest_reason` VARCHAR(500) COLLATE utf8mb4_bin NULL COMMENT '시나리오화 추천 근거',
     `new_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'Y' COMMENT '신규생성 여부 (Y: 신규생성, N: 갱신)',
 
     `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
