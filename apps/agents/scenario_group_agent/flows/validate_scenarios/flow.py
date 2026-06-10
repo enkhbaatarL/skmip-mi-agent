@@ -31,10 +31,10 @@ def build_graph() -> Runnable:
 
 
 def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
-    ValidateScenariosIn.model_validate(payload)
+    parsed = ValidateScenariosIn.model_validate(payload)
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
-        include_details=True,
+        include_details=parsed.include_details,
     )
 
 
@@ -44,7 +44,9 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> dict[str, Any]:
         "scenario_group_id": data.get("scenario_group_id") or 0,
         "is_valid": data.get("is_valid") or False,
         "reason": data.get("reason") or data.get("message") or "",
-        "validation_result": data.get("validation_result"),
+        "validation_result": (
+            data.get("validation_result") if data.get("include_details", True) else None
+        ),
         "status": data.get("status") or "success",
         "message": data.get("message") or "",
     }

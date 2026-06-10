@@ -170,6 +170,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         nullable=False,
         comment="이벤트 유형 L2 FK",
     )
+    latest_record_first_created: Mapped[datetime | None] = mapped_column(
+        mysql_types.DATETIME(fsp=6),
+        nullable=True,
+        comment="Event 관련 Record 중 최신 first_created 시각",
+    )
     estimated_impact_id: Mapped[str | None] = mapped_column(
         sqlalchemy.String(100, collation="utf8mb4_bin"),
         nullable=True,
@@ -199,7 +204,7 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         comment="시나리오화 추천 여부",
     )
     scenario_suggest_reason: Mapped[str | None] = mapped_column(
-        sqlalchemy.String(100, collation="utf8mb4_bin"),
+        sqlalchemy.String(500, collation="utf8mb4_bin"),
         nullable=True,
         comment="시나리오화 추천 근거",
     )

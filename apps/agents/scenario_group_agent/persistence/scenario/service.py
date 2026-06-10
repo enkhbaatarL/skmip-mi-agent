@@ -16,6 +16,25 @@ LIKELIHOOD_TO_SCORE = {
 
 
 class ScenarioService:
+    def _load_template_json_from_db(self, event_type_l2_id: int) -> list[dict[str, Any]]:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            template_json = ScenarioRepository(session=session)._load_template_json_from_db(event_type_l2_id)
+        finally:
+            session.close()
+
+        if template_json is None:
+            raise KeyError(f"scenario dimension template 없음: event_type_l2_id={event_type_l2_id}")
+
+        if not isinstance(template_json, list):
+            raise ValueError(
+                "tmm_mi_scenario_dimension_template_m.template_json must be JSON ARRAY "
+                f"(event_type_l2_id={event_type_l2_id})"
+            )
+        return template_json
+
     def load_by_group_id(self, scenario_group_id: int) -> list[dict[str, Any]]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 

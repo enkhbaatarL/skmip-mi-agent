@@ -42,7 +42,7 @@ def run_scenario_generation(state: ScenarioDesignState) -> dict[str, Any]:
         return {}
     if state.event_data is None:
         return {"status": "failure", "error": "event_data is required", "message": "event_data is required"}
-    from apps.agents.scenario_agent.services.scenario_generation_service import ScenarioGenerationService
+    from apps.agents.scenario_group_agent.services.scenario_generation_service import ScenarioGenerationService
 
     result = ScenarioGenerationService().generate_scenario_group_from_event(state.event_data)
     return {"scenario_result": result}

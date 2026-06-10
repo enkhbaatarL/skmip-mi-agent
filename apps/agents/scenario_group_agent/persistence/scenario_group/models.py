@@ -56,6 +56,8 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         UniqueConstraint("mi_event_id", name="uk_tmm_mi_scenario_group_m_01"),
         Index("idx_tmm_mi_scenario_group_m_01", "event_type_l2_id"),
         CheckConstraint("JSON_TYPE(dimension_selected) = 'ARRAY'", name="ck_tmm_mi_scenario_group_m_01"),
+        CheckConstraint("status IN ('creating','created','realized')", name="ck_tmm_mi_scenario_group_m_02"),
+        CheckConstraint("stage IN ('ready','scenario_created','scenario_validated','signpost_created','completed')", name="ck_tmm_mi_scenario_group_m_03"),
         TABLE_ARGS,
     )
 
@@ -82,6 +84,18 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     description: Mapped[str | None] = mapped_column(sa.Text(collation=BIN), nullable=True)
     dimension_selected: Mapped[Any] = mapped_column(sa.JSON, nullable=False)
     scenario_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
+    status: Mapped[str] = mapped_column(
+        sa.String(50, collation=BIN),
+        nullable=False,
+        server_default=sa.text("'creating'"),
+        comment="상태 (creating:생성중 / created:생성완료 / realized:실현)",
+    )
+    stage: Mapped[str] = mapped_column(
+        sa.String(50, collation=BIN),
+        nullable=False,
+        server_default=sa.text("'ready'"),
+        comment="단계 (ready / scenario_created / scenario_validated / signpost_created / completed)",
+    )
 
 
 class MiSnapshotModel(AuditColumnsMixin, ORMBase):
@@ -127,7 +141,6 @@ class MiScenarioSnapModel(AuditColumnsMixin, ORMBase):
     src_scenario_id: Mapped[int] = mapped_column(mysql.INTEGER(unsigned=True), nullable=False)
     dimension_values: Mapped[Any] = mapped_column(sa.JSON, nullable=False)
     probability_score: Mapped[Decimal | None] = mapped_column(mysql.DECIMAL(5, 2), nullable=True)
-    judgment_status_code: Mapped[str | None] = mapped_column(sa.String(50, collation=BIN), nullable=True)
     baseline_yn: Mapped[str] = mapped_column(sa.CHAR(1, collation=BIN), nullable=False, server_default=sa.text("'N'"))
 
 

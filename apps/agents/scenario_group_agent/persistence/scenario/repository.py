@@ -4,11 +4,21 @@ from typing import Any
 
 from sqlalchemy import select
 
-from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
+from apps.agents.scenario_group_agent.persistence.scenario.models import (
+    MiScenarioDimensionTemplateModel,
+    MiScenarioModel,
+)
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
 class ScenarioRepository(BaseSyncSQLRepository):
+    def _load_template_json_from_db(self, event_type_l2_id: int) -> Any | None:
+        stmt = select(MiScenarioDimensionTemplateModel.template_json).where(
+            MiScenarioDimensionTemplateModel.event_type_l2_id == event_type_l2_id,
+            MiScenarioDimensionTemplateModel.del_yn == "N",
+        )
+        return self.session.execute(stmt).scalar_one_or_none()
+
     def fetch_models_by_group_id(self, scenario_group_id: int) -> list[MiScenarioModel]:
         stmt = (
             select(MiScenarioModel)

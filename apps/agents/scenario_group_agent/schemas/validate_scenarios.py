@@ -8,7 +8,10 @@ from apps.agents.scenario_group_agent.schemas.common import BaseScenarioDesignOu
 
 
 class ValidateScenariosIn(BaseModel):
-    pass
+    include_details: bool = Field(
+        default=True,
+        description="Whether to include the detailed validation result in the response",
+    )
 
 
 class ValidateScenariosOut(BaseScenarioDesignOut):
