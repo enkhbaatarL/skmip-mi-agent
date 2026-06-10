@@ -13,7 +13,11 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenario_group,
     save_scenarios,
 )
-from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosIn, CreateScenariosOut
+from apps.agents.scenario_group_agent.schemas.create_scenarios import (
+    CreateScenariosData,
+    CreateScenariosIn,
+    CreateScenariosOut,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 
 
@@ -38,18 +42,24 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     return ScenarioDesignState(mi_event_id=parsed.mi_event_id, include_details=True)
 
 
-def to_output(state: dict[str, Any] | ScenarioDesignState) -> dict[str, Any]:
+def _resolve_status(raw_status: Any) -> str:
+    return "error" if raw_status in {"failure", "error"} else "success"
+
+
+def to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
     scenarios = data.get("scenarios") or []
-    return {
-        "mi_event_id": data.get("mi_event_id") or 0,
-        "scenario_group_id": data.get("scenario_group_id"),
-        "scenario_count": len(scenarios),
-        "saved_scenario_ids": data.get("saved_scenario_ids") or [],
-        "scenario_result": data.get("scenario_result"),
-        "status": data.get("status") or "success",
-        "message": data.get("message") or "",
-    }
+    return CreateScenariosOut(
+        status=_resolve_status(data.get("status")),
+        message=data.get("message") or "",
+        data=CreateScenariosData(
+            mi_event_id=data.get("mi_event_id") or 0,
+            scenario_group_id=data.get("scenario_group_id"),
+            scenario_count=len(scenarios),
+            saved_scenario_ids=data.get("saved_scenario_ids") or [],
+            scenario_result=data.get("scenario_result"),
+        ),
+    )
 
 
 def build_runnable_graph() -> Runnable:

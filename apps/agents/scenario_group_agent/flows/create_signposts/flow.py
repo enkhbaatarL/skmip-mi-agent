@@ -13,7 +13,11 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     run_signpost_generation,
     save_signposts,
 )
-from apps.agents.scenario_group_agent.schemas.create_signposts import CreateSignpostsIn, CreateSignpostsOut
+from apps.agents.scenario_group_agent.schemas.create_signposts import (
+    CreateSignpostsData,
+    CreateSignpostsIn,
+    CreateSignpostsOut,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 
 
@@ -41,16 +45,22 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     )
 
 
-def to_output(state: dict[str, Any] | ScenarioDesignState) -> dict[str, Any]:
+def _resolve_status(raw_status: Any) -> str:
+    return "error" if raw_status in {"failure", "error"} else "success"
+
+
+def to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateSignpostsOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    return {
-        "scenario_group_id": data.get("scenario_group_id") or 0,
-        "signpost_count": len(data.get("signposts") or []),
-        "saved_signpost_ids": data.get("saved_signpost_ids") or [],
-        "signpost_result": data.get("signpost_result"),
-        "status": data.get("status") or "success",
-        "message": data.get("message") or "",
-    }
+    return CreateSignpostsOut(
+        status=_resolve_status(data.get("status")),
+        message=data.get("message") or "",
+        data=CreateSignpostsData(
+            scenario_group_id=data.get("scenario_group_id") or 0,
+            signpost_count=len(data.get("signposts") or []),
+            saved_signpost_ids=data.get("saved_signpost_ids") or [],
+            signpost_result=data.get("signpost_result"),
+        ),
+    )
 
 
 def build_runnable_graph() -> Runnable:

@@ -12,7 +12,11 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     save_validation_result,
     validate_scenarios,
 )
-from apps.agents.scenario_group_agent.schemas.validate_scenarios import ValidateScenariosIn, ValidateScenariosOut
+from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
+    ValidateScenariosData,
+    ValidateScenariosIn,
+    ValidateScenariosOut,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 
 
@@ -38,18 +42,22 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     )
 
 
-def to_output(state: dict[str, Any] | ScenarioDesignState) -> dict[str, Any]:
+def _resolve_status(raw_status: Any) -> str:
+    return "error" if raw_status in {"failure", "error"} else "success"
+
+
+def to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    return {
-        "scenario_group_id": data.get("scenario_group_id") or 0,
-        "is_valid": data.get("is_valid") or False,
-        "reason": data.get("reason") or data.get("message") or "",
-        "validation_result": (
-            data.get("validation_result") if data.get("include_details", True) else None
+    return ValidateScenariosOut(
+        status=_resolve_status(data.get("status")),
+        message=data.get("message") or "",
+        data=ValidateScenariosData(
+            scenario_group_id=data.get("scenario_group_id") or 0,
+            is_valid=data.get("is_valid") or False,
+            reason=data.get("reason") or data.get("message") or "",
+            validation_result=data.get("validation_result") if data.get("include_details", True) else None,
         ),
-        "status": data.get("status") or "success",
-        "message": data.get("message") or "",
-    }
+    )
 
 
 def build_runnable_graph() -> Runnable:

@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from apps.agents.scenario_group_agent.schemas.common import BaseScenarioDesignOut
+from apps.common.values.response import CommonResponse
 
 
 class ValidateScenariosIn(BaseModel):
@@ -14,8 +14,12 @@ class ValidateScenariosIn(BaseModel):
     )
 
 
-class ValidateScenariosOut(BaseScenarioDesignOut):
+class ValidateScenariosData(BaseModel):
     scenario_group_id: int
     is_valid: bool = False
     reason: str = ""
     validation_result: dict[str, Any] | None = None
+
+
+class ValidateScenariosOut(CommonResponse):
+    data: ValidateScenariosData | None = None
