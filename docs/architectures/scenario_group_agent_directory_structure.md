@@ -28,6 +28,7 @@ skmip-mi-agent/
 apps/agents/scenario_group_agent/
 ├── __init__.py
 ├── api.py
+├── presentation.py
 ├── state.py
 ├── flows/
 │   ├── __init__.py
@@ -51,7 +52,6 @@ apps/agents/scenario_group_agent/
 │   ├── __init__.py
 │   ├── event/
 │   │   ├── __init__.py
-│   │   ├── models.py
 │   │   ├── repository.py
 │   │   └── service.py
 │   ├── scenario_group/
@@ -69,23 +69,20 @@ apps/agents/scenario_group_agent/
 │       ├── models.py
 │       ├── repository.py
 │       └── service.py
+├── subgraphs/
+│   ├── __init__.py
+│   └── scenario_generation/
+│       ├── __init__.py
+│       ├── pipeline.py
+│       ├── stages.py
+│       ├── state.py
+│       ├── subgraph_adapter.py
+│       └── subgraph_builder.py
 ├── prompts/
 │   ├── __init__.py
 │   ├── builders/
-│   │   ├── __init__.py
-│   │   ├── scenario.py
-│   │   ├── scenario_validation.py
-│   │   └── signpost.py
+│   │   └── __init__.py
 │   └── templates/
-│       ├── scenario_stage2.yaml
-│       ├── scenario_stage3.yaml
-│       ├── scenario_stage4.yaml
-│       ├── scenario_stage5.yaml
-│       ├── scenario_validation.yaml
-│       ├── signpost_stage2.yaml
-│       ├── signpost_stage3.yaml
-│       ├── signpost_stage4.yaml
-│       └── signpost_stage5.yaml
 └── schemas/
     ├── __init__.py
     ├── common.py
@@ -99,12 +96,22 @@ apps/agents/scenario_group_agent/
 
 - `api.py`
   - API endpoint 선언 및 flow 호출 진입점
+- `presentation.py`
+  - API 응답 payload 조립/정규화 helper
 - `state.py`
   - 여러 flow에서 공유하는 상위 state 타입
 - `flows/<api_name>/flow.py`
-  - API별 graph/runnable 구성
+  - API별 graph/runnable 구성 (생성 계열은 subgraph orchestration 호출)
 - `flows/<api_name>/nodes.py`
   - 해당 flow 전용 node 집합
+- `subgraphs/scenario_generation/pipeline.py`
+  - 시나리오 생성 메인 파이프라인(stage 실행 순서) 정의
+- `subgraphs/scenario_generation/stages.py`
+  - 생성 단계별 stage 함수 집합
+- `subgraphs/scenario_generation/subgraph_builder.py`
+  - 생성용 subgraph를 flow에서 사용할 runnable로 조립
+- `subgraphs/scenario_generation/subgraph_adapter.py`
+  - flow state <-> subgraph state 변환/연결
 - `persistence/<domain>/models.py`
   - ORM 모델 정의
 - `persistence/<domain>/repository.py`
@@ -112,9 +119,9 @@ apps/agents/scenario_group_agent/
 - `persistence/<domain>/service.py`
   - 저장/조회 단위 비즈니스 친화 API
 - `prompts/builders/*`
-  - 템플릿 조합 및 LLM 입력 메시지 구성
+  - 템플릿 조합 및 LLM 입력 메시지 구성(확장 포인트)
 - `prompts/templates/*`
-  - stage별 prompt YAML 템플릿
+  - stage별 prompt 템플릿 저장 위치(현재 미사용)
 - `schemas/*`
   - API request/response Pydantic schema
 
@@ -163,9 +170,11 @@ apps/agents/signpost_flow_agent/
 ```text
 apps/agents/scenario_group_agent/
 ├── api.py
+├── presentation.py
 ├── state.py
 ├── flows/
 ├── persistence/
+├── subgraphs/
 ├── prompts/
 └── schemas/
 ```
@@ -174,11 +183,11 @@ apps/agents/scenario_group_agent/
 
 ```text
 scenario_agent/services/scenario_pipeline.py
-→ scenario_group_agent/flows/create_scenarios/nodes.py
-  또는 scenario_group_agent/flows/create_scenarios/flow.py
+→ scenario_group_agent/subgraphs/scenario_generation/pipeline.py
+  + scenario_group_agent/subgraphs/scenario_generation/stages.py
 
 scenario_agent/services/scenario_generation_service.py
-→ scenario_group_agent/flows/create_scenarios/nodes.py
+→ scenario_group_agent/subgraphs/scenario_generation/*
 
 scenario_agent/services/scenario_db_service.py
 → scenario_group_agent/persistence/scenario/service.py
@@ -191,8 +200,8 @@ scenario_agent/models/scenario_models_orm.py
 → scenario_group_agent/persistence/scenario/models.py
 
 signpost_flow_agent/services/signpost_pipeline.py
-→ scenario_group_agent/flows/create_signposts/nodes.py
-  또는 scenario_group_agent/flows/create_signposts/flow.py
+→ scenario_group_agent/flows/create_signposts/flow.py
+  + scenario_group_agent/flows/create_signposts/nodes.py
 
 signpost_flow_agent/services/signpost_db_service.py
 → scenario_group_agent/persistence/signpost/service.py
@@ -207,6 +216,7 @@ signpost_flow_agent/models/signpost_models_orm.py
 ## 신규 에이전트 추가 체크리스트
 
 - API를 추가할 때 `flows/<new_flow>/flow.py`, `flows/<new_flow>/nodes.py`를 같이 만든다.
+- 생성 파이프라인 확장이 필요하면 `subgraphs/scenario_generation/`의 stage/adapter/builder를 우선 수정한다.
 - DB 저장/조회가 필요하면 먼저 `persistence/<domain>/`를 만들고 flow에서는 service만 호출한다.
 - Prompt가 필요하면 `prompts/builders/`와 `prompts/templates/`를 쌍으로 추가한다.
 - API 입출력은 `schemas/<new_api>.py`로 분리한다.
