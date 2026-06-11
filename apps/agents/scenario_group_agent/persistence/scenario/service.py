@@ -17,8 +17,13 @@ LIKELIHOOD_TO_SCORE = {
 
 
 class ScenarioService:
+    def load_dimension_template(
+        self, event_type_l2_id: int
+    ) -> list[dict[str, Any]]:
+        return self._load_template_json_from_db(event_type_l2_id)
+
     def load_pipeline_template(self, event_type_l2_id: int) -> dict[str, Any]:
-        template_json = self._load_template_json_from_db(event_type_l2_id)
+        template_json = self.load_dimension_template(event_type_l2_id)
         return self._map_template_json_to_pipeline_template(
             template_json,
             event_type_l2_id,

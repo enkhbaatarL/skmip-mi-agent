@@ -15,6 +15,7 @@ class ScenarioDesignState(BaseModel):
     event_data: dict[str, Any] | None = None
     scenario_group: dict[str, Any] | None = None
     scenarios: list[dict[str, Any]] = Field(default_factory=list)
+    dimension_template: list[dict[str, Any]] = Field(default_factory=list)
     signposts: list[dict[str, Any]] = Field(default_factory=list)
 
     scenario_result: dict[str, Any] | None = None

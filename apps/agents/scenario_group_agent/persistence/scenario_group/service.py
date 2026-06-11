@@ -134,20 +134,6 @@ class ScenarioGroupService:
             group = group_repository.fetch_by_id(scenario_group_id)
             if group is None:
                 return {"status": "failure", "message": "Scenario group not found"}
-            if int(scenario_group_payload["scenario_group_id"]) != scenario_group_id:
-                return {
-                    "status": "failure",
-                    "message": "Path and body scenarioGroupId do not match",
-                }
-            if int(scenario_group_payload["mi_event_id"]) != int(
-                group.mi_event_id
-            ) or int(scenario_group_payload["event_type_l2_id"]) != int(
-                group.event_type_l2_id
-            ):
-                return {
-                    "status": "failure",
-                    "message": "Body scenarioGroup identifiers do not match persisted group",
-                }
 
             scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
             scenarios_by_id = {

@@ -44,7 +44,7 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     )
 
 
-def _resolve_status(raw_status: Any) -> str:
+def _resolve_status(raw_status: object) -> str:
     return "error" if raw_status in {"failure", "error"} else "success"
 
 
@@ -52,6 +52,7 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosO
     data = state if isinstance(state, dict) else state.model_dump()
     status = _resolve_status(data.get("status"))
     group = data.get("scenario_group") or {}
+    validation_result = data.get("validation_result") or {}
     return ValidateScenariosOut(
         status=status,
         message=data.get("message") or "",
@@ -62,6 +63,9 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosO
                 reason=data.get("reason") or data.get("message") or "",
                 status=group.get("status") or "creating",
                 stage=group.get("stage") or "scenario_created",
+                verdict=validation_result.get("verdict") or "BLOCK",
+                summary=validation_result.get("summary") or {},
+                checks=validation_result.get("checks") or [],
             )
             if status == "success"
             else None

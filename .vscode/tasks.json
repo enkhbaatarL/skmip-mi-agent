@@ -28,9 +28,24 @@
         {
             "label": "Docker Build",
             "type": "shell",
-            "command": "docker build -f ${workspaceFolder}/Dockerfile -t skmidemoacr.azurecr.io/mi-agent-scenario:v0.0.1 ${workspaceFolder}",
+            "command": "docker build -f ${workspaceFolder}/Dockerfile -t skmidemoacr.azurecr.io/mi-agent-scenario:${input:dockerImageTag} ${workspaceFolder}",
             "problemMatcher": [],
             "group": "build"
+        },
+        {
+            "label": "Docker Push",
+            "type": "shell",
+            "command": "docker push skmidemoacr.azurecr.io/mi-agent-scenario:${input:dockerImageTag}",
+            "problemMatcher": [],
+            "group": "build"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "dockerImageTag",
+            "type": "promptString",
+            "description": "Docker image tag",
+            "default": "v0.0.2"
         }
     ]
 }

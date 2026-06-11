@@ -495,12 +495,13 @@ payload에 합쳐진다. 출력은 `is_valid`, `reason`, `validation_result`와 
 |---|---|---|---|
 | 1 | `load_scenario_group` | scenario group 조회 | group 미존재 시 `failure` |
 | 2 | `load_scenarios` | group 소속 scenarios 조회 | scenario가 없으면 `failure` |
-| 3 | `validate_scenarios` | title, dimension 값, dimension 조합 중복 검사 | 앞선 실패 시 skip |
+| 3 | `validate_scenarios` | 구조, 템플릿 값, tail, 다양성, 방향성, compatibility, MECE, 확률 범위 검사 | 앞선 실패 시 skip |
 | 4 | `save_validation_result` | scenario 판단 상태를 `검증완료` 또는 `검토필요`로 갱신 | 앞선 실패 시 skip |
 
-검증 이슈가 없으면 `is_valid=True`, `reason="Scenarios are valid"`가 된다. 이슈가 있으면
-각 이슈를 세미콜론으로 연결한 문자열이 `reason`에 들어가고, 상세 목록은
-`validation_result["issues"]`에 저장된다.
+R01~R14 중 FAIL이 있으면 `BLOCK`과 `is_valid=False`, WARN만 있으면
+`REVIEW`와 `is_valid=True`, 모두 통과하면 `PASS`가 된다. LLM compatibility
+호출 실패는 WARN으로 처리한다. 개별 결과는 `validation_result["checks"]`와 API
+응답의 `data.checks`에 저장된다.
 
 ## 세 Flow 비교
 
