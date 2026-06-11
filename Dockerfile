@@ -1,78 +1,61 @@
 ARG PLATFORM_ARCH="linux/amd64"
-FROM python:3.13-slim
+ARG BASE_IMAGE="python:3.12-slim-bookworm"
+
+FROM --platform=${PLATFORM_ARCH} ${BASE_IMAGE}
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    POETRY_HTTP_TIMEOUT=60
 
-# ✅ 컨테이너 기준 루트 디렉토리를 /app 으로 통일
-WORKDIR /app
+ARG POETRY_VERSION="2.3.2"
 
-# (선택) 빌드/런타임에 필요한 패키지가 있으면 여기에 추가
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     curl jq \
-#  && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    default-libmysqlclient-dev \
+    pkg-config \
+    vim \
+    curl \
+    yq \
+    jq \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
 
-# ✅ 1) requirements 먼저 복사해서 캐시 효율 확보
-COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --no-cache-dir "poetry==${POETRY_VERSION}" && \
+    poetry config virtualenvs.create false
 
-# ✅ 2) 의존성 설치는 root로
-RUN python -m pip install --no-cache-dir -r /app/requirements.txt
+WORKDIR /workdir
 
-# ✅ 유저 생성 + 디렉토리 권한 정리
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --only main --no-interaction --no-ansi
+
+COPY apps ./apps
+COPY main.py ./main.py
+COPY envs/config.yaml ./config.yaml
+
 RUN addgroup --gid 1000 usergroup && \
     adduser user \
-      --disabled-password \
-      --uid 1000 --gecos "" \
-      --ingroup usergroup && \
-    mkdir -p /app && \
-    chown -R user:usergroup /app && \
-    # ✅ 과거 /workdir 경로를 참조하는 코드/툴이 있어도 동작하게 호환 링크 제공
-    ln -s /app /workdir
+    --disabled-password \
+    --uid 1000 \
+    --gecos "" \
+    --ingroup usergroup && \
+    adduser user root && \
+    mkdir -p /workdir/apps && \
+    chown -R user:usergroup /workdir
 
-# ✅ 3) 소스 복사
-COPY . /app/
-
-# 런타임에서 env 파일을 “파일로 마운트”할 경우 기본 경로
-# 예) docker run -v $(pwd)/env.txt:/app/.env:ro ...
-ENV ENV_FILE_PATH="/app/.env"
-
-# ✅ GRAPH_PATH도 환경변수로 override 가능하게(원격 실행/경로 변경 대응)
-# 기본값은 /app 기준 상대경로
-ENV GRAPH_PATH="./apps/agents/mi_agent/flows/mari_agent_runnable.py:runnable_graph"
-
-# ✅ server.py 생성 (env 파일이 없어도 동작하도록)
-RUN echo 'import os' > /app/server.py && \
-    echo 'from adxp_sdk.serves.server import get_server' >> /app/server.py && \
-    echo '' >> /app/server.py && \
-    echo 'graph_path = os.getenv("GRAPH_PATH", "./apps/agents/mi_agent/flows/mari_agent_runnable.py:runnable_graph")' >> /app/server.py && \
-    echo 'env_file = os.getenv("ENV_FILE_PATH", "/app/.env")' >> /app/server.py && \
-    echo 'if not os.path.exists(env_file):' >> /app/server.py && \
-    echo '    env_file = None' >> /app/server.py && \
-    echo 'app = get_server(graph_path, env_file)' >> /app/server.py
-
-# 런타임 설정
-ENV WORKER_CLASS="uvicorn.workers.UvicornWorker" \
-    APP__HOST="0.0.0.0" \
-    APP__PORT="18080" \
+ENV APP_CONFIG="/workdir/config.yaml" \
+    APP_HOST="0.0.0.0" \
+    APP_PORT="8000" \
+    WORKER_CLASS="uvicorn.workers.UvicornWorker" \
+    GUNICORN_WORKERS="3" \
     LOG_LEVEL="info" \
     GRACEFUL_TIMEOUT="600" \
     TIMEOUT="600" \
-    KEEP_ALIVE="600" \
-    IS_DEPLOYED_APP="true" \
-    APP_MODULE="server:app"
+    KEEP_ALIVE="600"
 
-EXPOSE 18080
+
+EXPOSE 8000
 
 USER user
 
-# ✅ preload는 플래그로만 쓰고, 앱 모듈은 마지막에 전달
-CMD python -m gunicorn \
-    -k "${WORKER_CLASS}" \
-    -b "${APP__HOST}:${APP__PORT}" \
-    --log-level "${LOG_LEVEL}" \
-    --graceful-timeout "${GRACEFUL_TIMEOUT}" \
-    --timeout "${TIMEOUT}" \
-    --keep-alive "${KEEP_ALIVE}" \
-    --preload \
-    "${APP_MODULE}"
+CMD ["sh", "-c", "exec gunicorn main:app --worker-class \"${WORKER_CLASS}\" --workers \"${GUNICORN_WORKERS}\" --bind \"${APP_HOST}:${APP_PORT}\" --log-level \"${LOG_LEVEL}\" --graceful-timeout \"${GRACEFUL_TIMEOUT}\" --timeout \"${TIMEOUT}\" --keep-alive \"${KEEP_ALIVE}\" --access-logfile - --error-logfile -"]

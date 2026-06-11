@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  scenario-group-agent:
+    container_name: skmip-mi-agent
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: skmip-mi-agent:local
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../../envs/.env
+    environment:
+      METADATA_DB_HOST: host.docker.internal
+      REF_TEMPLATE_REGISTRY_PATH: /workdir/apps/common/configs/template_registry.json
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+    restart: unless-stopped

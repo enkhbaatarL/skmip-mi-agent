@@ -1,4 +1,4 @@
-"""Backwards-compatible settings exports."""
+"""Backwards-compatible settings exports. """
 
 from pydantic_settings import BaseSettings
 
