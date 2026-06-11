@@ -42,7 +42,10 @@ def build_graph() -> Runnable:
 def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     parsed = CreateScenariosIn.model_validate(payload)
     return ScenarioDesignState(
-        mi_event_id=parsed.mi_event_id, user_id=parsed.user_id, include_details=True
+        mi_event_id=parsed.mi_event_id,
+        user_id=parsed.user_id,
+        request_usr_id=parsed.request_usr_id,
+        include_details=True,
     )
 
 

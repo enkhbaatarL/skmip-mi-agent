@@ -18,6 +18,7 @@ class ScenarioGroupPayload(ApiModel):
     scenario_group_id: int
     mi_event_id: int
     event_type_l2_id: int
+    request_usr_id: int | None = None
     title: str
     summary: str | None = None
     description: str | None = None

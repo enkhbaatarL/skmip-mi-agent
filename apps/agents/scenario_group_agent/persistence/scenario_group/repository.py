@@ -114,6 +114,11 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "scenario_group_id": int(group.scenario_group_id),
             "mi_event_id": int(group.mi_event_id),
             "event_type_l2_id": int(group.event_type_l2_id),
+            "request_usr_id": (
+                int(group.request_usr_id)
+                if group.request_usr_id is not None
+                else None
+            ),
             "title": group.title,
             "summary": group.summary,
             "description": group.description,

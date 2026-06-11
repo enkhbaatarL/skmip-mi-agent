@@ -79,6 +79,11 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         nullable=False,
         comment="이벤트 유형 L2 ID",
     )
+    request_usr_id: Mapped[int | None] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        nullable=True,
+        comment="요청 사용자 ID",
+    )
     title: Mapped[str] = mapped_column(sa.String(255, collation=BIN), nullable=False)
     summary: Mapped[str | None] = mapped_column(sa.Text(collation=BIN), nullable=True)
     description: Mapped[str | None] = mapped_column(sa.Text(collation=BIN), nullable=True)

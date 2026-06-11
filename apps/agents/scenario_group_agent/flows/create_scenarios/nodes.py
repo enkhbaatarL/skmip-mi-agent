@@ -85,6 +85,7 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     payload = {
         "mi_event_id": int(state.event_data["mi_event_id"]),
         "event_type_l2_id": int(state.event_data["event_type_l2_id"]),
+        "request_usr_id": state.request_usr_id,
         "title": (
             state.event_data.get("event_title_ko")
             or f"Scenario group {state.event_data['mi_event_id']}"
