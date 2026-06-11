@@ -85,6 +85,7 @@ class ReviewContext:
     enum_index: dict[str, list[str]]
     tail_index: dict[str, str | None]
     persisted_scenario_ids: set[int]
+    persisted_scenario_id_counts: Counter[int]
 
 
 @dataclass
@@ -131,6 +132,7 @@ def build_context(
         enum_index=enum_index,
         tail_index=tail_index,
         persisted_scenario_ids=set(persisted_by_id),
+        persisted_scenario_id_counts=Counter(persisted_by_id),
     )
 
 
@@ -157,7 +159,10 @@ def _normalize_scenario(
         "impact_jkm": impact.get("jkm", persisted.get("impact_jkm")),
         "impact_ttf": impact.get("ttf", persisted.get("impact_ttf")),
         "impact_hh": impact.get("hh", persisted.get("impact_hh")),
-        "baseline_yn": row.get("baseline_yn") or persisted.get("baseline_yn"),
+        # Preserve explicitly submitted falsey values (e.g. "") so R03 can catch them.
+        "baseline_yn": row["baseline_yn"]
+        if "baseline_yn" in row
+        else persisted.get("baseline_yn"),
         "del_yn": "N",
     }
 
@@ -180,19 +185,42 @@ def _check_count(ctx: ReviewContext) -> CheckResult:
 
 def _check_group_fk(ctx: ReviewContext) -> CheckResult:
     group_id = ctx.group.get("scenario_group_id")
+    requested_ids = [scenario["scenario_id"] for scenario in ctx.scenarios]
+    requested_id_counts = Counter(requested_ids)
+    missing = sorted(
+        sid
+        for sid, count in ctx.persisted_scenario_id_counts.items()
+        if requested_id_counts.get(sid, 0) < count
+    )
+    unexpected = sorted(
+        sid
+        for sid in requested_id_counts
+        if sid not in ctx.persisted_scenario_id_counts
+    )
+    duplicated = sorted(
+        sid for sid, count in requested_id_counts.items() if count > 1
+    )
     bad = [
         _sid(scenario)
         for scenario in ctx.scenarios
         if scenario["scenario_id"] not in ctx.persisted_scenario_ids
         or scenario.get("scenario_group_id") != group_id
     ]
+    id_mismatch = bool(missing or unexpected or duplicated)
     return CheckResult(
         "R02",
         "구조",
         "모든 시나리오의 group_id 일치",
-        "PASS" if not bad else "FAIL",
-        f"그룹 id={group_id}" if not bad else f"불일치 {len(bad)}건",
-        bad,
+        "PASS" if not bad and not id_mismatch else "FAIL",
+        (
+            f"그룹 id={group_id}"
+            if not bad and not id_mismatch
+            else f"group 불일치 {len(bad)}건 / ID 누락={missing} 여분={unexpected} 중복={duplicated}"
+        ),
+        bad
+        + [f"missing:{sid}" for sid in missing]
+        + [f"unexpected:{sid}" for sid in unexpected]
+        + [f"duplicated:{sid}" for sid in duplicated],
     )
 
 
