@@ -27,8 +27,6 @@ spec:
               value: 0.0.0.0
             - name: APP_PORT
               value: "8000"
-            - name: REF_TEMPLATE_REGISTRY_PATH
-              value: /workdir/apps/common/configs/template_registry.json
           envFrom:
             - secretRef:
                 name: mi-agent-env

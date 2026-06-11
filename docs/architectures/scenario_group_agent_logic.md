@@ -128,7 +128,7 @@ ScenarioDesignState(mi_event_id=parsed.mi_event_id, include_details=True)
 |---|---|---|---|
 | 1 | `load_event` | `EventService`로 MI event 조회 | ID 누락 또는 event 미존재 시 `failure` |
 | 2 | `check_existing_scenario_group` | event에 연결된 group과 scenarios 조회 | 앞선 실패 시 skip, 기존 group 발견 시 `already_exist` |
-| 3 | `run_scenario_generation` | `ScenarioGenerationService`로 scenario group 생성 | `failure`, `already_exist`면 skip |
+| 3 | `run_scenario_generation` | scenario generation subgraph 실행 | `failure`, `already_exist`면 skip |
 | 4 | `save_scenario_group` | 생성 결과에서 선택 차원과 scenario 수를 추출해 group 저장 | 생성 결과 누락 시 `failure` |
 | 5 | `save_scenarios` | scenarios 저장, group의 scenario count 갱신, 저장 결과 재조회 | group ID 또는 생성 결과 누락 시 `failure` |
 
@@ -137,34 +137,31 @@ ScenarioDesignState(mi_event_id=parsed.mi_event_id, include_details=True)
 
 ### `run_scenario_generation` 상세
 
-이 node는 직접 prompt를 조립하지 않고
-`ScenarioGenerationService.generate_scenario_group_from_event(state.event_data)`에
-전체 생성 작업을 위임한다.
+이 단계에는
+`subgraphs/scenario_generation/subgraph_builder.py`에서 컴파일한
+`scenario_generation_runnable`이 직접 등록된다. 단일 node 함수가 pipeline을 호출하는
+방식이 아니라, 상위 graph 안에서 5-stage subgraph가 하나의 node처럼 실행된다.
 
 ```python
-def run_scenario_generation(state: ScenarioDesignState) -> dict[str, Any]:
-    if state.status in {"failure", "already_exist"}:
-        return {}
-    if state.event_data is None:
-        return {
-            "status": "failure",
-            "error": "event_data is required",
-            "message": "event_data is required",
-        }
-
-    result = ScenarioGenerationService().generate_scenario_group_from_event(
-        state.event_data
-    )
-    return {"scenario_result": result}
+builder.add_node(
+    "run_scenario_generation",
+    scenario_generation_runnable,
+)
 ```
 
-node 자체의 책임은 다음 세 가지로 제한된다.
+subgraph adapter의 책임은 다음과 같다.
 
 1. 앞선 node가 설정한 `failure` 또는 `already_exist` 상태를 확인한다.
-2. `event_data`가 존재하는지 방어적으로 검사한다.
-3. service의 전체 결과를 `state.scenario_result`에 저장한다.
+2. `event_data.event_type_l2_id`로 DB template을 조회하고 pipeline 형식으로 변환한다.
+3. subgraph 결과를 상위 state의 `scenario_result`에 반환한다.
 
 실제 생성은 다음 5-stage pipeline으로 실행된다.
+
+Dimension template은
+`tmm_mi_scenario_dimension_template_m.template_json`에서 조회한다. 현재 DB
+계약의 `dim_key`, `label`, `display_order`, `value_enums`를 사용하며 enum ID는
+`{dim_key}_v{순번}`으로 생성한다. 파일 기반 template registry와 전역 registry
+초기화는 사용하지 않는다. DB 계약에 없는 compatibility rule은 적용하지 않는다.
 
 ```mermaid
 flowchart LR
@@ -187,14 +184,15 @@ flowchart LR
 - `C4_related_events`: 현재는 빈 목록
 
 핵심 driver는 `key_bullets`의 첫 항목을 우선 사용하고, 없으면
-`detail_analysis`의 첫 문장을 사용한다. event type은
-`level_1_code::level_2_code` 형식의 template key로 변환된다.
+`detail_analysis`의 첫 문장을 사용한다. event type은 결과 메타데이터와 LLM
+prompt를 위해 `level_1_code::level_2_code` 형식으로 변환된다.
 
 #### Template 조회
 
-`_resolve_template()`은 Stage 1에서 만든 `event_type_l1_l2`를 key로 template registry를
-조회한다. 일치하는 template이 없으면 `KeyError`가 발생하며 node 내부에서 별도로
-처리하지 않으므로 graph 호출까지 예외가 전파된다.
+`ScenarioService`는 event의 `event_type_l2_id`로
+`ScenarioRepository._load_template_json_from_db()`를 호출한다. 활성 DB template이
+없으면 `KeyError`가 발생하며, 빈 배열이나 필수 dimension/value 구조가 잘못되면
+`ValueError`가 발생한다.
 
 #### Stage 2: Dimension 선택
 
@@ -219,13 +217,14 @@ flowchart LR
 
 #### Stage 4: Scenario 합성
 
-`stage4_synthesize_scenarios()`은 Stage 3의 enum들로 Cartesian product를 만들고,
-template compatibility rule을 적용한 뒤 목표 개수만 선택한다.
+`stage4_synthesize_scenarios()`은 Stage 3의 enum들로 Cartesian product를 만들고
+목표 개수만 선택한다. 파이프라인은 compatibility rule 처리 기능을 유지하지만 현재
+DB template 계약에는 해당 규칙이 없어 빈 목록으로 실행된다.
 
 조합 선택은 baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 dimension 값의
 Hamming distance가 큰 조합을 우선 선택해 다양성을 확보한다. 기본 목표 개수는
-`REF_TARGET_SCENARIOS`이며 기본값은 6이다. compatibility rule을 통과한 조합이 없으면
-Cartesian 결과 중 첫 조합을 강제로 사용한다.
+`REF_TARGET_SCENARIOS`이며 기본값은 6이다. 현재 DB 계약에서는 모든 Cartesian 조합이
+compatibility 검사를 통과한다.
 
 선택한 각 조합에 대해 LLM이 다음 값을 생성한다.
 

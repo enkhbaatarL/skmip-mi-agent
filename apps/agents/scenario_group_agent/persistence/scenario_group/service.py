@@ -87,7 +87,7 @@ class ScenarioGroupService:
         *,
         status: str | None = None,
         stage: str | None = None,
-        user_id: str | None = None,
+        user_id: int | None = None,
     ) -> dict[str, Any] | None:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -104,7 +104,7 @@ class ScenarioGroupService:
                 payload["status"] = status
             if stage is not None:
                 payload["stage"] = stage
-            if user_id:
+            if user_id is not None:
                 payload["mod_usr_logn_id"] = user_id
             repository.update_group(group, payload)
             session.commit()

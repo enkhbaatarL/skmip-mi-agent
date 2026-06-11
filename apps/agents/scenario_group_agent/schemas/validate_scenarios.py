@@ -9,7 +9,7 @@ from apps.common.values.response import CommonResponse
 
 
 class ValidateScenariosIn(ApiModel):
-    user_id: str
+    user_id: int
     scenario_group: ScenarioGroupPayload
     table: ScenarioTable
 

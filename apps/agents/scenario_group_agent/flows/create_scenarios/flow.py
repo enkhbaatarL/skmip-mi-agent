@@ -9,7 +9,6 @@ from langgraph.graph import StateGraph
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     check_existing_scenario_group,
     load_event,
-    run_scenario_generation,
     save_scenario_group,
     save_scenarios,
 )
@@ -21,13 +20,16 @@ from apps.agents.scenario_group_agent.schemas.create_scenarios import (
     CreateScenariosOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_builder import (
+    scenario_generation_runnable,
+)
 
 
 def build_graph() -> Runnable:
     builder = StateGraph(ScenarioDesignState)
     builder.add_node("load_event", load_event)
     builder.add_node("check_existing_scenario_group", check_existing_scenario_group)
-    builder.add_node("run_scenario_generation", run_scenario_generation)
+    builder.add_node("run_scenario_generation", scenario_generation_runnable)
     builder.add_node("save_scenario_group", save_scenario_group)
     builder.add_node("save_scenarios", save_scenarios)
     builder.set_entry_point("load_event")
@@ -44,12 +46,11 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     return ScenarioDesignState(
         mi_event_id=parsed.mi_event_id,
         user_id=parsed.user_id,
-        request_usr_id=parsed.request_usr_id,
         include_details=True,
     )
 
 
-def _resolve_status(raw_status: Any) -> str:
+def _resolve_status(raw_status: object) -> str:
     return "error" if raw_status in {"failure", "error"} else "success"
 
 

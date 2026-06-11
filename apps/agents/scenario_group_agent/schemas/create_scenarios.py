@@ -11,7 +11,7 @@ from apps.common.values.response import CommonResponse
 
 class CreateScenariosIn(ApiModel):
     mi_event_id: int = Field(description="MI Event ID to generate a scenario group for")
-    user_id: str
+    user_id: int
 
 
 class CreateScenariosOut(CommonResponse):

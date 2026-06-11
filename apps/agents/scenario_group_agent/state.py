@@ -9,8 +9,7 @@ from pydantic import BaseModel, Field
 class ScenarioDesignState(BaseModel):
     mi_event_id: int | None = None
     scenario_group_id: int | None = None
-    user_id: str | None = None
-    request_usr_id: int | None = None
+    user_id: int | None = None
     include_details: bool = False
 
     event_data: dict[str, Any] | None = None

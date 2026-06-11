@@ -87,7 +87,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
             "message": "Event not found",
         }
 
-    from apps.agents.scenario_agent.services.scenario_pipeline import (
+    from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
         stage1_build_context_pack,
     )
     from apps.agents.signpost_flow_agent.services.signpost_pipeline import (

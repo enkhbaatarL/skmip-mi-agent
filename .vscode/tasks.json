@@ -28,7 +28,7 @@
         {
             "label": "Docker Build",
             "type": "shell",
-            "command": "docker build -f ${workspaceFolder}/Dockerfile -t skmip-mi-agent:local ${workspaceFolder}",
+            "command": "docker build -f ${workspaceFolder}/Dockerfile -t skmidemoacr.azurecr.io/mi-agent-scenario:v0.0.1 ${workspaceFolder}",
             "problemMatcher": [],
             "group": "build"
         }

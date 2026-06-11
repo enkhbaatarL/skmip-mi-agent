@@ -13,7 +13,6 @@ services:
       - ../../envs/.env
     environment:
       METADATA_DB_HOST: host.docker.internal
-      REF_TEMPLATE_REGISTRY_PATH: /workdir/apps/common/configs/template_registry.json
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
     restart: unless-stopped

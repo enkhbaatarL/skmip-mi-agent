@@ -8,7 +8,7 @@ from apps.common.values.response import CommonResponse
 
 
 class CreateSignpostsIn(ApiModel):
-    user_id: str | None = None
+    user_id: int | None = None
 
 
 class CreateSignpostsOut(CommonResponse):

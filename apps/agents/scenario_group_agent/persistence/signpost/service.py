@@ -45,7 +45,7 @@ class SignpostService:
     def save_generated_signposts(
         self,
         signposts: list[dict[str, Any]],
-        user_id: str | None = None,
+        user_id: int | None = None,
     ) -> list[int]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -73,7 +73,7 @@ class SignpostService:
                     "signpost_reason": rationale,
                     "display_order": display_order_by_scenario[scenario_id],
                 }
-                if user_id:
+                if user_id is not None:
                     payload["crt_usr_logn_id"] = user_id
                     payload["mod_usr_logn_id"] = user_id
                 saved_ids.append(repository.insert_signpost(payload))

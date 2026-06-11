@@ -17,6 +17,13 @@ LIKELIHOOD_TO_SCORE = {
 
 
 class ScenarioService:
+    def load_pipeline_template(self, event_type_l2_id: int) -> dict[str, Any]:
+        template_json = self._load_template_json_from_db(event_type_l2_id)
+        return self._map_template_json_to_pipeline_template(
+            template_json,
+            event_type_l2_id,
+        )
+
     def _load_template_json_from_db(
         self, event_type_l2_id: int
     ) -> list[dict[str, Any]]:
@@ -44,6 +51,110 @@ class ScenarioService:
             )
         return template_json
 
+    def _map_template_json_to_pipeline_template(
+        self,
+        template_json: list[dict[str, Any]],
+        event_type_l2_id: int,
+    ) -> dict[str, Any]:
+        if not template_json:
+            raise ValueError(
+                f"template_json is empty: event_type_l2_id={event_type_l2_id}"
+            )
+
+        ordered_items = sorted(
+            template_json,
+            key=self._template_display_order,
+        )
+        dimensions = [
+            self._map_template_dimension(item, event_type_l2_id, index)
+            for index, item in enumerate(ordered_items, start=1)
+        ]
+        if len(dimensions) < 3:
+            raise ValueError(
+                "template_json must include at least three dimensions: "
+                f"event_type_l2_id={event_type_l2_id}"
+            )
+        dimension_ids = [dimension["dimension_id"] for dimension in dimensions]
+        if len(set(dimension_ids)) != len(dimension_ids):
+            raise ValueError(
+                "template_json contains duplicate dim_key: "
+                f"event_type_l2_id={event_type_l2_id}"
+            )
+
+        return {
+            "label_ko": f"event_type_l2_id={event_type_l2_id}",
+            "template_dimensions_total": len(dimensions),
+            "dimensions": dimensions,
+            "compatibility_rules": [],
+        }
+
+    def _map_template_dimension(
+        self,
+        raw_dimension: dict[str, Any],
+        event_type_l2_id: int,
+        index: int,
+    ) -> dict[str, Any]:
+        if not isinstance(raw_dimension, dict):
+            raise ValueError(
+                "template_json item must be object: "
+                f"event_type_l2_id={event_type_l2_id}, index={index}"
+            )
+
+        dimension_id = str(raw_dimension.get("dim_key", "")).strip()
+        if not dimension_id:
+            raise ValueError(
+                "dim_key is required: "
+                f"event_type_l2_id={event_type_l2_id}, index={index}"
+            )
+
+        label = str(raw_dimension.get("label", "")).strip() or dimension_id
+        raw_value_enums = raw_dimension.get("value_enums") or []
+        if not isinstance(raw_value_enums, list):
+            raise ValueError(
+                "value_enums must be array: "
+                f"event_type_l2_id={event_type_l2_id}, dim_key={dimension_id}"
+            )
+
+        value_enums = [
+            str(value).strip() for value in raw_value_enums if str(value).strip()
+        ]
+        if len(value_enums) < 2:
+            raise ValueError(
+                "value_enums must include at least two non-empty values: "
+                f"event_type_l2_id={event_type_l2_id}, dim_key={dimension_id}"
+            )
+
+        return {
+            "dimension_id": dimension_id,
+            "label_ko": label,
+            "description": label,
+            "enum": self._build_enum_list(value_enums, dimension_id),
+        }
+
+    def _template_display_order(self, item: dict[str, Any]) -> int:
+        if not isinstance(item, dict):
+            return 999999
+        try:
+            return int(item.get("display_order", 999999))
+        except (TypeError, ValueError):
+            return 999999
+
+    def _build_enum_list(
+        self,
+        value_enums: list[str],
+        dimension_id: str,
+    ) -> list[dict[str, Any]]:
+        total = len(value_enums)
+        tail_threshold = total if total < 5 else total - 1
+        return [
+            {
+                "id": f"{dimension_id}_v{index}",
+                "label": enum_label,
+                "tail": index >= tail_threshold,
+            }
+            for index, enum_label in enumerate(value_enums, start=1)
+        ]
+
     def load_by_group_id(self, scenario_group_id: int) -> list[dict[str, Any]]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -63,7 +174,7 @@ class ScenarioService:
         self,
         scenario_group_id: int,
         scenario_result: dict[str, Any],
-        user_id: str,
+        user_id: int,
     ) -> list[int]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
