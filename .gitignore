@@ -109,3 +109,4 @@ mysql_data/
 local/
 .omc/
 skmip-mi-agent.code-workspace
+.cursor/rules/
