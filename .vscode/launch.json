@@ -2,32 +2,75 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "[🌱]adxp-cli run (single)",
+      "name": "[🚀]launcher: poetry install + uvicorn",
       "type": "debugpy",
       "request": "launch",
-      "module": "adxp_cli.cli",
+      "python": "${command:python.interpreterPath}",
+      "module": "uvicorn",
       "args": [
-        "agent",
-        "run",
+        "main:app",
         "--host",
-        "0.0.0.0",
+        "127.0.0.1",
         "--port",
-        "3002",
-        "--graph_yaml",
-        "./graph.yaml"
+        "8000"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "redirectOutput": true,
-      "outputCapture": "std",
-      "subProcess": true,
-      "justMyCode": false,
+      "console": "internalConsole",
+      "preLaunchTask": "Poetry Install",
+      "envFile": "${workspaceFolder}/envs/.env",
       "env": {
-        "PYTHONUNBUFFERED": "1",
-        "BOOT_TRACE": "1",
-        "PYTHONPATH": "${workspaceFolder}/apps:${workspaceFolder}"
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
+
       },
-      "logToFile": true
+      "justMyCode": false
+    },
+    {
+      "name": "[🌱]backend: uvicorn (main.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${command:python.interpreterPath}",
+      "module": "uvicorn",
+      "args": [
+        "main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "envFile": "${workspaceFolder}/envs/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "[🌱🌱]backend: gunicorn (main.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${command:python.interpreterPath}",
+      "module": "gunicorn",
+      "args": [
+        "main:app",
+        "-k=uvicorn.workers.UvicornWorker",
+        "--bind",
+        "127.0.0.1:8000",
+        "--timeout",
+        "3600",
+        "--keep-alive",
+        "3600"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "envFile": "${workspaceFolder}/envs/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
+      },
+      "justMyCode": false
     }
   ]
 }

@@ -574,6 +574,7 @@ CREATE TABLE `tmm_mi_scenario_group_m` (
     `scenario_group_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시나리오 그룹 ID',
     `mi_event_id` INT UNSIGNED NOT NULL COMMENT 'MI 이벤트 ID (1:1 기준 키)',
     `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 ID (분류 기준)',
+    `request_usr_id` INT UNSIGNED NULL COMMENT '요청 사용자 ID',
     `title` VARCHAR(255) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 그룹명',
     `summary` TEXT COLLATE utf8mb4_bin NULL COMMENT '시나리오 그룹 요약',
     `description` TEXT COLLATE utf8mb4_bin NULL COMMENT '시나리오 그룹 설명',

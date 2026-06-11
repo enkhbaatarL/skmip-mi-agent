@@ -1,0 +1,10 @@
+{
+    "mi_event_id": "ev_demo_001",
+    "event_type": {
+      "level_1_code": "geopolitical_risk",
+      "level_2_code": "war_military_conflict"
+    },
+    "event_title_ko": "미국-이란 전쟁 발발",
+    "one_line_summary": "전쟁 발발로 LNG 공급 불확실성이 확대됨",
+    "detail_analysis": "호르무즈 해협 통항 리스크 및 제재 확장 가능성 증대"
+  }

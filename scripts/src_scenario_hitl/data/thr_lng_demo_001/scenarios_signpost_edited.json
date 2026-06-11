@@ -1,0 +1,784 @@
+{
+  "scenario_group_id": "sg_미국_이란_전쟁_발발_2026_05_26",
+  "created_at": "2026-05-26T06:58:17Z",
+  "stage1_context_pack": {
+    "C1_base_event": {
+      "event_id": "ev_demo_001",
+      "title": "미국-이란 전쟁 발발",
+      "event_type_l1_l2": "geopolitical_risk::war_military_conflict",
+      "summary": "전쟁 발발로 LNG 공급 불확실성이 확대됨",
+      "driver": "호르무즈 해협 통항 리스크 및 제재 확장 가능성 증대"
+    },
+    "C2_linked_records": {
+      "window_days": 30,
+      "records": []
+    },
+    "C3_historical_analogs": [],
+    "C4_related_events": []
+  },
+  "stage2_dimension_selection": {
+    "template_id": "geopolitical_risk::war_military_conflict",
+    "template_dimensions_total": 8,
+    "selected_dimensions": [
+      {
+        "dimension_id": "conflict_duration",
+        "rationale": "(c) 충돌 지속 기간은 호르무즈 통항 리스크와 LNG 공급 불확실성이 유지되는 기간을 좌우하는 핵심 경로입니다."
+      },
+      {
+        "dimension_id": "escalation_level",
+        "rationale": "(a) 본문에 미국-이란 전쟁 발발이 직접 제시되어 충돌 강도와 형태가 주요 분기축입니다."
+      },
+      {
+        "dimension_id": "strait_shipping_impact",
+        "rationale": "(a)(c) 본문에 호르무즈 해협 통항 리스크가 직접 언급되며 LNG 물동량·수급 충격 경로와 강하게 연결됩니다."
+      },
+      {
+        "dimension_id": "risk_premium",
+        "rationale": "(c) 지정학적 전쟁 리스크와 해협 통항 불확실성은 JKM/TTF LNG 가격 프리미엄으로 즉시 전이될 수 있습니다."
+      },
+      {
+        "dimension_id": "sanctions_scope",
+        "rationale": "(a)(c) 본문에 제재 확장 가능성이 직접 언급되며 거래·보험·금융 제약을 통해 LNG 수급과 물동량에 영향을 줍니다."
+      }
+    ],
+    "excluded_dimensions": [
+      {
+        "dimension_id": "lng_facility_damage",
+        "reason": "LNG 액화·저장·항만 시설의 물리적 피해에 대한 현 단계 시그널 없음."
+      },
+      {
+        "dimension_id": "crude_disruption",
+        "reason": "원유 공급 차질은 Base Event의 LNG 분기 초점과 직접 관련 부재."
+      },
+      {
+        "dimension_id": "supply_response",
+        "reason": "SPR·OPEC+ 증산 등 공급 측 완화 대응에 대한 현 단계 시그널 없음."
+      }
+    ]
+  },
+  "stage3_value_selection": {
+    "per_dimension": [
+      {
+        "dimension_id": "conflict_duration",
+        "template_enum_full": [
+          "1M_under",
+          "1_3M",
+          "3_6M",
+          "6_12M",
+          "1Y_plus"
+        ],
+        "selected_enum": [
+          "1M_under",
+          "1_3M",
+          "3_6M",
+          "1Y_plus"
+        ],
+        "tail_risk_kept": "1Y_plus"
+      },
+      {
+        "dimension_id": "escalation_level",
+        "template_enum_full": [
+          "diplomatic",
+          "proxy_limited",
+          "regional_conventional",
+          "high_intensity",
+          "existential"
+        ],
+        "selected_enum": [
+          "proxy_limited",
+          "regional_conventional",
+          "high_intensity",
+          "existential"
+        ],
+        "tail_risk_kept": "existential"
+      },
+      {
+        "dimension_id": "strait_shipping_impact",
+        "template_enum_full": [
+          "none",
+          "intermittent",
+          "partial_blockade",
+          "full_blockade",
+          "prolonged_closure"
+        ],
+        "selected_enum": [
+          "intermittent",
+          "partial_blockade",
+          "full_blockade",
+          "prolonged_closure"
+        ],
+        "tail_risk_kept": "prolonged_closure"
+      },
+      {
+        "dimension_id": "risk_premium",
+        "template_enum_full": [
+          "flat",
+          "low",
+          "mid",
+          "high",
+          "extreme"
+        ],
+        "selected_enum": [
+          "low",
+          "mid",
+          "high",
+          "extreme"
+        ],
+        "tail_risk_kept": "extreme"
+      },
+      {
+        "dimension_id": "sanctions_scope",
+        "template_enum_full": [
+          "none",
+          "bilateral",
+          "multilateral",
+          "secondary",
+          "comprehensive"
+        ],
+        "selected_enum": [
+          "bilateral",
+          "multilateral",
+          "secondary",
+          "comprehensive"
+        ],
+        "tail_risk_kept": "secondary"
+      }
+    ]
+  },
+  "stage4_scenario_synthesis": {
+    "cartesian_total": 1024,
+    "filtered_by_compatibility": 768,
+    "scenarios": [
+      {
+        "scenario_id": "S_01",
+        "title": "1개월 내 제한 충돌, 간헐적 통항 차질에 따른 단기 프리미엄",
+        "dimension_values": {
+          "conflict_duration": "1M_under",
+          "escalation_level": "proxy_limited",
+          "strait_shipping_impact": "intermittent",
+          "risk_premium": "mid",
+          "sanctions_scope": "bilateral"
+        },
+        "description": "미국과 이란의 충돌은 1개월 미만의 제한적 대리전 양상으로 관리되는 시나리오다. 호르무즈 해협 통항은 전면 중단까지 확대되기보다는 간헐적 지연과 보험료 상승을 중심으로 차질이 나타난다. 제재는 양자 제한 제재에 머물러 LNG 실물 흐름을 구조적으로 막기보다는 단기적인 공급 불확실성을 키우는 정도에 그친다. 이에 따라 브렌트유와 주요 LNG 가격은 급등보다는 단기 리스크 프리미엄을 반영해 완만하게 상승한 뒤 점차 진정될 가능성이 크다.",
+        "derivation_rationale": "충돌 지속 기간이 1개월 미만이고 에스컬레이션 강도도 대리전·제한 충돌에 머무는 점을 반영한 시나리오다. 주요 해협 통항 영향이 간헐적 차질에 그치고 제재 범위도 양자 제한 제재로 제한되기 때문에, 공급 차질 우려는 커지지만 구조적 단절 가능성은 낮다. LNG 시장에는 약 $3~5/MMBtu 수준의 지정학 리스크 프리미엄이 붙으며, 원유와 LNG 가격 모두 완만한 상승 압력을 받는 것으로 해석된다.",
+        "price_direction": {
+          "brent": "mild_bull",
+          "jkm": "mild_bull",
+          "ttf": "mild_bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S01_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "UKMTO가 호르무즈 해협 인근 선박 통항 지연 경보를 발령",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "호르무즈 인근 통항 지연 경보는 전면 봉쇄가 아닌 간헐적 차질 가능성을 보여주는 분명한 초기 신호다. 실제 물류 지연 여부는 추가 확인이 필요하지만 시나리오의 통항 차질 방향을 보강한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "UKMTO 경보 발령",
+              "호르무즈 해협 통항 지연",
+              "Strait of Hormuz 선박 대기"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Lloyd's Market Association이 걸프 해역 전쟁위험 보험 할증률을 상향",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "보험 할증률 상승은 선박 운항 리스크 프리미엄 확대를 시사하지만, 실물 공급 차질을 직접 증명하지는 않는다. 단기 프리미엄 형성의 정황적 근거로 시나리오를 지지한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Lloyd's Market Association 할증률 상향",
+              "Gulf 전쟁위험 보험료 인상",
+              "war risk premium 상승",
+              "호르무즈 해역 보험료 급등"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 재무부가 이란 관련 추가 양자 제재 명단을 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "추가 제재가 양자 차원에 머문다면 제재 범위가 제한적이라는 시나리오와 부합한다. 다만 향후 다자·광범위 제재로 확대될 수 있어 확정 신호보다는 강한 초기 신호로 평가한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "미국 재무부 제재 명단 발표",
+              "US Treasury 이란 제재 추가",
+              "OFAC 제재 대상 지정",
+              "Iran 양자 제재 확대"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "QatarEnergy가 Ras Laffan LNG 선적 중단 없이 일부 지연을 공지",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "핵심 LNG 공급원의 선적이 중단되지 않고 일부 지연에 그쳤다는 공지는 ‘전면 중단이 아닌 간헐적 차질’이라는 시나리오를 직접 확인한다. 실물 흐름이 유지된다는 점에서 realized 신호에 가깝다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "QatarEnergy 선적 지연 공지",
+              "Ras Laffan LNG 일부 지연",
+              "카타르 LNG 선적 중단 없음",
+              "QatarEnergy 선적 지연"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S01_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Platts JKM 일간 평가가격이 전쟁 발발 전 대비 5~15% 상승",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "JKM의 5~15% 상승은 급등이 아니라 단기 리스크 프리미엄을 반영한 완만한 가격 반응에 해당한다. 시나리오의 가격 경로를 직접 검증하는 결정적 관측이다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Platts JKM 평가가격 상승",
+              "JKM 5~15% 상승",
+              "LNG spot price premium 반영",
+              "전쟁 발발 후 JKM 급등"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_02",
+        "title": "3~6개월 생존전 양상과 장기 폐쇄가 부르는 극단적 공급 위기",
+        "dimension_values": {
+          "conflict_duration": "3_6M",
+          "escalation_level": "existential",
+          "strait_shipping_impact": "prolonged_closure",
+          "risk_premium": "high",
+          "sanctions_scope": "comprehensive"
+        },
+        "description": "충돌은 3~6개월 동안 이어지며, 양측이 물러서기 어려운 전면전·존재 위협의 양상으로 격화된다. 호르무즈 해협이 장기 폐쇄되면서 중동산 LNG와 원유 수출의 핵심 통로가 사실상 마비된다. 여기에 전면적 제재가 더해져 선박 운항, 금융 결제, 보험, 에너지 거래 전반에서 정상적인 계약 이행이 크게 어려워진다. 시장은 대체 물량 확보 경쟁, 비축 수요 확대, 강제적인 수요 위축 가능성을 동시에 반영하며 브렌트유와 JKM, TTF 가격 모두 강한 상승 압력을 받는다.",
+        "derivation_rationale": "이 시나리오는 충돌 지속 기간이 3~6개월로 길어지고, 에스컬레이션 강도가 전면전·존재 위협 수준까지 높아지는 경우를 전제로 한다. 주요 해협 통항 영향이 장기 폐쇄에 이르고 제재 범위도 전면적 제재로 확대되면서, 물리적 공급 차질과 금융·물류 차단이 동시에 발생한다. LNG 시장에는 $5~10/MMBtu 수준의 지정학 리스크 프리미엄이 붙으며, 극단적인 공급 위기와 가격 급등 가능성이 부각된다.",
+        "price_direction": {
+          "brent": "strong_bull",
+          "jkm": "strong_bull",
+          "ttf": "strong_bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S02_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "UKMTO가 호르무즈 해협 통항 중단 경보를 30일 이상 유지한다.",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "30일 이상 통항 중단 경보가 유지되면 ‘장기 폐쇄’와 해상 물류 마비가 사실상 관측된 것으로, 시나리오의 핵심 전제인 호르무즈 해협 장기 차질을 직접 검증한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "UKMTO 호르무즈 통항 중단 경보 유지",
+              "Strait of Hormuz transit warning extended",
+              "영국 해사무역기구 30일 이상 경보 지속",
+              "호르무즈 해협 선박 운항 중단 권고"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "QatarEnergy가 Ras Laffan LNG 수출 화물에 불가항력을 선언한다.",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "카타르 핵심 LNG 수출기지의 불가항력 선언은 중동산 LNG 공급 차질이 계약 이행 불능 단계로 현실화됐음을 보여주는 결정적 신호다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "QatarEnergy Ras Laffan LNG 불가항력 선언",
+              "Ras Laffan 수출 화물 선적 지연",
+              "카타르 LNG cargo force majeure 발동",
+              "QatarEnergy 장기공급계약 이행 중단 통보"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Oman LNG가 Qalhat 터미널 LNG 선적 중단을 공식 발표한다.",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "오만 LNG 선적 중단은 호르무즈·페르시아만 인근 LNG 물류 차질을 강하게 보강하지만, 단일 터미널 이슈일 가능성도 있어 전면적 장기 폐쇄의 확정 신호보다는 강한 초기 신호로 본다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Oman LNG Qalhat 터미널 선적 중단 발표",
+              "Qalhat LNG export loading suspended",
+              "오만 LNG 공식 선적 차질 공지",
+              "Oman LNG cargo lifting 중단 공식화"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 재무부 OFAC가 이란 에너지·해운·금융 부문 포괄적 2차 제재를 발표한다.",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "에너지·해운·금융을 포괄하는 2차 제재는 선박 운항, 결제, 보험, 거래 전반의 정상 이행을 막는 시나리오의 제재 축이 실제 발동됐음을 직접 입증한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "OFAC 이란 에너지 해운 금융 2차 제재 발표",
+              "U.S. Treasury Iran secondary sanctions expanded",
+              "미국 재무부 포괄 제재 지정 발표",
+              "이란 원유 LNG 운송 결제 제재 강화"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S02_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Lloyd’s Market Association Joint War Committee가 페르시아만·호르무즈 해협을 고위험 항행구역으로 확대 지정한다.",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "고위험 항행구역 확대는 보험료와 선박 기피를 통해 공급 리스크 프리미엄을 크게 높이는 강한 초기 신호다. 다만 실제 장기 폐쇄나 수출 중단 자체를 직접 증명하지는 않는다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Lloyd’s Joint War Committee 호르무즈 고위험 지정",
+              "LMA JWC Persian Gulf listed area 확대",
+              "페르시아만 전쟁위험 항행구역 지정",
+              "호르무즈 해협 war risk area 확대 발표"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_03",
+        "title": "단기 제한전이나 부분 봉쇄와 2차 제재가 가격을 끌어올리는 국면",
+        "dimension_values": {
+          "conflict_duration": "1M_under",
+          "escalation_level": "proxy_limited",
+          "strait_shipping_impact": "partial_blockade",
+          "risk_premium": "mid",
+          "sanctions_scope": "secondary"
+        },
+        "description": "충돌은 1개월 미만의 대리전·제한 충돌 수준에 머물 가능성이 크다. 그러나 호르무즈 해협에서 부분 봉쇄가 발생하면서 일부 LNG와 원유 선적 일정에 차질이 생긴다. 여기에 2차 제재까지 포함되면서 직접 당사자가 아닌 거래자들도 제재 리스크를 피하려는 움직임을 강화한다. 시장은 짧은 충돌 기간에도 물류 병목과 제재 회피 비용을 반영해 브렌트유와 JKM 가격의 상승 압력을 크게 보고, TTF 역시 완만한 상승세를 보일 것으로 예상한다.",
+        "derivation_rationale": "이 시나리오는 충돌 지속 기간이 1개월 미만이고 에스컬레이션 강도는 대리전·제한 충돌에 그치는 경우를 전제로 한다. 다만 주요 해협 통항 영향이 부분 봉쇄로 나타나고 제재 범위가 2차 제재까지 확대되면서 공급 불확실성이 커진다. 이에 따라 LNG 시장에는 $3~5/MMBtu 수준의 지정학 리스크 프리미엄이 반영될 수 있으며, 단기 제한전임에도 에너지 가격 전반에 상승 압력이 형성된다.",
+        "price_direction": {
+          "brent": "bull",
+          "jkm": "bull",
+          "ttf": "mild_bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S03_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "UKMTO가 호르무즈 해협 인근 상선 통항 제한 경보를 발령",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "공식 해상안전 경보는 호르무즈 통항 리스크와 부분 봉쇄 가능성을 분명히 높이는 초기 신호다. 다만 실제 선적 차질이나 봉쇄 실행 자체를 직접 입증하진 않는다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "UKMTO 경보 발령",
+              "호르무즈 해협 통항 제한",
+              "상선 운항 주의 권고",
+              "Hormuz Strait 항행 위험 상승"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "QatarEnergy가 Ras Laffan LNG 카고 선적 일정 지연을 구매자에게 통보",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "카타르 LNG의 핵심 선적지에서 실제 카고 지연 통보가 나온 것은 LNG 물류 병목이 현실화됐다는 직접 증거다. 시나리오의 ‘부분 봉쇄로 인한 일부 LNG 선적 차질’을 강하게 검증한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "QatarEnergy 선적 지연 통보",
+              "Ras Laffan LNG 카고 지연",
+              "LNG 구매자 납기 차질",
+              "카타르 LNG 선적 일정 변경"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미 재무부 OFAC가 이란 에너지 거래 관련 외국 선사·트레이더를 2차 제재 명단에 추가",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "외국 선사·트레이더가 2차 제재 명단에 오른 것은 제재 범위 확대가 실제 집행 단계에 들어갔음을 보여준다. 비당사자 거래자들의 회피 행동과 비용 상승이라는 시나리오 핵심 경로를 직접 뒷받침한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "OFAC 2차 제재 명단 추가",
+              "미 재무부 이란 에너지 거래 제재",
+              "외국 선사 제재 지정",
+              "트레이더 제재 리스크 확대"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Lloyd’s Market Association이 호르무즈 해협 전쟁위험 해상보험 지정 구역을 확대",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "전쟁위험 보험 구역 확대는 운항 비용과 리스크 프리미엄 상승을 유발하는 강한 초기 신호다. 다만 보험시장 반응만으로 실제 봉쇄나 가격 상승이 확정됐다고 보긴 어렵다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Lloyd’s Market Association 지정 구역 확대",
+              "호르무즈 해협 전쟁위험 보험",
+              "해상보험 war risk 상승",
+              "LMA 고위험 해역 확대 지정"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S03_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "S&P Global Platts가 JKM 현물 평가가격의 호르무즈 차질 이후 연속 상승을 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "호르무즈 차질 이후 JKM 현물가격이 연속 상승했다는 평가는 LNG 가격 상승 압력이 이미 가격에 반영됐음을 보여준다. 시나리오의 ‘단기 차질에도 JKM 상승’ 결과를 직접 확인하는 신호다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "S&P Global Platts JKM 상승 발표",
+              "JKM 현물 평가가격 연속 상승",
+              "호르무즈 차질 이후 LNG 가격 상승",
+              "Platts LNG 가격 평가 상향"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_04",
+        "title": "단기 지역전과 포괄 제재가 만드는 거래 회피성 강세",
+        "dimension_values": {
+          "conflict_duration": "1M_under",
+          "escalation_level": "regional_conventional",
+          "strait_shipping_impact": "intermittent",
+          "risk_premium": "mid",
+          "sanctions_scope": "comprehensive"
+        },
+        "description": "충돌은 1개월 미만으로 짧게 전개되지만, 역내 재래전 수준으로 확대되며 시장의 긴장감을 높인다. 호르무즈 해협 통항은 전면 봉쇄가 아니라 간헐적 차질에 그치지만, 선박 보험료와 안전 운항 비용 상승을 통해 LNG 조달 비용을 끌어올린다. 여기에 전면적 제재가 적용되면서 에너지, 금융, 운송 계약 전반에서 거래 회피 심리가 강화된다. 시장은 물리적 공급 차단보다는 제재 확대와 거래 비용 상승을 더 크게 반영하며, LNG에는 $3~5/MMBtu 수준의 지정학 리스크 프리미엄이 붙는 강세 흐름이 나타난다.",
+        "derivation_rationale": "이 시나리오는 충돌 지속 기간이 1개월 미만으로 제한되지만, 에스컬레이션 강도가 역내 재래전 수준까지 높아지는 조합에서 도출된다. 주요 해협 통항 영향이 간헐적 차질에 머무르더라도, 전면적 제재가 병행되면 계약 이행과 결제, 운송 전반의 불확실성이 커진다. 그 결과 물리적 공급 부족보다 거래 회피와 비용 상승이 가격을 밀어 올리며, LNG와 유럽 가스 가격에는 뚜렷한 상승 압력이, 브렌트유에는 완만한 상승 압력이 형성된다.",
+        "price_direction": {
+          "brent": "mild_bull",
+          "jkm": "bull",
+          "ttf": "bull"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S04_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 재무부 OFAC가 이란 에너지·금융·운송 부문을 포괄 제재 대상으로 지정한다",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "에너지·금융·운송 전반의 포괄 제재는 시나리오의 핵심 축인 거래 회피 심리와 계약 비용 상승을 직접 확인시킨다. 물리적 차단보다 제재 리스크가 가격에 반영되는 경로를 강하게 검증한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "OFAC 이란 에너지 제재 지정",
+              "미국 재무부 포괄 제재 발표",
+              "Iran 금융 운송 부문 sanction 확대",
+              "이란 원유·LNG 거래 차단 공식화"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "영국 Joint War Committee가 호르무즈 해협과 오만만을 전쟁위험 해역으로 추가 지정한다",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "전쟁위험 해역 지정은 보험료·운항비 상승의 선행 신호로, 호르무즈 전면 봉쇄가 아니더라도 조달 비용이 올라갈 가능성을 뚜렷하게 보강한다. 다만 실제 프리미엄 형성 자체를 확정하진 않는다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Joint War Committee 호르무즈 전쟁위험 지정",
+              "JWC 오만만 war risk 추가",
+              "London marine insurers 위험해역 확대",
+              "Strait of Hormuz 보험 위험 고시"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 CENTCOM이 호르무즈 해협 인근 LNG 운반선 호위 작전 개시를 발표한다",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "LNG 운반선 호위 작전은 역내 재래전 수준의 긴장과 간헐적 통항 차질 위험이 현실화되고 있음을 보여주는 강한 초기 신호다. 그러나 통항 봉쇄나 가격 프리미엄을 직접 증명하는 단계는 아니다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "CENTCOM 호르무즈 LNG선 호위 개시",
+              "미군 해군 escort operation 발표",
+              "Strait of Hormuz LNG carrier 보호작전",
+              "미국 5함대 상선 호위 투입"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Platts JKM 근월물이 전쟁 전 종가 대비 $3~5/MMBtu 높은 수준으로 3거래일 이상 거래된다",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "JKM이 $3~5/MMBtu 상승 구간에서 3거래일 이상 유지되는 것은 시나리오가 제시한 중간 수준 지정학 리스크 프리미엄을 직접 관측한 것이다. LNG 강세 흐름의 실현 여부를 결정적으로 검증한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Platts JKM $3/MMBtu 상승 거래",
+              "JKM front-month risk premium 확대",
+              "S&P Global Commodity Insights JKM 강세 지속",
+              "전쟁 전 종가 대비 $5/MMBtu 높게 형성"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S04_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Reuters가 호르무즈 해협 통항 LNG 운반선의 전쟁위험 보험료 인상을 보도한다",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "보험료 인상 보도는 운항비 상승과 거래 회피성 비용 전가의 정황을 제공하지만, 인상 폭이나 지속성이 확인되지 않으면 단독으로는 강도가 제한적이다. 시나리오의 비용 상승 경로를 보조적으로 뒷받침한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Reuters 호르무즈 LNG선 보험료 인상 보도",
+              "war risk premium LNG carrier 상승",
+              "Strait of Hormuz transit insurance 급등",
+              "Lloyd's market 전쟁위험 보험료 올려"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      },
+      {
+        "scenario_id": "S_05",
+        "title": "[HITL 추가] 시나리오 05",
+        "dimension_values": {
+          "conflict_duration": "3_6M",
+          "escalation_level": "regional_conventional",
+          "strait_shipping_impact": "partial_blockade",
+          "risk_premium": "mid",
+          "sanctions_scope": "multilateral"
+        },
+        "description": "미국과 이란 간 충돌이 3~6개월가량 이어지며 역내 재래전 수준으로 확산되는 시나리오다. 호르무즈 해협 등 주요 해협의 통항은 완전히 차단되지는 않지만 부분 봉쇄가 발생해 LNG 공급 안정성에 부담을 준다. 다자 제재가 병행되면서 거래·보험·운송 관련 불확실성이 커지고, LNG 시장에는 $3~5/MMBtu 수준의 지정학 리스크 프리미엄이 반영된다. 다만 시장은 공급 차질과 정책 대응 가능성을 함께 반영하면서 브렌트, JKM, TTF 가격 방향성은 전반적으로 중립적인 흐름을 보인다.",
+        "derivation_rationale": "이 시나리오는 충돌 지속 기간 3~6개월, 에스컬레이션 강도 역내 재래전, 주요 해협 통항 영향 부분 봉쇄라는 조건을 결합해 구성됐다. 여기에 LNG 지정학 리스크 프리미엄 $3~5/MMBtu와 다자 제재가 더해져 공급 불확실성은 높지만, 전면적 가격 급등으로 단정하기는 어려운 균형적 상황으로 해석된다. 따라서 세 주요 가격 지표의 방향성은 중립으로 정리된다.",
+        "price_direction": {
+          "brent": "neutral",
+          "jkm": "neutral",
+          "ttf": "neutral"
+        },
+        "compatibility_passed": true,
+        "assumptions": [],
+        "signposts": [
+          {
+            "signpost_id": "sgp_S05_01",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "미국 CENTCOM이 최초 교전 90일 이후에도 이란 군사 표적에 대한 작전 지속을 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "최초 교전 90일 이후에도 작전이 지속된다는 공식 발표는 충돌이 단기 사건을 넘어 3~6개월 지속 국면에 들어섰음을 직접 보여준다. 시나리오의 핵심 조건인 장기화된 역내 재래전 전개를 강하게 검증한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "CENTCOM 작전 지속 발표",
+              "미국 이란 군사 표적 공습 지속",
+              "교전 90일 이후 작전 연장",
+              "U.S. Central Command strikes continue"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_02",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "UKMTO가 호르무즈 해협 통항을 지정 항로 또는 호송 체계로 제한한다고 공지",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "호르무즈 통항이 지정 항로·호송 체계로 제한되는 것은 완전 차단은 아니지만 부분 봉쇄가 현실화됐음을 직접 입증한다. LNG 운송 안정성 부담이라는 시나리오의 해협 리스크를 결정적으로 뒷받침한다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "UKMTO 호르무즈 통항 제한 공지",
+              "Hormuz 지정 항로 운항 지시",
+              "호르무즈 해협 호송 체계 시행",
+              "UKMTO transit corridor announced"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_03",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "QatarEnergy가 Ras Laffan LNG 선적 지연 또는 우회 운항 발생을 공식 통보",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "카타르 LNG 선적 지연·우회는 공급 차질 우려가 실제 물류에 반영되기 시작한 강한 초기 신호다. 다만 지속 기간과 시장 전반 확산 여부는 추가 확인이 필요해 확정 신호보다는 보강 신호에 가깝다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "QatarEnergy 선적 지연 공식 통보",
+              "Ras Laffan LNG loading delayed",
+              "카타르 LNG 우회 운항 발생",
+              "QatarEnergy Ras Laffan notice issued"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_04",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "EU Council과 G7이 이란 해운·보험·에너지 거래 대상 공동 제재 패키지를 발표",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "MEDIUM",
+            "weight": null,
+            "rationale_ko": "EU와 G7의 공동 제재는 다자 제재 및 거래·보험 불확실성 확대를 분명히 보여주는 강한 정책 신호다. 다만 전쟁 지속·해협 봉쇄·가격 프리미엄까지 단독으로 확정하지는 않아 MEDIUM으로 본다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "EU Council G7 공동 제재 발표",
+              "이란 해운 보험 거래 제재",
+              "Iran energy transactions sanctions package",
+              "G7 제재 패키지 공식화"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_05",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Lloyd’s Market Association Joint War Committee가 페르시아만 또는 호르무즈 해협을 고위험 해상구역으로 지정",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "WEAK",
+            "weight": null,
+            "rationale_ko": "고위험 해상구역 지정은 보험료와 운항 리스크 상승을 시사하지만, 실제 봉쇄나 LNG 물동 차질 자체를 직접 증명하지는 않는다. 시나리오의 운송·보험 불확실성을 간접적으로 보강하는 약한 초기 신호다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Joint War Committee 고위험 해상구역 지정",
+              "Lloyd’s Market Association 호르무즈 위험 지정",
+              "페르시아만 war risk area 등재",
+              "Hormuz high risk maritime area declared"
+            ]
+          },
+          {
+            "signpost_id": "sgp_S05_06",
+            "assumption_refs": [],
+            "signpost_class": "observation",
+            "label_ko": "Platts가 JKM 가격에 중동 지정학 리스크 프리미엄이 $3~5/MMBtu 반영됐다고 보도",
+            "signpost_source": "mi_record",
+            "actor_nature": null,
+            "direction": "SUP",
+            "strength": "STRONG",
+            "weight": null,
+            "rationale_ko": "JKM에 $3~5/MMBtu 지정학 리스크 프리미엄이 반영됐다는 보도는 시나리오가 제시한 중간 수준 리스크 프리미엄을 직접 확인한다. LNG 시장 가격에 지정학 리스크가 실현됐음을 보여주는 결정적 관측이다.",
+            "role_tag": null,
+            "keyword_hints": [
+              "Platts JKM 리스크 프리미엄 반영 보도",
+              "JKM $3~5/MMBtu premium assessed",
+              "중동 지정학 프리미엄 가격 반영",
+              "Platts LNG price assessment reported"
+            ]
+          }
+        ],
+        "window_end_ts": "",
+        "monitored_signposts": [],
+        "deadline_kill_conditions": []
+      }
+    ]
+  },
+  "stage5_validation": {
+    "mece_check": {
+      "mutually_exclusive": true
+    },
+    "likelihood_prior": {
+      "S_01": 0.5,
+      "S_02": 0.05,
+      "S_03": 0.1,
+      "S_04": 0.1,
+      "S_05": 0.1
+    }
+  }
+}

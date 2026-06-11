@@ -4,13 +4,20 @@ from apps.common.values.error_codes import ErrorCode
 
 
 class MIBaseError(Exception):
-    def __init__(self, error_code: ErrorCode, detail: str | None = "") -> None:
-        base_message = error_code.value
+    def __init__(
+        self,
+        error_code: ErrorCode,
+        detail: str | None = "",
+        status_code: int | None = None,
+    ) -> None:
+        code, base_message = error_code.value
         if detail:
             self.error_message = f"{base_message} - {detail}"
         else:
             self.error_message = base_message
         self.error_code = error_code
+        self.code = code
+        self.status_code = status_code
         super().__init__(f"[{error_code.name}] {self.error_message}")
 
 

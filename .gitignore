@@ -102,4 +102,11 @@ site/
 
 *.pyc
 
+# =========================
+# Optional: Local files
+# =========================
 mysql_data/
+local/
+.omc/
+skmip-mi-agent.code-workspace
+.cursor/rules/

@@ -1,0 +1,1 @@
+"""Confirm generation flow."""

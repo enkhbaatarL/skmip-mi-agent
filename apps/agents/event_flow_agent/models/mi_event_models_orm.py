@@ -61,25 +61,20 @@ class MiEventContentColumnsMixin:
         nullable=False,
         comment="이벤트 제목",
     )
-    one_line_summary: Mapped[str | None] = mapped_column(
+    one_line_summary: Mapped[str] = mapped_column(
         sqlalchemy.String(300, collation="utf8mb4_bin"),
-        nullable=True,
+        nullable=False,
         comment="한줄 요약",
     )
-    key_bullets_json: Mapped[Any | None] = mapped_column(
+    key_bullets_json: Mapped[Any] = mapped_column(
         sqlalchemy.JSON,
-        nullable=True,
+        nullable=False,
         comment="핵심 bullet 목록 JSON",
     )
     detail_analysis: Mapped[str] = mapped_column(
         mysql_types.LONGTEXT(collation="utf8mb4_bin"),
         nullable=False,
         comment="이벤트 상세 분석 본문",
-    )
-    market_and_institution_view: Mapped[str | None] = mapped_column(
-        mysql_types.LONGTEXT(collation="utf8mb4_bin"),
-        nullable=True,
-        comment="시장 반응 및 기관 전망",
     )
     tags_json: Mapped[Any | None] = mapped_column(
         sqlalchemy.JSON,
@@ -175,6 +170,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         nullable=False,
         comment="이벤트 유형 L2 FK",
     )
+    latest_record_first_created: Mapped[datetime | None] = mapped_column(
+        mysql_types.DATETIME(fsp=6),
+        nullable=True,
+        comment="Event 관련 Record 중 최신 first_created 시각",
+    )
     estimated_impact_id: Mapped[str | None] = mapped_column(
         sqlalchemy.String(100, collation="utf8mb4_bin"),
         nullable=True,
@@ -204,7 +204,7 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         comment="시나리오화 추천 여부",
     )
     scenario_suggest_reason: Mapped[str | None] = mapped_column(
-        sqlalchemy.String(100, collation="utf8mb4_bin"),
+        sqlalchemy.String(500, collation="utf8mb4_bin"),
         nullable=True,
         comment="시나리오화 추천 근거",
     )
@@ -225,6 +225,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
     record_maps: Mapped[list[MiEventRecordMapModel]] = relationship(
         "MiEventRecordMapModel", back_populates="event"
     )
+
+    @property
+    def market_and_institution_view(self) -> str | None:
+        """Compatibility shim for legacy code paths."""
+        return None
 
 
 class MiEventRecordMapModel(AuditColumnsMixin, ORMBase):
