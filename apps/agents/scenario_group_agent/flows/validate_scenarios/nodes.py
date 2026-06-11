@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
+    build_context,
+    run_review,
+)
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
     ScenarioService,
 )
@@ -25,16 +29,9 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
             "error": f"Scenario group not found: {state.scenario_group_id}",
             "message": f"Scenario group not found: {state.scenario_group_id}",
         }
-    requested_group_id = (state.request_scenario_group or {}).get("scenario_group_id")
-    if requested_group_id != state.scenario_group_id:
-        return {
-            "status": "failure",
-            "error": "Path and body scenarioGroupId do not match",
-            "message": "Path and body scenarioGroupId do not match",
-        }
     requested_event_id = (state.request_scenario_group or {}).get("mi_event_id")
     requested_event_type_id = (state.request_scenario_group or {}).get(
-        "event_type_l2_id"
+        "event_type_l2_id",
     )
     if (
         requested_event_id != group["mi_event_id"]
@@ -58,42 +55,39 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
             "error": "No scenarios found",
             "message": "No scenarios found",
         }
-    return {"scenarios": scenarios}
+    try:
+        dimension_template = ScenarioService().load_dimension_template(
+            int(state.scenario_group["event_type_l2_id"]),
+        )
+    except (KeyError, ValueError):
+        dimension_template = []
+    return {
+        "scenarios": scenarios,
+        "dimension_template": dimension_template,
+    }
 
 
-def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
+async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure":
         return {}
-    issues: list[str] = []
-    seen_dimension_sets: set[tuple[tuple[str, Any], ...]] = set()
     requested_rows = (state.request_table or {}).get("rows", [])
-    if not requested_rows:
-        issues.append("No scenarios provided")
-    scenario_ids = {int(scenario["scenario_id"]) for scenario in state.scenarios}
-    for scenario in requested_rows:
-        scenario_id = int(scenario["scenario_id"])
-        if scenario_id not in scenario_ids:
-            issues.append(
-                f"scenario_id={scenario_id} does not belong to scenario group"
-            )
-        dimension_values = scenario.get("cells") or {}
-        if not dimension_values:
-            issues.append(f"scenario_id={scenario_id} has empty cells")
-        dimension_key = tuple(sorted(dimension_values.items()))
-        if dimension_key in seen_dimension_sets:
-            issues.append(f"scenario_id={scenario_id} duplicates cells")
-        seen_dimension_sets.add(dimension_key)
-
-    is_valid = not issues
-    reason = "Scenarios are valid" if is_valid else "; ".join(issues)
+    context = build_context(
+        group=state.scenario_group or {},
+        requested_rows=requested_rows,
+        persisted_scenarios=state.scenarios,
+        template_dims=state.dimension_template,
+    )
+    report = await run_review(context)
     validation_result = {
         "scenario_group_id": state.scenario_group_id,
         "scenario_count": len(requested_rows),
-        "issues": issues,
+        "verdict": report.verdict,
+        "summary": report.summary,
+        "checks": [check.to_dict() for check in report.checks],
     }
     return {
-        "is_valid": is_valid,
-        "reason": reason,
+        "is_valid": report.is_valid,
+        "reason": report.reason,
         "validation_result": validation_result,
     }
 

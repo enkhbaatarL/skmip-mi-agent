@@ -87,14 +87,14 @@ Request
 ```json
 {
   "miEventId": 12345,
-  "userId": "..."
+  "userId": 10001
 }
 ```
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `miEventId` | number | Y | MI Event 식별자 |
-| `userId` | string | Y | 요청 사용자 식별자 |
+| `userId` | number | Y | 요청 사용자 식별자(int) |
 
 Response Body (`CreateScenariosOut`)
 
@@ -203,9 +203,8 @@ Request body
 
 ```json
 {
-  "userId": "...",
+  "userId": 10001,
   "scenarioGroup": {
-    "scenarioGroupId": 12345,
     "miEventId": 998877,
     "eventTypeL2Id": 12,
     "title": "호르무즈 봉쇄 + 전면전",
@@ -246,9 +245,8 @@ Request body
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `userId` | string | Y | 요청 사용자 식별자 |
+| `userId` | number | Y | 요청 사용자 식별자(int) |
 | `scenarioGroup` | object | Y | 검증 대상 시나리오 그룹 정보 |
-| `scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
 | `scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
 | `scenarioGroup.eventTypeL2Id` | number | Y | Event type L2 ID |
 | `scenarioGroup.title` | string | Y | 제목 |
@@ -271,6 +269,23 @@ Response Body
     "reason": "MECE and plausibility checks passed",
     "status":"creating",
     "stage": "scenario_validated", //scenario_created
+    "verdict": "PASS", //PASS | REVIEW | BLOCK
+    "summary": {
+      "PASS": 14,
+      "WARN": 0,
+      "FAIL": 0,
+      "INFO": 0
+    },
+    "checks": [
+      {
+        "checkId": "R01",
+        "stage": "구조",
+        "name": "scenario_count = 실제 시나리오 수",
+        "status": "PASS",
+        "detail": "선언=2, 실제=2",
+        "offenders": []
+      }
+    ]
   }
 
 }
@@ -285,6 +300,9 @@ Response Body
 | `data.reason` | string | N | 검증 사유/코멘트 |
 | `data.status` | string | Y | Scenario Group status |
 | `data.stage` | string | Y | Scenario Group stage |
+| `data.verdict` | string | Y | `"PASS" | "REVIEW" | "BLOCK"` |
+| `data.summary` | object | Y | PASS/WARN/FAIL/INFO 검사 건수 |
+| `data.checks` | array | Y | R01~R14 개별 검사 결과 |
 
 ### 3) Signpost 생성
 
@@ -296,13 +314,13 @@ Request (body optional)
 
 ```json
 {
-  "userId": "..."
+  "userId": 10001
 }
 ```
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `userId` | string | N | 요청 사용자 식별자 |
+| `userId` | number | N | 요청 사용자 식별자(int) |
 
 Response Body
 

@@ -26,6 +26,8 @@ from apps.agents.scenario_group_agent.schemas.confirm_generation import (
 from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosIn
 from apps.agents.scenario_group_agent.schemas.create_signposts import CreateSignpostsIn
 from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
+    ValidationCheck,
+    ValidationSummary,
     ValidateScenariosData,
     ValidateScenariosIn,
 )
@@ -46,6 +48,13 @@ SCENARIO_GROUP = {
 TABLE = {
     "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
     "rows": [{"scenarioId": 100, "cells": {"period": "단기"}}],
+}
+VALIDATION_SCENARIO_GROUP = {
+    "miEventId": 20,
+    "eventTypeL2Id": 30,
+    "title": "group",
+    "summary": None,
+    "description": None,
 }
 
 
@@ -189,12 +198,13 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         payload = ValidateScenariosIn.model_validate(
             {
                 "userId": 101,
-                "scenarioGroup": SCENARIO_GROUP,
+                "scenarioGroup": VALIDATION_SCENARIO_GROUP,
                 "table": TABLE,
             },
         )
 
-        assert payload.scenario_group.scenario_group_id == 10
+        assert payload.scenario_group.mi_event_id == 20
+        assert payload.scenario_group.event_type_l2_id == 30
         assert payload.table.rows[0].scenario_id == 100
         assert payload.user_id == 101
 
@@ -258,11 +268,25 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             reason="ok",
             status="creating",
             stage="scenario_validated",
+            verdict="REVIEW",
+            summary=ValidationSummary(PASS=12, WARN=2, FAIL=0, INFO=0),
+            checks=[
+                ValidationCheck(
+                    check_id="R09",
+                    stage="Stage3",
+                    name="tail",
+                    status="WARN",
+                    detail="missing",
+                )
+            ],
         )
 
         serialized = payload.model_dump(by_alias=True)
         assert serialized["scenarioGroupId"] == 10
         assert serialized["isValid"]
+        assert serialized["verdict"] == "REVIEW"
+        assert serialized["summary"]["WARN"] == 2
+        assert serialized["checks"][0]["checkId"] == "R09"
         assert "scenario_group_id" not in serialized
 
     def test_scenario_insert_payload_matches_orm(self) -> None:
