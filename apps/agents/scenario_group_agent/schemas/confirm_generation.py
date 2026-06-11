@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from apps.agents.scenario_group_agent.schemas.common import (
     ApiModel,
-    ScenarioGroupPayload,
     ScenarioTable,
 )
 from apps.common.values.response import CommonResponse
 
 
+class ConfirmScenarioGroupIn(ApiModel):
+    title: str
+    summary: str | None = None
+    description: str | None = None
+
+
 class ConfirmGenerationIn(ApiModel):
-    scenario_group: ScenarioGroupPayload
+    scenario_group: ConfirmScenarioGroupIn
     table: ScenarioTable
 
 

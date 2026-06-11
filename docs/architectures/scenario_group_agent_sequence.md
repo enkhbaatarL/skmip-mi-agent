@@ -422,9 +422,6 @@ Request Body:
 ```json
 {
     "scenarioGroup": {
-      "scenarioGroupId": 12345,
-      "miEventId": 998877,
-      "eventTypeL2Id": 12,
       "title": "호르무즈 봉쇄 + 전면전",
       "summary": "단기 공급 차질 및 운임 급등 시나리오",
       "description": "상세 설명..."
@@ -488,6 +485,9 @@ Request Body:
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
 | `scenarioGroup` | object | Y | 확정 대상 시나리오 그룹 |
+| `scenarioGroup.title` | string | Y | 확정 대상 그룹 제목 |
+| `scenarioGroup.summary` | string | N | 확정 대상 그룹 요약 |
+| `scenarioGroup.description` | string | N | 확정 대상 그룹 상세 설명 |
 | `table` | object | Y | 확정 대상 시나리오 테이블(행 + signposts 포함) |
 
 Response (`ConfirmGenerationOut`)

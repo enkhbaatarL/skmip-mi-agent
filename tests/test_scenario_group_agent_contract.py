@@ -45,6 +45,11 @@ SCENARIO_GROUP = {
     "summary": None,
     "description": None,
 }
+CONFIRM_SCENARIO_GROUP = {
+    "title": "group",
+    "summary": None,
+    "description": None,
+}
 TABLE = {
     "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
     "rows": [{"scenarioId": 100, "cells": {"period": "단기"}}],
@@ -241,17 +246,17 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_confirmation_request_accepts_document_shape(self) -> None:
         payload = ConfirmGenerationIn.model_validate(
             {
-                "scenarioGroup": SCENARIO_GROUP,
+                "scenarioGroup": CONFIRM_SCENARIO_GROUP,
                 "table": TABLE,
             },
         )
 
-        assert payload.scenario_group.mi_event_id == 20
+        assert payload.scenario_group.title == "group"
 
     def test_confirmation_exclude_unset_preserves_partial_update(self) -> None:
         payload = ConfirmGenerationIn.model_validate(
             {
-                "scenarioGroup": SCENARIO_GROUP,
+                "scenarioGroup": CONFIRM_SCENARIO_GROUP,
                 "table": TABLE,
             },
         )
