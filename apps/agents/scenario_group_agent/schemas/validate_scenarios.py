@@ -11,17 +11,8 @@ from apps.agents.scenario_group_agent.schemas.common import (
 from apps.common.values.response import CommonResponse
 
 
-class ValidateScenarioGroupIn(ApiModel):
-    mi_event_id: int
-    event_type_l2_id: int
-    title: str
-    summary: str | None = None
-    description: str | None = None
-
-
 class ValidateScenariosIn(ApiModel):
     user_id: int
-    scenario_group: ValidateScenarioGroupIn
     table: ScenarioTable
 
 

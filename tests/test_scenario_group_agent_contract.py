@@ -54,15 +54,6 @@ TABLE = {
     "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
     "rows": [{"scenarioId": 100, "cells": {"period": "단기"}}],
 }
-VALIDATION_SCENARIO_GROUP = {
-    "miEventId": 20,
-    "eventTypeL2Id": 30,
-    "title": "group",
-    "summary": None,
-    "description": None,
-}
-
-
 class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_create_scenarios_graph_registers_generation_subgraph(self) -> None:
         graph = build_graph().get_graph()
@@ -203,13 +194,10 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         payload = ValidateScenariosIn.model_validate(
             {
                 "userId": 101,
-                "scenarioGroup": VALIDATION_SCENARIO_GROUP,
                 "table": TABLE,
             },
         )
 
-        assert payload.scenario_group.mi_event_id == 20
-        assert payload.scenario_group.event_type_l2_id == 30
         assert payload.table.rows[0].scenario_id == 100
         assert payload.user_id == 101
 
