@@ -29,19 +29,6 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
             "error": f"Scenario group not found: {state.scenario_group_id}",
             "message": f"Scenario group not found: {state.scenario_group_id}",
         }
-    requested_event_id = (state.request_scenario_group or {}).get("mi_event_id")
-    requested_event_type_id = (state.request_scenario_group or {}).get(
-        "event_type_l2_id",
-    )
-    if (
-        requested_event_id != group["mi_event_id"]
-        or requested_event_type_id != group["event_type_l2_id"]
-    ):
-        return {
-            "status": "failure",
-            "error": "Body scenarioGroup identifiers do not match persisted group",
-            "message": "Body scenarioGroup identifiers do not match persisted group",
-        }
     return {"scenario_group": group}
 
 

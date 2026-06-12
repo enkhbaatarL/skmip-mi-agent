@@ -39,7 +39,6 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
         user_id=parsed.user_id,
-        request_scenario_group=parsed.scenario_group.model_dump(),
         request_table=parsed.table.model_dump(),
     )
 
