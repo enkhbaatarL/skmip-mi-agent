@@ -6,7 +6,8 @@ import asyncio
 
 import httpx
 
-from apps.common.exceptions.custom import RuntimeRegistryNotReadyError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.runtime.runtime_context import RuntimeContext
 from apps.common.runtime.shutdown_hooks import install_shutdown_hooks
 from apps.common.values.enums import SemaphoreName
@@ -47,7 +48,7 @@ async def ensure_mcp_pool_by_key(pool_key: str) -> None:
 
 def get_runtime_resources() -> RuntimeContext:
     if not _runtime_context.is_ready:
-        raise RuntimeRegistryNotReadyError
+        raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY)
     return _runtime_context
 
 

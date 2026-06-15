@@ -15,7 +15,8 @@ from apps.agents.mi_agent.prompts.rdb_search_select_target_table import build_se
 from apps.agents.mi_agent.prompts.rdb_search_sql_column_fix import build_sql_column_fix_prompt
 from apps.agents.mi_agent.subgraphs.rdb_search.schemas import RDBSearchCandidate, RDBSearchResult, VDBSearchCandidate
 from apps.common.configs.settings import get_settings
-from apps.common.exceptions.custom import RdbAccessDeniedError, RdbDataFetchError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
 from apps.common.runtime.runtime import ensure_runtime_context_ready, get_rdb_exec_semaphore
@@ -102,7 +103,7 @@ def _validate_db_access(company_code: str, db_name: str) -> None:
             f"company_code={company_code!r}는 database={db_name!r}에 접근 권한이 없습니다. "
             f"허용된 database: {allowed_pool_key!r}"
         )
-        raise RdbAccessDeniedError(detail)
+        raise MIBaseError(ErrorCode.RDB_ACCESS_DENIED, detail=detail)
 
 
 @log_tool
@@ -133,7 +134,7 @@ def _collect_rows_from_mcp_result(result: Any) -> list[dict]:
             rows.append(parsed)
         else:
             msg = "Unexpected parsed type from MCP: %s"
-            raise RdbDataFetchError(msg, type(parsed))
+            raise MIBaseError(ErrorCode.RDB_DATA_FETCH_FAILED, detail=msg % type(parsed))
 
     return rows
 
@@ -474,6 +475,6 @@ async def _extract_target_table_info(prompt: str) -> Any:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
         msg = "JSON 파싱 실패: %s | head=%r"
-        raise RdbDataFetchError(msg, str(e), raw[:240]) from e
+        raise MIBaseError(ErrorCode.RDB_DATA_FETCH_FAILED, detail=msg % (str(e), raw[:240])) from e
 
     return parsed

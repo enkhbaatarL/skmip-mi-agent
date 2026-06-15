@@ -10,7 +10,8 @@ import re
 from typing import Any
 
 from apps.agents.mi_agent.schemas.schemas import SearchQuery
-from apps.common.exceptions.custom import LLMInvalidResponseError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.values.enums import ModelPreference
 from apps.connectors.llm.llm_client import invoke_llm_function_call
 
@@ -25,7 +26,7 @@ async def generate_search_queries(prompt: str) -> list[SearchQuery]:
 
     context = response.get("content")
     if len(context) < 1:
-        raise LLMInvalidResponseError(detail=f"prompt:{prompt}, return context:{context}")
+        raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail=f"prompt:{prompt}, return context:{context}")
 
     return _parse_query_items(str(context))
 

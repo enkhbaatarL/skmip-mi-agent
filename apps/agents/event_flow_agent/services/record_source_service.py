@@ -28,7 +28,8 @@ from apps.agents.event_flow_agent.repositories.sync_record_repository import (
     SyncRecordRepository,
 )
 from apps.common.configs.database.sync_database.connection import get_sync_session
-from apps.common.exceptions.custom import RdbDataFetchError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 class RecordSourceService:
@@ -57,6 +58,6 @@ class RecordSourceService:
             
             return records
         except Exception as exc:
-            raise RdbDataFetchError(detail=str(exc)) from exc
+            raise MIBaseError(ErrorCode.RDB_DATA_FETCH_FAILED, detail=str(exc)) from exc
         finally:
             session.close()

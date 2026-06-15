@@ -4,7 +4,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
 from fastapi.responses import JSONResponse
 
-from apps.common.exceptions.custom import MIBaseError, UnknownMIError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.logger_config import logger
 from apps.common.values.response import CommonResponse
 
@@ -15,7 +16,7 @@ def _request_info(request: Request) -> str:
 
 
 def _resolve_status_code(exc: MIBaseError) -> HTTPStatus | int:
-    return exc.status_code or HTTPStatus.INTERNAL_SERVER_ERROR
+    return exc.status_code
 
 
 def _mi_error_response(exc: MIBaseError) -> JSONResponse:
@@ -59,7 +60,7 @@ def register_exception_handlers(app: FastAPI) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def undefined_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        managed_exc = UnknownMIError(detail=str(exc))
+        managed_exc = MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=str(exc))
         logger.exception(f"Unhandled Exception | request={_request_info(request)} | error={exc!r}")
         return _mi_error_response(managed_exc)
 

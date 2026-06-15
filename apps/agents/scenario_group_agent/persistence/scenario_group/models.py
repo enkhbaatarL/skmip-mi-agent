@@ -103,6 +103,7 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     )
 
 
+
 class MiSnapshotModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_snapshot_m"
     __table_args__ = (

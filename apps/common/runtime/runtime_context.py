@@ -12,10 +12,8 @@ import httpx
 from apps.agents.mi_agent.components.context import set_search_policies
 from apps.agents.mi_agent.components.policies import SearchPolicySet, build_search_policy_set
 from apps.common.configs.settings import Settings, get_settings
-from apps.common.exceptions.custom import (
-    RuntimeRegistryNotReadyError,
-    SemaphoreManagementError,
-)
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.logger_config import logger
 from apps.common.values.enums import SemaphoreName
 from apps.connectors.http.http_client_manager import HttpClientManager
@@ -239,7 +237,7 @@ class RuntimeContext:
         http2: bool | None = None,
     ) -> httpx.AsyncClient:
         if not self._initialized:
-            raise RuntimeRegistryNotReadyError
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY)
 
         return await self.http_manager.get_http_client(
             base_url=base_url,
@@ -249,11 +247,11 @@ class RuntimeContext:
 
     def get_semaphore(self, name: SemaphoreName) -> asyncio.Semaphore:
         if not self._initialized:
-            raise RuntimeRegistryNotReadyError
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY)
 
         sem = self.semaphores.get(name)
         if sem is None:
-            raise SemaphoreManagementError(detail=f"Semaphore '{name}' not initialized")
+            raise MIBaseError(ErrorCode.SEMAPHORE_MANAGEMENT_ERROR, detail=f"Semaphore '{name}' not initialized")
         return sem
 
     def get_http_semaphore(self) -> asyncio.Semaphore:
@@ -274,23 +272,23 @@ class RuntimeContext:
     def get_default_mcp_pool(self) -> MCPClientPool:
         """항상 default URL에 연결된 풀을 반환한다 (company_code와 무관)."""
         if not self._initialized:
-            raise RuntimeRegistryNotReadyError
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY)
         pool = self.default_mcp_pool
         if pool is None:
-            raise RuntimeRegistryNotReadyError(detail="Default MCP pool not initialized")
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY, detail="Default MCP pool not initialized")
         return pool
 
     def get_mcp_pool(self) -> MCPClientPool:
         if not self._initialized:
-            raise RuntimeRegistryNotReadyError
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY)
         pool = self.mcp_pool
         if pool is None:
-            raise RuntimeRegistryNotReadyError(detail="MCP pool not initialized")
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY, detail="MCP pool not initialized")
         return pool
 
     async def get_web_search_provider(self) -> WebSearchProvider:
         if not self._initialized:
-            raise RuntimeRegistryNotReadyError
+            raise MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY)
 
         if self.web_search_provider:
             return self.web_search_provider

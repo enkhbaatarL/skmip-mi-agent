@@ -11,7 +11,8 @@ from apps.agents.mi_agent.prompts.vdb_search_rewrite_queries import (
 from apps.agents.mi_agent.schemas.mari_agent_input import ContentProvider, ContentProviderAccess
 from apps.agents.mi_agent.subgraphs.vdb_search.schemas import VdbStructuredQuery
 from apps.agents.mi_agent.tools.search_queries import generate_search_queries, strip_code_fence
-from apps.common.exceptions.custom import LLMInvalidResponseError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
 from apps.common.values.enums import ModelPreference
@@ -95,7 +96,7 @@ async def _prepare_omdia_vdb_search_queries(rewritten_query: str) -> list[VdbStr
     )
     context = response.get("content")
     if not context:
-        raise LLMInvalidResponseError(detail=f"prompt:{prompt}, return context:{context}")
+        raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail=f"prompt:{prompt}, return context:{context}")
     return _parse_omdia_query_items(str(context))
 
 
