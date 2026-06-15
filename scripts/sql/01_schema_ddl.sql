@@ -6,10 +6,10 @@
 -- Drop existing tables (FK-safe order: child tables first)
 -- =========================================================
 
-DROP TABLE IF EXISTS `tmm_mi_institution_view`;
-DROP TABLE IF EXISTS `tmm_mi_mievent_candidate_record_map`;
 DROP TABLE IF EXISTS `tmm_mi_mievent_record_map`;
+DROP TABLE IF EXISTS `tmm_mi_mievent_candidate_record_map`;
 DROP TABLE IF EXISTS `tmm_mi_mievent_candidate_m`;
+DROP TABLE IF EXISTS `tmm_mi_institution_view`;
 DROP TABLE IF EXISTS `tmm_mi_mievent_m`;
 DROP TABLE IF EXISTS `tmm_mi_record_metacuration_item`;
 DROP TABLE IF EXISTS `tmm_mi_record_metacuration_m`;
