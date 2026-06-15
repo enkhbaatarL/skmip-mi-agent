@@ -18,6 +18,8 @@ from apps.agents.scenario_group_agent.schemas.confirm_generation import (
     ConfirmGenerationOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 def build_graph() -> Runnable:
@@ -43,25 +45,18 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     )
 
 
-def _resolve_status(raw_status: Any) -> str:
-    return "error" if raw_status in {"failure", "error"} else "success"
-
-
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> ConfirmGenerationOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    status = _resolve_status(data.get("status"))
+    if data.get("status") in {"failure", "error"}:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=data.get("message") or "Confirmation failed")
     group = data.get("scenario_group") or {}
     return ConfirmGenerationOut(
-        status=status,
+        status="success",
         message=data.get("message") or "",
-        data=(
-            ConfirmGenerationData(
-                scenario_group_id=data.get("scenario_group_id") or 0,
-                status=group.get("status") or "created",
-                stage=group.get("stage") or "completed",
-            )
-            if status == "success"
-            else None
+        data=ConfirmGenerationData(
+            scenario_group_id=data.get("scenario_group_id") or 0,
+            status=group.get("status") or "created",
+            stage=group.get("stage") or "completed",
         ),
     )
 

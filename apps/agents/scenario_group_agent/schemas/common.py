@@ -52,10 +52,13 @@ class SignpostPayload(ApiModel):
     probability_impact_score: Decimal | None = None
     signpost_reason: str | None = None
     display_order: int = 0
+    strength: str | None = None
+    use_yn: str | None = None
+    keyword_hints: list[str] = Field(default_factory=list)
 
 
 class ScenarioRow(ApiModel):
-    scenario_id: int
+    scenario_id: int | None = None
     display_order: int = 0
     title: str = ""
     narrative: str | None = None

@@ -80,14 +80,13 @@ def build_scenario_group_table_data(
                     SignpostPayload(
                         signpost_id=int(signpost["signpost_id"]),
                         label=signpost.get("label") or "",
-                        probability_direction_code=signpost.get(
-                            "probability_direction_code"
-                        ),
-                        probability_impact_score=signpost.get(
-                            "probability_impact_score"
-                        ),
+                        probability_direction_code=signpost.get("probability_direction_code"),
+                        probability_impact_score=signpost.get("probability_impact_score"),
                         signpost_reason=signpost.get("signpost_reason"),
                         display_order=int(signpost.get("display_order") or 0),
+                        strength=signpost.get("strength"),
+                        use_yn=signpost.get("use_yn"),
+                        keyword_hints=signpost.get("keyword_hints") or [],
                     )
                     for signpost in signposts_by_scenario_id.get(scenario_id, [])
                 ],

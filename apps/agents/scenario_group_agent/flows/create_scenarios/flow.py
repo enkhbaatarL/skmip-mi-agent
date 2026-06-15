@@ -23,6 +23,8 @@ from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_builder import (
     scenario_generation_runnable,
 )
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 def build_graph() -> Runnable:
@@ -50,22 +52,18 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     )
 
 
-def _resolve_status(raw_status: object) -> str:
-    return "error" if raw_status in {"failure", "error"} else "success"
-
-
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    status = _resolve_status(data.get("status"))
+    if data.get("status") in {"failure", "error"}:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=data.get("message") or "Scenario creation failed")
     group = data.get("scenario_group")
+    if not group:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group not found in state")
+    table_data = build_scenario_group_table_data(group, data.get("scenarios") or [])
     return CreateScenariosOut(
-        status=status,
-        message=data.get("message") or "",
-        data=(
-            build_scenario_group_table_data(group, data.get("scenarios") or [])
-            if status == "success" and group
-            else None
-        ),
+        result="success",
+        scenario_group=table_data.scenario_group,
+        table=table_data.table,
     )
 
 

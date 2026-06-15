@@ -3,9 +3,7 @@
 
 시간이 오래걸리는 시나리오 생성, 시나리오 검토, Signpost생성은 작업 완료 후 callback 할 예정입니다.
 
-다만, 6/12일까지 callback 로직을 구현하기에는 촉박하여 우선 Sync 방식으로 통신하도록 구현 예정이며, 추후 callback API 논의 완료되면 Async 방식으로 전환 예정입니다.
-
-Sync 방식의 Response Body는 아래 Response Body를 참고해주세요.
+다만, callback 로직 구현 전까지 Sync 방식으로 통신하며, **Sync 방식의 Response Body는 Callback Body와 동일합니다.**
 
 </aside>
 
@@ -35,7 +33,7 @@ sequenceDiagram
 
     Client->>Server: <br/><br/><br/><br/>POST /scenario-groups/{scenarioGroupId}/confirmation
     Note over Server: 생성 확정/스냅샷 저장
-    Server-->>Client: Callback생성 확정 결과
+    Server-->>Client: 생성 확정 결과 (콜백없음)
 ```
 
 ## Scenario Group과 Scenario 의 status / stage
@@ -98,100 +96,70 @@ Request
 
 Response Body (`CreateScenariosOut`)
 
-> Platform Team에서 정의 예정
-> 
-
 ```json
 {
-  "status": "success",
-  "message": "성공",
-  "data": {
-    "scenarioGroup": {
-      "scenarioGroupId": 12345,
-      "miEventId": 998877,
-      "eventTypeL2Id": 12,
-      "title": "호르무즈 봉쇄 + 전면전",
-      "summary": "단기 공급 차질 및 운임 급등 시나리오",
-      "description": "상세 설명...",
-      "dimensionSelected": ["period_label", "capacity_change", "recovery"],
-      "scenarioCount": 5,
-      "status": "creating",
-      "stage": "scenario_created"
-    },
-    "table": {
-      "headers": [
-        {
-          "key": "period_label",
-          "label": "기간",
-          "displayOrder": 1
+  "result": "success",
+  "reason": null,
+  "scenarioGroup": {
+    "scenarioGroupId": 12345,
+    "miEventId": 998877,
+    "eventTypeL2Id": 12,
+    "title": "호르무즈 봉쇄 + 전면전",
+    "summary": "단기 공급 차질 및 운임 급등 시나리오",
+    "description": "상세 설명...",
+    "dimensionSelected": ["period_label", "capacity_change", "recovery"],
+    "scenarioCount": 5,
+    "status": "creating",
+    "stage": "scenario_created"
+  },
+  "table": {
+    "headers": [
+      { "key": "period_label", "label": "기간", "displayOrder": 1 },
+      { "key": "capacity_change", "label": "생산능력 변화", "displayOrder": 2 },
+      { "key": "recovery", "label": "공급 복구", "displayOrder": 3 }
+    ],
+    "rows": [
+      {
+        "scenarioId": 90001,
+        "displayOrder": 1,
+        "title": "단기 외교 해결",
+        "cells": {
+          "period_label": "2026.5월 말 (~2개월)",
+          "capacity_change": "15%",
+          "recovery": "4~6주 대다수 재기동"
         },
-        {
-          "key": "capacity_change",
-          "label": "생산능력 변화",
-          "displayOrder": 2
-        },
-        {
-          "key": "recovery",
-          "label": "공급 복구",
-          "displayOrder": 3
-        }
-      ],
-      "rows": [
-        {
-          "scenarioId": 90001,
-          "displayOrder": 1,
-          "title": "단기 외교 해결",
-          "narrative": "시나리오 내러티브...",
-          "cells": {
-            "period_label": "2026.5월 말 (~2개월)",
-            "capacity_change": "15%",
-            "recovery": "4~6주 대다수 재기동"
-          },
-          "metrics": {
-            "probabilityScore": 75.0,
-            "probabilityDelta": 0.0
-          },
-          "impact": {
-            "jkm": "중",
-            "ttf": "중",
-            "hh": "하"
-          },
-          "baselineYn": "Y"
-        }
-      ]
-    }
+        "baselineYn": "Y"
+      }
+    ]
   }
 }
 ```
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroup` | object | Y | 시나리오 그룹 메타 정보 |
-| `data.scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
-| `data.scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
-| `data.scenarioGroup.eventTypeL2Id` | number | Y | Event type L2 ID |
-| `data.scenarioGroup.title` | string | Y | 시나리오 그룹 제목 |
-| `data.scenarioGroup.summary` | string | N | 시나리오 그룹 요약 |
-| `data.scenarioGroup.description` | string | N | 시나리오 그룹 상세 설명 |
-| `data.scenarioGroup.dimensionSelected` | array(json) | Y | 선택된 테이블 차원 키 목록 |
-| `data.scenarioGroup.scenarioCount` | number | Y | 생성 시나리오 개수 |
-| `data.scenarioGroup.status` | string | Y | Scenario Group status |
-| `data.scenarioGroup.stage` | string | Y | Scenario Group stage |
-| `data.table.headers` | array(json) | Y | 테이블 헤더 정의 |
-| `data.table.headers[].key` | string | Y | 컬럼 키(예: `period_label`) |
-| `data.table.headers[].label` | string | Y | 표시 라벨 |
-| `data.table.headers[].displayOrder` | number | Y | 표시 순서 |
-| `data.table.rows` | array(json) | Y | 시나리오 행 목록 |
-| `data.table.rows[].scenarioId` | number | Y | 시나리오 ID |
-| `data.table.rows[].displayOrder` | number | Y | 표시 순서 |
-| `data.table.rows[].title` | string | Y | 시나리오 제목 |
-| `data.table.rows[].narrative` | string | N | 시나리오 내러티브 |
-| `data.table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
-| `data.table.rows[].metrics` | object | N | 확률/실현가능성 등 메트릭 |
-| `data.table.rows[].impact` | object | N | 시장 영향(예: jkm/ttf/hh) |
-| `data.table.rows[].baselineYn` | CHAR(1) | N | Baseline 여부(`"Y" | "N"`) |
+| `result` | string | Y | `"success" \| "error"` |
+| `reason` | string | N | 에러 사유 (성공 시 null) |
+| `scenarioGroup` | object | Y | 시나리오 그룹 메타 정보 |
+| `scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
+| `scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
+| `scenarioGroup.eventTypeL2Id` | number | Y | Event type L2 ID |
+| `scenarioGroup.title` | string | Y | 시나리오 그룹 제목 |
+| `scenarioGroup.summary` | string | N | 시나리오 그룹 요약 |
+| `scenarioGroup.description` | string | N | 시나리오 그룹 상세 설명 |
+| `scenarioGroup.dimensionSelected` | array(json) | Y | 선택된 테이블 차원 키 목록 |
+| `scenarioGroup.scenarioCount` | number | Y | 생성 시나리오 개수 |
+| `scenarioGroup.status` | string | Y | Scenario Group status |
+| `scenarioGroup.stage` | string | Y | Scenario Group stage |
+| `table.headers` | array(json) | Y | 테이블 헤더 정의 |
+| `table.headers[].key` | string | Y | 컬럼 키(예: `period_label`) |
+| `table.headers[].label` | string | Y | 표시 라벨 |
+| `table.headers[].displayOrder` | number | Y | 표시 순서 |
+| `table.rows` | array(json) | Y | 시나리오 행 목록 |
+| `table.rows[].scenarioId` | number | Y | 시나리오 ID |
+| `table.rows[].displayOrder` | number | Y | 표시 순서 |
+| `table.rows[].title` | string | Y | 시나리오 제목 |
+| `table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
+| `table.rows[].baselineYn` | CHAR(1) | N | Baseline 여부(`"Y" \| "N"`) |
 
 ### 2) 시나리오 검증
 
@@ -204,30 +172,99 @@ Request body
 ```json
 {
   "userId": 10001,
+  "table": {
+    "headers": [
+      { "key": "period_label", "label": "기간", "displayOrder": 1 },
+      { "key": "capacity_change", "label": "생산능력 변화", "displayOrder": 2 },
+      { "key": "recovery", "label": "공급 복구", "displayOrder": 3 },
+      { "key": "new_dimension", "label": "새로운 분기항목(예시)", "displayOrder": 4 }
+    ],
+    "rows": [
+      {
+        "scenarioId": 90001,
+        "cells": {
+          "period_label": "2026.5월 말 (~2개월)",
+          "capacity_change": "15%",
+          "recovery": "4~6주 대다수 재기동",
+          "new_dimension": null
+        }
+      }
+    ]
+  }
+}
+```
+
+> `new_dimension` 처럼 분기 기준 추가로 인해 agent가 자동생성 해야 하는 값인 경우 `null`로 넣어주세요.
+
+| Path | Type | Required | Description |
+| --- | --- | --- | --- |
+| `userId` | number | Y | 요청 사용자 식별자(int) |
+| `table.headers` | array(json) | Y | 테이블 헤더 정의 |
+| `table.rows` | array&lt;object&gt; | Y | 검증 대상 시나리오 행 목록 |
+| `table.rows[].scenarioId` | number | Y | 시나리오 ID |
+| `table.rows[].cells` | object | Y | 헤더 key별 셀 값 (agent 자동생성 대상은 null) |
+
+Response Body (`ValidateScenariosOut`)
+
+```json
+{
+  "result": "success",
+  "isValid": true,
+  "reason": "MECE and plausibility checks passed",
   "scenarioGroup": {
-    "miEventId": 998877,
-    "eventTypeL2Id": 12,
-    "title": "호르무즈 봉쇄 + 전면전",
-    "summary": "단기 공급 차질 및 운임 급등 시나리오",
-    "description": "상세 설명...",
+    "scenarioGroupId": 12345,
+    "status": "creating",
+    "stage": "scenario_validated"
   },
   "table": {
     "headers": [
+      { "key": "period_label", "label": "기간", "displayOrder": 1 },
+      { "key": "new_dimension", "label": "새로운 분기항목(예시)", "displayOrder": 4 }
+    ],
+    "rows": [
       {
-        "key": "period_label",
-        "label": "기간",
-        "displayOrder": 1
-      },
-      {
-        "key": "capacity_change",
-        "label": "생산능력 변화",
-        "displayOrder": 2
-      },
-      {
-        "key": "recovery",
-        "label": "공급 복구",
-        "displayOrder": 3
+        "scenarioId": 90001,
+        "cells": {
+          "period_label": "2026.5월 말 (~2개월)",
+          "new_dimension": "new_value"
+        }
       }
+    ]
+  }
+}
+```
+
+> `table`은 agent가 자동생성한 값을 포함한 전체 테이블의 header/value를 담습니다.
+
+| Path | Type | Required | Description |
+| --- | --- | --- | --- |
+| `result` | string | Y | `"success" \| "error"` |
+| `reason` | string | N | 검증 사유/코멘트 (에러 시 에러 메시지) |
+| `isValid` | boolean | Y | 검증 결과 |
+| `scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
+| `scenarioGroup.status` | string | Y | Scenario Group status |
+| `scenarioGroup.stage` | string | Y | Scenario Group stage |
+| `table.headers` | array(json) | Y | 테이블 헤더 정의 |
+| `table.rows` | array(json) | Y | 검증 결과 행 목록 |
+| `table.rows[].scenarioId` | number | Y | 시나리오 ID |
+| `table.rows[].cells` | object | Y | 헤더 key별 셀 값(검증/자동생성 값 포함) |
+
+### 3) Signpost 생성
+
+- Method/Path: `POST /scenario-groups/{scenarioGroupId}/signposts`
+- Description: 시나리오 그룹 기준 signpost를 생성한다.
+- Path Param: `scenarioGroupId` (int)
+
+Request (body)
+
+```json
+{
+  "userId": 10001,
+  "table": {
+    "headers": [
+      { "key": "period_label", "label": "기간", "displayOrder": 1 },
+      { "key": "capacity_change", "label": "생산능력 변화", "displayOrder": 2 },
+      { "key": "recovery", "label": "공급 복구", "displayOrder": 3 }
     ],
     "rows": [
       {
@@ -237,179 +274,103 @@ Request body
           "capacity_change": "15%",
           "recovery": "4~6주 대다수 재기동"
         }
-      }
-    ]
-  }
-}
-```
-
-| Path | Type | Required | Description |
-| --- | --- | --- | --- |
-| `userId` | number | Y | 요청 사용자 식별자(int) |
-| `scenarioGroup` | object | Y | 검증 대상 시나리오 그룹 정보 |
-| `scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
-| `scenarioGroup.eventTypeL2Id` | number | Y | Event type L2 ID |
-| `scenarioGroup.title` | string | Y | 제목 |
-| `scenarioGroup.summary` | string | N | 요약 |
-| `scenarioGroup.description` | string | N | 상세 설명 |
-| `table.headers` | array(json) | Y | 테이블 헤더 정의 |
-| `table.rows` | array&lt;object&gt; | Y | 검증 대상 시나리오 행 목록 |
-| `table.rows[].scenarioId` | number | Y | 시나리오 ID |
-| `table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
-
-Response Body
-
-```json
-{
-  "status": "success",
-  "message": "성공",
-  "data": {
-    "scenarioGroupId": 1001,
-    "isValid": true, //false
-    "reason": "MECE and plausibility checks passed",
-    "status":"creating",
-    "stage": "scenario_validated", //scenario_created
-    "verdict": "PASS", //PASS | REVIEW | BLOCK
-    "summary": {
-      "PASS": 14,
-      "WARN": 0,
-      "FAIL": 0,
-      "INFO": 0
-    },
-    "checks": [
+      },
       {
-        "checkId": "R01",
-        "stage": "구조",
-        "name": "scenario_count = 실제 시나리오 수",
-        "status": "PASS",
-        "detail": "선언=2, 실제=2",
-        "offenders": []
+        "scenarioId": null,
+        "cells": {
+          "period_label": "~6개월",
+          "capacity_change": "30%",
+          "recovery": "9주 대다수 재기동"
+        }
       }
     ]
   }
-
 }
 ```
 
-| Path | Type | Required | Description |
-| --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
-| `data.isValid` | boolean | Y | 검증 결과 |
-| `data.reason` | string | N | 검증 사유/코멘트 |
-| `data.status` | string | Y | Scenario Group status |
-| `data.stage` | string | Y | Scenario Group stage |
-| `data.verdict` | string | Y | `"PASS" | "REVIEW" | "BLOCK"` |
-| `data.summary` | object | Y | PASS/WARN/FAIL/INFO 검사 건수 |
-| `data.checks` | array | Y | R01~R14 개별 검사 결과 |
-
-### 3) Signpost 생성
-
-- Method/Path: `POST /scenario-groups/{scenarioGroupId}/signposts`
-- Description: 시나리오 그룹 기준 signpost를 생성한다.
-- Path Param: `scenarioGroupId` (int)
-
-Request (body optional)
-
-```json
-{
-  "userId": 10001
-}
-```
+> 사용자가 추가한 신규 시나리오는 `scenarioId: null`로 보내주세요.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `userId` | number | N | 요청 사용자 식별자(int) |
+| `table` | object | Y | Signpost 생성을 위한 테이블(헤더/행) |
+| `table.headers` | array(json) | Y | 테이블 헤더 정의 |
+| `table.headers[].key` | string | Y | 컬럼 키(예: `period_label`) |
+| `table.headers[].label` | string | Y | 표시 라벨 |
+| `table.headers[].displayOrder` | number | Y | 표시 순서 |
+| `table.rows` | array(object) | Y | 대상 시나리오 행 목록 |
+| `table.rows[].scenarioId` | number\|null | Y | 시나리오 ID (사용자 추가 시나리오는 null) |
+| `table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
 
-Response Body
+Response Body (`CreateSignpostsOut`)
 
 ```json
 {
-  "status": "success",
-  "message": "성공",
-  "data": {
-    "scenarioGroup": {
-      "scenarioGroupId": 12345,
-      "miEventId": 998877,
-      "eventTypeL2Id": 12,
-      "title": "호르무즈 봉쇄 + 전면전",
-      "summary": "단기 공급 차질 및 운임 급등 시나리오",
-      "description": "상세 설명...",
-      "dimensionSelected": ["period_label", "capacity_change", "recovery"],
-      "scenarioCount": 5,
-      "status": "creating",
-      "stage": "signpost_created"
-    },
-    "table": {
-      "headers": [
-        {
-          "key": "period_label",
-          "label": "기간",
-          "displayOrder": 1
+  "result": "success",
+  "reason": null,
+  "scenarioGroup": {
+    "scenarioGroupId": 12345,
+    "miEventId": 998877,
+    "eventTypeL2Id": 12,
+    "title": "호르무즈 봉쇄 + 전면전",
+    "summary": "단기 공급 차질 및 운임 급등 시나리오",
+    "description": "상세 설명...",
+    "dimensionSelected": ["period_label", "capacity_change", "recovery"],
+    "scenarioCount": 5,
+    "status": "creating",
+    "stage": "signpost_created"
+  },
+  "table": {
+    "headers": [
+      { "key": "period_label", "label": "기간", "displayOrder": 1 },
+      { "key": "capacity_change", "label": "생산능력 변화", "displayOrder": 2 },
+      { "key": "recovery", "label": "공급 복구", "displayOrder": 3 }
+    ],
+    "rows": [
+      {
+        "scenarioId": 90001,
+        "displayOrder": 1,
+        "title": "단기 외교 해결",
+        "narrative": "시나리오 내러티브...",
+        "cells": {
+          "period_label": "2026.5월 말 (~2개월)",
+          "capacity_change": "15%",
+          "recovery": "4~6주 대다수 재기동"
         },
-        {
-          "key": "capacity_change",
-          "label": "생산능력 변화",
-          "displayOrder": 2
-        },
-        {
-          "key": "recovery",
-          "label": "공급 복구",
-          "displayOrder": 3
-        }
-      ],
-      "rows": [
-        {
-          "scenarioId": 90001,
-          "displayOrder": 1,
-          "title": "단기 외교 해결",
-          "narrative": "시나리오 내러티브...",
-          "cells": {
-            "period_label": "2026.5월 말 (~2개월)",
-            "capacity_change": "15%",
-            "recovery": "4~6주 대다수 재기동"
-          },
-          "metrics": {
-            "probabilityScore": 75.0,
-            "probabilityDelta": 0.0
-          },
-          "impact": {
-            "jkm": "중",
-            "ttf": "중",
-            "hh": "하"
-          },
-          "baselineYn": "Y",
-          "signposts": [
-            {
-              "signpostId": 1,
-              "label": "호르무즈 봉쇄 장기화",
-              "probabilityDirectionCode": "up",
-              "probabilityImpactScore": 12.5,
-              "signpostReason": "운송 리스크 확대 및 대체 항로 비용 증가",
-              "displayOrder": 1
-            }
-          ]
-        }
-      ]
-    }
+        "metrics": { "probabilityScore": 75.0, "probabilityDelta": 0.0 },
+        "baselineYn": "Y",
+        "signposts": [
+          {
+            "signpostId": 1,
+            "label": "호르무즈 봉쇄 장기화",
+            "probabilityDirectionCode": "up",
+            "signpostReason": "운송 리스크 확대 및 대체 항로 비용 증가",
+            "displayOrder": 1,
+            "strength": "STRONG",
+            "useYn": "Y"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroup` | object | Y | 시나리오 그룹 메타 정보 |
-| `data.table` | object | Y | 시나리오 테이블(행 + signposts 포함) |
-| `data.table.rows[].signposts` | array(json) | Y | 시나리오별 Signpost 목록 |
-| `data.table.rows[].signposts[].signpostId` | number | Y | Signpost ID |
-| `data.table.rows[].signposts[].label` | string | Y | Signpost 라벨 |
-| `data.table.rows[].signposts[].probabilityDirectionCode` | string | N | 확률 방향 코드(예: up/down) |
-| `data.table.rows[].signposts[].probabilityImpactScore` | DECIMAL(5,2) | N | 확률 영향 점수 |
-| `data.table.rows[].signposts[].signpostReason` | string | N | Signpost 사유 |
-| `data.table.rows[].signposts[].displayOrder` | number | N | 표시 순서 |
+| `result` | string | Y | `"success" \| "error"` |
+| `reason` | string | N | 에러 사유 (성공 시 null) |
+| `scenarioGroup` | object | Y | 시나리오 그룹 메타 정보 |
+| `table` | object | Y | 시나리오 테이블(행 + signposts 포함) |
+| `table.rows[].signposts` | array(json) | Y | 시나리오별 Signpost 목록 |
+| `table.rows[].signposts[].signpostId` | number | Y | Signpost ID |
+| `table.rows[].signposts[].label` | string | Y | Signpost 라벨 |
+| `table.rows[].signposts[].probabilityDirectionCode` | string | N | 확률 방향 코드(예: up/down) |
+| `table.rows[].signposts[].signpostReason` | string | N | Signpost 사유 |
+| `table.rows[].signposts[].displayOrder` | number | N | 표시 순서 |
+| `table.rows[].signposts[].strength` | string | N | Signpost 강도 (STRONG/MEDIUM/WEAK) |
+| `table.rows[].signposts[].useYn` | CHAR(1) | N | 사용 여부 (Y/N) |
+| `table.rows[].signposts[].keywordHints` | array(string) | N | 키워드 힌트 목록 |
 
 ### 4) 생성 확정
 
@@ -421,63 +382,43 @@ Request Body:
 
 ```json
 {
-    "scenarioGroup": {
-      "title": "호르무즈 봉쇄 + 전면전",
-      "summary": "단기 공급 차질 및 운임 급등 시나리오",
-      "description": "상세 설명..."
-    },
-    "table": {
-      "headers": [
-        {
-          "key": "period_label",
-          "label": "기간",
-          "displayOrder": 1
+  "scenarioGroup": {
+    "title": "호르무즈 봉쇄 + 전면전",
+    "summary": "단기 공급 차질 및 운임 급등 시나리오",
+    "description": "상세 설명..."
+  },
+  "table": {
+    "headers": [
+      { "key": "period_label", "label": "기간", "displayOrder": 1 },
+      { "key": "capacity_change", "label": "생산능력 변화", "displayOrder": 2 },
+      { "key": "recovery", "label": "공급 복구", "displayOrder": 3 }
+    ],
+    "rows": [
+      {
+        "scenarioId": 90001,
+        "displayOrder": 1,
+        "title": "단기 외교 해결",
+        "narrative": "시나리오 내러티브...",
+        "cells": {
+          "period_label": "2026.5월 말 (~2개월)",
+          "capacity_change": "15%",
+          "recovery": "4~6주 대다수 재기동"
         },
-        {
-          "key": "capacity_change",
-          "label": "생산능력 변화",
-          "displayOrder": 2
-        },
-        {
-          "key": "recovery",
-          "label": "공급 복구",
-          "displayOrder": 3
-        }
-      ],
-      "rows": [
-        {
-          "scenarioId": 90001,
-          "displayOrder": 1,
-          "title": "단기 외교 해결",
-          "narrative": "시나리오 내러티브...",
-          "cells": {
-            "period_label": "2026.5월 말 (~2개월)",
-            "capacity_change": "15%",
-            "recovery": "4~6주 대다수 재기동"
-          },
-          "metrics": {
-            "probabilityScore": 75.0,
-            "probabilityDelta": 0.0
-          },
-          "impact": {
-            "jkm": "중",
-            "ttf": "중",
-            "hh": "하"
-          },
-          "baselineYn": "Y",
-          "signposts": [
-            {
-              "signpostId": 1,
-              "label": "호르무즈 봉쇄 장기화",
-              "probabilityDirectionCode": "up",
-              "probabilityImpactScore": 12.5,
-              "signpostReason": "운송 리스크 확대 및 대체 항로 비용 증가",
-              "displayOrder": 1
-            }
-          ]
-        }
-      ]
-    }
+        "metrics": { "probabilityScore": 75.0, "probabilityDelta": 0.0 },
+        "baselineYn": "Y",
+        "signposts": [
+          {
+            "signpostId": 1,
+            "label": "호르무즈 봉쇄 장기화",
+            "probabilityDirectionCode": "up",
+            "signpostReason": "운송 리스크 확대 및 대체 항로 비용 증가",
+            "displayOrder": 1,
+            "strength": "STRONG",
+            "useYn": "Y"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -496,24 +437,30 @@ Response (`ConfirmGenerationOut`)
 {
   "status": "success",
   "message": "성공",
-  "data":{
+  "data": {
     "scenarioGroupId": 1001,
-    "status":"created",
-    "stage": "completed",
+    "status": "created",
+    "stage": "completed"
   }
-
 }
 ```
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `status` | string | Y | `"success" | "error"` |
+| `status` | string | Y | `"success" \| "error"` |
 | `message` | string | Y | 처리 결과 메시지 |
 | `data.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
 | `data.status` | string | Y | Scenario Group status |
 | `data.stage` | string | Y | Scenario Group stage |
 
 ## 공통 응답 필드
+
+### Callback Body (API 1, 2, 3)
+
+- `result`: `"success" | "error"`
+- `reason`: 에러 사유 (성공 시 null)
+
+### 일반 Response Body (API 4)
 
 - `status`: `"success" | "error"`
 - `message`: 처리 결과 메시지

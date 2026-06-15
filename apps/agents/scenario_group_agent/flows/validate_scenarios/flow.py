@@ -12,12 +12,15 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     save_validation_result,
     validate_scenarios,
 )
+from apps.agents.scenario_group_agent.schemas.common import ScenarioTable
 from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
-    ValidateScenariosData,
+    ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosIn,
     ValidateScenariosOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 def build_graph() -> Runnable:
@@ -43,32 +46,22 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     )
 
 
-def _resolve_status(raw_status: object) -> str:
-    return "error" if raw_status in {"failure", "error"} else "success"
-
-
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    status = _resolve_status(data.get("status"))
+    if data.get("status") in {"failure", "error"}:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=data.get("message") or "Scenario validation failed")
     group = data.get("scenario_group") or {}
-    validation_result = data.get("validation_result") or {}
+    request_table = data.get("request_table")
     return ValidateScenariosOut(
-        status=status,
-        message=data.get("message") or "",
-        data=(
-            ValidateScenariosData(
-                scenario_group_id=data.get("scenario_group_id") or 0,
-                is_valid=data.get("is_valid") or False,
-                reason=data.get("reason") or data.get("message") or "",
-                status=group.get("status") or "creating",
-                stage=group.get("stage") or "scenario_created",
-                verdict=validation_result.get("verdict") or "BLOCK",
-                summary=validation_result.get("summary") or {},
-                checks=validation_result.get("checks") or [],
-            )
-            if status == "success"
-            else None
+        result="success",
+        is_valid=data.get("is_valid"),
+        reason=data.get("reason") or None,
+        scenario_group=ValidateScenariosCallBackScenarioGroup(
+            scenario_group_id=data.get("scenario_group_id") or 0,
+            status=group.get("status") or "creating",
+            stage=group.get("stage") or "scenario_created",
         ),
+        table=ScenarioTable.model_validate(request_table) if request_table else None,
     )
 
 
