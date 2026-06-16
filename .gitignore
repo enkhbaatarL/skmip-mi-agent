@@ -110,3 +110,4 @@ local/
 .omc/
 skmip-mi-agent.code-workspace
 .cursor/rules/
+.claude/settings.local.json
