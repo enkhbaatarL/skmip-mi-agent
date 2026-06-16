@@ -17,7 +17,7 @@ class ScenarioRepository(BaseSyncSQLRepository):
             MiScenarioDimensionTemplateModel.event_type_l2_id == event_type_l2_id,
             MiScenarioDimensionTemplateModel.del_yn == "N",
         )
-        return self.session.execute(stmt).scalar_one_or_none()
+        return self.session.execute(stmt).scalars().first()
 
     def fetch_models_by_group_id(self, scenario_group_id: int) -> list[MiScenarioModel]:
         stmt = (

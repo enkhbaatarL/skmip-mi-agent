@@ -588,8 +588,8 @@ CREATE TABLE `tmm_mi_scenario_group_m` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`scenario_group_id`),
-    UNIQUE KEY `uk_tmm_mi_scenario_group_m_01` (`mi_event_id`),
     KEY `idx_tmm_mi_scenario_group_m_01` (`event_type_l2_id`),
+    KEY `idx_tmm_mi_scenario_group_m_02` (`mi_event_id`),
 
     CONSTRAINT `ck_tmm_mi_scenario_group_m_01`
         CHECK (JSON_TYPE(dimension_selected) = 'ARRAY'),
@@ -621,7 +621,7 @@ CREATE TABLE `tmm_mi_scenario_dimension_template_m` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`scenario_dimension_template_id`),
-    UNIQUE KEY `uk_tmm_mi_scenario_dimension_template_m_01` (`event_type_l2_id`),
+    KEY `idx_tmm_mi_scenario_dimension_template_m_01` (`event_type_l2_id`),
 
     CONSTRAINT `ck_tmm_mi_scenario_dimension_template_m_01`
         CHECK (JSON_TYPE(template_json) = 'ARRAY'),
@@ -762,7 +762,7 @@ CREATE TABLE `tmm_mi_snapshot_m` (
     `del_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'N' COMMENT '삭제여부',
 
     PRIMARY KEY (`snapshot_id`),
-    UNIQUE KEY `uk_tmm_mi_snapshot_m_01` (`scenario_group_id`, `stage_no`, `phase_code`),
+    KEY `idx_tmm_mi_snapshot_m_01` (`scenario_group_id`),
 
     CONSTRAINT `fk_tmm_mi_snapshot_m_01`
         FOREIGN KEY (`scenario_group_id`)
