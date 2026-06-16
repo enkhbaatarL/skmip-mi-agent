@@ -1,6 +1,6 @@
 ---
-name: mr-message
-description: MR(Merge Request) 메시지를 현재 브랜치의 커밋 내역을 분석하여 자동 생성합니다. "MR 메세지", "MR 메시지", "merge request", "release note" 요청 시 사용.
+name: release
+description: MR 메시지 생성부터 Git tag, GitHub Release, Docker build & push까지 릴리즈 프로세스 전체를 진행합니다. "MR 메세지", "MR 메시지", "release note", "릴리즈", "배포 준비" 요청 시 사용.
 disable-model-invocation: true
 allowed-tools: Bash(git *) Bash(gh *) Bash(docker *) AskUserQuestion
 ---
