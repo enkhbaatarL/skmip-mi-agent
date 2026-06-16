@@ -75,7 +75,7 @@ MR 메시지 작성 후, `AskUserQuestion` 도구로 묻는다:
 "작업 없음"만 선택 또는 선택 없음 → 종료.
 
 ### Step 4-A: Git tag & GitHub Release (옵션 A 선택 시)
-
+ 
 1. 기존 태그 목록 확인:
    ```bash
    git tag -l --sort=-v:refname | head -10

@@ -132,7 +132,7 @@ def build_context(
         enum_index=enum_index,
         tail_index=tail_index,
         persisted_scenario_ids=set(persisted_by_id),
-        persisted_scenario_id_counts=Counter(persisted_by_id),
+        persisted_scenario_id_counts=Counter(persisted_by_id.keys()),
     )
 
 
@@ -184,19 +184,27 @@ def _check_count(ctx: ReviewContext) -> CheckResult:
 
 
 def _check_group_fk(ctx: ReviewContext) -> CheckResult:
+    """Validate that requested scenario IDs match the persisted group scenarios.
+
+    R02 guards against validating a table that is missing a stored scenario,
+    includes a scenario from another group, or repeats an ID in the request.
+    """
     group_id = ctx.group.get("scenario_group_id")
     requested_ids = [scenario["scenario_id"] for scenario in ctx.scenarios]
     requested_id_counts = Counter(requested_ids)
+    # DB에 저장된 시나리오 수보다 요청 payload의 동일 ID 개수가 적으면 누락으로 본다. ->  추후 template에서 required true로 되어있는것만 missing으로 보도록 개선 예정
     missing = sorted(
         sid
         for sid, count in ctx.persisted_scenario_id_counts.items()
         if requested_id_counts.get(sid, 0) < count
     )
+    # 요청에는 있지만 현재 group의 DB 시나리오 목록에는 없는 ID다. => 추후 llm 이 value 자동 생성하는 로직 추가 예정
     unexpected = sorted(
         sid
         for sid in requested_id_counts
         if sid not in ctx.persisted_scenario_id_counts
     )
+    # 같은 scenario_id가 요청 payload 안에 두 번 이상 들어오면 중복으로 본다.
     duplicated = sorted(
         sid for sid, count in requested_id_counts.items() if count > 1
     )
