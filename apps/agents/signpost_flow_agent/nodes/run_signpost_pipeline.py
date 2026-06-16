@@ -12,6 +12,7 @@ import asyncio
 from datetime import datetime
 from typing import Any
 
+from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
 from apps.agents.signpost_flow_agent.services.signpost_db_service import SignpostDbService
 from apps.agents.signpost_flow_agent.services.signpost_pipeline import build_signposts_for_scenario
 from apps.agents.signpost_flow_agent.state.signpost_flow_state import SignpostFlowState
@@ -24,7 +25,7 @@ async def _process_one_scenario(
     scenario: dict[str, Any],
     base_event_summary: dict[str, str],
     sem: asyncio.Semaphore,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[GeneratedSignpost], dict[str, Any]]:
     """Check existence and generate signposts for a single scenario."""
     scenario_id = scenario.get("scenario_id", 0)
     scenario_title = scenario.get("title", "")
@@ -109,7 +110,7 @@ async def run_signpost_pipeline(state: SignpostFlowState) -> dict[str, Any]:
         *[_process_one_scenario(scenario, base_event_summary, sem) for scenario in scenarios],
     )
 
-    all_generated_signposts: list[dict[str, Any]] = []
+    all_generated_signposts: list[GeneratedSignpost] = []
     scenario_results: list[dict[str, Any]] = []
     for signposts, result in results:
         all_generated_signposts.extend(signposts)

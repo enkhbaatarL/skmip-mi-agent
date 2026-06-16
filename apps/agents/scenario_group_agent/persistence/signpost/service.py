@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from decimal import Decimal
 from typing import Any
 
+from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
-
-STRENGTH_TO_IMPACT_SCORE = {
-    "STRONG": Decimal("1.00"),
-    "MEDIUM": Decimal("0.50"),
-    "WEAK": Decimal("0.25"),
-}
+from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
 
 
 class SignpostService:
@@ -44,7 +39,7 @@ class SignpostService:
 
     def save_generated_signposts(
         self,
-        signposts: list[dict[str, Any]],
+        signposts: list[GeneratedSignpost],
         user_id: int | None = None,
     ) -> list[int]:
         from apps.common.configs.database.sync_database.connection import (
@@ -57,26 +52,17 @@ class SignpostService:
             saved_ids: list[int] = []
             display_order_by_scenario: dict[int, int] = defaultdict(int)
             for signpost in signposts:
-                rationale = signpost.get("rationale_ko") or ""
-                keyword_hints = signpost.get("keyword_hints") or []
-                if keyword_hints:
-                    rationale = f"{rationale}\n\nkeyword_hints: {', '.join(map(str, keyword_hints))}".strip()
-                scenario_id = int(signpost["scenario_id"])
+                scenario_id = int(signpost.scenario_id)
                 display_order_by_scenario[scenario_id] += 1
-                payload = {
-                    "scenario_id": scenario_id,
-                    "label": (signpost.get("label") or "")[:500],
-                    "probability_direction_code": signpost.get("direction"),
-                    "probability_impact_score": STRENGTH_TO_IMPACT_SCORE.get(
-                        signpost.get("strength")
-                    ),
-                    "signpost_reason": rationale,
-                    "display_order": display_order_by_scenario[scenario_id],
-                }
-                if user_id is not None:
-                    payload["crt_usr_logn_id"] = user_id
-                    payload["mod_usr_logn_id"] = user_id
-                saved_ids.append(repository.insert_signpost(payload))
+                saved_ids.append(
+                    repository.insert_signpost(
+                        MiSignpostModel.convert_from_dto(
+                            dto=signpost,
+                            display_order=display_order_by_scenario[scenario_id],
+                            user_id=user_id,
+                        )
+                    )
+                )
             session.commit()
             return saved_ids
         except Exception:

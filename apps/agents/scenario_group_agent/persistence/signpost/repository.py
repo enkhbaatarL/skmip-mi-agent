@@ -39,8 +39,7 @@ class SignpostRepository(BaseSyncSQLRepository):
         )
         return self.session.execute(stmt).first() is not None
 
-    def insert_signpost(self, payload: dict[str, Any]) -> int:
-        signpost = MiSignpostModel(**payload)
+    def insert_signpost(self, signpost: MiSignpostModel) -> int:
         self.session.add(signpost)
         self.session.flush()
         return int(signpost.signpost_id)
