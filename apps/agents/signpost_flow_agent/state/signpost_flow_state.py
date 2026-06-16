@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
+
 
 class SignpostFlowState(BaseModel):
     """Signpost Flow Agent State
@@ -36,7 +38,7 @@ class SignpostFlowState(BaseModel):
     )
 
     # --- Signpost results ---
-    signposts_generated: Optional[List[Dict[str, Any]]] = Field(
+    signposts_generated: Optional[List[GeneratedSignpost]] = Field(
         default=None,
         description="Generated signposts with their scenario_id FK mapping"
     )

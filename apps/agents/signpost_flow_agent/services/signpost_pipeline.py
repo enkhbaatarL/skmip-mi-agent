@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
+from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
+from apps.agents.scenario_group_agent.schemas.scenario_enums import (
+    DirectionCode,
+    SignpostStrength,
+)
 from apps.common.logging.logger_config import logger as app_logger
 from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
@@ -45,9 +50,7 @@ REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 SignpostClass = Literal["observation"]
 SignpostSource = Literal["mi_record"]
 Direction = Literal["SUP", "REF"]
-Strength = Literal["STRONG", "MEDIUM", "WEAK"]
-
-STRENGTH_TIERS: Tuple[str, ...] = ("STRONG", "MEDIUM", "WEAK")
+Strength = SignpostStrength
 
 
 # ==============================================
@@ -88,7 +91,9 @@ class _Stage2LLMOutput(BaseModel):
 
 class _Stage4Assignment(BaseModel):
     label_ko: str = Field(description="입력 signpost 의 label_ko (echo).")
-    strength: Strength = Field(description="STRONG / MEDIUM / WEAK 중 1개.")
+    strength: Strength = Field(
+        description="SignpostStrength enum 값 (VERYSTRONG/STRONG/MEDIUM/WEAK/VERYWEAK)."
+    )
     rationale_ko: str = Field(
         description="이 strength 부여 + 시나리오 검증 측면의 한국어 1~2줄 근거.",
     )
@@ -406,17 +411,14 @@ STAGE4_SYSTEM = """\
 를 받습니다. **direction 은 'SUP' 로 이미 고정**되었으므로 결정/출력하지 않습니다.
 
 ## 당신이 결정할 것 (signpost 별로)
-1. strength ∈ {{STRONG, MEDIUM, WEAK}}
-   - STRONG = 'realized' 신호: 시나리오가 사실상 실현됐음을 직접 증명하는 결정적 관측.
-   - MEDIUM = 'early' 신호 (강): 시나리오 방향성의 분명한 초기 신호. 확정은 아님.
-   - WEAK   = 'early' 신호 (약): 정황적·간접적 초기 신호. 단독으로는 약함.
+{stage4_strength_guide}
 2. rationale_ko : 위 strength 부여 근거 + 이 signpost 가 시나리오를 어떻게
    검증/보강하는지 한국어 1~2줄.
 
 ## 역할 쿼터 (반드시 준수)
 - 입력 signpost 가 N 개(=3~6)일 때, 다음을 모두 만족해야 함:
-  - STRONG 개수 ∈ [{strong_min}, {strong_max}]   (=realized)
-  - MEDIUM+WEAK 개수 ∈ [{early_min}, {early_max}]  (=early)
+  - REALIZED_BUCKET(VERYSTRONG+STRONG) 개수 ∈ [{strong_min}, {strong_max}]
+  - EARLY_BUCKET(MEDIUM+WEAK+VERYWEAK) 개수 ∈ [{early_min}, {early_max}]
 - 위 폭 내에서 **시나리오 확정성에 비례해 분포가 달라지는 것이 정상**:
   - tail-risk/극단 시나리오 → STRONG 비중을 키우고 EARLY 작게.
   - 단기/완화 시나리오    → STRONG 작게, EARLY(MED/WEAK) 비중 크게.
@@ -432,8 +434,8 @@ STAGE4_HARD = """\
 [중요한 출력 제약 — Stage 4]
 - assignments 길이는 입력 signpost 수와 정확히 일치.
 - 각 항목의 label_ko 는 입력 label 과 정확히 일치 (echo).
-- strength ∈ {{STRONG, MEDIUM, WEAK}} 중 정확히 1개.
-- 쿼터: STRONG {strong_min}~{strong_max} + (MEDIUM∪WEAK) {early_min}~{early_max}. 위반 시 재시도.
+- strength 는 SignpostStrength enum 값 중 정확히 1개.
+- 쿼터: (VERYSTRONG∪STRONG) {strong_min}~{strong_max} + (MEDIUM∪WEAK∪VERYWEAK) {early_min}~{early_max}. 위반 시 재시도.
 """
 
 
@@ -487,8 +489,21 @@ async def stage4_assign_direction_strength(
                 "assignments 의 label_ko 순서가 입력과 다름. "
                 f"expected={label_set}, got={out_labels}"
             )
-        n_strong = sum(1 for a in out.assignments if a.strength == "STRONG")
-        n_early = sum(1 for a in out.assignments if a.strength in ("MEDIUM", "WEAK"))
+        n_strong = sum(
+            1
+            for a in out.assignments
+            if a.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
+        )
+        n_early = sum(
+            1
+            for a in out.assignments
+            if a.strength
+            in (
+                SignpostStrength.MEDIUM,
+                SignpostStrength.WEAK,
+                SignpostStrength.VERYWEAK,
+            )
+        )
         if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
             raise ValueError(
                 f"STRONG 쿼터 위반: {n_strong} "
@@ -503,7 +518,13 @@ async def stage4_assign_direction_strength(
     out = await _invoke_with_retry(
         stage_label="Stage 4",
         schema_cls=_Stage4LLMOutput,
-        system_prompt=STAGE4_SYSTEM,
+        system_prompt=STAGE4_SYSTEM.format(
+            stage4_strength_guide=SignpostStrength.stage4_prompt_guide_text(),
+            strong_min=REF_STRONG_QUOTA_MIN,
+            strong_max=REF_STRONG_QUOTA_MAX,
+            early_min=REF_EARLY_QUOTA_MIN,
+            early_max=REF_EARLY_QUOTA_MAX,
+        ),
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=hard,
@@ -513,7 +534,11 @@ async def stage4_assign_direction_strength(
         return _stage4_fallback(labels)
 
     return [
-        {"label_ko": a.label_ko.strip(), "strength": a.strength, "rationale_ko": a.rationale_ko}
+        {
+            "label_ko": a.label_ko.strip(),
+            "strength": a.strength.to_string(),
+            "rationale_ko": a.rationale_ko,
+        }
         for a in out.assignments
     ]
 
@@ -534,12 +559,30 @@ def _stage4_fallback(labels: List[str]) -> List[Dict[str, str]]:
         n_strong -= shift
         n_early += shift
 
+    n_verystrong = 1 if n_strong >= 2 else 0
+    n_strong_only = n_strong - n_verystrong
     n_med = (n_early + 1) // 2
-    n_weak = n_early - n_med
+    n_remaining_early = n_early - n_med
+    n_weak = (n_remaining_early + 1) // 2
+    n_veryweak = n_remaining_early - n_weak
 
-    app_logger.info("Stage 4 fallback: N={} → STRONG={} MED={} WEAK={}", n, n_strong, n_med, n_weak)
+    app_logger.info(
+        "Stage 4 fallback: N={} → VS={} S={} M={} W={} VW={}",
+        n,
+        n_verystrong,
+        n_strong_only,
+        n_med,
+        n_weak,
+        n_veryweak,
+    )
 
-    sequence = (["STRONG"] * n_strong) + (["MEDIUM"] * n_med) + (["WEAK"] * n_weak)
+    sequence = (
+        ([SignpostStrength.VERYSTRONG.to_string()] * n_verystrong)
+        + ([SignpostStrength.STRONG.to_string()] * n_strong_only)
+        + ([SignpostStrength.MEDIUM.to_string()] * n_med)
+        + ([SignpostStrength.WEAK.to_string()] * n_weak)
+        + ([SignpostStrength.VERYWEAK.to_string()] * n_veryweak)
+    )
     out: List[Dict[str, str]] = []
     for lbl, strength in zip(labels, sequence):
         out.append({
@@ -672,16 +715,12 @@ def _stage5_fallback_keywords(label: str) -> List[str]:
 # 8. Pipeline Orchestration (per-scenario)
 # ==============================================
 
-def _build_signpost_id(scenario_pk: int, idx: int) -> str:
-    """sgp_S{PK}_{NN} 패턴 — scenario 의 PK 사용."""
-    return f"sgp_{scenario_pk}_{idx:02d}"
-
 
 async def build_signposts_for_scenario(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
-) -> List[Dict[str, Any]]:
-    """단일 시나리오에 대해 Stage 2→3→4→5 를 순차 실행하고 signposts dict list 반환."""
+) -> List[GeneratedSignpost]:
+    """단일 시나리오에 대해 Stage 2→3→4→5 를 순차 실행하고 typed signposts 반환."""
     sid = scenario.get("scenario_id", 0)
     scenario_pk = int(sid) if isinstance(sid, (int, str)) and str(sid).isdigit() else 0
 
@@ -693,29 +732,42 @@ async def build_signposts_for_scenario(
 
     # ── Stage 4 ────────────────────────────────────────────────
     s4_assigns = await stage4_assign_direction_strength(scenario, base_event_summary, labels)
+    stage4_strengths = [
+        SignpostStrength.from_string_or_default(
+            a.get("strength"),
+            default=SignpostStrength.MEDIUM,
+        )
+        for a in s4_assigns
+    ]
     app_logger.info(
-        "[{}] Stage 4 strong={} med={} weak={}",
+        "[{}] Stage 4 vs={} s={} m={} w={} vw={}",
         scenario_pk,
-        sum(1 for a in s4_assigns if a['strength'] == 'STRONG'),
-        sum(1 for a in s4_assigns if a['strength'] == 'MEDIUM'),
-        sum(1 for a in s4_assigns if a['strength'] == 'WEAK'),
+        sum(1 for s in stage4_strengths if s == SignpostStrength.VERYSTRONG),
+        sum(1 for s in stage4_strengths if s == SignpostStrength.STRONG),
+        sum(1 for s in stage4_strengths if s == SignpostStrength.MEDIUM),
+        sum(1 for s in stage4_strengths if s == SignpostStrength.WEAK),
+        sum(1 for s in stage4_strengths if s == SignpostStrength.VERYWEAK),
     )
 
     # ── Stage 5 ────────────────────────────────────────────────
     s5_keywords = await stage5_mint_keywords(scenario, base_event_summary, labels)
 
     # ── Stage 3 + 조립 ─────────────────────────────────────────
-    signposts: List[Dict[str, Any]] = []
-    for idx, (lbl, assign, kws) in enumerate(zip(labels, s4_assigns, s5_keywords), start=1):
-        signposts.append({
-            "scenario_id": scenario_pk,
-            "signpost_id": _build_signpost_id(scenario_pk, idx),
-            "signpost_class": "observation",
-            "label": lbl,  # DB column name is 'label', not 'label_ko'
-            "signpost_source": "mi_record",
-            "direction": "SUP",
-            "strength": assign["strength"],
-            "rationale_ko": assign["rationale_ko"],
-            "keyword_hints": kws,
-        })
+    signposts: List[GeneratedSignpost] = []
+    for lbl, assign, kws in zip(labels, s4_assigns, s5_keywords):
+        signposts.append(
+            GeneratedSignpost(
+                scenario_id=scenario_pk,
+                signpost_class="observation",
+                label=lbl,  # DB column name is 'label', not 'label_ko'
+                signpost_source="mi_record",
+                direction=DirectionCode.SUP,
+                strength=SignpostStrength.from_string_or_default(
+                    assign["strength"],
+                    default=SignpostStrength.MEDIUM,
+                ),
+                rationale_ko=assign["rationale_ko"],
+                keyword_hints=kws,
+            )
+        )
     return signposts

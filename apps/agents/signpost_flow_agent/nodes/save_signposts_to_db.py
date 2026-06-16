@@ -45,7 +45,7 @@ def save_signposts_to_db(state: SignpostFlowState) -> Dict[str, Any]:
         "mi_event_id": mi_event_id,
         "scenario_group_id": state.scenario_group_id,
         "scenario_results": state.scenario_results,
-        "signposts": signposts,
+        "signposts": [signpost.model_dump(mode="json") for signpost in signposts],
         "saved_signpost_ids": saved_ids,
         "created_at": datetime.utcnow().isoformat(),
     }

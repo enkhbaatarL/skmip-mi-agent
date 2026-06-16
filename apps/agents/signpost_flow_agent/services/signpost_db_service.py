@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
 from apps.agents.signpost_flow_agent.repositories.sync_signpost_repository import (
     SyncSignpostRepository,
 )
@@ -53,7 +54,7 @@ class SignpostDbService:
 
     def save_signposts(
         self,
-        signposts: list[dict[str, Any]],
+        signposts: list[GeneratedSignpost],
     ) -> list[int]:
         """생성된 signpost들을 tmm_signpostm에 저장.
 
@@ -78,20 +79,20 @@ class SignpostDbService:
             saved_ids: list[int] = []
 
             for sp in signposts:
-                keyword_hints = sp.get("keyword_hints", [])
+                keyword_hints = sp.keyword_hints or []
 
                 payload = {
-                    "scenario_id": sp.get("scenario_id"),
+                    "scenario_id": sp.scenario_id,
                     "crt_usr_logn_id": "SYSTEM",
                     "mod_usr_logn_id": "SYSTEM",
                     "del_yn": "N",
                     "status_code": "draft",
                     "language": "ko",
-                    "label": sp.get("label", ""),
-                    "signpost_class": sp.get("signpost_class", "observation"),
-                    "signpost_source": sp.get("signpost_source", "mi_record"),
-                    "direction": sp.get("direction", "SUP"),
-                    "strength": sp.get("strength"),
+                    "label": sp.label,
+                    "signpost_class": sp.signpost_class,
+                    "signpost_source": sp.signpost_source,
+                    "direction": sp.direction.to_string(),
+                    "strength": sp.strength.to_string() if sp.strength else None,
                     "keyword_hints": keyword_hints,
                 }
 

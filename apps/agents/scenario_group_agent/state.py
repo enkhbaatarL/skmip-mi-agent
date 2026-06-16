@@ -5,6 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from apps.agents.scenario_group_agent.schemas.create_signposts import (
+    GeneratedSignpost,
+    SignpostGenerationResult,
+)
+
 
 class ScenarioDesignState(BaseModel):
     mi_event_id: int | None = None
@@ -16,11 +21,11 @@ class ScenarioDesignState(BaseModel):
     scenario_group: dict[str, Any] | None = None
     scenarios: list[dict[str, Any]] = Field(default_factory=list)
     dimension_template: list[dict[str, Any]] = Field(default_factory=list)
-    signposts: list[dict[str, Any]] = Field(default_factory=list)
+    signposts: list[GeneratedSignpost] = Field(default_factory=list)
 
     scenario_result: dict[str, Any] | None = None
     validation_result: dict[str, Any] | None = None
-    signpost_result: dict[str, Any] | None = None
+    signpost_result: SignpostGenerationResult | None = None
     request_scenario_group: dict[str, Any] | None = None
     request_table: dict[str, Any] | None = None
 

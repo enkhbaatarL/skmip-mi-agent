@@ -13,6 +13,10 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.service import 
 from apps.agents.scenario_group_agent.persistence.signpost.service import (
     SignpostService,
 )
+from apps.agents.scenario_group_agent.schemas.create_signposts import (
+    GeneratedSignpost,
+    SignpostGenerationResult,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 
 _MAX_CONCURRENT_SCENARIOS = 7
@@ -101,7 +105,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
         "summary": c1.get("summary", ""),
         "driver": c1.get("driver", ""),
     }
-    existing_scenario_ids = {int(sp["scenario_id"]) for sp in state.signposts}
+    existing_scenario_ids = {int(sp.scenario_id) for sp in state.signposts}
     scenarios_to_process = [
         s for s in state.scenarios if int(s["scenario_id"]) not in existing_scenario_ids
     ]
@@ -110,19 +114,21 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
 
     async def process_one(
         scenario: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    ) -> tuple[list[GeneratedSignpost], dict[str, Any]]:
         async with sem:
-            signposts = await build_signposts_for_scenario(scenario, base_event_summary)
-            return signposts, {
+            generated_signposts = await build_signposts_for_scenario(
+                scenario, base_event_summary
+            )
+            return generated_signposts, {
                 "scenario_id": scenario["scenario_id"],
                 "status": "success",
-                "signpost_count": len(signposts),
+                "signpost_count": len(generated_signposts),
             }
 
     results = await asyncio.gather(
         *(process_one(scenario) for scenario in scenarios_to_process)
     )
-    generated: list[dict[str, Any]] = []
+    generated: list[GeneratedSignpost] = []
     scenario_results: list[dict[str, Any]] = []
     for signposts, scenario_result in results:
         generated.extend(signposts)
@@ -130,18 +136,19 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
 
     return {
         "signposts": [*state.signposts, *generated],
-        "signpost_result": {
-            "scenario_group_id": state.scenario_group_id,
-            "scenario_results": scenario_results,
-            "signposts": generated,
-        },
+        "signpost_result": SignpostGenerationResult(
+            scenario_group_id=state.scenario_group_id,
+            scenario_results=scenario_results,
+            signposts=generated,
+        ),
     }
 
 
 def save_signposts(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status in {"failure", "already_exist"}:
         return {}
-    generated = (state.signpost_result or {}).get("signposts", [])
+    signpost_result = state.signpost_result
+    generated = signpost_result.signposts if signpost_result is not None else []
     saved_ids = (
         SignpostService().save_generated_signposts(generated, user_id=state.user_id)
         if generated

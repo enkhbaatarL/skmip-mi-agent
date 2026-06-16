@@ -96,7 +96,10 @@ class SyncSignpostRepository(BaseSyncSQLRepository):
     def check_signposts_exist(self, scenario_id: int) -> bool:
         """tmm_signpostm에서 해당 scenario_id에 signpost가 이미 존재하는지 확인."""
         stmt = select(
-            exists().where(SignpostModel.scenario_id == scenario_id)
+            exists().where(
+                SignpostModel.scenario_id == scenario_id,
+                SignpostModel.del_yn == "N",
+            )
         )
         return bool(self.session.execute(stmt).scalar())
 
