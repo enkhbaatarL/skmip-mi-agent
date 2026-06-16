@@ -65,17 +65,19 @@ class MiSignpostModel(AuditColumnsMixin, ORMBase):
             if isinstance(dto.strength, str)
             else dto.strength
         )
-        payload = {
-            "scenario_id": int(dto.scenario_id),
-            "label": (dto.label or "")[:500],
-            "probability_direction_code": dto.direction.to_string(),
-            "probability_impact_score": (
-                strength.to_impact_score() if strength is not None else None
-            ),
-            "signpost_reason": rationale,
-            "display_order": display_order,
-        }
+        strength_value = strength.to_string() if strength is not None else None
+        impact_score = strength.to_impact_score() if strength is not None else None
+
+        model = cls(
+            scenario_id=int(dto.scenario_id),
+            label=(dto.label or "")[:500],
+            probability_direction_code=dto.direction.to_string(),
+            strength=strength_value,
+            probability_impact_score=impact_score,
+            signpost_reason=rationale,
+            display_order=display_order,
+        )
         if user_id is not None:
-            payload["crt_usr_logn_id"] = user_id
-            payload["mod_usr_logn_id"] = user_id
-        return cls(**payload)
+            model.crt_usr_logn_id = user_id
+            model.mod_usr_logn_id = user_id
+        return model
