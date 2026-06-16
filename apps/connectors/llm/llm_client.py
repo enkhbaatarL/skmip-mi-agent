@@ -44,7 +44,8 @@ from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
 from apps.common.configs.settings import BaseSettings, get_settings
-from apps.common.exceptions.custom import LLMInvocationError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_connector
 from apps.common.runtime.runtime import (
     ensure_runtime_context_ready,
@@ -149,7 +150,7 @@ async def invoke_llm_function_call(
                 "model": model,
             }
     except Exception as ex:
-        raise LLMInvocationError(detail=str(ex)) from ex
+        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
 
 
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
@@ -203,7 +204,7 @@ async def invoke_llm_structured_output[T: BaseModel](
             accumulate_usage(usage)
             return LLMStructuredResult[T](result=parsed_result, usage=usage)
     except Exception as ex:
-        raise LLMInvocationError(detail=str(ex)) from ex
+        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
 
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
 async def invoke_llm_text(
@@ -250,4 +251,4 @@ async def invoke_llm_text(
                 "model": model,
             }
     except Exception as ex:
-        raise LLMInvocationError(detail=str(ex)) from ex
+        raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex

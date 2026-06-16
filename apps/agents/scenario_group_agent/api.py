@@ -58,11 +58,11 @@ async def validate_scenarios(
 )
 async def create_signposts(
     scenario_group_id: int,
-    payload: CreateSignpostsIn | None = None,
+    payload: CreateSignpostsIn,
 ) -> CreateSignpostsOut:
     data = {
         "scenario_group_id": scenario_group_id,
-        **(payload.model_dump() if payload else {}),
+        **payload.model_dump(),
     }
     result = await get_create_signposts_runnable().ainvoke(data)
     return CreateSignpostsOut.model_validate(result)

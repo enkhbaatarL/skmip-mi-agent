@@ -5,7 +5,8 @@ from typing import Any
 import httpx
 
 from apps.common.configs.settings import Settings, get_settings
-from apps.common.exceptions.custom import HttpConnectionError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_connector
 from apps.common.runtime.runtime import get_http_client, get_http_semaphore
 
@@ -55,7 +56,7 @@ async def http_request(
                 return resp
 
     msg = "http_request reached an unexpected fallthrough path."
-    raise HttpConnectionError(msg)
+    raise MIBaseError(ErrorCode.HTTP_CONNECTION_ERROR, detail=msg)
 
 
 async def http_get(url: str, **kw: Any) -> httpx.Response:

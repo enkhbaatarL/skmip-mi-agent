@@ -15,7 +15,8 @@ from apps.agents.mi_agent.subgraphs.rdb_search.schemas import (
     SimilarityRdbQueryTexts,
 )
 from apps.agents.mi_agent.tools.search_queries import generate_search_queries
-from apps.common.exceptions.custom import LLMInvalidResponseError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_tool
 from apps.common.utils.time_utils import prior_year_period
 from apps.common.values.enums import ModelPreference
@@ -56,7 +57,7 @@ async def prepare_rdb_search_similarity_pattern_queries(
     )
     context = response.get("content")
     if len(context) < 1:
-        raise LLMInvalidResponseError(detail=f"prompt:{similarity_query_params_prompt}, return context:{context}")
+        raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail=f"prompt:{similarity_query_params_prompt}, return context:{context}")
 
     similarity_query_params: SimilarityPatternQueryParams = _parse_llm_similarity_query_params(
         rewritten_query,

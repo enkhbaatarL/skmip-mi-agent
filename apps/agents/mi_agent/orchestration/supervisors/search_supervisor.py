@@ -20,7 +20,8 @@ from apps.agents.mi_agent.subgraphs.vdb_search.subgraph_builder import run_vdb
 from apps.agents.mi_agent.subgraphs.web_search.schemas import WebSearchOutput
 from apps.agents.mi_agent.subgraphs.web_search.state import WebSearchState
 from apps.agents.mi_agent.subgraphs.web_search.subgraph_builder import run_web
-from apps.common.exceptions.custom import DataRetrievalError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.values.enums import SearchSource
 
 
@@ -184,7 +185,7 @@ class SearchSupervisor:
                 if status != "ok" and error_detail:
                     # 디버깅/관찰용: 각 소스별 마지막 실패 원인 저장
                     # (이미 last_error_by_source에 기록되어 있음)
-                    raise DataRetrievalError(detail=error_detail)
+                    raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail=error_detail)
                     # logger.error(f"[search exception] : {error_detail}")
 
                 raw_result = self._load_search_result(agent_state, search_source)
@@ -220,7 +221,7 @@ class SearchSupervisor:
                     else:
                         pass
 
-                raise DataRetrievalError({s.value for s in missing_search_sources})
+                raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail=str({s.value for s in missing_search_sources}))
 
         return agent_state.search_output
 

@@ -103,6 +103,7 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     )
 
 
+
 class MiSnapshotModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_snapshot_m"
     __table_args__ = (
@@ -154,6 +155,7 @@ class MiSignpostSnapModel(AuditColumnsMixin, ORMBase):
     __table_args__ = (
         Index("idx_tmm_mi_signpost_snap_m_01", "snapshot_id"),
         Index("idx_tmm_mi_signpost_snap_m_02", "scenario_snap_id"),
+        CheckConstraint("keyword_hints IS NULL OR JSON_TYPE(keyword_hints) = 'ARRAY'", name="ck_tmm_mi_signpost_snap_m_01"),
         TABLE_ARGS,
     )
 
@@ -175,4 +177,6 @@ class MiSignpostSnapModel(AuditColumnsMixin, ORMBase):
     src_signpost_id: Mapped[int] = mapped_column(mysql.INTEGER(unsigned=True), nullable=False)
     label: Mapped[str] = mapped_column(sa.String(500, collation=BIN), nullable=False)
     probability_direction_code: Mapped[str | None] = mapped_column(sa.String(50, collation=BIN), nullable=True)
+    strength: Mapped[str | None] = mapped_column(sa.String(50, collation=BIN), nullable=True, comment="signpost 강도 (동결, STRONG/MEDIUM/WEAK)")
     probability_impact_score: Mapped[Decimal | None] = mapped_column(mysql.DECIMAL(5, 2), nullable=True)
+    keyword_hints: Mapped[Any | None] = mapped_column(sa.JSON, nullable=True, comment="매칭 키워드 힌트 배열 (동결)")

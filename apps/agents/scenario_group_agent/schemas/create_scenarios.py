@@ -4,9 +4,10 @@ from pydantic import Field
 
 from apps.agents.scenario_group_agent.schemas.common import (
     ApiModel,
-    ScenarioGroupTableData,
+    ScenarioGroupPayload,
+    ScenarioTable,
 )
-from apps.common.values.response import CommonResponse
+from apps.common.values.response import CallBackBody
 
 
 class CreateScenariosIn(ApiModel):
@@ -14,5 +15,6 @@ class CreateScenariosIn(ApiModel):
     user_id: int
 
 
-class CreateScenariosOut(CommonResponse):
-    data: ScenarioGroupTableData | None = None
+class CreateScenariosOut(CallBackBody):
+    scenario_group: ScenarioGroupPayload | None = None
+    table: ScenarioTable | None = None

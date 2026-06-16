@@ -6,7 +6,8 @@ import json
 from apps.agents.mi_agent.schemas.mari_agent_input import ContentProvider, ContentProviderAccess
 from apps.agents.mi_agent.subgraphs.vdb_search.schemas import VDBSearchItem, VdbStructuredQuery, VectorSourceModel
 from apps.common.configs.settings import get_settings
-from apps.common.exceptions.custom import DataRetrievalError
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
 from apps.connectors.vdb.config_loader import get_retrieval_options
@@ -19,20 +20,20 @@ from apps.connectors.vdb.vector_db import AipKnowledgeRetriever
 def _get_meta_repo_id(content_provider: str) -> str:
     entry = get_settings().vdb_document_repo_ids_by_provider.get(content_provider)
     if not entry:
-        raise DataRetrievalError(detail=f"VDB repo mapping이 없습니다: content_provider={content_provider}")
+        raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail=f"VDB repo mapping이 없습니다: content_provider={content_provider}")
     repo_id = entry.get("meta_repo_id") if isinstance(entry, dict) else entry
     if not repo_id:
-        raise DataRetrievalError(detail=f"VDB meta_repo_id가 없습니다: content_provider={content_provider}")
+        raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail=f"VDB meta_repo_id가 없습니다: content_provider={content_provider}")
     return repo_id
 
 @log_tool
 def _get_chunk_repo_id(content_provider: str) -> str:
     entry = get_settings().vdb_document_repo_ids_by_provider.get(content_provider)
     if not entry or not isinstance(entry, dict):
-        raise DataRetrievalError(detail=f"VDB repo mapping이 없습니다: content_provider={content_provider}")
+        raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail=f"VDB repo mapping이 없습니다: content_provider={content_provider}")
     repo_id = entry.get("chunk_repo_id")
     if not repo_id:
-        raise DataRetrievalError(detail=f"VDB chunk_repo_id가 없습니다: content_provider={content_provider}")
+        raise MIBaseError(ErrorCode.DATA_RETRIEVAL_FAILED, detail=f"VDB chunk_repo_id가 없습니다: content_provider={content_provider}")
     return repo_id
 
 
@@ -248,7 +249,8 @@ def refine_retrieval_results(
         ]
         missing = [f for f, v in _checks if v is None]
         if missing:
-            raise DataRetrievalError(
+            raise MIBaseError(
+                ErrorCode.DATA_RETRIEVAL_FAILED,
                 detail=f"VDB 검색 결과 문서에 필수 메타데이터가 없습니다: {', '.join(missing)}",
             )
 

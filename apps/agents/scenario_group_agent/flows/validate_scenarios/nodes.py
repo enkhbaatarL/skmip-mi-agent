@@ -13,22 +13,16 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.service import 
     ScenarioGroupService,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
-
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if state.scenario_group_id is None:
-        return {
-            "status": "failure",
-            "error": "scenario_group_id is required",
-            "message": "scenario_group_id is required",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
     if group is None:
-        return {
-            "status": "failure",
-            "error": f"Scenario group not found: {state.scenario_group_id}",
-            "message": f"Scenario group not found: {state.scenario_group_id}",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {state.scenario_group_id}")
+            
     return {"scenario_group": group}
 
 

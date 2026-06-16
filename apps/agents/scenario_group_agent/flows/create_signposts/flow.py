@@ -21,6 +21,8 @@ from apps.agents.scenario_group_agent.schemas.create_signposts import (
     CreateSignpostsOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 def build_graph() -> Runnable:
@@ -45,29 +47,26 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
         scenario_group_id=int(payload["scenario_group_id"]),
         user_id=parsed.user_id,
         include_details=True,
+        request_table=parsed.table.model_dump(),
     )
-
-
-def _resolve_status(raw_status: Any) -> str:
-    return "error" if raw_status in {"failure", "error"} else "success"
 
 
 def to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateSignpostsOut:
     data = state if isinstance(state, dict) else state.model_dump()
-    status = _resolve_status(data.get("status"))
+    if data.get("status") in {"failure", "error"}:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=data.get("message") or "Signpost creation failed")
     group = data.get("scenario_group")
+    if not group:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group not found in state")
+    table_data = build_scenario_group_table_data(
+        group,
+        data.get("scenarios") or [],
+        data.get("signposts") or [],
+    )
     return CreateSignpostsOut(
-        status=status,
-        message=data.get("message") or "",
-        data=(
-            build_scenario_group_table_data(
-                group,
-                data.get("scenarios") or [],
-                data.get("signposts") or [],
-            )
-            if status == "success" and group
-            else None
-        ),
+        result="success",
+        scenario_group=table_data.scenario_group,
+        table=table_data.table,
     )
 
 

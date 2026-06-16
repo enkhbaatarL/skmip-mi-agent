@@ -69,4 +69,7 @@ class SignpostRepository(BaseSyncSQLRepository):
             "probability_impact_score": signpost.probability_impact_score,
             "signpost_reason": signpost.signpost_reason,
             "display_order": signpost.display_order,
+            "strength": signpost.strength,
+            "use_yn": signpost.use_yn,
+            "keyword_hints": signpost.keyword_hints or [],
         }

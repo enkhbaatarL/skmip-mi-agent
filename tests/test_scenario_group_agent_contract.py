@@ -26,10 +26,9 @@ from apps.agents.scenario_group_agent.schemas.confirm_generation import (
 from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosIn
 from apps.agents.scenario_group_agent.schemas.create_signposts import CreateSignpostsIn
 from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
-    ValidationCheck,
-    ValidationSummary,
-    ValidateScenariosData,
+    ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosIn,
+    ValidateScenariosOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_adapter import (
@@ -186,7 +185,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload.user_id == 101
 
     def test_create_signposts_request_uses_integer_user_id(self) -> None:
-        payload = CreateSignpostsIn.model_validate({"userId": 101})
+        payload = CreateSignpostsIn.model_validate({"userId": 101, "table": TABLE})
 
         assert payload.user_id == 101
 
@@ -255,32 +254,23 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert "impact" not in serialized["table"]["rows"][0]
 
     def test_response_serializes_camel_case(self) -> None:
-        payload = ValidateScenariosData(
-            scenario_group_id=10,
+        payload = ValidateScenariosOut(
+            result="success",
             is_valid=True,
             reason="ok",
-            status="creating",
-            stage="scenario_validated",
-            verdict="REVIEW",
-            summary=ValidationSummary(PASS=12, WARN=2, FAIL=0, INFO=0),
-            checks=[
-                ValidationCheck(
-                    check_id="R09",
-                    stage="Stage3",
-                    name="tail",
-                    status="WARN",
-                    detail="missing",
-                )
-            ],
+            scenario_group=ValidateScenariosCallBackScenarioGroup(
+                scenario_group_id=10,
+                status="creating",
+                stage="scenario_validated",
+            ),
+            table=None,
         )
 
         serialized = payload.model_dump(by_alias=True)
-        assert serialized["scenarioGroupId"] == 10
+        assert serialized["result"] == "success"
         assert serialized["isValid"]
-        assert serialized["verdict"] == "REVIEW"
-        assert serialized["summary"]["WARN"] == 2
-        assert serialized["checks"][0]["checkId"] == "R09"
-        assert "scenario_group_id" not in serialized
+        assert serialized["scenarioGroup"]["scenarioGroupId"] == 10
+        assert serialized["scenarioGroup"]["stage"] == "scenario_validated"
 
     def test_scenario_insert_payload_matches_orm(self) -> None:
         payload = {
