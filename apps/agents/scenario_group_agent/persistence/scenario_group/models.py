@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -53,8 +53,8 @@ class AuditColumnsMixin:
 class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_scenario_group_m"
     __table_args__ = (
-        UniqueConstraint("mi_event_id", name="uk_tmm_mi_scenario_group_m_01"),
         Index("idx_tmm_mi_scenario_group_m_01", "event_type_l2_id"),
+        Index("idx_tmm_mi_scenario_group_m_02", "mi_event_id"),
         CheckConstraint("JSON_TYPE(dimension_selected) = 'ARRAY'", name="ck_tmm_mi_scenario_group_m_01"),
         CheckConstraint("status IN ('creating','created','realized')", name="ck_tmm_mi_scenario_group_m_02"),
         CheckConstraint("stage IN ('ready','scenario_created','scenario_validated','signpost_created','completed')", name="ck_tmm_mi_scenario_group_m_03"),
@@ -107,7 +107,7 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
 class MiSnapshotModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_snapshot_m"
     __table_args__ = (
-        UniqueConstraint("scenario_group_id", "stage_no", "phase_code", name="uk_tmm_mi_snapshot_m_01"),
+        Index("idx_tmm_mi_snapshot_m_01", "scenario_group_id"),
         TABLE_ARGS,
     )
 

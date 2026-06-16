@@ -69,6 +69,17 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         stage_no: int = 2,
         phase_code: str = "AFTER",
     ) -> int:
+        existing = self.session.execute(
+            select(MiSnapshotModel).where(
+                MiSnapshotModel.scenario_group_id == scenario_group_id,
+                MiSnapshotModel.stage_no == stage_no,
+                MiSnapshotModel.phase_code == phase_code,
+                MiSnapshotModel.del_yn == "N",
+            )
+        ).scalars().first()
+        if existing is not None:
+            return int(existing.snapshot_id)
+
         snapshot = MiSnapshotModel(
             scenario_group_id=scenario_group_id,
             stage_no=stage_no,

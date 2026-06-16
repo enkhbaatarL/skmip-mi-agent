@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,7 +15,7 @@ from apps.common.configs.database.sync_database.base import ORMBase
 class MiScenarioDimensionTemplateModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_scenario_dimension_template_m"
     __table_args__ = (
-        UniqueConstraint("event_type_l2_id", name="uk_tmm_mi_scenario_dimension_template_m_01"),
+        Index("idx_tmm_mi_scenario_dimension_template_m_01", "event_type_l2_id"),
         CheckConstraint("JSON_TYPE(template_json) = 'ARRAY'", name="ck_tmm_mi_scenario_dimension_template_m_01"),
         TABLE_ARGS,
     )

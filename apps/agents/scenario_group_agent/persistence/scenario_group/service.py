@@ -231,7 +231,7 @@ class ScenarioGroupService:
             session.rollback()
             return {
                 "status": "failure",
-                "message": f"Snapshot already exists or violates DB constraints: {exc}",
+                "message": f"DB constraint violation: {exc}",
             }
         except Exception:
             session.rollback()
@@ -290,7 +290,7 @@ class ScenarioGroupService:
             session.rollback()
             return {
                 "status": "failure",
-                "message": f"Snapshot already exists or violates DB constraints: {exc}",
+                "message": f"DB constraint violation: {exc}",
             }
         except Exception:
             session.rollback()
