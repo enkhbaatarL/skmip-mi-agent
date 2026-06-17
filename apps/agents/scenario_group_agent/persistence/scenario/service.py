@@ -6,6 +6,10 @@ from typing import Any
 from apps.agents.scenario_group_agent.persistence.scenario.repository import (
     ScenarioRepository,
 )
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+    ScenarioTemplate,
+    TemplateDimension,
+)
 
 LIKELIHOOD_TO_SCORE = {
     "very_low": Decimal("10.00"),
@@ -22,7 +26,7 @@ class ScenarioService:
     ) -> list[dict[str, Any]]:
         return self._load_template_json_from_db(event_type_l2_id)
 
-    def load_pipeline_template(self, event_type_l2_id: int) -> dict[str, Any]:
+    def load_pipeline_template(self, event_type_l2_id: int) -> ScenarioTemplate:
         template_json = self.load_dimension_template(event_type_l2_id)
         return self._map_template_json_to_pipeline_template(
             template_json,
@@ -60,81 +64,56 @@ class ScenarioService:
         self,
         template_json: list[dict[str, Any]],
         event_type_l2_id: int,
-    ) -> dict[str, Any]:
+    ) -> ScenarioTemplate:
         if not template_json:
             raise ValueError(
                 f"template_json is empty: event_type_l2_id={event_type_l2_id}"
             )
 
-        ordered_items = sorted(
-            template_json,
-            key=self._template_display_order,
-        )
         dimensions = [
             self._map_template_dimension(item, event_type_l2_id, index)
-            for index, item in enumerate(ordered_items, start=1)
+            for index, item in enumerate(template_json, start=1)
         ]
-        if len(dimensions) < 3:
-            raise ValueError(
-                "template_json must include at least three dimensions: "
-                f"event_type_l2_id={event_type_l2_id}"
-            )
-        dimension_ids = [dimension["dimension_id"] for dimension in dimensions]
-        if len(set(dimension_ids)) != len(dimension_ids):
-            raise ValueError(
-                "template_json contains duplicate dim_key: "
-                f"event_type_l2_id={event_type_l2_id}"
-            )
-
-        return {
-            "label_ko": f"event_type_l2_id={event_type_l2_id}",
-            "template_dimensions_total": len(dimensions),
-            "dimensions": dimensions,
-            "compatibility_rules": [],
-        }
+        return ScenarioTemplate(
+            label_ko=f"event_type_l2_id={event_type_l2_id}",
+            template_dimensions_total=len(dimensions),
+            dimensions=dimensions,
+            compatibility_rules=[],
+        )
 
     def _map_template_dimension(
         self,
         raw_dimension: dict[str, Any],
         event_type_l2_id: int,
         index: int,
-    ) -> dict[str, Any]:
+    ) -> TemplateDimension:
         if not isinstance(raw_dimension, dict):
             raise ValueError(
                 "template_json item must be object: "
                 f"event_type_l2_id={event_type_l2_id}, index={index}"
             )
 
-        dimension_id = str(raw_dimension.get("dim_key", "")).strip()
-        if not dimension_id:
+        dim_key = str(raw_dimension.get("dim_key", "")).strip()
+        if not dim_key:
             raise ValueError(
                 "dim_key is required: "
                 f"event_type_l2_id={event_type_l2_id}, index={index}"
             )
 
-        label = str(raw_dimension.get("label", "")).strip() or dimension_id
         raw_value_enums = raw_dimension.get("value_enums") or []
         if not isinstance(raw_value_enums, list):
             raise ValueError(
                 "value_enums must be array: "
-                f"event_type_l2_id={event_type_l2_id}, dim_key={dimension_id}"
+                f"event_type_l2_id={event_type_l2_id}, dim_key={dim_key}"
             )
 
-        value_enums = [
-            str(value).strip() for value in raw_value_enums if str(value).strip()
-        ]
-        if len(value_enums) < 2:
-            raise ValueError(
-                "value_enums must include at least two non-empty values: "
-                f"event_type_l2_id={event_type_l2_id}, dim_key={dimension_id}"
-            )
-
-        return {
-            "dimension_id": dimension_id,
-            "label_ko": label,
-            "description": label,
-            "enum": self._build_enum_list(value_enums, dimension_id),
-        }
+        return TemplateDimension(
+            label=str(raw_dimension.get("label", "")).strip() or dim_key,
+            dim_key=dim_key,
+            required=bool(raw_dimension.get("required", False)),
+            value_enums=raw_value_enums,
+            display_order=self._template_display_order(raw_dimension),
+        )
 
     def _template_display_order(self, item: dict[str, Any]) -> int:
         if not isinstance(item, dict):
@@ -143,22 +122,6 @@ class ScenarioService:
             return int(item.get("display_order", 999999))
         except (TypeError, ValueError):
             return 999999
-
-    def _build_enum_list(
-        self,
-        value_enums: list[str],
-        dimension_id: str,
-    ) -> list[dict[str, Any]]:
-        total = len(value_enums)
-        tail_threshold = total if total < 5 else total - 1
-        return [
-            {
-                "id": f"{dimension_id}_v{index}",
-                "label": enum_label,
-                "tail": index >= tail_threshold,
-            }
-            for index, enum_label in enumerate(value_enums, start=1)
-        ]
 
     def load_by_group_id(self, scenario_group_id: int) -> list[dict[str, Any]]:
         from apps.common.configs.database.sync_database.connection import (
@@ -203,7 +166,7 @@ class ScenarioService:
                     "title": (scenario.get("title") or "")[:255],
                     "narrative": scenario.get("description") or "",
                     "status": "created",
-                    "dimension_values": self._dimension_values_to_array(
+                    "dimension_values": self._normalize_dimension_values_object(
                         scenario.get("dimension_values") or {}
                     ),
                     "probability_score": LIKELIHOOD_TO_SCORE.get(likelihood),
@@ -247,19 +210,20 @@ class ScenarioService:
         finally:
             session.close()
 
-    def _dimension_values_to_array(
+    def _normalize_dimension_values_object(
         self, dimension_values: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        return [
-            {"dimension_id": str(dimension_id), "value": value}
-            for dimension_id, value in dimension_values.items()
-        ]
+    ) -> dict[str, Any]:
+        return {
+            str(dim_key): value
+            for dim_key, value in dimension_values.items()
+            if str(dim_key).strip()
+        }
 
     def cells_to_dimension_values(
         self,
         event_type_l2_id: int,
         cells: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         template_json = self._load_template_json_from_db(event_type_l2_id)
         template_by_key = {
             str(item.get("dim_key")): item
@@ -268,10 +232,6 @@ class ScenarioService:
         }
         converted: dict[str, Any] = {}
         for key, value in cells.items():
-            template = template_by_key.get(key)
-            value_enums = template.get("value_enums", []) if template else []
-            if value in value_enums:
-                converted[key] = f"{key}_v{value_enums.index(value) + 1}"
-            else:
+            if key in template_by_key:
                 converted[key] = value
-        return self._dimension_values_to_array(converted)
+        return self._normalize_dimension_values_object(converted)

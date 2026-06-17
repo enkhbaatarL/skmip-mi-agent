@@ -81,6 +81,27 @@ class SignpostStrength(str, Enum):
         return _IMPACT_SCORE_BY_STRENGTH[self.to_string()]
 
 
+class ScenarioGroupStatus(str, Enum):
+    CREATING = "creating"
+    CREATED = "created"
+    REALIZED = "realized"
+
+    @classmethod
+    def from_string(cls, value: str) -> "ScenarioStatus":
+        return cls(str(value).lower())
+
+
+class ScenarioStatus(str, Enum):
+    CREATING = "creating"
+    CREATED = "created"
+    REALIZED = "realized"
+    DISCARDED = "discarded"
+
+    @classmethod
+    def from_string(cls, value: str) -> "ScenarioStatus":
+        return cls(str(value).lower())
+
+
 _IMPACT_SCORE_BY_STRENGTH: dict[str, Decimal] = {
     SignpostStrength.VERYSTRONG.value: Decimal("1.25"),
     SignpostStrength.STRONG.value: Decimal("1.00"),

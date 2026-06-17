@@ -5,7 +5,7 @@ import os
 import random
 import time
 from itertools import product
-from typing import Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
@@ -72,8 +72,89 @@ class Stage1ContextPack(BaseModel):
     )
 
 
+class TemplateDimension(BaseModel):
+    label: str = Field(description="Dimension 표시명")
+    dim_key: str = Field(description="Dimension key")
+    required: bool = Field(default=False, description="필수 여부")
+    value_enums: List[str] = Field(
+        default_factory=list,
+        description="Dimension 값 후보 목록",
+    )
+    display_order: int = Field(default=999999, description="표시 순서")
+
+    @model_validator(mode="after")
+    def _validate_template_dimension(self):
+        dim_key = str(self.dim_key).strip()
+        if not dim_key:
+            raise ValueError("dim_key is required.")
+        enums = [str(value).strip() for value in self.value_enums if str(value).strip()]
+        if len(enums) < 2:
+            raise ValueError(f"value_enums must include at least two values: dim_key={dim_key}")
+        if len(set(enums)) != len(enums):
+            raise ValueError(f"value_enums contains duplicates: dim_key={dim_key}")
+        self.dim_key = dim_key
+        self.label = str(self.label).strip() or dim_key
+        self.value_enums = enums
+        return self
+
+    def enum_items(self) -> list[dict[str, Any]]:
+        total = len(self.value_enums)
+        tail_threshold = total if total < 5 else total - 1
+        return [
+            {
+                "id": enum_label,
+                "label": enum_label,
+                "tail": index >= tail_threshold,
+            }
+            for index, enum_label in enumerate(self.value_enums, start=1)
+        ]
+
+    def to_runtime_dimension(self) -> dict[str, Any]:
+        return {
+            "dim_key": self.dim_key,
+            "label_ko": self.label,
+            "description": self.label,
+            "enum": self.enum_items(),
+        }
+
+
+class ScenarioTemplate(BaseModel):
+    label_ko: str = Field(default="", description="템플릿 라벨")
+    template_dimensions_total: int | None = Field(
+        default=None,
+        description="템플릿 전체 Dimension 수",
+    )
+    dimensions: List[TemplateDimension] = Field(
+        default_factory=list,
+        description="Dimension 템플릿 정의",
+    )
+    compatibility_rules: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="조합 호환성 규칙",
+    )
+
+    @model_validator(mode="after")
+    def _validate_template(self):
+        ordered = self.ordered_dimensions()
+        if len(ordered) < 3:
+            raise ValueError("template must include at least three dimensions.")
+        dim_keys = [dimension.dim_key for dimension in ordered]
+        if len(set(dim_keys)) != len(dim_keys):
+            raise ValueError("template contains duplicate dim_key.")
+        return self
+
+    def ordered_dimensions(self) -> list[TemplateDimension]:
+        return sorted(
+            self.dimensions,
+            key=lambda dimension: (dimension.display_order, dimension.dim_key),
+        )
+
+    def resolved_total(self) -> int:
+        return self.template_dimensions_total or len(self.dimensions)
+
+
 class SelectedDimension(BaseModel):
-    dimension_id: str = Field(description="템플릿의 dimension_id")
+    dim_key: str = Field(description="템플릿의 dim_key")
     rationale: str = Field(
         description=(
             "선택 근거. 반드시 '(a)' 또는 '(c)' 또는 '(a)(c)' 코드로 시작하고, "
@@ -83,7 +164,7 @@ class SelectedDimension(BaseModel):
 
 
 class ExcludedDimension(BaseModel):
-    dimension_id: str = Field(description="제외된 템플릿 dimension_id")
+    dim_key: str = Field(description="제외된 템플릿 dim_key")
     reason: str = Field(description="제외 사유 한국어 1줄.")
 
 
@@ -100,10 +181,10 @@ class Stage2DimensionSelection(BaseModel):
 
 
 class PerDimensionValue(BaseModel):
-    dimension_id: str = Field(description="템플릿의 dimension_id")
+    dim_key: str = Field(description="템플릿의 dim_key")
     template_enum_full: List[str] = Field(
         default_factory=list,
-        description="해당 Dim 의 원본 5단계 Enum ID 전체.",
+        description="해당 Dim 의 원본 value_enums 전체.",
     )
     selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
         description="채택한 Enum ID 2~4개. 인접 병합 금지.",
@@ -131,7 +212,7 @@ class Scenario(BaseModel):
     scenario_id: str = Field(description="S_01 형태")
     title: str = Field(description="시장 참여자 관점 한 줄 요약")
     dimension_values: Dict[str, str] = Field(
-        description="dim_id -> enum_id 의 1:1 매핑.",
+        description="dim_key -> value 의 1:1 매핑.",
     )
     description: str = Field(
         description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술.",
@@ -185,8 +266,8 @@ class _Stage2LLMOutput(BaseModel):
 
     @model_validator(mode="after")
     def _validate_no_dup(self):
-        sel = {d.dimension_id for d in self.selected_dimensions}
-        exc = {d.dimension_id for d in self.excluded_dimensions}
+        sel = {d.dim_key for d in self.selected_dimensions}
+        exc = {d.dim_key for d in self.excluded_dimensions}
         if sel & exc:
             raise ValueError(f"selected_dimensions 와 excluded_dimensions 가 중복: {sel & exc}")
         return self
@@ -194,10 +275,10 @@ class _Stage2LLMOutput(BaseModel):
 
 class _Stage3SingleDimOutput(BaseModel):
     selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
-        description="채택 enum_id 2~4개. 반드시 template_enum_full 의 부분집합.",
+        description="채택 값 2~4개. 반드시 value_enums 의 부분집합.",
     )
     tail_risk_kept: str = Field(
-        description="유지된 Tail Risk enum_id (selected_enum 안에 포함).",
+        description="유지된 Tail Risk 값 (selected_enum 안에 포함).",
     )
 
 
@@ -226,9 +307,12 @@ class _Stage5LLMOutput(BaseModel):
 # 3. Helper Functions
 # ==============================================
 
-def _dim_index(template: Dict) -> Dict[str, Dict]:
-    """dimension_id -> dimension dict 인덱스."""
-    return {d["dimension_id"]: d for d in template["dimensions"]}
+def _dim_index(template: ScenarioTemplate) -> Dict[str, Dict]:
+    """dim_key -> dimension dict 인덱스."""
+    return {
+        dimension.dim_key: dimension.to_runtime_dimension()
+        for dimension in template.ordered_dimensions()
+    }
 
 
 def _enum_id_set(dimension: Dict) -> List[str]:
@@ -406,12 +490,13 @@ def stage1_build_context_pack(event: Dict) -> Stage1ContextPack:
 # 6. Stage 2 — Dimension Selector (LLM)
 # ==============================================
 
-def _format_dimensions_block(template: Dict) -> str:
+def _format_dimensions_block(template: ScenarioTemplate) -> str:
     lines: List[str] = []
-    for d in template["dimensions"]:
-        enum_ids = ", ".join(_enum_id_set(d))
+    for dimension in template.ordered_dimensions():
+        value_enums = ", ".join(dimension.value_enums)
+        required_mark = "Y" if dimension.required else "N"
         lines.append(
-            f"- {d['dimension_id']} ({d.get('label_ko','')}): enum=[{enum_ids}] / {d.get('description','')}"
+            f"- {dimension.dim_key} (label={dimension.label}, required={required_mark}): value_enums=[{value_enums}]"
         )
     return "\n".join(lines)
 
@@ -441,7 +526,7 @@ STAGE2_SYSTEM = """\
 STAGE2_HARD = """\
 [중요한 출력 제약 — Stage 2]
 - selected_dimensions 길이는 반드시 3~5.
-- 모든 dimension_id 는 입력된 Template 의 dimension_id 안에 있어야 함.
+- 모든 dim_key 는 입력된 Template 의 dim_key 안에 있어야 함.
 - selected ∪ excluded = template 전체 Dim 집합 (누락 금지, 중복 금지).
 - rationale 은 (a) / (c) / (a)(c) 중 하나로 시작. (b) 코드 포함 금지.
 """
@@ -451,11 +536,21 @@ STAGE2_HARD = """\
 def stage2_select_dimensions(
     pack: Stage1ContextPack,
     event: Dict,
-    template: Dict,
+    template: ScenarioTemplate,
     llm_client=None,
 ) -> Stage2DimensionSelection:
     """Stage 2 진입점 — 8개 Dim 중 3~5개 선택 (LLM)."""
-    template_dim_ids = [d["dimension_id"] for d in template["dimensions"]]
+    template_dim_ids = [dimension.dim_key for dimension in template.ordered_dimensions()]
+    required_dim_ids = [
+        dimension.dim_key
+        for dimension in template.ordered_dimensions()
+        if dimension.required
+    ]
+    if len(required_dim_ids) > 5:
+        raise ValueError(
+            "required=true 인 dim_key 가 5개를 초과하여 Stage2(3~5개 선택) 규칙과 충돌합니다. "
+            f"required_dim_keys={required_dim_ids}"
+        )
     detail_excerpt = _shorten(event.get("detail_analysis", ""), 600)
 
     user_prompt = f"""\
@@ -468,24 +563,29 @@ def stage2_select_dimensions(
 - detail_analysis(요약): {detail_excerpt}
 
 ## Template (event_type_l1_l2 = {pack.C1_base_event.event_type_l1_l2})
-- template_dimensions_total: {template["template_dimensions_total"]}
-- dimensions: 아래 리스트의 dimension_id 만 선택 가능.
+- template_dimensions_total: {template.resolved_total()}
+- dimensions: 아래 리스트의 dim_key 만 선택 가능.
 {_format_dimensions_block(template)}
+- required=true 인 dim_key: {required_dim_ids if required_dim_ids else '없음'}
 
 ## 산출 규칙
 - 선택 Dim: 3~5개.
+- required=true 인 dim_key 는 반드시 selected_dimensions 에 모두 포함.
 - 모든 미선택 Dim 은 excluded_dimensions 에 사유와 함께 기재.
 """
 
     def _validate(out: _Stage2LLMOutput) -> None:
-        sel_ids = {d.dimension_id for d in out.selected_dimensions}
-        exc_ids = {d.dimension_id for d in out.excluded_dimensions}
+        sel_ids = {d.dim_key for d in out.selected_dimensions}
+        exc_ids = {d.dim_key for d in out.excluded_dimensions}
         unknown = (sel_ids | exc_ids) - set(template_dim_ids)
         if unknown:
-            raise ValueError(f"Template 외 dimension_id 사용: {unknown}")
+            raise ValueError(f"Template 외 dim_key 사용: {unknown}")
+        missing_required = set(required_dim_ids) - sel_ids
+        if missing_required:
+            raise ValueError(f"required=true dim_key 누락: {sorted(missing_required)}")
         for d in out.selected_dimensions:
             if "(b)" in d.rationale:
-                raise ValueError(f"(b) 기준 rationale 검출: {d.dimension_id}")
+                raise ValueError(f"(b) 기준 rationale 검출: {d.dim_key}")
 
     out = _invoke_with_retry(
         stage_label="Stage 2",
@@ -500,10 +600,44 @@ def stage2_select_dimensions(
         out = _stage2_fallback(template_dim_ids)
 
     # excluded 보강: LLM 이 빠뜨린 미선택 Dim 자동 채움
-    sel_ids = {d.dimension_id for d in out.selected_dimensions}
-    given_exc_ids = {d.dimension_id for d in out.excluded_dimensions}
+    selected_dimensions = list(out.selected_dimensions)
+    sel_ids = {d.dim_key for d in selected_dimensions}
+    # required=true dim 누락 시 자동 추가
+    for required_dim in required_dim_ids:
+        if required_dim not in sel_ids:
+            selected_dimensions.append(
+                SelectedDimension(
+                    dim_key=required_dim,
+                    rationale="(a) required=true 규칙으로 자동 포함.",
+                )
+            )
+            sel_ids.add(required_dim)
+    # 5개 초과면 required를 우선 유지하고 비required를 잘라서 5개로 맞춤
+    if len(selected_dimensions) > 5:
+        required_set = set(required_dim_ids)
+        kept_required = [d for d in selected_dimensions if d.dim_key in required_set]
+        non_required = [d for d in selected_dimensions if d.dim_key not in required_set]
+        slots_left = max(0, 5 - len(kept_required))
+        selected_dimensions = kept_required + non_required[:slots_left]
+        sel_ids = {d.dim_key for d in selected_dimensions}
+
+    # 3개 미만이면 템플릿에서 순서대로 채워서 최소 3개 보장
+    if len(selected_dimensions) < 3:
+        for dim_id in template_dim_ids:
+            if dim_id not in sel_ids:
+                selected_dimensions.append(
+                    SelectedDimension(
+                        dim_key=dim_id,
+                        rationale="(a) 최소 선택 개수(3개) 충족을 위한 자동 보강.",
+                    )
+                )
+                sel_ids.add(dim_id)
+            if len(selected_dimensions) >= 3:
+                break
+
+    given_exc_ids = {d.dim_key for d in out.excluded_dimensions}
     auto_excluded = [
-        ExcludedDimension(dimension_id=did, reason="LLM 미언급 — 자동 제외 처리")
+        ExcludedDimension(dim_key=did, reason="LLM 미언급 — 자동 제외 처리")
         for did in template_dim_ids
         if did not in sel_ids and did not in given_exc_ids
     ]
@@ -511,8 +645,8 @@ def stage2_select_dimensions(
 
     return Stage2DimensionSelection(
         template_id=pack.C1_base_event.event_type_l1_l2,
-        template_dimensions_total=template.get("template_dimensions_total", len(template_dim_ids)),
-        selected_dimensions=out.selected_dimensions,
+        template_dimensions_total=template.resolved_total(),
+        selected_dimensions=selected_dimensions,
         excluded_dimensions=excluded,
     )
 
@@ -522,13 +656,13 @@ def _stage2_fallback(template_dim_ids: List[str]) -> _Stage2LLMOutput:
     print("  ↳ Stage 2 fallback: 템플릿 앞 4개 Dim 안전 선택")
     selected = [
         SelectedDimension(
-            dimension_id=did,
+            dim_key=did,
             rationale="(a) Fallback 안전 선택 — Base Event 와 잠재적 관련성 가정.",
         )
         for did in template_dim_ids[:4]
     ]
     excluded = [
-        ExcludedDimension(dimension_id=did, reason="Fallback 자동 제외")
+        ExcludedDimension(dim_key=did, reason="Fallback 자동 제외")
         for did in template_dim_ids[4:]
     ]
     return _Stage2LLMOutput(selected_dimensions=selected, excluded_dimensions=excluded)
@@ -540,7 +674,7 @@ def _stage2_fallback(template_dim_ids: List[str]) -> _Stage2LLMOutput:
 
 STAGE3_SYSTEM = """\
 당신은 멀티시나리오 생성을 위한 'Value Reducer' 입니다.
-하나의 Dimension 의 5단계 Enum 중에서 **2~4개만** 채택하십시오.
+하나의 Dimension 의 value_enums 중에서 **2~4개 값만** 채택하십시오.
 
 ## 선택 규칙 (반드시 준수)
 - (b) 극단 보존: Tail Risk(=template 정의상 tail=true) 중 **최소 1개** 를 selected_enum 안에 포함.
@@ -549,7 +683,7 @@ STAGE3_SYSTEM = """\
 ## 절대 금지
 - (a) 인접 병합(시장 영향이 유사하다는 이유로 인접 Enum 을 합쳐 1개로 대체) **사용 금지**.
   → '인접 영향 유사', '비슷한 강도여서 통합' 같은 사유로 인접 Enum 을 한꺼번에 제거하지 말 것.
-- 입력 template_enum_full 외의 enum_id 사용 금지.
+- 입력 value_enums 외의 값 사용 금지.
 
 ## "영향 없음(none)" 류 enum 채택 가이드
 - Base Event 가 이미 발생·진행 중이고 해당 Dim 영역에서 영향이 관측되고 있다면,
@@ -558,13 +692,13 @@ STAGE3_SYSTEM = """\
   예외적으로 채택하고, rationale 성격(=baseline 표현 의도)을 description 에 명시하십시오.
 
 ## tail_risk_kept
-- selected_enum 에 포함된 enum_id 중 tail=true 인 1개를 명시.
+- selected_enum 에 포함된 값 중 tail=true 인 1개를 명시.
 """
 
 STAGE3_HARD = """\
 [중요한 출력 제약 — Stage 3]
 - selected_enum 길이는 반드시 2~4.
-- 모든 enum_id 는 입력된 template_enum_full 안에 있어야 함.
+- selected_enum 의 모든 값은 입력된 value_enums 안에 있어야 함.
 - tail_risk_kept 는 selected_enum 안의 값이며, tail=true 인 enum 이어야 함.
 - 인접 병합 사유로 Enum 제거 금지.
 """
@@ -574,7 +708,7 @@ STAGE3_HARD = """\
 def stage3_reduce_values(
     pack: Stage1ContextPack,
     selected: Stage2DimensionSelection,
-    template: Dict,
+    template: ScenarioTemplate,
     llm_client=None,
 ) -> Stage3ValueSelection:
     """Stage 3 진입점 — 선택된 Dim 별로 LLM 호출하여 Enum 축소."""
@@ -582,9 +716,9 @@ def stage3_reduce_values(
 
     per_dim: List[PerDimensionValue] = []
     for sd in selected.selected_dimensions:
-        dim = dim_idx.get(sd.dimension_id)
+        dim = dim_idx.get(sd.dim_key)
         if dim is None:
-            print(f"  ↳ 경고: Stage3 — '{sd.dimension_id}' 템플릿 누락. 스킵.")
+            print(f"  ↳ 경고: Stage3 — '{sd.dim_key}' 템플릿 누락. 스킵.")
             continue
 
         enum_full = _enum_id_set(dim)
@@ -604,20 +738,20 @@ def stage3_reduce_values(
 - driver: {pack.C1_base_event.driver}
 
 ## Dimension 정보
-- dimension_id: {dim["dimension_id"]}
+- dim_key: {dim["dim_key"]}
 - label_ko: {dim.get("label_ko", "")}
 - description: {dim.get("description", "")}
-- template_enum_full: {enum_full_block}
+- value_enums(=선택 가능한 값): {enum_full_block}
 - tail enum 후보: {tail_block}
 
 ## 산출
-- 채택 enum_id 2~4개 + tail_risk_kept 1개.
+- 채택 값 2~4개 + tail_risk_kept 1개.
 """
 
         def _validate(out: _Stage3SingleDimOutput) -> None:
             unknown = set(out.selected_enum) - set(enum_full)
             if unknown:
-                raise ValueError(f"template_enum_full 외 enum_id 사용: {unknown}")
+                raise ValueError(f"value_enums 외 값 사용: {unknown}")
             if out.tail_risk_kept not in out.selected_enum:
                 raise ValueError("tail_risk_kept 가 selected_enum 안에 없음.")
             if tail_full and out.tail_risk_kept not in tail_full:
@@ -627,7 +761,7 @@ def stage3_reduce_values(
                 )
 
         out = _invoke_with_retry(
-            stage_label=f"Stage 3 [{dim['dimension_id']}]",
+            stage_label=f"Stage 3 [{dim['dim_key']}]",
             schema_cls=_Stage3SingleDimOutput,
             system_prompt=STAGE3_SYSTEM,
             user_prompt=user_prompt,
@@ -639,7 +773,7 @@ def stage3_reduce_values(
             out = _stage3_fallback(dim)
 
         per_dim.append(PerDimensionValue(
-            dimension_id=dim["dimension_id"],
+            dim_key=dim["dim_key"],
             template_enum_full=enum_full,
             selected_enum=out.selected_enum,
             tail_risk_kept=out.tail_risk_kept,
@@ -650,7 +784,7 @@ def stage3_reduce_values(
 
 def _stage3_fallback(dim: Dict) -> _Stage3SingleDimOutput:
     """LLM 실패 시 — 첫 1개 + 중간 1개 + Tail 1개 안전 채택."""
-    print(f"  ↳ Stage 3 fallback ({dim['dimension_id']}): 안전 3개 Enum 선택")
+    print(f"  ↳ Stage 3 fallback ({dim['dim_key']}): 안전 3개 Enum 선택")
     enum_full = _enum_id_set(dim)
     tail_full = _tail_id_set(dim)
     tail_pick = tail_full[0] if tail_full else enum_full[-1]
@@ -676,7 +810,7 @@ def _stage3_fallback(dim: Dict) -> _Stage3SingleDimOutput:
 
 def _cartesian_combos(stage3: Stage3ValueSelection) -> List[Dict[str, str]]:
     """Stage3 결과를 Dim×Enum Cartesian 으로 펼침."""
-    dim_ids = [pd.dimension_id for pd in stage3.per_dimension]
+    dim_ids = [pd.dim_key for pd in stage3.per_dimension]
     enum_lists = [list(pd.selected_enum) for pd in stage3.per_dimension]
     combos: List[Dict[str, str]] = []
     for tup in product(*enum_lists):
@@ -686,13 +820,13 @@ def _cartesian_combos(stage3: Stage3ValueSelection) -> List[Dict[str, str]]:
 
 def _apply_compat_rules(
     combos: List[Dict[str, str]],
-    template: Dict,
+    template: ScenarioTemplate,
 ) -> Tuple[List[Dict[str, str]], List[Tuple[Dict[str, str], str]]]:
     """Compatibility Rule Engine — 통과/탈락 분리.
 
     forbid 정의: 모든 forbid 키의 값이 forbid 리스트 안에 들어있으면 탈락.
     """
-    rules = template.get("compatibility_rules", []) or []
+    rules = template.compatibility_rules or []
     passed: List[Dict[str, str]] = []
     rejected: List[Tuple[Dict[str, str], str]] = []
     for combo in combos:
@@ -720,7 +854,7 @@ def _select_target_combos(
     passed: List[Dict[str, str]],
     stage3: Stage3ValueSelection,
     target_n: int,
-    template: Dict,
+    template: ScenarioTemplate,
 ) -> List[Dict[str, str]]:
     """Compat 통과 조합 중 5~7개 추출 — 다양성 기반 선정.
 
@@ -734,8 +868,8 @@ def _select_target_combos(
 
     dim_idx = _dim_index(template)
     template_tail: Dict[str, set] = {
-        pd.dimension_id: set(
-            e["id"] for e in dim_idx.get(pd.dimension_id, {}).get("enum", [])
+        pd.dim_key: set(
+            e["id"] for e in dim_idx.get(pd.dim_key, {}).get("enum", [])
             if e.get("tail")
         )
         for pd in stage3.per_dimension
@@ -786,6 +920,9 @@ STAGE4_SYSTEM = """\
 - description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
 - price_direction.brent / jkm / ttf: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
+- 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
+- 올바른 형식 예시: {"period":"3개월","utilization_change_direction":"감소"}
+- 금지 형식 예시: [{"dim_key":"period","value":"3개월"}], [{"dimension_id":"period","value":"3개월"}]
 
 ## 절대 금지
 - '결과(가격 방향)가 동일하므로 두 조합을 합쳐서 1개로 만든다' 같은 통합/생략 행위.
@@ -798,6 +935,8 @@ STAGE4_HARD = """\
 - price_direction.brent / jkm / ttf 는 반드시 7단계 enum 중 정확히 1개.
 - description 은 3~5줄, title 은 1줄.
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
+- 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
+- 입력 조합의 key 집합은 selected dim_key 와 정확히 일치해야 함(누락/여분 금지).
 """
 
 
@@ -805,7 +944,7 @@ STAGE4_HARD = """\
 def stage4_synthesize_scenarios(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
-    template: Dict,
+    template: ScenarioTemplate,
     llm_client=None,
 ) -> Stage4ScenarioSynthesis:
     """Stage 4 진입점 — Cartesian → Compat → 5~7건 선정 → Narrative LLM."""
@@ -825,7 +964,7 @@ def stage4_synthesize_scenarios(
 
     dim_idx = _dim_index(template)
     dim_label_block = "\n".join(
-        f"- {pd.dimension_id} ({dim_idx.get(pd.dimension_id, {}).get('label_ko', '')})"
+        f"- {pd.dim_key} ({dim_idx.get(pd.dim_key, {}).get('label_ko', '')})"
         for pd in stage3.per_dimension
     )
     combos_block = "\n".join(
@@ -920,7 +1059,7 @@ STAGE5_SYSTEM = """\
 
 ## 검사 항목 (반드시 이 둘만)
 1. mutually_exclusive (M): 동일 시점에 정확히 한 시나리오만 참이 될 수 있는가?
-   - 본 파이프라인의 시나리오는 모두 (dimension_id → enum_id) 단일 조합으로 정의됨.
+   - 본 파이프라인의 시나리오는 모두 (dim_key → value) 단일 조합으로 정의됨.
    - 따라서 두 시나리오의 dimension_values 가 **하나라도 서로 다르면** 정의상 동시 성립 불가 → True.
    - 모든 시나리오의 dimension_values 조합이 서로 유일하면 True.
    - 동일한 dimension_values 조합을 가진 시나리오 쌍이 있을 때만 False.
