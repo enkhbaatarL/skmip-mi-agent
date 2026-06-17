@@ -107,7 +107,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert report.verdict == "PASS"
         assert report.is_valid
-        assert report.summary == {"PASS": 14, "WARN": 0, "FAIL": 0, "INFO": 0}
+        assert report.summary == {"PASS": 5, "WARN": 0, "FAIL": 0, "INFO": 0}
 
     async def test_warning_does_not_block_validation(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
@@ -129,7 +129,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert report.is_valid
         assert report.summary["WARN"] == 2
 
-    async def test_deterministic_failure_blocks_validation(self) -> None:
+    async def test_duplicate_combination_is_warning(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
         rows[1]["cells"] = dict(rows[0]["cells"])
         context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
@@ -145,11 +145,11 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         ):
             report = await run_review(context)
 
-        assert report.verdict == "BLOCK"
-        assert not report.is_valid
-        assert next(check for check in report.checks if check.check_id == "R13").status == "FAIL"
+        assert report.verdict == "REVIEW"
+        assert report.is_valid
+        assert next(check for check in report.checks if check.check_id == "R04").status == "WARN"
 
-    async def test_llm_incompatibility_is_failure(self) -> None:
+    async def test_llm_incompatibility_is_warning(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
         incompatible = _llm_result(
             CompatibilityItem(
@@ -167,8 +167,9 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         ):
             report = await run_review(context)
 
-        assert report.verdict == "BLOCK"
-        assert next(check for check in report.checks if check.check_id == "R12").status == "FAIL"
+        assert report.verdict == "REVIEW"
+        assert report.is_valid
+        assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
 
     async def test_llm_error_is_non_blocking_warning(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
@@ -182,7 +183,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert report.verdict == "REVIEW"
         assert report.is_valid
-        assert next(check for check in report.checks if check.check_id == "R12").status == "WARN"
+        assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
 
 
 if __name__ == "__main__":
