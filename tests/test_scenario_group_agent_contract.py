@@ -35,6 +35,10 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_ada
     to_output as scenario_generation_to_output,
     to_state as scenario_generation_to_state,
 )
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+    ScenarioTemplate,
+    TemplateDimension,
+)
 
 SCENARIO_GROUP = {
     "scenarioGroupId": 10,
@@ -63,11 +67,30 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         state = ScenarioDesignState(
             event_data={"mi_event_id": "20", "event_type_l2_id": 30},
         )
-        template = {
-            "template_dimensions_total": 3,
-            "dimensions": [],
-            "compatibility_rules": [],
-        }
+        template = ScenarioTemplate(
+            template_dimensions_total=3,
+            dimensions=[
+                TemplateDimension(
+                    label="기간",
+                    dim_key="period",
+                    value_enums=["단기", "장기"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    label="강도",
+                    dim_key="intensity",
+                    value_enums=["낮음", "높음"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    label="회복",
+                    dim_key="recovery",
+                    value_enums=["빠름", "느림"],
+                    display_order=3,
+                ),
+            ],
+            compatibility_rules=[],
+        )
 
         with patch(
             "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
@@ -115,25 +138,28 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             event_type_l2_id=30,
         )
 
-        assert [item["dimension_id"] for item in result["dimensions"]] == [
+        ordered = result.ordered_dimensions()
+        assert [item.dim_key for item in ordered] == [
             "first",
             "second",
             "third",
         ]
-        assert [item["id"] for item in result["dimensions"][0]["enum"]] == [
-            "first_v1",
-            "first_v2",
-            "first_v3",
-            "first_v4",
-            "first_v5",
+        assert [item["id"] for item in ordered[0].enum_items()] == [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
         ]
-        assert [
-            item["tail"] for item in result["dimensions"][0]["enum"]
-        ] == [False, False, False, True, True]
-        assert [
-            item["tail"] for item in result["dimensions"][1]["enum"]
-        ] == [False, True]
-        assert result["compatibility_rules"] == []
+        assert [item["tail"] for item in ordered[0].enum_items()] == [
+            False,
+            False,
+            False,
+            True,
+            True,
+        ]
+        assert [item["tail"] for item in ordered[1].enum_items()] == [False, True]
+        assert result.compatibility_rules == []
 
     def test_db_template_requires_three_dimensions(self) -> None:
         template = [
@@ -212,7 +238,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             },
             scenario_result={
                 "stage2_dimension_selection": {
-                    "selected_dimensions": [{"dimension_id": "period"}],
+                    "selected_dimensions": [{"dim_key": "period"}],
                 },
                 "stage4_scenario_synthesis": {"scenarios": []},
             },
@@ -278,7 +304,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             "title": "scenario",
             "narrative": "narrative",
             "status": "created",
-            "dimension_values": [{"dimension_id": "period", "value": "period_v1"}],
+            "dimension_values": {"period": "period_v1"},
             "probability_score": 75,
             "probability_delta": None,
             "impact_jkm": "up",

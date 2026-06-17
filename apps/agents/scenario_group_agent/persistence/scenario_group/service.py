@@ -16,6 +16,9 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.repository impo
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
+from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
+    MiScenarioGroupModel,
+)
 
 
 class ScenarioGroupService:
@@ -32,7 +35,7 @@ class ScenarioGroupService:
         finally:
             session.close()
 
-    def load_by_mi_event_id(self, mi_event_id: int) -> dict[str, Any] | None:
+    def load_by_mi_event_id(self, mi_event_id: int) -> MiScenarioGroupModel | None:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -40,8 +43,7 @@ class ScenarioGroupService:
         session = get_sync_session()
         try:
             repository = ScenarioGroupRepository(session=session)
-            group = repository.fetch_by_mi_event_id(mi_event_id)
-            return repository.model_to_dict(group) if group else None
+            return repository.fetch_by_mi_event_id(mi_event_id)
         finally:
             session.close()
 

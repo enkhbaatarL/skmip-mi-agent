@@ -879,6 +879,9 @@ STAGE4_SYSTEM = """\
 - description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
 - price_direction.brent / jkm / ttf: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
+- 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
+- 올바른 형식 예시: {"period":"3개월","utilization_change_direction":"감소"}
+- 금지 형식 예시: [{"dim_key":"period","value":"3개월"}], [{"dimension_id":"period","value":"3개월"}]
 
 ## 절대 금지
 - '결과(가격 방향)가 동일하므로 두 조합을 합쳐서 1개로 만든다' 같은 통합/생략 행위.
@@ -891,6 +894,8 @@ STAGE4_HARD = """\
 - price_direction.brent / jkm / ttf 는 반드시 7단계 enum 중 정확히 1개.
 - description 은 3~5줄, title 은 1줄.
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
+- 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
+- 입력 조합의 key 집합은 selected dim_key 와 정확히 일치해야 함(누락/여분 금지).
 """
 
 

@@ -9,7 +9,11 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import AuditColumnsMixin, BIN, TABLE_ARGS
+from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
 from apps.common.configs.database.sync_database.base import ORMBase
+
+
+_SCENARIO_STATUS_CHECK_SQL = ", ".join(f"'{status.value}'" for status in ScenarioStatus)
 
 
 class MiScenarioDimensionTemplateModel(AuditColumnsMixin, ORMBase):
@@ -43,7 +47,10 @@ class MiScenarioModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_scenario_m"
     __table_args__ = (
         Index("idx_tmm_mi_scenario_m_01", "scenario_group_id"),
-        CheckConstraint("status IN ('creating','created','realized','discarded')", name="ck_tmm_mi_scenario_m_02"),
+        CheckConstraint(
+            f"status IN ({_SCENARIO_STATUS_CHECK_SQL})",
+            name="ck_tmm_mi_scenario_m_02",
+        ),
         TABLE_ARGS,
     )
 
@@ -60,10 +67,10 @@ class MiScenarioModel(AuditColumnsMixin, ORMBase):
     )
     title: Mapped[str] = mapped_column(sa.String(255, collation=BIN), nullable=False)
     narrative: Mapped[str | None] = mapped_column(sa.Text(collation=BIN), nullable=True)
-    status: Mapped[str] = mapped_column(
+    status: Mapped[ScenarioStatus] = mapped_column(
         sa.String(50, collation=BIN),
         nullable=False,
-        server_default=sa.text("'creating'"),
+        server_default=sa.text(f"'{ScenarioStatus.CREATING.value}'"),
         comment="상태 (creating:생성중 / created:생성완료 / realized:실현 / discarded:폐기)",
     )
     dimension_values: Mapped[Any] = mapped_column(sa.JSON, nullable=False)

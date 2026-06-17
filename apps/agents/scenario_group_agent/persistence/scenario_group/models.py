@@ -93,7 +93,7 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         sa.String(50, collation=BIN),
         nullable=False,
         server_default=sa.text("'creating'"),
-        comment="상태 (creating:생성중 / created:생성완료 / realized:실현)",
+        comment="상태 (creating:생성중 / created:생성완료 / realized:실현 / discarded:폐기)",
     )
     stage: Mapped[str] = mapped_column(
         sa.String(50, collation=BIN),
