@@ -4,6 +4,7 @@ from typing import Any
 
 from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
     build_context,
+    generate_new_dimension_values,
     run_review,
 )
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
@@ -46,6 +47,86 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         "scenarios": scenarios,
         "dimension_template": dimension_template,
     }
+
+
+async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any]:
+    if state.status == "failure":
+        return {}
+
+    request_table = state.request_table or {}
+    headers = request_table.get("headers") or []
+    rows = request_table.get("rows") or []
+    header_keys = {str(header["key"]) for header in headers}
+
+    event_type_l2_id = int((state.scenario_group or {})["event_type_l2_id"])
+    template = ScenarioService().load_scenario_template(event_type_l2_id)
+
+    required_keys = [
+        dimension.dimension_id
+        for dimension in template.dimensions
+        if dimension.required
+    ]
+    label_by_key = {
+        dimension.dimension_id: dimension.label_ko
+        for dimension in template.dimensions
+    }
+    missing_required = [key for key in required_keys if key not in header_keys]
+    if missing_required:
+        missing_labels = ", ".join(
+            label_by_key.get(key, key) for key in missing_required
+        )
+        raise MIBaseError(
+            ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
+            detail=f"필수 dimension 누락: {missing_labels}",
+        )
+
+    new_dimensions = [
+        key
+        for key in header_keys
+        if rows and all((row.get("cells") or {}).get(key) is None for row in rows)
+    ]
+
+    for row in rows:
+        if row.get("scenario_id") is not None:
+            continue
+        cells = row.get("cells") or {}
+        missing_cells = [
+            key
+            for key, value in cells.items()
+            if value is None and key not in new_dimensions
+        ]
+        if missing_cells:
+            missing_labels = ", ".join(
+                label_by_key.get(key, key) for key in missing_cells
+            )
+            title = row.get("title") or "(제목 없음)"
+            raise MIBaseError(
+                ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
+                detail=(
+                    f"새로 추가된 시나리오 '{title}'의 값을 모두 입력해야 합니다. "
+                    f"누락: {missing_labels}"
+                ),
+            )
+
+    if new_dimensions:
+        generated = await generate_new_dimension_values(
+            template,
+            rows,
+            new_dimensions,
+        )
+        for index, row in enumerate(rows):
+            values = generated.get(index) or {}
+            if not values:
+                continue
+            cells = row.get("cells")
+            if cells is None:
+                cells = {}
+                row["cells"] = cells
+            for key, value in values.items():
+                if cells.get(key) is None:
+                    cells[key] = value
+
+    return {"request_table": request_table}
 
 
 async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:

@@ -9,6 +9,7 @@ class ErrorCode(Enum):
     ENTITY_NOT_FOUND = (-201, "요청한 리소스를 찾을 수 없습니다", 404)
 
     CLASSIFY_SCENARIO_TYPE_FAILED = (-1000, "사용자 질의 내용 기반으로 시나리오 타입 분류에 실패했습니다.", 500)
+    SCENARIO_VALIDATION_INPUT_ERROR = (-1001, "시나리오 검증 입력 오류", 422)
     FLOW_MAPPING_FAILED = (-2000, "Flow매핑에 실패했습니다.", 500)
     QUERY_STRUCTURING_FAILED = (-3000, "질의 구조화 중 오류가 발생했습니다.", 500)
     DATA_RETRIEVAL_FAILED = (-4000, "데이터 조회 중 문제가 발생했습니다.", 500)

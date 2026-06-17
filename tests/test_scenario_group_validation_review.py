@@ -109,7 +109,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert report.is_valid
         assert report.summary == {"PASS": 5, "WARN": 0, "FAIL": 0, "INFO": 0}
 
-    async def test_warning_does_not_block_validation(self) -> None:
+    async def test_warning_marks_invalid(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
         rows[1]["cells"] = {"period": "장기", "severity": "낮음"}
         context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
@@ -126,7 +126,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             report = await run_review(context)
 
         assert report.verdict == "REVIEW"
-        assert report.is_valid
+        assert not report.is_valid
         assert report.summary["WARN"] == 2
 
     async def test_duplicate_combination_is_warning(self) -> None:
@@ -146,7 +146,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             report = await run_review(context)
 
         assert report.verdict == "REVIEW"
-        assert report.is_valid
+        assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R04").status == "WARN"
 
     async def test_llm_incompatibility_is_warning(self) -> None:
@@ -168,7 +168,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             report = await run_review(context)
 
         assert report.verdict == "REVIEW"
-        assert report.is_valid
+        assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
 
     async def test_llm_error_is_non_blocking_warning(self) -> None:
@@ -182,8 +182,61 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             report = await run_review(context)
 
         assert report.verdict == "REVIEW"
-        assert report.is_valid
+        assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
+
+    async def test_new_scenario_gets_temp_negative_id(self) -> None:
+        rows = [
+            dict(ROWS[0]),
+            {
+                "scenario_id": None,
+                "display_order": 3,
+                "title": "신규",
+                "narrative": "신규 narrative",
+                "cells": {"period": "장기", "severity": "높음"},
+                "metrics": {"probability_score": 50, "probability_delta": 0},
+                "impact": {"jkm": "neutral", "ttf": "neutral", "hh": "neutral"},
+                "baseline_yn": "N",
+            },
+        ]
+        context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
+
+        new_scenario = context.scenarios[1]
+        assert new_scenario["scenario_id"] == -3
+        assert new_scenario["is_new"] is True
+        assert new_scenario["display_order"] == 3
+
+    async def test_new_scenario_label_is_user_friendly(self) -> None:
+        # 제목이 없는 신규 시나리오는 음수 ID 대신 '{displayOrder}번째 시나리오'로 노출.
+        rows = [
+            dict(ROWS[0]),
+            {
+                "scenario_id": None,
+                "display_order": 3,
+                "title": "",
+                "narrative": "",
+                # ROWS[0] 과 동일 조합으로 만들어 R04(중복) advice 를 유발한다.
+                "cells": dict(ROWS[0]["cells"]),
+                "metrics": {"probability_score": 50, "probability_delta": 0},
+                "impact": {"jkm": "neutral", "ttf": "neutral", "hh": "neutral"},
+                "baseline_yn": "N",
+            },
+        ]
+        context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=-3, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert "3번째 시나리오" in report.reason
+        assert "-3" not in report.reason
 
 
 if __name__ == "__main__":

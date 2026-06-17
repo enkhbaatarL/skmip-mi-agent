@@ -29,6 +29,12 @@ class ScenarioService:
             event_type_l2_id,
         )
 
+    def load_scenario_template(self, event_type_l2_id: int) -> "ScenarioTemplate":
+        from apps.agents.scenario_group_agent.schemas.common import ScenarioTemplate
+
+        pipeline_template = self.load_pipeline_template(event_type_l2_id)
+        return ScenarioTemplate.model_validate(pipeline_template)
+
     def _load_template_json_from_db(
         self, event_type_l2_id: int
     ) -> list[dict[str, Any]]:
@@ -133,6 +139,7 @@ class ScenarioService:
             "dimension_id": dimension_id,
             "label_ko": label,
             "description": label,
+            "required": bool(raw_dimension.get("required", False)),
             "enum": self._build_enum_list(value_enums, dimension_id),
         }
 
