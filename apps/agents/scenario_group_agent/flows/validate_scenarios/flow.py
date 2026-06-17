@@ -27,14 +27,12 @@ def build_graph() -> Runnable:
     builder = StateGraph(ScenarioDesignState)
     builder.add_node("load_scenario_group", load_scenario_group)
     builder.add_node("load_scenarios", load_scenarios)
-    
     builder.add_node("validate_scenarios", validate_scenarios)
-    builder.add_node("autofill_dimension_values", autofill_dimension_values)
     builder.add_node("save_validation_result", save_validation_result)
     builder.set_entry_point("load_scenario_group")
     builder.add_edge("load_scenario_group", "load_scenarios")
     builder.add_edge("load_scenarios", "validate_scenarios")
-    builder.add_conditional_edges("validate_scenarios", )
+    builder.add_edge("validate_scenarios", "save_validation_result")
     builder.set_finish_point("save_validation_result")
     return builder.compile()
 
