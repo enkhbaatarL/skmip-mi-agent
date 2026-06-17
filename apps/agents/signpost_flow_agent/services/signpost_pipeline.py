@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Literal, Tuple
 from pydantic import BaseModel, Field, conlist, model_validator
 
 from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
-from apps.agents.scenario_group_agent.schemas.scenario_enums import (
+from apps.agents.scenario_group_agent.schemas.enums import (
     DirectionCode,
     SignpostStrength,
 )

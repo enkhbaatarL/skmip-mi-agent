@@ -9,7 +9,7 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import AuditColumnsMixin, BIN, TABLE_ARGS
-from apps.agents.scenario_group_agent.schemas.scenario_enums import SignpostStrength
+from apps.agents.scenario_group_agent.schemas.enums import SignpostStrength
 from apps.common.configs.database.sync_database.base import ORMBase
 
 if TYPE_CHECKING:
@@ -76,6 +76,8 @@ class MiSignpostModel(AuditColumnsMixin, ORMBase):
             probability_impact_score=impact_score,
             signpost_reason=rationale,
             display_order=display_order,
+            keyword_hints=dto.keyword_hints,
+            use_yn="Y",
         )
         if user_id is not None:
             model.crt_usr_logn_id = user_id

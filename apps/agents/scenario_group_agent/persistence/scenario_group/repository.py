@@ -93,7 +93,9 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             scenario_snap = MiScenarioSnapModel(
                 snapshot_id=snapshot.snapshot_id,
                 src_scenario_id=scenario.scenario_id,
-                dimension_values=scenario.dimension_values,
+                dimension_values=self._to_snapshot_dimension_values(
+                    scenario.dimension_values
+                ),
                 probability_score=scenario.probability_score,
                 baseline_yn=scenario.baseline_yn,
             )
@@ -119,6 +121,22 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
 
         self.session.flush()
         return int(snapshot.snapshot_id)
+
+    @staticmethod
+    def _to_snapshot_dimension_values(raw_dimension_values: Any) -> list[dict[str, Any]]:
+        if isinstance(raw_dimension_values, list):
+            return [
+                item
+                for item in raw_dimension_values
+                if isinstance(item, dict) and item.get("dim_key")
+            ]
+        if isinstance(raw_dimension_values, dict):
+            return [
+                {"dim_key": str(dim_key), "value": value}
+                for dim_key, value in raw_dimension_values.items()
+                if str(dim_key).strip()
+            ]
+        return []
 
     def model_to_dict(self, group: MiScenarioGroupModel) -> dict[str, Any]:
         return {

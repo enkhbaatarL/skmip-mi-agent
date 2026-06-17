@@ -109,7 +109,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert report.is_valid
         assert report.summary == {"PASS": 5, "WARN": 0, "FAIL": 0, "INFO": 0}
 
-    async def test_warning_marks_invalid(self) -> None:
+    async def test_warning_sets_invalid(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
         rows[1]["cells"] = {"period": "장기", "severity": "낮음"}
         context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
@@ -171,7 +171,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
 
-    async def test_llm_error_is_non_blocking_warning(self) -> None:
+    async def test_llm_error_sets_invalid(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
 
         with patch(

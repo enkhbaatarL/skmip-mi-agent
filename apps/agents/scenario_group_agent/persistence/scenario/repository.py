@@ -64,12 +64,21 @@ class ScenarioRepository(BaseSyncSQLRepository):
         self.session.flush()
 
     def model_to_dict(self, scenario: MiScenarioModel) -> dict[str, Any]:
-        dimension_values = scenario.dimension_values or []
-        dim_dict = {
-            item.get("dimension_id"): item.get("value")
-            for item in dimension_values
-            if isinstance(item, dict) and item.get("dimension_id")
-        }
+        raw_dimension_values = scenario.dimension_values
+        if isinstance(raw_dimension_values, dict):
+            dim_dict = {
+                str(dim_key): value
+                for dim_key, value in raw_dimension_values.items()
+                if str(dim_key).strip()
+            }
+        elif isinstance(raw_dimension_values, list):
+            dim_dict = {
+                str(item.get("dim_key")): item.get("value")
+                for item in raw_dimension_values
+                if isinstance(item, dict) and item.get("dim_key")
+            }
+        else:
+            dim_dict = {}
         price_direction = {
             "jkm": scenario.impact_jkm,
             "ttf": scenario.impact_ttf,
@@ -83,7 +92,6 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "narrative": scenario.narrative,
             "status": scenario.status,
             "dimension_values": dim_dict,
-            "dimension_values_array": dimension_values,
             "price_direction": price_direction,
             "probability_score": scenario.probability_score,
             "probability_delta": scenario.probability_delta,

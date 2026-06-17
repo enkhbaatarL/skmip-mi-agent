@@ -11,38 +11,41 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.service import 
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
+from apps.agents.scenario_group_agent.schemas.enums import ScenarioGroupStatus
 
 def load_event(state: ScenarioDesignState) -> dict[str, Any]:
     if state.mi_event_id is None:
-        return {
-            "status": "failure",
-            "error": "mi_event_id is required",
-            "message": "mi_event_id is required",
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
     event = EventService().load_event(state.mi_event_id)
     if event is None:
-        return {
-            "status": "failure",
-            "error": f"Event not found for mi_event_id={state.mi_event_id}",
-            "message": f"Event not found for mi_event_id={state.mi_event_id}",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Event not found for mi_event_id={state.mi_event_id}")
     return {"event_data": event}
 
 
 def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure" or state.mi_event_id is None:
-        return {}
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
     existing = ScenarioGroupService().load_by_mi_event_id(state.mi_event_id)
     if existing is None:
+        # 새로 생성
         return {}
-    scenarios = ScenarioService().load_by_group_id(existing["scenario_group_id"])
-    return {
-        "scenario_group_id": existing["scenario_group_id"],
-        "scenario_group": existing,
-        "scenarios": scenarios,
-        "status": "already_exist",
-        "message": "Scenario group already exists",
-    }
+    if existing.status == ScenarioGroupStatus.CREATING:
+        if existing.request_usr_id == state.user_id:
+            raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail="초안 생성 완료. 다음 단계를 진행해주세요.")
+        raise MIBaseError(ErrorCode.SCENARIO_GROUP_CREATION_NOT_ALLOWED, detail=f"시나리오 작성자: {existing.request_usr_id}")
+    else:
+        raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED)
+    
+    # scenarios = ScenarioService().load_by_group_id(existing["scenario_group_id"])
+    # return {
+    #     "scenario_group_id": existing["scenario_group_id"],
+    #     "scenario_group": existing,
+    #     "scenarios": scenarios,
+    #     "status": "already_exist",
+    #     "message": "Scenario group already exists",
+    # }
 
 
 def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
@@ -65,9 +68,9 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     stage4 = state.scenario_result.get("stage4_scenario_synthesis", {}) or {}
     selected_dimensions = stage2.get("selected_dimensions", []) or []
     dimension_selected = [
-        item.get("dimension_id")
+        item.get("dim_key")
         for item in selected_dimensions
-        if isinstance(item, dict) and item.get("dimension_id")
+        if isinstance(item, dict) and item.get("dim_key")
     ]
     payload = {
         "mi_event_id": int(state.event_data["mi_event_id"]),

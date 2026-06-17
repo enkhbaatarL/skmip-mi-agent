@@ -218,6 +218,7 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
     __table_args__ = (
         Index("idx_tmm_mi_mievent_m_01", "event_type_l2_id"),
         Index("idx_tmm_mi_mievent_m_02", "occurred_at"),
+        Index("idx_tmm_mi_mievent_m_03", "latest_record_first_created"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_bin"},
     )
 

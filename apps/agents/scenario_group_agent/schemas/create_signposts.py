@@ -9,7 +9,7 @@ from apps.agents.scenario_group_agent.schemas.common import (
     ScenarioGroupPayload,
     ScenarioTable,
 )
-from apps.agents.scenario_group_agent.schemas.scenario_enums import (
+from apps.agents.scenario_group_agent.schemas.enums import (
     DirectionCode,
     SignpostStrength,
 )
