@@ -1,8 +1,6 @@
 ---
 name: release
 description: MR 메시지 생성부터 Git tag, GitHub Release, Docker build & push까지 릴리즈 프로세스 전체를 진행합니다. "MR 메세지", "MR 메시지", "release note", "릴리즈", "배포 준비" 요청 시 사용.
-disable-model-invocation: true
-allowed-tools: Bash(git *) Bash(gh *) Bash(docker *) AskUserQuestion
 ---
 
 ## 현재 브랜치 정보
