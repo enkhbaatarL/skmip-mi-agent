@@ -43,7 +43,6 @@ class MiScenarioModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_scenario_m"
     __table_args__ = (
         Index("idx_tmm_mi_scenario_m_01", "scenario_group_id"),
-        CheckConstraint("JSON_TYPE(dimension_values) = 'ARRAY'", name="ck_tmm_mi_scenario_m_01"),
         CheckConstraint("status IN ('creating','created','realized','discarded')", name="ck_tmm_mi_scenario_m_02"),
         TABLE_ARGS,
     )

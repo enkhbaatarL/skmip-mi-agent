@@ -643,7 +643,7 @@ CREATE TABLE `tmm_mi_scenario_m` (
     `scenario_group_id` INT UNSIGNED NOT NULL COMMENT '시나리오 그룹 ID',
     `title` VARCHAR(255) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오명',
     `narrative` TEXT COLLATE utf8mb4_bin NULL COMMENT '시나리오 내러티브',
-    `dimension_values` JSON NOT NULL COMMENT '시나리오 주요 가정 (dimension values)',
+    `dimension_values` JSON NOT NULL COMMENT '시나리오 주요 가정 - key-value JSON 객체 (예: {"capacity_change": "15%", "recovery": "4~6주"})',
     `probability_score` DECIMAL(5,2) NULL COMMENT '시나리오 발생확률',
     `probability_level` VARCHAR(50) COLLATE utf8mb4_bin NULL COMMENT '시나리오 확률 레벨',
     `probability_delta` DECIMAL(5,2) NULL COMMENT '시나리오 확률 증감',
@@ -664,8 +664,6 @@ CREATE TABLE `tmm_mi_scenario_m` (
     PRIMARY KEY (`scenario_id`),
     KEY `idx_tmm_mi_scenario_m_01` (`scenario_group_id`),
 
-    CONSTRAINT `ck_tmm_mi_scenario_m_01`
-        CHECK (JSON_TYPE(dimension_values) = 'ARRAY'),
     CONSTRAINT `fk_tmm_mi_scenario_m_01`
         FOREIGN KEY (`scenario_group_id`)
         REFERENCES `tmm_mi_scenario_group_m` (`scenario_group_id`)
