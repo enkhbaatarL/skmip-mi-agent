@@ -56,4 +56,4 @@ llm_concurrency: 4
 mcp_max_concurrency: 8
 http_max_concurrency: 16
 rdb_exec_max_parallel: 4
-log_level: INFO
+log_level: DEBUG

@@ -11,21 +11,23 @@ from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import validate_schema
 from apps.common.configs.database.sync_database.connection import get_sync_engine
-from apps.common.logging.logger_config import logger
+from apps.common.logging.logger_config import logger, setup_logging
 from apps.common.middleware.exception_handler import register_exception_handlers
 from apps.common.middleware.request_logging import RequestLoggingMiddleware
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    logger.info("Validating ORM models against the database schema")
-    await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
-    logger.info("ORM/DB schema validation completed")
-
     from apps.common.configs.settings import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
 
     cfg = get_settings()
+    setup_logging(cfg.log_level)
+    logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+
+    logger.info("Validating ORM models against the database schema")
+    await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
+    logger.info("ORM/DB schema validation completed")
     if cfg.callback_oauth2_token_url:
         logger.info("Pre-fetching callback OAuth2 token")
         try:

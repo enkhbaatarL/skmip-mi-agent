@@ -24,7 +24,7 @@ async def send_callback(url: str, payload: CallBackBody) -> None:
     cfg = get_settings()
     token_manager = get_token_manager()
     body = payload.model_dump(by_alias=True, mode="json")
-    logger.info(
+    logger.debug(
         "[CONNECTOR][CALLBACK][send_callback] REQUEST BODY\n"
         f"url={url}\n"
         f"body=\n{json.dumps(body, ensure_ascii=False, indent=2, default=str)}"
