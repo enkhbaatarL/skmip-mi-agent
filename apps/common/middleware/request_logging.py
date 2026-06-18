@@ -29,12 +29,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             f" | client={request.client.host if request.client else '-'}"
         )
         body_str = body_bytes.decode("utf-8", errors="replace")
-        logger.debug(
-            "[REQUEST] BODY\n"
-            f"method={request.method}\n"
-            f"path={request.url.path}\n"
-            f"body=\n{_format_body_for_debug(body_str)}"
-        )
+        logger.debug(f"[REQUEST] BODY\n{_format_body_for_debug(body_str)}")
 
         response = await call_next(request)
 
@@ -48,12 +43,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 def _format_body_for_debug(body_str: str) -> str:
     if not body_str.strip():
-        return "<empty>"
+        return "null"
     try:
         parsed = json.loads(body_str)
         pretty = json.dumps(parsed, ensure_ascii=False, indent=2, default=str)
     except Exception:
-        pretty = body_str
+        pretty = json.dumps({"raw": body_str}, ensure_ascii=False, indent=2, default=str)
     if len(pretty) > _MAX_BODY_LOG_LEN:
         return pretty[:_MAX_BODY_LOG_LEN] + f"... [truncated, total {len(pretty)} chars]"
     return pretty
