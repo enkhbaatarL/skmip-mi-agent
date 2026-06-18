@@ -12,6 +12,7 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     load_scenarios,
     run_signpost_generation,
     save_signposts,
+    sync_scenarios_from_table,
 )
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
@@ -28,12 +29,14 @@ from apps.common.values.error_codes import ErrorCode
 def build_graph() -> Runnable:
     builder = StateGraph(ScenarioDesignState)
     builder.add_node("load_scenario_group", load_scenario_group)
+    builder.add_node("sync_scenarios_from_table", sync_scenarios_from_table)
     builder.add_node("load_scenarios", load_scenarios)
     builder.add_node("check_existing_signposts", check_existing_signposts)
     builder.add_node("run_signpost_generation", run_signpost_generation)
     builder.add_node("save_signposts", save_signposts)
     builder.set_entry_point("load_scenario_group")
-    builder.add_edge("load_scenario_group", "load_scenarios")
+    builder.add_edge("load_scenario_group", "sync_scenarios_from_table")
+    builder.add_edge("sync_scenarios_from_table", "load_scenarios")
     builder.add_edge("load_scenarios", "check_existing_signposts")
     builder.add_edge("check_existing_signposts", "run_signpost_generation")
     builder.add_edge("run_signpost_generation", "save_signposts")

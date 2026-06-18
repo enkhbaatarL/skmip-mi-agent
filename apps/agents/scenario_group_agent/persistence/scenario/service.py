@@ -3,6 +3,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from apps.agents.scenario_group_agent.persistence.scenario_group.repository import (
+    ScenarioGroupRepository,
+)
+from apps.agents.scenario_group_agent.persistence.signpost.repository import (
+    SignpostRepository,
+)
 from apps.agents.scenario_group_agent.persistence.scenario.repository import (
     ScenarioRepository,
 )
@@ -202,7 +208,7 @@ class ScenarioService:
                     "scenario_group_id": scenario_group_id,
                     "title": (scenario.get("title") or "")[:255],
                     "narrative": scenario.get("description") or "",
-                    "status": "created",
+                    "status": "creating",
                     "dimension_values": self._normalize_dimension_values_object(
                         scenario.get("dimension_values") or {}
                     ),
@@ -212,15 +218,15 @@ class ScenarioService:
                     "impact_ttf": price_direction.get("ttf"),
                     "impact_hh": price_direction.get("hh"),
                     "display_order": index,
-                    "baseline_yn": (
-                        "Y"
-                        if likelihood in {"high", "very_high"} and index == 1
-                        else "N"
-                    ),
+                    "baseline_yn": "N",
                     "crt_usr_logn_id": user_id,
                     "mod_usr_logn_id": user_id,
                 }
                 saved_ids.append(repository.insert_scenario(payload))
+            self.apply_baseline_by_probability(
+                repository.fetch_models_by_group_id(scenario_group_id),
+                user_id=user_id,
+            )
             session.commit()
             return saved_ids
         except Exception:
@@ -241,6 +247,129 @@ class ScenarioService:
             )
             session.commit()
             return count
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def update_status_by_ids(self, scenario_ids: list[int], status: str) -> int:
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            count = ScenarioRepository(session=session).update_status_by_ids(
+                scenario_ids, status
+            )
+            session.commit()
+            return count
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def sync_from_table(
+        self,
+        scenario_group_id: int,
+        event_type_l2_id: int,
+        table_payload: dict[str, Any],
+        user_id: int,
+    ) -> dict[str, list[int] | int]:
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            scenario_repository = ScenarioRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+            group_repository = ScenarioGroupRepository(session=session)
+
+            scenarios = scenario_repository.fetch_models_by_group_id(
+                scenario_group_id
+            )
+            scenarios_by_id = {
+                int(scenario.scenario_id): scenario for scenario in scenarios
+            }
+            requested_existing_ids: set[int] = set()
+            inserted_ids: list[int] = []
+            updated_ids: list[int] = []
+            unchanged_existing_ids: list[int] = []
+
+            for row in table_payload.get("rows", []) or []:
+                row_scenario_id = row.get("scenario_id")
+                payload = self._row_to_scenario_payload(
+                    scenario_group_id=scenario_group_id,
+                    event_type_l2_id=event_type_l2_id,
+                    row=row,
+                    user_id=user_id,
+                    status="creating",
+                )
+                if row_scenario_id is None:
+                    inserted_ids.append(scenario_repository.insert_scenario(payload))
+                    continue
+
+                scenario_id = int(row_scenario_id)
+                scenario = scenarios_by_id.get(scenario_id)
+                if scenario is None:
+                    raise ValueError(
+                        f"Scenario does not belong to group: {scenario_id}"
+                    )
+                requested_existing_ids.add(scenario_id)
+                if self._scenario_requires_update(scenario, payload):
+                    scenario_repository.update_from_payload(scenario, payload)
+                    updated_ids.append(scenario_id)
+                else:
+                    unchanged_existing_ids.append(scenario_id)
+
+            deleted_ids = [
+                scenario_id
+                for scenario_id in scenarios_by_id
+                if scenario_id not in requested_existing_ids
+            ]
+            scenario_repository.soft_delete_by_ids(deleted_ids, user_id=user_id)
+
+            regenerate_ids = [*inserted_ids, *updated_ids]
+            signpost_repository.soft_delete_by_scenario_ids(
+                [*updated_ids, *deleted_ids],
+                user_id=user_id,
+            )
+
+            active_scenarios = scenario_repository.fetch_models_by_group_id(
+                scenario_group_id
+            )
+            self._apply_baseline_by_probability(active_scenarios, user_id=user_id)
+
+            group = group_repository.fetch_by_id(scenario_group_id)
+            if group is not None:
+                header_keys = [
+                    str(header["key"])
+                    for header in table_payload.get("headers", []) or []
+                    if header.get("key")
+                ]
+                group_repository.update_group(
+                    group,
+                    {
+                        "dimension_selected": header_keys,
+                        "scenario_count": len(active_scenarios),
+                        "mod_usr_logn_id": user_id,
+                    },
+                )
+
+            session.commit()
+            return {
+                "active_scenario_ids": [
+                    int(scenario.scenario_id) for scenario in active_scenarios
+                ],
+                "regenerate_scenario_ids": regenerate_ids,
+                "inserted_scenario_ids": inserted_ids,
+                "updated_scenario_ids": updated_ids,
+                "deleted_scenario_ids": deleted_ids,
+                "unchanged_existing_scenario_ids": unchanged_existing_ids,
+            }
         except Exception:
             session.rollback()
             raise
@@ -272,3 +401,98 @@ class ScenarioService:
             if key in template_by_key:
                 converted[key] = value
         return self._normalize_dimension_values_object(converted)
+
+    def _row_to_scenario_payload(
+        self,
+        *,
+        scenario_group_id: int,
+        event_type_l2_id: int,
+        row: dict[str, Any],
+        user_id: int,
+        status: str,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "scenario_group_id": scenario_group_id,
+            "title": (row.get("title") or "")[:255],
+            "narrative": row.get("narrative") or "",
+            "status": status,
+            "dimension_values": self.cells_to_dimension_values(
+                event_type_l2_id,
+                row.get("cells") or {},
+            ),
+            "display_order": int(row.get("display_order") or 0),
+            "baseline_yn": "N",
+            "crt_usr_logn_id": user_id,
+            "mod_usr_logn_id": user_id,
+        }
+        metrics = row.get("metrics") or {}
+        payload["probability_score"] = metrics.get("probability_score")
+        payload["probability_delta"] = metrics.get("probability_delta")
+
+        impact = row.get("impact") or {}
+        payload["impact_jkm"] = impact.get("jkm")
+        payload["impact_ttf"] = impact.get("ttf")
+        payload["impact_hh"] = impact.get("hh")
+        return payload
+
+    def _scenario_requires_update(
+        self,
+        scenario: Any,
+        payload: dict[str, Any],
+    ) -> bool:
+        for field in (
+            "title",
+            "narrative",
+            "dimension_values",
+            "probability_score",
+            "probability_delta",
+            "impact_jkm",
+            "impact_ttf",
+            "impact_hh",
+            "display_order",
+        ):
+            if self._normalize_compare_value(getattr(scenario, field)) != (
+                self._normalize_compare_value(payload.get(field))
+            ):
+                return True
+        return False
+
+    def _normalize_compare_value(self, value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                return Decimal(str(value))
+            except Exception:
+                return value
+        return value
+
+    def _apply_baseline_by_probability(
+        self,
+        scenarios: list[Any],
+        *,
+        user_id: int,
+    ) -> None:
+        self.apply_baseline_by_probability(scenarios, user_id=user_id)
+
+    def apply_baseline_by_probability(
+        self,
+        scenarios: list[Any],
+        *,
+        user_id: int,
+    ) -> None:
+        scores = [
+            Decimal(str(scenario.probability_score))
+            for scenario in scenarios
+            if scenario.probability_score is not None
+        ]
+        max_score = max(scores) if scores else None
+        for scenario in scenarios:
+            scenario.baseline_yn = (
+                "Y"
+                if max_score is not None
+                and scenario.probability_score is not None
+                and Decimal(str(scenario.probability_score)) == max_score
+                else "N"
+            )
+            scenario.mod_usr_logn_id = user_id

@@ -6,7 +6,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from apps.agents.scenario_group_agent.schemas.create_signposts import (
-    GeneratedSignpost,
     SignpostGenerationResult,
 )
 
@@ -21,7 +20,7 @@ class ScenarioDesignState(BaseModel):
     scenario_group: dict[str, Any] | None = None
     scenarios: list[dict[str, Any]] = Field(default_factory=list)
     dimension_template: list[dict[str, Any]] = Field(default_factory=list)
-    signposts: list[GeneratedSignpost] = Field(default_factory=list)
+    signposts: list[dict[str, Any]] = Field(default_factory=list)
 
     scenario_result: dict[str, Any] | None = None
     validation_result: dict[str, Any] | None = None
@@ -31,6 +30,7 @@ class ScenarioDesignState(BaseModel):
 
     saved_scenario_ids: list[int] = Field(default_factory=list)
     saved_signpost_ids: list[int] = Field(default_factory=list)
+    signpost_target_scenario_ids: list[int] = Field(default_factory=list)
     snapshot_id: int | None = None
 
     is_valid: bool = False

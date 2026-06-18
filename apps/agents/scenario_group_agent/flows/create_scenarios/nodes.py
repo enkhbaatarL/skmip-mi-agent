@@ -34,7 +34,7 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if existing.status == ScenarioGroupStatus.CREATING:
         if existing.request_usr_id == state.user_id:
             raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail="초안 생성 완료. 다음 단계를 진행해주세요.")
-        raise MIBaseError(ErrorCode.SCENARIO_GROUP_CREATION_NOT_ALLOWED, detail=f"시나리오 작성자: {existing.request_usr_id}")
+        raise MIBaseError(ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT, detail=f"시나리오 작성자: {existing.request_usr_id}")
     else:
         raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED)
     
@@ -52,17 +52,9 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.event_data is None or state.scenario_result is None:
-        return {
-            "status": "failure",
-            "error": "scenario_result is required",
-            "message": "scenario_result is required",
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_result is required")
     if state.user_id is None:
-        return {
-            "status": "failure",
-            "error": "user_id is required",
-            "message": "user_id is required",
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
 
     stage2 = state.scenario_result.get("stage2_dimension_selection", {}) or {}
     stage4 = state.scenario_result.get("stage4_scenario_synthesis", {}) or {}
@@ -99,17 +91,9 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.scenario_group_id is None or state.scenario_result is None:
-        return {
-            "status": "failure",
-            "error": "scenario_group_id is required",
-            "message": "scenario_group_id is required",
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
-        return {
-            "status": "failure",
-            "error": "user_id is required",
-            "message": "user_id is required",
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
     saved_ids = ScenarioService().save_generated_scenarios(
         state.scenario_group_id,
         state.scenario_result,
@@ -120,6 +104,7 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
     )
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
+        status="creating",
         stage="scenario_created",
         user_id=state.user_id,
     )

@@ -17,7 +17,7 @@ from apps.common.values.response import CallBackBody
 
 
 class CreateSignpostsIn(ApiModel):
-    user_id: int | None = None
+    user_id: int
     table: ScenarioTable
 
 

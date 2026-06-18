@@ -79,6 +79,24 @@ class ScenarioGroupTableData(ApiModel):
     table: ScenarioTable
 
 
+class ScenarioGroupQueryPayload(ScenarioGroupPayload):
+    del_yn: str = "N"
+
+
+class SignpostQueryPayload(SignpostPayload):
+    del_yn: str = "N"
+
+
+class ScenarioQueryRow(ScenarioRow):
+    del_yn: str = "N"
+    signposts: list[SignpostQueryPayload] = Field(default_factory=list)
+
+
+class ScenarioQueryTable(ApiModel):
+    headers: list[ScenarioHeader]
+    rows: list[ScenarioQueryRow]
+
+
 class ScenarioTemplateEnum(BaseModel):
     id: str
     label: str

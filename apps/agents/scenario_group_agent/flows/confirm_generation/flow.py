@@ -40,6 +40,7 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     parsed = ConfirmGenerationIn.model_validate(payload)
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
+        user_id=parsed.user_id,
         request_scenario_group=parsed.scenario_group.model_dump(exclude_unset=True),
         request_table=parsed.table.model_dump(exclude_unset=True),
     )

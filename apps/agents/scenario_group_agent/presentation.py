@@ -8,13 +8,20 @@ from apps.agents.scenario_group_agent.persistence.scenario.service import (
 )
 from apps.agents.scenario_group_agent.schemas.common import (
     ScenarioGroupPayload,
+    ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
     ScenarioHeader,
     ScenarioImpact,
     ScenarioMetrics,
+    ScenarioQueryRow,
+    ScenarioQueryTable,
     ScenarioRow,
     ScenarioTable,
     SignpostPayload,
+    SignpostQueryPayload,
+)
+from apps.agents.scenario_group_agent.schemas.manage_scenario_groups import (
+    ScenarioGroupDetailOut,
 )
 
 
@@ -23,6 +30,91 @@ def build_scenario_group_table_data(
     scenarios: list[dict[str, Any]],
     signposts: list[dict[str, Any]] | None = None,
 ) -> ScenarioGroupTableData:
+    template_by_key, selected_keys, headers = _build_headers(group)
+    signposts_by_scenario_id = _group_signposts(signposts)
+
+    rows: list[ScenarioRow] = []
+    for scenario in scenarios:
+        scenario_id = int(scenario["scenario_id"])
+        rows.append(
+            ScenarioRow(
+                **_row_common_payload(scenario, template_by_key, selected_keys),
+                signposts=[
+                    SignpostPayload(
+                        signpost_id=int(signpost["signpost_id"]),
+                        label=signpost.get("label") or "",
+                        probability_direction_code=signpost.get("probability_direction_code"),
+                        probability_impact_score=signpost.get("probability_impact_score"),
+                        signpost_reason=signpost.get("signpost_reason"),
+                        display_order=int(signpost.get("display_order") or 0),
+                        strength=signpost.get("strength"),
+                        use_yn=signpost.get("use_yn"),
+                        keyword_hints=signpost.get("keyword_hints") or [],
+                    )
+                    for signpost in signposts_by_scenario_id.get(scenario_id, [])
+                ],
+            )
+        )
+
+    return ScenarioGroupTableData(
+        scenario_group=ScenarioGroupPayload.model_validate(group),
+        table=ScenarioTable(headers=headers, rows=rows),
+    )
+
+
+def build_scenario_group_query_data(
+    group: dict[str, Any],
+    scenarios: list[dict[str, Any]],
+    signposts: list[dict[str, Any]] | None = None,
+) -> ScenarioGroupDetailOut:
+    template_by_key, selected_keys, headers = _build_headers(group)
+    signposts_by_scenario_id = _group_signposts(signposts)
+
+    rows: list[ScenarioQueryRow] = []
+    for scenario in scenarios:
+        scenario_id = int(scenario["scenario_id"])
+        rows.append(
+            ScenarioQueryRow(
+                **_row_common_payload(scenario, template_by_key, selected_keys),
+                del_yn=scenario.get("del_yn") or "N",
+                signposts=[
+                    SignpostQueryPayload(
+                        signpost_id=int(signpost["signpost_id"]),
+                        label=signpost.get("label") or "",
+                        probability_direction_code=signpost.get("probability_direction_code"),
+                        probability_impact_score=signpost.get("probability_impact_score"),
+                        signpost_reason=signpost.get("signpost_reason"),
+                        display_order=int(signpost.get("display_order") or 0),
+                        strength=signpost.get("strength"),
+                        use_yn=signpost.get("use_yn"),
+                        keyword_hints=signpost.get("keyword_hints") or [],
+                        del_yn=signpost.get("del_yn") or "N",
+                    )
+                    for signpost in signposts_by_scenario_id.get(scenario_id, [])
+                ],
+            )
+        )
+
+    signposts_list = signposts or []
+    return ScenarioGroupDetailOut(
+        scenario_group=ScenarioGroupQueryPayload.model_validate(group),
+        table=ScenarioQueryTable(headers=headers, rows=rows),
+        scenario_count=sum(1 for scenario in scenarios if scenario.get("del_yn") != "Y"),
+        signpost_count=sum(
+            1 for signpost in signposts_list if signpost.get("del_yn") != "Y"
+        ),
+        deleted_scenario_count=sum(
+            1 for scenario in scenarios if scenario.get("del_yn") == "Y"
+        ),
+        deleted_signpost_count=sum(
+            1 for signpost in signposts_list if signpost.get("del_yn") == "Y"
+        ),
+    )
+
+
+def _build_headers(
+    group: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], list[str], list[ScenarioHeader]]:
     template_json = ScenarioService()._load_template_json_from_db(
         int(group["event_type_l2_id"])
     )
@@ -46,57 +138,45 @@ def build_scenario_group_table_data(
         )
         for index, key in enumerate(selected_keys, start=1)
     ]
+    return template_by_key, selected_keys, headers
 
+
+def _group_signposts(
+    signposts: list[dict[str, Any]] | None,
+) -> dict[int, list[dict[str, Any]]]:
     signposts_by_scenario_id: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for signpost in signposts or []:
         signposts_by_scenario_id[int(signpost["scenario_id"])].append(signpost)
+    return signposts_by_scenario_id
 
-    rows: list[ScenarioRow] = []
-    for scenario in scenarios:
-        scenario_id = int(scenario["scenario_id"])
-        raw_values = scenario.get("dimension_values") or {}
-        cells = {
-            key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key))
-            for key in selected_keys
-        }
-        rows.append(
-            ScenarioRow(
-                scenario_id=scenario_id,
-                display_order=int(scenario.get("display_order") or 0),
-                title=scenario.get("title") or "",
-                narrative=scenario.get("narrative"),
-                cells=cells,
-                metrics=ScenarioMetrics(
-                    probability_score=scenario.get("probability_score"),
-                    probability_delta=scenario.get("probability_delta"),
-                ),
-                impact=ScenarioImpact(
-                    jkm=scenario.get("impact_jkm"),
-                    ttf=scenario.get("impact_ttf"),
-                    hh=scenario.get("impact_hh"),
-                ),
-                baseline_yn=scenario.get("baseline_yn"),
-                signposts=[
-                    SignpostPayload(
-                        signpost_id=int(signpost["signpost_id"]),
-                        label=signpost.get("label") or "",
-                        probability_direction_code=signpost.get("probability_direction_code"),
-                        probability_impact_score=signpost.get("probability_impact_score"),
-                        signpost_reason=signpost.get("signpost_reason"),
-                        display_order=int(signpost.get("display_order") or 0),
-                        strength=signpost.get("strength"),
-                        use_yn=signpost.get("use_yn"),
-                        keyword_hints=signpost.get("keyword_hints") or [],
-                    )
-                    for signpost in signposts_by_scenario_id.get(scenario_id, [])
-                ],
-            )
-        )
 
-    return ScenarioGroupTableData(
-        scenario_group=ScenarioGroupPayload.model_validate(group),
-        table=ScenarioTable(headers=headers, rows=rows),
-    )
+def _row_common_payload(
+    scenario: dict[str, Any],
+    template_by_key: dict[str, dict[str, Any]],
+    selected_keys: list[str],
+) -> dict[str, Any]:
+    raw_values = scenario.get("dimension_values") or {}
+    cells = {
+        key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key))
+        for key in selected_keys
+    }
+    return {
+        "scenario_id": int(scenario["scenario_id"]),
+        "display_order": int(scenario.get("display_order") or 0),
+        "title": scenario.get("title") or "",
+        "narrative": scenario.get("narrative"),
+        "cells": cells,
+        "metrics": ScenarioMetrics(
+            probability_score=scenario.get("probability_score"),
+            probability_delta=scenario.get("probability_delta"),
+        ),
+        "impact": ScenarioImpact(
+            jkm=scenario.get("impact_jkm"),
+            ttf=scenario.get("impact_ttf"),
+            hh=scenario.get("impact_hh"),
+        ),
+        "baseline_yn": scenario.get("baseline_yn"),
+    }
 
 
 def _enum_id_to_label(

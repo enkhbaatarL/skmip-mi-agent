@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
@@ -21,6 +21,16 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             MiScenarioGroupModel.scenario_group_id == scenario_group_id,
             MiScenarioGroupModel.del_yn == "N",
         )
+        return self.session.execute(stmt).scalars().one_or_none()
+
+    def fetch_by_id_for_query(
+        self, scenario_group_id: int, *, include_deleted: bool = False
+    ) -> MiScenarioGroupModel | None:
+        stmt = select(MiScenarioGroupModel).where(
+            MiScenarioGroupModel.scenario_group_id == scenario_group_id,
+        )
+        if not include_deleted:
+            stmt = stmt.where(MiScenarioGroupModel.del_yn == "N")
         return self.session.execute(stmt).scalars().one_or_none()
 
     def fetch_by_mi_event_id(self, mi_event_id: int) -> MiScenarioGroupModel | None:
@@ -60,6 +70,96 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             if field in payload:
                 setattr(group, field, payload[field])
         self.session.flush()
+
+    def soft_delete_group(self, group: MiScenarioGroupModel, user_id: int) -> int:
+        if group.del_yn == "Y":
+            return 0
+        group.del_yn = "Y"
+        group.mod_usr_logn_id = user_id
+        self.session.flush()
+        return 1
+
+    def hard_delete_group(self, scenario_group_id: int) -> dict[str, int]:
+        scenario_ids = list(
+            self.session.execute(
+                select(MiScenarioModel.scenario_id).where(
+                    MiScenarioModel.scenario_group_id == scenario_group_id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        snapshot_ids = list(
+            self.session.execute(
+                select(MiSnapshotModel.snapshot_id).where(
+                    MiSnapshotModel.scenario_group_id == scenario_group_id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        scenario_snap_ids = (
+            list(
+                self.session.execute(
+                    select(MiScenarioSnapModel.scenario_snap_id).where(
+                        MiScenarioSnapModel.snapshot_id.in_(snapshot_ids),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if snapshot_ids
+            else []
+        )
+
+        counts = {
+            "tmm_mi_signpost_snap_m": self._delete_count(
+                delete(MiSignpostSnapModel).where(
+                    MiSignpostSnapModel.snapshot_id.in_(snapshot_ids)
+                )
+            )
+            if snapshot_ids
+            else 0,
+            "tmm_mi_scenario_snap_m": self._delete_count(
+                delete(MiScenarioSnapModel).where(
+                    MiScenarioSnapModel.scenario_snap_id.in_(scenario_snap_ids)
+                )
+            )
+            if scenario_snap_ids
+            else 0,
+            "tmm_mi_snapshot_m": self._delete_count(
+                delete(MiSnapshotModel).where(
+                    MiSnapshotModel.snapshot_id.in_(snapshot_ids)
+                )
+            )
+            if snapshot_ids
+            else 0,
+            "tmm_mi_signpost_m": self._delete_count(
+                delete(MiSignpostModel).where(
+                    MiSignpostModel.scenario_id.in_(scenario_ids)
+                )
+            )
+            if scenario_ids
+            else 0,
+            "tmm_mi_scenario_m": self._delete_count(
+                delete(MiScenarioModel).where(
+                    MiScenarioModel.scenario_id.in_(scenario_ids)
+                )
+            )
+            if scenario_ids
+            else 0,
+            "tmm_mi_scenario_group_m": self._delete_count(
+                delete(MiScenarioGroupModel).where(
+                    MiScenarioGroupModel.scenario_group_id == scenario_group_id
+                )
+            ),
+        }
+        self.session.flush()
+        return counts
+
+    def _delete_count(self, stmt: Any) -> int:
+        result = self.session.execute(stmt)
+        return int(result.rowcount or 0)
 
     def create_confirmation_snapshot(
         self,
@@ -138,8 +238,10 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             ]
         return []
 
-    def model_to_dict(self, group: MiScenarioGroupModel) -> dict[str, Any]:
-        return {
+    def model_to_dict(
+        self, group: MiScenarioGroupModel, *, include_del_yn: bool = False
+    ) -> dict[str, Any]:
+        payload = {
             "scenario_group_id": int(group.scenario_group_id),
             "mi_event_id": int(group.mi_event_id),
             "event_type_l2_id": int(group.event_type_l2_id),
@@ -156,3 +258,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "status": group.status,
             "stage": group.stage,
         }
+        if include_del_yn:
+            payload["del_yn"] = group.del_yn
+        return payload

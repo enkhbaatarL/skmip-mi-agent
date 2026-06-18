@@ -19,15 +19,18 @@ class ScenarioRepository(BaseSyncSQLRepository):
         )
         return self.session.execute(stmt).scalars().first()
 
-    def fetch_models_by_group_id(self, scenario_group_id: int) -> list[MiScenarioModel]:
+    def fetch_models_by_group_id(
+        self, scenario_group_id: int, *, include_deleted: bool = False
+    ) -> list[MiScenarioModel]:
         stmt = (
             select(MiScenarioModel)
             .where(
                 MiScenarioModel.scenario_group_id == scenario_group_id,
-                MiScenarioModel.del_yn == "N",
             )
             .order_by(MiScenarioModel.display_order, MiScenarioModel.scenario_id)
         )
+        if not include_deleted:
+            stmt = stmt.where(MiScenarioModel.del_yn == "N")
         return list(self.session.execute(stmt).scalars().all())
 
     def insert_scenario(self, payload: dict[str, Any]) -> int:
@@ -40,6 +43,44 @@ class ScenarioRepository(BaseSyncSQLRepository):
         scenarios = self.fetch_models_by_group_id(scenario_group_id)
         for scenario in scenarios:
             scenario.status = status
+        self.session.flush()
+        return len(scenarios)
+
+    def update_status_by_ids(self, scenario_ids: list[int], status: str) -> int:
+        if not scenario_ids:
+            return 0
+        scenarios = self.fetch_models_by_ids(scenario_ids)
+        for scenario in scenarios:
+            scenario.status = status
+        self.session.flush()
+        return len(scenarios)
+
+    def fetch_models_by_ids(self, scenario_ids: list[int]) -> list[MiScenarioModel]:
+        if not scenario_ids:
+            return []
+        stmt = (
+            select(MiScenarioModel)
+            .where(
+                MiScenarioModel.scenario_id.in_(scenario_ids),
+                MiScenarioModel.del_yn == "N",
+            )
+            .order_by(MiScenarioModel.display_order, MiScenarioModel.scenario_id)
+        )
+        return list(self.session.execute(stmt).scalars().all())
+
+    def soft_delete_by_ids(self, scenario_ids: list[int], user_id: int) -> int:
+        scenarios = self.fetch_models_by_ids(scenario_ids)
+        for scenario in scenarios:
+            scenario.del_yn = "Y"
+            scenario.mod_usr_logn_id = user_id
+        self.session.flush()
+        return len(scenarios)
+
+    def soft_delete_by_group_id(self, scenario_group_id: int, user_id: int) -> int:
+        scenarios = self.fetch_models_by_group_id(scenario_group_id)
+        for scenario in scenarios:
+            scenario.del_yn = "Y"
+            scenario.mod_usr_logn_id = user_id
         self.session.flush()
         return len(scenarios)
 
@@ -57,13 +98,16 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "impact_hh",
             "display_order",
             "baseline_yn",
+            "status",
             "mod_usr_logn_id",
         ):
             if field in payload:
                 setattr(scenario, field, payload[field])
         self.session.flush()
 
-    def model_to_dict(self, scenario: MiScenarioModel) -> dict[str, Any]:
+    def model_to_dict(
+        self, scenario: MiScenarioModel, *, include_del_yn: bool = False
+    ) -> dict[str, Any]:
         raw_dimension_values = scenario.dimension_values
         if isinstance(raw_dimension_values, dict):
             dim_dict = {
@@ -84,7 +128,7 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "ttf": scenario.impact_ttf,
             "hh": scenario.impact_hh,
         }
-        return {
+        payload = {
             "scenario_id": int(scenario.scenario_id),
             "scenario_group_id": int(scenario.scenario_group_id),
             "title": scenario.title,
@@ -101,3 +145,6 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "display_order": scenario.display_order,
             "baseline_yn": scenario.baseline_yn,
         }
+        if include_del_yn:
+            payload["del_yn"] = scenario.del_yn
+        return payload
