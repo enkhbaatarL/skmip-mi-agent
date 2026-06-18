@@ -230,6 +230,45 @@ class ScenarioGroupService:
         finally:
             session.close()
 
+    def soft_delete_signposts_by_group_id(
+        self, scenario_group_id: int, *, user_id: int, authorization: str | None
+    ) -> dict[str, int]:
+        self._assert_delete_authorization(authorization)
+
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            group_repository = ScenarioGroupRepository(session=session)
+            scenario_repository = ScenarioRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+
+            group = group_repository.fetch_by_id_for_query(
+                scenario_group_id,
+                include_deleted=False,
+            )
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+
+            scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
+            scenario_ids = [int(scenario.scenario_id) for scenario in scenarios]
+            signpost_deleted = signpost_repository.soft_delete_by_scenario_ids(
+                scenario_ids,
+                user_id=user_id,
+            )
+            session.commit()
+            return {"signpost_deleted": signpost_deleted}
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def hard_delete_group(
         self,
         scenario_group_id: int,

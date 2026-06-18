@@ -180,11 +180,10 @@ def log_node(func: Callable[P, T]) -> Callable[P, T]:
 
 
 def log_tool(func: Callable[P, T]) -> Callable[P, T]:
-    """Log tool execution with input/output.
+    """Log tool execution with start/end and failure details.
 
     Logging levels:
         - INFO: Tool start/end with elapsed time
-        - DEBUG: Input parameters and output result
         - ERROR: Exception details
 
     Works with both sync and async functions.
@@ -196,14 +195,12 @@ def log_tool(func: Callable[P, T]) -> Callable[P, T]:
     @functools.wraps(func)
     async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         logger.info(f"[TOOL][{tool_name}] START")
-        logger.debug(f"[TOOL][{tool_name}] INPUT | args={serialize(args)} | kwargs={serialize(kwargs)}")
         start_time = time.perf_counter()
 
         try:
             result = await func(*args, **kwargs)
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-            logger.debug(f"[TOOL][{tool_name}] OUTPUT | result={serialize(result)}")
             logger.info(f"[TOOL][{tool_name}] END | elapsed={elapsed_ms}ms")
             return result
 
@@ -215,14 +212,12 @@ def log_tool(func: Callable[P, T]) -> Callable[P, T]:
     @functools.wraps(func)
     def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
         logger.info(f"[TOOL][{tool_name}] START")
-        logger.debug(f"[TOOL][{tool_name}] INPUT | args={serialize(args)} | kwargs={serialize(kwargs)}")
         start_time = time.perf_counter()
 
         try:
             result = func(*args, **kwargs)
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-            logger.debug(f"[TOOL][{tool_name}] OUTPUT | result={serialize(result)}")
             logger.info(f"[TOOL][{tool_name}] END | elapsed={elapsed_ms}ms")
             return result
 

@@ -37,6 +37,8 @@ from apps.agents.scenario_group_agent.schemas.manage_scenario_groups import (
     ScenarioGroupDetailOut,
     SoftDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupOut,
+    SoftDeleteSignpostsIn,
+    SoftDeleteSignpostsOut,
 )
 from apps.agents.scenario_group_agent.schemas.validate_scenarios import ValidateScenariosIn
 
@@ -202,6 +204,32 @@ async def validate_scenarios(
             stage=result["stage"],
         )
     )
+
+
+@router.delete(
+    "/scenario-groups/{scenario_group_id}/signposts",
+    response_model=SoftDeleteSignpostsOut,
+    summary="[로컬 개발 전용] 시나리오 그룹 signpost soft delete",
+    description=(
+        "로컬 개발 환경에서 테스트 데이터를 정리하기 위한 API입니다. "
+        "운영 또는 일반 업무 플로우에서는 사용하지 마세요. "
+        "시나리오 그룹 하위의 signpost를 `del_yn='Y'`로 soft delete합니다. "
+        "시나리오 그룹과 시나리오는 유지됩니다. Swagger Authorize를 사용하거나 "
+        "`Authorization: Bearer <token>` 헤더에 "
+        "`scenario_group_admin_bearer_tokens`에 등록된 토큰을 전달해야 합니다."
+    ),
+)
+async def delete_signposts(
+    scenario_group_id: int,
+    payload: SoftDeleteSignpostsIn,
+    credentials: HTTPAuthorizationCredentials | None = Security(admin_bearer_scheme),
+) -> SoftDeleteSignpostsOut:
+    result = ScenarioGroupService().soft_delete_signposts_by_group_id(
+        scenario_group_id,
+        user_id=payload.user_id,
+        authorization=_authorization_header(credentials),
+    )
+    return SoftDeleteSignpostsOut.model_validate(result)
 
 
 @router.post(
