@@ -46,6 +46,9 @@ data:
 
     rdb_search_metadata_repo_id: 00000000-0000-0000-0000-000000000000
 
+    scenario_group_admin_bearer_tokens:
+      - ${SCENARIO_GROUP_ADMIN_TOKEN}
+
     llm_concurrency: 4
     mcp_max_concurrency: 8
     http_max_concurrency: 16
