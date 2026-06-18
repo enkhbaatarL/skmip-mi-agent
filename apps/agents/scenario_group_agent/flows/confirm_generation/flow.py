@@ -40,6 +40,7 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     parsed = ConfirmGenerationIn.model_validate(payload)
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
+        user_id=parsed.user_id,
         request_scenario_group=parsed.scenario_group.model_dump(exclude_unset=True),
         request_table=parsed.table.model_dump(exclude_unset=True),
     )
@@ -56,7 +57,7 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> ConfirmGenerationO
         data=ConfirmGenerationData(
             scenario_group_id=data.get("scenario_group_id") or 0,
             status=group.get("status") or "created",
-            stage=group.get("stage") or "completed",
+            stage=group.get("stage") or "ready",
         ),
     )
 

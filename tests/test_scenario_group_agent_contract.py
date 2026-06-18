@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
     ScenarioService,
@@ -15,6 +17,9 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
 from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenario_group,
+)
+from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
+    load_scenario_group as load_validation_scenario_group,
 )
 from apps.agents.scenario_group_agent.flows.create_scenarios.flow import build_graph
 from apps.agents.scenario_group_agent.presentation import (
@@ -39,6 +44,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline imp
     ScenarioTemplate,
     TemplateDimension,
 )
+from apps.common.exceptions.custom import MIBaseError
 
 SCENARIO_GROUP = {
     "scenarioGroupId": 10,
@@ -259,6 +265,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_confirmation_request_accepts_document_shape(self) -> None:
         payload = ConfirmGenerationIn.model_validate(
             {
+                "userId": 101,
                 "scenarioGroup": CONFIRM_SCENARIO_GROUP,
                 "table": TABLE,
             },
@@ -269,6 +276,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_confirmation_exclude_unset_preserves_partial_update(self) -> None:
         payload = ConfirmGenerationIn.model_validate(
             {
+                "userId": 101,
                 "scenarioGroup": CONFIRM_SCENARIO_GROUP,
                 "table": TABLE,
             },
@@ -278,6 +286,89 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert "dimension_selected" not in serialized["scenario_group"]
         assert "metrics" not in serialized["table"]["rows"][0]
         assert "impact" not in serialized["table"]["rows"][0]
+
+    def test_confirmation_request_requires_user_id(self) -> None:
+        with self.assertRaises(ValidationError):
+            ConfirmGenerationIn.model_validate(
+                {
+                    "scenarioGroup": CONFIRM_SCENARIO_GROUP,
+                    "table": TABLE,
+                },
+            )
+
+    def test_validation_rejects_scenario_group_owned_by_other_user(self) -> None:
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "ScenarioGroupService.load_by_id",
+            return_value={"scenario_group_id": 10, "request_usr_id": 202},
+        ):
+            with self.assertRaises(MIBaseError) as context:
+                load_validation_scenario_group(
+                    ScenarioDesignState(scenario_group_id=10, user_id=101),
+                )
+
+        assert context.exception.status_code == 401
+
+    def test_baseline_uses_highest_probability_and_all_ties(self) -> None:
+        scenarios = [
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="low",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=50,
+                display_order=1,
+            ),
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="high-a",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=75,
+                display_order=2,
+            ),
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="high-b",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=75,
+                display_order=3,
+            ),
+        ]
+
+        ScenarioService().apply_baseline_by_probability(scenarios, user_id=101)
+
+        assert [scenario.baseline_yn for scenario in scenarios] == ["N", "Y", "Y"]
+
+    def test_baseline_all_null_probability_sets_all_non_baseline(self) -> None:
+        scenarios = [
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="a",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=None,
+                display_order=1,
+            ),
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="b",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=None,
+                display_order=2,
+            ),
+        ]
+
+        ScenarioService().apply_baseline_by_probability(scenarios, user_id=101)
+
+        assert [scenario.baseline_yn for scenario in scenarios] == ["N", "N"]
 
     def test_response_serializes_camel_case(self) -> None:
         payload = ValidateScenariosOut(

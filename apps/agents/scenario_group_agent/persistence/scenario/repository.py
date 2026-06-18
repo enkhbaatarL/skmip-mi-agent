@@ -43,6 +43,36 @@ class ScenarioRepository(BaseSyncSQLRepository):
         self.session.flush()
         return len(scenarios)
 
+    def update_status_by_ids(self, scenario_ids: list[int], status: str) -> int:
+        if not scenario_ids:
+            return 0
+        scenarios = self.fetch_models_by_ids(scenario_ids)
+        for scenario in scenarios:
+            scenario.status = status
+        self.session.flush()
+        return len(scenarios)
+
+    def fetch_models_by_ids(self, scenario_ids: list[int]) -> list[MiScenarioModel]:
+        if not scenario_ids:
+            return []
+        stmt = (
+            select(MiScenarioModel)
+            .where(
+                MiScenarioModel.scenario_id.in_(scenario_ids),
+                MiScenarioModel.del_yn == "N",
+            )
+            .order_by(MiScenarioModel.display_order, MiScenarioModel.scenario_id)
+        )
+        return list(self.session.execute(stmt).scalars().all())
+
+    def soft_delete_by_ids(self, scenario_ids: list[int], user_id: int) -> int:
+        scenarios = self.fetch_models_by_ids(scenario_ids)
+        for scenario in scenarios:
+            scenario.del_yn = "Y"
+            scenario.mod_usr_logn_id = user_id
+        self.session.flush()
+        return len(scenarios)
+
     def update_from_payload(
         self, scenario: MiScenarioModel, payload: dict[str, Any]
     ) -> None:
@@ -57,6 +87,7 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "impact_hh",
             "display_order",
             "baseline_yn",
+            "status",
             "mod_usr_logn_id",
         ):
             if field in payload:

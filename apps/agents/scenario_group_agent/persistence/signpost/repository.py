@@ -59,6 +59,16 @@ class SignpostRepository(BaseSyncSQLRepository):
                 setattr(signpost, field, payload[field])
         self.session.flush()
 
+    def soft_delete_by_scenario_ids(
+        self, scenario_ids: list[int], user_id: int
+    ) -> int:
+        signposts = self.fetch_models_by_scenario_ids(scenario_ids)
+        for signpost in signposts:
+            signpost.del_yn = "Y"
+            signpost.mod_usr_logn_id = user_id
+        self.session.flush()
+        return len(signposts)
+
     def model_to_dict(self, signpost: MiSignpostModel) -> dict[str, Any]:
         return {
             "signpost_id": int(signpost.signpost_id),

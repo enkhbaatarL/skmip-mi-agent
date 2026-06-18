@@ -17,13 +17,24 @@ from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
+
+def _assert_group_owner(group: dict[str, Any], user_id: int | None) -> None:
+    request_usr_id = group.get("request_usr_id")
+    if request_usr_id is not None and request_usr_id != user_id:
+        raise MIBaseError(
+            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+            detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
+        )
+
+
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
     if group is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {state.scenario_group_id}")
-            
+    _assert_group_owner(group, state.user_id)
+
     return {"scenario_group": group}
 
 
@@ -32,11 +43,7 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         return {}
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
     if not scenarios:
-        return {
-            "status": "failure",
-            "error": "No scenarios found",
-            "message": "No scenarios found",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No scenarios found")
     try:
         dimension_template = ScenarioService().load_dimension_template(
             int(state.scenario_group["event_type_l2_id"]),
@@ -157,9 +164,11 @@ async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
 def save_validation_result(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
+    ScenarioService().update_status(state.scenario_group_id, "creating")
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
-        stage="scenario_validated" if state.is_valid else "scenario_created",
+        status="creating",
+        stage="scenario_validated",
         user_id=state.user_id,
     )
     return {

@@ -12,22 +12,22 @@ from apps.agents.scenario_group_agent.persistence.signpost.service import (
     SignpostService,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if state.scenario_group_id is None:
-        return {
-            "status": "failure",
-            "error": "scenario_group_id is required",
-            "message": "scenario_group_id is required",
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
     if group is None:
-        return {
-            "status": "failure",
-            "error": f"Scenario group not found: {state.scenario_group_id}",
-            "message": f"Scenario group not found: {state.scenario_group_id}",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {state.scenario_group_id}")
+    request_usr_id = group.get("request_usr_id")
+    if request_usr_id is not None and request_usr_id != state.user_id:
+        raise MIBaseError(
+            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+            detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
+        )
     return {"scenario_group": group}
 
 
@@ -36,11 +36,7 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         return {}
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
     if not scenarios:
-        return {
-            "status": "failure",
-            "error": "No scenarios found",
-            "message": "No scenarios found",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No scenarios found")
     return {"scenarios": scenarios}
 
 
@@ -51,11 +47,7 @@ def load_signposts(state: ScenarioDesignState) -> dict[str, Any]:
         [int(s["scenario_id"]) for s in state.scenarios]
     )
     if not signposts:
-        return {
-            "status": "failure",
-            "error": "No signposts found",
-            "message": "No signposts found",
-        }
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No signposts found")
     return {"signposts": signposts}
 
 
@@ -63,22 +55,15 @@ def confirm_outputs(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     if state.request_scenario_group is None or state.request_table is None:
-        return {
-            "status": "failure",
-            "message": "scenarioGroup and table are required",
-            "confirmed": False,
-        }
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenarioGroup and table are required")
     result = ScenarioGroupService().apply_confirmation(
         state.scenario_group_id,
         state.request_scenario_group,
         state.request_table,
+        user_id=state.user_id,
     )
     if result.get("status") != "success":
-        return {
-            "status": "failure",
-            "message": result.get("message", "Confirmation failed"),
-            "confirmed": False,
-        }
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=result.get("message", "Confirmation failed"))
     return {
         "snapshot_id": result["snapshot_id"],
         "scenario_group": result["group"],

@@ -122,6 +122,7 @@ class ScenarioGroupService:
         scenario_group_id: int,
         scenario_group_payload: dict[str, Any],
         table_payload: dict[str, Any],
+        user_id: int | None = None,
     ) -> dict[str, Any]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -162,6 +163,8 @@ class ScenarioGroupService:
                         row["cells"],
                     ),
                 }
+                if user_id is not None:
+                    scenario_update["mod_usr_logn_id"] = user_id
                 for field in ("title", "narrative", "display_order", "baseline_yn"):
                     if field in row:
                         scenario_update[field] = row[field]
@@ -189,6 +192,8 @@ class ScenarioGroupService:
                     scenario_update,
                 )
                 for signpost_payload in row.get("signposts", []):
+                    if user_id is not None:
+                        signpost_payload["mod_usr_logn_id"] = user_id
                     signpost_id = int(signpost_payload["signpost_id"])
                     signpost = signposts_by_id.get(signpost_id)
                     if signpost is None or int(signpost.scenario_id) != scenario_id:
@@ -198,7 +203,19 @@ class ScenarioGroupService:
                         }
                     signpost_repository.update_from_payload(signpost, signpost_payload)
 
-            group_update: dict[str, Any] = {"scenario_count": len(scenarios)}
+            ScenarioService().apply_baseline_by_probability(
+                scenarios,
+                user_id=user_id if user_id is not None else 0,
+            )
+            scenario_repository.update_status(scenario_group_id, "created")
+
+            group_update: dict[str, Any] = {
+                "scenario_count": len(scenarios),
+                "status": "created",
+                "stage": "ready",
+            }
+            if user_id is not None:
+                group_update["mod_usr_logn_id"] = user_id
             for field in ("title", "summary", "description", "dimension_selected"):
                 if field in scenario_group_payload:
                     group_update[field] = scenario_group_payload[field]
@@ -218,9 +235,7 @@ class ScenarioGroupService:
                 scenarios=scenarios,
                 signposts_by_scenario_id=signposts_by_scenario_id,
             )
-            group_repository.update_group(
-                group, {"status": "created", "stage": "completed"}
-            )
+            group_repository.update_group(group, {"status": "created", "stage": "ready"})
             session.commit()
             return {
                 "status": "success",
@@ -278,8 +293,9 @@ class ScenarioGroupService:
                 signposts_by_scenario_id=signposts_by_scenario_id,
             )
             group_repository.update_scenario_count(scenario_group_id, len(scenarios))
+            scenario_repository.update_status(scenario_group_id, "created")
             group_repository.update_group(
-                group, {"status": "created", "stage": "completed"}
+                group, {"status": "created", "stage": "ready"}
             )
             session.commit()
             return {
