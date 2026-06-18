@@ -115,7 +115,10 @@ async def run_create_signposts_background(
     from apps.common.configs.settings import get_settings
 
     cfg = get_settings()
-    callback_url = cfg.callback_base_url.rstrip("/") + cfg.callback_create_signposts_path
+    callback_path = cfg.callback_create_signposts_path.format(
+        scenario_group_id=scenario_group_id
+    )
+    callback_url = cfg.callback_base_url.rstrip("/") + callback_path
 
     logger.info(f"[BG][create_signposts] START | group_id={scenario_group_id}")
     start = time.perf_counter()

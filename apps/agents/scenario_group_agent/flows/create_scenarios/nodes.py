@@ -31,7 +31,10 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if existing is None:
         # 새로 생성
         return {}
-    if existing.status == ScenarioGroupStatus.CREATING:
+    if existing.status == "ready":
+        # async API로 create scenario group 요청했는데, 실패해서 다시 시도했을 경우
+        return {}
+    if existing.status == ScenarioGroupStatus.CREATING :
         if existing.request_usr_id == state.user_id:
             raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail="초안 생성 완료. 다음 단계를 진행해주세요.")
         raise MIBaseError(ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT, detail=f"시나리오 작성자: {existing.request_usr_id}")

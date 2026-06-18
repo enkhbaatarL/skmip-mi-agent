@@ -107,7 +107,10 @@ async def run_validate_scenarios_background(
     from apps.common.configs.settings import get_settings
 
     cfg = get_settings()
-    callback_url = cfg.callback_base_url.rstrip("/") + cfg.callback_validate_scenarios_path
+    callback_path = cfg.callback_validate_scenarios_path.format(
+        scenario_group_id=scenario_group_id
+    )
+    callback_url = cfg.callback_base_url.rstrip("/") + callback_path
 
     logger.info(f"[BG][validate_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
