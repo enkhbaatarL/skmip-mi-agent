@@ -155,6 +155,17 @@ class Settings(BaseSettings):
     # Scenario group admin/test APIs
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
 
+    # Callback OAuth2 (client_credentials)
+    callback_oauth2_token_url: str = Field(default="")
+    callback_oauth2_client_id: str = Field(default="")
+    callback_oauth2_client_secret: str = Field(default="")
+
+    # Callback 엔드포인트 (base_url + path 조합)
+    callback_base_url: str = Field(default="")
+    callback_create_scenarios_path: str = Field(default="")
+    callback_validate_scenarios_path: str = Field(default="")
+    callback_create_signposts_path: str = Field(default="")
+
     @field_validator("search_sources", mode="before")
     @classmethod
     def parse_search_sources(cls, v: Any) -> list[str]:

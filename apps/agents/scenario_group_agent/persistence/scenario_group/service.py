@@ -146,6 +146,7 @@ class ScenarioGroupService:
         *,
         status: str | None = None,
         stage: str | None = None,
+        dimension_selected: list[str] | None = None,
         user_id: int | None = None,
     ) -> dict[str, Any] | None:
         from apps.common.configs.database.sync_database.connection import (
@@ -163,6 +164,8 @@ class ScenarioGroupService:
                 payload["status"] = status
             if stage is not None:
                 payload["stage"] = stage
+            if dimension_selected is not None:
+                payload["dimension_selected"] = dimension_selected
             if user_id is not None:
                 payload["mod_usr_logn_id"] = user_id
             repository.update_group(group, payload)
