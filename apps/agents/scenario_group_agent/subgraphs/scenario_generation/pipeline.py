@@ -101,12 +101,11 @@ class TemplateDimension(BaseModel):
 
     def enum_items(self) -> list[dict[str, Any]]:
         total = len(self.value_enums)
-        tail_threshold = total if total < 5 else total - 1
         return [
             {
                 "id": enum_label,
                 "label": enum_label,
-                "tail": index >= tail_threshold,
+                "tail": index == total,
             }
             for index, enum_label in enumerate(self.value_enums, start=1)
         ]
@@ -322,7 +321,7 @@ def _enum_id_set(dimension: Dict) -> List[str]:
 
 
 def _tail_id_set(dimension: Dict) -> List[str]:
-    return [e["id"] for e in dimension["enum"] if e.get("tail")]
+    return [e["id"] for e in dimension.get("enum", []) if e.get("tail")]
 
 
 def _shorten(text: str, max_len: int) -> str:
@@ -466,7 +465,11 @@ def _invoke_with_retry(
                 reason = "기타 재시도"
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
-            print(f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — {reason}, {wait_sec:.1f}s 후")
+            err_summary = f"{exc.__class__.__name__}: {str(exc)[:200]}"
+            print(
+                f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — "
+                f"{reason}, {wait_sec:.1f}s 후 | 원인: {err_summary}"
+            )
             time.sleep(wait_sec)
 
     print(f"  ↳ {stage_label} 재시도 소진 — fallback 진입 (last_error={type(last_exc).__name__})")
@@ -1313,10 +1316,6 @@ STAGE6_SYSTEM = """\
 
 ## 검사 항목
 
-### R01 — Tail(극단값) 보존
-선택된 각 Dimension 에서, 전체 시나리오에 걸쳐 tail=true 값이 최소 1개 등장해야 함.
-→ 하나의 Dimension 이라도 tail 값이 전혀 없으면 passed=false.
-
 ### R02 — 값 다양성
 선택된 각 Dimension 에서, 전체 시나리오에 걸쳐 2가지 이상 서로 다른 값이 사용되어야 함.
 → 모든 시나리오가 특정 Dimension 에서 동일 값을 가지면 passed=false.
@@ -1330,8 +1329,12 @@ STAGE6_SYSTEM = """\
 모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
 → 완전히 동일한 조합을 가진 시나리오 쌍이 있으면 passed=false.
 
+## 이미 코드로 결정론적 검증된 항목
+- Tail(극단값) 보존 R01은 LLM 호출 전에 코드로 검사한다.
+- Tail 보존 여부를 다시 판정하거나 실패 사유로 언급하지 마십시오.
+
 ## 출력 규칙
-- passed=true: 4가지 모두 통과. issues=[], improvement_suggestions="".
+- passed=true: 위 3가지 모두 통과. issues=[], improvement_suggestions="".
 - passed=false: 실패 항목별로 issues 에 한국어 1줄씩 기술.
   improvement_suggestions: Stage 4 재생성 시 반드시 따라야 할 구체적 지시.
   → 어떤 Dim 에서 어떤 값을 변경/추가/제거해야 하는지 dim_key·value 명시.
@@ -1343,6 +1346,29 @@ class _Stage6LLMOutput(BaseModel):
     passed: bool
     issues: List[str] = Field(default_factory=list)
     improvement_suggestions: str = Field(default="")
+
+
+def _missing_tail_coverage(
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+    template: ScenarioTemplate,
+) -> list[tuple[str, str]]:
+    dim_idx = _dim_index(template)
+    used_by_dim: Dict[str, set[str]] = {pd.dim_key: set() for pd in stage3.per_dimension}
+    for scenario in stage4.scenarios:
+        for dim_key, value in scenario.dimension_values.items():
+            if dim_key in used_by_dim:
+                used_by_dim[dim_key].add(value)
+
+    missing: list[tuple[str, str]] = []
+    for pd in stage3.per_dimension:
+        tails = _tail_id_set(dim_idx.get(pd.dim_key, {}))
+        if not tails:
+            continue
+        tail = tails[-1]
+        if tail not in used_by_dim.get(pd.dim_key, set()):
+            missing.append((pd.dim_key, tail))
+    return missing
 
 
 @log_tool
@@ -1359,6 +1385,23 @@ def stage6_quick_validate(
     - passed=False → (False, "<피드백 문자열>")
     """
     dim_idx = _dim_index(template)
+    missing_tail = _missing_tail_coverage(stage3, stage4, template)
+    if missing_tail:
+        issues = "\n".join(
+            f"- R01 tail 누락: {dim_key}={tail}"
+            for dim_key, tail in missing_tail
+        )
+        suggestions = "; ".join(
+            f"{dim_key} 값이 '{tail}'인 조합을 최소 1개 포함"
+            for dim_key, tail in missing_tail
+        )
+        return (
+            False,
+            "[검증 실패/ 재생성 필요]\n"
+            f"{issues}\n\n"
+            "[개선 지시]\n"
+            f"{suggestions}하도록 Stage 4 조합을 재선정하십시오.",
+        )
 
     # Dim별 tail 값 목록
     tail_block_lines: List[str] = []
@@ -1394,7 +1437,8 @@ def stage6_quick_validate(
 {chr(10).join(scenario_lines)}
 
 ## 판정 요청
-위 4가지 검사 항목(R01~R04)을 모두 적용하여 passed 여부를 결정하십시오.
+Tail 보존 R01은 이미 코드로 통과했습니다.
+위 3가지 검사 항목(R02 값 다양성, R03 조합 호환성, R04 MECE)을 적용하여 passed 여부를 결정하십시오.
 passed=false 인 경우, improvement_suggestions 에 Stage 4 재생성을 위한 구체적 지시를 작성하십시오.
 """
 

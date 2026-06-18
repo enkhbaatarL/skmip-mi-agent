@@ -177,7 +177,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             False,
             False,
             False,
-            True,
+            False,
             True,
         ]
         assert [item["tail"] for item in ordered[1].enum_items()] == [False, True]

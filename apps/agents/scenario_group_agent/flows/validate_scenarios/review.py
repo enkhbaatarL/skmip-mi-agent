@@ -16,8 +16,6 @@ if TYPE_CHECKING:
     )
 
 
-TAIL_OVERRIDE = {"supply_disruption_pattern": "P4: Permanent loss"}
-
 COMPAT_SYSTEM = """\
 당신은 LNG 멀티시나리오의 Compatibility Judge 입니다.
 각 시나리오는 Dimension과 값의 조합으로 정의됩니다. 조합 안의 값들이 서로
@@ -127,7 +125,7 @@ def build_context(
         for key, dimension in dim_index.items()
     }
     tail_index = {
-        key: TAIL_OVERRIDE.get(key, values[-1] if values else None)
+        key: values[-1] if values else None
         for key, values in enum_index.items()
     }
     return ReviewContext(

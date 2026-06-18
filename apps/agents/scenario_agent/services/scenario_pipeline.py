@@ -458,7 +458,11 @@ def _invoke_with_retry(
                 reason = "기타 재시도"
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
-            print(f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — {reason}, {wait_sec:.1f}s 후")
+            err_summary = f"{exc.__class__.__name__}: {str(exc)[:200]}"
+            print(
+                f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — "
+                f"{reason}, {wait_sec:.1f}s 후 | 원인: {err_summary}"
+            )
             time.sleep(wait_sec)
 
     print(f"  ↳ {stage_label} 재시도 소진 — fallback 진입 (last_error={type(last_exc).__name__})")
