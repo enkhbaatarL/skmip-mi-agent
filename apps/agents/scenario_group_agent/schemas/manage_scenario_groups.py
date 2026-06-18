@@ -28,6 +28,14 @@ class SoftDeleteScenarioGroupOut(ApiModel):
     signpost_deleted: int = 0
 
 
+class SoftDeleteSignpostsIn(ApiModel):
+    user_id: int
+
+
+class SoftDeleteSignpostsOut(ApiModel):
+    signpost_deleted: int = 0
+
+
 class HardDeleteScenarioGroupIn(ApiModel):
     user_id: int
     confirm: bool = False

@@ -1,46 +1,46 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Security
+from fastapi import APIRouter, BackgroundTasks, Query, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from apps.agents.scenario_group_agent.flows.confirm_generation.flow import (
     get_runnable_graph as get_confirm_generation_runnable,
 )
-from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
-    get_runnable_graph as get_create_scenarios_runnable,
+from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
+    prepare_create_scenarios,
+    run_create_scenarios_background,
 )
-from apps.agents.scenario_group_agent.flows.create_signposts.flow import (
-    get_runnable_graph as get_create_signposts_runnable,
+from apps.agents.scenario_group_agent.flows.create_signposts.flow_async import (
+    prepare_create_signposts,
+    run_create_signposts_background,
 )
-from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
-    get_runnable_graph as get_validate_scenarios_runnable,
+from apps.agents.scenario_group_agent.flows.validate_scenarios.flow_async import (
+    prepare_validate_scenarios,
+    run_validate_scenarios_background,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
+    ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.schemas.common import (
+    ScenarioGroupAcceptedData,
+    ScenarioGroupAcceptedOut,
 )
 from apps.agents.scenario_group_agent.schemas.confirm_generation import (
     ConfirmGenerationIn,
     ConfirmGenerationOut,
 )
-from apps.agents.scenario_group_agent.schemas.create_scenarios import (
-    CreateScenariosIn,
-    CreateScenariosOut,
-)
-from apps.agents.scenario_group_agent.schemas.create_signposts import (
-    CreateSignpostsIn,
-    CreateSignpostsOut,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
+from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosIn
+from apps.agents.scenario_group_agent.schemas.create_signposts import CreateSignpostsIn
 from apps.agents.scenario_group_agent.schemas.manage_scenario_groups import (
     HardDeleteScenarioGroupIn,
     HardDeleteScenarioGroupOut,
     ScenarioGroupDetailOut,
     SoftDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupOut,
+    SoftDeleteSignpostsIn,
+    SoftDeleteSignpostsOut,
 )
-from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
-    ValidateScenariosIn,
-    ValidateScenariosOut,
-)
+from apps.agents.scenario_group_agent.schemas.validate_scenarios import ValidateScenariosIn
 
 router = APIRouter()
 
@@ -65,16 +65,32 @@ def _authorization_header(
 
 @router.post(
     "/scenario-groups",
-    response_model=CreateScenariosOut,
+    response_model=ScenarioGroupAcceptedOut,
     summary="시나리오 그룹 생성",
     description=(
-        "MI 이벤트 ID와 요청 사용자 ID를 기준으로 시나리오 그룹과 초기 시나리오 "
-        "초안을 생성합니다. 이미 다른 사용자가 점유한 이벤트이면 권한 오류를 반환합니다."
+        "MI 이벤트 ID와 요청 사용자 ID를 기준으로 시나리오 그룹을 즉시 생성하고 200을 반환합니다. "
+        "시나리오 초안 생성은 백그라운드에서 실행되며 완료 시 콜백으로 결과를 전달합니다. "
+        "이미 다른 사용자가 점유한 이벤트이면 권한 오류를 반환합니다."
     ),
 )
-async def create_scenarios(payload: CreateScenariosIn) -> CreateScenariosOut:
-    result = await get_create_scenarios_runnable().ainvoke(payload.model_dump())
-    return CreateScenariosOut.model_validate(result)
+async def create_scenarios(
+    payload: CreateScenariosIn,
+    background_tasks: BackgroundTasks,
+) -> ScenarioGroupAcceptedOut:
+    result = prepare_create_scenarios(payload.mi_event_id, payload.user_id)
+    background_tasks.add_task(
+        run_create_scenarios_background,
+        scenario_group_id=result["scenario_group_id"],
+        event_data=result["event_data"],
+        user_id=result["user_id"],
+    )
+    return ScenarioGroupAcceptedOut(
+        data=ScenarioGroupAcceptedData(
+            scenario_group_id=result["scenario_group_id"],
+            status=result["status"],
+            stage=result["stage"],
+        )
+    )
 
 
 @router.get(
@@ -157,42 +173,97 @@ async def hard_delete_scenario_group(
 
 @router.post(
     "/scenario-groups/{scenario_group_id}/validation",
-    response_model=ValidateScenariosOut,
+    response_model=ScenarioGroupAcceptedOut,
     summary="시나리오 테이블 검증",
     description=(
-        "사용자가 편집한 시나리오 테이블을 검증하고 보완 의견을 반환합니다. "
+        "시나리오 그룹 존재·권한을 확인하고 200을 반환합니다. "
+        "검증 및 차원값 자동생성은 백그라운드에서 실행되며 완료 시 콜백으로 결과를 전달합니다. "
         "시나리오 그룹 점유자와 요청 사용자 ID가 다르면 권한 오류를 반환합니다."
     ),
 )
 async def validate_scenarios(
     scenario_group_id: int,
     payload: ValidateScenariosIn,
-) -> ValidateScenariosOut:
-    data = {"scenario_group_id": scenario_group_id, **payload.model_dump()}
-    result = await get_validate_scenarios_runnable().ainvoke(data)
-    return ValidateScenariosOut.model_validate(result)
+    background_tasks: BackgroundTasks,
+) -> ScenarioGroupAcceptedOut:
+    result = prepare_validate_scenarios(
+        scenario_group_id,
+        payload.user_id,
+        payload.table.model_dump(),
+    )
+    background_tasks.add_task(
+        run_validate_scenarios_background,
+        scenario_group_id=result["scenario_group_id"],
+        user_id=result["user_id"],
+        request_table=result["request_table"],
+    )
+    return ScenarioGroupAcceptedOut(
+        data=ScenarioGroupAcceptedData(
+            scenario_group_id=result["scenario_group_id"],
+            status=result["status"],
+            stage=result["stage"],
+        )
+    )
+
+
+@router.delete(
+    "/scenario-groups/{scenario_group_id}/signposts",
+    response_model=SoftDeleteSignpostsOut,
+    summary="[로컬 개발 전용] 시나리오 그룹 signpost soft delete",
+    description=(
+        "로컬 개발 환경에서 테스트 데이터를 정리하기 위한 API입니다. "
+        "운영 또는 일반 업무 플로우에서는 사용하지 마세요. "
+        "시나리오 그룹 하위의 signpost를 `del_yn='Y'`로 soft delete합니다. "
+        "시나리오 그룹과 시나리오는 유지됩니다. Swagger Authorize를 사용하거나 "
+        "`Authorization: Bearer <token>` 헤더에 "
+        "`scenario_group_admin_bearer_tokens`에 등록된 토큰을 전달해야 합니다."
+    ),
+)
+async def delete_signposts(
+    scenario_group_id: int,
+    payload: SoftDeleteSignpostsIn,
+    credentials: HTTPAuthorizationCredentials | None = Security(admin_bearer_scheme),
+) -> SoftDeleteSignpostsOut:
+    result = ScenarioGroupService().soft_delete_signposts_by_group_id(
+        scenario_group_id,
+        user_id=payload.user_id,
+        authorization=_authorization_header(credentials),
+    )
+    return SoftDeleteSignpostsOut.model_validate(result)
 
 
 @router.post(
     "/scenario-groups/{scenario_group_id}/signposts",
-    response_model=CreateSignpostsOut,
+    response_model=ScenarioGroupAcceptedOut,
     summary="Signpost 생성",
     description=(
-        "요청 body의 시나리오 테이블을 기준으로 DB의 시나리오를 동기화한 뒤, "
-        "신규 또는 수정된 시나리오에 대해 signpost를 생성합니다. "
-        "요청에서 빠진 기존 활성 시나리오는 soft delete됩니다."
+        "시나리오 그룹 존재·권한을 확인하고 200을 반환합니다. "
+        "시나리오 동기화 및 signpost 생성은 백그라운드에서 실행되며 완료 시 콜백으로 결과를 전달합니다."
     ),
 )
 async def create_signposts(
     scenario_group_id: int,
     payload: CreateSignpostsIn,
-) -> CreateSignpostsOut:
-    data = {
-        "scenario_group_id": scenario_group_id,
-        **payload.model_dump(),
-    }
-    result = await get_create_signposts_runnable().ainvoke(data)
-    return CreateSignpostsOut.model_validate(result)
+    background_tasks: BackgroundTasks,
+) -> ScenarioGroupAcceptedOut:
+    result = prepare_create_signposts(
+        scenario_group_id,
+        payload.user_id,
+        payload.table.model_dump(),
+    )
+    background_tasks.add_task(
+        run_create_signposts_background,
+        scenario_group_id=result["scenario_group_id"],
+        user_id=result["user_id"],
+        request_table=result["request_table"],
+    )
+    return ScenarioGroupAcceptedOut(
+        data=ScenarioGroupAcceptedData(
+            scenario_group_id=result["scenario_group_id"],
+            status=result["status"],
+            stage=result["stage"],
+        )
+    )
 
 
 @router.post(

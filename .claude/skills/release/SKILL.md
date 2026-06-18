@@ -8,9 +8,9 @@ description: MR 메시지 생성부터 Git tag, GitHub Release, Docker build & p
 - 브랜치: !`git rev-parse --abbrev-ref HEAD`
 - 최근 태그: !`git tag -l --sort=-v:refname | head -5`
 
-## develop 이후 커밋 목록
+## main 이후 커밋 목록
 
-!`git log origin/develop..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null || git log develop..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null`
+!`git log origin/main..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null || git log main..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null`
 
 ---
 

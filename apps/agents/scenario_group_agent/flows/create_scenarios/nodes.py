@@ -31,7 +31,10 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if existing is None:
         # 새로 생성
         return {}
-    if existing.status == ScenarioGroupStatus.CREATING:
+    if existing.status == "ready":
+        # async API로 create scenario group 요청했는데, 실패해서 다시 시도했을 경우
+        return {}
+    if existing.status == ScenarioGroupStatus.CREATING :
         if existing.request_usr_id == state.user_id:
             raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail="초안 생성 완료. 다음 단계를 진행해주세요.")
         raise MIBaseError(ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT, detail=f"시나리오 작성자: {existing.request_usr_id}")
@@ -46,6 +49,34 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     #     "status": "already_exist",
     #     "message": "Scenario group already exists",
     # }
+
+
+def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
+    """Prepare 단계: agent 실행 전 group row를 미리 INSERT해 scenarioGroupId를 확보한다."""
+    if state.event_data is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="event_data is required")
+    if state.user_id is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
+    payload = {
+        "mi_event_id": int(state.event_data["mi_event_id"]),
+        "event_type_l2_id": int(state.event_data["event_type_l2_id"]),
+        "request_usr_id": state.user_id,
+        "title": (
+            state.event_data.get("event_title_ko")
+            or f"Scenario group {state.event_data['mi_event_id']}"
+        )[:255],
+        "summary": state.event_data.get("one_line_summary"),
+        "description": state.event_data.get("detail_analysis"),
+        "dimension_selected": [],
+        "scenario_count": 0,
+        "status": "creating",
+        "stage": "ready",
+        "crt_usr_logn_id": state.user_id,
+        "mod_usr_logn_id": state.user_id,
+    }
+    scenario_group_id = ScenarioGroupService().create_group(payload)
+    group = ScenarioGroupService().load_by_id(scenario_group_id)
+    return {"scenario_group_id": scenario_group_id, "scenario_group": group}
 
 
 def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
@@ -94,6 +125,15 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
+
+    stage2 = state.scenario_result.get("stage2_dimension_selection", {}) or {}
+    selected_dimensions = stage2.get("selected_dimensions", []) or []
+    dimension_selected = [
+        item.get("dim_key")
+        for item in selected_dimensions
+        if isinstance(item, dict) and item.get("dim_key")
+    ]
+
     saved_ids = ScenarioService().save_generated_scenarios(
         state.scenario_group_id,
         state.scenario_result,
@@ -106,6 +146,7 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         state.scenario_group_id,
         status="creating",
         stage="scenario_created",
+        dimension_selected=dimension_selected,
         user_id=state.user_id,
     )
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
