@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +23,42 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+def _normalize_probability_scores_to_100(
+    rows: list[dict[str, Any]],
+) -> dict[int, Decimal]:
+    """rows에서 probability_score를 추출해 합계 100으로 정규화한 {row_index: score} 반환.
+
+    하나라도 null이거나 rows가 비어있으면 빈 dict 반환 (정규화 생략).
+    """
+    raw: list[Decimal] = []
+    for row in rows:
+        metrics = row.get("metrics") or {}
+        score = metrics.get("probability_score")
+        if score is None:
+            return {}
+        try:
+            raw.append(Decimal(str(score)))
+        except Exception:
+            return {}
+
+    if not raw:
+        return {}
+
+    total = sum(raw)
+    if total <= 0:
+        equal = Decimal(100) / Decimal(len(raw))
+        return {i: equal for i in range(len(raw))}
+
+    exact = [float(s) / float(total) * 100 for s in raw]
+    floors = [int(v) for v in exact]
+    remainders = [v - int(v) for v in exact]
+    deficit = 100 - sum(floors)
+    for i in sorted(range(len(remainders)), key=lambda k: -remainders[k])[:deficit]:
+        floors[i] += 1
+
+    return {i: Decimal(str(floors[i])) for i in range(len(floors))}
 
 
 class ScenarioGroupService:
@@ -374,7 +411,10 @@ class ScenarioGroupService:
                 int(signpost.signpost_id): signpost for signpost in signposts
             }
 
-            for row in table_payload.get("rows", []):
+            rows = table_payload.get("rows", [])
+            normalized_scores = _normalize_probability_scores_to_100(rows)
+
+            for row_index, row in enumerate(rows):
                 scenario_id = int(row["scenario_id"])
                 scenario = scenarios_by_id.get(scenario_id)
                 if scenario is None:
@@ -396,9 +436,9 @@ class ScenarioGroupService:
                 if "metrics" in row and row["metrics"] is not None:
                     metrics = row["metrics"]
                     if "probability_score" in metrics:
-                        scenario_update["probability_score"] = metrics[
-                            "probability_score"
-                        ]
+                        scenario_update["probability_score"] = normalized_scores.get(
+                            row_index, metrics["probability_score"]
+                        )
                     if "probability_delta" in metrics:
                         scenario_update["probability_delta"] = metrics[
                             "probability_delta"

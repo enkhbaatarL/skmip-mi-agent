@@ -3,6 +3,7 @@
 import asyncio
 import os
 import random
+import re
 import time
 from itertools import product
 from typing import Any, Dict, List, Literal, Tuple
@@ -32,6 +33,7 @@ LikelihoodTier = Literal["very_low", "low", "medium", "high", "very_high"]
 REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 REF_TARGET_SCENARIOS: int = int(os.getenv("REF_TARGET_SCENARIOS", "6"))
 REF_TEMPERATURE: float = float(os.getenv("REF_TEMPERATURE", "0.0"))
+REF_QUICK_VALIDATE_MAX_RETRIES: int = int(os.getenv("REF_QUICK_VALIDATE_MAX_RETRIES", "2"))
 
 
 # ==============================================
@@ -693,6 +695,13 @@ STAGE3_SYSTEM = """\
 
 ## tail_risk_kept
 - selected_enum 에 포함된 값 중 tail=true 인 1개를 명시.
+
+## 이 단계에서 즉시 충족해야 하는 로컬 규칙
+- (R01-local) 각 Dim 의 selected_enum 에는 tail=true 값이 최소 1개 포함되어야 함.
+- (R02-local) 각 Dim 의 selected_enum 에는 서로 다른 값이 최소 2개 포함되어야 함.
+
+## 참고 (다음 단계와의 연결 맥락)
+- 위 로컬 규칙은 Stage 4 조합 생성 시 tail 보존과 값 다양성 확보를 위한 최소 조건이다.
 """
 
 STAGE3_HARD = """\
@@ -855,13 +864,14 @@ def _select_target_combos(
     stage3: Stage3ValueSelection,
     target_n: int,
     template: ScenarioTemplate,
+    validation_feedback: str | None = None,
 ) -> List[Dict[str, str]]:
-    """Compat 통과 조합 중 5~7개 추출 — 다양성 기반 선정.
+    """Compat 통과 조합 중 target_n개 추출 — 다양성/커버리지 기반 선정.
 
     1) Tail score = combo 내 enum_id 중 template.enum.tail=true 인 개수.
     2) Base anchor(score 최소): 가장 baseline 에 가까운 1건.
     3) Extreme anchor(score 최대): 가장 tail 쪽 1건.
-    4) 나머지: Farthest-First 탐색으로 다양성 확보.
+    4) 나머지: R01/R02 커버리지 + 피드백 힌트 + Farthest-First 순으로 선정.
     """
     if len(passed) <= target_n:
         return list(passed)
@@ -878,6 +888,16 @@ def _select_target_combos(
     def _tail_score(combo: Dict[str, str]) -> int:
         return sum(
             1 for did, eid in combo.items() if eid in template_tail.get(did, set())
+        )
+
+    feedback_hints = _extract_feedback_value_hints(validation_feedback, stage3)
+    dim_keys = [pd.dim_key for pd in stage3.per_dimension]
+
+    def _feedback_score(combo: Dict[str, str]) -> int:
+        return sum(
+            1
+            for dim_key, preferred_values in feedback_hints.items()
+            if combo.get(dim_key) in preferred_values
         )
 
     def _hamming(a: Dict[str, str], b: Dict[str, str]) -> int:
@@ -902,12 +922,94 @@ def _select_target_combos(
         chosen_idx.append(_farthest_idx(ext_pool, chosen_idx))
 
     pool = [i for i in range(len(passed)) if i not in chosen_idx]
+    seen_by_dim: Dict[str, set[str]] = {key: set() for key in dim_keys}
+    for idx in chosen_idx:
+        for key in dim_keys:
+            if key in passed[idx]:
+                seen_by_dim[key].add(passed[idx][key])
+
+    def _uncovered_tail_dims() -> set[str]:
+        uncovered: set[str] = set()
+        for key in dim_keys:
+            tails = template_tail.get(key, set())
+            if not tails:
+                continue
+            if not any(val in tails for val in seen_by_dim.get(key, set())):
+                uncovered.add(key)
+        return uncovered
+
     while len(chosen_idx) < target_n and pool:
-        nxt = _farthest_idx(pool, chosen_idx)
+        uncovered_tail = _uncovered_tail_dims()
+
+        def _candidate_rank(i: int) -> Tuple[int, int, int, int, int]:
+            combo = passed[i]
+            gain_tail = sum(
+                1
+                for key in uncovered_tail
+                if combo.get(key) in template_tail.get(key, set())
+            )
+            gain_diversity = sum(
+                1
+                for key in dim_keys
+                if len(seen_by_dim.get(key, set())) < 2
+                and combo.get(key) not in seen_by_dim.get(key, set())
+            )
+            d_min = (
+                min(_hamming(combo, passed[a]) for a in chosen_idx)
+                if chosen_idx
+                else 0
+            )
+            return (
+                gain_tail,
+                gain_diversity,
+                _feedback_score(combo),
+                d_min,
+                _tail_score(combo),
+            )
+
+        nxt = max(pool, key=_candidate_rank)
         chosen_idx.append(nxt)
+        for key in dim_keys:
+            if key in passed[nxt]:
+                seen_by_dim[key].add(passed[nxt][key])
         pool.remove(nxt)
 
     return [passed[i] for i in chosen_idx[:target_n]]
+
+
+def _extract_feedback_value_hints(
+    validation_feedback: str | None,
+    stage3: Stage3ValueSelection,
+) -> Dict[str, set[str]]:
+    """경량 검증 피드백 문자열에서 dim_key별 value 힌트를 추출한다.
+
+    - dim_key=value 형태를 우선 탐지
+    - selected_enum 값이 전체에서 유일할 때는 value 단독 출현도 힌트로 허용
+    """
+    if not validation_feedback:
+        return {}
+
+    text = validation_feedback
+    hints: Dict[str, set[str]] = {}
+    enum_freq: Dict[str, int] = {}
+    for pd in stage3.per_dimension:
+        for value in pd.selected_enum:
+            enum_freq[value] = enum_freq.get(value, 0) + 1
+
+    for pd in stage3.per_dimension:
+        matched: set[str] = set()
+        for value in pd.selected_enum:
+            explicit = re.search(
+                rf"{re.escape(pd.dim_key)}\s*[:=]\s*{re.escape(value)}",
+                text,
+            )
+            scoped = pd.dim_key in text and value in text
+            unique_value_hint = enum_freq.get(value, 0) == 1 and value in text
+            if explicit or scoped or unique_value_hint:
+                matched.add(value)
+        if matched:
+            hints[pd.dim_key] = matched
+    return hints
 
 
 STAGE4_SYSTEM = """\
@@ -927,6 +1029,13 @@ STAGE4_SYSTEM = """\
 ## 절대 금지
 - '결과(가격 방향)가 동일하므로 두 조합을 합쳐서 1개로 만든다' 같은 통합/생략 행위.
   → 입력으로 들어온 조합 개수와 출력 narratives 개수는 **반드시 일치**.
+
+## 최종 검증에서 반드시 통과해야 할 조건
+- (R03) 각 시나리오의 Dim 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
+  → Compat Rule 필터 외에도, 개별 시나리오 서술이 조합 의도를 명확히 설명해야 함.
+  → '이런 상황에서 이 값이 어떻게 나타나는가'를 description 에 명시하면 모순 판정 방지.
+- (R04) 모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
+  → 동일한 Dim 조합을 가진 두 시나리오가 존재하면 MECE 위반으로 탈락.
 """
 
 STAGE4_HARD = """\
@@ -945,6 +1054,7 @@ def stage4_synthesize_scenarios(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
     template: ScenarioTemplate,
+    validation_feedback: str | None = None,
     llm_client=None,
 ) -> Stage4ScenarioSynthesis:
     """Stage 4 진입점 — Cartesian → Compat → 5~7건 선정 → Narrative LLM."""
@@ -957,7 +1067,13 @@ def stage4_synthesize_scenarios(
     for combo, rule in rejected[:5]:
         print(f"    - reject ({rule}): {combo}")
 
-    target = _select_target_combos(passed, stage3, REF_TARGET_SCENARIOS, template)
+    target = _select_target_combos(
+        passed,
+        stage3,
+        REF_TARGET_SCENARIOS,
+        template,
+        validation_feedback=validation_feedback,
+    )
     if not target:
         print("  ↳ 경고: Compat 통과 조합 0건 — Cartesian 전체 중 1건 강제 채택.")
         target = combos_all[:1] or [{}]
@@ -970,6 +1086,12 @@ def stage4_synthesize_scenarios(
     combos_block = "\n".join(
         f"  [{i+1}] " + ", ".join(f"{k}={v}" for k, v in combo.items())
         for i, combo in enumerate(target)
+    )
+
+    feedback_block = (
+        f"\n[이전 출력에 대한 자동 규칙 검증 피드백 — 아래 항목을 모두 반영해 전체 narratives를 다시 작성하십시오]\n{validation_feedback}\n"
+        if validation_feedback
+        else ""
     )
 
     user_prompt = f"""\
@@ -988,7 +1110,7 @@ def stage4_synthesize_scenarios(
 - narratives 길이 = {len(target)}.
 - 각 narrative 의 description 은 3~5줄.
 - title 은 한 줄.
-"""
+{feedback_block}"""
 
     def _validate(out: _Stage4LLMOutput) -> None:
         if len(out.narratives) != len(target):
@@ -1179,3 +1301,119 @@ def _stage5_fallback(sc_ids: List[str]) -> _Stage5LLMOutput:
         rationale="Fallback — Prior 카테고리 정밀 판정 보류.",
         likelihood_prior={sid: "medium" for sid in sc_ids},
     )
+
+
+# ==============================================
+# 11. Stage 6 — Quick Validation (LLM 1회 경량 검증)
+# ==============================================
+
+STAGE6_SYSTEM = """\
+당신은 LNG 멀티시나리오의 'Quick Validator' 입니다.
+생성된 시나리오 세트가 4가지 핵심 검증 기준을 통과하는지 1회 판정하십시오.
+
+## 검사 항목
+
+### R01 — Tail(극단값) 보존
+선택된 각 Dimension 에서, 전체 시나리오에 걸쳐 tail=true 값이 최소 1개 등장해야 함.
+→ 하나의 Dimension 이라도 tail 값이 전혀 없으면 passed=false.
+
+### R02 — 값 다양성
+선택된 각 Dimension 에서, 전체 시나리오에 걸쳐 2가지 이상 서로 다른 값이 사용되어야 함.
+→ 모든 시나리오가 특정 Dimension 에서 동일 값을 가지면 passed=false.
+
+### R03 — 조합 호환성
+각 시나리오의 Dimension 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
+→ 명백한 모순(동시 성립 불가)이 있는 시나리오가 1개 이상이면 passed=false.
+→ 단지 드물거나 극단적인 조합이라는 이유만으로 false 를 반환하지 않음.
+
+### R04 — MECE(조합 유일성)
+모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
+→ 완전히 동일한 조합을 가진 시나리오 쌍이 있으면 passed=false.
+
+## 출력 규칙
+- passed=true: 4가지 모두 통과. issues=[], improvement_suggestions="".
+- passed=false: 실패 항목별로 issues 에 한국어 1줄씩 기술.
+  improvement_suggestions: Stage 4 재생성 시 반드시 따라야 할 구체적 지시.
+  → 어떤 Dim 에서 어떤 값을 변경/추가/제거해야 하는지 dim_key·value 명시.
+  → 단순 나열이 아닌, 재생성에 바로 활용 가능한 지시 형태로 작성.
+"""
+
+
+class _Stage6LLMOutput(BaseModel):
+    passed: bool
+    issues: List[str] = Field(default_factory=list)
+    improvement_suggestions: str = Field(default="")
+
+
+@log_tool
+def stage6_quick_validate(
+    pack: Stage1ContextPack,
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+    template: ScenarioTemplate,
+) -> tuple[bool, str | None]:
+    """Stage 6 진입점 — LLM 1회 경량 검증.
+
+    반환: (passed, improvement_suggestions)
+    - passed=True  → (True, None)
+    - passed=False → (False, "<피드백 문자열>")
+    """
+    dim_idx = _dim_index(template)
+
+    # Dim별 tail 값 목록
+    tail_block_lines: List[str] = []
+    for pd in stage3.per_dimension:
+        dim = dim_idx.get(pd.dim_key, {})
+        tails = _tail_id_set(dim)
+        tail_block_lines.append(
+            f"- {pd.dim_key} ({dim.get('label_ko', '')}): "
+            f"전체 enum={pd.template_enum_full}, "
+            f"선택된 enum={pd.selected_enum}, "
+            f"tail 후보={tails if tails else '없음'}"
+        )
+
+    # 시나리오 목록
+    scenario_lines: List[str] = []
+    for s in stage4.scenarios:
+        dim_vals = ", ".join(f"{k}={v}" for k, v in s.dimension_values.items())
+        scenario_lines.append(
+            f"- {s.scenario_id} [{s.title}]\n"
+            f"  dimension_values: {dim_vals}\n"
+            f"  description: {_shorten(s.description, 200)}"
+        )
+
+    user_prompt = f"""\
+## Base Event 요약
+- title: {pack.C1_base_event.title}
+- summary: {pack.C1_base_event.summary}
+
+## 선택된 Dimension 및 Enum 정보
+{chr(10).join(tail_block_lines)}
+
+## 생성된 시나리오 ({len(stage4.scenarios)}건)
+{chr(10).join(scenario_lines)}
+
+## 판정 요청
+위 4가지 검사 항목(R01~R04)을 모두 적용하여 passed 여부를 결정하십시오.
+passed=false 인 경우, improvement_suggestions 에 Stage 4 재생성을 위한 구체적 지시를 작성하십시오.
+"""
+
+    out = _invoke_with_retry(
+        stage_label="Stage 6",
+        schema_cls=_Stage6LLMOutput,
+        system_prompt=STAGE6_SYSTEM,
+        user_prompt=user_prompt,
+        validate_fn=None,
+        hard_constraints="",
+    )
+
+    if out is None:
+        print("  ↳ Stage 6 fallback: LLM 호출 실패 — 검증 통과로 처리")
+        return True, None
+
+    if out.passed:
+        return True, None
+
+    issues_text = "\n".join(f"- {issue}" for issue in out.issues) if out.issues else "(상세 없음)"
+    feedback = f"[검증 실패/ 재생성 필요]\n{issues_text}\n\n[개선 지시]\n{out.improvement_suggestions}"
+    return False, feedback
