@@ -165,10 +165,11 @@ def save_validation_result(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     ScenarioService().update_status(state.scenario_group_id, "creating")
+    next_stage = "scenario_validated" if state.is_valid else "scenario_created"
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
         status="creating",
-        stage="scenario_validated",
+        stage=next_stage,
         user_id=state.user_id,
     )
     return {

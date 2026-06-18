@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +20,8 @@ from apps.agents.scenario_group_agent.persistence.signpost.repository import (
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
     MiScenarioGroupModel,
 )
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 class ScenarioGroupService:
@@ -32,6 +35,60 @@ class ScenarioGroupService:
             repository = ScenarioGroupRepository(session=session)
             group = repository.fetch_by_id(scenario_group_id)
             return repository.model_to_dict(group) if group else None
+        finally:
+            session.close()
+
+    def load_detail(
+        self, scenario_group_id: int, *, include_deleted: bool = False
+    ) -> dict[str, Any]:
+        from apps.agents.scenario_group_agent.presentation import (
+            build_scenario_group_query_data,
+        )
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            group_repository = ScenarioGroupRepository(session=session)
+            scenario_repository = ScenarioRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+
+            group = group_repository.fetch_by_id_for_query(
+                scenario_group_id,
+                include_deleted=include_deleted,
+            )
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+
+            scenarios = scenario_repository.fetch_models_by_group_id(
+                scenario_group_id,
+                include_deleted=include_deleted,
+            )
+            scenario_ids = [int(scenario.scenario_id) for scenario in scenarios]
+            signposts = signpost_repository.fetch_models_by_scenario_ids(
+                scenario_ids,
+                include_deleted=include_deleted,
+            )
+
+            data = build_scenario_group_query_data(
+                group=group_repository.model_to_dict(group, include_del_yn=True),
+                scenarios=[
+                    scenario_repository.model_to_dict(
+                        scenario,
+                        include_del_yn=True,
+                    )
+                    for scenario in scenarios
+                ],
+                signposts=[
+                    signpost_repository.model_to_dict(signpost, include_del_yn=True)
+                    for signpost in signposts
+                ],
+            )
+            return data.model_dump()
         finally:
             session.close()
 
@@ -116,6 +173,132 @@ class ScenarioGroupService:
             raise
         finally:
             session.close()
+
+    def soft_delete_group(
+        self, scenario_group_id: int, *, user_id: int, authorization: str | None
+    ) -> dict[str, int]:
+        self._assert_delete_authorization(authorization)
+
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            group_repository = ScenarioGroupRepository(session=session)
+            scenario_repository = ScenarioRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+
+            group = group_repository.fetch_by_id_for_query(
+                scenario_group_id,
+                include_deleted=False,
+            )
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+
+            scenarios = scenario_repository.fetch_models_by_group_id(
+                scenario_group_id,
+            )
+            scenario_ids = [int(scenario.scenario_id) for scenario in scenarios]
+            signpost_deleted = signpost_repository.soft_delete_by_scenario_ids(
+                scenario_ids,
+                user_id=user_id,
+            )
+            scenario_deleted = scenario_repository.soft_delete_by_group_id(
+                scenario_group_id,
+                user_id=user_id,
+            )
+            scenario_group_deleted = group_repository.soft_delete_group(
+                group,
+                user_id=user_id,
+            )
+            session.commit()
+            return {
+                "scenario_group_deleted": scenario_group_deleted,
+                "scenario_deleted": scenario_deleted,
+                "signpost_deleted": signpost_deleted,
+            }
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def hard_delete_group(
+        self,
+        scenario_group_id: int,
+        *,
+        user_id: int,
+        confirm: bool,
+        authorization: str | None,
+    ) -> dict[str, int]:
+        if not confirm:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail="confirm=true is required",
+            )
+        self._assert_delete_authorization(authorization)
+
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioGroupRepository(session=session)
+            if (
+                repository.fetch_by_id_for_query(
+                    scenario_group_id,
+                    include_deleted=True,
+                )
+                is None
+            ):
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+            counts = repository.hard_delete_group(scenario_group_id)
+            session.commit()
+            return counts
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def _assert_delete_authorization(self, authorization: str | None) -> None:
+        from apps.common.configs.settings import get_settings
+
+        bearer_token = self._extract_bearer_token(authorization)
+        allowed_tokens = get_settings().scenario_group_admin_bearer_tokens
+        if not bearer_token or not any(
+            secrets.compare_digest(bearer_token, allowed_token)
+            for allowed_token in allowed_tokens
+            if allowed_token
+        ):
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_ADMIN_FORBIDDEN,
+                detail="Invalid Authorization bearer token",
+            )
+
+    def _extract_bearer_token(self, authorization: str | None) -> str | None:
+        if not authorization:
+            return None
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            return None
+        return token.strip()
+
+    def _assert_group_owner(self, group: dict[str, Any], *, user_id: int) -> None:
+        request_usr_id = group.get("request_usr_id")
+        if request_usr_id is not None and int(request_usr_id) != int(user_id):
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
+            )
 
     def apply_confirmation(
         self,
@@ -212,7 +395,7 @@ class ScenarioGroupService:
             group_update: dict[str, Any] = {
                 "scenario_count": len(scenarios),
                 "status": "created",
-                "stage": "ready",
+                "stage": "completed",
             }
             if user_id is not None:
                 group_update["mod_usr_logn_id"] = user_id
@@ -235,7 +418,10 @@ class ScenarioGroupService:
                 scenarios=scenarios,
                 signposts_by_scenario_id=signposts_by_scenario_id,
             )
-            group_repository.update_group(group, {"status": "created", "stage": "ready"})
+            group_repository.update_group(
+                group,
+                {"status": "created", "stage": "completed"},
+            )
             session.commit()
             return {
                 "status": "success",
@@ -295,7 +481,8 @@ class ScenarioGroupService:
             group_repository.update_scenario_count(scenario_group_id, len(scenarios))
             scenario_repository.update_status(scenario_group_id, "created")
             group_repository.update_group(
-                group, {"status": "created", "stage": "ready"}
+                group,
+                {"status": "created", "stage": "completed"},
             )
             session.commit()
             return {

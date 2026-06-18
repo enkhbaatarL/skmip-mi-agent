@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     search_exec_fanout_deadline_sec: float = Field(default=240.0)
     search_strict_required: bool = Field(default=True)
 
+    # Scenario group admin/test APIs
+    scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
+
     @field_validator("search_sources", mode="before")
     @classmethod
     def parse_search_sources(cls, v: Any) -> list[str]:

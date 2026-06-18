@@ -10,7 +10,7 @@ from apps.common.configs.database.sync_database.base import BaseSyncSQLRepositor
 
 class SignpostRepository(BaseSyncSQLRepository):
     def fetch_models_by_scenario_ids(
-        self, scenario_ids: list[int]
+        self, scenario_ids: list[int], *, include_deleted: bool = False
     ) -> list[MiSignpostModel]:
         if not scenario_ids:
             return []
@@ -18,7 +18,6 @@ class SignpostRepository(BaseSyncSQLRepository):
             select(MiSignpostModel)
             .where(
                 MiSignpostModel.scenario_id.in_(scenario_ids),
-                MiSignpostModel.del_yn == "N",
             )
             .order_by(
                 MiSignpostModel.scenario_id,
@@ -26,6 +25,8 @@ class SignpostRepository(BaseSyncSQLRepository):
                 MiSignpostModel.signpost_id,
             )
         )
+        if not include_deleted:
+            stmt = stmt.where(MiSignpostModel.del_yn == "N")
         return list(self.session.execute(stmt).scalars().all())
 
     def exists_for_scenario(self, scenario_id: int) -> bool:
@@ -69,8 +70,10 @@ class SignpostRepository(BaseSyncSQLRepository):
         self.session.flush()
         return len(signposts)
 
-    def model_to_dict(self, signpost: MiSignpostModel) -> dict[str, Any]:
-        return {
+    def model_to_dict(
+        self, signpost: MiSignpostModel, *, include_del_yn: bool = False
+    ) -> dict[str, Any]:
+        payload = {
             "signpost_id": int(signpost.signpost_id),
             "scenario_id": int(signpost.scenario_id),
             "label": signpost.label,
@@ -82,3 +85,6 @@ class SignpostRepository(BaseSyncSQLRepository):
             "use_yn": signpost.use_yn,
             "keyword_hints": signpost.keyword_hints or [],
         }
+        if include_del_yn:
+            payload["del_yn"] = signpost.del_yn
+        return payload

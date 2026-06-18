@@ -169,7 +169,7 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, Any]:
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
         status="creating",
-        stage="ready",
+        stage="signpost_created",
         user_id=state.user_id,
     )
     return {

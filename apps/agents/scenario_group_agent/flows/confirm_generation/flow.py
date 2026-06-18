@@ -57,7 +57,7 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> ConfirmGenerationO
         data=ConfirmGenerationData(
             scenario_group_id=data.get("scenario_group_id") or 0,
             status=group.get("status") or "created",
-            stage=group.get("stage") or "ready",
+            stage=group.get("stage") or "completed",
         ),
     )
 
