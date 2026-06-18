@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from apps.agents.scenario_group_agent.persistence.scenario.repository import (
     ScenarioRepository,
@@ -10,6 +10,11 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline imp
     ScenarioTemplate,
     TemplateDimension,
 )
+
+if TYPE_CHECKING:
+    from apps.agents.scenario_group_agent.schemas.common import (
+        ScenarioTemplate as CommonScenarioTemplate,
+    )
 
 LIKELIHOOD_TO_SCORE = {
     "very_low": Decimal("10.00"),
@@ -31,6 +36,38 @@ class ScenarioService:
         return self._map_template_json_to_pipeline_template(
             template_json,
             event_type_l2_id,
+        )
+
+    def load_scenario_template(
+        self, event_type_l2_id: int
+    ) -> "CommonScenarioTemplate":
+        from apps.agents.scenario_group_agent.schemas.common import (
+            ScenarioTemplate as CommonScenarioTemplate,
+            ScenarioTemplateDimension,
+            ScenarioTemplateEnum,
+        )
+
+        pipeline_template = self.load_pipeline_template(event_type_l2_id)
+        dimensions = [
+            ScenarioTemplateDimension(
+                dimension_id=dimension.dim_key,
+                label_ko=dimension.label,
+                description=dimension.label,
+                required=dimension.required,
+                enum=[
+                    ScenarioTemplateEnum(
+                        id=str(item["id"]),
+                        label=str(item["label"]),
+                        tail=bool(item.get("tail", False)),
+                    )
+                    for item in dimension.enum_items()
+                ],
+            )
+            for dimension in pipeline_template.dimensions
+        ]
+        return CommonScenarioTemplate(
+            template_dimensions_total=len(dimensions),
+            dimensions=dimensions,
         )
 
     def _load_template_json_from_db(

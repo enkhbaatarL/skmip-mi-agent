@@ -5,9 +5,15 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from apps.agents.scenario_group_agent.schemas.common import (
+        ScenarioTemplate,
+        ScenarioTemplateDimension,
+    )
 
 
 TAIL_OVERRIDE = {"supply_disruption_pattern": "P4: Permanent loss"}
@@ -81,8 +87,6 @@ class ReviewContext:
     dim_index: dict[str, dict[str, Any]]
     enum_index: dict[str, list[str]]
     tail_index: dict[str, str | None]
-    persisted_scenario_ids: set[int]
-    persisted_scenario_id_counts: Counter[int]
 
 
 @dataclass
@@ -104,8 +108,14 @@ def build_context(
         int(scenario["scenario_id"]): scenario for scenario in persisted_scenarios
     }
     scenarios = [
-        _normalize_scenario(row, persisted_by_id.get(int(row["scenario_id"])))
-        for row in requested_rows
+        _normalize_scenario(
+            row,
+            persisted_by_id.get(int(row["scenario_id"]))
+            if row.get("scenario_id") is not None
+            else None,
+            index,
+        )
+        for index, row in enumerate(requested_rows)
     ]
     dim_index = {
         str(dimension["dim_key"]): dimension
@@ -128,24 +138,28 @@ def build_context(
         dim_index=dim_index,
         enum_index=enum_index,
         tail_index=tail_index,
-        persisted_scenario_ids=set(persisted_by_id),
-        persisted_scenario_id_counts=Counter(persisted_by_id.keys()),
     )
 
 
 def _normalize_scenario(
     row: dict[str, Any],
     persisted: dict[str, Any] | None,
+    index: int,
 ) -> dict[str, Any]:
     persisted = persisted or {}
     metrics = row.get("metrics") or {}
-    impact = row.get("impact") or {}
+    raw_id = row.get("scenario_id")
+    is_new = raw_id is None
+    display_order = int(row.get("display_order") or (index + 1))
+    # 신규 시나리오는 아직 DB ID가 없으므로 displayOrder 기반 음수 임시 ID를
+    # 부여해 기존 review 흐름(조합 판정·중복 검사 등)을 그대로 유지한다.
+    scenario_id = -display_order if is_new else int(raw_id)
     return {
-        "scenario_id": int(row["scenario_id"]),
-        "scenario_group_id": persisted.get("scenario_group_id"),
+        "scenario_id": scenario_id,
+        "is_new": is_new,
+        "display_order": display_order,
         "title": row.get("title") or persisted.get("title") or "",
         "narrative": row.get("narrative") or persisted.get("narrative") or "",
-        "status": persisted.get("status"),
         "dimension_values": row.get("cells") or {},
         "probability_score": metrics.get(
             "probability_score", persisted.get("probability_score"),
@@ -153,25 +167,28 @@ def _normalize_scenario(
         "probability_delta": metrics.get(
             "probability_delta", persisted.get("probability_delta"),
         ),
-        "impact_jkm": impact.get("jkm", persisted.get("impact_jkm")),
-        "impact_ttf": impact.get("ttf", persisted.get("impact_ttf")),
-        "impact_hh": impact.get("hh", persisted.get("impact_hh")),
-        # Preserve explicitly submitted falsey values (e.g. "") so R03 can catch them.
-        "baseline_yn": row["baseline_yn"]
-        if "baseline_yn" in row
-        else persisted.get("baseline_yn"),
-        "del_yn": "N",
     }
 
 
 def _sid(scenario: dict[str, Any]) -> str:
+    """대상 표기에 쓰는 시나리오 식별자.
+
+    신규(아직 ID 미발급) 시나리오는 음수 임시 ID 대신 displayOrder 기반
+    '{n}번째 시나리오' 표기를 사용해 사용자 친화적으로 노출한다.
+    """
+    if scenario.get("is_new"):
+        return f"{scenario.get('display_order')}번째 시나리오"
     return str(scenario.get("scenario_id", "?"))
 
 
 def _scenario_label(scenario: dict[str, Any]) -> str:
-    """사용자에게 보여줄 시나리오 이름(제목 우선, 없으면 ID)."""
+    """사용자에게 보여줄 시나리오 이름(제목 우선, 없으면 순번/ID)."""
     title = str(scenario.get("title") or "").strip()
-    return title or f"시나리오 {_sid(scenario)}"
+    if title:
+        return title
+    if scenario.get("is_new"):
+        return f"{scenario.get('display_order')}번째 시나리오"
+    return f"시나리오 {_sid(scenario)}"
 
 
 def _dim_label(ctx: ReviewContext, key: str) -> str:
@@ -379,6 +396,142 @@ async def _invoke_compatibility(
         CompatibilityOutput,
         messages=messages,
     )
+
+
+DIMENSION_VALUE_SYSTEM = """\
+당신은 LNG 멀티시나리오의 Dimension Value Generator 입니다.
+각 시나리오(행)에 대해, 새로 추가된 Dimension 의 값을 추론해 채워 넣으십시오.
+
+- 각 시나리오의 제목(title)·서술(narrative)·이미 채워진 다른 Dimension 값을 근거로
+  가장 적합한 값을 1개 선택합니다.
+- 선택하는 값은 반드시 해당 Dimension 의 '선택 가능한 값(enum)' 목록 안에 있어야 합니다.
+  목록에 없는 값을 임의로 만들어내지 마십시오.
+- 입력으로 주어진 (scenario_index, dim_key) 조합마다 정확히 하나의 항목을 출력합니다.
+- value 는 enum 목록에 표시된 표기 그대로(label) 작성합니다.
+"""
+
+
+class GeneratedDimensionCell(BaseModel):
+    scenario_index: int
+    dim_key: str
+    value: str
+
+
+class DimensionValueGenerationOutput(BaseModel):
+    items: list[GeneratedDimensionCell] = Field(default_factory=list)
+
+
+class DimensionValueInvocationResult(Protocol):
+    result: DimensionValueGenerationOutput
+
+
+async def _invoke_dimension_values(
+    *,
+    messages: list[dict[str, str]],
+) -> DimensionValueInvocationResult:
+    from apps.connectors.llm.llm_client import invoke_llm_structured_output
+
+    return await invoke_llm_structured_output(
+        DimensionValueGenerationOutput,
+        messages=messages,
+    )
+
+
+def _enum_labels(dimension: "ScenarioTemplateDimension") -> list[str]:
+    return [enum.label for enum in dimension.enum]
+
+
+def _build_dimension_value_messages(
+    dimensions: list["ScenarioTemplateDimension"],
+    rows: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    dimension_lines: list[str] = []
+    for dimension in dimensions:
+        options = ", ".join(f"'{label}'" for label in _enum_labels(dimension))
+        dimension_lines.append(
+            f"- dim_key={dimension.dimension_id} ({dimension.description}): "
+            f"선택 가능한 값=[{options}]",
+        )
+    row_lines: list[str] = []
+    for index, row in enumerate(rows):
+        cells = row.get("cells") or {}
+        filled = ", ".join(
+            f"{key}='{value}'"
+            for key, value in cells.items()
+            if value is not None
+        )
+        row_lines.append(
+            f"- scenario_index={index} [{row.get('title') or ''}]\n"
+            f"  narrative: {row.get('narrative') or ''}\n"
+            f"  기존 값: {filled or '(없음)'}",
+        )
+    target_keys = ", ".join(dimension.dimension_id for dimension in dimensions)
+    user_content = (
+        "## 새로 추가된 Dimension\n"
+        + "\n".join(dimension_lines)
+        + "\n\n## 시나리오 목록\n"
+        + "\n".join(row_lines)
+        + "\n\n## 산출\n"
+        + f"- 모든 scenario_index 와 다음 dim_key 조합에 대해 값을 채우십시오: {target_keys}."
+    )
+    return [
+        {"role": "system", "content": DIMENSION_VALUE_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+
+
+async def generate_new_dimension_values(
+    template: "ScenarioTemplate",
+    rows: list[dict[str, Any]],
+    new_dimensions: list[str],
+) -> dict[int, dict[str, str]]:
+    """새로 추가된 Dimension 의 null 값을 LLM 으로 생성한다.
+
+    반환: {scenario_index: {dim_key: value}}. value 는 항상 해당 Dimension 의
+    enum label 중 하나로 보정된다(LLM 이 범위 밖 값을 반환하면 결정론적 폴백).
+    """
+    if not rows or not new_dimensions:
+        return {}
+    dim_by_key = {
+        dimension.dimension_id: dimension for dimension in template.dimensions
+    }
+    target_dimensions = [
+        dim_by_key[key] for key in new_dimensions if key in dim_by_key
+    ]
+    if not target_dimensions:
+        return {}
+    enum_by_key = {
+        dimension.dimension_id: _enum_labels(dimension)
+        for dimension in target_dimensions
+    }
+
+    generated: dict[int, dict[str, str]] = {}
+    try:
+        result = await _invoke_dimension_values(
+            messages=_build_dimension_value_messages(target_dimensions, rows),
+        )
+        for item in result.result.items:
+            if item.dim_key not in enum_by_key:
+                continue
+            if not 0 <= item.scenario_index < len(rows):
+                continue
+            allowed = enum_by_key[item.dim_key]
+            value = item.value if item.value in allowed else None
+            if value is None:
+                continue
+            generated.setdefault(item.scenario_index, {})[item.dim_key] = value
+    except Exception:
+        generated = {}
+
+    # 누락된 (scenario_index, dim_key) 는 결정론적 폴백(첫 enum)으로 채운다.
+    for index in range(len(rows)):
+        for dimension in target_dimensions:
+            labels = enum_by_key[dimension.dimension_id]
+            if not labels:
+                continue
+            row_values = generated.setdefault(index, {})
+            row_values.setdefault(dimension.dimension_id, labels[0])
+    return generated
 
 
 def _check_mece(ctx: ReviewContext) -> CheckResult:

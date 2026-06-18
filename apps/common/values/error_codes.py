@@ -14,7 +14,8 @@ class ErrorCode(Enum):
     CLASSIFY_SCENARIO_TYPE_FAILED = (-1000, "사용자 질의 내용 기반으로 시나리오 타입 분류에 실패했습니다.", 500)
     SCENARIO_GROUP_ALREADY_CREATED = (-1001, "시나리오 그룹이 이미 생성되었습니다.", 400)
     SCENARIO_GROUP_CREATION_NOT_ALLOWED = (-1002, "시나리오 그룹 생성 권한이 없습니다. 다른 사용자에 의해 시나리오가 생성중입니다.", 401)
-    
+    SCENARIO_VALIDATION_INPUT_ERROR = (-1003, "시나리오 검증 입력 오류", 422)
+
     # 추후 분류 예정
     FLOW_MAPPING_FAILED = (-2000, "Flow매핑에 실패했습니다.", 500)
     QUERY_STRUCTURING_FAILED = (-3000, "질의 구조화 중 오류가 발생했습니다.", 500)
