@@ -244,7 +244,7 @@ class ScenarioService:
                         scenario.get("dimension_values") or {}
                     ),
                     "probability_score": probability_score,
-                    "probability_delta": None,
+                    "probability_delta": Decimal("0.0"),
                     "impact_jkm": price_direction.get("jkm"),
                     "impact_ttf": price_direction.get("ttf"),
                     "impact_hh": price_direction.get("hh"),
