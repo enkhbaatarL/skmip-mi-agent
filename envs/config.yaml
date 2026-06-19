@@ -51,7 +51,7 @@ callback_base_url: https://mi.mingovvv.info
 callback_create_scenarios_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/generation/callback
 callback_validate_scenarios_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/validation/callback
 callback_create_signposts_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/signposts/callback
-skip_callback: true
+skip_callback: false
 
 llm_concurrency: 4
 mcp_max_concurrency: 8
