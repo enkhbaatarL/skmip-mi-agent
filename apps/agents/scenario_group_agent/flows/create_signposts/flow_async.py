@@ -145,7 +145,7 @@ async def run_create_signposts_background(
             f"[BG][create_signposts] FAILED | group_id={scenario_group_id}"
             f" | elapsed={elapsed_ms}ms | error={e!r}"
         )
-        error_payload = CallBackBody(result="error", reason=str(e))
+        error_payload = CallBackBody(result="failure", reason=str(e))
         try:
             await send_callback(callback_url, error_payload)
         except Exception as cb_err:
