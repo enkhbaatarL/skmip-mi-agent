@@ -9,14 +9,17 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from apps.agents.scenario_group_agent.baseline_contrast import (
+    apply_single_baseline_by_probability,
+    check_baseline_contrast_coverage,
+)
+
 if TYPE_CHECKING:
     from apps.agents.scenario_group_agent.schemas.common import (
         ScenarioTemplate,
         ScenarioTemplateDimension,
     )
 
-
-TAIL_OVERRIDE = {"supply_disruption_pattern": "P4: Permanent loss"}
 
 COMPAT_SYSTEM = """\
 당신은 LNG 멀티시나리오의 Compatibility Judge 입니다.
@@ -86,7 +89,6 @@ class ReviewContext:
     selected_dims: list[str]
     dim_index: dict[str, dict[str, Any]]
     enum_index: dict[str, list[str]]
-    tail_index: dict[str, str | None]
 
 
 @dataclass
@@ -126,10 +128,7 @@ def build_context(
         key: [str(value) for value in dimension.get("value_enums", [])]
         for key, dimension in dim_index.items()
     }
-    tail_index = {
-        key: TAIL_OVERRIDE.get(key, values[-1] if values else None)
-        for key, values in enum_index.items()
-    }
+    apply_single_baseline_by_probability(scenarios)
     return ReviewContext(
         group=group,
         scenarios=scenarios,
@@ -137,7 +136,6 @@ def build_context(
         selected_dims=[str(key) for key in group.get("dimension_selected") or []],
         dim_index=dim_index,
         enum_index=enum_index,
-        tail_index=tail_index,
     )
 
 
@@ -167,6 +165,7 @@ def _normalize_scenario(
         "probability_delta": metrics.get(
             "probability_delta", persisted.get("probability_delta"),
         ),
+        "baseline_yn": row.get("baseline_yn") or persisted.get("baseline_yn"),
     }
 
 
@@ -213,53 +212,61 @@ def _hashable(value: object) -> object:
     return value
 
 
-def _top_probability_scenario(ctx: ReviewContext) -> dict[str, Any] | None:
-    def score(scenario: dict[str, Any]) -> Decimal:
-        try:
-            return Decimal(str(scenario.get("probability_score")))
-        except (InvalidOperation, TypeError, ValueError):
-            return Decimal("-Infinity")
-
-    if not ctx.scenarios:
-        return None
-    top = max(ctx.scenarios, key=score)
-    return top if score(top) > Decimal("-Infinity") else None
+def _baseline_scenarios(ctx: ReviewContext) -> list[dict[str, Any]]:
+    return [scenario for scenario in ctx.scenarios if scenario.get("baseline_yn") == "Y"]
 
 
-def _check_tail_preserved(ctx: ReviewContext) -> CheckResult:
-    used = _used_values(ctx)
+def _check_baseline_contrast_covered(ctx: ReviewContext) -> CheckResult:
+    baselines = _baseline_scenarios(ctx)
+    if len(baselines) != 1:
+        detail = f"baseline scenario {len(baselines)}건"
+        advice = [
+            "baseline scenario는 발생 가능성이 가장 높은 1개만 선택되어야 합니다. "
+            "확률값을 확인해 baseline을 1개로 정리해주세요.",
+        ]
+        return CheckResult(
+            "R01",
+            "Stage3",
+            "Baseline 대비 대안값 coverage",
+            "WARN",
+            detail,
+            ["baseline_yn"],
+            advice,
+        )
+
+    baseline_index = ctx.scenarios.index(baselines[0])
+    coverage = check_baseline_contrast_coverage(
+        ctx.scenarios,
+        ctx.selected_dims,
+        baseline_index=baseline_index,
+    )
     missing_pairs = [
-        (key, ctx.tail_index[key])
-        for key in ctx.selected_dims
-        if ctx.tail_index.get(key)
-        and ctx.tail_index[key] not in used.get(key, set())
+        (key, coverage.baseline_values.get(key))
+        for key in coverage.missing_dimensions
     ]
-    offenders = [f"{key} (tail='{tail}')" for key, tail in missing_pairs]
+    offenders = [
+        f"{key} (baseline='{baseline_value}')"
+        for key, baseline_value in missing_pairs
+    ]
     advice: list[str] = []
     if missing_pairs:
         example = ", ".join(
-            f"{_dim_label(ctx, key)}: {tail}" for key, tail in missing_pairs
-        )
-        top = _top_probability_scenario(ctx)
-        opposite = (
-            f"발생 가능성이 높은 시나리오 '{_scenario_label(top)}'와(과) 반대되는 "
-            "시나리오를 추가해주세요. "
-            if top is not None
-            else ""
+            f"{_dim_label(ctx, key)}: baseline '{baseline_value}'와 다른 값"
+            for key, baseline_value in missing_pairs
         )
         advice.append(
-            "시나리오 다양성을 위해 발생 가능성이 낮은(극단적인) 시나리오를 "
-            f"최소 1개 포함해야 합니다. {opposite}"
-            f"예시 극단값 → {example}",
+            f"baseline 시나리오 '{_scenario_label(baselines[0])}'와(과) 다른 방향의 "
+            "대안 값을 전체 시나리오 묶음에 포함해야 합니다. "
+            f"누락된 대안값 기준 → {example}",
         )
     return CheckResult(
         "R01",
         "Stage3",
-        "선택 Dim별 극단값(tail) 보존",
+        "Baseline 대비 대안값 coverage",
         "PASS" if not missing_pairs else "WARN",
-        "모든 Dim에서 tail 등장"
+        "모든 선택 Dim에서 baseline 대비 대안값 등장"
         if not missing_pairs
-        else f"tail 미등장 {len(missing_pairs)}건",
+        else f"baseline 대비 대안값 누락 {len(missing_pairs)}건",
         offenders,
         advice,
     )
@@ -599,7 +606,7 @@ def _check_probability_range(ctx: ReviewContext) -> CheckResult:
 
 
 CHECKS: list[Callable[[ReviewContext], CheckResult]] = [
-    _check_tail_preserved,
+    _check_baseline_contrast_covered,
     _check_value_diversity,
 ]
 
@@ -616,7 +623,7 @@ _STATUS_LABEL = {"FAIL": "실패", "WARN": "주의"}
 #   - suggestion  : 개선 제안 (advice 가 채워진 검사에서는 advice 가 우선)
 #
 # 적용 검사 (5개)
-#   R01) 시나리오 다양성        : 발생 가능성이 낮은(극단) 시나리오 최소 1개 포함
+#   R01) 시나리오 다양성        : baseline 대비 대안값을 각 선택 항목에 최소 1개 포함
 #   R02) 값 다양성              : 각 항목에 서로 다른 값 2개 이상
 #   R03) 값 조합 적합성         : 함께 가질 수 없는 값 조합(LLM 판정)
 #   R04) 시나리오 조합 중복     : 두 시나리오의 값 조합이 모두 같음
@@ -624,10 +631,10 @@ _STATUS_LABEL = {"FAIL": "실패", "WARN": "주의"}
 CHECK_DISPLAY: dict[str, dict[str, Any]] = {
     "R01": {
         "title": "시나리오 다양성",
-        "issue": "극단(저확률) 값이 빠진 항목",
+        "issue": "baseline 대비 대안값이 빠진 항목",
         "target_word": "해당 항목",
-        "suggestion": "발생 가능성이 낮은(극단) 시나리오를 최소 1개 포함해 다양성을 "
-        "확보하세요.",
+        "suggestion": "baseline 시나리오와 다른 값을 각 항목에 최소 1개 포함해 "
+        "다양성을 확보하세요.",
     },
     "R02": {
         "title": "값 다양성",
@@ -660,7 +667,7 @@ CHECK_DISPLAY: dict[str, dict[str, Any]] = {
 
 # 대상 문자열에 남는 내부 표기를 사람이 읽기 쉬운 표현으로 치환한다.
 _TARGET_TOKEN_REPLACEMENTS = (
-    ("tail='", "극단값 '"),
+    ("baseline='", "baseline 값 '"),
 )
 
 

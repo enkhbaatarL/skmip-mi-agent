@@ -23,3 +23,5 @@ class ScenarioGenerationState(BaseModel):
     scenario_result: dict[str, Any] | None = None
     skip_generation: bool = False
     error: str | None = None
+    validation_feedback: str | None = None
+    quick_validate_retry_count: int = 0

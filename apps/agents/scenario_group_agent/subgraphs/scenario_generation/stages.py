@@ -10,6 +10,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline imp
     stage3_reduce_values,
     stage4_synthesize_scenarios,
     stage5_validate,
+    stage6_quick_validate,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
@@ -74,7 +75,33 @@ def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
             state.stage1_context_pack,
             state.stage3_value_selection,
             state.template,
+            validation_feedback=state.validation_feedback,
         ),
+    }
+
+
+def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
+    if state.skip_generation or state.error:
+        return {}
+    if (
+        state.stage1_context_pack is None
+        or state.stage3_value_selection is None
+        or state.stage4_scenario_synthesis is None
+        or state.template is None
+    ):
+        return {"error": "quick_validate 입력 누락"}
+
+    passed, feedback = stage6_quick_validate(
+        state.stage1_context_pack,
+        state.stage3_value_selection,
+        state.stage4_scenario_synthesis,
+        state.template,
+    )
+    if passed:
+        return {"validation_feedback": None}
+    return {
+        "validation_feedback": feedback,
+        "quick_validate_retry_count": state.quick_validate_retry_count + 1,
     }
 
 

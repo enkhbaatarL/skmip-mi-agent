@@ -3,12 +3,16 @@
 import asyncio
 import os
 import random
+import re
 import time
 from itertools import product
 from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
+from apps.agents.scenario_group_agent.baseline_contrast import (
+    check_baseline_contrast_coverage,
+)
 from apps.common.logging.decorators import log_tool
 
 
@@ -32,6 +36,7 @@ LikelihoodTier = Literal["very_low", "low", "medium", "high", "very_high"]
 REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 REF_TARGET_SCENARIOS: int = int(os.getenv("REF_TARGET_SCENARIOS", "6"))
 REF_TEMPERATURE: float = float(os.getenv("REF_TEMPERATURE", "0.0"))
+REF_QUICK_VALIDATE_MAX_RETRIES: int = int(os.getenv("REF_QUICK_VALIDATE_MAX_RETRIES", "2"))
 
 
 # ==============================================
@@ -98,15 +103,13 @@ class TemplateDimension(BaseModel):
         return self
 
     def enum_items(self) -> list[dict[str, Any]]:
-        total = len(self.value_enums)
-        tail_threshold = total if total < 5 else total - 1
         return [
             {
                 "id": enum_label,
                 "label": enum_label,
-                "tail": index >= tail_threshold,
+                "tail": False,
             }
-            for index, enum_label in enumerate(self.value_enums, start=1)
+            for enum_label in self.value_enums
         ]
 
     def to_runtime_dimension(self) -> dict[str, Any]:
@@ -189,10 +192,6 @@ class PerDimensionValue(BaseModel):
     selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
         description="채택한 Enum ID 2~4개. 인접 병합 금지.",
     )
-    tail_risk_kept: str = Field(
-        default="",
-        description="Tail Risk 로 보존된 Enum ID 1개 이상 (selected_enum 내 포함).",
-    )
 
 
 class Stage3ValueSelection(BaseModel):
@@ -203,9 +202,9 @@ class Stage3ValueSelection(BaseModel):
 
 
 class PriceDirection(BaseModel):
-    brent: PriceTier = Field(description="Brent 방향성 7단계")
     jkm: PriceTier = Field(description="JKM 방향성 7단계")
     ttf: PriceTier = Field(description="TTF 방향성 7단계")
+    hh: PriceTier = Field(description="Henry Hub 방향성 7단계")
 
 
 class Scenario(BaseModel):
@@ -220,7 +219,7 @@ class Scenario(BaseModel):
     derivation_rationale: str = Field(
         description="이 시나리오를 도출한 근거.",
     )
-    price_direction: PriceDirection = Field(description="Brent/JKM/TTF 7단계 방향성.")
+    price_direction: PriceDirection = Field(description="JKM/TTF/HH 7단계 방향성.")
     compatibility_passed: bool = Field(
         default=True,
         description="Compat Rule 통과 여부",
@@ -277,9 +276,6 @@ class _Stage3SingleDimOutput(BaseModel):
     selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
         description="채택 값 2~4개. 반드시 value_enums 의 부분집합.",
     )
-    tail_risk_kept: str = Field(
-        description="유지된 Tail Risk 값 (selected_enum 안에 포함).",
-    )
 
 
 class _NarrativeOnly(BaseModel):
@@ -317,10 +313,6 @@ def _dim_index(template: ScenarioTemplate) -> Dict[str, Dict]:
 
 def _enum_id_set(dimension: Dict) -> List[str]:
     return [e["id"] for e in dimension["enum"]]
-
-
-def _tail_id_set(dimension: Dict) -> List[str]:
-    return [e["id"] for e in dimension["enum"] if e.get("tail")]
 
 
 def _shorten(text: str, max_len: int) -> str:
@@ -464,7 +456,11 @@ def _invoke_with_retry(
                 reason = "기타 재시도"
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
-            print(f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — {reason}, {wait_sec:.1f}s 후")
+            err_summary = f"{exc.__class__.__name__}: {str(exc)[:200]}"
+            print(
+                f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — "
+                f"{reason}, {wait_sec:.1f}s 후 | 원인: {err_summary}"
+            )
             time.sleep(wait_sec)
 
     print(f"  ↳ {stage_label} 재시도 소진 — fallback 진입 (last_error={type(last_exc).__name__})")
@@ -677,8 +673,8 @@ STAGE3_SYSTEM = """\
 하나의 Dimension 의 value_enums 중에서 **2~4개 값만** 채택하십시오.
 
 ## 선택 규칙 (반드시 준수)
-- (b) 극단 보존: Tail Risk(=template 정의상 tail=true) 중 **최소 1개** 를 selected_enum 안에 포함.
-- (c) 최종 수: 2~4개.
+- 최종 수: 2~4개.
+- 이후 Stage 4 에서 baseline 대비 대안값 coverage 를 만들 수 있도록, 의미가 서로 다른 값을 선택하십시오.
 
 ## 절대 금지
 - (a) 인접 병합(시장 영향이 유사하다는 이유로 인접 Enum 을 합쳐 1개로 대체) **사용 금지**.
@@ -691,15 +687,17 @@ STAGE3_SYSTEM = """\
 - 단, 해당 Dim 이 '단기 종전 후 정상화 baseline' 시나리오 분기를 위해 꼭 필요할 때만
   예외적으로 채택하고, rationale 성격(=baseline 표현 의도)을 description 에 명시하십시오.
 
-## tail_risk_kept
-- selected_enum 에 포함된 값 중 tail=true 인 1개를 명시.
+## 이 단계에서 즉시 충족해야 하는 로컬 규칙
+- (R02-local) 각 Dim 의 selected_enum 에는 서로 다른 값이 최소 2개 포함되어야 함.
+
+## 참고 (다음 단계와의 연결 맥락)
+- 위 로컬 규칙은 Stage 4 조합 생성 시 baseline contrast coverage 와 값 다양성 확보를 위한 최소 조건이다.
 """
 
 STAGE3_HARD = """\
 [중요한 출력 제약 — Stage 3]
 - selected_enum 길이는 반드시 2~4.
 - selected_enum 의 모든 값은 입력된 value_enums 안에 있어야 함.
-- tail_risk_kept 는 selected_enum 안의 값이며, tail=true 인 enum 이어야 함.
 - 인접 병합 사유로 Enum 제거 금지.
 """
 
@@ -722,14 +720,11 @@ def stage3_reduce_values(
             continue
 
         enum_full = _enum_id_set(dim)
-        tail_full = _tail_id_set(dim)
-
-        # Format enum block with label and tail info
+        # Format enum block with labels only. Enum order and tail flags are not probability signals.
         enum_full_block = ", ".join(
-            f"{e['id']}({e.get('label','')}, tail={'Y' if e.get('tail') else 'N'})"
+            f"{e['id']}({e.get('label','')})"
             for e in dim["enum"]
         )
-        tail_block = ", ".join(tail_full) if tail_full else "(없음)"
 
         user_prompt = f"""\
 ## Base Event 요약
@@ -742,23 +737,15 @@ def stage3_reduce_values(
 - label_ko: {dim.get("label_ko", "")}
 - description: {dim.get("description", "")}
 - value_enums(=선택 가능한 값): {enum_full_block}
-- tail enum 후보: {tail_block}
 
 ## 산출
-- 채택 값 2~4개 + tail_risk_kept 1개.
+- 채택 값 2~4개.
 """
 
         def _validate(out: _Stage3SingleDimOutput) -> None:
             unknown = set(out.selected_enum) - set(enum_full)
             if unknown:
                 raise ValueError(f"value_enums 외 값 사용: {unknown}")
-            if out.tail_risk_kept not in out.selected_enum:
-                raise ValueError("tail_risk_kept 가 selected_enum 안에 없음.")
-            if tail_full and out.tail_risk_kept not in tail_full:
-                raise ValueError(
-                    f"tail_risk_kept='{out.tail_risk_kept}' 가 tail enum 집합에 없음. "
-                    f"tail 후보: {tail_full}"
-                )
 
         out = _invoke_with_retry(
             stage_label=f"Stage 3 [{dim['dim_key']}]",
@@ -776,22 +763,20 @@ def stage3_reduce_values(
             dim_key=dim["dim_key"],
             template_enum_full=enum_full,
             selected_enum=out.selected_enum,
-            tail_risk_kept=out.tail_risk_kept,
         ))
 
     return Stage3ValueSelection(per_dimension=per_dim)
 
 
 def _stage3_fallback(dim: Dict) -> _Stage3SingleDimOutput:
-    """LLM 실패 시 — 첫 1개 + 중간 1개 + Tail 1개 안전 채택."""
+    """LLM 실패 시 — 첫 1개 + 중간 1개 + 마지막 1개 안전 채택."""
     print(f"  ↳ Stage 3 fallback ({dim['dim_key']}): 안전 3개 Enum 선택")
     enum_full = _enum_id_set(dim)
-    tail_full = _tail_id_set(dim)
-    tail_pick = tail_full[0] if tail_full else enum_full[-1]
     base = enum_full[0]
     mid = enum_full[len(enum_full) // 2] if len(enum_full) >= 2 else enum_full[0]
+    last = enum_full[-1]
     selected = []
-    for cand in (base, mid, tail_pick):
+    for cand in (base, mid, last):
         if cand and cand not in selected:
             selected.append(cand)
     while len(selected) < 2 and enum_full:
@@ -801,7 +786,7 @@ def _stage3_fallback(dim: Dict) -> _Stage3SingleDimOutput:
                 break
         else:
             break
-    return _Stage3SingleDimOutput(selected_enum=selected[:4], tail_risk_kept=tail_pick)
+    return _Stage3SingleDimOutput(selected_enum=selected[:4])
 
 
 # ==============================================
@@ -855,29 +840,25 @@ def _select_target_combos(
     stage3: Stage3ValueSelection,
     target_n: int,
     template: ScenarioTemplate,
+    validation_feedback: str | None = None,
 ) -> List[Dict[str, str]]:
-    """Compat 통과 조합 중 5~7개 추출 — 다양성 기반 선정.
+    """Compat 통과 조합 중 target_n개 추출 — 다양성/커버리지 기반 선정.
 
-    1) Tail score = combo 내 enum_id 중 template.enum.tail=true 인 개수.
-    2) Base anchor(score 최소): 가장 baseline 에 가까운 1건.
-    3) Extreme anchor(score 최대): 가장 tail 쪽 1건.
-    4) 나머지: Farthest-First 탐색으로 다양성 확보.
+    1) 첫 compat 통과 조합을 baseline anchor 로 둔다.
+    2) 이후 조합은 baseline 과 다른 값을 아직 커버하지 못한 Dim 을 우선 보강한다.
+    3) 나머지는 값 다양성 + 피드백 힌트 + Farthest-First 순으로 선정한다.
     """
     if len(passed) <= target_n:
         return list(passed)
 
-    dim_idx = _dim_index(template)
-    template_tail: Dict[str, set] = {
-        pd.dim_key: set(
-            e["id"] for e in dim_idx.get(pd.dim_key, {}).get("enum", [])
-            if e.get("tail")
-        )
-        for pd in stage3.per_dimension
-    }
+    feedback_hints = _extract_feedback_value_hints(validation_feedback, stage3)
+    dim_keys = [pd.dim_key for pd in stage3.per_dimension]
 
-    def _tail_score(combo: Dict[str, str]) -> int:
+    def _feedback_score(combo: Dict[str, str]) -> int:
         return sum(
-            1 for did, eid in combo.items() if eid in template_tail.get(did, set())
+            1
+            for dim_key, preferred_values in feedback_hints.items()
+            if combo.get(dim_key) in preferred_values
         )
 
     def _hamming(a: Dict[str, str], b: Dict[str, str]) -> int:
@@ -891,23 +872,100 @@ def _select_target_combos(
                 best_i, best_d = i, d_min
         return best_i
 
-    scores = [_tail_score(c) for c in passed]
-    min_s, max_s = min(scores), max(scores)
-    base_idx = next(i for i, s in enumerate(scores) if s == min_s)
-
-    chosen_idx: List[int] = [base_idx]
-
-    if max_s != min_s:
-        ext_pool = [i for i, s in enumerate(scores) if s == max_s]
-        chosen_idx.append(_farthest_idx(ext_pool, chosen_idx))
+    baseline_idx = 0
+    baseline_combo = passed[baseline_idx]
+    chosen_idx: List[int] = [baseline_idx]
 
     pool = [i for i in range(len(passed)) if i not in chosen_idx]
+    seen_by_dim: Dict[str, set[str]] = {key: set() for key in dim_keys}
+    for idx in chosen_idx:
+        for key in dim_keys:
+            if key in passed[idx]:
+                seen_by_dim[key].add(passed[idx][key])
+
+    def _uncovered_contrast_dims() -> set[str]:
+        uncovered: set[str] = set()
+        for key in dim_keys:
+            baseline_value = baseline_combo.get(key)
+            if not any(
+                val != baseline_value
+                for val in seen_by_dim.get(key, set())
+            ):
+                uncovered.add(key)
+        return uncovered
+
     while len(chosen_idx) < target_n and pool:
-        nxt = _farthest_idx(pool, chosen_idx)
+        uncovered_contrast = _uncovered_contrast_dims()
+
+        def _candidate_rank(i: int) -> Tuple[int, int, int, int, int]:
+            combo = passed[i]
+            gain_contrast = sum(
+                1
+                for key in uncovered_contrast
+                if combo.get(key) != baseline_combo.get(key)
+            )
+            gain_diversity = sum(
+                1
+                for key in dim_keys
+                if len(seen_by_dim.get(key, set())) < 2
+                and combo.get(key) not in seen_by_dim.get(key, set())
+            )
+            d_min = (
+                min(_hamming(combo, passed[a]) for a in chosen_idx)
+                if chosen_idx
+                else 0
+            )
+            return (
+                gain_contrast,
+                gain_diversity,
+                _feedback_score(combo),
+                d_min,
+                _hamming(combo, baseline_combo),
+            )
+
+        nxt = max(pool, key=_candidate_rank)
         chosen_idx.append(nxt)
+        for key in dim_keys:
+            if key in passed[nxt]:
+                seen_by_dim[key].add(passed[nxt][key])
         pool.remove(nxt)
 
     return [passed[i] for i in chosen_idx[:target_n]]
+
+
+def _extract_feedback_value_hints(
+    validation_feedback: str | None,
+    stage3: Stage3ValueSelection,
+) -> Dict[str, set[str]]:
+    """경량 검증 피드백 문자열에서 dim_key별 value 힌트를 추출한다.
+
+    - dim_key=value 형태를 우선 탐지
+    - selected_enum 값이 전체에서 유일할 때는 value 단독 출현도 힌트로 허용
+    """
+    if not validation_feedback:
+        return {}
+
+    text = validation_feedback
+    hints: Dict[str, set[str]] = {}
+    enum_freq: Dict[str, int] = {}
+    for pd in stage3.per_dimension:
+        for value in pd.selected_enum:
+            enum_freq[value] = enum_freq.get(value, 0) + 1
+
+    for pd in stage3.per_dimension:
+        matched: set[str] = set()
+        for value in pd.selected_enum:
+            explicit = re.search(
+                rf"{re.escape(pd.dim_key)}\s*[:=]\s*{re.escape(value)}",
+                text,
+            )
+            scoped = pd.dim_key in text and value in text
+            unique_value_hint = enum_freq.get(value, 0) == 1 and value in text
+            if explicit or scoped or unique_value_hint:
+                matched.add(value)
+        if matched:
+            hints[pd.dim_key] = matched
+    return hints
 
 
 STAGE4_SYSTEM = """\
@@ -919,20 +977,57 @@ STAGE4_SYSTEM = """\
 - title (1줄): 시장 참여자 관점의 한 줄 요약. 예: '1개월 내 정상화'.
 - description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
-- price_direction.brent / jkm / ttf: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
+- price_direction.jkm / ttf / hh: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
 - 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
+## Price Benchmark 해석 가이드
+
+price_direction은 Base Event와 Dim 조합이 각 가격 지표에 미치는 상대적 방향성과 강도를 판단한다.
+세 지표는 동일한 글로벌 LNG 이벤트에 노출되더라도 시장 구조가 다르므로, 특별한 근거 없이 동일한 방향/강도로 설정하지 않는다.
+
+### JKM
+- 동북아 LNG 현물 가격 benchmark로, 일본·한국·중국·대만향 LNG cargo 수급을 반영한다.
+- 해상 운송 차질, 중동/카타르 LNG 물동량 리스크, spot cargo 경쟁, 아시아 구매자 재고 수준에 민감하다.
+- 호르무즈 해협 긴장, LNG 선박 우회, 물류 지연, 아시아 재고 부족은 JKM에 bullish 요인이다.
+- 아시아 재고가 높거나 수요가 약하거나 대체 공급이 충분하면 상승 강도는 제한된다.
+
+### TTF
+- 유럽 천연가스 허브 가격 benchmark로, LNG 유입, 파이프라인 공급, 저장 재고, 계절 수요의 영향을 함께 받는다.
+- 글로벌 LNG cargo 경쟁이 심화되면 TTF도 상승 압력을 받지만, 유럽 재고 수준이 높으면 완충된다.
+- 유럽 저장 재고가 낮고 LNG 유입 차질이 예상되면 bullish 강도가 커진다.
+- 재고가 높거나 파이프라인 공급이 안정적이면 JKM보다 반응 강도가 낮을 수 있다.
+
+### HH
+- 미국 Henry Hub 천연가스 가격 benchmark로, 미국 내 생산량, 재고, 날씨, 전력 수요, LNG export feedgas 수요가 핵심 변수다.
+- 호르무즈 해협 리스크의 직접 영향은 JKM/TTF보다 약하다.
+- 글로벌 LNG 가격 상승이 미국 LNG 수출 가동률 증가 또는 feedgas 수요 증가로 연결될 때 HH에 bullish 압력이 생긴다.
+- 미국 내 재고가 높거나 생산 증가가 충분하면 HH는 neutral 또는 mild_bull에 그칠 수 있다.
+
+## 방향성 판단 원칙
+- 호르무즈/중동 해상 물류 리스크는 일반적으로 JKM이 가장 직접적으로 반응하고, TTF는 LNG cargo 경쟁을 통해 간접 반응하며, HH는 미국 LNG 수출 수요를 통해 가장 간접적으로 반응한다.
+- 따라서 기본 민감도는 대체로 JKM > TTF > HH 순서로 보되, storage_level, period, utilization_change_direction 조합에 따라 강도를 조정한다.
+- 같은 방향일 수는 있지만, 특별한 근거 없이 JKM/TTF/HH를 모두 동일 enum으로 설정하지 않는다.
+- HH는 글로벌 LNG 이벤트만으로 strong_bull 또는 bull을 부여하지 말고, 미국 내 수급 타이트화 또는 LNG export feedgas 증가 근거가 있을 때만 상승 강도를 높인다.
+
+## 형식 예시
 - 올바른 형식 예시: {"period":"3개월","utilization_change_direction":"감소"}
 - 금지 형식 예시: [{"dim_key":"period","value":"3개월"}], [{"dimension_id":"period","value":"3개월"}]
 
 ## 절대 금지
 - '결과(가격 방향)가 동일하므로 두 조합을 합쳐서 1개로 만든다' 같은 통합/생략 행위.
   → 입력으로 들어온 조합 개수와 출력 narratives 개수는 **반드시 일치**.
+
+## 최종 검증에서 반드시 통과해야 할 조건
+- (R03) 각 시나리오의 Dim 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
+  → Compat Rule 필터 외에도, 개별 시나리오 서술이 조합 의도를 명확히 설명해야 함.
+  → '이런 상황에서 이 값이 어떻게 나타나는가'를 description 에 명시하면 모순 판정 방지.
+- (R04) 모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
+  → 동일한 Dim 조합을 가진 두 시나리오가 존재하면 MECE 위반으로 탈락.
 """
 
 STAGE4_HARD = """\
 [중요한 출력 제약 — Stage 4]
 - narratives 길이는 입력 조합 수와 정확히 일치.
-- price_direction.brent / jkm / ttf 는 반드시 7단계 enum 중 정확히 1개.
+- price_direction.jkm / ttf / hh 는 반드시 7단계 enum 중 정확히 1개.
 - description 은 3~5줄, title 은 1줄.
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
 - 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
@@ -945,6 +1040,7 @@ def stage4_synthesize_scenarios(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
     template: ScenarioTemplate,
+    validation_feedback: str | None = None,
     llm_client=None,
 ) -> Stage4ScenarioSynthesis:
     """Stage 4 진입점 — Cartesian → Compat → 5~7건 선정 → Narrative LLM."""
@@ -957,7 +1053,13 @@ def stage4_synthesize_scenarios(
     for combo, rule in rejected[:5]:
         print(f"    - reject ({rule}): {combo}")
 
-    target = _select_target_combos(passed, stage3, REF_TARGET_SCENARIOS, template)
+    target = _select_target_combos(
+        passed,
+        stage3,
+        REF_TARGET_SCENARIOS,
+        template,
+        validation_feedback=validation_feedback,
+    )
     if not target:
         print("  ↳ 경고: Compat 통과 조합 0건 — Cartesian 전체 중 1건 강제 채택.")
         target = combos_all[:1] or [{}]
@@ -970,6 +1072,12 @@ def stage4_synthesize_scenarios(
     combos_block = "\n".join(
         f"  [{i+1}] " + ", ".join(f"{k}={v}" for k, v in combo.items())
         for i, combo in enumerate(target)
+    )
+
+    feedback_block = (
+        f"\n[이전 출력에 대한 자동 규칙 검증 피드백 — 아래 항목을 모두 반영해 전체 narratives를 다시 작성하십시오]\n{validation_feedback}\n"
+        if validation_feedback
+        else ""
     )
 
     user_prompt = f"""\
@@ -988,7 +1096,7 @@ def stage4_synthesize_scenarios(
 - narratives 길이 = {len(target)}.
 - 각 narrative 의 description 은 3~5줄.
 - title 은 한 줄.
-"""
+{feedback_block}"""
 
     def _validate(out: _Stage4LLMOutput) -> None:
         if len(out.narratives) != len(target):
@@ -996,7 +1104,7 @@ def stage4_synthesize_scenarios(
                 f"narratives 길이 불일치: {len(out.narratives)} != {len(target)}"
             )
         for n in out.narratives:
-            for v in (n.price_direction.brent, n.price_direction.jkm, n.price_direction.ttf):
+            for v in (n.price_direction.jkm, n.price_direction.ttf, n.price_direction.hh):
                 if v not in PRICE_TIERS:
                     raise ValueError(f"price_direction 범위 밖 값: {v}")
 
@@ -1043,7 +1151,7 @@ def _stage4_fallback(target: List[Dict[str, str]]) -> _Stage4LLMOutput:
                 "전개 양상 판단 보류 — 후속 재실행 필요."
             ),
             derivation_rationale="LLM 실패 — 안전 기본값.",
-            price_direction=PriceDirection(brent="neutral", jkm="neutral", ttf="neutral"),
+            price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
         )
         for i, combo in enumerate(target)
     ]
@@ -1073,7 +1181,7 @@ STAGE5_SYSTEM = """\
 - 수치 Prior(예: 0.4, 40%) 출력 금지 — 반드시 5단계 카테고리만.
 
 ## Prior 부여 가이드 (참고)
-- Tail Risk(시설 영구 손상·전면 봉쇄 등 극단)는 통상 'low' 또는 'very_low'.
+- 시설 영구 손상·전면 봉쇄 등 발생 가능성이 낮은 강한 충격 조합은 통상 'low' 또는 'very_low'.
 - Base case 성격(완화·정상화)은 'medium' 또는 'high'.
 - 시장 충격 강한 중기 차질은 'medium' 부근.
 """
@@ -1098,7 +1206,7 @@ def stage5_validate(
     scenarios_block = "\n".join(
         f"- {s.scenario_id} | {s.title}\n"
         f"    dims: {', '.join(f'{k}={v}' for k,v in s.dimension_values.items())}\n"
-        f"    price: brent={s.price_direction.brent}, jkm={s.price_direction.jkm}, ttf={s.price_direction.ttf}"
+        f"    price: jkm={s.price_direction.jkm}, ttf={s.price_direction.ttf}, hh={s.price_direction.hh}"
         for s in stage4.scenarios
     )
 
@@ -1179,3 +1287,158 @@ def _stage5_fallback(sc_ids: List[str]) -> _Stage5LLMOutput:
         rationale="Fallback — Prior 카테고리 정밀 판정 보류.",
         likelihood_prior={sid: "medium" for sid in sc_ids},
     )
+
+
+# ==============================================
+# 11. Stage 6 — Quick Validation (LLM 1회 경량 검증)
+# ==============================================
+
+STAGE6_SYSTEM = """\
+당신은 LNG 멀티시나리오의 'Quick Validator' 입니다.
+생성된 시나리오 세트가 4가지 핵심 검증 기준을 통과하는지 1회 판정하십시오.
+
+## 검사 항목
+
+### R03 — 조합 호환성
+각 시나리오의 Dimension 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
+→ 명백한 모순(동시 성립 불가)이 있는 시나리오가 1개 이상이면 passed=false.
+→ 단지 드물거나 극단적인 조합이라는 이유만으로 false 를 반환하지 않음.
+
+### R04 — MECE(조합 유일성)
+모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
+→ 완전히 동일한 조합을 가진 시나리오 쌍이 있으면 passed=false.
+
+## 이미 코드로 결정론적 검증된 항목
+- R01 baseline contrast coverage 와 R02 값 다양성은 LLM 호출 전에 코드로 검사한다.
+- baseline 대비 대안값 coverage 여부를 다시 판정하거나 실패 사유로 언급하지 마십시오.
+
+## 출력 규칙
+- passed=true: 위 2가지 모두 통과. issues=[], improvement_suggestions="".
+- passed=false: 실패 항목별로 issues 에 한국어 1줄씩 기술.
+  improvement_suggestions: Stage 4 재생성 시 반드시 따라야 할 구체적 지시.
+  → 어떤 Dim 에서 어떤 값을 변경/추가/제거해야 하는지 dim_key·value 명시.
+  → 단순 나열이 아닌, 재생성에 바로 활용 가능한 지시 형태로 작성.
+"""
+
+
+class _Stage6LLMOutput(BaseModel):
+    passed: bool
+    issues: List[str] = Field(default_factory=list)
+    improvement_suggestions: str = Field(default="")
+
+
+def _missing_baseline_contrast_coverage(
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+    template: ScenarioTemplate,
+) -> list[tuple[str, str]]:
+    """Return selected dimensions without non-baseline values in the scenario set."""
+    result = check_baseline_contrast_coverage(
+        stage4.scenarios,
+        [pd.dim_key for pd in stage3.per_dimension],
+        baseline_index=0,
+    )
+    baseline_values = result.baseline_values
+    return [
+        (dim_key, str(baseline_values.get(dim_key)))
+        for dim_key in result.missing_dimensions
+    ]
+
+
+@log_tool
+def stage6_quick_validate(
+    pack: Stage1ContextPack,
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+    template: ScenarioTemplate,
+) -> tuple[bool, str | None]:
+    """Stage 6 진입점 — LLM 1회 경량 검증.
+
+    반환: (passed, improvement_suggestions)
+    - passed=True  → (True, None)
+    - passed=False → (False, "<피드백 문자열>")
+    """
+    selected_dim_keys = [pd.dim_key for pd in stage3.per_dimension]
+    contrast = check_baseline_contrast_coverage(
+        stage4.scenarios,
+        selected_dim_keys,
+        baseline_index=0,
+    )
+    if contrast.baseline_issue or contrast.missing_dimensions:
+        missing = contrast.missing_dimensions
+        issues = "\n".join(
+            f"- R01 baseline 대비 대안값 누락: {dim_key} "
+            f"(baseline={contrast.baseline_values.get(dim_key)})"
+            for dim_key in missing
+        )
+        suggestions = "; ".join(
+            f"{dim_key} 값이 baseline '{contrast.baseline_values.get(dim_key)}'와 다른 조합을 최소 1개 포함"
+            for dim_key in missing
+        )
+        return (
+            False,
+            "[검증 실패/ 재생성 필요]\n"
+            f"{issues or contrast.baseline_issue}\n\n"
+            "[개선 지시]\n"
+            f"{suggestions}하도록 Stage 4 조합을 재선정하십시오.",
+        )
+
+    # Dim별 선택 값 목록
+    dim_idx = _dim_index(template)
+    dimension_block_lines: List[str] = []
+    for pd in stage3.per_dimension:
+        dim = dim_idx.get(pd.dim_key, {})
+        dimension_block_lines.append(
+            f"- {pd.dim_key} ({dim.get('label_ko', '')}): "
+            f"전체 enum={pd.template_enum_full}, "
+            f"선택된 enum={pd.selected_enum}, "
+            f"baseline={contrast.baseline_values.get(pd.dim_key)}, "
+            f"대안값={sorted(contrast.observed_non_baseline_values.get(pd.dim_key, set()))}"
+        )
+
+    # 시나리오 목록
+    scenario_lines: List[str] = []
+    for s in stage4.scenarios:
+        dim_vals = ", ".join(f"{k}={v}" for k, v in s.dimension_values.items())
+        scenario_lines.append(
+            f"- {s.scenario_id} [{s.title}]\n"
+            f"  dimension_values: {dim_vals}\n"
+            f"  description: {_shorten(s.description, 200)}"
+        )
+
+    user_prompt = f"""\
+## Base Event 요약
+- title: {pack.C1_base_event.title}
+- summary: {pack.C1_base_event.summary}
+
+## 선택된 Dimension 및 Enum 정보
+{chr(10).join(dimension_block_lines)}
+
+## 생성된 시나리오 ({len(stage4.scenarios)}건)
+{chr(10).join(scenario_lines)}
+
+## 판정 요청
+R01 baseline contrast coverage 와 R02 값 다양성은 이미 코드로 통과했습니다.
+위 2가지 검사 항목(R03 조합 호환성, R04 MECE)을 적용하여 passed 여부를 결정하십시오.
+passed=false 인 경우, improvement_suggestions 에 Stage 4 재생성을 위한 구체적 지시를 작성하십시오.
+"""
+
+    out = _invoke_with_retry(
+        stage_label="Stage 6",
+        schema_cls=_Stage6LLMOutput,
+        system_prompt=STAGE6_SYSTEM,
+        user_prompt=user_prompt,
+        validate_fn=None,
+        hard_constraints="",
+    )
+
+    if out is None:
+        print("  ↳ Stage 6 fallback: LLM 호출 실패 — 검증 통과로 처리")
+        return True, None
+
+    if out.passed:
+        return True, None
+
+    issues_text = "\n".join(f"- {issue}" for issue in out.issues) if out.issues else "(상세 없음)"
+    feedback = f"[검증 실패/ 재생성 필요]\n{issues_text}\n\n[개선 지시]\n{out.improvement_suggestions}"
+    return False, feedback

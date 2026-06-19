@@ -3,6 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from apps.agents.scenario_group_agent.baseline_contrast import (
+    apply_single_baseline_by_probability,
+)
 from apps.agents.scenario_group_agent.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
@@ -22,13 +25,35 @@ if TYPE_CHECKING:
         ScenarioTemplate as CommonScenarioTemplate,
     )
 
-LIKELIHOOD_TO_SCORE = {
-    "very_low": Decimal("10.00"),
-    "low": Decimal("25.00"),
-    "medium": Decimal("50.00"),
-    "high": Decimal("75.00"),
-    "very_high": Decimal("90.00"),
+_LIKELIHOOD_WEIGHTS: dict[str, int] = {
+    "very_low": 5,
+    "low": 10,
+    "medium": 20,
+    "high": 35,
+    "very_high": 50,
 }
+
+
+def _normalize_scores_to_100(likelihoods: list[str]) -> list[Decimal]:
+    """likelihood_prior 목록을 합계가 정확히 100인 probability_score 목록으로 변환.
+
+    각 tier의 상대 가중치를 기반으로 비례 배분하고,
+    나머지는 largest-remainder 방식으로 처리해 정수 합계 100을 보장한다.
+    """
+    weights = [_LIKELIHOOD_WEIGHTS.get(t, _LIKELIHOOD_WEIGHTS["medium"]) for t in likelihoods]
+    total = sum(weights)
+    if total == 0 or not weights:
+        even = Decimal(100) / Decimal(len(likelihoods)) if likelihoods else Decimal("0")
+        return [even] * len(likelihoods)
+
+    exact = [w / total * 100 for w in weights]
+    floors = [int(v) for v in exact]
+    remainders = [v - int(v) for v in exact]
+    deficit = 100 - sum(floors)
+    for i in sorted(range(len(remainders)), key=lambda k: -remainders[k])[:deficit]:
+        floors[i] += 1
+
+    return [Decimal(str(s)) for s in floors]
 
 
 class ScenarioService:
@@ -196,13 +221,19 @@ class ScenarioService:
         scenarios = stage4.get("scenarios", []) or []
         likelihood_prior = stage5.get("likelihood_prior", {}) or {}
 
+        likelihoods = [
+            likelihood_prior.get(scenario.get("scenario_id", ""), "medium")
+            for scenario in scenarios
+        ]
+        normalized_scores = _normalize_scores_to_100(likelihoods)
+
         session = get_sync_session()
         try:
             repository = ScenarioRepository(session=session)
             saved_ids: list[int] = []
-            for index, scenario in enumerate(scenarios, start=1):
-                scenario_key = scenario.get("scenario_id", "")
-                likelihood = likelihood_prior.get(scenario_key, "medium")
+            for index, (scenario, probability_score) in enumerate(
+                zip(scenarios, normalized_scores), start=1
+            ):
                 price_direction = scenario.get("price_direction", {}) or {}
                 payload = {
                     "scenario_group_id": scenario_group_id,
@@ -212,7 +243,7 @@ class ScenarioService:
                     "dimension_values": self._normalize_dimension_values_object(
                         scenario.get("dimension_values") or {}
                     ),
-                    "probability_score": LIKELIHOOD_TO_SCORE.get(likelihood),
+                    "probability_score": probability_score,
                     "probability_delta": None,
                     "impact_jkm": price_direction.get("jkm"),
                     "impact_ttf": price_direction.get("ttf"),
@@ -481,18 +512,4 @@ class ScenarioService:
         *,
         user_id: int,
     ) -> None:
-        scores = [
-            Decimal(str(scenario.probability_score))
-            for scenario in scenarios
-            if scenario.probability_score is not None
-        ]
-        max_score = max(scores) if scores else None
-        for scenario in scenarios:
-            scenario.baseline_yn = (
-                "Y"
-                if max_score is not None
-                and scenario.probability_score is not None
-                and Decimal(str(scenario.probability_score)) == max_score
-                else "N"
-            )
-            scenario.mod_usr_logn_id = user_id
+        apply_single_baseline_by_probability(scenarios, user_id=user_id)

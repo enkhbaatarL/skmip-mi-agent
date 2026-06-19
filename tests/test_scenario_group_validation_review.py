@@ -12,6 +12,18 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
     build_context,
     run_review,
 )
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+    C1BaseEvent,
+    PriceDirection,
+    Scenario,
+    ScenarioTemplate,
+    Stage1ContextPack,
+    Stage3ValueSelection,
+    Stage4ScenarioSynthesis,
+    TemplateDimension,
+    PerDimensionValue,
+    stage6_quick_validate,
+)
 
 
 TEMPLATE = [
@@ -129,6 +141,100 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert not report.is_valid
         assert report.summary["WARN"] == 2
 
+    async def test_tail_override_is_not_applied(self) -> None:
+        template = [
+            {
+                "dim_key": "supply_disruption_pattern",
+                "label": "공급 차질 - 발생/회복 패턴",
+                "value_enums": [
+                    "P1: Short disruption",
+                    "P4: Permanent loss",
+                    "P5: No disruption",
+                ],
+            },
+            {
+                "dim_key": "severity",
+                "label": "강도",
+                "value_enums": ["낮음", "높음"],
+            },
+        ]
+        group = {
+            **GROUP,
+            "dimension_selected": ["supply_disruption_pattern", "severity"],
+        }
+        rows = [
+            {
+                **ROWS[0],
+                "cells": {
+                    "supply_disruption_pattern": "P1: Short disruption",
+                    "severity": "낮음",
+                },
+            },
+            {
+                **ROWS[1],
+                "cells": {
+                    "supply_disruption_pattern": "P5: No disruption",
+                    "severity": "높음",
+                },
+            },
+        ]
+        context = build_context(group, rows, PERSISTED_SCENARIOS, template)
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "PASS"
+        assert report.is_valid
+
+    async def test_enum_order_does_not_define_low_probability_value(self) -> None:
+        template = [
+            {
+                "dim_key": "period",
+                "label": "기간",
+                "value_enums": ["A", "B", "C", "D", "E"],
+            },
+            {
+                "dim_key": "severity",
+                "label": "강도",
+                "value_enums": ["낮음", "높음"],
+            },
+        ]
+        rows = [
+            {
+                **ROWS[0],
+                "cells": {"period": "D", "severity": "낮음"},
+            },
+            {
+                **ROWS[1],
+                "cells": {"period": "A", "severity": "높음"},
+            },
+        ]
+        context = build_context(GROUP, rows, PERSISTED_SCENARIOS, template)
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        contrast_check = next(
+            check for check in report.checks if check.check_id == "R01"
+        )
+        assert contrast_check.status == "PASS"
+
     async def test_duplicate_combination_is_warning(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
         rows[1]["cells"] = dict(rows[0]["cells"])
@@ -237,6 +343,92 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert "3번째 시나리오" in report.reason
         assert "-3" not in report.reason
+
+
+class ScenarioGenerationQuickValidationTest(unittest.TestCase):
+    def test_stage6_baseline_contrast_precheck_skips_llm_on_missing_coverage(
+        self,
+    ) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["단기", "중기", "장기"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="severity",
+                    label="강도",
+                    value_enums=["낮음", "중간", "높음"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="recovery",
+                    label="회복",
+                    value_enums=["빠름", "보통", "느림"],
+                    display_order=3,
+                ),
+            ]
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["단기", "중기", "장기"],
+                    selected_enum=["단기", "장기"],
+                ),
+                PerDimensionValue(
+                    dim_key="severity",
+                    template_enum_full=["낮음", "중간", "높음"],
+                    selected_enum=["낮음", "높음"],
+                ),
+                PerDimensionValue(
+                    dim_key="recovery",
+                    template_enum_full=["빠름", "보통", "느림"],
+                    selected_enum=["빠름", "느림"],
+                ),
+            ]
+        )
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=1,
+            filtered_by_compatibility=1,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="contrast missing",
+                    dimension_values={
+                        "period": "단기",
+                        "severity": "높음",
+                        "recovery": "느림",
+                    },
+                    description="기간 대안값 누락",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                    ),
+                )
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "pipeline._invoke_with_retry",
+        ) as invoke:
+            passed, feedback = stage6_quick_validate(
+                Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                stage3,
+                stage4,
+                template,
+            )
+
+        assert not passed
+        assert feedback is not None
+        assert "baseline 대비 대안값 누락" in feedback
+        assert "period" in feedback
+        invoke.assert_not_called()
 
 
 if __name__ == "__main__":
