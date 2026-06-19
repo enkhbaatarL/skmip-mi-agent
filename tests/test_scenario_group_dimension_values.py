@@ -162,6 +162,42 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
         assert filled[0]["cells"]["recovery"] == "빠름"
         assert filled[1]["cells"]["recovery"] == "느림"
 
+    async def test_auto_fill_uses_persisted_narrative_without_returning_it(self) -> None:
+        headers = HEADERS + [{"key": "recovery", "label": "회복", "display_order": 3}]
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "",
+                "cells": {"period": "단기", "severity": "낮음", "recovery": None},
+            },
+        ]
+        state = _state(headers, rows)
+        state.scenarios = [
+            {
+                "scenario_id": 100,
+                "title": "persisted title",
+                "narrative": "persisted narrative",
+            },
+        ]
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "ScenarioService.load_scenario_template",
+            return_value=_template(),
+        ), patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "generate_new_dimension_values",
+            new=AsyncMock(return_value={0: {"recovery": "빠름"}}),
+        ) as generate:
+            result = await generate_dimension_values(state)
+
+        generation_rows = generate.call_args.args[1]
+        assert generation_rows[0]["title"] == "persisted title"
+        assert generation_rows[0]["narrative"] == "persisted narrative"
+        returned_row = result["request_table"]["rows"][0]
+        assert "narrative" not in returned_row
+        assert returned_row["cells"]["recovery"] == "빠름"
+
     async def test_out_of_enum_value_falls_back(self) -> None:
         headers = HEADERS + [{"key": "recovery", "label": "회복", "display_order": 3}]
         rows = [

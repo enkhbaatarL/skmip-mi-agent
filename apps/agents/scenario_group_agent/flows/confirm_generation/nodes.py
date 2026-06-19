@@ -22,12 +22,13 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
     if group is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {state.scenario_group_id}")
-    request_usr_id = group.get("request_usr_id")
-    if request_usr_id is not None and request_usr_id != state.user_id:
-        raise MIBaseError(
-            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
-            detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
-        )
+    # TODO: Re-enable ownership validation after request userId policy is finalized.
+    # request_usr_id = group.get("request_usr_id")
+    # if request_usr_id is not None and request_usr_id != state.user_id:
+    #     raise MIBaseError(
+    #         ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+    #         detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
+    #     )
     return {"scenario_group": group}
 
 
@@ -56,11 +57,12 @@ def confirm_outputs(state: ScenarioDesignState) -> dict[str, Any]:
         return {}
     if state.request_scenario_group is None or state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenarioGroup and table are required")
+    effective_user_id = state.user_id or (state.scenario_group or {}).get("request_usr_id")
     result = ScenarioGroupService().apply_confirmation(
         state.scenario_group_id,
         state.request_scenario_group,
         state.request_table,
-        user_id=state.user_id,
+        user_id=effective_user_id,
     )
     if result.get("status") != "success":
         raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=result.get("message", "Confirmation failed"))

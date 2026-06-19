@@ -23,6 +23,27 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
 
+def _build_dimension_generation_rows(
+    rows: list[dict[str, Any]],
+    persisted_scenarios: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    persisted_by_id = {
+        int(scenario["scenario_id"]): scenario
+        for scenario in persisted_scenarios
+        if scenario.get("scenario_id") is not None
+    }
+    generation_rows: list[dict[str, Any]] = []
+    for row in rows:
+        generation_row = dict(row)
+        if row.get("scenario_id") is not None:
+            persisted = persisted_by_id.get(int(row["scenario_id"])) or {}
+            if not generation_row.get("title"):
+                generation_row["title"] = persisted.get("title") or ""
+            generation_row["narrative"] = persisted.get("narrative") or ""
+        generation_rows.append(generation_row)
+    return generation_rows
+
+
 def _assert_group_owner(group: dict[str, Any], user_id: int | None) -> None:
     request_usr_id = group.get("request_usr_id")
     if request_usr_id is not None and request_usr_id != user_id:
@@ -123,7 +144,7 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
     if new_dimensions:
         generated = await generate_new_dimension_values(
             template,
-            rows,
+            _build_dimension_generation_rows(rows, state.scenarios),
             new_dimensions,
         )
         for index, row in enumerate(rows):

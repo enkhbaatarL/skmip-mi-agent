@@ -51,12 +51,24 @@ def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, Any]:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
     if state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
+    event_data = None
+    has_new_rows = any(
+        row.get("scenario_id") is None
+        for row in state.request_table.get("rows", []) or []
+    )
+    if has_new_rows:
+        event_data = EventService().load_event(
+            int(state.scenario_group["mi_event_id"])
+        )
+        if event_data is None:
+            raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
     try:
         result = ScenarioService().sync_from_table(
             scenario_group_id=state.scenario_group_id,
             event_type_l2_id=int(state.scenario_group["event_type_l2_id"]),
             table_payload=state.request_table,
             user_id=state.user_id,
+            event_data=event_data,
         )
     except ValueError as exc:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=str(exc)) from exc
