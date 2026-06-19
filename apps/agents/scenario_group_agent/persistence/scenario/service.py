@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     )
 
 ScenarioDimensionValues = dict[str, Any]
+ScenarioDimensionTemplateByKey = dict[str, dict[str, Any]]
 
 
 class ScenarioSyncRowPayload(TypedDict, total=False):
@@ -410,30 +411,35 @@ class ScenarioService:
             updated_ids: list[int] = []
             unchanged_existing_ids: list[int] = []
             rows = table_payload.get("rows", []) or []
+            template_by_key = self._load_dimension_template_by_key(event_type_l2_id)
+            new_rows = [row for row in rows if row.get("scenario_id") is None]
             new_row_details = self._generate_new_row_details(
                 event_data,
                 [
-                    self.cells_to_dimension_values(
-                        event_type_l2_id,
+                    self.cells_to_dimension_values_with_template(
+                        template_by_key,
                         row.get("cells") or {},
                     )
-                    for row in rows
-                    if row.get("scenario_id") is None
+                    for row in new_rows
                 ],
             )
-            new_row_detail_index = 0
+            details_by_row_id = {
+                id(row): detail for row, detail in zip(new_rows, new_row_details)
+            }
 
             for row in rows:
                 row_scenario_id = row.get("scenario_id")
                 if row_scenario_id is None:
+                    generated_details = details_by_row_id.get(id(row))
+                    if generated_details is None:
+                        raise ValueError("Generated scenario details are missing")
                     payload = self._row_to_new_scenario_payload(
                         scenario_group_id=scenario_group_id,
-                        event_type_l2_id=event_type_l2_id,
+                        template_by_key=template_by_key,
                         row=row,
                         user_id=user_id,
-                        generated_details=new_row_details[new_row_detail_index],
+                        generated_details=generated_details,
                     )
-                    new_row_detail_index += 1
                     inserted_ids.append(scenario_repository.insert_scenario(payload))
                     continue
 
@@ -445,7 +451,7 @@ class ScenarioService:
                     )
                 requested_existing_ids.add(scenario_id)
                 payload = self._row_to_existing_scenario_payload(
-                    event_type_l2_id=event_type_l2_id,
+                    template_by_key=template_by_key,
                     row=row,
                     user_id=user_id,
                 )
@@ -524,12 +530,28 @@ class ScenarioService:
         event_type_l2_id: int,
         cells: dict[str, Any],
     ) -> dict[str, Any]:
+        return self.cells_to_dimension_values_with_template(
+            self._load_dimension_template_by_key(event_type_l2_id),
+            cells,
+        )
+
+    def _load_dimension_template_by_key(
+        self,
+        event_type_l2_id: int,
+    ) -> ScenarioDimensionTemplateByKey:
         template_json = self._load_template_json_from_db(event_type_l2_id)
         template_by_key = {
             str(item.get("dim_key")): item
             for item in template_json
             if isinstance(item, dict) and item.get("dim_key")
         }
+        return template_by_key
+
+    def cells_to_dimension_values_with_template(
+        self,
+        template_by_key: ScenarioDimensionTemplateByKey,
+        cells: dict[str, Any],
+    ) -> ScenarioDimensionValues:
         converted: dict[str, Any] = {}
         for key, value in cells.items():
             if key in template_by_key:
@@ -587,14 +609,14 @@ class ScenarioService:
     def _row_to_existing_scenario_payload(
         self,
         *,
-        event_type_l2_id: int,
+        template_by_key: ScenarioDimensionTemplateByKey,
         row: ScenarioSyncRowPayload,
         user_id: int,
     ) -> ExistingScenarioUpdatePayload:
         return {
             "title": (row.get("title") or "")[:255],
-            "dimension_values": self.cells_to_dimension_values(
-                event_type_l2_id,
+            "dimension_values": self.cells_to_dimension_values_with_template(
+                template_by_key,
                 row.get("cells") or {},
             ),
             "display_order": int(row.get("display_order") or 0),
@@ -605,7 +627,7 @@ class ScenarioService:
         self,
         *,
         scenario_group_id: int,
-        event_type_l2_id: int,
+        template_by_key: ScenarioDimensionTemplateByKey,
         row: ScenarioSyncRowPayload,
         user_id: int,
         generated_details: NewScenarioGeneratedDetails,
@@ -615,8 +637,8 @@ class ScenarioService:
             "title": (row.get("title") or "")[:255],
             "narrative": generated_details.narrative,
             "status": ScenarioStatus.CREATING.value,
-            "dimension_values": self.cells_to_dimension_values(
-                event_type_l2_id,
+            "dimension_values": self.cells_to_dimension_values_with_template(
+                template_by_key,
                 row.get("cells") or {},
             ),
             "display_order": int(row.get("display_order") or 0),

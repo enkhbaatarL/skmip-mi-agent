@@ -50,6 +50,12 @@ class CreateSignpostsTableIn(ApiModel):
 
 
 class CreateSignpostsIn(ApiModel):
+    model_config = ConfigDict(
+        alias_generator=ApiModel.model_config["alias_generator"],
+        populate_by_name=True,
+        extra="forbid",
+    )
+
     user_id: int
     table: CreateSignpostsTableIn
 

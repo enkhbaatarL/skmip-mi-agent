@@ -263,6 +263,16 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CreateSignpostsIn.model_validate({"userId": 101, "table": table})
 
+    def test_create_signposts_request_rejects_top_level_extra_fields(self) -> None:
+        with self.assertRaises(ValidationError):
+            CreateSignpostsIn.model_validate(
+                {
+                    "userId": 101,
+                    "table": TABLE,
+                    "unexpected": True,
+                },
+            )
+
     def test_create_signposts_request_accepts_documented_row_shape(self) -> None:
         table = {
             "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
@@ -282,22 +292,16 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload.table.rows[0].cells == {"period": "단기"}
 
     def test_existing_signpost_sync_payload_preserves_hidden_db_fields(self) -> None:
-        service = ScenarioService()
-        with patch.object(
-            service,
-            "cells_to_dimension_values",
-            return_value={"period": "단기"},
-        ):
-            payload = service._row_to_existing_scenario_payload(
-                event_type_l2_id=30,
-                row={
-                    "scenario_id": 100,
-                    "display_order": 2,
-                    "title": "updated",
-                    "cells": {"period": "단기"},
-                },
-                user_id=101,
-            )
+        payload = ScenarioService()._row_to_existing_scenario_payload(
+            template_by_key={"period": {"dim_key": "period"}},
+            row={
+                "scenario_id": 100,
+                "display_order": 2,
+                "title": "updated",
+                "cells": {"period": "단기", "ignored": "x"},
+            },
+            user_id=101,
+        )
 
         assert payload == {
             "title": "updated",
@@ -357,6 +361,44 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 impact_hh="mild_bull",
             ),
         ]
+
+    def test_new_signpost_row_payload_uses_generated_hidden_fields(self) -> None:
+        payload = ScenarioService()._row_to_new_scenario_payload(
+            scenario_group_id=10,
+            template_by_key={"period": {"dim_key": "period"}},
+            row={
+                "scenario_id": None,
+                "display_order": 3,
+                "title": "new scenario",
+                "cells": {"period": "단기", "ignored": "x"},
+            },
+            user_id=101,
+            generated_details=NewScenarioGeneratedDetails(
+                narrative="generated narrative",
+                probability_weight=Decimal("20"),
+                probability_delta=Decimal("0.0"),
+                impact_jkm="bull",
+                impact_ttf="neutral",
+                impact_hh="mild_bull",
+            ),
+        )
+
+        assert payload == {
+            "scenario_group_id": 10,
+            "title": "new scenario",
+            "narrative": "generated narrative",
+            "status": "creating",
+            "dimension_values": {"period": "단기"},
+            "display_order": 3,
+            "baseline_yn": "N",
+            "crt_usr_logn_id": 101,
+            "mod_usr_logn_id": 101,
+            "probability_score": Decimal("20"),
+            "probability_delta": Decimal("0.0"),
+            "impact_jkm": "bull",
+            "impact_ttf": "neutral",
+            "impact_hh": "mild_bull",
+        }
 
     def test_signpost_sync_normalizes_active_probability_scores(self) -> None:
         scenarios = [
