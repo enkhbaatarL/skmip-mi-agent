@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -36,7 +36,13 @@ class ScenarioHeader(ApiModel):
 
 class ScenarioMetrics(ApiModel):
     probability_score: Decimal | None = None
-    probability_delta: Decimal | None = None
+    probability_delta: Decimal | None = Field(default=Decimal("0.0"))
+
+    @model_validator(mode="after")
+    def _coerce_delta(self) -> ScenarioMetrics:
+        if self.probability_delta is None:
+            self.probability_delta = Decimal("0.0")
+        return self
 
 
 class ScenarioImpact(ApiModel):
