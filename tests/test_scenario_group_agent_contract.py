@@ -453,6 +453,37 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload.table.rows[0].scenario_id == 100
         assert payload.user_id == 101
 
+    def test_validation_request_rejects_non_request_row_fields(self) -> None:
+        table = {
+            "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
+            "rows": [
+                {
+                    "scenarioId": 100,
+                    "displayOrder": 1,
+                    "title": "scenario",
+                    "cells": {"period": "단기"},
+                    "narrative": "must not be accepted",
+                    "metrics": {"probabilityScore": 40},
+                    "impact": {"jkm": "bull"},
+                    "baselineYn": "Y",
+                    "signposts": [],
+                },
+            ],
+        }
+
+        with self.assertRaises(ValidationError):
+            ValidateScenariosIn.model_validate({"userId": 101, "table": table})
+
+    def test_validation_request_rejects_top_level_extra_fields(self) -> None:
+        with self.assertRaises(ValidationError):
+            ValidateScenariosIn.model_validate(
+                {
+                    "userId": 101,
+                    "table": TABLE,
+                    "unexpected": True,
+                },
+            )
+
     def test_scenario_group_insert_uses_integer_user_id_for_audit_fields(
         self,
     ) -> None:
