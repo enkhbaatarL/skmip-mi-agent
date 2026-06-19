@@ -89,6 +89,9 @@ class ReviewContext:
     selected_dims: list[str]
     dim_index: dict[str, dict[str, Any]]
     enum_index: dict[str, list[str]]
+    # 요청 본문이 DB(create scenario 결과)와 정확히 일치하는지 여부.
+    # True 면 사용자가 수정한 것이 없으므로 review 를 건너뛰고 통과 처리한다.
+    unchanged: bool = False
 
 
 @dataclass
@@ -136,7 +139,94 @@ def build_context(
         selected_dims=[str(key) for key in group.get("dimension_selected") or []],
         dim_index=dim_index,
         enum_index=enum_index,
+        unchanged=_is_request_unchanged(requested_rows, persisted_scenarios),
     )
+
+
+def _norm_compare_value(value: Any) -> Any:
+    """request/DB 값을 비교 가능한 형태로 정규화한다.
+
+    - 숫자(int/float)는 Decimal 로 변환해 40 == 40.0 == Decimal('40.00') 을 동등 처리.
+    - 문자열은 공백 제거 후 빈 문자열을 None 으로 취급(None == '' == '  ').
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return value
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
+def _norm_cells(cells: Any) -> dict[str, Any]:
+    if not isinstance(cells, dict):
+        return {}
+    return {
+        str(key): _norm_compare_value(value)
+        for key, value in cells.items()
+        if str(key).strip() and value is not None
+    }
+
+
+def _is_request_unchanged(
+    requested_rows: list[dict[str, Any]],
+    persisted_scenarios: list[dict[str, Any]],
+) -> bool:
+    """validate 요청 본문이 DB(create scenario 결과)와 정확히 일치하는지 판정.
+
+    사용자가 아무것도 수정하지 않은 경우(요청 == DB) True 를 반환한다. 이때는
+    검토를 수행하면 사용자가 손대지 않은 항목에까지 불필요한 warning 이 떠서,
+    review 를 건너뛰고 통과 처리하기 위한 신호로 쓴다.
+
+    신규 시나리오 추가/삭제, 시나리오 식별자 불일치, 비교 대상 필드(title·
+    narrative·dimension_values·확률/증감·baseline_yn) 중 하나라도 다르면 False.
+    """
+    if not requested_rows or not persisted_scenarios:
+        return False
+    if len(requested_rows) != len(persisted_scenarios):
+        return False
+    persisted_by_id = {
+        int(scenario["scenario_id"]): scenario
+        for scenario in persisted_scenarios
+        if scenario.get("scenario_id") is not None
+    }
+    for row in requested_rows:
+        raw_id = row.get("scenario_id")
+        if raw_id is None:
+            # 신규 시나리오는 DB 에 없으므로 변경으로 간주.
+            return False
+        persisted = persisted_by_id.get(int(raw_id))
+        if persisted is None:
+            return False
+        metrics = row.get("metrics") or {}
+        comparisons: list[tuple[Any, Any]] = [
+            (row.get("title"), persisted.get("title")),
+            (row.get("narrative"), persisted.get("narrative")),
+            (row.get("baseline_yn"), persisted.get("baseline_yn")),
+            (
+                metrics.get("probability_score"),
+                persisted.get("probability_score"),
+            ),
+            (
+                metrics.get("probability_delta"),
+                persisted.get("probability_delta"),
+            ),
+        ]
+        if any(
+            _norm_compare_value(requested) != _norm_compare_value(stored)
+            for requested, stored in comparisons
+        ):
+            return False
+        if _norm_cells(row.get("cells")) != _norm_cells(
+            persisted.get("dimension_values"),
+        ):
+            return False
+    return True
 
 
 def _normalize_scenario(
@@ -742,6 +832,16 @@ def _build_reason(notable: list[CheckResult], label_map: dict[str, str]) -> str:
 
 
 async def run_review(ctx: ReviewContext) -> ReviewReport:
+    if ctx.unchanged:
+        # 요청 본문이 DB(create scenario 결과)와 동일 → 사용자가 수정한 것이
+        # 없으므로 불필요한 warning 없이 그대로 통과 처리한다.
+        return ReviewReport(
+            verdict="PASS",
+            is_valid=True,
+            reason="변경 사항이 없어 모든 시나리오 검토 항목을 통과했습니다.",
+            summary={"PASS": 0, "WARN": 0, "FAIL": 0, "INFO": 0},
+            checks=[],
+        )
     checks: list[CheckResult] = []
     for check in CHECKS:
         try:
@@ -757,7 +857,10 @@ async def run_review(ctx: ReviewContext) -> ReviewReport:
                 ),
             )
     checks.append(await _check_compatibility(ctx))
-    for check in (_check_mece, _check_probability_range):
+    # R05(확률/증감 값 범위) 검토 비활성화(always):
+    # 서비스 사용자가 시나리오 추가 시 probability 가 null 등으로 들어올 수 있어
+    # 0~100 범위 검토가 무의미하므로 항상 비활성화한다.
+    for check in (_check_mece,):  # _check_probability_range 비활성화
         try:
             checks.append(check(ctx))
         except Exception as exc:
