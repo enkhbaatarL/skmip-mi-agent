@@ -3,6 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from apps.agents.scenario_group_agent.baseline_contrast import (
+    apply_single_baseline_by_probability,
+)
 from apps.agents.scenario_group_agent.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
@@ -509,18 +512,4 @@ class ScenarioService:
         *,
         user_id: int,
     ) -> None:
-        scores = [
-            Decimal(str(scenario.probability_score))
-            for scenario in scenarios
-            if scenario.probability_score is not None
-        ]
-        max_score = max(scores) if scores else None
-        for scenario in scenarios:
-            scenario.baseline_yn = (
-                "Y"
-                if max_score is not None
-                and scenario.probability_score is not None
-                and Decimal(str(scenario.probability_score)) == max_score
-                else "N"
-            )
-            scenario.mod_usr_logn_id = user_id
+        apply_single_baseline_by_probability(scenarios, user_id=user_id)

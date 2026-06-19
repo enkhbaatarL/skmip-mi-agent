@@ -10,6 +10,9 @@ from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
+from apps.agents.scenario_group_agent.baseline_contrast import (
+    check_baseline_contrast_coverage,
+)
 from apps.common.logging.decorators import log_tool
 
 
@@ -100,14 +103,13 @@ class TemplateDimension(BaseModel):
         return self
 
     def enum_items(self) -> list[dict[str, Any]]:
-        total = len(self.value_enums)
         return [
             {
                 "id": enum_label,
                 "label": enum_label,
-                "tail": index == total,
+                "tail": False,
             }
-            for index, enum_label in enumerate(self.value_enums, start=1)
+            for enum_label in self.value_enums
         ]
 
     def to_runtime_dimension(self) -> dict[str, Any]:
@@ -189,10 +191,6 @@ class PerDimensionValue(BaseModel):
     )
     selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
         description="채택한 Enum ID 2~4개. 인접 병합 금지.",
-    )
-    tail_risk_kept: str = Field(
-        default="",
-        description="Tail Risk 로 보존된 Enum ID 1개 이상 (selected_enum 내 포함).",
     )
 
 
@@ -278,9 +276,6 @@ class _Stage3SingleDimOutput(BaseModel):
     selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
         description="채택 값 2~4개. 반드시 value_enums 의 부분집합.",
     )
-    tail_risk_kept: str = Field(
-        description="유지된 Tail Risk 값 (selected_enum 안에 포함).",
-    )
 
 
 class _NarrativeOnly(BaseModel):
@@ -318,10 +313,6 @@ def _dim_index(template: ScenarioTemplate) -> Dict[str, Dict]:
 
 def _enum_id_set(dimension: Dict) -> List[str]:
     return [e["id"] for e in dimension["enum"]]
-
-
-def _tail_id_set(dimension: Dict) -> List[str]:
-    return [e["id"] for e in dimension.get("enum", []) if e.get("tail")]
 
 
 def _shorten(text: str, max_len: int) -> str:
@@ -682,8 +673,8 @@ STAGE3_SYSTEM = """\
 하나의 Dimension 의 value_enums 중에서 **2~4개 값만** 채택하십시오.
 
 ## 선택 규칙 (반드시 준수)
-- (b) 극단 보존: Tail Risk(=template 정의상 tail=true) 중 **최소 1개** 를 selected_enum 안에 포함.
-- (c) 최종 수: 2~4개.
+- 최종 수: 2~4개.
+- 이후 Stage 4 에서 baseline 대비 대안값 coverage 를 만들 수 있도록, 의미가 서로 다른 값을 선택하십시오.
 
 ## 절대 금지
 - (a) 인접 병합(시장 영향이 유사하다는 이유로 인접 Enum 을 합쳐 1개로 대체) **사용 금지**.
@@ -696,22 +687,17 @@ STAGE3_SYSTEM = """\
 - 단, 해당 Dim 이 '단기 종전 후 정상화 baseline' 시나리오 분기를 위해 꼭 필요할 때만
   예외적으로 채택하고, rationale 성격(=baseline 표현 의도)을 description 에 명시하십시오.
 
-## tail_risk_kept
-- selected_enum 에 포함된 값 중 tail=true 인 1개를 명시.
-
 ## 이 단계에서 즉시 충족해야 하는 로컬 규칙
-- (R01-local) 각 Dim 의 selected_enum 에는 tail=true 값이 최소 1개 포함되어야 함.
 - (R02-local) 각 Dim 의 selected_enum 에는 서로 다른 값이 최소 2개 포함되어야 함.
 
 ## 참고 (다음 단계와의 연결 맥락)
-- 위 로컬 규칙은 Stage 4 조합 생성 시 tail 보존과 값 다양성 확보를 위한 최소 조건이다.
+- 위 로컬 규칙은 Stage 4 조합 생성 시 baseline contrast coverage 와 값 다양성 확보를 위한 최소 조건이다.
 """
 
 STAGE3_HARD = """\
 [중요한 출력 제약 — Stage 3]
 - selected_enum 길이는 반드시 2~4.
 - selected_enum 의 모든 값은 입력된 value_enums 안에 있어야 함.
-- tail_risk_kept 는 selected_enum 안의 값이며, tail=true 인 enum 이어야 함.
 - 인접 병합 사유로 Enum 제거 금지.
 """
 
@@ -734,14 +720,11 @@ def stage3_reduce_values(
             continue
 
         enum_full = _enum_id_set(dim)
-        tail_full = _tail_id_set(dim)
-
-        # Format enum block with label and tail info
+        # Format enum block with labels only. Enum order and tail flags are not probability signals.
         enum_full_block = ", ".join(
-            f"{e['id']}({e.get('label','')}, tail={'Y' if e.get('tail') else 'N'})"
+            f"{e['id']}({e.get('label','')})"
             for e in dim["enum"]
         )
-        tail_block = ", ".join(tail_full) if tail_full else "(없음)"
 
         user_prompt = f"""\
 ## Base Event 요약
@@ -754,23 +737,15 @@ def stage3_reduce_values(
 - label_ko: {dim.get("label_ko", "")}
 - description: {dim.get("description", "")}
 - value_enums(=선택 가능한 값): {enum_full_block}
-- tail enum 후보: {tail_block}
 
 ## 산출
-- 채택 값 2~4개 + tail_risk_kept 1개.
+- 채택 값 2~4개.
 """
 
         def _validate(out: _Stage3SingleDimOutput) -> None:
             unknown = set(out.selected_enum) - set(enum_full)
             if unknown:
                 raise ValueError(f"value_enums 외 값 사용: {unknown}")
-            if out.tail_risk_kept not in out.selected_enum:
-                raise ValueError("tail_risk_kept 가 selected_enum 안에 없음.")
-            if tail_full and out.tail_risk_kept not in tail_full:
-                raise ValueError(
-                    f"tail_risk_kept='{out.tail_risk_kept}' 가 tail enum 집합에 없음. "
-                    f"tail 후보: {tail_full}"
-                )
 
         out = _invoke_with_retry(
             stage_label=f"Stage 3 [{dim['dim_key']}]",
@@ -788,22 +763,20 @@ def stage3_reduce_values(
             dim_key=dim["dim_key"],
             template_enum_full=enum_full,
             selected_enum=out.selected_enum,
-            tail_risk_kept=out.tail_risk_kept,
         ))
 
     return Stage3ValueSelection(per_dimension=per_dim)
 
 
 def _stage3_fallback(dim: Dict) -> _Stage3SingleDimOutput:
-    """LLM 실패 시 — 첫 1개 + 중간 1개 + Tail 1개 안전 채택."""
+    """LLM 실패 시 — 첫 1개 + 중간 1개 + 마지막 1개 안전 채택."""
     print(f"  ↳ Stage 3 fallback ({dim['dim_key']}): 안전 3개 Enum 선택")
     enum_full = _enum_id_set(dim)
-    tail_full = _tail_id_set(dim)
-    tail_pick = tail_full[0] if tail_full else enum_full[-1]
     base = enum_full[0]
     mid = enum_full[len(enum_full) // 2] if len(enum_full) >= 2 else enum_full[0]
+    last = enum_full[-1]
     selected = []
-    for cand in (base, mid, tail_pick):
+    for cand in (base, mid, last):
         if cand and cand not in selected:
             selected.append(cand)
     while len(selected) < 2 and enum_full:
@@ -813,7 +786,7 @@ def _stage3_fallback(dim: Dict) -> _Stage3SingleDimOutput:
                 break
         else:
             break
-    return _Stage3SingleDimOutput(selected_enum=selected[:4], tail_risk_kept=tail_pick)
+    return _Stage3SingleDimOutput(selected_enum=selected[:4])
 
 
 # ==============================================
@@ -871,27 +844,12 @@ def _select_target_combos(
 ) -> List[Dict[str, str]]:
     """Compat 통과 조합 중 target_n개 추출 — 다양성/커버리지 기반 선정.
 
-    1) Tail score = combo 내 enum_id 중 template.enum.tail=true 인 개수.
-    2) Base anchor(score 최소): 가장 baseline 에 가까운 1건.
-    3) Extreme anchor(score 최대): 가장 tail 쪽 1건.
-    4) 나머지: R01/R02 커버리지 + 피드백 힌트 + Farthest-First 순으로 선정.
+    1) 첫 compat 통과 조합을 baseline anchor 로 둔다.
+    2) 이후 조합은 baseline 과 다른 값을 아직 커버하지 못한 Dim 을 우선 보강한다.
+    3) 나머지는 값 다양성 + 피드백 힌트 + Farthest-First 순으로 선정한다.
     """
     if len(passed) <= target_n:
         return list(passed)
-
-    dim_idx = _dim_index(template)
-    template_tail: Dict[str, set] = {
-        pd.dim_key: set(
-            e["id"] for e in dim_idx.get(pd.dim_key, {}).get("enum", [])
-            if e.get("tail")
-        )
-        for pd in stage3.per_dimension
-    }
-
-    def _tail_score(combo: Dict[str, str]) -> int:
-        return sum(
-            1 for did, eid in combo.items() if eid in template_tail.get(did, set())
-        )
 
     feedback_hints = _extract_feedback_value_hints(validation_feedback, stage3)
     dim_keys = [pd.dim_key for pd in stage3.per_dimension]
@@ -914,15 +872,9 @@ def _select_target_combos(
                 best_i, best_d = i, d_min
         return best_i
 
-    scores = [_tail_score(c) for c in passed]
-    min_s, max_s = min(scores), max(scores)
-    base_idx = next(i for i, s in enumerate(scores) if s == min_s)
-
-    chosen_idx: List[int] = [base_idx]
-
-    if max_s != min_s:
-        ext_pool = [i for i, s in enumerate(scores) if s == max_s]
-        chosen_idx.append(_farthest_idx(ext_pool, chosen_idx))
+    baseline_idx = 0
+    baseline_combo = passed[baseline_idx]
+    chosen_idx: List[int] = [baseline_idx]
 
     pool = [i for i in range(len(passed)) if i not in chosen_idx]
     seen_by_dim: Dict[str, set[str]] = {key: set() for key in dim_keys}
@@ -931,25 +883,26 @@ def _select_target_combos(
             if key in passed[idx]:
                 seen_by_dim[key].add(passed[idx][key])
 
-    def _uncovered_tail_dims() -> set[str]:
+    def _uncovered_contrast_dims() -> set[str]:
         uncovered: set[str] = set()
         for key in dim_keys:
-            tails = template_tail.get(key, set())
-            if not tails:
-                continue
-            if not any(val in tails for val in seen_by_dim.get(key, set())):
+            baseline_value = baseline_combo.get(key)
+            if not any(
+                val != baseline_value
+                for val in seen_by_dim.get(key, set())
+            ):
                 uncovered.add(key)
         return uncovered
 
     while len(chosen_idx) < target_n and pool:
-        uncovered_tail = _uncovered_tail_dims()
+        uncovered_contrast = _uncovered_contrast_dims()
 
         def _candidate_rank(i: int) -> Tuple[int, int, int, int, int]:
             combo = passed[i]
-            gain_tail = sum(
+            gain_contrast = sum(
                 1
-                for key in uncovered_tail
-                if combo.get(key) in template_tail.get(key, set())
+                for key in uncovered_contrast
+                if combo.get(key) != baseline_combo.get(key)
             )
             gain_diversity = sum(
                 1
@@ -963,11 +916,11 @@ def _select_target_combos(
                 else 0
             )
             return (
-                gain_tail,
+                gain_contrast,
                 gain_diversity,
                 _feedback_score(combo),
                 d_min,
-                _tail_score(combo),
+                _hamming(combo, baseline_combo),
             )
 
         nxt = max(pool, key=_candidate_rank)
@@ -1198,7 +1151,7 @@ STAGE5_SYSTEM = """\
 - 수치 Prior(예: 0.4, 40%) 출력 금지 — 반드시 5단계 카테고리만.
 
 ## Prior 부여 가이드 (참고)
-- Tail Risk(시설 영구 손상·전면 봉쇄 등 극단)는 통상 'low' 또는 'very_low'.
+- 시설 영구 손상·전면 봉쇄 등 발생 가능성이 낮은 강한 충격 조합은 통상 'low' 또는 'very_low'.
 - Base case 성격(완화·정상화)은 'medium' 또는 'high'.
 - 시장 충격 강한 중기 차질은 'medium' 부근.
 """
@@ -1316,10 +1269,6 @@ STAGE6_SYSTEM = """\
 
 ## 검사 항목
 
-### R02 — 값 다양성
-선택된 각 Dimension 에서, 전체 시나리오에 걸쳐 2가지 이상 서로 다른 값이 사용되어야 함.
-→ 모든 시나리오가 특정 Dimension 에서 동일 값을 가지면 passed=false.
-
 ### R03 — 조합 호환성
 각 시나리오의 Dimension 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
 → 명백한 모순(동시 성립 불가)이 있는 시나리오가 1개 이상이면 passed=false.
@@ -1330,11 +1279,11 @@ STAGE6_SYSTEM = """\
 → 완전히 동일한 조합을 가진 시나리오 쌍이 있으면 passed=false.
 
 ## 이미 코드로 결정론적 검증된 항목
-- Tail(극단값) 보존 R01은 LLM 호출 전에 코드로 검사한다.
-- Tail 보존 여부를 다시 판정하거나 실패 사유로 언급하지 마십시오.
+- R01 baseline contrast coverage 와 R02 값 다양성은 LLM 호출 전에 코드로 검사한다.
+- baseline 대비 대안값 coverage 여부를 다시 판정하거나 실패 사유로 언급하지 마십시오.
 
 ## 출력 규칙
-- passed=true: 위 3가지 모두 통과. issues=[], improvement_suggestions="".
+- passed=true: 위 2가지 모두 통과. issues=[], improvement_suggestions="".
 - passed=false: 실패 항목별로 issues 에 한국어 1줄씩 기술.
   improvement_suggestions: Stage 4 재생성 시 반드시 따라야 할 구체적 지시.
   → 어떤 Dim 에서 어떤 값을 변경/추가/제거해야 하는지 dim_key·value 명시.
@@ -1348,27 +1297,22 @@ class _Stage6LLMOutput(BaseModel):
     improvement_suggestions: str = Field(default="")
 
 
-def _missing_tail_coverage(
+def _missing_baseline_contrast_coverage(
     stage3: Stage3ValueSelection,
     stage4: Stage4ScenarioSynthesis,
     template: ScenarioTemplate,
 ) -> list[tuple[str, str]]:
-    dim_idx = _dim_index(template)
-    used_by_dim: Dict[str, set[str]] = {pd.dim_key: set() for pd in stage3.per_dimension}
-    for scenario in stage4.scenarios:
-        for dim_key, value in scenario.dimension_values.items():
-            if dim_key in used_by_dim:
-                used_by_dim[dim_key].add(value)
-
-    missing: list[tuple[str, str]] = []
-    for pd in stage3.per_dimension:
-        tails = _tail_id_set(dim_idx.get(pd.dim_key, {}))
-        if not tails:
-            continue
-        tail = tails[-1]
-        if tail not in used_by_dim.get(pd.dim_key, set()):
-            missing.append((pd.dim_key, tail))
-    return missing
+    """Return selected dimensions without non-baseline values in the scenario set."""
+    result = check_baseline_contrast_coverage(
+        stage4.scenarios,
+        [pd.dim_key for pd in stage3.per_dimension],
+        baseline_index=0,
+    )
+    baseline_values = result.baseline_values
+    return [
+        (dim_key, str(baseline_values.get(dim_key)))
+        for dim_key in result.missing_dimensions
+    ]
 
 
 @log_tool
@@ -1384,35 +1328,42 @@ def stage6_quick_validate(
     - passed=True  → (True, None)
     - passed=False → (False, "<피드백 문자열>")
     """
-    dim_idx = _dim_index(template)
-    missing_tail = _missing_tail_coverage(stage3, stage4, template)
-    if missing_tail:
+    selected_dim_keys = [pd.dim_key for pd in stage3.per_dimension]
+    contrast = check_baseline_contrast_coverage(
+        stage4.scenarios,
+        selected_dim_keys,
+        baseline_index=0,
+    )
+    if contrast.baseline_issue or contrast.missing_dimensions:
+        missing = contrast.missing_dimensions
         issues = "\n".join(
-            f"- R01 tail 누락: {dim_key}={tail}"
-            for dim_key, tail in missing_tail
+            f"- R01 baseline 대비 대안값 누락: {dim_key} "
+            f"(baseline={contrast.baseline_values.get(dim_key)})"
+            for dim_key in missing
         )
         suggestions = "; ".join(
-            f"{dim_key} 값이 '{tail}'인 조합을 최소 1개 포함"
-            for dim_key, tail in missing_tail
+            f"{dim_key} 값이 baseline '{contrast.baseline_values.get(dim_key)}'와 다른 조합을 최소 1개 포함"
+            for dim_key in missing
         )
         return (
             False,
             "[검증 실패/ 재생성 필요]\n"
-            f"{issues}\n\n"
+            f"{issues or contrast.baseline_issue}\n\n"
             "[개선 지시]\n"
             f"{suggestions}하도록 Stage 4 조합을 재선정하십시오.",
         )
 
-    # Dim별 tail 값 목록
-    tail_block_lines: List[str] = []
+    # Dim별 선택 값 목록
+    dim_idx = _dim_index(template)
+    dimension_block_lines: List[str] = []
     for pd in stage3.per_dimension:
         dim = dim_idx.get(pd.dim_key, {})
-        tails = _tail_id_set(dim)
-        tail_block_lines.append(
+        dimension_block_lines.append(
             f"- {pd.dim_key} ({dim.get('label_ko', '')}): "
             f"전체 enum={pd.template_enum_full}, "
             f"선택된 enum={pd.selected_enum}, "
-            f"tail 후보={tails if tails else '없음'}"
+            f"baseline={contrast.baseline_values.get(pd.dim_key)}, "
+            f"대안값={sorted(contrast.observed_non_baseline_values.get(pd.dim_key, set()))}"
         )
 
     # 시나리오 목록
@@ -1431,14 +1382,14 @@ def stage6_quick_validate(
 - summary: {pack.C1_base_event.summary}
 
 ## 선택된 Dimension 및 Enum 정보
-{chr(10).join(tail_block_lines)}
+{chr(10).join(dimension_block_lines)}
 
 ## 생성된 시나리오 ({len(stage4.scenarios)}건)
 {chr(10).join(scenario_lines)}
 
 ## 판정 요청
-Tail 보존 R01은 이미 코드로 통과했습니다.
-위 3가지 검사 항목(R02 값 다양성, R03 조합 호환성, R04 MECE)을 적용하여 passed 여부를 결정하십시오.
+R01 baseline contrast coverage 와 R02 값 다양성은 이미 코드로 통과했습니다.
+위 2가지 검사 항목(R03 조합 호환성, R04 MECE)을 적용하여 passed 여부를 결정하십시오.
 passed=false 인 경우, improvement_suggestions 에 Stage 4 재생성을 위한 구체적 지시를 작성하십시오.
 """
 

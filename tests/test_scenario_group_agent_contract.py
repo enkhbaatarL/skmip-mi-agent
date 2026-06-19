@@ -9,6 +9,9 @@ from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
 
+from apps.agents.scenario_group_agent.baseline_contrast import (
+    check_baseline_contrast_coverage,
+)
 from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
     ScenarioService,
@@ -178,9 +181,9 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             False,
             False,
             False,
-            True,
+            False,
         ]
-        assert [item["tail"] for item in ordered[1].enum_items()] == [False, True]
+        assert [item["tail"] for item in ordered[1].enum_items()] == [False, False]
         assert result.compatibility_rules == []
 
     def test_db_template_requires_three_dimensions(self) -> None:
@@ -640,7 +643,9 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
         assert result["scenario_group"]["stage"] == "signpost_created"
 
-    def test_baseline_uses_highest_probability_and_all_ties(self) -> None:
+    def test_baseline_uses_single_highest_probability_with_display_order_tiebreak(
+        self,
+    ) -> None:
         scenarios = [
             MiScenarioModel(
                 scenario_group_id=10,
@@ -673,7 +678,71 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         ScenarioService().apply_baseline_by_probability(scenarios, user_id=101)
 
-        assert [scenario.baseline_yn for scenario in scenarios] == ["N", "Y", "Y"]
+        assert [scenario.baseline_yn for scenario in scenarios] == ["N", "Y", "N"]
+
+    def test_baseline_contrast_coverage_allows_distributed_alternatives(
+        self,
+    ) -> None:
+        scenarios = [
+            {
+                "dimension_values": {
+                    "period": "단기",
+                    "impact": "낮음",
+                    "recovery": "빠름",
+                },
+                "probability_score": 70,
+                "display_order": 1,
+            },
+            {
+                "dimension_values": {
+                    "period": "장기",
+                    "impact": "낮음",
+                    "recovery": "빠름",
+                },
+                "probability_score": 20,
+                "display_order": 2,
+            },
+            {
+                "dimension_values": {
+                    "period": "단기",
+                    "impact": "높음",
+                    "recovery": "느림",
+                },
+                "probability_score": 10,
+                "display_order": 3,
+            },
+        ]
+
+        result = check_baseline_contrast_coverage(
+            scenarios,
+            ["period", "impact", "recovery"],
+        )
+
+        assert result.covered is True
+        assert result.baseline_index == 0
+        assert result.missing_dimensions == []
+
+    def test_baseline_contrast_coverage_reports_missing_dimension(self) -> None:
+        scenarios = [
+            {
+                "dimension_values": {"period": "단기", "impact": "낮음"},
+                "probability_score": 70,
+                "display_order": 1,
+            },
+            {
+                "dimension_values": {"period": "장기", "impact": "낮음"},
+                "probability_score": 30,
+                "display_order": 2,
+            },
+        ]
+
+        result = check_baseline_contrast_coverage(
+            scenarios,
+            ["period", "impact"],
+        )
+
+        assert result.covered is False
+        assert result.missing_dimensions == ["impact"]
 
     def test_baseline_all_null_probability_sets_all_non_baseline(self) -> None:
         scenarios = [

@@ -194,7 +194,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert report.verdict == "PASS"
         assert report.is_valid
 
-    async def test_only_last_enum_counts_as_tail(self) -> None:
+    async def test_enum_order_does_not_define_low_probability_value(self) -> None:
         template = [
             {
                 "dim_key": "period",
@@ -230,10 +230,10 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         ):
             report = await run_review(context)
 
-        tail_check = next(check for check in report.checks if check.check_id == "R01")
-        assert tail_check.status == "WARN"
-        assert "period" in tail_check.offenders[0]
-        assert "E" in tail_check.offenders[0]
+        contrast_check = next(
+            check for check in report.checks if check.check_id == "R01"
+        )
+        assert contrast_check.status == "PASS"
 
     async def test_duplicate_combination_is_warning(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
@@ -346,7 +346,9 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ScenarioGenerationQuickValidationTest(unittest.TestCase):
-    def test_stage6_tail_precheck_skips_llm_on_missing_tail(self) -> None:
+    def test_stage6_baseline_contrast_precheck_skips_llm_on_missing_coverage(
+        self,
+    ) -> None:
         template = ScenarioTemplate(
             dimensions=[
                 TemplateDimension(
@@ -375,19 +377,16 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     dim_key="period",
                     template_enum_full=["단기", "중기", "장기"],
                     selected_enum=["단기", "장기"],
-                    tail_risk_kept="장기",
                 ),
                 PerDimensionValue(
                     dim_key="severity",
                     template_enum_full=["낮음", "중간", "높음"],
                     selected_enum=["낮음", "높음"],
-                    tail_risk_kept="높음",
                 ),
                 PerDimensionValue(
                     dim_key="recovery",
                     template_enum_full=["빠름", "보통", "느림"],
                     selected_enum=["빠름", "느림"],
-                    tail_risk_kept="느림",
                 ),
             ]
         )
@@ -397,13 +396,13 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             scenarios=[
                 Scenario(
                     scenario_id="S_01",
-                    title="tail missing",
+                    title="contrast missing",
                     dimension_values={
                         "period": "단기",
                         "severity": "높음",
                         "recovery": "느림",
                     },
-                    description="기간 tail 누락",
+                    description="기간 대안값 누락",
                     derivation_rationale="test",
                     price_direction=PriceDirection(
                         brent="neutral",
@@ -427,7 +426,8 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
 
         assert not passed
         assert feedback is not None
-        assert "period=장기" in feedback
+        assert "baseline 대비 대안값 누락" in feedback
+        assert "period" in feedback
         invoke.assert_not_called()
 
 
