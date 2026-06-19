@@ -87,7 +87,19 @@ class ScenarioGroupStatus(str, Enum):
     REALIZED = "realized"
 
     @classmethod
-    def from_string(cls, value: str) -> "ScenarioStatus":
+    def from_string(cls, value: str) -> "ScenarioGroupStatus":
+        return cls(str(value).lower())
+
+
+class ScenarioGroupStage(str, Enum):
+    READY = "ready"
+    SCENARIO_CREATED = "scenario_created"
+    SCENARIO_VALIDATED = "scenario_validated"
+    SIGNPOST_CREATED = "signpost_created"
+    COMPLETED = "completed"
+
+    @classmethod
+    def from_string(cls, value: str) -> "ScenarioGroupStage":
         return cls(str(value).lower())
 
 

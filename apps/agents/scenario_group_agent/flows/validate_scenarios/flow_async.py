@@ -19,6 +19,10 @@ from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
     ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosOut,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.logging.logger_config import logger
 from apps.common.values.response import CallBackBody
@@ -44,8 +48,8 @@ def prepare_validate_scenarios(
     group = group_result["scenario_group"]
     return {
         "scenario_group_id": scenario_group_id,
-        "status": group.get("status", "creating"),
-        "stage": group.get("stage", "scenario_created"),
+        "status": group.get("status", ScenarioGroupStatus.CREATING.value),
+        "stage": group.get("stage", ScenarioGroupStage.SCENARIO_CREATED.value),
         "user_id": user_id,
         "request_table": request_table,
     }
@@ -81,8 +85,8 @@ def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenar
         reason=data.get("reason") or None,
         scenario_group=ValidateScenariosCallBackScenarioGroup(
             scenario_group_id=data.get("scenario_group_id") or 0,
-            status=group.get("status") or "creating",
-            stage=group.get("stage") or "scenario_created",
+            status=group.get("status") or ScenarioGroupStatus.CREATING.value,
+            stage=group.get("stage") or ScenarioGroupStage.SCENARIO_CREATED.value,
         ),
         table=ScenarioTable.model_validate(request_table) if request_table else None,
     )

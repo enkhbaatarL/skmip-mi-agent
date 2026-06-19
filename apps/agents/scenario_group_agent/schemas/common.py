@@ -6,6 +6,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(
@@ -24,8 +29,8 @@ class ScenarioGroupPayload(ApiModel):
     description: str | None = None
     dimension_selected: list[str] = Field(default_factory=list)
     scenario_count: int = 0
-    status: str = "creating"
-    stage: str = "ready"
+    status: str = ScenarioGroupStatus.CREATING.value
+    stage: str = ScenarioGroupStage.READY.value
 
 
 class ScenarioHeader(ApiModel):

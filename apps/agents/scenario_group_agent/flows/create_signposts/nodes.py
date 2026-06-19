@@ -17,6 +17,11 @@ from apps.agents.scenario_group_agent.schemas.create_signposts import (
     GeneratedSignpost,
     SignpostGenerationResult,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -165,11 +170,11 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, Any]:
     all_signposts = SignpostService().load_by_scenario_ids(
         [int(s["scenario_id"]) for s in state.scenarios]
     )
-    ScenarioService().update_status(state.scenario_group_id, "created")
+    ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATED.value)
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
-        status="creating",
-        stage="signpost_created",
+        status=ScenarioGroupStatus.CREATING,
+        stage=ScenarioGroupStage.SIGNPOST_CREATED,
         user_id=state.user_id,
     )
     return {

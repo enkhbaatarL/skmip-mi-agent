@@ -19,6 +19,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline imp
     ScenarioTemplate,
     TemplateDimension,
 )
+from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
 
 if TYPE_CHECKING:
     from apps.agents.scenario_group_agent.schemas.common import (
@@ -239,7 +240,7 @@ class ScenarioService:
                     "scenario_group_id": scenario_group_id,
                     "title": (scenario.get("title") or "")[:255],
                     "narrative": scenario.get("description") or "",
-                    "status": "creating",
+                    "status": ScenarioStatus.CREATING.value,
                     "dimension_values": self._normalize_dimension_values_object(
                         scenario.get("dimension_values") or {}
                     ),
@@ -266,7 +267,7 @@ class ScenarioService:
         finally:
             session.close()
 
-    def update_status(self, scenario_group_id: int, status: str) -> int:
+    def update_status(self, scenario_group_id: int, status: ScenarioStatus | str) -> int:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -274,7 +275,8 @@ class ScenarioService:
         session = get_sync_session()
         try:
             count = ScenarioRepository(session=session).update_status(
-                scenario_group_id, status
+                scenario_group_id,
+                status.value if isinstance(status, ScenarioStatus) else status,
             )
             session.commit()
             return count
@@ -284,7 +286,11 @@ class ScenarioService:
         finally:
             session.close()
 
-    def update_status_by_ids(self, scenario_ids: list[int], status: str) -> int:
+    def update_status_by_ids(
+        self,
+        scenario_ids: list[int],
+        status: ScenarioStatus | str,
+    ) -> int:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -292,7 +298,8 @@ class ScenarioService:
         session = get_sync_session()
         try:
             count = ScenarioRepository(session=session).update_status_by_ids(
-                scenario_ids, status
+                scenario_ids,
+                status.value if isinstance(status, ScenarioStatus) else status,
             )
             session.commit()
             return count
@@ -337,7 +344,7 @@ class ScenarioService:
                     event_type_l2_id=event_type_l2_id,
                     row=row,
                     user_id=user_id,
-                    status="creating",
+                    status=ScenarioStatus.CREATING.value,
                 )
                 if row_scenario_id is None:
                     inserted_ids.append(scenario_repository.insert_scenario(payload))

@@ -165,6 +165,7 @@ class Settings(BaseSettings):
     callback_create_scenarios_path: str = Field(default="")
     callback_validate_scenarios_path: str = Field(default="")
     callback_create_signposts_path: str = Field(default="")
+    skip_callback: bool = Field(default=False)
 
     @field_validator("search_sources", mode="before")
     @classmethod

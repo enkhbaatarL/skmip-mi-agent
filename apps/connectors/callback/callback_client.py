@@ -22,7 +22,6 @@ async def send_callback(url: str, payload: CallBackBody) -> None:
     from apps.common.configs.settings import get_settings
 
     cfg = get_settings()
-    token_manager = get_token_manager()
     body = payload.model_dump(by_alias=True, mode="json")
     logger.debug(
         "[CONNECTOR][CALLBACK][send_callback] REQUEST BODY\n"
@@ -30,6 +29,11 @@ async def send_callback(url: str, payload: CallBackBody) -> None:
         f"body=\n{json.dumps(body, ensure_ascii=False, indent=2, default=str)}"
     )
 
+    if cfg.skip_callback:
+        logger.info(f"[CONNECTOR][CALLBACK][send_callback] SKIPPED (skip_callback=true) | url={url}")
+        return
+
+    token_manager = get_token_manager()
     token = await token_manager.get_token()
 
     async with httpx.AsyncClient(verify=cfg.http_verify, timeout=30.0) as client:

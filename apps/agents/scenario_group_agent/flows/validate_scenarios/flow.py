@@ -19,6 +19,10 @@ from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
     ValidateScenariosIn,
     ValidateScenariosOut,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -61,8 +65,8 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosO
         reason=data.get("reason") or None,
         scenario_group=ValidateScenariosCallBackScenarioGroup(
             scenario_group_id=data.get("scenario_group_id") or 0,
-            status=group.get("status") or "creating",
-            stage=group.get("stage") or "scenario_created",
+            status=group.get("status") or ScenarioGroupStatus.CREATING.value,
+            stage=group.get("stage") or ScenarioGroupStage.SCENARIO_CREATED.value,
         ),
         table=ScenarioTable.model_validate(request_table) if request_table else None,
     )

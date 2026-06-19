@@ -13,6 +13,11 @@ from apps.agents.scenario_group_agent.persistence.scenario.service import (
 from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
     ScenarioGroupService,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -164,11 +169,15 @@ async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
 def save_validation_result(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
-    ScenarioService().update_status(state.scenario_group_id, "creating")
-    next_stage = "scenario_validated" if state.is_valid else "scenario_created"
+    ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATING.value)
+    next_stage = (
+        ScenarioGroupStage.SCENARIO_VALIDATED
+        if state.is_valid
+        else ScenarioGroupStage.SCENARIO_CREATED
+    )
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
-        status="creating",
+        status=ScenarioGroupStatus.CREATING,
         stage=next_stage,
         user_id=state.user_id,
     )

@@ -15,6 +15,10 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosOut
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_builder import (
     scenario_generation_runnable,
@@ -39,8 +43,8 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
     group = group_result.get("scenario_group") or {}
     return {
         "scenario_group_id": group_result["scenario_group_id"],
-        "status": group.get("status", "creating"),
-        "stage": group.get("stage", "ready"),
+        "status": group.get("status", ScenarioGroupStatus.CREATING.value),
+        "stage": group.get("stage", ScenarioGroupStage.READY.value),
         "event_data": state.event_data,
         "user_id": user_id,
     }
