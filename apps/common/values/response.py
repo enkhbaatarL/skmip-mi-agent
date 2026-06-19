@@ -15,5 +15,5 @@ class CommonResponse(BaseModel):
 class CallBackBody(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
-    result: Literal["success", "error"] = Field(description="Callback result", default="success")
+    result: Literal["success", "failure"] = Field(description="Callback result", default="success")
     reason: str | None = Field(default=None, description="Reason for error, or null on success")

@@ -136,7 +136,7 @@ async def run_validate_scenarios_background(
             f"[BG][validate_scenarios] FAILED | group_id={scenario_group_id}"
             f" | elapsed={elapsed_ms}ms | error={e!r}"
         )
-        error_payload = CallBackBody(result="error", reason=str(e))
+        error_payload = CallBackBody(result="failure", reason=str(e))
         try:
             await send_callback(callback_url, error_payload)
         except Exception as cb_err:
