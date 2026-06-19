@@ -21,6 +21,11 @@ from apps.agents.scenario_group_agent.persistence.signpost.repository import (
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
     MiScenarioGroupModel,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -181,8 +186,8 @@ class ScenarioGroupService:
         self,
         scenario_group_id: int,
         *,
-        status: str | None = None,
-        stage: str | None = None,
+        status: ScenarioGroupStatus | str | None = None,
+        stage: ScenarioGroupStage | str | None = None,
         dimension_selected: list[str] | None = None,
         user_id: int | None = None,
     ) -> dict[str, Any] | None:
@@ -198,9 +203,17 @@ class ScenarioGroupService:
                 return None
             payload: dict[str, Any] = {}
             if status is not None:
-                payload["status"] = status
+                payload["status"] = (
+                    status.value
+                    if isinstance(status, ScenarioGroupStatus)
+                    else status
+                )
             if stage is not None:
-                payload["stage"] = stage
+                payload["stage"] = (
+                    stage.value
+                    if isinstance(stage, ScenarioGroupStage)
+                    else stage
+                )
             if dimension_selected is not None:
                 payload["dimension_selected"] = dimension_selected
             if user_id is not None:
@@ -472,12 +485,12 @@ class ScenarioGroupService:
                 scenarios,
                 user_id=user_id if user_id is not None else 0,
             )
-            scenario_repository.update_status(scenario_group_id, "created")
+            scenario_repository.update_status(scenario_group_id, ScenarioStatus.CREATED.value)
 
             group_update: dict[str, Any] = {
                 "scenario_count": len(scenarios),
-                "status": "created",
-                "stage": "completed",
+                "status": ScenarioGroupStatus.CREATED.value,
+                "stage": ScenarioGroupStage.COMPLETED.value,
             }
             if user_id is not None:
                 group_update["mod_usr_logn_id"] = user_id
@@ -502,7 +515,10 @@ class ScenarioGroupService:
             )
             group_repository.update_group(
                 group,
-                {"status": "created", "stage": "completed"},
+                {
+                    "status": ScenarioGroupStatus.CREATED.value,
+                    "stage": ScenarioGroupStage.COMPLETED.value,
+                },
             )
             session.commit()
             return {
@@ -561,10 +577,13 @@ class ScenarioGroupService:
                 signposts_by_scenario_id=signposts_by_scenario_id,
             )
             group_repository.update_scenario_count(scenario_group_id, len(scenarios))
-            scenario_repository.update_status(scenario_group_id, "created")
+            scenario_repository.update_status(scenario_group_id, ScenarioStatus.CREATED.value)
             group_repository.update_group(
                 group,
-                {"status": "created", "stage": "completed"},
+                {
+                    "status": ScenarioGroupStatus.CREATED.value,
+                    "stage": ScenarioGroupStage.COMPLETED.value,
+                },
             )
             session.commit()
             return {

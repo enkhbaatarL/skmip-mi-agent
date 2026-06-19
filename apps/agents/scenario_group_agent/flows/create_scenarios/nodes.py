@@ -9,11 +9,14 @@ from apps.agents.scenario_group_agent.persistence.scenario.service import (
 from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
     ScenarioGroupService,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
-
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
-from apps.agents.scenario_group_agent.schemas.enums import ScenarioGroupStatus
+
 
 def load_event(state: ScenarioDesignState) -> dict[str, Any]:
     if state.mi_event_id is None:
@@ -31,16 +34,22 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     if existing is None:
         # 새로 생성
         return {}
-    if existing.status == "ready":
+    if existing.stage == ScenarioGroupStage.READY.value:
         # async API로 create scenario group 요청했는데, 실패해서 다시 시도했을 경우
         return {}
-    if existing.status == ScenarioGroupStatus.CREATING :
+    if existing.status == ScenarioGroupStatus.CREATING.value:
         if existing.request_usr_id == state.user_id:
-            raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail="초안 생성 완료. 다음 단계를 진행해주세요.")
-        raise MIBaseError(ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT, detail=f"시나리오 작성자: {existing.request_usr_id}")
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
+                detail=f"초안 생성 완료. 다음 단계를 진행해주세요. 시나리오 그룹 ID: {existing.scenario_group_id}",
+            )
+        raise MIBaseError(
+            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+            detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
+        )
     else:
-        raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED)
-    
+        raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail=f"시나리오 그룹 ID: {existing.scenario_group_id}")
+
     # scenarios = ScenarioService().load_by_group_id(existing["scenario_group_id"])
     # return {
     #     "scenario_group_id": existing["scenario_group_id"],
@@ -69,8 +78,8 @@ def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
         "description": state.event_data.get("detail_analysis"),
         "dimension_selected": [],
         "scenario_count": 0,
-        "status": "creating",
-        "stage": "ready",
+        "status": ScenarioGroupStatus.CREATING.value,
+        "stage": ScenarioGroupStage.READY.value,
         "crt_usr_logn_id": state.user_id,
         "mod_usr_logn_id": state.user_id,
     }
@@ -107,8 +116,8 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
         "description": state.event_data.get("detail_analysis"),
         "dimension_selected": dimension_selected,
         "scenario_count": len(stage4.get("scenarios", []) or []),
-        "status": "creating",
-        "stage": "ready",
+        "status": ScenarioGroupStatus.CREATING.value,
+        "stage": ScenarioGroupStage.READY.value,
         "crt_usr_logn_id": state.user_id,
         "mod_usr_logn_id": state.user_id,
     }
@@ -144,8 +153,8 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
     )
     group = ScenarioGroupService().update_state(
         state.scenario_group_id,
-        status="creating",
-        stage="scenario_created",
+        status=ScenarioGroupStatus.CREATING,
+        stage=ScenarioGroupStage.SCENARIO_CREATED,
         dimension_selected=dimension_selected,
         user_id=state.user_id,
     )

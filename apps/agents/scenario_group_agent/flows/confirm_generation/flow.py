@@ -17,6 +17,10 @@ from apps.agents.scenario_group_agent.schemas.confirm_generation import (
     ConfirmGenerationIn,
     ConfirmGenerationOut,
 )
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -56,8 +60,8 @@ def to_output(state: dict[str, Any] | ScenarioDesignState) -> ConfirmGenerationO
         message=data.get("message") or "",
         data=ConfirmGenerationData(
             scenario_group_id=data.get("scenario_group_id") or 0,
-            status=group.get("status") or "created",
-            stage=group.get("stage") or "completed",
+            status=group.get("status") or ScenarioGroupStatus.CREATED.value,
+            stage=group.get("stage") or ScenarioGroupStage.COMPLETED.value,
         ),
     )
 

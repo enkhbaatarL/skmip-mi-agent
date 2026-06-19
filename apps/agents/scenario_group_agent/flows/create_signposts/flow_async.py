@@ -17,6 +17,10 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.create_signposts import CreateSignpostsOut
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -45,8 +49,8 @@ def prepare_create_signposts(
     group = group_result["scenario_group"]
     return {
         "scenario_group_id": scenario_group_id,
-        "status": group.get("status", "creating"),
-        "stage": group.get("stage", "scenario_validated"),
+        "status": group.get("status", ScenarioGroupStatus.CREATING.value),
+        "stage": group.get("stage", ScenarioGroupStage.SCENARIO_VALIDATED.value),
         "user_id": user_id,
         "request_table": request_table,
     }

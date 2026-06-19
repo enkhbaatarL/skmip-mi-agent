@@ -9,11 +9,22 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
+from apps.agents.scenario_group_agent.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.common.configs.database.sync_database.base import ORMBase
 
 
 BIN = "utf8mb4_bin"
 TABLE_ARGS = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4", "mysql_collate": BIN}
+_SCENARIO_GROUP_STATUS_CHECK_SQL = ", ".join(
+    f"'{status.value}'" for status in ScenarioGroupStatus
+)
+_SCENARIO_GROUP_STAGE_CHECK_SQL = ", ".join(
+    f"'{stage.value}'" for stage in ScenarioGroupStage
+)
+_SCENARIO_GROUP_STAGE_COMMENT = " / ".join(stage.value for stage in ScenarioGroupStage)
 
 
 class AuditColumnsMixin:
@@ -56,8 +67,8 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         Index("idx_tmm_mi_scenario_group_m_01", "event_type_l2_id"),
         Index("idx_tmm_mi_scenario_group_m_02", "mi_event_id"),
         CheckConstraint("JSON_TYPE(dimension_selected) = 'ARRAY'", name="ck_tmm_mi_scenario_group_m_01"),
-        CheckConstraint("status IN ('creating','created','realized')", name="ck_tmm_mi_scenario_group_m_02"),
-        CheckConstraint("stage IN ('ready','scenario_created','scenario_validated','signpost_created','completed')", name="ck_tmm_mi_scenario_group_m_03"),
+        CheckConstraint(f"status IN ({_SCENARIO_GROUP_STATUS_CHECK_SQL})", name="ck_tmm_mi_scenario_group_m_02"),
+        CheckConstraint(f"stage IN ({_SCENARIO_GROUP_STAGE_CHECK_SQL})", name="ck_tmm_mi_scenario_group_m_03"),
         TABLE_ARGS,
     )
 
@@ -89,17 +100,17 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     description: Mapped[str | None] = mapped_column(sa.Text(collation=BIN), nullable=True)
     dimension_selected: Mapped[Any] = mapped_column(sa.JSON, nullable=False)
     scenario_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
-    status: Mapped[str] = mapped_column(
+    status: Mapped[ScenarioGroupStatus] = mapped_column(
         sa.String(50, collation=BIN),
         nullable=False,
-        server_default=sa.text("'creating'"),
+        server_default=sa.text(f"'{ScenarioGroupStatus.CREATING.value}'"),
         comment="상태 (creating:생성중 / created:생성완료 / realized:실현 / discarded:폐기)",
     )
-    stage: Mapped[str] = mapped_column(
+    stage: Mapped[ScenarioGroupStage] = mapped_column(
         sa.String(50, collation=BIN),
         nullable=False,
-        server_default=sa.text("'ready'"),
-        comment="단계 (ready / scenario_created / scenario_validated / signpost_created / completed)",
+        server_default=sa.text(f"'{ScenarioGroupStage.READY.value}'"),
+        comment=f"단계 ({_SCENARIO_GROUP_STAGE_COMMENT})",
     )
 
 
