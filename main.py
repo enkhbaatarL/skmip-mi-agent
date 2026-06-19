@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,10 @@ from apps.common.configs.database.sync_database.connection import get_sync_engin
 from apps.common.logging.logger_config import logger, setup_logging
 from apps.common.middleware.exception_handler import register_exception_handlers
 from apps.common.middleware.request_logging import RequestLoggingMiddleware
+from apps.common.openapi.local_docs import register_local_openapi_docs
+
+
+INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 
 @asynccontextmanager
@@ -43,7 +48,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="SKMIP MI Agent API", lifespan=lifespan)
+app = FastAPI(
+    title="SKMIP MI Agent API",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    servers=[{"url": INGRESS_PREFIX}] if INGRESS_PREFIX else None,
+)
 
 origins = ["*"]
 
@@ -55,6 +66,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestLoggingMiddleware)
+register_local_openapi_docs(app, INGRESS_PREFIX)
 
 
 app.include_router(
