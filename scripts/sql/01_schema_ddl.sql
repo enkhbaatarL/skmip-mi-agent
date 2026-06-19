@@ -176,6 +176,8 @@ CREATE TABLE `tmm_mi_mievent_m` (
     `one_line_summary` VARCHAR(300) COLLATE utf8mb4_bin NOT NULL COMMENT '한줄 요약',
     `key_bullets_json` JSON NOT NULL COMMENT '핵심 bullet 목록 JSON',
     `detail_analysis` LONGTEXT COLLATE utf8mb4_bin NOT NULL COMMENT '이벤트 상세 분석 본문',
+    
+    `signature_text` VARCHAR(200) COLLATE utf8mb4_bin NULL COMMENT 'LLM 이벤트 매칭용 정규화 시그니처. 지역/주체/주제만 포함, 방향성·상태 제외',    
     `tags_json` JSON NULL COMMENT '이벤트 태그 목록 JSON',
     `occurred_at` DATETIME(6) NULL COMMENT '이벤트 실제 발생 일시',
 
