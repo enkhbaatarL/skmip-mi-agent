@@ -48,7 +48,7 @@ ENV APP_CONFIG="/workdir/config.yaml" \
     APP_PORT="8000" \
     WORKER_CLASS="uvicorn.workers.UvicornWorker" \
     GUNICORN_WORKERS="3" \
-    LOG_LEVEL="info" \
+    GUNICORN_LOG_LEVEL="info" \
     GRACEFUL_TIMEOUT="600" \
     TIMEOUT="600" \
     KEEP_ALIVE="600"
@@ -58,4 +58,4 @@ EXPOSE 8000
 
 USER user
 
-CMD ["sh", "-c", "exec gunicorn main:app --worker-class \"${WORKER_CLASS}\" --workers \"${GUNICORN_WORKERS}\" --bind \"${APP_HOST}:${APP_PORT}\" --log-level \"${LOG_LEVEL}\" --graceful-timeout \"${GRACEFUL_TIMEOUT}\" --timeout \"${TIMEOUT}\" --keep-alive \"${KEEP_ALIVE}\" --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "exec gunicorn main:app --worker-class \"${WORKER_CLASS}\" --workers \"${GUNICORN_WORKERS}\" --bind \"${APP_HOST}:${APP_PORT}\" --log-level \"${GUNICORN_LOG_LEVEL}\" --graceful-timeout \"${GRACEFUL_TIMEOUT}\" --timeout \"${TIMEOUT}\" --keep-alive \"${KEEP_ALIVE}\" --access-logfile - --error-logfile -"]
