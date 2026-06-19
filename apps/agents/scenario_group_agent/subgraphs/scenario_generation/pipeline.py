@@ -202,9 +202,9 @@ class Stage3ValueSelection(BaseModel):
 
 
 class PriceDirection(BaseModel):
-    brent: PriceTier = Field(description="Brent 방향성 7단계")
     jkm: PriceTier = Field(description="JKM 방향성 7단계")
     ttf: PriceTier = Field(description="TTF 방향성 7단계")
+    hh: PriceTier = Field(description="Henry Hub 방향성 7단계")
 
 
 class Scenario(BaseModel):
@@ -219,7 +219,7 @@ class Scenario(BaseModel):
     derivation_rationale: str = Field(
         description="이 시나리오를 도출한 근거.",
     )
-    price_direction: PriceDirection = Field(description="Brent/JKM/TTF 7단계 방향성.")
+    price_direction: PriceDirection = Field(description="JKM/TTF/HH 7단계 방향성.")
     compatibility_passed: bool = Field(
         default=True,
         description="Compat Rule 통과 여부",
@@ -977,8 +977,38 @@ STAGE4_SYSTEM = """\
 - title (1줄): 시장 참여자 관점의 한 줄 요약. 예: '1개월 내 정상화'.
 - description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
-- price_direction.brent / jkm / ttf: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
+- price_direction.jkm / ttf / hh: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
 - 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
+## Price Benchmark 해석 가이드
+
+price_direction은 Base Event와 Dim 조합이 각 가격 지표에 미치는 상대적 방향성과 강도를 판단한다.
+세 지표는 동일한 글로벌 LNG 이벤트에 노출되더라도 시장 구조가 다르므로, 특별한 근거 없이 동일한 방향/강도로 설정하지 않는다.
+
+### JKM
+- 동북아 LNG 현물 가격 benchmark로, 일본·한국·중국·대만향 LNG cargo 수급을 반영한다.
+- 해상 운송 차질, 중동/카타르 LNG 물동량 리스크, spot cargo 경쟁, 아시아 구매자 재고 수준에 민감하다.
+- 호르무즈 해협 긴장, LNG 선박 우회, 물류 지연, 아시아 재고 부족은 JKM에 bullish 요인이다.
+- 아시아 재고가 높거나 수요가 약하거나 대체 공급이 충분하면 상승 강도는 제한된다.
+
+### TTF
+- 유럽 천연가스 허브 가격 benchmark로, LNG 유입, 파이프라인 공급, 저장 재고, 계절 수요의 영향을 함께 받는다.
+- 글로벌 LNG cargo 경쟁이 심화되면 TTF도 상승 압력을 받지만, 유럽 재고 수준이 높으면 완충된다.
+- 유럽 저장 재고가 낮고 LNG 유입 차질이 예상되면 bullish 강도가 커진다.
+- 재고가 높거나 파이프라인 공급이 안정적이면 JKM보다 반응 강도가 낮을 수 있다.
+
+### HH
+- 미국 Henry Hub 천연가스 가격 benchmark로, 미국 내 생산량, 재고, 날씨, 전력 수요, LNG export feedgas 수요가 핵심 변수다.
+- 호르무즈 해협 리스크의 직접 영향은 JKM/TTF보다 약하다.
+- 글로벌 LNG 가격 상승이 미국 LNG 수출 가동률 증가 또는 feedgas 수요 증가로 연결될 때 HH에 bullish 압력이 생긴다.
+- 미국 내 재고가 높거나 생산 증가가 충분하면 HH는 neutral 또는 mild_bull에 그칠 수 있다.
+
+## 방향성 판단 원칙
+- 호르무즈/중동 해상 물류 리스크는 일반적으로 JKM이 가장 직접적으로 반응하고, TTF는 LNG cargo 경쟁을 통해 간접 반응하며, HH는 미국 LNG 수출 수요를 통해 가장 간접적으로 반응한다.
+- 따라서 기본 민감도는 대체로 JKM > TTF > HH 순서로 보되, storage_level, period, utilization_change_direction 조합에 따라 강도를 조정한다.
+- 같은 방향일 수는 있지만, 특별한 근거 없이 JKM/TTF/HH를 모두 동일 enum으로 설정하지 않는다.
+- HH는 글로벌 LNG 이벤트만으로 strong_bull 또는 bull을 부여하지 말고, 미국 내 수급 타이트화 또는 LNG export feedgas 증가 근거가 있을 때만 상승 강도를 높인다.
+
+## 형식 예시
 - 올바른 형식 예시: {"period":"3개월","utilization_change_direction":"감소"}
 - 금지 형식 예시: [{"dim_key":"period","value":"3개월"}], [{"dimension_id":"period","value":"3개월"}]
 
@@ -997,7 +1027,7 @@ STAGE4_SYSTEM = """\
 STAGE4_HARD = """\
 [중요한 출력 제약 — Stage 4]
 - narratives 길이는 입력 조합 수와 정확히 일치.
-- price_direction.brent / jkm / ttf 는 반드시 7단계 enum 중 정확히 1개.
+- price_direction.jkm / ttf / hh 는 반드시 7단계 enum 중 정확히 1개.
 - description 은 3~5줄, title 은 1줄.
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
 - 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
@@ -1074,7 +1104,7 @@ def stage4_synthesize_scenarios(
                 f"narratives 길이 불일치: {len(out.narratives)} != {len(target)}"
             )
         for n in out.narratives:
-            for v in (n.price_direction.brent, n.price_direction.jkm, n.price_direction.ttf):
+            for v in (n.price_direction.jkm, n.price_direction.ttf, n.price_direction.hh):
                 if v not in PRICE_TIERS:
                     raise ValueError(f"price_direction 범위 밖 값: {v}")
 
@@ -1121,7 +1151,7 @@ def _stage4_fallback(target: List[Dict[str, str]]) -> _Stage4LLMOutput:
                 "전개 양상 판단 보류 — 후속 재실행 필요."
             ),
             derivation_rationale="LLM 실패 — 안전 기본값.",
-            price_direction=PriceDirection(brent="neutral", jkm="neutral", ttf="neutral"),
+            price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
         )
         for i, combo in enumerate(target)
     ]
@@ -1176,7 +1206,7 @@ def stage5_validate(
     scenarios_block = "\n".join(
         f"- {s.scenario_id} | {s.title}\n"
         f"    dims: {', '.join(f'{k}={v}' for k,v in s.dimension_values.items())}\n"
-        f"    price: brent={s.price_direction.brent}, jkm={s.price_direction.jkm}, ttf={s.price_direction.ttf}"
+        f"    price: jkm={s.price_direction.jkm}, ttf={s.price_direction.ttf}, hh={s.price_direction.hh}"
         for s in stage4.scenarios
     )
 
