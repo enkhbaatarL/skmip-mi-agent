@@ -119,7 +119,126 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert report.verdict == "PASS"
         assert report.is_valid
-        assert report.summary == {"PASS": 5, "WARN": 0, "FAIL": 0, "INFO": 0}
+        # R05(확률/증감 값 범위)는 비활성화되어 검사 4종(R01~R04)만 수행된다.
+        assert report.summary == {"PASS": 4, "WARN": 0, "FAIL": 0, "INFO": 0}
+
+    async def test_unchanged_request_skips_review(self) -> None:
+        # 요청 본문이 DB(create scenario 결과)와 정확히 일치하면 사용자가 수정한
+        # 것이 없으므로 어떤 warning 도 발생시키지 않고 통과 처리한다.
+        persisted = [
+            {
+                "scenario_id": 100,
+                "scenario_group_id": 10,
+                "title": "short",
+                "narrative": "short narrative",
+                "status": "created",
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+                "probability_score": 40,
+                "probability_delta": 0,
+                "baseline_yn": "Y",
+            },
+            {
+                "scenario_id": 101,
+                "scenario_group_id": 10,
+                "title": "long",
+                "narrative": "long narrative",
+                "status": "created",
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+                "probability_score": 60,
+                "probability_delta": 0,
+                "baseline_yn": "N",
+            },
+        ]
+        # 동일 조합(중복)이라 원래라면 R04(MECE) WARN 이 발생하지만,
+        # 요청 == DB 이므로 review 자체를 건너뛰어 warning 이 없어야 한다.
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "short",
+                "narrative": "short narrative",
+                "cells": {"period": "단기", "severity": "낮음"},
+                "metrics": {"probability_score": 40, "probability_delta": 0},
+                "baseline_yn": "Y",
+            },
+            {
+                "scenario_id": 101,
+                "title": "long",
+                "narrative": "long narrative",
+                "cells": {"period": "단기", "severity": "낮음"},
+                "metrics": {"probability_score": 60, "probability_delta": 0},
+                "baseline_yn": "N",
+            },
+        ]
+        context = build_context(GROUP, rows, persisted, TEMPLATE)
+        assert context.unchanged is True
+
+        report = await run_review(context)
+
+        assert report.verdict == "PASS"
+        assert report.is_valid
+        assert report.summary["WARN"] == 0
+        assert report.checks == []
+
+    async def test_modified_request_still_runs_review(self) -> None:
+        # DB 와 한 글자라도 다르면(여기선 cells 변경) review 가 정상 수행된다.
+        persisted = [
+            {
+                "scenario_id": 100,
+                "scenario_group_id": 10,
+                "title": "short",
+                "narrative": "short narrative",
+                "status": "created",
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+                "probability_score": 40,
+                "probability_delta": 0,
+                "baseline_yn": "Y",
+            },
+            {
+                "scenario_id": 101,
+                "scenario_group_id": 10,
+                "title": "long",
+                "narrative": "long narrative",
+                "status": "created",
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+                "probability_score": 60,
+                "probability_delta": 0,
+                "baseline_yn": "N",
+            },
+        ]
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "short",
+                "narrative": "short narrative",
+                "cells": {"period": "단기", "severity": "낮음"},
+                "metrics": {"probability_score": 40, "probability_delta": 0},
+                "baseline_yn": "Y",
+            },
+            {
+                "scenario_id": 101,
+                "title": "long",
+                "narrative": "long narrative",
+                # 사용자가 조합을 수정 → 더 이상 DB 와 일치하지 않는다.
+                "cells": {"period": "장기", "severity": "높음"},
+                "metrics": {"probability_score": 60, "probability_delta": 0},
+                "baseline_yn": "N",
+            },
+        ]
+        context = build_context(GROUP, rows, persisted, TEMPLATE)
+        assert context.unchanged is False
+
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert report.checks != []
 
     async def test_warning_sets_invalid(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]
