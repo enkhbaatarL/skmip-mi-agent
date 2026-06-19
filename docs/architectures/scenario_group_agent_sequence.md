@@ -86,7 +86,7 @@ Request
 ```json
 {
   "miEventId": 12345,
-  "userId": "10001"
+  "userId": 10001
 }
 ```
 
@@ -353,7 +353,7 @@ Request (body)
 
 ```json
 {
-  "userId": "10001",
+  "userId": 10001,
   "table": {
     "headers": [
       { "key": "period_label", "label": "기간", "displayOrder": 1 },
@@ -548,7 +548,7 @@ Request Body:
           {
             "signpostId": 1,
             "label": "호르무즈 봉쇄 장기화",
-            "probabilityDirectionCode": "up",
+            "probabilityDirectionCode": "sup",
             "signpostReason": "운송 리스크 확대 및 대체 항로 비용 증가",
             "displayOrder": 1,
             "strength": "STRONG",

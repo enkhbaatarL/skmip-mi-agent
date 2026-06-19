@@ -14,7 +14,7 @@ class ConfirmScenarioGroupIn(ApiModel):
 
 
 class ConfirmGenerationIn(ApiModel):
-    user_id: int
+    user_id: int | None = None
     scenario_group: ConfirmScenarioGroupIn
     table: ScenarioTable
 

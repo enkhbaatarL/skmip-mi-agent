@@ -539,14 +539,15 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert "metrics" not in serialized["table"]["rows"][0]
         assert "impact" not in serialized["table"]["rows"][0]
 
-    def test_confirmation_request_requires_user_id(self) -> None:
-        with self.assertRaises(ValidationError):
-            ConfirmGenerationIn.model_validate(
-                {
-                    "scenarioGroup": CONFIRM_SCENARIO_GROUP,
-                    "table": TABLE,
-                },
-            )
+    def test_confirmation_request_allows_missing_user_id_temporarily(self) -> None:
+        payload = ConfirmGenerationIn.model_validate(
+            {
+                "scenarioGroup": CONFIRM_SCENARIO_GROUP,
+                "table": TABLE,
+            },
+        )
+
+        assert payload.user_id is None
 
     def test_confirmation_updates_scenario_group_title_summary_description(
         self,
