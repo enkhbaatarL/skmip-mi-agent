@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 import unittest
 import sys
 import types
@@ -14,6 +15,7 @@ from apps.agents.scenario_group_agent.baseline_contrast import (
 )
 from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
+    NewScenarioGeneratedDetails,
     ScenarioService,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
@@ -240,6 +242,154 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert payload.user_id == 101
 
+    def test_create_signposts_request_rejects_non_request_row_fields(self) -> None:
+        table = {
+            "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
+            "rows": [
+                {
+                    "scenarioId": 100,
+                    "displayOrder": 1,
+                    "title": "scenario",
+                    "cells": {"period": "단기"},
+                    "narrative": "must not be accepted",
+                    "metrics": {"probabilityScore": 40},
+                    "impact": {"jkm": "bull"},
+                    "baselineYn": "Y",
+                    "signposts": [],
+                },
+            ],
+        }
+
+        with self.assertRaises(ValidationError):
+            CreateSignpostsIn.model_validate({"userId": 101, "table": table})
+
+    def test_create_signposts_request_accepts_documented_row_shape(self) -> None:
+        table = {
+            "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
+            "rows": [
+                {
+                    "scenarioId": None,
+                    "displayOrder": 1,
+                    "title": "사용자 추가 시나리오",
+                    "cells": {"period": "단기"},
+                },
+            ],
+        }
+
+        payload = CreateSignpostsIn.model_validate({"userId": 101, "table": table})
+
+        assert payload.table.rows[0].scenario_id is None
+        assert payload.table.rows[0].cells == {"period": "단기"}
+
+    def test_existing_signpost_sync_payload_preserves_hidden_db_fields(self) -> None:
+        service = ScenarioService()
+        with patch.object(
+            service,
+            "cells_to_dimension_values",
+            return_value={"period": "단기"},
+        ):
+            payload = service._row_to_existing_scenario_payload(
+                event_type_l2_id=30,
+                row={
+                    "scenario_id": 100,
+                    "display_order": 2,
+                    "title": "updated",
+                    "cells": {"period": "단기"},
+                },
+                user_id=101,
+            )
+
+        assert payload == {
+            "title": "updated",
+            "dimension_values": {"period": "단기"},
+            "display_order": 2,
+            "mod_usr_logn_id": 101,
+        }
+        assert "narrative" not in payload
+        assert "probability_score" not in payload
+        assert "impact_jkm" not in payload
+        assert "baseline_yn" not in payload
+
+    def test_new_signpost_row_details_are_generated_from_pipeline_outputs(self) -> None:
+        price_direction = types.SimpleNamespace(
+            jkm="bull",
+            ttf="neutral",
+            hh="mild_bull",
+        )
+        generated = types.SimpleNamespace(
+            scenario_id="S_01",
+            description="generated narrative",
+            price_direction=price_direction,
+        )
+        stage4 = types.SimpleNamespace(scenarios=[generated])
+        stage5 = types.SimpleNamespace(likelihood_prior={"S_01": "medium"})
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+                "pipeline.stage1_build_context_pack",
+                return_value=types.SimpleNamespace(),
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+                "pipeline.stage4_synthesize_fixed_scenarios",
+                return_value=stage4,
+            ) as synthesize,
+            patch(
+                "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+                "pipeline.stage5_validate",
+                return_value=stage5,
+            ),
+        ):
+            details = ScenarioService()._generate_new_row_details(
+                {"mi_event_id": 20},
+                [{"period": "단기"}],
+            )
+
+        synthesize.assert_called_once()
+        assert details == [
+            NewScenarioGeneratedDetails(
+                narrative="generated narrative",
+                probability_weight=Decimal("20"),
+                probability_delta=Decimal("0.0"),
+                impact_jkm="bull",
+                impact_ttf="neutral",
+                impact_hh="mild_bull",
+            ),
+        ]
+
+    def test_signpost_sync_normalizes_active_probability_scores(self) -> None:
+        scenarios = [
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="existing",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=100,
+                display_order=1,
+            ),
+            MiScenarioModel(
+                scenario_group_id=10,
+                title="new",
+                narrative="",
+                status="creating",
+                dimension_values={},
+                probability_score=20,
+                display_order=2,
+            ),
+        ]
+
+        ScenarioService()._normalize_active_probability_scores(
+            scenarios,
+            user_id=101,
+        )
+
+        assert scenarios[0].probability_score == Decimal("83")
+        assert scenarios[1].probability_score == Decimal("17")
+        assert scenarios[0].mod_usr_logn_id == 101
+        assert scenarios[1].mod_usr_logn_id == 101
+
     def test_scenario_group_delete_requests_accept_camel_case(self) -> None:
         soft_payload = SoftDeleteScenarioGroupIn.model_validate({"userId": 101})
         hard_payload = HardDeleteScenarioGroupIn.model_validate(
@@ -460,7 +610,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                     ScenarioDesignState(scenario_group_id=10, user_id=101),
                 )
 
-        assert context.exception.status_code == 401
+        assert context.exception.status_code == 403
 
     def test_validation_success_sets_group_stage_to_validated(self) -> None:
         with (
@@ -535,7 +685,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 user_id=101,
             )
 
-        assert context.exception.status_code == 401
+        assert context.exception.status_code == 403
         assert "이미 사용자 202" in context.exception.error_message
 
     def test_hard_delete_requires_confirm_before_db_access(self) -> None:

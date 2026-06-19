@@ -31,6 +31,7 @@ PriceTier = Literal[
     "strong_bull", "bull", "mild_bull", "neutral", "mild_bear", "bear", "strong_bear",
 ]
 LikelihoodTier = Literal["very_low", "low", "medium", "high", "very_high"]
+DimensionValueMap = Dict[str, str]
 
 # --- LLM config constants (from env) ---
 REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
@@ -1104,12 +1105,116 @@ def stage4_synthesize_scenarios(
                 f"narratives 길이 불일치: {len(out.narratives)} != {len(target)}"
             )
         for n in out.narratives:
-            for v in (n.price_direction.jkm, n.price_direction.ttf, n.price_direction.hh):
+            for v in (
+                n.price_direction.jkm,
+                n.price_direction.ttf,
+                n.price_direction.hh,
+            ):
                 if v not in PRICE_TIERS:
                     raise ValueError(f"price_direction 범위 밖 값: {v}")
 
     out = _invoke_with_retry(
         stage_label="Stage 4",
+        schema_cls=_Stage4LLMOutput,
+        system_prompt=STAGE4_SYSTEM,
+        user_prompt=user_prompt,
+        validate_fn=_validate,
+        hard_constraints=STAGE4_HARD,
+    )
+
+    if out is None:
+        out = _stage4_fallback(target)
+
+    scenarios: List[Scenario] = []
+    for i, (combo, narr) in enumerate(zip(target, out.narratives), start=1):
+        scenarios.append(
+            Scenario(
+                scenario_id=f"S_{i:02d}",
+                title=narr.title,
+                dimension_values=combo,
+                description=narr.description,
+                derivation_rationale=narr.derivation_rationale,
+                price_direction=narr.price_direction,
+                compatibility_passed=True,
+            )
+        )
+
+    return Stage4ScenarioSynthesis(
+        cartesian_total=len(combos_all),
+        filtered_by_compatibility=len(passed),
+        scenarios=scenarios,
+    )
+
+
+def _stage4_fallback(target: List[DimensionValueMap]) -> _Stage4LLMOutput:
+    """LLM 실패 시 — 모든 조합에 대해 중립 시나리오 narrative 생성."""
+    print(f"  ↳ Stage 4 fallback: {len(target)}개 중립 narrative 생성")
+    narratives = [
+        _NarrativeOnly(
+            title=f"[Fallback] 조합 #{i+1} 시나리오",
+            description=(
+                "LLM 호출 실패로 fallback 서사가 적용됨.\n"
+                f"가정치 조합: {', '.join(f'{k}={v}' for k, v in combo.items())}\n"
+                "전개 양상 판단 보류 — 후속 재실행 필요."
+            ),
+            derivation_rationale="LLM 실패 — 안전 기본값.",
+            price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
+        )
+        for i, combo in enumerate(target)
+    ]
+    return _Stage4LLMOutput(narratives=narratives)
+
+
+@log_tool
+def stage4_synthesize_fixed_scenarios(
+    pack: Stage1ContextPack,
+    dimension_values_list: List[DimensionValueMap],
+    llm_client=None,
+) -> Stage4ScenarioSynthesis:
+    """Generate narratives for caller-provided Dim combinations without reselecting them."""
+    target = [
+        {str(key): str(value) for key, value in values.items()}
+        for values in dimension_values_list
+    ]
+    if not target:
+        raise ValueError("dimension_values_list is required")
+
+    dim_keys = sorted({key for values in target for key in values})
+    dim_label_block = "\n".join(f"- {key}" for key in dim_keys)
+    combos_block = "\n".join(
+        f"  [{i+1}] " + ", ".join(f"{k}={v}" for k, v in combo.items())
+        for i, combo in enumerate(target)
+    )
+    user_prompt = f"""\
+## Base Event
+- title: {pack.C1_base_event.title}
+- summary: {pack.C1_base_event.summary}
+- driver: {pack.C1_base_event.driver}
+
+## Dimension 라벨 (참고)
+{dim_label_block}
+
+## 작성 대상 조합 ({len(target)}개) — 입력 순서를 그대로 유지하여 narratives 출력
+{combos_block}
+
+## 산출 규칙
+- narratives 길이 = {len(target)}.
+- 각 narrative 의 description 은 3~5줄.
+- title 은 한 줄.
+"""
+
+    def _validate(out: _Stage4LLMOutput) -> None:
+        if len(out.narratives) != len(target):
+            raise ValueError(
+                f"narratives 길이 불일치: {len(out.narratives)} != {len(target)}"
+            )
+        for n in out.narratives:
+            for v in (n.price_direction.jkm, n.price_direction.ttf, n.price_direction.hh):
+                if v not in PRICE_TIERS:
+                    raise ValueError(f"price_direction 범위 밖 값: {v}")
+
+    out = _invoke_with_retry(
+        stage_label="Stage 4 fixed",
         schema_cls=_Stage4LLMOutput,
         system_prompt=STAGE4_SYSTEM,
         user_prompt=user_prompt,
@@ -1133,29 +1238,10 @@ def stage4_synthesize_scenarios(
         ))
 
     return Stage4ScenarioSynthesis(
-        cartesian_total=len(combos_all),
-        filtered_by_compatibility=len(passed),
+        cartesian_total=len(target),
+        filtered_by_compatibility=len(target),
         scenarios=scenarios,
     )
-
-
-def _stage4_fallback(target: List[Dict[str, str]]) -> _Stage4LLMOutput:
-    """LLM 실패 시 — 모든 조합에 대해 중립 시나리오 narrative 생성."""
-    print(f"  ↳ Stage 4 fallback: {len(target)}개 중립 narrative 생성")
-    narratives = [
-        _NarrativeOnly(
-            title=f"[Fallback] 조합 #{i+1} 시나리오",
-            description=(
-                "LLM 호출 실패로 fallback 서사가 적용됨.\n"
-                f"가정치 조합: {', '.join(f'{k}={v}' for k, v in combo.items())}\n"
-                "전개 양상 판단 보류 — 후속 재실행 필요."
-            ),
-            derivation_rationale="LLM 실패 — 안전 기본값.",
-            price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
-        )
-        for i, combo in enumerate(target)
-    ]
-    return _Stage4LLMOutput(narratives=narratives)
 
 
 # ==============================================

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
+
+from pydantic import BaseModel, ConfigDict
 
 from apps.agents.scenario_group_agent.baseline_contrast import (
     apply_single_baseline_by_probability,
@@ -26,6 +28,64 @@ if TYPE_CHECKING:
         ScenarioTemplate as CommonScenarioTemplate,
     )
 
+ScenarioDimensionValues = dict[str, Any]
+
+
+class ScenarioSyncRowPayload(TypedDict, total=False):
+    scenario_id: int | None
+    display_order: int
+    title: str
+    cells: ScenarioDimensionValues
+
+
+class ScenarioSyncHeaderPayload(TypedDict, total=False):
+    key: str
+
+
+class ScenarioSyncTablePayload(TypedDict):
+    headers: list[ScenarioSyncHeaderPayload]
+    rows: list[ScenarioSyncRowPayload]
+
+
+class ScenarioSyncResult(TypedDict):
+    active_scenario_ids: list[int]
+    regenerate_scenario_ids: list[int]
+    inserted_scenario_ids: list[int]
+    updated_scenario_ids: list[int]
+    deleted_scenario_ids: list[int]
+    unchanged_existing_scenario_ids: list[int]
+
+
+class ExistingScenarioUpdatePayload(TypedDict):
+    title: str
+    dimension_values: ScenarioDimensionValues
+    display_order: int
+    mod_usr_logn_id: int
+
+
+class NewScenarioInsertPayload(ExistingScenarioUpdatePayload):
+    scenario_group_id: int
+    narrative: str
+    status: str
+    probability_score: Decimal
+    probability_delta: Decimal
+    impact_jkm: str | None
+    impact_ttf: str | None
+    impact_hh: str | None
+    baseline_yn: str
+    crt_usr_logn_id: int
+
+
+class NewScenarioGeneratedDetails(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    narrative: str
+    probability_weight: Decimal
+    probability_delta: Decimal
+    impact_jkm: str | None
+    impact_ttf: str | None
+    impact_hh: str | None
+
 _LIKELIHOOD_WEIGHTS: dict[str, int] = {
     "very_low": 5,
     "low": 10,
@@ -41,13 +101,25 @@ def _normalize_scores_to_100(likelihoods: list[str]) -> list[Decimal]:
     각 tier의 상대 가중치를 기반으로 비례 배분하고,
     나머지는 largest-remainder 방식으로 처리해 정수 합계 100을 보장한다.
     """
-    weights = [_LIKELIHOOD_WEIGHTS.get(t, _LIKELIHOOD_WEIGHTS["medium"]) for t in likelihoods]
-    total = sum(weights)
-    if total == 0 or not weights:
-        even = Decimal(100) / Decimal(len(likelihoods)) if likelihoods else Decimal("0")
-        return [even] * len(likelihoods)
+    weights = [
+        Decimal(_LIKELIHOOD_WEIGHTS.get(t, _LIKELIHOOD_WEIGHTS["medium"]))
+        for t in likelihoods
+    ]
+    return _normalize_decimal_scores_to_100(weights)
 
-    exact = [w / total * 100 for w in weights]
+
+def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
+    """Score 목록을 합계 100인 probability_score 목록으로 변환한다."""
+    if not scores:
+        return []
+
+    weights = scores
+    total = sum(weights)
+    if total <= 0:
+        even = Decimal(100) / Decimal(len(weights))
+        return [even] * len(weights)
+
+    exact = [float(w) / float(total) * 100 for w in weights]
     floors = [int(v) for v in exact]
     remainders = [v - int(v) for v in exact]
     deficit = 100 - sum(floors)
@@ -313,9 +385,10 @@ class ScenarioService:
         self,
         scenario_group_id: int,
         event_type_l2_id: int,
-        table_payload: dict[str, Any],
+        table_payload: ScenarioSyncTablePayload,
         user_id: int,
-    ) -> dict[str, list[int] | int]:
+        event_data: dict[str, Any] | None = None,
+    ) -> ScenarioSyncResult:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -336,17 +409,31 @@ class ScenarioService:
             inserted_ids: list[int] = []
             updated_ids: list[int] = []
             unchanged_existing_ids: list[int] = []
+            rows = table_payload.get("rows", []) or []
+            new_row_details = self._generate_new_row_details(
+                event_data,
+                [
+                    self.cells_to_dimension_values(
+                        event_type_l2_id,
+                        row.get("cells") or {},
+                    )
+                    for row in rows
+                    if row.get("scenario_id") is None
+                ],
+            )
+            new_row_detail_index = 0
 
-            for row in table_payload.get("rows", []) or []:
+            for row in rows:
                 row_scenario_id = row.get("scenario_id")
-                payload = self._row_to_scenario_payload(
-                    scenario_group_id=scenario_group_id,
-                    event_type_l2_id=event_type_l2_id,
-                    row=row,
-                    user_id=user_id,
-                    status=ScenarioStatus.CREATING.value,
-                )
                 if row_scenario_id is None:
+                    payload = self._row_to_new_scenario_payload(
+                        scenario_group_id=scenario_group_id,
+                        event_type_l2_id=event_type_l2_id,
+                        row=row,
+                        user_id=user_id,
+                        generated_details=new_row_details[new_row_detail_index],
+                    )
+                    new_row_detail_index += 1
                     inserted_ids.append(scenario_repository.insert_scenario(payload))
                     continue
 
@@ -357,6 +444,11 @@ class ScenarioService:
                         f"Scenario does not belong to group: {scenario_id}"
                     )
                 requested_existing_ids.add(scenario_id)
+                payload = self._row_to_existing_scenario_payload(
+                    event_type_l2_id=event_type_l2_id,
+                    row=row,
+                    user_id=user_id,
+                )
                 if self._scenario_requires_update(scenario, payload):
                     scenario_repository.update_from_payload(scenario, payload)
                     updated_ids.append(scenario_id)
@@ -378,6 +470,10 @@ class ScenarioService:
 
             active_scenarios = scenario_repository.fetch_models_by_group_id(
                 scenario_group_id
+            )
+            self._normalize_active_probability_scores(
+                active_scenarios,
+                user_id=user_id,
             )
             self._apply_baseline_by_probability(active_scenarios, user_id=user_id)
 
@@ -440,20 +536,85 @@ class ScenarioService:
                 converted[key] = value
         return self._normalize_dimension_values_object(converted)
 
-    def _row_to_scenario_payload(
+    def _generate_new_row_details(
+        self,
+        event_data: dict[str, Any] | None,
+        dimension_values_list: list[ScenarioDimensionValues],
+    ) -> list[NewScenarioGeneratedDetails]:
+        if not dimension_values_list:
+            return []
+        if event_data is None:
+            raise ValueError("event_data is required to create new scenario rows")
+
+        from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+            stage1_build_context_pack,
+            stage4_synthesize_fixed_scenarios,
+            stage5_validate,
+        )
+
+        pack = stage1_build_context_pack(event_data)
+        stage4 = stage4_synthesize_fixed_scenarios(
+            pack,
+            [
+                {str(key): str(value) for key, value in dimension_values.items()}
+                for dimension_values in dimension_values_list
+            ],
+        )
+        stage5 = stage5_validate(pack, stage4)
+        likelihoods = [
+            stage5.likelihood_prior.get(scenario.scenario_id, "medium")
+            for scenario in stage4.scenarios
+        ]
+        details: list[NewScenarioGeneratedDetails] = []
+        for scenario, likelihood in zip(stage4.scenarios, likelihoods):
+            details.append(
+                NewScenarioGeneratedDetails(
+                    narrative=scenario.description,
+                    probability_weight=Decimal(
+                        _LIKELIHOOD_WEIGHTS.get(
+                            likelihood,
+                            _LIKELIHOOD_WEIGHTS["medium"],
+                        )
+                    ),
+                    probability_delta=Decimal("0.0"),
+                    impact_jkm=scenario.price_direction.jkm,
+                    impact_ttf=scenario.price_direction.ttf,
+                    impact_hh=scenario.price_direction.hh,
+                )
+            )
+        return details
+
+    def _row_to_existing_scenario_payload(
+        self,
+        *,
+        event_type_l2_id: int,
+        row: ScenarioSyncRowPayload,
+        user_id: int,
+    ) -> ExistingScenarioUpdatePayload:
+        return {
+            "title": (row.get("title") or "")[:255],
+            "dimension_values": self.cells_to_dimension_values(
+                event_type_l2_id,
+                row.get("cells") or {},
+            ),
+            "display_order": int(row.get("display_order") or 0),
+            "mod_usr_logn_id": user_id,
+        }
+
+    def _row_to_new_scenario_payload(
         self,
         *,
         scenario_group_id: int,
         event_type_l2_id: int,
-        row: dict[str, Any],
+        row: ScenarioSyncRowPayload,
         user_id: int,
-        status: str,
-    ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+        generated_details: NewScenarioGeneratedDetails,
+    ) -> NewScenarioInsertPayload:
+        return {
             "scenario_group_id": scenario_group_id,
             "title": (row.get("title") or "")[:255],
-            "narrative": row.get("narrative") or "",
-            "status": status,
+            "narrative": generated_details.narrative,
+            "status": ScenarioStatus.CREATING.value,
             "dimension_values": self.cells_to_dimension_values(
                 event_type_l2_id,
                 row.get("cells") or {},
@@ -462,31 +623,21 @@ class ScenarioService:
             "baseline_yn": "N",
             "crt_usr_logn_id": user_id,
             "mod_usr_logn_id": user_id,
+            "probability_score": generated_details.probability_weight,
+            "probability_delta": generated_details.probability_delta,
+            "impact_jkm": generated_details.impact_jkm,
+            "impact_ttf": generated_details.impact_ttf,
+            "impact_hh": generated_details.impact_hh,
         }
-        metrics = row.get("metrics") or {}
-        payload["probability_score"] = metrics.get("probability_score")
-        payload["probability_delta"] = metrics.get("probability_delta")
-
-        impact = row.get("impact") or {}
-        payload["impact_jkm"] = impact.get("jkm")
-        payload["impact_ttf"] = impact.get("ttf")
-        payload["impact_hh"] = impact.get("hh")
-        return payload
 
     def _scenario_requires_update(
         self,
         scenario: Any,
-        payload: dict[str, Any],
+        payload: ExistingScenarioUpdatePayload,
     ) -> bool:
         for field in (
             "title",
-            "narrative",
             "dimension_values",
-            "probability_score",
-            "probability_delta",
-            "impact_jkm",
-            "impact_ttf",
-            "impact_hh",
             "display_order",
         ):
             if self._normalize_compare_value(getattr(scenario, field)) != (
@@ -504,6 +655,28 @@ class ScenarioService:
             except Exception:
                 return value
         return value
+
+    def _normalize_active_probability_scores(
+        self,
+        scenarios: list[Any],
+        *,
+        user_id: int,
+    ) -> None:
+        raw_scores: list[Decimal] = []
+        for scenario in scenarios:
+            score = getattr(scenario, "probability_score", None)
+            if score is None:
+                return
+            raw_scores.append(Decimal(str(score)))
+
+        normalized_scores = _normalize_decimal_scores_to_100(raw_scores)
+        for scenario, probability_score in zip(scenarios, normalized_scores):
+            if self._normalize_compare_value(scenario.probability_score) == (
+                self._normalize_compare_value(probability_score)
+            ):
+                continue
+            scenario.probability_score = probability_score
+            scenario.mod_usr_logn_id = user_id
 
     def _apply_baseline_by_probability(
         self,
