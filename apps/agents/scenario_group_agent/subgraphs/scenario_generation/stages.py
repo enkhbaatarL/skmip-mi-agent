@@ -11,6 +11,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline imp
     stage4_synthesize_scenarios,
     stage5_validate,
     stage6_quick_validate,
+    stage_generate_scenario_group_metadata,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
@@ -121,6 +122,11 @@ def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
         state.stage1_context_pack,
         state.stage4_scenario_synthesis,
     )
+    scenario_group_metadata = stage_generate_scenario_group_metadata(
+        state.stage1_context_pack,
+        state.event_data,
+        state.stage4_scenario_synthesis,
+    )
     event_type_l2_id = int(state.event_data.get("event_type_l2_id") or 0)
     stage4 = state.stage4_scenario_synthesis
     return {
@@ -134,6 +140,7 @@ def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
             "stage3_value_selection": state.stage3_value_selection.model_dump(),
             "stage4_scenario_synthesis": stage4.model_dump(),
             "stage5_validation": stage5.model_dump(),
+            "scenario_group_metadata": scenario_group_metadata.model_dump(),
             "cartesian_total": stage4.cartesian_total,
             "filtered_by_compatibility": stage4.filtered_by_compatibility,
             "scenario_count": len(stage4.scenarios),

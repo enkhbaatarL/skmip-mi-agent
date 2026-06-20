@@ -75,7 +75,7 @@ def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
             or f"Scenario group {state.event_data['mi_event_id']}"
         )[:255],
         "summary": state.event_data.get("one_line_summary"),
-        "description": state.event_data.get("detail_analysis"),
+        "description": None, #initialize
         "dimension_selected": [],
         "scenario_count": 0,
         "status": ScenarioGroupStatus.CREATING.value,
@@ -98,6 +98,7 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
 
     stage2 = state.scenario_result.get("stage2_dimension_selection", {}) or {}
     stage4 = state.scenario_result.get("stage4_scenario_synthesis", {}) or {}
+    scenario_group_metadata = state.scenario_result.get("scenario_group_metadata", {}) or {}
     selected_dimensions = stage2.get("selected_dimensions", []) or []
     dimension_selected = [
         item.get("dim_key")
@@ -109,11 +110,15 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
         "event_type_l2_id": int(state.event_data["event_type_l2_id"]),
         "request_usr_id": state.user_id,
         "title": (
-            state.event_data.get("event_title_ko")
+            scenario_group_metadata.get("title")
+            or state.event_data.get("event_title_ko")
             or f"Scenario group {state.event_data['mi_event_id']}"
         )[:255],
         "summary": state.event_data.get("one_line_summary"),
-        "description": state.event_data.get("detail_analysis"),
+        "description": (
+            scenario_group_metadata.get("description")
+            or state.event_data.get("detail_analysis")
+        ),
         "dimension_selected": dimension_selected,
         "scenario_count": len(stage4.get("scenarios", []) or []),
         "status": ScenarioGroupStatus.CREATING.value,
@@ -136,6 +141,7 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
 
     stage2 = state.scenario_result.get("stage2_dimension_selection", {}) or {}
+    scenario_group_metadata = state.scenario_result.get("scenario_group_metadata", {}) or {}
     selected_dimensions = stage2.get("selected_dimensions", []) or []
     dimension_selected = [
         item.get("dim_key")
@@ -156,6 +162,8 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         status=ScenarioGroupStatus.CREATING,
         stage=ScenarioGroupStage.SCENARIO_CREATED,
         dimension_selected=dimension_selected,
+        title=scenario_group_metadata.get("title"),
+        description=scenario_group_metadata.get("description"),
         user_id=state.user_id,
     )
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)

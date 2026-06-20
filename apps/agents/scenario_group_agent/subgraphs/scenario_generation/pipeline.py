@@ -210,12 +210,12 @@ class PriceDirection(BaseModel):
 
 class Scenario(BaseModel):
     scenario_id: str = Field(description="S_01 형태")
-    title: str = Field(description="시장 참여자 관점 한 줄 요약")
+    title: str = Field(description="시장 참여자 관점 한 줄 요약. 공백과 문장부호를 포함해 100자 이내.")
     dimension_values: Dict[str, str] = Field(
         description="dim_key -> value 의 1:1 매핑.",
     )
     description: str = Field(
-        description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술.",
+        description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술. 공백과 문장부호를 포함해 300~500자.",
     )
     derivation_rationale: str = Field(
         description="이 시나리오를 도출한 근거.",
@@ -251,6 +251,11 @@ class Stage5Validation(BaseModel):
     )
 
 
+class ScenarioGroupMetadata(BaseModel):
+    title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 400~500자.")
+
+
 # ==============================================
 # 3. LLM Output Models (internal, not part of state)
 # ==============================================
@@ -280,8 +285,8 @@ class _Stage3SingleDimOutput(BaseModel):
 
 
 class _NarrativeOnly(BaseModel):
-    title: str = Field(description="시장 참여자 관점 한 줄 요약")
-    description: str = Field(description="3~5줄 시나리오 서술")
+    title: str = Field(description="시장 참여자 관점 한 줄 요약. 공백과 문장부호를 포함해 100자 이내.")
+    description: str = Field(description="3~5줄 시나리오 서술. 공백과 문장부호를 포함해 300~500자.")
     derivation_rationale: str = Field(description="도출 근거")
     price_direction: PriceDirection
 
@@ -298,6 +303,11 @@ class _Stage5LLMOutput(BaseModel):
     likelihood_prior: Dict[str, LikelihoodTier] = Field(
         description="scenario_id -> 5단계 Prior",
     )
+
+
+class _ScenarioGroupMetadataOutput(BaseModel):
+    title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 400~500자.")
 
 
 # ==============================================
@@ -975,8 +985,8 @@ STAGE4_SYSTEM = """\
 시장 참여자 관점의 시나리오 서사를 작성하십시오.
 
 ## 작성 가이드라인 (반드시 준수)
-- title (1줄): 시장 참여자 관점의 한 줄 요약. 예: '1개월 내 정상화'.
-- description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상.
+- title (1줄): 시장 참여자 관점의 한 줄 요약. 공백과 문장부호를 포함해 100자 이내. 예: '1개월 내 정상화'.
+- description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상. 공백과 문장부호를 포함해 300~500자.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
 - price_direction.jkm / ttf / hh: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
 - 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
@@ -1029,7 +1039,8 @@ STAGE4_HARD = """\
 [중요한 출력 제약 — Stage 4]
 - narratives 길이는 입력 조합 수와 정확히 일치.
 - price_direction.jkm / ttf / hh 는 반드시 7단계 enum 중 정확히 1개.
-- description 은 3~5줄, title 은 1줄.
+- title 은 1줄이며, 공백과 문장부호를 포함해 100자 이내.
+- description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자.
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
 - 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
 - 입력 조합의 key 집합은 selected dim_key 와 정확히 일치해야 함(누락/여분 금지).
@@ -1095,8 +1106,8 @@ def stage4_synthesize_scenarios(
 
 ## 산출 규칙
 - narratives 길이 = {len(target)}.
-- 각 narrative 의 description 은 3~5줄.
-- title 은 한 줄.
+- 각 narrative 의 title 은 한 줄이며, 공백과 문장부호를 포함해 100자 이내.
+- 각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자.
 {feedback_block}"""
 
     def _validate(out: _Stage4LLMOutput) -> None:
@@ -1199,8 +1210,8 @@ def stage4_synthesize_fixed_scenarios(
 
 ## 산출 규칙
 - narratives 길이 = {len(target)}.
-- 각 narrative 의 description 은 3~5줄.
-- title 은 한 줄.
+- 각 narrative 의 title 은 한 줄이며, 공백과 문장부호를 포함해 100자 이내.
+- 각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자.
 """
 
     def _validate(out: _Stage4LLMOutput) -> None:
@@ -1245,7 +1256,68 @@ def stage4_synthesize_fixed_scenarios(
 
 
 # ==============================================
-# 10. Stage 5 — Validation (MECE + Likelihood LLM)
+# 10. Scenario Group Metadata (LLM)
+# ==============================================
+
+SCENARIO_GROUP_METADATA_SYSTEM = """\
+당신은 LNG 멀티시나리오 결과를 사용자 화면에 표시할 'Scenario Group Metadata Writer' 입니다.
+Base Event와 생성된 시나리오 목록을 입력받아 시나리오 그룹명과 그룹 설명을 작성하십시오.
+"""
+
+SCENARIO_GROUP_METADATA_RULES = """\
+[중요한 출력 제약 — Scenario Group Metadata]
+- title 은 공백과 문장부호를 포함해 100자 이내.
+- description 은 공백과 문장부호를 포함해 400~500자.
+- description은 기존 detail_analysis를 그대로 복사하지 말고, 시나리오 그룹의 목적과 주요 분기 축을 압축 요약하십시오.
+- 새 수치나 근거 없는 사실을 만들지 마십시오.
+"""
+
+
+@log_tool
+def stage_generate_scenario_group_metadata(
+    pack: Stage1ContextPack,
+    event: Dict,
+    stage4: Stage4ScenarioSynthesis,
+    llm_client=None,
+) -> ScenarioGroupMetadata:
+    """Generate scenario group title/description for UI display."""
+    detail_excerpt = _shorten(event.get("detail_analysis", ""), 1200)
+    scenarios_block = "\n".join(
+        f"- {scenario.scenario_id}: {scenario.title} | "
+        f"dims={', '.join(f'{key}={value}' for key, value in scenario.dimension_values.items())}"
+        for scenario in stage4.scenarios
+    )
+    user_prompt = f"""\
+## Base Event
+- title: {pack.C1_base_event.title}
+- summary: {pack.C1_base_event.summary}
+- driver: {pack.C1_base_event.driver}
+- detail_analysis(참고용 발췌): {detail_excerpt}
+
+## 생성된 시나리오 목록 ({len(stage4.scenarios)}건)
+{scenarios_block}
+"""
+
+    out = _invoke_with_retry(
+        stage_label="Scenario Group Metadata",
+        schema_cls=_ScenarioGroupMetadataOutput,
+        system_prompt=SCENARIO_GROUP_METADATA_SYSTEM,
+        user_prompt=user_prompt,
+        validate_fn=None,
+        hard_constraints=SCENARIO_GROUP_METADATA_RULES,
+    )
+
+    if out is None:
+        return ScenarioGroupMetadata(
+            title=pack.C1_base_event.title or f"Scenario group {pack.C1_base_event.event_id}",
+            description=pack.C1_base_event.summary or "",
+        )
+
+    return ScenarioGroupMetadata(title=out.title, description=out.description)
+
+
+# ==============================================
+# 11. Stage 5 — Validation (MECE + Likelihood LLM)
 # ==============================================
 
 STAGE5_SYSTEM = """\
