@@ -34,5 +34,5 @@ def test_scenario_group_metadata_prompt_includes_text_length_guidance() -> None:
     assert "Scenario Group Metadata Writer" in source
     assert "SCENARIO_GROUP_METADATA_RULES" in source
     assert "title 은 공백과 문장부호를 포함해 100자 이내." in source
-    assert "description 은 공백과 문장부호를 포함해 400~500자." in source
+    assert "description 은 공백과 문장부호를 포함해 300~400자." in source
     assert "기존 detail_analysis를 그대로 복사하지 말고" in source
