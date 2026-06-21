@@ -253,7 +253,7 @@ class Stage5Validation(BaseModel):
 
 class ScenarioGroupMetadata(BaseModel):
     title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
-    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 400~500자.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300~400자.")
 
 
 # ==============================================
@@ -307,7 +307,7 @@ class _Stage5LLMOutput(BaseModel):
 
 class _ScenarioGroupMetadataOutput(BaseModel):
     title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
-    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 400~500자.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300~400자.")
 
 
 # ==============================================
@@ -1267,7 +1267,7 @@ Base Event와 생성된 시나리오 목록을 입력받아 시나리오 그룹�
 SCENARIO_GROUP_METADATA_RULES = """\
 [중요한 출력 제약 — Scenario Group Metadata]
 - title 은 공백과 문장부호를 포함해 100자 이내.
-- description 은 공백과 문장부호를 포함해 400~500자.
+- description 은 공백과 문장부호를 포함해 300~400자.
 - description은 기존 detail_analysis를 그대로 복사하지 말고, 시나리오 그룹의 목적과 주요 분기 축을 압축 요약하십시오.
 - 새 수치나 근거 없는 사실을 만들지 마십시오.
 """
