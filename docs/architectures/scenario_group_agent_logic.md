@@ -361,10 +361,12 @@ flowchart LR
 
 ### 입력과 출력 변환
 
-`ValidateScenariosIn`은 `user_id`와 `table`(ScenarioTable)을 받는다.
+`ValidateScenariosIn`은 `user_id`와 `table`(`ValidateScenariosTableIn`)을 받는다.
+validation 요청 row는 `scenario_id`, `display_order`, `title`, `cells`만 허용한다.
 `to_state`는 `request_table=parsed.table.model_dump()`를 state에 설정한다.
 
 `to_output`은 `is_valid`, `reason`, `scenario_group`(id, status, stage), `table`을 반환한다.
+응답의 `table`은 보정된 `request_table`을 `ScenarioTable`로 검증해 구성한다.
 
 ### Node 책임
 
@@ -378,20 +380,141 @@ flowchart LR
 
 #### `generate_dimension_values` 상세
 
-요청 table에서 header가 있지만 모든 row의 해당 cell이 `null`인 dimension을 **새로 추가된 dimension**으로
-판별하고, LLM(`generate_new_dimension_values`)을 호출해 각 row에 값을 채워 `request_table`을 갱신한다.
+`generate_dimension_values`는 validation 요청 table을 review 가능한 형태로 보정하는 전처리 node다.
+주 역할은 다음 둘이다.
 
-필수 dimension 누락 또는 기존 scenario의 cell 값이 누락된 경우에는 LLM 호출 없이 즉시
+1. template 기준 필수 dimension이 요청 header에 포함되어 있는지 확인한다.
+2. 사용자가 새 dimension column을 추가했지만 값을 비워 둔 경우, 각 scenario row의 값을 자동 생성한다.
+
+##### 입력 기준
+
+| 데이터 | 출처 | 용도 |
+|---|---|---|
+| `request_table.headers` | validation 요청 | 화면에 존재하는 dimension key 집합 |
+| `request_table.rows[].cells` | validation 요청 | scenario별 현재 dimension value |
+| `scenario_group.event_type_l2_id` | DB group | scenario template 조회 |
+| `state.scenarios` | DB scenario | 기존 scenario의 title/narrative 보강 |
+
+node는 `ScenarioService.load_scenario_template(event_type_l2_id)`로 template을 다시 조회한다.
+`load_scenarios`에서 넣은 `dimension_template`은 review context용 dict 목록이고,
+`generate_dimension_values`는 required flag와 enum label이 필요하므로 `ScenarioTemplate` 모델을 별도로 사용한다.
+
+##### 필수 dimension 검증
+
+template의 `dimensions[].required=True`인 dimension key가 요청 header에 없으면 즉시
+`SCENARIO_VALIDATION_INPUT_ERROR`를 raise한다. 이 검증은 row 값 생성보다 먼저 수행된다.
+
+```text
+required_keys = template.dimensions where required=True
+header_keys = request_table.headers[].key
+missing_required = required_keys - header_keys
+```
+
+에러 메시지에는 가능한 경우 template의 `label_ko`를 사용한다.
+
+##### 새 dimension 판별
+
+요청 header에는 존재하지만 모든 row에서 해당 cell 값이 없거나 `null`인 key를
+**새로 추가된 dimension**으로 본다.
+
+```text
+new_dimensions =
+  header key 중
+  rows가 있고
+  모든 row.cells[key]가 없거나 null인 key
+```
+
+중요한 점은 “template에는 있는데 DB에 없던 dimension”인지 직접 비교하지 않는다는 것이다.
+현재 판별 기준은 요청 table의 값 상태다. 따라서 일부 row라도 값이 들어 있으면 그 column은 자동 생성 대상이
+아니라 사용자가 직접 관리하는 column으로 취급된다.
+
+##### 신규 scenario row의 입력 검증
+
+`scenario_id is None`인 row는 validation 전에 사용자가 새로 추가한 scenario다. 이 경우 row의 `cells`에
+포함된 항목 중 자동 생성 대상이 아닌 cell 값이 `null`이면 LLM 호출 없이 즉시
 `SCENARIO_VALIDATION_INPUT_ERROR`를 raise한다.
+
+```text
+신규 scenario row에서
+  row.cells.items()에 포함된 value is null
+  and key not in new_dimensions
+이면 입력 오류
+```
+
+즉, 새 dimension column 전체를 비워 둔 경우는 자동 생성 대상이지만, 신규 scenario의 기존 dimension 값을
+부분적으로 `null`로 보내는 것은 허용하지 않는다. 다만 현재 구현은 header에는 있지만 신규 row의 `cells`
+dict에 아예 없는 key까지 이 단계에서 누락으로 판정하지는 않는다.
+
+##### LLM 생성 입력 보강
+
+새 dimension이 있으면 `generate_new_dimension_values(template, rows, new_dimensions)`를 호출한다.
+이때 기존 scenario row(`scenario_id != null`)는 DB에 저장된 title/narrative를 보강해서 LLM에 전달한다.
+
+- 요청 row의 title이 비어 있으면 DB scenario title을 사용한다.
+- DB scenario narrative를 LLM 입력에만 추가한다.
+- 보강한 narrative는 callback의 `request_table` row에 되돌려 넣지 않는다.
+
+이 처리는 validation 요청 schema가 row의 수정 가능 필드를 제한하기 때문에 필요하다.
+사용자가 validation 요청에서 narrative를 보내지 않아도 LLM은 기존 scenario 서술을 참고할 수 있다.
+
+##### 생성값 정규화와 fallback
+
+`generate_new_dimension_values`는 새 dimension별 enum label 목록을 prompt에 포함해 structured-output LLM을
+호출한다. LLM 응답은 다음 기준으로 필터링된다.
+
+- `dim_key`가 생성 대상 dimension이어야 한다.
+- `scenario_index`가 요청 row 범위 안이어야 한다.
+- `value`가 해당 dimension의 enum label 중 하나여야 한다.
+
+LLM이 enum 밖 값을 반환하거나 일부 cell을 누락하면 해당 값은 버리고, 누락된
+`(scenario_index, dim_key)` 조합은 결정론적 fallback으로 해당 dimension의 첫 번째 enum label을 사용한다.
+LLM 호출 자체가 실패해도 동일한 fallback으로 모든 누락 cell을 채운다.
+
+##### request_table 갱신 규칙
+
+생성 결과는 기존 cell이 `null`인 경우에만 채운다.
+
+```text
+for each generated value:
+  if row.cells[key] is null:
+    row.cells[key] = generated_value
+```
+
+이미 사용자가 입력한 값은 덮어쓰지 않는다. node 반환값은 갱신된 `request_table`뿐이며,
+이후 `validate_scenarios`는 이 보정된 table을 기준으로 review context를 만든다.
+
+##### 현재 한계
+
+이 node가 enum membership을 강제하는 범위는 **자동 생성된 새 dimension 값**뿐이다.
+사용자가 직접 입력한 `cells` 값이 template enum label에 포함되는지는 여기서 검증하지 않는다.
+따라서 화면 편집 단계에서 template enum 밖 사용자 정의 값을 허용하려면, validation 정책은
+“직접 입력값은 자유값, 자동 생성값은 template enum 값”이라는 구분을 명시해야 한다.
 
 #### `validate_scenarios` 상세
 
-`build_context(group, requested_rows, persisted_scenarios, template_dims)`로 context를 구성한 뒤
-`run_review(context)`가 검토 리포트를 반환한다. 리포트에는 verdict(`PASS | REVIEW | BLOCK`),
-summary, checks 목록이 포함된다.
+`build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)`로 context를 구성한 뒤
+`run_review(context)`가 검토 리포트를 반환한다. validation review의 검사 대상 dimension은
+DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].key`를 기준으로 한다.
+따라서 요청 table에 없는 dimension은 DB에 selected로 남아 있어도 R01/R02 검사 대상에서 제외된다.
+리포트에는 verdict(`PASS | REVIEW | BLOCK`), summary, checks 목록이 포함된다.
 
-- `is_valid=True`: verdict가 `PASS` 또는 `REVIEW`
-- `is_valid=False`: verdict가 `BLOCK`
+##### `run_review` 검사 규칙 (R01~R05)
+
+| 규칙 | 목적 | 현재 동작 | enum/custom 영향 |
+|---|---|---|---|
+| R01 baseline contrast coverage | baseline 대비 시나리오 구분력 확인 | 각 selected dimension에서 baseline과 다른 값이 최소 1개 이상 존재하는지 검사 | enum 순서나 tail flag가 아니라 실제 값 문자열 비교로 판단 |
+| R02 value diversity | dimension별 값 다양성 확인 | 각 selected dimension에서 서로 다른 값이 2개 이상인지 검사 | custom text도 일반 값으로 집계되므로 동의어가 다양성으로 과대 계산될 수 있음 |
+| R03 compatibility | 값 조합의 물리/논리 정합성 확인 | scenario별 dimension value 조합과 narrative를 LLM에 전달해 모순 여부를 평가 | enum 밖 custom value도 그대로 검토 입력에 포함 |
+| R04 MECE | 시나리오 조합 중복 방지 | 모든 dimension value 조합이 완전히 동일한 scenario 쌍을 탐지 | 문자열 완전 일치 비교이므로 표기 차이가 있으면 중복으로 잡히지 않을 수 있음 |
+| R05 probability range | 수치 범위 유효성 확인 | 확률(0~100), 증감(-100~100) 검사 함수가 있으나 현재 `run_review`에서는 비활성 | 현재 validation verdict에 영향 없음 |
+
+추가로, 요청 table이 DB의 create 결과와 완전히 동일하면 review를 skip하고 PASS를 반환한다.
+
+- `is_valid=True`: verdict가 `PASS`
+- `is_valid=False`: verdict가 `REVIEW`
+
+현재 review는 모든 검사 실패를 `WARN`으로 분류하므로 `BLOCK` verdict를 생성하지 않는다.
+`WARN`이 하나라도 있으면 verdict는 `REVIEW`가 되고, `is_valid=False`로 반환된다.
 
 ## Confirm Generation Flow
 

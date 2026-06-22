@@ -9,6 +9,7 @@ from apps.agents.scenario_group_agent.persistence.scenario.service import (
 from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
     ScenarioGroupService,
 )
+from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -16,6 +17,15 @@ from apps.agents.scenario_group_agent.schemas.enums import (
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+def _existing_group_state_update(
+    scenario_group: ScenarioGroupPayload,
+) -> dict[str, Any]:
+    return {
+        "scenario_group_id": scenario_group.scenario_group_id,
+        "scenario_group": scenario_group.model_dump(),
+    }
 
 
 def load_event(state: ScenarioDesignState) -> dict[str, Any]:
@@ -35,8 +45,12 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
         # 새로 생성
         return {}
     if existing.stage == ScenarioGroupStage.READY.value:
-        # async API로 create scenario group 요청했는데, 실패해서 다시 시도했을 경우
-        return {}
+        if existing.request_usr_id != state.user_id:
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
+            )
+        return _existing_group_state_update(existing)
     if existing.status == ScenarioGroupStatus.CREATING.value:
         if existing.request_usr_id == state.user_id:
             raise MIBaseError(
@@ -126,7 +140,10 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
         "crt_usr_logn_id": state.user_id,
         "mod_usr_logn_id": state.user_id,
     }
-    scenario_group_id = ScenarioGroupService().create_group(payload)
+    if state.scenario_group_id is not None:
+        scenario_group_id = state.scenario_group_id
+    else:
+        scenario_group_id = ScenarioGroupService().create_group(payload)
     scenario_result = dict(state.scenario_result)
     scenario_result["scenario_group_id"] = scenario_group_id
     return {"scenario_group_id": scenario_group_id, "scenario_result": scenario_result}

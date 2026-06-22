@@ -14,6 +14,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenarios,
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
+from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
 from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosOut
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
@@ -38,13 +39,22 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
     """event 로드 → 기존 그룹 확인 → group row INSERT. 반환값으로 200 응답을 구성한다."""
     state = ScenarioDesignState(mi_event_id=mi_event_id, user_id=user_id)
     state = state.model_copy(update=load_event(state))
-    check_existing_scenario_group(state)  # 충돌·중복 시 MIBaseError raise
-    group_result = create_group_record(state)
-    group = group_result.get("scenario_group") or {}
+    existing_group_result = check_existing_scenario_group(state)  # 충돌·중복 시 MIBaseError raise
+    state = state.model_copy(update=existing_group_result)
+    if state.scenario_group_id is None:
+        state = state.model_copy(update=create_group_record(state))
+    if state.scenario_group_id is None:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group ID not found in state")
+
+    group = (
+        ScenarioGroupPayload.model_validate(state.scenario_group)
+        if state.scenario_group
+        else None
+    )
     return {
-        "scenario_group_id": group_result["scenario_group_id"],
-        "status": group.get("status", ScenarioGroupStatus.CREATING.value),
-        "stage": group.get("stage", ScenarioGroupStage.READY.value),
+        "scenario_group_id": state.scenario_group_id,
+        "status": group.status if group else ScenarioGroupStatus.CREATING.value,
+        "stage": group.stage if group else ScenarioGroupStage.READY.value,
         "event_data": state.event_data,
         "user_id": user_id,
     }

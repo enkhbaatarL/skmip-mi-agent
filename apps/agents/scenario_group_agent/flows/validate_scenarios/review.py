@@ -108,6 +108,7 @@ def build_context(
     requested_rows: list[dict[str, Any]],
     persisted_scenarios: list[dict[str, Any]],
     template_dims: list[dict[str, Any]],
+    requested_headers: list[dict[str, Any]] | None = None,
 ) -> ReviewContext:
     persisted_by_id = {
         int(scenario["scenario_id"]): scenario for scenario in persisted_scenarios
@@ -131,16 +132,31 @@ def build_context(
         key: [str(value) for value in dimension.get("value_enums", [])]
         for key, dimension in dim_index.items()
     }
+    selected_dims = _selected_dims_from_headers(requested_headers)
+    if selected_dims is None:
+        selected_dims = [str(key) for key in group.get("dimension_selected") or []]
     apply_single_baseline_by_probability(scenarios)
     return ReviewContext(
         group=group,
         scenarios=scenarios,
         template_dims=template_dims,
-        selected_dims=[str(key) for key in group.get("dimension_selected") or []],
+        selected_dims=selected_dims,
         dim_index=dim_index,
         enum_index=enum_index,
         unchanged=_is_request_unchanged(requested_rows, persisted_scenarios),
     )
+
+
+def _selected_dims_from_headers(
+    requested_headers: list[dict[str, Any]] | None,
+) -> list[str] | None:
+    if requested_headers is None:
+        return None
+    return [
+        str(header["key"])
+        for header in requested_headers
+        if isinstance(header, dict) and header.get("key")
+    ]
 
 
 def _norm_compare_value(value: Any) -> Any:

@@ -122,6 +122,46 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         # R05(확률/증감 값 범위)는 비활성화되어 검사 4종(R01~R04)만 수행된다.
         assert report.summary == {"PASS": 4, "WARN": 0, "FAIL": 0, "INFO": 0}
 
+    async def test_requested_headers_define_review_dimensions(self) -> None:
+        group = {
+            **GROUP,
+            "dimension_selected": ["period", "severity", "recovery"],
+        }
+        template = [
+            *TEMPLATE,
+            {
+                "dim_key": "recovery",
+                "label": "회복",
+                "value_enums": ["빠름", "느림"],
+            },
+        ]
+        requested_headers = [
+            {"key": "period", "label": "기간", "display_order": 1},
+            {"key": "severity", "label": "강도", "display_order": 2},
+        ]
+        context = build_context(
+            group,
+            ROWS,
+            PERSISTED_SCENARIOS,
+            template,
+            requested_headers=requested_headers,
+        )
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert context.selected_dims == ["period", "severity"]
+        assert report.verdict == "PASS"
+        assert report.summary == {"PASS": 4, "WARN": 0, "FAIL": 0, "INFO": 0}
+
     async def test_unchanged_request_skips_review(self) -> None:
         # 요청 본문이 DB(create scenario 결과)와 정확히 일치하면 사용자가 수정한
         # 것이 없으므로 어떤 warning 도 발생시키지 않고 통과 처리한다.
@@ -527,6 +567,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                         brent="neutral",
                         jkm="neutral",
                         ttf="neutral",
+                        hh="neutral",
                     ),
                 )
             ],
