@@ -63,11 +63,6 @@ logs/
 .vscode/settings.json
 
 # =========================
-# Poetry
-# =========================
-poetry.lock
-
-# =========================
 # Local database / temp files
 # =========================
 *.sqlite3
@@ -82,6 +77,9 @@ uploads/
 downloads/
 artifacts/
 cache/
+release-artifacts/
+skmip-mi-agent_*_linux-amd64.tar.gz
+skmip-mi-agent_*_linux-amd64.bundle.zip
 
 # =========================
 # macOS

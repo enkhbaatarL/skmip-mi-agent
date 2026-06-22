@@ -1,0 +1,4 @@
+interface:
+  display_name: "MI Source Import"
+  short_description: "Build MI source import bundles."
+  default_prompt: "Use $mi-source-banib to create a source import bundle for the current MI repo release tag and provide the internal import steps."
