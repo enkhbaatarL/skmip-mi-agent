@@ -37,8 +37,8 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         stmt = select(MiScenarioGroupModel).where(
             MiScenarioGroupModel.mi_event_id == mi_event_id,
             MiScenarioGroupModel.del_yn == "N",
-        )
-        return self.session.execute(stmt).scalars().one_or_none()
+        ).order_by(MiScenarioGroupModel.scenario_group_id.desc()).limit(1)
+        return self.session.execute(stmt).scalars().first()
 
     def insert_group(self, payload: dict[str, Any]) -> int:
         group = MiScenarioGroupModel(**payload)

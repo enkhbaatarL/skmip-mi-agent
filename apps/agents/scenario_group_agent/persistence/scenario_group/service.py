@@ -18,9 +18,7 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.repository impo
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
-    MiScenarioGroupModel,
-)
+from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -134,7 +132,7 @@ class ScenarioGroupService:
         finally:
             session.close()
 
-    def load_by_mi_event_id(self, mi_event_id: int) -> MiScenarioGroupModel | None:
+    def load_by_mi_event_id(self, mi_event_id: int) -> ScenarioGroupPayload | None:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -142,7 +140,10 @@ class ScenarioGroupService:
         session = get_sync_session()
         try:
             repository = ScenarioGroupRepository(session=session)
-            return repository.fetch_by_mi_event_id(mi_event_id)
+            group = repository.fetch_by_mi_event_id(mi_event_id)
+            if group is None:
+                return None
+            return ScenarioGroupPayload.model_validate(repository.model_to_dict(group))
         finally:
             session.close()
 

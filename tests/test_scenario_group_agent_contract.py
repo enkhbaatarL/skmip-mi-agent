@@ -23,9 +23,13 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
 )
 from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
+    check_existing_scenario_group,
     create_group_record,
     save_scenario_group,
     save_scenarios,
+)
+from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
+    prepare_create_scenarios,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     load_scenario_group as load_validation_scenario_group,
@@ -38,6 +42,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.flow import build_g
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
+from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
 from apps.agents.scenario_group_agent.schemas.confirm_generation import (
     ConfirmGenerationIn,
 )
@@ -238,6 +243,77 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert payload.mi_event_id == 20
         assert payload.user_id == 101
+
+    def test_ready_existing_group_is_reused_for_create_scenarios(self) -> None:
+        state = ScenarioDesignState(mi_event_id=20, user_id=101)
+        existing = ScenarioGroupPayload.model_validate({
+            "scenario_group_id": 10,
+            "mi_event_id": 20,
+            "event_type_l2_id": 30,
+            "request_usr_id": 101,
+            "title": "group",
+            "summary": None,
+            "description": None,
+            "dimension_selected": [],
+            "scenario_count": 0,
+            "status": "creating",
+            "stage": "ready",
+        })
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+            "ScenarioGroupService.load_by_mi_event_id",
+            return_value=existing,
+        ):
+            result = check_existing_scenario_group(state)
+
+        assert result["scenario_group_id"] == 10
+        assert result["scenario_group"]["stage"] == "ready"
+
+    def test_prepare_create_scenarios_reuses_ready_group_without_insert(
+        self,
+    ) -> None:
+        event_data = {
+            "mi_event_id": 20,
+            "event_type_l2_id": 30,
+            "event_title_ko": "event",
+        }
+        existing = ScenarioGroupPayload.model_validate({
+            "scenario_group_id": 10,
+            "mi_event_id": 20,
+            "event_type_l2_id": 30,
+            "request_usr_id": 101,
+            "title": "group",
+            "summary": None,
+            "description": None,
+            "dimension_selected": [],
+            "scenario_count": 0,
+            "status": "creating",
+            "stage": "ready",
+        })
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+                "EventService.load_event",
+                return_value=event_data,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+                "ScenarioGroupService.load_by_mi_event_id",
+                return_value=existing,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.flow_async."
+                "create_group_record",
+            ) as create_group_record_mock,
+        ):
+            result = prepare_create_scenarios(mi_event_id=20, user_id=101)
+
+        create_group_record_mock.assert_not_called()
+        assert result["scenario_group_id"] == 10
+        assert result["status"] == "creating"
+        assert result["stage"] == "ready"
 
     def test_create_signposts_request_uses_integer_user_id(self) -> None:
         payload = CreateSignpostsIn.model_validate({"userId": 101, "table": TABLE})
@@ -549,6 +625,33 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload["title"] == "generated group title"
         assert payload["description"] == "generated group description"
         assert payload["summary"] == "event summary"
+
+    def test_save_scenario_group_reuses_existing_group_id(self) -> None:
+        state = ScenarioDesignState(
+            scenario_group_id=10,
+            user_id=101,
+            event_data={
+                "mi_event_id": "20",
+                "event_type_l2_id": 30,
+                "event_title_ko": "event title",
+            },
+            scenario_result={
+                "stage2_dimension_selection": {
+                    "selected_dimensions": [{"dim_key": "period"}],
+                },
+                "stage4_scenario_synthesis": {"scenarios": []},
+            },
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+            "ScenarioGroupService.create_group",
+        ) as create_group:
+            result = save_scenario_group(state)
+
+        create_group.assert_not_called()
+        assert result["scenario_group_id"] == 10
+        assert result["scenario_result"]["scenario_group_id"] == 10
 
     def test_prepare_group_record_leaves_initial_description_empty(self) -> None:
         state = ScenarioDesignState(

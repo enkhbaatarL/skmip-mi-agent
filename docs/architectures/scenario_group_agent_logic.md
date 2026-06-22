@@ -496,6 +496,18 @@ for each generated value:
 `run_review(context)`가 검토 리포트를 반환한다. 리포트에는 verdict(`PASS | REVIEW | BLOCK`),
 summary, checks 목록이 포함된다.
 
+##### `run_review` 검사 규칙 (R01~R05)
+
+| 규칙 | 목적 | 현재 동작 | enum/custom 영향 |
+|---|---|---|---|
+| R01 baseline contrast coverage | baseline 대비 시나리오 구분력 확인 | 각 selected dimension에서 baseline과 다른 값이 최소 1개 이상 존재하는지 검사 | enum 순서나 tail flag가 아니라 실제 값 문자열 비교로 판단 |
+| R02 value diversity | dimension별 값 다양성 확인 | 각 selected dimension에서 서로 다른 값이 2개 이상인지 검사 | custom text도 일반 값으로 집계되므로 동의어가 다양성으로 과대 계산될 수 있음 |
+| R03 compatibility | 값 조합의 물리/논리 정합성 확인 | scenario별 dimension value 조합과 narrative를 LLM에 전달해 모순 여부를 평가 | enum 밖 custom value도 그대로 검토 입력에 포함 |
+| R04 MECE | 시나리오 조합 중복 방지 | 모든 dimension value 조합이 완전히 동일한 scenario 쌍을 탐지 | 문자열 완전 일치 비교이므로 표기 차이가 있으면 중복으로 잡히지 않을 수 있음 |
+| R05 probability range | 수치 범위 유효성 확인 | 확률(0~100), 증감(-100~100) 검사 함수가 있으나 현재 `run_review`에서는 비활성 | 현재 validation verdict에 영향 없음 |
+
+추가로, 요청 table이 DB의 create 결과와 완전히 동일하면 review를 skip하고 PASS를 반환한다.
+
 - `is_valid=True`: verdict가 `PASS`
 - `is_valid=False`: verdict가 `REVIEW`
 
