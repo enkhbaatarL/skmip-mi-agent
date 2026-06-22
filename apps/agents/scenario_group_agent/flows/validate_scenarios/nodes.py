@@ -95,15 +95,24 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
     event_type_l2_id = int((state.scenario_group or {})["event_type_l2_id"])
     template = ScenarioService().load_scenario_template(event_type_l2_id)
 
+    # 시나리오화 템플릿(event type 기준)에서 필수 분기(required=True)와
+    # 선택 분기(required=False)를 식별한다.
     required_keys = [
         dimension.dimension_id
         for dimension in template.dimensions
         if dimension.required
     ]
+    optional_keys = {
+        dimension.dimension_id
+        for dimension in template.dimensions
+        if not dimension.required
+    }
     label_by_key = {
         dimension.dimension_id: dimension.label_ko
         for dimension in template.dimensions
     }
+
+    # 필수 분기는 화면에서 삭제가 막혀 있으므로 헤더(컬럼)에도 반드시 존재해야 한다.
     missing_required = [key for key in required_keys if key not in header_keys]
     if missing_required:
         missing_labels = ", ".join(
@@ -111,47 +120,36 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
         )
         raise MIBaseError(
             ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
-            detail=f"필수 dimension 누락: {missing_labels}",
+            detail=f"필수 분기 누락: {missing_labels}",
         )
 
-    # Agent 초안에 포함된 분기 기준(draft dims)과 나중에 추가된 분기 기준(added dims)을 구분한다.
-    # 초안 분기 = group.dimension_selected ∪ 저장된 시나리오가 이미 가진 dimension_values 키.
-    # added dims 는 Agent 가 값을 채워야 하므로 신규 시나리오에서도 null 을 허용한다.
-    draft_dims: set[str] = {
-        str(key)
-        for key in (state.scenario_group or {}).get("dimension_selected") or []
-    }
-    for scenario in state.scenarios:
-        draft_dims.update(
-            str(key) for key in (scenario.get("dimension_values") or {})
-        )
-    added_dims = {key for key in header_keys if key not in draft_dims}
+    required_header_keys = [
+        key for key in header_key_list if key in set(required_keys)
+    ]
 
-    # 초안 분기 기준 값은 신규/기존 시나리오 모두 null 일 수 없다.
-    #  - 신규 시나리오: 초안 분기 값을 반드시 입력해야 함.
-    #  - 기존 시나리오: 초안 분기로 채워진 값을 사용자가 null 로 비우는 것은 미허용.
-    # 반면 나중에 추가된 분기 기준(added dims)의 null 은 Agent 가 채우므로 허용한다(부분 null 포함).
+    # 필수 분기(required=True) 값은 기존/신규 시나리오 여부와 무관하게 비워 둘 수 없다.
+    #  - 신규 시나리오: 필수 분기 값을 반드시 입력해야 함.
+    #  - 기존 시나리오: 필수 분기 값을 사용자가 null 로 비우는 것은 미허용.
+    # 선택 분기(required=False)의 null 은 아래에서 Agent 가 채우므로 허용한다(부분 null 포함).
     for row in rows:
         cells = row.get("cells") or {}
-        null_draft = [
-            key
-            for key in header_key_list
-            if key not in added_dims and cells.get(key) is None
+        missing_required_values = [
+            key for key in required_header_keys if cells.get(key) is None
         ]
-        if not null_draft:
+        if not missing_required_values:
             continue
         missing_labels = ", ".join(
-            label_by_key.get(key, key) for key in null_draft
+            label_by_key.get(key, key) for key in missing_required_values
         )
         title = row.get("title") or "(제목 없음)"
         if row.get("scenario_id") is None:
             detail = (
-                f"새로 추가된 시나리오 '{title}'의 값을 모두 입력해야 합니다. "
+                f"새로 추가된 시나리오 '{title}'의 필수 분기 값을 모두 입력해야 합니다. "
                 f"누락: {missing_labels}"
             )
         else:
             detail = (
-                f"시나리오 '{title}'의 분기 기준 값은 비워 둘 수 없습니다. "
+                f"시나리오 '{title}'의 필수 분기 값은 비워 둘 수 없습니다. "
                 f"누락: {missing_labels}"
             )
         raise MIBaseError(
@@ -159,12 +157,12 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
             detail=detail,
         )
 
-    # 나중에 추가된 분기 기준(added dims)의 null 만 Agent 가 채운다(부분 null 포함).
-    # 초안 분기 null 은 위에서 이미 에러로 걸러졌다.
+    # 선택 분기(required=False)의 null 만 Agent 가 채운다(부분 null 포함).
+    # 필수 분기 null 은 위에서 이미 에러로 걸러졌다.
     fillable_dims = [
         key
         for key in header_key_list
-        if key in added_dims
+        if key in optional_keys
         and any((row.get("cells") or {}).get(key) is None for row in rows)
     ]
     if fillable_dims:
