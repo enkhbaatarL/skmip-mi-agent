@@ -166,11 +166,13 @@ async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
     if state.status == "failure":
         return {}
     requested_rows = (state.request_table or {}).get("rows", [])
+    requested_headers = (state.request_table or {}).get("headers", [])
     context = build_context(
         group=state.scenario_group or {},
         requested_rows=requested_rows,
         persisted_scenarios=state.scenarios,
         template_dims=state.dimension_template,
+        requested_headers=requested_headers,
     )
     report = await run_review(context)
     validation_result = {

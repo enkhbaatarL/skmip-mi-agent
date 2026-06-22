@@ -492,9 +492,11 @@ for each generated value:
 
 #### `validate_scenarios` 상세
 
-`build_context(group, requested_rows, persisted_scenarios, template_dims)`로 context를 구성한 뒤
-`run_review(context)`가 검토 리포트를 반환한다. 리포트에는 verdict(`PASS | REVIEW | BLOCK`),
-summary, checks 목록이 포함된다.
+`build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)`로 context를 구성한 뒤
+`run_review(context)`가 검토 리포트를 반환한다. validation review의 검사 대상 dimension은
+DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].key`를 기준으로 한다.
+따라서 요청 table에 없는 dimension은 DB에 selected로 남아 있어도 R01/R02 검사 대상에서 제외된다.
+리포트에는 verdict(`PASS | REVIEW | BLOCK`), summary, checks 목록이 포함된다.
 
 ##### `run_review` 검사 규칙 (R01~R05)
 
