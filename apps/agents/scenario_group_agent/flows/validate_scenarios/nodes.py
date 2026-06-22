@@ -89,20 +89,30 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
     request_table = state.request_table or {}
     headers = request_table.get("headers") or []
     rows = request_table.get("rows") or []
-    header_keys = {str(header["key"]) for header in headers}
+    header_key_list = [str(header["key"]) for header in headers]
+    header_keys = set(header_key_list)
 
     event_type_l2_id = int((state.scenario_group or {})["event_type_l2_id"])
     template = ScenarioService().load_scenario_template(event_type_l2_id)
 
+    # 시나리오화 템플릿(event type 기준)에서 필수 분기(required=True)와
+    # 선택 분기(required=False)를 식별한다.
     required_keys = [
         dimension.dimension_id
         for dimension in template.dimensions
         if dimension.required
     ]
+    optional_keys = {
+        dimension.dimension_id
+        for dimension in template.dimensions
+        if not dimension.required
+    }
     label_by_key = {
         dimension.dimension_id: dimension.label_ko
         for dimension in template.dimensions
     }
+
+    # 필수 분기는 화면에서 삭제가 막혀 있으므로 헤더(컬럼)에도 반드시 존재해야 한다.
     missing_required = [key for key in required_keys if key not in header_keys]
     if missing_required:
         missing_labels = ", ".join(
@@ -110,42 +120,56 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
         )
         raise MIBaseError(
             ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
-            detail=f"필수 dimension 누락: {missing_labels}",
+            detail=f"필수 분기 누락: {missing_labels}",
         )
 
-    new_dimensions = [
-        key
-        for key in header_keys
-        if rows and all((row.get("cells") or {}).get(key) is None for row in rows)
+    required_header_keys = [
+        key for key in header_key_list if key in set(required_keys)
     ]
 
+    # 필수 분기(required=True) 값은 기존/신규 시나리오 여부와 무관하게 비워 둘 수 없다.
+    #  - 신규 시나리오: 필수 분기 값을 반드시 입력해야 함.
+    #  - 기존 시나리오: 필수 분기 값을 사용자가 null 로 비우는 것은 미허용.
+    # 선택 분기(required=False)의 null 은 아래에서 Agent 가 채우므로 허용한다(부분 null 포함).
     for row in rows:
-        if row.get("scenario_id") is not None:
-            continue
         cells = row.get("cells") or {}
-        missing_cells = [
-            key
-            for key, value in cells.items()
-            if value is None and key not in new_dimensions
+        missing_required_values = [
+            key for key in required_header_keys if cells.get(key) is None
         ]
-        if missing_cells:
-            missing_labels = ", ".join(
-                label_by_key.get(key, key) for key in missing_cells
+        if not missing_required_values:
+            continue
+        missing_labels = ", ".join(
+            label_by_key.get(key, key) for key in missing_required_values
+        )
+        title = row.get("title") or "(제목 없음)"
+        if row.get("scenario_id") is None:
+            detail = (
+                f"새로 추가된 시나리오 '{title}'의 필수 분기 값을 모두 입력해야 합니다. "
+                f"누락: {missing_labels}"
             )
-            title = row.get("title") or "(제목 없음)"
-            raise MIBaseError(
-                ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
-                detail=(
-                    f"새로 추가된 시나리오 '{title}'의 값을 모두 입력해야 합니다. "
-                    f"누락: {missing_labels}"
-                ),
+        else:
+            detail = (
+                f"시나리오 '{title}'의 필수 분기 값은 비워 둘 수 없습니다. "
+                f"누락: {missing_labels}"
             )
+        raise MIBaseError(
+            ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
+            detail=detail,
+        )
 
-    if new_dimensions:
+    # 선택 분기(required=False)의 null 만 Agent 가 채운다(부분 null 포함).
+    # 필수 분기 null 은 위에서 이미 에러로 걸러졌다.
+    fillable_dims = [
+        key
+        for key in header_key_list
+        if key in optional_keys
+        and any((row.get("cells") or {}).get(key) is None for row in rows)
+    ]
+    if fillable_dims:
         generated = await generate_new_dimension_values(
             template,
             _build_dimension_generation_rows(rows, state.scenarios),
-            new_dimensions,
+            fillable_dims,
         )
         for index, row in enumerate(rows):
             values = generated.get(index) or {}

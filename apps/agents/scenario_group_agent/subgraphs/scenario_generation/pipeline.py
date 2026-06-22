@@ -986,7 +986,7 @@ STAGE4_SYSTEM = """\
 
 ## 작성 가이드라인 (반드시 준수)
 - title (1줄): 시장 참여자 관점의 한 줄 요약. 공백과 문장부호를 포함해 100자 이내. 예: '1개월 내 정상화'.
-- description (3~5줄): 각 시나리오의 가정치 조합(=주요 Dim 값) + 전개 양상. 공백과 문장부호를 포함해 300~500자.
+- description (3~5줄): 각 시나리오의 가정치 조합(주요 Dim 값)을 자연스러운 한국어 문장으로 풀어 서술 + 전개 양상. 공백과 문장부호를 포함해 300~500자. 'A=B' 같은 key=value 표기 금지.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
 - price_direction.jkm / ttf / hh: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
 - 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
@@ -1026,6 +1026,12 @@ price_direction은 Base Event와 Dim 조합이 각 가격 지표에 미치는 �
 ## 절대 금지
 - '결과(가격 방향)가 동일하므로 두 조합을 합쳐서 1개로 만든다' 같은 통합/생략 행위.
   → 입력으로 들어온 조합 개수와 출력 narratives 개수는 **반드시 일치**.
+- title·description 안에 '분기기준=값', 'dim_key=값', '항목명=값', '항목: 값' 같은
+  key=value/표·코드 형태의 표기를 노출하는 것.
+  → 분기 기준 값은 반드시 자연스러운 한국어 문장으로 녹여 서술한다.
+    (예: '기간=3개월' (X) → '기간은 3개월이며' (O) / 'utilization_change_direction=증가' (X)
+     → 'Cameron LNG 가동률은 증가하며' (O))
+  → 입력 조합의 dim_key 나 등호(=)를 결과 문장에 그대로 드러내지 마십시오.
 
 ## 최종 검증에서 반드시 통과해야 할 조건
 - (R03) 각 시나리오의 Dim 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
@@ -1044,6 +1050,8 @@ STAGE4_HARD = """\
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
 - 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
 - 입력 조합의 key 집합은 selected dim_key 와 정확히 일치해야 함(누락/여분 금지).
+- title·description 에 'key=value' / '항목명=값' / 표·코드 형태의 나열식 표기 금지.
+  분기 기준 값은 자연어 문장으로만 서술하며 등호(=)·dim_key 를 노출하지 마십시오.
 """
 
 
