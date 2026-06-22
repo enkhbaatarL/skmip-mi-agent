@@ -93,7 +93,9 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
 
         assert "강도" in ctx.exception.error_message
 
-    async def test_new_scenario_with_null_cell_raises(self) -> None:
+    async def test_new_scenario_with_null_in_draft_dim_raises(self) -> None:
+        # severity 는 초안(persisted) 시나리오가 이미 가진 분기 기준이므로,
+        # 신규 시나리오가 null 로 두면 여전히 에러여야 한다.
         rows = [
             {
                 "scenario_id": 100,
@@ -107,6 +109,12 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
             },
         ]
         state = _state(HEADERS, rows)
+        state.scenarios = [
+            {
+                "scenario_id": 100,
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+            },
+        ]
 
         with patch(
             "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
@@ -117,6 +125,122 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
                 await generate_dimension_values(state)
 
         assert "new" in ctx.exception.error_message
+
+    async def test_new_scenario_with_null_in_added_dim_is_filled(self) -> None:
+        # recovery 는 초안에 없던(나중에 추가된) 분기 기준 → 신규 시나리오가 null 이어도
+        # 에러 없이 Agent 가 채워야 한다.
+        headers = HEADERS + [{"key": "recovery", "label": "회복", "display_order": 3}]
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "existing",
+                "cells": {"period": "단기", "severity": "낮음", "recovery": "빠름"},
+            },
+            {
+                "scenario_id": None,
+                "title": "new",
+                "cells": {"period": "장기", "severity": "높음", "recovery": None},
+            },
+        ]
+        state = _state(headers, rows)
+        # 초안(persisted) 시나리오에는 recovery 가 없다 → recovery 는 나중에 추가된 분기.
+        state.scenarios = [
+            {
+                "scenario_id": 100,
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+            },
+        ]
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "ScenarioService.load_scenario_template",
+            return_value=_template(),
+        ), patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "generate_new_dimension_values",
+            new=AsyncMock(return_value={1: {"recovery": "느림"}}),
+        ):
+            result = await generate_dimension_values(state)
+
+        assert result["request_table"]["rows"][1]["cells"]["recovery"] == "느림"
+
+    async def test_existing_scenario_null_in_draft_dim_raises(self) -> None:
+        # 기존(existing) 시나리오의 초안 분기 기준을 사용자가 null 로 비우면 에러여야 한다.
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "a",
+                "cells": {"period": "단기", "severity": "낮음"},
+            },
+            {
+                "scenario_id": 101,
+                "title": "b",
+                "cells": {"period": "장기", "severity": None},
+            },
+        ]
+        state = _state(HEADERS, rows)
+        state.scenarios = [
+            {
+                "scenario_id": 100,
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+            },
+            {
+                "scenario_id": 101,
+                "dimension_values": {"period": "장기", "severity": "높음"},
+            },
+        ]
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "ScenarioService.load_scenario_template",
+            return_value=_template(),
+        ):
+            with self.assertRaises(MIBaseError) as ctx:
+                await generate_dimension_values(state)
+
+        assert "b" in ctx.exception.error_message
+        assert "강도" in ctx.exception.error_message
+
+    async def test_existing_scenario_null_in_added_dim_is_filled(self) -> None:
+        # 기존(existing) 시나리오라도 나중에 추가된 분기 기준의 부분 null 은 Agent 가 채운다.
+        headers = HEADERS + [{"key": "recovery", "label": "회복", "display_order": 3}]
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "a",
+                "cells": {"period": "단기", "severity": "낮음", "recovery": "빠름"},
+            },
+            {
+                "scenario_id": 101,
+                "title": "b",
+                "cells": {"period": "장기", "severity": "높음", "recovery": None},
+            },
+        ]
+        state = _state(headers, rows)
+        # 초안(persisted) 시나리오에는 recovery 가 없다 → recovery 는 나중에 추가된 분기.
+        state.scenarios = [
+            {
+                "scenario_id": 100,
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+            },
+            {
+                "scenario_id": 101,
+                "dimension_values": {"period": "장기", "severity": "높음"},
+            },
+        ]
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "ScenarioService.load_scenario_template",
+            return_value=_template(),
+        ), patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "generate_new_dimension_values",
+            new=AsyncMock(return_value={1: {"recovery": "느림"}}),
+        ):
+            result = await generate_dimension_values(state)
+
+        assert result["request_table"]["rows"][1]["cells"]["recovery"] == "느림"
 
     async def test_null_column_is_auto_filled(self) -> None:
         headers = HEADERS + [{"key": "recovery", "label": "회복", "display_order": 3}]

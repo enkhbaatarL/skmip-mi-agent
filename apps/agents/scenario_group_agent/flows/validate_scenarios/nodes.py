@@ -89,7 +89,8 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
     request_table = state.request_table or {}
     headers = request_table.get("headers") or []
     rows = request_table.get("rows") or []
-    header_keys = {str(header["key"]) for header in headers}
+    header_key_list = [str(header["key"]) for header in headers]
+    header_keys = set(header_key_list)
 
     event_type_l2_id = int((state.scenario_group or {})["event_type_l2_id"])
     template = ScenarioService().load_scenario_template(event_type_l2_id)
@@ -113,39 +114,64 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
             detail=f"필수 dimension 누락: {missing_labels}",
         )
 
-    new_dimensions = [
-        key
-        for key in header_keys
-        if rows and all((row.get("cells") or {}).get(key) is None for row in rows)
-    ]
+    # Agent 초안에 포함된 분기 기준(draft dims)과 나중에 추가된 분기 기준(added dims)을 구분한다.
+    # 초안 분기 = group.dimension_selected ∪ 저장된 시나리오가 이미 가진 dimension_values 키.
+    # added dims 는 Agent 가 값을 채워야 하므로 신규 시나리오에서도 null 을 허용한다.
+    draft_dims: set[str] = {
+        str(key)
+        for key in (state.scenario_group or {}).get("dimension_selected") or []
+    }
+    for scenario in state.scenarios:
+        draft_dims.update(
+            str(key) for key in (scenario.get("dimension_values") or {})
+        )
+    added_dims = {key for key in header_keys if key not in draft_dims}
 
+    # 초안 분기 기준 값은 신규/기존 시나리오 모두 null 일 수 없다.
+    #  - 신규 시나리오: 초안 분기 값을 반드시 입력해야 함.
+    #  - 기존 시나리오: 초안 분기로 채워진 값을 사용자가 null 로 비우는 것은 미허용.
+    # 반면 나중에 추가된 분기 기준(added dims)의 null 은 Agent 가 채우므로 허용한다(부분 null 포함).
     for row in rows:
-        if row.get("scenario_id") is not None:
-            continue
         cells = row.get("cells") or {}
-        missing_cells = [
+        null_draft = [
             key
-            for key, value in cells.items()
-            if value is None and key not in new_dimensions
+            for key in header_key_list
+            if key not in added_dims and cells.get(key) is None
         ]
-        if missing_cells:
-            missing_labels = ", ".join(
-                label_by_key.get(key, key) for key in missing_cells
+        if not null_draft:
+            continue
+        missing_labels = ", ".join(
+            label_by_key.get(key, key) for key in null_draft
+        )
+        title = row.get("title") or "(제목 없음)"
+        if row.get("scenario_id") is None:
+            detail = (
+                f"새로 추가된 시나리오 '{title}'의 값을 모두 입력해야 합니다. "
+                f"누락: {missing_labels}"
             )
-            title = row.get("title") or "(제목 없음)"
-            raise MIBaseError(
-                ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
-                detail=(
-                    f"새로 추가된 시나리오 '{title}'의 값을 모두 입력해야 합니다. "
-                    f"누락: {missing_labels}"
-                ),
+        else:
+            detail = (
+                f"시나리오 '{title}'의 분기 기준 값은 비워 둘 수 없습니다. "
+                f"누락: {missing_labels}"
             )
+        raise MIBaseError(
+            ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
+            detail=detail,
+        )
 
-    if new_dimensions:
+    # 나중에 추가된 분기 기준(added dims)의 null 만 Agent 가 채운다(부분 null 포함).
+    # 초안 분기 null 은 위에서 이미 에러로 걸러졌다.
+    fillable_dims = [
+        key
+        for key in header_key_list
+        if key in added_dims
+        and any((row.get("cells") or {}).get(key) is None for row in rows)
+    ]
+    if fillable_dims:
         generated = await generate_new_dimension_values(
             template,
             _build_dimension_generation_rows(rows, state.scenarios),
-            new_dimensions,
+            fillable_dims,
         )
         for index, row in enumerate(rows):
             values = generated.get(index) or {}
