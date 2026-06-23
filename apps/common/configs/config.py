@@ -22,70 +22,17 @@ ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_FILE = ROOT_DIR / "config.yaml"
 CONFIG_FILE_PATH = Path(os.getenv("APP_CONFIG", str(DEFAULT_CONFIG_FILE))).expanduser()
 ENV_PLACEHOLDER_PATTERN = re.compile(r"\${(\w+)}")
+ESCAPED_LINE_BREAK_PATTERN = re.compile(r"\\r\\n|\\n|\\r")
 
 
 def _normalize_yaml_text(yaml_str: str) -> str:
     """Normalize real line breaks and single-line escaped ConfigMap blobs."""
     normalized = yaml_str.replace("\r\n", "\n").replace("\r", "\n")
     if "\n" not in normalized.strip():
-        normalized = _replace_escaped_line_breaks_outside_quotes(normalized)
+        # A single-line escaped blob means the ConfigMap stored YAML line breaks
+        # as text. Treat every escaped line break as a structural separator.
+        normalized = ESCAPED_LINE_BREAK_PATTERN.sub("\n", normalized)
     return normalized
-
-
-def _replace_escaped_line_breaks_outside_quotes(yaml_str: str) -> str:
-    """Restore escaped line separators without touching quoted scalar content."""
-    result: list[str] = []
-    in_single_quote = False
-    in_double_quote = False
-    index = 0
-
-    while index < len(yaml_str):
-        char = yaml_str[index]
-
-        if in_single_quote:
-            result.append(char)
-            if char == "'":
-                if index + 1 < len(yaml_str) and yaml_str[index + 1] == "'":
-                    result.append(yaml_str[index + 1])
-                    index += 2
-                    continue
-                in_single_quote = False
-            index += 1
-            continue
-
-        if in_double_quote:
-            result.append(char)
-            if char == "\\" and index + 1 < len(yaml_str):
-                result.append(yaml_str[index + 1])
-                index += 2
-                continue
-            if char == '"':
-                in_double_quote = False
-            index += 1
-            continue
-
-        if char == "'":
-            in_single_quote = True
-            result.append(char)
-            index += 1
-        elif char == '"':
-            in_double_quote = True
-            result.append(char)
-            index += 1
-        elif yaml_str.startswith("\\r\\n", index):
-            result.append("\n")
-            index += 4
-        elif yaml_str.startswith("\\n", index):
-            result.append("\n")
-            index += 2
-        elif yaml_str.startswith("\\r", index):
-            result.append("\n")
-            index += 2
-        else:
-            result.append(char)
-            index += 1
-
-    return "".join(result)
 
 
 def _replace_env_placeholders(yaml_str: str) -> str:

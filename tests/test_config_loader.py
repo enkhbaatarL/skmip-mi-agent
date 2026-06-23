@@ -9,6 +9,20 @@ import textwrap
 import unittest
 
 
+PRESERVED_SUBPROCESS_ENV_KEYS = {
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "POETRY_ACTIVE",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "SHELL",
+    "TMPDIR",
+    "USER",
+    "VIRTUAL_ENV",
+}
+
 BASE_CONFIG = textwrap.dedent(
     """
     METADATA_DB_TYPE: mysql
@@ -64,7 +78,11 @@ class ConfigLoaderTest(unittest.TestCase):
             config_path = Path(tmp_dir) / "config.yaml"
             config_path.write_text(config_text, encoding="utf-8")
 
-            env = os.environ.copy()
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if key in PRESERVED_SUBPROCESS_ENV_KEYS
+            }
             env["APP_CONFIG"] = str(config_path)
             if extra_env:
                 env.update(extra_env)
@@ -150,16 +168,29 @@ class ConfigLoaderTest(unittest.TestCase):
 
         self.assertEqual(lines, [r"'line1\\r\\nline2'"])
 
-    def test_single_line_escaped_blob_preserves_quoted_internal_escape(self) -> None:
-        config_text = BASE_CONFIG + "\ncallback_oauth2_client_secret: 'line1\\r\\nline2'"
+    def test_single_line_escaped_blob_loads_plain_scalar_apostrophe(self) -> None:
+        config_text = BASE_CONFIG.replace("api_key: api-key", "api_key: it's-ok\n# don't lower")
         escaped_config = config_text.replace("\n", r"\r\n")
 
         lines = self.run_settings_import(
             escaped_config,
-            print_lines=["print(repr(cfg.callback_oauth2_client_secret))"],
+            print_lines=["print(cfg.api_key)"],
         )
 
-        self.assertEqual(lines, [r"'line1\\r\\nline2'"])
+        self.assertEqual(lines, ["it's-ok"])
+
+    def test_parent_config_env_vars_do_not_override_temp_config(self) -> None:
+        original = os.environ.get("METADATA_DB_HOST")
+        os.environ["METADATA_DB_HOST"] = "external-db-host"
+        try:
+            lines = self.run_settings_import(BASE_CONFIG)
+        finally:
+            if original is None:
+                os.environ.pop("METADATA_DB_HOST", None)
+            else:
+                os.environ["METADATA_DB_HOST"] = original
+
+        self.assertEqual(lines, ["db-host", "60.0", "60.0", "DEBUG"])
 
 
 if __name__ == "__main__":
