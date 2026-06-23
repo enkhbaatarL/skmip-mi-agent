@@ -8,7 +8,7 @@ import unittest
 
 
 PIPELINE_PATH = (
-    Path(__file__).parents[1]
+    Path(__file__).parents[2]
     / "apps"
     / "agents"
     / "scenario_group_agent"
