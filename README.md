@@ -38,9 +38,10 @@ MI Event ORM도 `scenario_group_agent.persistence.event`에서 소유합니다.
 
 ## Key Docs
 
-- [Architecture Index](docs/architectures/index.md)
-- [Scenario Group Agent Directory Structure](docs/architectures/scenario_group_agent_directory_structure.md)
-- [Scenario Group Agent Logic](docs/architectures/scenario_group_agent_logic.md)
+- [Agent Guide](AGENTS.md)
+- [Project Directory Structure](docs/architectures/project_directory_structure.md)
+- [Scenario Group Agent Flow Pipeline](docs/architectures/scenario_group_agent_flow_pipeline.md)
+- [Scenario Group Agent API Request/Response](docs/architectures/scenario_group_agent_api_request_response.md)
 
 ## Development
 

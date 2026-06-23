@@ -1,9 +1,9 @@
-# Scenario Group Agent 디렉터리 구조 가이드
+# Project Directory Structure Guide
 
 ## 문서 목적
 
-`scenario_group_agent`는 현재 시나리오 설계 기능의 단일 기준 Agent이다.
-이 문서는 신규 기능 추가, 리팩터링, 바이브 코딩 시 디렉터리 배치와 파일 책임을 빠르게 확인하기 위한 구조 가이드다.
+이 문서는 프로젝트 전체 디렉터리 배치, 파일 책임, Agent 패키지 확장 기준을 빠르게 확인하기 위한 구조 가이드다.
+현재 런타임 Agent는 `scenario_group_agent` 하나지만, 향후 Agent가 늘어날 때도 이 문서의 배치 기준을 따른다.
 
 최근 디렉터리 정리 기준은 `local/plan/06_refact_directory_arch.md`의 미사용 Agent 정리 계획을 따른다.
 `event_flow_agent`, `mi_agent`, `scenario_agent`, `scenario_flow_agent`, `signpost_flow_agent`는 현행 런타임 기준 Agent 구조에서 제거되었고,
@@ -21,9 +21,8 @@ skmip-mi-agent/
 │   └── connectors/
 ├── docs/
 │   └── architectures/
-│       ├── index.md
-│       ├── scenario_group_agent_directory_structure.md
-│       └── scenario_group_agent_logic.md
+│       ├── project_directory_structure.md
+│       └── scenario_group_agent_flow_pipeline.md
 └── tests/
     ├── automated/
     └── manual/
@@ -34,7 +33,7 @@ skmip-mi-agent/
 - `tests/automated/`: pytest로 자동 실행되는 회귀/계약 테스트
 - `tests/manual/`: 로컬 API 확인과 요청 바디 생성용 수동 실행 스크립트
 
-## `scenario_group_agent` 현재 구조
+## 현재 Agent 구조: `scenario_group_agent`
 
 `__pycache__` 디렉터리는 생략한다.
 

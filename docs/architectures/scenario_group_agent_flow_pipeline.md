@@ -1,4 +1,4 @@
-# Scenario Group Agent Flow 로직
+# Scenario Group Agent Flow Pipeline
 
 ## 문서 목적
 
