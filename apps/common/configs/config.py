@@ -124,9 +124,6 @@ class Settings(BaseSettings):
     callback_create_signposts_path: str = Field(default="")
     skip_callback: bool = Field(default=False)
 
-    # STREAMING
-    streaming_mode: list[str] = Field(default_factory=lambda: ["custom"])
-
     mcp_database_base: str = "mimcp://database"
 
     @computed_field

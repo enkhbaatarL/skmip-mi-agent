@@ -11,8 +11,7 @@ skmip-mi-agent/
 ├── main.py
 ├── apps/
 │   └── agents/
-│       ├── scenario_group_agent/
-│       └── signpost_flow_agent/
+│       └── scenario_group_agent/
 └── docs/
     └── architectures/
         ├── scenario_group_agent_design.md
@@ -72,13 +71,16 @@ apps/agents/scenario_group_agent/
 │       └── service.py
 ├── subgraphs/
 │   ├── __init__.py
-│   └── scenario_generation/
+│   ├── scenario_generation/
 │       ├── __init__.py
 │       ├── pipeline.py
 │       ├── stages.py
 │       ├── state.py
 │       ├── subgraph_adapter.py
 │       └── subgraph_builder.py
+│   └── signpost_generation/
+│       ├── __init__.py
+│       └── pipeline.py
 ├── prompts/
 │   ├── __init__.py
 │   ├── builders/
@@ -113,6 +115,8 @@ apps/agents/scenario_group_agent/
   - 생성용 subgraph를 flow에서 사용할 runnable로 조립
 - `subgraphs/scenario_generation/subgraph_adapter.py`
   - flow state <-> subgraph state 변환/연결
+- `subgraphs/signpost_generation/pipeline.py`
+  - Signpost 생성 LLM 파이프라인(stage 실행 순서) 정의
 - `persistence/<domain>/models.py`
   - ORM 모델 정의
 - `persistence/<domain>/repository.py`

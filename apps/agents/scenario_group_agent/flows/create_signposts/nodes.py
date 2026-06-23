@@ -108,7 +108,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
     from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
         stage1_build_context_pack,
     )
-    from apps.agents.signpost_flow_agent.services.signpost_pipeline import (
+    from apps.agents.scenario_group_agent.subgraphs.signpost_generation.pipeline import (
         build_signposts_for_scenario,
     )
 

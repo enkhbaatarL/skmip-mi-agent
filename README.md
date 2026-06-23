@@ -20,8 +20,8 @@ apps/
 │   │   │   └── signpost/
 │   │   ├── schemas/
 │   │   └── subgraphs/
-│   │       └── scenario_generation/
-│   └── signpost_flow_agent/
+│   │       ├── scenario_generation/
+│   │       └── signpost_generation/
 ├── common/
 │   ├── configs/
 │   ├── runtime/
