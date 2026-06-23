@@ -42,3 +42,13 @@ If the task touches one of these areas, read the linked document before changing
 - Keep changes scoped to the requested behavior.
 - Do not revive removed Agent packages such as `mi_agent`, `scenario_agent`, `event_flow_agent`, or `signpost_flow_agent`.
 - Update architecture docs when changing package ownership, flow boundaries, or endpoint-to-flow mapping.
+
+## Github Code Review Guideline
+
+- Write review comments in Korean.
+- Before reviewing, follow the `Read This First` routing in this file and read the documents relevant to the changed area.
+- Focus findings on bugs, regression risks, missing tests, and mismatches between docs and code.
+- Start each review comment with brief context: what the current code appears intended to do, then explain the issue in that context.
+- Include file/line references, why the issue matters, and the expected fix direction whenever possible.
+- Avoid style preferences or broad refactor suggestions unless they directly affect the safety of the current change.
+- If there are no issues, say so clearly and mention remaining risks or checks that were not run.
