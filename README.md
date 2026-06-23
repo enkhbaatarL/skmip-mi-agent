@@ -45,10 +45,10 @@ MI Event ORM도 `scenario_group_agent.persistence.event`에서 소유합니다.
 ## Development
 
 ```bash
-pytest tests/test_scenario_group_agent_contract.py
-pytest tests/test_scenario_group_pipeline_contract.py
-pytest tests/test_scenario_group_dimension_values.py
-pytest tests/test_scenario_group_validation_review.py
+pytest tests/automated/test_scenario_group_agent_contract.py
+pytest tests/automated/test_scenario_group_pipeline_contract.py
+pytest tests/automated/test_scenario_group_dimension_values.py
+pytest tests/automated/test_scenario_group_validation_review.py
 ```
 
 Smoke checks:
