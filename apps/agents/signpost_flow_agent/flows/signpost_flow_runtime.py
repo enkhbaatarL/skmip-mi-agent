@@ -3,7 +3,7 @@ Signpost Flow Runtime 초기화 모듈
 
 역할:
 - signpost_flow_agent 실행에 필요한 runtime 리소스를 사전에 준비한다.
-- MCP pool, HTTP client, semaphore, API KEY 환경변수 등 공용 리소스 초기화를 담당한다.
+- HTTP client, semaphore, API KEY 환경변수 등 공용 리소스 초기화를 담당한다.
 
 설계 의도:
 - 각 node/service에서 runtime 초기화 여부를 신경쓰지 않도록

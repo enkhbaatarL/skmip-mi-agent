@@ -991,7 +991,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
         with patch.dict(
             sys.modules,
-            {"apps.common.configs.settings": settings_module},
+            {"apps.common.configs.config": settings_module},
         ):
 
             with self.assertRaises(MIBaseError) as context:
@@ -1009,7 +1009,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
         with patch.dict(
             sys.modules,
-            {"apps.common.configs.settings": settings_module},
+            {"apps.common.configs.config": settings_module},
         ):
 
             with self.assertRaises(MIBaseError) as context:
@@ -1027,7 +1027,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
         with patch.dict(
             sys.modules,
-            {"apps.common.configs.settings": settings_module},
+            {"apps.common.configs.config": settings_module},
         ):
 
             ScenarioGroupService()._assert_delete_authorization(

@@ -32,7 +32,7 @@ class OAuth2TokenManager:
             return await self._fetch_token()
 
     async def _fetch_token(self) -> str:
-        from apps.common.configs.settings import get_settings
+        from apps.common.configs.config import get_settings
 
         cfg = get_settings()
         credentials = base64.b64encode(

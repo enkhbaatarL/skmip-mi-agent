@@ -31,7 +31,7 @@ from apps.agents.signpost_flow_agent.flows.signpost_flow_graph import signpost_f
 from apps.agents.signpost_flow_agent.flows.signpost_flow_runtime import ensure_runtime
 from apps.agents.signpost_flow_agent.schemas.signpost_flow_input import SignpostFlowInput
 from apps.agents.signpost_flow_agent.schemas.signpost_flow_output import SignpostFlowOutput
-from apps.common.configs.settings import get_settings
+from apps.common.configs.config import get_settings
 from apps.common.logging.logger_config import logger as app_logger
 
 

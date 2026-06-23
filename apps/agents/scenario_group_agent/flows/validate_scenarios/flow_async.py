@@ -108,7 +108,7 @@ async def run_validate_scenarios_background(
     user_id: int,
     request_table: dict[str, Any],
 ) -> None:
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
 
     cfg = get_settings()
     callback_path = cfg.callback_validate_scenarios_path.format(

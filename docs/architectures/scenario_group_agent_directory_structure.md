@@ -11,8 +11,8 @@ skmip-mi-agent/
 ├── main.py
 ├── apps/
 │   └── agents/
-│       ├── mi_agent/
-│       └── scenario_group_agent/
+│       ├── scenario_group_agent/
+│       └── signpost_flow_agent/
 └── docs/
     └── architectures/
         ├── scenario_group_agent_design.md
@@ -52,6 +52,7 @@ apps/agents/scenario_group_agent/
 │   ├── __init__.py
 │   ├── event/
 │   │   ├── __init__.py
+│   │   ├── models.py
 │   │   ├── repository.py
 │   │   └── service.py
 │   ├── scenario_group/
@@ -139,78 +140,6 @@ POST /scenario-design/scenario-groups/{scenario_group_id}/signposts
 
 POST /scenario-design/scenario-groups/{scenario_group_id}/confirmation
 → flows/confirm_generation/flow.py
-```
-
-## 기존 구조에서 이관 매핑
-
-현재 구조:
-
-```text
-apps/agents/scenario_agent/
-├── flows/
-├── nodes/
-├── services/
-├── repositories/
-├── models/
-├── schemas/
-└── state/
-
-apps/agents/signpost_flow_agent/
-├── flows/
-├── nodes/
-├── services/
-├── repositories/
-├── models/
-├── schemas/
-└── state/
-```
-
-목표 구조:
-
-```text
-apps/agents/scenario_group_agent/
-├── api.py
-├── presentation.py
-├── state.py
-├── flows/
-├── persistence/
-├── subgraphs/
-├── prompts/
-└── schemas/
-```
-
-세부 매핑:
-
-```text
-scenario_agent/services/scenario_pipeline.py
-→ scenario_group_agent/subgraphs/scenario_generation/pipeline.py
-  + scenario_group_agent/subgraphs/scenario_generation/stages.py
-
-scenario_agent/services/scenario_generation_service.py
-→ scenario_group_agent/subgraphs/scenario_generation/*
-
-scenario_agent/services/scenario_db_service.py
-→ scenario_group_agent/persistence/scenario/service.py
-  또는 scenario_group_agent/persistence/scenario_group/service.py
-
-scenario_agent/repositories/sync_scenario_repository.py
-→ scenario_group_agent/persistence/scenario/repository.py
-
-scenario_agent/models/scenario_models_orm.py
-→ scenario_group_agent/persistence/scenario/models.py
-
-signpost_flow_agent/services/signpost_pipeline.py
-→ scenario_group_agent/flows/create_signposts/flow.py
-  + scenario_group_agent/flows/create_signposts/nodes.py
-
-signpost_flow_agent/services/signpost_db_service.py
-→ scenario_group_agent/persistence/signpost/service.py
-
-signpost_flow_agent/repositories/sync_signpost_repository.py
-→ scenario_group_agent/persistence/signpost/repository.py
-
-signpost_flow_agent/models/signpost_models_orm.py
-→ scenario_group_agent/persistence/signpost/models.py
 ```
 
 ## 신규 에이전트 추가 체크리스트

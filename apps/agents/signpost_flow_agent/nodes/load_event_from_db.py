@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import Any, Dict
 
+from apps.agents.scenario_group_agent.persistence.event.service import EventService
 from apps.agents.signpost_flow_agent.services.signpost_db_service import SignpostDbService
 from apps.agents.signpost_flow_agent.state.signpost_flow_state import SignpostFlowState
-from apps.agents.scenario_agent.services.scenario_db_service import ScenarioDbService
 
 
 def load_event_from_db(state: SignpostFlowState) -> Dict[str, Any]:
@@ -26,8 +26,7 @@ def load_event_from_db(state: SignpostFlowState) -> Dict[str, Any]:
     mi_event_id_int = int(mi_event_id)
 
     # Load base event data (for C1_base_event construction)
-    scenario_db = ScenarioDbService()
-    event = scenario_db.load_event(mi_event_id_int)
+    event = EventService().load_event(mi_event_id_int)
 
     if event is None:
         return {

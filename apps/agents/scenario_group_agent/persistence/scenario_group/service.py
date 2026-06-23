@@ -369,7 +369,7 @@ class ScenarioGroupService:
             session.close()
 
     def _assert_delete_authorization(self, authorization: str | None) -> None:
-        from apps.common.configs.settings import get_settings
+        from apps.common.configs.config import get_settings
 
         bearer_token = self._extract_bearer_token(authorization)
         allowed_tokens = get_settings().scenario_group_admin_bearer_tokens

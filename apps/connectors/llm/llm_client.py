@@ -43,7 +43,7 @@ import httpx
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
-from apps.common.configs.settings import BaseSettings, get_settings
+from apps.common.configs.config import BaseSettings, get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_connector

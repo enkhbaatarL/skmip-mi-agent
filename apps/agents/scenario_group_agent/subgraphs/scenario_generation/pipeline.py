@@ -392,7 +392,7 @@ def _invoke_structured(schema_cls: type[BaseModel], messages: List[Dict[str, str
     """Synchronous structured output LLM call via the project's invoke_llm_structured_output connector.
 
     Uses asyncio.run() to bridge from sync context to the async connector,
-    exactly as event_flow_agent patterns do.
+    exactly as scenario_group_agent patterns do.
     """
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 

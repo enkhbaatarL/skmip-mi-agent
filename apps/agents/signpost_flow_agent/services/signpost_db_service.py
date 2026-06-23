@@ -6,7 +6,7 @@ Signpost DB Service 모듈
 - 시나리오 로드와 signpost 저장/조회를 담당한다.
 
 설계 의도:
-- scenario_flow_agent의 ScenarioDbService 패턴과 동일하게 적용
+- scenario_group_agent의 persistence service 패턴과 동일하게 적용
 - service 계층에서 세션 관리와 Payload 구성을 담당하고,
   repository 계층에서 SQL 실행만 담당
 """

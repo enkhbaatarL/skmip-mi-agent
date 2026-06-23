@@ -34,7 +34,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
-from apps.common.configs.settings import settings
+from apps.common.configs.config import settings
 
 
 def _resolve_sync_driver(db_type: str) -> str:

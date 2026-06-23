@@ -2,7 +2,7 @@
 Signpost Flow Agent Graph
 
 LangGraph StateGraph definition for signpost generation pipeline.
-Follows same architecture pattern as scenario_flow_agent.
+Follows the scenario_group_agent flow architecture pattern.
 """
 from langgraph.graph import StateGraph
 

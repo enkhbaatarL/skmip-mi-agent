@@ -1,5 +1,5 @@
 """
-event_flow_agent ORM Models — MI Event Domain
+scenario_group_agent ORM Models - MI Event Domain
 
 tables:
   - tmm_mi_event_type_l1_m

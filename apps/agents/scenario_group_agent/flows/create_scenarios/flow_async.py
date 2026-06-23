@@ -108,7 +108,7 @@ async def run_create_scenarios_background(
     event_data: dict[str, Any],
     user_id: int,
 ) -> None:
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
 
     cfg = get_settings()
     callback_path = cfg.callback_create_scenarios_path.format(

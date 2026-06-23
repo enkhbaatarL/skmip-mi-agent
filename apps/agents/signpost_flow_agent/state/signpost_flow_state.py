@@ -8,7 +8,7 @@ from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedS
 class SignpostFlowState(BaseModel):
     """Signpost Flow Agent State
 
-    Follows the same state pattern as the scenario_flow_agent.
+    Follows the same state pattern as scenario_group_agent flows.
     Holds the complete pipeline execution state for signpost generation.
     """
     # --- Input ---
