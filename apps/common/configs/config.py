@@ -21,6 +21,81 @@ from pydantic_settings import (
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_FILE = ROOT_DIR / "config.yaml"
 CONFIG_FILE_PATH = Path(os.getenv("APP_CONFIG", str(DEFAULT_CONFIG_FILE))).expanduser()
+ENV_PLACEHOLDER_PATTERN = re.compile(r"\${(\w+)}")
+
+
+def _normalize_yaml_text(yaml_str: str) -> str:
+    """Normalize real line breaks and single-line escaped ConfigMap blobs."""
+    normalized = yaml_str.replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in normalized.strip():
+        normalized = _replace_escaped_line_breaks_outside_quotes(normalized)
+    return normalized
+
+
+def _replace_escaped_line_breaks_outside_quotes(yaml_str: str) -> str:
+    """Restore escaped line separators without touching quoted scalar content."""
+    result: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    index = 0
+
+    while index < len(yaml_str):
+        char = yaml_str[index]
+
+        if in_single_quote:
+            result.append(char)
+            if char == "'":
+                if index + 1 < len(yaml_str) and yaml_str[index + 1] == "'":
+                    result.append(yaml_str[index + 1])
+                    index += 2
+                    continue
+                in_single_quote = False
+            index += 1
+            continue
+
+        if in_double_quote:
+            result.append(char)
+            if char == "\\" and index + 1 < len(yaml_str):
+                result.append(yaml_str[index + 1])
+                index += 2
+                continue
+            if char == '"':
+                in_double_quote = False
+            index += 1
+            continue
+
+        if char == "'":
+            in_single_quote = True
+            result.append(char)
+            index += 1
+        elif char == '"':
+            in_double_quote = True
+            result.append(char)
+            index += 1
+        elif yaml_str.startswith("\\r\\n", index):
+            result.append("\n")
+            index += 4
+        elif yaml_str.startswith("\\n", index):
+            result.append("\n")
+            index += 2
+        elif yaml_str.startswith("\\r", index):
+            result.append("\n")
+            index += 2
+        else:
+            result.append(char)
+            index += 1
+
+    return "".join(result)
+
+
+def _replace_env_placeholders(yaml_str: str) -> str:
+    """Replace `${ENV_NAME}` placeholders with environment values when present."""
+    for env_name in ENV_PLACEHOLDER_PATTERN.findall(yaml_str):
+        yaml_str = yaml_str.replace(
+            f"${{{env_name}}}",
+            os.environ.get(env_name, f"${{{env_name}}}"),
+        )
+    return yaml_str
 
 
 class EnvYamlConfigSettingsSource(YamlConfigSettingsSource):
@@ -28,13 +103,7 @@ class EnvYamlConfigSettingsSource(YamlConfigSettingsSource):
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:
         with open(file_path, encoding=self.yaml_file_encoding) as yaml_file:
-            yaml_str = yaml_file.read()
-            env_pattern = re.compile(r".*?\${(\w+)}.*?")
-            for env_name in env_pattern.findall(yaml_str):
-                yaml_str = yaml_str.replace(
-                    f"${{{env_name}}}",
-                    os.environ.get(env_name, f"${{{env_name}}}"),
-                )
+            yaml_str = _replace_env_placeholders(_normalize_yaml_text(yaml_file.read()))
             loaded = yaml.safe_load(yaml_str)
         return loaded if isinstance(loaded, dict) else {}
 
