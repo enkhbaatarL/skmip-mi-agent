@@ -29,7 +29,7 @@ If the task touches one of these areas, read the linked document before changing
 - In normal app code, use `get_settings()` instead of reading `os.environ` directly.
 - Use `MIBaseError(ErrorCode..., detail=...)` for domain/API errors.
 - Keep DB access behind `persistence/<domain>/service.py` and `repository.py`; flow/node code should call services.
-- Put API schemas in `schemas/<api_name>.py`, shared schema types in `schemas/common.py`, and enums in `schemas/enums.py`.
+- Put API schemas in `schemas/api/<api_name>.py`, API shared schema types in `schemas/api/common.py`, table shapes in `schemas/api/table.py`, and enums in `schemas/enums.py`.
 - For long-running API work that returns immediately, use the existing `flow_async.py` background-task pattern.
 
 ## Tests
