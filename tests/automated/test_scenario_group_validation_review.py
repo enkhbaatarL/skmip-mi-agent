@@ -23,7 +23,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage4ScenarioSynthesis,
     TemplateDimension,
 )
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
     stage6_quick_validate,
 )
 
@@ -577,7 +577,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
 
         with patch(
             "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "pipeline._invoke_with_retry",
+            "generation_stages._invoke_with_retry",
         ) as invoke:
             passed, feedback = stage6_quick_validate(
                 Stage1ContextPack(C1_base_event=C1BaseEvent()),

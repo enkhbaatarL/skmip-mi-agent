@@ -123,18 +123,14 @@ apps/agents/scenario_group_agent/
     │   ├── nodes.py
     │   ├── generation_stages.py
     │   ├── subgraph_adapter.py
-    │   ├── flow.py
-    │   ├── pipeline.py              # compatibility wrapper
-    │   ├── stages.py                # compatibility wrapper
-    │   └── subgraph_builder.py      # compatibility wrapper
+    │   └── flow.py
     └── signpost_generation/
         ├── __init__.py
         ├── state.py
         ├── nodes.py
         ├── generation_stages.py
         ├── subgraph_adapter.py
-        ├── flow.py
-        └── pipeline.py              # compatibility wrapper
+        └── flow.py
 ```
 
 ## 디렉터리별 역할
@@ -163,12 +159,10 @@ apps/agents/scenario_group_agent/
   - `generation_stages.py`는 stage 구현, LLM 호출, retry, validation, fallback을 담당한다.
   - `nodes.py`는 LangGraph node wrapper, `state.py`는 subgraph state를 담당한다.
   - `subgraph_adapter.py`는 flow state와 subgraph state의 변환, `flow.py`는 runnable graph 조립을 담당한다.
-  - `pipeline.py`, `stages.py`, `subgraph_builder.py`는 기존 import 호환 wrapper다.
 - `subgraphs/signpost_generation/`
   - 단일 scenario Signpost 생성을 담당하는 LangGraph subgraph 계층이다.
   - `generation_stages.py`는 Stage 2/4/5 구현, LLM 호출, retry, validation, fallback을 담당한다.
   - `nodes.py`는 LangGraph node wrapper, `subgraph_adapter.py`는 parent 입력과 subgraph state 변환, `flow.py`는 runnable graph 조립을 담당한다.
-  - `pipeline.py`는 `build_signposts_for_scenario()` 기존 import 호환 wrapper다.
   - Signpost 저장/조회는 `persistence/signpost`가 기준이다.
 - `persistence/<domain>/models.py`
   - SQLAlchemy ORM 모델 정의. DB 테이블명/컬럼명/FK/index 소유권의 기준이다.
@@ -177,7 +171,7 @@ apps/agents/scenario_group_agent/
 - `persistence/<domain>/service.py`
   - flow/node가 호출하는 비즈니스 친화 API를 제공한다.
 - `prompts/builders/`
-  - 프롬프트 builder 확장 위치다. 현재 핵심 생성 프롬프트는 pipeline 내부 상수/함수 중심으로 유지된다.
+  - 프롬프트 builder 확장 위치다. 현재 핵심 생성 프롬프트는 subgraph의 `generation_stages.py`와 `prompts/` 하위 모듈 중심으로 유지된다.
 - `schemas/base.py`
   - API alias 설정 등 Pydantic schema 공통 기반 타입을 정의한다.
 - `schemas/enums.py`

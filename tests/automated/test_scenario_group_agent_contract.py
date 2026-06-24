@@ -455,17 +455,17 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         with (
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-                "pipeline.stage1_build_context_pack",
+                "generation_stages.stage1_build_context_pack",
                 return_value=types.SimpleNamespace(),
             ),
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-                "pipeline.stage4_synthesize_fixed_scenarios",
+                "generation_stages.stage4_synthesize_fixed_scenarios",
                 return_value=stage4,
             ) as synthesize,
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-                "pipeline.stage5_validate",
+                "generation_stages.stage5_validate",
                 return_value=stage5,
             ),
         ):
