@@ -990,6 +990,70 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
         assert result["scenario_group"]["stage"] == "scenario_created"
 
+    def test_validation_result_accepts_review_summary_counts(self) -> None:
+        state = ScenarioDesignState(
+            validation_result={
+                "scenario_group_id": 10,
+                "scenario_count": 2,
+                "verdict": "REVIEW",
+                "summary": {"PASS": 3, "WARN": 1, "FAIL": 0, "INFO": 0},
+                "checks": [],
+            },
+        )
+
+        assert state.validation_result is not None
+        assert state.validation_result.summary == {"PASS": 3, "WARN": 1, "FAIL": 0, "INFO": 0}
+
+    def test_request_table_row_coerces_typed_nested_fields(self) -> None:
+        state = ScenarioDesignState(
+            request_table={
+                "headers": [{"key": "period", "label": "기간", "display_order": 1}],
+                "rows": [
+                    {
+                        "scenario_id": 100,
+                        "display_order": 1,
+                        "title": "scenario",
+                        "cells": {"period": "단기"},
+                        "metrics": {"probability_score": 40, "probability_delta": None},
+                        "impact": {"jkm": "bull", "ttf": "neutral", "hh": "mild_bull"},
+                        "baseline_yn": "Y",
+                        "signposts": [
+                            {
+                                "signpost_id": 900,
+                                "scenario_id": 100,
+                                "label": "signal",
+                                "probability_direction_code": "sup",
+                            },
+                        ],
+                    },
+                ],
+            },
+        )
+
+        row = state.request_table.rows[0]
+        assert row.metrics is not None
+        assert row.metrics.probability_delta == Decimal("0.0")
+        assert row.impact is not None
+        assert row.impact.jkm == "bull"
+        assert row.baseline_yn == "Y"
+        assert row.signposts[0].signpost_id == 900
+
+    def test_request_table_row_rejects_unknown_baseline_flag(self) -> None:
+        with self.assertRaises(ValidationError):
+            ScenarioDesignState(
+                request_table={
+                    "headers": [{"key": "period", "label": "기간", "display_order": 1}],
+                    "rows": [
+                        {
+                            "scenario_id": 100,
+                            "title": "scenario",
+                            "cells": {"period": "단기"},
+                            "baseline_yn": "M",
+                        },
+                    ],
+                },
+            )
+
     def test_soft_delete_owner_check_matches_shared_policy(self) -> None:
         with self.assertRaises(MIBaseError) as context:
             ScenarioGroupService()._assert_group_owner(

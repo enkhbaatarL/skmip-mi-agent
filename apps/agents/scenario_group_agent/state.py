@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any
+from decimal import Decimal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
     ConfirmScenarioGroupIn,
@@ -28,16 +29,36 @@ class ScenarioTableHeaderState(ApiModel):
     display_order: int = 0
 
 
+class ScenarioMetricsState(ApiModel):
+    probability_score: Decimal | None = None
+    probability_delta: Decimal | None = Field(default=Decimal("0.0"))
+
+    @model_validator(mode="after")
+    def _coerce_delta(self) -> ScenarioMetricsState:
+        if self.probability_delta is None:
+            self.probability_delta = Decimal("0.0")
+        return self
+
+
+class ScenarioImpactState(ApiModel):
+    jkm: str | None = None
+    ttf: str | None = None
+    hh: str | None = None
+
+
+BaselineYn = Literal["Y", "N"]
+
+
 class ScenarioTableRowState(ApiModel):
     scenario_id: int | None = None
     display_order: int = 0
     title: str = ""
     narrative: str | None = None
     cells: dict[str, Any] = Field(default_factory=dict)
-    metrics: dict[str, Any] | None = None
-    impact: dict[str, Any] | None = None
-    baseline_yn: str | None = None
-    signposts: list[dict[str, Any]] = Field(default_factory=list)
+    metrics: ScenarioMetricsState | None = None
+    impact: ScenarioImpactState | None = None
+    baseline_yn: BaselineYn | None = None
+    signposts: list[SignpostPayload] = Field(default_factory=list)
 
 
 class ScenarioTableState(ApiModel):
@@ -45,11 +66,15 @@ class ScenarioTableState(ApiModel):
     rows: list[ScenarioTableRowState]
 
 
+ValidationCheckStatus = Literal["PASS", "WARN", "FAIL", "INFO"]
+ValidationVerdict = Literal["PASS", "REVIEW", "BLOCK", ""]
+
+
 class ScenarioValidationResult(ApiModel):
     scenario_group_id: int | None = None
     scenario_count: int = 0
-    verdict: str = ""
-    summary: str = ""
+    verdict: ValidationVerdict = ""
+    summary: dict[ValidationCheckStatus, int] = Field(default_factory=dict)
     checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
