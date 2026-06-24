@@ -592,7 +592,7 @@ class ScenarioService:
         if event_data is None:
             raise ValueError("event_data is required to create new scenario rows")
 
-        from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+        from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
             stage1_build_context_pack,
             stage4_synthesize_fixed_scenarios,
             stage5_validate,

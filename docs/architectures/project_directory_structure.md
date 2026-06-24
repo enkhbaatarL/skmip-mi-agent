@@ -119,14 +119,22 @@ apps/agents/scenario_group_agent/
     ├── __init__.py
     ├── scenario_generation/
     │   ├── __init__.py
-    │   ├── pipeline.py
-    │   ├── stages.py
     │   ├── state.py
+    │   ├── nodes.py
+    │   ├── generation_stages.py
     │   ├── subgraph_adapter.py
-    │   └── subgraph_builder.py
+    │   ├── flow.py
+    │   ├── pipeline.py              # compatibility wrapper
+    │   ├── stages.py                # compatibility wrapper
+    │   └── subgraph_builder.py      # compatibility wrapper
     └── signpost_generation/
         ├── __init__.py
-        └── pipeline.py
+        ├── state.py
+        ├── nodes.py
+        ├── generation_stages.py
+        ├── subgraph_adapter.py
+        ├── flow.py
+        └── pipeline.py              # compatibility wrapper
 ```
 
 ## 디렉터리별 역할
@@ -151,11 +159,16 @@ apps/agents/scenario_group_agent/
 - `flows/validate_scenarios/review.py`
   - 검증 결과 review, 오류 메시지 구성, 차원값/시나리오 조합 검토 로직을 담당한다.
 - `subgraphs/scenario_generation/`
-  - 시나리오 초안 생성용 LLM pipeline과 LangGraph subgraph 조립 계층이다.
-  - `pipeline.py`는 단계 실행 순서와 LLM 호출 기준, `stages.py`는 stage node wrapper, `state.py`는 subgraph state를 담당한다.
-  - `subgraph_adapter.py`는 flow state와 subgraph state의 변환, `subgraph_builder.py`는 runnable graph 조립을 담당한다.
+  - 시나리오 초안 생성용 LangGraph subgraph 계층이다.
+  - `generation_stages.py`는 stage 구현, LLM 호출, retry, validation, fallback을 담당한다.
+  - `nodes.py`는 LangGraph node wrapper, `state.py`는 subgraph state를 담당한다.
+  - `subgraph_adapter.py`는 flow state와 subgraph state의 변환, `flow.py`는 runnable graph 조립을 담당한다.
+  - `pipeline.py`, `stages.py`, `subgraph_builder.py`는 기존 import 호환 wrapper다.
 - `subgraphs/signpost_generation/`
-  - 기존 standalone `signpost_flow_agent`에서 통합된 Signpost 생성 LLM pipeline이다.
+  - 단일 scenario Signpost 생성을 담당하는 LangGraph subgraph 계층이다.
+  - `generation_stages.py`는 Stage 2/4/5 구현, LLM 호출, retry, validation, fallback을 담당한다.
+  - `nodes.py`는 LangGraph node wrapper, `subgraph_adapter.py`는 parent 입력과 subgraph state 변환, `flow.py`는 runnable graph 조립을 담당한다.
+  - `pipeline.py`는 `build_signposts_for_scenario()` 기존 import 호환 wrapper다.
   - Signpost 저장/조회는 `persistence/signpost`가 기준이다.
 - `persistence/<domain>/models.py`
   - SQLAlchemy ORM 모델 정의. DB 테이블명/컬럼명/FK/index 소유권의 기준이다.
@@ -235,7 +248,7 @@ POST /scenario-groups/{scenario_group_id}/confirmation
   - 과거 `scenario_agent`의 모델/서비스/repository를 새 코드에 추가하지 않는다.
 - Signpost
   - `persistence/signpost/*`가 Signpost 저장/조회 기준이다.
-  - LLM 생성 pipeline은 `subgraphs/signpost_generation/pipeline.py`에 둔다.
+  - LLM stage 구현은 `subgraphs/signpost_generation/generation_stages.py`, subgraph 조립은 `subgraphs/signpost_generation/flow.py`에 둔다.
   - 과거 `signpost_flow_agent` standalone runnable 또는 DB service 계층을 되살리지 않는다.
 
 ## 신규 기능 추가 기준

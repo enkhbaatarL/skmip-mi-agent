@@ -105,11 +105,11 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
     if event is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
 
-    from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+    from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
         stage1_build_context_pack,
     )
-    from apps.agents.scenario_group_agent.subgraphs.signpost_generation.pipeline import (
-        build_signposts_for_scenario,
+    from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
+        signpost_generation_runnable,
     )
 
     pack = stage1_build_context_pack(event)
@@ -142,9 +142,13 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
         scenario: dict[str, Any],
     ) -> tuple[list[GeneratedSignpost], dict[str, Any]]:
         async with sem:
-            generated_signposts = await build_signposts_for_scenario(
-                scenario, base_event_summary
+            output = await signpost_generation_runnable.ainvoke(
+                {
+                    "scenario": scenario,
+                    "base_event_summary": base_event_summary,
+                },
             )
+            generated_signposts = list(output.get("signposts") or [])
             return generated_signposts, {
                 "scenario_id": scenario["scenario_id"],
                 "status": "success",
@@ -152,7 +156,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
             }
 
     results = await asyncio.gather(
-        *(process_one(scenario) for scenario in scenarios_to_process)
+        *(process_one(scenario) for scenario in scenarios_to_process),
     )
     generated: list[GeneratedSignpost] = []
     scenario_results: list[dict[str, Any]] = []
@@ -180,7 +184,7 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
         else []
     )
     all_signposts = SignpostService().load_by_scenario_ids(
-        [int(scenario.scenario_id) for scenario in state.scenarios]
+        [int(scenario.scenario_id) for scenario in state.scenarios],
     )
     ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATED.value)
     group = ScenarioGroupService().update_state(

@@ -5,11 +5,9 @@
 <aside>
 💡
 
-시간이 오래걸리는 시나리오 생성, 시나리오 검토, Signpost 생성은 작업 완료 후 callback 할 예정입니다.
+시간이 오래 걸리는 시나리오 생성, 시나리오 검토, Signpost 생성은 HTTP 요청에서 접수 상태를 즉시 반환하고, 작업 완료 후 callback으로 최종 결과를 전송합니다.
 
-다만, 6/12일까지 callback 로직을 구현하기에는 촉박하여 우선 Sync 방식으로 통신하도록 구현 예정이며, 추후 callback API 논의 완료되면 Async 방식으로 전환 예정입니다.
-
-Sync 방식의 Response Body는 Callback Body를 참고해주세요.
+즉시 응답은 `ScenarioGroupAcceptedOut` 형태이며, 최종 결과 payload는 각 API의 Callback Body를 기준으로 합니다.
 
 </aside>
 

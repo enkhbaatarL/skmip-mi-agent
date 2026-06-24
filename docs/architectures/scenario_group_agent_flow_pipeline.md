@@ -142,7 +142,7 @@ ScenarioDesignState(
 
 ### `run_scenario_generation` 상세
 
-`subgraphs/scenario_generation/subgraph_builder.py`에서 컴파일한 `scenario_generation_runnable`이
+`subgraphs/scenario_generation/flow.py`에서 컴파일한 `scenario_generation_runnable`이
 직접 node로 등록된다. 6-stage subgraph가 하나의 node처럼 실행된다.
 
 ```mermaid
@@ -302,7 +302,10 @@ scenarios_to_process = [
 `target_ids`는 `sync_scenarios_from_table`이 테이블 편집(dimension 변경 등)을 감지해 설정한다.
 기존 signpost가 이미 있는 scenario라도 `target_ids`에 포함되면 재생성된다.
 
-#### Scenario 내부 signpost pipeline
+#### Scenario 내부 signpost subgraph
+
+`run_signpost_generation`은 대상 scenario 필터링, event summary 구성, semaphore 기반 병렬 fan-out만 담당한다.
+시나리오 1건 처리는 `subgraphs/signpost_generation/flow.py`의 `signpost_generation_runnable.ainvoke(...)`로 위임한다.
 
 ```mermaid
 flowchart LR
