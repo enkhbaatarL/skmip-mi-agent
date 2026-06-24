@@ -12,7 +12,7 @@ from apps.agents.scenario_group_agent.flows.confirm_generation.nodes import (
     load_scenarios,
     load_signposts,
 )
-from apps.agents.scenario_group_agent.schemas.confirm_generation import (
+from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
     ConfirmGenerationData,
     ConfirmGenerationIn,
     ConfirmGenerationOut,
@@ -45,7 +45,7 @@ def to_state(payload: dict[str, Any]) -> ScenarioDesignState:
     return ScenarioDesignState(
         scenario_group_id=int(payload["scenario_group_id"]),
         user_id=parsed.user_id,
-        request_scenario_group=parsed.scenario_group.model_dump(exclude_unset=True),
+        request_scenario_group=parsed.scenario_group,
         request_table=parsed.table.model_dump(exclude_unset=True),
     )
 

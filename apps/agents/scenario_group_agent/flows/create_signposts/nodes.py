@@ -13,23 +13,24 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.service import 
 from apps.agents.scenario_group_agent.persistence.signpost.service import (
     SignpostService,
 )
-from apps.agents.scenario_group_agent.schemas.create_signposts import (
-    GeneratedSignpost,
-    SignpostGenerationResult,
-)
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
     ScenarioStatus,
 )
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.agents.scenario_group_agent.schemas.graph.generation import (
+    GeneratedSignpost,
+    SignpostGenerationResult,
+)
+from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
 
 _MAX_CONCURRENT_SCENARIOS = 7
 
 
-def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
+def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
@@ -41,10 +42,10 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
         )
-    return {"scenario_group": group, "mi_event_id": group["mi_event_id"]}
+    return {"scenario_group": group, "mi_event_id": int(group["mi_event_id"])}
 
 
-def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, Any]:
+def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
@@ -66,20 +67,20 @@ def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, Any]:
         result = ScenarioService().sync_from_table(
             scenario_group_id=state.scenario_group_id,
             event_type_l2_id=int(state.scenario_group["event_type_l2_id"]),
-            table_payload=state.request_table,
+            table_payload=state.request_table.model_dump(exclude_unset=True),
             user_id=state.user_id,
             event_data=event_data,
         )
     except ValueError as exc:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=str(exc)) from exc
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
-    return {
-        "scenario_group": group,
-        "signpost_target_scenario_ids": result["regenerate_scenario_ids"],
-    }
+    return state_update(
+        scenario_group=group,
+        signpost_target_scenario_ids=result["regenerate_scenario_ids"],
+    )
 
 
-def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
+def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
@@ -88,7 +89,7 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
     return {"scenarios": scenarios}
 
 
-def check_existing_signposts(state: ScenarioDesignState) -> dict[str, Any]:
+def check_existing_signposts(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure":
         return {}
     scenario_ids = [int(s["scenario_id"]) for s in state.scenarios]
@@ -96,7 +97,7 @@ def check_existing_signposts(state: ScenarioDesignState) -> dict[str, Any]:
     return {"signposts": existing}
 
 
-async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
+async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.mi_event_id is None:
@@ -128,13 +129,13 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
         or int(s["scenario_id"]) not in existing_scenario_ids
     ]
     if not scenarios_to_process:
-        return {
-            "signpost_result": SignpostGenerationResult(
+        return state_update(
+            signpost_result=SignpostGenerationResult(
                 scenario_group_id=state.scenario_group_id,
                 scenario_results=[],
                 signposts=[],
             ),
-        }
+        )
 
     sem = asyncio.Semaphore(_MAX_CONCURRENT_SCENARIOS)
 
@@ -160,16 +161,16 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, Any]:
         generated.extend(signposts)
         scenario_results.append(scenario_result)
 
-    return {
-        "signpost_result": SignpostGenerationResult(
+    return state_update(
+        signpost_result=SignpostGenerationResult(
             scenario_group_id=state.scenario_group_id,
             scenario_results=scenario_results,
             signposts=generated,
         ),
-    }
+    )
 
 
-def save_signposts(state: ScenarioDesignState) -> dict[str, Any]:
+def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     signpost_result = state.signpost_result
@@ -189,10 +190,12 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, Any]:
         stage=ScenarioGroupStage.SIGNPOST_CREATED,
         user_id=state.user_id,
     )
-    return {
-        "saved_signpost_ids": saved_ids,
-        "signposts": all_signposts,
-        "scenario_group": group,
-        "status": "success",
-        "message": f"Created {len(saved_ids)} signposts",
-    }
+    if group is None:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group update failed")
+    return state_update(
+        saved_signpost_ids=saved_ids,
+        signposts=all_signposts,
+        scenario_group=group,
+        status="success",
+        message=f"Created {len(saved_ids)} signposts",
+    )

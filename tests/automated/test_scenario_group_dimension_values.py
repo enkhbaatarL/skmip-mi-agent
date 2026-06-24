@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import unittest
 from types import SimpleNamespace
+import unittest
 from unittest.mock import AsyncMock, patch
 
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
@@ -13,7 +13,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
     DimensionValueGenerationOutput,
     GeneratedDimensionCell,
 )
-from apps.agents.scenario_group_agent.schemas.common import (
+from apps.agents.scenario_group_agent.schemas.domain.template import (
     ScenarioTemplate,
     ScenarioTemplateDimension,
     ScenarioTemplateEnum,

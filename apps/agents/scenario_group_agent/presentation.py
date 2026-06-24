@@ -6,8 +6,10 @@ from typing import Any
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
     ScenarioService,
 )
-from apps.agents.scenario_group_agent.schemas.common import (
-    ScenarioGroupPayload,
+from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
+    ScenarioGroupDetailOut,
+)
+from apps.agents.scenario_group_agent.schemas.api.table import (
     ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
     ScenarioHeader,
@@ -17,12 +19,12 @@ from apps.agents.scenario_group_agent.schemas.common import (
     ScenarioQueryTable,
     ScenarioRow,
     ScenarioTable,
-    SignpostPayload,
     SignpostQueryPayload,
 )
-from apps.agents.scenario_group_agent.schemas.manage_scenario_groups import (
-    ScenarioGroupDetailOut,
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
 )
+from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
 
 
 def build_scenario_group_table_data(

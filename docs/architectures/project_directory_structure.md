@@ -94,13 +94,27 @@ apps/agents/scenario_group_agent/
 │       └── __init__.py
 ├── schemas/
 │   ├── __init__.py
-│   ├── common.py
-│   ├── confirm_generation.py
-│   ├── create_scenarios.py
-│   ├── create_signposts.py
+│   ├── base.py
 │   ├── enums.py
-│   ├── manage_scenario_groups.py
-│   └── validate_scenarios.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── common.py
+│   │   ├── table.py
+│   │   ├── confirm_generation.py
+│   │   ├── create_scenarios.py
+│   │   ├── create_signposts.py
+│   │   ├── manage_scenario_groups.py
+│   │   └── validate_scenarios.py
+│   ├── domain/
+│   │   ├── __init__.py
+│   │   ├── event.py
+│   │   ├── scenario_group.py
+│   │   ├── scenario.py
+│   │   ├── signpost.py
+│   │   └── template.py
+│   └── graph/
+│       ├── __init__.py
+│       └── generation.py
 └── subgraphs/
     ├── __init__.py
     ├── scenario_generation/
@@ -151,14 +165,17 @@ apps/agents/scenario_group_agent/
   - flow/node가 호출하는 비즈니스 친화 API를 제공한다.
 - `prompts/builders/`
   - 프롬프트 builder 확장 위치다. 현재 핵심 생성 프롬프트는 pipeline 내부 상수/함수 중심으로 유지된다.
-- `schemas/common.py`
-  - 여러 API에서 공유하는 Pydantic request/response/table payload 타입을 정의한다.
+- `schemas/base.py`
+  - API alias 설정 등 Pydantic schema 공통 기반 타입을 정의한다.
 - `schemas/enums.py`
   - scenario group, scenario, signpost stage/status/strength 등 공통 enum을 정의한다.
-- `schemas/manage_scenario_groups.py`
-  - 조회, soft delete, hard delete, signpost 정리 등 관리성 API schema를 정의한다.
-- `schemas/<api_name>.py`
-  - 생성/검증/Signpost/확정 API별 request/response schema를 정의한다.
+- `schemas/api/`
+  - FastAPI request/response 전용 schema를 정의한다.
+  - `schemas/api/table.py`는 외부 API table 응답/요청 shape, `schemas/api/common.py`은 API 공통 응답 wrapper를 담당한다.
+- `schemas/domain/`
+  - service outward boundary DTO와 domain/template payload를 정의한다.
+- `schemas/graph/`
+  - LangGraph state에 저장되는 generation pipeline stage/template/result DTO를 정의한다.
 
 ## API Endpoint ↔ Flow 경로 매핑
 
@@ -223,12 +240,13 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 
 ## 신규 기능 추가 기준
 
-- API를 추가할 때는 `api.py`, `schemas/<new_api>.py`, `flows/<new_api>/flow.py`, `flows/<new_api>/nodes.py`를 함께 검토한다.
+- API를 추가할 때는 `api.py`, `schemas/api/<new_api>.py`, `flows/<new_api>/flow.py`, `flows/<new_api>/nodes.py`를 함께 검토한다.
 - API가 즉시 200을 반환하고 백그라운드에서 오래 도는 작업이면 `flows/<new_api>/flow_async.py`를 둔다.
 - 생성 파이프라인 확장이 필요하면 `subgraphs/scenario_generation/` 또는 `subgraphs/signpost_generation/` 내부에서 확장한다.
 - DB 저장/조회가 필요하면 먼저 `persistence/<domain>/`의 service/repository 책임을 확인하고, flow/node에서는 service를 호출한다.
-- API 입출력은 `schemas/<new_api>.py`, 여러 API 공통 타입은 `schemas/common.py`, enum은 `schemas/enums.py`에 둔다.
-- 조회/삭제/관리성 schema는 `schemas/manage_scenario_groups.py`에 둔다.
+- API 입출력은 `schemas/api/<new_api>.py`, API table shape은 `schemas/api/table.py`, API 공통 응답은 `schemas/api/common.py`, enum은 `schemas/enums.py`에 둔다.
+- 조회/삭제/관리성 schema는 `schemas/api/manage_scenario_groups.py`에 둔다.
+- service 반환 DTO는 `schemas/domain/`, graph generation stage/template/result DTO는 `schemas/graph/`에 둔다.
 - 응답 조립/표시용 변환은 `presentation.py`에 둔다.
 - flow/subgraph에서 공유하는 상태가 늘어나면 `state.py`에 추가하고, 특정 flow에만 필요한 상태는 해당 flow 내부에 둔다.
 

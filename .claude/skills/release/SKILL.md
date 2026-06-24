@@ -43,7 +43,6 @@ description: MR 메시지 생성부터 Git tag, GitHub Release, Docker build & p
 ## Ops
 - ...
 
-@codex 리뷰해줘
 ```
 
 규칙:

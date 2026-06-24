@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from functools import lru_cache
+import time
 from typing import Any
 
 from langchain_core.runnables import Runnable, RunnableLambda
@@ -14,8 +14,10 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenarios,
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
-from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
-from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosOut
+from apps.agents.scenario_group_agent.schemas.api.create_scenarios import CreateScenariosOut
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,

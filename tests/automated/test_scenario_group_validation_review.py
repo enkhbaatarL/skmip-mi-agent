@@ -12,8 +12,9 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
     build_context,
     run_review,
 )
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+from apps.agents.scenario_group_agent.schemas.graph.generation import (
     C1BaseEvent,
+    PerDimensionValue,
     PriceDirection,
     Scenario,
     ScenarioTemplate,
@@ -21,7 +22,8 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline imp
     Stage3ValueSelection,
     Stage4ScenarioSynthesis,
     TemplateDimension,
-    PerDimensionValue,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
     stage6_quick_validate,
 )
 

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
 
 from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
-from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
+from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
+from apps.agents.scenario_group_agent.schemas.graph.generation import GeneratedSignpost
 
 
 class SignpostService:
-    def load_by_scenario_ids(self, scenario_ids: list[int]) -> list[dict[str, Any]]:
+    def load_by_scenario_ids(self, scenario_ids: list[int]) -> list[SignpostPayload]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -20,7 +20,7 @@ class SignpostService:
         try:
             repository = SignpostRepository(session=session)
             return [
-                repository.model_to_dict(model)
+                SignpostPayload.model_validate(repository.model_to_dict(model))
                 for model in repository.fetch_models_by_scenario_ids(scenario_ids)
             ]
         finally:

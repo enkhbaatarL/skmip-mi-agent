@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+import re
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -14,8 +14,9 @@ from apps.agents.scenario_group_agent.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
 
+
 if TYPE_CHECKING:
-    from apps.agents.scenario_group_agent.schemas.common import (
+    from apps.agents.scenario_group_agent.schemas.domain.template import (
         ScenarioTemplate,
         ScenarioTemplateDimension,
     )

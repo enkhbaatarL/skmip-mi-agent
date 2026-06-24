@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from apps.agents.scenario_group_agent.schemas.common import (
-    ApiModel,
-    ScenarioTable,
-)
+from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
+from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.common.values.response import CommonResponse
 
 

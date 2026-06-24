@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import secrets
 from decimal import Decimal
+import secrets
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -18,7 +18,12 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.repository impo
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
-from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
+from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
+    ScenarioGroupDetailOut,
+)
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -65,7 +70,7 @@ def _normalize_probability_scores_to_100(
 
 
 class ScenarioGroupService:
-    def load_by_id(self, scenario_group_id: int) -> dict[str, Any] | None:
+    def load_by_id(self, scenario_group_id: int) -> ScenarioGroupPayload | None:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -74,13 +79,15 @@ class ScenarioGroupService:
         try:
             repository = ScenarioGroupRepository(session=session)
             group = repository.fetch_by_id(scenario_group_id)
-            return repository.model_to_dict(group) if group else None
+            if group is None:
+                return None
+            return ScenarioGroupPayload.model_validate(repository.model_to_dict(group))
         finally:
             session.close()
 
     def load_detail(
         self, scenario_group_id: int, *, include_deleted: bool = False
-    ) -> dict[str, Any]:
+    ) -> ScenarioGroupDetailOut:
         from apps.agents.scenario_group_agent.presentation import (
             build_scenario_group_query_data,
         )
@@ -128,7 +135,7 @@ class ScenarioGroupService:
                     for signpost in signposts
                 ],
             )
-            return data.model_dump()
+            return data
         finally:
             session.close()
 

@@ -4,11 +4,11 @@ from typing import Any
 
 from pydantic import ConfigDict, Field
 
-from apps.agents.scenario_group_agent.schemas.common import (
-    ApiModel,
+from apps.agents.scenario_group_agent.schemas.api.table import (
     ScenarioHeader,
     ScenarioTable,
 )
+from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.common.values.response import CallBackBody
 
 

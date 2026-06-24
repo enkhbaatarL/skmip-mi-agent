@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from apps.agents.scenario_group_agent.persistence.event.service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
     ScenarioService,
@@ -9,26 +7,28 @@ from apps.agents.scenario_group_agent.persistence.scenario.service import (
 from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
     ScenarioGroupService,
 )
-from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
 
 def _existing_group_state_update(
     scenario_group: ScenarioGroupPayload,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     return {
         "scenario_group_id": scenario_group.scenario_group_id,
-        "scenario_group": scenario_group.model_dump(),
+        "scenario_group": scenario_group,
     }
 
 
-def load_event(state: ScenarioDesignState) -> dict[str, Any]:
+def load_event(state: ScenarioDesignState) -> dict[str, object]:
     if state.mi_event_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
     event = EventService().load_event(state.mi_event_id)
@@ -37,7 +37,7 @@ def load_event(state: ScenarioDesignState) -> dict[str, Any]:
     return {"event_data": event}
 
 
-def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
+def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure" or state.mi_event_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
     existing = ScenarioGroupService().load_by_mi_event_id(state.mi_event_id)
@@ -61,8 +61,10 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
         )
-    else:
-        raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail=f"시나리오 그룹 ID: {existing.scenario_group_id}")
+    raise MIBaseError(
+        ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
+        detail=f"시나리오 그룹 ID: {existing.scenario_group_id}",
+    )
 
     # scenarios = ScenarioService().load_by_group_id(existing["scenario_group_id"])
     # return {
@@ -74,7 +76,7 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     # }
 
 
-def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
+def create_group_record(state: ScenarioDesignState) -> dict[str, object]:
     """Prepare 단계: agent 실행 전 group row를 미리 INSERT해 scenarioGroupId를 확보한다."""
     if state.event_data is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="event_data is required")
@@ -99,10 +101,18 @@ def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
     }
     scenario_group_id = ScenarioGroupService().create_group(payload)
     group = ScenarioGroupService().load_by_id(scenario_group_id)
-    return {"scenario_group_id": scenario_group_id, "scenario_group": group}
+    if group is None:
+        raise MIBaseError(
+            ErrorCode.UNKNOWN_ERROR,
+            detail="Scenario group not found after creation",
+        )
+    return {
+        "scenario_group_id": scenario_group_id,
+        "scenario_group": group,
+    }
 
 
-def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
+def save_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.event_data is None or state.scenario_result is None:
@@ -144,12 +154,15 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
         scenario_group_id = state.scenario_group_id
     else:
         scenario_group_id = ScenarioGroupService().create_group(payload)
-    scenario_result = dict(state.scenario_result)
+    scenario_result = state.scenario_result.model_dump()
     scenario_result["scenario_group_id"] = scenario_group_id
-    return {"scenario_group_id": scenario_group_id, "scenario_result": scenario_result}
+    return state_update(
+        scenario_group_id=scenario_group_id,
+        scenario_result=scenario_result,
+    )
 
 
-def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
+def save_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.scenario_group_id is None or state.scenario_result is None:
@@ -168,7 +181,7 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
 
     saved_ids = ScenarioService().save_generated_scenarios(
         state.scenario_group_id,
-        state.scenario_result,
+        state.scenario_result.model_dump(),
         state.user_id,
     )
     ScenarioGroupService().update_scenario_count(
@@ -184,10 +197,12 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         user_id=state.user_id,
     )
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
-    return {
-        "saved_scenario_ids": saved_ids,
-        "scenario_group": group,
-        "scenarios": scenarios,
-        "status": "success",
-        "message": f"Created {len(saved_ids)} scenarios",
-    }
+    if group is None:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group update failed")
+    return state_update(
+        saved_scenario_ids=saved_ids,
+        scenario_group=group,
+        scenarios=scenarios,
+        status="success",
+        message=f"Created {len(saved_ids)} scenarios",
+    )

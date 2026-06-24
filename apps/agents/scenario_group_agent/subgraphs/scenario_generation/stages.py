@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 import uuid
 
+from apps.agents.scenario_group_agent.schemas.graph.generation import (
+    ScenarioGenerationResult,
+)
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
     stage1_build_context_pack,
     stage2_select_dimensions,
@@ -129,26 +131,25 @@ def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
     )
     event_type_l2_id = int(state.event_data.get("event_type_l2_id") or 0)
     stage4 = state.stage4_scenario_synthesis
-    return {
-        "scenario_result": {
-            "scenario_group_id": f"scg_{uuid.uuid4().hex[:10]}",
-            "created_at": datetime.now(UTC).isoformat(),
-            "stage1_context_pack": state.stage1_context_pack.model_dump(),
-            "stage2_dimension_selection": (
-                state.stage2_dimension_selection.model_dump()
-            ),
-            "stage3_value_selection": state.stage3_value_selection.model_dump(),
-            "stage4_scenario_synthesis": stage4.model_dump(),
-            "stage5_validation": stage5.model_dump(),
-            "scenario_group_metadata": scenario_group_metadata.model_dump(),
-            "cartesian_total": stage4.cartesian_total,
-            "filtered_by_compatibility": stage4.filtered_by_compatibility,
-            "scenario_count": len(stage4.scenarios),
-            "mece_passed": stage5.mece_check.mutually_exclusive,
-            "mi_event_id": state.event_data.get("mi_event_id"),
-            "event_type_l1_l2": (
-                state.stage1_context_pack.C1_base_event.event_type_l1_l2
-            ),
-            "template_id": str(event_type_l2_id),
-        },
-    }
+    return ScenarioGenerationState(
+        scenario_result=ScenarioGenerationResult(
+            scenario_group_id=f"scg_{uuid.uuid4().hex[:10]}",
+            stage1_context_pack=state.stage1_context_pack,
+            stage2_dimension_selection=state.stage2_dimension_selection,
+            stage3_value_selection=state.stage3_value_selection,
+            stage4_scenario_synthesis=stage4,
+            stage5_validation=stage5,
+            scenario_group_metadata=scenario_group_metadata,
+            cartesian_total=stage4.cartesian_total,
+            filtered_by_compatibility=stage4.filtered_by_compatibility,
+            scenario_count=len(stage4.scenarios),
+            mece_passed=stage5.mece_check.mutually_exclusive,
+            mi_event_id=state.event_data.get("mi_event_id"),
+            event_type_l1_l2=state.stage1_context_pack.C1_base_event.event_type_l1_l2,
+            template_id=str(event_type_l2_id),
+        )
+    ).model_dump(
+        include={"scenario_result"},
+        exclude_none=True,
+        exclude_unset=True,
+    )

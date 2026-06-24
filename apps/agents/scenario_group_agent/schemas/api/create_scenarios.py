@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from apps.agents.scenario_group_agent.schemas.common import (
-    ApiModel,
+from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
+from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
-    ScenarioTable,
 )
 from apps.common.values.response import CallBackBody
 

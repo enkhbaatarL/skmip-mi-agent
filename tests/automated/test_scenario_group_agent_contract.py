@@ -42,20 +42,22 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.flow import build_g
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
-from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
-from apps.agents.scenario_group_agent.schemas.confirm_generation import (
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
+from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
     ConfirmGenerationIn,
 )
-from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosIn
-from apps.agents.scenario_group_agent.schemas.create_signposts import (
+from apps.agents.scenario_group_agent.schemas.api.create_scenarios import CreateScenariosIn
+from apps.agents.scenario_group_agent.schemas.api.create_signposts import (
     CreateSignpostsIn,
-    SignpostGenerationResult,
 )
-from apps.agents.scenario_group_agent.schemas.manage_scenario_groups import (
+from apps.agents.scenario_group_agent.schemas.graph.generation import SignpostGenerationResult
+from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     HardDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupIn,
 )
-from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
+from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
     ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosIn,
     ValidateScenariosOut,
@@ -68,7 +70,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_ada
     to_output as scenario_generation_to_output,
     to_state as scenario_generation_to_state,
 )
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioTemplate,
     TemplateDimension,
 )
@@ -91,6 +93,50 @@ TABLE = {
     "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
     "rows": [{"scenarioId": 100, "cells": {"period": "단기"}}],
 }
+
+
+def scenario_generation_result_stub(
+    *,
+    scenario_group_metadata: dict[str, str] | None = None,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "stage2_dimension_selection": {
+            "template_id": "template",
+            "template_dimensions_total": 3,
+            "selected_dimensions": [
+                {"dim_key": "period", "rationale": "(a) period rationale"},
+                {"dim_key": "supply", "rationale": "(a) supply rationale"},
+                {"dim_key": "demand", "rationale": "(a) demand rationale"},
+            ],
+        },
+        "stage4_scenario_synthesis": {
+            "cartesian_total": 1,
+            "filtered_by_compatibility": 1,
+            "scenarios": [
+                {
+                    "scenario_id": "S_01",
+                    "title": "scenario",
+                    "dimension_values": {
+                        "period": "short",
+                        "supply": "tight",
+                        "demand": "high",
+                    },
+                    "description": "scenario description",
+                    "derivation_rationale": "scenario rationale",
+                    "price_direction": {
+                        "jkm": "neutral",
+                        "ttf": "neutral",
+                        "hh": "neutral",
+                    },
+                },
+            ],
+        },
+    }
+    if scenario_group_metadata is not None:
+        result["scenario_group_metadata"] = scenario_group_metadata
+    return result
+
+
 class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_create_scenarios_graph_registers_generation_subgraph(self) -> None:
         graph = build_graph().get_graph()
@@ -572,12 +618,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 "event_type_l2_id": 30,
                 "event_title_ko": "event",
             },
-            scenario_result={
-                "stage2_dimension_selection": {
-                    "selected_dimensions": [{"dim_key": "period"}],
-                },
-                "stage4_scenario_synthesis": {"scenarios": []},
-            },
+            scenario_result=scenario_generation_result_stub(),
         )
 
         with patch(
@@ -602,16 +643,12 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 "one_line_summary": "event summary",
                 "detail_analysis": "event detail",
             },
-            scenario_result={
-                "scenario_group_metadata": {
+            scenario_result=scenario_generation_result_stub(
+                scenario_group_metadata={
                     "title": "generated group title",
                     "description": "generated group description",
-                },
-                "stage2_dimension_selection": {
-                    "selected_dimensions": [{"dim_key": "period"}],
-                },
-                "stage4_scenario_synthesis": {"scenarios": []},
-            },
+                }
+            ),
         )
 
         with patch(
@@ -635,12 +672,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 "event_type_l2_id": 30,
                 "event_title_ko": "event title",
             },
-            scenario_result={
-                "stage2_dimension_selection": {
-                    "selected_dimensions": [{"dim_key": "period"}],
-                },
-                "stage4_scenario_synthesis": {"scenarios": []},
-            },
+            scenario_result=scenario_generation_result_stub(),
         )
 
         with patch(
@@ -686,16 +718,12 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         state = ScenarioDesignState(
             scenario_group_id=10,
             user_id=101,
-            scenario_result={
-                "scenario_group_metadata": {
+            scenario_result=scenario_generation_result_stub(
+                scenario_group_metadata={
                     "title": "generated group title",
                     "description": "generated group description",
-                },
-                "stage2_dimension_selection": {
-                    "selected_dimensions": [{"dim_key": "period"}],
-                },
-                "stage4_scenario_synthesis": {"scenarios": []},
-            },
+                }
+            ),
         )
 
         with (
