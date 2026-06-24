@@ -20,6 +20,7 @@ WORKDIR /workdir
 
 COPY pyproject.toml poetry.lock ./
 RUN poetry source add --priority=primary nexus "${NEXUS_PYPI_URL}" && \
+    poetry lock --no-interaction --no-ansi && \
     poetry install --only main --no-interaction --no-ansi
 
 COPY apps ./apps

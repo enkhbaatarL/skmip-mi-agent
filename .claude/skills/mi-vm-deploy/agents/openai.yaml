@@ -1,0 +1,4 @@
+interface:
+  display_name: "MI VM Deploy"
+  short_description: "Build, push, and deploy scenario agent"
+  default_prompt: "Use $mi-vm-deploy to build and push a scenario agent image tag, then deploy it on the MI demo VM via Docker Compose."
