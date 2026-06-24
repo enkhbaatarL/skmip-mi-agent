@@ -36,13 +36,13 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
     if group is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {state.scenario_group_id}")
-    request_usr_id = group.get("request_usr_id")
+    request_usr_id = group.request_usr_id
     if request_usr_id is not None and request_usr_id != state.user_id:
         raise MIBaseError(
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
         )
-    return {"scenario_group": group, "mi_event_id": int(group["mi_event_id"])}
+    return {"scenario_group": group, "mi_event_id": int(group.mi_event_id)}
 
 
 def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
@@ -53,21 +53,20 @@ def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
     if state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
     event_data = None
+    request_table = state.request_table.model_dump(exclude_unset=True)
     has_new_rows = any(
         row.get("scenario_id") is None
-        for row in state.request_table.get("rows", []) or []
+        for row in request_table.get("rows", []) or []
     )
     if has_new_rows:
-        event_data = EventService().load_event(
-            int(state.scenario_group["mi_event_id"])
-        )
+        event_data = EventService().load_event(int(state.scenario_group.mi_event_id))
         if event_data is None:
             raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
     try:
         result = ScenarioService().sync_from_table(
             scenario_group_id=state.scenario_group_id,
-            event_type_l2_id=int(state.scenario_group["event_type_l2_id"]),
-            table_payload=state.request_table.model_dump(exclude_unset=True),
+            event_type_l2_id=int(state.scenario_group.event_type_l2_id),
+            table_payload=request_table,
             user_id=state.user_id,
             event_data=event_data,
         )
@@ -92,7 +91,7 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
 def check_existing_signposts(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure":
         return {}
-    scenario_ids = [int(s["scenario_id"]) for s in state.scenarios]
+    scenario_ids = [int(scenario.scenario_id) for scenario in state.scenarios]
     existing = SignpostService().load_by_scenario_ids(scenario_ids)
     return {"signposts": existing}
 
@@ -120,13 +119,13 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
         "summary": c1.get("summary", ""),
         "driver": c1.get("driver", ""),
     }
-    existing_scenario_ids = {int(sp["scenario_id"]) for sp in state.signposts}
+    existing_scenario_ids = {int(signpost.scenario_id) for signpost in state.signposts}
     target_ids = {int(scenario_id) for scenario_id in state.signpost_target_scenario_ids}
     scenarios_to_process = [
-        s
-        for s in state.scenarios
-        if int(s["scenario_id"]) in target_ids
-        or int(s["scenario_id"]) not in existing_scenario_ids
+        scenario.model_dump()
+        for scenario in state.scenarios
+        if int(scenario.scenario_id) in target_ids
+        or int(scenario.scenario_id) not in existing_scenario_ids
     ]
     if not scenarios_to_process:
         return state_update(
@@ -181,7 +180,7 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
         else []
     )
     all_signposts = SignpostService().load_by_scenario_ids(
-        [int(s["scenario_id"]) for s in state.scenarios]
+        [int(scenario.scenario_id) for scenario in state.scenarios]
     )
     ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATED.value)
     group = ScenarioGroupService().update_state(

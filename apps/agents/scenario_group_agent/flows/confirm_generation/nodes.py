@@ -43,7 +43,7 @@ def load_signposts(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure":
         return {}
     signposts = SignpostService().load_by_scenario_ids(
-        [int(s["scenario_id"]) for s in state.scenarios]
+        [int(scenario.scenario_id) for scenario in state.scenarios]
     )
     if not signposts:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No signposts found")
@@ -55,7 +55,9 @@ def confirm_outputs(state: ScenarioDesignState) -> dict[str, object]:
         return {}
     if state.request_scenario_group is None or state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenarioGroup and table are required")
-    effective_user_id = state.user_id or (state.scenario_group or {}).get("request_usr_id")
+    effective_user_id = state.user_id or (
+        state.scenario_group.request_usr_id if state.scenario_group is not None else None
+    )
     result = ScenarioGroupService().apply_confirmation(
         state.scenario_group_id,
         state.request_scenario_group.model_dump(exclude_unset=True),

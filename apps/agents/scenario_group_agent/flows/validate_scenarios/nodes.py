@@ -44,6 +44,12 @@ def _build_dimension_generation_rows(
     return generation_rows
 
 
+def _model_or_dict_dump(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return dict(value)
+
+
 def _assert_group_owner(group: dict[str, Any], user_id: int | None) -> None:
     request_usr_id = group.get("request_usr_id")
     if request_usr_id is not None and request_usr_id != user_id:
@@ -70,9 +76,11 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
     if not scenarios:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No scenarios found")
+    if state.scenario_group is None:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group is required")
     try:
         dimension_template = ScenarioService().load_dimension_template(
-            int(state.scenario_group["event_type_l2_id"]),
+            int(state.scenario_group.event_type_l2_id),
         )
     except (KeyError, ValueError):
         dimension_template = []
@@ -93,7 +101,9 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, obj
     header_key_list = [str(header["key"]) for header in headers]
     header_keys = set(header_key_list)
 
-    event_type_l2_id = int((state.scenario_group or {})["event_type_l2_id"])
+    if state.scenario_group is None:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group is required")
+    event_type_l2_id = int(state.scenario_group.event_type_l2_id)
     template = ScenarioService().load_scenario_template(event_type_l2_id)
 
     # 시나리오화 템플릿(event type 기준)에서 필수 분기(required=True)와
@@ -168,10 +178,13 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, obj
     ]
     if fillable_dims:
         generated = await generate_new_dimension_values(
-            template,
-            _build_dimension_generation_rows(rows, state.scenarios),
-            fillable_dims,
-        )
+                template,
+                _build_dimension_generation_rows(
+                    rows,
+                    [_model_or_dict_dump(scenario) for scenario in state.scenarios],
+                ),
+                fillable_dims,
+            )
         for index, row in enumerate(rows):
             values = generated.get(index) or {}
             if not values:
@@ -190,13 +203,14 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, obj
 async def validate_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure":
         return {}
-    requested_rows = (state.request_table or {}).get("rows", [])
-    requested_headers = (state.request_table or {}).get("headers", [])
+    request_table = state.request_table.model_dump() if state.request_table is not None else {}
+    requested_rows = request_table.get("rows", [])
+    requested_headers = request_table.get("headers", [])
     context = build_context(
-        group=state.scenario_group or {},
+        group=state.scenario_group.model_dump() if state.scenario_group is not None else {},
         requested_rows=requested_rows,
-        persisted_scenarios=state.scenarios,
-        template_dims=state.dimension_template,
+        persisted_scenarios=[_model_or_dict_dump(scenario) for scenario in state.scenarios],
+        template_dims=[_model_or_dict_dump(dimension) for dimension in state.dimension_template],
         requested_headers=requested_headers,
     )
     report = await run_review(context)

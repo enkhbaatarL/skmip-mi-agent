@@ -15,6 +15,7 @@ from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
 from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
+from apps.agents.scenario_group_agent.schemas.domain.template import ScenarioTemplateDimension
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioGenerationResult,
     SignpostGenerationResult,
@@ -42,14 +43,6 @@ class ScenarioTableRowState(ApiModel):
 class ScenarioTableState(ApiModel):
     headers: list[ScenarioTableHeaderState]
     rows: list[ScenarioTableRowState]
-
-
-class ScenarioTemplateDimensionState(ApiModel):
-    dim_key: str
-    label: str = ""
-    required: bool = False
-    value_enums: list[Any] = Field(default_factory=list)
-    display_order: int = 999999
 
 
 class ScenarioValidationResult(ApiModel):
@@ -95,7 +88,7 @@ class ScenarioDesignState(BaseModel):
     event_data: EventPayload | None = None
     scenario_group: ScenarioGroupPayload | None = None
     scenarios: list[ScenarioPayload] = Field(default_factory=list)
-    dimension_template: list[ScenarioTemplateDimensionState] = Field(default_factory=list)
+    dimension_template: list[ScenarioTemplateDimension] = Field(default_factory=list)
     signposts: list[SignpostPayload] = Field(default_factory=list)
 
     scenario_result: ScenarioGenerationResult | None = None

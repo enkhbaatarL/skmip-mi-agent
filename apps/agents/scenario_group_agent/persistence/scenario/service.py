@@ -136,11 +136,32 @@ def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
 class ScenarioService:
     def load_dimension_template(
         self, event_type_l2_id: int
-    ) -> list[dict[str, Any]]:
-        return self._load_template_json_from_db(event_type_l2_id)
+    ) -> list["CommonScenarioTemplateDimension"]:
+        from apps.agents.scenario_group_agent.schemas.domain.template import (
+            ScenarioTemplateDimension as CommonScenarioTemplateDimension,
+        )
+
+        pipeline_template = self.load_pipeline_template(event_type_l2_id)
+        return [
+            CommonScenarioTemplateDimension(
+                dimension_id=dimension.dim_key,
+                label_ko=dimension.label,
+                description=dimension.label,
+                required=dimension.required,
+                enum=[
+                    {
+                        "id": str(item["id"]),
+                        "label": str(item["label"]),
+                        "tail": bool(item.get("tail", False)),
+                    }
+                    for item in dimension.enum_items()
+                ],
+            )
+            for dimension in pipeline_template.dimensions
+        ]
 
     def load_pipeline_template(self, event_type_l2_id: int) -> ScenarioTemplate:
-        template_json = self.load_dimension_template(event_type_l2_id)
+        template_json = self._load_template_json_from_db(event_type_l2_id)
         return self._map_template_json_to_pipeline_template(
             template_json,
             event_type_l2_id,
