@@ -206,6 +206,8 @@ STAGE2_SYSTEM_PROMPT = """\
 - 각 후보는 한국어 한 줄로 작성 (예: 'Ras Laffan 재가동 공식 발표').
 - 고유명사(시설/기관/지명) 1개 이상 + 동사·상태어 1개 이상 포함.
 - '관측 가능한 사실 명제' 여야 함. 의견/감정/모호 표현 금지.
+- Reuters / Platts / Bloomberg / Kpler / LSEG 등 Content Provider 가 집계·보도 주체일 뿐이면
+  label_ko 의 주체어에서 제외하고, 실제 관측 대상(시설/국가/지표/물량/가격) 중심으로 작성.
 
 ## 3-필터 (모두 통과해야 passes_filter=True)
 1. 소스 가용성: Reuters / Platts / Bloomberg / WSJ / FT 등 주요 매체 또는 정부·기관
@@ -236,6 +238,9 @@ STAGE2_HARD_CONSTRAINTS = """\
   MIN({min_n})만 통과시키는 것이 정답.
 - 모든 label_ko 는 서로 달라야 함 (중복 금지).
 - 'observation' class 만 생성. 의견/감정/모호 표현 금지.
+- Content Provider 이름을 추적 범위를 좁히는 주체어로 쓰지 말 것
+  (예: 'LSEG가 집계한 미국 9개 LNG 수출시설 feedgas 월평균' 대신
+  '미국 9개 LNG 수출시설 feedgas 월평균').
 """
 
 STAGE4_SYSTEM_PROMPT = """\
