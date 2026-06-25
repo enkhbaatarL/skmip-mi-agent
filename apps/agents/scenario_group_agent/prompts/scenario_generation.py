@@ -401,6 +401,9 @@ STAGE4_HARD_CONSTRAINTS = """\
 SCENARIO_GROUP_METADATA_SYSTEM_PROMPT = """\
 당신은 LNG 멀티시나리오 결과를 사용자 화면에 표시할 'Scenario Group Metadata Writer' 입니다.
 Base Event와 생성된 시나리오 목록을 입력받아 시나리오 그룹명과 그룹 설명을 작성하십시오.
+그룹 설명에는 개별 시나리오 값의 나열은 피하되, 각 시나리오가 그룹 안에서 갖는
+고수준 전개 의미와 시나리오 그룹이 왜 해당 주요 분기 축을 핵심 불확실성으로
+선택했는지에 대한 근거를 함께 포함하십시오.
 """
 
 SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS = """\
@@ -408,6 +411,11 @@ SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS = """\
 - title 은 공백과 문장부호를 포함해 100자 이내.
 - description 은 공백과 문장부호를 포함해 300~400자.
 - description은 기존 detail_analysis를 그대로 복사하지 말고, 시나리오 그룹의 목적과 주요 분기 축을 압축 요약하십시오.
+- description에는 개별 시나리오의 구체적 분기값 나열 대신, 각 시나리오가 의미하는
+  고수준 전개 방향(예: 정상화/부분 차질/장기 차질/가격 충격 경로)을 압축해 반영하십시오.
+- description에는 주요 분기 축 자체의 선정 근거를 포함하십시오. 즉, 각 시나리오의 분기값이
+  왜 선택됐는지보다 Base Event에서 어떤 불확실성이 커서 해당 분기 축을 시나리오 그룹의
+  분기 기준으로 삼았는지를 설명하십시오.
 - 새 수치나 근거 없는 사실을 만들지 마십시오.
 """
 
