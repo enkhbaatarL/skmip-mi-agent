@@ -1,6 +1,6 @@
 ---
 name: mi-source-banib
-description: 외부 GitHub main 기준으로 내부망 반입용 소스 release tag, git bundle, bundle.zip, manifest를 생성하고, 내부 Git 서버에서 tag 반입, import 태그 브랜치, Pull Request로 develop에 반영하는 절차를 안내한다. "소스 반입파일 만들어줘", "GitHub tag를 내부 Git으로 반입", "mi-agent 소스 반입", "bundle zip 생성", "내부 PR 반입 절차" 류 요청에 사용.
+description: main merge 이후 외부 GitHub main 기준으로 내부망 반입용 소스 release tag, git bundle, bundle.zip, manifest를 생성하고, 내부 Git 서버에서 tag 반입, import 태그 브랜치, Pull Request로 develop에 반영하는 절차를 안내한다. "소스 반입파일 만들어줘", "GitHub tag를 내부 Git으로 반입", "mi-agent 소스 반입", "bundle zip 생성", "내부 PR 반입 절차" 류 요청에 사용.
 ---
 
 # MI 소스 반입 bundle 생성
@@ -19,6 +19,7 @@ Codex가 실제로 수행하는 범위는 **외부 환경에서 반입 파일 �
 Codex가 수행:
 - `origin/<base_branch>` 기준 annotated tag 생성
 - GitHub tag push
+- tag가 이미 로컬/원격에 있고 annotated tag object와 peeled commit이 모두 일치하면 기존 tag를 재사용해 bundle 재생성
 - tag 기준 `git bundle` 생성
 - bundle을 다시 zip으로 압축
 - manifest에 commit, sha256, 파일명 기록
@@ -39,6 +40,20 @@ Codex가 수행하지 않음:
 
 TAG가 없으면 사용자에게 tag 값을 먼저 확인한다.
 기본 기준은 `origin/main`이며, 로컬 미커밋 변경은 bundle에 포함하지 않는다.
+이 스킬은 main merge 이후 실행하는 것이 원칙이다.
+
+## Release 흐름 내 위치
+
+1. `release` 스킬로 main 대상 MR/PR을 생성한다.
+2. main merge 완료 후 이 스킬을 실행해 같은 버전 tag와 source bundle을 생성한다.
+3. 같은 tag로 `mi-image-banib`을 실행해 image bundle을 생성한다.
+
+주의:
+- source bundle과 image bundle은 같은 tag commit 기준이어야 한다.
+- 이미 같은 commit을 가리키는 동일 tag object가 있으면 재사용한다.
+- tag가 다른 commit을 가리키면 중단하고 사용자에게 확인한다.
+- local tag와 remote tag가 같은 commit을 가리키더라도 tag object가 다르면 중단한다.
+- lightweight tag는 사용하지 않는다. release tag는 annotated tag여야 한다.
 
 ## A. 외부 - 반입 파일 생성
 
