@@ -13,8 +13,7 @@ import httpx
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "GET /scenario-groups/{id} 응답을 기반으로 "
-            "validation/signposts/confirmation 요청 바디를 생성합니다."
+            "GET /scenario-groups/{id} 응답을 기반으로 validation/signposts/confirmation 요청 바디를 생성합니다."
         )
     )
     parser.add_argument("--base-url", default="http://localhost:8000", help="API 서버 주소")
@@ -90,6 +89,55 @@ def normalize_table_for_validate_or_signposts(table: dict[str, Any]) -> dict[str
     return {"headers": headers, "rows": rows}
 
 
+def normalize_table_for_confirmation(table: dict[str, Any]) -> dict[str, Any]:
+    headers: list[dict[str, Any]] = []
+    for idx, header in enumerate(table.get("headers") or [], start=1):
+        headers.append(
+            {
+                "key": header.get("key", ""),
+                "label": header.get("label", ""),
+                "displayOrder": int(header.get("displayOrder") or idx),
+            }
+        )
+
+    rows: list[dict[str, Any]] = []
+    for idx, row in enumerate(table.get("rows") or [], start=1):
+        cells = row.get("cells")
+        if not isinstance(cells, dict):
+            cells = {}
+
+        normalized_row: dict[str, Any] = {
+            "scenarioId": row.get("scenarioId"),
+            "displayOrder": int(row.get("displayOrder") or idx),
+            "title": row.get("title") or "",
+            "narrative": row.get("narrative"),
+            "cells": cells,
+        }
+        for key in ("metrics", "impact", "baselineYn"):
+            if key in row:
+                normalized_row[key] = row.get(key)
+
+        signposts: list[dict[str, Any]] = []
+        for signpost_idx, signpost in enumerate(row.get("signposts") or [], start=1):
+            signposts.append(
+                {
+                    "signpostId": signpost.get("signpostId"),
+                    "label": signpost.get("label") or "",
+                    "probabilityDirectionCode": signpost.get("probabilityDirectionCode"),
+                    "probabilityImpactScore": signpost.get("probabilityImpactScore"),
+                    "signpostReason": signpost.get("signpostReason"),
+                    "displayOrder": int(signpost.get("displayOrder") or signpost_idx),
+                    "strength": signpost.get("strength"),
+                    "useYn": signpost.get("useYn"),
+                    "keywordHints": signpost.get("keywordHints") or [],
+                }
+            )
+        normalized_row["signposts"] = signposts
+        rows.append(normalized_row)
+
+    return {"headers": headers, "rows": rows}
+
+
 def build_confirmation_scenario_group(scenario_group: dict[str, Any]) -> dict[str, Any]:
     return {
         "title": scenario_group.get("title") or "",
@@ -107,8 +155,7 @@ def resolve_user_id(cli_user_id: int | None, scenario_group: dict[str, Any]) -> 
         return response_user_id
 
     raise ValueError(
-        "userId를 결정할 수 없습니다. --user-id를 지정하거나, "
-        "GET 응답에 scenarioGroup.requestUsrId가 있어야 합니다."
+        "userId를 결정할 수 없습니다. --user-id를 지정하거나, GET 응답에 scenarioGroup.requestUsrId가 있어야 합니다."
     )
 
 
@@ -144,7 +191,7 @@ def main() -> int:
     confirmation_body = {
         "userId": user_id,
         "scenarioGroup": build_confirmation_scenario_group(scenario_group),
-        "table": table,
+        "table": normalize_table_for_confirmation(table),
     }
 
     output_root = args.output_dir / f"scenario_group_{args.scenario_group_id}"

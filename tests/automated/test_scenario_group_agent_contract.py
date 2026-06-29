@@ -803,6 +803,40 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert payload.scenario_group.title == "group"
 
+    def test_confirmation_state_accepts_signposts_without_scenario_id(self) -> None:
+        payload = ConfirmGenerationIn.model_validate(
+            {
+                "userId": 101,
+                "scenarioGroup": CONFIRM_SCENARIO_GROUP,
+                "table": {
+                    "headers": [{"key": "period", "label": "기간", "displayOrder": 1}],
+                    "rows": [
+                        {
+                            "scenarioId": 100,
+                            "cells": {"period": "단기"},
+                            "signposts": [
+                                {
+                                    "signpostId": 900,
+                                    "label": "signal",
+                                    "direction": "sup",
+                                    "displayOrder": 1,
+                                    "strength": "strong",
+                                    "used": True,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        )
+        state = ScenarioDesignState(
+            request_scenario_group=payload.scenario_group,
+            request_table=payload.table.model_dump(exclude_unset=True),
+        )
+
+        assert state.request_table is not None
+        assert state.request_table.rows[0].signposts[0].signpost_id == 900
+
     def test_confirmation_exclude_unset_preserves_partial_update(self) -> None:
         payload = ConfirmGenerationIn.model_validate(
             {

@@ -46,31 +46,82 @@ ZIP_FILE="${BUNDLE_FILE}.zip"
 MANIFEST_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.manifest.txt"
 IMPORT_SCRIPT=".claude/skills/mi-source-banib/scripts/import_source_bundle.sh"
 
-echo "[1/7] Fetching ${REMOTE}/${BASE_BRANCH} and tags..."
-git fetch "$REMOTE" "$BASE_BRANCH" --tags --prune
-
-if git show-ref --verify --quiet "refs/tags/${TAG}"; then
-  echo "ERROR: local tag already exists: ${TAG}" >&2
-  exit 1
-fi
-
-if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/${TAG}" >/dev/null 2>&1; then
-  echo "ERROR: remote tag already exists: ${TAG}" >&2
-  exit 1
-fi
+echo "[1/7] Fetching ${REMOTE}/${BASE_BRANCH} and checking tag metadata..."
+git fetch "$REMOTE" "$BASE_BRANCH" --prune
 
 TARGET_COMMIT="$(git rev-parse "${REMOTE}/${BASE_BRANCH}^{commit}")"
 SHORT_COMMIT="$(git rev-parse --short=12 "$TARGET_COMMIT")"
+TAG_EXISTS_LOCAL=0
+TAG_EXISTS_REMOTE=0
+TAG_OBJECT=""
+TAG_COMMIT=""
+TAG_OBJECT_TYPE=""
+REMOTE_TAG_OBJECT=""
+REMOTE_TAG_COMMIT=""
+
+if git show-ref --verify --quiet "refs/tags/${TAG}"; then
+  TAG_EXISTS_LOCAL=1
+  TAG_OBJECT="$(git rev-parse "refs/tags/${TAG}")"
+  TAG_COMMIT="$(git rev-parse "${TAG}^{commit}")"
+  TAG_OBJECT_TYPE="$(git cat-file -t "$TAG_OBJECT")"
+fi
+
+if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/${TAG}" >/dev/null 2>&1; then
+  TAG_EXISTS_REMOTE=1
+  REMOTE_TAG_OBJECT="$(git ls-remote --tags "$REMOTE" "refs/tags/${TAG}" | awk -v ref="refs/tags/${TAG}" '$2 == ref {print $1; exit}')"
+  REMOTE_TAG_COMMIT="$(git ls-remote --tags "$REMOTE" "refs/tags/${TAG}^{}" | awk '{print $1}' | head -n1)"
+  if [[ -z "$REMOTE_TAG_COMMIT" ]]; then
+    REMOTE_TAG_COMMIT="$REMOTE_TAG_OBJECT"
+  fi
+fi
+
+if [[ "$TAG_EXISTS_REMOTE" -eq 1 && "$TAG_EXISTS_LOCAL" -eq 0 ]]; then
+  echo "      Fetching existing remote tag ${TAG}..."
+  git fetch "$REMOTE" "refs/tags/${TAG}:refs/tags/${TAG}"
+  TAG_EXISTS_LOCAL=1
+  TAG_OBJECT="$(git rev-parse "refs/tags/${TAG}")"
+  TAG_COMMIT="$(git rev-parse "${TAG}^{commit}")"
+  TAG_OBJECT_TYPE="$(git cat-file -t "$TAG_OBJECT")"
+fi
+
+if [[ "$TAG_EXISTS_LOCAL" -eq 1 && "$TAG_OBJECT_TYPE" != "tag" ]]; then
+  echo "ERROR: local tag ${TAG} is not an annotated tag (object type: ${TAG_OBJECT_TYPE})." >&2
+  exit 1
+fi
+
+if [[ "$TAG_EXISTS_LOCAL" -eq 1 && "$TAG_COMMIT" != "$TARGET_COMMIT" ]]; then
+  echo "ERROR: local tag ${TAG} points to ${TAG_COMMIT}, not ${REMOTE}/${BASE_BRANCH} (${TARGET_COMMIT})." >&2
+  exit 1
+fi
+
+if [[ "$TAG_EXISTS_REMOTE" -eq 1 && "$REMOTE_TAG_COMMIT" != "$TARGET_COMMIT" ]]; then
+  echo "ERROR: remote tag ${TAG} points to ${REMOTE_TAG_COMMIT}, not ${REMOTE}/${BASE_BRANCH} (${TARGET_COMMIT})." >&2
+  exit 1
+fi
+
+if [[ "$TAG_EXISTS_LOCAL" -eq 1 && "$TAG_EXISTS_REMOTE" -eq 1 && "$TAG_OBJECT" != "$REMOTE_TAG_OBJECT" ]]; then
+  echo "ERROR: local tag ${TAG} object ${TAG_OBJECT} differs from ${REMOTE} tag object ${REMOTE_TAG_OBJECT}." >&2
+  echo "       Refusing to create a bundle from a local tag that does not exactly match the external Git tag." >&2
+  exit 1
+fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "WARN: working tree has local changes. They are not included; bundle uses ${REMOTE}/${BASE_BRANCH} (${SHORT_COMMIT})." >&2
 fi
 
-echo "[2/7] Creating annotated tag ${TAG} at ${TARGET_COMMIT}..."
-git tag -a "$TAG" "$TARGET_COMMIT" -m "Release ${TAG}"
+if [[ "$TAG_EXISTS_LOCAL" -eq 1 ]]; then
+  echo "[2/7] Reusing existing local tag ${TAG} at ${TARGET_COMMIT}..."
+else
+  echo "[2/7] Creating annotated tag ${TAG} at ${TARGET_COMMIT}..."
+  git tag -a "$TAG" "$TARGET_COMMIT" -m "Release ${TAG}"
+fi
 
-echo "[3/7] Pushing tag ${TAG} to ${REMOTE}..."
-git push "$REMOTE" "refs/tags/${TAG}"
+if [[ "$TAG_EXISTS_REMOTE" -eq 1 ]]; then
+  echo "[3/7] Remote tag ${TAG} already exists at ${TARGET_COMMIT}; skipping push."
+else
+  echo "[3/7] Pushing tag ${TAG} to ${REMOTE}..."
+  git push "$REMOTE" "refs/tags/${TAG}"
+fi
 
 mkdir -p "$OUTPUT_DIR"
 rm -f "$BUNDLE_FILE" "$ZIP_FILE" "$MANIFEST_FILE"
