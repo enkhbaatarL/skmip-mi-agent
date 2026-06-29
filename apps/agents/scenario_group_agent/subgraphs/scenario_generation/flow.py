@@ -22,6 +22,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_ada
     to_output,
     to_state,
 )
+from apps.common.logging.logger_config import logger
 
 
 def _route_after_quick_validate(state: ScenarioGenerationState) -> str:
@@ -30,7 +31,15 @@ def _route_after_quick_validate(state: ScenarioGenerationState) -> str:
     if state.validation_feedback is None:
         return "done"
     if state.quick_validate_retry_count > REF_QUICK_VALIDATE_MAX_RETRIES:
+        logger.info(
+            "[SCENARIO_GENERATION][stage6] quick validate retry limit exceeded; proceeding to stage5 "
+            f"| retry_count={state.quick_validate_retry_count} | max_retries={REF_QUICK_VALIDATE_MAX_RETRIES}",
+        )
         return "done"
+    logger.info(
+        "[SCENARIO_GENERATION][stage6] routing back to stage4 for regeneration "
+        f"| retry_count={state.quick_validate_retry_count} | max_retries={REF_QUICK_VALIDATE_MAX_RETRIES}",
+    )
     return "retry"
 
 

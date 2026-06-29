@@ -18,6 +18,15 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
 )
+from apps.common.logging.logger_config import logger
+
+
+def _shorten_feedback(feedback: str | None, max_len: int = 600) -> str:
+    if not feedback:
+        return ""
+    if len(feedback) <= max_len:
+        return feedback
+    return feedback[:max_len] + "..."
 
 
 def build_context_node(state: ScenarioGenerationState) -> dict[str, Any]:
@@ -101,10 +110,20 @@ def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
         state.template,
     )
     if passed:
+        if state.quick_validate_retry_count > 0:
+            logger.info(
+                "[SCENARIO_GENERATION][stage6] quick validate passed after retry "
+                f"| retry_count={state.quick_validate_retry_count}",
+            )
         return {"validation_feedback": None}
+    next_retry_count = state.quick_validate_retry_count + 1
+    logger.info(
+        "[SCENARIO_GENERATION][stage6] quick validate failed "
+        f"| retry_count={next_retry_count} | feedback={_shorten_feedback(feedback)}",
+    )
     return {
         "validation_feedback": feedback,
-        "quick_validate_retry_count": state.quick_validate_retry_count + 1,
+        "quick_validate_retry_count": next_retry_count,
     }
 
 
@@ -147,7 +166,7 @@ def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
             mi_event_id=state.event_data.get("mi_event_id"),
             event_type_l1_l2=state.stage1_context_pack.C1_base_event.event_type_l1_l2,
             template_id=str(event_type_l2_id),
-        )
+        ),
     ).model_dump(
         include={"scenario_result"},
         exclude_none=True,
