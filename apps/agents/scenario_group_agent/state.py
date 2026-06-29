@@ -15,7 +15,10 @@ from apps.agents.scenario_group_agent.schemas.domain.scenario import ScenarioPay
 from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
+from apps.agents.scenario_group_agent.schemas.domain.signpost import (
+    SignpostBasePayload,
+    SignpostPayload,
+)
 from apps.agents.scenario_group_agent.schemas.domain.template import ScenarioTemplateDimension
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioGenerationResult,
@@ -58,7 +61,7 @@ class ScenarioTableRowState(ApiModel):
     metrics: ScenarioMetricsState | None = None
     impact: ScenarioImpactState | None = None
     baseline_yn: BaselineYn | None = None
-    signposts: list[SignpostPayload] = Field(default_factory=list)
+    signposts: list[SignpostBasePayload] = Field(default_factory=list)
 
 
 class ScenarioTableState(ApiModel):
