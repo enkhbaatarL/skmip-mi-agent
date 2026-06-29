@@ -9,7 +9,7 @@ from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
+from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostBasePayload
 
 
 class ScenarioHeader(ApiModel):
@@ -44,7 +44,7 @@ class ScenarioRow(ApiModel):
     metrics: ScenarioMetrics | None = None
     impact: ScenarioImpact | None = None
     baseline_yn: str | None = None
-    signposts: list[SignpostPayload] = Field(default_factory=list)
+    signposts: list[SignpostBasePayload] = Field(default_factory=list)
 
 
 class ScenarioTable(ApiModel):
@@ -61,7 +61,7 @@ class ScenarioGroupQueryPayload(ScenarioGroupPayload):
     del_yn: str = "N"
 
 
-class SignpostQueryPayload(SignpostPayload):
+class SignpostQueryPayload(SignpostBasePayload):
     del_yn: str = "N"
 
 

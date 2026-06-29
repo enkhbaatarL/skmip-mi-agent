@@ -45,6 +45,10 @@ from apps.agents.scenario_group_agent.presentation import (
 from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
+from apps.agents.scenario_group_agent.schemas.domain.signpost import (
+    SignpostBasePayload,
+    SignpostPayload,
+)
 from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
     ConfirmGenerationIn,
 )
@@ -414,6 +418,42 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert payload.table.rows[0].scenario_id is None
         assert payload.table.rows[0].cells == {"period": "단기"}
+
+    def test_signpost_payload_requires_ids(self) -> None:
+        base_payload = SignpostBasePayload.model_validate(
+            {
+                "signpostId": 1000,
+                "label": "signal",
+            }
+        )
+        assert base_payload.signpost_id == 1000
+
+        payload = SignpostPayload.model_validate(
+            {
+                "signpostId": 1000,
+                "scenarioId": 100,
+                "label": "signal",
+            }
+        )
+
+        assert payload.signpost_id == 1000
+        assert payload.scenario_id == 100
+
+        with self.assertRaises(ValidationError):
+            SignpostPayload.model_validate(
+                {
+                    "signpostId": 1000,
+                    "label": "signal",
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            SignpostPayload.model_validate(
+                {
+                    "scenarioId": 100,
+                    "label": "signal",
+                }
+            )
 
     def test_existing_signpost_sync_payload_preserves_hidden_db_fields(self) -> None:
         payload = ScenarioService()._row_to_existing_scenario_payload(
@@ -1485,7 +1525,9 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         serialized = result.model_dump(by_alias=True)
         assert serialized["scenarioGroup"]["delYn"] == "N"
         assert serialized["table"]["rows"][1]["delYn"] == "Y"
+        assert "scenarioId" not in serialized["table"]["rows"][0]["signposts"][0]
         assert serialized["table"]["rows"][1]["signposts"][0]["delYn"] == "Y"
+        assert "scenarioId" not in serialized["table"]["rows"][1]["signposts"][0]
         assert serialized["scenarioCount"] == 1
         assert serialized["signpostCount"] == 1
         assert serialized["deletedScenarioCount"] == 1

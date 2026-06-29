@@ -24,7 +24,7 @@ from apps.agents.scenario_group_agent.schemas.api.table import (
 from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
+from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostBasePayload
 
 
 def build_scenario_group_table_data(
@@ -42,7 +42,7 @@ def build_scenario_group_table_data(
             ScenarioRow(
                 **_row_common_payload(scenario, template_by_key, selected_keys),
                 signposts=[
-                    SignpostPayload(
+                    SignpostBasePayload(
                         signpost_id=int(signpost["signpost_id"]),
                         label=signpost.get("label") or "",
                         probability_direction_code=signpost.get("probability_direction_code"),
