@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from apps.agents.event_flow_agent.models.mi_event_models_orm import (
+from apps.agents.scenario_group_agent.persistence.event.models import (
     MiEventModel,
     MiEventRecordMapModel,
     MiEventTypeL2Model,

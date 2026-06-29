@@ -42,6 +42,7 @@ description: MR 메시지 생성부터 Git tag, GitHub Release, Docker build & p
 
 ## Ops
 - ...
+
 ```
 
 규칙:

@@ -8,23 +8,26 @@ from pydantic import BaseModel, ConfigDict
 from apps.agents.scenario_group_agent.baseline_contrast import (
     apply_single_baseline_by_probability,
 )
+from apps.agents.scenario_group_agent.persistence.scenario.repository import (
+    ScenarioRepository,
+)
 from apps.agents.scenario_group_agent.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
-from apps.agents.scenario_group_agent.persistence.scenario.repository import (
-    ScenarioRepository,
-)
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
+from apps.agents.scenario_group_agent.schemas.domain.scenario import ScenarioPayload
+from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
+from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioTemplate,
     TemplateDimension,
 )
-from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
+
 
 if TYPE_CHECKING:
-    from apps.agents.scenario_group_agent.schemas.common import (
+    from apps.agents.scenario_group_agent.schemas.domain.template import (
         ScenarioTemplate as CommonScenarioTemplate,
     )
 
@@ -133,11 +136,32 @@ def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
 class ScenarioService:
     def load_dimension_template(
         self, event_type_l2_id: int
-    ) -> list[dict[str, Any]]:
-        return self._load_template_json_from_db(event_type_l2_id)
+    ) -> list["CommonScenarioTemplateDimension"]:
+        from apps.agents.scenario_group_agent.schemas.domain.template import (
+            ScenarioTemplateDimension as CommonScenarioTemplateDimension,
+        )
+
+        pipeline_template = self.load_pipeline_template(event_type_l2_id)
+        return [
+            CommonScenarioTemplateDimension(
+                dimension_id=dimension.dim_key,
+                label_ko=dimension.label,
+                description=dimension.label,
+                required=dimension.required,
+                enum=[
+                    {
+                        "id": str(item["id"]),
+                        "label": str(item["label"]),
+                        "tail": bool(item.get("tail", False)),
+                    }
+                    for item in dimension.enum_items()
+                ],
+            )
+            for dimension in pipeline_template.dimensions
+        ]
 
     def load_pipeline_template(self, event_type_l2_id: int) -> ScenarioTemplate:
-        template_json = self.load_dimension_template(event_type_l2_id)
+        template_json = self._load_template_json_from_db(event_type_l2_id)
         return self._map_template_json_to_pipeline_template(
             template_json,
             event_type_l2_id,
@@ -146,7 +170,7 @@ class ScenarioService:
     def load_scenario_template(
         self, event_type_l2_id: int
     ) -> "CommonScenarioTemplate":
-        from apps.agents.scenario_group_agent.schemas.common import (
+        from apps.agents.scenario_group_agent.schemas.domain.template import (
             ScenarioTemplate as CommonScenarioTemplate,
             ScenarioTemplateDimension,
             ScenarioTemplateEnum,
@@ -265,7 +289,7 @@ class ScenarioService:
         except (TypeError, ValueError):
             return 999999
 
-    def load_by_group_id(self, scenario_group_id: int) -> list[dict[str, Any]]:
+    def load_by_group_id(self, scenario_group_id: int) -> list[ScenarioPayload]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -274,7 +298,7 @@ class ScenarioService:
         try:
             repository = ScenarioRepository(session=session)
             return [
-                repository.model_to_dict(model)
+                ScenarioPayload.model_validate(repository.model_to_dict(model))
                 for model in repository.fetch_models_by_group_id(scenario_group_id)
             ]
         finally:
@@ -388,7 +412,7 @@ class ScenarioService:
         event_type_l2_id: int,
         table_payload: ScenarioSyncTablePayload,
         user_id: int,
-        event_data: dict[str, Any] | None = None,
+        event_data: EventPayload | dict[str, Any] | None = None,
     ) -> ScenarioSyncResult:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -560,7 +584,7 @@ class ScenarioService:
 
     def _generate_new_row_details(
         self,
-        event_data: dict[str, Any] | None,
+        event_data: EventPayload | dict[str, Any] | None,
         dimension_values_list: list[ScenarioDimensionValues],
     ) -> list[NewScenarioGeneratedDetails]:
         if not dimension_values_list:
@@ -568,7 +592,7 @@ class ScenarioService:
         if event_data is None:
             raise ValueError("event_data is required to create new scenario rows")
 
-        from apps.agents.scenario_group_agent.subgraphs.scenario_generation.pipeline import (
+        from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
             stage1_build_context_pack,
             stage4_synthesize_fixed_scenarios,
             stage5_validate,

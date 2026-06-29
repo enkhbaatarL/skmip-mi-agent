@@ -17,7 +17,7 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
-from apps.agents.scenario_group_agent.schemas.create_signposts import (
+from apps.agents.scenario_group_agent.schemas.api.create_signposts import (
     CreateSignpostsIn,
     CreateSignpostsOut,
 )

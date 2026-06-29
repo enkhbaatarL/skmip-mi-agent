@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from functools import lru_cache
+import time
 from typing import Any
 
 from langchain_core.runnables import Runnable, RunnableLambda
@@ -16,7 +16,7 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     sync_scenarios_from_table,
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
-from apps.agents.scenario_group_agent.schemas.create_signposts import CreateSignpostsOut
+from apps.agents.scenario_group_agent.schemas.api.create_signposts import CreateSignpostsOut
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -116,7 +116,7 @@ async def run_create_signposts_background(
     user_id: int,
     request_table: dict[str, Any],
 ) -> None:
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
 
     cfg = get_settings()
     callback_path = cfg.callback_create_signposts_path.format(

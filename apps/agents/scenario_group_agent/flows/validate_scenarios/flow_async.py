@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from functools import lru_cache
+import time
 from typing import Any
 
 from langchain_core.runnables import Runnable, RunnableLambda
@@ -14,8 +14,8 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     save_validation_result,
     validate_scenarios,
 )
-from apps.agents.scenario_group_agent.schemas.common import ScenarioTable
-from apps.agents.scenario_group_agent.schemas.validate_scenarios import (
+from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
+from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
     ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosOut,
 )
@@ -108,7 +108,7 @@ async def run_validate_scenarios_background(
     user_id: int,
     request_table: dict[str, Any],
 ) -> None:
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
 
     cfg = get_settings()
     callback_path = cfg.callback_validate_scenarios_path.format(

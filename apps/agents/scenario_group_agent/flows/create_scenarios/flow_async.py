@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from functools import lru_cache
+import time
 from typing import Any
 
 from langchain_core.runnables import Runnable, RunnableLambda
@@ -14,14 +14,16 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenarios,
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
-from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
-from apps.agents.scenario_group_agent.schemas.create_scenarios import CreateScenariosOut
+from apps.agents.scenario_group_agent.schemas.api.create_scenarios import CreateScenariosOut
+from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_builder import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.flow import (
     scenario_generation_runnable,
 )
 from apps.common.exceptions.custom import MIBaseError
@@ -108,7 +110,7 @@ async def run_create_scenarios_background(
     event_data: dict[str, Any],
     user_id: int,
 ) -> None:
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
 
     cfg = get_settings()
     callback_path = cfg.callback_create_scenarios_path.format(

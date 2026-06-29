@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from apps.common.configs.settings import Settings, get_settings
+from apps.common.configs.config import Settings, get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_connector

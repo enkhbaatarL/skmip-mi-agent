@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import Table
 
-from apps.agents.event_flow_agent.models.mi_event_models_orm import (
+from apps.agents.scenario_group_agent.persistence.event.models import (
     MiEventModel,
     MiEventRecordMapModel,
     MiEventTypeL1Model,

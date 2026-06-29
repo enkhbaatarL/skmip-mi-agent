@@ -31,7 +31,7 @@ def setup_logging(log_level: str | None = None) -> None:
     if log_level is None:
         # Try to get from settings, fallback to env var or default
         try:
-            from apps.common.configs.settings import get_settings
+            from apps.common.configs.config import get_settings
 
             log_level = get_settings().log_level.upper()
         except Exception:

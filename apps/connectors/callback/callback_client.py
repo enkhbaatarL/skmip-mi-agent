@@ -19,7 +19,7 @@ async def send_callback(url: str, payload: CallBackBody) -> None:
       2. 401 응답 → 토큰 강제 재발급 후 1회 재시도
       3. 재시도 후에도 실패하면 예외 발생
     """
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
 
     cfg = get_settings()
     body = payload.model_dump(by_alias=True, mode="json")

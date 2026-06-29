@@ -8,12 +8,13 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import AuditColumnsMixin, BIN, TABLE_ARGS
+from apps.agents.scenario_group_agent.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
 from apps.agents.scenario_group_agent.schemas.enums import SignpostStrength
 from apps.common.configs.database.sync_database.base import ORMBase
 
+
 if TYPE_CHECKING:
-    from apps.agents.scenario_group_agent.schemas.create_signposts import GeneratedSignpost
+    from apps.agents.scenario_group_agent.schemas.graph.generation import GeneratedSignpost
 
 
 class MiSignpostModel(AuditColumnsMixin, ORMBase):

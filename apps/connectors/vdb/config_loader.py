@@ -17,6 +17,8 @@ _PROVIDER_FIELDS = {
     "scoring_parameters",
     "top_k",
 }
+_DEFAULT_PROVIDER = "LSEG"
+_OMDIA_PROVIDER = "OMDIA"
 
 
 @lru_cache(maxsize=None)
@@ -29,11 +31,10 @@ def _load_yaml_raw(provider: str) -> dict:
 
 
 def get_retrieval_options(provider: str | None) -> RetrievalOptions:
-    from apps.agents.mi_agent.schemas.mari_agent_input import ContentProvider
-
-    defaults = dict(_load_yaml_raw(provider or ContentProvider.LSEG))
-    if provider == ContentProvider.OMDIA:
-        overrides = _load_yaml_raw(provider)
+    provider_name = provider or _DEFAULT_PROVIDER
+    defaults = dict(_load_yaml_raw(provider_name))
+    if provider_name == _OMDIA_PROVIDER:
+        overrides = _load_yaml_raw(provider_name)
         for field in _PROVIDER_FIELDS:
             if field in overrides:
                 defaults[field] = overrides[field]

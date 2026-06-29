@@ -1,15 +1,13 @@
 """YAML 기반 앱 설정 로더."""
 
 from collections.abc import Mapping
-import json
 import os
 from pathlib import Path
 import re
 from typing import Any
-from uuid import UUID
 
 import yaml
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -19,7 +17,7 @@ from pydantic_settings import (
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG_FILE = ROOT_DIR / "config.yaml"
+DEFAULT_CONFIG_FILE = ROOT_DIR / "envs" / "config.yaml"
 CONFIG_FILE_PATH = Path(os.getenv("APP_CONFIG", str(DEFAULT_CONFIG_FILE))).expanduser()
 ENV_PLACEHOLDER_PATTERN = re.compile(r"\${(\w+)}")
 ESCAPED_LINE_BREAK_PATTERN = re.compile(r"\\r\\n|\\n|\\r")
@@ -110,17 +108,6 @@ class Settings(BaseSettings):
     lightly_thinking_model_api_deployment_name: str
     deeply_thinking_model_api_deployment_name: str
 
-    # MCP
-    mcp_pool_urls: dict[str, str] = Field(default_factory=dict, alias="MCP_POOL_URLS")
-    company_mcp_map: dict[str, str] = Field(
-        default_factory=dict,
-        alias="COMPANY_MCP_MAP",
-    )
-    mcp_pool_size: int
-    mcp_per_session_limit: int
-    mcp_client_timeout: float
-    mcp_client_sse_read_timeout: float
-
     # HTTP
     http_timeout: float
     http_connect_timeout: float
@@ -132,41 +119,11 @@ class Settings(BaseSettings):
     http_retry_backoff_base: float = Field(default=1.0)
 
     # VDB
-    vdb_document_repo_ids_by_provider: dict[str, dict[str, str]] = Field(
-        default_factory=dict,
-        alias="DOCUMENT_SEARCH_REPOS_BY_PROVIDER",
-        description="content_provider -> {meta_repo_id, chunk_repo_id} mapping",
-    )
-    rdb_search_metadata_repo_id: UUID
-
     # LLM
     llm_concurrency: int
     llm_timeout_sec: float = Field(default=90.0)
-    analyze_records_max_parallel: int = Field(default=4, alias="MAX_PARALLEL_REQUESTS")
 
-    # WEB
-    bing_endpoint: str = Field(default="")
-    bing_api_key: str = Field(default="")
-    web_search_provider: str = Field(default="tavily")
-
-    # Tavily Search Provider
-    tavily_api_key: str = Field(default="")
-    tavily_search_depth: str = Field(default="advanced")
-    tavily_max_results: int = Field(default=5)
-    tavily_include_domains: list[str] = Field(default_factory=list)
-    tavily_exclude_domains: list[str] = Field(default_factory=list)
-    tavily_score_threshold: float = Field(default=0.5)
-
-    # CONCURRENCY
-    mcp_max_concurrency: int
     http_max_concurrency: int
-    rdb_exec_max_parallel: int
-    web_search_max_concurrent: int = Field(default=5)
-
-    # SEARCH
-    search_sources: list[str] = Field(default_factory=lambda: ["web", "rdb", "vdb"])
-    search_exec_fanout_deadline_sec: float = Field(default=240.0)
-    search_strict_required: bool = Field(default=True)
 
     # Scenario group admin/test APIs
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
@@ -183,29 +140,6 @@ class Settings(BaseSettings):
     callback_create_signposts_path: str = Field(default="")
     skip_callback: bool = Field(default=False)
 
-    @field_validator("search_sources", mode="before")
-    @classmethod
-    def parse_search_sources(cls, v: Any) -> list[str]:
-        """Allow JSON or comma-delimited strings for env overrides."""
-        if isinstance(v, list):
-            return v
-        if v is None:
-            return []
-        if isinstance(v, str):
-            raw = v.strip().strip("'\"")
-            if raw.startswith("["):
-                return json.loads(raw)
-            return [x.strip() for x in raw.split(",") if x.strip()]
-        return list(v)
-
-    search_rdb_exec_timeout_sec: float = 240.0
-    search_vdb_exec_timeout_sec: float = 240.0
-    search_web_exec_timeout_sec: float = 240.0
-
-    # STREAMING
-    streaming_mode: list[str] = Field(default_factory=lambda: ["custom"])
-
-    # MCP
     mcp_database_base: str = "mimcp://database"
 
     @computed_field

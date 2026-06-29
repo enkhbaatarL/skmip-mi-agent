@@ -15,12 +15,12 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
-from apps.agents.scenario_group_agent.schemas.create_scenarios import (
+from apps.agents.scenario_group_agent.schemas.api.create_scenarios import (
     CreateScenariosIn,
     CreateScenariosOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_builder import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.flow import (
     scenario_generation_runnable,
 )
 from apps.common.exceptions.custom import MIBaseError

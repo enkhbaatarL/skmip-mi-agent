@@ -18,7 +18,7 @@ from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStatus,
     ScenarioStatus,
 )
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -44,6 +44,12 @@ def _build_dimension_generation_rows(
     return generation_rows
 
 
+def _model_or_dict_dump(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return dict(value)
+
+
 def _assert_group_owner(group: dict[str, Any], user_id: int | None) -> None:
     request_usr_id = group.get("request_usr_id")
     if request_usr_id is not None and request_usr_id != user_id:
@@ -53,7 +59,7 @@ def _assert_group_owner(group: dict[str, Any], user_id: int | None) -> None:
         )
 
 
-def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
+def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
@@ -64,35 +70,40 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     return {"scenario_group": group}
 
 
-def load_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
+def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
     if not scenarios:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No scenarios found")
+    if state.scenario_group is None:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group is required")
     try:
         dimension_template = ScenarioService().load_dimension_template(
-            int(state.scenario_group["event_type_l2_id"]),
+            int(state.scenario_group.event_type_l2_id),
         )
     except (KeyError, ValueError):
         dimension_template = []
-    return {
-        "scenarios": scenarios,
-        "dimension_template": dimension_template,
-    }
+    return {"scenarios": scenarios, "dimension_template": dimension_template}
 
 
-async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any]:
+async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure":
         return {}
 
-    request_table = state.request_table or {}
+    request_table = (
+        state.request_table.model_dump(exclude_unset=True)
+        if state.request_table is not None
+        else {}
+    )
     headers = request_table.get("headers") or []
     rows = request_table.get("rows") or []
     header_key_list = [str(header["key"]) for header in headers]
     header_keys = set(header_key_list)
 
-    event_type_l2_id = int((state.scenario_group or {})["event_type_l2_id"])
+    if state.scenario_group is None:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group is required")
+    event_type_l2_id = int(state.scenario_group.event_type_l2_id)
     template = ScenarioService().load_scenario_template(event_type_l2_id)
 
     # 시나리오화 템플릿(event type 기준)에서 필수 분기(required=True)와
@@ -167,10 +178,13 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
     ]
     if fillable_dims:
         generated = await generate_new_dimension_values(
-            template,
-            _build_dimension_generation_rows(rows, state.scenarios),
-            fillable_dims,
-        )
+                template,
+                _build_dimension_generation_rows(
+                    rows,
+                    [_model_or_dict_dump(scenario) for scenario in state.scenarios],
+                ),
+                fillable_dims,
+            )
         for index, row in enumerate(rows):
             values = generated.get(index) or {}
             if not values:
@@ -183,19 +197,20 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, Any
                 if cells.get(key) is None:
                     cells[key] = value
 
-    return {"request_table": request_table}
+    return state_update(request_table=request_table)
 
 
-async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
+async def validate_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure":
         return {}
-    requested_rows = (state.request_table or {}).get("rows", [])
-    requested_headers = (state.request_table or {}).get("headers", [])
+    request_table = state.request_table.model_dump() if state.request_table is not None else {}
+    requested_rows = request_table.get("rows", [])
+    requested_headers = request_table.get("headers", [])
     context = build_context(
-        group=state.scenario_group or {},
+        group=state.scenario_group.model_dump() if state.scenario_group is not None else {},
         requested_rows=requested_rows,
-        persisted_scenarios=state.scenarios,
-        template_dims=state.dimension_template,
+        persisted_scenarios=[_model_or_dict_dump(scenario) for scenario in state.scenarios],
+        template_dims=[_model_or_dict_dump(dimension) for dimension in state.dimension_template],
         requested_headers=requested_headers,
     )
     report = await run_review(context)
@@ -206,14 +221,14 @@ async def validate_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         "summary": report.summary,
         "checks": [check.to_dict() for check in report.checks],
     }
-    return {
-        "is_valid": report.is_valid,
-        "reason": report.reason,
-        "validation_result": validation_result,
-    }
+    return state_update(
+        is_valid=report.is_valid,
+        reason=report.reason,
+        validation_result=validation_result,
+    )
 
 
-def save_validation_result(state: ScenarioDesignState) -> dict[str, Any]:
+def save_validation_result(state: ScenarioDesignState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATING.value)
@@ -228,8 +243,10 @@ def save_validation_result(state: ScenarioDesignState) -> dict[str, Any]:
         stage=next_stage,
         user_id=state.user_id,
     )
-    return {
-        "scenario_group": group,
-        "status": "success",
-        "message": "Validation completed",
-    }
+    if group is None:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group update failed")
+    return state_update(
+        scenario_group=group,
+        status="success",
+        message="Validation completed",
+    )

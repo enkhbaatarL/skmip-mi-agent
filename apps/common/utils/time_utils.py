@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from dateutil.relativedelta import relativedelta
 
-from apps.common.configs.settings import Settings, get_settings
+from apps.common.configs.config import Settings, get_settings
 
 
 def now(*, timespec: str = "auto") -> str:
