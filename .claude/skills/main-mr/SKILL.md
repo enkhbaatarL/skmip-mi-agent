@@ -1,9 +1,9 @@
 ---
-name: release
+name: main-mr
 description: MR 메시지를 생성하고 main 브랜치로의 MR/PR 요청까지 준비합니다. "MR 메세지", "MR 메시지", "release note", "릴리즈", "배포 준비" 요청 시 사용. main merge 이후 소스/이미지 반입 산출물은 mi-source-banib, mi-image-banib 스킬로 진행합니다.
 ---
 
-# Release 준비
+# Main MR 준비
 
 릴리즈 전 변경 내용을 정리해 main 브랜치로 MR/PR을 요청하는 단계까지만 수행한다.
 main merge 이후의 tag, source bundle, image bundle 생성은 이 스킬에서 수행하지 않고 아래 스킬로 분리한다.
@@ -48,7 +48,7 @@ Codex가 수행하지 않음:
 **출력 포맷 (반드시 이 형식 그대로):**
 
 ```text
-# [Agent] <제목: 전체 변경 내용을 한 줄로 요약>
+# <제목: 전체 변경 내용을 한 줄로 요약>
 
 ## Feature
 - ...
@@ -111,5 +111,5 @@ v0.0.18 반입이미지 생성해줘
 ```
 
 주의:
-- `release` 스킬은 main merge 전 준비까지만 담당한다.
+- `main-mr` 스킬은 main merge 전 준비까지만 담당한다.
 - tag와 image는 main merge 후 같은 tag commit 기준으로 생성되어야 한다.

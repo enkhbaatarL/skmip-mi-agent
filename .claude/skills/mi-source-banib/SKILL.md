@@ -1,6 +1,6 @@
 ---
 name: mi-source-banib
-description: main merge 이후 외부 GitHub main 기준으로 내부망 반입용 소스 release tag, git bundle, bundle.zip, manifest를 생성하고, 내부 Git 서버에서 tag 반입, import 태그 브랜치, Pull Request로 develop에 반영하는 절차를 안내한다. "소스 반입파일 만들어줘", "GitHub tag를 내부 Git으로 반입", "mi-agent 소스 반입", "bundle zip 생성", "내부 PR 반입 절차" 류 요청에 사용.
+description: main merge 이후 외부 GitHub main 기준으로 내부망 반입용 소스 release tag, 직전 tag 대비 release note markdown 및 GitHub Release, git bundle, bundle.zip, manifest를 생성하고, 내부 Git 서버에서 tag 반입, import 태그 브랜치, Pull Request로 develop에 반영하는 절차를 안내한다. "소스 반입파일 만들어줘", "GitHub tag를 내부 Git으로 반입", "mi-agent 소스 반입", "bundle zip 생성", "release note 생성", "GitHub Release 생성", "내부 PR 반입 절차" 류 요청에 사용.
 ---
 
 # MI 소스 반입 bundle 생성
@@ -22,7 +22,9 @@ Codex가 수행:
 - tag가 이미 로컬/원격에 있고 annotated tag object와 peeled commit이 모두 일치하면 기존 tag를 재사용해 bundle 재생성
 - tag 기준 `git bundle` 생성
 - bundle을 다시 zip으로 압축
-- manifest에 commit, sha256, 파일명 기록
+- 직전 release tag와 현재 tag를 비교한 release note를 Codex/Claude가 작성
+- release note markdown 파일 내용을 그대로 사용해 GitHub Release 생성 또는 갱신
+- manifest에 commit, sha256, 파일명, release note 정보 기록
 - 생성 파일 경로와 내부 반입 절차 보고
 
 Codex가 수행하지 않음:
@@ -44,7 +46,7 @@ TAG가 없으면 사용자에게 tag 값을 먼저 확인한다.
 
 ## Release 흐름 내 위치
 
-1. `release` 스킬로 main 대상 MR/PR을 생성한다.
+1. `main-mr` 스킬로 main 대상 MR/PR을 생성한다.
 2. main merge 완료 후 이 스킬을 실행해 같은 버전 tag와 source bundle을 생성한다.
 3. 같은 tag로 `mi-image-banib`을 실행해 image bundle을 생성한다.
 
@@ -57,16 +59,29 @@ TAG가 없으면 사용자에게 tag 값을 먼저 확인한다.
 
 ## A. 외부 - 반입 파일 생성
 
+먼저 직전 release tag와 현재 tag를 비교해 release note 초안을 작성한다.
+
+```bash
+TAG=v0.0.3
+BASE_BRANCH=main
+TARGET_COMMIT="$(git rev-parse "origin/${BASE_BRANCH}^{commit}")"
+PREVIOUS_TAG="$(git tag --merged "$TARGET_COMMIT" --sort=-v:refname | grep -E '^v[0-9]+(\.[0-9]+){1,3}([-+][A-Za-z0-9._-]+)?$' | grep -F -x -v "$TAG" | head -n1 || true)"
+git log "${PREVIOUS_TAG:+${PREVIOUS_TAG}..}${TARGET_COMMIT}" --no-merges --pretty=format:"%s%n%b"
+```
+
+그 커밋 목록을 Codex/Claude가 분석해 아래 release note 포맷으로 markdown 파일을 만든다.
+스크립트는 release note 내용을 생성하지 않고, `RELEASE_NOTES_SOURCE`로 받은 파일을 산출물과 GitHub Release 본문에 그대로 사용한다.
+
 아래 bundled script를 실행한다.
 
 ```bash
-.claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh <TAG> [BASE_BRANCH]
+RELEASE_NOTES_SOURCE=<작성한-release-notes.md> .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh <TAG> [BASE_BRANCH]
 ```
 
 예:
 
 ```bash
-.claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3
+RELEASE_NOTES_SOURCE=/tmp/skmip-mi-agent-v0.0.3.release-notes.md .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3
 ```
 
 생성물:
@@ -74,17 +89,60 @@ TAG가 없으면 사용자에게 tag 값을 먼저 확인한다.
 ```text
 release-artifacts/
   skmip-mi-agent-v0.0.3.bundle
-  skmip-mi-agent-v0.0.3.bundle.zip  # bundle + 내부 import sh 포함
+  skmip-mi-agent-v0.0.3.bundle.zip  # bundle + 내부 import sh + release note 포함
   skmip-mi-agent-v0.0.3.manifest.txt
+  skmip-mi-agent-v0.0.3.release-notes.md
 ```
+
+스크립트는 tag push 후 `RELEASE_NOTES_SOURCE` 파일을 `skmip-mi-agent-<tag>.release-notes.md`로 복사하고, 그 파일 내용을 그대로 GitHub Release 본문으로 사용한다.
+이미 GitHub Release가 있으면 `gh release edit`으로 갱신하고, 없으면 `gh release create`로 생성한다.
+반입 산출물만 만들고 GitHub Release를 건너뛰어야 하면 `SKIP_GITHUB_RELEASE=1`을 붙여 실행한다.
+
+Release note는 직전 release tag와 현재 tag를 비교해 달라진 commit만 포함하도록 Codex/Claude가 작성한다.
+포맷은 `main-mr`의 MR 메시지 포맷과 동일하게 유지한다.
+
+커밋 prefix -> 섹션 매핑:
+- `feat:` / `feature:` -> **Feature**
+- `refact:` / `refactor:` -> **Refactor**
+- `fix:` / `bugfix:` -> **BugFix**
+- `chore:` / `ops:` / `ci:` / `build:` / `infra:` / `docs:` -> **Ops**
+
+**Release note 포맷 (반드시 이 형식 그대로):**
+
+```text
+# <제목: 이전 tag와 비교한 전체 변경 내용을 한 줄로 요약>
+
+## Feature
+- ...
+
+## Refactor
+- ...
+
+## BugFix
+- ...
+
+## Ops
+- ...
+```
+
+규칙:
+- 섹션 순서: Feature -> Refactor -> BugFix -> Ops 고정
+- 빈 섹션은 `- 없음` 으로 표시 (섹션 자체를 삭제하지 말 것)
+- 불릿은 `- ` 형식
+- 사용자 요청 없이 추가 섹션 금지
+- 내용은 간결하게 작성
+- 위 매핑에 없는 commit subject는 누락하지 않고 Ops에 포함한다.
 
 사용자에게 보고할 항목:
 - tag
 - 기준 branch
 - 기준 commit
+- 직전 tag
+- GitHub Release URL
 - bundle zip 경로
 - bundle zip sha256
 - manifest 경로
+- release note 경로
 - 현재 작업트리에 미커밋 변경이 있어도 bundle에는 포함되지 않는다는 점
 
 ## B. 내부 - 사용자가 수행할 sh 절차 안내

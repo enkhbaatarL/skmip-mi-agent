@@ -4,6 +4,8 @@ set -euo pipefail
 VM_HOST="40.82.137.178"
 VM_USER="azureuser"
 DEFAULT_PEM="/Users/messiah/sk-mi-demo-vm-key.pem"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_CONFIG="${SCRIPT_DIR}/../.local"
 SCENARIO_DIR="/home/azureuser/mi/mi-agent-scenario"
 DEFAULT_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-scenario"
 DEFAULT_DOCKERFILE="Dockerfile"
@@ -12,10 +14,46 @@ DEFAULT_PLATFORM="linux/amd64"
 IMAGE_REPO="$DEFAULT_IMAGE_REPO"
 DOCKERFILE="$DEFAULT_DOCKERFILE"
 PLATFORM="$DEFAULT_PLATFORM"
-PEM="${MI_DEMO_VM_PEM:-$DEFAULT_PEM}"
+PEM="$DEFAULT_PEM"
 PULL=1
 NO_CACHE=0
 DRY_RUN=0
+
+read_local_pem() {
+  local line key value
+  if [[ ! -f "$LOCAL_CONFIG" ]]; then
+    return
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+
+    case "$key" in
+      PEM|MI_DEMO_VM_PEM)
+        if [[ -n "$value" ]]; then
+          PEM="$value"
+        fi
+        ;;
+    esac
+  done < "$LOCAL_CONFIG"
+}
+
+read_local_pem
+if [[ -n "${MI_DEMO_VM_PEM:-}" ]]; then
+  PEM="$MI_DEMO_VM_PEM"
+fi
 
 usage() {
   cat <<'EOF'
@@ -30,7 +68,7 @@ Commands:
   logs [tail]                  Show remote scenario agent logs; default tail=120
 
 Options:
-  --pem <path>                 SSH PEM path. Defaults to MI_DEMO_VM_PEM or /Users/messiah/sk-mi-demo-vm-key.pem
+  --pem <path>                 SSH PEM path. Defaults to MI_DEMO_VM_PEM, skill .local, or /Users/messiah/sk-mi-demo-vm-key.pem
   --dockerfile <path>          Dockerfile path. Default: Dockerfile
   --platform <platform>        Docker platform. Default: linux/amd64
   --image-repo <repo>          Image repo. Default: skmidemoacr.azurecr.io/mi-agent-scenario
