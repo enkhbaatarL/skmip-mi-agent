@@ -23,11 +23,9 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     SignpostGenerationResult,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
+from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
-
-
-_MAX_CONCURRENT_SCENARIOS = 7
 
 
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
@@ -136,7 +134,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
             ),
         )
 
-    sem = asyncio.Semaphore(_MAX_CONCURRENT_SCENARIOS)
+    sem = asyncio.Semaphore(get_settings().create_signposts_max_concurrent_scenarios)
 
     async def process_one(
         scenario: dict[str, Any],
