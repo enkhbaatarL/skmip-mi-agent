@@ -37,7 +37,7 @@ def build_context_node(state: ScenarioGenerationState) -> dict[str, Any]:
     return {"stage1_context_pack": stage1_build_context_pack(state.event_data)}
 
 
-def select_dimensions_node(state: ScenarioGenerationState) -> dict[str, Any]:
+async def select_dimensions_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if state.skip_generation or state.error:
         return {}
     if (
@@ -47,7 +47,7 @@ def select_dimensions_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "scenario generation input is incomplete"}
     return {
-        "stage2_dimension_selection": stage2_select_dimensions(
+        "stage2_dimension_selection": await stage2_select_dimensions(
             state.stage1_context_pack,
             state.event_data,
             state.template,
@@ -55,7 +55,7 @@ def select_dimensions_node(state: ScenarioGenerationState) -> dict[str, Any]:
     }
 
 
-def reduce_values_node(state: ScenarioGenerationState) -> dict[str, Any]:
+async def reduce_values_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if state.skip_generation or state.error:
         return {}
     if (
@@ -65,7 +65,7 @@ def reduce_values_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "scenario generation stage 2 output is missing"}
     return {
-        "stage3_value_selection": stage3_reduce_values(
+        "stage3_value_selection": await stage3_reduce_values(
             state.stage1_context_pack,
             state.stage2_dimension_selection,
             state.template,
@@ -73,7 +73,7 @@ def reduce_values_node(state: ScenarioGenerationState) -> dict[str, Any]:
     }
 
 
-def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
+async def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if state.skip_generation or state.error:
         return {}
     if (
@@ -83,7 +83,7 @@ def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "scenario generation stage 3 output is missing"}
     return {
-        "stage4_scenario_synthesis": stage4_synthesize_scenarios(
+        "stage4_scenario_synthesis": await stage4_synthesize_scenarios(
             state.stage1_context_pack,
             state.stage3_value_selection,
             state.template,
@@ -92,7 +92,7 @@ def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
     }
 
 
-def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
+async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if state.skip_generation or state.error:
         return {}
     if (
@@ -103,7 +103,7 @@ def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "quick_validate 입력 누락"}
 
-    passed, feedback = stage6_quick_validate(
+    passed, feedback = await stage6_quick_validate(
         state.stage1_context_pack,
         state.stage3_value_selection,
         state.stage4_scenario_synthesis,
@@ -127,7 +127,7 @@ def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     }
 
 
-def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
+async def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if state.skip_generation or state.error:
         return {}
     if (
@@ -139,11 +139,11 @@ def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "scenario generation stage output is incomplete"}
 
-    stage5 = stage5_validate(
+    stage5 = await stage5_validate(
         state.stage1_context_pack,
         state.stage4_scenario_synthesis,
     )
-    scenario_group_metadata = stage_generate_scenario_group_metadata(
+    scenario_group_metadata = await stage_generate_scenario_group_metadata(
         state.stage1_context_pack,
         state.event_data,
         state.stage4_scenario_synthesis,

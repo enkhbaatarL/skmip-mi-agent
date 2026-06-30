@@ -45,7 +45,7 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     return {"scenario_group": group, "mi_event_id": int(group.mi_event_id)}
 
 
-def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
+async def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
@@ -63,7 +63,7 @@ def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
         if event_data is None:
             raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
     try:
-        result = ScenarioService().sync_from_table(
+        result = await ScenarioService().sync_from_table_async(
             scenario_group_id=state.scenario_group_id,
             event_type_l2_id=int(state.scenario_group.event_type_l2_id),
             table_payload=request_table,

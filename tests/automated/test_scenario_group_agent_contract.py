@@ -6,7 +6,7 @@ from decimal import Decimal
 import unittest
 import sys
 import types
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
@@ -501,12 +501,12 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
                 "generation_stages.stage4_synthesize_fixed_scenarios",
-                return_value=stage4,
+                new=AsyncMock(return_value=stage4),
             ) as synthesize,
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
                 "generation_stages.stage5_validate",
-                return_value=stage5,
+                new=AsyncMock(return_value=stage5),
             ),
         ):
             details = ScenarioService()._generate_new_row_details(

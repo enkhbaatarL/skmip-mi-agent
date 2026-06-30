@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -577,13 +578,15 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
 
         with patch(
             "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "generation_stages._invoke_with_retry",
+            "generation_stages._ainvoke_with_retry",
         ) as invoke:
-            passed, feedback = stage6_quick_validate(
-                Stage1ContextPack(C1_base_event=C1BaseEvent()),
-                stage3,
-                stage4,
-                template,
+            passed, feedback = asyncio.run(
+                stage6_quick_validate(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    stage4,
+                    template,
+                )
             )
 
         assert not passed

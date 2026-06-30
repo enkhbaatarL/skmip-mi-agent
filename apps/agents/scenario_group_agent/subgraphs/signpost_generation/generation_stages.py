@@ -96,7 +96,7 @@ async def _invoke_structured(
     return result.result
 
 
-async def _invoke_with_retry(
+async def _ainvoke_with_retry(
     stage_label: str,
     schema_cls: type[BaseModel],
     system_prompt: str,
@@ -205,7 +205,7 @@ async def stage2_observability_filter(
                 f"[{REF_SIGNPOSTS_PER_SCENARIO_MIN}, {REF_SIGNPOSTS_PER_SCENARIO_MAX}] 밖."
             )
 
-    out = await _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 2",
         schema_cls=Stage2StructuredOutput,
         system_prompt=STAGE2_SYSTEM_PROMPT.format(
@@ -337,7 +337,7 @@ async def stage4_assign_direction_strength(
                 f"(허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})"
             )
 
-    out = await _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 4",
         schema_cls=Stage4StructuredOutput,
         system_prompt=build_stage4_system_prompt(
@@ -463,7 +463,7 @@ async def stage5_mint_keywords(
             if any(not str(kw).strip() for kw in h.keyword_hints):
                 raise ValueError("keyword_hints 안에 빈 문자열 존재.")
 
-    out = await _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 5",
         schema_cls=Stage5StructuredOutput,
         system_prompt=STAGE5_SYSTEM_PROMPT,

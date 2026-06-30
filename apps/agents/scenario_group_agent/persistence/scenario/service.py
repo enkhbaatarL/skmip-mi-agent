@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -29,6 +30,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
 if TYPE_CHECKING:
     from apps.agents.scenario_group_agent.schemas.domain.template import (
         ScenarioTemplate as CommonScenarioTemplate,
+        ScenarioTemplateDimension as CommonScenarioTemplateDimension,
     )
 
 ScenarioDimensionValues = dict[str, Any]
@@ -414,6 +416,24 @@ class ScenarioService:
         user_id: int,
         event_data: EventPayload | dict[str, Any] | None = None,
     ) -> ScenarioSyncResult:
+        return asyncio.run(
+            self.sync_from_table_async(
+                scenario_group_id=scenario_group_id,
+                event_type_l2_id=event_type_l2_id,
+                table_payload=table_payload,
+                user_id=user_id,
+                event_data=event_data,
+            )
+        )
+
+    async def sync_from_table_async(
+        self,
+        scenario_group_id: int,
+        event_type_l2_id: int,
+        table_payload: ScenarioSyncTablePayload,
+        user_id: int,
+        event_data: EventPayload | dict[str, Any] | None = None,
+    ) -> ScenarioSyncResult:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -437,7 +457,7 @@ class ScenarioService:
             rows = table_payload.get("rows", []) or []
             template_by_key = self._load_dimension_template_by_key(event_type_l2_id)
             new_rows = [row for row in rows if row.get("scenario_id") is None]
-            new_row_details = self._generate_new_row_details(
+            new_row_details = await self._generate_new_row_details_async(
                 event_data,
                 [
                     self.cells_to_dimension_values_with_template(
@@ -587,6 +607,18 @@ class ScenarioService:
         event_data: EventPayload | dict[str, Any] | None,
         dimension_values_list: list[ScenarioDimensionValues],
     ) -> list[NewScenarioGeneratedDetails]:
+        return asyncio.run(
+            self._generate_new_row_details_async(
+                event_data=event_data,
+                dimension_values_list=dimension_values_list,
+            )
+        )
+
+    async def _generate_new_row_details_async(
+        self,
+        event_data: EventPayload | dict[str, Any] | None,
+        dimension_values_list: list[ScenarioDimensionValues],
+    ) -> list[NewScenarioGeneratedDetails]:
         if not dimension_values_list:
             return []
         if event_data is None:
@@ -599,14 +631,14 @@ class ScenarioService:
         )
 
         pack = stage1_build_context_pack(event_data)
-        stage4 = stage4_synthesize_fixed_scenarios(
+        stage4 = await stage4_synthesize_fixed_scenarios(
             pack,
             [
                 {str(key): str(value) for key, value in dimension_values.items()}
                 for dimension_values in dimension_values_list
             ],
         )
-        stage5 = stage5_validate(pack, stage4)
+        stage5 = await stage5_validate(pack, stage4)
         likelihoods = [
             stage5.likelihood_prior.get(scenario.scenario_id, "medium")
             for scenario in stage4.scenarios

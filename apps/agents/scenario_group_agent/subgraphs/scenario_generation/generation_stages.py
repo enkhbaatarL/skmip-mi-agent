@@ -1,11 +1,12 @@
 """Scenario generation stages used by the scenario group agent."""
 
+from __future__ import annotations
+
 import asyncio
 from itertools import product
 import os
 import random
 import re
-import time
 from typing import Dict, List, Tuple
 
 from pydantic import BaseModel
@@ -47,7 +48,6 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     C2LinkedRecords,
     DimensionValueMap,
     ExcludedDimension,
-    LikelihoodTier,
     MECECheck,
     PerDimensionValue,
     PriceDirection,
@@ -62,6 +62,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage5Validation,
 )
 from apps.common.logging.decorators import log_tool
+from apps.common.logging.logger_config import logger
 
 
 # --- LLM config constants (from env) ---
@@ -125,7 +126,7 @@ def _build_c1_base_event(event: Dict) -> C1BaseEvent:
 
 
 # ==============================================
-# 4. LLM Infrastructure (sync wrapper around async connector)
+# 4. LLM Infrastructure
 # ==============================================
 
 def _is_retryable_api_error(exc: Exception) -> bool:
@@ -148,28 +149,24 @@ def _is_retryable_schema_error(exc: Exception) -> bool:
     return "validation" in name or any(k in msg for k in keywords)
 
 
-def _invoke_structured(schema_cls: type[BaseModel], messages: List[Dict[str, str]],
-                       temperature: float = 0.0) -> BaseModel:
-    """Synchronous structured output LLM call via the project's invoke_llm_structured_output connector.
-
-    Uses asyncio.run() to bridge from sync context to the async connector,
-    exactly as scenario_group_agent patterns do.
-    """
+async def _invoke_structured(
+    schema_cls: type[BaseModel],
+    messages: List[Dict[str, str]],
+    temperature: float = 0.0,
+) -> BaseModel:
+    """Structured output LLM call via the project's async connector."""
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
-    async def _call():
-        result = await invoke_llm_structured_output(
-            output_schema=schema_cls,
-            messages=messages,
-            temperature=temperature or REF_TEMPERATURE,
-            max_retries=2,
-        )
-        return result.result
-
-    return asyncio.run(_call())
+    result = await invoke_llm_structured_output(
+        output_schema=schema_cls,
+        messages=messages,
+        temperature=temperature or REF_TEMPERATURE,
+        max_retries=2,
+    )
+    return result.result
 
 
-def _invoke_with_retry(
+async def _ainvoke_with_retry(
     stage_label: str,
     schema_cls: type[BaseModel],
     system_prompt: str,
@@ -200,7 +197,7 @@ def _invoke_with_retry(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ]
-            result = _invoke_structured(schema_cls, messages, temperature=REF_TEMPERATURE)
+            result = await _invoke_structured(schema_cls, messages, temperature=REF_TEMPERATURE)
             if validate_fn:
                 validate_fn(result)
             return result
@@ -213,7 +210,12 @@ def _invoke_with_retry(
             should_retry = (is_api or is_schema or is_validation) and attempt < REF_MAX_RETRIES
 
             if not should_retry:
-                print(f"  ↳ {stage_label} 재시도 불가 — {exc.__class__.__name__}: {str(exc)[:160]}")
+                logger.warning(
+                    "{} retry disabled | error_type={} | error={}",
+                    stage_label,
+                    exc.__class__.__name__,
+                    str(exc)[:160],
+                )
                 break
 
             if is_validation or is_schema:
@@ -229,13 +231,18 @@ def _invoke_with_retry(
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
             err_summary = f"{exc.__class__.__name__}: {str(exc)[:200]}"
-            print(
-                f"  ↳ {stage_label} 재시도 ({attempt}/{REF_MAX_RETRIES}) — "
-                f"{reason}, {wait_sec:.1f}s 후 | 원인: {err_summary}"
+            logger.warning(
+                "{} retry scheduled | attempt={}/{} | reason={} | wait_sec={:.1f} | error={}",
+                stage_label,
+                attempt,
+                REF_MAX_RETRIES,
+                reason,
+                wait_sec,
+                err_summary,
             )
-            time.sleep(wait_sec)
+            await asyncio.sleep(wait_sec)
 
-    print(f"  ↳ {stage_label} 재시도 소진 — fallback 진입 (last_error={type(last_exc).__name__})")
+    logger.warning("{} retry exhausted; fallback starts | last_error={}", stage_label, type(last_exc).__name__)
     return None
 
 
@@ -259,7 +266,7 @@ def stage1_build_context_pack(event: Dict) -> Stage1ContextPack:
 # ==============================================
 
 @log_tool
-def stage2_select_dimensions(
+async def stage2_select_dimensions(
     pack: Stage1ContextPack,
     event: Dict,
     template: ScenarioTemplate,
@@ -299,7 +306,7 @@ def stage2_select_dimensions(
             if "(b)" in d.rationale:
                 raise ValueError(f"(b) 기준 rationale 검출: {d.dim_key}")
 
-    out = _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 2",
         schema_cls=Stage2StructuredOutput,
         system_prompt=STAGE2_SYSTEM_PROMPT,
@@ -385,7 +392,7 @@ def _stage2_fallback(template_dim_ids: List[str]) -> Stage2StructuredOutput:
 # ==============================================
 
 @log_tool
-def stage3_reduce_values(
+async def stage3_reduce_values(
     pack: Stage1ContextPack,
     selected: Stage2DimensionSelection,
     template: ScenarioTemplate,
@@ -419,7 +426,7 @@ def stage3_reduce_values(
             if unknown:
                 raise ValueError(f"value_enums 외 값 사용: {unknown}")
 
-        out = _invoke_with_retry(
+        out = await _ainvoke_with_retry(
             stage_label=f"Stage 3 [{dim['dim_key']}]",
             schema_cls=Stage3StructuredOutput,
             system_prompt=STAGE3_SYSTEM_PROMPT,
@@ -641,7 +648,7 @@ def _extract_feedback_value_hints(
 
 
 @log_tool
-def stage4_synthesize_scenarios(
+async def stage4_synthesize_scenarios(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
     template: ScenarioTemplate,
@@ -701,7 +708,7 @@ def stage4_synthesize_scenarios(
                 if v not in PRICE_TIERS:
                     raise ValueError(f"price_direction 범위 밖 값: {v}")
 
-    out = _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 4",
         schema_cls=Stage4StructuredOutput,
         system_prompt=STAGE4_SYSTEM_PROMPT,
@@ -754,7 +761,7 @@ def _stage4_fallback(target: List[DimensionValueMap]) -> Stage4StructuredOutput:
 
 
 @log_tool
-def stage4_synthesize_fixed_scenarios(
+async def stage4_synthesize_fixed_scenarios(
     pack: Stage1ContextPack,
     dimension_values_list: List[DimensionValueMap],
     llm_client=None,
@@ -790,7 +797,7 @@ def stage4_synthesize_fixed_scenarios(
                 if v not in PRICE_TIERS:
                     raise ValueError(f"price_direction 범위 밖 값: {v}")
 
-    out = _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 4 fixed",
         schema_cls=Stage4StructuredOutput,
         system_prompt=STAGE4_SYSTEM_PROMPT,
@@ -826,7 +833,7 @@ def stage4_synthesize_fixed_scenarios(
 # ==============================================
 
 @log_tool
-def stage_generate_scenario_group_metadata(
+async def stage_generate_scenario_group_metadata(
     pack: Stage1ContextPack,
     event: Dict,
     stage4: Stage4ScenarioSynthesis,
@@ -840,7 +847,7 @@ def stage_generate_scenario_group_metadata(
         scenarios=stage4.scenarios,
     )
 
-    out = _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Scenario Group Metadata",
         schema_cls=ScenarioGroupMetadataStructuredOutput,
         system_prompt=SCENARIO_GROUP_METADATA_SYSTEM_PROMPT,
@@ -863,7 +870,7 @@ def stage_generate_scenario_group_metadata(
 # ==============================================
 
 @log_tool
-def stage5_validate(
+async def stage5_validate(
     pack: Stage1ContextPack,
     stage4: Stage4ScenarioSynthesis,
     llm_client=None,
@@ -884,7 +891,7 @@ def stage5_validate(
             if v not in LIKELIHOOD_TIERS:
                 raise ValueError(f"5단계 외 Prior 값: {v}")
 
-    out = _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 5",
         schema_cls=Stage5StructuredOutput,
         system_prompt=STAGE5_SYSTEM_PROMPT,
@@ -962,7 +969,7 @@ def _missing_baseline_contrast_coverage(
 
 
 @log_tool
-def stage6_quick_validate(
+async def stage6_quick_validate(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
     stage4: Stage4ScenarioSynthesis,
@@ -1029,7 +1036,7 @@ def stage6_quick_validate(
         scenario_count=len(stage4.scenarios),
     )
 
-    out = _invoke_with_retry(
+    out = await _ainvoke_with_retry(
         stage_label="Stage 6",
         schema_cls=Stage6StructuredOutput,
         system_prompt=STAGE6_SYSTEM_PROMPT,
