@@ -627,7 +627,7 @@ class ScenarioService:
         from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
             stage1_build_context_pack,
             stage4_synthesize_fixed_scenarios,
-            stage5_validate,
+            stage6_validate,
         )
 
         pack = stage1_build_context_pack(event_data)
@@ -638,9 +638,9 @@ class ScenarioService:
                 for dimension_values in dimension_values_list
             ],
         )
-        stage5 = await stage5_validate(pack, stage4)
+        stage6 = await stage6_validate(pack, stage4)
         likelihoods = [
-            stage5.likelihood_prior.get(scenario.scenario_id, "medium")
+            stage6.likelihood_prior.get(scenario.scenario_id, "medium")
             for scenario in stage4.scenarios
         ]
         details: list[NewScenarioGeneratedDetails] = []

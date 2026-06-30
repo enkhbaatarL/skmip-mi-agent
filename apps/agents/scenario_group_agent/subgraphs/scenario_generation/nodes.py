@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from typing import Any
+import json
 import uuid
+from typing import Any
 
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioGenerationResult,
+    Stage4ScenarioSynthesis,
+    Stage5RepairInstruction,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
     stage1_build_context_pack,
     stage2_select_dimensions,
     stage3_reduce_values,
     stage4_synthesize_scenarios,
-    stage5_validate,
-    stage6_quick_validate,
+    stage6_validate,
+    stage5_quick_validate,
     stage_generate_scenario_group_metadata,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
@@ -27,6 +30,47 @@ def _shorten_feedback(feedback: str | None, max_len: int = 600) -> str:
     if len(feedback) <= max_len:
         return feedback
     return feedback[:max_len] + "..."
+
+
+def _repair_index(scenario_ref: str) -> int | None:
+    if not scenario_ref.startswith("S_"):
+        return None
+    try:
+        index = int(scenario_ref.removeprefix("S_")) - 1
+    except ValueError:
+        return None
+    return index if index >= 0 else None
+
+
+def _apply_stage5_repairs(
+    stage4: Stage4ScenarioSynthesis,
+    repairs: list[Stage5RepairInstruction],
+) -> tuple[Stage4ScenarioSynthesis, list[dict[str, Any]]]:
+    repaired = stage4.model_copy(deep=True)
+    results: list[dict[str, Any]] = []
+    for repair in repairs:
+        result = repair.model_dump(mode="json")
+        index = _repair_index(repair.scenario_ref)
+        if index is None or index >= len(repaired.scenarios):
+            result.update({"applied": False, "skip_reason": "scenario_ref_not_found"})
+            results.append(result)
+            continue
+        scenario = repaired.scenarios[index]
+        current_value = scenario.dimension_values.get(repair.dim_key)
+        if current_value != repair.current_value:
+            result.update(
+                {
+                    "applied": False,
+                    "skip_reason": "current_value_mismatch",
+                    "actual_value": current_value,
+                }
+            )
+            results.append(result)
+            continue
+        scenario.dimension_values[repair.dim_key] = repair.recommended_value
+        result.update({"applied": True})
+        results.append(result)
+    return repaired, results
 
 
 def build_context_node(state: ScenarioGenerationState) -> dict[str, Any]:
@@ -88,6 +132,7 @@ async def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str,
             state.stage3_value_selection,
             state.template,
             validation_feedback=state.validation_feedback,
+            validation_repairs=state.validation_repairs,
         ),
     }
 
@@ -103,7 +148,7 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "quick_validate 입력 누락"}
 
-    passed, feedback = await stage6_quick_validate(
+    passed, feedback, repairs = await stage5_quick_validate(
         state.stage1_context_pack,
         state.stage3_value_selection,
         state.stage4_scenario_synthesis,
@@ -112,17 +157,44 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if passed:
         if state.quick_validate_retry_count > 0:
             logger.info(
-                "[SCENARIO_GENERATION][stage6] quick validate passed after retry "
+                "[SCENARIO_GENERATION][stage5] quick validate passed after retry "
                 f"| retry_count={state.quick_validate_retry_count}",
             )
-        return {"validation_feedback": None}
+        return {"validation_feedback": None, "validation_repairs": []}
     next_retry_count = state.quick_validate_retry_count + 1
     logger.info(
-        "[SCENARIO_GENERATION][stage6] quick validate failed "
+        "[SCENARIO_GENERATION][stage5] quick validate failed "
         f"| retry_count={next_retry_count} | feedback={_shorten_feedback(feedback)}",
     )
+    if repairs:
+        logger.info(
+            "[SCENARIO_GENERATION][stage5] repair instructions "
+            f"| repairs={json.dumps([repair.model_dump(mode='json') for repair in repairs], ensure_ascii=False)}",
+        )
+    repaired_stage4, repair_results = _apply_stage5_repairs(
+        state.stage4_scenario_synthesis,
+        repairs,
+    )
+    applied_count = sum(1 for result in repair_results if result.get("applied"))
+    if repair_results:
+        logger.info(
+            "[SCENARIO_GENERATION][stage5] repair application results "
+            f"| results={json.dumps(repair_results, ensure_ascii=False)}",
+        )
+    if applied_count > 0:
+        logger.info(
+            "[SCENARIO_GENERATION][stage5] applied repair instructions "
+            f"| applied_count={applied_count}",
+        )
+        return {
+            "stage4_scenario_synthesis": repaired_stage4,
+            "validation_feedback": None,
+            "validation_repairs": [],
+            "quick_validate_retry_count": next_retry_count,
+        }
     return {
         "validation_feedback": feedback,
+        "validation_repairs": repairs,
         "quick_validate_retry_count": next_retry_count,
     }
 
@@ -139,7 +211,7 @@ async def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, A
     ):
         return {"error": "scenario generation stage output is incomplete"}
 
-    stage5 = await stage5_validate(
+    stage6 = await stage6_validate(
         state.stage1_context_pack,
         state.stage4_scenario_synthesis,
     )
@@ -157,12 +229,12 @@ async def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, A
             stage2_dimension_selection=state.stage2_dimension_selection,
             stage3_value_selection=state.stage3_value_selection,
             stage4_scenario_synthesis=stage4,
-            stage5_validation=stage5,
+            stage5_validation=stage6,
             scenario_group_metadata=scenario_group_metadata,
             cartesian_total=stage4.cartesian_total,
             filtered_by_compatibility=stage4.filtered_by_compatibility,
             scenario_count=len(stage4.scenarios),
-            mece_passed=stage5.mece_check.mutually_exclusive,
+            mece_passed=stage6.mece_check.mutually_exclusive,
             mi_event_id=state.event_data.get("mi_event_id"),
             event_type_l1_l2=state.stage1_context_pack.C1_base_event.event_type_l1_l2,
             template_id=str(event_type_l2_id),

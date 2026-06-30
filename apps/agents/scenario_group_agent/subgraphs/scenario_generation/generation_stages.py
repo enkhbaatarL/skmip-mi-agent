@@ -23,23 +23,24 @@ from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     STAGE3_SYSTEM_PROMPT,
     STAGE4_HARD_CONSTRAINTS,
     STAGE4_SYSTEM_PROMPT,
-    STAGE5_HARD_CONSTRAINTS,
-    STAGE5_SYSTEM_PROMPT,
+    STAGE6_HARD_CONSTRAINTS,
     STAGE6_SYSTEM_PROMPT,
     NarrativeOnly,
     ScenarioGroupMetadataStructuredOutput,
     Stage2StructuredOutput,
     Stage3StructuredOutput,
     Stage4StructuredOutput,
-    Stage5StructuredOutput,
     Stage6StructuredOutput,
     build_scenario_group_metadata_user_prompt,
     build_stage2_user_prompt,
     build_stage3_user_prompt,
     build_stage4_fixed_user_prompt,
     build_stage4_user_prompt,
-    build_stage5_user_prompt,
     build_stage6_user_prompt,
+)
+from apps.agents.scenario_group_agent.prompts.scenario_validation import (
+    COMPAT_SYSTEM_PROMPT,
+    CompatibilityStructuredOutput,
 )
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     LIKELIHOOD_TIERS,
@@ -60,6 +61,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage3ValueSelection,
     Stage4ScenarioSynthesis,
     Stage5Validation,
+    Stage5RepairInstruction,
 )
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
@@ -520,6 +522,7 @@ def _select_target_combos(
     target_n: int,
     template: ScenarioTemplate,
     validation_feedback: str | None = None,
+    validation_repairs: list[Stage5RepairInstruction] | None = None,
 ) -> List[Dict[str, str]]:
     """Compat 통과 조합 중 target_n개 추출 — 다양성/커버리지 기반 선정.
 
@@ -528,7 +531,12 @@ def _select_target_combos(
     3) 나머지는 값 다양성 + 피드백 힌트 + Farthest-First 순으로 선정한다.
     """
     if len(passed) <= target_n:
-        return list(passed)
+        return _apply_repair_instructions(
+            list(passed),
+            passed,
+            stage3,
+            validation_repairs,
+        )
 
     feedback_hints = _extract_feedback_value_hints(validation_feedback, stage3)
     dim_keys = [pd.dim_key for pd in stage3.per_dimension]
@@ -609,7 +617,12 @@ def _select_target_combos(
                 seen_by_dim[key].add(passed[nxt][key])
         pool.remove(nxt)
 
-    return [passed[i] for i in chosen_idx[:target_n]]
+    return _apply_repair_instructions(
+        [passed[i] for i in chosen_idx[:target_n]],
+        passed,
+        stage3,
+        validation_repairs,
+    )
 
 
 def _extract_feedback_value_hints(
@@ -647,12 +660,123 @@ def _extract_feedback_value_hints(
     return hints
 
 
+def _combo_key(combo: Dict[str, str]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted(combo.items()))
+
+
+def _parse_scenario_ref_index(scenario_ref: str) -> int | None:
+    match = re.fullmatch(r"S_(\d+)", str(scenario_ref).strip())
+    if not match:
+        return None
+    return int(match.group(1)) - 1
+
+
+def _selected_enum_map(stage3: Stage3ValueSelection) -> dict[str, set[str]]:
+    return {
+        pd.dim_key: {str(value) for value in pd.selected_enum}
+        for pd in stage3.per_dimension
+    }
+
+
+def _valid_repairs(
+    repairs: list[Stage5RepairInstruction] | None,
+    stage3: Stage3ValueSelection,
+) -> list[Stage5RepairInstruction]:
+    if not repairs:
+        return []
+    enum_map = _selected_enum_map(stage3)
+    valid: list[Stage5RepairInstruction] = []
+    for repair in repairs:
+        allowed = enum_map.get(repair.dim_key)
+        if not allowed:
+            continue
+        if repair.recommended_value not in allowed:
+            continue
+        if repair.recommended_value == repair.current_value:
+            continue
+        if _parse_scenario_ref_index(repair.scenario_ref) is None:
+            continue
+        valid.append(repair)
+    return valid
+
+
+def _best_repair_combo(
+    *,
+    original: Dict[str, str],
+    repair: Stage5RepairInstruction,
+    passed: list[Dict[str, str]],
+    used_keys: set[tuple[tuple[str, str], ...]],
+) -> Dict[str, str] | None:
+    exact = dict(original)
+    exact[repair.dim_key] = repair.recommended_value
+    exact_key = _combo_key(exact)
+    passed_keys = {_combo_key(combo) for combo in passed}
+    if exact_key in passed_keys and exact_key not in used_keys:
+        return exact
+
+    candidates = [
+        combo
+        for combo in passed
+        if combo.get(repair.dim_key) == repair.recommended_value
+        and _combo_key(combo) not in used_keys
+    ]
+    if not candidates:
+        return None
+
+    def _rank(combo: Dict[str, str]) -> tuple[int, int]:
+        same_other_dims = sum(
+            1
+            for key, value in original.items()
+            if key != repair.dim_key and combo.get(key) == value
+        )
+        total_same = sum(1 for key, value in original.items() if combo.get(key) == value)
+        return (same_other_dims, total_same)
+
+    return max(candidates, key=_rank)
+
+
+def _apply_repair_instructions(
+    target: list[Dict[str, str]],
+    passed: list[Dict[str, str]],
+    stage3: Stage3ValueSelection,
+    repairs: list[Stage5RepairInstruction] | None,
+) -> list[Dict[str, str]]:
+    valid_repairs = _valid_repairs(repairs, stage3)
+    if not target or not valid_repairs:
+        return target
+
+    repaired = [dict(combo) for combo in target]
+    used_keys = {_combo_key(combo) for combo in repaired}
+    for repair in valid_repairs:
+        index = _parse_scenario_ref_index(repair.scenario_ref)
+        if index is None or index >= len(repaired):
+            continue
+        original = repaired[index]
+        if original.get(repair.dim_key) != repair.current_value:
+            continue
+
+        used_keys.discard(_combo_key(original))
+        replacement = _best_repair_combo(
+            original=original,
+            repair=repair,
+            passed=passed,
+            used_keys=used_keys,
+        )
+        if replacement is None:
+            used_keys.add(_combo_key(original))
+            continue
+        repaired[index] = replacement
+        used_keys.add(_combo_key(replacement))
+    return repaired
+
+
 @log_tool
 async def stage4_synthesize_scenarios(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
     template: ScenarioTemplate,
     validation_feedback: str | None = None,
+    validation_repairs: list[Stage5RepairInstruction] | None = None,
     llm_client=None,
 ) -> Stage4ScenarioSynthesis:
     """Stage 4 진입점 — Cartesian → Compat → 5~7건 선정 → Narrative LLM."""
@@ -671,6 +795,7 @@ async def stage4_synthesize_scenarios(
         REF_TARGET_SCENARIOS,
         template,
         validation_feedback=validation_feedback,
+        validation_repairs=validation_repairs,
     )
     if not target:
         print("  ↳ 경고: Compat 통과 조합 0건 — Cartesian 전체 중 1건 강제 채택.")
@@ -866,21 +991,21 @@ async def stage_generate_scenario_group_metadata(
 
 
 # ==============================================
-# 11. Stage 5 — Validation (MECE + Likelihood LLM)
+# 12. Stage 6 — Validation (MECE + Likelihood LLM)
 # ==============================================
 
 @log_tool
-async def stage5_validate(
+async def stage6_validate(
     pack: Stage1ContextPack,
     stage4: Stage4ScenarioSynthesis,
     llm_client=None,
 ) -> Stage5Validation:
-    """Stage 5 진입점 — MECE 통과 여부 + 5단계 Prior 부여."""
+    """Stage 6 진입점 — MECE 통과 여부 + 5단계 Prior 부여."""
     sc_ids = [s.scenario_id for s in stage4.scenarios]
 
-    user_prompt = build_stage5_user_prompt(pack=pack, scenarios=stage4.scenarios)
+    user_prompt = build_stage6_user_prompt(pack=pack, scenarios=stage4.scenarios)
 
-    def _validate(out: Stage5StructuredOutput) -> None:
+    def _validate(out: Stage6StructuredOutput) -> None:
         keys = set(out.likelihood_prior.keys())
         wanted = set(sc_ids)
         if keys != wanted:
@@ -892,16 +1017,16 @@ async def stage5_validate(
                 raise ValueError(f"5단계 외 Prior 값: {v}")
 
     out = await _ainvoke_with_retry(
-        stage_label="Stage 5",
-        schema_cls=Stage5StructuredOutput,
-        system_prompt=STAGE5_SYSTEM_PROMPT,
+        stage_label="Stage 6",
+        schema_cls=Stage6StructuredOutput,
+        system_prompt=STAGE6_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         validate_fn=_validate,
-        hard_constraints=STAGE5_HARD_CONSTRAINTS,
+        hard_constraints=STAGE6_HARD_CONSTRAINTS,
     )
 
     if out is None:
-        out = _stage5_fallback(sc_ids)
+        out = _stage6_fallback(sc_ids)
 
     # 방어적 후처리: 입력 범위 밖 키/값 정리
     cleaned: Dict[str, str] = {}
@@ -915,7 +1040,7 @@ async def stage5_validate(
     deterministic_me = _all_dim_values_unique(stage4.scenarios)
     if bool(out.mutually_exclusive) != deterministic_me:
         print(
-            f"  ↳ Stage 5 — LLM 판정({out.mutually_exclusive}) 과 코드 결정론 판정"
+            f"  ↳ Stage 6 — LLM 판정({out.mutually_exclusive}) 과 코드 결정론 판정"
             f"({deterministic_me}) 불일치 → 코드 판정 우선 적용"
         )
 
@@ -936,10 +1061,10 @@ def _all_dim_values_unique(scenarios: List[Scenario]) -> bool:
     return True
 
 
-def _stage5_fallback(sc_ids: List[str]) -> Stage5StructuredOutput:
+def _stage6_fallback(sc_ids: List[str]) -> Stage6StructuredOutput:
     """LLM 실패 시 — 모두 'medium' 으로 안전 부여."""
-    print("  ↳ Stage 5 fallback: 전체 'medium' Prior 안전 부여")
-    return Stage5StructuredOutput(
+    print("  ↳ Stage 6 fallback: 전체 'medium' Prior 안전 부여")
+    return Stage6StructuredOutput(
         mutually_exclusive=True,
         rationale="Fallback — Prior 카테고리 정밀 판정 보류.",
         likelihood_prior={sid: "medium" for sid in sc_ids},
@@ -947,39 +1072,322 @@ def _stage5_fallback(sc_ids: List[str]) -> Stage5StructuredOutput:
 
 
 # ==============================================
-# 11. Stage 6 — Quick Validation (LLM 1회 경량 검증)
+# 11. Stage 5 — Quick Validation (LLM 1회 경량 검증)
 # ==============================================
 
-def _missing_baseline_contrast_coverage(
+def _build_baseline_contrast_repairs(
+    *,
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+    missing_dim_keys: list[str],
+    baseline_values: dict[str, object],
+    baseline_index: int | None,
+) -> list[Stage5RepairInstruction]:
+    enum_map = _selected_enum_map(stage3)
+    repairs: list[Stage5RepairInstruction] = []
+    if not stage4.scenarios:
+        return repairs
+    target_index = 0
+    if baseline_index is not None and len(stage4.scenarios) > 1:
+        target_index = 1 if baseline_index == 0 else 0
+
+    target = stage4.scenarios[target_index]
+    for dim_key in missing_dim_keys:
+        current_value = target.dimension_values.get(dim_key)
+        allowed_values = enum_map.get(dim_key) or set()
+        baseline_value = baseline_values.get(dim_key)
+        recommended = next(
+            (
+                value
+                for value in sorted(allowed_values)
+                if value != baseline_value and value != current_value
+            ),
+            None,
+        )
+        if current_value is None or recommended is None:
+            continue
+        repairs.append(
+            Stage5RepairInstruction(
+                scenario_ref=target.scenario_id,
+                issue_type="baseline_contrast",
+                dim_key=dim_key,
+                current_value=str(current_value),
+                recommended_value=str(recommended),
+                reason="baseline 대비 대안값 coverage 확보",
+            ),
+        )
+    return repairs
+
+
+def _stage5_duplicate_repairs(
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+) -> tuple[str | None, list[Stage5RepairInstruction]]:
+    seen: dict[tuple[tuple[str, str], ...], Scenario] = {}
+    enum_map = _selected_enum_map(stage3)
+    issues: list[str] = []
+    repairs: list[Stage5RepairInstruction] = []
+    for scenario in stage4.scenarios:
+        combo_key = _combo_key(scenario.dimension_values)
+        original = seen.get(combo_key)
+        if original is None:
+            seen[combo_key] = scenario
+            continue
+
+        issues.append(
+            f"- {scenario.scenario_id} [{scenario.title}]가 "
+            f"{original.scenario_id} [{original.title}]와 동일한 Dimension 값 조합을 사용함.",
+        )
+        for dim_key, current_value in scenario.dimension_values.items():
+            recommended = next(
+                (
+                    value
+                    for value in sorted(enum_map.get(dim_key, set()))
+                    if value != current_value
+                ),
+                None,
+            )
+            if recommended is None:
+                continue
+            repairs.append(
+                Stage5RepairInstruction(
+                    scenario_ref=scenario.scenario_id,
+                    issue_type="duplicate",
+                    dim_key=dim_key,
+                    current_value=str(current_value),
+                    recommended_value=str(recommended),
+                    reason=f"{original.scenario_id}와 동일한 Dimension 값 조합 중복 해소",
+                ),
+            )
+            break
+
+    if not issues:
+        return None, []
+    feedback = (
+        "[검증 실패/ 재생성 필요]\n"
+        + "\n".join(issues)
+        + "\n\n[개선 지시]\n"
+        + "중복된 시나리오의 Dimension 값 조합이 기존 시나리오와 달라지도록 시나리오 조합을 재선정하십시오."
+    )
+    return feedback, _valid_repairs(repairs, stage3)
+
+
+def _stage5_dimension_label_maps(
+    template: ScenarioTemplate,
+) -> tuple[dict[str, str], dict[str, str]]:
+    label_by_key: dict[str, str] = {}
+    key_by_label: dict[str, str] = {}
+    for dimension in template.ordered_dimensions():
+        label = dimension.label or dimension.dim_key
+        label_by_key[dimension.dim_key] = label
+        key_by_label[label] = dimension.dim_key
+    return label_by_key, key_by_label
+
+
+def _stage5_compatibility_user_prompt(
+    stage4: Stage4ScenarioSynthesis,
+    template: ScenarioTemplate,
+) -> str:
+    label_by_key, _ = _stage5_dimension_label_maps(template)
+    lines: list[str] = []
+    for index, scenario in enumerate(stage4.scenarios, start=1):
+        pairs = ", ".join(
+            f"{label_by_key.get(key, key)} ({key})='{value}'"
+            for key, value in scenario.dimension_values.items()
+        )
+        lines.append(
+            f"- {index} [{scenario.scenario_id} | {scenario.title}]: {pairs}\n"
+            f"  narrative: {scenario.description}",
+        )
+    return "다음 시나리오 조합을 판정하십시오.\n" + "\n".join(lines)
+
+
+def _validate_stage5_compatibility_output(
+    out: CompatibilityStructuredOutput,
+    expected_ids: set[int],
+) -> None:
+    actual_ids = {item.scenario_id for item in out.items}
+    if len(out.items) != len(actual_ids) or actual_ids != expected_ids:
+        raise ValueError(
+            "compatibility scenario_id 집합 불일치: "
+            f"누락={expected_ids - actual_ids}, 여분={actual_ids - expected_ids}",
+        )
+
+
+def _resolve_stage5_dim_key(
+    raw_dim: str | None,
+    *,
+    label_by_key: dict[str, str],
+    key_by_label: dict[str, str],
+) -> str | None:
+    if not raw_dim:
+        return None
+    text = str(raw_dim).strip()
+    if text in label_by_key:
+        return text
+    if text in key_by_label:
+        return key_by_label[text]
+    for key, label in label_by_key.items():
+        if key in text or label in text:
+            return key
+    return None
+
+
+def _stage5_compatibility_repairs(
+    out: CompatibilityStructuredOutput,
     stage3: Stage3ValueSelection,
     stage4: Stage4ScenarioSynthesis,
     template: ScenarioTemplate,
-) -> list[tuple[str, str]]:
-    """Return selected dimensions without non-baseline values in the scenario set."""
-    result = check_baseline_contrast_coverage(
-        stage4.scenarios,
-        [pd.dim_key for pd in stage3.per_dimension],
-        baseline_index=0,
-    )
-    baseline_values = result.baseline_values
-    return [
-        (dim_key, str(baseline_values.get(dim_key)))
-        for dim_key in result.missing_dimensions
+) -> list[Stage5RepairInstruction]:
+    label_by_key, key_by_label = _stage5_dimension_label_maps(template)
+    repairs: list[Stage5RepairInstruction] = []
+    for item in out.items:
+        if item.compatible:
+            continue
+        index = item.scenario_id - 1
+        if not 0 <= index < len(stage4.scenarios):
+            continue
+        scenario = stage4.scenarios[index]
+        dim_key = _resolve_stage5_dim_key(
+            item.conflict_dim_b,
+            label_by_key=label_by_key,
+            key_by_label=key_by_label,
+        )
+        if dim_key is None:
+            dim_key = _resolve_stage5_dim_key(
+                item.conflict_dim_a,
+                label_by_key=label_by_key,
+                key_by_label=key_by_label,
+            )
+        if dim_key is None or item.recommended_value_b is None:
+            continue
+        current_value = scenario.dimension_values.get(dim_key)
+        if current_value is None:
+            continue
+        repairs.append(
+            Stage5RepairInstruction(
+                scenario_ref=scenario.scenario_id,
+                issue_type="compatibility",
+                dim_key=dim_key,
+                current_value=str(current_value),
+                recommended_value=str(item.recommended_value_b),
+                reason=item.reason,
+            ),
+        )
+    return _valid_repairs(repairs, stage3)
+
+
+def _feedback_table_cell(value: object) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("|", "/").replace("\n", " ").strip()
+
+
+def _stage5_repair_table(
+    repairs: list[Stage5RepairInstruction],
+    stage4: Stage4ScenarioSynthesis,
+) -> str:
+    lines = [
+        "| scenario_ref | scenario_title | dim_key | current_value | recommended_value |",
+        "|---|---|---|---|---|",
     ]
+    for repair in repairs:
+        index = _parse_scenario_ref_index(repair.scenario_ref)
+        title = ""
+        if index is not None and 0 <= index < len(stage4.scenarios):
+            title = stage4.scenarios[index].title
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _feedback_table_cell(repair.scenario_ref),
+                    _feedback_table_cell(title),
+                    _feedback_table_cell(repair.dim_key),
+                    _feedback_table_cell(repair.current_value),
+                    _feedback_table_cell(repair.recommended_value),
+                ]
+            )
+            + " |",
+        )
+    return "\n".join(lines)
+
+
+def _stage5_compatibility_feedback(
+    out: CompatibilityStructuredOutput,
+    stage4: Stage4ScenarioSynthesis,
+    repairs: list[Stage5RepairInstruction],
+) -> str:
+    if repairs:
+        issues = _stage5_repair_table(repairs, stage4)
+    else:
+        lines: list[str] = []
+        for item in out.items:
+            if item.compatible:
+                continue
+            scenario_title = ""
+            index = item.scenario_id - 1
+            if 0 <= index < len(stage4.scenarios):
+                scenario_title = stage4.scenarios[index].title
+            scenario_ref = f"S_{item.scenario_id:02d}"
+            lines.append(
+                f"- {scenario_ref} [{scenario_title}]: {item.reason}"
+                if scenario_title
+                else f"- {scenario_ref}: {item.reason}",
+            )
+        issues = "\n".join(lines) if lines else "- 조합 호환성 실패"
+    return (
+        "[검증 실패/ 재생성 필요]\n"
+        f"{issues}\n\n"
+        "[개선 지시]\n"
+        "위 표의 recommend value를 해당 시나리오의 dim_key 값에 반영하십시오."
+    )
+
+
+async def _stage5_check_compatibility(
+    stage3: Stage3ValueSelection,
+    stage4: Stage4ScenarioSynthesis,
+    template: ScenarioTemplate,
+) -> tuple[bool, str | None, list[Stage5RepairInstruction]]:
+    expected_ids = set(range(1, len(stage4.scenarios) + 1))
+
+    def _validate(out: CompatibilityStructuredOutput) -> None:
+        _validate_stage5_compatibility_output(out, expected_ids)
+
+    out = await _ainvoke_with_retry(
+        stage_label="Stage 5 Compatibility",
+        schema_cls=CompatibilityStructuredOutput,
+        system_prompt=COMPAT_SYSTEM_PROMPT,
+        user_prompt=_stage5_compatibility_user_prompt(stage4, template),
+        validate_fn=_validate,
+        hard_constraints="",
+    )
+    if out is None:
+        print("  ↳ Stage 5 compatibility fallback: LLM 호출 실패 — 검증 통과로 처리")
+        return True, None, []
+
+    incompatible = [item for item in out.items if not item.compatible]
+    if not incompatible:
+        return True, None, []
+
+    repairs = _stage5_compatibility_repairs(out, stage3, stage4, template)
+    return (
+        False,
+        _stage5_compatibility_feedback(out, stage4, repairs),
+        repairs,
+    )
 
 
 @log_tool
-async def stage6_quick_validate(
+async def stage5_quick_validate(
     pack: Stage1ContextPack,
     stage3: Stage3ValueSelection,
     stage4: Stage4ScenarioSynthesis,
     template: ScenarioTemplate,
-) -> tuple[bool, str | None]:
-    """Stage 6 진입점 — LLM 1회 경량 검증.
+) -> tuple[bool, str | None, list[Stage5RepairInstruction]]:
+    """Stage 5 진입점 — 빠른 규칙 검증.
 
-    반환: (passed, improvement_suggestions)
-    - passed=True  → (True, None)
-    - passed=False → (False, "<피드백 문자열>")
+    반환: (passed, improvement_suggestions, repairs)
+    - passed=True  → (True, None, [])
+    - passed=False → (False, "<피드백 문자열>", repairs)
     """
     selected_dim_keys = [pd.dim_key for pd in stage3.per_dimension]
     contrast = check_baseline_contrast_coverage(
@@ -998,60 +1406,24 @@ async def stage6_quick_validate(
             f"{dim_key} 값이 baseline '{contrast.baseline_values.get(dim_key)}'와 다른 조합을 최소 1개 포함"
             for dim_key in missing
         )
+        repairs = _build_baseline_contrast_repairs(
+            stage3=stage3,
+            stage4=stage4,
+            missing_dim_keys=missing,
+            baseline_values=contrast.baseline_values,
+            baseline_index=contrast.baseline_index,
+        )
         return (
             False,
             "[검증 실패/ 재생성 필요]\n"
             f"{issues or contrast.baseline_issue}\n\n"
             "[개선 지시]\n"
-            f"{suggestions}하도록 Stage 4 조합을 재선정하십시오.",
+            f"{suggestions}하도록 시나리오 조합을 재선정하십시오.",
+            repairs,
         )
 
-    # Dim별 선택 값 목록
-    dim_idx = _dim_index(template)
-    dimension_block_lines: List[str] = []
-    for pd in stage3.per_dimension:
-        dim = dim_idx.get(pd.dim_key, {})
-        dimension_block_lines.append(
-            f"- {pd.dim_key} ({dim.get('label_ko', '')}): "
-            f"전체 enum={pd.template_enum_full}, "
-            f"선택된 enum={pd.selected_enum}, "
-            f"baseline={contrast.baseline_values.get(pd.dim_key)}, "
-            f"대안값={sorted(contrast.observed_non_baseline_values.get(pd.dim_key, set()))}"
-        )
+    duplicate_feedback, duplicate_repairs = _stage5_duplicate_repairs(stage3, stage4)
+    if duplicate_feedback is not None:
+        return False, duplicate_feedback, duplicate_repairs
 
-    # 시나리오 목록
-    scenario_lines: List[str] = []
-    for s in stage4.scenarios:
-        dim_vals = ", ".join(f"{k}={v}" for k, v in s.dimension_values.items())
-        scenario_lines.append(
-            f"- {s.scenario_id} [{s.title}]\n"
-            f"  dimension_values: {dim_vals}\n"
-            f"  description: {_shorten(s.description, 200)}"
-        )
-
-    user_prompt = build_stage6_user_prompt(
-        pack=pack,
-        dimension_block="\n".join(dimension_block_lines),
-        scenario_block="\n".join(scenario_lines),
-        scenario_count=len(stage4.scenarios),
-    )
-
-    out = await _ainvoke_with_retry(
-        stage_label="Stage 6",
-        schema_cls=Stage6StructuredOutput,
-        system_prompt=STAGE6_SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-        validate_fn=None,
-        hard_constraints="",
-    )
-
-    if out is None:
-        print("  ↳ Stage 6 fallback: LLM 호출 실패 — 검증 통과로 처리")
-        return True, None
-
-    if out.passed:
-        return True, None
-
-    issues_text = "\n".join(f"- {issue}" for issue in out.issues) if out.issues else "(상세 없음)"
-    feedback = f"[검증 실패/ 재생성 필요]\n{issues_text}\n\n[개선 지시]\n{out.improvement_suggestions}"
-    return False, feedback
+    return await _stage5_check_compatibility(stage3, stage4, template)

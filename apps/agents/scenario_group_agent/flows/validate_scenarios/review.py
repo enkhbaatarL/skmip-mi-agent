@@ -196,8 +196,8 @@ def _is_request_unchanged(
     검토를 수행하면 사용자가 손대지 않은 항목에까지 불필요한 warning 이 떠서,
     review 를 건너뛰고 통과 처리하기 위한 신호로 쓴다.
 
-    신규 시나리오 추가/삭제, 시나리오 식별자 불일치, 비교 대상 필드(title·
-    narrative·dimension_values·확률/증감·baseline_yn) 중 하나라도 다르면 False.
+    신규 시나리오 추가/삭제, 시나리오 식별자 불일치, validation 요청 body가
+    받는 필드(title·dimension_values) 중 하나라도 다르면 False.
     """
     if not requested_rows or not persisted_scenarios:
         return False
@@ -216,19 +216,8 @@ def _is_request_unchanged(
         persisted = persisted_by_id.get(int(raw_id))
         if persisted is None:
             return False
-        metrics = row.get("metrics") or {}
         comparisons: list[tuple[Any, Any]] = [
             (row.get("title"), persisted.get("title")),
-            (row.get("narrative"), persisted.get("narrative")),
-            (row.get("baseline_yn"), persisted.get("baseline_yn")),
-            (
-                metrics.get("probability_score"),
-                persisted.get("probability_score"),
-            ),
-            (
-                metrics.get("probability_delta"),
-                persisted.get("probability_delta"),
-            ),
         ]
         if any(
             _norm_compare_value(requested) != _norm_compare_value(stored)
