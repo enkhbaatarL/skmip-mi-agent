@@ -29,6 +29,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenarios,
 )
 from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
+    _build_background_graph as build_create_scenarios_background_graph,
     prepare_create_scenarios,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
@@ -38,7 +39,6 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     save_signposts,
 )
-from apps.agents.scenario_group_agent.flows.create_scenarios.flow import build_graph
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
@@ -143,7 +143,7 @@ def scenario_generation_result_stub(
 
 class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_create_scenarios_graph_registers_generation_subgraph(self) -> None:
-        graph = build_graph().get_graph()
+        graph = build_create_scenarios_background_graph().get_graph()
 
         assert "run_scenario_generation" in graph.nodes
 

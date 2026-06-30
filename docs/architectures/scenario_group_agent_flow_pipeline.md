@@ -23,24 +23,26 @@ API 요청
 
 API는 `ScenarioGroupAcceptedOut`(scenario_group_id, status, stage)을 즉시 반환하고,
 LLM 파이프라인이 끝나면 콜백으로 최종 결과를 전달한다.
-`confirm_generation`만 동기 LangGraph graph를 직접 `ainvoke`한다.
+`confirm_generation`만 `flow.py`의 LangGraph graph를 직접 `ainvoke`한다.
 
 ## 공통 실행 구조
 
-### 1. `get_runnable_graph()`: 재사용 가능한 진입점
+### 1. 재사용 가능한 진입점
 
-각 flow의 `flow.py` 또는 `flow_async.py`에서 `get_runnable_graph().ainvoke(...)`를 호출한다.
+`create_scenarios`, `create_signposts`, `validate_scenarios`는 `flow_async.py`의
+`get_background_runnable().ainvoke(...)`를 호출한다.
+`confirm_generation`은 `flow.py`의 `get_runnable_graph().ainvoke(...)`를 호출한다.
 
 ```python
 @lru_cache(maxsize=1)
-def get_runnable_graph() -> Runnable:
-    return build_runnable_graph()
+def get_background_runnable() -> Runnable:
+    return _build_background_graph() | RunnableLambda(_bg_to_output)
 ```
 
 `@lru_cache(maxsize=1)`는 최초 호출 때만 runnable graph를 생성하고 이후 요청에서 동일한
 compiled graph를 재사용한다.
 
-### 2. `build_runnable_graph()`: 입출력 파이프라인 조립
+### 2. Runnable graph 조립
 
 ```text
 API payload(dict)
@@ -51,7 +53,7 @@ API payload(dict)
 ```
 
 - `to_state`: 입력 payload를 검증하고 `ScenarioDesignState`를 생성한다.
-- `build_graph()`: flow별 node를 등록하고 실행 순서를 정의한다.
+- `_build_background_graph()` 또는 `build_graph()`: flow별 node를 등록하고 실행 순서를 정의한다.
 - `to_output`: 최종 state에서 API 응답 필드만 추출한다. **실패 상태이면 `MIBaseError`를 raise한다.**
 
 ### 3. `build_graph()`: 상태 기반 node 체인 정의
@@ -574,7 +576,7 @@ flow를 분석하거나 새 flow를 추가할 때는 다음 순서로 확인한�
 
 1. `api.py`에서 path parameter와 body가 어떤 payload로 합쳐지는지 확인한다.
 2. `flow_async.py`의 `prepare_*`에서 동기 전처리 로직을 확인한다 (`confirm_generation`은 `flow.py` 직접).
-3. `get_runnable_graph()`에서 graph가 지연 생성되고 캐시되는지 확인한다.
-4. `build_runnable_graph()`에서 `to_state → graph → to_output` 연결을 확인한다.
+3. `flow_async.py`의 `get_background_runnable()`에서 graph가 지연 생성되고 캐시되는지 확인한다.
+4. background flow는 `_build_background_graph() → _bg_to_output`, confirm flow는 `build_runnable_graph()`에서 연결을 확인한다.
 5. `to_state`와 `to_output`에서 API schema와 state 사이의 경계를 확인한다.
 6. `nodes.py`에서 각 node의 state 변경 필드와 오류 처리 조건을 확인한다.
