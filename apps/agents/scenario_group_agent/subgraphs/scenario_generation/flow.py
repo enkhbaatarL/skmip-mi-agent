@@ -32,12 +32,12 @@ def _route_after_quick_validate(state: ScenarioGenerationState) -> str:
         return "done"
     if state.quick_validate_retry_count > REF_QUICK_VALIDATE_MAX_RETRIES:
         logger.info(
-            "[SCENARIO_GENERATION][stage6] quick validate retry limit exceeded; proceeding to stage5 "
+            "[SCENARIO_GENERATION][stage5] quick validate retry limit exceeded; proceeding to stage6 "
             f"| retry_count={state.quick_validate_retry_count} | max_retries={REF_QUICK_VALIDATE_MAX_RETRIES}",
         )
         return "done"
     logger.info(
-        "[SCENARIO_GENERATION][stage6] routing back to stage4 for regeneration "
+        "[SCENARIO_GENERATION][stage5] routing back to stage4 for regeneration "
         f"| retry_count={state.quick_validate_retry_count} | max_retries={REF_QUICK_VALIDATE_MAX_RETRIES}",
     )
     return "retry"

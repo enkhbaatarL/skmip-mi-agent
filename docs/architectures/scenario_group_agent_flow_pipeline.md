@@ -154,9 +154,9 @@ flowchart LR
     C --> D[Stage 2<br/>Dimension 선택]
     D --> E[Stage 3<br/>Value 축소]
     E --> F[Stage 4<br/>Scenario 합성]
-    F --> G[Stage 6<br/>Quick Validate]
+    F --> G[Stage 5<br/>Quick Validate]
     G -->|feedback 있음| F
-    G -->|통과 또는 재시도 초과| H[Stage 5<br/>MECE·Likelihood]
+    G -->|통과 또는 재시도 초과| H[Stage 6<br/>MECE·Likelihood]
     H --> I[scenario_result]
 ```
 
@@ -203,17 +203,17 @@ baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 Ha
 `price_direction.brent/jkm/ttf`를 생성한다. 실패 시 중립 가격 방향 fallback 사용.
 최종 scenario ID는 `S_01`, `S_02` 형식으로 부여된다.
 
-#### Stage 6: Quick Validate (재시도 루프)
+#### Stage 5: Quick Validate (재시도 루프)
 
-`stage6_quick_validate()`는 합성된 scenario 조합이 dimension 다양성·중복 요건을 충족하는지
+`stage5_quick_validate()`는 합성된 scenario 조합이 dimension 다양성·중복 요건을 충족하는지
 빠르게 검사한다.
 
-- 통과(`validation_feedback=None`)하거나 `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: Stage 5로 진행
+- 통과(`validation_feedback=None`)하거나 `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: Stage 6으로 진행
 - 피드백이 있으면: `synthesize_scenarios` 노드로 돌아가 재합성 (conditional edge)
 
-#### Stage 5: MECE 및 Likelihood 검증
+#### Stage 6: MECE 및 Likelihood 검증
 
-`stage5_validate()`는 모든 scenario에 대해 likelihood를 5단계
+`stage6_validate()`는 모든 scenario에 대해 likelihood를 5단계
 (`very_low | low | medium | high | very_high`)로 분류한다.
 
 LLM은 MECE 판정도 반환하지만, 최종 `mutually_exclusive` 값은 코드가 `dimension_values` 조합의
@@ -233,7 +233,7 @@ pipeline을 계속 진행한다.
 | `stage2_dimension_selection` | 선택/제외 dimension |
 | `stage3_value_selection` | dimension별 선택 enum |
 | `stage4_scenario_synthesis` | 조합 수, scenarios |
-| `stage5_validation` | MECE와 likelihood prior |
+| `stage5_validation` | Stage 6 MECE와 likelihood prior (기존 저장 필드명 유지) |
 | `scenario_count` | 최종 scenario 수 |
 | `mece_passed` | 결정론적 MECE 결과 |
 

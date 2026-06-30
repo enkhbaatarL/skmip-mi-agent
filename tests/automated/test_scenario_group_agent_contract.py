@@ -490,7 +490,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             price_direction=price_direction,
         )
         stage4 = types.SimpleNamespace(scenarios=[generated])
-        stage5 = types.SimpleNamespace(likelihood_prior={"S_01": "medium"})
+        stage6 = types.SimpleNamespace(likelihood_prior={"S_01": "medium"})
 
         with (
             patch(
@@ -505,8 +505,8 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             ) as synthesize,
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-                "generation_stages.stage5_validate",
-                new=AsyncMock(return_value=stage5),
+                "generation_stages.stage6_validate",
+                new=AsyncMock(return_value=stage6),
             ),
         ):
             details = ScenarioService()._generate_new_row_details(

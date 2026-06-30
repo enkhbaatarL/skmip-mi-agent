@@ -12,7 +12,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage2DimensionSelection,
     Stage3ValueSelection,
     Stage4ScenarioSynthesis,
-    Stage6RepairInstruction,
+    Stage5RepairInstruction,
 )
 
 
@@ -27,5 +27,5 @@ class ScenarioGenerationState(BaseModel):
     skip_generation: bool = False
     error: str | None = None
     validation_feedback: str | None = None
-    validation_repairs: list[Stage6RepairInstruction] = Field(default_factory=list)
+    validation_repairs: list[Stage5RepairInstruction] = Field(default_factory=list)
     quick_validate_retry_count: int = 0

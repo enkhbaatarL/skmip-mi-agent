@@ -11,8 +11,8 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
     stage2_select_dimensions,
     stage3_reduce_values,
     stage4_synthesize_scenarios,
-    stage5_validate,
-    stage6_quick_validate,
+    stage6_validate,
+    stage5_quick_validate,
     stage_generate_scenario_group_metadata,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
@@ -104,7 +104,7 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "quick_validate 입력 누락"}
 
-    passed, feedback, repairs = await stage6_quick_validate(
+    passed, feedback, repairs = await stage5_quick_validate(
         state.stage1_context_pack,
         state.stage3_value_selection,
         state.stage4_scenario_synthesis,
@@ -113,13 +113,13 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     if passed:
         if state.quick_validate_retry_count > 0:
             logger.info(
-                "[SCENARIO_GENERATION][stage6] quick validate passed after retry "
+                "[SCENARIO_GENERATION][stage5] quick validate passed after retry "
                 f"| retry_count={state.quick_validate_retry_count}",
             )
         return {"validation_feedback": None, "validation_repairs": []}
     next_retry_count = state.quick_validate_retry_count + 1
     logger.info(
-        "[SCENARIO_GENERATION][stage6] quick validate failed "
+        "[SCENARIO_GENERATION][stage5] quick validate failed "
         f"| retry_count={next_retry_count} | feedback={_shorten_feedback(feedback)}",
     )
     return {
@@ -141,7 +141,7 @@ async def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, A
     ):
         return {"error": "scenario generation stage output is incomplete"}
 
-    stage5 = await stage5_validate(
+    stage6 = await stage6_validate(
         state.stage1_context_pack,
         state.stage4_scenario_synthesis,
     )
@@ -159,12 +159,12 @@ async def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, A
             stage2_dimension_selection=state.stage2_dimension_selection,
             stage3_value_selection=state.stage3_value_selection,
             stage4_scenario_synthesis=stage4,
-            stage5_validation=stage5,
+            stage5_validation=stage6,
             scenario_group_metadata=scenario_group_metadata,
             cartesian_total=stage4.cartesian_total,
             filtered_by_compatibility=stage4.filtered_by_compatibility,
             scenario_count=len(stage4.scenarios),
-            mece_passed=stage5.mece_check.mutually_exclusive,
+            mece_passed=stage6.mece_check.mutually_exclusive,
             mi_event_id=state.event_data.get("mi_event_id"),
             event_type_l1_l2=state.stage1_context_pack.C1_base_event.event_type_l1_l2,
             template_id=str(event_type_l2_id),

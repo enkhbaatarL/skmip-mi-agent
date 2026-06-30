@@ -51,7 +51,7 @@ class Stage4StructuredOutput(BaseModel):
     )
 
 
-class Stage5StructuredOutput(BaseModel):
+class Stage6StructuredOutput(BaseModel):
     mutually_exclusive: bool = Field(description="시나리오 조합이 서로 중복되지 않는지 여부")
     rationale: str = Field(default="", description="조합 유일성 판정 근거 1~2줄")
     likelihood_prior: dict[str, LikelihoodTier] = Field(
@@ -208,7 +208,7 @@ def build_scenario_group_metadata_user_prompt(
 """
 
 
-def build_stage5_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenario]) -> str:
+def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenario]) -> str:
     scenarios_block = "\n".join(
         f"- {s.scenario_id} | {s.title}\n"
         f"    dims: {', '.join(f'{k}={v}' for k, v in s.dimension_values.items())}\n"
@@ -388,7 +388,7 @@ SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS = """\
 - 새 수치나 근거 없는 사실을 만들지 마십시오.
 """
 
-STAGE5_SYSTEM_PROMPT = """\
+STAGE6_SYSTEM_PROMPT = """\
 당신은 멀티시나리오의 조합 유일성 검증 및 발생 가능성 분류 담당자입니다.
 
 ## 검사 항목 (반드시 이 둘만)
@@ -412,8 +412,8 @@ STAGE5_SYSTEM_PROMPT = """\
 - 시장 충격 강한 중기 차질은 'medium' 부근.
 """
 
-STAGE5_HARD_CONSTRAINTS = """\
-[중요한 출력 제약 — Stage 5]
+STAGE6_HARD_CONSTRAINTS = """\
+[중요한 출력 제약 — Stage 6]
 - likelihood_prior 키 집합은 입력된 scenario_id 와 정확히 일치 (누락·여분 금지).
 - 값은 {very_low|low|medium|high|very_high} 중 정확히 1개.
 - 수치 출력 금지. Coverage·Sum 검사 금지.

@@ -19,7 +19,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     PriceDirection,
     Scenario,
     ScenarioTemplate,
-    Stage6RepairInstruction,
+    Stage5RepairInstruction,
     Stage1ContextPack,
     Stage3ValueSelection,
     Stage4ScenarioSynthesis,
@@ -27,7 +27,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
     _apply_repair_instructions,
-    stage6_quick_validate,
+    stage5_quick_validate,
 )
 
 
@@ -510,7 +510,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ScenarioGenerationQuickValidationTest(unittest.TestCase):
-    def test_stage6_baseline_contrast_precheck_skips_llm_on_missing_coverage(
+    def test_stage5_baseline_contrast_precheck_skips_llm_on_missing_coverage(
         self,
     ) -> None:
         template = ScenarioTemplate(
@@ -583,7 +583,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             "generation_stages._ainvoke_with_retry",
         ) as invoke:
             passed, feedback, repairs = asyncio.run(
-                stage6_quick_validate(
+                stage5_quick_validate(
                     Stage1ContextPack(C1_base_event=C1BaseEvent()),
                     stage3,
                     stage4,
@@ -595,7 +595,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert feedback is not None
         assert "baseline 대비 대안값 누락" in feedback
         assert "period" in feedback
-        assert Stage6RepairInstruction(
+        assert Stage5RepairInstruction(
             scenario_ref="S_01",
             issue_type="baseline_contrast",
             dim_key="period",
@@ -631,7 +631,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         ]
         replacement = {"period": "장기", "severity": "높음"}
         repairs = [
-            Stage6RepairInstruction(
+            Stage5RepairInstruction(
                 scenario_ref="S_02",
                 issue_type="compatibility",
                 dim_key="period",
@@ -650,7 +650,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
 
         assert repaired == [target[0], replacement]
 
-    def test_stage6_compatibility_failure_returns_repair_instruction(self) -> None:
+    def test_stage5_compatibility_failure_returns_repair_instruction(self) -> None:
         template = ScenarioTemplate(
             dimensions=[
                 TemplateDimension(
@@ -758,7 +758,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             new=AsyncMock(return_value=compat_output),
         ):
             passed, feedback, repairs = asyncio.run(
-                stage6_quick_validate(
+                stage5_quick_validate(
                     Stage1ContextPack(C1_base_event=C1BaseEvent()),
                     stage3,
                     stage4,
@@ -770,7 +770,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert feedback is not None
         assert "PowerMix 수요 감소량" in feedback
         assert repairs == [
-            Stage6RepairInstruction(
+            Stage5RepairInstruction(
                 scenario_ref="S_02",
                 issue_type="compatibility",
                 dim_key="power_reduction",
@@ -780,7 +780,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             )
         ]
 
-    def test_stage6_duplicate_combination_precheck_skips_llm(self) -> None:
+    def test_stage5_duplicate_combination_precheck_skips_llm(self) -> None:
         template = ScenarioTemplate(
             dimensions=[
                 TemplateDimension(
@@ -865,7 +865,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             "generation_stages._ainvoke_with_retry",
         ) as invoke:
             passed, feedback, repairs = asyncio.run(
-                stage6_quick_validate(
+                stage5_quick_validate(
                     Stage1ContextPack(C1_base_event=C1BaseEvent()),
                     stage3,
                     stage4,
