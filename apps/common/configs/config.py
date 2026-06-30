@@ -127,6 +127,7 @@ class Settings(BaseSettings):
 
     # Scenario group admin/test APIs
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
+    create_signposts_max_concurrent_scenarios: int = Field(default=7, ge=1)
 
     # Callback OAuth2 (client_credentials)
     callback_oauth2_token_url: str = Field(default="")
