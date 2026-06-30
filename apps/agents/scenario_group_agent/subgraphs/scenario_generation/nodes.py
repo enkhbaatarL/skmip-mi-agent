@@ -88,6 +88,7 @@ async def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str,
             state.stage3_value_selection,
             state.template,
             validation_feedback=state.validation_feedback,
+            validation_repairs=state.validation_repairs,
         ),
     }
 
@@ -103,7 +104,7 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     ):
         return {"error": "quick_validate 입력 누락"}
 
-    passed, feedback = await stage6_quick_validate(
+    passed, feedback, repairs = await stage6_quick_validate(
         state.stage1_context_pack,
         state.stage3_value_selection,
         state.stage4_scenario_synthesis,
@@ -115,7 +116,7 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
                 "[SCENARIO_GENERATION][stage6] quick validate passed after retry "
                 f"| retry_count={state.quick_validate_retry_count}",
             )
-        return {"validation_feedback": None}
+        return {"validation_feedback": None, "validation_repairs": []}
     next_retry_count = state.quick_validate_retry_count + 1
     logger.info(
         "[SCENARIO_GENERATION][stage6] quick validate failed "
@@ -123,6 +124,7 @@ async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     )
     return {
         "validation_feedback": feedback,
+        "validation_repairs": repairs,
         "quick_validate_retry_count": next_retry_count,
     }
 

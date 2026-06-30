@@ -234,6 +234,20 @@ class Stage4ScenarioSynthesis(BaseModel):
     )
 
 
+class Stage6RepairInstruction(BaseModel):
+    scenario_ref: str = Field(description="수정 대상 입력 시나리오 참조값. 예: S_03")
+    issue_type: Literal[
+        "baseline_contrast",
+        "value_diversity",
+        "compatibility",
+        "duplicate",
+    ] = Field(description="Stage 6 실패 유형")
+    dim_key: str = Field(description="수정할 dimension key")
+    current_value: str = Field(description="현재 값")
+    recommended_value: str = Field(description="Stage 3 selected enum 안의 권장 값")
+    reason: str = Field(default="", description="수정 사유")
+
+
 class MECECheck(BaseModel):
     mutually_exclusive: bool = Field(
         description="시나리오 간 동시 성립 사례 부재 시 True.",

@@ -19,12 +19,14 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     PriceDirection,
     Scenario,
     ScenarioTemplate,
+    Stage6RepairInstruction,
     Stage1ContextPack,
     Stage3ValueSelection,
     Stage4ScenarioSynthesis,
     TemplateDimension,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
+    _apply_repair_instructions,
     stage6_quick_validate,
 )
 
@@ -580,7 +582,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
             "generation_stages._ainvoke_with_retry",
         ) as invoke:
-            passed, feedback = asyncio.run(
+            passed, feedback, repairs = asyncio.run(
                 stage6_quick_validate(
                     Stage1ContextPack(C1_base_event=C1BaseEvent()),
                     stage3,
@@ -593,6 +595,290 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert feedback is not None
         assert "baseline 대비 대안값 누락" in feedback
         assert "period" in feedback
+        assert Stage6RepairInstruction(
+            scenario_ref="S_01",
+            issue_type="baseline_contrast",
+            dim_key="period",
+            current_value="단기",
+            recommended_value="장기",
+            reason="baseline 대비 대안값 coverage 확보",
+        ) in repairs
+        assert {repair.dim_key for repair in repairs} == {
+            "period",
+            "severity",
+            "recovery",
+        }
+        invoke.assert_not_called()
+
+    def test_stage4_repair_instruction_replaces_target_combo(self) -> None:
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["단기", "장기"],
+                    selected_enum=["단기", "장기"],
+                ),
+                PerDimensionValue(
+                    dim_key="severity",
+                    template_enum_full=["낮음", "높음"],
+                    selected_enum=["낮음", "높음"],
+                ),
+            ],
+        )
+        target = [
+            {"period": "단기", "severity": "낮음"},
+            {"period": "단기", "severity": "높음"},
+        ]
+        replacement = {"period": "장기", "severity": "높음"}
+        repairs = [
+            Stage6RepairInstruction(
+                scenario_ref="S_02",
+                issue_type="compatibility",
+                dim_key="period",
+                current_value="단기",
+                recommended_value="장기",
+                reason="조합 호환성 개선",
+            )
+        ]
+
+        repaired = _apply_repair_instructions(
+            target,
+            [*target, replacement],
+            stage3,
+            repairs,
+        )
+
+        assert repaired == [target[0], replacement]
+
+    def test_stage6_compatibility_failure_returns_repair_instruction(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["단기", "장기"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="alt_lng",
+                    label="대체 LNG 확보량",
+                    value_enums=["50%", "100%"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="power_reduction",
+                    label="PowerMix 수요 감소량",
+                    value_enums=["50%", "100%"],
+                    display_order=3,
+                ),
+            ]
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["단기", "장기"],
+                    selected_enum=["단기", "장기"],
+                ),
+                PerDimensionValue(
+                    dim_key="alt_lng",
+                    template_enum_full=["50%", "100%"],
+                    selected_enum=["50%", "100%"],
+                ),
+                PerDimensionValue(
+                    dim_key="power_reduction",
+                    template_enum_full=["50%", "100%"],
+                    selected_enum=["50%", "100%"],
+                ),
+            ]
+        )
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=2,
+            filtered_by_compatibility=2,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="baseline",
+                    dimension_values={
+                        "period": "단기",
+                        "alt_lng": "100%",
+                        "power_reduction": "50%",
+                    },
+                    description="baseline narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+                Scenario(
+                    scenario_id="S_02",
+                    title="incompatible",
+                    dimension_values={
+                        "period": "장기",
+                        "alt_lng": "50%",
+                        "power_reduction": "100%",
+                    },
+                    description="incompatible narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+            ],
+        )
+        compat_output = CompatibilityOutput(
+            items=[
+                CompatibilityItem(
+                    scenario_id=1,
+                    compatible=True,
+                    reason="정상",
+                ),
+                CompatibilityItem(
+                    scenario_id=2,
+                    compatible=False,
+                    reason="대체 LNG 50%와 수요 감소 100%는 동시 적용이 과도함",
+                    conflict_dim_a="대체 LNG 확보량 (alt_lng)",
+                    conflict_value_a="50%",
+                    conflict_dim_b="PowerMix 수요 감소량 (power_reduction)",
+                    conflict_value_b="100%",
+                    recommended_value_b="50%",
+                ),
+            ]
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "generation_stages._ainvoke_with_retry",
+            new=AsyncMock(return_value=compat_output),
+        ):
+            passed, feedback, repairs = asyncio.run(
+                stage6_quick_validate(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    stage4,
+                    template,
+                )
+            )
+
+        assert not passed
+        assert feedback is not None
+        assert "PowerMix 수요 감소량" in feedback
+        assert repairs == [
+            Stage6RepairInstruction(
+                scenario_ref="S_02",
+                issue_type="compatibility",
+                dim_key="power_reduction",
+                current_value="100%",
+                recommended_value="50%",
+                reason="대체 LNG 50%와 수요 감소 100%는 동시 적용이 과도함",
+            )
+        ]
+
+    def test_stage6_duplicate_combination_precheck_skips_llm(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["단기", "장기"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="severity",
+                    label="강도",
+                    value_enums=["낮음", "높음"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="recovery",
+                    label="회복",
+                    value_enums=["빠름", "느림"],
+                    display_order=3,
+                ),
+            ]
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["단기", "장기"],
+                    selected_enum=["단기", "장기"],
+                ),
+                PerDimensionValue(
+                    dim_key="severity",
+                    template_enum_full=["낮음", "높음"],
+                    selected_enum=["낮음", "높음"],
+                ),
+                PerDimensionValue(
+                    dim_key="recovery",
+                    template_enum_full=["빠름", "느림"],
+                    selected_enum=["빠름", "느림"],
+                ),
+            ]
+        )
+
+        def scenario(scenario_id: str, title: str, values: dict[str, str]) -> Scenario:
+            return Scenario(
+                scenario_id=scenario_id,
+                title=title,
+                dimension_values=values,
+                description=f"{title} narrative",
+                derivation_rationale="test",
+                price_direction=PriceDirection(
+                    brent="neutral",
+                    jkm="neutral",
+                    ttf="neutral",
+                    hh="neutral",
+                ),
+            )
+
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=3,
+            filtered_by_compatibility=3,
+            scenarios=[
+                scenario(
+                    "S_01",
+                    "baseline",
+                    {"period": "단기", "severity": "낮음", "recovery": "빠름"},
+                ),
+                scenario(
+                    "S_02",
+                    "duplicate",
+                    {"period": "단기", "severity": "낮음", "recovery": "빠름"},
+                ),
+                scenario(
+                    "S_03",
+                    "contrast",
+                    {"period": "장기", "severity": "높음", "recovery": "느림"},
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "generation_stages._ainvoke_with_retry",
+        ) as invoke:
+            passed, feedback, repairs = asyncio.run(
+                stage6_quick_validate(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    stage4,
+                    template,
+                )
+            )
+
+        assert not passed
+        assert feedback is not None
+        assert "동일한 Dimension 값 조합" in feedback
+        assert repairs
+        assert repairs[0].scenario_ref == "S_02"
+        assert repairs[0].issue_type == "duplicate"
         invoke.assert_not_called()
 
 
