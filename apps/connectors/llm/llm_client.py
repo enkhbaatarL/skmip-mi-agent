@@ -1,7 +1,6 @@
 #   apps/connectors/llm/llm_client.py
 #   kmj20260423목,    주석문 추가
-"""
-LLM 호출 공통 클라이언트 모듈
+"""LLM 호출 공통 클라이언트 모듈.
 
 역할:
 - 외부 LLM API(A.X Platform Gateway)를 호출하는 공통 인터페이스를 제공한다.
@@ -36,30 +35,25 @@ LLM 호출 공통 클라이언트 모듈
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, TypeVar
 
 import httpx
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from apps.common.configs.config import BaseSettings, get_settings
 from apps.common.exceptions.custom import MIBaseError
-from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.decorators import log_connector
 from apps.common.runtime.runtime import (
     ensure_runtime_context_ready,
-    get_http_client,
     get_http_semaphore,
     get_llm_semaphore,
 )
 from apps.common.runtime.usage_context import accumulate_usage
 from apps.common.values.enums import ModelPreference
+from apps.common.values.error_codes import ErrorCode
 from apps.common.values.llm_usage import LLMUsageModel
 
-
-_openai_client: AsyncOpenAI | None = None
-_client_init_lock = asyncio.Lock()
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -71,24 +65,29 @@ class LLMStructuredResult[T: BaseModel](BaseModel):
     usage: LLMUsageModel | None = None
 
 
-async def _ensure_openai_client() -> AsyncOpenAI:
-    global _openai_client
-    if _openai_client:
-        return _openai_client
-
-    async with _client_init_lock:
-        if _openai_client:
-            return _openai_client
-
-        cfg = get_settings()
-        http_client = await get_http_client(base_url=cfg.model_endpoint)
-        _openai_client = AsyncOpenAI(
+def _create_openai_client(max_retries: int) -> tuple[AsyncOpenAI, httpx.AsyncClient]:
+    cfg = get_settings()
+    http_client = httpx.AsyncClient(
+        verify=cfg.http_verify,
+        http2=cfg.http2,
+        timeout=httpx.Timeout(
+            timeout=cfg.llm_timeout_sec,
+            connect=cfg.http_connect_timeout,
+        ),
+        limits=httpx.Limits(
+            max_connections=cfg.http_max_connection,
+            max_keepalive_connections=cfg.http_max_keepalive,
+        ),
+    )
+    return (
+        AsyncOpenAI(
             base_url=cfg.model_endpoint,
             api_key=cfg.model_api_key,
             http_client=http_client,
-        )
-
-        return _openai_client
+            max_retries=max_retries,
+        ),
+        http_client,
+    )
 
 
 def _resolve_model_name(
@@ -105,6 +104,13 @@ def _resolve_model_name(
     return settings.model_api_deployment_name
 
 
+def _require_content(content: str | None) -> str:
+    if not content:
+        message = "LLM 응답 content가 비어 있습니다."
+        raise ValueError(message)
+    return content
+
+
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
 async def invoke_llm_function_call(
     messages: list[dict[str, str]],
@@ -117,22 +123,14 @@ async def invoke_llm_function_call(
     max_retries: int = 2,
 ) -> dict[str, Any]:
     await ensure_runtime_context_ready()
-    client = await _ensure_openai_client()
-    settings: BaseSettings = get_settings()
-    client = OpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.api_key,
-        # http_client=httpx.Client(verify=False, timeout=settings.llm_timeout_sec),
-        http_client=httpx.Client(verify=False),
-        max_retries=max_retries,
-    )
+    client, http_client = _create_openai_client(max_retries=max_retries)
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
     http_sem = get_http_semaphore()
 
     try:
         async with llm_sem, http_sem:
-            resp = client.chat.completions.create(
+            resp = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 functions=functions,
@@ -151,6 +149,8 @@ async def invoke_llm_function_call(
             }
     except Exception as ex:
         raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
+    finally:
+        await http_client.aclose()
 
 
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
@@ -166,15 +166,7 @@ async def invoke_llm_structured_output[T: BaseModel](
 ) -> LLMStructuredResult[T]:
     """Structured output LLM 호출. 결과와 usage 정보를 함께 반환."""
     await ensure_runtime_context_ready()
-    await _ensure_openai_client()
-
-    settings: BaseSettings = get_settings()
-    client = OpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.api_key,
-        http_client=httpx.Client(verify=False),  # TODO: verify= True로 변경
-        max_retries=max_retries,
-    )
+    client, http_client = _create_openai_client(max_retries=max_retries)
 
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
@@ -185,7 +177,7 @@ async def invoke_llm_structured_output[T: BaseModel](
 
     try:
         async with llm_sem, http_sem:
-            resp = client.chat.completions.create(
+            resp = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 # temperature=temperature,
@@ -205,6 +197,9 @@ async def invoke_llm_structured_output[T: BaseModel](
             return LLMStructuredResult[T](result=parsed_result, usage=usage)
     except Exception as ex:
         raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
+    finally:
+        await http_client.aclose()
+
 
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
 async def invoke_llm_text(
@@ -216,14 +211,7 @@ async def invoke_llm_text(
     max_retries: int = 2,
 ) -> dict[str, Any]:
     await ensure_runtime_context_ready()
-
-    settings: BaseSettings = get_settings()
-    client = OpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.api_key,
-        http_client=httpx.Client(verify=False),
-        max_retries=max_retries,
-    )
+    client, http_client = _create_openai_client(max_retries=max_retries)
 
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
@@ -231,15 +219,13 @@ async def invoke_llm_text(
 
     try:
         async with llm_sem, http_sem:
-            resp = client.chat.completions.create(
+            resp = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
             )
 
-            content = resp.choices[0].message.content
-            if not content:
-                raise ValueError("LLM 응답 content가 비어 있습니다.")
+            content = _require_content(resp.choices[0].message.content)
 
             usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
             accumulate_usage(usage)
@@ -252,3 +238,5 @@ async def invoke_llm_text(
             }
     except Exception as ex:
         raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
+    finally:
+        await http_client.aclose()

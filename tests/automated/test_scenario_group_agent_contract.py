@@ -6,7 +6,7 @@ from decimal import Decimal
 import unittest
 import sys
 import types
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
@@ -29,6 +29,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenarios,
 )
 from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
+    _build_background_graph as build_create_scenarios_background_graph,
     prepare_create_scenarios,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
@@ -38,7 +39,6 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     save_signposts,
 )
-from apps.agents.scenario_group_agent.flows.create_scenarios.flow import build_graph
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
@@ -143,7 +143,7 @@ def scenario_generation_result_stub(
 
 class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_create_scenarios_graph_registers_generation_subgraph(self) -> None:
-        graph = build_graph().get_graph()
+        graph = build_create_scenarios_background_graph().get_graph()
 
         assert "run_scenario_generation" in graph.nodes
 
@@ -501,12 +501,12 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
                 "generation_stages.stage4_synthesize_fixed_scenarios",
-                return_value=stage4,
+                new=AsyncMock(return_value=stage4),
             ) as synthesize,
             patch(
                 "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
                 "generation_stages.stage5_validate",
-                return_value=stage5,
+                new=AsyncMock(return_value=stage5),
             ),
         ):
             details = ScenarioService()._generate_new_row_details(
