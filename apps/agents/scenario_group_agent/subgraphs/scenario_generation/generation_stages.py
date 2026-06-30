@@ -1277,35 +1277,68 @@ def _stage5_compatibility_repairs(
     return _valid_repairs(repairs, stage3)
 
 
+def _feedback_table_cell(value: object) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("|", "/").replace("\n", " ").strip()
+
+
+def _stage5_repair_table(
+    repairs: list[Stage5RepairInstruction],
+    stage4: Stage4ScenarioSynthesis,
+) -> str:
+    lines = [
+        "| scenario_ref | scenario_title | dim_key | current_value | recommended_value |",
+        "|---|---|---|---|---|",
+    ]
+    for repair in repairs:
+        index = _parse_scenario_ref_index(repair.scenario_ref)
+        title = ""
+        if index is not None and 0 <= index < len(stage4.scenarios):
+            title = stage4.scenarios[index].title
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _feedback_table_cell(repair.scenario_ref),
+                    _feedback_table_cell(title),
+                    _feedback_table_cell(repair.dim_key),
+                    _feedback_table_cell(repair.current_value),
+                    _feedback_table_cell(repair.recommended_value),
+                ]
+            )
+            + " |",
+        )
+    return "\n".join(lines)
+
+
 def _stage5_compatibility_feedback(
     out: CompatibilityStructuredOutput,
     stage4: Stage4ScenarioSynthesis,
+    repairs: list[Stage5RepairInstruction],
 ) -> str:
-    lines: list[str] = []
-    for item in out.items:
-        if item.compatible:
-            continue
-        scenario_title = ""
-        index = item.scenario_id - 1
-        if 0 <= index < len(stage4.scenarios):
-            scenario_title = stage4.scenarios[index].title
-        target = f"{item.scenario_id}"
-        if scenario_title:
-            target += f" [{scenario_title}]"
-        if item.conflict_dim_a and item.conflict_dim_b and item.recommended_value_b:
+    if repairs:
+        issues = _stage5_repair_table(repairs, stage4)
+    else:
+        lines: list[str] = []
+        for item in out.items:
+            if item.compatible:
+                continue
+            scenario_title = ""
+            index = item.scenario_id - 1
+            if 0 <= index < len(stage4.scenarios):
+                scenario_title = stage4.scenarios[index].title
+            scenario_ref = f"S_{item.scenario_id:02d}"
             lines.append(
-                f"- {target}: {item.conflict_dim_a}='{item.conflict_value_a}'와 "
-                f"{item.conflict_dim_b}='{item.conflict_value_b}' 조합이 맞지 않음. "
-                f"{item.conflict_dim_b} 값을 '{item.recommended_value_b}'로 변경 권장.",
+                f"- {scenario_ref} [{scenario_title}]: {item.reason}"
+                if scenario_title
+                else f"- {scenario_ref}: {item.reason}",
             )
-        else:
-            lines.append(f"- {target}: {item.reason}")
-    issues = "\n".join(lines) if lines else "- 조합 호환성 실패"
+        issues = "\n".join(lines) if lines else "- 조합 호환성 실패"
     return (
         "[검증 실패/ 재생성 필요]\n"
         f"{issues}\n\n"
         "[개선 지시]\n"
-        "위 충돌 항목의 권장 변경값을 반영하도록 시나리오 조합을 재선정하십시오."
+        "위 표의 recommend value를 해당 시나리오의 dim_key 값에 반영하십시오."
     )
 
 
@@ -1335,10 +1368,11 @@ async def _stage5_check_compatibility(
     if not incompatible:
         return True, None, []
 
+    repairs = _stage5_compatibility_repairs(out, stage3, stage4, template)
     return (
         False,
-        _stage5_compatibility_feedback(out, stage4),
-        _stage5_compatibility_repairs(out, stage3, stage4, template),
+        _stage5_compatibility_feedback(out, stage4, repairs),
+        repairs,
     )
 
 

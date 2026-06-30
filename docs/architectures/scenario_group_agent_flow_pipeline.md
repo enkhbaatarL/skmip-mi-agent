@@ -155,8 +155,10 @@ flowchart LR
     D --> E[Stage 3<br/>Value 축소]
     E --> F[Stage 4<br/>Scenario 합성]
     F --> G[Stage 5<br/>Quick Validate]
-    G -->|feedback 있음| F
-    G -->|통과 또는 재시도 초과| H[Stage 6<br/>MECE·Likelihood]
+    G -->|통과| H[Stage 6<br/>MECE·Likelihood]
+    G -->|repair 적용 성공| H
+    G -->|feedback 있음 + repair 없음| F
+    G -->|재시도 초과| H
     H --> I[scenario_result]
 ```
 
@@ -208,8 +210,16 @@ baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 Ha
 `stage5_quick_validate()`는 합성된 scenario 조합이 dimension 다양성·중복 요건을 충족하는지
 빠르게 검사한다.
 
-- 통과(`validation_feedback=None`)하거나 `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: Stage 6으로 진행
-- 피드백이 있으면: `synthesize_scenarios` 노드로 돌아가 재합성 (conditional edge)
+- 통과(`validation_feedback=None`): Stage 6으로 진행
+- 실패했지만 `Stage5RepairInstruction`이 있으면: Stage 4로 되돌리지 않고 현재
+  `stage4_scenario_synthesis.scenarios[*].dimension_values`를 직접 보정한 뒤 Stage 6으로 진행
+  - `scenario_ref`(`S_01` 등)로 대상 scenario를 찾는다.
+  - 대상 scenario의 `dim_key` 값이 repair의 `current_value`와 같을 때만 `recommended_value`로 교체한다.
+  - 값이 이미 달라졌거나 대상 scenario를 찾을 수 없으면 해당 repair는 적용하지 않는다.
+  - compatibility 실패 feedback은 `scenario_ref | scenario_title | dim_key | current_value | recommended_value`
+    헤더의 표 형식으로 생성한다. `scenario_ref`는 `1`이 아니라 `S_01` 형식을 사용한다.
+- 실패했고 적용 가능한 repair가 없으면: `validation_feedback`을 유지해 `synthesize_scenarios` 노드로 돌아가 재합성
+- `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: 남은 feedback이 있어도 Stage 6으로 진행
 
 #### Stage 6: MECE 및 Likelihood 검증
 
@@ -513,7 +523,14 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 | R04 MECE | 시나리오 조합 중복 방지 | 모든 dimension value 조합이 완전히 동일한 scenario 쌍을 탐지 | 문자열 완전 일치 비교이므로 표기 차이가 있으면 중복으로 잡히지 않을 수 있음 |
 | R05 probability range | 수치 범위 유효성 확인 | 확률(0~100), 증감(-100~100) 검사 함수가 있으나 현재 `run_review`에서는 비활성 | 현재 validation verdict에 영향 없음 |
 
-추가로, 요청 table이 DB의 create 결과와 완전히 동일하면 review를 skip하고 PASS를 반환한다.
+추가로, 요청 table이 DB의 create 결과와 동일하면 review를 skip하고 PASS를 반환한다.
+동일성 비교는 validation request body가 실제로 받을 수 있는 row 필드만 기준으로 한다.
+
+- 비교 대상: row 수, `scenario_id`, `title`, `cells`와 DB의 `dimension_values`
+- 비교 제외: validation request schema가 받지 않는 `narrative`, `metrics`, `baseline_yn`, `impact`, `signposts`
+
+따라서 GET 응답 table을 validation 요청 형태로 축약해 보내는 경우에도,
+사용자가 수정 가능한 필드가 바뀌지 않았으면 변경 없음으로 보고 LLM review를 건너뛴다.
 
 - `is_valid=True`: verdict가 `PASS`
 - `is_valid=False`: verdict가 `REVIEW`

@@ -29,6 +29,10 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
     _apply_repair_instructions,
     stage5_quick_validate,
 )
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation import nodes
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
+    ScenarioGenerationState,
+)
 
 
 TEMPLATE = [
@@ -221,6 +225,60 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert report.verdict == "PASS"
         assert report.is_valid
+        assert report.summary["WARN"] == 0
+        assert report.checks == []
+
+    async def test_unchanged_validation_request_ignores_fields_absent_from_body(self) -> None:
+        # validation request schema 는 title/cells 만 받으므로, GET 응답에 있던
+        # narrative/metrics/baselineYn 이 요청에서 빠져도 변경으로 보지 않는다.
+        persisted = [
+            {
+                "scenario_id": 100,
+                "scenario_group_id": 10,
+                "title": "short",
+                "narrative": "short narrative",
+                "status": "created",
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+                "probability_score": 40,
+                "probability_delta": 0,
+                "baseline_yn": "Y",
+            },
+            {
+                "scenario_id": 101,
+                "scenario_group_id": 10,
+                "title": "long",
+                "narrative": "long narrative",
+                "status": "created",
+                "dimension_values": {"period": "단기", "severity": "낮음"},
+                "probability_score": 60,
+                "probability_delta": 0,
+                "baseline_yn": "N",
+            },
+        ]
+        rows = [
+            {
+                "scenario_id": 100,
+                "title": "short",
+                "cells": {"period": "단기", "severity": "낮음"},
+            },
+            {
+                "scenario_id": 101,
+                "title": "long",
+                "cells": {"period": "단기", "severity": "낮음"},
+            },
+        ]
+        context = build_context(GROUP, rows, persisted, TEMPLATE)
+        assert context.unchanged is True
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(),
+        ) as invoke:
+            report = await run_review(context)
+
+        invoke.assert_not_called()
+        assert report.verdict == "PASS"
         assert report.summary["WARN"] == 0
         assert report.checks == []
 
@@ -768,7 +826,8 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
 
         assert not passed
         assert feedback is not None
-        assert "PowerMix 수요 감소량" in feedback
+        assert "| scenario_ref | scenario_title | dim_key | current_value | recommended_value |" in feedback
+        assert "| S_02 | incompatible | power_reduction | 100% | 50% |" in feedback
         assert repairs == [
             Stage5RepairInstruction(
                 scenario_ref="S_02",
@@ -779,6 +838,102 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                 reason="대체 LNG 50%와 수요 감소 100%는 동시 적용이 과도함",
             )
         ]
+
+    def test_quick_validate_node_applies_stage5_repair_to_current_stage4(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="supply_disruption_intensity",
+                    label="공급 차질 - 강도",
+                    value_enums=["전혀 없음", "낮음"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="supply_disruption_pattern",
+                    label="공급 차질 - 발생/회복 패턴",
+                    value_enums=["차질 없음", "급차질-급회복"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["1개월 이하", "6개월"],
+                    display_order=3,
+                ),
+            ]
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="supply_disruption_intensity",
+                    template_enum_full=["전혀 없음", "낮음"],
+                    selected_enum=["전혀 없음", "낮음"],
+                ),
+                PerDimensionValue(
+                    dim_key="supply_disruption_pattern",
+                    template_enum_full=["차질 없음", "급차질-급회복"],
+                    selected_enum=["차질 없음", "급차질-급회복"],
+                ),
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["1개월 이하", "6개월"],
+                    selected_enum=["1개월 이하", "6개월"],
+                ),
+            ]
+        )
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=2,
+            filtered_by_compatibility=2,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="repair target",
+                    dimension_values={
+                        "supply_disruption_intensity": "전혀 없음",
+                        "supply_disruption_pattern": "급차질-급회복",
+                        "period": "1개월 이하",
+                    },
+                    description="target narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                )
+            ],
+        )
+        repairs = [
+            Stage5RepairInstruction(
+                scenario_ref="S_01",
+                issue_type="compatibility",
+                dim_key="supply_disruption_pattern",
+                current_value="급차질-급회복",
+                recommended_value="차질 없음",
+                reason="공급 차질 없음과 급차질 패턴 충돌",
+            )
+        ]
+        state = ScenarioGenerationState(
+            event_data={"mi_event_id": 1, "event_type_l2_id": 2},
+            template=template,
+            stage1_context_pack=Stage1ContextPack(C1_base_event=C1BaseEvent()),
+            stage3_value_selection=stage3,
+            stage4_scenario_synthesis=stage4,
+        )
+
+        with patch.object(
+            nodes,
+            "stage5_quick_validate",
+            new=AsyncMock(return_value=(False, "feedback", repairs)),
+        ):
+            result = asyncio.run(nodes.quick_validate_node(state))
+
+        repaired = result["stage4_scenario_synthesis"]
+        assert repaired.scenarios[0].dimension_values["supply_disruption_pattern"] == "차질 없음"
+        assert result["validation_feedback"] is None
+        assert result["validation_repairs"] == []
+        assert result["quick_validate_retry_count"] == 1
 
     def test_stage5_duplicate_combination_precheck_skips_llm(self) -> None:
         template = ScenarioTemplate(
