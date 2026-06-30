@@ -4,16 +4,21 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh <tag> [base-branch]
+  RELEASE_NOTES_SOURCE=<release-notes.md> .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh <tag> [base-branch]
 
 Examples:
-  .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3
-  .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3 main
+  RELEASE_NOTES_SOURCE=/tmp/skmip-mi-agent-v0.0.3.release-notes.md .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3
+  RELEASE_NOTES_SOURCE=/tmp/skmip-mi-agent-v0.0.3.release-notes.md .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3 main
 
 Creates:
   release-artifacts/<repo>-<tag>.bundle
   release-artifacts/<repo>-<tag>.bundle.zip  # contains the bundle and internal import sh
   release-artifacts/<repo>-<tag>.manifest.txt
+  release-artifacts/<repo>-<tag>.release-notes.md
+
+Environment:
+  RELEASE_NOTES_SOURCE=<file>  Required. Prewritten release notes to copy into artifacts and GitHub Release
+  SKIP_GITHUB_RELEASE=1        Create artifacts only; do not create/update GitHub Release
 EOF
 }
 
@@ -26,11 +31,26 @@ TAG="${1:-}"
 BASE_BRANCH="${2:-main}"
 REMOTE="${REMOTE:-origin}"
 OUTPUT_DIR="${OUTPUT_DIR:-release-artifacts}"
+RELEASE_NOTES_SOURCE="${RELEASE_NOTES_SOURCE:-}"
 
 if [[ -z "$TAG" ]]; then
   usage >&2
   exit 1
 fi
+
+if [[ -z "$RELEASE_NOTES_SOURCE" ]]; then
+  echo "ERROR: RELEASE_NOTES_SOURCE is required. Create release notes with Codex/Claude first, then pass the file path." >&2
+  usage >&2
+  exit 1
+fi
+
+if [[ ! -f "$RELEASE_NOTES_SOURCE" ]]; then
+  echo "ERROR: RELEASE_NOTES_SOURCE does not exist or is not a file: $RELEASE_NOTES_SOURCE" >&2
+  exit 1
+fi
+
+SOURCE_DIR="$(cd "$(dirname "$RELEASE_NOTES_SOURCE")" && pwd)"
+RELEASE_NOTES_SOURCE="${SOURCE_DIR}/$(basename "$RELEASE_NOTES_SOURCE")"
 
 if [[ ! "$TAG" =~ ^v[0-9]+(\.[0-9]+){1,3}([-+][A-Za-z0-9._-]+)?$ ]]; then
   echo "ERROR: tag must look like v0.0.3 or v1.2.3-rc.1: $TAG" >&2
@@ -44,10 +64,19 @@ REPO_NAME="$(basename "$PROJECT_ROOT")"
 BUNDLE_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.bundle"
 ZIP_FILE="${BUNDLE_FILE}.zip"
 MANIFEST_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.manifest.txt"
+RELEASE_NOTES_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.release-notes.md"
 IMPORT_SCRIPT=".claude/skills/mi-source-banib/scripts/import_source_bundle.sh"
 
-echo "[1/7] Fetching ${REMOTE}/${BASE_BRANCH} and checking tag metadata..."
+for heading in "## Feature" "## Refactor" "## BugFix" "## Ops"; do
+  if ! grep -qx "$heading" "$RELEASE_NOTES_SOURCE"; then
+    echo "ERROR: RELEASE_NOTES_SOURCE must follow the main-mr release note format. Missing heading: $heading" >&2
+    exit 1
+  fi
+done
+
+echo "[1/9] Fetching ${REMOTE}/${BASE_BRANCH} and checking tag metadata..."
 git fetch "$REMOTE" "$BASE_BRANCH" --prune
+git fetch "$REMOTE" --tags --prune
 
 TARGET_COMMIT="$(git rev-parse "${REMOTE}/${BASE_BRANCH}^{commit}")"
 SHORT_COMMIT="$(git rev-parse --short=12 "$TARGET_COMMIT")"
@@ -110,30 +139,66 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 if [[ "$TAG_EXISTS_LOCAL" -eq 1 ]]; then
-  echo "[2/7] Reusing existing local tag ${TAG} at ${TARGET_COMMIT}..."
+  echo "[2/9] Reusing existing local tag ${TAG} at ${TARGET_COMMIT}..."
 else
-  echo "[2/7] Creating annotated tag ${TAG} at ${TARGET_COMMIT}..."
+  echo "[2/9] Creating annotated tag ${TAG} at ${TARGET_COMMIT}..."
   git tag -a "$TAG" "$TARGET_COMMIT" -m "Release ${TAG}"
 fi
 
 if [[ "$TAG_EXISTS_REMOTE" -eq 1 ]]; then
-  echo "[3/7] Remote tag ${TAG} already exists at ${TARGET_COMMIT}; skipping push."
+  echo "[3/9] Remote tag ${TAG} already exists at ${TARGET_COMMIT}; skipping push."
 else
-  echo "[3/7] Pushing tag ${TAG} to ${REMOTE}..."
+  echo "[3/9] Pushing tag ${TAG} to ${REMOTE}..."
   git push "$REMOTE" "refs/tags/${TAG}"
 fi
 
 mkdir -p "$OUTPUT_DIR"
-rm -f "$BUNDLE_FILE" "$ZIP_FILE" "$MANIFEST_FILE"
+TARGET_DIR="$(cd "$(dirname "$RELEASE_NOTES_FILE")" && pwd)"
+TARGET_ABS="${TARGET_DIR}/$(basename "$RELEASE_NOTES_FILE")"
 
-echo "[4/7] Creating bundle: ${BUNDLE_FILE}"
+if [[ "$RELEASE_NOTES_SOURCE" == "$TARGET_ABS" ]]; then
+  echo "ERROR: RELEASE_NOTES_SOURCE must be a separate input file, not the generated artifact path: $RELEASE_NOTES_FILE" >&2
+  exit 1
+fi
+
+rm -f "$BUNDLE_FILE" "$ZIP_FILE" "$MANIFEST_FILE" "$RELEASE_NOTES_FILE"
+
+PREVIOUS_TAG="$(git tag --merged "$TARGET_COMMIT" --sort=-v:refname | grep -E '^v[0-9]+(\.[0-9]+){1,3}([-+][A-Za-z0-9._-]+)?$' | grep -F -x -v "$TAG" | head -n1 || true)"
+if [[ -n "$PREVIOUS_TAG" ]]; then
+  COMPARE_RANGE="${PREVIOUS_TAG}..${TAG}"
+else
+  COMPARE_RANGE="${TAG}"
+fi
+
+echo "[4/9] Creating release notes: ${RELEASE_NOTES_FILE}"
+cp "$RELEASE_NOTES_SOURCE" "$RELEASE_NOTES_FILE"
+
+GITHUB_RELEASE_URL=""
+if [[ "${SKIP_GITHUB_RELEASE:-0}" == "1" ]]; then
+  echo "[5/9] Skipping GitHub Release because SKIP_GITHUB_RELEASE=1."
+else
+  echo "[5/9] Creating/updating GitHub Release from release notes..."
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ERROR: gh CLI is required to create/update GitHub Release. Set SKIP_GITHUB_RELEASE=1 to create artifacts only." >&2
+    exit 1
+  fi
+
+  if gh release view "$TAG" >/dev/null 2>&1; then
+    gh release edit "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES_FILE"
+  else
+    gh release create "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES_FILE"
+  fi
+  GITHUB_RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url')"
+fi
+
+echo "[6/9] Creating bundle: ${BUNDLE_FILE}"
 git bundle create "$BUNDLE_FILE" "refs/tags/${TAG}"
 
-echo "[5/7] Verifying bundle..."
+echo "[7/9] Verifying bundle..."
 git bundle verify "$BUNDLE_FILE"
 
-echo "[6/7] Zipping bundle: ${ZIP_FILE}"
-zip -j -9 "$ZIP_FILE" "$BUNDLE_FILE" "$IMPORT_SCRIPT" >/dev/null
+echo "[8/9] Zipping bundle: ${ZIP_FILE}"
+zip -j -9 "$ZIP_FILE" "$BUNDLE_FILE" "$IMPORT_SCRIPT" "$RELEASE_NOTES_FILE" >/dev/null
 unzip -l "$ZIP_FILE" >/dev/null
 
 sha256_file() {
@@ -162,13 +227,20 @@ bundle_file=$(basename "$BUNDLE_FILE")
 bundle_sha256=${BUNDLE_SHA256}
 zip_file=$(basename "$ZIP_FILE")
 zip_sha256=${ZIP_SHA256}
+release_notes_file=$(basename "$RELEASE_NOTES_FILE")
+previous_tag=${PREVIOUS_TAG:-}
+compare_range=${COMPARE_RANGE}
+github_release_url=${GITHUB_RELEASE_URL}
 import_script=import_source_bundle.sh
 EOF
 
-echo "[7/7] Done."
+echo "[9/9] Done."
 echo "Tag commit : ${TARGET_COMMIT}"
+echo "Previous   : ${PREVIOUS_TAG:-none}"
+echo "Release    : ${GITHUB_RELEASE_URL:-skipped}"
 echo "Bundle     : ${BUNDLE_FILE}"
 echo "Bundle SHA : ${BUNDLE_SHA256}"
 echo "Zip        : ${ZIP_FILE}"
 echo "Zip SHA    : ${ZIP_SHA256}"
 echo "Manifest   : ${MANIFEST_FILE}"
+echo "Notes      : ${RELEASE_NOTES_FILE}"

@@ -17,7 +17,7 @@ v0.0.1 에서 검증된 절차를 그대로 따른다(버전만 치환).
 
 ## Release 흐름 내 위치
 
-1. `release` 스킬로 main 대상 MR/PR을 생성한다.
+1. `main-mr` 스킬로 main 대상 MR/PR을 생성한다.
 2. main merge 완료 후 `mi-source-banib`으로 같은 버전 tag와 source bundle을 생성한다.
 3. 이 스킬로 같은 version/tag 기준 image bundle을 생성한다.
 
