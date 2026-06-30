@@ -56,7 +56,10 @@ from apps.agents.scenario_group_agent.schemas.api.create_scenarios import Create
 from apps.agents.scenario_group_agent.schemas.api.create_signposts import (
     CreateSignpostsIn,
 )
-from apps.agents.scenario_group_agent.schemas.graph.generation import SignpostGenerationResult
+from apps.agents.scenario_group_agent.schemas.graph.generation import (
+    GeneratedSignpost,
+    SignpostGenerationResult,
+)
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     HardDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupIn,
@@ -792,6 +795,34 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert update_state.call_args.kwargs["title"] == "generated group title"
         assert update_state.call_args.kwargs["description"] == "generated group description"
 
+    def test_async_save_scenarios_does_not_save_when_group_update_fails(self) -> None:
+        state = ScenarioDesignState(
+            scenario_group_id=10,
+            user_id=101,
+            scenario_result=scenario_generation_result_stub(),
+        )
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+                "ScenarioGroupService.update_state",
+                return_value=None,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+                "ScenarioService.save_generated_scenarios",
+            ) as save_generated_scenarios,
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+                "ScenarioGroupService.update_scenario_count",
+            ) as update_scenario_count,
+            self.assertRaises(MIBaseError),
+        ):
+            save_scenarios(state)
+
+        save_generated_scenarios.assert_not_called()
+        update_scenario_count.assert_not_called()
+
     def test_confirmation_request_accepts_document_shape(self) -> None:
         payload = ConfirmGenerationIn.model_validate(
             {
@@ -1242,6 +1273,48 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             user_id=101,
         )
         assert result["scenario_group"]["stage"] == "signpost_created"
+
+    def test_signpost_save_does_not_save_when_group_update_fails(self) -> None:
+        state = ScenarioDesignState(
+            scenario_group_id=10,
+            user_id=101,
+            scenarios=[{"scenario_id": 100}],
+            signpost_result=SignpostGenerationResult(
+                scenario_group_id=10,
+                signposts=[
+                    GeneratedSignpost(
+                        scenario_id=100,
+                        label="signal",
+                    ),
+                ],
+            ),
+        )
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "ScenarioGroupService.update_state",
+                return_value=None,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "SignpostService.save_generated_signposts",
+            ) as save_generated_signposts,
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "ScenarioService.update_status",
+            ) as update_scenario_status,
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "SignpostService.load_by_scenario_ids",
+            ) as load_by_scenario_ids,
+            self.assertRaises(MIBaseError),
+        ):
+            save_signposts(state)
+
+        save_generated_signposts.assert_not_called()
+        update_scenario_status.assert_not_called()
+        load_by_scenario_ids.assert_not_called()
 
     def test_baseline_uses_single_highest_probability_with_display_order_tiebreak(
         self,

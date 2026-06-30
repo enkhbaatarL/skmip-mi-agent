@@ -23,9 +23,11 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     SignpostGenerationResult,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
-from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+_MAX_CONCURRENT_SCENARIOS = 7
 
 
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
@@ -43,7 +45,7 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     return {"scenario_group": group, "mi_event_id": int(group.mi_event_id)}
 
 
-async def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
+def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
@@ -61,7 +63,7 @@ async def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, obj
         if event_data is None:
             raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
     try:
-        result = await ScenarioService().sync_from_table_async(
+        result = ScenarioService().sync_from_table(
             scenario_group_id=state.scenario_group_id,
             event_type_l2_id=int(state.scenario_group.event_type_l2_id),
             table_payload=request_table,
@@ -134,7 +136,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
             ),
         )
 
-    sem = asyncio.Semaphore(get_settings().create_signposts_max_concurrent_scenarios)
+    sem = asyncio.Semaphore(_MAX_CONCURRENT_SCENARIOS)
 
     async def process_one(
         scenario: dict[str, Any],
@@ -176,6 +178,18 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
         return {}
     signpost_result = state.signpost_result
     generated = signpost_result.signposts if signpost_result is not None else []
+    group = ScenarioGroupService().update_state(
+        state.scenario_group_id,
+        status=ScenarioGroupStatus.CREATING,
+        stage=ScenarioGroupStage.SIGNPOST_CREATED,
+        user_id=state.user_id,
+    )
+    if group is None:
+        raise MIBaseError(
+            ErrorCode.ENTITY_NOT_FOUND,
+            detail=f"Fail to save signposts because scenario group is deleted: {state.scenario_group_id}.",
+        )
+
     saved_ids = (
         SignpostService().save_generated_signposts(generated, user_id=state.user_id)
         if generated
@@ -185,14 +199,6 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
         [int(scenario.scenario_id) for scenario in state.scenarios],
     )
     ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATED.value)
-    group = ScenarioGroupService().update_state(
-        state.scenario_group_id,
-        status=ScenarioGroupStatus.CREATING,
-        stage=ScenarioGroupStage.SIGNPOST_CREATED,
-        user_id=state.user_id,
-    )
-    if group is None:
-        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group update failed")
     return state_update(
         saved_signpost_ids=saved_ids,
         signposts=all_signposts,

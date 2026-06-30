@@ -210,7 +210,10 @@ class ScenarioGroupService:
             repository = ScenarioGroupRepository(session=session)
             group = repository.fetch_by_id(scenario_group_id)
             if group is None:
-                return None
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}. It might be deleted.",
+                )
             payload: dict[str, Any] = {}
             if status is not None:
                 payload["status"] = (
