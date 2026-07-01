@@ -8,6 +8,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from apps.agents.interpret_agent.api import router as interpret_router
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import validate_schema
@@ -73,6 +74,11 @@ app.include_router(
     scenario_group_router,
     prefix="",
     tags=["scenario-group"],
+)
+app.include_router(
+    interpret_router,
+    prefix="",
+    tags=["interpret-agent"],
 )
 
 app = register_exception_handlers(app)
