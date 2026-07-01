@@ -4,11 +4,11 @@ from typing import Any
 
 from sqlalchemy import select
 
-from apps.agents.scenario_group_agent.persistence.scenario.models import (
+from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
+from apps.persistence.scenario.models import (
     MiScenarioDimensionTemplateModel,
     MiScenarioModel,
 )
-from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
 class ScenarioRepository(BaseSyncSQLRepository):

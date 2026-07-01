@@ -2,35 +2,38 @@ from __future__ import annotations
 
 from decimal import Decimal
 import secrets
-from typing import Any
+from typing import Any, TypedDict
 
 from sqlalchemy.exc import IntegrityError
 
-from apps.agents.scenario_group_agent.persistence.scenario.repository import (
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
+from apps.persistence.scenario.repository import (
     ScenarioRepository,
 )
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
+from apps.persistence.scenario.service import (
     ScenarioService,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.repository import (
+from apps.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
-from apps.agents.scenario_group_agent.persistence.signpost.repository import (
-    SignpostRepository,
-)
-from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
-    ScenarioGroupDetailOut,
-)
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+from apps.persistence.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.enums import (
+from apps.persistence.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
     ScenarioStatus,
 )
-from apps.common.exceptions.custom import MIBaseError
-from apps.common.values.error_codes import ErrorCode
+from apps.persistence.signpost.repository import (
+    SignpostRepository,
+)
+
+
+class ScenarioGroupDetailData(TypedDict):
+    group: dict[str, Any]
+    scenarios: list[dict[str, Any]]
+    signposts: list[dict[str, Any]]
 
 
 def _normalize_probability_scores_to_100(
@@ -87,10 +90,7 @@ class ScenarioGroupService:
 
     def load_detail(
         self, scenario_group_id: int, *, include_deleted: bool = False
-    ) -> ScenarioGroupDetailOut:
-        from apps.agents.scenario_group_agent.presentation import (
-            build_scenario_group_query_data,
-        )
+    ) -> ScenarioGroupDetailData:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
@@ -121,21 +121,20 @@ class ScenarioGroupService:
                 include_deleted=include_deleted,
             )
 
-            data = build_scenario_group_query_data(
-                group=group_repository.model_to_dict(group, include_del_yn=True),
-                scenarios=[
+            return {
+                "group": group_repository.model_to_dict(group, include_del_yn=True),
+                "scenarios": [
                     scenario_repository.model_to_dict(
                         scenario,
                         include_del_yn=True,
                     )
                     for scenario in scenarios
                 ],
-                signposts=[
+                "signposts": [
                     signpost_repository.model_to_dict(signpost, include_del_yn=True)
                     for signpost in signposts
                 ],
-            )
-            return data
+            }
         finally:
             session.close()
 

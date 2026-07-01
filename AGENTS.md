@@ -28,8 +28,9 @@ If the task touches one of these areas, read the linked document before changing
 - Import settings from `apps.common.configs.config`; do not add imports from `apps.common.configs.settings`.
 - In normal app code, use `get_settings()` instead of reading `os.environ` directly.
 - Use `MIBaseError(ErrorCode..., detail=...)` for domain/API errors.
-- Keep DB access behind `persistence/<domain>/service.py` and `repository.py`; flow/node code should call services.
-- Put API schemas in `schemas/api/<api_name>.py`, API shared schema types in `schemas/api/common.py`, table shapes in `schemas/api/table.py`, and enums in `schemas/enums.py`.
+- Keep DB access behind `apps/persistence/<domain>/service.py` and `repository.py`; flow/node code should call services.
+- Put API schemas in `schemas/api/<api_name>.py`, API shared schema types in `schemas/api/common.py`, and table shapes in `schemas/api/table.py`.
+- Put persistence service DTOs and DB/domain enums in `apps/persistence/schemas/`.
 - For long-running API work that returns immediately, use the existing `flow_async.py` background-task pattern.
 
 ## Tests

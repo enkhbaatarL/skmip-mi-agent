@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Literal, Tuple
 from pydantic import BaseModel, Field, conlist, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.enums import (
+from apps.persistence.schemas.enums import (
     DirectionCode,
     SignpostStrength,
 )

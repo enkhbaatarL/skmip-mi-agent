@@ -4,8 +4,8 @@ from typing import Any
 
 from sqlalchemy import select
 
-from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
+from apps.persistence.signpost.models import MiSignpostModel
 
 
 class SignpostRepository(BaseSyncSQLRepository):

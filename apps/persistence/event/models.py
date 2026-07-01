@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 
 import sqlalchemy
-from sqlalchemy import ForeignKey, UniqueConstraint, Index
+from sqlalchemy import ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects import mysql as mysql_types
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

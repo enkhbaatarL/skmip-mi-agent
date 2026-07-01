@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.enums import (
+from apps.persistence.schemas.base import ApiModel
+from apps.persistence.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )

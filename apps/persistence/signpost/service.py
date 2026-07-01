@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
-from apps.agents.scenario_group_agent.persistence.signpost.repository import (
+from apps.persistence.schemas.domain.signpost import GeneratedSignpostPayload, SignpostPayload
+from apps.persistence.signpost.models import MiSignpostModel
+from apps.persistence.signpost.repository import (
     SignpostRepository,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostPayload
-from apps.agents.scenario_group_agent.schemas.graph.generation import GeneratedSignpost
 
 
 class SignpostService:
@@ -39,7 +38,7 @@ class SignpostService:
 
     def save_generated_signposts(
         self,
-        signposts: list[GeneratedSignpost],
+        signposts: list[GeneratedSignpostPayload],
         user_id: int | None = None,
     ) -> list[int]:
         from apps.common.configs.database.sync_database.connection import (

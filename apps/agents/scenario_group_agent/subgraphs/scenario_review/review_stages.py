@@ -15,14 +15,14 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     GeneratedDimensionCell as _GeneratedDimensionCell,
     build_dimension_value_messages,
 )
-from apps.agents.scenario_group_agent.utils.baseline_contrast import (
+from apps.persistence.schemas.baseline_contrast import (
     apply_single_baseline_by_probability,
     check_baseline_contrast_coverage,
 )
 
 
 if TYPE_CHECKING:
-    from apps.agents.scenario_group_agent.schemas.domain.template import (
+    from apps.persistence.schemas.domain.template import (
         ScenarioTemplate,
         ScenarioTemplateDimension,
     )

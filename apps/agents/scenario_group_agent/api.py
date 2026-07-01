@@ -18,9 +18,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.flow_async import
     prepare_validate_scenarios,
     run_validate_scenarios_background,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
+from apps.agents.scenario_group_agent.presentation import build_scenario_group_query_data
 from apps.agents.scenario_group_agent.schemas.api.common import (
     ScenarioGroupAcceptedData,
     ScenarioGroupAcceptedOut,
@@ -41,6 +39,9 @@ from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import 
     SoftDeleteSignpostsOut,
 )
 from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import ValidateScenariosIn
+from apps.persistence.scenario_group.service import (
+    ScenarioGroupService,
+)
 
 
 router = APIRouter()
@@ -116,7 +117,7 @@ async def get_scenario_group(
         scenario_group_id,
         include_deleted=include_deleted,
     )
-    return result
+    return build_scenario_group_query_data(**result)
 
 
 @router.delete(

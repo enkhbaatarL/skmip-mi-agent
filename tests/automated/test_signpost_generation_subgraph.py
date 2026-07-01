@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 
-from apps.agents.scenario_group_agent.schemas.enums import SignpostStrength
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
     signpost_generation_runnable,
 )
+from apps.persistence.schemas.enums import SignpostStrength
 
 
 def _scenario() -> dict[str, object]:

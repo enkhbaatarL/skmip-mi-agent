@@ -18,10 +18,6 @@ from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
     ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosOut,
 )
-from apps.agents.scenario_group_agent.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
     scenario_review_runnable,
@@ -29,6 +25,10 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
 from apps.common.logging.logger_config import logger
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
+from apps.persistence.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 
 
 # ---------------------------------------------------------------------------

@@ -3,9 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
-)
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     ScenarioGroupDetailOut,
 )
@@ -21,10 +18,13 @@ from apps.agents.scenario_group_agent.schemas.api.table import (
     ScenarioTable,
     SignpostQueryPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+from apps.persistence.scenario.service import (
+    ScenarioService,
+)
+from apps.persistence.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostBasePayload
+from apps.persistence.schemas.domain.signpost import SignpostBasePayload
 
 
 def build_scenario_group_table_data(

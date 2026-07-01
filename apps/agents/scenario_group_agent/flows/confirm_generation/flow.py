@@ -17,13 +17,13 @@ from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
     ConfirmGenerationIn,
     ConfirmGenerationOut,
 )
-from apps.agents.scenario_group_agent.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 
 
 def build_graph() -> Runnable:

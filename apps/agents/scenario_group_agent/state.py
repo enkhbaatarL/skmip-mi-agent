@@ -10,23 +10,23 @@ from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
     ConfirmScenarioGroupIn,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
-from apps.agents.scenario_group_agent.schemas.domain.scenario import (
-    NewScenarioGeneratedDetails,
-    ScenarioPayload,
-)
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
-    ScenarioGroupPayload,
-)
-from apps.agents.scenario_group_agent.schemas.domain.signpost import (
-    SignpostBasePayload,
-    SignpostPayload,
-)
-from apps.agents.scenario_group_agent.schemas.domain.template import ScenarioTemplateDimension
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioGenerationResult,
     SignpostGenerationResult,
 )
+from apps.persistence.schemas.domain.event import EventPayload
+from apps.persistence.schemas.domain.scenario import (
+    NewScenarioGeneratedDetails,
+    ScenarioPayload,
+)
+from apps.persistence.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
+from apps.persistence.schemas.domain.signpost import (
+    SignpostBasePayload,
+    SignpostPayload,
+)
+from apps.persistence.schemas.domain.template import ScenarioTemplateDimension
 
 
 class ScenarioTableHeaderState(ApiModel):

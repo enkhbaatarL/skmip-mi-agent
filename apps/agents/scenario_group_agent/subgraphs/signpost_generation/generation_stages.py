@@ -32,10 +32,10 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     build_stage4_user_prompt,
     build_stage5_user_prompt,
 )
-from apps.agents.scenario_group_agent.schemas.enums import (
+from apps.common.logging.logger_config import logger as app_logger
+from apps.persistence.schemas.enums import (
     SignpostStrength,
 )
-from apps.common.logging.logger_config import logger as app_logger
 
 
 # ==============================================

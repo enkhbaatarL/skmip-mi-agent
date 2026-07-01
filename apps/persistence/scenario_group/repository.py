@@ -4,15 +4,15 @@ from typing import Any
 
 from sqlalchemy import delete, select
 
-from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
+from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
+from apps.persistence.scenario.models import MiScenarioModel
+from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
     MiScenarioSnapModel,
     MiSignpostSnapModel,
     MiSnapshotModel,
 )
-from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
-from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
+from apps.persistence.signpost.models import MiSignpostModel
 
 
 class ScenarioGroupRepository(BaseSyncSQLRepository):

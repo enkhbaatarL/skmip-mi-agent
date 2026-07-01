@@ -13,11 +13,6 @@ apps/
 │   │   │   ├── validate_scenarios/
 │   │   │   ├── create_signposts/
 │   │   │   └── confirm_generation/
-│   │   ├── persistence/
-│   │   │   ├── event/
-│   │   │   ├── scenario_group/
-│   │   │   ├── scenario/
-│   │   │   └── signpost/
 │   │   ├── schemas/
 │   │   └── subgraphs/
 │   │       ├── scenario_generation/
@@ -26,15 +21,21 @@ apps/
 │   ├── configs/
 │   ├── runtime/
 │   └── values/
-└── connectors/
-    ├── callback/
-    ├── http/
-    ├── llm/
-    └── vdb/
+├── connectors/
+│   ├── callback/
+│   ├── http/
+│   ├── llm/
+│   └── vdb/
+└── persistence/
+    ├── event/
+    ├── scenario_group/
+    ├── scenario/
+    ├── signpost/
+    └── schemas/
 ```
 
 `scenario_group_agent`가 시나리오 생성/검증/Signpost 생성 흐름의 기준 구현입니다.
-MI Event ORM도 `scenario_group_agent.persistence.event`에서 소유합니다.
+공유 DB ORM, repository, service는 `apps.persistence`에서 소유합니다.
 
 ## Key Docs
 

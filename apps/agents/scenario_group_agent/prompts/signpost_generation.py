@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
-from apps.agents.scenario_group_agent.schemas.enums import SignpostStrength
+from apps.persistence.schemas.enums import SignpostStrength
 
 
 KEYWORD_HINTS_MIN: int = 3

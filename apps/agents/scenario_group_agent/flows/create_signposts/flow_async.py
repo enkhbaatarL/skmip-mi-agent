@@ -18,16 +18,16 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.api.create_signposts import CreateSignpostsOut
-from apps.agents.scenario_group_agent.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
+from apps.persistence.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 
 
 # ---------------------------------------------------------------------------

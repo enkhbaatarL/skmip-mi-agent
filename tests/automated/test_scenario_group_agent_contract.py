@@ -11,18 +11,18 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
-from apps.agents.scenario_group_agent.utils.baseline_contrast import (
+from apps.persistence.schemas.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
-from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
+from apps.persistence.scenario.models import MiScenarioModel
+from apps.persistence.scenario.service import (
     NewScenarioGeneratedDetails,
     ScenarioService,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
+from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
 )
-from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
+from apps.persistence.signpost.models import MiSignpostModel
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     check_existing_scenario_group,
     create_group_record,
@@ -46,10 +46,10 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+from apps.persistence.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import (
+from apps.persistence.schemas.domain.signpost import (
     SignpostBasePayload,
     SignpostPayload,
 )
@@ -74,7 +74,7 @@ from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
     ValidateScenariosOut,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
+from apps.persistence.scenario_group.service import (
     ScenarioGroupService,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_adapter import (
@@ -1125,15 +1125,15 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.scenario_group_agent.persistence.scenario_group.service.ScenarioGroupRepository",
+                "apps.persistence.scenario_group.service.ScenarioGroupRepository",
                 return_value=group_repository,
             ),
             patch(
-                "apps.agents.scenario_group_agent.persistence.scenario_group.service.ScenarioRepository",
+                "apps.persistence.scenario_group.service.ScenarioRepository",
                 return_value=scenario_repository,
             ),
             patch(
-                "apps.agents.scenario_group_agent.persistence.scenario_group.service.SignpostRepository",
+                "apps.persistence.scenario_group.service.SignpostRepository",
                 return_value=signpost_repository,
             ),
             patch.object(

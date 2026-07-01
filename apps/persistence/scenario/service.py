@@ -4,31 +4,31 @@ import asyncio
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from apps.agents.scenario_group_agent.persistence.scenario.repository import (
+from apps.persistence.scenario.repository import (
     ScenarioRepository,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.repository import (
+from apps.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
-from apps.agents.scenario_group_agent.persistence.signpost.repository import (
-    SignpostRepository,
+from apps.persistence.schemas.baseline_contrast import (
+    apply_single_baseline_by_probability,
 )
-from apps.agents.scenario_group_agent.schemas.domain.scenario import (
+from apps.persistence.schemas.domain.scenario import (
     NewScenarioGeneratedDetails,
     ScenarioPayload,
 )
-from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
-    ScenarioTemplate,
-    TemplateDimension,
+from apps.persistence.schemas.domain.template import (
+    PipelineScenarioTemplate,
+    PipelineTemplateDimension,
 )
-from apps.agents.scenario_group_agent.utils.baseline_contrast import (
-    apply_single_baseline_by_probability,
+from apps.persistence.schemas.enums import ScenarioStatus
+from apps.persistence.signpost.repository import (
+    SignpostRepository,
 )
 
 
 if TYPE_CHECKING:
-    from apps.agents.scenario_group_agent.schemas.domain.template import (
+    from apps.persistence.schemas.domain.template import (
         ScenarioTemplate as CommonScenarioTemplate,
         ScenarioTemplateDimension as CommonScenarioTemplateDimension,
     )
@@ -124,7 +124,7 @@ def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
 
 class ScenarioService:
     def load_dimension_template(self, event_type_l2_id: int) -> list["CommonScenarioTemplateDimension"]:
-        from apps.agents.scenario_group_agent.schemas.domain.template import (
+        from apps.persistence.schemas.domain.template import (
             ScenarioTemplateDimension as CommonScenarioTemplateDimension,
         )
 
@@ -147,7 +147,7 @@ class ScenarioService:
             for dimension in pipeline_template.dimensions
         ]
 
-    def load_pipeline_template(self, event_type_l2_id: int) -> ScenarioTemplate:
+    def load_pipeline_template(self, event_type_l2_id: int) -> PipelineScenarioTemplate:
         template_json = self._load_template_json_from_db(event_type_l2_id)
         return self._map_template_json_to_pipeline_template(
             template_json,
@@ -155,7 +155,7 @@ class ScenarioService:
         )
 
     def load_scenario_template(self, event_type_l2_id: int) -> "CommonScenarioTemplate":
-        from apps.agents.scenario_group_agent.schemas.domain.template import (
+        from apps.persistence.schemas.domain.template import (
             ScenarioTemplate as CommonScenarioTemplate,
             ScenarioTemplateDimension,
             ScenarioTemplateEnum,
@@ -209,7 +209,7 @@ class ScenarioService:
         self,
         template_json: list[dict[str, Any]],
         event_type_l2_id: int,
-    ) -> ScenarioTemplate:
+    ) -> PipelineScenarioTemplate:
         if not template_json:
             raise ValueError(f"template_json is empty: event_type_l2_id={event_type_l2_id}")
 
@@ -217,7 +217,7 @@ class ScenarioService:
             self._map_template_dimension(item, event_type_l2_id, index)
             for index, item in enumerate(template_json, start=1)
         ]
-        return ScenarioTemplate(
+        return PipelineScenarioTemplate(
             label_ko=f"event_type_l2_id={event_type_l2_id}",
             template_dimensions_total=len(dimensions),
             dimensions=dimensions,
@@ -229,7 +229,7 @@ class ScenarioService:
         raw_dimension: dict[str, Any],
         event_type_l2_id: int,
         index: int,
-    ) -> TemplateDimension:
+    ) -> PipelineTemplateDimension:
         if not isinstance(raw_dimension, dict):
             raise ValueError(f"template_json item must be object: event_type_l2_id={event_type_l2_id}, index={index}")
 
@@ -241,7 +241,7 @@ class ScenarioService:
         if not isinstance(raw_value_enums, list):
             raise ValueError(f"value_enums must be array: event_type_l2_id={event_type_l2_id}, dim_key={dim_key}")
 
-        return TemplateDimension(
+        return PipelineTemplateDimension(
             label=str(raw_dimension.get("label", "")).strip() or dim_key,
             dim_key=dim_key,
             required=bool(raw_dimension.get("required", False)),

@@ -9,11 +9,11 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.agents.scenario_group_agent.schemas.enums import (
+from apps.common.configs.database.sync_database.base import ORMBase
+from apps.persistence.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
-from apps.common.configs.database.sync_database.base import ORMBase
 
 
 BIN = "utf8mb4_bin"

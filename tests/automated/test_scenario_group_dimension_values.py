@@ -9,17 +9,17 @@ from unittest.mock import AsyncMock, patch
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
 )
-from apps.agents.scenario_group_agent.schemas.domain.template import (
-    ScenarioTemplate,
-    ScenarioTemplateDimension,
-    ScenarioTemplateEnum,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages import (
     DimensionValueGenerationOutput,
     GeneratedDimensionCell,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.persistence.schemas.domain.template import (
+    ScenarioTemplate,
+    ScenarioTemplateDimension,
+    ScenarioTemplateEnum,
+)
 
 
 def _template() -> ScenarioTemplate:

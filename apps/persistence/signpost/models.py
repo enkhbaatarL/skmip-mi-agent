@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
-from apps.agents.scenario_group_agent.schemas.enums import SignpostStrength
 from apps.common.configs.database.sync_database.base import ORMBase
-
-
-if TYPE_CHECKING:
-    from apps.agents.scenario_group_agent.schemas.graph.generation import GeneratedSignpost
+from apps.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
+from apps.persistence.schemas.domain.signpost import GeneratedSignpostPayload
+from apps.persistence.schemas.enums import SignpostStrength
 
 
 class MiSignpostModel(AuditColumnsMixin, ORMBase):
@@ -52,7 +49,7 @@ class MiSignpostModel(AuditColumnsMixin, ORMBase):
     @classmethod
     def convert_from_dto(
         cls,
-        dto: "GeneratedSignpost",
+        dto: GeneratedSignpostPayload,
         display_order: int,
         user_id: int | None = None,
     ) -> "MiSignpostModel":

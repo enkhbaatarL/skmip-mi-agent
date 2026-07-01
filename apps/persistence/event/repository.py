@@ -6,12 +6,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from apps.agents.scenario_group_agent.persistence.event.models import (
+from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
+from apps.persistence.event.models import (
     MiEventModel,
     MiEventRecordMapModel,
     MiEventTypeL2Model,
 )
-from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
 class EventRepository(BaseSyncSQLRepository):

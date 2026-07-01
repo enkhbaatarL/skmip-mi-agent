@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from sqlalchemy import Table
 
-from apps.agents.scenario_group_agent.persistence.event.models import (
+from apps.persistence.event.models import (
     MiEventModel,
     MiEventRecordMapModel,
     MiEventTypeL1Model,
     MiEventTypeL2Model,
 )
-from apps.agents.scenario_group_agent.persistence.scenario.models import (
+from apps.persistence.scenario.models import (
     MiScenarioDimensionTemplateModel,
     MiScenarioModel,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
+from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
     MiScenarioSnapModel,
     MiSignpostSnapModel,
     MiSnapshotModel,
 )
-from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
+from apps.persistence.signpost.models import MiSignpostModel
 
 
 APPLICATION_TABLES: tuple[Table, ...] = (

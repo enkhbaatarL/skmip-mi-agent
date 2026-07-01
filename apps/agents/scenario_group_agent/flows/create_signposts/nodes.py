@@ -4,25 +4,6 @@ import asyncio
 from decimal import Decimal
 from typing import Any
 
-from apps.agents.scenario_group_agent.persistence.event.service import EventService
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
-from apps.agents.scenario_group_agent.persistence.signpost.service import (
-    SignpostService,
-)
-from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
-from apps.agents.scenario_group_agent.schemas.domain.scenario import (
-    NewScenarioGeneratedDetails,
-)
-from apps.agents.scenario_group_agent.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-    ScenarioStatus,
-)
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     GeneratedSignpost,
     SignpostGenerationResult,
@@ -35,6 +16,25 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.event.service import EventService
+from apps.persistence.scenario.service import (
+    ScenarioService,
+)
+from apps.persistence.scenario_group.service import (
+    ScenarioGroupService,
+)
+from apps.persistence.schemas.domain.event import EventPayload
+from apps.persistence.schemas.domain.scenario import (
+    NewScenarioGeneratedDetails,
+)
+from apps.persistence.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
+from apps.persistence.signpost.service import (
+    SignpostService,
+)
 
 
 _LIKELIHOOD_WEIGHTS: dict[str, int] = {

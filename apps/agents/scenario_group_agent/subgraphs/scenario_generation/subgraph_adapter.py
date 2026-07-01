@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
+)
+from apps.persistence.scenario.service import (
+    ScenarioService,
 )
 
 

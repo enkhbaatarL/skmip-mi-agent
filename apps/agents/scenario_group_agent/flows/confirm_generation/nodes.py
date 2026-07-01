@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
-from apps.agents.scenario_group_agent.persistence.signpost.service import (
-    SignpostService,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.scenario.service import (
+    ScenarioService,
+)
+from apps.persistence.scenario_group.service import (
+    ScenarioGroupService,
+)
+from apps.persistence.signpost.service import (
+    SignpostService,
+)
 
 
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:

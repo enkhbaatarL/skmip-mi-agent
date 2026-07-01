@@ -8,9 +8,9 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import AuditColumnsMixin, BIN, TABLE_ARGS
-from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
 from apps.common.configs.database.sync_database.base import ORMBase
+from apps.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
+from apps.persistence.schemas.enums import ScenarioStatus
 
 
 _SCENARIO_STATUS_CHECK_SQL = ", ".join(f"'{status.value}'" for status in ScenarioStatus)

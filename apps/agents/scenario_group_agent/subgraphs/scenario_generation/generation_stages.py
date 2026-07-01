@@ -61,11 +61,11 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage5RepairInstruction,
     Stage5Validation,
 )
-from apps.agents.scenario_group_agent.utils.baseline_contrast import (
-    check_baseline_contrast_coverage,
-)
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
+from apps.persistence.schemas.baseline_contrast import (
+    check_baseline_contrast_coverage,
+)
 
 
 # --- LLM config constants (from env) ---

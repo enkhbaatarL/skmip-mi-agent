@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from apps.agents.scenario_group_agent.persistence.event.repository import EventRepository
-from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
+from apps.persistence.event.repository import EventRepository
+from apps.persistence.schemas.domain.event import EventPayload
 
 
 class EventService:

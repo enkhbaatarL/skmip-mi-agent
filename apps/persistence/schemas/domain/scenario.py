@@ -5,8 +5,8 @@ from typing import Any
 
 from pydantic import ConfigDict, Field
 
-from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
+from apps.persistence.schemas.base import ApiModel
+from apps.persistence.schemas.enums import ScenarioStatus
 
 
 class ScenarioPayload(ApiModel):

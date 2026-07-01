@@ -4,10 +4,10 @@ from pydantic import Field
 
 from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+from apps.common.values.response import CallBackBody
+from apps.persistence.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.common.values.response import CallBackBody
 
 
 class CreateScenariosIn(ApiModel):

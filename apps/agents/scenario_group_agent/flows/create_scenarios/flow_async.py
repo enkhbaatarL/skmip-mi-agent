@@ -15,13 +15,6 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.api.create_scenarios import CreateScenariosOut
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
-    ScenarioGroupPayload,
-)
-from apps.agents.scenario_group_agent.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.flow import (
     scenario_generation_runnable,
@@ -31,6 +24,13 @@ from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
+from apps.persistence.schemas.domain.scenario_group import (
+    ScenarioGroupPayload,
+)
+from apps.persistence.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 
 
 # ---------------------------------------------------------------------------

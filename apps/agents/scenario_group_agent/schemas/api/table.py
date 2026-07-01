@@ -6,10 +6,10 @@ from typing import Any
 from pydantic import Field, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
+from apps.persistence.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.domain.signpost import SignpostBasePayload
+from apps.persistence.schemas.domain.signpost import SignpostBasePayload
 
 
 class ScenarioHeader(ApiModel):

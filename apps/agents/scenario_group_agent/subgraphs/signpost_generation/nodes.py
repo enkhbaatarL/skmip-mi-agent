@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.agents.scenario_group_agent.schemas.enums import DirectionCode, SignpostStrength
 from apps.agents.scenario_group_agent.schemas.graph.generation import GeneratedSignpost
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.generation_stages import (
     stage2_observability_filter,
@@ -14,6 +13,7 @@ from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import
     SignpostGenerationState,
 )
 from apps.common.logging.logger_config import logger as app_logger
+from apps.persistence.schemas.enums import DirectionCode, SignpostStrength
 
 
 def _scenario_pk(scenario: dict[str, Any]) -> int:

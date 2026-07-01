@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
-from apps.agents.scenario_group_agent.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-    ScenarioStatus,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages import (
     generate_new_dimension_values,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.scenario.service import (
+    ScenarioService,
+)
+from apps.persistence.scenario_group.service import (
+    ScenarioGroupService,
+)
+from apps.persistence.schemas.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
 
 
 def _build_dimension_generation_rows(
