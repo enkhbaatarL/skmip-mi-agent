@@ -33,14 +33,12 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
     _build_background_graph as build_create_scenarios_background_graph,
     prepare_create_scenarios,
 )
-from apps.agents.scenario_group_agent.flows.scenario_row_details import (
-    generate_new_scenario_row_details,
-)
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     load_scenario_group as load_validation_scenario_group,
     save_validation_result,
 )
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
+    generate_new_scenario_row_details,
     generate_new_scenario_row_details_node,
     save_signposts,
     sync_scenarios_from_table,
@@ -504,15 +502,15 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         with (
             patch(
-                "apps.agents.scenario_group_agent.flows.scenario_row_details.stage1_build_context_pack",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.stage1_build_context_pack",
                 return_value=types.SimpleNamespace(),
             ),
             patch(
-                "apps.agents.scenario_group_agent.flows.scenario_row_details.stage4_synthesize_fixed_scenarios",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.stage4_synthesize_fixed_scenarios",
                 new=AsyncMock(return_value=stage4),
             ) as synthesize,
             patch(
-                "apps.agents.scenario_group_agent.flows.scenario_row_details.stage6_validate",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.stage6_validate",
                 new=AsyncMock(return_value=stage6),
             ),
         ):
@@ -623,8 +621,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 return_value={"period": "단기"},
             ) as cells_to_dimension_values,
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "generate_new_scenario_row_details",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.generate_new_scenario_row_details",
                 new=AsyncMock(return_value=[detail]),
             ) as generate_details,
         ):
@@ -680,8 +677,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         with (
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "ScenarioService.sync_from_table",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.ScenarioService.sync_from_table",
                 return_value={
                     "active_scenario_ids": [100],
                     "regenerate_scenario_ids": [100],
@@ -692,8 +688,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 },
             ) as sync_from_table,
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "ScenarioGroupService.load_by_id",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.ScenarioGroupService.load_by_id",
                 return_value={"scenario_group_id": 10},
             ),
         ):
