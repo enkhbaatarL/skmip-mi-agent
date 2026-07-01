@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
-from apps.agents.scenario_group_agent.baseline_contrast import (
+from apps.agents.scenario_group_agent.utils.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
 from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel

@@ -43,7 +43,6 @@ skmip-mi-agent/
 apps/agents/<agent_name>/
 ├── __init__.py
 ├── api.py
-├── <agent_helper>.py          # Agent 전용 공통 helper가 필요할 때만 둔다.
 ├── presentation.py
 ├── state.py
 ├── flows/
@@ -67,6 +66,12 @@ apps/agents/<agent_name>/
 ├── prompts/
 │   ├── __init__.py
 │   └── <prompt_area>.py
+├── tools/
+│   ├── __init__.py
+│   └── <llm_tool>.py
+├── utils/
+│   ├── __init__.py
+│   └── <agent_util>.py
 ├── schemas/
 │   ├── __init__.py
 │   ├── base.py
@@ -101,12 +106,20 @@ apps/agents/<agent_name>/
   - FastAPI endpoint 선언, request schema 수신, background task 등록, flow 진입점 호출을 담당한다.
   - endpoint 내부에 도메인 로직을 길게 두지 않고 schema 변환, validation, flow/service 호출까지만 담당한다.
 - `presentation.py`
-  - API 응답 payload, table, 표시값 등 외부 응답 형태를 조립/정규화한다.
+  - API 응답 표현 계층이다.
+  - API 응답 payload, table, 표시값 등 입출력 shape을 조립/정규화한다.
+  - flow/node/subgraph에서 만든 내부 결과를 외부 callback 또는 HTTP response schema에 맞게 변환하는 책임을 둔다.
 - `state.py`
   - 여러 flow와 subgraph에서 공유하는 Agent 상위 state 타입을 정의한다.
-- Agent 전용 helper module
-  - 여러 flow에서 공유하지만 Agent 밖으로 공개할 필요가 없는 계산/표현 helper는 Agent 루트에 둔다.
-  - 예: `scenario_group_agent/baseline_contrast.py`
+- `utils/`
+  - 해당 Agent 도메인에 강하게 묶인 공통 계산/정규화 helper를 둔다.
+  - 여러 flow/subgraph/persistence에서 재사용하지만 `apps/common`에 둘 만큼 모든 Agent 공통은 아닌 로직을 모은다.
+  - LLM 호출, LangGraph state, runnable 조립이 필요한 수준이면 `subgraphs/`로 분리한다.
+  - 예: `scenario_group_agent/utils/baseline_contrast.py`
+- `tools/`
+  - 현재 runtime tool 구현은 없지만, 앞으로 LLM이 직접 사용할 Agent 전용 tool을 둘 위치다.
+  - 외부 API 호출, 검색, 계산 등 LLM tool/function calling 표면으로 노출할 로직을 둔다.
+  - 일반 공통 helper는 `tools/`가 아니라 `utils/`에 둔다.
 - `flows/<feature_or_domain>/`
   - API 동작 하나 또는 밀접한 기능 묶음 하나를 기능 단위, 도메인 단위로 나눈 flow 패키지다.
   - 예: `create_scenarios`, `validate_scenarios`, `create_signposts`, `confirm_generation`
@@ -122,7 +135,7 @@ apps/agents/<agent_name>/
   - 저장/조회는 직접 SQL을 쓰지 않고 `persistence/*/service.py`를 통해 수행한다.
 - `flows/<feature_or_domain>/<helper>.py`
   - 특정 기능 단위 flow 안에서만 쓰는 review, validation, normalization helper를 둔다.
-  - 예: `flows/validate_scenarios/review.py`
+  - 여러 flow에서 재사용되거나 독립적인 graph 경계가 필요한 로직은 `subgraphs/<subgraph_name>/`로 승격한다.
 - `subgraphs/<subgraph_name>/`
   - 여러 flow에서 재사용되거나 독립적인 LLM/검색/생성 pipeline으로 분리할 만한 LangGraph subgraph 계층이다.
   - `flow.py`는 runnable graph 조립, `nodes.py`는 LangGraph node wrapper, `state.py`는 subgraph state를 담당한다.
@@ -157,7 +170,7 @@ apps/agents/<agent_name>/
 - `flows/create_scenarios/`: scenario 생성 기능 단위 flow
   - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
-  - `flow_async.py`, `nodes.py`, `review.py`로 구성된다.
+  - `flow_async.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow
   - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/confirm_generation/`: 생성 결과 확정 기능 단위 flow
@@ -167,7 +180,10 @@ apps/agents/<agent_name>/
 - `schemas/api/`: `common.py`, `table.py`, `create_scenarios.py`, `validate_scenarios.py`, `create_signposts.py`, `confirm_generation.py`, `manage_scenario_groups.py`
 - `schemas/domain/`: `event.py`, `scenario_group.py`, `scenario.py`, `signpost.py`, `template.py`
 - `schemas/graph/generation.py`: scenario/signpost generation subgraph가 공유하는 graph DTO
+- `utils/baseline_contrast.py`: scenario group agent 도메인에 묶인 baseline 대비 coverage 계산 helper
+- `tools/`: 현재 구현된 Agent 전용 LLM tool은 없으며, 향후 tool 구현 위치로 예약
 - `subgraphs/scenario_generation/`: scenario 생성 pipeline subgraph
+- `subgraphs/scenario_review/`: scenario validation review subgraph
 - `subgraphs/signpost_generation/`: signpost 생성 pipeline subgraph
 
 ## API Endpoint ↔ Flow 경로 매핑
@@ -199,7 +215,7 @@ POST /scenario-groups/{scenario_group_id}/validation
 → api.py
 → flows/validate_scenarios/flow_async.py
 → flows/validate_scenarios/nodes.py
-→ flows/validate_scenarios/review.py
+→ subgraphs/scenario_review/
 
 DELETE /scenario-groups/{scenario_group_id}/signposts
 → api.py

@@ -7,16 +7,17 @@ from decimal import Decimal, InvalidOperation
 import re
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from apps.agents.scenario_group_agent.baseline_contrast import (
-    apply_single_baseline_by_probability,
-    check_baseline_contrast_coverage,
-)
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     COMPAT_SYSTEM_PROMPT,
     CompatibilityItem,
     CompatibilityStructuredOutput,
     DimensionValueStructuredOutput,
+    GeneratedDimensionCell as _GeneratedDimensionCell,
     build_dimension_value_messages,
+)
+from apps.agents.scenario_group_agent.utils.baseline_contrast import (
+    apply_single_baseline_by_probability,
+    check_baseline_contrast_coverage,
 )
 
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 CompatibilityOutput = CompatibilityStructuredOutput
 DimensionValueGenerationOutput = DimensionValueStructuredOutput
+GeneratedDimensionCell = _GeneratedDimensionCell
 
 
 class CompatibilityInvocationResult(Protocol):

@@ -12,7 +12,6 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     load_scenario_group,
     load_scenarios,
     save_validation_result,
-    validate_scenarios,
 )
 from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
 from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
@@ -24,6 +23,9 @@ from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStatus,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
+    scenario_review_runnable,
+)
 from apps.common.logging.logger_config import logger
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
@@ -64,7 +66,7 @@ def _build_background_graph() -> Runnable:
     builder.add_node("load_scenario_group", load_scenario_group)
     builder.add_node("load_scenarios", load_scenarios)
     builder.add_node("generate_dimension_values", generate_dimension_values)
-    builder.add_node("validate_scenarios", validate_scenarios)
+    builder.add_node("validate_scenarios", scenario_review_runnable)
     builder.add_node("save_validation_result", save_validation_result)
     builder.set_entry_point("load_scenario_group")
     builder.add_edge("load_scenario_group", "load_scenarios")

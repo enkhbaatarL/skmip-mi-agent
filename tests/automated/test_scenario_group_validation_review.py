@@ -7,12 +7,6 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
-    CompatibilityItem,
-    CompatibilityOutput,
-    build_context,
-    run_review,
-)
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     C1BaseEvent,
     PerDimensionValue,
@@ -32,6 +26,12 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages import (
+    CompatibilityItem,
+    CompatibilityOutput,
+    build_context,
+    run_review,
 )
 
 
@@ -120,7 +120,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -161,7 +161,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -271,7 +271,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert context.unchanged is True
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(),
         ) as invoke:
@@ -335,7 +335,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
         )
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -353,7 +353,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -407,7 +407,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -446,7 +446,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -467,7 +467,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -489,7 +489,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=incompatible),
         ):
@@ -516,7 +516,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=incompatible),
         ):
@@ -532,7 +532,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(side_effect=RuntimeError("unavailable")),
         ):
@@ -586,7 +586,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):

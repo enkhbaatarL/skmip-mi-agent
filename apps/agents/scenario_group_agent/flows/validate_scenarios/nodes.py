@@ -2,11 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
-    build_context,
-    generate_new_dimension_values,
-    run_review,
-)
 from apps.agents.scenario_group_agent.persistence.scenario.service import (
     ScenarioService,
 )
@@ -19,6 +14,9 @@ from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioStatus,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages import (
+    generate_new_dimension_values,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -178,13 +176,13 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, obj
     ]
     if fillable_dims:
         generated = await generate_new_dimension_values(
-                template,
-                _build_dimension_generation_rows(
-                    rows,
-                    [_model_or_dict_dump(scenario) for scenario in state.scenarios],
-                ),
-                fillable_dims,
-            )
+            template,
+            _build_dimension_generation_rows(
+                rows,
+                [_model_or_dict_dump(scenario) for scenario in state.scenarios],
+            ),
+            fillable_dims,
+        )
         for index, row in enumerate(rows):
             values = generated.get(index) or {}
             if not values:
@@ -198,34 +196,6 @@ async def generate_dimension_values(state: ScenarioDesignState) -> dict[str, obj
                     cells[key] = value
 
     return state_update(request_table=request_table)
-
-
-async def validate_scenarios(state: ScenarioDesignState) -> dict[str, object]:
-    if state.status == "failure":
-        return {}
-    request_table = state.request_table.model_dump() if state.request_table is not None else {}
-    requested_rows = request_table.get("rows", [])
-    requested_headers = request_table.get("headers", [])
-    context = build_context(
-        group=state.scenario_group.model_dump() if state.scenario_group is not None else {},
-        requested_rows=requested_rows,
-        persisted_scenarios=[_model_or_dict_dump(scenario) for scenario in state.scenarios],
-        template_dims=[_model_or_dict_dump(dimension) for dimension in state.dimension_template],
-        requested_headers=requested_headers,
-    )
-    report = await run_review(context)
-    validation_result = {
-        "scenario_group_id": state.scenario_group_id,
-        "scenario_count": len(requested_rows),
-        "verdict": report.verdict,
-        "summary": report.summary,
-        "checks": [check.to_dict() for check in report.checks],
-    }
-    return state_update(
-        is_valid=report.is_valid,
-        reason=report.reason,
-        validation_result=validation_result,
-    )
 
 
 def save_validation_result(state: ScenarioDesignState) -> dict[str, object]:

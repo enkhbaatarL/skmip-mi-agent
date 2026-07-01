@@ -11,9 +11,6 @@ from typing import Dict, List, Tuple
 
 from pydantic import BaseModel
 
-from apps.agents.scenario_group_agent.baseline_contrast import (
-    check_baseline_contrast_coverage,
-)
 from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS,
     SCENARIO_GROUP_METADATA_SYSTEM_PROMPT,
@@ -63,6 +60,9 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage4ScenarioSynthesis,
     Stage5RepairInstruction,
     Stage5Validation,
+)
+from apps.agents.scenario_group_agent.utils.baseline_contrast import (
+    check_baseline_contrast_coverage,
 )
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger

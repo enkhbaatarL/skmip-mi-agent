@@ -413,7 +413,7 @@ validation 요청 row는 `scenario_id`, `display_order`, `title`, `cells`만 허
 | 1 | `load_scenario_group` | scenario group 조회, 점유자 확인 | group 미존재 또는 다른 사용자 점유 시 raise |
 | 2 | `load_scenarios` | group 소속 scenarios 조회, `dimension_template` 로드 | scenario가 없으면 raise |
 | 3 | `generate_dimension_values` | 새로 추가된 dimension의 값을 LLM으로 생성, 필수 dimension 누락 검증 | 필수 dimension 누락 또는 신규 scenario 값 미입력 시 raise |
-| 4 | `validate_scenarios` | `build_context` + `run_review`로 시나리오 검토 | 앞선 실패 시 skip |
+| 4 | `validate_scenarios` | `subgraphs/scenario_review/` runnable로 시나리오 검토 | 앞선 실패 시 skip |
 | 5 | `save_validation_result` | `is_valid`에 따라 `stage="scenario_validated"` 또는 `"scenario_created"`로 갱신 | 앞선 실패 시 skip |
 
 #### `generate_dimension_values` 상세
@@ -530,11 +530,21 @@ for each generated value:
 
 #### `validate_scenarios` 상세
 
-`build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)`로 context를 구성한 뒤
+`validate_scenarios` node는 `subgraphs/scenario_review/flow.py`의 `scenario_review_runnable`을 호출한다.
+subgraph adapter가 parent state를 review state로 변환하면서
+`build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)` 입력을 구성하고,
 `run_review(context)`가 검토 리포트를 반환한다. validation review의 검사 대상 dimension은
 DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].key`를 기준으로 한다.
 따라서 요청 table에 없는 dimension은 DB에 selected로 남아 있어도 R01/R02 검사 대상에서 제외된다.
 리포트에는 verdict(`PASS | REVIEW | BLOCK`), summary, checks 목록이 포함된다.
+
+`subgraphs/scenario_review/`는 다음 책임을 가진다.
+
+- `flow.py`: review subgraph runnable 조립
+- `subgraph_adapter.py`: `ScenarioDesignState`와 `ScenarioReviewState` 사이의 변환, review 결과를 parent state update dict로 변환
+- `nodes.py`: LangGraph node wrapper
+- `state.py`: review subgraph 전용 state
+- `review_stages.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현
 
 ##### `run_review` 검사 규칙 (R01~R05)
 

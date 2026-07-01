@@ -4,9 +4,6 @@ import asyncio
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from apps.agents.scenario_group_agent.baseline_contrast import (
-    apply_single_baseline_by_probability,
-)
 from apps.agents.scenario_group_agent.persistence.scenario.repository import (
     ScenarioRepository,
 )
@@ -24,6 +21,9 @@ from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioTemplate,
     TemplateDimension,
+)
+from apps.agents.scenario_group_agent.utils.baseline_contrast import (
+    apply_single_baseline_by_probability,
 )
 
 
