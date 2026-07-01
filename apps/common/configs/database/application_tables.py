@@ -8,6 +8,11 @@ from apps.agents.event_flow_agent.models.mi_event_models_orm import (
     MiEventTypeL1Model,
     MiEventTypeL2Model,
 )
+from apps.agents.model_parameter_agent.persistence.model_input.models import (
+    MiModelParamDimensionMapModel,
+    MiModelParamModel,
+    MiModelParamProposalModel,
+)
 from apps.agents.scenario_group_agent.persistence.scenario.models import (
     MiScenarioDimensionTemplateModel,
     MiScenarioModel,
@@ -33,4 +38,7 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiSnapshotModel.__table__,
     MiScenarioSnapModel.__table__,
     MiSignpostSnapModel.__table__,
+    MiModelParamProposalModel.__table__,
+    MiModelParamModel.__table__,
+    MiModelParamDimensionMapModel.__table__,
 )
