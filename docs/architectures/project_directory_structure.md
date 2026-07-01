@@ -2,8 +2,8 @@
 
 ## 문서 목적
 
-이 문서는 프로젝트 전체 디렉터리 배치와 Agent 패키지 안의 기본 역할 분리를 빠르게 확인하기 위한 구조 가이드다.
-새 Agent를 개발할 때는 현재 런타임 Agent인 `scenario_group_agent`를 기준 예시로 보고, 같은 책임 분리 원칙을 따른다.
+이 문서는 앞으로 여러 Agent가 추가되더라도 각 Agent 패키지가 동일한 디렉터리 규칙과 책임 분리를 따르도록 하는 기준 가이드다.
+프로젝트 루트 배치와 Agent 내부의 공통 구조 원칙을 정의하고, 현재 런타임 Agent인 `scenario_group_agent`는 그 기준을 적용한 예시로 둔다.
 
 
 ## 프로젝트 루트 배치
@@ -17,10 +17,12 @@ skmip-mi-agent/
 │   ├── common/
 │   └── connectors/
 ├── docs/
-│   └── architectures/
-│       ├── project_directory_structure.md
-│       ├── scenario_group_agent_api_request_response.md
-│       └── scenario_group_agent_flow_pipeline.md
+│   ├── architectures/
+│   │   ├── project_directory_structure.md
+│   │   ├── scenario_group_agent_api_request_response.md
+│   │   └── scenario_group_agent_flow_pipeline.md
+│   └── guides/
+│       └── launch.md
 └── tests/
     ├── automated/
     └── manual/
@@ -41,13 +43,14 @@ skmip-mi-agent/
 apps/agents/<agent_name>/
 ├── __init__.py
 ├── api.py
+├── <agent_helper>.py          # Agent 전용 공통 helper가 필요할 때만 둔다.
 ├── presentation.py
 ├── state.py
 ├── flows/
 │   ├── __init__.py
 │   ├── <feature_or_domain>/
 │   │   ├── __init__.py
-│   │   ├── flow.py
+│   │   ├── flow.py              # 동기 graph invoke가 필요한 기능만 둔다.
 │   │   ├── flow_async.py        # background task가 필요한 기능만 둔다.
 │   │   └── nodes.py
 │   └── <another_feature_or_domain>/
@@ -110,6 +113,7 @@ apps/agents/<agent_name>/
 - `flows/<feature_or_domain>/flow.py`
   - LangGraph `StateGraph` 기반 runnable을 구성한다.
   - 동기적으로 graph를 invoke하는 내부/테스트 경로에서 기준 구현으로 사용한다.
+  - API가 항상 background graph만 사용하면 생략할 수 있다.
 - `flows/<feature_or_domain>/flow_async.py`
   - HTTP API가 즉시 200을 반환한 뒤 FastAPI `BackgroundTasks`에서 실행할 준비/백그라운드 실행 함수를 제공한다.
   - 오래 걸리는 작업이 아니면 만들지 않아도 된다.
@@ -142,6 +146,7 @@ apps/agents/<agent_name>/
   - `schemas/api/table.py`는 외부 API table 응답/요청 shape, `schemas/api/common.py`은 API 공통 응답 wrapper를 담당한다.
 - `schemas/domain/`
   - service outward boundary DTO와 domain/template payload를 정의한다.
+  - 예: event, scenario, signpost, template처럼 service와 pipeline 경계에서 공유되는 domain schema를 둔다.
 - `schemas/graph/`
   - LangGraph state에 저장되는 pipeline stage/template/result DTO를 정의한다.
 
@@ -150,10 +155,18 @@ apps/agents/<agent_name>/
 `scenario_group_agent`는 위 기본 구조를 따르는 현재 런타임 Agent다.
 
 - `flows/create_scenarios/`: scenario 생성 기능 단위 flow
+  - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
+  - `flow_async.py`, `nodes.py`, `review.py`로 구성된다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow
+  - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/confirm_generation/`: 생성 결과 확정 기능 단위 flow
+  - `flow.py`, `nodes.py`로 구성되며 API 요청에서 직접 graph를 invoke한다.
 - `persistence/event/`, `persistence/scenario_group/`, `persistence/scenario/`, `persistence/signpost/`: DB domain 단위 persistence 계층
+- `prompts/scenario_generation.py`, `prompts/scenario_validation.py`, `prompts/signpost_generation.py`: 생성/검증/Signpost LLM prompt와 structured output schema
+- `schemas/api/`: `common.py`, `table.py`, `create_scenarios.py`, `validate_scenarios.py`, `create_signposts.py`, `confirm_generation.py`, `manage_scenario_groups.py`
+- `schemas/domain/`: `event.py`, `scenario_group.py`, `scenario.py`, `signpost.py`, `template.py`
+- `schemas/graph/generation.py`: scenario/signpost generation subgraph가 공유하는 graph DTO
 - `subgraphs/scenario_generation/`: scenario 생성 pipeline subgraph
 - `subgraphs/signpost_generation/`: signpost 생성 pipeline subgraph
 
@@ -227,7 +240,7 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 
 ## 신규 기능 추가 기준
 
-- API를 추가할 때는 `api.py`, `schemas/api/<api_or_feature>.py`, `flows/<feature_or_domain>/flow.py`, `flows/<feature_or_domain>/nodes.py`를 함께 검토한다.
+- API를 추가할 때는 `api.py`, `schemas/api/<api_or_feature>.py`, `flows/<feature_or_domain>/nodes.py`와 실행 방식에 맞는 `flow.py` 또는 `flow_async.py`를 함께 검토한다.
 - `flows/<feature_or_domain>/` 이름은 endpoint path를 그대로 따르기보다 기능 단위, 도메인 단위 의미가 드러나게 정한다.
 - API가 즉시 200을 반환하고 백그라운드에서 오래 도는 작업이면 `flows/<feature_or_domain>/flow_async.py`를 둔다.
 - 생성/검색/검증 파이프라인이 여러 flow에서 재사용되거나 독립적으로 테스트할 가치가 있으면 `subgraphs/<subgraph_name>/`로 분리한다.
