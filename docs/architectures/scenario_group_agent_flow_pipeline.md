@@ -140,7 +140,7 @@ ScenarioDesignState(
 | 순서 | Node | 주요 동작 | 오류 조건 |
 |---|---|---|---|
 | 1 | `run_scenario_generation` | scenario generation subgraph 실행 | subgraph 내부 오류 |
-| 2 | `save_scenarios` | scenarios 저장, group `stage="scenario_created"` 갱신, 저장 결과 재조회 | group ID 또는 생성 결과 누락 시 raise |
+| 2 | `save_scenarios` | group 존재 확인 후 scenarios 저장, scenario count 갱신, group `stage="scenario_created"` 갱신, 저장 결과 재조회 | group ID 또는 생성 결과 누락 시 raise |
 
 ### `run_scenario_generation` 상세
 
@@ -156,8 +156,7 @@ flowchart LR
     E --> F[Stage 4<br/>Scenario 합성]
     F --> G[Stage 5<br/>Quick Validate]
     G -->|통과| H[Stage 6<br/>MECE·Likelihood]
-    G -->|repair 적용 성공| H
-    G -->|feedback 있음 + repair 없음| F
+    G -->|feedback 있음| F
     G -->|재시도 초과| H
     H --> I[scenario_result]
 ```
@@ -200,6 +199,9 @@ baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 Ha
 선택해 다양성을 확보한다. 기본 목표 개수는 `REF_TARGET_SCENARIOS`(기본값 6)다.
 
 `validation_feedback`이 있으면 이전 합성 결과에 대한 피드백을 반영해 조합을 재선정한다.
+compatibility feedback에 `recommended_value`가 있으면 해당 시나리오의 이전 조합을 기준으로
+권장 값을 우선 적용한 target 조합을 만든다. 이 값은 Stage 3 selected enum 밖이어도
+template enum 안의 값이면 사용할 수 있다.
 
 선택한 각 조합에 대해 LLM이 `title`, `description`, `derivation_rationale`,
 `price_direction.brent/jkm/ttf`를 생성한다. 실패 시 중립 가격 방향 fallback 사용.
@@ -211,14 +213,15 @@ baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 Ha
 빠르게 검사한다.
 
 - 통과(`validation_feedback=None`): Stage 6으로 진행
-- 실패했지만 `Stage5RepairInstruction`이 있으면: Stage 4로 되돌리지 않고 현재
-  `stage4_scenario_synthesis.scenarios[*].dimension_values`를 직접 보정한 뒤 Stage 6으로 진행
-  - `scenario_ref`(`S_01` 등)로 대상 scenario를 찾는다.
-  - 대상 scenario의 `dim_key` 값이 repair의 `current_value`와 같을 때만 `recommended_value`로 교체한다.
-  - 값이 이미 달라졌거나 대상 scenario를 찾을 수 없으면 해당 repair는 적용하지 않는다.
-  - compatibility 실패 feedback은 `scenario_ref | scenario_title | dim_key | current_value | recommended_value`
-    헤더의 표 형식으로 생성한다. `scenario_ref`는 `1`이 아니라 `S_01` 형식을 사용한다.
-- 실패했고 적용 가능한 repair가 없으면: `validation_feedback`을 유지해 `synthesize_scenarios` 노드로 돌아가 재합성
+- 실패하면 `validation_feedback`을 유지해 `synthesize_scenarios` 노드로 돌아가 재합성
+  - Stage 5는 `dimension_values`를 직접 보정하지 않는다.
+  - feedback에는 실패 유형(`baseline_contrast`, `duplicate`, `compatibility`), 문제 시나리오/값,
+    Stage 4 재생성 지시를 포함한다.
+  - compatibility 실패에서 LLM이 권장한 값은 `Stage5RepairInstruction` 형태로 Stage 4 재생성에 전달된다.
+    이는 Stage 6으로 직행하는 직접 보정이 아니라, Stage 4가 해당 target 조합과 narrative를 다시 만들기 위한
+    override 입력이다.
+  - Stage 4는 feedback을 반영해 조합을 재선정하고, 새 조합에 맞춰 `title`, `description`,
+    `derivation_rationale`, `price_direction`을 다시 생성한다.
 - `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: 남은 feedback이 있어도 Stage 6으로 진행
 
 #### Stage 6: MECE 및 Likelihood 검증
@@ -257,12 +260,13 @@ flowchart LR
     B --> C[200 ScenarioGroupAcceptedOut]
     B --> D[BackgroundTasks]
     D --> E[load_scenario_group]
-    E --> F[sync_scenarios_from_table]
-    F --> G[load_scenarios]
-    G --> H[check_existing_signposts]
-    H --> I[run_signpost_generation]
-    I --> J[save_signposts]
-    J --> K[send_callback]
+    E --> F[generate_new_scenario_row_details]
+    F --> G[sync_scenarios_from_table]
+    G --> H[load_scenarios]
+    H --> I[check_existing_signposts]
+    I --> J[run_signpost_generation]
+    J --> K[save_signposts]
+    K --> L[send_callback]
 ```
 
 ### 입력과 출력 변환
@@ -278,11 +282,30 @@ flowchart LR
 | 순서 | Node | 주요 동작 | 오류 조건 |
 |---|---|---|---|
 | 1 | `load_scenario_group` | group 조회, 점유자 확인 | group 미존재 또는 다른 사용자 점유 시 raise |
-| 2 | `sync_scenarios_from_table` | 테이블 변경 내용을 DB에 반영하고 재생성 필요 scenario ID를 `signpost_target_scenario_ids`에 설정 | table 누락 시 raise |
-| 3 | `load_scenarios` | group 소속 scenarios 조회 | scenario가 없으면 raise |
-| 4 | `check_existing_signposts` | scenario별 기존 signpost 조회 | (생략 없음) |
-| 5 | `run_signpost_generation` | 미생성 scenario + `target_ids` 대상 비동기 생성 | `failure`, `already_exist`이면 skip |
-| 6 | `save_signposts` | 새 signpost 저장, scenario `status="created"`, group `stage="signpost_created"` 갱신 | `failure`, `already_exist`이면 skip |
+| 2 | `generate_new_scenario_row_details` | table 신규 row(`scenario_id=None`)가 있으면 고정 dimension 조합에 대해 Stage 4 fixed narrative와 Stage 6 likelihood를 생성 | event 누락 시 raise |
+| 3 | `sync_scenarios_from_table` | 테이블 변경 내용을 DB에 반영하고 재생성 필요 scenario ID를 `signpost_target_scenario_ids`에 설정 | table 누락 또는 신규 row detail 누락 시 raise |
+| 4 | `load_scenarios` | group 소속 scenarios 조회 | scenario가 없으면 raise |
+| 5 | `check_existing_signposts` | scenario별 기존 signpost 조회 | (생략 없음) |
+| 6 | `run_signpost_generation` | 미생성 scenario + `target_ids` 대상 비동기 생성 | `failure`, `already_exist`이면 skip |
+| 7 | `save_signposts` | group 존재 확인 후 새 signpost 저장, scenario `status="created"` 갱신, group `stage="signpost_created"` 갱신 | `failure`, `already_exist`이면 skip |
+
+### `generate_new_scenario_row_details` 상세
+
+신규 scenario row는 table cell의 dimension 조합은 이미 확정되어 있지만 DB 저장에 필요한
+`narrative`, `probability_score`, `impact_jkm/ttf/hh`가 없다. 이 node는 persistence service가
+LLM pipeline을 직접 호출하지 않도록 저장 전에 generation을 수행한다.
+
+```mermaid
+flowchart LR
+    A[신규 row cells] --> B[dimension_values 변환]
+    B --> C[Stage 4 fixed<br/>Narrative·Price Direction]
+    C --> D[Stage 6<br/>Likelihood]
+    D --> E[new_scenario_row_details]
+```
+
+- Stage 4 fixed는 조합을 재선정하지 않고, 주어진 dimension 조합에 narrative와 price direction만 생성한다.
+- Stage 6 likelihood는 신규 row의 초기 `probability_score`로 변환된다.
+- `ScenarioService.sync_from_table*()`는 `new_scenario_row_details`를 받아 DB insert/update만 담당한다.
 
 ### `run_signpost_generation` 상세
 
@@ -389,8 +412,8 @@ validation 요청 row는 `scenario_id`, `display_order`, `title`, `cells`만 허
 |---|---|---|---|
 | 1 | `load_scenario_group` | scenario group 조회, 점유자 확인 | group 미존재 또는 다른 사용자 점유 시 raise |
 | 2 | `load_scenarios` | group 소속 scenarios 조회, `dimension_template` 로드 | scenario가 없으면 raise |
-| 3 | `generate_dimension_values` | 새로 추가된 dimension의 값을 LLM으로 생성, 필수 dimension 누락 검증 | 필수 dimension 누락 또는 신규 scenario 값 미입력 시 raise |
-| 4 | `validate_scenarios` | `build_context` + `run_review`로 시나리오 검토 | 앞선 실패 시 skip |
+| 3 | `generate_dimension_values` | 선택 dimension(`required=False`)의 빈 값을 LLM으로 생성, 필수 dimension 누락/빈 값 검증 | 필수 dimension 누락 또는 필수 값 미입력 시 raise |
+| 4 | `validate_scenarios` | `subgraphs/scenario_review/` runnable로 시나리오 검토 | 앞선 실패 시 skip |
 | 5 | `save_validation_result` | `is_valid`에 따라 `stage="scenario_validated"` 또는 `"scenario_created"`로 갱신 | 앞선 실패 시 skip |
 
 #### `generate_dimension_values` 상세
@@ -399,7 +422,7 @@ validation 요청 row는 `scenario_id`, `display_order`, `title`, `cells`만 허
 주 역할은 다음 둘이다.
 
 1. template 기준 필수 dimension이 요청 header에 포함되어 있는지 확인한다.
-2. 사용자가 새 dimension column을 추가했지만 값을 비워 둔 경우, 각 scenario row의 값을 자동 생성한다.
+2. 선택 dimension(`required=False`) column에 비어 있는 값이 있으면 각 scenario row의 값을 자동 생성한다.
 
 ##### 입력 기준
 
@@ -427,42 +450,41 @@ missing_required = required_keys - header_keys
 
 에러 메시지에는 가능한 경우 template의 `label_ko`를 사용한다.
 
-##### 새 dimension 판별
+##### 자동 생성 대상 판별
 
-요청 header에는 존재하지만 모든 row에서 해당 cell 값이 없거나 `null`인 key를
-**새로 추가된 dimension**으로 본다.
+요청 header에 존재하는 key 중 template에서 `required=False`인 선택 dimension만 자동 생성 후보가 된다.
+그중 하나 이상의 row에서 해당 cell 값이 `null`이면 자동 생성 대상(`fillable_dims`)으로 본다.
 
 ```text
-new_dimensions =
+fillable_dims =
   header key 중
-  rows가 있고
-  모든 row.cells[key]가 없거나 null인 key
+  template.dimensions[].required == False
+  and rows 중 하나라도 row.cells[key] is null
 ```
 
 중요한 점은 “template에는 있는데 DB에 없던 dimension”인지 직접 비교하지 않는다는 것이다.
-현재 판별 기준은 요청 table의 값 상태다. 따라서 일부 row라도 값이 들어 있으면 그 column은 자동 생성 대상이
-아니라 사용자가 직접 관리하는 column으로 취급된다.
+현재 판별 기준은 요청 header, template required flag, row 값의 `null` 여부다.
+이미 값이 들어 있는 cell은 자동 생성 결과로 덮어쓰지 않고, `null` cell만 채운다.
 
 ##### 신규 scenario row의 입력 검증
 
-`scenario_id is None`인 row는 validation 전에 사용자가 새로 추가한 scenario다. 이 경우 row의 `cells`에
-포함된 항목 중 자동 생성 대상이 아닌 cell 값이 `null`이면 LLM 호출 없이 즉시
-`SCENARIO_VALIDATION_INPUT_ERROR`를 raise한다.
+`scenario_id is None`인 row는 validation 전에 사용자가 새로 추가한 scenario다. 기존/신규 여부와 무관하게
+필수 dimension(`required=True`) 값은 비워 둘 수 없다. 필수 dimension 값이 `null`이면 LLM 호출 없이 즉시
+`SCENARIO_VALIDATION_INPUT_ERROR`를 raise한다. 선택 dimension(`required=False`)의 `null`은 자동 생성 대상으로 허용한다.
 
 ```text
-신규 scenario row에서
-  row.cells.items()에 포함된 value is null
-  and key not in new_dimensions
+모든 row에서
+  header key가 required=True
+  and row.cells[key] is null
 이면 입력 오류
 ```
 
-즉, 새 dimension column 전체를 비워 둔 경우는 자동 생성 대상이지만, 신규 scenario의 기존 dimension 값을
-부분적으로 `null`로 보내는 것은 허용하지 않는다. 다만 현재 구현은 header에는 있지만 신규 row의 `cells`
-dict에 아예 없는 key까지 이 단계에서 누락으로 판정하지는 않는다.
+즉, 선택 dimension의 부분 `null`은 Agent가 채우지만, 필수 dimension의 부분 `null`은 기존 scenario와 신규 scenario
+모두에서 허용하지 않는다.
 
 ##### LLM 생성 입력 보강
 
-새 dimension이 있으면 `generate_new_dimension_values(template, rows, new_dimensions)`를 호출한다.
+자동 생성 대상이 있으면 `generate_new_dimension_values(template, rows, fillable_dims)`를 호출한다.
 이때 기존 scenario row(`scenario_id != null`)는 DB에 저장된 title/narrative를 보강해서 LLM에 전달한다.
 
 - 요청 row의 title이 비어 있으면 DB scenario title을 사용한다.
@@ -474,10 +496,10 @@ dict에 아예 없는 key까지 이 단계에서 누락으로 판정하지는 �
 
 ##### 생성값 정규화와 fallback
 
-`generate_new_dimension_values`는 새 dimension별 enum label 목록을 prompt에 포함해 structured-output LLM을
+`generate_new_dimension_values`는 자동 생성 대상 dimension별 enum label 목록을 prompt에 포함해 structured-output LLM을
 호출한다. LLM 응답은 다음 기준으로 필터링된다.
 
-- `dim_key`가 생성 대상 dimension이어야 한다.
+- `dim_key`가 자동 생성 대상 dimension이어야 한다.
 - `scenario_index`가 요청 row 범위 안이어야 한다.
 - `value`가 해당 dimension의 enum label 중 하나여야 한다.
 
@@ -500,18 +522,28 @@ for each generated value:
 
 ##### 현재 한계
 
-이 node가 enum membership을 강제하는 범위는 **자동 생성된 새 dimension 값**뿐이다.
+이 node가 enum membership을 강제하는 범위는 **자동 생성된 선택 dimension 값**뿐이다.
 사용자가 직접 입력한 `cells` 값이 template enum label에 포함되는지는 여기서 검증하지 않는다.
 따라서 화면 편집 단계에서 template enum 밖 사용자 정의 값을 허용하려면, validation 정책은
 “직접 입력값은 자유값, 자동 생성값은 template enum 값”이라는 구분을 명시해야 한다.
 
 #### `validate_scenarios` 상세
 
-`build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)`로 context를 구성한 뒤
+`validate_scenarios` node는 `subgraphs/scenario_review/flow.py`의 `scenario_review_runnable`을 호출한다.
+subgraph adapter가 parent state를 review state로 변환하면서
+`build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)` 입력을 구성하고,
 `run_review(context)`가 검토 리포트를 반환한다. validation review의 검사 대상 dimension은
 DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].key`를 기준으로 한다.
 따라서 요청 table에 없는 dimension은 DB에 selected로 남아 있어도 R01/R02 검사 대상에서 제외된다.
 리포트에는 verdict(`PASS | REVIEW | BLOCK`), summary, checks 목록이 포함된다.
+
+`subgraphs/scenario_review/`는 다음 책임을 가진다.
+
+- `flow.py`: review subgraph runnable 조립
+- `subgraph_adapter.py`: `ScenarioDesignState`와 `ScenarioReviewState` 사이의 변환, review 결과를 parent state update dict로 변환
+- `nodes.py`: LangGraph node wrapper
+- `state.py`: review subgraph 전용 state
+- `review_stages.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현
 
 ##### `run_review` 검사 규칙 (R01~R05)
 
@@ -582,7 +614,7 @@ flowchart LR
 | 시작 식별자 | `mi_event_id` | `scenario_group_id` | `scenario_group_id` | `scenario_group_id` |
 | 실행 방식 | prepare + 백그라운드 | prepare + 백그라운드 | prepare + 백그라운드 | 동기 ainvoke |
 | 입력 payload | `user_id` | `user_id`, `table` | `user_id`, `table` | `user_id`, `scenario_group`, `table` |
-| 핵심 외부 처리 | scenario LLM pipeline (6 stage) | signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증 | snapshot 생성 (DB only) |
+| 핵심 외부 처리 | scenario LLM pipeline (6 stage) | 신규 row fixed scenario detail 생성 + signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증 | snapshot 생성 (DB only) |
 | 중복 처리 | 기존 group 존재 시 에러 raise | 미생성 scenario + target_ids 대상만 생성 | 해당 없음 | 해당 없음 |
 | stage 갱신 | `scenario_created` | `signpost_created` | `scenario_validated` 또는 `scenario_created` | `completed` |
 | 최종 DB 변경 | group/scenarios 생성 | signposts 생성, scenario 상태 갱신 | judgment stage 갱신 | snapshot 생성, 변경 사항 적용 |

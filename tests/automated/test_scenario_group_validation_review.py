@@ -7,31 +7,31 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
-    CompatibilityItem,
-    CompatibilityOutput,
-    build_context,
-    run_review,
-)
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     C1BaseEvent,
     PerDimensionValue,
     PriceDirection,
     Scenario,
     ScenarioTemplate,
-    Stage5RepairInstruction,
     Stage1ContextPack,
     Stage3ValueSelection,
     Stage4ScenarioSynthesis,
+    Stage5RepairInstruction,
     TemplateDimension,
 )
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
-    _apply_repair_instructions,
+    stage4_synthesize_scenarios,
     stage5_quick_validate,
 )
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages import (
+    CompatibilityItem,
+    CompatibilityOutput,
+    build_context,
+    run_review,
 )
 
 
@@ -120,7 +120,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -161,7 +161,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -271,7 +271,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert context.unchanged is True
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(),
         ) as invoke:
@@ -335,7 +335,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
         )
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -353,7 +353,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -407,7 +407,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -446,7 +446,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -467,7 +467,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -489,7 +489,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=incompatible),
         ):
@@ -499,11 +499,40 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
 
+    async def test_llm_incompatibility_passes_when_only_recommendation_is_outside_template_enum(self) -> None:
+        context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
+        incompatible = _llm_result(
+            CompatibilityItem(
+                scenario_id=100,
+                compatible=False,
+                reason="기간 값이 더 자연스러운 중간 선택지를 필요로 함",
+                conflict_dim_a="강도 (severity)",
+                conflict_value_a="낮음",
+                conflict_dim_b="기간 (period)",
+                conflict_value_b="단기",
+                recommended_value_b="중기",
+            ),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=incompatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "PASS"
+        assert report.is_valid
+        r03 = next(check for check in report.checks if check.check_id == "R03")
+        assert r03.status == "PASS"
+        assert "enum 안 실행 가능한 권장 변경 없음" in r03.detail
+
     async def test_llm_error_sets_invalid(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(side_effect=RuntimeError("unavailable")),
         ):
@@ -557,7 +586,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages."
             "_invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
@@ -653,62 +682,12 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert feedback is not None
         assert "baseline 대비 대안값 누락" in feedback
         assert "period" in feedback
-        assert Stage5RepairInstruction(
-            scenario_ref="S_01",
-            issue_type="baseline_contrast",
-            dim_key="period",
-            current_value="단기",
-            recommended_value="장기",
-            reason="baseline 대비 대안값 coverage 확보",
-        ) in repairs
-        assert {repair.dim_key for repair in repairs} == {
-            "period",
-            "severity",
-            "recovery",
-        }
+        assert "Stage4 재생성 지시" in feedback
+        assert "title, description, derivation_rationale, price_direction" in feedback
+        assert repairs == []
         invoke.assert_not_called()
 
-    def test_stage4_repair_instruction_replaces_target_combo(self) -> None:
-        stage3 = Stage3ValueSelection(
-            per_dimension=[
-                PerDimensionValue(
-                    dim_key="period",
-                    template_enum_full=["단기", "장기"],
-                    selected_enum=["단기", "장기"],
-                ),
-                PerDimensionValue(
-                    dim_key="severity",
-                    template_enum_full=["낮음", "높음"],
-                    selected_enum=["낮음", "높음"],
-                ),
-            ],
-        )
-        target = [
-            {"period": "단기", "severity": "낮음"},
-            {"period": "단기", "severity": "높음"},
-        ]
-        replacement = {"period": "장기", "severity": "높음"}
-        repairs = [
-            Stage5RepairInstruction(
-                scenario_ref="S_02",
-                issue_type="compatibility",
-                dim_key="period",
-                current_value="단기",
-                recommended_value="장기",
-                reason="조합 호환성 개선",
-            )
-        ]
-
-        repaired = _apply_repair_instructions(
-            target,
-            [*target, replacement],
-            stage3,
-            repairs,
-        )
-
-        assert repaired == [target[0], replacement]
-
-    def test_stage5_compatibility_failure_returns_repair_instruction(self) -> None:
+    def test_stage5_compatibility_failure_returns_regeneration_feedback(self) -> None:
         template = ScenarioTemplate(
             dimensions=[
                 TemplateDimension(
@@ -826,8 +805,11 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
 
         assert not passed
         assert feedback is not None
-        assert "| scenario_ref | scenario_title | dim_key | current_value | recommended_value |" in feedback
-        assert "| S_02 | incompatible | power_reduction | 100% | 50% |" in feedback
+        assert "검증 실패/ 재생성 필요: compatibility" in feedback
+        assert "S_02" in feedback
+        assert "incompatible" in feedback
+        assert "'100%'을(를) '50%'(으)로 바꾸는 것을 권장합니다." in feedback
+        assert "title, description, derivation_rationale, price_direction" in feedback
         assert repairs == [
             Stage5RepairInstruction(
                 scenario_ref="S_02",
@@ -839,7 +821,495 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
             )
         ]
 
-    def test_quick_validate_node_applies_stage5_repair_to_current_stage4(self) -> None:
+    def test_stage5_compatibility_feedback_allows_recommendation_outside_stage3_selection(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="supply_disruption_intensity",
+                    label="공급 차질 - 강도",
+                    value_enums=["전혀 없음", "낮음"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="supply_disruption_pattern",
+                    label="공급 차질 - 발생/회복 패턴",
+                    value_enums=["차질 없음", "완만한 차질", "급차질-급회복"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["1개월 이하", "6개월"],
+                    display_order=3,
+                ),
+            ],
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="supply_disruption_intensity",
+                    template_enum_full=["전혀 없음", "낮음"],
+                    selected_enum=["전혀 없음", "낮음"],
+                ),
+                PerDimensionValue(
+                    dim_key="supply_disruption_pattern",
+                    template_enum_full=["차질 없음", "완만한 차질", "급차질-급회복"],
+                    selected_enum=["완만한 차질", "급차질-급회복"],
+                ),
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["1개월 이하", "6개월"],
+                    selected_enum=["1개월 이하", "6개월"],
+                ),
+            ],
+        )
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=2,
+            filtered_by_compatibility=2,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="incompatible",
+                    dimension_values={
+                        "supply_disruption_intensity": "전혀 없음",
+                        "supply_disruption_pattern": "급차질-급회복",
+                        "period": "1개월 이하",
+                    },
+                    description="incompatible narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+                Scenario(
+                    scenario_id="S_02",
+                    title="contrast",
+                    dimension_values={
+                        "supply_disruption_intensity": "낮음",
+                        "supply_disruption_pattern": "완만한 차질",
+                        "period": "6개월",
+                    },
+                    description="contrast narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+            ],
+        )
+        compat_output = CompatibilityOutput(
+            items=[
+                CompatibilityItem(
+                    scenario_id=1,
+                    compatible=False,
+                    reason="공급 차질 없음과 급차질 패턴 충돌",
+                    conflict_dim_a="공급 차질 - 강도 (supply_disruption_intensity)",
+                    conflict_value_a="전혀 없음",
+                    conflict_dim_b="공급 차질 - 발생/회복 패턴 (supply_disruption_pattern)",
+                    conflict_value_b="급차질-급회복",
+                    recommended_value_b="차질 없음",
+                ),
+                CompatibilityItem(
+                    scenario_id=2,
+                    compatible=True,
+                    reason="정상",
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "generation_stages._ainvoke_with_retry",
+            new=AsyncMock(return_value=compat_output),
+        ):
+            passed, feedback, repairs = asyncio.run(
+                stage5_quick_validate(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    stage4,
+                    template,
+                ),
+            )
+
+        assert not passed
+        assert feedback is not None
+        assert "S_01" in feedback
+        assert "공급 차질 없음과 급차질 패턴 충돌" in feedback
+        assert "'급차질-급회복'을(를) '차질 없음'(으)로 바꾸는 것을 권장합니다." in feedback
+        assert repairs == [
+            Stage5RepairInstruction(
+                scenario_ref="S_01",
+                issue_type="compatibility",
+                dim_key="supply_disruption_pattern",
+                current_value="급차질-급회복",
+                recommended_value="차질 없음",
+                reason="공급 차질 없음과 급차질 패턴 충돌",
+            )
+        ]
+
+    def test_stage4_retry_prioritizes_recommended_value_outside_stage3_selection(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="supply_disruption_intensity",
+                    label="공급 차질 - 강도",
+                    value_enums=["전혀 없음", "낮음"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="supply_disruption_pattern",
+                    label="공급 차질 - 발생/회복 패턴",
+                    value_enums=["차질 없음", "완만한 차질", "급차질-급회복"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["1개월 이하", "6개월"],
+                    display_order=3,
+                ),
+            ],
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="supply_disruption_intensity",
+                    template_enum_full=["전혀 없음", "낮음"],
+                    selected_enum=["전혀 없음", "낮음"],
+                ),
+                PerDimensionValue(
+                    dim_key="supply_disruption_pattern",
+                    template_enum_full=["차질 없음", "완만한 차질", "급차질-급회복"],
+                    selected_enum=["완만한 차질", "급차질-급회복"],
+                ),
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["1개월 이하", "6개월"],
+                    selected_enum=["1개월 이하", "6개월"],
+                ),
+            ],
+        )
+        previous_stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=2,
+            filtered_by_compatibility=2,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="incompatible",
+                    dimension_values={
+                        "supply_disruption_intensity": "전혀 없음",
+                        "supply_disruption_pattern": "급차질-급회복",
+                        "period": "1개월 이하",
+                    },
+                    description="incompatible narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+                Scenario(
+                    scenario_id="S_02",
+                    title="ordinary",
+                    dimension_values={
+                        "supply_disruption_intensity": "낮음",
+                        "supply_disruption_pattern": "완만한 차질",
+                        "period": "6개월",
+                    },
+                    description="ordinary narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+            ],
+        )
+        repairs = [
+            Stage5RepairInstruction(
+                scenario_ref="S_01",
+                issue_type="compatibility",
+                dim_key="supply_disruption_pattern",
+                current_value="급차질-급회복",
+                recommended_value="차질 없음",
+                reason="공급 차질 없음과 급차질 패턴 충돌",
+            )
+        ]
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "generation_stages._ainvoke_with_retry",
+            new=AsyncMock(return_value=None),
+        ):
+            stage4 = asyncio.run(
+                stage4_synthesize_scenarios(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    template,
+                    validation_feedback="S_01 supply_disruption_pattern 권장값 차질 없음",
+                    validation_repairs=repairs,
+                    previous_stage4=previous_stage4,
+                )
+            )
+
+        assert stage4.scenarios[0].dimension_values == {
+            "supply_disruption_intensity": "전혀 없음",
+            "supply_disruption_pattern": "차질 없음",
+            "period": "1개월 이하",
+        }
+
+    def test_stage5_compatibility_passes_when_only_recommendation_is_outside_template_enum(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="supply_disruption_intensity",
+                    label="공급 차질 - 강도",
+                    value_enums=["전혀 없음", "낮음"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="supply_disruption_pattern",
+                    label="공급 차질 - 발생/회복 패턴",
+                    value_enums=["완만한 차질", "급차질-급회복"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["1개월 이하", "6개월"],
+                    display_order=3,
+                ),
+            ],
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="supply_disruption_intensity",
+                    template_enum_full=["전혀 없음", "낮음"],
+                    selected_enum=["전혀 없음", "낮음"],
+                ),
+                PerDimensionValue(
+                    dim_key="supply_disruption_pattern",
+                    template_enum_full=["완만한 차질", "급차질-급회복"],
+                    selected_enum=["완만한 차질", "급차질-급회복"],
+                ),
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["1개월 이하", "6개월"],
+                    selected_enum=["1개월 이하", "6개월"],
+                ),
+            ],
+        )
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=2,
+            filtered_by_compatibility=2,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="incompatible",
+                    dimension_values={
+                        "supply_disruption_intensity": "전혀 없음",
+                        "supply_disruption_pattern": "급차질-급회복",
+                        "period": "1개월 이하",
+                    },
+                    description="incompatible narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+                Scenario(
+                    scenario_id="S_02",
+                    title="contrast",
+                    dimension_values={
+                        "supply_disruption_intensity": "낮음",
+                        "supply_disruption_pattern": "완만한 차질",
+                        "period": "6개월",
+                    },
+                    description="contrast narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+            ],
+        )
+        compat_output = CompatibilityOutput(
+            items=[
+                CompatibilityItem(
+                    scenario_id=1,
+                    compatible=False,
+                    reason="공급 차질 없음과 급차질 패턴 충돌",
+                    conflict_dim_a="공급 차질 - 강도 (supply_disruption_intensity)",
+                    conflict_value_a="전혀 없음",
+                    conflict_dim_b="공급 차질 - 발생/회복 패턴 (supply_disruption_pattern)",
+                    conflict_value_b="급차질-급회복",
+                    recommended_value_b="차질 없음",
+                ),
+                CompatibilityItem(
+                    scenario_id=2,
+                    compatible=True,
+                    reason="정상",
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "generation_stages._ainvoke_with_retry",
+            new=AsyncMock(return_value=compat_output),
+        ):
+            passed, feedback, repairs = asyncio.run(
+                stage5_quick_validate(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    stage4,
+                    template,
+                ),
+            )
+
+        assert passed
+        assert feedback is None
+        assert repairs == []
+
+    def test_stage5_compatibility_still_fails_when_repair_is_unavailable_for_unresolved_dim(self) -> None:
+        template = ScenarioTemplate(
+            dimensions=[
+                TemplateDimension(
+                    dim_key="supply_disruption_intensity",
+                    label="공급 차질 - 강도",
+                    value_enums=["전혀 없음", "낮음"],
+                    display_order=1,
+                ),
+                TemplateDimension(
+                    dim_key="supply_disruption_pattern",
+                    label="공급 차질 - 발생/회복 패턴",
+                    value_enums=["완만한 차질", "급차질-급회복"],
+                    display_order=2,
+                ),
+                TemplateDimension(
+                    dim_key="period",
+                    label="기간",
+                    value_enums=["1개월 이하", "6개월"],
+                    display_order=3,
+                ),
+            ],
+        )
+        stage3 = Stage3ValueSelection(
+            per_dimension=[
+                PerDimensionValue(
+                    dim_key="supply_disruption_intensity",
+                    template_enum_full=["전혀 없음", "낮음"],
+                    selected_enum=["전혀 없음", "낮음"],
+                ),
+                PerDimensionValue(
+                    dim_key="supply_disruption_pattern",
+                    template_enum_full=["완만한 차질", "급차질-급회복"],
+                    selected_enum=["완만한 차질", "급차질-급회복"],
+                ),
+                PerDimensionValue(
+                    dim_key="period",
+                    template_enum_full=["1개월 이하", "6개월"],
+                    selected_enum=["1개월 이하", "6개월"],
+                ),
+            ],
+        )
+        stage4 = Stage4ScenarioSynthesis(
+            cartesian_total=1,
+            filtered_by_compatibility=1,
+            scenarios=[
+                Scenario(
+                    scenario_id="S_01",
+                    title="unresolved-dim",
+                    dimension_values={
+                        "supply_disruption_intensity": "전혀 없음",
+                        "supply_disruption_pattern": "급차질-급회복",
+                        "period": "1개월 이하",
+                    },
+                    description="unresolved dim narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+                Scenario(
+                    scenario_id="S_02",
+                    title="contrast",
+                    dimension_values={
+                        "supply_disruption_intensity": "낮음",
+                        "supply_disruption_pattern": "완만한 차질",
+                        "period": "6개월",
+                    },
+                    description="contrast narrative",
+                    derivation_rationale="test",
+                    price_direction=PriceDirection(
+                        brent="neutral",
+                        jkm="neutral",
+                        ttf="neutral",
+                        hh="neutral",
+                    ),
+                ),
+            ],
+        )
+        compat_output = CompatibilityOutput(
+            items=[
+                CompatibilityItem(
+                    scenario_id=1,
+                    compatible=False,
+                    reason="공급 차질 없음과 급차질 패턴 충돌",
+                    conflict_dim_a="공급 차질 - 강도 (supply_disruption_intensity)",
+                    conflict_value_a="전혀 없음",
+                    conflict_dim_b="해석할 수 없는 차원명",
+                    conflict_value_b="급차질-급회복",
+                    recommended_value_b="차질 없음",
+                ),
+                CompatibilityItem(
+                    scenario_id=2,
+                    compatible=True,
+                    reason="정상",
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
+            "generation_stages._ainvoke_with_retry",
+            new=AsyncMock(return_value=compat_output),
+        ):
+            passed, feedback, repairs = asyncio.run(
+                stage5_quick_validate(
+                    Stage1ContextPack(C1_base_event=C1BaseEvent()),
+                    stage3,
+                    stage4,
+                    template,
+                ),
+            )
+
+        assert not passed
+        assert feedback is not None
+        assert "검증 실패/ 재생성 필요: compatibility" in feedback
+        assert repairs == []
+
+    def test_quick_validate_node_routes_failed_stage5_back_to_stage4(self) -> None:
         template = ScenarioTemplate(
             dimensions=[
                 TemplateDimension(
@@ -904,6 +1374,13 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                 )
             ],
         )
+        state = ScenarioGenerationState(
+            event_data={"mi_event_id": 1, "event_type_l2_id": 2},
+            template=template,
+            stage1_context_pack=Stage1ContextPack(C1_base_event=C1BaseEvent()),
+            stage3_value_selection=stage3,
+            stage4_scenario_synthesis=stage4,
+        )
         repairs = [
             Stage5RepairInstruction(
                 scenario_ref="S_01",
@@ -914,13 +1391,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                 reason="공급 차질 없음과 급차질 패턴 충돌",
             )
         ]
-        state = ScenarioGenerationState(
-            event_data={"mi_event_id": 1, "event_type_l2_id": 2},
-            template=template,
-            stage1_context_pack=Stage1ContextPack(C1_base_event=C1BaseEvent()),
-            stage3_value_selection=stage3,
-            stage4_scenario_synthesis=stage4,
-        )
 
         with patch.object(
             nodes,
@@ -929,10 +1399,10 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         ):
             result = asyncio.run(nodes.quick_validate_node(state))
 
-        repaired = result["stage4_scenario_synthesis"]
-        assert repaired.scenarios[0].dimension_values["supply_disruption_pattern"] == "차질 없음"
-        assert result["validation_feedback"] is None
-        assert result["validation_repairs"] == []
+        assert "stage4_scenario_synthesis" not in result
+        assert stage4.scenarios[0].dimension_values["supply_disruption_pattern"] == "급차질-급회복"
+        assert result["validation_feedback"] == "feedback"
+        assert result["validation_repairs"] == repairs
         assert result["quick_validate_retry_count"] == 1
 
     def test_stage5_duplicate_combination_precheck_skips_llm(self) -> None:
@@ -1031,9 +1501,9 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert not passed
         assert feedback is not None
         assert "동일한 Dimension 값 조합" in feedback
-        assert repairs
-        assert repairs[0].scenario_ref == "S_02"
-        assert repairs[0].issue_type == "duplicate"
+        assert "Stage4 재생성 지시" in feedback
+        assert "title, description, derivation_rationale, price_direction" in feedback
+        assert repairs == []
         invoke.assert_not_called()
 
 

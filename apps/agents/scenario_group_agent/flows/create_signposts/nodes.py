@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 from typing import Any
 
 from apps.agents.scenario_group_agent.persistence.event.service import EventService
@@ -13,6 +14,10 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.service import 
 from apps.agents.scenario_group_agent.persistence.signpost.service import (
     SignpostService,
 )
+from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
+from apps.agents.scenario_group_agent.schemas.domain.scenario import (
+    NewScenarioGeneratedDetails,
+)
 from apps.agents.scenario_group_agent.schemas.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
@@ -23,9 +28,22 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     SignpostGenerationResult,
 )
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
-from apps.common.configs.config import get_settings
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
+    stage1_build_context_pack,
+    stage4_synthesize_fixed_scenarios,
+    stage6_validate,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+_LIKELIHOOD_WEIGHTS: dict[str, int] = {
+    "very_low": 5,
+    "low": 10,
+    "medium": 20,
+    "high": 35,
+    "very_high": 50,
+}
 
 
 def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
@@ -43,30 +61,89 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     return {"scenario_group": group, "mi_event_id": int(group.mi_event_id)}
 
 
-async def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
+async def generate_new_scenario_row_details(
+    event_data: EventPayload | dict[str, Any],
+    dimension_values_list: list[dict[str, Any]],
+) -> list[NewScenarioGeneratedDetails]:
+    if not dimension_values_list:
+        return []
+
+    pack = stage1_build_context_pack(event_data)
+    stage4 = await stage4_synthesize_fixed_scenarios(
+        pack,
+        [
+            {str(key): str(value) for key, value in dimension_values.items()}
+            for dimension_values in dimension_values_list
+        ],
+    )
+    stage6 = await stage6_validate(pack, stage4)
+    likelihoods = [stage6.likelihood_prior.get(scenario.scenario_id, "medium") for scenario in stage4.scenarios]
+    details: list[NewScenarioGeneratedDetails] = []
+    for scenario, likelihood in zip(stage4.scenarios, likelihoods, strict=False):
+        details.append(
+            NewScenarioGeneratedDetails(
+                narrative=scenario.description,
+                probability_weight=Decimal(
+                    _LIKELIHOOD_WEIGHTS.get(
+                        likelihood,
+                        _LIKELIHOOD_WEIGHTS["medium"],
+                    ),
+                ),
+                probability_delta=Decimal("0.0"),
+                impact_jkm=scenario.price_direction.jkm,
+                impact_ttf=scenario.price_direction.ttf,
+                impact_hh=scenario.price_direction.hh,
+            ),
+        )
+    return details
+
+
+async def generate_new_scenario_row_details_node(
+    state: ScenarioDesignState,
+) -> dict[str, object]:
+    if state.scenario_group_id is None or state.scenario_group is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
+    if state.request_table is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
+    request_table = state.request_table.model_dump(exclude_unset=True)
+    new_rows = [row for row in request_table.get("rows", []) or [] if row.get("scenario_id") is None]
+    if not new_rows:
+        return {}
+
+    event_data = EventService().load_event(int(state.scenario_group.mi_event_id))
+    if event_data is None:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
+
+    scenario_service = ScenarioService()
+    dimension_values_list = [
+        scenario_service.cells_to_dimension_values(
+            int(state.scenario_group.event_type_l2_id),
+            row.get("cells") or {},
+        )
+        for row in new_rows
+    ]
+    details = await generate_new_scenario_row_details(
+        event_data,
+        dimension_values_list,
+    )
+    return {"new_scenario_row_details": details}
+
+
+def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
     if state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
-    event_data = None
     request_table = state.request_table.model_dump(exclude_unset=True)
-    has_new_rows = any(
-        row.get("scenario_id") is None
-        for row in request_table.get("rows", []) or []
-    )
-    if has_new_rows:
-        event_data = EventService().load_event(int(state.scenario_group.mi_event_id))
-        if event_data is None:
-            raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
     try:
-        result = await ScenarioService().sync_from_table_async(
+        result = ScenarioService().sync_from_table(
             scenario_group_id=state.scenario_group_id,
             event_type_l2_id=int(state.scenario_group.event_type_l2_id),
             table_payload=request_table,
             user_id=state.user_id,
-            event_data=event_data,
+            new_row_details=state.new_scenario_row_details,
         )
     except ValueError as exc:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=str(exc)) from exc
@@ -122,8 +199,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
     scenarios_to_process = [
         scenario.model_dump()
         for scenario in state.scenarios
-        if int(scenario.scenario_id) in target_ids
-        or int(scenario.scenario_id) not in existing_scenario_ids
+        if int(scenario.scenario_id) in target_ids or int(scenario.scenario_id) not in existing_scenario_ids
     ]
     if not scenarios_to_process:
         return state_update(
@@ -133,6 +209,8 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
                 signposts=[],
             ),
         )
+
+    from apps.common.configs.config import get_settings
 
     sem = asyncio.Semaphore(get_settings().create_signposts_max_concurrent_scenarios)
 
@@ -174,25 +252,28 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
 def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
+    if state.scenario_group_id is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     signpost_result = state.signpost_result
     generated = signpost_result.signposts if signpost_result is not None else []
-    saved_ids = (
-        SignpostService().save_generated_signposts(generated, user_id=state.user_id)
-        if generated
-        else []
-    )
+    scenario_group_service = ScenarioGroupService()
+    if scenario_group_service.load_by_id(state.scenario_group_id) is None:
+        raise MIBaseError(
+            ErrorCode.ENTITY_NOT_FOUND,
+            detail=f"Fail to save signposts because scenario group is deleted: {state.scenario_group_id}.",
+        )
+
+    saved_ids = SignpostService().save_generated_signposts(generated, user_id=state.user_id) if generated else []
     all_signposts = SignpostService().load_by_scenario_ids(
         [int(scenario.scenario_id) for scenario in state.scenarios],
     )
     ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATED.value)
-    group = ScenarioGroupService().update_state(
+    group = scenario_group_service.update_state(
         state.scenario_group_id,
         status=ScenarioGroupStatus.CREATING,
         stage=ScenarioGroupStage.SIGNPOST_CREATED,
         user_id=state.user_id,
     )
-    if group is None:
-        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group update failed")
     return state_update(
         saved_signpost_ids=saved_ids,
         signposts=all_signposts,

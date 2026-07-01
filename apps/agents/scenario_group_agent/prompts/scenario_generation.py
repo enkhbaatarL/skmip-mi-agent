@@ -134,10 +134,22 @@ def build_stage4_user_prompt(
     combos_block: str,
     target_count: int,
     validation_feedback: str | None = None,
+    previous_scenarios_block: str | None = None,
 ) -> str:
     feedback_block = (
-        f"\n[이전 출력에 대한 자동 규칙 검증 피드백 — 위 작성 대상 조합은 이 피드백을 반영해 재선정된 값입니다. 각 narrative는 해당 조합과 모순 없이 작성하십시오]\n{validation_feedback}\n"
+        "\n[이전 출력에 대한 자동 규칙 검증 피드백]\n"
+        f"{validation_feedback}\n"
+        "\n[작성 지시]\n"
+        "- 위 피드백의 recommended value가 기존 enum 축소 결과 밖에 있더라도, 작성 대상 조합에 이미 반영된 "
+        "recommended value를 우선하십시오.\n"
+        "- 이전 title/description/derivation_rationale/price_direction을 그대로 유지하지 말고, "
+        "새 dimension 조합에 맞춰 다시 작성하십시오.\n"
         if validation_feedback
+        else ""
+    )
+    previous_block = (
+        f"\n## 이전 Stage4 출력 (검증 실패했던 previous 값)\n{previous_scenarios_block}\n"
+        if previous_scenarios_block
         else ""
     )
     return f"""\
@@ -151,6 +163,7 @@ def build_stage4_user_prompt(
 
 ## 작성 대상 조합 ({target_count}개)  — 입력 순서를 그대로 유지하여 narratives 출력
 {combos_block}
+{previous_block}
 
 ## 산출 규칙
 - narratives 길이 = {target_count}.

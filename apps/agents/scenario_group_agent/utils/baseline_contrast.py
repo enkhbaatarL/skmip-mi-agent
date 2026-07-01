@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 """시나리오 그룹 생성 및 검증에서 공통으로 쓰는 베이스라인 대비 정책.
 
 이 모듈은 단일 베이스라인 선택 규칙과, 선택된 각 Dimension에서

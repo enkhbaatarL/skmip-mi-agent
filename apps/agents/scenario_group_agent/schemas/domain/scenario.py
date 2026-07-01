@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
@@ -26,3 +26,14 @@ class ScenarioPayload(ApiModel):
     baseline_yn: str | None = "N"
     status: str = ScenarioStatus.CREATING.value
     del_yn: str | None = None
+
+
+class NewScenarioGeneratedDetails(ApiModel):
+    model_config = ConfigDict(frozen=True)
+
+    narrative: str
+    probability_weight: Decimal
+    probability_delta: Decimal
+    impact_jkm: str | None
+    impact_ttf: str | None
+    impact_hh: str | None

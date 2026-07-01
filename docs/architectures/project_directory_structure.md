@@ -2,8 +2,8 @@
 
 ## 문서 목적
 
-이 문서는 프로젝트 전체 디렉터리 배치와 Agent 패키지 안의 기본 역할 분리를 빠르게 확인하기 위한 구조 가이드다.
-새 Agent를 개발할 때는 현재 런타임 Agent인 `scenario_group_agent`를 기준 예시로 보고, 같은 책임 분리 원칙을 따른다.
+이 문서는 앞으로 여러 Agent가 추가되더라도 각 Agent 패키지가 동일한 디렉터리 규칙과 책임 분리를 따르도록 하는 기준 가이드다.
+프로젝트 루트 배치와 Agent 내부의 공통 구조 원칙을 정의하고, 현재 런타임 Agent인 `scenario_group_agent`는 그 기준을 적용한 예시로 둔다.
 
 
 ## 프로젝트 루트 배치
@@ -17,10 +17,12 @@ skmip-mi-agent/
 │   ├── common/
 │   └── connectors/
 ├── docs/
-│   └── architectures/
-│       ├── project_directory_structure.md
-│       ├── scenario_group_agent_api_request_response.md
-│       └── scenario_group_agent_flow_pipeline.md
+│   ├── architectures/
+│   │   ├── project_directory_structure.md
+│   │   ├── scenario_group_agent_api_request_response.md
+│   │   └── scenario_group_agent_flow_pipeline.md
+│   └── guides/
+│       └── launch.md
 └── tests/
     ├── automated/
     └── manual/
@@ -47,7 +49,7 @@ apps/agents/<agent_name>/
 │   ├── __init__.py
 │   ├── <feature_or_domain>/
 │   │   ├── __init__.py
-│   │   ├── flow.py
+│   │   ├── flow.py              # 동기 graph invoke가 필요한 기능만 둔다.
 │   │   ├── flow_async.py        # background task가 필요한 기능만 둔다.
 │   │   └── nodes.py
 │   └── <another_feature_or_domain>/
@@ -64,6 +66,12 @@ apps/agents/<agent_name>/
 ├── prompts/
 │   ├── __init__.py
 │   └── <prompt_area>.py
+├── tools/
+│   ├── __init__.py
+│   └── <llm_tool>.py
+├── utils/
+│   ├── __init__.py
+│   └── <agent_util>.py
 ├── schemas/
 │   ├── __init__.py
 │   ├── base.py
@@ -98,18 +106,27 @@ apps/agents/<agent_name>/
   - FastAPI endpoint 선언, request schema 수신, background task 등록, flow 진입점 호출을 담당한다.
   - endpoint 내부에 도메인 로직을 길게 두지 않고 schema 변환, validation, flow/service 호출까지만 담당한다.
 - `presentation.py`
-  - API 응답 payload, table, 표시값 등 외부 응답 형태를 조립/정규화한다.
+  - API 응답 표현 계층이다.
+  - API 응답 payload, table, 표시값 등 입출력 shape을 조립/정규화한다.
+  - flow/node/subgraph에서 만든 내부 결과를 외부 callback 또는 HTTP response schema에 맞게 변환하는 책임을 둔다.
 - `state.py`
   - 여러 flow와 subgraph에서 공유하는 Agent 상위 state 타입을 정의한다.
-- Agent 전용 helper module
-  - 여러 flow에서 공유하지만 Agent 밖으로 공개할 필요가 없는 계산/표현 helper는 Agent 루트에 둔다.
-  - 예: `scenario_group_agent/baseline_contrast.py`
+- `utils/`
+  - 해당 Agent 도메인에 강하게 묶인 공통 계산/정규화 helper를 둔다.
+  - 여러 flow/subgraph/persistence에서 재사용하지만 `apps/common`에 둘 만큼 모든 Agent 공통은 아닌 로직을 모은다.
+  - LLM 호출, LangGraph state, runnable 조립이 필요한 수준이면 `subgraphs/`로 분리한다.
+  - 예: `scenario_group_agent/utils/baseline_contrast.py`
+- `tools/`
+  - 현재 runtime tool 구현은 없지만, 앞으로 LLM이 직접 사용할 Agent 전용 tool을 둘 위치다.
+  - 외부 API 호출, 검색, 계산 등 LLM tool/function calling 표면으로 노출할 로직을 둔다.
+  - 일반 공통 helper는 `tools/`가 아니라 `utils/`에 둔다.
 - `flows/<feature_or_domain>/`
   - API 동작 하나 또는 밀접한 기능 묶음 하나를 기능 단위, 도메인 단위로 나눈 flow 패키지다.
   - 예: `create_scenarios`, `validate_scenarios`, `create_signposts`, `confirm_generation`
 - `flows/<feature_or_domain>/flow.py`
   - LangGraph `StateGraph` 기반 runnable을 구성한다.
   - 동기적으로 graph를 invoke하는 내부/테스트 경로에서 기준 구현으로 사용한다.
+  - API가 항상 background graph만 사용하면 생략할 수 있다.
 - `flows/<feature_or_domain>/flow_async.py`
   - HTTP API가 즉시 200을 반환한 뒤 FastAPI `BackgroundTasks`에서 실행할 준비/백그라운드 실행 함수를 제공한다.
   - 오래 걸리는 작업이 아니면 만들지 않아도 된다.
@@ -118,7 +135,7 @@ apps/agents/<agent_name>/
   - 저장/조회는 직접 SQL을 쓰지 않고 `persistence/*/service.py`를 통해 수행한다.
 - `flows/<feature_or_domain>/<helper>.py`
   - 특정 기능 단위 flow 안에서만 쓰는 review, validation, normalization helper를 둔다.
-  - 예: `flows/validate_scenarios/review.py`
+  - 여러 flow에서 재사용되거나 독립적인 graph 경계가 필요한 로직은 `subgraphs/<subgraph_name>/`로 승격한다.
 - `subgraphs/<subgraph_name>/`
   - 여러 flow에서 재사용되거나 독립적인 LLM/검색/생성 pipeline으로 분리할 만한 LangGraph subgraph 계층이다.
   - `flow.py`는 runnable graph 조립, `nodes.py`는 LangGraph node wrapper, `state.py`는 subgraph state를 담당한다.
@@ -142,6 +159,7 @@ apps/agents/<agent_name>/
   - `schemas/api/table.py`는 외부 API table 응답/요청 shape, `schemas/api/common.py`은 API 공통 응답 wrapper를 담당한다.
 - `schemas/domain/`
   - service outward boundary DTO와 domain/template payload를 정의한다.
+  - 예: event, scenario, signpost, template처럼 service와 pipeline 경계에서 공유되는 domain schema를 둔다.
 - `schemas/graph/`
   - LangGraph state에 저장되는 pipeline stage/template/result DTO를 정의한다.
 
@@ -150,11 +168,22 @@ apps/agents/<agent_name>/
 `scenario_group_agent`는 위 기본 구조를 따르는 현재 런타임 Agent다.
 
 - `flows/create_scenarios/`: scenario 생성 기능 단위 flow
+  - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
+  - `flow_async.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow
+  - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/confirm_generation/`: 생성 결과 확정 기능 단위 flow
+  - `flow.py`, `nodes.py`로 구성되며 API 요청에서 직접 graph를 invoke한다.
 - `persistence/event/`, `persistence/scenario_group/`, `persistence/scenario/`, `persistence/signpost/`: DB domain 단위 persistence 계층
+- `prompts/scenario_generation.py`, `prompts/scenario_validation.py`, `prompts/signpost_generation.py`: 생성/검증/Signpost LLM prompt와 structured output schema
+- `schemas/api/`: `common.py`, `table.py`, `create_scenarios.py`, `validate_scenarios.py`, `create_signposts.py`, `confirm_generation.py`, `manage_scenario_groups.py`
+- `schemas/domain/`: `event.py`, `scenario_group.py`, `scenario.py`, `signpost.py`, `template.py`
+- `schemas/graph/generation.py`: scenario/signpost generation subgraph가 공유하는 graph DTO
+- `utils/baseline_contrast.py`: scenario group agent 도메인에 묶인 baseline 대비 coverage 계산 helper
+- `tools/`: 현재 구현된 Agent 전용 LLM tool은 없으며, 향후 tool 구현 위치로 예약
 - `subgraphs/scenario_generation/`: scenario 생성 pipeline subgraph
+- `subgraphs/scenario_review/`: scenario validation review subgraph
 - `subgraphs/signpost_generation/`: signpost 생성 pipeline subgraph
 
 ## API Endpoint ↔ Flow 경로 매핑
@@ -186,7 +215,7 @@ POST /scenario-groups/{scenario_group_id}/validation
 → api.py
 → flows/validate_scenarios/flow_async.py
 → flows/validate_scenarios/nodes.py
-→ flows/validate_scenarios/review.py
+→ subgraphs/scenario_review/
 
 DELETE /scenario-groups/{scenario_group_id}/signposts
 → api.py
@@ -227,7 +256,7 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 
 ## 신규 기능 추가 기준
 
-- API를 추가할 때는 `api.py`, `schemas/api/<api_or_feature>.py`, `flows/<feature_or_domain>/flow.py`, `flows/<feature_or_domain>/nodes.py`를 함께 검토한다.
+- API를 추가할 때는 `api.py`, `schemas/api/<api_or_feature>.py`, `flows/<feature_or_domain>/nodes.py`와 실행 방식에 맞는 `flow.py` 또는 `flow_async.py`를 함께 검토한다.
 - `flows/<feature_or_domain>/` 이름은 endpoint path를 그대로 따르기보다 기능 단위, 도메인 단위 의미가 드러나게 정한다.
 - API가 즉시 200을 반환하고 백그라운드에서 오래 도는 작업이면 `flows/<feature_or_domain>/flow_async.py`를 둔다.
 - 생성/검색/검증 파이프라인이 여러 flow에서 재사용되거나 독립적으로 테스트할 가치가 있으면 `subgraphs/<subgraph_name>/`로 분리한다.

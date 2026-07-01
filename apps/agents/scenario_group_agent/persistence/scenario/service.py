@@ -4,11 +4,6 @@ import asyncio
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from pydantic import BaseModel, ConfigDict
-
-from apps.agents.scenario_group_agent.baseline_contrast import (
-    apply_single_baseline_by_probability,
-)
 from apps.agents.scenario_group_agent.persistence.scenario.repository import (
     ScenarioRepository,
 )
@@ -18,12 +13,17 @@ from apps.agents.scenario_group_agent.persistence.scenario_group.repository impo
 from apps.agents.scenario_group_agent.persistence.signpost.repository import (
     SignpostRepository,
 )
-from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
-from apps.agents.scenario_group_agent.schemas.domain.scenario import ScenarioPayload
+from apps.agents.scenario_group_agent.schemas.domain.scenario import (
+    NewScenarioGeneratedDetails,
+    ScenarioPayload,
+)
 from apps.agents.scenario_group_agent.schemas.enums import ScenarioStatus
 from apps.agents.scenario_group_agent.schemas.graph.generation import (
     ScenarioTemplate,
     TemplateDimension,
+)
+from apps.agents.scenario_group_agent.utils.baseline_contrast import (
+    apply_single_baseline_by_probability,
 )
 
 
@@ -82,16 +82,6 @@ class NewScenarioInsertPayload(ExistingScenarioUpdatePayload):
     crt_usr_logn_id: int
 
 
-class NewScenarioGeneratedDetails(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    narrative: str
-    probability_weight: Decimal
-    probability_delta: Decimal
-    impact_jkm: str | None
-    impact_ttf: str | None
-    impact_hh: str | None
-
 _LIKELIHOOD_WEIGHTS: dict[str, int] = {
     "very_low": 5,
     "low": 10,
@@ -107,10 +97,7 @@ def _normalize_scores_to_100(likelihoods: list[str]) -> list[Decimal]:
     각 tier의 상대 가중치를 기반으로 비례 배분하고,
     나머지는 largest-remainder 방식으로 처리해 정수 합계 100을 보장한다.
     """
-    weights = [
-        Decimal(_LIKELIHOOD_WEIGHTS.get(t, _LIKELIHOOD_WEIGHTS["medium"]))
-        for t in likelihoods
-    ]
+    weights = [Decimal(_LIKELIHOOD_WEIGHTS.get(t, _LIKELIHOOD_WEIGHTS["medium"])) for t in likelihoods]
     return _normalize_decimal_scores_to_100(weights)
 
 
@@ -136,9 +123,7 @@ def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
 
 
 class ScenarioService:
-    def load_dimension_template(
-        self, event_type_l2_id: int
-    ) -> list["CommonScenarioTemplateDimension"]:
+    def load_dimension_template(self, event_type_l2_id: int) -> list["CommonScenarioTemplateDimension"]:
         from apps.agents.scenario_group_agent.schemas.domain.template import (
             ScenarioTemplateDimension as CommonScenarioTemplateDimension,
         )
@@ -169,9 +154,7 @@ class ScenarioService:
             event_type_l2_id,
         )
 
-    def load_scenario_template(
-        self, event_type_l2_id: int
-    ) -> "CommonScenarioTemplate":
+    def load_scenario_template(self, event_type_l2_id: int) -> "CommonScenarioTemplate":
         from apps.agents.scenario_group_agent.schemas.domain.template import (
             ScenarioTemplate as CommonScenarioTemplate,
             ScenarioTemplateDimension,
@@ -201,25 +184,19 @@ class ScenarioService:
             dimensions=dimensions,
         )
 
-    def _load_template_json_from_db(
-        self, event_type_l2_id: int
-    ) -> list[dict[str, Any]]:
+    def _load_template_json_from_db(self, event_type_l2_id: int) -> list[dict[str, Any]]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
 
         session = get_sync_session()
         try:
-            template_json = ScenarioRepository(
-                session=session
-            )._load_template_json_from_db(event_type_l2_id)
+            template_json = ScenarioRepository(session=session)._load_template_json_from_db(event_type_l2_id)
         finally:
             session.close()
 
         if template_json is None:
-            raise KeyError(
-                f"scenario dimension template 없음: event_type_l2_id={event_type_l2_id}"
-            )
+            raise KeyError(f"scenario dimension template 없음: event_type_l2_id={event_type_l2_id}")
 
         if not isinstance(template_json, list):
             raise ValueError(
@@ -234,9 +211,7 @@ class ScenarioService:
         event_type_l2_id: int,
     ) -> ScenarioTemplate:
         if not template_json:
-            raise ValueError(
-                f"template_json is empty: event_type_l2_id={event_type_l2_id}"
-            )
+            raise ValueError(f"template_json is empty: event_type_l2_id={event_type_l2_id}")
 
         dimensions = [
             self._map_template_dimension(item, event_type_l2_id, index)
@@ -256,24 +231,15 @@ class ScenarioService:
         index: int,
     ) -> TemplateDimension:
         if not isinstance(raw_dimension, dict):
-            raise ValueError(
-                "template_json item must be object: "
-                f"event_type_l2_id={event_type_l2_id}, index={index}"
-            )
+            raise ValueError(f"template_json item must be object: event_type_l2_id={event_type_l2_id}, index={index}")
 
         dim_key = str(raw_dimension.get("dim_key", "")).strip()
         if not dim_key:
-            raise ValueError(
-                "dim_key is required: "
-                f"event_type_l2_id={event_type_l2_id}, index={index}"
-            )
+            raise ValueError(f"dim_key is required: event_type_l2_id={event_type_l2_id}, index={index}")
 
         raw_value_enums = raw_dimension.get("value_enums") or []
         if not isinstance(raw_value_enums, list):
-            raise ValueError(
-                "value_enums must be array: "
-                f"event_type_l2_id={event_type_l2_id}, dim_key={dim_key}"
-            )
+            raise ValueError(f"value_enums must be array: event_type_l2_id={event_type_l2_id}, dim_key={dim_key}")
 
         return TemplateDimension(
             label=str(raw_dimension.get("label", "")).strip() or dim_key,
@@ -321,28 +287,21 @@ class ScenarioService:
         scenarios = stage4.get("scenarios", []) or []
         likelihood_prior = stage5.get("likelihood_prior", {}) or {}
 
-        likelihoods = [
-            likelihood_prior.get(scenario.get("scenario_id", ""), "medium")
-            for scenario in scenarios
-        ]
+        likelihoods = [likelihood_prior.get(scenario.get("scenario_id", ""), "medium") for scenario in scenarios]
         normalized_scores = _normalize_scores_to_100(likelihoods)
 
         session = get_sync_session()
         try:
             repository = ScenarioRepository(session=session)
             saved_ids: list[int] = []
-            for index, (scenario, probability_score) in enumerate(
-                zip(scenarios, normalized_scores), start=1
-            ):
+            for index, (scenario, probability_score) in enumerate(zip(scenarios, normalized_scores), start=1):
                 price_direction = scenario.get("price_direction", {}) or {}
                 payload = {
                     "scenario_group_id": scenario_group_id,
                     "title": (scenario.get("title") or "")[:255],
                     "narrative": scenario.get("description") or "",
                     "status": ScenarioStatus.CREATING.value,
-                    "dimension_values": self._normalize_dimension_values_object(
-                        scenario.get("dimension_values") or {}
-                    ),
+                    "dimension_values": self._normalize_dimension_values_object(scenario.get("dimension_values") or {}),
                     "probability_score": probability_score,
                     "probability_delta": Decimal("0.0"),
                     "impact_jkm": price_direction.get("jkm"),
@@ -414,7 +373,7 @@ class ScenarioService:
         event_type_l2_id: int,
         table_payload: ScenarioSyncTablePayload,
         user_id: int,
-        event_data: EventPayload | dict[str, Any] | None = None,
+        new_row_details: list[NewScenarioGeneratedDetails] | None = None,
     ) -> ScenarioSyncResult:
         return asyncio.run(
             self.sync_from_table_async(
@@ -422,7 +381,7 @@ class ScenarioService:
                 event_type_l2_id=event_type_l2_id,
                 table_payload=table_payload,
                 user_id=user_id,
-                event_data=event_data,
+                new_row_details=new_row_details,
             )
         )
 
@@ -432,7 +391,7 @@ class ScenarioService:
         event_type_l2_id: int,
         table_payload: ScenarioSyncTablePayload,
         user_id: int,
-        event_data: EventPayload | dict[str, Any] | None = None,
+        new_row_details: list[NewScenarioGeneratedDetails] | None = None,
     ) -> ScenarioSyncResult:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -444,12 +403,8 @@ class ScenarioService:
             signpost_repository = SignpostRepository(session=session)
             group_repository = ScenarioGroupRepository(session=session)
 
-            scenarios = scenario_repository.fetch_models_by_group_id(
-                scenario_group_id
-            )
-            scenarios_by_id = {
-                int(scenario.scenario_id): scenario for scenario in scenarios
-            }
+            scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
+            scenarios_by_id = {int(scenario.scenario_id): scenario for scenario in scenarios}
             requested_existing_ids: set[int] = set()
             inserted_ids: list[int] = []
             updated_ids: list[int] = []
@@ -457,19 +412,9 @@ class ScenarioService:
             rows = table_payload.get("rows", []) or []
             template_by_key = self._load_dimension_template_by_key(event_type_l2_id)
             new_rows = [row for row in rows if row.get("scenario_id") is None]
-            new_row_details = await self._generate_new_row_details_async(
-                event_data,
-                [
-                    self.cells_to_dimension_values_with_template(
-                        template_by_key,
-                        row.get("cells") or {},
-                    )
-                    for row in new_rows
-                ],
-            )
-            details_by_row_id = {
-                id(row): detail for row, detail in zip(new_rows, new_row_details)
-            }
+            if new_rows and len(new_row_details or []) != len(new_rows):
+                raise ValueError("Generated scenario details are required for every new scenario row")
+            details_by_row_id = {id(row): detail for row, detail in zip(new_rows, new_row_details or [])}
 
             for row in rows:
                 row_scenario_id = row.get("scenario_id")
@@ -490,9 +435,7 @@ class ScenarioService:
                 scenario_id = int(row_scenario_id)
                 scenario = scenarios_by_id.get(scenario_id)
                 if scenario is None:
-                    raise ValueError(
-                        f"Scenario does not belong to group: {scenario_id}"
-                    )
+                    raise ValueError(f"Scenario does not belong to group: {scenario_id}")
                 requested_existing_ids.add(scenario_id)
                 payload = self._row_to_existing_scenario_payload(
                     template_by_key=template_by_key,
@@ -505,11 +448,7 @@ class ScenarioService:
                 else:
                     unchanged_existing_ids.append(scenario_id)
 
-            deleted_ids = [
-                scenario_id
-                for scenario_id in scenarios_by_id
-                if scenario_id not in requested_existing_ids
-            ]
+            deleted_ids = [scenario_id for scenario_id in scenarios_by_id if scenario_id not in requested_existing_ids]
             scenario_repository.soft_delete_by_ids(deleted_ids, user_id=user_id)
 
             regenerate_ids = [*inserted_ids, *updated_ids]
@@ -518,9 +457,7 @@ class ScenarioService:
                 user_id=user_id,
             )
 
-            active_scenarios = scenario_repository.fetch_models_by_group_id(
-                scenario_group_id
-            )
+            active_scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
             self._normalize_active_probability_scores(
                 active_scenarios,
                 user_id=user_id,
@@ -530,9 +467,7 @@ class ScenarioService:
             group = group_repository.fetch_by_id(scenario_group_id)
             if group is not None:
                 header_keys = [
-                    str(header["key"])
-                    for header in table_payload.get("headers", []) or []
-                    if header.get("key")
+                    str(header["key"]) for header in table_payload.get("headers", []) or [] if header.get("key")
                 ]
                 group_repository.update_group(
                     group,
@@ -545,9 +480,7 @@ class ScenarioService:
 
             session.commit()
             return {
-                "active_scenario_ids": [
-                    int(scenario.scenario_id) for scenario in active_scenarios
-                ],
+                "active_scenario_ids": [int(scenario.scenario_id) for scenario in active_scenarios],
                 "regenerate_scenario_ids": regenerate_ids,
                 "inserted_scenario_ids": inserted_ids,
                 "updated_scenario_ids": updated_ids,
@@ -560,14 +493,8 @@ class ScenarioService:
         finally:
             session.close()
 
-    def _normalize_dimension_values_object(
-        self, dimension_values: dict[str, Any]
-    ) -> dict[str, Any]:
-        return {
-            str(dim_key): value
-            for dim_key, value in dimension_values.items()
-            if str(dim_key).strip()
-        }
+    def _normalize_dimension_values_object(self, dimension_values: dict[str, Any]) -> dict[str, Any]:
+        return {str(dim_key): value for dim_key, value in dimension_values.items() if str(dim_key).strip()}
 
     def cells_to_dimension_values(
         self,
@@ -585,9 +512,7 @@ class ScenarioService:
     ) -> ScenarioDimensionTemplateByKey:
         template_json = self._load_template_json_from_db(event_type_l2_id)
         template_by_key = {
-            str(item.get("dim_key")): item
-            for item in template_json
-            if isinstance(item, dict) and item.get("dim_key")
+            str(item.get("dim_key")): item for item in template_json if isinstance(item, dict) and item.get("dim_key")
         }
         return template_by_key
 
@@ -601,66 +526,6 @@ class ScenarioService:
             if key in template_by_key:
                 converted[key] = value
         return self._normalize_dimension_values_object(converted)
-
-    def _generate_new_row_details(
-        self,
-        event_data: EventPayload | dict[str, Any] | None,
-        dimension_values_list: list[ScenarioDimensionValues],
-    ) -> list[NewScenarioGeneratedDetails]:
-        return asyncio.run(
-            self._generate_new_row_details_async(
-                event_data=event_data,
-                dimension_values_list=dimension_values_list,
-            )
-        )
-
-    async def _generate_new_row_details_async(
-        self,
-        event_data: EventPayload | dict[str, Any] | None,
-        dimension_values_list: list[ScenarioDimensionValues],
-    ) -> list[NewScenarioGeneratedDetails]:
-        if not dimension_values_list:
-            return []
-        if event_data is None:
-            raise ValueError("event_data is required to create new scenario rows")
-
-        from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
-            stage1_build_context_pack,
-            stage4_synthesize_fixed_scenarios,
-            stage6_validate,
-        )
-
-        pack = stage1_build_context_pack(event_data)
-        stage4 = await stage4_synthesize_fixed_scenarios(
-            pack,
-            [
-                {str(key): str(value) for key, value in dimension_values.items()}
-                for dimension_values in dimension_values_list
-            ],
-        )
-        stage6 = await stage6_validate(pack, stage4)
-        likelihoods = [
-            stage6.likelihood_prior.get(scenario.scenario_id, "medium")
-            for scenario in stage4.scenarios
-        ]
-        details: list[NewScenarioGeneratedDetails] = []
-        for scenario, likelihood in zip(stage4.scenarios, likelihoods):
-            details.append(
-                NewScenarioGeneratedDetails(
-                    narrative=scenario.description,
-                    probability_weight=Decimal(
-                        _LIKELIHOOD_WEIGHTS.get(
-                            likelihood,
-                            _LIKELIHOOD_WEIGHTS["medium"],
-                        )
-                    ),
-                    probability_delta=Decimal("0.0"),
-                    impact_jkm=scenario.price_direction.jkm,
-                    impact_ttf=scenario.price_direction.ttf,
-                    impact_hh=scenario.price_direction.hh,
-                )
-            )
-        return details
 
     def _row_to_existing_scenario_payload(
         self,

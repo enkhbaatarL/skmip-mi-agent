@@ -11,7 +11,10 @@ from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
-from apps.agents.scenario_group_agent.schemas.domain.scenario import ScenarioPayload
+from apps.agents.scenario_group_agent.schemas.domain.scenario import (
+    NewScenarioGeneratedDetails,
+    ScenarioPayload,
+)
 from apps.agents.scenario_group_agent.schemas.domain.scenario_group import (
     ScenarioGroupPayload,
 )
@@ -128,6 +131,7 @@ class ScenarioDesignState(BaseModel):
     saved_scenario_ids: Annotated[list[int], extend_unique_ints] = Field(default_factory=list)
     saved_signpost_ids: Annotated[list[int], extend_unique_ints] = Field(default_factory=list)
     signpost_target_scenario_ids: list[int] = Field(default_factory=list)
+    new_scenario_row_details: list[NewScenarioGeneratedDetails] = Field(default_factory=list)
     snapshot_id: int | None = None
 
     is_valid: bool = False
