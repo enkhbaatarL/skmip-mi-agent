@@ -499,6 +499,35 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
 
+    async def test_llm_incompatibility_passes_when_only_recommendation_is_outside_template_enum(self) -> None:
+        context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
+        incompatible = _llm_result(
+            CompatibilityItem(
+                scenario_id=100,
+                compatible=False,
+                reason="기간 값이 더 자연스러운 중간 선택지를 필요로 함",
+                conflict_dim_a="강도 (severity)",
+                conflict_value_a="낮음",
+                conflict_dim_b="기간 (period)",
+                conflict_value_b="단기",
+                recommended_value_b="중기",
+            ),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=incompatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "PASS"
+        assert report.is_valid
+        r03 = next(check for check in report.checks if check.check_id == "R03")
+        assert r03.status == "PASS"
+        assert "enum 안 실행 가능한 권장 변경 없음" in r03.detail
+
     async def test_llm_error_sets_invalid(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
 

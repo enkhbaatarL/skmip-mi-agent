@@ -15,7 +15,6 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     COMPAT_SYSTEM_PROMPT,
     CompatibilityItem,
     CompatibilityStructuredOutput,
-    GeneratedDimensionCell,
     DimensionValueStructuredOutput,
     build_dimension_value_messages,
 )
@@ -414,6 +413,60 @@ def _compat_advice(item: CompatibilityItem, scenario_label: str | None) -> str:
     return f"{prefix}{body}"
 
 
+def _compatibility_enum_lines(ctx: ReviewContext) -> list[str]:
+    """LLM compatibility judge가 참조할 수 있도록 선택 Dimension의 enum 목록을 프롬프트 행으로 만든다."""
+    lines: list[str] = []
+    for key in ctx.selected_dims:
+        enum_values = ctx.enum_index.get(key) or []
+        if not enum_values:
+            continue
+        lines.append(f"- {_dim_label(ctx, key)} ({key}): {', '.join(enum_values)}")
+    return lines
+
+
+def _resolve_compat_dim_key(ctx: ReviewContext, raw_dim: str | None) -> str | None:
+    """LLM이 반환한 Dimension 표기를 내부 dim_key로 해석한다.LLM이 반환한 conflict_dim_b가 라벨, key, 또는 "기간 (period)" 같은 혼합 표기일 수 있어서 내부 dim_key로 매핑합니다."""
+    if not raw_dim:
+        return None
+    text = str(raw_dim).strip()
+    if text in ctx.dim_index:
+        return text
+    label_by_key = {key: _dim_label(ctx, key) for key in ctx.dim_index}
+    for key, label in label_by_key.items():
+        if text == label or key in text or label in text:
+            return key
+    return None
+
+
+def _has_only_unusable_enum_recommendations(
+    ctx: ReviewContext,
+    incompatible: list[CompatibilityItem],
+) -> bool:
+    """모든 모순 판정이 enum 안에서 실행 가능한 권장 변경 없이 나온 경우인지 확인한다. 모순 판정이 있더라도 모든 권장 변경값이 해당 Dimension enum 밖이라 실제 수정 가능한 대안이 없는 경우인지 확인합니다. 이때만 review R03을 pass 처리합
+    니다."""
+    if not incompatible:
+        return False
+    scenario_by_id = {
+        int(scenario["scenario_id"]): scenario
+        for scenario in ctx.scenarios
+    }
+    for item in incompatible:
+        if item.recommended_value_b is None:
+            return False
+        scenario = scenario_by_id.get(item.scenario_id)
+        if scenario is None:
+            return False
+        dim_key = _resolve_compat_dim_key(ctx, item.conflict_dim_b)
+        if dim_key is None:
+            return False
+        current_value = scenario["dimension_values"].get(dim_key)
+        if current_value is None or str(current_value) != str(item.conflict_value_b):
+            return False
+        if str(item.recommended_value_b) in set(ctx.enum_index.get(dim_key) or []):
+            return False
+    return True
+
+
 async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
     if not ctx.scenarios:
         return CheckResult(
@@ -433,12 +486,14 @@ async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
             f"- {scenario['scenario_id']} [{scenario['title']}]: {pairs}\n"
             f"  narrative: {scenario['narrative']}",
         )
+    enum_lines = _compatibility_enum_lines(ctx)
+    user_prompt = "다음 시나리오 조합을 판정하십시오.\n\n"
+    if enum_lines:
+        user_prompt += "## Dimension enum\n" + "\n".join(enum_lines) + "\n\n"
+    user_prompt += "## Scenarios\n" + "\n".join(lines)
     messages = [
         {"role": "system", "content": COMPAT_SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": "다음 시나리오 조합을 판정하십시오.\n" + "\n".join(lines),
-        },
+        {"role": "user", "content": user_prompt},
     ]
     try:
         result = await _invoke_compatibility(messages=messages)
@@ -459,6 +514,14 @@ async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
             for scenario in ctx.scenarios
         }
         incompatible = [item for item in items if not item.compatible]
+        if _has_only_unusable_enum_recommendations(ctx, incompatible):
+            return CheckResult(
+                "R03",
+                "Stage4",
+                "Compatibility(조합 모순) — LLM 판정",
+                "PASS",
+                f"{len(items)}건 판정 — enum 안 실행 가능한 권장 변경 없음",
+            )
         offenders = [f"{item.scenario_id}: {item.reason}" for item in incompatible]
         advice = [
             _compat_advice(item, title_by_id.get(item.scenario_id))
