@@ -778,7 +778,7 @@ async def run_review(ctx: ReviewContext) -> ReviewReport:
         return ReviewReport(
             verdict="PASS",
             is_valid=True,
-            reason="변경 사항이 없어 모든 시나리오 검토 항목을 통과했습니다.",
+            reason="모든 검사 항목을 통과했습니다.",
             summary={"PASS": 0, "WARN": 0, "FAIL": 0, "INFO": 0},
             checks=[],
         )

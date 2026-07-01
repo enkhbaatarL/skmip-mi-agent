@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     check_existing_signposts,
+    generate_new_scenario_row_details_node,
     load_scenario_group,
     load_scenarios,
     run_signpost_generation,
@@ -32,6 +33,7 @@ from apps.connectors.callback.callback_client import send_callback
 # ---------------------------------------------------------------------------
 # Prepare (plain function, no LangGraph — DB only)
 # ---------------------------------------------------------------------------
+
 
 def prepare_create_signposts(
     scenario_group_id: int,
@@ -57,19 +59,25 @@ def prepare_create_signposts(
 
 
 # ---------------------------------------------------------------------------
-# Background graph: load_scenario_group → sync → load → check → generate → save
+# Background graph: load_scenario_group → generate_new_row_details → sync → load → check → generate → save
 # ---------------------------------------------------------------------------
+
 
 def _build_background_graph() -> Runnable:
     builder = StateGraph(ScenarioDesignState)
     builder.add_node("load_scenario_group", load_scenario_group)
+    builder.add_node(
+        "generate_new_scenario_row_details",
+        generate_new_scenario_row_details_node,
+    )
     builder.add_node("sync_scenarios_from_table", sync_scenarios_from_table)
     builder.add_node("load_scenarios", load_scenarios)
     builder.add_node("check_existing_signposts", check_existing_signposts)
     builder.add_node("run_signpost_generation", run_signpost_generation)
     builder.add_node("save_signposts", save_signposts)
     builder.set_entry_point("load_scenario_group")
-    builder.add_edge("load_scenario_group", "sync_scenarios_from_table")
+    builder.add_edge("load_scenario_group", "generate_new_scenario_row_details")
+    builder.add_edge("generate_new_scenario_row_details", "sync_scenarios_from_table")
     builder.add_edge("sync_scenarios_from_table", "load_scenarios")
     builder.add_edge("load_scenarios", "check_existing_signposts")
     builder.add_edge("check_existing_signposts", "run_signpost_generation")
@@ -102,14 +110,13 @@ def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateSignpost
 
 @lru_cache(maxsize=1)
 def get_background_runnable() -> Runnable:
-    return (
-        _build_background_graph() | RunnableLambda(_bg_to_output)
-    ).with_types(output_type=CreateSignpostsOut)
+    return (_build_background_graph() | RunnableLambda(_bg_to_output)).with_types(output_type=CreateSignpostsOut)
 
 
 # ---------------------------------------------------------------------------
 # Background task function (called via FastAPI BackgroundTasks)
 # ---------------------------------------------------------------------------
+
 
 async def run_create_signposts_background(
     scenario_group_id: int,
@@ -119,9 +126,7 @@ async def run_create_signposts_background(
     from apps.common.configs.config import get_settings
 
     cfg = get_settings()
-    callback_path = cfg.callback_create_signposts_path.format(
-        scenario_group_id=scenario_group_id
-    )
+    callback_path = cfg.callback_create_signposts_path.format(scenario_group_id=scenario_group_id)
     callback_url = cfg.callback_base_url.rstrip("/") + callback_path
 
     logger.info(f"[BG][create_signposts] START | group_id={scenario_group_id}")
@@ -136,14 +141,11 @@ async def run_create_signposts_background(
         callback_payload: CallBackBody = await get_background_runnable().ainvoke(state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
-        logger.info(
-            f"[BG][create_signposts] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms"
-        )
+        logger.info(f"[BG][create_signposts] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms")
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.error(
-            f"[BG][create_signposts] FAILED | group_id={scenario_group_id}"
-            f" | elapsed={elapsed_ms}ms | error={e!r}"
+            f"[BG][create_signposts] FAILED | group_id={scenario_group_id} | elapsed={elapsed_ms}ms | error={e!r}",
         )
         error_payload = CallBackBody(result="failure", reason=str(e))
         try:

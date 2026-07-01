@@ -140,7 +140,7 @@ ScenarioDesignState(
 | 순서 | Node | 주요 동작 | 오류 조건 |
 |---|---|---|---|
 | 1 | `run_scenario_generation` | scenario generation subgraph 실행 | subgraph 내부 오류 |
-| 2 | `save_scenarios` | scenarios 저장, group `stage="scenario_created"` 갱신, 저장 결과 재조회 | group ID 또는 생성 결과 누락 시 raise |
+| 2 | `save_scenarios` | group 존재 확인 후 scenarios 저장, scenario count 갱신, group `stage="scenario_created"` 갱신, 저장 결과 재조회 | group ID 또는 생성 결과 누락 시 raise |
 
 ### `run_scenario_generation` 상세
 
@@ -156,8 +156,7 @@ flowchart LR
     E --> F[Stage 4<br/>Scenario 합성]
     F --> G[Stage 5<br/>Quick Validate]
     G -->|통과| H[Stage 6<br/>MECE·Likelihood]
-    G -->|repair 적용 성공| H
-    G -->|feedback 있음 + repair 없음| F
+    G -->|feedback 있음| F
     G -->|재시도 초과| H
     H --> I[scenario_result]
 ```
@@ -200,6 +199,9 @@ baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 Ha
 선택해 다양성을 확보한다. 기본 목표 개수는 `REF_TARGET_SCENARIOS`(기본값 6)다.
 
 `validation_feedback`이 있으면 이전 합성 결과에 대한 피드백을 반영해 조합을 재선정한다.
+compatibility feedback에 `recommended_value`가 있으면 해당 시나리오의 이전 조합을 기준으로
+권장 값을 우선 적용한 target 조합을 만든다. 이 값은 Stage 3 selected enum 밖이어도
+template enum 안의 값이면 사용할 수 있다.
 
 선택한 각 조합에 대해 LLM이 `title`, `description`, `derivation_rationale`,
 `price_direction.brent/jkm/ttf`를 생성한다. 실패 시 중립 가격 방향 fallback 사용.
@@ -211,14 +213,15 @@ baseline에 가까운 조합과 tail 조합을 anchor로 잡고, 나머지는 Ha
 빠르게 검사한다.
 
 - 통과(`validation_feedback=None`): Stage 6으로 진행
-- 실패했지만 `Stage5RepairInstruction`이 있으면: Stage 4로 되돌리지 않고 현재
-  `stage4_scenario_synthesis.scenarios[*].dimension_values`를 직접 보정한 뒤 Stage 6으로 진행
-  - `scenario_ref`(`S_01` 등)로 대상 scenario를 찾는다.
-  - 대상 scenario의 `dim_key` 값이 repair의 `current_value`와 같을 때만 `recommended_value`로 교체한다.
-  - 값이 이미 달라졌거나 대상 scenario를 찾을 수 없으면 해당 repair는 적용하지 않는다.
-  - compatibility 실패 feedback은 `scenario_ref | scenario_title | dim_key | current_value | recommended_value`
-    헤더의 표 형식으로 생성한다. `scenario_ref`는 `1`이 아니라 `S_01` 형식을 사용한다.
-- 실패했고 적용 가능한 repair가 없으면: `validation_feedback`을 유지해 `synthesize_scenarios` 노드로 돌아가 재합성
+- 실패하면 `validation_feedback`을 유지해 `synthesize_scenarios` 노드로 돌아가 재합성
+  - Stage 5는 `dimension_values`를 직접 보정하지 않는다.
+  - feedback에는 실패 유형(`baseline_contrast`, `duplicate`, `compatibility`), 문제 시나리오/값,
+    Stage 4 재생성 지시를 포함한다.
+  - compatibility 실패에서 LLM이 권장한 값은 `Stage5RepairInstruction` 형태로 Stage 4 재생성에 전달된다.
+    이는 Stage 6으로 직행하는 직접 보정이 아니라, Stage 4가 해당 target 조합과 narrative를 다시 만들기 위한
+    override 입력이다.
+  - Stage 4는 feedback을 반영해 조합을 재선정하고, 새 조합에 맞춰 `title`, `description`,
+    `derivation_rationale`, `price_direction`을 다시 생성한다.
 - `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: 남은 feedback이 있어도 Stage 6으로 진행
 
 #### Stage 6: MECE 및 Likelihood 검증
@@ -257,12 +260,13 @@ flowchart LR
     B --> C[200 ScenarioGroupAcceptedOut]
     B --> D[BackgroundTasks]
     D --> E[load_scenario_group]
-    E --> F[sync_scenarios_from_table]
-    F --> G[load_scenarios]
-    G --> H[check_existing_signposts]
-    H --> I[run_signpost_generation]
-    I --> J[save_signposts]
-    J --> K[send_callback]
+    E --> F[generate_new_scenario_row_details]
+    F --> G[sync_scenarios_from_table]
+    G --> H[load_scenarios]
+    H --> I[check_existing_signposts]
+    I --> J[run_signpost_generation]
+    J --> K[save_signposts]
+    K --> L[send_callback]
 ```
 
 ### 입력과 출력 변환
@@ -278,11 +282,30 @@ flowchart LR
 | 순서 | Node | 주요 동작 | 오류 조건 |
 |---|---|---|---|
 | 1 | `load_scenario_group` | group 조회, 점유자 확인 | group 미존재 또는 다른 사용자 점유 시 raise |
-| 2 | `sync_scenarios_from_table` | 테이블 변경 내용을 DB에 반영하고 재생성 필요 scenario ID를 `signpost_target_scenario_ids`에 설정 | table 누락 시 raise |
-| 3 | `load_scenarios` | group 소속 scenarios 조회 | scenario가 없으면 raise |
-| 4 | `check_existing_signposts` | scenario별 기존 signpost 조회 | (생략 없음) |
-| 5 | `run_signpost_generation` | 미생성 scenario + `target_ids` 대상 비동기 생성 | `failure`, `already_exist`이면 skip |
-| 6 | `save_signposts` | 새 signpost 저장, scenario `status="created"`, group `stage="signpost_created"` 갱신 | `failure`, `already_exist`이면 skip |
+| 2 | `generate_new_scenario_row_details` | table 신규 row(`scenario_id=None`)가 있으면 고정 dimension 조합에 대해 Stage 4 fixed narrative와 Stage 6 likelihood를 생성 | event 누락 시 raise |
+| 3 | `sync_scenarios_from_table` | 테이블 변경 내용을 DB에 반영하고 재생성 필요 scenario ID를 `signpost_target_scenario_ids`에 설정 | table 누락 또는 신규 row detail 누락 시 raise |
+| 4 | `load_scenarios` | group 소속 scenarios 조회 | scenario가 없으면 raise |
+| 5 | `check_existing_signposts` | scenario별 기존 signpost 조회 | (생략 없음) |
+| 6 | `run_signpost_generation` | 미생성 scenario + `target_ids` 대상 비동기 생성 | `failure`, `already_exist`이면 skip |
+| 7 | `save_signposts` | group 존재 확인 후 새 signpost 저장, scenario `status="created"` 갱신, group `stage="signpost_created"` 갱신 | `failure`, `already_exist`이면 skip |
+
+### `generate_new_scenario_row_details` 상세
+
+신규 scenario row는 table cell의 dimension 조합은 이미 확정되어 있지만 DB 저장에 필요한
+`narrative`, `probability_score`, `impact_jkm/ttf/hh`가 없다. 이 node는 persistence service가
+LLM pipeline을 직접 호출하지 않도록 저장 전에 generation을 수행한다.
+
+```mermaid
+flowchart LR
+    A[신규 row cells] --> B[dimension_values 변환]
+    B --> C[Stage 4 fixed<br/>Narrative·Price Direction]
+    C --> D[Stage 6<br/>Likelihood]
+    D --> E[new_scenario_row_details]
+```
+
+- Stage 4 fixed는 조합을 재선정하지 않고, 주어진 dimension 조합에 narrative와 price direction만 생성한다.
+- Stage 6 likelihood는 신규 row의 초기 `probability_score`로 변환된다.
+- `ScenarioService.sync_from_table*()`는 `new_scenario_row_details`를 받아 DB insert/update만 담당한다.
 
 ### `run_signpost_generation` 상세
 
@@ -582,7 +605,7 @@ flowchart LR
 | 시작 식별자 | `mi_event_id` | `scenario_group_id` | `scenario_group_id` | `scenario_group_id` |
 | 실행 방식 | prepare + 백그라운드 | prepare + 백그라운드 | prepare + 백그라운드 | 동기 ainvoke |
 | 입력 payload | `user_id` | `user_id`, `table` | `user_id`, `table` | `user_id`, `scenario_group`, `table` |
-| 핵심 외부 처리 | scenario LLM pipeline (6 stage) | signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증 | snapshot 생성 (DB only) |
+| 핵심 외부 처리 | scenario LLM pipeline (6 stage) | 신규 row fixed scenario detail 생성 + signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증 | snapshot 생성 (DB only) |
 | 중복 처리 | 기존 group 존재 시 에러 raise | 미생성 scenario + target_ids 대상만 생성 | 해당 없음 | 해당 없음 |
 | stage 갱신 | `scenario_created` | `signpost_created` | `scenario_validated` 또는 `scenario_created` | `completed` |
 | 최종 DB 변경 | group/scenarios 생성 | signposts 생성, scenario 상태 갱신 | judgment stage 갱신 | snapshot 생성, 변경 사항 적용 |

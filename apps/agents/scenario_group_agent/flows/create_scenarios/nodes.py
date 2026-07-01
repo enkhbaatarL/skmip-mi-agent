@@ -179,16 +179,8 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, object]:
         if isinstance(item, dict) and item.get("dim_key")
     ]
 
-    group = ScenarioGroupService().update_state(
-        state.scenario_group_id,
-        status=ScenarioGroupStatus.CREATING,
-        stage=ScenarioGroupStage.SCENARIO_CREATED,
-        dimension_selected=dimension_selected,
-        title=scenario_group_metadata.get("title"),
-        description=scenario_group_metadata.get("description"),
-        user_id=state.user_id,
-    )
-    if group is None:
+    scenario_group_service = ScenarioGroupService()
+    if scenario_group_service.load_by_id(state.scenario_group_id) is None:
         raise MIBaseError(
             ErrorCode.ENTITY_NOT_FOUND,
             detail=f"Fail to save scenarios because scenario group is deleted: {state.scenario_group_id}.",
@@ -199,8 +191,18 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, object]:
         state.scenario_result.model_dump(),
         state.user_id,
     )
-    ScenarioGroupService().update_scenario_count(
-        state.scenario_group_id, len(saved_ids)
+    scenario_group_service.update_scenario_count(
+        state.scenario_group_id,
+        len(saved_ids),
+    )
+    group = scenario_group_service.update_state(
+        state.scenario_group_id,
+        status=ScenarioGroupStatus.CREATING,
+        stage=ScenarioGroupStage.SCENARIO_CREATED,
+        dimension_selected=dimension_selected,
+        title=scenario_group_metadata.get("title"),
+        description=scenario_group_metadata.get("description"),
+        user_id=state.user_id,
     )
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
     return state_update(

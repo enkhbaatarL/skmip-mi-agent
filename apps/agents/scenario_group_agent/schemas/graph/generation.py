@@ -244,7 +244,7 @@ class Stage5RepairInstruction(BaseModel):
     ] = Field(description="Stage 5 quick validation 실패 유형")
     dim_key: str = Field(description="수정할 dimension key")
     current_value: str = Field(description="현재 값")
-    recommended_value: str = Field(description="Stage 3 selected enum 안의 권장 값")
+    recommended_value: str = Field(description="Stage 4 재생성 시 우선 반영할 권장 값")
     reason: str = Field(default="", description="수정 사유")
 
 
