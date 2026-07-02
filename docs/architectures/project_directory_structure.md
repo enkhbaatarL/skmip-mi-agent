@@ -169,7 +169,7 @@ apps/agents/<agent_name>/
 - `prompts/scenario_generation.py`, `prompts/scenario_validation.py`, `prompts/signpost_generation.py`: 생성/검증/Signpost LLM prompt와 structured output schema
 - `schemas/api/`: `common.py`, `table.py`, `manage_scenario_groups.py`처럼 여러 endpoint 또는 presentation에서 공유하는 API DTO
 - `apps/persistence/<domain>/schema.py`: `event`, `scenario_group`, `scenario`, `signpost` service DTO
-- `subgraphs/scenario_generation/schema.py`, `subgraphs/signpost_generation/schema.py`: 각 generation subgraph의 graph DTO
+- `subgraphs/scenario_generation/schema.py`, `subgraphs/scenario_review/schema.py`, `subgraphs/signpost_generation/schema.py`: 각 subgraph의 graph/review DTO
 - `apps/persistence/scenario/baseline_contrast.py`: scenario/signpost persistence와 generation/review에서 공유하는 baseline 대비 coverage 계산 helper
 - `tools/`: 현재 구현된 Agent 전용 LLM tool은 없으며, 향후 tool 구현 위치로 예약
 - `subgraphs/scenario_generation/`: scenario 생성 pipeline subgraph
@@ -184,6 +184,7 @@ apps/agents/<agent_name>/
 ```text
 POST /scenario-groups
 → api.py
+→ flows/create_scenarios/api_schema.py
 → flows/create_scenarios/flow_async.py
 → flows/create_scenarios/nodes.py
 → subgraphs/scenario_generation/
@@ -203,6 +204,7 @@ DELETE /admin/scenario-groups/{scenario_group_id}/hard
 
 POST /scenario-groups/{scenario_group_id}/validation
 → api.py
+→ flows/validate_scenarios/api_schema.py
 → flows/validate_scenarios/flow_async.py
 → flows/validate_scenarios/nodes.py
 → subgraphs/scenario_review/
@@ -213,12 +215,14 @@ DELETE /scenario-groups/{scenario_group_id}/signposts
 
 POST /scenario-groups/{scenario_group_id}/signposts
 → api.py
+→ flows/create_signposts/api_schema.py
 → flows/create_signposts/flow_async.py
 → flows/create_signposts/nodes.py
 → subgraphs/signpost_generation/
 
 POST /scenario-groups/{scenario_group_id}/confirmation
 → api.py
+→ flows/confirm_generation/api_schema.py
 → flows/confirm_generation/flow.py
 → flows/confirm_generation/nodes.py
 ```

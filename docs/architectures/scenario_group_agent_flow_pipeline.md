@@ -542,6 +542,7 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 - `flow.py`: review subgraph runnable 조립
 - `subgraph_adapter.py`: `ScenarioDesignState`와 `ScenarioReviewState` 사이의 변환, review 결과를 parent state update dict로 변환
 - `nodes.py`: LangGraph node wrapper
+- `schema.py`: review context, check result, report DTO
 - `state.py`: review subgraph 전용 state
 - `review_stages.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현
 
