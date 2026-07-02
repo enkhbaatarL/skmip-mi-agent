@@ -1,107 +1,55 @@
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from apps.agents.interpret_agent.schemas.base import ApiModel
-from apps.common.values.response import CallBackBody
+from apps.agents.interpret_agent.schemas.enums import PriceInterpretationStatus
+from apps.common.values.response import CallBackBody, CommonResponse
 
 
-class ForecastPoint(ApiModel):
-    month: str = Field(description="YYYY-MM")
-    value: float = Field(description="월별 forecast 값(float)")
+class PriceInterpretationItem(ApiModel):
+    """시나리오별 가격전망 해석 단위(callback interpretations 항목)."""
+
+    scenario_id: int = Field(description="대상 시나리오 ID")
+    content: str = Field(description="가격전망 해석 원본 텍스트")
 
 
-class InterpretationScenarioIn(ApiModel):
-    scenario_id: int
-    forecast: list[ForecastPoint] = Field(min_length=1)
+class CreatePriceInterpretationIn(ApiModel):
+    """가격전망 해석 생성 요청 body.
+
+    `scenarioGroupId`는 path param으로 전달되므로 body에서는 생략한다.
+    `scenarioIds`에는 이미 해석을 보유한 재실행(re-run) 대상도 포함될 수 있다.
+    """
+
+    scenario_ids: list[int] = Field(
+        min_length=1,
+        description="해석 생성 대상 시나리오 ID 목록(재실행 대상 포함 가능)",
+    )
 
 
-class CreateInterpretationIn(ApiModel):
+class PriceInterpretationAcceptedData(ApiModel):
     scenario_group_id: int
-    scenarios: list[InterpretationScenarioIn] = Field(min_length=1)
+    scenario_ids: list[int] = Field(description="접수된 대상 시나리오 ID 목록")
+    status: str = Field(
+        default=PriceInterpretationStatus.PROCESSING.value,
+        description="접수 직후 상태(PROCESSING)",
+    )
 
 
-class InterpretationAcceptedData(ApiModel):
-    job_id: str
-    scenario_group_id: int
-    status: str
-    stage: str
-    accepted_at: str
+class PriceInterpretationAcceptedOut(CommonResponse):
+    """생성 요청 접수(ack) 동기 응답."""
+
+    data: PriceInterpretationAcceptedData | None = None
 
 
-class InterpretationAcceptedOut(BaseModel):
-    status: str = "success"
-    message: str = "성공"
-    data: InterpretationAcceptedData
+class PriceInterpretationCallbackOut(CallBackBody):
+    """가격전망 해석 생성 완료 callback body(Agent → B.E).
 
+    - result=success: `interpretations`에 시나리오별 해석 원본을 담아 전달
+    - result=failure: `reason`에 실패 사유, `interpretations`는 null
+    """
 
-class InterpretationJobStatusData(ApiModel):
-    job_id: str
-    scenario_group_id: int
-    status: str
-    stage: str
-    updated_at: str
-    error: dict[str, Any] | None = None
-
-
-class InterpretationJobStatusOut(BaseModel):
-    status: str = "success"
-    message: str = "성공"
-    data: InterpretationJobStatusData
-
-
-class BaseEventOut(ApiModel):
-    event_id: int
-    title: str
-    summary: str
-    event_type: dict[str, str] = Field(default_factory=dict)
-    key_drivers: list[str] = Field(default_factory=list)
-    occurred_at: str | None = None
-
-
-class DimensionDefinitionOut(ApiModel):
-    dimension_id: str
-    label: str
-    rationale: str | None = None
-    enum_used: list[str] = Field(default_factory=list)
-
-
-class InterpretationScenarioOut(ApiModel):
-    scenario_id: int | str
-    title: str
-    description: str | None = None
-    dimension_values: dict[str, Any] = Field(default_factory=dict)
-    pattern: dict[str, Any] = Field(default_factory=dict)
-    causal_narrative: str | None = None
-    likelihood_prior: str | None = None
-    forecast: list[ForecastPoint] | None = None
-
-
-class InterpretationMetaOut(ApiModel):
-    scenario_group_id: int | str
-    base_event_id: int | str
-    interpretation_date: str
-    indices: list[str] = Field(default_factory=list)
-    unit: str
-
-
-class InterpretationResultOut(ApiModel):
-    meta: InterpretationMetaOut
-    scenarios: list[InterpretationScenarioOut] = Field(default_factory=list)
-    synthesis: dict[str, Any] = Field(default_factory=dict)
-    # Backward compatibility for previous documentation drafts.
-    base_event: BaseEventOut | None = None
-    dimensions: list[DimensionDefinitionOut] = Field(default_factory=list)
-
-
-class InterpretationCallbackData(ApiModel):
-    job_id: str
-    scenario_group_id: int
-    interpretation: InterpretationResultOut
-
-
-class InterpretationCallbackOut(CallBackBody):
-    data: InterpretationCallbackData | None = None
-
+    interpretations: list[PriceInterpretationItem] | None = Field(
+        default=None,
+        description="시나리오별 해석 목록(result=success일 때 필수)",
+    )
