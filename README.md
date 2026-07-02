@@ -13,7 +13,7 @@ apps/
 │   │   │   ├── validate_scenarios/
 │   │   │   ├── create_signposts/
 │   │   │   └── confirm_generation/
-│   │   ├── schemas/          # shared API schema only
+│   │   ├── schemas/          # shared or flow-less API schema
 │   │   └── subgraphs/
 │   │       ├── scenario_generation/
 │   │       ├── scenario_review/

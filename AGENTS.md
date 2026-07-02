@@ -29,7 +29,7 @@ If the task touches one of these areas, read the linked document before changing
 - In normal app code, use `get_settings()` instead of reading `os.environ` directly.
 - Use `MIBaseError(ErrorCode..., detail=...)` for domain/API errors.
 - Keep DB access behind `apps/persistence/<domain>/service.py` and `repository.py`; flow/node code should call services.
-- Put flow endpoint request/response schemas in `flows/<flow_name>/api_schema.py`; keep only shared API schemas in `schemas/api/common.py`, `schemas/api/table.py`, or focused shared files such as `schemas/api/manage_scenario_groups.py`.
+- Put flow endpoint request/response schemas in `flows/<flow_name>/api_schema.py`; keep shared API schemas or flow-less API schemas in `schemas/api/common.py`, `schemas/api/table.py`, or focused files such as `schemas/api/manage_scenario_groups.py`.
 - Put persistence DTOs next to the owning persistence service in `apps/persistence/<domain>/schema.py`; put shared persistence base/enums in `apps/persistence/schema_base.py` and `apps/persistence/enums.py`.
 - For long-running API work that returns immediately, use the existing `flow_async.py` background-task pattern.
 
