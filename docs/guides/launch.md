@@ -24,6 +24,18 @@ poetry --version
 poetry install
 ```
 
+개인 로컬에서 프로젝트 내부 `.venv`를 사용하려면 VS Code/Cursor의
+`Poetry Install (.venv)` task를 실행하거나 아래 명령어를 사용합니다.
+
+```bash
+POETRY_VIRTUALENVS_CREATE=true \
+POETRY_VIRTUALENVS_IN_PROJECT=true \
+POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON=false \
+poetry install
+```
+
+이후 VS Code/Cursor Python interpreter를 `${workspaceFolder}/.venv/bin/python`으로 선택합니다.
+
 ## 3) 환경 파일 복사 및 수정
 
 `env.example.txt`를 복사해 `env.txt`를 만들고, 실제 실행 환경에 맞게 값을 수정합니다.
@@ -41,3 +53,7 @@ cp envs/skgas_agent/env.example.txt envs/skgas_agent/env.txt
 3. `F5`를 눌러 실행합니다.
 
 이 Launcher는 실행 전에 `Poetry Install` task를 먼저 실행하고, 이어서 `uvicorn`으로 서버를 시작합니다.
+
+프로젝트 내부 `.venv`를 사용하는 경우에는 Python interpreter를 `.venv/bin/python`으로 선택한 뒤
+`[🚀]launcher: poetry install (.venv) + uvicorn` 또는 `[🌱]backend: uvicorn (main.py)`를 사용합니다.
+기존 `[🚀]launcher: poetry install + uvicorn`은 기존 active Python 환경 기준 task를 유지합니다.

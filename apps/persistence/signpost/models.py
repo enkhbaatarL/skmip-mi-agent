@@ -9,9 +9,7 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.common.configs.database.sync_database.base import ORMBase
-from apps.persistence.enums import SignpostStrength
 from apps.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
-from apps.persistence.signpost.schema import GeneratedSignpostPayload
 
 
 class MiSignpostModel(AuditColumnsMixin, ORMBase):
@@ -45,39 +43,3 @@ class MiSignpostModel(AuditColumnsMixin, ORMBase):
     keyword_hints: Mapped[Any | None] = mapped_column(sa.JSON, nullable=True, comment="매칭 키워드 힌트 배열")
     display_order: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     use_yn: Mapped[str] = mapped_column(sa.CHAR(1, collation=BIN), nullable=False, server_default=sa.text("'Y'"), comment="사용 여부")
-
-    @classmethod
-    def convert_from_dto(
-        cls,
-        dto: GeneratedSignpostPayload,
-        display_order: int,
-        user_id: int | None = None,
-    ) -> "MiSignpostModel":
-        rationale = dto.rationale_ko or ""
-        if dto.keyword_hints:
-            rationale = (
-                f"{rationale}\n\nkeyword_hints: {', '.join(map(str, dto.keyword_hints))}"
-            ).strip()
-        strength = (
-            SignpostStrength.from_string(dto.strength)
-            if isinstance(dto.strength, str)
-            else dto.strength
-        )
-        strength_value = strength.to_string() if strength is not None else None
-        impact_score = strength.to_impact_score() if strength is not None else None
-
-        model = cls(
-            scenario_id=int(dto.scenario_id),
-            label=(dto.label or "")[:500],
-            probability_direction_code=dto.direction.to_string(),
-            strength=strength_value,
-            probability_impact_score=impact_score,
-            signpost_reason=rationale,
-            display_order=display_order,
-            keyword_hints=dto.keyword_hints,
-            use_yn="Y",
-        )
-        if user_id is not None:
-            model.crt_usr_logn_id = user_id
-            model.mod_usr_logn_id = user_id
-        return model

@@ -4,7 +4,7 @@ from functools import lru_cache
 import time
 from typing import Any
 
-from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.flows.create_scenarios.api_schema import CreateScenariosOut
@@ -12,13 +12,11 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     check_existing_scenario_group,
     create_group_record,
     load_event,
+    run_scenario_generation,
     save_scenarios,
 )
+from apps.agents.scenario_group_agent.flows.create_scenarios.state import CreateScenariosState
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.flow import (
-    scenario_generation_runnable,
-)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
@@ -39,7 +37,7 @@ from apps.persistence.scenario_group.schema import (
 
 def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
     """event 로드 → 기존 그룹 확인 → group row INSERT. 반환값으로 200 응답을 구성한다."""
-    state = ScenarioDesignState(mi_event_id=mi_event_id, user_id=user_id)
+    state = CreateScenariosState(mi_event_id=mi_event_id, user_id=user_id)
     state = state.model_copy(update=load_event(state))
     existing_group_result = check_existing_scenario_group(state)  # 충돌·중복 시 MIBaseError raise
     state = state.model_copy(update=existing_group_result)
@@ -67,8 +65,8 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _build_background_graph() -> Runnable:
-    builder = StateGraph(ScenarioDesignState)
-    builder.add_node("run_scenario_generation", scenario_generation_runnable)
+    builder = StateGraph(CreateScenariosState)
+    builder.add_node("run_scenario_generation", run_scenario_generation)
     builder.add_node("save_scenarios", save_scenarios)
     builder.set_entry_point("run_scenario_generation")
     builder.add_edge("run_scenario_generation", "save_scenarios")
@@ -76,7 +74,7 @@ def _build_background_graph() -> Runnable:
     return builder.compile()
 
 
-def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateScenariosOut:
+def _bg_to_output(state: dict[str, Any] | CreateScenariosState) -> CreateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
     if data.get("status") in {"failure", "error"}:
         raise MIBaseError(
@@ -95,10 +93,8 @@ def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateScenario
 
 
 @lru_cache(maxsize=1)
-def get_background_runnable() -> Runnable:
-    return (
-        _build_background_graph() | RunnableLambda(_bg_to_output)
-    ).with_types(output_type=CreateScenariosOut)
+def get_compiled_graph() -> Runnable:
+    return _build_background_graph()
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +117,13 @@ async def run_create_scenarios_background(
     logger.info(f"[BG][create_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
-        state = ScenarioDesignState(
+        state = CreateScenariosState(
             scenario_group_id=scenario_group_id,
             event_data=event_data,
             user_id=user_id,
         )
-        callback_payload: CallBackBody = await get_background_runnable().ainvoke(state)
+        final_state = await get_compiled_graph().ainvoke(state)
+        callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(

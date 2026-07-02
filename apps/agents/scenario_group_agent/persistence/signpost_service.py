@@ -2,11 +2,46 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from apps.persistence.enums import SignpostStrength
 from apps.persistence.signpost.models import MiSignpostModel
 from apps.persistence.signpost.repository import (
     SignpostRepository,
 )
 from apps.persistence.signpost.schema import GeneratedSignpostPayload, SignpostPayload
+
+
+def build_signpost_model(
+    payload: GeneratedSignpostPayload,
+    *,
+    display_order: int,
+    user_id: int | None = None,
+) -> MiSignpostModel:
+    rationale = payload.rationale_ko or ""
+    if payload.keyword_hints:
+        rationale = f"{rationale}\n\nkeyword_hints: {', '.join(map(str, payload.keyword_hints))}".strip()
+    strength = (
+        SignpostStrength.from_string(payload.strength)
+        if isinstance(payload.strength, str)
+        else payload.strength
+    )
+    strength_value = strength.to_string() if strength is not None else None
+    impact_score = strength.to_impact_score() if strength is not None else None
+
+    model = MiSignpostModel(
+        scenario_id=int(payload.scenario_id),
+        label=(payload.label or "")[:500],
+        probability_direction_code=payload.direction.to_string(),
+        strength=strength_value,
+        probability_impact_score=impact_score,
+        signpost_reason=rationale,
+        display_order=display_order,
+        keyword_hints=payload.keyword_hints,
+        use_yn="Y",
+    )
+    if user_id is not None:
+        model.crt_usr_logn_id = user_id
+        model.mod_usr_logn_id = user_id
+    return model
 
 
 class SignpostService:
@@ -18,10 +53,7 @@ class SignpostService:
         session = get_sync_session()
         try:
             repository = SignpostRepository(session=session)
-            return [
-                SignpostPayload.model_validate(repository.model_to_dict(model))
-                for model in repository.fetch_models_by_scenario_ids(scenario_ids)
-            ]
+            return [SignpostPayload.from_model(model) for model in repository.fetch_models_by_scenario_ids(scenario_ids)]
         finally:
             session.close()
 
@@ -55,8 +87,8 @@ class SignpostService:
                 display_order_by_scenario[scenario_id] += 1
                 saved_ids.append(
                     repository.insert_signpost(
-                        MiSignpostModel.convert_from_dto(
-                            dto=signpost,
+                        build_signpost_model(
+                            payload=signpost,
                             display_order=display_order_by_scenario[scenario_id],
                             user_id=user_id,
                         )

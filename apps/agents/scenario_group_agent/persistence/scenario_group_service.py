@@ -16,7 +16,7 @@ from apps.persistence.enums import (
 from apps.persistence.scenario.repository import (
     ScenarioRepository,
 )
-from apps.persistence.scenario.service import (
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
 from apps.persistence.scenario_group.repository import (
@@ -84,7 +84,7 @@ class ScenarioGroupService:
             group = repository.fetch_by_id(scenario_group_id)
             if group is None:
                 return None
-            return ScenarioGroupPayload.model_validate(repository.model_to_dict(group))
+            return ScenarioGroupPayload.from_model(group)
         finally:
             session.close()
 
@@ -149,7 +149,7 @@ class ScenarioGroupService:
             group = repository.fetch_by_mi_event_id(mi_event_id)
             if group is None:
                 return None
-            return ScenarioGroupPayload.model_validate(repository.model_to_dict(group))
+            return ScenarioGroupPayload.from_model(group)
         finally:
             session.close()
 

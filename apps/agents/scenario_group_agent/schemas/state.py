@@ -8,24 +8,16 @@ from pydantic import BaseModel, Field, model_validator
 
 from apps.agents.scenario_group_agent.schemas.api.table import SignpostBasePayload
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
-    ScenarioGenerationResult,
-)
-from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
-    SignpostGenerationResult,
-)
-from apps.persistence.event.schema import EventPayload
-from apps.persistence.scenario.schema import (
-    NewScenarioGeneratedDetails,
-    ScenarioPayload,
-    ScenarioTemplateDimension,
-)
-from apps.persistence.scenario_group.schema import (
-    ScenarioGroupPayload,
-)
-from apps.persistence.signpost.schema import (
-    SignpostPayload,
-)
+
+
+class BaseFlowState(BaseModel):
+    scenario_group_id: int | None = None
+    user_id: int | None = None
+    status: str = "success"
+    message: str = ""
+    error: str | None = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = None
 
 
 class ScenarioTableHeaderState(ApiModel):
@@ -102,49 +94,8 @@ def extend_unique_ints(current: list[int], update: list[int] | None) -> list[int
     return merged
 
 
-def state_update(**values: object) -> dict[str, object]:
-    """Validate node output through ScenarioDesignState before returning a partial update.
-
-    Node outputs should use this helper for non-trivial state updates so field
-    validation runs and only explicitly provided fields are merged into LangGraph
-    state.
-    """
-    return ScenarioDesignState(**values).model_dump(
+def state_update(state_type: type[BaseModel], **values: object) -> dict[str, object]:
+    return state_type(**values).model_dump(
         exclude_none=True,
         exclude_unset=True,
     )
-
-
-class ScenarioDesignState(BaseModel):
-    mi_event_id: int | None = None
-    scenario_group_id: int | None = None
-    user_id: int | None = None
-    include_details: bool = False
-
-    event_data: EventPayload | None = None
-    scenario_group: ScenarioGroupPayload | None = None
-    scenarios: list[ScenarioPayload] = Field(default_factory=list)
-    dimension_template: list[ScenarioTemplateDimension] = Field(default_factory=list)
-    signposts: list[SignpostPayload] = Field(default_factory=list)
-
-    scenario_result: ScenarioGenerationResult | None = None
-    validation_result: ScenarioValidationResult | None = None
-    signpost_result: SignpostGenerationResult | None = None
-    request_scenario_group: ConfirmScenarioGroupState | None = None
-    request_table: ScenarioTableState | None = None
-
-    saved_scenario_ids: Annotated[list[int], extend_unique_ints] = Field(default_factory=list)
-    saved_signpost_ids: Annotated[list[int], extend_unique_ints] = Field(default_factory=list)
-    signpost_target_scenario_ids: list[int] = Field(default_factory=list)
-    new_scenario_row_details: list[NewScenarioGeneratedDetails] = Field(default_factory=list)
-    snapshot_id: int | None = None
-
-    is_valid: bool = False
-    reason: str = ""
-    confirmed: bool = False
-
-    status: str = "success"
-    message: str = ""
-    started_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: datetime | None = None
-    error: str | None = None

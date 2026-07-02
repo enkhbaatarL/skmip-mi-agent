@@ -19,7 +19,7 @@ from apps.agents.scenario_group_agent.schemas.api.table import (
     SignpostBasePayload,
     SignpostQueryPayload,
 )
-from apps.persistence.scenario.service import (
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
 from apps.persistence.scenario_group.schema import (

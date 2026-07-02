@@ -6,6 +6,7 @@ from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
+from apps.persistence.scenario_group.models import MiScenarioGroupModel
 from apps.persistence.schema_base import ApiModel
 
 
@@ -21,3 +22,21 @@ class ScenarioGroupPayload(ApiModel):
     scenario_count: int = 0
     status: str = ScenarioGroupStatus.CREATING.value
     stage: str = ScenarioGroupStage.READY.value
+
+    @classmethod
+    def from_model(cls, model: MiScenarioGroupModel) -> ScenarioGroupPayload:
+        return cls.model_validate(
+            {
+                "scenario_group_id": model.scenario_group_id,
+                "mi_event_id": model.mi_event_id,
+                "event_type_l2_id": model.event_type_l2_id,
+                "request_usr_id": model.request_usr_id,
+                "title": model.title,
+                "summary": model.summary,
+                "description": model.description,
+                "dimension_selected": model.dimension_selected or [],
+                "scenario_count": model.scenario_count,
+                "status": model.status,
+                "stage": model.stage,
+            }
+        )

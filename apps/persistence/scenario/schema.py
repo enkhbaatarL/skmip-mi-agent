@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from apps.persistence.enums import ScenarioStatus
+from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.schema_base import ApiModel
 
 
@@ -26,6 +27,33 @@ class ScenarioPayload(ApiModel):
     baseline_yn: str | None = "N"
     status: str = ScenarioStatus.CREATING.value
     del_yn: str | None = None
+
+    @classmethod
+    def from_model(cls, model: MiScenarioModel) -> ScenarioPayload:
+        return cls.model_validate(
+            {
+                "scenario_id": model.scenario_id,
+                "scenario_group_id": model.scenario_group_id,
+                "display_order": model.display_order,
+                "title": model.title,
+                "description": model.narrative or "",
+                "narrative": model.narrative,
+                "dimension_values": model.dimension_values or {},
+                "price_direction": {
+                    "jkm": model.impact_jkm,
+                    "ttf": model.impact_ttf,
+                    "hh": model.impact_hh,
+                },
+                "probability_score": model.probability_score,
+                "probability_delta": model.probability_delta,
+                "impact_jkm": model.impact_jkm,
+                "impact_ttf": model.impact_ttf,
+                "impact_hh": model.impact_hh,
+                "baseline_yn": model.baseline_yn,
+                "status": model.status,
+                "del_yn": getattr(model, "del_yn", None),
+            }
+        )
 
 
 class NewScenarioGeneratedDetails(ApiModel):

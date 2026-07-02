@@ -4,7 +4,7 @@ from functools import lru_cache
 import time
 from typing import Any
 
-from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (
@@ -15,14 +15,14 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
     load_scenario_group,
     load_scenarios,
+    run_scenario_review,
     save_validation_result,
 )
+from apps.agents.scenario_group_agent.flows.validate_scenarios.state import ValidateScenariosState
 from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
-    scenario_review_runnable,
-)
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
 from apps.persistence.enums import (
@@ -41,7 +41,7 @@ def prepare_validate_scenarios(
     request_table: dict[str, Any],
 ) -> dict[str, Any]:
     """group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
-    state = ScenarioDesignState(
+    state = ValidateScenariosState(
         scenario_group_id=scenario_group_id,
         user_id=user_id,
         request_table=request_table,
@@ -62,11 +62,11 @@ def prepare_validate_scenarios(
 # ---------------------------------------------------------------------------
 
 def _build_background_graph() -> Runnable:
-    builder = StateGraph(ScenarioDesignState)
+    builder = StateGraph(ValidateScenariosState)
     builder.add_node("load_scenario_group", load_scenario_group)
     builder.add_node("load_scenarios", load_scenarios)
     builder.add_node("generate_dimension_values", generate_dimension_values)
-    builder.add_node("validate_scenarios", scenario_review_runnable)
+    builder.add_node("validate_scenarios", run_scenario_review)
     builder.add_node("save_validation_result", save_validation_result)
     builder.set_entry_point("load_scenario_group")
     builder.add_edge("load_scenario_group", "load_scenarios")
@@ -77,8 +77,13 @@ def _build_background_graph() -> Runnable:
     return builder.compile()
 
 
-def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenariosOut:
+def _bg_to_output(state: dict[str, Any] | ValidateScenariosState) -> ValidateScenariosOut:
     data = state if isinstance(state, dict) else state.model_dump()
+    if data.get("status") in {"failure", "error"}:
+        raise MIBaseError(
+            ErrorCode.UNKNOWN_ERROR,
+            detail=data.get("message") or "Scenario validation failed",
+        )
     group = data.get("scenario_group") or {}
     request_table = data.get("request_table")
     return ValidateScenariosOut(
@@ -95,10 +100,8 @@ def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> ValidateScenar
 
 
 @lru_cache(maxsize=1)
-def get_background_runnable() -> Runnable:
-    return (
-        _build_background_graph() | RunnableLambda(_bg_to_output)
-    ).with_types(output_type=ValidateScenariosOut)
+def get_compiled_graph() -> Runnable:
+    return _build_background_graph()
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +124,13 @@ async def run_validate_scenarios_background(
     logger.info(f"[BG][validate_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
-        state = ScenarioDesignState(
+        state = ValidateScenariosState(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
         )
-        callback_payload: CallBackBody = await get_background_runnable().ainvoke(state)
+        final_state = await get_compiled_graph().ainvoke(state)
+        callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(

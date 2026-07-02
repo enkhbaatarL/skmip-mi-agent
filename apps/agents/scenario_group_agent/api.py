@@ -3,43 +3,39 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Query, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from apps.agents.scenario_group_agent.flows.confirm_generation.api_schema import (
-    ConfirmGenerationIn,
-    ConfirmGenerationOut,
-)
 from apps.agents.scenario_group_agent.flows.confirm_generation.flow import (
     get_runnable_graph as get_confirm_generation_runnable,
 )
-from apps.agents.scenario_group_agent.flows.create_scenarios.api_schema import CreateScenariosIn
-from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
+from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
     prepare_create_scenarios,
     run_create_scenarios_background,
 )
-from apps.agents.scenario_group_agent.flows.create_signposts.api_schema import CreateSignpostsIn
-from apps.agents.scenario_group_agent.flows.create_signposts.flow_async import (
+from apps.agents.scenario_group_agent.flows.create_signposts.flow import (
     prepare_create_signposts,
     run_create_signposts_background,
 )
-from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
-from apps.agents.scenario_group_agent.flows.validate_scenarios.flow_async import (
+from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     prepare_validate_scenarios,
     run_validate_scenarios_background,
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_query_data
-from apps.agents.scenario_group_agent.schemas.api.common import (
-    ScenarioGroupAcceptedData,
-    ScenarioGroupAcceptedOut,
-)
-from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
+from apps.agents.scenario_group_agent.schemas.endpoint import (
+    ConfirmGenerationIn,
+    ConfirmGenerationOut,
+    CreateScenariosIn,
+    CreateSignpostsIn,
     HardDeleteScenarioGroupIn,
     HardDeleteScenarioGroupOut,
+    ScenarioGroupAcceptedData,
+    ScenarioGroupAcceptedOut,
     ScenarioGroupDetailOut,
     SoftDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupOut,
     SoftDeleteSignpostsIn,
     SoftDeleteSignpostsOut,
+    ValidateScenariosIn,
 )
-from apps.persistence.scenario_group.service import (
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
 

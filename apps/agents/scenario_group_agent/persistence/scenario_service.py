@@ -263,10 +263,7 @@ class ScenarioService:
         session = get_sync_session()
         try:
             repository = ScenarioRepository(session=session)
-            return [
-                ScenarioPayload.model_validate(repository.model_to_dict(model))
-                for model in repository.fetch_models_by_group_id(scenario_group_id)
-            ]
+            return [ScenarioPayload.from_model(model) for model in repository.fetch_models_by_group_id(scenario_group_id)]
         finally:
             session.close()
 

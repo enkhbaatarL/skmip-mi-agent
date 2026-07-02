@@ -7,6 +7,7 @@ from decimal import Decimal
 import unittest
 import sys
 import types
+from typing import ClassVar
 from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
@@ -15,7 +16,7 @@ from apps.persistence.scenario.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
 from apps.persistence.scenario.models import MiScenarioModel
-from apps.persistence.scenario.service import (
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
     NewScenarioGeneratedDetails,
     ScenarioService,
 )
@@ -29,7 +30,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     save_scenario_group,
     save_scenarios,
 )
-from apps.agents.scenario_group_agent.flows.create_scenarios.flow_async import (
+from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
     _build_background_graph as build_create_scenarios_background_graph,
     prepare_create_scenarios,
 )
@@ -73,19 +74,33 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import
     ValidateScenariosIn,
     ValidateScenariosOut,
 )
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.persistence.scenario_group.service import (
+from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
+    _bg_to_output as validate_scenarios_bg_to_output,
+)
+from apps.agents.scenario_group_agent.flows.confirm_generation.state import ConfirmGenerationState
+from apps.agents.scenario_group_agent.flows.create_scenarios.state import CreateScenariosState
+from apps.agents.scenario_group_agent.flows.create_signposts.state import CreateSignpostsState
+from apps.agents.scenario_group_agent.flows.validate_scenarios.state import ValidateScenariosState
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_adapter import (
-    to_output as scenario_generation_to_output,
-    to_state as scenario_generation_to_state,
-)
+from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import run_scenario_generation
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ScenarioTemplate,
     TemplateDimension,
 )
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import ScenarioGenerationState
 from apps.common.exceptions.custom import MIBaseError
+
+
+class TestScenarioState(
+    CreateSignpostsState,
+    ConfirmGenerationState,
+    ValidateScenariosState,
+    CreateScenariosState,
+):
+    __test__: ClassVar[bool] = False
+    pass
 
 SCENARIO_GROUP = {
     "scenarioGroupId": 10,
@@ -154,8 +169,8 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert "run_scenario_generation" in graph.nodes
 
-    def test_generation_subgraph_adapter_loads_db_template(self) -> None:
-        state = ScenarioDesignState(
+    def test_generation_node_loads_db_template(self) -> None:
+        state = TestScenarioState(
             event_data={"mi_event_id": "20", "event_type_l2_id": 30},
         )
         template = ScenarioTemplate(
@@ -184,23 +199,25 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "subgraph_adapter.ScenarioService.load_pipeline_template",
+            "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+            "ScenarioService.load_pipeline_template",
             return_value=template,
         ) as load_template:
-            subgraph_state = scenario_generation_to_state(state)
+            with patch(
+                "apps.agents.scenario_group_agent.flows.create_scenarios.nodes."
+                "get_scenario_generation_subgraph"
+            ) as get_subgraph:
+                subgraph = get_subgraph.return_value
+                subgraph.ainvoke = AsyncMock(
+                    return_value=ScenarioGenerationState(scenario_result=scenario_generation_result_stub())
+                )
+                asyncio.run(run_scenario_generation(state))
 
         load_template.assert_called_once_with(30)
-        assert subgraph_state.event_data == state.event_data
-        assert subgraph_state.template == template
 
     def test_generation_subgraph_skips_existing_group(self) -> None:
-        subgraph_state = scenario_generation_to_state(
-            ScenarioDesignState(status="already_exist"),
-        )
-
-        assert subgraph_state.skip_generation
-        assert scenario_generation_to_output(subgraph_state) == {}
+        result = asyncio.run(run_scenario_generation(TestScenarioState(status="already_exist")))
+        assert result == {}
 
     def test_db_template_maps_to_pipeline_shape(self) -> None:
         template = [
@@ -302,7 +319,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload.user_id == 101
 
     def test_ready_existing_group_is_reused_for_create_scenarios(self) -> None:
-        state = ScenarioDesignState(mi_event_id=20, user_id=101)
+        state = TestScenarioState(mi_event_id=20, user_id=101)
         existing = ScenarioGroupPayload.model_validate(
             {
                 "scenario_group_id": 10,
@@ -363,7 +380,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 return_value=existing,
             ),
             patch(
-                "apps.agents.scenario_group_agent.flows.create_scenarios.flow_async.create_group_record",
+                "apps.agents.scenario_group_agent.flows.create_scenarios.flow.create_group_record",
             ) as create_group_record_mock,
         ):
             result = prepare_create_scenarios(mi_event_id=20, user_id=101)
@@ -580,7 +597,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             impact_ttf="neutral",
             impact_hh="mild_bull",
         )
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             scenario_group=ScenarioGroupPayload.model_validate(
                 {
@@ -643,7 +660,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             impact_ttf="neutral",
             impact_hh="mild_bull",
         )
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             scenario_group=ScenarioGroupPayload.model_validate(
@@ -785,7 +802,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
     def test_scenario_group_insert_uses_integer_user_id_for_audit_fields(
         self,
     ) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             user_id=101,
             event_data={
                 "mi_event_id": "20",
@@ -807,7 +824,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload["mod_usr_logn_id"] == 101
 
     def test_scenario_group_insert_uses_generated_group_metadata(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             user_id=101,
             event_data={
                 "mi_event_id": "20",
@@ -836,7 +853,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload["summary"] == "event summary"
 
     def test_save_scenario_group_reuses_existing_group_id(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             event_data={
@@ -857,7 +874,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert result["scenario_result"]["scenario_group_id"] == 10
 
     def test_prepare_group_record_leaves_initial_description_empty(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             user_id=101,
             event_data={
                 "mi_event_id": "20",
@@ -884,7 +901,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert payload["description"] is None
 
     def test_async_save_scenarios_updates_group_metadata(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             scenario_result=scenario_generation_result_stub(
@@ -924,7 +941,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert update_state.call_args.kwargs["description"] == "generated group description"
 
     def test_async_save_scenarios_updates_stage_after_save(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             scenario_result=scenario_generation_result_stub(),
@@ -962,7 +979,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert result["message"] == "Created 2 scenarios"
 
     def test_async_save_scenarios_does_not_save_when_group_missing(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             scenario_result=scenario_generation_result_stub(),
@@ -1024,7 +1041,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 },
             },
         )
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             request_scenario_group=payload.scenario_group,
             request_table=payload.table.model_dump(exclude_unset=True),
         )
@@ -1125,15 +1142,15 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.persistence.scenario_group.service.ScenarioGroupRepository",
+                "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
                 return_value=group_repository,
             ),
             patch(
-                "apps.persistence.scenario_group.service.ScenarioRepository",
+                "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioRepository",
                 return_value=scenario_repository,
             ),
             patch(
-                "apps.persistence.scenario_group.service.SignpostRepository",
+                "apps.agents.scenario_group_agent.persistence.scenario_group_service.SignpostRepository",
                 return_value=signpost_repository,
             ),
             patch.object(
@@ -1182,7 +1199,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         ):
             with self.assertRaises(MIBaseError) as context:
                 load_validation_scenario_group(
-                    ScenarioDesignState(scenario_group_id=10, user_id=101),
+                    TestScenarioState(scenario_group_id=10, user_id=101),
                 )
 
         assert context.exception.status_code == 403
@@ -1203,7 +1220,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             ) as update_group_state,
         ):
             result = save_validation_result(
-                ScenarioDesignState(
+                TestScenarioState(
                     scenario_group_id=10,
                     user_id=101,
                     is_valid=True,
@@ -1234,7 +1251,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             ) as update_group_state,
         ):
             result = save_validation_result(
-                ScenarioDesignState(
+                TestScenarioState(
                     scenario_group_id=10,
                     user_id=101,
                     is_valid=False,
@@ -1249,8 +1266,18 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         )
         assert result["scenario_group"]["stage"] == "scenario_created"
 
+    def test_validation_background_output_raises_on_failure_state(self) -> None:
+        with self.assertRaises(MIBaseError):
+            validate_scenarios_bg_to_output(
+                ValidateScenariosState(
+                    scenario_group_id=10,
+                    status="failure",
+                    message="review failed",
+                ),
+            )
+
     def test_validation_result_accepts_review_summary_counts(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             validation_result={
                 "scenario_group_id": 10,
                 "scenario_count": 2,
@@ -1264,7 +1291,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert state.validation_result.summary == {"PASS": 3, "WARN": 1, "FAIL": 0, "INFO": 0}
 
     def test_request_table_row_coerces_typed_nested_fields(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             request_table={
                 "headers": [{"key": "period", "label": "기간", "display_order": 1}],
                 "rows": [
@@ -1299,7 +1326,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
     def test_request_table_row_rejects_unknown_baseline_flag(self) -> None:
         with self.assertRaises(ValidationError):
-            ScenarioDesignState(
+            TestScenarioState(
                 request_table={
                     "headers": [{"key": "period", "label": "기간", "display_order": 1}],
                     "rows": [
@@ -1383,7 +1410,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             )
 
     def test_signpost_save_sets_group_stage_to_signpost_created(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             scenarios=[{"scenario_id": 100}],
@@ -1427,7 +1454,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert result["scenario_group"]["stage"] == "signpost_created"
 
     def test_signpost_save_does_not_save_when_group_missing(self) -> None:
-        state = ScenarioDesignState(
+        state = TestScenarioState(
             scenario_group_id=10,
             user_id=101,
             scenarios=[{"scenario_id": 100}],

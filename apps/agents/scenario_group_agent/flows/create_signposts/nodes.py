@@ -4,8 +4,11 @@ import asyncio
 from decimal import Decimal
 from typing import Any
 
-from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
+from apps.agents.scenario_group_agent.flows.create_signposts.state import (
+    CreateSignpostsState,
+    create_signposts_state_update,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
     stage1_build_context_pack,
     stage4_synthesize_fixed_scenarios,
     stage6_validate,
@@ -13,6 +16,12 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     GeneratedSignpost,
     SignpostGenerationResult,
+)
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
+    get_signpost_generation_subgraph,
+)
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
+    SignpostGenerationState,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -22,17 +31,17 @@ from apps.persistence.enums import (
     ScenarioStatus,
 )
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.event.service import EventService
+from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.persistence.scenario.schema import (
     NewScenarioGeneratedDetails,
 )
-from apps.persistence.scenario.service import (
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
-from apps.persistence.scenario_group.service import (
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
-from apps.persistence.signpost.service import (
+from apps.agents.scenario_group_agent.persistence.signpost_service import (
     SignpostService,
 )
 
@@ -46,7 +55,7 @@ _LIKELIHOOD_WEIGHTS: dict[str, int] = {
 }
 
 
-def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
+def load_scenario_group(state: CreateSignpostsState) -> dict[str, object]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
@@ -99,7 +108,7 @@ async def generate_new_scenario_row_details(
 
 
 async def generate_new_scenario_row_details_node(
-    state: ScenarioDesignState,
+    state: CreateSignpostsState,
 ) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
@@ -129,7 +138,7 @@ async def generate_new_scenario_row_details_node(
     return {"new_scenario_row_details": details}
 
 
-def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
+def sync_scenarios_from_table(state: CreateSignpostsState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     if state.user_id is None:
@@ -148,13 +157,13 @@ def sync_scenarios_from_table(state: ScenarioDesignState) -> dict[str, object]:
     except ValueError as exc:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=str(exc)) from exc
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
-    return state_update(
+    return create_signposts_state_update(
         scenario_group=group,
         signpost_target_scenario_ids=result["regenerate_scenario_ids"],
     )
 
 
-def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
+def load_scenarios(state: CreateSignpostsState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
@@ -163,7 +172,7 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     return {"scenarios": scenarios}
 
 
-def check_existing_signposts(state: ScenarioDesignState) -> dict[str, object]:
+def check_existing_signposts(state: CreateSignpostsState) -> dict[str, object]:
     if state.status == "failure":
         return {}
     scenario_ids = [int(scenario.scenario_id) for scenario in state.scenarios]
@@ -171,7 +180,7 @@ def check_existing_signposts(state: ScenarioDesignState) -> dict[str, object]:
     return {"signposts": existing}
 
 
-async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, object]:
+async def run_signpost_generation(state: CreateSignpostsState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.mi_event_id is None:
@@ -180,13 +189,9 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
     if event is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
 
-    from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
+    from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
         stage1_build_context_pack,
     )
-    from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
-        signpost_generation_runnable,
-    )
-
     pack = stage1_build_context_pack(event)
     c1 = pack.model_dump().get("C1_base_event", {})
     base_event_summary = {
@@ -202,7 +207,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
         if int(scenario.scenario_id) in target_ids or int(scenario.scenario_id) not in existing_scenario_ids
     ]
     if not scenarios_to_process:
-        return state_update(
+        return create_signposts_state_update(
             signpost_result=SignpostGenerationResult(
                 scenario_group_id=state.scenario_group_id,
                 scenario_results=[],
@@ -218,13 +223,20 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
         scenario: dict[str, Any],
     ) -> tuple[list[GeneratedSignpost], dict[str, Any]]:
         async with sem:
-            output = await signpost_generation_runnable.ainvoke(
-                {
-                    "scenario": scenario,
-                    "base_event_summary": base_event_summary,
-                },
+            result_state = await get_signpost_generation_subgraph().ainvoke(
+                SignpostGenerationState(
+                    scenario=scenario,
+                    base_event_summary=base_event_summary,
+                ),
             )
-            generated_signposts = list(output.get("signposts") or [])
+            result = (
+                result_state
+                if isinstance(result_state, SignpostGenerationState)
+                else SignpostGenerationState.model_validate(result_state)
+            )
+            if result.error:
+                raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=result.error)
+            generated_signposts = list(result.signposts or [])
             return generated_signposts, {
                 "scenario_id": scenario["scenario_id"],
                 "status": "success",
@@ -240,7 +252,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
         generated.extend(signposts)
         scenario_results.append(scenario_result)
 
-    return state_update(
+    return create_signposts_state_update(
         signpost_result=SignpostGenerationResult(
             scenario_group_id=state.scenario_group_id,
             scenario_results=scenario_results,
@@ -249,7 +261,7 @@ async def run_signpost_generation(state: ScenarioDesignState) -> dict[str, objec
     )
 
 
-def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
+def save_signposts(state: CreateSignpostsState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.scenario_group_id is None:
@@ -274,7 +286,7 @@ def save_signposts(state: ScenarioDesignState) -> dict[str, object]:
         stage=ScenarioGroupStage.SIGNPOST_CREATED,
         user_id=state.user_id,
     )
-    return state_update(
+    return create_signposts_state_update(
         saved_signpost_ids=saved_ids,
         signposts=all_signposts,
         scenario_group=group,

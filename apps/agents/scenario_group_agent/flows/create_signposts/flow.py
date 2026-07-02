@@ -4,7 +4,7 @@ from functools import lru_cache
 import time
 from typing import Any
 
-from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.flows.create_signposts.api_schema import CreateSignpostsOut
@@ -17,8 +17,8 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     save_signposts,
     sync_scenarios_from_table,
 )
+from apps.agents.scenario_group_agent.flows.create_signposts.state import CreateSignpostsState
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
@@ -41,7 +41,7 @@ def prepare_create_signposts(
     request_table: dict[str, Any],
 ) -> dict[str, Any]:
     """group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
-    state = ScenarioDesignState(
+    state = CreateSignpostsState(
         scenario_group_id=scenario_group_id,
         user_id=user_id,
         include_details=True,
@@ -64,7 +64,7 @@ def prepare_create_signposts(
 
 
 def _build_background_graph() -> Runnable:
-    builder = StateGraph(ScenarioDesignState)
+    builder = StateGraph(CreateSignpostsState)
     builder.add_node("load_scenario_group", load_scenario_group)
     builder.add_node(
         "generate_new_scenario_row_details",
@@ -86,7 +86,7 @@ def _build_background_graph() -> Runnable:
     return builder.compile()
 
 
-def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateSignpostsOut:
+def _bg_to_output(state: dict[str, Any] | CreateSignpostsState) -> CreateSignpostsOut:
     data = state if isinstance(state, dict) else state.model_dump()
     if data.get("status") in {"failure", "error"}:
         raise MIBaseError(
@@ -109,8 +109,8 @@ def _bg_to_output(state: dict[str, Any] | ScenarioDesignState) -> CreateSignpost
 
 
 @lru_cache(maxsize=1)
-def get_background_runnable() -> Runnable:
-    return (_build_background_graph() | RunnableLambda(_bg_to_output)).with_types(output_type=CreateSignpostsOut)
+def get_compiled_graph() -> Runnable:
+    return _build_background_graph()
 
 
 # ---------------------------------------------------------------------------
@@ -132,13 +132,14 @@ async def run_create_signposts_background(
     logger.info(f"[BG][create_signposts] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
-        state = ScenarioDesignState(
+        state = CreateSignpostsState(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             include_details=True,
             request_table=request_table,
         )
-        callback_payload: CallBackBody = await get_background_runnable().ainvoke(state)
+        final_state = await get_compiled_graph().ainvoke(state)
+        callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(f"[BG][create_signposts] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms")
