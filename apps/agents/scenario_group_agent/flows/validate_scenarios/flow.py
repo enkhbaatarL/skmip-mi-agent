@@ -22,6 +22,12 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import (
+    TraceContext,
+    build_langgraph_config,
+    mlflow_trace_context,
+    new_transaction_id,
+)
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
@@ -62,7 +68,7 @@ def prepare_validate_scenarios(
 # ---------------------------------------------------------------------------
 
 def _build_background_graph() -> Runnable:
-    builder = StateGraph(ValidateScenariosState)
+    builder = StateGraph(ValidateScenariosState, context_schema=TraceContext)
     builder.add_node("load_scenario_group", load_scenario_group)
     builder.add_node("load_scenarios", load_scenarios)
     builder.add_node("generate_dimension_values", generate_dimension_values)
@@ -124,12 +130,22 @@ async def run_validate_scenarios_background(
     logger.info(f"[BG][validate_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
+        trace_context = TraceContext(
+            transaction_id=new_transaction_id(),
+            app_identifier="scenario-group-agent",
+            scenario_group_id=str(scenario_group_id),
+        )
         state = ValidateScenariosState(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
         )
-        final_state = await get_compiled_graph().ainvoke(state)
+        with mlflow_trace_context(trace_context):
+            final_state = await get_compiled_graph().ainvoke(
+                state,
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
         callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)

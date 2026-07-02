@@ -14,10 +14,11 @@ from apps.agents.scenario_group_agent.subgraphs.signpost_generation.nodes import
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
     SignpostGenerationState,
 )
+from apps.common.tracing.context import TraceContext
 
 
 def build_signpost_generation_subgraph() -> Runnable:
-    graph = StateGraph(state_schema=SignpostGenerationState)
+    graph = StateGraph(state_schema=SignpostGenerationState, context_schema=TraceContext)
     graph.add_node("observability_filter", ObservabilityFilterNode())
     graph.add_node("assign_direction_strength", DirectionStrengthNode())
     graph.add_node("mint_keyword_hints", KeywordHintsNode())

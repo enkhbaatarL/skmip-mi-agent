@@ -25,10 +25,12 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from apps.common.configs.config import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
+    from apps.connectors.mlflow.tracing import setup_mlflow_tracing
 
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+    setup_mlflow_tracing(cfg)
 
     logger.info("Validating ORM models against the database schema")
     await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)

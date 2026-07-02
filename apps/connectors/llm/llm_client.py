@@ -50,6 +50,7 @@ from apps.common.runtime.runtime import (
     get_llm_semaphore,
 )
 from apps.common.runtime.usage_context import accumulate_usage
+from apps.common.tracing.context import TraceContext, build_aip_headers
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.llm_usage import LLMUsageModel
@@ -111,6 +112,12 @@ def _require_content(content: str | None) -> str:
     return content
 
 
+def _extra_headers(trace_context: TraceContext | None) -> dict[str, str] | None:
+    if trace_context is None:
+        return None
+    return build_aip_headers(trace_context)
+
+
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
 async def invoke_llm_function_call(
     messages: list[dict[str, str]],
@@ -121,6 +128,7 @@ async def invoke_llm_function_call(
     function_call: dict | None = None,
     temperature: float = 0.7,
     max_retries: int = 2,
+    trace_context: TraceContext | None = None,
 ) -> dict[str, Any]:
     await ensure_runtime_context_ready()
     client, http_client = _create_openai_client(max_retries=max_retries)
@@ -135,6 +143,7 @@ async def invoke_llm_function_call(
                 messages=messages,
                 functions=functions,
                 function_call=function_call,
+                extra_headers=_extra_headers(trace_context),
                 # temperature=temperature,
             )
             choice = resp.choices[0]
@@ -163,6 +172,7 @@ async def invoke_llm_structured_output[T: BaseModel](
     preference: ModelPreference | None = None,
     temperature: float = 0.0,
     max_retries: int = 2,
+    trace_context: TraceContext | None = None,
 ) -> LLMStructuredResult[T]:
     """Structured output LLM 호출. 결과와 usage 정보를 함께 반환."""
     await ensure_runtime_context_ready()
@@ -180,6 +190,7 @@ async def invoke_llm_structured_output[T: BaseModel](
             resp = await client.chat.completions.create(
                 model=model,
                 messages=messages,
+                extra_headers=_extra_headers(trace_context),
                 # temperature=temperature,
                 response_format={
                     "type": "json_schema",
@@ -209,6 +220,7 @@ async def invoke_llm_text(
     preference: ModelPreference | None = None,
     temperature: float = 0.0,
     max_retries: int = 2,
+    trace_context: TraceContext | None = None,
 ) -> dict[str, Any]:
     await ensure_runtime_context_ready()
     client, http_client = _create_openai_client(max_retries=max_retries)
@@ -223,6 +235,7 @@ async def invoke_llm_text(
                 model=model,
                 messages=messages,
                 temperature=temperature,
+                extra_headers=_extra_headers(trace_context),
             )
 
             content = _require_content(resp.choices[0].message.content)

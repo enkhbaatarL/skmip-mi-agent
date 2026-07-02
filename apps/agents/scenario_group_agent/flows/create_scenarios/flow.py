@@ -19,6 +19,12 @@ from apps.agents.scenario_group_agent.presentation import build_scenario_group_t
 from apps.agents.scenario_group_agent.schemas.endpoint import CreateScenariosOut
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import (
+    TraceContext,
+    build_langgraph_config,
+    mlflow_trace_context,
+    new_transaction_id,
+)
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
@@ -65,7 +71,7 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _build_background_graph() -> Runnable:
-    builder = StateGraph(CreateScenariosState)
+    builder = StateGraph(CreateScenariosState, context_schema=TraceContext)
     builder.add_node("run_scenario_generation", run_scenario_generation)
     builder.add_node("save_scenarios", save_scenarios)
     builder.set_entry_point("run_scenario_generation")
@@ -117,12 +123,22 @@ async def run_create_scenarios_background(
     logger.info(f"[BG][create_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
+        trace_context = TraceContext(
+            transaction_id=new_transaction_id(),
+            app_identifier="scenario-group-agent",
+            scenario_group_id=str(scenario_group_id),
+        )
         state = CreateScenariosState(
             scenario_group_id=scenario_group_id,
             event_data=event_data,
             user_id=user_id,
         )
-        final_state = await get_compiled_graph().ainvoke(state)
+        with mlflow_trace_context(trace_context):
+            final_state = await get_compiled_graph().ainvoke(
+                state,
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
         callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)

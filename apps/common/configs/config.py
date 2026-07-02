@@ -129,6 +129,15 @@ class Settings(BaseSettings):
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
     create_signposts_max_concurrent_scenarios: int = Field(default=7, ge=1)
 
+    # MLflow tracing
+    mlflow_tracing_enabled: bool = Field(default=False)
+    mlflow_tracking_uri: str = Field(default="http://mlflow:5000")
+    mlflow_experiment_name: str = Field(default="mi-agent-local")
+    mlflow_tracking_username: str = Field(default="")
+    mlflow_tracking_password: str = Field(default="")
+    mlflow_langchain_run_tracer_inline: bool = Field(default=False)
+    mlflow_openai_autolog_enabled: bool = Field(default=True)
+
     # Callback OAuth2 (client_credentials)
     callback_oauth2_token_url: str = Field(default="")
     callback_oauth2_client_id: str = Field(default="")
