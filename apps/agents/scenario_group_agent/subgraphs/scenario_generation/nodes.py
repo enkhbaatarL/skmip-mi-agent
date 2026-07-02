@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from itertools import product
+import json
 import os
 import random
 import re
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
+import uuid
 
 from pydantic import BaseModel
 
@@ -40,6 +42,7 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     CompatibilityItem,
     CompatibilityStructuredOutput,
 )
+from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     LIKELIHOOD_TIERS,
     PRICE_TIERS,
@@ -1386,37 +1389,12 @@ async def stage5_quick_validate(
 # LangGraph Node Classes
 # ==============================================
 
-from abc import ABC, abstractmethod
-import json
-from typing import Any
-import uuid
-
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ScenarioGenerationResult,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
 )
-from apps.common.logging.logger_config import logger
-
-
-def _shorten_feedback(feedback: str | None, max_len: int = 600) -> str:
-    if not feedback:
-        return ""
-    if len(feedback) <= max_len:
-        return feedback
-    return feedback[:max_len] + "..."
-
-
-class BaseNode(ABC):
-    """Stateless LangGraph node."""
-
-    async def __call__(self, state: ScenarioGenerationState) -> dict[str, Any]:
-        return await self.run(state)
-
-    @abstractmethod
-    async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
-        ...
 
 
 class BuildContextNode(BaseNode):
@@ -1425,12 +1403,7 @@ class BuildContextNode(BaseNode):
             return {}
         if state.event_data is None:
             return {"error": "event_data is required"}
-        return {"stage1_context_pack": self._stage1_build_context_pack(state)}
-
-    def _stage1_build_context_pack(self, state: ScenarioGenerationState) -> Stage1ContextPack:
-        if state.event_data is None:
-            raise ValueError("event_data is required")
-        return stage1_build_context_pack(state.event_data)
+        return {"stage1_context_pack": stage1_build_context_pack(state.event_data)}
 
 
 class SelectDimensionsNode(BaseNode):
@@ -1439,12 +1412,13 @@ class SelectDimensionsNode(BaseNode):
             return {}
         if state.event_data is None or state.template is None or state.stage1_context_pack is None:
             return {"error": "scenario generation input is incomplete"}
-        return {"stage2_dimension_selection": await self._stage2_select_dimensions(state)}
-
-    async def _stage2_select_dimensions(self, state: ScenarioGenerationState) -> Stage2DimensionSelection:
-        if state.event_data is None or state.template is None or state.stage1_context_pack is None:
-            raise ValueError("scenario generation input is incomplete")
-        return await stage2_select_dimensions(state.stage1_context_pack, state.event_data, state.template)
+        return {
+            "stage2_dimension_selection": await stage2_select_dimensions(
+                state.stage1_context_pack,
+                state.event_data,
+                state.template,
+            ),
+        }
 
 
 class ReduceValuesNode(BaseNode):
@@ -1453,12 +1427,13 @@ class ReduceValuesNode(BaseNode):
             return {}
         if state.template is None or state.stage1_context_pack is None or state.stage2_dimension_selection is None:
             return {"error": "scenario generation stage 2 output is missing"}
-        return {"stage3_value_selection": await self._stage3_reduce_values(state)}
-
-    async def _stage3_reduce_values(self, state: ScenarioGenerationState) -> Stage3ValueSelection:
-        if state.template is None or state.stage1_context_pack is None or state.stage2_dimension_selection is None:
-            raise ValueError("scenario generation stage 2 output is missing")
-        return await stage3_reduce_values(state.stage1_context_pack, state.stage2_dimension_selection, state.template)
+        return {
+            "stage3_value_selection": await stage3_reduce_values(
+                state.stage1_context_pack,
+                state.stage2_dimension_selection,
+                state.template,
+            ),
+        }
 
 
 class SynthesizeScenariosNode(BaseNode):
@@ -1467,19 +1442,16 @@ class SynthesizeScenariosNode(BaseNode):
             return {}
         if state.template is None or state.stage1_context_pack is None or state.stage3_value_selection is None:
             return {"error": "scenario generation stage 3 output is missing"}
-        return {"stage4_scenario_synthesis": await self._stage4_synthesize_scenarios(state)}
-
-    async def _stage4_synthesize_scenarios(self, state: ScenarioGenerationState) -> Stage4ScenarioSynthesis:
-        if state.template is None or state.stage1_context_pack is None or state.stage3_value_selection is None:
-            raise ValueError("scenario generation stage 3 output is missing")
-        return await stage4_synthesize_scenarios(
-            state.stage1_context_pack,
-            state.stage3_value_selection,
-            state.template,
-            validation_feedback=state.validation_feedback,
-            validation_repairs=state.validation_repairs,
-            previous_stage4=state.stage4_scenario_synthesis,
-        )
+        return {
+            "stage4_scenario_synthesis": await stage4_synthesize_scenarios(
+                state.stage1_context_pack,
+                state.stage3_value_selection,
+                state.template,
+                validation_feedback=state.validation_feedback,
+                validation_repairs=state.validation_repairs,
+                previous_stage4=state.stage4_scenario_synthesis,
+            ),
+        }
 
 
 class QuickValidateNode(BaseNode):
@@ -1494,7 +1466,12 @@ class QuickValidateNode(BaseNode):
         ):
             return {"error": "quick_validate 입력 누락"}
 
-        passed, feedback, repairs = await self._stage5_quick_validate(state)
+        passed, feedback, repairs = await stage5_quick_validate(
+            state.stage1_context_pack,
+            state.stage3_value_selection,
+            state.stage4_scenario_synthesis,
+            state.template,
+        )
         if passed:
             if state.quick_validate_retry_count > 0:
                 logger.info(
@@ -1505,7 +1482,7 @@ class QuickValidateNode(BaseNode):
         next_retry_count = state.quick_validate_retry_count + 1
         logger.info(
             "[SCENARIO_GENERATION][stage5] quick validate failed "
-            f"| retry_count={next_retry_count} | feedback={_shorten_feedback(feedback)}",
+            f"| retry_count={next_retry_count} | feedback={_shorten(feedback or '', 600)}",
         )
         if repairs:
             logger.info(
@@ -1517,25 +1494,6 @@ class QuickValidateNode(BaseNode):
             "validation_repairs": repairs,
             "quick_validate_retry_count": next_retry_count,
         }
-
-    async def _stage5_quick_validate(
-        self,
-        state: ScenarioGenerationState,
-    ) -> tuple[bool, str | None, list[Stage5RepairInstruction]]:
-        if (
-            state.stage1_context_pack is None
-            or state.stage3_value_selection is None
-            or state.stage4_scenario_synthesis is None
-            or state.template is None
-        ):
-            raise ValueError("quick_validate 입력 누락")
-        return await stage5_quick_validate(
-            state.stage1_context_pack,
-            state.stage3_value_selection,
-            state.stage4_scenario_synthesis,
-            state.template,
-        )
-
 
 class ValidateScenariosNode(BaseNode):
     async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
@@ -1550,8 +1508,15 @@ class ValidateScenariosNode(BaseNode):
         ):
             return {"error": "scenario generation stage output is incomplete"}
 
-        stage6 = await self._stage6_validate(state)
-        scenario_group_metadata = await self._stage_generate_scenario_group_metadata(state)
+        stage6 = await stage6_validate(
+            state.stage1_context_pack,
+            state.stage4_scenario_synthesis,
+        )
+        scenario_group_metadata = await stage_generate_scenario_group_metadata(
+            state.stage1_context_pack,
+            state.event_data,
+            state.stage4_scenario_synthesis,
+        )
         event_type_l2_id = int(state.event_data.get("event_type_l2_id") or 0)
         stage4 = state.stage4_scenario_synthesis
         return ScenarioGenerationState(
@@ -1573,40 +1538,6 @@ class ValidateScenariosNode(BaseNode):
             ),
         ).model_dump(include={"scenario_result"}, exclude_none=True, exclude_unset=True)
 
-    async def _stage6_validate(self, state: ScenarioGenerationState) -> Stage5Validation:
-        if state.stage1_context_pack is None or state.stage4_scenario_synthesis is None:
-            raise ValueError("scenario generation stage output is incomplete")
-        return await stage6_validate(state.stage1_context_pack, state.stage4_scenario_synthesis)
-
-    async def _stage_generate_scenario_group_metadata(self, state: ScenarioGenerationState) -> ScenarioGroupMetadata:
-        if state.event_data is None or state.stage1_context_pack is None or state.stage4_scenario_synthesis is None:
-            raise ValueError("scenario generation stage output is incomplete")
-        return await stage_generate_scenario_group_metadata(
-            state.stage1_context_pack,
-            state.event_data,
-            state.stage4_scenario_synthesis,
-        )
-
-
-async def build_context_node(state: ScenarioGenerationState) -> dict[str, Any]:
-    return await BuildContextNode()(state)
-
-
-async def select_dimensions_node(state: ScenarioGenerationState) -> dict[str, Any]:
-    return await SelectDimensionsNode()(state)
-
-
-async def reduce_values_node(state: ScenarioGenerationState) -> dict[str, Any]:
-    return await ReduceValuesNode()(state)
-
-
-async def synthesize_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
-    return await SynthesizeScenariosNode()(state)
-
 
 async def quick_validate_node(state: ScenarioGenerationState) -> dict[str, Any]:
     return await QuickValidateNode()(state)
-
-
-async def validate_scenarios_node(state: ScenarioGenerationState) -> dict[str, Any]:
-    return await ValidateScenariosNode()(state)

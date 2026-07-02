@@ -14,6 +14,7 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     GeneratedDimensionCell as _GeneratedDimensionCell,
     build_dimension_value_messages,
 )
+from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.schema import (
     CheckResult,
     ReviewContext,
@@ -97,10 +98,6 @@ def _template_enum_labels(dimension: dict[str, Any]) -> list[str]:
         for item in dimension.get("enum", [])
         if isinstance(item, dict) and str(item.get("label") or item.get("id") or "").strip()
     ]
-
-
-def _template_dim_label(dimension: dict[str, Any], fallback: str) -> str:
-    return str(dimension.get("label") or dimension.get("label_ko") or fallback)
 
 
 def _selected_dims_from_headers(
@@ -263,12 +260,8 @@ def _hashable(value: object) -> object:
     return value
 
 
-def _baseline_scenarios(ctx: ReviewContext) -> list[dict[str, Any]]:
-    return [scenario for scenario in ctx.scenarios if scenario.get("baseline_yn") == "Y"]
-
-
 def _check_baseline_contrast_covered(ctx: ReviewContext) -> CheckResult:
-    baselines = _baseline_scenarios(ctx)
+    baselines = [scenario for scenario in ctx.scenarios if scenario.get("baseline_yn") == "Y"]
     if len(baselines) != 1:
         detail = f"baseline scenario {len(baselines)}건"
         advice = [
@@ -385,7 +378,7 @@ def _compatibility_enum_lines(ctx: ReviewContext) -> list[str]:
 
 
 def _resolve_compat_dim_key(ctx: ReviewContext, raw_dim: str | None) -> str | None:
-    """LLM이 반환한 Dimension 표기를 내부 dim_key로 해석한다.LLM이 반환한 conflict_dim_b가 라벨, key, 또는 "기간 (period)" 같은 혼합 표기일 수 있어서 내부 dim_key로 매핑합니다."""
+    """LLM이 반환한 Dimension 표기를 내부 dim_key로 해석한다."""
     if not raw_dim:
         return None
     text = str(raw_dim).strip()
@@ -402,8 +395,7 @@ def _has_only_unusable_enum_recommendations(
     ctx: ReviewContext,
     incompatible: list[CompatibilityItem],
 ) -> bool:
-    """모든 모순 판정이 enum 안에서 실행 가능한 권장 변경 없이 나온 경우인지 확인한다. 모순 판정이 있더라도 모든 권장 변경값이 해당 Dimension enum 밖이라 실제 수정 가능한 대안이 없는 경우인지 확인합니다. 이때만 review R03을 pass 처리합
-    니다."""
+    """모든 모순 판정이 enum 안에서 실행 가능한 권장 변경 없이 나온 경우인지 확인한다."""
     if not incompatible:
         return False
     scenario_by_id = {
@@ -438,10 +430,12 @@ async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
         )
     lines: list[str] = []
     for scenario in ctx.scenarios:
-        pairs = ", ".join(
-            f"{_template_dim_label(ctx.dim_index.get(key, {}), key)}='{value}'"
-            for key, value in scenario["dimension_values"].items()
-        )
+        rendered_pairs: list[str] = []
+        for key, value in scenario["dimension_values"].items():
+            dimension = ctx.dim_index.get(key) or {}
+            label = str(dimension.get("label") or dimension.get("label_ko") or key)
+            rendered_pairs.append(f"{label}='{value}'")
+        pairs = ", ".join(rendered_pairs)
         lines.append(
             f"- {scenario['scenario_id']} [{scenario['title']}]: {pairs}\n"
             f"  narrative: {scenario['narrative']}",
@@ -536,10 +530,6 @@ async def _invoke_dimension_values(
     )
 
 
-def _enum_labels(dimension: "ScenarioTemplateDimension") -> list[str]:
-    return [enum.label for enum in dimension.enum]
-
-
 async def generate_new_dimension_values(
     template: "ScenarioTemplate",
     rows: list[dict[str, Any]],
@@ -561,7 +551,7 @@ async def generate_new_dimension_values(
     if not target_dimensions:
         return {}
     enum_by_key = {
-        dimension.dimension_id: _enum_labels(dimension)
+        dimension.dimension_id: [enum.label for enum in dimension.enum]
         for dimension in target_dimensions
     }
 
@@ -862,44 +852,23 @@ async def run_review(ctx: ReviewContext) -> ReviewReport:
 # LangGraph Node Classes
 # ==============================================
 
-from abc import ABC, abstractmethod
-from typing import Any
-
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.state import (
     ScenarioReviewState,
 )
-
-
-class BaseNode(ABC):
-    """Stateless LangGraph node."""
-
-    async def __call__(self, state: ScenarioReviewState) -> dict[str, Any]:
-        return await self.run(state)
-
-    @abstractmethod
-    async def run(self, state: ScenarioReviewState) -> dict[str, Any]:
-        ...
 
 
 class RunReviewNode(BaseNode):
     async def run(self, state: ScenarioReviewState) -> dict[str, Any]:
         if state.skip_review or state.error:
             return {}
-        context = self._build_context(state)
-        return {"report": await self._run_review(context)}
-
-    def _build_context(self, state: ScenarioReviewState) -> ReviewContext:
-        return build_context(
-            group=state.group,
-            requested_rows=state.requested_rows,
-            persisted_scenarios=state.persisted_scenarios,
-            template_dims=state.template_dims,
-            requested_headers=state.requested_headers,
-        )
-
-    async def _run_review(self, context: ReviewContext) -> ReviewReport:
-        return await run_review(context)
-
-
-async def run_review_node(state: ScenarioReviewState) -> dict[str, Any]:
-    return await RunReviewNode()(state)
+        return {
+            "report": await run_review(
+                build_context(
+                    group=state.group,
+                    requested_rows=state.requested_rows,
+                    persisted_scenarios=state.persisted_scenarios,
+                    template_dims=state.template_dims,
+                    requested_headers=state.requested_headers,
+                )
+            ),
+        }

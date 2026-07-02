@@ -30,63 +30,10 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_service import 
 )
 
 
-def _build_dimension_generation_rows(
-    rows: list[dict[str, Any]],
-    persisted_scenarios: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    persisted_by_id = {
-        int(scenario["scenario_id"]): scenario
-        for scenario in persisted_scenarios
-        if scenario.get("scenario_id") is not None
-    }
-    generation_rows: list[dict[str, Any]] = []
-    for row in rows:
-        generation_row = dict(row)
-        if row.get("scenario_id") is not None:
-            persisted = persisted_by_id.get(int(row["scenario_id"])) or {}
-            if not generation_row.get("title"):
-                generation_row["title"] = persisted.get("title") or ""
-            generation_row["narrative"] = persisted.get("narrative") or ""
-        generation_rows.append(generation_row)
-    return generation_rows
-
-
 def _model_or_dict_dump(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
         return value.model_dump()
     return dict(value)
-
-
-def _review_state_to_output(state: ScenarioReviewState) -> dict[str, object]:
-    if state.skip_review:
-        return {}
-    if state.error:
-        return validate_scenarios_state_update(status="failure", message=state.error, error=state.error)
-    if state.report is None:
-        message = "Scenario review report is missing"
-        return validate_scenarios_state_update(status="failure", message=message, error=message)
-    report = state.report
-    validation_result = {
-        "scenario_group_id": state.scenario_group_id,
-        "scenario_count": len(state.requested_rows),
-        "verdict": report.verdict,
-        "summary": report.summary,
-        "checks": [check.to_dict() for check in report.checks],
-    }
-    return validate_scenarios_state_update(
-        is_valid=report.is_valid,
-        reason=report.reason,
-        validation_result=validation_result,
-    )
-
-
-def _assert_group_owner(group: dict[str, Any], user_id: int | None) -> None:
-    request_usr_id = group.get("request_usr_id")
-    if request_usr_id is not None and request_usr_id != user_id:
-        raise MIBaseError(
-            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
-            detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
-        )
 
 
 def load_scenario_group(state: ValidateScenariosState) -> dict[str, object]:
@@ -95,7 +42,12 @@ def load_scenario_group(state: ValidateScenariosState) -> dict[str, object]:
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
     if group is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {state.scenario_group_id}")
-    _assert_group_owner(group, state.user_id)
+    request_usr_id = group.get("request_usr_id")
+    if request_usr_id is not None and request_usr_id != state.user_id:
+        raise MIBaseError(
+            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+            detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
+        )
 
     return {"scenario_group": group}
 
@@ -120,6 +72,26 @@ def load_scenarios(state: ValidateScenariosState) -> dict[str, object]:
 async def generate_dimension_values(state: ValidateScenariosState) -> dict[str, object]:
     if state.status == "failure":
         return {}
+
+    def build_dimension_generation_rows(
+        table_rows: list[dict[str, Any]],
+        persisted_scenarios: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        persisted_by_id = {
+            int(scenario["scenario_id"]): scenario
+            for scenario in persisted_scenarios
+            if scenario.get("scenario_id") is not None
+        }
+        generation_rows: list[dict[str, Any]] = []
+        for row in table_rows:
+            generation_row = dict(row)
+            if row.get("scenario_id") is not None:
+                persisted = persisted_by_id.get(int(row["scenario_id"])) or {}
+                if not generation_row.get("title"):
+                    generation_row["title"] = persisted.get("title") or ""
+                generation_row["narrative"] = persisted.get("narrative") or ""
+            generation_rows.append(generation_row)
+        return generation_rows
 
     request_table = (
         state.request_table.model_dump(exclude_unset=True)
@@ -209,7 +181,7 @@ async def generate_dimension_values(state: ValidateScenariosState) -> dict[str, 
     if fillable_dims:
         generated = await generate_new_dimension_values(
             template,
-            _build_dimension_generation_rows(
+            build_dimension_generation_rows(
                 rows,
                 [_model_or_dict_dump(scenario) for scenario in state.scenarios],
             ),
@@ -248,7 +220,27 @@ async def run_scenario_review(state: ValidateScenariosState) -> dict[str, object
         if isinstance(result_state, ScenarioReviewState)
         else ScenarioReviewState.model_validate(result_state)
     )
-    return _review_state_to_output(result)
+    if result.skip_review:
+        return {}
+    if result.error:
+        return validate_scenarios_state_update(status="failure", message=result.error, error=result.error)
+    if result.report is None:
+        message = "Scenario review report is missing"
+        return validate_scenarios_state_update(status="failure", message=message, error=message)
+
+    report = result.report
+    validation_result = {
+        "scenario_group_id": result.scenario_group_id,
+        "scenario_count": len(result.requested_rows),
+        "verdict": report.verdict,
+        "summary": report.summary,
+        "checks": [check.to_dict() for check in report.checks],
+    }
+    return validate_scenarios_state_update(
+        is_valid=report.is_valid,
+        reason=report.reason,
+        validation_result=validation_result,
+    )
 
 
 def save_validation_result(state: ValidateScenariosState) -> dict[str, object]:

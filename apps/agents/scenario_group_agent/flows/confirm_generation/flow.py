@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import StateGraph
 
-from apps.agents.scenario_group_agent.flows.confirm_generation.api_schema import (
+from apps.agents.scenario_group_agent.schemas.endpoint import (
     ConfirmGenerationData,
     ConfirmGenerationIn,
     ConfirmGenerationOut,

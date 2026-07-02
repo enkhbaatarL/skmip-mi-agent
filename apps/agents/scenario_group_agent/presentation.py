@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
+from apps.agents.scenario_group_agent.schemas.endpoint import (
     ScenarioGroupDetailOut,
 )
-from apps.agents.scenario_group_agent.schemas.api.table import (
+from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
     ScenarioHeader,

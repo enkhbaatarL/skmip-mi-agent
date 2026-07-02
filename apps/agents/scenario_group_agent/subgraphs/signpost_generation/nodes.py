@@ -32,8 +32,11 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     build_stage4_user_prompt,
     build_stage5_user_prompt,
 )
+from apps.agents.scenario_group_agent.schemas.base import BaseNode
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
 from apps.common.logging.logger_config import logger as app_logger
 from apps.persistence.enums import (
+    DirectionCode,
     SignpostStrength,
 )
 
@@ -259,17 +262,6 @@ def _stage2_fallback(scenario: Dict[str, Any]) -> List[str]:
     while len(out) < REF_SIGNPOSTS_PER_SCENARIO_MIN:
         out.append(f"{base} — 추가 관측 #{len(out)+1}")
     return out
-
-
-# ==============================================
-# 5. Stage 3 — Axis Classifier (deterministic)
-# ==============================================
-
-def stage3_assign_axes() -> Dict[str, Any]:
-    """단일 label에 대한 Axis 부여. Phase1: 무조건 mi_record / actor_nature=None."""
-    return {
-        "signpost_source": "mi_record",
-    }
 
 
 # ==============================================
@@ -502,15 +494,9 @@ def _stage5_fallback_keywords(label: str) -> List[str]:
 # LangGraph Node Classes
 # ==============================================
 
-from abc import ABC, abstractmethod
-from typing import Any
-
-from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
     SignpostGenerationState,
 )
-from apps.common.logging.logger_config import logger as app_logger
-from apps.persistence.enums import DirectionCode, SignpostStrength
 
 
 def _scenario_pk(scenario: dict[str, Any]) -> int:
@@ -520,32 +506,19 @@ def _scenario_pk(scenario: dict[str, Any]) -> int:
     return 0
 
 
-class BaseNode(ABC):
-    """Stateless LangGraph node."""
-
-    async def __call__(self, state: SignpostGenerationState) -> dict[str, Any]:
-        return await self.run(state)
-
-    @abstractmethod
-    async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
-        ...
-
-
 class ObservabilityFilterNode(BaseNode):
     async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if state.scenario is None:
             return {"error": "scenario is required"}
-        labels = await self._stage2_observability_filter(state)
+        labels = await stage2_observability_filter(
+            state.scenario,
+            state.base_event_summary,
+        )
         if not labels:
             app_logger.info("[{}] Stage 2 통과 0건 - signposts 비어있음", _scenario_pk(state.scenario))
         return {"labels": labels}
-
-    async def _stage2_observability_filter(self, state: SignpostGenerationState) -> list[str]:
-        if state.scenario is None:
-            raise ValueError("scenario is required")
-        return await stage2_observability_filter(state.scenario, state.base_event_summary)
 
 
 class DirectionStrengthNode(BaseNode):
@@ -554,7 +527,11 @@ class DirectionStrengthNode(BaseNode):
             return {}
         if state.scenario is None:
             return {"error": "scenario is required"}
-        assignments = await self._stage4_assign_direction_strength(state)
+        assignments = await stage4_assign_direction_strength(
+            state.scenario,
+            state.base_event_summary,
+            state.labels,
+        )
         strengths = [
             SignpostStrength.from_string_or_default(
                 assignment.get("strength"),
@@ -573,11 +550,6 @@ class DirectionStrengthNode(BaseNode):
         )
         return {"stage4_assignments": assignments}
 
-    async def _stage4_assign_direction_strength(self, state: SignpostGenerationState) -> list[dict[str, str]]:
-        if state.scenario is None:
-            raise ValueError("scenario is required")
-        return await stage4_assign_direction_strength(state.scenario, state.base_event_summary, state.labels)
-
 
 class KeywordHintsNode(BaseNode):
     async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
@@ -585,19 +557,23 @@ class KeywordHintsNode(BaseNode):
             return {}
         if state.scenario is None:
             return {"error": "scenario is required"}
-        return {"stage5_keyword_hints": await self._stage5_mint_keywords(state)}
-
-    async def _stage5_mint_keywords(self, state: SignpostGenerationState) -> list[list[str]]:
-        if state.scenario is None:
-            raise ValueError("scenario is required")
-        return await stage5_mint_keywords(state.scenario, state.base_event_summary, state.labels)
+        return {
+            "stage5_keyword_hints": await stage5_mint_keywords(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+            ),
+        }
 
 
 class AssembleSignpostsNode(BaseNode):
     async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
         if state.skip_generation or state.error or state.scenario is None:
             return {}
-        axes = self._stage3_assign_axes()
+        axes = {
+            "signpost_class": "observation",
+            "signpost_source": "mi_record",
+        }
         scenario_pk = _scenario_pk(state.scenario)
         signposts: list[GeneratedSignpost] = []
         for label, assignment, keyword_hints in zip(
@@ -622,22 +598,3 @@ class AssembleSignpostsNode(BaseNode):
                 ),
             )
         return {"signposts": signposts}
-
-    def _stage3_assign_axes(self) -> dict[str, Any]:
-        return stage3_assign_axes()
-
-
-async def observability_filter_node(state: SignpostGenerationState) -> dict[str, Any]:
-    return await ObservabilityFilterNode()(state)
-
-
-async def direction_strength_node(state: SignpostGenerationState) -> dict[str, Any]:
-    return await DirectionStrengthNode()(state)
-
-
-async def keyword_hints_node(state: SignpostGenerationState) -> dict[str, Any]:
-    return await KeywordHintsNode()(state)
-
-
-async def assemble_signposts_node(state: SignpostGenerationState) -> dict[str, Any]:
-    return await AssembleSignpostsNode()(state)

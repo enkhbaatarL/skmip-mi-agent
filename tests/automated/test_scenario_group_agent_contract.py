@@ -50,29 +50,23 @@ from apps.agents.scenario_group_agent.presentation import (
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.agents.scenario_group_agent.schemas.api.table import SignpostBasePayload
+from apps.agents.scenario_group_agent.schemas.table import SignpostBasePayload
 from apps.persistence.signpost.schema import (
     SignpostPayload,
 )
-from apps.agents.scenario_group_agent.flows.confirm_generation.api_schema import (
+from apps.agents.scenario_group_agent.schemas.endpoint import (
     ConfirmGenerationIn,
-)
-from apps.agents.scenario_group_agent.flows.create_scenarios.api_schema import CreateScenariosIn
-from apps.agents.scenario_group_agent.flows.create_signposts.api_schema import (
+    CreateScenariosIn,
     CreateSignpostsIn,
+    HardDeleteScenarioGroupIn,
+    SoftDeleteScenarioGroupIn,
+    ValidateScenariosCallBackScenarioGroup,
+    ValidateScenariosIn,
+    ValidateScenariosOut,
 )
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     GeneratedSignpost,
     SignpostGenerationResult,
-)
-from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
-    HardDeleteScenarioGroupIn,
-    SoftDeleteScenarioGroupIn,
-)
-from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (
-    ValidateScenariosCallBackScenarioGroup,
-    ValidateScenariosIn,
-    ValidateScenariosOut,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     _bg_to_output as validate_scenarios_bg_to_output,

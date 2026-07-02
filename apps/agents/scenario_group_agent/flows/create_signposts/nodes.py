@@ -189,9 +189,6 @@ async def run_signpost_generation(state: CreateSignpostsState) -> dict[str, obje
     if event is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
 
-    from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
-        stage1_build_context_pack,
-    )
     pack = stage1_build_context_pack(event)
     c1 = pack.model_dump().get("C1_base_event", {})
     base_event_summary = {

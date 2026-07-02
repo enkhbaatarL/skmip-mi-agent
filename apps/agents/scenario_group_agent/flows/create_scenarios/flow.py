@@ -7,7 +7,6 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
-from apps.agents.scenario_group_agent.flows.create_scenarios.api_schema import CreateScenariosOut
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     check_existing_scenario_group,
     create_group_record,
@@ -17,6 +16,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
 )
 from apps.agents.scenario_group_agent.flows.create_scenarios.state import CreateScenariosState
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
+from apps.agents.scenario_group_agent.schemas.endpoint import CreateScenariosOut
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode

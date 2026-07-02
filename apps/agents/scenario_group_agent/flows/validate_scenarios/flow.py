@@ -7,10 +7,6 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
-from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (
-    ValidateScenariosCallBackScenarioGroup,
-    ValidateScenariosOut,
-)
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
     load_scenario_group,
@@ -19,7 +15,11 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     save_validation_result,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.state import ValidateScenariosState
-from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
+from apps.agents.scenario_group_agent.schemas.endpoint import (
+    ValidateScenariosCallBackScenarioGroup,
+    ValidateScenariosOut,
+)
+from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode

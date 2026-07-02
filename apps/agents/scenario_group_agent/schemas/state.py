@@ -6,8 +6,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from apps.agents.scenario_group_agent.schemas.api.table import SignpostBasePayload
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.agents.scenario_group_agent.schemas.table import SignpostBasePayload
 
 
 class BaseFlowState(BaseModel):

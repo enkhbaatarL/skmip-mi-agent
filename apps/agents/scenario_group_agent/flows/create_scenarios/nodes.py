@@ -14,9 +14,6 @@ from apps.agents.scenario_group_agent.persistence.event_service import EventServ
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
-from apps.persistence.scenario_group.schema import (
-    ScenarioGroupPayload,
-)
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
@@ -29,15 +26,6 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
 )
-
-
-def _existing_group_state_update(
-    scenario_group: ScenarioGroupPayload,
-) -> dict[str, object]:
-    return {
-        "scenario_group_id": scenario_group.scenario_group_id,
-        "scenario_group": scenario_group,
-    }
 
 
 def load_event(state: CreateScenariosState) -> dict[str, object]:
@@ -62,7 +50,10 @@ def check_existing_scenario_group(state: CreateScenariosState) -> dict[str, obje
                 ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
                 detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
             )
-        return _existing_group_state_update(existing)
+        return {
+            "scenario_group_id": existing.scenario_group_id,
+            "scenario_group": existing,
+        }
     if existing.status == ScenarioGroupStatus.CREATING.value:
         if existing.request_usr_id == state.user_id:
             raise MIBaseError(
