@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
-from apps.persistence.schemas.baseline_contrast import (
+from apps.persistence.scenario.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
 from apps.persistence.scenario.models import MiScenarioModel
@@ -46,21 +46,21 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.persistence.schemas.domain.signpost import (
-    SignpostBasePayload,
+from apps.agents.scenario_group_agent.schemas.api.table import SignpostBasePayload
+from apps.persistence.signpost.schema import (
     SignpostPayload,
 )
-from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
+from apps.agents.scenario_group_agent.flows.confirm_generation.api_schema import (
     ConfirmGenerationIn,
 )
-from apps.agents.scenario_group_agent.schemas.api.create_scenarios import CreateScenariosIn
-from apps.agents.scenario_group_agent.schemas.api.create_signposts import (
+from apps.agents.scenario_group_agent.flows.create_scenarios.api_schema import CreateScenariosIn
+from apps.agents.scenario_group_agent.flows.create_signposts.api_schema import (
     CreateSignpostsIn,
 )
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     GeneratedSignpost,
     SignpostGenerationResult,
 )
@@ -68,7 +68,7 @@ from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import 
     HardDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupIn,
 )
-from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (
     ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosIn,
     ValidateScenariosOut,
@@ -81,7 +81,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.subgraph_ada
     to_output as scenario_generation_to_output,
     to_state as scenario_generation_to_state,
 )
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ScenarioTemplate,
     TemplateDimension,
 )

@@ -3,19 +3,19 @@ from __future__ import annotations
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+)
 from apps.persistence.event.service import EventService
 from apps.persistence.scenario.service import (
     ScenarioService,
 )
-from apps.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.persistence.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
+from apps.persistence.scenario_group.service import (
+    ScenarioGroupService,
 )
 
 

@@ -15,7 +15,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages im
     GeneratedDimensionCell,
 )
 from apps.common.exceptions.custom import MIBaseError
-from apps.persistence.schemas.domain.template import (
+from apps.persistence.scenario.schema import (
     ScenarioTemplate,
     ScenarioTemplateDimension,
     ScenarioTemplateEnum,

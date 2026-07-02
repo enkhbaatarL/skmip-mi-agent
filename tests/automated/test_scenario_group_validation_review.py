@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation import nodes
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
+    stage4_synthesize_scenarios,
+    stage5_quick_validate,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     C1BaseEvent,
     PerDimensionValue,
     PriceDirection,
@@ -18,11 +23,6 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage4ScenarioSynthesis,
     Stage5RepairInstruction,
     TemplateDimension,
-)
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation import nodes
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
-    stage4_synthesize_scenarios,
-    stage5_quick_validate,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,

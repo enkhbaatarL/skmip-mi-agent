@@ -7,6 +7,7 @@ from typing import Any
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import StateGraph
 
+from apps.agents.scenario_group_agent.flows.create_signposts.api_schema import CreateSignpostsOut
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     check_existing_signposts,
     generate_new_scenario_row_details_node,
@@ -17,14 +18,13 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     sync_scenarios_from_table,
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
-from apps.agents.scenario_group_agent.schemas.api.create_signposts import CreateSignpostsOut
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
-from apps.persistence.schemas.enums import (
+from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )

@@ -1,8 +1,42 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from apps.persistence.enums import ScenarioStatus
+from apps.persistence.schema_base import ApiModel
+
+
+class ScenarioPayload(ApiModel):
+    scenario_id: int
+    scenario_group_id: int = 0
+    display_order: int = 0
+    title: str = ""
+    description: str = ""
+    narrative: str | None = None
+    dimension_values: dict[str, Any] = Field(default_factory=dict)
+    price_direction: dict[str, Any] = Field(default_factory=dict)
+    probability_score: Decimal | None = None
+    probability_delta: Decimal | None = Decimal("0.0")
+    impact_jkm: str | None = None
+    impact_ttf: str | None = None
+    impact_hh: str | None = None
+    baseline_yn: str | None = "N"
+    status: str = ScenarioStatus.CREATING.value
+    del_yn: str | None = None
+
+
+class NewScenarioGeneratedDetails(ApiModel):
+    model_config = ConfigDict(frozen=True)
+
+    narrative: str
+    probability_weight: Decimal
+    probability_delta: Decimal
+    impact_jkm: str | None
+    impact_ttf: str | None
+    impact_hh: str | None
 
 
 class ScenarioTemplateEnum(BaseModel):
@@ -64,7 +98,7 @@ class ScenarioTemplate(BaseModel):
     dimensions: list[ScenarioTemplateDimension] = Field(default_factory=list)
 
 
-class PipelineTemplateDimension(BaseModel):
+class ScenarioPipelineTemplateDimension(BaseModel):
     label: str = Field(description="Dimension 표시명")
     dim_key: str = Field(description="Dimension key")
     required: bool = Field(default=False, description="필수 여부")
@@ -75,7 +109,7 @@ class PipelineTemplateDimension(BaseModel):
     display_order: int = Field(default=999999, description="표시 순서")
 
     @model_validator(mode="after")
-    def _validate_template_dimension(self) -> "PipelineTemplateDimension":
+    def _validate_template_dimension(self) -> "ScenarioPipelineTemplateDimension":
         dim_key = str(self.dim_key).strip()
         if not dim_key:
             raise ValueError("dim_key is required.")
@@ -108,20 +142,20 @@ class PipelineTemplateDimension(BaseModel):
         }
 
 
-class PipelineScenarioTemplate(BaseModel):
+class ScenarioPipelineTemplate(BaseModel):
     label_ko: str = Field(default="", description="템플릿 라벨")
     template_dimensions_total: int | None = Field(
         default=None,
         description="템플릿 전체 Dimension 수",
     )
-    dimensions: list[PipelineTemplateDimension] = Field(
+    dimensions: list[ScenarioPipelineTemplateDimension] = Field(
         default_factory=list,
         description="Dimension 템플릿 정의",
     )
     compatibility_rules: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_template(self) -> "PipelineScenarioTemplate":
+    def _validate_template(self) -> "ScenarioPipelineTemplate":
         self.dimensions = self.ordered_dimensions()
         if len(self.dimensions) < 3:
             raise ValueError("template must include at least three dimensions.")
@@ -137,7 +171,7 @@ class PipelineScenarioTemplate(BaseModel):
             )
         return self
 
-    def ordered_dimensions(self) -> list[PipelineTemplateDimension]:
+    def ordered_dimensions(self) -> list[ScenarioPipelineTemplateDimension]:
         return sorted(
             self.dimensions,
             key=lambda dimension: (dimension.display_order, dimension.dim_key),

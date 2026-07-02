@@ -10,7 +10,7 @@ from apps.agents.scenario_group_agent.schemas.api.table import (
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.common.values.response import CallBackBody
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
 

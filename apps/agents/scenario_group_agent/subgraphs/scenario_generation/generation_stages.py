@@ -40,7 +40,7 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     CompatibilityItem,
     CompatibilityStructuredOutput,
 )
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     LIKELIHOOD_TIERS,
     PRICE_TIERS,
     C1BaseEvent,
@@ -63,7 +63,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
 )
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
-from apps.persistence.schemas.baseline_contrast import (
+from apps.persistence.scenario.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
 

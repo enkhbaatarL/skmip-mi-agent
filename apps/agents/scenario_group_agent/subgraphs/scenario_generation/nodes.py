@@ -4,9 +4,6 @@ import json
 from typing import Any
 import uuid
 
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
-    ScenarioGenerationResult,
-)
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
     stage1_build_context_pack,
     stage2_select_dimensions,
@@ -15,6 +12,9 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_s
     stage5_quick_validate,
     stage6_validate,
     stage_generate_scenario_group_metadata,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
+    ScenarioGenerationResult,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,

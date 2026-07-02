@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import Field
 
-from apps.persistence.schemas.base import ApiModel
+from apps.persistence.schema_base import ApiModel
 
 
 class EventPayload(ApiModel):

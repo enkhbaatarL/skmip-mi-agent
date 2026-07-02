@@ -10,7 +10,7 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.common.configs.database.sync_database.base import ORMBase
-from apps.persistence.schemas.enums import (
+from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )

@@ -9,8 +9,8 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from apps.common.configs.database.sync_database.base import ORMBase
+from apps.persistence.enums import ScenarioStatus
 from apps.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumnsMixin
-from apps.persistence.schemas.enums import ScenarioStatus
 
 
 _SCENARIO_STATUS_CHECK_SQL = ", ".join(f"'{status.value}'" for status in ScenarioStatus)

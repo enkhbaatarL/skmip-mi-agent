@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.agents.scenario_group_agent.state import ConfirmScenarioGroupState
 from apps.common.values.response import CommonResponse
 
 
-class ConfirmScenarioGroupIn(ApiModel):
-    title: str
-    summary: str | None = None
-    description: str | None = None
+class ConfirmScenarioGroupIn(ConfirmScenarioGroupState):
+    # API DTO 이름은 OpenAPI 계약으로 유지하고, 필드는 graph state 계약을 재사용한다.
+    pass
 
 
 class ConfirmGenerationIn(ApiModel):

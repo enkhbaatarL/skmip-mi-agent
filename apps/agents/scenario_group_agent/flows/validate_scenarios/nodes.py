@@ -8,16 +8,16 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages im
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
 from apps.persistence.scenario.service import (
     ScenarioService,
 )
 from apps.persistence.scenario_group.service import (
     ScenarioGroupService,
-)
-from apps.persistence.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-    ScenarioStatus,
 )
 
 

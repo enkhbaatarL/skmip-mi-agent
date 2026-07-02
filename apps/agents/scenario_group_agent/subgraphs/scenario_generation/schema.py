@@ -5,10 +5,6 @@ from typing import Any, Dict, List, Literal, Tuple
 from pydantic import BaseModel, Field, conlist, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.persistence.schemas.enums import (
-    DirectionCode,
-    SignpostStrength,
-)
 
 
 PRICE_TIERS: Tuple[str, ...] = (
@@ -41,40 +37,6 @@ LikelihoodTier = Literal["very_low", "low", "medium", "high", "very_high"]
 DimensionValueMap = Dict[str, str]
 
 
-class C1BaseEvent(BaseModel):
-    event_id: str = Field(default="", description="MIEvent 고유 ID (mi_event_id)")
-    title: str = Field(default="", description="이벤트 한글 제목")
-    event_type_l1_l2: str = Field(default="", description="'l1_code::l2_code' 형태")
-    summary: str = Field(default="", description="이벤트 한 줄 요약 (one_line_summary)")
-    driver: str = Field(default="", description="핵심 드라이버 (자유 서술)")
-
-
-class C2LinkedRecords(BaseModel):
-    window_days: int = Field(default=30, description="연관 Record 조회 시간창 (일)")
-    records: List[Dict] = Field(default_factory=list, description="연관 Record 요약 리스트(stub)")
-
-
-class C3HistoricalAnalog(BaseModel):
-    analog_event_id: str = Field(default="", description="과거 유사 이벤트 ID")
-    trajectory: List[str] = Field(default_factory=list, description="전개 단계 라벨 시퀀스")
-
-
-class Stage1ContextPack(BaseModel):
-    C1_base_event: C1BaseEvent = Field(description="필수 — 단일 Base Event")
-    C2_linked_records: C2LinkedRecords = Field(
-        default_factory=C2LinkedRecords,
-        description="형식적 stub — 실제 구현은 본 파이프라인 범위 밖.",
-    )
-    C3_historical_analogs: List[C3HistoricalAnalog] = Field(
-        default_factory=list,
-        description="형식적 stub — RAG 미연결.",
-    )
-    C4_related_events: List[Dict] = Field(
-        default_factory=list,
-        description="형식적 stub — Graph 미연결.",
-    )
-
-
 class TemplateDimension(BaseModel):
     label: str = Field(description="Dimension 표시명")
     dim_key: str = Field(description="Dimension key")
@@ -86,7 +48,7 @@ class TemplateDimension(BaseModel):
     display_order: int = Field(default=999999, description="표시 순서")
 
     @model_validator(mode="after")
-    def _validate_template_dimension(self):
+    def _validate_template_dimension(self) -> "TemplateDimension":
         dim_key = str(self.dim_key).strip()
         if not dim_key:
             raise ValueError("dim_key is required.")
@@ -135,7 +97,7 @@ class ScenarioTemplate(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_template(self):
+    def _validate_template(self) -> "ScenarioTemplate":
         ordered = self.ordered_dimensions()
         if len(ordered) < 3:
             raise ValueError("template must include at least three dimensions.")
@@ -152,6 +114,40 @@ class ScenarioTemplate(BaseModel):
 
     def resolved_total(self) -> int:
         return self.template_dimensions_total or len(self.dimensions)
+
+
+class C1BaseEvent(BaseModel):
+    event_id: str = Field(default="", description="MIEvent 고유 ID (mi_event_id)")
+    title: str = Field(default="", description="이벤트 한글 제목")
+    event_type_l1_l2: str = Field(default="", description="'l1_code::l2_code' 형태")
+    summary: str = Field(default="", description="이벤트 한 줄 요약 (one_line_summary)")
+    driver: str = Field(default="", description="핵심 드라이버 (자유 서술)")
+
+
+class C2LinkedRecords(BaseModel):
+    window_days: int = Field(default=30, description="연관 Record 조회 시간창 (일)")
+    records: List[Dict] = Field(default_factory=list, description="연관 Record 요약 리스트(stub)")
+
+
+class C3HistoricalAnalog(BaseModel):
+    analog_event_id: str = Field(default="", description="과거 유사 이벤트 ID")
+    trajectory: List[str] = Field(default_factory=list, description="전개 단계 라벨 시퀀스")
+
+
+class Stage1ContextPack(BaseModel):
+    C1_base_event: C1BaseEvent = Field(description="필수 — 단일 Base Event")
+    C2_linked_records: C2LinkedRecords = Field(
+        default_factory=C2LinkedRecords,
+        description="형식적 stub — 실제 구현은 본 파이프라인 범위 밖.",
+    )
+    C3_historical_analogs: List[C3HistoricalAnalog] = Field(
+        default_factory=list,
+        description="형식적 stub — RAG 미연결.",
+    )
+    C4_related_events: List[Dict] = Field(
+        default_factory=list,
+        description="형식적 stub — Graph 미연결.",
+    )
 
 
 class SelectedDimension(BaseModel):
@@ -282,21 +278,3 @@ class ScenarioGenerationResult(ApiModel):
     filtered_by_compatibility: int = 0
     mece_passed: bool = False
     scenario_group_id: int | str | None = None
-
-
-class GeneratedSignpost(ApiModel):
-    scenario_id: int
-    signpost_id: int | None = None
-    signpost_class: Literal["observation"] = "observation"
-    label: str
-    signpost_source: Literal["mi_record"] = "mi_record"
-    direction: DirectionCode = DirectionCode.SUP
-    strength: SignpostStrength | None = None
-    rationale_ko: str = ""
-    keyword_hints: list[str] = Field(default_factory=list)
-
-
-class SignpostGenerationResult(ApiModel):
-    scenario_group_id: int | None = None
-    scenario_results: list[dict[str, Any]] = Field(default_factory=list)
-    signposts: list[GeneratedSignpost] = Field(default_factory=list)

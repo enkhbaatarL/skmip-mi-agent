@@ -4,31 +4,29 @@ import asyncio
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from apps.persistence.enums import ScenarioStatus
+from apps.persistence.scenario.baseline_contrast import (
+    apply_single_baseline_by_probability,
+)
 from apps.persistence.scenario.repository import (
     ScenarioRepository,
+)
+from apps.persistence.scenario.schema import (
+    NewScenarioGeneratedDetails,
+    ScenarioPayload,
+    ScenarioPipelineTemplate,
+    ScenarioPipelineTemplateDimension,
 )
 from apps.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
-from apps.persistence.schemas.baseline_contrast import (
-    apply_single_baseline_by_probability,
-)
-from apps.persistence.schemas.domain.scenario import (
-    NewScenarioGeneratedDetails,
-    ScenarioPayload,
-)
-from apps.persistence.schemas.domain.template import (
-    PipelineScenarioTemplate,
-    PipelineTemplateDimension,
-)
-from apps.persistence.schemas.enums import ScenarioStatus
 from apps.persistence.signpost.repository import (
     SignpostRepository,
 )
 
 
 if TYPE_CHECKING:
-    from apps.persistence.schemas.domain.template import (
+    from apps.persistence.scenario.schema import (
         ScenarioTemplate as CommonScenarioTemplate,
         ScenarioTemplateDimension as CommonScenarioTemplateDimension,
     )
@@ -124,7 +122,7 @@ def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
 
 class ScenarioService:
     def load_dimension_template(self, event_type_l2_id: int) -> list["CommonScenarioTemplateDimension"]:
-        from apps.persistence.schemas.domain.template import (
+        from apps.persistence.scenario.schema import (
             ScenarioTemplateDimension as CommonScenarioTemplateDimension,
         )
 
@@ -147,7 +145,7 @@ class ScenarioService:
             for dimension in pipeline_template.dimensions
         ]
 
-    def load_pipeline_template(self, event_type_l2_id: int) -> PipelineScenarioTemplate:
+    def load_pipeline_template(self, event_type_l2_id: int) -> ScenarioPipelineTemplate:
         template_json = self._load_template_json_from_db(event_type_l2_id)
         return self._map_template_json_to_pipeline_template(
             template_json,
@@ -155,7 +153,7 @@ class ScenarioService:
         )
 
     def load_scenario_template(self, event_type_l2_id: int) -> "CommonScenarioTemplate":
-        from apps.persistence.schemas.domain.template import (
+        from apps.persistence.scenario.schema import (
             ScenarioTemplate as CommonScenarioTemplate,
             ScenarioTemplateDimension,
             ScenarioTemplateEnum,
@@ -209,7 +207,7 @@ class ScenarioService:
         self,
         template_json: list[dict[str, Any]],
         event_type_l2_id: int,
-    ) -> PipelineScenarioTemplate:
+    ) -> ScenarioPipelineTemplate:
         if not template_json:
             raise ValueError(f"template_json is empty: event_type_l2_id={event_type_l2_id}")
 
@@ -217,7 +215,7 @@ class ScenarioService:
             self._map_template_dimension(item, event_type_l2_id, index)
             for index, item in enumerate(template_json, start=1)
         ]
-        return PipelineScenarioTemplate(
+        return ScenarioPipelineTemplate(
             label_ko=f"event_type_l2_id={event_type_l2_id}",
             template_dimensions_total=len(dimensions),
             dimensions=dimensions,
@@ -229,7 +227,7 @@ class ScenarioService:
         raw_dimension: dict[str, Any],
         event_type_l2_id: int,
         index: int,
-    ) -> PipelineTemplateDimension:
+    ) -> ScenarioPipelineTemplateDimension:
         if not isinstance(raw_dimension, dict):
             raise ValueError(f"template_json item must be object: event_type_l2_id={event_type_l2_id}, index={index}")
 
@@ -241,7 +239,7 @@ class ScenarioService:
         if not isinstance(raw_value_enums, list):
             raise ValueError(f"value_enums must be array: event_type_l2_id={event_type_l2_id}, dim_key={dim_key}")
 
-        return PipelineTemplateDimension(
+        return ScenarioPipelineTemplateDimension(
             label=str(raw_dimension.get("label", "")).strip() or dim_key,
             dim_key=dim_key,
             required=bool(raw_dimension.get("required", False)),

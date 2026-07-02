@@ -4,33 +4,33 @@ import asyncio
 from decimal import Decimal
 from typing import Any
 
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
-    GeneratedSignpost,
-    SignpostGenerationResult,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.generation_stages import (
     stage1_build_context_pack,
     stage4_synthesize_fixed_scenarios,
     stage6_validate,
 )
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
+    GeneratedSignpost,
+    SignpostGenerationResult,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
+from apps.persistence.event.schema import EventPayload
 from apps.persistence.event.service import EventService
+from apps.persistence.scenario.schema import (
+    NewScenarioGeneratedDetails,
+)
 from apps.persistence.scenario.service import (
     ScenarioService,
 )
 from apps.persistence.scenario_group.service import (
     ScenarioGroupService,
-)
-from apps.persistence.schemas.domain.event import EventPayload
-from apps.persistence.schemas.domain.scenario import (
-    NewScenarioGeneratedDetails,
-)
-from apps.persistence.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-    ScenarioStatus,
 )
 from apps.persistence.signpost.service import (
     SignpostService,

@@ -7,6 +7,10 @@ from typing import Any
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import StateGraph
 
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (
+    ValidateScenariosCallBackScenarioGroup,
+    ValidateScenariosOut,
+)
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
     load_scenario_group,
@@ -14,10 +18,6 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     save_validation_result,
 )
 from apps.agents.scenario_group_agent.schemas.api.table import ScenarioTable
-from apps.agents.scenario_group_agent.schemas.api.validate_scenarios import (
-    ValidateScenariosCallBackScenarioGroup,
-    ValidateScenariosOut,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
     scenario_review_runnable,
@@ -25,7 +25,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
 from apps.common.logging.logger_config import logger
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
-from apps.persistence.schemas.enums import (
+from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )

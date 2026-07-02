@@ -6,27 +6,26 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
-    ConfirmScenarioGroupIn,
-)
+from apps.agents.scenario_group_agent.schemas.api.table import SignpostBasePayload
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ScenarioGenerationResult,
+)
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     SignpostGenerationResult,
 )
-from apps.persistence.schemas.domain.event import EventPayload
-from apps.persistence.schemas.domain.scenario import (
+from apps.persistence.event.schema import EventPayload
+from apps.persistence.scenario.schema import (
     NewScenarioGeneratedDetails,
     ScenarioPayload,
+    ScenarioTemplateDimension,
 )
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.persistence.schemas.domain.signpost import (
-    SignpostBasePayload,
+from apps.persistence.signpost.schema import (
     SignpostPayload,
 )
-from apps.persistence.schemas.domain.template import ScenarioTemplateDimension
 
 
 class ScenarioTableHeaderState(ApiModel):
@@ -70,6 +69,12 @@ class ScenarioTableRowState(ApiModel):
 class ScenarioTableState(ApiModel):
     headers: list[ScenarioTableHeaderState]
     rows: list[ScenarioTableRowState]
+
+
+class ConfirmScenarioGroupState(ApiModel):
+    title: str
+    summary: str | None = None
+    description: str | None = None
 
 
 ValidationCheckStatus = Literal["PASS", "WARN", "FAIL", "INFO"]
@@ -125,7 +130,7 @@ class ScenarioDesignState(BaseModel):
     scenario_result: ScenarioGenerationResult | None = None
     validation_result: ScenarioValidationResult | None = None
     signpost_result: SignpostGenerationResult | None = None
-    request_scenario_group: ConfirmScenarioGroupIn | None = None
+    request_scenario_group: ConfirmScenarioGroupState | None = None
     request_table: ScenarioTableState | None = None
 
     saved_scenario_ids: Annotated[list[int], extend_unique_ints] = Field(default_factory=list)

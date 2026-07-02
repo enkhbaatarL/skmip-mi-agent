@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from apps.persistence.schemas.base import ApiModel
-from apps.persistence.schemas.enums import (
+from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
+from apps.persistence.schema_base import ApiModel
 
 
 class ScenarioGroupPayload(ApiModel):

@@ -6,21 +6,21 @@ from typing import Any
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import StateGraph
 
+from apps.agents.scenario_group_agent.flows.confirm_generation.api_schema import (
+    ConfirmGenerationData,
+    ConfirmGenerationIn,
+    ConfirmGenerationOut,
+)
 from apps.agents.scenario_group_agent.flows.confirm_generation.nodes import (
     confirm_outputs,
     load_scenario_group,
     load_scenarios,
     load_signposts,
 )
-from apps.agents.scenario_group_agent.schemas.api.confirm_generation import (
-    ConfirmGenerationData,
-    ConfirmGenerationIn,
-    ConfirmGenerationOut,
-)
 from apps.agents.scenario_group_agent.state import ScenarioDesignState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
-from apps.persistence.schemas.enums import (
+from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )

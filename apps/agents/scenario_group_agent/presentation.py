@@ -16,15 +16,15 @@ from apps.agents.scenario_group_agent.schemas.api.table import (
     ScenarioQueryTable,
     ScenarioRow,
     ScenarioTable,
+    SignpostBasePayload,
     SignpostQueryPayload,
 )
 from apps.persistence.scenario.service import (
     ScenarioService,
 )
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.persistence.schemas.domain.signpost import SignpostBasePayload
 
 
 def build_scenario_group_table_data(

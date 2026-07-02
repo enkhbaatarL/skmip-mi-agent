@@ -31,7 +31,7 @@ skmip-mi-agent/
 
 - `main.py`: FastAPI app 구성, schema validation, 공통 middleware/openapi 설정, Agent router 등록
 - `apps/agents/<agent_name>/`: Agent별 API, flow, API/graph schema, prompt, subgraph 구현 위치
-- `apps/persistence/`: 여러 Agent가 공유하는 DB ORM, repository, service, persistence DTO 구현 위치
+- `apps/persistence/`: 여러 Agent가 공유하는 DB ORM, repository, service, persistence domain DTO 구현 위치
 - `apps/agents/scenario_group_agent/`: 현재 운영 중인 Agent이자 새 Agent 구조의 기준 예시
 - `tests/automated/`: pytest로 자동 실행되는 회귀/계약 테스트
 - `tests/manual/`: 로컬 API 확인과 요청 바디 생성용 수동 실행 스크립트
@@ -51,6 +51,7 @@ apps/agents/<agent_name>/
 │   ├── __init__.py
 │   ├── <feature_or_domain>/
 │   │   ├── __init__.py
+│   │   ├── api_schema.py       # 이 flow endpoint 전용 request/response schema
 │   │   ├── flow.py              # 동기 graph invoke가 필요한 기능만 둔다.
 │   │   ├── flow_async.py        # background task가 필요한 기능만 둔다.
 │   │   └── nodes.py
@@ -68,18 +69,16 @@ apps/agents/<agent_name>/
 ├── schemas/
 │   ├── __init__.py
 │   ├── base.py
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── common.py
-│   │   ├── table.py
-│   │   └── <api_or_feature>.py
-│   └── graph/
+│   └── api/
 │       ├── __init__.py
-│       └── <graph_payload>.py
+│       ├── common.py
+│       ├── table.py
+│       └── <shared_api_area>.py
 └── subgraphs/
     ├── __init__.py
     ├── <subgraph_name>/
     │   ├── __init__.py
+    │   ├── schema.py
     │   ├── state.py
     │   ├── nodes.py
     │   ├── generation_stages.py
@@ -112,6 +111,9 @@ apps/agents/<agent_name>/
 - `flows/<feature_or_domain>/`
   - API 동작 하나 또는 밀접한 기능 묶음 하나를 기능 단위, 도메인 단위로 나눈 flow 패키지다.
   - 예: `create_scenarios`, `validate_scenarios`, `create_signposts`, `confirm_generation`
+- `flows/<feature_or_domain>/api_schema.py`
+  - 해당 flow endpoint에서만 쓰는 FastAPI request/response DTO를 둔다.
+  - 여러 endpoint나 presentation에서 공유하는 API DTO는 `schemas/api/`에 남긴다.
 - `flows/<feature_or_domain>/flow.py`
   - LangGraph `StateGraph` 기반 runnable을 구성한다.
   - 동기적으로 graph를 invoke하는 내부/테스트 경로에서 기준 구현으로 사용한다.
@@ -128,45 +130,47 @@ apps/agents/<agent_name>/
 - `subgraphs/<subgraph_name>/`
   - 여러 flow에서 재사용되거나 독립적인 LLM/검색/생성 pipeline으로 분리할 만한 LangGraph subgraph 계층이다.
   - `flow.py`는 runnable graph 조립, `nodes.py`는 LangGraph node wrapper, `state.py`는 subgraph state를 담당한다.
+  - `schema.py`는 해당 subgraph 내부 stage/template/result DTO를 담당한다.
   - `generation_stages.py`는 stage 구현, LLM 호출, retry, validation, fallback을 담당한다.
   - `subgraph_adapter.py`는 parent flow state와 subgraph state 사이의 변환을 담당한다.
 - `apps/persistence/<domain>/models.py`
   - SQLAlchemy ORM 모델 정의. DB 테이블명/컬럼명/FK/index 소유권의 기준이다.
+- `apps/persistence/<domain>/schema.py`
+  - 해당 persistence domain service의 입력/반환 DTO를 둔다.
+  - 같은 domain의 `models.py`, `repository.py`, `service.py`와 함께 배치해 검색성을 맞춘다.
 - `apps/persistence/<domain>/repository.py`
   - DB 접근 단위 쿼리 로직을 담당한다.
 - `apps/persistence/<domain>/service.py`
   - flow/node가 호출하는 비즈니스 친화 API를 제공한다.
-- `apps/persistence/schemas/`
-  - persistence service 반환/입력 DTO, DB 상태 enum, 공유 DB 도메인 helper를 둔다.
+- `apps/persistence/schema_base.py`, `apps/persistence/enums.py`
+  - 여러 persistence domain이 공유하는 DTO base class와 DB/domain enum을 둔다.
 - `prompts/`
   - Agent에서 쓰는 프롬프트 템플릿과 프롬프트 builder를 API/flow 외부 모듈로 분리해 둔다.
   - LLM 호출과 retry/fallback orchestration은 flow/subgraph가 담당하고, 프롬프트 문구/구성은 `prompts/*.py`가 기준이다.
 - `schemas/base.py`
   - API alias 설정 등 Pydantic schema 공통 기반 타입을 정의한다.
 - `schemas/api/`
-  - FastAPI request/response 전용 schema를 정의한다.
+  - 여러 endpoint, flow, presentation에서 공유하는 FastAPI request/response schema를 정의한다.
   - `schemas/api/table.py`는 외부 API table 응답/요청 shape, `schemas/api/common.py`은 API 공통 응답 wrapper를 담당한다.
-- `schemas/graph/`
-  - LangGraph state에 저장되는 pipeline stage/template/result DTO를 정의한다.
 
 ## 현재 Agent 예시: `scenario_group_agent`
 
 `scenario_group_agent`는 위 기본 구조를 따르는 현재 런타임 Agent다.
 
 - `flows/create_scenarios/`: scenario 생성 기능 단위 flow
-  - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
+  - `api_schema.py`, `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
-  - `flow_async.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
+  - `api_schema.py`, `flow_async.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow
-  - `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
+  - `api_schema.py`, `flow_async.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/confirm_generation/`: 생성 결과 확정 기능 단위 flow
-  - `flow.py`, `nodes.py`로 구성되며 API 요청에서 직접 graph를 invoke한다.
+  - `api_schema.py`, `flow.py`, `nodes.py`로 구성되며 API 요청에서 직접 graph를 invoke한다.
 - `apps/persistence/event/`, `apps/persistence/scenario_group/`, `apps/persistence/scenario/`, `apps/persistence/signpost/`: DB domain 단위 persistence 계층
 - `prompts/scenario_generation.py`, `prompts/scenario_validation.py`, `prompts/signpost_generation.py`: 생성/검증/Signpost LLM prompt와 structured output schema
-- `schemas/api/`: `common.py`, `table.py`, `create_scenarios.py`, `validate_scenarios.py`, `create_signposts.py`, `confirm_generation.py`, `manage_scenario_groups.py`
-- `apps/persistence/schemas/domain/`: `event.py`, `scenario_group.py`, `scenario.py`, `signpost.py`, `template.py`
-- `schemas/graph/generation.py`: scenario/signpost generation subgraph가 공유하는 graph DTO
-- `apps/persistence/schemas/baseline_contrast.py`: scenario/signpost persistence와 generation/review에서 공유하는 baseline 대비 coverage 계산 helper
+- `schemas/api/`: `common.py`, `table.py`, `manage_scenario_groups.py`처럼 여러 endpoint 또는 presentation에서 공유하는 API DTO
+- `apps/persistence/<domain>/schema.py`: `event`, `scenario_group`, `scenario`, `signpost` service DTO
+- `subgraphs/scenario_generation/schema.py`, `subgraphs/signpost_generation/schema.py`: 각 generation subgraph의 graph DTO
+- `apps/persistence/scenario/baseline_contrast.py`: scenario/signpost persistence와 generation/review에서 공유하는 baseline 대비 coverage 계산 helper
 - `tools/`: 현재 구현된 Agent 전용 LLM tool은 없으며, 향후 tool 구현 위치로 예약
 - `subgraphs/scenario_generation/`: scenario 생성 pipeline subgraph
 - `subgraphs/scenario_review/`: scenario validation review subgraph
@@ -242,14 +246,14 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 
 ## 신규 기능 추가 기준
 
-- API를 추가할 때는 `api.py`, `schemas/api/<api_or_feature>.py`, `flows/<feature_or_domain>/nodes.py`와 실행 방식에 맞는 `flow.py` 또는 `flow_async.py`를 함께 검토한다.
+- API를 추가할 때는 `api.py`, `flows/<feature_or_domain>/api_schema.py`, `flows/<feature_or_domain>/nodes.py`와 실행 방식에 맞는 `flow.py` 또는 `flow_async.py`를 함께 검토한다.
 - `flows/<feature_or_domain>/` 이름은 endpoint path를 그대로 따르기보다 기능 단위, 도메인 단위 의미가 드러나게 정한다.
 - API가 즉시 200을 반환하고 백그라운드에서 오래 도는 작업이면 `flows/<feature_or_domain>/flow_async.py`를 둔다.
 - 생성/검색/검증 파이프라인이 여러 flow에서 재사용되거나 독립적으로 테스트할 가치가 있으면 `subgraphs/<subgraph_name>/`로 분리한다.
 - DB 저장/조회가 필요하면 먼저 `apps/persistence/<domain>/`의 service/repository 책임을 확인하고, flow/node에서는 service를 호출한다.
-- API 입출력은 `schemas/api/<api_or_feature>.py`, API table shape은 `schemas/api/table.py`, API 공통 응답은 `schemas/api/common.py`에 둔다.
+- flow endpoint 전용 API 입출력은 `flows/<feature_or_domain>/api_schema.py`, API table shape은 `schemas/api/table.py`, API 공통 응답은 `schemas/api/common.py`에 둔다.
 - 조회/삭제/관리성 schema가 한 도메인에 묶이면 `schemas/api/manage_<domain>.py`처럼 관리 목적을 드러내는 파일에 둔다.
-- service 반환 DTO는 `apps/persistence/schemas/domain/`, graph generation stage/template/result DTO는 `schemas/graph/`에 둔다.
+- service 반환 DTO는 `apps/persistence/<domain>/schema.py`, graph generation stage/template/result DTO는 해당 `subgraphs/<subgraph_name>/schema.py`에 둔다.
 - 응답 조립/표시용 변환은 `presentation.py`에 둔다.
 - flow/subgraph에서 공유하는 상태가 늘어나면 `state.py`에 추가하고, 특정 flow에만 필요한 상태는 해당 flow 내부에 둔다.
 

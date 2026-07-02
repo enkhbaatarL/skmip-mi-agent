@@ -6,10 +6,22 @@ from typing import Any
 from pydantic import Field, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
-from apps.persistence.schemas.domain.signpost import SignpostBasePayload
+
+
+class SignpostBasePayload(ApiModel):
+    signpost_id: int
+    label: str
+    probability_direction_code: str | None = None
+    probability_impact_score: Decimal | None = None
+    signpost_reason: str | None = None
+    display_order: int = 0
+    strength: str | None = None
+    use_yn: str | None = None
+    keyword_hints: list[str] = Field(default_factory=list)
+    del_yn: str | None = None
 
 
 class ScenarioHeader(ApiModel):

@@ -8,6 +8,11 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
+    ScenarioStatus,
+)
 from apps.persistence.scenario.repository import (
     ScenarioRepository,
 )
@@ -17,13 +22,8 @@ from apps.persistence.scenario.service import (
 from apps.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
-from apps.persistence.schemas.domain.scenario_group import (
+from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
-)
-from apps.persistence.schemas.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-    ScenarioStatus,
 )
 from apps.persistence.signpost.repository import (
     SignpostRepository,

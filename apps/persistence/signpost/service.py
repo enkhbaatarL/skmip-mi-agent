@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from apps.persistence.schemas.domain.signpost import GeneratedSignpostPayload, SignpostPayload
 from apps.persistence.signpost.models import MiSignpostModel
 from apps.persistence.signpost.repository import (
     SignpostRepository,
 )
+from apps.persistence.signpost.schema import GeneratedSignpostPayload, SignpostPayload
 
 
 class SignpostService:
