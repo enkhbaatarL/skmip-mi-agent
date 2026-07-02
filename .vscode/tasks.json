@@ -19,6 +19,24 @@
             "group": "build"
         },
         {
+            "label": "Poetry Install (.venv)",
+            "type": "process",
+            "command": "poetry",
+            "args": [
+                "install"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "POETRY_VIRTUALENVS_CREATE": "true",
+                    "POETRY_VIRTUALENVS_IN_PROJECT": "true",
+                    "POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON": "false"
+                }
+            },
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
             "label": "Run FastAPI",
             "type": "shell",
             "command": "python ${workspaceFolder}/simple_graph/graph.py",
