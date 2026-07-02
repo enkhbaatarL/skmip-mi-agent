@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ExcludedDimension,
     LikelihoodTier,
     PriceDirection,

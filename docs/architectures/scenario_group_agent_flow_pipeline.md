@@ -29,14 +29,14 @@ LLM 파이프라인이 끝나면 콜백으로 최종 결과를 전달한다.
 
 ### 1. 재사용 가능한 진입점
 
-`create_scenarios`, `create_signposts`, `validate_scenarios`는 `flow_async.py`의
-`get_background_runnable().ainvoke(...)`를 호출한다.
-`confirm_generation`은 `flow.py`의 `get_runnable_graph().ainvoke(...)`를 호출한다.
+`create_scenarios`, `create_signposts`, `validate_scenarios`는 `flow.py`의
+`get_compiled_graph().ainvoke(...)`를 호출한다.
+`confirm_generation`은 `flow.py`의 `get_api_runnable().ainvoke(...)`를 호출한다.
 
 ```python
 @lru_cache(maxsize=1)
-def get_background_runnable() -> Runnable:
-    return _build_background_graph() | RunnableLambda(_bg_to_output)
+def get_compiled_graph() -> Runnable:
+    return _build_background_graph()
 ```
 
 `@lru_cache(maxsize=1)`는 최초 호출 때만 runnable graph를 생성하고 이후 요청에서 동일한
@@ -45,21 +45,20 @@ compiled graph를 재사용한다.
 ### 2. Runnable graph 조립
 
 ```text
-API payload(dict)
-  -> RunnableLambda(to_state)
+background state
   -> compiled StateGraph
-  -> RunnableLambda(to_output)
-  -> API response
+  -> explicit output conversion
+  -> callback payload
 ```
 
-- `to_state`: 입력 payload를 검증하고 `ScenarioDesignState`를 생성한다.
-- `_build_background_graph()` 또는 `build_graph()`: flow별 node를 등록하고 실행 순서를 정의한다.
-- `to_output`: 최종 state에서 API 응답 필드만 추출한다. **실패 상태이면 `MIBaseError`를 raise한다.**
+- background flow는 prepare 단계에서 flow state를 만들고 compiled graph를 직접 호출한다.
+- API payload adapter가 필요한 flow만 `RunnableLambda(to_state) | graph | RunnableLambda(to_output)` 구조를 유지한다.
+- output 변환은 최종 state에서 API 응답 필드만 추출한다. **실패 상태이면 `MIBaseError`를 raise한다.**
 
 ### 3. `build_graph()`: 상태 기반 node 체인 정의
 
 ```python
-builder = StateGraph(ScenarioDesignState)
+builder = StateGraph(flow별 state)
 builder.add_node("node_name", node_function)
 builder.set_entry_point("first_node")
 builder.add_edge("first_node", "next_node")
@@ -67,25 +66,21 @@ builder.set_finish_point("last_node")
 return builder.compile()
 ```
 
-- 모든 node는 현재 `ScenarioDesignState`를 입력으로 받는다.
+- 모든 node는 현재 `flow별 state`를 입력으로 받는다.
 - node는 변경할 필드만 `dict`로 반환한다.
 - LangGraph는 반환된 필드를 기존 state에 병합한 뒤 다음 node로 전달한다.
 - **오류 발생 시 node는 `status="failure"` dict를 반환하지 않고 `MIBaseError`를 raise한다.**
 
-## 공통 State
+## Flow State
 
-네 flow는 [`ScenarioDesignState`](../../apps/agents/scenario_group_agent/state.py)를 공유한다.
+공통 실행 상태는 `schemas/state.py`의 `BaseFlowState`에 두고, 각 flow는 자기 `state.py`에 실제 사용 필드만 둔다.
 
-| 분류 | 주요 필드 | 용도 |
+| Flow | State | 주요 전용 필드 |
 |---|---|---|
-| 식별자 | `mi_event_id`, `scenario_group_id`, `user_id` | event, scenario group, 요청 사용자 식별 |
-| 조회 데이터 | `event_data`, `scenario_group`, `scenarios`, `signposts`, `dimension_template` | DB에서 읽은 데이터 |
-| 처리 결과 | `scenario_result`, `validation_result`, `signpost_result` | 생성·검증 pipeline 결과 |
-| 요청 payload | `request_scenario_group`, `request_table` | 클라이언트가 전달한 수정 내용 |
-| 저장 결과 | `saved_scenario_ids`, `saved_signpost_ids`, `snapshot_id` | 신규 저장된 row ID |
-| 검증 결과 | `is_valid`, `reason`, `confirmed` | scenario 유효성·확정 결과 |
-| 재생성 대상 | `signpost_target_scenario_ids` | 테이블 변경으로 signpost 재생성이 필요한 scenario ID |
-| 실행 상태 | `status`, `message`, `error` | node 간 중단 또는 결과 상태 전달 |
+| create_scenarios | `CreateScenariosState` | `mi_event_id`, `event_data`, `scenario_group`, `scenario_result`, `saved_scenario_ids`, `scenarios` |
+| validate_scenarios | `ValidateScenariosState` | `scenario_group`, `scenarios`, `dimension_template`, `request_table`, `validation_result`, `is_valid`, `reason` |
+| create_signposts | `CreateSignpostsState` | `mi_event_id`, `scenario_group`, `scenarios`, `signposts`, `request_table`, `signpost_result`, `saved_signpost_ids`, `signpost_target_scenario_ids`, `new_scenario_row_details` |
+| confirm_generation | `ConfirmGenerationState` | `scenario_group`, `scenarios`, `signposts`, `request_scenario_group`, `request_table`, `snapshot_id`, `confirmed` |
 
 초기 `status`는 `"success"`다. `to_output`은 `status`가 `"failure"` 또는 `"error"`이면
 `MIBaseError`를 raise한다.
@@ -125,7 +120,7 @@ load_event → check_existing_scenario_group → create_group_record
 `to_state`는 `CreateScenariosIn`으로 검증 후 다음 state를 만든다.
 
 ```python
-ScenarioDesignState(
+flow별 state(
     scenario_group_id=...,   # prepare에서 확보한 ID
     event_data=...,          # prepare에서 조회한 event
     user_id=...,
@@ -144,7 +139,7 @@ ScenarioDesignState(
 
 ### `run_scenario_generation` 상세
 
-`subgraphs/scenario_generation/flow.py`에서 컴파일한 `scenario_generation_runnable`이
+`subgraphs/scenario_generation/flow.py`에서 컴파일한 `get_scenario_generation_subgraph() 직접 호출`이
 직접 node로 등록된다. 6-stage subgraph가 하나의 node처럼 실행된다.
 
 ```mermaid
@@ -340,7 +335,7 @@ scenarios_to_process = [
 #### Scenario 내부 signpost subgraph
 
 `run_signpost_generation`은 대상 scenario 필터링, event summary 구성, semaphore 기반 병렬 fan-out만 담당한다.
-시나리오 1건 처리는 `subgraphs/signpost_generation/flow.py`의 `signpost_generation_runnable.ainvoke(...)`로 위임한다.
+시나리오 1건 처리는 `subgraphs/signpost_generation/flow.py`의 `get_signpost_generation_subgraph() 직접 호출.ainvoke(...)`로 위임한다.
 
 ```mermaid
 flowchart LR
@@ -529,7 +524,7 @@ for each generated value:
 
 #### `validate_scenarios` 상세
 
-`validate_scenarios` node는 `subgraphs/scenario_review/flow.py`의 `scenario_review_runnable`을 호출한다.
+`validate_scenarios` node는 `subgraphs/scenario_review/flow.py`의 `get_scenario_review_subgraph() 직접 호출`을 호출한다.
 subgraph adapter가 parent state를 review state로 변환하면서
 `build_context(group, requested_rows, persisted_scenarios, template_dims, requested_headers)` 입력을 구성하고,
 `run_review(context)`가 검토 리포트를 반환한다. validation review의 검사 대상 dimension은
@@ -540,10 +535,11 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 `subgraphs/scenario_review/`는 다음 책임을 가진다.
 
 - `flow.py`: review subgraph runnable 조립
-- `subgraph_adapter.py`: `ScenarioDesignState`와 `ScenarioReviewState` 사이의 변환, review 결과를 parent state update dict로 변환
+- `schema.py 또는 parent flow nodes.py`: `flow별 state`와 `ScenarioReviewState` 사이의 변환, review 결과를 parent state update dict로 변환
 - `nodes.py`: LangGraph node wrapper
+- `schema.py`: review context, check result, report DTO
 - `state.py`: review subgraph 전용 state
-- `review_stages.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현
+- `nodes.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현, LangGraph node wrapper
 
 ##### `run_review` 검사 규칙 (R01~R05)
 
@@ -624,8 +620,8 @@ flowchart LR
 flow를 분석하거나 새 flow를 추가할 때는 다음 순서로 확인한다.
 
 1. `api.py`에서 path parameter와 body가 어떤 payload로 합쳐지는지 확인한다.
-2. `flow_async.py`의 `prepare_*`에서 동기 전처리 로직을 확인한다 (`confirm_generation`은 `flow.py` 직접).
-3. `flow_async.py`의 `get_background_runnable()`에서 graph가 지연 생성되고 캐시되는지 확인한다.
+2. `flow.py`의 `prepare_*`에서 동기 전처리 로직을 확인한다 (`confirm_generation`은 `flow.py` 직접).
+3. `flow.py`의 `get_compiled_graph()`에서 graph가 지연 생성되고 캐시되는지 확인한다.
 4. background flow는 `_build_background_graph() → _bg_to_output`, confirm flow는 `build_runnable_graph()`에서 연결을 확인한다.
 5. `to_state`와 `to_output`에서 API schema와 state 사이의 경계를 확인한다.
 6. `nodes.py`에서 각 node의 state 변경 필드와 오류 처리 조건을 확인한다.

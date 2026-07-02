@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from apps.agents.scenario_group_agent.subgraphs.scenario_review.review_stages import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.schema import (
     ReviewReport,
 )
 
@@ -19,4 +19,3 @@ class ScenarioReviewState(BaseModel):
     report: ReviewReport | None = None
     skip_review: bool = False
     error: str | None = None
-

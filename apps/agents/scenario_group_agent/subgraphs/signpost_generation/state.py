@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from apps.agents.scenario_group_agent.schemas.graph.generation import GeneratedSignpost
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
 
 
 class SignpostGenerationState(BaseModel):

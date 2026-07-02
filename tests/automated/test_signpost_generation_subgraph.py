@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
-from apps.agents.scenario_group_agent.schemas.enums import SignpostStrength
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
-    signpost_generation_runnable,
+    get_signpost_generation_subgraph,
 )
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
+    SignpostGenerationState,
+)
+from apps.persistence.enums import SignpostStrength
 
 
 def _scenario() -> dict[str, object]:
@@ -50,15 +53,15 @@ def test_signpost_generation_subgraph_returns_generated_signposts(monkeypatch) -
     monkeypatch.setattr(nodes, "stage5_mint_keywords", fake_stage5)
 
     output = asyncio.run(
-        signpost_generation_runnable.ainvoke(
-            {
-                "scenario": _scenario(),
-                "base_event_summary": _event_summary(),
-            },
+        get_signpost_generation_subgraph().ainvoke(
+            SignpostGenerationState(
+                scenario=_scenario(),
+                base_event_summary=_event_summary(),
+            ),
         ),
     )
 
-    signposts = output["signposts"]
+    signposts = SignpostGenerationState.model_validate(output).signposts
     assert len(signposts) == 3
     assert signposts[0].scenario_id == 100
     assert signposts[0].label == "정부 공식 발표"
@@ -72,15 +75,15 @@ def test_stage2_empty_result_still_completes(monkeypatch) -> None:
     monkeypatch.setattr(nodes, "stage2_observability_filter", fake_stage2)
 
     output = asyncio.run(
-        signpost_generation_runnable.ainvoke(
-            {
-                "scenario": _scenario(),
-                "base_event_summary": _event_summary(),
-            },
+        get_signpost_generation_subgraph().ainvoke(
+            SignpostGenerationState(
+                scenario=_scenario(),
+                base_event_summary=_event_summary(),
+            ),
         ),
     )
 
-    assert output["signposts"] == []
+    assert SignpostGenerationState.model_validate(output).signposts == []
 
 
 def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
@@ -109,15 +112,15 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
     monkeypatch.setattr(nodes, "stage5_mint_keywords", fake_stage5)
 
     output = asyncio.run(
-        signpost_generation_runnable.ainvoke(
-            {
-                "scenario": _scenario(),
-                "base_event_summary": _event_summary(),
-            },
+        get_signpost_generation_subgraph().ainvoke(
+            SignpostGenerationState(
+                scenario=_scenario(),
+                base_event_summary=_event_summary(),
+            ),
         ),
     )
 
-    first, second = output["signposts"]
+    first, second = SignpostGenerationState.model_validate(output).signposts
     assert first.strength == SignpostStrength.STRONG
     assert first.rationale_ko == "강한 근거"
     assert first.keyword_hints == ["비축", "방출", "발표"]

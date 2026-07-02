@@ -13,28 +13,31 @@ apps/
 │   │   │   ├── validate_scenarios/
 │   │   │   ├── create_signposts/
 │   │   │   └── confirm_generation/
-│   │   ├── persistence/
-│   │   │   ├── event/
-│   │   │   ├── scenario_group/
-│   │   │   ├── scenario/
-│   │   │   └── signpost/
-│   │   ├── schemas/
+│   │   ├── schemas/          # shared or flow-less API schema
 │   │   └── subgraphs/
 │   │       ├── scenario_generation/
+│   │       ├── scenario_review/
 │   │       └── signpost_generation/
 ├── common/
 │   ├── configs/
 │   ├── runtime/
 │   └── values/
-└── connectors/
-    ├── callback/
-    ├── http/
-    ├── llm/
-    └── vdb/
+├── connectors/
+│   ├── callback/
+│   ├── http/
+│   ├── llm/
+│   └── vdb/
+└── persistence/
+    ├── event/
+    ├── scenario_group/
+    ├── scenario/
+    ├── signpost/
+    ├── schema_base.py
+    └── enums.py
 ```
 
 `scenario_group_agent`가 시나리오 생성/검증/Signpost 생성 흐름의 기준 구현입니다.
-MI Event ORM도 `scenario_group_agent.persistence.event`에서 소유합니다.
+공유 DB ORM, repository, service와 persistence DTO는 `apps.persistence`에서 소유합니다.
 
 ## Key Docs
 

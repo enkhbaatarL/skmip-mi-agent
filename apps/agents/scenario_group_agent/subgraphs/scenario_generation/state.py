@@ -4,8 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from apps.agents.scenario_group_agent.schemas.domain.event import EventPayload
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ScenarioGenerationResult,
     ScenarioTemplate,
     Stage1ContextPack,
@@ -14,6 +13,7 @@ from apps.agents.scenario_group_agent.schemas.graph.generation import (
     Stage4ScenarioSynthesis,
     Stage5RepairInstruction,
 )
+from apps.persistence.event.schema import EventPayload
 
 
 class ScenarioGenerationState(BaseModel):
