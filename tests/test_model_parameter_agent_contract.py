@@ -17,13 +17,17 @@ from openpyxl import Workbook, load_workbook
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
+    _route_after_candidate_validation,
     build_graph,
     to_output,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
+    _build_basecase_slot_options,
+    _build_basecase_value_groups,
     _coordinate_issues,
     _period_start_year_month,
     filter_basecase_records_by_slots,
+    finalize_empty_parameter_values,
     load_scenario_context,
     propose_parameter_slots,
     propose_parameter_values,
@@ -40,10 +44,14 @@ from apps.agents.model_parameter_agent.mapping import (
 )
 from apps.agents.model_parameter_agent.schemas.propose_parameters import (
     LLMCandidateValidationResponse,
+    LLMSlotAxis,
+    LLMSlotProposal,
     LLMSlotProposalResponse,
+    LLMValueAdjustment,
+    LLMValueCell,
     LLMValueProposalResponse,
     ModelParameterTarget,
-    ParameterCandidateDecision,
+    ParameterCandidateGroupDecision,
     ParameterSlotAxis,
     ParameterSlotProposal,
     ParameterAdjustment,
@@ -101,12 +109,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "maxCandidates": 3,
                 "maxBasecaseSampleRows": 2,
                 "allowLlmFallback": True,
+                "mappingExcelPath": "/tmp/legacy-mapping.xlsx",
             },
         )
 
         assert payload.max_candidates == 3
         assert payload.max_basecase_sample_rows == 2
         assert payload.allow_llm_fallback is True
+        assert not hasattr(payload, "mapping_excel_path")
 
     def test_graph_registers_expected_nodes(self) -> None:
         graph = build_graph().get_graph()
@@ -118,6 +128,44 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "propose_parameter_slots" in graph.nodes
         assert "filter_basecase_records_by_slots" in graph.nodes
         assert "propose_parameter_values" in graph.nodes
+        assert "finalize_empty_parameter_values" in graph.nodes
+
+    def test_graph_routes_empty_candidates_to_finalizer(self) -> None:
+        graph_edges = build_graph().get_graph().edges
+        assert any(
+            edge.source == "validate_parameter_candidates"
+            and edge.target == "finalize_empty_parameter_values"
+            and edge.conditional
+            for edge in graph_edges
+        )
+
+        state = ModelParameterProposalState(
+            scenario_id=100,
+            candidate_mappings=[],
+        )
+
+        assert _route_after_candidate_validation(state) == "finalize_empty_parameter_values"
+        assert _route_after_candidate_validation({"candidate_mappings": []}) == (
+            "finalize_empty_parameter_values"
+        )
+        assert (
+            _route_after_candidate_validation(
+                {"candidate_mappings": [{"candidate_key": "c1"}]},
+            )
+            == "load_basecase_samples"
+        )
+
+    def test_empty_candidate_finalizer_returns_empty_adjustments(self) -> None:
+        state = ModelParameterProposalState(
+            scenario_id=100,
+            candidate_mappings=[],
+        )
+
+        result = finalize_empty_parameter_values(state)
+
+        assert result["parameter_adjustments"] == []
+        assert "Step1/Step1.5 candidate 결과가 없어" in result["validation_warnings"][0]
+        assert "Step2 selected slot" not in result["validation_warnings"][0]
 
     def test_main_registers_model_parameter_router(self) -> None:
         main_source = Path("main.py").read_text()
@@ -136,6 +184,15 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         assert route.body_field is None
         assert [param.name for param in route.dependant.path_params] == ["scenario_id"]
+
+    def test_llm_schema_describes_temporal_slot_values_as_integer_numbers(self) -> None:
+        slot_schema = ParameterSlotAxis.model_json_schema()
+        value_schema = ParameterValueCell.model_json_schema()
+
+        assert "integer JSON number" in slot_schema["properties"]["axisValue"]["description"]
+        assert "not a string" in slot_schema["properties"]["axisValue"]["description"]
+        assert "integer JSON numbers" in value_schema["properties"]["coordinates"]["description"]
+        assert "not strings" in value_schema["properties"]["coordinates"]["description"]
 
     def test_default_excel_resources_are_packaged_with_agent(self) -> None:
         assert DEFAULT_INPUT_DIR.name == "resources"
@@ -159,7 +216,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "event_type_l2_id": 17,
                 "dimension_key": "transport_disruption",
                 "dimension_label": "운송 차질",
-                "mapping_status": "exact",
                 "canonical_parameter_name": "ShippingCost",
                 "mapping_method": "direct",
                 "comment": "운송 차질은 ShippingCost에 직접 반영",
@@ -169,9 +225,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             {
                 "canonical_parameter_name": "ShippingCost",
                 "parameter_name": "ShippingCost",
+                "parameter_hint": "운송 비용 입력값",
                 "model_file": "Trade",
                 "model_sheet": "ShippingCostInput",
-                "unit": "USD",
+                "model_table": "Table1",
                 "semantic_axes": "Route",
                 "basecase_read_mode": "fixed_columns",
                 "basecase_header_row": 1,
@@ -183,7 +240,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "basecase_period_row": None,
                 "basecase_value_start_col": None,
                 "basecase_value_end_col": None,
-                "basecase_value_name": "ShippingCost",
                 "basecase_stop_rule": "blank_axis",
             },
         ]
@@ -229,6 +285,30 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert not warnings
         assert candidates[0]["canonical_parameter_name"] == "ShippingCost"
         assert candidates[0]["model_file"] == "Trade"
+
+    def test_dimension_mapping_query_excludes_inactive_parameter_refs(self) -> None:
+        from sqlalchemy.dialects import mysql
+
+        from apps.agents.model_parameter_agent.persistence.model_input.repository import (
+            ModelInputRepository,
+        )
+
+        session = Mock()
+        session.execute.return_value.all.return_value = []
+
+        ModelInputRepository(session=session)._fetch_dimension_mapping_rules()
+
+        stmt = session.execute.call_args.args[0]
+        compiled = str(
+            stmt.compile(
+                dialect=mysql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            ),
+        )
+
+        assert "tmm_mi_model_param_dimension_map.model_param_id IS NULL" in compiled
+        assert "tmm_mi_model_param_m.model_param_id IS NOT NULL" in compiled
+        assert "mapping_status" not in compiled
 
     def test_model_input_service_loads_context_with_parameter_mapping_resources(self) -> None:
         fake_session = SimpleNamespace(close=lambda: None)
@@ -326,7 +406,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         "event_type_l2_id": 17,
                         "dimension_key": "transport_disruption",
                         "dimension_label": "운송 차질",
-                        "mapping_status": "exact",
                         "canonical_parameter_name": "ShippingCost",
                         "mapping_method": "direct",
                         "comment": "운송 차질은 ShippingCost에 직접 반영",
@@ -336,9 +415,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     {
                         "canonical_parameter_name": "ShippingCost",
                         "parameter_name": "ShippingCost",
+                        "parameter_hint": "운송 비용 입력값",
                         "model_file": "Trade",
                         "model_sheet": "ShippingCostInput",
-                        "unit": "USD",
+                        "model_table": "Table1",
                         "semantic_axes": "Route",
                         "basecase_read_mode": "fixed_columns",
                         "basecase_header_row": 1,
@@ -350,7 +430,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         "basecase_period_row": None,
                         "basecase_value_start_col": None,
                         "basecase_value_end_col": None,
-                        "basecase_value_name": "ShippingCost",
                         "basecase_stop_rule": "blank_axis",
                     },
                 ],
@@ -429,6 +508,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         model_target=ModelParameterTarget(
                             model_file="Trade",
                             model_sheet="ShippingCostInput",
+                            table_name="Table1",
                             value_field_names=["ShippingCost"],
                             slot_axes_field_names=["Route"],
                         ),
@@ -457,6 +537,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
         assert saved_payload[0]["parameterName"] == "ShippingCost"
         assert saved_payload[0]["modelTarget"]["modelFile"] == "Trade"
+        assert saved_payload[0]["modelTarget"]["tableName"] == "Table1"
 
     def test_model_input_persistence_write_scope_is_proposal_only(self) -> None:
         source = Path(
@@ -1261,12 +1342,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         {
                             "candidate_key": "selected",
                             "parameter_name": "PowerMix",
-                            "basecase_value_name": "PowerMixAdjust",
+                            "model_table": "Table2",
                         },
                         {
                             "candidate_key": "rejected",
                             "parameter_name": "ShippingCost",
-                            "basecase_value_name": "ShippingCost",
                         },
                     ],
                     "basecase_records": [{"candidate_key": "debug"}],
@@ -1332,7 +1412,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert proposal_parameter["modelTarget"] == {
             "modelFile": "Demand",
             "modelSheet": "PowerMixAdjustment",
-            "valueFieldNames": ["PowerMixAdjust"],
+            "tableName": "Table2",
+            "valueFieldNames": ["PowerMix"],
             "slotAxesFieldNames": ["Country", "Energy Source", "Year"],
         }
         assert proposal_parameter["rationale"] == "가스발전 비중 조정이 필요합니다."
@@ -1360,6 +1441,126 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "llmUsage" not in dumped
         service_cls.return_value.save_proposal_result.assert_called_once()
 
+    def test_to_output_normalizes_slot_axis_fields_for_same_parameter(self) -> None:
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+        ) as service_cls:
+            service_cls.return_value.save_proposal_result.return_value = 780
+            output = to_output(
+                {
+                    "scenario_id": 100,
+                    "scenario_context": {
+                        "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+                        "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+                        "event": {"mi_event_id": 30},
+                    },
+                    "candidate_mappings": [
+                        {
+                            "candidate_key": "c1",
+                            "parameter_name": "SupplyDisruption",
+                            "canonical_parameter_name": "SupplyDisruption",
+                            "basecase_read_mode": "fixed_columns",
+                            "basecase_column_roles": "B:Year,C:Province Country,E:SupplyDisruption",
+                        },
+                        {
+                            "candidate_key": "c2",
+                            "parameter_name": "SupplyDisruption",
+                            "canonical_parameter_name": "SupplyDisruption",
+                            "basecase_read_mode": "fixed_columns",
+                            "basecase_column_roles": "B:Year,C:Province Country,E:SupplyDisruption",
+                        },
+                    ],
+                    "parameter_adjustments": [
+                        {
+                            "candidate_key": "c1",
+                            "model_file": "Supply",
+                            "model_sheet": "VolumeAdjustment",
+                            "parameter_name": "SupplyDisruption",
+                            "selected": True,
+                            "slot_axes": [],
+                            "value_grid": [
+                                {
+                                    "coordinates": {
+                                        "Province": "Norway",
+                                        "Year": 2026,
+                                        "Month": 6,
+                                    },
+                                    "basecase_value": None,
+                                    "proposed_value": 3,
+                                    "operation": "absolute",
+                                    "value_selection_rationale_ko": "Norway 2026 row",
+                                    "proposed_value_rationale_ko": "3% 차질",
+                                },
+                            ],
+                            "parameter_selection_rationale_ko": "upstream 차질",
+                            "confidence_overall": 0.8,
+                        },
+                        {
+                            "candidate_key": "c2",
+                            "model_file": "Supply",
+                            "model_sheet": "VolumeAdjustment",
+                            "parameter_name": "SupplyDisruption",
+                            "selected": True,
+                            "slot_axes": [],
+                            "value_grid": [
+                                {
+                                    "coordinates": {
+                                        "Province Country": "Norway",
+                                        "Year": "2026",
+                                    },
+                                    "basecase_value": None,
+                                    "proposed_value": -0.0,
+                                    "operation": "absolute",
+                                    "value_selection_rationale_ko": "Norway 2026 duplicate row",
+                                    "proposed_value_rationale_ko": "대체 공급 반영",
+                                },
+                                {
+                                    "coordinates": {
+                                        "Province Country": "Europe",
+                                        "Year": 2026,
+                                    },
+                                    "basecase_value": None,
+                                    "proposed_value": 0,
+                                    "operation": "absolute",
+                                    "value_selection_rationale_ko": "Europe 2026 row",
+                                    "proposed_value_rationale_ko": "대체 공급 반영",
+                                },
+                            ],
+                            "parameter_selection_rationale_ko": "대체 공급 반영",
+                            "confidence_overall": 0.8,
+                        },
+                    ],
+                },
+            )
+
+        proposal = output.model_dump(by_alias=True)["data"]["proposalParameters"][0]
+        assert proposal["parameterName"] == "SupplyDisruption"
+        assert proposal["modelTarget"]["slotAxesFieldNames"] == [
+            "Province Country",
+            "Year",
+        ]
+        for value in proposal["values"]:
+            assert "Province Country" in value
+            assert "Year" in value
+            assert "Province" not in value
+            assert "Month" not in value
+        assert proposal["values"] == [
+            {
+                "Province Country": "Norway",
+                "Year": 2026,
+                "basecaseValue": None,
+                "proposedValue": 3,
+                "rationale": "Norway 2026 row 3% 차질",
+            },
+            {
+                "Province Country": "Europe",
+                "Year": 2026,
+                "basecaseValue": None,
+                "proposedValue": 0,
+                "rationale": "Europe 2026 row 대체 공급 반영",
+            },
+        ]
+
     def test_event_type_is_not_forcibly_suppressed(self) -> None:
         with patch(
             "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
@@ -1385,7 +1586,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                             {
                                 "candidate_key": "selected",
                                 "parameter_name": "PowerMix",
-                                "basecase_value_name": "PowerMixAdjust",
                             },
                         ],
                         "parameter_adjustments": [
@@ -1475,12 +1675,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         {
                             "candidate_key": "null_value",
                             "parameter_name": "PMI",
-                            "basecase_value_name": "PMI",
                         },
                         {
                             "candidate_key": "unknown_operation",
                             "parameter_name": "GDP",
-                            "basecase_value_name": "GDP",
                         },
                     ],
                     "parameter_adjustments": [
@@ -1541,38 +1739,50 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         direct_candidate = {
             "candidate_key": "direct",
             "mapping_method": "direct",
+            "source_dimension_id": "affected_facility_type",
+            "source_dimension_label": "피해 시설 유형",
+            "source_dimension_value": "수입 시설",
             "model_file": "Demand",
             "model_sheet": "PowerMixAdjustment",
+            "model_table": "Table1",
             "parameter_name": "PowerMix",
             "canonical_parameter_name": "PowerMix",
+            "parameter_hint": "발전 믹스 조정 입력값입니다.",
+            "semantic_axes": "Country, Year",
         }
         routing_candidate = {
             "candidate_key": "routing",
             "mapping_method": "routing",
+            "source_dimension_id": "affected_facility_type",
+            "source_dimension_label": "피해 시설 유형",
+            "source_dimension_value": "수입 시설",
+            "mapping_comment": "수입 시설 피해 시",
             "model_file": "Supply",
             "model_sheet": "RegasAdjustment",
+            "model_table": "Table2",
             "parameter_name": "RegasAdjustment",
             "canonical_parameter_name": "RegasAdjustment",
+            "parameter_hint": "재기화 차질 조정 입력값입니다.",
         }
         candidate_response = LLMCandidateValidationResponse(
-            candidate_decisions=[
-                ParameterCandidateDecision(
-                    candidate_key="direct",
+            parameter_candidate_groups=[
+                ParameterCandidateGroupDecision(
+                    candidate_keys=["direct"],
                     selected=False,
-                    rationale_ko="시나리오 문맥상 발전 믹스 조정은 직접 영향이 아닙니다.",
-                    confidence_overall=0.8,
                 ),
-                ParameterCandidateDecision(
-                    candidate_key="routing",
+                ParameterCandidateGroupDecision(
+                    candidate_keys=["routing"],
                     selected=True,
-                    rationale_ko="수입 시설 피해이므로 재기화 조정 후보가 적합합니다.",
-                    confidence_overall=0.9,
                 ),
             ],
         )
+        captured_system_contents: list[str] = []
+        captured_contents: list[str] = []
 
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
             assert kwargs["output_schema"] is LLMCandidateValidationResponse
+            captured_system_contents.append(kwargs["messages"][0]["content"])
+            captured_contents.append(kwargs["messages"][1]["content"])
             return SimpleNamespace(result=candidate_response, usage=None)
 
         state = ModelParameterProposalState(
@@ -1594,13 +1804,69 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "direct",
             "routing",
         ]
-        assert "direct로 지정된 모델 input" in result["candidate_mappings"][0][
-            "candidate_validation_rationale_ko"
-        ]
-        assert result["candidate_mappings"][1]["candidate_validation_rationale_ko"].startswith(
-            "수입 시설",
+        assert "candidate_validation_rationale_ko" not in result["candidate_mappings"][0]
+        assert "candidate_validation_rationale_ko" not in result["candidate_mappings"][1]
+        assert any(
+            "direct 후보는 LLM parameter group selected=false" in warning
+            for warning in result["validation_warnings"]
         )
-        assert any("direct 후보는 LLM selected=false" in warning for warning in result["validation_warnings"])
+        assert (
+            "candidate_validation_tasks는 Step1.5에서 검증할 parameter별 작업 단위"
+            in captured_system_contents[0]
+        )
+        assert (
+            "parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항"
+            in captured_system_contents[0]
+        )
+        assert (
+            "mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항"
+            in captured_system_contents[0]
+        )
+        assert (
+            "특정 dimension에 routing parameter 후보가 하나 이상 있으면"
+            in captured_system_contents[0]
+        )
+        payload = json.loads(captured_contents[0].split("\n", 1)[1])
+        assert "scenario_context" not in payload
+        assert "dimension_template" not in json.dumps(payload, ensure_ascii=False)
+        assert "candidate_mappings" not in payload
+        assert "parameter_candidate_groups" not in payload
+        assert "candidate_validation_tasks" in payload
+        assert "model_file" not in json.dumps(payload, ensure_ascii=False)
+        assert "model_sheet" not in json.dumps(payload, ensure_ascii=False)
+        assert "model_table" not in json.dumps(payload, ensure_ascii=False)
+        assert payload["candidate_validation_tasks"][0] == {
+            "parameter": {
+                "parameter_name": "PowerMix",
+                "parameter_hint": "발전 믹스 조정 입력값입니다.",
+                "semantic_axes": "Country, Year",
+            },
+            "candidate_keys": ["direct"],
+            "selection_dimensions": [
+                {
+                    "dimension_key": "affected_facility_type",
+                    "dimension_label": "피해 시설 유형",
+                    "dimension_value": "수입 시설",
+                    "mapping_method": "direct",
+                },
+            ],
+        }
+        assert payload["candidate_validation_tasks"][1] == {
+            "parameter": {
+                "parameter_name": "RegasAdjustment",
+                "parameter_hint": "재기화 차질 조정 입력값입니다.",
+            },
+            "candidate_keys": ["routing"],
+            "selection_dimensions": [
+                {
+                    "dimension_key": "affected_facility_type",
+                    "dimension_label": "피해 시설 유형",
+                    "dimension_value": "수입 시설",
+                    "mapping_method": "routing",
+                    "mapping_comment": "수입 시설 피해 시",
+                },
+            ],
+        }
 
     async def test_llm_candidate_validation_omitted_direct_candidate_is_kept(self) -> None:
         candidates = [
@@ -1622,12 +1888,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         ]
         candidate_response = LLMCandidateValidationResponse(
-            candidate_decisions=[
-                ParameterCandidateDecision(
-                    candidate_key="c1",
+            parameter_candidate_groups=[
+                ParameterCandidateGroupDecision(
+                    candidate_keys=["c1"],
                     selected=True,
-                    rationale_ko="발전 믹스 조정 후보가 적합합니다.",
-                    confidence_overall=0.8,
                 ),
             ],
         )
@@ -1649,6 +1913,70 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert [candidate["candidate_key"] for candidate in result["candidate_mappings"]] == ["c1", "c2"]
         assert any("누락된 direct candidate_key는 유지" in warning for warning in result["validation_warnings"])
 
+    async def test_llm_candidate_validation_group_merges_same_parameter_candidates(self) -> None:
+        candidates = [
+            {
+                "candidate_key": "utilization",
+                "event_type_l2_id": 1,
+                "dimension_key": "utilization_change_amount",
+                "source_dimension_id": "utilization_change_amount",
+                "source_dimension_label": "가동률 변화 폭",
+                "source_dimension_value": "<5%",
+                "mapping_method": "direct",
+                "mapping_comment": "차질 규모",
+                "model_file": "Supply",
+                "model_sheet": "VolumeAdjustment",
+                "parameter_name": "SupplyDisruption",
+                "canonical_parameter_name": "SupplyDisruption",
+            },
+            {
+                "candidate_key": "alternative",
+                "event_type_l2_id": 1,
+                "dimension_key": "alt_gas_supply_availability",
+                "source_dimension_id": "alt_gas_supply_availability",
+                "source_dimension_label": "대체 가스 공급 가능성",
+                "source_dimension_value": "100%",
+                "mapping_method": "direct",
+                "mapping_comment": "대체 공급 완화율",
+                "model_file": "Supply",
+                "model_sheet": "VolumeAdjustment",
+                "parameter_name": "SupplyDisruption",
+                "canonical_parameter_name": "SupplyDisruption",
+            },
+        ]
+        candidate_response = LLMCandidateValidationResponse(
+            parameter_candidate_groups=[
+                ParameterCandidateGroupDecision(
+                    candidate_keys=["utilization", "alternative"],
+                    selected=True,
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMCandidateValidationResponse
+            return SimpleNamespace(result=candidate_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=283,
+            scenario_context={"scenario": {"scenario_id": 283}},
+            candidate_mappings=candidates,
+        )
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}):
+            result = await validate_parameter_candidates(state)
+
+        assert len(result["candidate_mappings"]) == 1
+        merged = result["candidate_mappings"][0]
+        assert merged["candidate_key"] == "parameter|1|supply|volumeadjustment|supplydisruption"
+        assert merged["merged_candidate_keys"] == ["utilization", "alternative"]
+        assert [item["dimension_key"] for item in merged["source_dimensions"]] == [
+            "utilization_change_amount",
+            "alt_gas_supply_availability",
+        ]
+        assert "candidate_validation_rationale_ko" not in merged
+
     async def test_llm_candidate_validation_omitted_routing_candidate_is_excluded(self) -> None:
         candidates = [
             {
@@ -1669,12 +1997,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         ]
         candidate_response = LLMCandidateValidationResponse(
-            candidate_decisions=[
-                ParameterCandidateDecision(
-                    candidate_key="c1",
+            parameter_candidate_groups=[
+                ParameterCandidateGroupDecision(
+                    candidate_keys=["c1"],
                     selected=True,
-                    rationale_ko="발전 믹스 조정 후보가 적합합니다.",
-                    confidence_overall=0.8,
                 ),
             ],
         )
@@ -1722,20 +2048,18 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "model_sheet": "LiqUtilAdjustment",
             "parameter_name": "LiqUtilAdjustment",
             "canonical_parameter_name": "LiqUtilAdjustment",
+            "basecase_read_mode": "matrix_time_columns",
+            "basecase_column_roles": "B:Country,C:LNG Plant,D:LNG Plant Train",
         }
         candidate_response = LLMCandidateValidationResponse(
-            candidate_decisions=[
-                ParameterCandidateDecision(
-                    candidate_key=liq_candidate["candidate_key"],
+            parameter_candidate_groups=[
+                ParameterCandidateGroupDecision(
+                    candidate_keys=[liq_candidate["candidate_key"]],
                     selected=True,
-                    rationale_ko="LLM은 액화시설로 판단했습니다.",
-                    confidence_overall=0.7,
                 ),
-                ParameterCandidateDecision(
-                    candidate_key=supply_candidate["candidate_key"],
+                ParameterCandidateGroupDecision(
+                    candidate_keys=[supply_candidate["candidate_key"]],
                     selected=False,
-                    rationale_ko="LLM은 생산 시설 후보를 제외했습니다.",
-                    confidence_overall=0.6,
                 ),
             ],
         )
@@ -1764,65 +2088,58 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "candidate_key": "c1",
             "model_file": "Trade",
             "model_sheet": "ShippingCostInput",
+            "model_table": "Table1",
             "parameter_name": "ShippingCost",
             "canonical_parameter_name": "ShippingCost",
+            "parameter_hint": "운송 차질 시 비용 입력값을 조정합니다.",
         }
         omitted_candidate = {
             "candidate_key": "c2",
             "model_file": "Supply",
             "model_sheet": "VolumeAdjustment",
+            "model_table": "Table1",
             "parameter_name": "SupplyDisruption",
             "canonical_parameter_name": "SupplyDisruption",
+            "parameter_hint": "Upstream 공급 차질량을 조정합니다.",
         }
         slot_response = LLMSlotProposalResponse(
             parameter_slots=[
-                ParameterSlotProposal(
+                LLMSlotProposal(
                     candidate_key="c1",
                     selected=True,
                     slot_axes=[
-                        ParameterSlotAxis(
+                        LLMSlotAxis(
                             axis_name="Year",
-                            axis_value="2026",
-                            rationale="기간 dimension 근거",
+                            axis_value=2026,
                         ),
                     ],
-                    rationale_ko_overall="운송 차질이 높아 ShippingCost slot 조정이 필요합니다.",
-                    confidence_overall=0.7,
+                    rationale_ko="운송 차질이 높아 ShippingCost slot 조정이 필요합니다.",
                 ),
             ],
         )
         value_response = LLMValueProposalResponse(
             parameter_adjustments=[
-                ParameterAdjustment(
+                LLMValueAdjustment(
                     candidate_key="c1",
-                    model_file="Invented",
-                    model_sheet="Invented",
-                    parameter_name="Invented",
-                    slot_axes=[],
                     value_grid=[
-                        ParameterValueCell(
+                        LLMValueCell(
                             coordinates={"Year": 2026},
-                            basecase_value=None,
                             proposed_value=1.2,
-                            unit="ratio",
                             operation="percent_change",
-                            value_selection_rationale_ko=(
-                                "2026년 ShippingCost basecase record를 선택했습니다."
-                            ),
-                            proposed_value_rationale_ko=(
+                            rationale_ko=(
+                                "2026년 ShippingCost basecase record를 선택했고, "
                                 "운송 차질 scenario dimension을 반영해 basecase 대비 20% 상향했습니다."
                             ),
                             basecase_reference_ids=["ref1"],
                         ),
                     ],
-                    parameter_selection_rationale_ko=(
-                        "운송 차질이 높아 ShippingCost 조정이 필요합니다."
-                    ),
-                    confidence_overall=0.7,
+                    rationale_ko="운송 차질이 높아 ShippingCost 조정이 필요합니다.",
                 ),
             ],
         )
         requested_schemas: list[str] = []
+        captured_value_system_contents: list[str] = []
+        captured_value_contents: list[str] = []
 
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
             output_schema = kwargs["output_schema"]
@@ -1830,6 +2147,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             if output_schema is LLMSlotProposalResponse:
                 return SimpleNamespace(result=slot_response, usage=None)
             if output_schema is LLMValueProposalResponse:
+                captured_value_system_contents.append(kwargs["messages"][0]["content"])
+                captured_value_contents.append(kwargs["messages"][1]["content"])
                 return SimpleNamespace(result=value_response, usage=None)
             raise AssertionError(f"unexpected schema: {output_schema}")
 
@@ -1861,6 +2180,36 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "LLMSlotProposalResponse",
             "LLMValueProposalResponse",
         ]
+        value_payload = json.loads(captured_value_contents[0].split("\n", 1)[1])
+        assert "basecase_records" not in value_payload
+        assert "candidate_mappings" not in value_payload
+        assert "parameter_candidate_groups" not in value_payload
+        assert "parameter_slots" not in value_payload
+        assert "basecase_value_groups" not in value_payload
+        assert "basecase_value_groups" in captured_value_system_contents[0]
+        task = value_payload["parameter_value_tasks"][0]
+        assert task["parameter"] == {
+            "candidate_key": "c1",
+            "parameter_name": "ShippingCost",
+            "parameter_hint": "운송 차질 시 비용 입력값을 조정합니다.",
+        }
+        assert "model_file" not in task
+        assert "model_sheet" not in task
+        assert "model_table" not in json.dumps(value_payload, ensure_ascii=False)
+        assert task["basecase_value_groups"] == [
+            {
+                "value_name": None,
+                "fixed_axes": {},
+                "variable_axis_names": ["Year"],
+                "cells": [
+                    {
+                        "reference_id": "ref1",
+                        "axes": {"Year": 2026},
+                        "basecase_value": 1.0,
+                    },
+                ],
+            },
+        ]
         assert adjustment["model_file"] == "Trade"
         assert adjustment["model_sheet"] == "ShippingCostInput"
         assert adjustment["parameter_name"] == "ShippingCost"
@@ -1868,21 +2217,24 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["parameter_selection_rationale_ko"].startswith("운송 차질")
         assert adjustment["value_grid"][0]["basecase_value"] == 1.0
         assert adjustment["value_grid"][0]["basecase_reference_ids"] == ["ref1"]
-        assert "value_selection_rationale_ko" in adjustment["value_grid"][0]
-        assert "proposed_value_rationale_ko" in adjustment["value_grid"][0]
+        assert "2026년 ShippingCost basecase record" in adjustment["value_grid"][0]["rationale_ko"]
+        assert "value_selection_rationale_ko" not in adjustment["value_grid"][0]
+        assert "proposed_value_rationale_ko" not in adjustment["value_grid"][0]
         patched = result["parameter_adjustments"][1]
         assert patched["candidate_key"] == "c2"
         assert patched["selected"] is False
-        assert patched["needs_user_review"] is True
+        assert "needs_user_review" not in patched
         assert "누락" in patched["parameter_selection_rationale_ko"]
 
-    async def test_slot_prompt_uses_distinct_basecase_slot_options(self) -> None:
+    async def test_slot_prompt_uses_time_values_and_non_time_hierarchy(self) -> None:
         candidate = {
             "candidate_key": "c1",
             "model_file": "Supply",
             "model_sheet": "LiqUtilAdjustment",
             "parameter_name": "LiqUtilAdjustment",
             "canonical_parameter_name": "LiqUtilAdjustment",
+            "basecase_read_mode": "matrix_time_columns",
+            "basecase_column_roles": "B:Country,C:LNG Plant,D:LNG Plant Train",
         }
         records = [
             {
@@ -1918,25 +2270,25 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         ]
         slot_response = LLMSlotProposalResponse(
             parameter_slots=[
-                ParameterSlotProposal(
+                LLMSlotProposal(
                     candidate_key="c1",
                     selected=True,
                     slot_axes=[
-                        ParameterSlotAxis(
+                        LLMSlotAxis(
                             axis_name="Plant",
                             axis_value="Plant-42",
-                            rationale="event에 명시된 설비",
                         ),
                     ],
-                    rationale_ko_overall="설비 차질 event를 반영했습니다.",
-                    confidence_overall=0.8,
+                    rationale_ko="설비 차질 event를 반영했습니다.",
                 ),
             ],
         )
         captured_contents: list[str] = []
+        captured_system_contents: list[str] = []
 
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
             assert kwargs["output_schema"] is LLMSlotProposalResponse
+            captured_system_contents.append(kwargs["messages"][0]["content"])
             captured_contents.append(kwargs["messages"][1]["content"])
             return SimpleNamespace(result=slot_response, usage=None)
 
@@ -1944,6 +2296,15 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_id=100,
             scenario_context={"scenario": {"scenario_id": 100}},
             candidate_mappings=[candidate],
+            non_input_items=[
+                {
+                    "source_dimension_id": "alternative_supply_route",
+                    "source_dimension_label": "대체 공급 경로",
+                    "source_dimension_value": "미국 Gulf Coast LNG",
+                    "mapping_method": "indirect",
+                    "reason": "slot 판단 보조 정보",
+                },
+            ],
             basecase_records=records,
         )
         fake_module = types.ModuleType("apps.connectors.llm.llm_client")
@@ -1953,26 +2314,260 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         assert result["parameter_slots"][0]["candidate_key"] == "c1"
         assert captured_contents
+        assert captured_system_contents
+        assert "basecase_slot_options는 충분한 후보 pool" in captured_system_contents[0]
+        assert "axis_values에는 Year/Month/Period 같은 시간축 후보 값만" in captured_system_contents[0]
+        assert "slot_hierarchy에는 시간축이 아닌 축들의 현재 Base Case 유효 path" in captured_system_contents[0]
+        assert "slot 수를 줄이기 위해 누락하지 말고 모두 포함" in captured_system_contents[0]
+        assert "두 조건 중 어느 것도 확인되지 않으면 basecase에 있더라도 포함하지 마십시오" in captured_system_contents[0]
+        assert "단순 전수 열거하지는 마십시오" in captured_system_contents[0]
+        assert "Cartesian product를 자동 전개하지 말고" in captured_system_contents[0]
+        assert "서로 다른 path의 Country/Plant/Train/Region/Contract 같은 값을 섞어" in captured_system_contents[0]
+        assert '"타 공급국", "대체 공급", "인접 공급국"' in captured_system_contents[0]
+        assert "slot_hierarchy leaf path" in captured_system_contents[0]
+        assert "Life Cycle Category/Nameplate Capacity 같은 path 속성" in captured_system_contents[0]
+        assert "선택한 leaf path의 모든 축 값을 slot_axes에 포함" in captured_system_contents[0]
+        assert "해당 월에 대응되는 Period도 slot_axes에 포함" in captured_system_contents[0]
+        assert "axis_combinations" not in captured_system_contents[0]
+        assert "기간 길이를 명시하면" in captured_system_contents[0]
+        assert "기간 밖의 future year" in captured_system_contents[0]
+        assert "axis_value는 반드시 JSON number integer" in captured_system_contents[0]
+        assert '"2026" 같은 문자열은 금지' in captured_system_contents[0]
+        assert "supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension" in captured_system_contents[0]
+        assert "parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항" in captured_system_contents[0]
+        assert "mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항" in captured_system_contents[0]
         payload = json.loads(captured_contents[0].split("\n", 1)[1])
-        assert payload["basecase_records"] == []
+        assert "basecase_records" not in payload
         assert "basecase_record_summaries" not in payload
-        assert payload["basecase_slot_options"] == [
+        assert "candidate_mappings" not in payload
+        assert "parameter_candidate_groups" not in payload
+        assert "supporting_dimensions" not in payload
+        assert "basecase_slot_options" not in payload
+        assert payload["scenario_brief"] == {"scenario_id": 100}
+        task = payload["parameter_slot_tasks"][0]
+        assert "selection_dimensions" not in task
+        assert task["supporting_dimensions"] == [
             {
-                "candidate_key": "c1",
-                "model_file": "Supply",
-                "sheet_name": "LiqUtilAdjustment",
-                "parameter_name": "LiqUtilAdjustment",
-                "record_count": 3,
+                "dimension_key": "alternative_supply_route",
+                "dimension_label": "대체 공급 경로",
+                "dimension_value": "미국 Gulf Coast LNG",
+                "mapping_method": "indirect",
+                "reason": "slot 판단 보조 정보",
+            },
+        ]
+        assert task["parameter"] == {
+            "candidate_key": "c1",
+            "parameter_name": "LiqUtilAdjustment",
+            "allowed_slot_axes_field_names": [
+                "Country",
+                "LNG Plant",
+                "LNG Plant Train",
+                "Year",
+                "Month",
+                "Period",
+            ],
+        }
+        assert "model_file" not in json.dumps(payload, ensure_ascii=False)
+        assert "model_sheet" not in json.dumps(payload, ensure_ascii=False)
+        assert "model_table" not in json.dumps(payload, ensure_ascii=False)
+        assert task["basecase_slot_options"] == [
+            {
                 "axis_names": ["Plant", "Year"],
                 "axis_values": {
-                    "Plant": ["Cameron", "Sabine"],
                     "Year": [2026, 2027],
                 },
-                "value_names": ["LiqUtilAdjustment"],
+                "slot_hierarchy_axes": ["Plant"],
+                "slot_hierarchy": ["Cameron", "Sabine"],
             },
         ]
         assert "cameron-2026-a" not in captured_contents[0]
         assert "sabine-2027" not in captured_contents[0]
+        assert "axis_combinations" not in captured_contents[0]
+
+    def test_basecase_slot_options_dedupes_time_values_and_non_time_hierarchy(self) -> None:
+        records = [
+            {
+                "candidate_key": "c1",
+                "axes": {"Country": "Germany", "Year": 2026},
+            },
+            {
+                "candidate_key": "c1",
+                "axes": {"Country": "Germany", "Year": 2026},
+            },
+            {
+                "candidate_key": "c1",
+                "axes": {"Country": "France", "Year": 2026},
+            },
+            {
+                "candidate_key": "c1",
+                "axes": {"Country": "Italy", "Year": 2027},
+            },
+        ]
+
+        options = _build_basecase_slot_options(records)
+
+        assert options == [
+            {
+                "candidate_key": "c1",
+                "axis_names": ["Country", "Year"],
+                "axis_values": {
+                    "Year": [2026, 2027],
+                },
+                "slot_hierarchy_axes": ["Country"],
+                "slot_hierarchy": ["France", "Germany", "Italy"],
+            },
+        ]
+
+    def test_basecase_slot_options_preserves_non_time_hierarchy_paths(self) -> None:
+        records = [
+            {
+                "candidate_key": "c1",
+                "axes": {
+                    "Country": "Russia",
+                    "LNG Plant": "Yamal LNG",
+                    "LNG Plant Train": "Yamal LNG T1",
+                    "Year": 2026,
+                },
+            },
+            {
+                "candidate_key": "c1",
+                "axes": {
+                    "Country": "Russia",
+                    "LNG Plant": "Yamal LNG",
+                    "LNG Plant Train": "Yamal LNG T2",
+                    "Year": 2026,
+                },
+            },
+            {
+                "candidate_key": "c1",
+                "axes": {
+                    "Country": "Norway",
+                    "LNG Plant": "Snohvit LNG",
+                    "LNG Plant Train": "Snohvit LNG T1",
+                    "Year": 2026,
+                },
+            },
+        ]
+
+        options = _build_basecase_slot_options(records)
+
+        assert options == [
+            {
+                "candidate_key": "c1",
+                "axis_names": [
+                    "Country",
+                    "LNG Plant",
+                    "LNG Plant Train",
+                    "Year",
+                ],
+                "axis_values": {"Year": [2026]},
+                "slot_hierarchy_axes": [
+                    "Country",
+                    "LNG Plant",
+                    "LNG Plant Train",
+                ],
+                "slot_hierarchy": [
+                    ["Norway", [["Snohvit LNG", ["Snohvit LNG T1"]]]],
+                    [
+                        "Russia",
+                        [
+                            [
+                                "Yamal LNG",
+                                ["Yamal LNG T1", "Yamal LNG T2"],
+                            ],
+                        ],
+                    ],
+                ],
+            },
+        ]
+
+    def test_basecase_value_groups_compress_fixed_axes_and_keep_value_cells(self) -> None:
+        records = [
+            {
+                "candidate_key": "c1",
+                "reference_id": "r1",
+                "axes": {
+                    "Country": "Russia",
+                    "LNG Plant": "Yamal LNG",
+                    "Year": 2026,
+                    "Month": 7,
+                    "Period": 103,
+                },
+                "value_name": "LiqUtilAdjustment",
+                "value": 0.45,
+                "unit": "%",
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "r2",
+                "axes": {
+                    "Country": "Russia",
+                    "LNG Plant": "Yamal LNG",
+                    "Year": 2026,
+                    "Month": 8,
+                    "Period": 104,
+                },
+                "value_name": "LiqUtilAdjustment",
+                "value": 0.5,
+                "unit": "%",
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "r3",
+                "axes": {
+                    "Country": "Norway",
+                    "LNG Plant": "Snohvit LNG",
+                    "Year": 2026,
+                    "Month": 7,
+                    "Period": 103,
+                },
+                "value_name": "LiqUtilAdjustment",
+                "value": 0.7,
+                "unit": "%",
+            },
+        ]
+
+        groups = _build_basecase_value_groups(records)
+
+        assert groups == [
+            {
+                "candidate_key": "c1",
+                "value_name": "LiqUtilAdjustment",
+                "fixed_axes": {
+                    "Country": "Russia",
+                    "LNG Plant": "Yamal LNG",
+                },
+                "variable_axis_names": ["Year", "Month", "Period"],
+                "cells": [
+                    {
+                        "reference_id": "r1",
+                        "axes": {"Year": 2026, "Month": 7, "Period": 103},
+                        "basecase_value": 0.45,
+                    },
+                    {
+                        "reference_id": "r2",
+                        "axes": {"Year": 2026, "Month": 8, "Period": 104},
+                        "basecase_value": 0.5,
+                    },
+                ],
+            },
+            {
+                "candidate_key": "c1",
+                "value_name": "LiqUtilAdjustment",
+                "fixed_axes": {
+                    "Country": "Norway",
+                    "LNG Plant": "Snohvit LNG",
+                },
+                "variable_axis_names": ["Year", "Month", "Period"],
+                "cells": [
+                    {
+                        "reference_id": "r3",
+                        "axes": {"Year": 2026, "Month": 7, "Period": 103},
+                        "basecase_value": 0.7,
+                    },
+                ],
+            },
+        ]
 
     async def test_weather_slot_selection_calls_llm_without_compact_bypass(self) -> None:
         candidate = {
@@ -2038,7 +2633,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert result["parameter_slots"][0]["candidate_key"] == "temperature-direct"
         assert result["parameter_slots"][0]["slot_axes"][0]["axis_value"] == "Japan"
 
-    def test_basecase_records_are_filtered_by_selected_slots_for_value_prompt(self) -> None:
+    def test_basecase_records_under_limit_are_not_filtered_for_value_prompt(self) -> None:
         records = [
             {
                 "candidate_key": "c1",
@@ -2097,6 +2692,129 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert [record["reference_id"] for record in result["basecase_records"]] == [
             "cameron-2026-a",
             "cameron-2026-b",
+            "sabine-2026",
+            "other-2026",
+        ]
+
+    def test_basecase_records_without_selected_slots_are_filtered_out(self) -> None:
+        records = [
+            {
+                "candidate_key": "c1",
+                "reference_id": "norway-2026",
+                "axes": {"Country": "Norway", "Year": 2026},
+                "value": 1.0,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "us-2026",
+                "axes": {"Country": "United States", "Year": 2026},
+                "value": 2.0,
+            },
+        ]
+        state = ModelParameterProposalState(
+            scenario_id=100,
+            basecase_records=records,
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": False,
+                    "slot_axes": [
+                        {"axis_name": "Country", "axis_value": "Norway"},
+                    ],
+                },
+            ],
+        )
+
+        result = filter_basecase_records_by_slots(state)
+
+        assert result["basecase_records"] == []
+
+    def test_large_basecase_records_prioritize_deeper_prefix_matches(self) -> None:
+        records = [
+            {
+                "candidate_key": "c1",
+                "reference_id": "month-only-first",
+                "axes": {"Country": "China", "Year": 2025, "Month": 8},
+                "value": 10,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "full-1",
+                "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
+                "value": 11,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "country-1",
+                "axes": {"Country": "Japan", "Year": 2025, "Month": 1},
+                "value": 12,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "country-year-late",
+                "axes": {"Country": "Japan", "Year": 2026, "Month": 9},
+                "value": 12.5,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "year-1",
+                "axes": {"Country": "Korea", "Year": 2026, "Month": 3},
+                "value": 13,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "full-2",
+                "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
+                "value": 14,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "country-2",
+                "axes": {"Country": "Japan", "Year": 2027, "Month": 2},
+                "value": 15,
+            },
+            {
+                "candidate_key": "c2",
+                "reference_id": "other-candidate-full",
+                "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
+                "value": 16,
+            },
+            {
+                "candidate_key": "c1",
+                "reference_id": "unrelated",
+                "axes": {"Country": "China", "Year": 2025, "Month": 9},
+                "value": 17,
+            },
+        ]
+        state = ModelParameterProposalState(
+            scenario_id=100,
+            basecase_records=records,
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Country", "axis_value": "Japan"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 8},
+                    ],
+                },
+            ],
+        )
+
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.nodes."
+            "MAX_VALUE_PROMPT_BASECASE_RECORDS",
+            5,
+        ):
+            result = filter_basecase_records_by_slots(state)
+
+        assert [record["reference_id"] for record in result["basecase_records"]] == [
+            "full-1",
+            "full-2",
+            "country-year-late",
+            "country-1",
+            "country-2",
         ]
 
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:
@@ -2144,7 +2862,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert slot["candidate_key"] == "c1"
         assert slot["selected"] is False
         assert slot["slot_axes"] == []
-        assert slot["needs_user_review"] is True
+        assert "needs_user_review" not in slot
         assert any("모호한 slot" in warning for warning in result["validation_warnings"])
 
     async def test_llm_value_sanitizer_rejects_ambiguous_coordinates(self) -> None:
@@ -2226,8 +2944,211 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["candidate_key"] == "c1"
         assert adjustment["selected"] is False
         assert adjustment["value_grid"] == []
-        assert adjustment["needs_user_review"] is True
+        assert "needs_user_review" not in adjustment
         assert any("coordinates에 모호한 값" in warning for warning in result["validation_warnings"])
+
+    async def test_value_prompt_includes_slot_axis_contract(self) -> None:
+        candidate = {
+            "candidate_key": "c1",
+            "source_dimension_id": "utilization_change_amount",
+            "source_dimension_label": "가동률 변화 폭",
+            "source_dimension_value": "<5%",
+            "mapping_method": "direct",
+            "mapping_comment": "차질 규모",
+            "model_file": "Supply",
+            "model_sheet": "VolumeAdjustment",
+            "parameter_name": "SupplyDisruption",
+            "canonical_parameter_name": "SupplyDisruption",
+            "basecase_read_mode": "fixed_columns",
+            "basecase_column_roles": "B:Year,C:Province Country,E:SupplyDisruption",
+        }
+        sibling_candidate = {
+            "candidate_key": "c2",
+            "source_dimension_id": "alt_gas_supply_availability",
+            "source_dimension_label": "대체 가스 공급 가능성",
+            "source_dimension_value": "100%",
+            "mapping_method": "direct",
+            "mapping_comment": "대체 공급 완화율",
+            "model_file": "Supply",
+            "model_sheet": "VolumeAdjustment",
+            "parameter_name": "SupplyDisruption",
+            "canonical_parameter_name": "SupplyDisruption",
+            "basecase_read_mode": "fixed_columns",
+            "basecase_column_roles": "B:Year,C:Province Country,E:SupplyDisruption",
+        }
+        value_response = LLMValueProposalResponse(
+            parameter_adjustments=[
+                ParameterAdjustment(
+                    candidate_key="c1",
+                    model_file="Supply",
+                    model_sheet="VolumeAdjustment",
+                    parameter_name="SupplyDisruption",
+                    selected=True,
+                    slot_axes=[
+                        ParameterSlotAxis(
+                            axis_name="Province Country",
+                            axis_value="Norway",
+                        ),
+                        ParameterSlotAxis(axis_name="Year", axis_value="2026"),
+                    ],
+                    value_grid=[
+                        ParameterValueCell(
+                            coordinates={
+                                "Province Country": "Norway",
+                                "Year": 2026,
+                            },
+                            basecase_value=None,
+                            proposed_value=3,
+                            operation="absolute",
+                            value_selection_rationale_ko="Norway 2026 row",
+                            proposed_value_rationale_ko="3% 차질",
+                        ),
+                    ],
+                    parameter_selection_rationale_ko="공급 차질 조정",
+                    confidence_overall=0.8,
+                ),
+            ],
+        )
+        captured_contents: list[str] = []
+        captured_system_contents: list[str] = []
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMValueProposalResponse
+            captured_system_contents.append(kwargs["messages"][0]["content"])
+            captured_contents.append(kwargs["messages"][1]["content"])
+            return SimpleNamespace(result=value_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=100,
+            scenario_context={"scenario": {"scenario_id": 100}},
+            candidate_mappings=[candidate, sibling_candidate],
+            non_input_items=[
+                {
+                    "source_dimension_id": "alternative_supply_route",
+                    "source_dimension_label": "대체 공급 경로",
+                    "source_dimension_value": "미국 Gulf Coast LNG",
+                    "mapping_method": "na",
+                    "reason": "value 산정 보조 정보",
+                },
+            ],
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {
+                            "axis_name": "Province Country",
+                            "axis_value": "Norway",
+                        },
+                        {"axis_name": "Year", "axis_value": 2026},
+                    ],
+                },
+            ],
+            basecase_records=[],
+        )
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}):
+            await propose_parameter_values(state)
+
+        assert captured_system_contents
+        assert (
+            "value_grid.coordinates의 Year, Month, Period 값은 반드시 JSON number integer"
+            in captured_system_contents[0]
+        )
+        assert (
+            "slot_axes.axis_name이 Year, Month, Period 중 하나이면 axis_value도 반드시 JSON number integer"
+            in captured_system_contents[0]
+        )
+        assert (
+            "Step3 value 산정은 기존과 같이 scenario/event/dimension, Step2 slot 축"
+            in captured_system_contents[0]
+        )
+        assert (
+            "parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항"
+            in captured_system_contents[0]
+        )
+        assert (
+            "mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항"
+            in captured_system_contents[0]
+        )
+        assert (
+            "parameter-level 근거는 값 산정 상세가 아니라 parameter 선정 근거와 값 제안 구조 요약"
+            in captured_system_contents[0]
+        )
+        assert (
+            "scenario dimension이 이 parameter와 연결되는 관계를 먼저"
+            in captured_system_contents[0]
+        )
+        assert (
+            "selected_slots가 1개 이상 있는 parameter_value_task는 최소 1개의 valid value_grid cell"
+            in captured_system_contents[0]
+        )
+        assert (
+            "보수적인 최소 충격값을 산정"
+            in captured_system_contents[0]
+        )
+        assert (
+            "개별 slot/설비/국가/월/record명, basecase_value, proposed_value"
+            in captured_system_contents[0]
+        )
+        assert (
+            "그런 상세 slot/value 산정 근거는 value_grid[].rationale_ko에만"
+            in captured_system_contents[0]
+        )
+        assert "parameter_value_tasks는 Step3에서 값을 산정해야 하는 parameter별 작업 단위" in captured_system_contents[0]
+        assert "supporting_dimensions의 indirect/na 정보도 value 방향" in captured_system_contents[0]
+        payload = json.loads(captured_contents[0].split("\n", 1)[1])
+        assert "scenario_context" not in payload
+        assert "dimension_template" not in json.dumps(payload, ensure_ascii=False)
+        assert "candidate_mappings" not in payload
+        assert "parameter_candidate_groups" not in payload
+        assert "parameter_slots" not in payload
+        assert "basecase_value_groups" not in payload
+        assert payload["scenario_brief"] == {"scenario_id": 100}
+        assert payload["parameter_value_tasks"][0]["parameter"] == {
+            "candidate_key": "c1",
+            "parameter_name": "SupplyDisruption",
+            "allowed_slot_axes_field_names": [
+                "Year",
+                "Province Country",
+            ],
+        }
+        assert payload["parameter_value_tasks"][0]["selection_dimensions"] == [
+            {
+                "dimension_key": "utilization_change_amount",
+                "dimension_label": "가동률 변화 폭",
+                "dimension_value": "<5%",
+                "mapping_method": "direct",
+                "mapping_comment": "차질 규모",
+            },
+        ]
+        assert payload["parameter_value_tasks"][0]["supporting_dimensions"] == [
+            {
+                "dimension_key": "alternative_supply_route",
+                "dimension_label": "대체 공급 경로",
+                "dimension_value": "미국 Gulf Coast LNG",
+                "mapping_method": "na",
+                "reason": "value 산정 보조 정보",
+            },
+        ]
+        assert payload["parameter_value_tasks"][0]["selected_slot_axes_field_names"] == [
+            "Province Country",
+            "Year",
+        ]
+        assert payload["parameter_value_tasks"][0]["selected_slots"] == [
+            {
+                "slot_axes": [
+                    {
+                        "axis_name": "Province Country",
+                        "axis_value": "Norway",
+                    },
+                    {"axis_name": "Year", "axis_value": 2026},
+                ],
+            },
+        ]
+        assert payload["parameter_value_tasks"][0].get("model_file") is None
+        assert payload["parameter_value_tasks"][0].get("model_sheet") is None
 
     async def test_llm_value_sanitizer_allows_clear_value_without_basecase(self) -> None:
         candidate = {
@@ -2309,7 +3230,114 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["value_grid"][0]["proposed_value"] == 0.03
         assert adjustment["value_grid"][0]["operation"] == "absolute"
 
-    async def test_regas_adjustment_is_backfilled_for_import_facility_damage(self) -> None:
+    async def test_llm_value_sanitizer_allows_partial_value_grid_for_multiple_slots(self) -> None:
+        candidate = {
+            "candidate_key": "c1",
+            "model_file": "Demand",
+            "model_sheet": "CoalGasAdjustment",
+            "parameter_name": "Gas Futures Price",
+            "canonical_parameter_name": "Gas Futures Price",
+        }
+        value_response = LLMValueProposalResponse(
+            parameter_adjustments=[
+                ParameterAdjustment(
+                    candidate_key="c1",
+                    model_file="Demand",
+                    model_sheet="CoalGasAdjustment",
+                    parameter_name="Gas Futures Price",
+                    selected=True,
+                    slot_axes=[],
+                    value_grid=[
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Asia",
+                                "Year": 2026,
+                                "Month": 7,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.1,
+                            unit="USD/mmbtu",
+                            operation="delta",
+                            value_selection_rationale_ko=(
+                                "선택된 네 개 slot 중 가장 이른 Asia 2026년 7월 좌표입니다."
+                            ),
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최소 상승폭을 적용했습니다."
+                            ),
+                        ),
+                    ],
+                    parameter_selection_rationale_ko=(
+                        "운송 규제 영향이 가스 가격 변수와 연결됩니다."
+                    ),
+                    confidence_overall=0.5,
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMValueProposalResponse
+            return SimpleNamespace(result=value_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=281,
+            scenario_context={"scenario": {"scenario_id": 281}},
+            candidate_mappings=[candidate],
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Asia"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 7},
+                    ],
+                },
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Asia"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 8},
+                    ],
+                },
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Europe"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 7},
+                    ],
+                },
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Europe"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 8},
+                    ],
+                },
+            ],
+            basecase_records=[],
+        )
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}):
+            result = await propose_parameter_values(state)
+
+        adjustment = result["parameter_adjustments"][0]
+        assert adjustment["selected"] is True
+        assert len(adjustment["value_grid"]) == 1
+        assert adjustment["value_grid"][0]["coordinates"] == {
+            "Region": "Asia",
+            "Year": 2026,
+            "Month": 7,
+        }
+        assert adjustment["value_grid"][0]["proposed_value"] == 0.1
+
+    async def test_empty_llm_value_is_not_rule_backfilled(self) -> None:
         candidate = {
             "candidate_key": "routing-regas",
             "mapping_method": "routing",
@@ -2318,27 +3346,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "parameter_name": "RegasAdjustment",
             "canonical_parameter_name": "RegasAdjustment",
         }
-        value_response = LLMValueProposalResponse(
-            parameter_adjustments=[
-                ParameterAdjustment(
-                    candidate_key="routing-regas",
-                    model_file="Supply",
-                    model_sheet="RegasAdjustment",
-                    parameter_name="RegasAdjustment",
-                    selected=False,
-                    slot_axes=[],
-                    value_grid=[],
-                    parameter_selection_rationale_ko="LLM이 정량 값을 확정하지 못했습니다.",
-                    confidence_overall=0.2,
-                    needs_user_review=True,
-                    warnings=["정량 값 미확정"],
-                ),
-            ],
-        )
-
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
-            assert kwargs["output_schema"] is LLMValueProposalResponse
-            return SimpleNamespace(result=value_response, usage=None)
+            raise AssertionError("Step3 LLM should not be called without selected slots")
 
         state = ModelParameterProposalState(
             scenario_id=280,
@@ -2368,15 +3377,14 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         adjustment = result["parameter_adjustments"][0]
         assert adjustment["candidate_key"] == "routing-regas"
-        assert adjustment["selected"] is True
+        assert adjustment["selected"] is False
         assert adjustment["parameter_name"] == "RegasAdjustment"
-        value = adjustment["value_grid"][0]
-        assert value["coordinates"]["Country"] == "Australia"
-        assert value["coordinates"]["Year"] == 2026
-        assert value["proposed_value"] == -11.25
-        assert value["operation"] == "percent_change"
+        assert adjustment["value_grid"] == []
+        assert "needs_user_review" not in adjustment
+        assert any("Step2 selected slot" in warning for warning in result["validation_warnings"])
+        assert not any("규칙 보정값" in warning for warning in result["validation_warnings"])
 
-    async def test_rule_based_backfill_respects_multiple_step2_country_slots(self) -> None:
+    async def test_empty_llm_value_with_step2_slots_is_not_rule_backfilled(self) -> None:
         candidate = {
             "candidate_key": "routing-regas",
             "mapping_method": "routing",
@@ -2459,15 +3467,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_values(state)
 
         adjustment = result["parameter_adjustments"][0]
-        assert adjustment["selected"] is True
-        countries = [cell["coordinates"]["Country"] for cell in adjustment["value_grid"]]
-        assert countries == ["Japan", "South Korea"]
-        assert all(cell["coordinates"]["Year"] == 2026 for cell in adjustment["value_grid"])
-        assert [cell["proposed_value"] for cell in adjustment["value_grid"]] == [-11.25, -11.25]
-        assert all(
-            "Step2에서 확정한 slot 좌표" not in cell["value_selection_rationale_ko"]
-            for cell in adjustment["value_grid"]
-        )
+        assert adjustment["selected"] is False
+        assert adjustment["value_grid"] == []
+        assert "needs_user_review" not in adjustment
+        assert not any("규칙 보정값" in warning for warning in result["validation_warnings"])
 
     async def test_llm_value_sanitizer_rejects_unusable_values(self) -> None:
         candidate = {
@@ -2547,7 +3550,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         adjustment = result["parameter_adjustments"][0]
         assert adjustment["selected"] is False
         assert adjustment["value_grid"] == []
-        assert adjustment["needs_user_review"] is True
+        assert "needs_user_review" not in adjustment
         assert any("proposed_value가 null" in warning for warning in result["validation_warnings"])
         assert any("operation" in warning for warning in result["validation_warnings"])
 
@@ -2631,7 +3634,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         adjustment = result["parameter_adjustments"][0]
         assert adjustment["selected"] is False
         assert adjustment["value_grid"] == []
-        assert adjustment["needs_user_review"] is True
+        assert "needs_user_review" not in adjustment
         assert any("동일 slot 좌표" in warning for warning in result["validation_warnings"])
 
 

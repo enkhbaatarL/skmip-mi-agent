@@ -175,6 +175,11 @@ class MiModelParamModel(AuditColumnsMixin, ORMBase):
         nullable=False,
         comment="수급모델 파라미터명",
     )
+    parameter_hint: Mapped[str] = mapped_column(
+        sa.String(500, collation=BIN),
+        nullable=False,
+        comment="수급모델 파라미터 설명",
+    )
     model_file: Mapped[str] = mapped_column(
         sa.String(100, collation=BIN),
         nullable=False,
@@ -185,10 +190,10 @@ class MiModelParamModel(AuditColumnsMixin, ORMBase):
         nullable=False,
         comment="모델 시트명",
     )
-    unit: Mapped[str | None] = mapped_column(
-        sa.String(100, collation=BIN),
-        nullable=True,
-        comment="단위",
+    model_table: Mapped[str] = mapped_column(
+        sa.String(50, collation=BIN),
+        nullable=False,
+        comment="모델 시트 내 테이블명",
     )
     semantic_axes: Mapped[str | None] = mapped_column(
         sa.String(500, collation=BIN),
@@ -245,11 +250,6 @@ class MiModelParamModel(AuditColumnsMixin, ORMBase):
         nullable=True,
         comment="Basecase value end column",
     )
-    basecase_value_name: Mapped[str | None] = mapped_column(
-        sa.String(100, collation=BIN),
-        nullable=True,
-        comment="Basecase value name",
-    )
     basecase_stop_rule: Mapped[str] = mapped_column(
         sa.String(100, collation=BIN),
         nullable=False,
@@ -271,12 +271,8 @@ class MiModelParamDimensionMapModel(AuditColumnsMixin, ORMBase):
         CheckConstraint("use_yn IN ('Y','N')", name="ck_tmm_mi_model_param_dimension_map_01"),
         CheckConstraint("del_yn IN ('Y','N')", name="ck_tmm_mi_model_param_dimension_map_02"),
         CheckConstraint(
-            "mapping_status IN ('exact','alias')",
-            name="ck_tmm_mi_model_param_dimension_map_03",
-        ),
-        CheckConstraint(
             "mapping_method IN ('direct','indirect','routing','na')",
-            name="ck_tmm_mi_model_param_dimension_map_04",
+            name="ck_tmm_mi_model_param_dimension_map_03",
         ),
         TABLE_ARGS,
     )
@@ -312,11 +308,6 @@ class MiModelParamDimensionMapModel(AuditColumnsMixin, ORMBase):
         sa.String(200, collation=BIN),
         nullable=False,
         comment="시나리오 dimension label",
-    )
-    mapping_status: Mapped[str] = mapped_column(
-        sa.String(50, collation=BIN),
-        nullable=False,
-        comment="매핑 상태",
     )
     mapping_method: Mapped[str] = mapped_column(
         sa.String(50, collation=BIN),

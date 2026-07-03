@@ -175,6 +175,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         nullable=True,
         comment="Event 관련 Record 중 최신 first_created 시각",
     )
+    oldest_record_first_created: Mapped[datetime | None] = mapped_column(
+        mysql_types.DATETIME(fsp=6),
+        nullable=True,
+        comment="Event 관련 Record 중 최초 first_created 시각",
+    )
     estimated_impact_id: Mapped[str | None] = mapped_column(
         sqlalchemy.String(100, collation="utf8mb4_bin"),
         nullable=True,

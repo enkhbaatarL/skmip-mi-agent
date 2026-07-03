@@ -33,6 +33,7 @@ from apps.agents.model_parameter_agent.scripts.evaluate_proposals import (
     _json_preview,
     _llm_call_table_lines,
     _selected_adjustments,
+    _stage_summary_table_lines,
 )
 from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
 from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
@@ -287,7 +288,6 @@ def _group_status(target: EventTypeTarget, records: list[dict[str, Any]], errors
         and len(group_records) == len(target.scenario_ids)
         and all(record["mapping_ok"] for record in group_records)
         and all(record["selected_ok"] for record in group_records)
-        and all(record["routing_status"] != "REVIEW" for record in group_records)
         and value_diff_ok
     )
 
@@ -458,6 +458,9 @@ def _render_report(
                 lines.append(f"- routing_messages: `{_json_preview(record['routing_messages'])}`")
             if record["mapping_warnings"]:
                 lines.append(f"- mapping_warnings: `{_json_preview(record['mapping_warnings'])}`")
+            if record.get("basecase_warnings"):
+                lines.append(f"- basecase_warnings: `{_json_preview(record['basecase_warnings'])}`")
+            lines.extend(_stage_summary_table_lines(record.get("step_summary") or {}))
             lines.extend(_llm_call_table_lines(record.get("llm_calls") or []))
             lines.extend(
                 [

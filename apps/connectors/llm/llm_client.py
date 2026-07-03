@@ -39,8 +39,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, TypeVar
 
-import httpx
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from apps.common.configs.settings import BaseSettings, get_settings
@@ -81,7 +80,7 @@ async def _ensure_openai_client() -> AsyncOpenAI:
             return _openai_client
 
         cfg = get_settings()
-        http_client = await get_http_client(base_url=cfg.model_endpoint)
+        http_client = await get_http_client(base_url=cfg.model_endpoint, verify=False)
         _openai_client = AsyncOpenAI(
             base_url=cfg.model_endpoint,
             api_key=cfg.model_api_key,
@@ -105,6 +104,14 @@ def _resolve_model_name(
     return settings.model_api_deployment_name
 
 
+def _with_llm_request_options(client: AsyncOpenAI, max_retries: int) -> AsyncOpenAI:
+    settings: BaseSettings = get_settings()
+    return client.with_options(
+        max_retries=max_retries,
+        timeout=settings.llm_timeout_sec,
+    )
+
+
 @log_connector(connector_type="LLM", log_input=False, log_output=False, log_retry=False)
 async def invoke_llm_function_call(
     messages: list[dict[str, str]],
@@ -118,21 +125,14 @@ async def invoke_llm_function_call(
 ) -> dict[str, Any]:
     await ensure_runtime_context_ready()
     client = await _ensure_openai_client()
-    settings: BaseSettings = get_settings()
-    client = OpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.api_key,
-        # http_client=httpx.Client(verify=False, timeout=settings.llm_timeout_sec),
-        http_client=httpx.Client(verify=False),
-        max_retries=max_retries,
-    )
+    request_client = _with_llm_request_options(client, max_retries)
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
     http_sem = get_http_semaphore()
 
     try:
         async with llm_sem, http_sem:
-            resp = client.chat.completions.create(
+            resp = await request_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 functions=functions,
@@ -166,15 +166,8 @@ async def invoke_llm_structured_output[T: BaseModel](
 ) -> LLMStructuredResult[T]:
     """Structured output LLM 호출. 결과와 usage 정보를 함께 반환."""
     await ensure_runtime_context_ready()
-    await _ensure_openai_client()
-
-    settings: BaseSettings = get_settings()
-    client = OpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.api_key,
-        http_client=httpx.Client(verify=False),  # TODO: verify= True로 변경
-        max_retries=max_retries,
-    )
+    client = await _ensure_openai_client()
+    request_client = _with_llm_request_options(client, max_retries)
 
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
@@ -185,7 +178,7 @@ async def invoke_llm_structured_output[T: BaseModel](
 
     try:
         async with llm_sem, http_sem:
-            resp = client.chat.completions.create(
+            resp = await request_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 # temperature=temperature,
@@ -216,14 +209,8 @@ async def invoke_llm_text(
     max_retries: int = 2,
 ) -> dict[str, Any]:
     await ensure_runtime_context_ready()
-
-    settings: BaseSettings = get_settings()
-    client = OpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.api_key,
-        http_client=httpx.Client(verify=False),
-        max_retries=max_retries,
-    )
+    client = await _ensure_openai_client()
+    request_client = _with_llm_request_options(client, max_retries)
 
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
@@ -231,7 +218,7 @@ async def invoke_llm_text(
 
     try:
         async with llm_sem, http_sem:
-            resp = client.chat.completions.create(
+            resp = await request_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,

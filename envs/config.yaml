@@ -53,7 +53,8 @@ callback_validate_scenarios_path: /api/v1/mi/next-gen/scenario-groups/{scenario_
 callback_create_signposts_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/signposts/callback
 skip_callback: false
 
-llm_concurrency: 4
+llm_concurrency: 10
+llm_timeout_sec: 310
 mcp_max_concurrency: 8
 http_max_concurrency: 16
 rdb_exec_max_parallel: 4

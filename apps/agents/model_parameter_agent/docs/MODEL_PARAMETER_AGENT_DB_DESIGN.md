@@ -263,7 +263,8 @@ CREATE TABLE `tmm_mi_model_param_proposal_m` (
 - `tmm_mi_model_param_m.parameter_name`은 현재 엑셀의 `canonical_parameter_name`과 동일하게 사용한다.
 - `tmm_mi_model_param_dimension_map`은 `parameter_name` 문자열을 FK로 갖지 않고 `model_param_id`를 nullable FK로 갖는다.
 - `Dimension Parameter Mapping`에는 모델 input 대상이 아닌 `indirect`, `na` row가 있으므로 `model_param_id`는 `NULL`을 허용한다.
-- agent 후보 생성 시에는 `use_yn='Y'`, `del_yn='N'`, `mapping_method IN ('direct','routing')`, `model_param_id IS NOT NULL` 조건으로 조회한다.
+- agent 후보 생성 시에는 map/master 모두 `use_yn='Y'`, `del_yn='N'`인 row만 사용한다. map이 `use_yn='Y'`이어도 연결된 `tmm_mi_model_param_m.use_yn='N'`이면 제외한다.
+- 후보 parameter는 `mapping_method IN ('direct','routing')`, `model_param_id IS NOT NULL`인 row에서 생성한다.
 - proposal payload에서 제외한 `unit`은 기준정보 성격의 `tmm_mi_model_param_m`에는 유지한다.
 
 현재 엑셀 검증 결과:
@@ -298,7 +299,6 @@ CREATE TABLE `tmm_mi_model_param_proposal_m` (
 | `basecase_period_row` | `SMALLINT UNSIGNED` | Y | `NULL` | matrix period row |
 | `basecase_value_start_col` | `VARCHAR(10) COLLATE utf8mb4_bin` | Y | `NULL` | matrix value start col |
 | `basecase_value_end_col` | `VARCHAR(10) COLLATE utf8mb4_bin` | Y | `NULL` | matrix value end col |
-| `basecase_value_name` | `VARCHAR(100) COLLATE utf8mb4_bin` | Y | `NULL` | matrix value name |
 | `basecase_stop_rule` | `VARCHAR(100) COLLATE utf8mb4_bin` | N |  | scan stop rule |
 | `crt_usr_logn_id` | `VARCHAR(100) COLLATE utf8mb4_bin` | N | `'system'` | 생성자 |
 | `crt_dtm` | `DATETIME(6)` | N | `CURRENT_TIMESTAMP(6)` | 생성일시 |
@@ -326,7 +326,6 @@ CREATE TABLE `tmm_mi_model_param_proposal_m` (
 | `event_type_l2_id` | `INT UNSIGNED` | N |  | event type L2 FK |
 | `dimension_key` | `VARCHAR(150) COLLATE utf8mb4_bin` | N |  | scenario dimension key |
 | `dimension_label` | `VARCHAR(200) COLLATE utf8mb4_bin` | N |  | scenario dimension label |
-| `mapping_status` | `VARCHAR(50) COLLATE utf8mb4_bin` | N |  | `exact`, `alias` |
 | `mapping_method` | `VARCHAR(50) COLLATE utf8mb4_bin` | N |  | `direct`, `routing`, `indirect`, `na` |
 | `model_param_id` | `INT UNSIGNED` | Y | `NULL` | model parameter FK. non-input row는 `NULL` |
 | `comment` | `TEXT COLLATE utf8mb4_bin` | Y | `NULL` | 매핑 설명 |
@@ -348,8 +347,7 @@ CREATE TABLE `tmm_mi_model_param_proposal_m` (
 | FK | `fk_tmm_mi_model_param_dimension_map_02` | `model_param_id` -> `tmm_mi_model_param_m.model_param_id` |
 | CHECK | `ck_tmm_mi_model_param_dimension_map_01` | `use_yn IN ('Y','N')` |
 | CHECK | `ck_tmm_mi_model_param_dimension_map_02` | `del_yn IN ('Y','N')` |
-| CHECK | `ck_tmm_mi_model_param_dimension_map_03` | `mapping_status IN ('exact','alias')` |
-| CHECK | `ck_tmm_mi_model_param_dimension_map_04` | `mapping_method IN ('direct','indirect','routing','na')` |
+| CHECK | `ck_tmm_mi_model_param_dimension_map_03` | `mapping_method IN ('direct','indirect','routing','na')` |
 
 `uk_tmm_mi_model_param_dimension_map_01`은 동일 event/dimension이 여러 parameter로 확장되는 것은 허용하고, 동일 parameter로 중복 적재되는 것만 막는다. MySQL unique index는 `NULL`을 중복으로 보지 않으므로, `model_param_id IS NULL`인 indirect/na row의 중복 방지는 seed의 명시 PK 또는 application layer에서 관리한다.
 
@@ -374,7 +372,6 @@ CREATE TABLE `tmm_mi_model_param_m` (
     `basecase_period_row` SMALLINT UNSIGNED NULL COMMENT 'Basecase period row',
     `basecase_value_start_col` VARCHAR(10) COLLATE utf8mb4_bin NULL COMMENT 'Basecase value start column',
     `basecase_value_end_col` VARCHAR(10) COLLATE utf8mb4_bin NULL COMMENT 'Basecase value end column',
-    `basecase_value_name` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT 'Basecase value name',
     `basecase_stop_rule` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL COMMENT 'Basecase scan stop rule',
 
     `crt_usr_logn_id` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL DEFAULT 'system' COMMENT '생성자',
@@ -400,7 +397,6 @@ CREATE TABLE `tmm_mi_model_param_dimension_map` (
     `event_type_l2_id` INT UNSIGNED NOT NULL COMMENT '이벤트 유형 L2 ID',
     `dimension_key` VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 dimension key',
     `dimension_label` VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT '시나리오 dimension label',
-    `mapping_status` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT '매핑 상태',
     `mapping_method` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT '매핑 방식',
     `model_param_id` INT UNSIGNED NULL COMMENT '수급모델 파라미터 ID',
     `comment` TEXT COLLATE utf8mb4_bin NULL COMMENT '매핑 설명',
@@ -417,8 +413,7 @@ CREATE TABLE `tmm_mi_model_param_dimension_map` (
     KEY `idx_tmm_mi_model_param_dimension_map_02` (`model_param_id`),
     CONSTRAINT `ck_tmm_mi_model_param_dimension_map_01` CHECK (`use_yn` IN ('Y','N')),
     CONSTRAINT `ck_tmm_mi_model_param_dimension_map_02` CHECK (`del_yn` IN ('Y','N')),
-    CONSTRAINT `ck_tmm_mi_model_param_dimension_map_03` CHECK (`mapping_status` IN ('exact','alias')),
-    CONSTRAINT `ck_tmm_mi_model_param_dimension_map_04` CHECK (`mapping_method` IN ('direct','indirect','routing','na')),
+    CONSTRAINT `ck_tmm_mi_model_param_dimension_map_03` CHECK (`mapping_method` IN ('direct','indirect','routing','na')),
     CONSTRAINT `fk_tmm_mi_model_param_dimension_map_01`
         FOREIGN KEY (`event_type_l2_id`)
         REFERENCES `tmm_mi_event_type_l2_m` (`event_type_l2_id`)

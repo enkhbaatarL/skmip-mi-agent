@@ -28,7 +28,6 @@ DIMENSION_MAPPING_REQUIRED_COLUMNS = {
     "dimension_label",
     "mapping_method",
     "canonical_parameter_name",
-    "mapping_status",
     "comment",
 }
 PARAMETER_EXCEL_MAPPING_REQUIRED_COLUMNS = {
@@ -37,7 +36,6 @@ PARAMETER_EXCEL_MAPPING_REQUIRED_COLUMNS = {
     "model_file",
     "model_sheet",
     "parameter_name",
-    "unit",
     "semantic_axes",
     "basecase_read_mode",
     "basecase_header_row",
@@ -49,7 +47,6 @@ PARAMETER_EXCEL_MAPPING_REQUIRED_COLUMNS = {
     "basecase_period_row",
     "basecase_value_start_col",
     "basecase_value_end_col",
-    "basecase_value_name",
     "basecase_stop_rule",
 }
 MAX_DISTINCT_VALUES = 20
@@ -82,7 +79,6 @@ BASECASE_SPEC_COLUMNS = {
     "basecase_period_row",
     "basecase_value_start_col",
     "basecase_value_end_col",
-    "basecase_value_name",
     "basecase_stop_rule",
 }
 PARAMETER_ALIASES = {
@@ -106,10 +102,11 @@ MODEL_FILE_MARKERS = {
 @dataclass(frozen=True)
 class ParameterDefinition:
     canonical_parameter_name: str
+    parameter_hint: str | None
     model_file: str
     model_sheet: str
+    model_table: str | None
     parameter_name: str
-    unit: str | None
     semantic_axes: str | None
     basecase_read_mode: str | None
     basecase_header_row: int | None
@@ -121,7 +118,6 @@ class ParameterDefinition:
     basecase_period_row: int | None
     basecase_value_start_col: str | None
     basecase_value_end_col: str | None
-    basecase_value_name: str | None
     basecase_stop_rule: str | None
 
 
@@ -130,7 +126,6 @@ class MappingRule:
     event_type_l2_id: int
     dimension_key: str
     dimension_label: str
-    mapping_status: str
     canonical_parameter_name: str
     mapping_method: str
     comment: str | None
@@ -433,6 +428,7 @@ def match_parameter_candidates(
 
         model_file = definition.model_file
         model_sheet = definition.model_sheet
+        model_table = definition.model_table
         candidate_key = "|".join([
             str(rule.event_type_l2_id),
             _normalize_for_key(rule.dimension_key),
@@ -455,12 +451,12 @@ def match_parameter_candidates(
             "source_dimension_label": source_label or rule.dimension_label,
             "source_dimension_value": source_value,
             "mapping_method": rule.mapping_method,
-            "mapping_status": rule.mapping_status,
             "model_file": model_file,
             "model_sheet": model_sheet,
+            "model_table": model_table,
             "parameter_name": definition.parameter_name,
             "canonical_parameter_name": canonical,
-            "unit": definition.unit,
+            "parameter_hint": definition.parameter_hint,
             "semantic_axes": definition.semantic_axes,
             "mapping_comment": rule.comment,
             "basecase_read_mode": definition.basecase_read_mode,
@@ -473,7 +469,6 @@ def match_parameter_candidates(
             "basecase_period_row": definition.basecase_period_row,
             "basecase_value_start_col": definition.basecase_value_start_col,
             "basecase_value_end_col": definition.basecase_value_end_col,
-            "basecase_value_name": definition.basecase_value_name,
             "basecase_stop_rule": definition.basecase_stop_rule,
             "basecase_available": bool(profile and profile.sheet_exists),
         })
@@ -506,7 +501,7 @@ def build_basecase_samples(
         payload.update({
             "candidate_key": candidate.get("candidate_key"),
             "parameter_name": candidate.get("canonical_parameter_name"),
-            "unit": candidate.get("unit"),
+            "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
         })
         samples.append(payload)
@@ -659,7 +654,6 @@ def _mapping_rules_from_rows(
                 event_type_l2_id=event_type_l2_id,
                 dimension_key=dimension_key,
                 dimension_label=_clean_text(row_map.get("dimension_label")),
-                mapping_status=_clean_text(row_map.get("mapping_status")) or "unknown",
                 canonical_parameter_name=canonical,
                 mapping_method=_normalize_mapping_method(
                     row_map.get("mapping_method"),
@@ -696,10 +690,11 @@ def _parameter_definitions_from_rows(
             )
         definitions[canonical] = ParameterDefinition(
             canonical_parameter_name=canonical,
+            parameter_hint=_none_if_dash(row_map.get("parameter_hint")),
             model_file=_clean_text(row_map.get("model_file")),
             model_sheet=_clean_text(row_map.get("model_sheet")),
+            model_table=_model_table_from_row(row_map),
             parameter_name=_clean_text(row_map.get("parameter_name")) or canonical,
-            unit=_none_if_dash(row_map.get("unit")),
             semantic_axes=_none_if_dash(row_map.get("semantic_axes")),
             basecase_read_mode=_none_if_dash(row_map.get("basecase_read_mode")),
             basecase_header_row=_int_or_none(row_map.get("basecase_header_row")),
@@ -711,7 +706,6 @@ def _parameter_definitions_from_rows(
             basecase_period_row=_int_or_none(row_map.get("basecase_period_row")),
             basecase_value_start_col=_none_if_dash(row_map.get("basecase_value_start_col")),
             basecase_value_end_col=_none_if_dash(row_map.get("basecase_value_end_col")),
-            basecase_value_name=_none_if_dash(row_map.get("basecase_value_name")),
             basecase_stop_rule=_none_if_dash(row_map.get("basecase_stop_rule")),
         )
     if not definitions:
@@ -759,7 +753,6 @@ def _load_dimension_mapping_rules(ws: Any) -> list[MappingRule]:
                 event_type_l2_id=event_type_l2_id,
                 dimension_key=dimension_key,
                 dimension_label=_clean_text(row_map.get("dimension_label")),
-                mapping_status=_clean_text(row_map.get("mapping_status")) or "unknown",
                 canonical_parameter_name=canonical,
                 mapping_method=_normalize_mapping_method(
                     row_map.get("mapping_method"),
@@ -807,10 +800,11 @@ def _load_parameter_definitions(ws: Any) -> dict[str, ParameterDefinition]:
             )
         definitions[canonical] = ParameterDefinition(
             canonical_parameter_name=canonical,
+            parameter_hint=_none_if_dash(row_map.get("parameter_hint")),
             model_file=_clean_text(row_map.get("model_file")),
             model_sheet=_clean_text(row_map.get("model_sheet")),
+            model_table=_model_table_from_row(row_map),
             parameter_name=_clean_text(row_map.get("parameter_name")) or canonical,
-            unit=_none_if_dash(row_map.get("unit")),
             semantic_axes=_none_if_dash(row_map.get("semantic_axes")),
             basecase_read_mode=_none_if_dash(row_map.get("basecase_read_mode")),
             basecase_header_row=_int_or_none(row_map.get("basecase_header_row")),
@@ -822,7 +816,6 @@ def _load_parameter_definitions(ws: Any) -> dict[str, ParameterDefinition]:
             basecase_period_row=_int_or_none(row_map.get("basecase_period_row")),
             basecase_value_start_col=_none_if_dash(row_map.get("basecase_value_start_col")),
             basecase_value_end_col=_none_if_dash(row_map.get("basecase_value_end_col")),
-            basecase_value_name=_none_if_dash(row_map.get("basecase_value_name")),
             basecase_stop_rule=_none_if_dash(row_map.get("basecase_stop_rule")),
         )
     return definitions
@@ -1080,7 +1073,6 @@ def _append_matrix_records_for_row(
             "axes": axes,
             "value_name": block.value_name,
             "value": value,
-            "unit": candidate.get("unit"),
             "source_row": row_idx,
             "source_col": col_idx,
         })
@@ -1149,7 +1141,6 @@ def _extract_fixed_column_records(
             "axes": axes,
             "value_name": spec.value_name,
             "value": value,
-            "unit": candidate.get("unit"),
             "source_row": row_idx,
             "source_col": spec.value_col,
         })
@@ -1239,7 +1230,6 @@ def _extract_matrix_time_column_records(
                 "axes": record_axes,
                 "value_name": spec.value_name,
                 "value": value,
-                "unit": candidate.get("unit"),
                 "source_row": row_idx,
                 "source_col": col_idx,
             })
@@ -1296,8 +1286,7 @@ def _matrix_time_column_spec_from_candidate(
         return None
 
     value_name = (
-        _none_if_dash(candidate.get("basecase_value_name"))
-        or _none_if_dash(candidate.get("canonical_parameter_name"))
+        _none_if_dash(candidate.get("canonical_parameter_name"))
         or _none_if_dash(candidate.get("parameter_name"))
         or "Value"
     )
@@ -1735,6 +1724,13 @@ def _none_if_dash(value: Any) -> str | None:
     if not text or text in {"-", "—"}:
         return None
     return text
+
+
+def _model_table_from_row(row_map: dict[str, Any]) -> str | None:
+    return (
+        _none_if_dash(row_map.get("model_table"))
+        or _none_if_dash(row_map.get("table_name"))
+    )
 
 
 def _normalize_unicode(value: str) -> str:

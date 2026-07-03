@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import joinedload
 
 from apps.agents.event_flow_agent.models.mi_event_models_orm import (
@@ -163,6 +163,10 @@ class ModelInputRepository(BaseSyncSQLRepository):
             .where(
                 MiModelParamDimensionMapModel.del_yn == "N",
                 MiModelParamDimensionMapModel.use_yn == "Y",
+                or_(
+                    MiModelParamDimensionMapModel.model_param_id.is_(None),
+                    MiModelParamModel.model_param_id.is_not(None),
+                ),
             )
             .order_by(MiModelParamDimensionMapModel.model_param_dimension_map_id)
         )
@@ -209,10 +213,11 @@ class ModelInputRepository(BaseSyncSQLRepository):
     def _parameter_definition_to_dict(self, parameter: MiModelParamModel) -> dict[str, Any]:
         return {
             "canonical_parameter_name": parameter.parameter_name,
+            "parameter_hint": parameter.parameter_hint,
             "model_file": parameter.model_file,
             "model_sheet": parameter.model_sheet,
+            "model_table": parameter.model_table,
             "parameter_name": parameter.parameter_name,
-            "unit": parameter.unit,
             "semantic_axes": parameter.semantic_axes,
             "basecase_read_mode": parameter.basecase_read_mode,
             "basecase_header_row": parameter.basecase_header_row,
@@ -224,7 +229,6 @@ class ModelInputRepository(BaseSyncSQLRepository):
             "basecase_period_row": parameter.basecase_period_row,
             "basecase_value_start_col": parameter.basecase_value_start_col,
             "basecase_value_end_col": parameter.basecase_value_end_col,
-            "basecase_value_name": parameter.basecase_value_name,
             "basecase_stop_rule": parameter.basecase_stop_rule,
         }
 
@@ -237,7 +241,6 @@ class ModelInputRepository(BaseSyncSQLRepository):
             "event_type_l2_id": int(mapping.event_type_l2_id),
             "dimension_key": mapping.dimension_key,
             "dimension_label": mapping.dimension_label,
-            "mapping_status": mapping.mapping_status,
             "canonical_parameter_name": (
                 parameter.parameter_name if parameter is not None else ""
             ),

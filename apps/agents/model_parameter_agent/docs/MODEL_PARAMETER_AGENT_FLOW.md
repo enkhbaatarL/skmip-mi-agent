@@ -85,7 +85,8 @@ flowchart TD
 
 주요 입력 옵션:
 
-- `mapping_excel_path`, `basecase_dir_path`: 기본 리소스 대신 사용할 매핑/Basecase 경로
+- 매핑 정보는 매 요청 시 DB의 `tmm_mi_model_param_m`, `tmm_mi_model_param_dimension_map`에서 조회한다.
+- `basecase_dir_path`: 기본 Basecase 경로 대신 사용할 경로
 - `max_candidates`: 후보 최대 개수
 - `max_basecase_sample_rows`, `max_basecase_cols`: Basecase profile 샘플링 옵션
 - `allow_llm_fallback`: LLM 실패 시 fallback 허용 여부
@@ -164,9 +165,8 @@ Step1.5 LLM 후보 검증 단계다. DB mapping rule로 만들어진 후보 안�
 
 LLM 입력:
 
-- scenario/event context
-- `candidate_mappings`
-- `non_input_items`
+- `scenario_brief`
+- `candidate_validation_tasks`
 - Basecase record는 아직 전달하지 않음
 
 핵심 규칙:
@@ -177,7 +177,7 @@ LLM 입력:
 
 서버 보정:
 
-- `_sanitize_candidate_decisions()`
+- `_sanitize_parameter_candidate_group_decisions()`
   - 알 수 없는 candidate key 제거
   - direct 후보는 LLM이 누락하거나 `selected=false`를 반환해도 유지
   - routing 후보는 LLM 응답 누락 또는 `selected=false`면 제외

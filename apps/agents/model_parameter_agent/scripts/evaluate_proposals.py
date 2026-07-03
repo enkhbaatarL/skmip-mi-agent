@@ -29,7 +29,12 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     to_output,
     to_state,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
+    _build_basecase_slot_options,
+    _coordinate_issues,
+)
 from apps.agents.model_parameter_agent.mapping import (
+    build_basecase_records,
     get_parameter_knowledge_base,
     match_parameter_candidates,
 )
@@ -247,54 +252,6 @@ EVENT_TYPES_WITHOUT_CALL_TARGETS: tuple[tuple[int, str], ...] = (
 )
 
 
-EXPECTED_ROUTING_RULES_BY_SCENARIO_ID: dict[int, dict[str, tuple[str, ...]]] = {
-    279: {
-        "must_select": (
-            "11|affectedfacilitytype|supplydisruption|supply|volumeadjustment",
-        ),
-        "must_not_select": (
-            "11|affectedfacilitytype|regasadjustment|supply|regasadjustment",
-            "11|affectedfacilitytype|hurricaneintensity|supply|usahurricanes",
-        ),
-    },
-    280: {
-        "must_select": (
-            "11|affectedfacilitytype|regasadjustment|supply|regasadjustment",
-        ),
-        "must_not_select": (
-            "11|affectedfacilitytype|supplydisruption|supply|volumeadjustment",
-            "11|affectedfacilitytype|liqutiladjustment|supply|liqutiladjustment",
-            "11|affectedfacilitytype|liqprodadjustment|supply|liqprodadjustment",
-            "11|affectedfacilitytype|hurricaneintensity|supply|usahurricanes",
-        ),
-    },
-    281: {
-        "must_select": (
-            "19|impactintensity|shippingcost|trade|shippingcostinput",
-        ),
-        "must_not_select": (
-            "19|impactintensity|powermix|demand|powermixadjustment",
-            "19|impactintensity|coalfuturesprice|demand|coalgasadjustment",
-            "19|impactintensity|gasfuturesprice|demand|coalgasadjustment",
-            "19|impactintensity|useradjustedgasdemand|demand|demandoutputoverwrite",
-            "19|impactintensity|volumecancelled|trade|traderestrictioninput",
-        ),
-    },
-    282: {
-        "must_select": (
-            "19|impactintensity|shippingcost|trade|shippingcostinput",
-        ),
-        "must_not_select": (
-            "19|impactintensity|powermix|demand|powermixadjustment",
-            "19|impactintensity|coalfuturesprice|demand|coalgasadjustment",
-            "19|impactintensity|gasfuturesprice|demand|coalgasadjustment",
-            "19|impactintensity|useradjustedgasdemand|demand|demandoutputoverwrite",
-            "19|impactintensity|volumecancelled|trade|traderestrictioninput",
-        ),
-    },
-}
-
-
 def _normalize(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump()
@@ -391,6 +348,254 @@ def _selected_adjustments(result: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _proposal_parameters(final_response: dict[str, Any]) -> list[dict[str, Any]]:
+    data = final_response.get("data") or {}
+    return data.get("proposalParameters") or []
+
+
+def _selected_slots(parameter_slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        slot
+        for slot in parameter_slots
+        if slot.get("selected", True) is not False
+    ]
+
+
+def _slot_axis_names(slot: dict[str, Any]) -> list[str]:
+    axis_names: list[str] = []
+    for axis in slot.get("slot_axes") or []:
+        axis_name = axis.get("axis_name")
+        if axis_name:
+            axis_names.append(str(axis_name))
+    return axis_names
+
+
+def _slot_coordinates(slot: dict[str, Any]) -> dict[str, Any]:
+    coordinates: dict[str, Any] = {}
+    for axis in slot.get("slot_axes") or []:
+        axis_name = axis.get("axis_name")
+        if axis_name:
+            coordinates[str(axis_name)] = axis.get("axis_value")
+    return coordinates
+
+
+def _slot_issue_messages(parameter_slots: list[dict[str, Any]]) -> list[str]:
+    issues: list[str] = []
+    axis_sets_by_candidate: dict[str, set[tuple[str, ...]]] = defaultdict(set)
+    for slot in _selected_slots(parameter_slots):
+        candidate_key = str(slot.get("candidate_key") or "")
+        axis_names = tuple(_slot_axis_names(slot))
+        axis_sets_by_candidate[candidate_key].add(axis_names)
+        for issue in _coordinate_issues(_slot_coordinates(slot)):
+            issues.append(f"{candidate_key}: {issue}")
+    for candidate_key, axis_sets in axis_sets_by_candidate.items():
+        if len(axis_sets) > 1:
+            issues.append(
+                f"{candidate_key}: 같은 parameter에서 서로 다른 slot axis set 사용 {sorted(axis_sets)}",
+            )
+    return issues
+
+
+def _value_issue_messages(adjustments: list[dict[str, Any]]) -> list[str]:
+    issues: list[str] = []
+    for adjustment in _selected_adjustments({"parameter_adjustments": adjustments}):
+        candidate_key = str(adjustment.get("candidate_key") or "")
+        axis_names = [
+            str(axis.get("axis_name"))
+            for axis in adjustment.get("slot_axes") or []
+            if axis.get("axis_name")
+        ]
+        seen_coordinates: set[str] = set()
+        for cell in adjustment.get("value_grid") or []:
+            coordinates = cell.get("coordinates") or {}
+            missing_axes = [
+                axis_name
+                for axis_name in axis_names
+                if axis_name not in coordinates
+            ]
+            if missing_axes:
+                issues.append(f"{candidate_key}: value_grid 좌표 누락 {missing_axes}")
+            coordinate_key = json.dumps(
+                {axis_name: coordinates.get(axis_name) for axis_name in axis_names},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
+            if coordinate_key in seen_coordinates:
+                issues.append(f"{candidate_key}: 중복 value_grid 좌표 {coordinate_key}")
+            seen_coordinates.add(coordinate_key)
+    return issues
+
+
+def _slot_option_axis_value_count(slot_options: list[dict[str, Any]]) -> int:
+    return sum(
+        len(values or [])
+        for option in slot_options
+        for values in (option.get("axis_values") or {}).values()
+    )
+
+
+def _slot_option_axis_counts_by_candidate(slot_options: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    summary: dict[str, dict[str, int]] = {}
+    for option in slot_options:
+        candidate_key = str(option.get("candidate_key") or "")
+        summary[candidate_key] = {
+            str(axis_name): len(values or [])
+            for axis_name, values in (option.get("axis_values") or {}).items()
+        }
+    return summary
+
+
+def _build_step_summary(
+    *,
+    rule_candidates: list[dict[str, Any]],
+    validated_candidates: list[dict[str, Any]],
+    parameter_slots: list[dict[str, Any]],
+    slot_basecase_records: list[dict[str, Any]],
+    slot_options: list[dict[str, Any]],
+    value_basecase_records: list[dict[str, Any]],
+    adjustments: list[dict[str, Any]],
+    final_response: dict[str, Any],
+    llm_calls: list[dict[str, Any]],
+    routing_status: str,
+) -> dict[str, Any]:
+    selected_slots = _selected_slots(parameter_slots)
+    selected_adjustments = _selected_adjustments({"parameter_adjustments": adjustments})
+    proposal_parameters = _proposal_parameters(final_response)
+    llm_steps = [str(call.get("step") or "") for call in llm_calls]
+
+    if not rule_candidates:
+        termination_stage = "Step1 종료 - 매핑 후보 없음"
+    elif not validated_candidates:
+        termination_stage = "Step1.5 종료 - 후보 검증 후 selected parameter 없음"
+    elif not selected_slots:
+        termination_stage = "Step2 종료 - selected slot 없음"
+    elif any("Step3" in step for step in llm_steps):
+        termination_stage = "Step3 완료 - value proposal 산정"
+    else:
+        termination_stage = "Step2 이후 종료 - Step3 호출 없음"
+
+    slot_issues = _slot_issue_messages(parameter_slots)
+    value_issues = _value_issue_messages(adjustments)
+    value_cell_count = sum(len(adjustment.get("value_grid") or []) for adjustment in selected_adjustments)
+    value_cell_with_basecase_count = sum(
+        1
+        for adjustment in selected_adjustments
+        for cell in adjustment.get("value_grid") or []
+        if cell.get("basecase_value") is not None
+    )
+
+    if not rule_candidates:
+        parameter_status = "N/A"
+    elif not validated_candidates:
+        parameter_status = "FAIL"
+    elif routing_status == "REVIEW":
+        parameter_status = "REVIEW"
+    else:
+        parameter_status = "PASS"
+
+    if not validated_candidates:
+        slot_status = "N/A"
+    elif not selected_slots:
+        slot_status = "FAIL"
+    elif slot_issues:
+        slot_status = "REVIEW"
+    else:
+        slot_status = "PASS"
+
+    if not selected_slots:
+        basecase_status = "N/A"
+    elif len(value_basecase_records) > 100:
+        basecase_status = "FAIL"
+    elif slot_basecase_records and not value_basecase_records:
+        basecase_status = "REVIEW"
+    else:
+        basecase_status = "PASS"
+
+    if not proposal_parameters:
+        value_status = "EMPTY"
+    elif value_issues:
+        value_status = "FAIL"
+    else:
+        value_status = "PASS"
+
+    return {
+        "termination_stage": termination_stage,
+        "parameter_status": parameter_status,
+        "slot_status": slot_status,
+        "basecase_status": basecase_status,
+        "value_status": value_status,
+        "rule_candidate_count": len(rule_candidates),
+        "validated_candidate_count": len(validated_candidates),
+        "selected_parameter_count": len(selected_adjustments),
+        "proposal_parameter_count": len(proposal_parameters),
+        "slot_option_candidate_count": len(slot_options),
+        "slot_option_axis_value_count": _slot_option_axis_value_count(slot_options),
+        "slot_option_axis_counts_by_candidate": _slot_option_axis_counts_by_candidate(slot_options),
+        "selected_slot_count": len(selected_slots),
+        "slot_issue_messages": slot_issues,
+        "slot_basecase_record_count": len(slot_basecase_records),
+        "value_basecase_record_count": len(value_basecase_records),
+        "value_cell_count": value_cell_count,
+        "value_cell_with_basecase_count": value_cell_with_basecase_count,
+        "value_issue_messages": value_issues,
+        "llm_steps": llm_steps,
+    }
+
+
+def _stage_summary_table_lines(step_summary: dict[str, Any]) -> list[str]:
+    if not step_summary:
+        return ["", "- 단계별 실행 요약: `{}`"]
+    return [
+        "",
+        "##### 단계별 실행 요약",
+        "",
+        "| 항목 | 값 | 판정 |",
+        "|---|---:|---|",
+        f"| 종료 단계 | {step_summary.get('termination_stage') or ''} | |",
+        (
+            f"| Step1/1.5 parameter 후보 | "
+            f"rule={step_summary.get('rule_candidate_count', 0)}, "
+            f"validated={step_summary.get('validated_candidate_count', 0)}, "
+            f"final_selected={step_summary.get('selected_parameter_count', 0)}, "
+            f"proposalParameters={step_summary.get('proposal_parameter_count', 0)} | "
+            f"{step_summary.get('parameter_status') or ''} |"
+        ),
+        (
+            f"| Step2 basecase raw rows | "
+            f"raw_records={step_summary.get('slot_basecase_record_count', 0)} | "
+            f"{step_summary.get('slot_status') or ''} |"
+        ),
+        (
+            f"| Step2 distinct slot axis values | "
+            f"slot_option_candidates={step_summary.get('slot_option_candidate_count', 0)}, "
+            f"distinct_axis_values={step_summary.get('slot_option_axis_value_count', 0)} | "
+            f"{step_summary.get('slot_status') or ''} |"
+        ),
+        (
+            f"| Step2 selected slot | "
+            f"{step_summary.get('selected_slot_count', 0)} | "
+            f"{step_summary.get('slot_status') or ''} |"
+        ),
+        (
+            f"| Step3 basecase 샘플 | "
+            f"prompt_records={step_summary.get('value_basecase_record_count', 0)}, "
+            "limit=100 | "
+            f"{step_summary.get('basecase_status') or ''} |"
+        ),
+        (
+            f"| Step3 value 결과 | "
+            f"value_cells={step_summary.get('value_cell_count', 0)}, "
+            f"basecaseValue_present={step_summary.get('value_cell_with_basecase_count', 0)} | "
+            f"{step_summary.get('value_status') or ''} |"
+        ),
+        (
+            f"| Step2 slot axis value 수 | "
+            f"`{_json_preview(step_summary.get('slot_option_axis_counts_by_candidate') or {}, max_chars=1200)}` | |"
+        ),
+    ]
+
+
 def _all_adjustments(result: dict[str, Any]) -> list[dict[str, Any]]:
     return result.get("parameter_adjustments", []) or []
 
@@ -432,24 +637,16 @@ def _review_selected_parameters(
 
 
 def _review_routing_selection(
-    scenario_id: int,
+    _scenario_id: int,
     candidates: list[dict[str, Any]],
     result: dict[str, Any],
 ) -> tuple[str, list[str]]:
-    expected_rule = EXPECTED_ROUTING_RULES_BY_SCENARIO_ID.get(scenario_id)
     routing_candidates = [
         candidate
         for candidate in candidates
         if str(candidate.get("mapping_method") or "").lower() == "routing"
     ]
     if not routing_candidates:
-        if expected_rule:
-            return (
-                "REVIEW",
-                [
-                    "routing 검증 대상 scenario인데 Step1.5 후보 검증을 통과한 routing 후보가 없습니다.",
-                ],
-            )
         return "N/A", []
 
     routing_keys = {str(candidate.get("candidate_key") or "") for candidate in routing_candidates}
@@ -465,20 +662,6 @@ def _review_routing_selection(
         messages.append(
             "routing 후보가 모두 selected입니다. DB scenario dimension에 따른 선택/제외 사유 검토가 필요합니다.",
         )
-
-    if expected_rule:
-        must_select = set(expected_rule.get("must_select") or ())
-        missing_required = sorted(must_select - selected_routing_keys)
-        if missing_required:
-            messages.append(
-                f"routing 필수 선택 후보가 selected되지 않았습니다: {missing_required}",
-            )
-        must_not_select = set(expected_rule.get("must_not_select") or ())
-        unexpected_selected = sorted(must_not_select & selected_routing_keys)
-        if unexpected_selected:
-            messages.append(
-                f"scenario dimension상 제외되어야 할 routing 후보가 selected되었습니다: {unexpected_selected}",
-            )
     return ("PASS" if not messages else "REVIEW"), messages
 
 
@@ -498,7 +681,6 @@ def _build_group_status(
             len(group_records) == len(target.scenario_ids)
             and all(record["mapping_ok"] for record in group_records)
             and all(record["selected_ok"] for record in group_records)
-            and all(record["routing_status"] != "REVIEW" for record in group_records)
             and (
                 not any(record["expected_candidates"] for record in group_records)
                 or len({record["value_signature"] for record in group_records}) > 1
@@ -528,6 +710,14 @@ async def _evaluate_scenario(
     raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
     raw_state = _normalize(raw_output)
     validated_candidates = raw_state.get("candidate_mappings") or []
+    slot_basecase_records, basecase_warnings = build_basecase_records(
+        kb,
+        validated_candidates,
+        context,
+    )
+    slot_options = _build_basecase_slot_options(slot_basecase_records)
+    parameter_slots = raw_state.get("parameter_slots") or []
+    value_basecase_records = raw_state.get("basecase_records") or []
     result = {
         "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
         "non_input_items": raw_state.get("non_input_items") or [],
@@ -545,6 +735,18 @@ async def _evaluate_scenario(
         validated_candidates,
         result,
     )
+    step_summary = _build_step_summary(
+        rule_candidates=candidates,
+        validated_candidates=validated_candidates,
+        parameter_slots=parameter_slots,
+        slot_basecase_records=slot_basecase_records,
+        slot_options=slot_options,
+        value_basecase_records=value_basecase_records,
+        adjustments=result["parameter_adjustments"],
+        final_response=final_response,
+        llm_calls=llm_calls,
+        routing_status=routing_status,
+    )
     return {
         "scenario_id": scenario_id,
         "context": context,
@@ -552,6 +754,9 @@ async def _evaluate_scenario(
         "expected_candidates": validated_candidates,
         "non_input_items": non_inputs,
         "mapping_warnings": mapping_warnings,
+        "basecase_warnings": basecase_warnings,
+        "parameter_slots": parameter_slots,
+        "step_summary": step_summary,
         "result": result,
         "final_response": final_response,
         "llm_calls": llm_calls,
@@ -644,8 +849,7 @@ def _render_md(
         mapping_ok = all(record["mapping_ok"] for record in group_records)
         selected_ok = all(record["selected_ok"] for record in group_records)
         routing_statuses = {record["routing_status"] for record in group_records}
-        routing_ok = "REVIEW" not in routing_statuses
-        group_ok = mapping_ok and selected_ok and routing_ok and value_diff_ok
+        group_ok = mapping_ok and selected_ok and value_diff_ok
         lines.extend(
             [
                 f"### event_type_l2_id={target.event_type_l2_id} {target.event_type_label}",

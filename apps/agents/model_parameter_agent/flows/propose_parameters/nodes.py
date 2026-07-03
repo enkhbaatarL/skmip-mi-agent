@@ -7,8 +7,6 @@ from typing import Any
 
 from apps.agents.model_parameter_agent.mapping import (
     build_basecase_records,
-    build_llm_prompt_packet,
-    get_parameter_knowledge_base,
     get_parameter_knowledge_base_from_resources,
     ParameterKnowledgeBase,
     match_parameter_candidates,
@@ -19,10 +17,13 @@ from apps.agents.model_parameter_agent.persistence.model_input.service import (
 )
 from apps.agents.model_parameter_agent.schemas.propose_parameters import (
     LLMCandidateValidationResponse,
+    LLMSlotProposal,
     LLMSlotProposalResponse,
+    LLMValueAdjustment,
+    LLMValueCell,
     LLMValueProposalResponse,
     ParameterAdjustment,
-    ParameterCandidateDecision,
+    ParameterCandidateGroupDecision,
     ParameterSlotProposal,
     ParameterSlotAxis,
     ParameterValueCell,
@@ -34,7 +35,8 @@ from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 
 MAX_PARAMETER_SLOTS = 100
-
+MAX_VALUE_PROMPT_BASECASE_RECORDS = 100
+TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
 CANDIDATE_VALIDATION_SYSTEM = """\
 당신은 LNG 수급모델 Input Parameter 제안 agent입니다.
 
@@ -43,24 +45,43 @@ CANDIDATE_VALIDATION_SYSTEM = """\
   scenario/event 맥락 기준으로 검증합니다.
 - 이 단계는 basecase row/value 추출 전 후보 gate입니다.
 - 후보 밖의 parameter, workbook, sheet, candidate_key를 만들지 마십시오.
+- candidate_validation_tasks는 Step1.5에서 검증할 parameter별 작업 단위입니다.
+  같은 model input parameter로 합쳐질 candidate_key들을 하나의 task로 제공합니다.
 
 판단 기준:
 - direct 후보는 DB 매핑에서 명시적으로 지정된 모델 input이므로 반드시 selected=true로 유지합니다.
-- routing 후보는 scenario/event/dimension 맥락에 맞는 후보만 선택합니다.
+- routing 후보는 scenario/event/dimension 맥락에 맞는 후보를 선택합니다.
+- 특정 dimension에 routing parameter 후보가 하나 이상 있으면, 해당 dimension의 routing 후보 중
+  최소 1개는 반드시 selected=true로 유지합니다. 정확히 일치하는 후보가 불명확해도
+  scenario/event/dimension_value, parameter_hint, mapping_comment를 비교해 가장 적합한 후보를 고르십시오.
 - 하나의 dimension에서 복수 parameter가 실제로 동시에 필요하면 복수 선택할 수 있습니다.
 - 단순히 가능성이 있거나 근거가 약한 후보는 제외합니다.
 - scenario/event가 정량 값 산정까지 보장하지 않아도, 이후 slot/value 단계에서 명확한 값 산정 가능성이 있으면 후보로 유지할 수 있습니다.
 - basecase row 존재 여부는 이 단계의 선택/제외 근거가 아닙니다.
 - 후보 밖으로 벗어나지 않는 범위에서는 가능한 parameter를 누락하지 말고 최대한 다음 단계로 넘기십시오.
 
+입력 필드 역할:
+- scenario_brief에는 scenario_id/title, 선택된 dimension 값, 원 이벤트 요약만 제공합니다.
+  원본 scenario_context, dimension_template, model target object는 제공되지 않습니다.
+- candidate_validation_tasks[].parameter에는 parameter_name, parameter_hint, semantic_axes처럼
+  후보 검증에 필요한 parameter 의미 정보만 들어 있습니다.
+- parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
+  parameter가 scenario/event/dimension 맥락에서 이후 slot/value 산정 대상이 될 수 있는지 판단할 때 참고하십시오.
+- candidate_validation_tasks[].selection_dimensions에는 이 parameter가 선택된 scenario dimension 값과
+  mapping_method, mapping_comment가 들어 있습니다.
+- mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
+  dimension_value와 함께 direct/routing 후보 적합성을 판단하는 보조 근거로 사용하십시오.
+- parameter_hint와 mapping_comment는 후보 밖 parameter를 만들거나 candidate_key를 바꾸기 위한 근거가 아닙니다.
+
 출력 규칙:
-- candidate_decisions는 candidate_mappings의 candidate_key만 사용합니다.
-- 모든 candidate_mappings에 대해 decision을 하나씩 반환합니다.
-- selected=true는 다음 basecase/slot/value 단계로 넘길 후보입니다.
-- selected=false는 제외 후보입니다.
-- rationale_ko에는 선택/제외 근거를 한국어로 작성하고, 어떤 scenario dimension 또는 event 근거를 사용했는지 명시합니다.
-- rationale_ko에는 내부 개발 단계나 평가 목적을 드러내는 표현을 쓰지 마십시오.
-  사용자에게 설명 가능한 시나리오/이벤트/모델 근거만 작성하십시오.
+- parameter_candidate_groups만 반환하십시오.
+- group.candidate_keys에는 candidate_validation_tasks[].candidate_keys에 존재하는 candidate_key만 넣습니다.
+- 같은 parameter가 여러 dimension 때문에 선정되면 group.candidate_keys에 모두 포함합니다.
+- selected=true인 group은 다음 basecase/slot/value 단계로 넘길 parameter입니다.
+- selected=false인 group은 제외 후보입니다.
+- routing 후보가 있는 dimension의 모든 group을 selected=false로 반환하지 마십시오.
+- Step1.5에서는 rationale, confidence, warnings를 생성하지 마십시오.
+- candidate_decisions나 metadata는 반환하지 마십시오.
 """
 
 
@@ -72,40 +93,135 @@ SLOT_PROPOSAL_SYSTEM = """\
   후보 parameter의 slot 축만 결정합니다.
 - Step1 후보 parameter는 DB 매핑으로 이미 제한되어 있습니다.
   후보 밖의 parameter, workbook, sheet를 만들지 마십시오.
-- basecase_slot_options는 매핑된 시트의 Base Case 영역에서 candidate별 축 이름과
-  각 축의 distinct 값만 모은 참고 목록입니다. Step2에서는 raw value row가 제공되지 않습니다.
+- Step2에서는 parameter 적합성을 다시 심사해 후보를 줄이는 것이 아니라,
+  각 parameter_slot_tasks마다 scenario/event/dimension과 basecase_slot_options를 이용해
+  실제 모델 input으로 변경 가능한 slot을 최대한 찾는 것이 목표입니다.
+- supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension도 포함됩니다.
+  이 값들은 parameter를 새로 만들기 위한 근거가 아니라 국가/지역/시설/route/기간 등 slot 힌트로 참고하십시오.
+- parameter_slot_tasks는 Step2에서 slot을 선택해야 하는 parameter별 작업 단위입니다.
+  각 task 안의 parameter, selection_dimensions, supporting_dimensions, basecase_slot_options를 함께 읽고
+  slot을 결정하십시오.
+- basecase_slot_options는 현재 Base Case에 설정된 실제 입력 row/value에서
+  candidate별 축 이름, 시간축 distinct 값, 비시간축 유효 조합 계층을 모은 현재 기준 축 후보입니다.
+  axis_values에는 Year/Month/Period 같은 시간축 후보 값만 들어갑니다.
+  slot_hierarchy에는 시간축이 아닌 축들의 현재 Base Case 유효 path만 들어갑니다.
+  slot_hierarchy_axes 순서와 slot_hierarchy path를 함께 읽어야 합니다.
+- basecase_slot_options.axis_values와 slot_hierarchy에 있는 값은 해당 parameter의 현재 모델 입력에서
+  사용할 수 있는 후보 pool입니다. Country가 slot_hierarchy_axes에 있으면 해당 parameter에서 사용 가능한
+  모델 국가 후보로 해석하십시오.
+  mapping_comment/selection_dimensions/supporting_dimensions 또는 scenario/event가 타 공급국, 인접국, 대체 공급국처럼
+  상대적 대상 선택을 요구하면, 코드에 고정된 국가 목록 없이 slot_hierarchy의 Country path 안에서
+  scenario/event/dimension 문맥상 근거를 설명할 수 있는 국가 값을 후보로 검토하십시오.
+  다만 문맥상 타당한 근거 없이 임의 대표 국가를 만들거나 axis_values/slot_hierarchy에 없는 값을 선택하지 마십시오.
+  특히 mapping_comment/selection_dimensions/supporting_dimensions가 "타 공급국", "대체 공급", "인접 공급국",
+  "액화 가동률 상향"처럼 상대적 공급 후보를 요구하고, slot_hierarchy에 Country/LNG Plant/LNG Plant Train 같은
+  유효 공급국/시설 path가 있으면 특정 plant/train이 원문에 직접 명시되지 않았다는 이유만으로 selected=false로
+  두지 마십시오. 피해 국가, 수요 지역, 대체 공급 경로, 시장 연결성 관점에서 설명 가능한 slot_hierarchy leaf path를
+  선택하십시오. 후보를 전혀 좁힐 근거가 없는 경우에만 selected=false를 사용하십시오.
 - basecase_slot_options는 slot 후보를 찾는 참고 자료일 뿐입니다.
   여기에 값이 없거나 빈 목록이어도 scenario/event/dimension에 명확한 모델 input 축 값이 있으면
   반드시 그 값을 사용해 slot을 선택하십시오.
 - slot_selection_limits.maxParameterSlots는 전체 selected slot 상한입니다.
-  basecase_slot_options에 있는 값 중 scenario/event 의미와 가장 잘 맞는 slot을 우선 선택하고,
-  basecase에 없더라도 scenario/event에 명확하거나 의미론적으로 타당한 실제 모델 input 값은 추가할 수 있습니다.
-  단, 상한을 넘길 때는 영향이 큰 대표 slot을 우선 선택하십시오.
+  basecase_slot_options는 충분한 후보 pool이며, pool 전체를 선택하라는 의미가 아닙니다.
+  그러나 상한 안에서는 명확한 slot을 대표값 하나로 축소하지 말고 최대한 포함하십시오.
+  각 slot은 다음 중 하나를 만족할 때만 selected=true로 반환하십시오.
+  (1) scenario/event/dimension이 그 좌표를 명시적으로 지목했습니다.
+  (2) 그 좌표의 모델 input 값이 scenario/event/dimension 때문에 실제로 변경되어야 합니다.
+  두 조건 중 어느 것도 확인되지 않으면 basecase에 있더라도 포함하지 마십시오.
+  조건을 만족하는 좌표는 slot 수를 줄이기 위해 누락하지 말고 모두 포함하십시오.
+  basecase에 없더라도 scenario/event에 명확한 실제 모델 input 값은 추가할 수 있습니다.
+  이 상한은 목표치가 아니라 토큰/타임아웃 방지용 안전장치입니다.
+  상한에 가까워지면 명시적으로 지목된 좌표와 모델 input 영향이 큰 좌표를 우선 선택하십시오.
+
+입력 필드 역할:
+- Step2 slot 선택은 기존과 같이 scenario_brief, task별 selection_dimensions/supporting_dimensions,
+  basecase_slot_options를 우선 근거로 수행하십시오.
+- parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
+  parameter_slot_tasks[].parameter.parameter_hint를
+  parameter의 의미, 축 해석, slot 선택 제약을 이해하는 참고 정보로 사용하십시오.
+- mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
+  parameter_slot_tasks[].selection_dimensions[].mapping_comment를 dimension_value와 함께 참고해
+  국가/지역/시설/route/기간 등 slot 대상의 해석을 보완하십시오.
+- parameter_hint와 mapping_comment는 후보 밖 parameter나 모호한 slot을 만들기 위한 근거가 아닙니다.
+  실제 slot_axes는 basecase_slot_options, allowed_slot_axes_field_names,
+  명확한 scenario/event/dimension 정보 안에서만 정하십시오.
 
 출력 규칙:
-- parameter_slots는 candidate_mappings의 candidate_key만 사용합니다.
+- parameter_slots는 parameter_slot_tasks[].parameter.candidate_key만 사용합니다.
+- parameter_slots에는 candidate_key, selected, slot_axes만 반환하십시오.
+- 이 외 metadata, 자연어 근거, 검토 플래그는 반환하지 마십시오.
+  서버가 candidate_key 기준 metadata와 검증 경고를 보정합니다.
+- parameter_slot_tasks의 각 candidate_key를 독립적으로 검토하십시오.
+  여러 후보가 있으면 후보별로 basecase_slot_options.axis_names, axis_values, slot_hierarchy와
+  scenario/event/dimension의 국가, 지역, 시설, 계약, route, 기간 표현을 대조해
+  선택 가능한 slot을 찾으십시오.
+- supporting_dimensions의 indirect/na 정보가 slot 축을 명확히 하는 경우 함께 사용하십시오.
+  예: direct dimension은 차질 규모를, indirect/na dimension은 국가/시설/기간/대체 공급 경로를 설명할 수 있습니다.
+  단 supporting_dimensions만으로 후보 밖 parameter를 만들거나 모호한 slot을 확정하지 마십시오.
+- 같은 task 안에 selection_dimensions가 여러 개 있으면 전체를 함께 읽고 slot을 결정하십시오.
+  한 dimension이 규모/방향을 주고 다른 dimension이 대상/기간을 주는 경우 두 정보를 결합할 수 있습니다.
 - slot_axes에는 지역/국가/시설/연/월/계약/route 등 해당 sheet에 필요한 축을 넣습니다.
 - 값을 산정하지 마십시오. 값 산정은 Step3에서 수행합니다.
-- slot_axes의 축 이름과 축 값은 basecase_slot_options의 axis_names/axis_values를 우선 사용합니다.
+- slot_axes의 축 이름과 축 값은 basecase_slot_options의 axis_names, axis_values, slot_hierarchy를 우선 사용합니다.
+  axis_values의 시간축 값은 선택한 slot_hierarchy path와 조합할 수 있지만, 시간축 값끼리도
+  scenario/event/dimension이 명시적으로 지목했거나 모델 input 변경에 필요한 조합만 만드십시오.
+- slot_hierarchy에 있는 비시간축 값은 같은 path 안의 값만 함께 사용할 수 있습니다.
+  서로 다른 path의 Country/Plant/Train/Region/Contract 같은 값을 섞어 Cartesian product를 만들지 마십시오.
+  상위 축 값만 명확하고 하위 축 값이 명확하지 않으면 임의로 하위 축 값을 만들지 말고,
+  해당 parameter의 slot을 selected=false로 두거나 명확한 축까지만 사용 가능한지 설명하십시오.
+  단 mapping_comment/selection_dimensions/supporting_dimensions가 상대적 공급 후보를 요구하는 경우에는
+  하위 Plant/Train이 원문에 직접 없더라도 slot_hierarchy의 같은 leaf path에 포함된 하위 축과
+  Life Cycle Category/Nameplate Capacity 같은 path 속성을 그대로 사용해 완성된 slot을 만들 수 있습니다.
+  이때 leaf path는 scenario/event/dimension 맥락상 왜 선택됐는지 근거를 설명할 수 있어야 합니다.
+  slot_hierarchy leaf path를 사용해 selected=true slot을 만들 때는 slot_hierarchy_axes에 있는 축을
+  Country 같은 상위 축만으로 축약하지 말고, 선택한 leaf path의 모든 축 값을 slot_axes에 포함하십시오.
+  예: slot_hierarchy_axes가 ["Country","LNG Plant","LNG Plant Train","Life Cycle Category","Nameplate Capacity"]이면
+  selected=true slot_axes에도 이 다섯 축을 모두 넣습니다.
 - basecase_slot_options에 없어도 scenario/event에 명확히 명시된 모델 input 축 값은 사용할 수 있습니다.
 - basecase_slot_options가 비어 있거나 특정 축 값이 없다는 이유만으로 selected=false를 반환하지 마십시오.
 - basecase에 있는 축 값 중 scenario/event 의미와 일치하는 값을 먼저 선택하고,
-  basecase에 없는 값은 의미론적으로 실제 모델 input에 적합할 때만 추가하십시오.
+  basecase에 없는 값은 scenario/event가 명확히 지목한 실제 모델 input 값일 때만 추가하십시오.
+- scenario/event/dimension의 값이 basecase_slot_options.axis_values 또는 slot_hierarchy path에 정확히 존재하거나
+  명확하게 같은 의미의 모델 input 축 값으로 대응되면 selected=true slot으로 반환하십시오.
+  다른 candidate의 slot이 더 명확하다는 이유만으로 현재 candidate의 명확한 slot을 누락하지 마십시오.
+- scenario/event/dimension에서 특정 국가, 지역, 설비, 계약, 기간이 여러 개 명확하면
+  위 선택 조건을 만족하는 slot들은 모두 포함하십시오.
+  다만 시나리오와 직접 관련 없는 basecase_slot_options의 전체 국가/지역/설비/월 조합을
+  단순 전수 열거하지는 마십시오. 시나리오가 여러 축 값을 각각 언급했더라도,
+  그 축들의 Cartesian product를 자동 전개하지 말고 각 조합이 실제 영향 좌표로 명시되었거나
+  모델 입력상 필요한 경우에만 조합을 만드십시오. 반대로 scenario가 명시적으로 지목했거나
+  모델 input 변경이 필요한 조합은 모두 포함하십시오.
+  영향 대상이 불명확하면 임의의 대표 slot을 selected=true로 확정하지 말고
+  selected=false로 두고 slot_axes는 비워 두십시오.
+- 기간이 여러 월/연도로 해석될 수 있어도 모델에 Year 또는 Period 축이 있으면
+  시나리오 의미를 잃지 않는 범위에서 Year 또는 Period를 사용할 수 있습니다.
+  월별 차이가 event/dimension에 명확하거나 월별 입력이 모델 정확도에 필요하면 충분한 Month slot을 전개하십시오.
+- basecase_slot_options.axis_names에 Year, Month, Period가 모두 있고 월 단위 slot을 선택하는 경우에는
+  Year와 Month만 반환하지 말고 해당 월에 대응되는 Period도 slot_axes에 포함하십시오.
+- scenario dimension의 period/affected_period가 "1개월 이하", "3개월", "6개월"처럼 기간 길이를 명시하면
+  period_resolution_policy의 current_year/current_month부터 그 기간에 포함되는 Year/Month/Period만 선택하십시오.
+  모델에 Year 축만 있으면 해당 기간이 걸치는 연도만 선택하고,
+  기간 밖의 future year를 basecase에 있다는 이유로 열거하지 마십시오.
+- parameter_slot_tasks[].parameter.allowed_slot_axes_field_names가 있으면 slot_axes.axis_name은 그 목록의 field name만
+  정확히 사용하십시오. 별칭이나 축약명을 만들지 마십시오.
+  예: allowed에 "Province Country"가 있으면 "Province", "Country"가 아니라 반드시 "Province Country"를 사용합니다.
+- 같은 candidate_key에서 selected=true인 parameter_slots는 모두 동일한 slot_axes.axis_name set을 사용하십시오.
+  여러 값이 필요하면 같은 axis_name set으로 parameter_slots를 여러 개 반환하십시오.
 - selected=true slot 총수는 slot_selection_limits.maxParameterSlots를 넘기지 마십시오.
 - 해당 parameter가 scalar 입력이거나 축을 특정할 필요가 없으면 selected=true와 빈 slot_axes를 반환하십시오.
 - 기간 표현은 period_resolution_policy를 기준으로 Year/Month/Period로 변환합니다.
 - `YYYY-MM`, `YYYY년 M월`, `occurred_at`처럼 연월이 명확하면 현재 기준월과 무관하게 그대로 사용합니다.
 - 연도 없이 월만 명시되면 현재 월 이후의 가장 가까운 해당 월로 변환합니다.
 - 명확한 연월/월 근거가 없으면 추론상 현재 월 이후부터 period를 전개합니다.
+- slot_axes.axis_name이 Year, Month, Period 중 하나이면 axis_value는 반드시 JSON number integer로 반환하십시오.
+  예: {"axis_name":"Year","axis_value":2026}. "2026" 같은 문자열은 금지입니다.
 - 미정, 후보, 추정, 또는(or), 일부, 대체 공급국, '?' 같은 모호한 slot 값은 절대 사용하지 마십시오.
 - 여러 값이 명확하면 "A; B"처럼 한 축 값에 합치지 말고 parameter_slots를 여러 개 반환하십시오.
 - 축을 명확한 실제 모델 input 값으로 특정할 수 없으면 selected=false,
-  needs_user_review=true와 warning을 남기고 slot_axes는 비워 두십시오.
+  slot_axes는 비워 두십시오.
+  이때 selected=false는 parameter 제외가 아니라 slot 미확정이라는 의미로만 사용하십시오.
 - 단, scenario/event/dimension에서 축이나 기간을 합리적으로 자동 변환할 수 있으면 selected=true로 유지하십시오.
-- 근거는 한국어로 작성하고, 어떤 scenario dimension과
-  basecase_slot_options를 썼는지 명시합니다.
-- 근거에는 내부 개발 단계나 평가 목적을 드러내는 표현을 쓰지 마십시오.
-  사용자에게 설명 가능한 slot 선택 근거만 작성하십시오.
+- Step2에서는 자연어 근거를 작성하지 마십시오. 최종 근거는 Step3에서 생성합니다.
 """
 
 
@@ -113,52 +229,117 @@ VALUE_PROPOSAL_SYSTEM = """\
 당신은 LNG 수급모델 Input Parameter 제안 agent입니다.
 
 목표:
-- Step3: Step2에서 결정된 slot 축과 basecase_records를 근거로 slot별 입력 값을 제안합니다.
+- Step3: parameter_value_tasks의 parameter별 selected_slots와 basecase_value_groups를 근거로
+  slot별 입력 값을 제안합니다.
 - Step1 후보 parameter와 Step2 slot 축은 이미 제한되어 있습니다.
   후보 밖의 parameter, workbook, sheet, candidate_key를 만들지 마십시오.
-- basecase_records는 Step2에서 선택된 slot 축에 매칭되는 row/value record만 포함합니다.
-  전달된 record는 해당 slot에 대해 사용 가능한 basecase value 전체이므로 누락 없이 참고하십시오.
-- basecase_records는 참고 자료입니다. 비어 있거나 일치 row/value가 없더라도
+- basecase_value_groups는 Step2에서 선택된 slot 축에 매칭되는 현재 Base Case의 실제 설정값 record를
+  fixed_axes와 cells로 압축한 값입니다.
+  group.fixed_axes는 group.cells 전체에 공통으로 적용되는 좌표입니다.
+  cell.axes는 Year/Month/Period 같은 시간축 좌표입니다.
+  각 cell의 전체 좌표는 group.fixed_axes와 cell.axes를 합친 값입니다.
+  cell.basecase_value는 해당 좌표의 현재 기준값이고, cell.reference_id는 원본 basecase record id입니다.
+- basecase_value_groups는 단순 샘플이 아니라 현재 모델 입력 기준값입니다. 비어 있거나 일치 row/value가 없더라도
   scenario/event/dimension에 명확한 수치, 기간, 방향, 강도가 있으면 반드시 proposed_value를 산정하십시오.
+- basecase_value_groups의 cells는 실제 basecase record 목록입니다.
+  cells를 Cartesian product나 추가 hierarchy로 해석하지 마십시오.
+- supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension도 포함됩니다.
+  이 값들은 parameter를 새로 만들기 위한 근거가 아니라 value 산정의 보조 맥락으로 참고하십시오.
+- parameter_value_tasks는 Step3에서 값을 산정해야 하는 parameter별 작업 단위입니다.
+  각 task 안의 parameter, selection_dimensions, supporting_dimensions, selected_slots,
+  basecase_value_groups를 함께 읽고 value를 산정하십시오.
+
+입력 필드 역할:
+- Step3 value 산정은 기존과 같이 scenario/event/dimension, Step2 slot 축,
+  basecase_value_groups를 우선 근거로 수행하십시오.
+- parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
+  parameter_value_tasks[].parameter.parameter_hint를
+  parameter 값의 의미, 단위/스케일, 방향성, 허용 범위, 적용 제약을 해석하는 참고 정보로 사용하십시오.
+- mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
+  parameter_value_tasks[].selection_dimensions[].mapping_comment를 dimension_value와 함께 참고해
+  value 방향, 강도, 완화율, 적용 대상의 해석을 보완하십시오.
+- parameter_hint와 mapping_comment는 후보 밖 parameter나 slot을 만들기 위한 근거가 아닙니다.
+  실제 value_grid 좌표는 Step2 slot 축과 basecase_value_groups, 명확한 scenario/event/dimension 정보 안에서만 정하십시오.
+- Step1.5와 Step2의 자연어 rationale은 제공되지 않습니다.
+  parameter-level 근거는 scenario_brief, parameter_hint, selection_dimensions의
+  dimension_value/mapping_method/mapping_comment, selected_slots, basecase_value_groups를 근거로
+  Step3에서 직접 작성하십시오.
+- parameter-level 근거는 값 산정 상세가 아니라 parameter 선정 근거와 값 제안 구조 요약입니다.
+  먼저 selection_dimensions의 dimension_value/mapping_comment가 parameter_hint/parameter 의미와
+  어떻게 연결되어 이 parameter가 선택됐는지 설명하십시오.
+  여러 selection_dimensions가 있으면 각 dimension의 역할을 구분하십시오.
+  예: 차질 규모, 기간, 발생/회복 패턴, 대체 공급 가능성/완화율, 적용 대상.
 
 출력 규칙:
-- parameter_adjustments는 candidate_mappings의 candidate_key만 사용합니다.
-- 모든 candidate_mappings에 대해 parameter_adjustments를 하나씩 반환합니다.
-- model_file, model_sheet, parameter_name은 candidate_mappings의 값을 그대로 사용합니다.
-- slot_axes는 Step2 parameter_slots를 유지하거나 더 구체화한 값만 사용합니다.
-- Step2 parameter_slots가 비어 있거나 selected=false였더라도,
-  scenario/event/dimension으로 slot/value를 명확히 산정할 수 있으면 selected=true로 반환하십시오.
-- parameter_selection_rationale_ko에는 해당 parameter를 선택한 근거를 적습니다.
-- value_grid에는 slot별 basecase_value, proposed_value와 operation을 넣습니다.
+- parameter_adjustments는 parameter_value_tasks[].parameter.candidate_key만 사용합니다.
+- 모든 parameter_value_tasks에 대해 parameter_adjustments를 하나씩 반환합니다.
+- parameter_adjustments에는 candidate_key, selected, rationale_ko, value_grid만 반환하십시오.
+- 이 외 metadata, slot_axes, 검토 플래그, 경고 필드는 반환하지 마십시오.
+  서버가 candidate_key 기준 metadata와 Step2 slot으로 보정합니다.
+- 같은 parameter task 안에 selection_dimensions가 여러 개 있으면 전체를 함께 반영하십시오.
+  예: 한 dimension이 차질 규모를 주고 다른 dimension이 대체 공급 가능성/완화율/기간을 주면
+  proposed_value는 두 dimension의 의미를 모두 반영해야 합니다.
+- supporting_dimensions의 indirect/na 정보도 value 방향, 강도, 완화율, 기간, 대상 힌트가 되면 함께 참고하십시오.
+  단 supporting_dimensions만으로 후보 밖 parameter나 모호한 value를 만들지 마십시오.
+- selected_slots에는 Step2에서 selected=true로 확정된 slot만 제공됩니다.
+- value_grid.coordinates는 전달된 selected_slots의 slot_axes를 유지하거나 더 구체화한 값만 사용합니다.
+- parameter_value_tasks[].selected_slot_axes_field_names는 Step2에서 확정된 slot field name set입니다.
+  value_grid.coordinates는 이 field name을 정확히 전부 포함해야 하며, 이 목록 밖의 slot field를 만들지 마십시오.
+  예: selected_slot_axes_field_names가 ["Province Country", "Year"]이면 모든 coordinates는
+  "Province Country"와 "Year"를 모두 포함해야 하고, "Province", "Country", "Month" 같은 대체 field는 금지입니다.
+- Step3 호출은 Step2 selected slot이 1개 이상 있을 때만 수행됩니다.
+- selected_slots가 1개 이상 있는 parameter_value_task는 최소 1개의 valid value_grid cell을 반환하고
+  selected=true로 두십시오.
+- 정량 근거가 약하거나 basecase_value_groups가 비어 있어도, scenario/event/dimension의 방향·강도·기간과
+  parameter_hint/mapping_comment 제약 안에서 가장 직접적인 selected slot 1개 이상에 대해
+  보수적인 최소 충격값을 산정하십시오.
+- selected_slots가 여러 개이고 전체 slot별 산정 근거가 약하면 모든 slot을 무리하게 채우지 말고,
+  영향 대상이 가장 직접적이거나 기간상 가장 이른 slot부터 최소 1개를 선택해 value_grid를 만드십시오.
+  여러 slot별 차이가 명확하면 가능한 만큼 더 반환하십시오.
+- parameter_adjustments[].rationale_ko에는 해당 parameter를 선택한 이유와
+  scenario dimension이 이 parameter와 연결되는 관계를 먼저 적습니다.
+  이후에는 해당 parameter의 제안값 구조를 한두 문장으로만 요약하십시오.
+  예: 상향/하향/유지 방향, 적용 기간/대상 범위, 배분 원칙, 상한/제약.
+  개별 slot/설비/국가/월/record명, basecase_value, proposed_value, reference_id,
+  정확한 환산량, 세부 산식, cell별 계산 과정은 parameter-level 근거에 쓰지 마십시오.
+  그런 상세 slot/value 산정 근거는 value_grid[].rationale_ko에만 작성하십시오.
+- value_grid에는 slot별 coordinates, proposed_value, operation, basecase_reference_ids, rationale_ko를 넣습니다.
 - value_grid.coordinates에는 실제 모델 input으로 넣을 수 있는 명확한 값만 넣습니다.
   미정, 후보, 추정, 또는(or), 일부, 대체 공급국, '?' 같은 모호한 값은 금지입니다.
+- basecase_value_groups의 cell을 사용해 value_grid를 만들 때 coordinates에는
+  group.fixed_axes와 cell.axes를 합친 전체 좌표를 넣으십시오.
 - value_grid.coordinates의 Year/Month는 period_resolution_policy를 따라 확정합니다.
   명시 연월은 현재 기준월과 무관하게 그대로 사용합니다.
   월만 명시되면 현재 월 이후의 가장 가까운 해당 월을 사용합니다.
+- value_grid.coordinates의 Year, Month, Period 값은 반드시 JSON number integer로 반환하십시오.
+  예: {"Year":2026,"Month":7}. {"Year":"2026","Month":"7"} 같은 문자열은 금지입니다.
+- slot_axes.axis_name이 Year, Month, Period 중 하나이면 axis_value도 반드시 JSON number integer로 반환하십시오.
 - 여러 좌표가 필요하면 하나의 문자열로 합치지 말고 value_grid 항목을 여러 개 반환하십시오.
 - 같은 candidate_key 안에서 같은 value_grid.coordinates 조합은 정확히 하나의 cell로만 반환하십시오.
   같은 slot에 여러 operation 또는 여러 proposed_value를 동시에 반환하지 마십시오.
-  여러 해석이 가능하지만 하나로 확정할 수 없으면 selected=false, needs_user_review=true로 반환하십시오.
-- parameter_selection_rationale_ko에는 이 parameter를 선택한 이유만 적습니다.
-  slot 좌표, basecase row, proposed_value 산식은 반복하지 마십시오.
-- value_grid의 value_selection_rationale_ko에는 해당 value_grid 좌표/record를 선택한 근거만 적습니다.
-  parameter 선택 이유나 proposed_value 산식은 반복하지 마십시오.
-- value_grid의 proposed_value_rationale_ko에는 operation과 proposed_value 산정 근거만 적습니다.
-  parameter 선택 이유나 slot 선택 근거는 반복하지 마십시오.
-- basecase_records를 사용했다면 value_grid.basecase_reference_ids에 reference_id를 넣습니다.
-- basecase_records에 일치 row/value가 있으면 basecase_value를 기준으로 scenario/event 충격을 조정합니다.
-- basecase_records에 일치 row/value가 없어도 scenario/event/dimension에 명확한 수치와 산정 근거가 있으면
-  basecase_value=null로 두고 proposed_value를 산정합니다.
+  여러 해석이 가능하지만 하나로 확정할 수 없으면 selected=false, value_grid=[]로 반환하고
+  rationale_ko에 사유를 남기십시오.
+- value_grid[].rationale_ko에는 해당 cell의 slot/record를 선택한 기준과
+  operation/proposed_value를 산정한 기준을 함께 적습니다.
+  parameter 선택 이유나 dimension이 parameter를 선택하게 된 근거는 반복하지 마십시오.
+  cell-level에서는 해당 좌표, 기준값, 제안값, 산정식/강도/기간 보정처럼
+  그 cell 하나의 slot/value를 설명하는 데 필요한 상세만 작성하십시오.
+- basecase_value_groups를 사용했다면 value_grid.basecase_reference_ids에 cell.reference_id를 넣습니다.
+- basecase_value_groups에 일치 cell/basecase_value가 있으면 basecase_value를 현재 기준값으로 해석하고 scenario/event 충격을 조정합니다.
+- basecase_value_groups에 일치 cell/basecase_value가 없어도 scenario/event/dimension에 명확한 방향·강도·기간이 있으면
+  basecase_value=null로 두고 보수적인 proposed_value를 산정합니다.
 - basecase_value가 null이라는 이유만으로 selected=false를 반환하지 마십시오.
 - 후보 parameter가 입력 가능한 것으로 판단되면 가능한 많은 명확한 좌표/value_grid를 반환하십시오.
 - 범위형 scenario dimension은 자동 변환해 proposed_value를 산정합니다.
   예: <5%는 3%, ±25% 이내는 방향이 명확하면 25%, +300% 초과는 300% 최소 충격값입니다.
-- 방향이 명확하지 않거나 정성 값만 있어 proposed_value를 숫자/명확한 값으로 확정할 수 없으면
-  selected=false, proposed_value=null, needs_user_review=true로 반환하십시오.
+- 정성 값만 있어도 방향·강도·기간이 해석 가능하면 parameter_hint/mapping_comment 제약 안에서
+  보수적인 최소 proposed_value로 변환하십시오.
+- 방향도 불명확하거나 실제 모델 input으로 사용할 수 있는 operation/proposed_value를 만들 수 없는 경우에만
+  selected=false, value_grid=[]로 반환하고 rationale_ko에 사유를 남기십시오.
 - selected=true인 value_grid는 proposed_value가 반드시 실제 모델 input으로 사용할 수 있는 명확한 값이어야 하고,
   operation도 absolute, delta, percent_change, overwrite 중 하나여야 합니다.
 - 근거는 한국어로 작성하되, 각 rationale 필드의 역할을 넘지 않는 범위에서 사용한
-  scenario dimension 또는 basecase_records만 명시합니다.
+  scenario dimension 또는 basecase_value_groups만 명시합니다.
 - 모든 rationale에는 내부 개발 단계나 평가 목적을 드러내는 표현을 쓰지 마십시오.
   사용자에게 설명 가능한 시나리오/이벤트/모델 근거만 작성하십시오.
 """
@@ -183,17 +364,17 @@ def _knowledge_base_from_context(
     state: ModelParameterProposalState,
     context: dict[str, Any],
 ) -> ParameterKnowledgeBase:
-    if state.mapping_excel_path:
-        return get_parameter_knowledge_base(
-            state.mapping_excel_path,
-            state.basecase_dir_path,
-            max_sample_rows=state.max_basecase_sample_rows,
-            max_sample_cols=state.max_basecase_cols,
-        )
     resources = context.get("parameter_mapping_resources") or {}
+    mapping_rules = resources.get("mapping_rules") or []
+    parameter_definitions = resources.get("parameter_definitions") or []
+    if not mapping_rules or not parameter_definitions:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="parameter mapping resources not loaded from DB",
+        )
     return get_parameter_knowledge_base_from_resources(
-        mapping_rows=resources.get("mapping_rules") or [],
-        parameter_rows=resources.get("parameter_definitions") or [],
+        mapping_rows=mapping_rules,
+        parameter_rows=parameter_definitions,
         basecase_dir_path=state.basecase_dir_path,
         max_sample_rows=state.max_basecase_sample_rows,
         max_sample_cols=state.max_basecase_cols,
@@ -251,11 +432,9 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
             "validation_warnings": state.validation_warnings,
         }
 
-    packet = build_llm_prompt_packet(
+    packet = _build_candidate_validation_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
-        state.non_input_items,
-        [],
     )
     messages = [
         {"role": "system", "content": CANDIDATE_VALIDATION_SYSTEM},
@@ -277,6 +456,7 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
         )
         llm_payload = result.result
         usage = result.usage.model_dump() if result.usage is not None else None
+        llm_validation_warnings: list[str] = []
         llm_call = _llm_call_trace(
             step="Step1.5 candidate validation",
             model_name=state.model_name,
@@ -300,35 +480,43 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
             state.scenario_id,
             repr(exc),
         )
+        fallback_reason = "Step1.5 LLM 후보 검증 실패로 rule-based 후보를 유지했습니다."
         llm_payload = _fallback_candidate_validation_response(
-            "Step1.5 LLM 후보 검증 실패로 rule-based 후보를 유지했습니다.",
+            fallback_reason,
             state.candidate_mappings,
         )
         usage = None
+        llm_validation_warnings = [fallback_reason]
 
-    candidates, validation_warnings = _sanitize_candidate_decisions(
-        llm_payload.candidate_decisions,
+    candidates, validation_warnings = _sanitize_parameter_candidate_group_decisions(
+        llm_payload.parameter_candidate_groups,
         state.candidate_mappings,
     )
     candidates, routing_warnings = _apply_routing_comment_overrides(
         state.candidate_mappings,
         candidates,
     )
+    merged_candidates, merge_warnings = _merge_candidates_by_parameter(candidates)
     logger.info(
-        "[model-parameter] validated candidate mappings | scenario_id={} before_count={} after_count={} selected_candidate_keys={} warning_count={}",
+        "[model-parameter] validated candidate mappings | scenario_id={} before_count={} after_count={} merged_count={} selected_candidate_keys={} warning_count={}",
         state.scenario_id,
         len(state.candidate_mappings),
         len(candidates),
-        [candidate.get("candidate_key") for candidate in candidates],
-        len(llm_payload.validation_warnings) + len(validation_warnings) + len(routing_warnings),
+        len(merged_candidates),
+        [candidate.get("candidate_key") for candidate in merged_candidates],
+        len(llm_validation_warnings)
+        + len(validation_warnings)
+        + len(routing_warnings)
+        + len(merge_warnings),
     )
     return {
-        "candidate_mappings": candidates,
+        "candidate_mappings": merged_candidates,
         "validation_warnings": [
             *state.validation_warnings,
-            *llm_payload.validation_warnings,
+            *llm_validation_warnings,
             *validation_warnings,
             *routing_warnings,
+            *merge_warnings,
         ],
         "llm_usage": usage,
         "llm_calls": [*state.llm_calls, llm_call],
@@ -378,6 +566,29 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     }
 
 
+def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
+    if not state.candidate_mappings:
+        reason = (
+            "Step1/Step1.5 candidate 결과가 없어 Step2 slot proposal 및 "
+            "Step3 value proposal LLM 호출을 생략했습니다."
+        )
+    else:
+        reason = "Step2 selected slot이 없어 Step3 value proposal LLM 호출을 생략했습니다."
+    logger.info(
+        "[model-parameter] finalized empty parameter values | scenario_id={} candidate_count={} reason={}",
+        state.scenario_id,
+        len(state.candidate_mappings),
+        reason,
+    )
+    return {
+        "parameter_adjustments": _unselected_adjustments_for_missing_slots(
+            state.candidate_mappings,
+            reason,
+        ),
+        "validation_warnings": [*state.validation_warnings, reason],
+    }
+
+
 async def propose_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
     if not state.candidate_mappings:
         return {
@@ -388,14 +599,17 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
             ],
         }
 
-    packet = build_llm_prompt_packet(
+    selected_slots = _selected_parameter_slots(state.parameter_slots)
+    if not selected_slots:
+        return finalize_empty_parameter_values(state)
+
+    packet = _build_value_proposal_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
-        state.non_input_items,
+        state.parameter_slots,
         state.basecase_records,
+        state.non_input_items,
     )
-    packet["period_resolution_policy"] = _period_resolution_policy()
-    packet["parameter_slots"] = state.parameter_slots
     messages = [
         {"role": "system", "content": VALUE_PROPOSAL_SYSTEM},
         {
@@ -451,20 +665,22 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
         state.candidate_mappings,
         state.parameter_slots,
         state.basecase_records,
-        state.scenario_context or {},
+    )
+    llm_validation_warnings = list(
+        getattr(llm_payload, "validation_warnings", []) or [],
     )
     logger.info(
         "[model-parameter] proposed parameter values | scenario_id={} adjustment_count={} selected_count={} warning_count={}",
         state.scenario_id,
         len(adjustments),
         len([adjustment for adjustment in adjustments if adjustment.get("selected", True)]),
-        len(llm_payload.validation_warnings) + len(validation_warnings),
+        len(llm_validation_warnings) + len(validation_warnings),
     )
     return {
         "parameter_adjustments": adjustments,
         "validation_warnings": [
             *state.validation_warnings,
-            *llm_payload.validation_warnings,
+            *llm_validation_warnings,
             *validation_warnings,
         ],
         "llm_usage": usage,
@@ -479,27 +695,16 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
             "validation_warnings": state.validation_warnings,
         }
 
-    packet = build_llm_prompt_packet(
+    packet = _build_slot_proposal_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
-        state.non_input_items,
-        [],
-    )
-    packet["period_resolution_policy"] = _period_resolution_policy()
-    packet["slot_selection_limits"] = {
-        "maxParameterSlots": MAX_PARAMETER_SLOTS,
-        "priority": [
-            "basecase_slot_options에 존재하고 scenario/event 의미와 일치하는 slot",
-            "basecase에는 없지만 scenario/event에 명확하거나 의미론적으로 타당한 실제 모델 input slot",
-        ],
-    }
-    packet["basecase_slot_options"] = _build_basecase_slot_options(
         state.basecase_records,
+        state.non_input_items,
     )
     logger.info(
         "[model-parameter] built basecase slot options | scenario_id={} candidate_count={} record_count={}",
         state.scenario_id,
-        len(packet["basecase_slot_options"]),
+        len(packet["parameter_slot_tasks"]),
         len(state.basecase_records),
     )
     messages = [
@@ -557,23 +762,27 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
         state.candidate_mappings,
         max_selected_slots=MAX_PARAMETER_SLOTS,
     )
+    llm_non_input_items = list(getattr(llm_payload, "non_input_items", []) or [])
+    llm_validation_warnings = list(
+        getattr(llm_payload, "validation_warnings", []) or [],
+    )
     non_inputs = [
         item.model_dump()
-        for item in llm_payload.non_input_items
+        for item in llm_non_input_items
     ] or state.non_input_items
     logger.info(
         "[model-parameter] proposed parameter slots | scenario_id={} slot_count={} selected_count={} warning_count={}",
         state.scenario_id,
         len(slots),
         len([slot for slot in slots if slot.get("selected", True)]),
-        len(llm_payload.validation_warnings) + len(validation_warnings),
+        len(llm_validation_warnings) + len(validation_warnings),
     )
     return {
         "parameter_slots": slots,
         "non_input_items": non_inputs,
         "validation_warnings": [
             *state.validation_warnings,
-            *llm_payload.validation_warnings,
+            *llm_validation_warnings,
             *validation_warnings,
         ],
         "llm_usage": usage,
@@ -625,8 +834,578 @@ async def _invoke_structured(
         model_name=model_name,
         preference=ModelPreference.QUALITY,
         temperature=0.0,
-        max_retries=2,
+        max_retries=1,
     )
+
+
+def _field_key(value: Any) -> str:
+    return re.sub(r"[^0-9a-zA-Z가-힣]+", "", str(value or "")).lower()
+
+
+def _append_unique_text(items: list[str], value: Any) -> None:
+    text = str(value or "").strip()
+    if text and text not in items:
+        items.append(text)
+
+
+def _append_unique_source_dimension(
+    items: list[dict[str, Any]],
+    value: dict[str, Any],
+) -> None:
+    key = to_compact_json(value)
+    seen = {to_compact_json(item) for item in items}
+    if key not in seen:
+        items.append(value)
+
+
+def _column_role_names(raw: Any) -> list[str]:
+    names: list[str] = []
+    for part in str(raw or "").split(","):
+        if ":" not in part:
+            continue
+        _, role = part.split(":", 1)
+        role_name = str(role or "").strip()
+        if role_name:
+            _append_unique_text(names, role_name)
+    return names
+
+
+def _allowed_slot_axes_field_names(candidate: dict[str, Any]) -> list[str]:
+    value_field_name = str(
+        candidate.get("canonical_parameter_name")
+        or candidate.get("parameter_name")
+        or "",
+    )
+    value_field_key = _field_key(value_field_name)
+    axis_names: list[str] = []
+    for role_name in _column_role_names(candidate.get("basecase_column_roles")):
+        if _field_key(role_name) == value_field_key:
+            continue
+        _append_unique_text(axis_names, role_name)
+
+    if str(candidate.get("basecase_read_mode") or "").lower() == "matrix_time_columns":
+        for axis_name in ("Year", "Month", "Period"):
+            _append_unique_text(axis_names, axis_name)
+    return axis_names
+
+
+def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "candidate_key": candidate.get("candidate_key"),
+        "dimension_key": (
+            candidate.get("dimension_key")
+            or candidate.get("source_dimension_id")
+        ),
+        "source_dimension_id": candidate.get("source_dimension_id"),
+        "source_dimension_label": candidate.get("source_dimension_label"),
+        "source_dimension_value": candidate.get("source_dimension_value"),
+        "mapping_method": candidate.get("mapping_method"),
+        "mapping_comment": candidate.get("mapping_comment"),
+    }
+    return {
+        key: value
+        for key, value in payload.items()
+        if value is not None
+    }
+
+
+def _source_dimensions_for_prompt(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = candidate.get("source_dimensions")
+    if isinstance(raw, list) and raw:
+        return [
+            item
+            for item in raw
+            if isinstance(item, dict)
+        ]
+    return [_source_dimension_for_prompt(candidate)]
+
+
+def _supporting_dimension_for_prompt(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_dimension_id": item.get("source_dimension_id"),
+        "source_dimension_label": item.get("source_dimension_label"),
+        "source_dimension_value": item.get("source_dimension_value"),
+        "mapping_method": item.get("mapping_method"),
+        "reason": item.get("reason"),
+    }
+
+
+def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(candidate.get("model_file") or ""),
+        str(candidate.get("model_sheet") or ""),
+        str(
+            candidate.get("canonical_parameter_name")
+            or candidate.get("parameter_name")
+            or "",
+        ),
+    )
+
+
+def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
+    event_type_l2_id = candidate.get("event_type_l2_id")
+    parts = [
+        "parameter",
+        _field_key(event_type_l2_id),
+        _field_key(candidate.get("model_file")),
+        _field_key(candidate.get("model_sheet")),
+    ]
+    parts.append(
+        _field_key(
+            candidate.get("canonical_parameter_name")
+            or candidate.get("parameter_name"),
+        ),
+    )
+    return "|".join(parts)
+
+
+def _merge_candidates_by_parameter(
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        groups.setdefault(_candidate_group_key(candidate), []).append(candidate)
+
+    merged_candidates: list[dict[str, Any]] = []
+    for group_candidates in groups.values():
+        if len(group_candidates) == 1:
+            candidate = dict(group_candidates[0])
+            candidate["merged_candidate_keys"] = (
+                candidate.get("merged_candidate_keys")
+                or [candidate.get("candidate_key")]
+            )
+            candidate["source_dimensions"] = _source_dimensions_for_prompt(candidate)
+            merged_candidates.append(candidate)
+            continue
+
+        base = dict(group_candidates[0])
+        merged_candidate_keys: list[str] = []
+        source_dimensions: list[dict[str, Any]] = []
+        mapping_methods: list[str] = []
+        mapping_comments: list[str] = []
+        for candidate in group_candidates:
+            for candidate_key in (
+                candidate.get("merged_candidate_keys")
+                or [candidate.get("candidate_key")]
+            ):
+                _append_unique_text(merged_candidate_keys, candidate_key)
+            for source_dimension in _source_dimensions_for_prompt(candidate):
+                _append_unique_source_dimension(source_dimensions, source_dimension)
+            _append_unique_text(mapping_methods, candidate.get("mapping_method"))
+            _append_unique_text(mapping_comments, candidate.get("mapping_comment"))
+
+        merged_method = (
+            mapping_methods[0]
+            if len(mapping_methods) == 1
+            else "merged"
+        )
+        base.update(
+            {
+                "candidate_key": _parameter_candidate_key(base),
+                "merged_candidate_keys": merged_candidate_keys,
+                "source_dimensions": source_dimensions,
+                "source_dimension_id": None,
+                "source_dimension_label": None,
+                "source_dimension_value": None,
+                "dimension_key": None,
+                "mapping_method": merged_method,
+                "mapping_comment": " ".join(mapping_comments),
+            },
+        )
+        merged_candidates.append(base)
+
+    return merged_candidates, []
+
+
+def _parameter_validation_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    return _drop_none_or_empty(
+        {
+            "parameter_name": (
+                candidate.get("canonical_parameter_name")
+                or candidate.get("parameter_name")
+            ),
+            "parameter_hint": candidate.get("parameter_hint"),
+            "semantic_axes": candidate.get("semantic_axes"),
+        },
+    )
+
+
+def _build_candidate_validation_tasks(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for candidate in candidates:
+        key = _candidate_group_key(candidate)
+        task = groups.setdefault(
+            key,
+            {
+                "parameter": _parameter_validation_prompt_payload(candidate),
+                "candidate_keys": [],
+                "selection_dimensions": [],
+            },
+        )
+        parameter = task["parameter"]
+        if "parameter_hint" not in parameter and candidate.get("parameter_hint"):
+            parameter["parameter_hint"] = candidate.get("parameter_hint")
+        if "semantic_axes" not in parameter and candidate.get("semantic_axes"):
+            parameter["semantic_axes"] = candidate.get("semantic_axes")
+
+        for candidate_key in (
+            candidate.get("merged_candidate_keys")
+            or [candidate.get("candidate_key")]
+        ):
+            _append_unique_text(task["candidate_keys"], candidate_key)
+        for source_dimension in _source_dimensions_for_prompt(candidate):
+            dimension = _source_dimension_for_value_task(source_dimension)
+            if dimension:
+                _append_unique_source_dimension(task["selection_dimensions"], dimension)
+
+    return [
+        _drop_none_or_empty(task)
+        for task in groups.values()
+    ]
+
+
+def _build_candidate_validation_prompt_packet(
+    scenario_context: dict[str, Any],
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "scenario_brief": _scenario_brief_for_value_prompt(scenario_context),
+        "candidate_validation_tasks": _build_candidate_validation_tasks(candidates),
+    }
+
+
+def _build_slot_proposal_prompt_packet(
+    scenario_context: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    basecase_records: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "scenario_brief": _scenario_brief_for_value_prompt(scenario_context),
+        "period_resolution_policy": _compact_period_resolution_policy(),
+        "slot_selection_limits": {
+            "maxParameterSlots": MAX_PARAMETER_SLOTS,
+            "priority": [
+                "parameter_slot_tasks[].basecase_slot_options에 존재하고 scenario/event 의미와 일치하는 slot",
+                "basecase에는 없지만 scenario/event에 명확한 실제 모델 input slot",
+            ],
+        },
+        "parameter_slot_tasks": _build_parameter_slot_tasks(
+            candidates,
+            basecase_records,
+            non_input_items,
+        ),
+    }
+
+
+def _slot_for_value_prompt(slot: dict[str, Any]) -> dict[str, Any]:
+    slot_axes = slot.get("slot_axes") or []
+    return {
+        "candidate_key": slot.get("candidate_key"),
+        "slot_axes": slot_axes,
+        "selected_slot_axes_field_names": _slot_axis_names(slot_axes),
+    }
+
+
+def _slot_axis_names(slot_axes: list[dict[str, Any]]) -> list[str]:
+    axis_names: list[str] = []
+    for axis in slot_axes or []:
+        axis_name = axis.get("axis_name")
+        if axis_name:
+            _append_unique_text(axis_names, axis_name)
+    return axis_names
+
+
+def _build_basecase_value_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for record in records:
+        axes = record.get("axes") or {}
+        fixed_axes: dict[str, Any] = {}
+        cell_axes: dict[str, Any] = {}
+        for axis_name, axis_value in axes.items():
+            axis_name_text = str(axis_name)
+            display_value = _slot_option_value(axis_value)
+            if _is_time_slot_axis(axis_name_text):
+                cell_axes[axis_name_text] = display_value
+            else:
+                fixed_axes[axis_name_text] = display_value
+
+        group_key = to_compact_json(
+            [
+                record.get("candidate_key"),
+                record.get("value_name"),
+                fixed_axes,
+            ],
+        )
+        group = groups.setdefault(
+            group_key,
+            {
+                "candidate_key": record.get("candidate_key"),
+                "value_name": record.get("value_name"),
+                "fixed_axes": fixed_axes,
+                "variable_axis_names": [],
+                "cells": [],
+            },
+        )
+        for axis_name in cell_axes:
+            _append_unique_text(group["variable_axis_names"], axis_name)
+        group["cells"].append(
+            {
+                "reference_id": record.get("reference_id"),
+                "axes": cell_axes,
+                "basecase_value": record.get("value"),
+            },
+        )
+    return list(groups.values())
+
+
+def _scenario_brief_for_value_prompt(scenario_context: dict[str, Any]) -> dict[str, Any]:
+    scenario = scenario_context.get("scenario") or {}
+    event = scenario_context.get("event") or {}
+    event_brief = _drop_none_or_empty(
+        {
+            "title": event.get("event_title_ko"),
+            "summary": event.get("one_line_summary"),
+            "analysis_excerpt": _trim_prompt_text(event.get("detail_analysis"), 900),
+        },
+    )
+    brief = {
+        "scenario_id": scenario.get("scenario_id"),
+        "title": scenario.get("title"),
+        "selected_dimensions": _selected_dimensions_for_value_prompt(scenario_context),
+        "event": event_brief,
+    }
+    return _drop_none_or_empty(brief)
+
+
+def _selected_dimensions_for_value_prompt(
+    scenario_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    scenario = scenario_context.get("scenario") or {}
+    dimension_values = scenario.get("dimension_values") or {}
+    if not isinstance(dimension_values, dict):
+        return []
+
+    label_by_key: dict[str, Any] = {}
+    for item in scenario_context.get("dimension_template") or []:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("dim_key")
+        if key:
+            label_by_key[str(key)] = item.get("label")
+
+    selected: list[dict[str, Any]] = []
+    for key, value in dimension_values.items():
+        selected.append(
+            _drop_none_or_empty(
+                {
+                    "dimension_key": key,
+                    "dimension_label": label_by_key.get(str(key)),
+                    "dimension_value": value,
+                },
+            ),
+        )
+    return selected
+
+
+def _trim_prompt_text(value: Any, limit: int) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip()
+
+
+def _drop_none_or_empty(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item
+        for key, item in value.items()
+        if item is not None and item != "" and item != [] and item != {}
+    }
+
+
+def _source_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
+    return _drop_none_or_empty(
+        {
+            "dimension_key": (
+                item.get("dimension_key")
+                or item.get("source_dimension_id")
+            ),
+            "dimension_label": item.get("source_dimension_label"),
+            "dimension_value": item.get("source_dimension_value"),
+            "mapping_method": item.get("mapping_method"),
+            "mapping_comment": item.get("mapping_comment"),
+        },
+    )
+
+
+def _supporting_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
+    return _drop_none_or_empty(
+        {
+            "dimension_key": item.get("source_dimension_id"),
+            "dimension_label": item.get("source_dimension_label"),
+            "dimension_value": item.get("source_dimension_value"),
+            "mapping_method": item.get("mapping_method"),
+            "reason": item.get("reason"),
+        },
+    )
+
+
+def _selection_dimensions_for_task(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    dimensions: list[dict[str, Any]] = []
+    for item in _source_dimensions_for_prompt(candidate):
+        dimension = _source_dimension_for_value_task(item)
+        if dimension:
+            dimensions.append(dimension)
+    return dimensions
+
+
+def _supporting_dimensions_for_task(
+    non_input_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    dimensions: list[dict[str, Any]] = []
+    for item in non_input_items:
+        dimension = _supporting_dimension_for_value_task(item)
+        if dimension:
+            dimensions.append(dimension)
+    return dimensions
+
+
+def _slot_for_value_task(slot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "slot_axes": slot.get("slot_axes") or [],
+    }
+
+
+def _strip_candidate_key_from_basecase_group(group: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in group.items()
+        if key != "candidate_key"
+    }
+
+
+def _strip_candidate_key_from_slot_option(option: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in option.items()
+        if key != "candidate_key"
+    }
+
+
+def _selected_slot_axis_names_for_task(slots: list[dict[str, Any]]) -> list[str]:
+    axis_names: list[str] = []
+    for slot in slots:
+        for axis_name in _slot_axis_names(slot.get("slot_axes") or []):
+            _append_unique_text(axis_names, axis_name)
+    return axis_names
+
+
+def _compact_period_resolution_policy() -> dict[str, Any]:
+    policy = _period_resolution_policy()
+    return {
+        "current_year": policy.get("current_year"),
+        "current_month": policy.get("current_month"),
+        "rules": policy.get("rules") or [],
+    }
+
+
+def _parameter_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    return _drop_none_or_empty(
+        {
+            "candidate_key": candidate.get("candidate_key"),
+            "parameter_name": (
+                candidate.get("canonical_parameter_name")
+                or candidate.get("parameter_name")
+            ),
+            "parameter_hint": candidate.get("parameter_hint"),
+            "semantic_axes": candidate.get("semantic_axes"),
+            "allowed_slot_axes_field_names": _allowed_slot_axes_field_names(candidate),
+        },
+    )
+
+
+def _build_parameter_slot_tasks(
+    candidates: list[dict[str, Any]],
+    basecase_records: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    basecase_options_by_key: dict[str, list[dict[str, Any]]] = {}
+    for option in _build_basecase_slot_options(basecase_records):
+        candidate_key = str(option.get("candidate_key") or "")
+        basecase_options_by_key.setdefault(candidate_key, []).append(
+            _strip_candidate_key_from_slot_option(option),
+        )
+
+    supporting_dimensions = _supporting_dimensions_for_task(non_input_items)
+    tasks: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        task = {
+            "parameter": _parameter_prompt_payload(candidate),
+            "selection_dimensions": _selection_dimensions_for_task(candidate),
+            "supporting_dimensions": supporting_dimensions,
+            "basecase_slot_options": basecase_options_by_key.get(candidate_key, []),
+        }
+        tasks.append(_drop_none_or_empty(task))
+    return tasks
+
+
+def _build_parameter_value_tasks(
+    candidates: list[dict[str, Any]],
+    parameter_slots: list[dict[str, Any]],
+    basecase_records: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected_slots_by_key = _group_selected_slots_by_candidate(parameter_slots)
+    basecase_groups_by_key: dict[str, list[dict[str, Any]]] = {}
+    for group in _build_basecase_value_groups(basecase_records):
+        candidate_key = str(group.get("candidate_key") or "")
+        basecase_groups_by_key.setdefault(candidate_key, []).append(
+            _strip_candidate_key_from_basecase_group(group),
+        )
+
+    supporting_dimensions = _supporting_dimensions_for_task(non_input_items)
+    tasks: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        selected_slots = selected_slots_by_key.get(candidate_key, [])
+        task = {
+            "parameter": _parameter_prompt_payload(candidate),
+            "selection_dimensions": _selection_dimensions_for_task(candidate),
+            "supporting_dimensions": supporting_dimensions,
+            "selected_slot_axes_field_names": _selected_slot_axis_names_for_task(selected_slots),
+            "selected_slots": [
+                _slot_for_value_task(slot)
+                for slot in selected_slots
+            ],
+            "basecase_value_groups": basecase_groups_by_key.get(candidate_key, []),
+        }
+        tasks.append(_drop_none_or_empty(task))
+    return tasks
+
+
+def _build_value_proposal_prompt_packet(
+    scenario_context: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    parameter_slots: list[dict[str, Any]],
+    basecase_records: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "scenario_brief": _scenario_brief_for_value_prompt(scenario_context),
+        "period_resolution_policy": _compact_period_resolution_policy(),
+        "basecase_record_selection_policy": {
+            "maxRecords": MAX_VALUE_PROMPT_BASECASE_RECORDS,
+        },
+        "parameter_value_tasks": _build_parameter_value_tasks(
+            candidates,
+            parameter_slots,
+            basecase_records,
+            non_input_items,
+        ),
+    }
 
 
 AMBIGUOUS_AXIS_TOKENS = (
@@ -717,43 +1496,106 @@ def _normalize_axis_value(value: Any) -> str:
     return " ".join(str(value).strip().lower().split())
 
 
-def _record_matches_slot(record: dict[str, Any], slot: dict[str, Any]) -> bool:
-    record_axes = record.get("axes") or {}
-    slot_axes = slot.get("slot_axes") or []
-    if not slot_axes:
-        return True
-    matched_axis_count = 0
-    for axis in slot_axes:
+def _slot_axis_pairs(slot: dict[str, Any]) -> list[tuple[str, Any]]:
+    pairs: list[tuple[str, Any]] = []
+    for axis in slot.get("slot_axes") or []:
         axis_name = axis.get("axis_name")
-        if axis_name not in record_axes:
-            continue
-        matched_axis_count += 1
-        if _normalize_axis_value(record_axes.get(axis_name)) != _normalize_axis_value(
-            axis.get("axis_value"),
-        ):
+        if axis_name:
+            pairs.append((str(axis_name), axis.get("axis_value")))
+    return pairs
+
+
+def _record_axis_matches(
+    record_axes: dict[str, Any],
+    axis_name: str,
+    axis_value: Any,
+) -> bool:
+    return (
+        axis_name in record_axes
+        and _normalize_axis_value(record_axes.get(axis_name))
+        == _normalize_axis_value(axis_value)
+    )
+
+
+def _record_fully_matches_slot(record: dict[str, Any], slot: dict[str, Any]) -> bool:
+    record_axes = record.get("axes") or {}
+    axis_pairs = _slot_axis_pairs(slot)
+    if not axis_pairs:
+        return True
+    for axis_name, axis_value in axis_pairs:
+        if not _record_axis_matches(record_axes, axis_name, axis_value):
             return False
-    return matched_axis_count > 0
+    return True
+
+
+def _record_matches_slot_prefix_depth(
+    record: dict[str, Any],
+    slot: dict[str, Any],
+    depth: int,
+) -> bool:
+    axis_pairs = _slot_axis_pairs(slot)
+    if depth <= 0 or depth > len(axis_pairs):
+        return False
+    record_axes = record.get("axes") or {}
+    return all(
+        _record_axis_matches(record_axes, axis_name, axis_value)
+        for axis_name, axis_value in axis_pairs[:depth]
+    )
 
 
 def _filter_records_by_selected_slots(
     records: list[dict[str, Any]],
     slots: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    selected_slots = _selected_parameter_slots(slots)
+    if not selected_slots:
+        return []
+
+    if len(records) <= MAX_VALUE_PROMPT_BASECASE_RECORDS:
+        return records
+
     slots_by_candidate: dict[str, list[dict[str, Any]]] = {}
-    for slot in slots:
-        if slot.get("selected", True) is False:
-            continue
+    for slot in selected_slots:
         candidate_key = str(slot.get("candidate_key") or "")
         if not candidate_key:
             continue
         slots_by_candidate.setdefault(candidate_key, []).append(slot)
 
     filtered: list[dict[str, Any]] = []
-    for record in records:
+    included_indices: set[int] = set()
+
+    def append_record(index: int, record: dict[str, Any]) -> bool:
+        if index in included_indices:
+            return False
+        included_indices.add(index)
+        filtered.append(record)
+        return len(filtered) >= MAX_VALUE_PROMPT_BASECASE_RECORDS
+
+    for index, record in enumerate(records):
         candidate_key = str(record.get("candidate_key") or "")
         candidate_slots = slots_by_candidate.get(candidate_key) or []
-        if any(_record_matches_slot(record, slot) for slot in candidate_slots):
-            filtered.append(record)
+        if any(_record_fully_matches_slot(record, slot) for slot in candidate_slots):
+            if append_record(index, record):
+                return filtered
+
+    max_axis_count = max(
+        (
+            len(_slot_axis_pairs(slot))
+            for candidate_slots in slots_by_candidate.values()
+            for slot in candidate_slots
+        ),
+        default=0,
+    )
+    for depth in range(max_axis_count - 1, 0, -1):
+        for index, record in enumerate(records):
+            candidate_key = str(record.get("candidate_key") or "")
+            candidate_slots = slots_by_candidate.get(candidate_key) or []
+            if any(
+                _record_matches_slot_prefix_depth(record, slot, depth)
+                for slot in candidate_slots
+            ):
+                if append_record(index, record):
+                    return filtered
     return filtered
 
 
@@ -763,39 +1605,79 @@ def _slot_option_value(value: Any) -> Any:
     return value
 
 
+def _is_time_slot_axis(axis_name: str) -> bool:
+    return axis_name in TIME_SLOT_AXIS_NAMES
+
+
+def _new_hierarchy_node(value: Any) -> dict[str, Any]:
+    return {"value": value, "children": {}}
+
+
+def _add_hierarchy_path(root: dict[str, dict[str, Any]], path: list[Any]) -> None:
+    if not path:
+        return
+    display_value = _slot_option_value(path[0])
+    key = _normalize_axis_value(display_value)
+    node = root.setdefault(key, _new_hierarchy_node(display_value))
+    _add_hierarchy_path(node["children"], path[1:])
+
+
+def _hierarchy_for_prompt(root: dict[str, dict[str, Any]]) -> list[Any]:
+    items: list[Any] = []
+    for _, node in sorted(root.items(), key=lambda item: str(item[1]["value"])):
+        children = _hierarchy_for_prompt(node["children"])
+        if children:
+            items.append([node["value"], children])
+        else:
+            items.append(node["value"])
+    return items
+
+
 def _build_basecase_slot_options(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     options: dict[str, dict[str, Any]] = {}
     axis_values_by_candidate: dict[str, dict[str, dict[str, Any]]] = {}
-    value_names_by_candidate: dict[str, set[str]] = {}
+    hierarchy_roots_by_candidate: dict[str, dict[str, dict[str, Any]]] = {}
     for record in records:
         candidate_key = str(record.get("candidate_key") or "")
         option = options.setdefault(
             candidate_key,
             {
                 "candidate_key": candidate_key,
-                "model_file": record.get("model_file"),
-                "sheet_name": record.get("sheet_name"),
-                "parameter_name": record.get("parameter_name"),
-                "record_count": 0,
                 "axis_names": [],
                 "axis_values": {},
-                "value_names": [],
+                "slot_hierarchy_axes": [],
+                "slot_hierarchy": [],
             },
         )
-        option["record_count"] += 1
         axis_values = axis_values_by_candidate.setdefault(candidate_key, {})
         for axis_name, axis_value in (record.get("axes") or {}).items():
             axis_name_text = str(axis_name)
             if axis_name_text not in option["axis_names"]:
                 option["axis_names"].append(axis_name_text)
-            values = axis_values.setdefault(axis_name_text, {})
-            display_value = _slot_option_value(axis_value)
-            values.setdefault(_normalize_axis_value(display_value), display_value)
-        value_name = record.get("value_name")
-        if value_name is not None:
-            value_names_by_candidate.setdefault(candidate_key, set()).add(str(value_name))
+            if _is_time_slot_axis(axis_name_text):
+                values = axis_values.setdefault(axis_name_text, {})
+                display_value = _slot_option_value(axis_value)
+                values.setdefault(_normalize_axis_value(display_value), display_value)
 
     for candidate_key, option in options.items():
+        non_time_axes = [
+            axis_name
+            for axis_name in option["axis_names"]
+            if not _is_time_slot_axis(axis_name)
+        ]
+        option["slot_hierarchy_axes"] = non_time_axes
+        root = hierarchy_roots_by_candidate.setdefault(candidate_key, {})
+        for record in records:
+            if str(record.get("candidate_key") or "") != candidate_key:
+                continue
+            axes = record.get("axes") or {}
+            path = [
+                axes.get(axis_name)
+                for axis_name in non_time_axes
+            ]
+            if path and all(value not in (None, "") for value in path):
+                _add_hierarchy_path(root, path)
+        option["slot_hierarchy"] = _hierarchy_for_prompt(root)
         axis_values = axis_values_by_candidate.get(candidate_key) or {}
         option["axis_values"] = {
             axis_name: [
@@ -804,77 +1686,66 @@ def _build_basecase_slot_options(records: list[dict[str, Any]]) -> list[dict[str
             ]
             for axis_name, values in axis_values.items()
         }
-        option["value_names"] = sorted(value_names_by_candidate.get(candidate_key) or set())
     return list(options.values())
 
 
-def _sanitize_candidate_decisions(
-    decisions: list[ParameterCandidateDecision],
+def _sanitize_parameter_candidate_group_decisions(
+    groups: list[ParameterCandidateGroupDecision],
     candidates: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
-    decision_by_key: dict[str, ParameterCandidateDecision] = {}
-    selected_candidates: list[dict[str, Any]] = []
+    selected_by_key: dict[str, dict[str, Any]] = {}
     warnings: list[str] = []
     returned_keys: set[str] = set()
-    selected_keys: set[str] = set()
 
-    for decision in decisions:
-        candidate = candidate_by_key.get(decision.candidate_key)
-        if candidate is None:
-            warnings.append(
-                "LLM이 알 수 없는 candidate_key를 반환해 후보 검증 결과에서 제외했습니다: "
-                f"{decision.candidate_key}",
-            )
+    for group in groups:
+        group_candidate_keys = [
+            str(candidate_key)
+            for candidate_key in group.candidate_keys
+            if str(candidate_key or "").strip()
+        ]
+        if not group_candidate_keys:
+            warnings.append("LLM parameter_candidate_groups에 빈 candidate_keys가 있어 제외했습니다.")
             continue
-        returned_keys.add(decision.candidate_key)
-        decision_by_key[decision.candidate_key] = decision
+
+        known_keys = [
+            candidate_key
+            for candidate_key in group_candidate_keys
+            if candidate_key in candidate_by_key
+        ]
+        unknown_keys = sorted(set(group_candidate_keys) - set(known_keys))
+        if unknown_keys:
+            warnings.append(
+                "LLM이 알 수 없는 candidate_key를 parameter_candidate_groups에 반환해 제외했습니다: "
+                f"{unknown_keys}",
+            )
+        returned_keys.update(known_keys)
+        if not group.selected:
+            continue
+
+        for candidate_key in known_keys:
+            candidate = candidate_by_key[candidate_key]
+            selected_by_key[candidate_key] = dict(candidate)
 
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
-        decision = decision_by_key.get(candidate_key)
+        if candidate_key in selected_by_key:
+            continue
         mapping_method = str(candidate.get("mapping_method") or "").lower()
-
         if mapping_method == "direct":
-            if candidate_key in selected_keys:
-                continue
             enriched = dict(candidate)
-            if decision is None:
-                enriched["candidate_validation_rationale_ko"] = (
-                    "DB 매핑에서 direct로 지정된 모델 input이므로 LLM 응답 누락과 무관하게 "
-                    "selected=true로 유지했습니다."
+            if candidate_key in returned_keys:
+                warning = (
+                    "direct 후보는 LLM parameter group selected=false와 무관하게 유지했습니다: "
+                    f"{candidate_key}"
                 )
-                enriched["candidate_validation_confidence"] = 1.0
-                warnings.append(
-                    "LLM 후보 검증 응답에 누락된 direct candidate_key는 유지했습니다: "
-                    f"{candidate_key}",
-                )
-            elif decision.selected:
-                enriched["candidate_validation_rationale_ko"] = decision.rationale_ko
-                enriched["candidate_validation_confidence"] = decision.confidence_overall
             else:
-                enriched["candidate_validation_rationale_ko"] = (
-                    "DB 매핑에서 direct로 지정된 모델 input이므로 LLM selected=false와 "
-                    f"무관하게 유지했습니다. LLM 제외 사유: {decision.rationale_ko}"
+                warning = (
+                    "LLM parameter group 응답에 누락된 direct candidate_key는 유지했습니다: "
+                    f"{candidate_key}"
                 )
-                enriched["candidate_validation_confidence"] = 1.0
-                warnings.append(
-                    "direct 후보는 LLM selected=false와 무관하게 유지했습니다: "
-                    f"{candidate_key}",
-                )
-            selected_keys.add(candidate_key)
-            selected_candidates.append(enriched)
-            continue
-
-        if decision is None or not decision.selected:
-            continue
-        if candidate_key in selected_keys:
-            continue
-        selected_keys.add(candidate_key)
-        enriched = dict(candidate)
-        enriched["candidate_validation_rationale_ko"] = decision.rationale_ko
-        enriched["candidate_validation_confidence"] = decision.confidence_overall
-        selected_candidates.append(enriched)
+            selected_by_key[candidate_key] = enriched
+            warnings.append(warning)
 
     missing_keys = sorted(
         key
@@ -883,11 +1754,16 @@ def _sanitize_candidate_decisions(
     )
     if missing_keys:
         warnings.append(
-            "LLM 후보 검증 응답에 누락된 candidate_key는 제외했습니다: "
+            "LLM parameter group 응답에 누락된 candidate_key는 제외했습니다: "
             f"{missing_keys}",
         )
+    selected_candidates = [
+        selected_by_key[str(candidate.get("candidate_key") or "")]
+        for candidate in candidates
+        if str(candidate.get("candidate_key") or "") in selected_by_key
+    ]
     if candidates and not selected_candidates:
-        warnings.append("LLM 후보 검증 결과 selected=true candidate가 없습니다.")
+        warnings.append("LLM parameter group 검증 결과 selected=true candidate가 없습니다.")
     return selected_candidates, warnings
 
 
@@ -903,7 +1779,6 @@ ROUTING_COMMENT_GENERIC_TOKENS = {
     "type",
     "when",
 }
-
 
 def _routing_match_tokens(value: Any) -> list[str]:
     tokens = re.findall(r"[0-9a-zA-Z가-힣]+", str(value or "").lower())
@@ -966,11 +1841,6 @@ def _apply_routing_comment_overrides(
             if candidate_key in matched_keys:
                 if candidate_key not in selected_by_key:
                     enriched = dict(candidate)
-                    enriched["candidate_validation_rationale_ko"] = (
-                        "DB 매핑 comment가 scenario dimension 값과 명확히 일치하여 "
-                        "LLM 후보 검증 결과를 보정했습니다."
-                    )
-                    enriched["candidate_validation_confidence"] = 1.0
                     selected_by_key[candidate_key] = enriched
                     warnings.append(
                         "routing 후보를 DB 매핑 comment 기준으로 selected=true 보정했습니다: "
@@ -993,7 +1863,7 @@ def _apply_routing_comment_overrides(
 
 
 def _sanitize_llm_slots(
-    slots: list[ParameterSlotProposal],
+    slots: list[LLMSlotProposal],
     candidates: list[dict[str, Any]],
     *,
     max_selected_slots: int = MAX_PARAMETER_SLOTS,
@@ -1020,11 +1890,9 @@ def _sanitize_llm_slots(
                 update={
                     "selected": False,
                     "slot_axes": [],
-                    "needs_user_review": True,
-                    "warnings": [*slot.warnings, reason],
                 },
             )
-            sanitized.append(patched.model_dump())
+            sanitized.append(_parameter_slot_from_llm(patched))
             continue
         if slot.selected is not False:
             selected_slot_count += 1
@@ -1037,28 +1905,42 @@ def _sanitize_llm_slots(
                 patched = slot.model_copy(
                     update={
                         "selected": False,
-                        "needs_user_review": True,
-                        "warnings": [*slot.warnings, reason],
                     },
                 )
-                sanitized.append(patched.model_dump())
+                sanitized.append(_parameter_slot_from_llm(patched))
                 continue
-        sanitized.append(slot.model_dump())
+        sanitized.append(_parameter_slot_from_llm(slot))
     return sanitized, warnings
+
+
+def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
+    return ParameterSlotProposal(
+        candidate_key=slot.candidate_key,
+        selected=slot.selected,
+        slot_axes=[
+            ParameterSlotAxis(
+                axis_name=axis.axis_name,
+                axis_value=axis.axis_value,
+            )
+            for axis in slot.slot_axes
+        ],
+    ).model_dump()
 
 
 def _group_selected_slots_by_candidate(
     slots: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for slot in slots:
-        if slot.get("selected", True) is False:
-            continue
+    for slot in _selected_parameter_slots(slots):
         candidate_key = str(slot.get("candidate_key") or "")
         if not candidate_key:
             continue
         grouped.setdefault(candidate_key, []).append(slot)
     return grouped
+
+
+def _selected_parameter_slots(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [slot for slot in slots if slot.get("selected", True) is not False]
 
 
 def _slot_axis_value(axis_name: str, axis_value: Any) -> Any:
@@ -1086,56 +1968,9 @@ def _slot_axes_for_candidate(slots: list[dict[str, Any]]) -> list[ParameterSlotA
                 ParameterSlotAxis(
                     axis_name=axis_name,
                     axis_value=str(axis_value),
-                    rationale=axis.get("rationale"),
                 ),
             )
     return slot_axes
-
-
-def _slot_coordinates_for_candidate(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    coordinates: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for slot in slots:
-        coordinate: dict[str, Any] = {}
-        for axis in slot.get("slot_axes") or []:
-            axis_name = str(axis.get("axis_name") or "").strip()
-            if not axis_name:
-                continue
-            axis_value = _slot_axis_value(axis_name, axis.get("axis_value"))
-            if _axis_value_issue(axis_name, axis_value):
-                continue
-            coordinate[axis_name] = axis_value
-        if not coordinate:
-            continue
-        key = to_compact_json(coordinate)
-        if key in seen:
-            continue
-        seen.add(key)
-        coordinates.append(coordinate)
-    return coordinates
-
-
-def _apply_slot_coordinates_to_cells(
-    cells: list[ParameterValueCell],
-    slot_coordinates: list[dict[str, Any]],
-) -> list[ParameterValueCell]:
-    if not slot_coordinates:
-        return cells
-
-    patched: list[ParameterValueCell] = []
-    for cell in cells:
-        for coordinate in slot_coordinates:
-            patched.append(
-                cell.model_copy(
-                    update={
-                        "coordinates": {
-                            **(cell.coordinates or {}),
-                            **coordinate,
-                        },
-                    },
-                ),
-            )
-    return patched
 
 
 def _canonical_coordinate_key(coordinates: dict[str, Any]) -> str:
@@ -1159,7 +1994,6 @@ def _value_cell_signature(cell: ParameterValueCell) -> str:
             "basecase_value": cell.basecase_value,
             "operation": cell.operation,
             "proposed_value": cell.proposed_value,
-            "unit": cell.unit,
         },
     )
 
@@ -1190,12 +2024,22 @@ def _dedupe_value_grid_by_slot(
     return deduped, conflicts
 
 
+def _parameter_value_cell_from_llm(cell: LLMValueCell) -> ParameterValueCell:
+    return ParameterValueCell(
+        coordinates=cell.coordinates,
+        basecase_value=None,
+        proposed_value=cell.proposed_value,
+        operation=cell.operation,
+        rationale_ko=cell.rationale_ko,
+        basecase_reference_ids=cell.basecase_reference_ids,
+    )
+
+
 def _sanitize_llm_adjustments(
-    adjustments: list[ParameterAdjustment],
+    adjustments: list[LLMValueAdjustment],
     candidates: list[dict[str, Any]],
     slots: list[dict[str, Any]],
     basecase_records: list[dict[str, Any]],
-    scenario_context: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
@@ -1216,30 +2060,26 @@ def _sanitize_llm_adjustments(
             )
             continue
         returned_candidate_keys.add(adjustment.candidate_key)
-        slot_axes = adjustment.slot_axes or _slot_axes_for_candidate(
-            slots_by_key.get(adjustment.candidate_key, []),
-        )
+        slot_axes = _slot_axes_for_candidate(slots_by_key.get(adjustment.candidate_key, []))
         selected = adjustment.selected
-        local_warnings = list(adjustment.warnings)
         slot_issues = _slot_axis_issues(slot_axes)
         if slot_issues and selected:
             reason = (
                 "Step3 응답 slot_axes에 실제 모델 input으로 사용할 수 없는 값이 있어 "
                 f"selected=false로 보정했습니다: {', '.join(slot_issues)}"
             )
-            local_warnings.append(reason)
             warnings.append(f"{reason}: {adjustment.candidate_key}")
             selected = False
 
         value_grid: list[ParameterValueCell] = []
-        for cell in adjustment.value_grid:
+        for raw_cell in adjustment.value_grid:
+            cell = _parameter_value_cell_from_llm(raw_cell)
             coordinate_issues = _coordinate_issues(cell.coordinates)
             if coordinate_issues:
                 reason = (
                     "Step3 응답 value_grid.coordinates에 모호한 값이 있어 "
                     f"cell을 제외했습니다: {', '.join(coordinate_issues)}"
                 )
-                local_warnings.append(reason)
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
                 continue
             if cell.proposed_value is None:
@@ -1247,7 +2087,6 @@ def _sanitize_llm_adjustments(
                     "Step3 응답 value_grid.proposed_value가 null이라 "
                     "cell을 제외했습니다. 범위형 dimension은 자동 변환해야 합니다."
                 )
-                local_warnings.append(reason)
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
                 continue
             if cell.operation in {"unknown", "not_applicable"}:
@@ -1255,7 +2094,6 @@ def _sanitize_llm_adjustments(
                     "Step3 응답 value_grid.operation이 실제 모델 input 적용 방식으로 "
                     f"사용할 수 없어 cell을 제외했습니다: {cell.operation}"
                 )
-                local_warnings.append(reason)
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
                 continue
             value_grid.append(_patch_basecase_value(cell, basecase_by_reference_id))
@@ -1266,30 +2104,28 @@ def _sanitize_llm_adjustments(
                 "Step3 응답 value_grid에 동일 slot 좌표의 value type/value 충돌이 있어 "
                 "selected=false로 보정했습니다."
             )
-            local_warnings.extend([reason, *slot_conflicts])
             warnings.append(f"{reason}: {adjustment.candidate_key}")
             warnings.extend(f"{conflict}: {adjustment.candidate_key}" for conflict in slot_conflicts)
             selected = False
 
         if selected and not value_grid:
             reason = "명확한 value_grid 좌표/제안값이 없어 selected=false로 보정했습니다."
-            local_warnings.append(reason)
             warnings.append(f"{reason}: {adjustment.candidate_key}")
             selected = False
 
-        patched = adjustment.model_copy(
-            update={
-                "model_file": str(candidate.get("model_file") or adjustment.model_file),
-                "model_sheet": str(candidate.get("model_sheet") or adjustment.model_sheet),
-                "parameter_name": str(
-                    candidate.get("canonical_parameter_name") or adjustment.parameter_name,
-                ),
-                "selected": selected,
-                "slot_axes": slot_axes,
-                "value_grid": value_grid if selected else [],
-                "needs_user_review": adjustment.needs_user_review or not selected,
-                "warnings": local_warnings,
-            },
+        patched = ParameterAdjustment(
+            candidate_key=adjustment.candidate_key,
+            model_file=str(candidate.get("model_file") or ""),
+            model_sheet=str(candidate.get("model_sheet") or ""),
+            parameter_name=str(
+                candidate.get("canonical_parameter_name")
+                or candidate.get("parameter_name")
+                or "",
+            ),
+            selected=selected,
+            slot_axes=slot_axes,
+            value_grid=value_grid if selected else [],
+            parameter_selection_rationale_ko=adjustment.rationale_ko,
         )
         sanitized.append(patched.model_dump())
 
@@ -1317,178 +2153,10 @@ def _sanitize_llm_adjustments(
                 slot_axes=slot_axes,
                 value_grid=[],
                 parameter_selection_rationale_ko=reason,
-                confidence_overall=0.0,
-                needs_user_review=True,
-                warnings=[reason],
             ).model_dump(),
         )
         warnings.append(f"{reason}: {candidate_key}")
-    sanitized = _backfill_rule_based_adjustments(
-        sanitized,
-        candidates,
-        slots_by_key,
-        scenario_context,
-        warnings,
-    )
     return sanitized, warnings
-
-
-def _backfill_rule_based_adjustments(
-    adjustments: list[dict[str, Any]],
-    candidates: list[dict[str, Any]],
-    slots_by_key: dict[str, list[dict[str, Any]]],
-    scenario_context: dict[str, Any],
-    warnings: list[str],
-) -> list[dict[str, Any]]:
-    candidate_by_key = {str(candidate.get("candidate_key") or ""): candidate for candidate in candidates}
-    patched: list[dict[str, Any]] = []
-    backfilled_count = 0
-    for adjustment in adjustments:
-        candidate_key = str(adjustment.get("candidate_key") or "")
-        candidate = candidate_by_key.get(candidate_key)
-        if candidate is None:
-            patched.append(adjustment)
-            continue
-        if adjustment.get("selected", True) is not False and adjustment.get("value_grid"):
-            patched.append(adjustment)
-            continue
-        fallback = _build_rule_based_adjustment(
-            candidate,
-            slots_by_key.get(candidate_key) or [],
-            scenario_context,
-        )
-        if fallback is None:
-            patched.append(adjustment)
-            continue
-        patched.append(fallback.model_dump())
-        backfilled_count += 1
-        warnings.append(
-            "LLM Step3가 명확한 value_grid를 만들지 못해 scenario dimension 기반 "
-            f"규칙 보정값을 생성했습니다: {candidate_key}",
-        )
-    if backfilled_count:
-        logger.info(
-            "[model-parameter] backfilled rule-based values | scenario_id={} backfilled_count={}",
-            (scenario_context.get("scenario") or {}).get("scenario_id"),
-            backfilled_count,
-        )
-    return patched
-
-
-def _build_rule_based_adjustment(
-    candidate: dict[str, Any],
-    slots: list[dict[str, Any]],
-    scenario_context: dict[str, Any],
-) -> ParameterAdjustment | None:
-    scenario = scenario_context.get("scenario") or {}
-    dimensions = scenario.get("dimension_values") or {}
-    canonical = str(candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "")
-    canonical_key = normalize_text(canonical)
-    slot_coordinates = _slot_coordinates_for_candidate(slots)
-    cells: list[ParameterValueCell] = []
-    rationale = (
-        "LLM이 최종 value_grid를 확정하지 못했으나, scenario dimension에 모델 input으로 "
-        "변환 가능한 명확한 값이 있어 규칙 기반 보정으로 선택했습니다."
-    )
-
-    if canonical_key == "supplydisruption":
-        cells = _supply_disruption_fallback_cells(
-            dimensions,
-            scenario_context,
-            allow_slot_coordinates=bool(slot_coordinates),
-        )
-    elif canonical_key == "volumecancelled":
-        cells = _volume_cancelled_fallback_cells(dimensions)
-    elif canonical_key == "shippingcost":
-        cells = _shipping_cost_fallback_cells(dimensions)
-    elif canonical_key == "regasadjustment":
-        cells = _regas_fallback_cells(
-            dimensions,
-            scenario_context,
-            allow_slot_coordinates=bool(slot_coordinates),
-        )
-    elif canonical_key in {"liqutiladjustment", "liqprodadjustment"}:
-        cells = _liquefaction_fallback_cells(
-            canonical,
-            dimensions,
-            scenario_context,
-            allow_slot_coordinates=bool(slot_coordinates),
-        )
-    elif canonical_key == "useradjustedgasdemand":
-        cells = _gas_demand_fallback_cells(
-            dimensions,
-            scenario_context,
-            allow_slot_coordinates=bool(slot_coordinates),
-        )
-
-    if not cells:
-        return None
-    cells = _apply_slot_coordinates_to_cells(cells, slot_coordinates)
-
-    slot_axes = _slot_axes_for_candidate(slots) or [
-        ParameterSlotAxis(
-            axis_name=str(axis_name),
-            axis_value=str(axis_value),
-            rationale="규칙 기반 value backfill에서 확정한 slot입니다.",
-        )
-        for axis_name, axis_value in (cells[0].coordinates or {}).items()
-    ]
-    return ParameterAdjustment(
-        candidate_key=str(candidate.get("candidate_key") or ""),
-        model_file=str(candidate.get("model_file") or ""),
-        model_sheet=str(candidate.get("model_sheet") or ""),
-        parameter_name=canonical,
-        selected=True,
-        slot_axes=slot_axes,
-        value_grid=cells,
-        parameter_selection_rationale_ko=rationale,
-        confidence_overall=0.55,
-        needs_user_review=False,
-        warnings=["LLM value 단계 보정을 위해 규칙 기반 value_grid를 생성했습니다."],
-    )
-
-
-def normalize_text(value: Any) -> str:
-    return re.sub(r"[^0-9a-zA-Z가-힣]+", "", str(value or "")).lower()
-
-
-def _dimension_text(dimensions: dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = dimensions.get(key)
-        if value is not None:
-            return str(value)
-    return ""
-
-
-def _numeric_from_text(value: Any) -> float | None:
-    text = str(value or "")
-    matches = re.findall(r"[+-]?\d+(?:\.\d+)?", text)
-    if not matches:
-        return None
-    numbers = [float(item) for item in matches]
-    if len(numbers) >= 2 and ("~" in text or "〜" in text):
-        return sum(numbers[:2]) / 2
-    number = numbers[0]
-    if any(marker in text for marker in ("<", "미만", "이내")):
-        if "%" in text and number == 5:
-            return 3.0
-        return number / 2
-    return number
-
-
-def _percent_from_dimension(dimensions: dict[str, Any], *keys: str) -> float | None:
-    return _numeric_from_text(_dimension_text(dimensions, *keys))
-
-
-def _intensity_percent(value: Any) -> float | None:
-    text = str(value or "").lower()
-    if any(token in text for token in ("낮", "약", "소규모", "경미")):
-        return 5.0
-    if any(token in text for token in ("중간", "보통", "중")):
-        return 15.0
-    if any(token in text for token in ("높", "강", "큼", "대규모", "급격")):
-        return 25.0
-    return _numeric_from_text(value)
 
 
 def _current_year_month() -> tuple[int, int]:
@@ -1505,7 +2173,8 @@ def _period_resolution_policy() -> dict[str, Any]:
         "rules": [
             "scenario/event에 YYYY-MM 또는 YYYY년 M월처럼 연월이 명확하면 현재 기준월과 무관하게 그대로 사용합니다.",
             "연도 없이 월만 명시되면 current_year/current_month 이후의 가장 가까운 해당 월로 변환합니다.",
-            "명확한 연월/월 근거가 없으면 추론상 current_year/current_month 이후부터 period를 전개합니다.",
+            "affected_period/period가 N개월이면 current_year/current_month부터 N개월 범위의 Year/Month/Period만 사용합니다.",
+            "명확한 연월/월 근거가 없으면 추론상 current_year/current_month 이후부터 필요한 period 범위만 전개합니다.",
         ],
     }
 
@@ -1612,331 +2281,6 @@ def _period_start_year_month(
     return current_year, current_month, "명확한 연월 근거가 없어 현재 월부터 전개"
 
 
-def _context_text(scenario_context: dict[str, Any]) -> str:
-    scenario = scenario_context.get("scenario") or {}
-    group = scenario_context.get("scenario_group") or {}
-    event = scenario_context.get("event") or {}
-    return "\n".join(
-        str(item or "")
-        for item in (
-            scenario.get("title"),
-            scenario.get("narrative"),
-            group.get("title"),
-            group.get("summary"),
-            event.get("event_title_ko"),
-            event.get("one_line_summary"),
-            event.get("detail_analysis"),
-        )
-    )
-
-
-COUNTRY_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("노르웨이", "Norway"),
-    ("norway", "Norway"),
-    ("미국", "United States"),
-    ("united states", "United States"),
-    ("u.s.", "United States"),
-    ("일본", "Japan"),
-    ("japan", "Japan"),
-    ("중국", "China"),
-    ("china", "China"),
-    ("한국", "South Korea"),
-    ("korea", "South Korea"),
-    ("카타르", "Qatar"),
-    ("qatar", "Qatar"),
-    ("호주", "Australia"),
-    ("australia", "Australia"),
-    ("아랍에미리트", "United Arab Emirates"),
-    ("uae", "United Arab Emirates"),
-    ("이란", "Iran"),
-    ("iran", "Iran"),
-    ("유럽", "Europe"),
-    ("europe", "Europe"),
-    ("러시아", "Russia"),
-    ("russia", "Russia"),
-)
-
-
-def _infer_countries(
-    scenario_context: dict[str, Any],
-    *,
-    max_count: int | None = None,
-) -> list[str]:
-    text = _context_text(scenario_context).lower()
-    first_positions: dict[str, int] = {}
-    for pattern, country in COUNTRY_PATTERNS:
-        position = text.find(pattern.lower())
-        if position >= 0:
-            first_positions[country] = min(position, first_positions.get(country, position))
-    countries = [
-        country
-        for country, _ in sorted(first_positions.items(), key=lambda item: item[1])
-    ]
-    if max_count is not None:
-        return countries[:max_count]
-    return countries
-
-
-def _supply_disruption_fallback_cells(
-    dimensions: dict[str, Any],
-    scenario_context: dict[str, Any],
-    *,
-    allow_slot_coordinates: bool = False,
-) -> list[ParameterValueCell]:
-    utilization = _percent_from_dimension(dimensions, "utilization_change_amount")
-    if utilization is None:
-        return []
-    alternative = _percent_from_dimension(
-        dimensions,
-        "alt_gas_supply_availability",
-        "alt_supply_availability",
-    )
-    residual = utilization * (1 - ((alternative or 0.0) / 100.0))
-    countries = _infer_countries(scenario_context)
-    if not countries and allow_slot_coordinates:
-        countries = [None]
-    return [
-        ParameterValueCell(
-            coordinates={
-                **{"Year": 2026},
-                **({"Province Country": country} if country else {}),
-            },
-            basecase_value=None,
-            proposed_value=round(-residual, 6),
-            unit="%",
-            operation="percent_change",
-            value_selection_rationale_ko=(
-                "SupplyDisruption은 upstream 생산 차질을 국가/연 단위로 반영하므로 "
-                "event 문맥의 공급국과 2026년을 slot으로 사용했습니다."
-            ),
-            proposed_value_rationale_ko=(
-                f"utilization 변화 {utilization:g}%에서 대체 공급 가능성 "
-                f"{alternative or 0:g}%를 차감해 순차질 {residual:g}%를 산정했습니다."
-            ),
-        )
-        for country in countries
-    ]
-
-
-def _volume_cancelled_fallback_cells(dimensions: dict[str, Any]) -> list[ParameterValueCell]:
-    scale_text = _dimension_text(dimensions, "transaction_scale")
-    scale = _intensity_percent(scale_text)
-    if scale is None:
-        return []
-    mtpa = 1.0 if scale <= 5 else 3.0 if scale <= 15 else 5.0
-    return [
-        ParameterValueCell(
-            coordinates={"Year": 2026},
-            basecase_value=None,
-            proposed_value=mtpa,
-            unit="MTPA",
-            operation="absolute",
-            value_selection_rationale_ko=(
-                "거래 분쟁 scenario에서 특정 거래 상대국은 확정되지 않아 명확한 Year 축만 사용했습니다."
-            ),
-            proposed_value_rationale_ko=(
-                f"transaction_scale `{scale_text}`를 규모 변환 규칙에 따라 {mtpa:g} MTPA "
-                "취소 물량으로 변환했습니다."
-            ),
-        ),
-    ]
-
-
-def _shipping_cost_fallback_cells(dimensions: dict[str, Any]) -> list[ParameterValueCell]:
-    intensity = _intensity_percent(
-        _dimension_text(dimensions, "transport_disruption", "impact_intensity"),
-    )
-    if intensity is None:
-        return []
-    return [
-        ParameterValueCell(
-            coordinates={"Year": 2026},
-            basecase_value=None,
-            proposed_value=round(intensity, 6),
-            unit="%",
-            operation="percent_change",
-            value_selection_rationale_ko=(
-                "ShippingCost는 운송 차질/규제 강도에 직접 연결되므로 2026년 비용 조정으로 반영했습니다."
-            ),
-            proposed_value_rationale_ko=(
-                f"운송 차질 또는 규제 강도를 {intensity:g}% ShippingCost 상승률로 변환했습니다."
-            ),
-        ),
-    ]
-
-
-def _regas_fallback_cells(
-    dimensions: dict[str, Any],
-    scenario_context: dict[str, Any],
-    *,
-    allow_slot_coordinates: bool = False,
-) -> list[ParameterValueCell]:
-    affected_facility_type = _dimension_text(dimensions, "affected_facility_type")
-    if "수입" not in affected_facility_type and "regas" not in affected_facility_type.lower():
-        return []
-    intensity = _intensity_percent(_dimension_text(dimensions, "supply_disruption_intensity"))
-    if intensity is None:
-        return []
-    alternative = _percent_from_dimension(dimensions, "alt_lng_supply_availability")
-    residual = intensity * (1 - ((alternative or 0.0) / 100.0))
-    countries = _infer_countries(scenario_context)
-    if not countries and allow_slot_coordinates:
-        countries = [None]
-    return [
-        ParameterValueCell(
-            coordinates={
-                **{"Year": 2026},
-                **({"Country": country} if country else {}),
-            },
-            basecase_value=None,
-            proposed_value=round(-residual, 6),
-            unit="%",
-            operation="percent_change",
-            value_selection_rationale_ko=(
-                "affected_facility_type이 수입 시설이므로 재기화 처리 여력 조정 slot으로 "
-                "event 문맥의 국가와 2026년을 사용했습니다."
-            ),
-            proposed_value_rationale_ko=(
-                f"supply_disruption_intensity를 {intensity:g}% 처리 여력 차질로 변환하고, "
-                f"대체 LNG 공급 가능성 {alternative or 0:g}%를 차감해 순차질 {residual:g}%로 산정했습니다."
-            ),
-        )
-        for country in countries
-    ]
-
-
-def _liquefaction_fallback_cells(
-    canonical: str,
-    dimensions: dict[str, Any],
-    scenario_context: dict[str, Any],
-    *,
-    allow_slot_coordinates: bool = False,
-) -> list[ParameterValueCell]:
-    countries = _infer_countries(scenario_context)
-    if not countries and allow_slot_coordinates:
-        countries = [None]
-    target_utilization = _percent_from_dimension(dimensions, "target_utilization_at_ramp_up")
-    if target_utilization is not None:
-        proposed = target_utilization / 100 if target_utilization > 1 else target_utilization
-        return [
-            ParameterValueCell(
-                coordinates={
-                    **{"Year": 2026},
-                    **({"Country": country} if country else {}),
-                },
-                basecase_value=None,
-                proposed_value=round(proposed, 6),
-                unit="%",
-                operation="absolute",
-                value_selection_rationale_ko=(
-                    f"{canonical}은 ramp-up 목표 가동률을 액화 설비 입력에 반영하므로 "
-                    "event 문맥의 공급국과 2026년을 사용했습니다."
-                ),
-                proposed_value_rationale_ko=(
-                    f"target_utilization_at_ramp_up {target_utilization:g}%를 "
-                    f"모델 입력 절대값 {proposed:g}로 변환했습니다."
-                ),
-            )
-            for country in countries
-        ]
-
-    utilization = _percent_from_dimension(dimensions, "utilization_change_amount")
-    if utilization is not None:
-        direction = _utilization_direction(scenario_context)
-        return [
-            ParameterValueCell(
-                coordinates={
-                    **{"Year": 2026},
-                    **({"Country": country} if country else {}),
-                },
-                basecase_value=None,
-                proposed_value=round(direction * utilization, 6),
-                unit="%",
-                operation="percent_change",
-                value_selection_rationale_ko=(
-                    f"{canonical}은 terminal/upstream utilization 변화 폭을 액화 설비 입력에 "
-                    "반영하므로 event 문맥의 공급국과 2026년을 사용했습니다."
-                ),
-                proposed_value_rationale_ko=(
-                    f"utilization_change_amount를 {utilization:g}%로 변환하고, "
-                    f"scenario/event 문맥의 방향성을 반영해 {direction * utilization:g}%로 산정했습니다."
-                ),
-            )
-            for country in countries
-        ]
-
-    intensity = _intensity_percent(_dimension_text(dimensions, "supply_disruption_intensity"))
-    if intensity is None:
-        return []
-    return [
-        ParameterValueCell(
-            coordinates={
-                **{"Year": 2026},
-                **({"Country": country} if country else {}),
-            },
-            basecase_value=None,
-            proposed_value=round(-intensity, 6),
-            unit="%",
-            operation="percent_change",
-            value_selection_rationale_ko=(
-                f"{canonical}은 공급 차질 강도를 액화 설비 입력에 반영하므로 event 문맥의 "
-                "공급국과 2026년을 사용했습니다."
-            ),
-            proposed_value_rationale_ko=(
-                f"supply_disruption_intensity를 {intensity:g}% 감산 충격으로 변환했습니다."
-            ),
-        )
-        for country in countries
-    ]
-
-
-def _utilization_direction(scenario_context: dict[str, Any]) -> int:
-    text = _context_text(scenario_context)
-    if any(token in text for token in ("감산", "감소", "차질", "지연", "손실", "하향", "제한")):
-        return -1
-    return 1
-
-
-def _gas_demand_fallback_cells(
-    dimensions: dict[str, Any],
-    scenario_context: dict[str, Any],
-    *,
-    allow_slot_coordinates: bool = False,
-) -> list[ParameterValueCell]:
-    response = _percent_from_dimension(
-        dimensions,
-        "demand_response_alternative_lng",
-        "demand_response_powermix_reduction",
-        "alt_energy_absorption",
-    )
-    if response is None:
-        return []
-    residual = max(0.0, min(100.0, 100.0 - response))
-    countries = _infer_countries(scenario_context)
-    if not countries and allow_slot_coordinates:
-        countries = [None]
-    return [
-        ParameterValueCell(
-            coordinates={
-                **{"Year": 2026},
-                **({"Country": country} if country else {}),
-            },
-            basecase_value=None,
-            proposed_value=round(residual, 6),
-            unit="%",
-            operation="percent_change",
-            value_selection_rationale_ko=(
-                "User-Adjusted Gas Demand는 국가/연 단위 수요 보정으로 사용했습니다."
-            ),
-            proposed_value_rationale_ko=(
-                f"대체 수요 반응 {response:g}%를 제외한 잔여 {residual:g}%를 가스 수요 "
-                "증가율로 변환했습니다."
-            ),
-        )
-        for country in countries
-    ]
-
-
 def _patch_basecase_value(
     cell: ParameterValueCell,
     basecase_by_reference_id: dict[str, dict[str, Any]],
@@ -1959,17 +2303,16 @@ def _fallback_candidate_validation_response(
     candidates: list[dict[str, Any]],
 ) -> LLMCandidateValidationResponse:
     return LLMCandidateValidationResponse(
-        candidate_decisions=[
-            ParameterCandidateDecision(
-                candidate_key=str(candidate["candidate_key"]),
+        parameter_candidate_groups=[
+            ParameterCandidateGroupDecision(
+                candidate_keys=[
+                    str(candidate_key)
+                    for candidate_key in task.get("candidate_keys") or []
+                ],
                 selected=True,
-                rationale_ko=reason,
-                confidence_overall=0.2,
-                warnings=[reason],
             )
-            for candidate in candidates
+            for task in _build_candidate_validation_tasks(candidates)
         ],
-        validation_warnings=[reason],
     )
 
 
@@ -1985,17 +2328,11 @@ def _fallback_slot_response(reason: str, candidates: list[dict[str, Any]]) -> LL
                             candidate.get("source_dimension_label") or "scenario_dimension",
                         ),
                         axis_value=str(candidate.get("source_dimension_value") or ""),
-                        rationale="시나리오 dimension 값을 우선 slot 힌트로 사용했습니다.",
                     ),
                 ],
-                rationale_ko_overall=reason,
-                confidence_overall=0.2,
-                needs_user_review=True,
-                warnings=[reason],
             )
             for candidate in candidates
         ],
-        validation_warnings=[reason],
     )
 
 
@@ -2030,16 +2367,34 @@ def _fallback_value_response(
                         basecase_value=None,
                         proposed_value=None,
                         operation="unknown",
-                        value_selection_rationale_ko=reason,
-                        proposed_value_rationale_ko=reason,
+                        rationale_ko=reason,
                     ),
                 ],
                 parameter_selection_rationale_ko=reason,
-                confidence_overall=0.2,
-                needs_user_review=True,
-                warnings=[reason],
             )
             for candidate in candidates
         ],
-        validation_warnings=[reason],
     )
+
+
+def _unselected_adjustments_for_missing_slots(
+    candidates: list[dict[str, Any]],
+    reason: str,
+) -> list[dict[str, Any]]:
+    return [
+        ParameterAdjustment(
+            candidate_key=str(candidate["candidate_key"]),
+            model_file=str(candidate.get("model_file") or ""),
+            model_sheet=str(candidate.get("model_sheet") or ""),
+            parameter_name=str(
+                candidate.get("canonical_parameter_name")
+                or candidate.get("parameter_name")
+                or "",
+            ),
+            selected=False,
+            slot_axes=[],
+            value_grid=[],
+            parameter_selection_rationale_ko=reason,
+        ).model_dump()
+        for candidate in candidates
+    ]
