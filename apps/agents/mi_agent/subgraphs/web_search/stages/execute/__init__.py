@@ -1,1 +1,0 @@
-"""Web search execution stage."""

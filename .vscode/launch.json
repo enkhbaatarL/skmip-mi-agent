@@ -2,33 +2,25 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "[🚀]launcher: poetry install + uvicorn",
+      "name": "[🚀]launcher: poetry install (.venv) + uvicorn",
       "type": "debugpy",
       "request": "launch",
-      "python": "${config:python.defaultInterpreterPath}",
+      "python": "${command:python.interpreterPath}",
       "module": "uvicorn",
       "args": [
         "main:app",
         "--host",
         "127.0.0.1",
         "--port",
-        "8000",
-        "--log-level",
-        "debug",
-        "--env-file",
-        "${workspaceFolder}/envs/.env"
+        "8000"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "preLaunchTask": "Poetry Install",
+      "console": "internalConsole",
+      "preLaunchTask": "Poetry Install (.venv)",
       "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
-        "POETRY_ACTIVE": "0",
-        "VIRTUAL_ENV": "",
-        "VIRTUAL_ENV_PROMPT": ""
-
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
       },
       "justMyCode": false
     },
@@ -36,57 +28,21 @@
       "name": "[🌱]backend: uvicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
-      "python": "${config:python.defaultInterpreterPath}",
+      "python": "${command:python.interpreterPath}",
       "module": "uvicorn",
       "args": [
         "main:app",
         "--host",
         "127.0.0.1",
         "--port",
-        "8000",
-        "--log-level",
-        "debug",
-        "--env-file",
-        "${workspaceFolder}/envs/.env"
+        "8000"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "console": "internalConsole",
       "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
-        "POETRY_ACTIVE": "0",
-        "VIRTUAL_ENV": "",
-        "VIRTUAL_ENV_PROMPT": ""
-      },
-      "justMyCode": false
-    },
-    {
-      "name": "[🐞]backend: debugpy uvicorn (main.py)",
-      "type": "debugpy",
-      "request": "launch",
-      "python": "${config:python.defaultInterpreterPath}",
-      "module": "uvicorn",
-      "args": [
-        "main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8000",
-        "--log-level",
-        "debug",
-        "--env-file",
-        "${workspaceFolder}/envs/.env"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "envFile": "${workspaceFolder}/envs/.env",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
-        "POETRY_ACTIVE": "0",
-        "VIRTUAL_ENV": "",
-        "VIRTUAL_ENV_PROMPT": ""
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
       },
       "justMyCode": false
     },
@@ -94,7 +50,7 @@
       "name": "[🌱🌱]backend: gunicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
-      "python": "${config:python.defaultInterpreterPath}",
+      "python": "${command:python.interpreterPath}",
       "module": "gunicorn",
       "args": [
         "main:app",
@@ -107,14 +63,11 @@
         "3600"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "console": "internalConsole",
       "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
-        "POETRY_ACTIVE": "0",
-        "VIRTUAL_ENV": "",
-        "VIRTUAL_ENV_PROMPT": ""
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
       },
       "justMyCode": false
     }

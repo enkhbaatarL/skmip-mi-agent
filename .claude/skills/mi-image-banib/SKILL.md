@@ -1,6 +1,6 @@
 ---
 name: mi-image-banib
-description: 내부 반입용 컨테이너 이미지를 빌드하거나 외부 이미지를 받아 tar.gz/zip 번들로 만들고, 직접 빌드 시 외부 ACR에도 push하며, 내부망에서 docker load → registry push → deployment 변경으로 적용하는 절차를 안내한다. "v0.0.2 반입이미지 생성해줘", "반입 이미지 빌드", "반입 번들 만들어줘", "내부 클러스터 반입/배포" 류 요청에 사용. (DB 마이그레이션은 이 스킬 범위에 포함하지 않음)
+description: main merge 및 mi-source-banib 이후 같은 tag commit 기준으로 내부 반입용 컨테이너 이미지를 빌드하거나 외부 이미지를 받아 tar.gz/zip 번들로 만들고, 직접 빌드 시 외부 ACR에도 push하며, 내부망에서 docker load -> registry push -> deployment 변경으로 적용하는 절차를 안내한다. "v0.0.2 반입이미지 생성해줘", "반입 이미지 빌드", "반입 번들 만들어줘", "내부 클러스터 반입/배포" 류 요청에 사용. (DB 마이그레이션은 이 스킬 범위에 포함하지 않음)
 ---
 
 # 반입 이미지 생성 · 반입 · 적용
@@ -14,6 +14,18 @@ description: 내부 반입용 컨테이너 이미지를 빌드하거나 외부 �
 **파일전송시스템으로 techvdi 반입 → (압축 해제) hiware sftp 로 내부 bastion 전송**한 뒤,
 bastion 에서 `docker load` → registry push → deployment 변경으로 적용한다.
 v0.0.1 에서 검증된 절차를 그대로 따른다(버전만 치환).
+
+## Release 흐름 내 위치
+
+1. `main-mr` 스킬로 main 대상 MR/PR을 생성한다.
+2. main merge 완료 후 `mi-source-banib`으로 같은 버전 tag와 source bundle을 생성한다.
+3. 이 스킬로 같은 version/tag 기준 image bundle을 생성한다.
+
+중요:
+- source bundle과 image bundle은 같은 git tag commit 기준이어야 한다.
+- 직접 빌드 방식은 현재 checkout/HEAD가 `VERSION` tag commit과 같은지 먼저 확인한다.
+- working tree가 dirty이면 이미지에 로컬 변경이 섞일 수 있으므로 중단하고 사용자 확인을 받는다.
+- 외부 이미지 pull 방식은 원본 이미지가 같은 `VERSION` tag에서 만들어졌다는 근거가 없으므로, 사용자가 명시적으로 기존 외부 이미지를 반입한다고 요청한 경우에만 사용한다.
 
 ## 스킬 동작 범위 (중요)
 - **에이전트가 실제로 수행하는 것은 "A. 반입 파일 생성"(빌드/외부 이미지 pull → 필요 시 외부 ACR push → tar.gz → zip 번들)까지다.**
@@ -30,6 +42,7 @@ v0.0.1 에서 검증된 절차를 그대로 따른다(버전만 치환).
 - **기본 최종 이미지 repo 는 `skpc-registry.skpc.cloudzcp.net/mi-platform-dev/dev/mi-agent-scenario` 로 고정한다.**
   예: `skpc-registry.skpc.cloudzcp.net/mi-platform-dev/dev/mi-agent-scenario:v0.0.15`
 - **직접 빌드 방식에서는 같은 이미지를 `skmidemoacr.azurecr.io/mi-agent-scenario:<VERSION>` 로도 태그하고 push 한다.**
+- **직접 빌드 전 `VERSION` git tag commit과 현재 HEAD가 일치해야 한다.**
 
 ## 입력
 - `VERSION` — 반입 버전 태그. 예: `v0.0.2` ("v0.0.2 반입이미지 생성해줘")
@@ -54,6 +67,43 @@ v0.0.1 에서 검증된 절차를 그대로 따른다(버전만 치환).
 ---
 
 ## A. 외부 — 이미지 준비 & 번들 생성  ← ★ 에이전트가 실제 수행
+
+### 0. tag commit 및 작업트리 검증
+
+직접 빌드 방식에서는 먼저 `VERSION` tag와 현재 checkout이 일치하는지 확인한다.
+
+```bash
+VERSION="<VERSION>"
+git fetch origin main --tags --prune
+git rev-parse "${VERSION}^{commit}"
+git rev-parse HEAD
+git status --porcelain
+```
+
+검증 기준:
+- `git rev-parse "${VERSION}^{commit}"` 가 성공해야 한다.
+- `git rev-parse HEAD` 값이 tag commit과 같아야 한다.
+- `git status --porcelain` 출력이 비어 있어야 한다.
+
+HEAD가 tag commit과 다르면 빌드하지 않는다. 사용자가 명시적으로 허용하지 않는 한 아래 중 하나로 정렬한 뒤 다시 검증한다.
+
+```bash
+git checkout "<VERSION>"
+```
+
+또는 이미 main이 해당 tag commit이라면:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+보고 항목에는 항상 아래 값을 포함한다.
+- `version`
+- `git_tag`
+- `git_commit`
+- `tar.gz sha256`
+- `bundle.zip sha256`
 
 ### 1-1. 이미지 빌드 방식 (linux/amd64, 내부 registry 명으로 생성 + 외부 ACR push)
 ```bash

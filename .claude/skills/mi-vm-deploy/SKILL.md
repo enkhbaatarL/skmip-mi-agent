@@ -15,10 +15,13 @@ description: MI scenario agent 이미지를 로컬 repo에서 빌드해 skmidemo
 - 외부 VM host: `40.82.137.178`
 - 외부 VM user: `azureuser`
 - 기본 PEM: `/Users/messiah/sk-mi-demo-vm-key.pem`
+- 로컬 PEM 설정 파일: `.claude/skills/mi-vm-deploy/.local` (git ignore 대상)
 - compose 경로: `/home/azureuser/mi/mi-agent-scenario`
 - compose service: `app`
 
-기본 PEM 파일이 없으면 임의 경로를 추측하지 말고 사용자에게 PEM 파일 경로를 먼저 요청한다. 사용자가 경로를 주면 `--pem <path>` 또는 `MI_DEMO_VM_PEM=<path>`로 전달한다.
+PEM 경로 우선순위는 `--pem <path>` > `MI_DEMO_VM_PEM` > `.claude/skills/mi-vm-deploy/.local` > 기본 PEM 순서다.
+기본 PEM 파일과 `.local` 설정이 모두 없으면 임의 경로를 추측하지 말고 사용자에게 PEM 파일 경로를 먼저 요청한다.
+사용자가 개인 PEM 경로를 주고 다음에도 쓰길 원하면 `.local`에 `PEM=/path/to/key.pem` 형식으로 저장한다.
 
 ## 입력
 
@@ -63,6 +66,12 @@ PEM 경로를 따로 받아야 할 때:
 ```bash
 .claude/skills/mi-vm-deploy/scripts/build_push_deploy.sh \
   --pem /path/to/key.pem build-push-deploy v0.0.16
+```
+
+개인 PEM 경로를 로컬에 저장할 때:
+
+```bash
+printf 'PEM=/path/to/key.pem\n' > .claude/skills/mi-vm-deploy/.local
 ```
 
 실제 실행 전 명령만 확인할 때:

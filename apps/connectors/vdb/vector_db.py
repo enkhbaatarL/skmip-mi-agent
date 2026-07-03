@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from apps.common.configs.settings import get_settings
+from apps.common.configs.config import get_settings
 from apps.common.logging.decorators import log_connector
 from apps.common.runtime.runtime import ensure_runtime_context_ready
 from apps.connectors.http.http_client import http_post

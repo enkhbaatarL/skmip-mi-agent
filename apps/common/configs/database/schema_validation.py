@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+# Validation policy:
+# - DB-only columns are logged as warnings because they are forward-compatible.
+# - DB nullable columns for ORM non-nullable fields are warnings because the
+#   application can still provide values, though DB data quality is looser.
+# - Missing ORM tables/columns, stricter DB nullability, and incompatible column
+#   definitions are errors because application code may depend on them at runtime.
+
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Engine, Table, inspect
@@ -9,6 +17,18 @@ from sqlalchemy.sql.type_api import TypeEngine
 
 class SchemaMismatchError(RuntimeError):
     """Raised when the database schema is incompatible with ORM metadata."""
+
+
+@dataclass(frozen=True)
+class SchemaValidationResult:
+    """Schema validation result grouped by startup impact.
+
+    errors block application startup.
+    warnings are logged, but do not block startup.
+    """
+
+    errors: list[str]
+    warnings: list[str]
 
 
 def _type_details(column_type: TypeEngine[Any]) -> dict[str, Any]:
@@ -28,15 +48,16 @@ def _types_match(expected: TypeEngine[Any], actual: TypeEngine[Any]) -> bool:
     return all(actual_details.get(key) == value for key, value in expected_details.items())
 
 
-def find_schema_mismatches(engine: Engine, tables: Sequence[Table]) -> list[str]:
-    """Return ORM/DB schema differences for the supplied application tables."""
+def find_schema_validation_result(engine: Engine, tables: Sequence[Table]) -> SchemaValidationResult:
+    """Return blocking errors and non-blocking warnings for ORM/DB schema differences."""
     inspector = inspect(engine)
     database_tables = set(inspector.get_table_names())
-    mismatches: list[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     for table in sorted(tables, key=lambda item: item.name):
         if table.name not in database_tables:
-            mismatches.append(f"{table.name}: missing table")
+            errors.append(f"{table.name}: missing table")
             continue
 
         expected_columns = {column.name: column for column in table.columns}
@@ -45,41 +66,58 @@ def find_schema_mismatches(engine: Engine, tables: Sequence[Table]) -> list[str]
         missing_columns = sorted(expected_columns.keys() - actual_columns.keys())
         unexpected_columns = sorted(actual_columns.keys() - expected_columns.keys())
         if missing_columns:
-            mismatches.append(f"{table.name}: missing columns {missing_columns}")
+            errors.append(f"{table.name}: missing columns {missing_columns}")
         if unexpected_columns:
-            mismatches.append(f"{table.name}: unexpected columns {unexpected_columns}")
+            # DB-only columns are forward-compatible and should not block startup.
+            warnings.append(f"{table.name}: unexpected columns {unexpected_columns}")
 
         for column_name in sorted(expected_columns.keys() & actual_columns.keys()):
             expected = expected_columns[column_name]
             actual = actual_columns[column_name]
 
             if not _types_match(expected.type, actual["type"]):
-                mismatches.append(
+                errors.append(
                     f"{table.name}.{column_name}: type mismatch "
                     f"(ORM={expected.type!s}, DB={actual['type']!s})"
                 )
 
             actual_nullable = bool(actual["nullable"])
             if expected.nullable != actual_nullable:
-                mismatches.append(
+                message = (
                     f"{table.name}.{column_name}: nullable mismatch "
                     f"(ORM={expected.nullable}, DB={actual_nullable})"
                 )
+                if expected.nullable is False and actual_nullable is True:
+                    # ORM nullable=False, DB nullable=True (DB가 더 느슨함) → warning 
+                    warnings.append(message)
+                else:
+                    # ORM nullable=True, DB nullable=False (DB가 더 엄격함) → error 
+                    errors.append(message)
 
         expected_pk = {column.name for column in table.primary_key.columns}
         actual_pk = set(inspector.get_pk_constraint(table.name).get("constrained_columns") or [])
         if expected_pk != actual_pk:
-            mismatches.append(
+            errors.append(
                 f"{table.name}: primary key mismatch "
                 f"(ORM={sorted(expected_pk)}, DB={sorted(actual_pk)})"
             )
 
-    return mismatches
+    return SchemaValidationResult(errors=errors, warnings=warnings)
+
+
+def find_schema_mismatches(engine: Engine, tables: Sequence[Table]) -> list[str]:
+    """Return blocking ORM/DB schema differences for the supplied application tables."""
+    return find_schema_validation_result(engine, tables).errors
 
 
 def validate_schema(engine: Engine, tables: Sequence[Table]) -> None:
-    """Fail application startup when ORM metadata and the DB schema differ."""
-    mismatches = find_schema_mismatches(engine, tables)
-    if mismatches:
-        details = "\n".join(f"- {mismatch}" for mismatch in mismatches)
+    """Fail application startup on blocking schema differences; log warnings only."""
+    result = find_schema_validation_result(engine, tables)
+    if result.warnings:
+        from apps.common.logging.logger_config import logger
+
+        details = "\n".join(f"- {warning}" for warning in result.warnings)
+        logger.warning("ORM/DB schema validation warnings (non-blocking):\n%s", details)
+    if result.errors:
+        details = "\n".join(f"- {error}" for error in result.errors)
         raise SchemaMismatchError(f"ORM/DB schema validation failed:\n{details}")

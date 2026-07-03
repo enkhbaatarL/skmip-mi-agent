@@ -24,7 +24,7 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    from apps.common.configs.settings import get_settings
+    from apps.common.configs.config import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
 
     cfg = get_settings()

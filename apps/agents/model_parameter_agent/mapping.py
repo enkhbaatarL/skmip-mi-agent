@@ -316,7 +316,7 @@ def _build_parameter_knowledge_base_from_rows(
 
 
 def _load_db_mapping_resources() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    from apps.agents.model_parameter_agent.persistence.model_input.service import (
+    from apps.agents.model_parameter_agent.persistence.model_input_service import (
         ModelInputService,
     )
 

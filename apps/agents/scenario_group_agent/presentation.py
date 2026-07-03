@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
+from apps.agents.scenario_group_agent.schemas.endpoint import (
+    ScenarioGroupDetailOut,
 )
-from apps.agents.scenario_group_agent.schemas.common import (
-    ScenarioGroupPayload,
+from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
     ScenarioHeader,
@@ -17,11 +16,14 @@ from apps.agents.scenario_group_agent.schemas.common import (
     ScenarioQueryTable,
     ScenarioRow,
     ScenarioTable,
-    SignpostPayload,
+    SignpostBasePayload,
     SignpostQueryPayload,
 )
-from apps.agents.scenario_group_agent.schemas.manage_scenario_groups import (
-    ScenarioGroupDetailOut,
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
+)
+from apps.persistence.scenario_group.schema import (
+    ScenarioGroupPayload,
 )
 
 
@@ -40,7 +42,7 @@ def build_scenario_group_table_data(
             ScenarioRow(
                 **_row_common_payload(scenario, template_by_key, selected_keys),
                 signposts=[
-                    SignpostPayload(
+                    SignpostBasePayload(
                         signpost_id=int(signpost["signpost_id"]),
                         label=signpost.get("label") or "",
                         probability_direction_code=signpost.get("probability_direction_code"),

@@ -26,7 +26,7 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
-from apps.agents.event_flow_agent.models.mi_event_models_orm import MiEventTypeL2Model
+from apps.persistence.event.models import MiEventTypeL2Model
 from apps.agents.model_parameter_agent.scripts.evaluate_proposals import (
     _evaluate_scenario,
     _json_pretty,
@@ -35,8 +35,8 @@ from apps.agents.model_parameter_agent.scripts.evaluate_proposals import (
     _selected_adjustments,
     _stage_summary_table_lines,
 )
-from apps.agents.scenario_group_agent.persistence.scenario.models import MiScenarioModel
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
+from apps.persistence.scenario.models import MiScenarioModel
+from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
 )
 from apps.common.configs.database.sync_database.connection import get_sync_session

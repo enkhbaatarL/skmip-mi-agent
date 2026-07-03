@@ -4,7 +4,7 @@ import asyncio
 
 import httpx
 
-from apps.common.configs.settings import Settings
+from apps.common.configs.config import Settings
 from apps.common.logging.logger_config import logger
 
 

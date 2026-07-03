@@ -1,34 +1,34 @@
 from __future__ import annotations
 
-from typing import Any
-
-from apps.agents.scenario_group_agent.persistence.event.service import EventService
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
+from apps.agents.scenario_group_agent.flows.create_scenarios.state import (
+    CreateScenariosState,
+    create_scenarios_state_update,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
-from apps.agents.scenario_group_agent.schemas.common import ScenarioGroupPayload
-from apps.agents.scenario_group_agent.schemas.enums import (
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
+from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.common.exceptions.custom import MIBaseError
-from apps.common.values.error_codes import ErrorCode
+from apps.agents.scenario_group_agent.persistence.event_service import EventService
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
+    ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.flow import (
+    get_scenario_generation_subgraph,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
+    ScenarioTemplate,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
+    ScenarioGenerationState,
+)
 
 
-def _existing_group_state_update(
-    scenario_group: ScenarioGroupPayload,
-) -> dict[str, Any]:
-    return {
-        "scenario_group_id": scenario_group.scenario_group_id,
-        "scenario_group": scenario_group.model_dump(),
-    }
-
-
-def load_event(state: ScenarioDesignState) -> dict[str, Any]:
+def load_event(state: CreateScenariosState) -> dict[str, object]:
     if state.mi_event_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
     event = EventService().load_event(state.mi_event_id)
@@ -37,7 +37,7 @@ def load_event(state: ScenarioDesignState) -> dict[str, Any]:
     return {"event_data": event}
 
 
-def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
+def check_existing_scenario_group(state: CreateScenariosState) -> dict[str, object]:
     if state.status == "failure" or state.mi_event_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
     existing = ScenarioGroupService().load_by_mi_event_id(state.mi_event_id)
@@ -50,7 +50,10 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
                 ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
                 detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
             )
-        return _existing_group_state_update(existing)
+        return {
+            "scenario_group_id": existing.scenario_group_id,
+            "scenario_group": existing,
+        }
     if existing.status == ScenarioGroupStatus.CREATING.value:
         if existing.request_usr_id == state.user_id:
             raise MIBaseError(
@@ -61,8 +64,10 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
         )
-    else:
-        raise MIBaseError(ErrorCode.SCENARIO_GROUP_ALREADY_CREATED, detail=f"시나리오 그룹 ID: {existing.scenario_group_id}")
+    raise MIBaseError(
+        ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
+        detail=f"시나리오 그룹 ID: {existing.scenario_group_id}",
+    )
 
     # scenarios = ScenarioService().load_by_group_id(existing["scenario_group_id"])
     # return {
@@ -74,7 +79,7 @@ def check_existing_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
     # }
 
 
-def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
+def create_group_record(state: CreateScenariosState) -> dict[str, object]:
     """Prepare 단계: agent 실행 전 group row를 미리 INSERT해 scenarioGroupId를 확보한다."""
     if state.event_data is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="event_data is required")
@@ -99,10 +104,50 @@ def create_group_record(state: ScenarioDesignState) -> dict[str, Any]:
     }
     scenario_group_id = ScenarioGroupService().create_group(payload)
     group = ScenarioGroupService().load_by_id(scenario_group_id)
-    return {"scenario_group_id": scenario_group_id, "scenario_group": group}
+    if group is None:
+        raise MIBaseError(
+            ErrorCode.UNKNOWN_ERROR,
+            detail="Scenario group not found after creation",
+        )
+    return {
+        "scenario_group_id": scenario_group_id,
+        "scenario_group": group,
+    }
 
 
-def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
+async def run_scenario_generation(state: CreateScenariosState) -> dict[str, object]:
+    if state.status in {"failure", "already_exist"}:
+        return {}
+    if state.event_data is None:
+        return create_scenarios_state_update(
+            status="failure",
+            error="event_data is required",
+            message="event_data is required",
+        )
+
+    event_type_l2_id = int(state.event_data.get("event_type_l2_id") or 0)
+    persistence_template = ScenarioService().load_pipeline_template(event_type_l2_id)
+    template = ScenarioTemplate.model_validate(persistence_template.model_dump())
+    subgraph_state = ScenarioGenerationState(
+        event_data=state.event_data,
+        template=template,
+    )
+    result_state = await get_scenario_generation_subgraph().ainvoke(subgraph_state)
+    result = (
+        result_state
+        if isinstance(result_state, ScenarioGenerationState)
+        else ScenarioGenerationState.model_validate(result_state)
+    )
+    if result.error:
+        return create_scenarios_state_update(
+            status="failure",
+            error=result.error,
+            message=result.error,
+        )
+    return create_scenarios_state_update(scenario_result=result.scenario_result)
+
+
+def save_scenario_group(state: CreateScenariosState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.event_data is None or state.scenario_result is None:
@@ -144,12 +189,15 @@ def save_scenario_group(state: ScenarioDesignState) -> dict[str, Any]:
         scenario_group_id = state.scenario_group_id
     else:
         scenario_group_id = ScenarioGroupService().create_group(payload)
-    scenario_result = dict(state.scenario_result)
+    scenario_result = state.scenario_result.model_dump()
     scenario_result["scenario_group_id"] = scenario_group_id
-    return {"scenario_group_id": scenario_group_id, "scenario_result": scenario_result}
+    return create_scenarios_state_update(
+        scenario_group_id=scenario_group_id,
+        scenario_result=scenario_result,
+    )
 
 
-def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
+def save_scenarios(state: CreateScenariosState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.scenario_group_id is None or state.scenario_result is None:
@@ -166,15 +214,23 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         if isinstance(item, dict) and item.get("dim_key")
     ]
 
+    scenario_group_service = ScenarioGroupService()
+    if scenario_group_service.load_by_id(state.scenario_group_id) is None:
+        raise MIBaseError(
+            ErrorCode.ENTITY_NOT_FOUND,
+            detail=f"Fail to save scenarios because scenario group is deleted: {state.scenario_group_id}.",
+        )
+
     saved_ids = ScenarioService().save_generated_scenarios(
         state.scenario_group_id,
-        state.scenario_result,
+        state.scenario_result.model_dump(),
         state.user_id,
     )
-    ScenarioGroupService().update_scenario_count(
-        state.scenario_group_id, len(saved_ids)
+    scenario_group_service.update_scenario_count(
+        state.scenario_group_id,
+        len(saved_ids),
     )
-    group = ScenarioGroupService().update_state(
+    group = scenario_group_service.update_state(
         state.scenario_group_id,
         status=ScenarioGroupStatus.CREATING,
         stage=ScenarioGroupStage.SCENARIO_CREATED,
@@ -184,10 +240,10 @@ def save_scenarios(state: ScenarioDesignState) -> dict[str, Any]:
         user_id=state.user_id,
     )
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
-    return {
-        "saved_scenario_ids": saved_ids,
-        "scenario_group": group,
-        "scenarios": scenarios,
-        "status": "success",
-        "message": f"Created {len(saved_ids)} scenarios",
-    }
+    return create_scenarios_state_update(
+        saved_scenario_ids=saved_ids,
+        scenario_group=group,
+        scenarios=scenarios,
+        status="success",
+        message=f"Created {len(saved_ids)} scenarios",
+    )

@@ -2,28 +2,28 @@ from __future__ import annotations
 
 from sqlalchemy import Table
 
-from apps.agents.event_flow_agent.models.mi_event_models_orm import (
+from apps.persistence.event.models import (
     MiEventModel,
     MiEventRecordMapModel,
     MiEventTypeL1Model,
     MiEventTypeL2Model,
 )
-from apps.agents.model_parameter_agent.persistence.model_input.models import (
+from apps.persistence.model_input.models import (
     MiModelParamDimensionMapModel,
     MiModelParamModel,
     MiModelParamProposalModel,
 )
-from apps.agents.scenario_group_agent.persistence.scenario.models import (
+from apps.persistence.scenario.models import (
     MiScenarioDimensionTemplateModel,
     MiScenarioModel,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.models import (
+from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
     MiScenarioSnapModel,
     MiSignpostSnapModel,
     MiSnapshotModel,
 )
-from apps.agents.scenario_group_agent.persistence.signpost.models import MiSignpostModel
+from apps.persistence.signpost.models import MiSignpostModel
 
 
 APPLICATION_TABLES: tuple[Table, ...] = (
@@ -38,7 +38,7 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiSnapshotModel.__table__,
     MiScenarioSnapModel.__table__,
     MiSignpostSnapModel.__table__,
-    MiModelParamProposalModel.__table__,
     MiModelParamModel.__table__,
     MiModelParamDimensionMapModel.__table__,
+    MiModelParamProposalModel.__table__,
 )

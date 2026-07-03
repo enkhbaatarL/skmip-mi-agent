@@ -38,7 +38,7 @@ from apps.agents.model_parameter_agent.mapping import (
     get_parameter_knowledge_base,
     match_parameter_candidates,
 )
-from apps.agents.model_parameter_agent.persistence.model_input.service import (
+from apps.agents.model_parameter_agent.persistence.model_input_service import (
     ModelInputService,
 )
 

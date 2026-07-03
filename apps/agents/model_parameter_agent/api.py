@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     get_runnable_graph,
 )
-from apps.agents.model_parameter_agent.schemas.propose_parameters import (
+from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
     ProposeParametersOut,
 )
 

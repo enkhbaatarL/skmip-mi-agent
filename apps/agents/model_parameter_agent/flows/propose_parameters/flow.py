@@ -18,17 +18,17 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     select_parameter_candidates,
     validate_parameter_candidates,
 )
-from apps.agents.model_parameter_agent.schemas.propose_parameters import (
+from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
     ModelParameterTarget,
     ProposalParameter,
     ProposeParametersIn,
     ProposeParametersData,
     ProposeParametersOut,
 )
-from apps.agents.model_parameter_agent.persistence.model_input.service import (
+from apps.agents.model_parameter_agent.persistence.model_input_service import (
     ModelInputService,
 )
-from apps.agents.model_parameter_agent.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode

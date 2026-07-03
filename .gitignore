@@ -109,3 +109,6 @@ local/
 skmip-mi-agent.code-workspace
 .cursor/rules/
 .claude/settings.local.json
+.claude/CLAUDE.md
+.claude/skills/*/.local
+.claude/skills/omc-reference/

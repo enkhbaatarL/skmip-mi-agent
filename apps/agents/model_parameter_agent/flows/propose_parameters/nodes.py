@@ -12,10 +12,10 @@ from apps.agents.model_parameter_agent.mapping import (
     match_parameter_candidates,
     to_compact_json,
 )
-from apps.agents.model_parameter_agent.persistence.model_input.service import (
+from apps.agents.model_parameter_agent.persistence.model_input_service import (
     ModelInputService,
 )
-from apps.agents.model_parameter_agent.schemas.propose_parameters import (
+from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
     LLMCandidateValidationResponse,
     LLMSlotProposal,
     LLMSlotProposalResponse,
@@ -28,7 +28,7 @@ from apps.agents.model_parameter_agent.schemas.propose_parameters import (
     ParameterSlotAxis,
     ParameterValueCell,
 )
-from apps.agents.model_parameter_agent.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.enums import ModelPreference
