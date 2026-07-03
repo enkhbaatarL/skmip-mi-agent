@@ -9,17 +9,17 @@ from unittest.mock import AsyncMock, patch
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
 )
-from apps.agents.scenario_group_agent.flows.validate_scenarios.review import (
+from apps.agents.scenario_group_agent.flows.validate_scenarios.state import ValidateScenariosState
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
     DimensionValueGenerationOutput,
     GeneratedDimensionCell,
 )
-from apps.agents.scenario_group_agent.schemas.domain.template import (
+from apps.common.exceptions.custom import MIBaseError
+from apps.persistence.scenario.schema import (
     ScenarioTemplate,
     ScenarioTemplateDimension,
     ScenarioTemplateEnum,
 )
-from apps.agents.scenario_group_agent.state import ScenarioDesignState
-from apps.common.exceptions.custom import MIBaseError
 
 
 def _template() -> ScenarioTemplate:
@@ -60,8 +60,8 @@ def _template() -> ScenarioTemplate:
     )
 
 
-def _state(headers: list[dict], rows: list[dict]) -> ScenarioDesignState:
-    return ScenarioDesignState(
+def _state(headers: list[dict], rows: list[dict]) -> ValidateScenariosState:
+    return ValidateScenariosState(
         scenario_group_id=10,
         user_id=1,
         scenario_group={"scenario_group_id": 10, "event_type_l2_id": 30},
@@ -358,7 +358,7 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
             "ScenarioService.load_scenario_template",
             return_value=_template(),
         ), patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
             "_invoke_dimension_values",
             new=AsyncMock(return_value=generated),
         ):
@@ -430,7 +430,7 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
             "ScenarioService.load_scenario_template",
             return_value=_template(),
         ), patch(
-            "apps.agents.scenario_group_agent.flows.validate_scenarios.review."
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
             "_invoke_dimension_values",
             new=AsyncMock(return_value=generated),
         ):

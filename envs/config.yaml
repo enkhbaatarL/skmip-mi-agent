@@ -33,6 +33,7 @@ http_max_keepalive: 20
 
 scenario_group_admin_bearer_tokens:
   - ${SCENARIO_GROUP_ADMIN_TOKEN}
+create_signposts_max_concurrent_scenarios: 7
 
 callback_oauth2_token_url: https://mi.mingovvv.info/api/v1/oauth2/token
 callback_oauth2_client_id: agent-skgas-client
@@ -45,6 +46,6 @@ callback_create_signposts_path: /api/v1/mi/next-gen/scenario-groups/{scenario_gr
 callback_price_interpretations_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/price-interpretations/callback
 skip_callback: false
 
-llm_concurrency: 4
-http_max_concurrency: 16
+llm_concurrency: 10
+http_max_concurrency: 20
 log_level: DEBUG

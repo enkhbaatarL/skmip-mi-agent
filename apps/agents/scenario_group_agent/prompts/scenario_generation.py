@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
-from apps.agents.scenario_group_agent.schemas.graph.generation import (
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ExcludedDimension,
     LikelihoodTier,
     PriceDirection,
@@ -51,9 +51,9 @@ class Stage4StructuredOutput(BaseModel):
     )
 
 
-class Stage5StructuredOutput(BaseModel):
-    mutually_exclusive: bool = Field(description="MECE 동시성립 부재 여부")
-    rationale: str = Field(default="", description="MECE 판정 근거 1~2줄")
+class Stage6StructuredOutput(BaseModel):
+    mutually_exclusive: bool = Field(description="시나리오 조합이 서로 중복되지 않는지 여부")
+    rationale: str = Field(default="", description="조합 유일성 판정 근거 1~2줄")
     likelihood_prior: dict[str, LikelihoodTier] = Field(
         description="scenario_id -> 5단계 Prior",
     )
@@ -62,12 +62,6 @@ class Stage5StructuredOutput(BaseModel):
 class ScenarioGroupMetadataStructuredOutput(BaseModel):
     title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
     description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300~400자.")
-
-
-class Stage6StructuredOutput(BaseModel):
-    passed: bool
-    issues: list[str] = Field(default_factory=list)
-    improvement_suggestions: str = Field(default="")
 
 
 def _format_dimensions_block(template: Any) -> str:
@@ -140,10 +134,22 @@ def build_stage4_user_prompt(
     combos_block: str,
     target_count: int,
     validation_feedback: str | None = None,
+    previous_scenarios_block: str | None = None,
 ) -> str:
     feedback_block = (
-        f"\n[이전 출력에 대한 자동 규칙 검증 피드백 — 아래 항목을 모두 반영해 전체 narratives를 다시 작성하십시오]\n{validation_feedback}\n"
+        "\n[이전 출력에 대한 자동 규칙 검증 피드백]\n"
+        f"{validation_feedback}\n"
+        "\n[작성 지시]\n"
+        "- 위 피드백의 recommended value가 기존 enum 축소 결과 밖에 있더라도, 작성 대상 조합에 이미 반영된 "
+        "recommended value를 우선하십시오.\n"
+        "- 이전 title/description/derivation_rationale/price_direction을 그대로 유지하지 말고, "
+        "새 dimension 조합에 맞춰 다시 작성하십시오.\n"
         if validation_feedback
+        else ""
+    )
+    previous_block = (
+        f"\n## 이전 Stage4 출력 (검증 실패했던 previous 값)\n{previous_scenarios_block}\n"
+        if previous_scenarios_block
         else ""
     )
     return f"""\
@@ -157,6 +163,7 @@ def build_stage4_user_prompt(
 
 ## 작성 대상 조합 ({target_count}개)  — 입력 순서를 그대로 유지하여 narratives 출력
 {combos_block}
+{previous_block}
 
 ## 산출 규칙
 - narratives 길이 = {target_count}.
@@ -214,7 +221,7 @@ def build_scenario_group_metadata_user_prompt(
 """
 
 
-def build_stage5_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenario]) -> str:
+def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenario]) -> str:
     scenarios_block = "\n".join(
         f"- {s.scenario_id} | {s.title}\n"
         f"    dims: {', '.join(f'{k}={v}' for k, v in s.dimension_values.items())}\n"
@@ -232,31 +239,6 @@ def build_stage5_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenari
 ## 산출
 - mutually_exclusive (bool) + rationale (1~2줄).
 - likelihood_prior: 모든 scenario_id 에 대해 5단계 중 1개.
-"""
-
-
-def build_stage6_user_prompt(
-    *,
-    pack: Stage1ContextPack,
-    dimension_block: str,
-    scenario_block: str,
-    scenario_count: int,
-) -> str:
-    return f"""\
-## Base Event 요약
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
-
-## 선택된 Dimension 및 Enum 정보
-{dimension_block}
-
-## 생성된 시나리오 ({scenario_count}건)
-{scenario_block}
-
-## 판정 요청
-R01 baseline contrast coverage 와 R02 값 다양성은 이미 코드로 통과했습니다.
-위 2가지 검사 항목(R03 조합 호환성, R04 MECE)을 적용하여 passed 여부를 결정하십시오.
-passed=false 인 경우, improvement_suggestions 에 Stage 4 재생성을 위한 구체적 지시를 작성하십시오.
 """
 
 
@@ -296,7 +278,7 @@ STAGE3_SYSTEM_PROMPT = """\
 
 ## 선택 규칙 (반드시 준수)
 - 최종 수: 2~4개.
-- 이후 Stage 4 에서 baseline 대비 대안값 coverage 를 만들 수 있도록, 의미가 서로 다른 값을 선택하십시오.
+- 이후 시나리오 조합 생성에서 baseline 대비 대안값 coverage 를 만들 수 있도록, 의미가 서로 다른 값을 선택하십시오.
 
 ## 절대 금지
 - (a) 인접 병합(시장 영향이 유사하다는 이유로 인접 Enum 을 합쳐 1개로 대체) **사용 금지**.
@@ -310,10 +292,10 @@ STAGE3_SYSTEM_PROMPT = """\
   예외적으로 채택하고, rationale 성격(=baseline 표현 의도)을 description 에 명시하십시오.
 
 ## 이 단계에서 즉시 충족해야 하는 로컬 규칙
-- (R02-local) 각 Dim 의 selected_enum 에는 서로 다른 값이 최소 2개 포함되어야 함.
+- 각 Dim 의 selected_enum 에는 서로 다른 값이 최소 2개 포함되어야 함.
 
 ## 참고 (다음 단계와의 연결 맥락)
-- 위 로컬 규칙은 Stage 4 조합 생성 시 baseline contrast coverage 와 값 다양성 확보를 위한 최소 조건이다.
+- 위 로컬 규칙은 시나리오 조합 생성 시 baseline 시나리오와 다른 대안값 및 값 다양성을 확보하기 위한 최소 조건이다.
 """
 
 STAGE3_HARD_CONSTRAINTS = """\
@@ -378,11 +360,11 @@ price_direction은 Base Event와 Dim 조합이 각 가격 지표에 미치는 �
   → 입력 조합의 dim_key 나 등호(=)를 결과 문장에 그대로 드러내지 마십시오.
 
 ## 최종 검증에서 반드시 통과해야 할 조건
-- (R03) 각 시나리오의 Dim 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
+- 각 시나리오의 Dim 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
   → Compat Rule 필터 외에도, 개별 시나리오 서술이 조합 의도를 명확히 설명해야 함.
   → '이런 상황에서 이 값이 어떻게 나타나는가'를 description 에 명시하면 모순 판정 방지.
-- (R04) 모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
-  → 동일한 Dim 조합을 가진 두 시나리오가 존재하면 MECE 위반으로 탈락.
+- 모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
+  → 동일한 Dim 조합을 가진 두 시나리오가 존재하면 탈락.
 """
 
 STAGE4_HARD_CONSTRAINTS = """\
@@ -419,8 +401,8 @@ SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS = """\
 - 새 수치나 근거 없는 사실을 만들지 마십시오.
 """
 
-STAGE5_SYSTEM_PROMPT = """\
-당신은 멀티시나리오 'MECE Validator + Likelihood Calibrator' 입니다.
+STAGE6_SYSTEM_PROMPT = """\
+당신은 멀티시나리오의 조합 유일성 검증 및 발생 가능성 분류 담당자입니다.
 
 ## 검사 항목 (반드시 이 둘만)
 1. mutually_exclusive (M): 동일 시점에 정확히 한 시나리오만 참이 될 수 있는가?
@@ -443,36 +425,9 @@ STAGE5_SYSTEM_PROMPT = """\
 - 시장 충격 강한 중기 차질은 'medium' 부근.
 """
 
-STAGE5_HARD_CONSTRAINTS = """\
-[중요한 출력 제약 — Stage 5]
+STAGE6_HARD_CONSTRAINTS = """\
+[중요한 출력 제약 — Stage 6]
 - likelihood_prior 키 집합은 입력된 scenario_id 와 정확히 일치 (누락·여분 금지).
 - 값은 {very_low|low|medium|high|very_high} 중 정확히 1개.
 - 수치 출력 금지. Coverage·Sum 검사 금지.
-"""
-
-STAGE6_SYSTEM_PROMPT = """\
-당신은 LNG 멀티시나리오의 'Quick Validator' 입니다.
-생성된 시나리오 세트가 4가지 핵심 검증 기준을 통과하는지 1회 판정하십시오.
-
-## 검사 항목
-
-### R03 — 조합 호환성
-각 시나리오의 Dimension 값 조합이 물리적·논리적으로 모순 없이 양립해야 함.
-→ 명백한 모순(동시 성립 불가)이 있는 시나리오가 1개 이상이면 passed=false.
-→ 단지 드물거나 극단적인 조합이라는 이유만으로 false 를 반환하지 않음.
-
-### R04 — MECE(조합 유일성)
-모든 시나리오의 dimension_values 조합(dim_key → value 집합)이 서로 유일해야 함.
-→ 완전히 동일한 조합을 가진 시나리오 쌍이 있으면 passed=false.
-
-## 이미 코드로 결정론적 검증된 항목
-- R01 baseline contrast coverage 와 R02 값 다양성은 LLM 호출 전에 코드로 검사한다.
-- baseline 대비 대안값 coverage 여부를 다시 판정하거나 실패 사유로 언급하지 마십시오.
-
-## 출력 규칙
-- passed=true: 위 2가지 모두 통과. issues=[], improvement_suggestions="".
-- passed=false: 실패 항목별로 issues 에 한국어 1줄씩 기술.
-  improvement_suggestions: Stage 4 재생성 시 반드시 따라야 할 구체적 지시.
-  → 어떤 Dim 에서 어떤 값을 변경/추가/제거해야 하는지 dim_key·value 명시.
-  → 단순 나열이 아닌, 재생성에 바로 활용 가능한 지시 형태로 작성.
 """

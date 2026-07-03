@@ -14,10 +14,14 @@ COMPAT_SYSTEM_PROMPT = """\
 - 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
 - narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
 - 입력의 모든 scenario_id를 정확히 한 번 포함하고 reason은 한국어 한 줄로 작성합니다.
+- recommended_value_b는 반드시 입력에 제공된 해당 Dimension의 enum 중 하나여야 합니다.
+- enum 안에서 모순을 해소하는 대체값이 있을 때만 compatible=false로 판정합니다.
+- 논리적으로 더 자연스러운 값이 enum 밖에만 있고, enum 안의 값으로는 명확히 해소할 수 없다면
+  현재 조합을 허용 가능한 차선으로 보고 compatible=true로 판정합니다.
 - compatible=false인 경우, 모순을 일으키는 두 항목을 다음 필드로 함께 채웁니다.
   · conflict_dim_a / conflict_value_a : 충돌하는 첫 번째 항목명과 값 (입력에 표시된 항목명·값 그대로)
   · conflict_dim_b / conflict_value_b : 충돌하는 두 번째 항목명과 값
-  · recommended_value_b : conflict_value_b 를 대체하면 모순이 해소되는 권장 값
+  · recommended_value_b : conflict_value_b 를 대체하면 모순이 해소되는 enum 안의 권장 값
 - compatible=true인 경우 위 다섯 필드는 비워 둡니다(null).
 """
 

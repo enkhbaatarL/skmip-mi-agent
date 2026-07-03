@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-from apps.agents.scenario_group_agent.persistence.scenario.service import (
-    ScenarioService,
+from apps.agents.scenario_group_agent.flows.confirm_generation.state import (
+    ConfirmGenerationState,
+    confirm_generation_state_update,
 )
-from apps.agents.scenario_group_agent.persistence.scenario_group.service import (
-    ScenarioGroupService,
-)
-from apps.agents.scenario_group_agent.persistence.signpost.service import (
-    SignpostService,
-)
-from apps.agents.scenario_group_agent.state import ScenarioDesignState, state_update
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
+    ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.persistence.signpost_service import (
+    SignpostService,
+)
 
 
-def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
+def load_scenario_group(state: ConfirmGenerationState) -> dict[str, object]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
@@ -30,7 +33,7 @@ def load_scenario_group(state: ScenarioDesignState) -> dict[str, object]:
     return {"scenario_group": group}
 
 
-def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
+def load_scenarios(state: ConfirmGenerationState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
@@ -39,7 +42,7 @@ def load_scenarios(state: ScenarioDesignState) -> dict[str, object]:
     return {"scenarios": scenarios}
 
 
-def load_signposts(state: ScenarioDesignState) -> dict[str, object]:
+def load_signposts(state: ConfirmGenerationState) -> dict[str, object]:
     if state.status == "failure":
         return {}
     signposts = SignpostService().load_by_scenario_ids(
@@ -50,7 +53,7 @@ def load_signposts(state: ScenarioDesignState) -> dict[str, object]:
     return {"signposts": signposts}
 
 
-def confirm_outputs(state: ScenarioDesignState) -> dict[str, object]:
+def confirm_outputs(state: ConfirmGenerationState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
     if state.request_scenario_group is None or state.request_table is None:
@@ -66,7 +69,7 @@ def confirm_outputs(state: ScenarioDesignState) -> dict[str, object]:
     )
     if result.get("status") != "success":
         raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=result.get("message", "Confirmation failed"))
-    return state_update(
+    return confirm_generation_state_update(
         snapshot_id=result["snapshot_id"],
         scenario_group=result["group"],
         confirmed=True,

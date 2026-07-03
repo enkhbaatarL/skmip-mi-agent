@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "[🚀]launcher: poetry install + uvicorn",
+      "name": "[🚀]launcher: poetry install (.venv) + uvicorn",
       "type": "debugpy",
       "request": "launch",
       "python": "${command:python.interpreterPath}",
@@ -16,12 +16,11 @@
       ],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
-      "preLaunchTask": "Poetry Install",
+      "preLaunchTask": "Poetry Install (.venv)",
       "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
         "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
-
       },
       "justMyCode": false
     },
