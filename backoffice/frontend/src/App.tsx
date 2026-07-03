@@ -22,22 +22,40 @@ import {
   buildSignpostBody,
   buildValidationBody,
   createScenarioGroup,
+  deleteScenarioGroup,
+  fetchScenarioGroupDetail,
+  listScenarioGroups,
   openRunEvents,
-  refreshScenarioGroup,
   requestConfirmation,
   requestSignposts,
   requestValidation
 } from "./api";
 import { initialDesignModel, seedEvents } from "./lib/seed";
 import { mergeDetailIntoModel, pickAgentStage, pickAgentStatus, pickRunId, pickScenarioGroupId } from "./lib/normalizer";
-import type { EventItem, RunLifecycle, RunState, RuntimeConfig, ScenarioDesignModel, ScenarioRow, TimelineEvent } from "./types";
+import type {
+  EventItem,
+  RunLifecycle,
+  RunState,
+  RuntimeConfig,
+  ScenarioDesignModel,
+  ScenarioGroupListRow,
+  TimelineEvent,
+  ScenarioRow
+} from "./types";
 
 type Workspace = "events" | "design-step-1" | "design-step-2" | "detail";
 type TopTab = "events" | "groups";
 type DetailTab = "summary" | "assumptions" | "prices" | "scenario";
 
 const DEFAULT_AGENT_BASE_URL = "http://localhost:8000";
-const selectValues = ["전혀 없음", "낮음", "50%", "100%", "급차질-급회복", "급손상-장기재건", "1개월 이하", "6개월", "1년 초과", "종료 미정"];
+const DEFAULT_RUNTIME: RuntimeConfig = {
+  agentBaseUrl: DEFAULT_AGENT_BASE_URL,
+  miEventId: "12",
+  userId: "10603",
+  runId: "",
+  scenarioGroupId: ""
+};
+const selectValues = ["전혀 없음", "낮음", "0%", "50%", "100%", "급차질-급회복", "급손상-장기재건", "1개월 이하", "6개월", "1년 초과", "종료 미정"];
 
 function readSaved<T>(key: string, fallback: T): T {
   try {
@@ -70,15 +88,17 @@ function parseSsePayload(event: MessageEvent) {
   }
 }
 
+function readPayloadField(payload: unknown, field: "result" | "message" | "reason"): string {
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  const direct = record[field];
+  if (typeof direct === "string" || typeof direct === "number" || typeof direct === "boolean") return String(direct);
+  return readPayloadField(record.payload, field) || readPayloadField(record.data, field);
+}
+
 export function App() {
   const [runtime, setRuntime] = useState<RuntimeConfig>(() =>
-    readSaved("backoffice.runtime", {
-          agentBaseUrl: DEFAULT_AGENT_BASE_URL,
-          miEventId: "12",
-          userId: "10603",
-          runId: "",
-          scenarioGroupId: ""
-        })
+    readSaved("backoffice.runtime", DEFAULT_RUNTIME)
   );
   const [runState, setRunState] = useState<RunState>(() => readSaved<RunState>("backoffice.runState", { lifecycle: "idle", agentStatus: "-", agentStage: "-" }));
   const [workspace, setWorkspace] = useState<Workspace>(() => readSaved<Workspace>("backoffice.workspace", "events"));
@@ -127,9 +147,8 @@ export function App() {
         setModel((current) => mergeDetailIntoModel(current, payload));
       }
       if (event.type === "validation_result" || event.type === "callback") {
-        const result = payload && typeof payload === "object" && "result" in payload ? String((payload as { result?: unknown }).result) : "";
-        const message =
-          payload && typeof payload === "object" && "message" in payload ? String((payload as { message?: unknown }).message) : "callback 결과를 확인하세요.";
+        const result = readPayloadField(payload, "result");
+        const message = readPayloadField(payload, "message") || readPayloadField(payload, "reason") || "callback 결과를 확인하세요.";
         if (result.toLowerCase() === "failure") {
           setValidation({ state: "warning", message, recommendation: "Raw JSON에서 실패 상세를 확인하고 수정하세요." });
           setRunState((current) => ({ ...current, lifecycle: "failed" }));
@@ -189,6 +208,7 @@ export function App() {
       agentStatus: pickAgentStatus(record) || "creating",
       agentStage: pickAgentStage(record) || "ready"
     });
+    setModel((current) => mergeDetailIntoModel(current, payload));
     addTimeline("accepted", "Create scenario draft accepted", payload);
     setWorkspace("design-step-1");
   }
@@ -218,11 +238,31 @@ export function App() {
     await runAction(
       "Refresh detail",
       runState.lifecycle,
-      () => refreshScenarioGroup(runtime.scenarioGroupId),
+      () => fetchScenarioGroupDetail(runtime.scenarioGroupId, runtime.agentBaseUrl, true),
       (payload) => {
         setModel((current) => mergeDetailIntoModel(current, payload));
         addTimeline("detail_refreshed", "Scenario group detail refreshed", payload);
         setRunState((current) => ({ ...current, lifecycle: "scenario_created" }));
+      }
+    );
+  }
+
+  async function handleOpenScenarioGroupDetail(row: ScenarioGroupListRow) {
+    const scenarioGroupId = String(row.scenarioGroupId);
+    patchRuntime({
+      scenarioGroupId,
+      runId: row.latestRunId || runtime.runId,
+      miEventId: row.miEventId ? String(row.miEventId) : runtime.miEventId
+    });
+    await runAction(
+      "Open scenario group detail",
+      runState.lifecycle,
+      () => fetchScenarioGroupDetail(scenarioGroupId, runtime.agentBaseUrl, row.deleted),
+      (payload) => {
+        setModel((current) => mergeDetailIntoModel(current, payload));
+        addTimeline("detail_refreshed", "Scenario group detail opened from list", payload);
+        setWorkspace("detail");
+        setTopTab("groups");
       }
     );
   }
@@ -338,9 +378,10 @@ export function App() {
     resetRuntimePersistence();
     setModel(initialDesignModel);
     setWorkspace("events");
+    setTopTab("events");
     setValidation({ state: "idle", message: "", recommendation: "" });
     setRunState({ lifecycle: "idle", agentStatus: "-", agentStage: "-" });
-    patchRuntime({ runId: "", scenarioGroupId: "" });
+    setRuntime(DEFAULT_RUNTIME);
     addTimeline("local", "Local screen state reset", {});
   }
 
@@ -370,6 +411,8 @@ export function App() {
               setModel((current) => ({ ...current, baseEvent: event }));
             }}
             onStartEvent={handleStartFromEvent}
+            onOpenGroupDetail={handleOpenScenarioGroupDetail}
+            onTimeline={addTimeline}
           />
         ) : null}
 
@@ -551,18 +594,34 @@ function EventWorkspace({
   runtime,
   onTopTab,
   onSelectEvent,
-  onStartEvent
+  onStartEvent,
+  onOpenGroupDetail,
+  onTimeline
 }: {
   topTab: TopTab;
   runtime: RuntimeConfig;
   onTopTab: (tab: TopTab) => void;
   onSelectEvent: (event: EventItem) => void;
   onStartEvent: (event: EventItem) => void;
+  onOpenGroupDetail: (row: ScenarioGroupListRow) => void;
+  onTimeline: (type: TimelineEvent["type"], title: string, payload: unknown) => void;
 }) {
   const [recommendedOnly, setRecommendedOnly] = useState(false);
   const [status, setStatus] = useState("전체");
   const [category, setCategory] = useState("all");
   const [keyword, setKeyword] = useState("");
+  const [groupKeyword, setGroupKeyword] = useState("");
+  const [groupStatus, setGroupStatus] = useState("");
+  const [groupStage, setGroupStage] = useState("");
+  const [groupSort, setGroupSort] = useState("latest");
+  const [includeDeleted, setIncludeDeleted] = useState(false);
+  const [groups, setGroups] = useState<ScenarioGroupListRow[]>([]);
+  const [groupMeta, setGroupMeta] = useState("");
+  const [groupLoading, setGroupLoading] = useState(false);
+  const [groupError, setGroupError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<ScenarioGroupListRow | null>(null);
+  const [deleteAuthorization, setDeleteAuthorization] = useState("backoffice-local-token");
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const filtered = seedEvents.filter(
     (event) =>
       (!recommendedOnly || event.recommended) &&
@@ -570,6 +629,62 @@ function EventWorkspace({
       (category === "all" || event.category === category) &&
       (!keyword.trim() || event.title.toLowerCase().includes(keyword.trim().toLowerCase()))
   );
+  async function loadGroups() {
+    setGroupLoading(true);
+    setGroupError("");
+    try {
+      const response = await listScenarioGroups({
+        agentBaseUrl: runtime.agentBaseUrl,
+        includeDeleted,
+        keyword: groupKeyword,
+        status: groupStatus,
+        stage: groupStage,
+        miEventId: "",
+        sort: groupSort
+      });
+      setGroups(response.rows);
+      setGroupMeta(`${response.meta.source} · ${response.meta.returned}/${response.meta.total}`);
+      onTimeline("detail_refreshed", "Scenario Group List loaded", response);
+    } catch (caught) {
+      const body = caught && typeof caught === "object" && "body" in caught ? (caught as { body: unknown }).body : caught;
+      setGroupError(caught instanceof Error ? caught.message : "Scenario Group List load failed");
+      onTimeline("error", "Scenario Group List load failed", body);
+    } finally {
+      setGroupLoading(false);
+    }
+  }
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setGroupError("");
+    const body = {
+      agentBaseUrl: runtime.agentBaseUrl,
+      userId: Number(runtime.userId),
+      deleteAuthorization
+    };
+    onTimeline("request_body", `Soft delete ${deleteTarget.scenarioGroupId} request`, body);
+    try {
+      const response = await deleteScenarioGroup(String(deleteTarget.scenarioGroupId), body);
+      onTimeline("detail_refreshed", `Soft delete ${deleteTarget.scenarioGroupId} response`, response);
+      setGroups((current) =>
+        includeDeleted
+          ? current.map((row) => (row.scenarioGroupId === deleteTarget.scenarioGroupId ? { ...row, deleted: true, delYn: "Y" } : row))
+          : current.filter((row) => row.scenarioGroupId !== deleteTarget.scenarioGroupId)
+      );
+      setDeleteTarget(null);
+    } catch (caught) {
+      const body = caught && typeof caught === "object" && "body" in caught ? (caught as { body: unknown }).body : caught;
+      setGroupError(caught instanceof Error ? caught.message : "Soft delete failed");
+      onTimeline("error", `Soft delete ${deleteTarget.scenarioGroupId} failed`, body);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (topTab === "groups") {
+      void loadGroups();
+    }
+  }, [topTab, includeDeleted, groupSort]);
   return (
     <section className="workspace">
       <div className="page-heading">
@@ -674,10 +789,152 @@ function EventWorkspace({
           </div>
         </>
       ) : (
-        <div className="empty-panel">
-          <h2>Scenario Group List</h2>
-          <p>Confirmed or refreshed scenario groups appear here when the backend run store is connected.</p>
-        </div>
+        <section className="section-block">
+          <div className="section-title-row">
+            <div>
+              <h2>Scenario Group List</h2>
+              <p>{groupMeta || "GET /backoffice/api/scenario-groups"}</p>
+            </div>
+            <button className="icon-button" aria-label="Refresh scenario groups" title="Refresh scenario groups" disabled={groupLoading} onClick={loadGroups}>
+              <RefreshCcw size={18} />
+            </button>
+          </div>
+          <div className="filter-bar">
+            <label className="search-box">
+              <Search size={16} />
+              <input
+                placeholder="시나리오 그룹명, 이벤트명, ID로 검색"
+                value={groupKeyword}
+                onChange={(event) => setGroupKeyword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void loadGroups();
+                }}
+              />
+            </label>
+            <select value={groupStatus} aria-label="scenario group status" onChange={(event) => setGroupStatus(event.target.value)}>
+              <option value="">Status all</option>
+              <option value="CREATED">CREATED</option>
+              <option value="CONFIRMED">CONFIRMED</option>
+              <option value="DELETED">DELETED</option>
+            </select>
+            <select value={groupStage} aria-label="scenario group stage" onChange={(event) => setGroupStage(event.target.value)}>
+              <option value="">Stage all</option>
+              <option value="GENERATION">GENERATION</option>
+              <option value="VALIDATION">VALIDATION</option>
+              <option value="SIGNPOST">SIGNPOST</option>
+              <option value="CONFIRMATION">CONFIRMATION</option>
+            </select>
+            <input type="date" defaultValue="2026-07-02" aria-label="scenario group date" />
+            <select value={groupSort} aria-label="scenario group sort" onChange={(event) => setGroupSort(event.target.value)}>
+              <option value="latest">Latest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+            <label className="toggle">
+              <input type="checkbox" checked={includeDeleted} onChange={(event) => setIncludeDeleted(event.target.checked)} />
+              삭제 항목 포함
+            </label>
+            <button className="button secondary" disabled={groupLoading} onClick={loadGroups}>
+              <Search size={16} /> Apply
+            </button>
+          </div>
+          {groupError ? <Callout tone="error" title="Scenario Group List 오류" message={groupError} action="QA Inspector에서 raw error를 확인하세요." /> : null}
+          <div className="table-wrap">
+            <table className="event-table group-table">
+              <thead>
+                <tr>
+                  <th>Scenario Group ID</th>
+                  <th>Scenario Group명</th>
+                  <th>Base Event</th>
+                  <th>Status</th>
+                  <th>Stage</th>
+                  <th>Scenario</th>
+                  <th>Signpost</th>
+                  <th>Updated</th>
+                  <th>삭제 상태</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((row) => (
+                  <tr key={row.scenarioGroupId} className={row.deleted ? "deleted-row" : ""}>
+                    <td>{row.scenarioGroupId}</td>
+                    <td>
+                      <strong>{row.title}</strong>
+                      {row.latestRunId ? <span className="selected-note">run {row.latestRunId.slice(0, 8)}</span> : null}
+                    </td>
+                    <td>{row.baseEventTitle || row.miEventId || "-"}</td>
+                    <td>{row.status || "-"}</td>
+                    <td>{row.stage || "-"}</td>
+                    <td>{row.scenarioCount}</td>
+                    <td>{row.signpostCount}</td>
+                    <td>{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "-"}</td>
+                    <td>{row.deleted ? <span className="badge deleted-badge">삭제됨</span> : <span className="badge">정상</span>}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button className="icon-button" aria-label="Open scenario group detail" title="Open detail" onClick={() => onOpenGroupDetail(row)}>
+                          <ChevronRight size={18} />
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          aria-label="Soft delete scenario group"
+                          title="Soft delete"
+                          disabled={row.deleted || deleteBusy}
+                          onClick={() => setDeleteTarget(row)}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {!groups.length ? (
+                  <tr>
+                    <td colSpan={10}>
+                      <div className="empty-table-message">
+                        {groupLoading ? "Scenario Group List를 불러오는 중입니다." : "조건에 맞는 Scenario Group이 없습니다."}
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          {deleteTarget ? (
+            <div className="modal-backdrop" role="dialog" aria-modal="true">
+              <div className="modal">
+                <h2>Scenario Group 삭제</h2>
+                <dl className="confirm-list">
+                  <div>
+                    <dt>Scenario Group ID</dt>
+                    <dd>{deleteTarget.scenarioGroupId}</dd>
+                  </div>
+                  <div>
+                    <dt>Scenario Group명</dt>
+                    <dd>{deleteTarget.title}</dd>
+                  </div>
+                  <div>
+                    <dt>Base Event</dt>
+                    <dd>{deleteTarget.baseEventTitle || deleteTarget.miEventId || "-"}</dd>
+                  </div>
+                </dl>
+                <p>Backoffice soft-delete proxy만 호출합니다. snapshot 계열 데이터는 hard delete하지 않습니다.</p>
+                <label className="labeled-textarea compact-label">
+                  <span>Delete authorization</span>
+                  <input value={deleteAuthorization} onChange={(event) => setDeleteAuthorization(event.target.value)} />
+                </label>
+                {groupError ? <Callout tone="error" title="삭제 실패" message={groupError} action="권한 값을 확인한 뒤 재시도하세요." /> : null}
+                <div className="modal-actions">
+                  <button className="button secondary" disabled={deleteBusy} onClick={() => setDeleteTarget(null)}>
+                    취소
+                  </button>
+                  <button className="button danger" disabled={deleteBusy || !deleteAuthorization.trim()} onClick={confirmDelete}>
+                    {deleteBusy ? "삭제 중" : "삭제"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
       )}
     </section>
   );
@@ -799,7 +1056,7 @@ function StepOne({
           <button className="button dark" disabled={!!pendingAction} onClick={onValidate}>
             변경사항 검토
           </button>
-          <button className="button primary" disabled={validation.state === "warning" || !!pendingAction} onClick={onComplete}>
+          <button className="button primary" disabled={validation.state !== "success" || !!pendingAction} onClick={onComplete}>
             검토 완료
           </button>
         </div>

@@ -14,6 +14,7 @@ from backoffice.backend.schemas import (
     RunLifecycleState,
     RunRecord,
     ScenarioGroupModel,
+    ScenarioGroupListRow,
     ScenarioHeader,
     ScenarioRow,
     ScenarioTable,
@@ -28,6 +29,7 @@ class BackofficeStore:
         self._runs: dict[str, RunRecord] = {}
         self._scenario_group_runs: dict[int, str] = {}
         self._orphan_callbacks: dict[int, list[tuple[CallbackType, JsonObject]]] = defaultdict(list)
+        self._deleted_scenario_groups: dict[int, JsonObject] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
         self._lock = asyncio.Lock()
 
@@ -54,6 +56,64 @@ class BackofficeStore:
             run_id = self._scenario_group_runs.get(scenario_group_id)
             run = self._runs.get(run_id) if run_id is not None else None
             return deepcopy(run) if run is not None else None
+
+    async def list_scenario_groups(
+        self,
+        include_deleted: bool = False,
+        keyword: str | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+        mi_event_id: int | None = None,
+        sort: str = "latest",
+    ) -> list[ScenarioGroupListRow]:
+        async with self._lock:
+            rows_by_group: dict[int, ScenarioGroupListRow] = {}
+            for run in self._runs.values():
+                if run.scenario_group_id is None:
+                    continue
+                row = self._row_from_run(run)
+                if row is None:
+                    continue
+                previous = rows_by_group.get(row.scenario_group_id)
+                if previous is None or (row.updated_at or row.created_at or 0) >= (previous.updated_at or previous.created_at or 0):
+                    rows_by_group[row.scenario_group_id] = row
+            rows = list(rows_by_group.values())
+            for scenario_group_id, marker in self._deleted_scenario_groups.items():
+                if any(row.scenario_group_id == scenario_group_id for row in rows):
+                    continue
+                rows.append(
+                    ScenarioGroupListRow(
+                        scenario_group_id=scenario_group_id,
+                        title=str(marker.get("title") or f"Scenario Group {scenario_group_id}"),
+                        base_event_title=marker.get("baseEventTitle"),
+                        mi_event_id=marker.get("miEventId"),
+                        status=marker.get("status"),
+                        stage=marker.get("stage"),
+                        deleted=True,
+                        del_yn="Y",
+                        source="backoffice_deleted_marker",
+                        raw=deepcopy(marker),
+                    )
+                )
+            filtered = [row for row in rows if include_deleted or not row.deleted]
+            if mi_event_id is not None:
+                filtered = [row for row in filtered if row.mi_event_id == mi_event_id]
+            if status:
+                filtered = [row for row in filtered if (row.status or "").lower() == status.lower()]
+            if stage:
+                filtered = [row for row in filtered if (row.stage or "").lower() == stage.lower()]
+            if keyword:
+                needle = keyword.lower()
+                filtered = [
+                    row
+                    for row in filtered
+                    if needle in str(row.scenario_group_id).lower()
+                    or needle in row.title.lower()
+                    or needle in (row.base_event_title or "").lower()
+                ]
+            reverse = sort != "oldest"
+            filtered.sort(key=lambda row: row.updated_at or row.created_at or 0, reverse=reverse)
+            return deepcopy(filtered)
 
     async def bind_accepted(self, run_id: str, action: str, accepted: JsonObject) -> RunRecord:
         events: list[tuple[SseEventType, JsonObject]] = []
@@ -105,6 +165,35 @@ class BackofficeStore:
             SseEventType.NORMALIZED_MODEL_UPDATED,
             {"runId": run_id, "normalized": snapshot.normalized.model_dump(by_alias=True)},
         )
+        return snapshot
+
+    async def mark_scenario_group_deleted(
+        self,
+        scenario_group_id: int,
+        user_id: int,
+        raw_response: JsonObject,
+    ) -> RunRecord | None:
+        async with self._lock:
+            run_id = self._scenario_group_runs.get(scenario_group_id)
+            run = self._runs.get(run_id) if run_id is not None else None
+            marker = {"scenarioGroupId": scenario_group_id, "deletedBy": user_id, "rawResponse": deepcopy(raw_response)}
+            if run is not None:
+                row = self._row_from_run(run)
+                if row is not None:
+                    marker.update(row.model_dump(by_alias=True))
+                run.timeline.append(TimelineEvent(type="soft_delete", message="Scenario group soft deleted", data=raw_response))
+                run.detail = _mark_detail_deleted(run.detail)
+                run.normalized.scenario_group_detail = _mark_detail_deleted(run.normalized.scenario_group_detail)
+                snapshot = deepcopy(run)
+            else:
+                snapshot = None
+            self._deleted_scenario_groups[scenario_group_id] = marker
+        if snapshot is not None:
+            await self._publish(
+                snapshot.run_id,
+                SseEventType.DETAIL_REFRESHED,
+                {"runId": snapshot.run_id, "scenarioGroupId": scenario_group_id, "deleted": True, "run": snapshot.model_dump(by_alias=True)},
+            )
         return snapshot
 
     async def record_callback(self, scenario_group_id: int, callback_type: CallbackType, payload: JsonObject) -> RunRecord | None:
@@ -193,6 +282,32 @@ class BackofficeStore:
         run.agent_status = scenario_group.get("status") or data.get("status") or run.agent_status
         run.agent_stage = scenario_group.get("stage") or data.get("stage") or run.agent_stage
 
+    def _row_from_run(self, run: RunRecord) -> ScenarioGroupListRow | None:
+        if run.scenario_group_id is None:
+            return None
+        group = run.normalized.scenario_group
+        title = group.title if group is not None else None
+        if not title and run.normalized.one_view_draft:
+            title = run.normalized.one_view_draft.get("scenarioGroupName")
+        deleted = run.scenario_group_id in self._deleted_scenario_groups or _detail_deleted(run.detail)
+        updated_at = run.timeline[-1].at if run.timeline else None
+        return ScenarioGroupListRow(
+            scenario_group_id=run.scenario_group_id,
+            title=title or f"Scenario Group {run.scenario_group_id}",
+            base_event_title=_base_event_title(run, group),
+            mi_event_id=run.mi_event_id or (group.mi_event_id if group is not None else None),
+            status=run.agent_status or (group.status if group is not None else None),
+            stage=run.agent_stage or (group.stage if group is not None else None),
+            scenario_count=len(run.normalized.table.rows),
+            signpost_count=run.normalized.signpost_count,
+            created_at=run.timeline[0].at if run.timeline else None,
+            updated_at=updated_at,
+            deleted=deleted,
+            del_yn="Y" if deleted else "N",
+            latest_run_id=run.run_id,
+            raw=run.model_dump(by_alias=True),
+        )
+
     async def _publish(self, run_id: str, event_type: SseEventType, payload: JsonObject) -> None:
         await self._publish_many(run_id, [(event_type, payload)])
 
@@ -243,7 +358,7 @@ def normalize_payload(payload: JsonObject) -> NormalizedScenarioDesign:
 
 def merge_normalized(current: NormalizedScenarioDesign, incoming: NormalizedScenarioDesign) -> NormalizedScenarioDesign:
     scenario_group = incoming.scenario_group or current.scenario_group
-    table = incoming.table if incoming.table.headers or incoming.table.rows else current.table
+    table = _merge_table(current.table, incoming.table) if incoming.table.headers or incoming.table.rows else current.table
     validation = incoming.validation or current.validation
     signpost_count = incoming.signpost_count or current.signpost_count
     return NormalizedScenarioDesign(
@@ -257,6 +372,21 @@ def merge_normalized(current: NormalizedScenarioDesign, incoming: NormalizedScen
         signpost_count=signpost_count,
         raw_source=incoming.raw_source or current.raw_source,
     )
+
+
+def _merge_table(current: ScenarioTable, incoming: ScenarioTable) -> ScenarioTable:
+    if not incoming.headers and not incoming.rows:
+        return current
+    current_by_scenario_id = {row.scenario_id: row for row in current.rows if row.scenario_id is not None}
+    current_by_order = {row.display_order: row for row in current.rows}
+    rows: list[ScenarioRow] = []
+    for row in incoming.rows:
+        previous = current_by_scenario_id.get(row.scenario_id) if row.scenario_id is not None else None
+        previous = previous or current_by_order.get(row.display_order)
+        if previous is not None and not row.signposts and previous.signposts:
+            row = row.model_copy(update={"signposts": previous.signposts})
+        rows.append(row)
+    return ScenarioTable(headers=incoming.headers or current.headers, rows=rows)
 
 
 def _normalize_group(raw: JsonObject) -> ScenarioGroupModel:
@@ -464,6 +594,40 @@ def _probability(row: ScenarioRow) -> Any:
 def _payload_data(payload: JsonObject) -> JsonObject:
     data = payload.get("data")
     return _as_dict(data) if isinstance(data, dict) else payload
+
+
+def _base_event_title(run: RunRecord, group: ScenarioGroupModel | None) -> str | None:
+    event_list = run.normalized.event_list.get("events", [])
+    if event_list and isinstance(event_list[0], dict):
+        title = event_list[0].get("title")
+        if title is not None:
+            return str(title)
+    if group is not None and group.mi_event_id is not None:
+        return f"MI Event {group.mi_event_id}"
+    if run.mi_event_id:
+        return f"MI Event {run.mi_event_id}"
+    return None
+
+
+def _detail_deleted(detail: JsonObject | None) -> bool:
+    data = _payload_data(detail or {})
+    group = _as_dict(data.get("scenarioGroup") or data.get("scenario_group"))
+    value = data.get("delYn") or data.get("del_yn") or data.get("deleted") or group.get("delYn") or group.get("del_yn") or group.get("deleted")
+    return value is True or str(value).upper() == "Y"
+
+
+def _mark_detail_deleted(detail: JsonObject | None) -> JsonObject | None:
+    if detail is None:
+        return None
+    next_detail = deepcopy(detail)
+    data = _payload_data(next_detail)
+    data["deleted"] = True
+    data["delYn"] = "Y"
+    group = _as_dict(data.get("scenarioGroup") or data.get("scenario_group"))
+    if group:
+        group["deleted"] = True
+        group["delYn"] = "Y"
+    return next_detail
 
 
 def _extract_scenario_group_id(payload: JsonObject) -> int | None:

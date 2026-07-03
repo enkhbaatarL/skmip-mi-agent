@@ -6,6 +6,7 @@
 - Do not import `apps/` runtime internals; call the Scenario Group Agent as an external HTTP service.
 - Keep v1 run state in memory with SSE fan-out and orphan callback attachment.
 - Serve React static `dist` only when it exists.
+- Use `docs/backoffice/PRD.md`, `docs/backoffice/DESIGN.md`, and `docs/backoffice/TEST_SCENARIOS.md` as the source requirements.
 
 ## Tasks
 
@@ -40,6 +41,12 @@
   - preserve accepted/callback/detail raw history
   - publish SSE event for list/detail refresh if a run is bound
 - [ ] Add backend tests or smoke checks for list empty/source metadata, delete success, delete authorization failure, delete non-existent group, and include-deleted detail refresh.
+- [ ] Support test cleanup flow:
+  - generated group can be found from list by `scenarioGroupId`
+  - detail can be opened before deletion
+  - delete result is inspectable
+  - default list hides deleted row
+  - include-deleted list exposes deleted row state when source supports it
 
 ## Verification
 
@@ -59,6 +66,7 @@
   - `GET /backoffice/api/scenario-groups` returns normalized rows and source metadata.
   - `DELETE /backoffice/api/scenario-groups/{scenario_group_id}` forwards only the Agent soft-delete request.
   - delete result is recorded without removing local run history.
+  - generated Scenario Groups can be cleaned up at the end of end-to-end tests.
 - Lint note:
   - `.venv/bin/ruff check backoffice/backend` was not run because `ruff` is not installed in the local virtualenv.
 
@@ -75,3 +83,10 @@ uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 The Agent must be configured to send callbacks to the Backoffice callback receiver paths on port `9010`.
+
+## Review Notes
+
+- Good: the plan keeps Backoffice outside `apps/`, treats Agent as the source of truth, keeps v1 state in memory, and preserves raw history for QA.
+- Risk: Scenario Group List source is not fully resolved. Current Agent docs/code expose detail and soft delete, but a persisted list endpoint may not exist. Implement the fallback deliberately and expose `source` so QA does not confuse in-memory/demo rows with Agent-persisted list rows.
+- Risk: delete authorization needs a concrete contract. The backend should define whether the frontend sends a bearer token directly, a token alias, or an environment-configured token reference.
+- Required alignment: soft delete must update list/detail/run state without deleting accepted responses, callbacks, detail payloads, or timeline events, because TEST_SCENARIOS requires post-delete evidence in QA Inspector.

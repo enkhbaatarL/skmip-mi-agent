@@ -107,6 +107,56 @@ class ScenarioGroupModel(ApiModel):
     raw: JsonObject = Field(default_factory=dict)
 
 
+class ScenarioGroupListRow(ApiModel):
+    scenario_group_id: int
+    title: str
+    base_event_title: str | None = None
+    mi_event_id: int | None = None
+    status: str | None = None
+    stage: str | None = None
+    scenario_count: int = 0
+    signpost_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    deleted: bool = False
+    del_yn: str = "N"
+    latest_run_id: str | None = None
+    source: str = "backoffice_memory"
+    raw: JsonObject = Field(default_factory=dict)
+
+
+class ScenarioGroupListMeta(ApiModel):
+    source: str
+    total: int
+    returned: int
+    include_deleted: bool = False
+    fallback_reason: str | None = None
+
+
+class ScenarioGroupListOut(ApiModel):
+    rows: list[ScenarioGroupListRow] = Field(default_factory=list)
+    meta: ScenarioGroupListMeta
+    raw_source: JsonObject | None = None
+
+
+class DeleteScenarioGroupIn(StrictApiModel):
+    agent_base_url: str = Field(min_length=1)
+    user_id: int
+    delete_authorization: str = Field(min_length=1)
+
+    @field_validator("agent_base_url")
+    @classmethod
+    def normalize_agent_base_url(cls, value: str) -> str:
+        return value.rstrip("/")
+
+
+class DeleteScenarioGroupOut(ApiModel):
+    scenario_group_id: int
+    deleted: bool
+    source: str = "agent_soft_delete_proxy"
+    raw_response: JsonObject = Field(default_factory=dict)
+
+
 class NormalizedScenarioDesign(ApiModel):
     event_list: JsonObject = Field(default_factory=lambda: {"events": []})
     branch_criteria_draft: JsonObject | None = None

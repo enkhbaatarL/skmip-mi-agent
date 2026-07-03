@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -15,11 +16,16 @@ from backoffice.backend.schemas import (
     CallbackType,
     ConfirmationRunIn,
     CreateRunIn,
+    DeleteScenarioGroupIn,
+    DeleteScenarioGroupOut,
     JsonObject,
     OAuthTokenOut,
     RunLifecycleState,
     RunOut,
     RunRecord,
+    ScenarioGroupListMeta,
+    ScenarioGroupListOut,
+    ScenarioGroupListRow,
     SignpostsRunIn,
     ValidationRunIn,
 )
@@ -48,6 +54,24 @@ async def create_scenario_group_run(payload: CreateRunIn) -> RunOut:
     try:
         accepted = await AgentClient(payload.agent_base_url).create_scenario_group(request_body)
     except AgentHttpError as exc:
+        existing_scenario_group_id = _already_created_scenario_group_id(exc.body)
+        if exc.status_code == 400 and existing_scenario_group_id is not None:
+            accepted = {
+                "status": "accepted",
+                "message": "Scenario group already exists; attached existing group for Backoffice QA.",
+                "data": {
+                    "scenarioGroupId": existing_scenario_group_id,
+                    "status": "created",
+                    "stage": "completed",
+                },
+            }
+            run = await store.bind_accepted(run.run_id, "create", accepted)
+            try:
+                detail = await AgentClient(payload.agent_base_url).get_scenario_group(existing_scenario_group_id, include_deleted=True)
+            except (AgentHttpError, httpx.HTTPError):
+                return RunOut(run=run)
+            run = await store.record_detail(run.run_id, detail)
+            return RunOut(run=run)
         run = await store.record_error(run.run_id, exc.step, str(exc), status_code=exc.status_code, body=exc.body)
         raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
     except httpx.HTTPError as exc:
@@ -86,6 +110,72 @@ async def stream_run_events(run_id: str, request: Request) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.get("/backoffice/api/scenario-groups", response_model=ScenarioGroupListOut)
+async def list_scenario_groups(
+    agent_base_url: str | None = Query(default=None, alias="agentBaseUrl"),
+    include_deleted: bool = Query(default=False, alias="includeDeleted"),
+    mi_event_id: int | None = Query(default=None, alias="miEventId"),
+    keyword: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    stage: str | None = Query(default=None),
+    sort: str = Query(default="latest"),
+) -> ScenarioGroupListOut:
+    params: JsonObject = {
+        "includeDeleted": str(include_deleted).lower(),
+        "sort": sort,
+    }
+    if mi_event_id is not None:
+        params["miEventId"] = mi_event_id
+    if keyword:
+        params["keyword"] = keyword
+    if status:
+        params["status"] = status
+    if stage:
+        params["stage"] = stage
+
+    raw_source: JsonObject | None = None
+    fallback_reason: str | None = None
+    rows: list[ScenarioGroupListRow]
+    source = "backoffice_memory"
+    if agent_base_url:
+        try:
+            raw_source = await AgentClient(agent_base_url).list_scenario_groups(params)
+            rows = _normalize_list_rows(raw_source, source="agent_proxy")
+            source = "agent_proxy"
+        except (AgentHttpError, httpx.HTTPError) as exc:
+            fallback_reason = str(exc)
+            rows = await store.list_scenario_groups(
+                include_deleted=include_deleted,
+                keyword=keyword,
+                status=status,
+                stage=stage,
+                mi_event_id=mi_event_id,
+                sort=sort,
+            )
+    else:
+        rows = await store.list_scenario_groups(
+            include_deleted=include_deleted,
+            keyword=keyword,
+            status=status,
+            stage=stage,
+            mi_event_id=mi_event_id,
+            sort=sort,
+        )
+    if source == "agent_proxy":
+        rows = _filter_rows(rows, include_deleted=include_deleted, keyword=keyword, status=status, stage=stage, mi_event_id=mi_event_id, sort=sort)
+    return ScenarioGroupListOut(
+        rows=rows,
+        meta=ScenarioGroupListMeta(
+            source=source,
+            total=len(rows),
+            returned=len(rows),
+            include_deleted=include_deleted,
+            fallback_reason=fallback_reason,
+        ),
+        raw_source=raw_source,
+    )
+
+
 @app.get("/backoffice/api/scenario-groups/{scenario_group_id}", response_model=RunOut)
 async def get_scenario_group_detail(
     scenario_group_id: int,
@@ -113,6 +203,28 @@ async def get_scenario_group_detail(
         raise HTTPException(status_code=502, detail={"message": str(exc)}) from exc
     run = await store.record_detail(run.run_id, detail)
     return RunOut(run=run)
+
+
+@app.delete("/backoffice/api/scenario-groups/{scenario_group_id}", response_model=DeleteScenarioGroupOut)
+async def delete_scenario_group(scenario_group_id: int, payload: DeleteScenarioGroupIn) -> DeleteScenarioGroupOut:
+    try:
+        response = await AgentClient(payload.agent_base_url).soft_delete_scenario_group(
+            scenario_group_id=scenario_group_id,
+            user_id=payload.user_id,
+            delete_authorization=payload.delete_authorization,
+        )
+    except AgentHttpError as exc:
+        run = await store.find_run_by_scenario_group_id(scenario_group_id)
+        if run is not None:
+            await store.record_error(run.run_id, exc.step, str(exc), status_code=exc.status_code, body=exc.body)
+        raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
+    except httpx.HTTPError as exc:
+        run = await store.find_run_by_scenario_group_id(scenario_group_id)
+        if run is not None:
+            await store.record_error(run.run_id, "soft_delete", str(exc))
+        raise HTTPException(status_code=502, detail={"message": str(exc)}) from exc
+    await store.mark_scenario_group_deleted(scenario_group_id, payload.user_id, response)
+    return DeleteScenarioGroupOut(scenario_group_id=scenario_group_id, deleted=True, raw_response=response)
 
 
 @app.post("/backoffice/api/runs/{run_id}/validation", response_model=RunOut)
@@ -259,6 +371,82 @@ def _request_envelope(run: RunRecord, action: str, agent_payload: JsonObject) ->
         "agentBaseUrl": run.agent_base_url,
         "agentPayload": agent_payload,
     }
+
+
+def _normalize_list_rows(payload: JsonObject, source: str) -> list[ScenarioGroupListRow]:
+    rows_raw = payload.get("rows") or payload.get("items") or payload.get("data") or []
+    if isinstance(rows_raw, dict):
+        rows_raw = rows_raw.get("rows") or rows_raw.get("items") or rows_raw.get("scenarioGroups") or []
+    if not isinstance(rows_raw, list):
+        return []
+    rows: list[ScenarioGroupListRow] = []
+    for item in rows_raw:
+        if not isinstance(item, dict):
+            continue
+        scenario_group_id = item.get("scenarioGroupId") or item.get("scenario_group_id") or item.get("id")
+        if scenario_group_id is None:
+            continue
+        deleted_value = item.get("deleted") or item.get("delYn") or item.get("del_yn")
+        deleted = deleted_value is True or str(deleted_value).upper() == "Y"
+        rows.append(
+            ScenarioGroupListRow(
+                scenario_group_id=int(scenario_group_id),
+                title=str(item.get("title") or item.get("name") or f"Scenario Group {scenario_group_id}"),
+                base_event_title=item.get("baseEventTitle") or item.get("base_event_title") or item.get("eventTitle") or item.get("event_title"),
+                mi_event_id=item.get("miEventId") or item.get("mi_event_id"),
+                status=item.get("status"),
+                stage=item.get("stage"),
+                scenario_count=int(item.get("scenarioCount") or item.get("scenario_count") or 0),
+                signpost_count=int(item.get("signpostCount") or item.get("signpost_count") or 0),
+                deleted=deleted,
+                del_yn="Y" if deleted else "N",
+                latest_run_id=item.get("latestRunId") or item.get("latest_run_id"),
+                source=source,
+                raw=item,
+            )
+        )
+    return rows
+
+
+def _already_created_scenario_group_id(body: object) -> int | None:
+    if not isinstance(body, dict):
+        return None
+    data = body.get("data")
+    error_name = data.get("error_name") if isinstance(data, dict) else None
+    if error_name != "SCENARIO_GROUP_ALREADY_CREATED":
+        return None
+    message = str(body.get("message") or "")
+    match = re.search(r"ID:\s*(\d+)", message)
+    return int(match.group(1)) if match else None
+
+
+def _filter_rows(
+    rows: list[ScenarioGroupListRow],
+    include_deleted: bool,
+    keyword: str | None,
+    status: str | None,
+    stage: str | None,
+    mi_event_id: int | None,
+    sort: str,
+) -> list[ScenarioGroupListRow]:
+    filtered = [row for row in rows if include_deleted or not row.deleted]
+    if mi_event_id is not None:
+        filtered = [row for row in filtered if row.mi_event_id == mi_event_id]
+    if status:
+        filtered = [row for row in filtered if (row.status or "").lower() == status.lower()]
+    if stage:
+        filtered = [row for row in filtered if (row.stage or "").lower() == stage.lower()]
+    if keyword:
+        needle = keyword.lower()
+        filtered = [
+            row
+            for row in filtered
+            if needle in str(row.scenario_group_id).lower()
+            or needle in row.title.lower()
+            or needle in (row.base_event_title or "").lower()
+        ]
+    filtered.sort(key=lambda row: row.updated_at or row.created_at or 0, reverse=sort != "oldest")
+    return filtered
 
 
 def _mount_static_dist(application: FastAPI) -> None:

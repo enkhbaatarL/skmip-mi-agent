@@ -69,6 +69,36 @@ export type EventItem = {
   impacts: Record<"JKM" | "TTF" | "HH", "up" | "down" | "neutral">;
 };
 
+export type ScenarioGroupListRow = {
+  scenarioGroupId: number;
+  title: string;
+  baseEventTitle?: string | null;
+  miEventId?: number | null;
+  status?: string | null;
+  stage?: string | null;
+  scenarioCount: number;
+  signpostCount: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  deleted: boolean;
+  delYn: "Y" | "N";
+  latestRunId?: string | null;
+  source: string;
+  raw?: unknown;
+};
+
+export type ScenarioGroupListResponse = {
+  rows: ScenarioGroupListRow[];
+  meta: {
+    source: string;
+    total: number;
+    returned: number;
+    includeDeleted: boolean;
+    fallbackReason?: string | null;
+  };
+  rawSource?: unknown;
+};
+
 export type ScenarioDesignModel = {
   groupName: string;
   description: string;

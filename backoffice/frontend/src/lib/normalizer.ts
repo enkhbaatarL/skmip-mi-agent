@@ -77,9 +77,9 @@ export function mergeDetailIntoModel(current: ScenarioDesignModel, detail: unkno
         return {
           id: asString(signpost.id ?? signpost.signpostId, `${row.scenarioId ?? index}-${signpostIndex}`),
           label: asString(signpost.label ?? signpost.title ?? signpost.signpostLabel),
-          direction: asString(signpost.direction),
-          impact: asString(signpost.impact),
-          evidence: asString(signpost.evidence ?? signpost.coreBasis ?? signpost.reason)
+          direction: asString(signpost.direction ?? signpost.probabilityDirectionCode ?? signpost.probability_direction_code),
+          impact: asString(signpost.impact ?? signpost.strength ?? signpost.probabilityImpactScore ?? signpost.probability_impact_score),
+          evidence: asString(signpost.evidence ?? signpost.coreBasis ?? signpost.core_basis ?? signpost.signpostReason ?? signpost.signpost_reason ?? signpost.reason)
         };
       })
     };
@@ -89,8 +89,15 @@ export function mergeDetailIntoModel(current: ScenarioDesignModel, detail: unkno
         currentRow.localId === generatedRow.localId ||
         currentRow.displayOrder === generatedRow.displayOrder
     );
+    const canReuseExistingSignposts =
+      existing?.signposts.length &&
+      (generatedRow.scenarioId === undefined || existing.scenarioId === undefined || existing.scenarioId === generatedRow.scenarioId);
+
     if (!existing?.edited) {
-      return generatedRow;
+      return {
+        ...generatedRow,
+        signposts: generatedRow.signposts.length ? generatedRow.signposts : canReuseExistingSignposts ? existing.signposts : []
+      };
     }
     return {
       ...generatedRow,
@@ -101,7 +108,7 @@ export function mergeDetailIntoModel(current: ScenarioDesignModel, detail: unkno
       probability: existing.probability,
       status: existing.status,
       edited: true,
-      signposts: generatedRow.signposts.length ? generatedRow.signposts : existing.signposts
+      signposts: generatedRow.signposts.length ? generatedRow.signposts : canReuseExistingSignposts ? existing.signposts : []
     };
   });
 

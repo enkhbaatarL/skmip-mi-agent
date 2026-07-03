@@ -23,6 +23,23 @@ class AgentClient:
             params={"includeDeleted": str(include_deleted).lower()},
         )
 
+    async def list_scenario_groups(self, params: dict[str, Any]) -> JsonObject:
+        return await self._request("list", "GET", "/scenario-groups", params=params)
+
+    async def soft_delete_scenario_group(
+        self,
+        scenario_group_id: int,
+        user_id: int,
+        delete_authorization: str,
+    ) -> JsonObject:
+        return await self._request(
+            "soft_delete",
+            "DELETE",
+            f"/scenario-groups/{scenario_group_id}",
+            json={"userId": user_id},
+            headers={"Authorization": f"Bearer {delete_authorization}"},
+        )
+
     async def validate_scenarios(self, scenario_group_id: int, payload: JsonObject) -> JsonObject:
         return await self._request("validation", "POST", f"/scenario-groups/{scenario_group_id}/validation", json=payload)
 

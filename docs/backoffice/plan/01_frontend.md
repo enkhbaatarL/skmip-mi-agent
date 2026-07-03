@@ -5,14 +5,15 @@
 Write scope for this task is limited to:
 
 - `backoffice/frontend/**`
-- `local/backoffice/plan/01_frontend.md`
+- `docs/backoffice/plan/01_frontend.md`
 - `backoffice/README.md` frontend section only if needed
 
 Source requirements:
 
 - `AGENTS.md`
-- `local/backoffice/PRD.md`
-- `local/backoffice/DESIGN.md`
+- `docs/backoffice/PRD.md`
+- `docs/backoffice/DESIGN.md`
+- `docs/backoffice/TEST_SCENARIOS.md`
 
 ## Checklist
 
@@ -24,7 +25,7 @@ Source requirements:
 - [x] Implement Scenario Design step 1 editable branch criteria table and validation warning/success states.
 - [x] Implement Scenario Design step 2 one-view scenario card editor, signpost generation request, and confirmation request.
 - [x] Implement Scenario Group detail tabs with summary, assumptions, price outlook placeholder, scenario detail, timeline, and raw JSON inspector.
-- [x] Verify with local static checks where possible; `node_modules` is not installed, so no network install or build was run.
+- [x] Verify with local static checks where possible.
 - [ ] Add Scenario Group List API client calls:
   - `GET /backoffice/api/scenario-groups`
   - `DELETE /backoffice/api/scenario-groups/{scenarioGroupId}`
@@ -46,6 +47,7 @@ Source requirements:
   - keep row with deleted badge when include-deleted is on
   - record raw delete request/response/error in QA inspector
 - [ ] Add focused frontend verification for Scenario Group List filters, detail action, delete confirm/cancel, delete success, and delete failure.
+- [ ] Update end-to-end test flow so every generated Scenario Group finishes with Scenario Group List detail check and soft-delete cleanup.
 
 ## Implementation Notes
 
@@ -56,3 +58,13 @@ Source requirements:
 - Integration adjustment: API normalizer reads the backend `RunOut` wrapper (`run`, `run.normalized`, `run.detail`) and confirmation request bodies use the Agent-compatible `scenarioGroup + table` shape.
 - New Scenario Group List work must preserve the Event List as the first meaningful screen while making the `Scenario Group List` tab a complete list/detail/delete workspace.
 - Soft delete must call only Backoffice's soft-delete proxy. The frontend must not expose hard delete.
+- Scenario Group List delete must be treated as a row-level mutation. It must not clear the active run, timeline, raw JSON history, or current detail state until the backend confirms deletion.
+- Include-deleted behavior must be explicit: default list hides soft-deleted rows, include-deleted list shows them with `삭제됨` state.
+- Test cleanup is part of the happy path: after confirmation/detail verification, navigate back to Scenario Group List and soft delete the generated group.
+
+## Review Notes
+
+- Good: the plan now covers API client methods, normalized list state, filters, detail navigation, delete confirmation, row update behavior, and QA inspector evidence.
+- Risk: delete authorization UX is still open between direct input and configured token selector. Choose one before implementation so tests can be deterministic.
+- Risk: current scope does not mention excluding generated frontend artifacts from commits. Keep `node_modules`, `dist`, `*.tsbuildinfo`, generated `vite.config.js`, and `vite.config.d.ts` out of source commits.
+- Required alignment: Scenario Group List work must satisfy `docs/backoffice/TEST_SCENARIOS.md` cleanup flow, not only the PRD acceptance criteria.

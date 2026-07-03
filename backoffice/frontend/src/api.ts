@@ -1,4 +1,4 @@
-import type { ApiRunResponse, ScenarioDesignModel, ScenarioRow, Signpost, TableHeader } from "./types";
+import type { ApiRunResponse, ScenarioDesignModel, ScenarioGroupListResponse, ScenarioRow, Signpost, TableHeader } from "./types";
 
 const API_ROOT = "/backoffice/api";
 
@@ -33,6 +33,34 @@ export function refreshScenarioGroup(scenarioGroupId: string) {
   return requestJson<unknown>(`/scenario-groups/${encodeURIComponent(scenarioGroupId)}`);
 }
 
+export function listScenarioGroups(params: ScenarioGroupListParams) {
+  const query = new URLSearchParams();
+  if (params.agentBaseUrl) query.set("agentBaseUrl", params.agentBaseUrl);
+  if (params.includeDeleted) query.set("includeDeleted", "true");
+  if (params.keyword) query.set("keyword", params.keyword);
+  if (params.status) query.set("status", params.status);
+  if (params.stage) query.set("stage", params.stage);
+  if (params.miEventId) query.set("miEventId", params.miEventId);
+  if (params.sort) query.set("sort", params.sort);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return requestJson<ScenarioGroupListResponse>(`/scenario-groups${suffix}`);
+}
+
+export function fetchScenarioGroupDetail(scenarioGroupId: string, agentBaseUrl: string, includeDeleted = false) {
+  const query = new URLSearchParams();
+  if (agentBaseUrl) query.set("agentBaseUrl", agentBaseUrl);
+  if (includeDeleted) query.set("includeDeleted", "true");
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return requestJson<ApiRunResponse>(`/scenario-groups/${encodeURIComponent(scenarioGroupId)}${suffix}`);
+}
+
+export function deleteScenarioGroup(scenarioGroupId: string, body: DeleteScenarioGroupBody) {
+  return requestJson<unknown>(`/scenario-groups/${encodeURIComponent(scenarioGroupId)}`, {
+    method: "DELETE",
+    body: JSON.stringify(body)
+  });
+}
+
 export function requestValidation(runId: string, body: ValidationRequestBody) {
   return requestJson<ApiRunResponse>(`/runs/${encodeURIComponent(runId)}/validation`, {
     method: "POST",
@@ -60,11 +88,27 @@ export type CreateScenarioGroupBody = {
   userId: number;
 };
 
+export type ScenarioGroupListParams = {
+  agentBaseUrl: string;
+  includeDeleted: boolean;
+  keyword: string;
+  status: string;
+  stage: string;
+  miEventId: string;
+  sort: string;
+};
+
+export type DeleteScenarioGroupBody = {
+  agentBaseUrl: string;
+  userId: number;
+  deleteAuthorization: string;
+};
+
 export type ValidationRequestBody = {
   userId: number;
   table: {
     headers: TableHeader[];
-    rows: Array<{
+      rows: Array<{
       scenarioId?: number;
       displayOrder: number;
       title: string;
@@ -106,7 +150,7 @@ export type ConfirmationRequestBody = {
       };
       baselineYn: "Y" | "N";
       cells: Record<string, string>;
-      signposts: Signpost[];
+      signposts: Array<Signpost & { signpostId?: number }>;
     }>;
   };
 };
@@ -172,6 +216,11 @@ export function buildConfirmationBody(userId: string, model: ScenarioDesignModel
         baselineYn: row.baselineYn,
         cells: row.cells,
         signposts: row.signposts
+          .map((signpost) => {
+            const signpostId = Number(signpost.id);
+            return Number.isFinite(signpostId) && signpostId > 0 ? { ...signpost, signpostId } : null;
+          })
+          .filter((signpost): signpost is Signpost & { signpostId: number } => signpost !== null)
       }))
     }
   };

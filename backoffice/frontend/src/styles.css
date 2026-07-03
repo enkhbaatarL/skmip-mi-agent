@@ -205,6 +205,11 @@ button:focus-visible {
   border-color: #dde3ea;
 }
 
+.button.danger {
+  color: #fff;
+  background: #b42318;
+}
+
 .button:disabled {
   color: #8a95a3;
   background: #eef2f6;
@@ -230,6 +235,11 @@ button:focus-visible {
 .icon-button:disabled {
   color: #b8c0cc;
   background: transparent;
+}
+
+.icon-button.danger:hover:not(:disabled) {
+  color: #b42318;
+  border-color: #f2a6a0;
 }
 
 .state-pill,
@@ -461,11 +471,21 @@ tbody tr.selected-row {
   outline-offset: -1px;
 }
 
+tbody tr.deleted-row {
+  color: #6b7280;
+  background: #fafafa;
+}
+
 .badge {
   padding: 4px 7px;
   color: #2f55d4;
   background: #eaf2ff;
   font-size: 12px;
+}
+
+.deleted-badge {
+  color: #991b1b;
+  background: #fef2f2;
 }
 
 .selected-note {
@@ -521,6 +541,71 @@ tbody tr.selected-row {
   padding: 20px;
   color: #4b5563;
   text-align: center;
+}
+
+.group-table {
+  min-width: 1180px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 23 42 / 36%);
+}
+
+.modal {
+  width: min(560px, 100%);
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 24px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgb(15 23 42 / 22%);
+}
+
+.confirm-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.confirm-list div {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e7ebf0;
+}
+
+.confirm-list dt {
+  color: #4b5563;
+  font-weight: 800;
+}
+
+.confirm-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.compact-label {
+  display: grid;
+  gap: 8px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .back-button {

@@ -7,12 +7,14 @@
 검증 대상:
 
 - 이벤트 리스트 조회 및 이벤트 선택
+- Scenario Group List 조회 및 기존 Scenario Group 상세 진입
 - 시나리오 생성 요청, accepted 응답, generation callback 반영
 - 생성된 시나리오 분기 기준 확인/수정/추가
 - 검토 요청 및 validation callback 반영
 - Signpost 생성 요청 및 signpost callback 반영
 - Signpost 확률/내용 수정 후 confirmation
 - Scenario Group detail 화면 확인
+- 테스트 종료 시 Scenario Group soft delete 정리
 - 오류, 지연, 빈 데이터, 입력 제한 등 edge case
 
 ## 2. 공통 사전조건
@@ -26,7 +28,35 @@
   - `CALLBACK_OAUTH2_TOKEN_URL=http://127.0.0.1:9010/api/v1/oauth2/token`
 - Backoffice runtime bar의 `Agent Base URL`은 `http://127.0.0.1:8000`이어야 한다.
 - 테스트 가능한 `miEventId`, `userId`가 준비되어 있어야 한다.
+- Scenario Group soft delete에 필요한 Agent delete authorization 값이 준비되어 있어야 한다.
 - QA Inspector에서 request body, accepted response, callback payload, detail response를 확인할 수 있어야 한다.
+
+### 2.1 공통 종료 절차: Scenario Group soft delete
+
+Scenario Group을 생성하거나 기존 Scenario Group을 상세 조회한 테스트는 케이스 종료 전에 아래 정리 절차를 수행한다. 단, 삭제 실패/권한 실패를 검증하는 케이스는 기대결과 확인 후 별도 유효한 권한으로 동일 절차를 다시 수행한다.
+
+절차:
+
+1. 테스트 중 사용한 `scenarioGroupId`를 기록한다.
+2. `Scenario Group List` 탭으로 이동한다.
+3. 목록을 새로고침하고 해당 `scenarioGroupId` 또는 Scenario Group명으로 검색한다.
+4. 행의 상세 action을 클릭해 detail 화면이 열리는지 확인한다.
+5. `Scenario Group List`로 돌아간다.
+6. 해당 행의 삭제 action을 클릭한다.
+7. 삭제 확인 모달에서 Scenario Group ID, Scenario Group명, Base Event 참조가 맞는지 확인한다.
+8. delete authorization 값과 필요한 `userId`를 입력하거나 선택한다.
+9. `삭제`를 클릭한다.
+10. QA Inspector에서 `DELETE /backoffice/api/scenario-groups/{scenarioGroupId}` request/response 또는 error를 확인한다.
+11. `삭제 항목 포함`이 off인 기본 목록에서 해당 row가 사라졌는지 확인한다.
+12. `삭제 항목 포함`을 on으로 바꾸고 해당 row가 `삭제됨` 상태로 조회되는지 확인한다.
+
+기대결과:
+
+- 삭제는 Backoffice soft-delete proxy만 호출하고 Agent hard-delete API는 호출하지 않는다.
+- 삭제 요청 중 중복 클릭이 방지된다.
+- 성공 시 기본 목록에서 row가 제거된다.
+- include-deleted 목록에서는 삭제 상태가 명확히 표시된다.
+- 삭제 결과 raw JSON과 timeline 이벤트가 QA Inspector에 남는다.
 
 ## 3. 통과 품질 기준
 
@@ -46,6 +76,8 @@
 - 시나리오 추가/삭제/수정 후 validation 요청 body에 변경 내용이 포함되어야 한다.
 - Step 2에서 수정한 scenario group명, 설명, narrative, probability, signpost 값이 confirmation 요청 body에 포함되어야 한다.
 - confirmation 이후 detail 화면의 요약, 가정 및 실현 가능성, 시나리오 상세 탭이 최신 데이터와 일치해야 한다.
+- 테스트 종료 시 soft delete 이후 기본 목록에서 해당 Scenario Group이 보이지 않아야 한다.
+- include-deleted 목록에서는 soft-deleted Scenario Group의 삭제 상태를 확인할 수 있어야 한다.
 
 ### 3.3 UX 품질
 
@@ -65,6 +97,7 @@
 - 시나리오 추가/수정 값이 다음 단계에서 유실된다.
 - error callback 또는 Agent 오류가 raw inspector에 남지 않는다.
 - confirmation 완료 후 detail 화면으로 이동하지 않거나 필수 탭이 렌더링되지 않는다.
+- 생성된 Scenario Group을 테스트 종료 시 soft delete하지 못했는데 원인과 재시도 경로가 남지 않는다.
 
 ## 4. 정상 동작 케이스
 
@@ -100,6 +133,7 @@
 19. confirmation 응답을 확인한다.
 20. Scenario Group detail 화면으로 이동하는지 확인한다.
 21. `요약`, `가정 및 실현 가능성`, `가격 전망`, `시나리오 상세` 탭을 순서대로 확인한다.
+22. 공통 종료 절차에 따라 Scenario Group List에서 상세 진입과 soft delete를 수행한다.
 
 기대결과:
 
@@ -108,7 +142,9 @@
 - validation 이후 Step 2로 이동할 수 있다.
 - signpost callback 이후 signpost 목록이 표시된다.
 - confirmation 이후 detail 화면이 표시된다.
+- 테스트 종료 시 생성된 Scenario Group이 soft delete된다.
 - QA Inspector에 create, validation, signpost, confirmation request/response/callback 증적이 남는다.
+- QA Inspector에 detail 조회와 soft delete request/response 증적이 남는다.
 
 확인 증적:
 
@@ -116,6 +152,8 @@
 - `accepted`: create, validation, signpost, confirmation
 - `callback`: generation, validation, signposts
 - detail 화면 스크린샷
+- Scenario Group List 삭제 전/후 화면 스크린샷
+- soft delete request/response raw JSON
 
 ### TC-N-002 시나리오 추가 후 검토 요청
 
@@ -248,6 +286,53 @@
 - detail response가 raw JSON으로 남는다.
 - 갱신 가능한 데이터는 화면에 반영된다.
 - refresh 실패 시 기존 화면 데이터는 유지되고 error가 표시된다.
+
+### TC-N-007 Scenario Group List 조회, 상세 진입, soft delete
+
+목적: Scenario Group List에서 기존 Scenario Group을 찾고 상세 화면으로 진입한 뒤 soft delete로 테스트 데이터를 정리할 수 있는지 확인한다.
+
+사전조건:
+
+- 조회 가능한 `scenarioGroupId`가 존재한다.
+- delete authorization 값이 준비되어 있다.
+
+절차:
+
+1. Backoffice 메인 화면을 연다.
+2. `Scenario Group List` 탭으로 이동한다.
+3. 목록이 로드되는지 확인한다.
+4. keyword, status, stage, date range, sort 필터를 하나 이상 변경한다.
+5. 대상 `scenarioGroupId` 또는 Scenario Group명으로 검색한다.
+6. 대상 row의 ID, Scenario Group명, Base Event, status, stage, 시나리오 수, Signpost 수, 업데이트 일시가 표시되는지 확인한다.
+7. row의 상세 action을 클릭한다.
+8. Scenario Group detail 화면으로 이동하고 detail API 응답이 QA Inspector에 기록되는지 확인한다.
+9. `Scenario Group List`로 돌아간다.
+10. 대상 row의 삭제 action을 클릭한다.
+11. 삭제 확인 모달의 대상 정보가 row와 일치하는지 확인한다.
+12. `취소`를 클릭하고 API 호출 없이 모달이 닫히는지 확인한다.
+13. 다시 삭제 action을 클릭한다.
+14. delete authorization 값과 `userId`를 입력하거나 선택한다.
+15. `삭제`를 클릭한다.
+16. 삭제 요청 중 row action과 모달 submit의 중복 클릭이 막히는지 확인한다.
+17. 삭제 성공 후 기본 목록에서 row가 제거되는지 확인한다.
+18. `삭제 항목 포함`을 켜고 row가 `삭제됨` 상태로 표시되는지 확인한다.
+
+기대결과:
+
+- Scenario Group List가 `GET /backoffice/api/scenario-groups` 기반으로 로드된다.
+- 상세 action은 `GET /backoffice/api/scenario-groups/{scenarioGroupId}`를 호출하고 detail 화면으로 이동한다.
+- 삭제 cancel 시 delete API가 호출되지 않는다.
+- 삭제 confirm 시 `DELETE /backoffice/api/scenario-groups/{scenarioGroupId}`만 호출되고 hard delete는 호출되지 않는다.
+- 삭제 성공/실패 결과가 QA Inspector와 timeline에 남는다.
+- soft-deleted row는 기본 목록에서 제외되고 include-deleted 목록에서 삭제 상태로 확인된다.
+
+확인 증적:
+
+- Scenario Group List 필터 적용 화면
+- detail 화면 및 detail raw JSON
+- delete cancel 시 API 미호출 증적
+- soft delete request/response raw JSON
+- include-deleted 목록의 `삭제됨` row 화면
 
 ## 5. Edge Case
 
@@ -446,12 +531,46 @@
 - refresh로 detail 상태를 다시 불러올 수 있다.
 - 복구할 수 없는 경우 사용자에게 필요한 값 입력 안내가 표시된다.
 
+### TC-E-015 Scenario Group soft delete 권한 실패
+
+절차:
+
+1. Scenario Group List에서 삭제 가능한 row를 선택한다.
+2. 삭제 action을 클릭한다.
+3. 삭제 확인 모달에서 잘못된 delete authorization 값을 입력한다.
+4. `삭제`를 클릭한다.
+5. 오류를 확인한 뒤 유효한 delete authorization 값으로 공통 종료 절차를 다시 수행한다.
+
+기대결과:
+
+- 권한 실패 시 row는 목록에서 제거되지 않는다.
+- 모달 또는 화면에 실패 사유가 표시된다.
+- Agent error body가 raw inspector에 남는다.
+- 실패 후 사용자는 유효한 권한으로 재시도할 수 있다.
+- 재시도 성공 후 기본 목록에서 row가 제거되고 include-deleted 목록에서 삭제 상태로 확인된다.
+
+### TC-E-016 Scenario Group List 빈 결과
+
+절차:
+
+1. Scenario Group List에서 존재하지 않는 keyword를 입력한다.
+2. status/stage/date 필터를 조합해 결과가 없도록 만든다.
+3. include-deleted toggle을 on/off로 바꿔 빈 상태를 확인한다.
+
+기대결과:
+
+- 빈 상태 메시지와 필터 초기화 액션이 표시된다.
+- Event List로 이동해 새 Scenario Group 생성을 시작할 수 있다.
+- 목록 빈 상태에서도 runtime bar와 QA Inspector는 계속 사용 가능하다.
+
 ## 6. 회귀 체크리스트
 
 - [ ] Backoffice root URL이 정상 렌더링된다.
 - [ ] OAuth token mock이 `access_token`, `expires_in` snake_case로 응답한다.
 - [ ] Agent startup 시 Backoffice token mock에서 token을 정상 prefetch한다.
 - [ ] Event List에서 이벤트 선택 시 `miEventId`가 runtime bar에 반영된다.
+- [ ] Scenario Group List가 로드되고 필터/검색이 동작한다.
+- [ ] Scenario Group List row에서 detail 화면으로 이동한다.
 - [ ] create accepted 후 `runId`, `scenarioGroupId`가 표시된다.
 - [ ] generation callback 후 Step 1 테이블이 표시된다.
 - [ ] 시나리오 추가 row가 validation request body에 포함된다.
@@ -462,6 +581,7 @@
 - [ ] signpost/probability 수정 값이 confirmation request body에 포함된다.
 - [ ] confirmation 완료 후 detail 화면으로 이동한다.
 - [ ] detail 탭 4개가 모두 렌더링된다.
+- [ ] 테스트 종료 시 Scenario Group List에서 soft delete를 수행한다.
+- [ ] soft delete 후 기본 목록에서 row가 사라지고 include-deleted 목록에서 `삭제됨`으로 표시된다.
 - [ ] raw inspector에 request, accepted, callback, detail, error가 남는다.
 - [ ] 오류 발생 시 기존 화면 입력값이 유실되지 않는다.
-
