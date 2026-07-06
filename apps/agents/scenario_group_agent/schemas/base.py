@@ -1,11 +1,14 @@
-from __future__ import annotations
+# ruff: noqa: ANN401
 
 from abc import ABC, abstractmethod
 from inspect import signature
 from typing import Any
 
+from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+
+from apps.common.tracing.context import langchain_callbacks_context
 
 
 class ApiModel(BaseModel):
@@ -50,10 +53,17 @@ class BaseNode(ABC):
     Request data must flow through the LangGraph state object.
     """
 
-    async def __call__(self, state: Any, runtime: Any | None = None) -> dict[str, Any]:
-        if runtime is None:
-            return await self.run(state)
-        return await self.run_with_runtime(state, runtime)
+    async def __call__(
+        self,
+        state: Any,
+        runtime: Any | None = None,
+        config: RunnableConfig | None = None,
+    ) -> dict[str, Any]:
+        callbacks = config.get("callbacks") if isinstance(config, dict) else None
+        with langchain_callbacks_context(callbacks):
+            if runtime is None:
+                return await self.run(state)
+            return await self.run_with_runtime(state, runtime)
 
     async def run_with_runtime(self, state: Any, runtime: Any) -> dict[str, Any]:
         if "runtime" in signature(self.run).parameters:

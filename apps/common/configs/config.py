@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-import yaml
 from pydantic import Field, computed_field
 from pydantic_settings import (
     BaseSettings,
@@ -14,6 +13,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+import yaml
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -47,7 +47,7 @@ class EnvYamlConfigSettingsSource(YamlConfigSettingsSource):
     """`${ENV_NAME}` 패턴을 YAML 읽기 전에 환경변수로 치환."""
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:
-        with open(file_path, encoding=self.yaml_file_encoding) as yaml_file:
+        with file_path.open(encoding=self.yaml_file_encoding) as yaml_file:
             yaml_str = _replace_env_placeholders(_normalize_yaml_text(yaml_file.read()))
             loaded = yaml.safe_load(yaml_str)
         return loaded if isinstance(loaded, dict) else {}
@@ -136,7 +136,6 @@ class Settings(BaseSettings):
     mlflow_tracking_username: str = Field(default="")
     mlflow_tracking_password: str = Field(default="")
     mlflow_langchain_run_tracer_inline: bool = Field(default=False)
-    mlflow_openai_autolog_enabled: bool = Field(default=True)
 
     # Callback OAuth2 (client_credentials)
     callback_oauth2_token_url: str = Field(default="")

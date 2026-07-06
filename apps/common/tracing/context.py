@@ -2,16 +2,36 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
-from typing import Any
+from contextvars import ContextVar
+from types import TracebackType
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+from apps.common.logging.logger_config import logger
 
 
 class TraceContext(BaseModel):
     transaction_id: str
     app_identifier: str
     scenario_group_id: str | None = None
+
+
+class _TraceManager(Protocol):
+    def __enter__(self) -> object:
+        pass
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> object:
+        pass
+
+
+_current_langchain_callbacks: ContextVar[Any | None] = ContextVar("current_langchain_callbacks", default=None)
 
 
 def new_transaction_id() -> str:
@@ -29,7 +49,27 @@ def build_aip_headers(context: TraceContext) -> dict[str, str]:
 
 
 def build_langgraph_config(context: TraceContext) -> dict[str, object]:
-    return {"configurable": {"thread_id": context.transaction_id}}
+    # thread_id 가 mlflow의 session_id가 됨. mlflow 에서 키값을 고정해놓음
+    configurable = {
+        "thread_id": context.scenario_group_id or context.transaction_id,
+        "transaction_id": context.transaction_id,
+    }
+    if context.scenario_group_id:
+        configurable["scenario_group_id"] = context.scenario_group_id
+    return {"configurable": configurable}
+
+
+@contextmanager
+def langchain_callbacks_context(callbacks: Any | None) -> Iterator[None]:  # noqa: ANN401
+    token = _current_langchain_callbacks.set(callbacks)
+    try:
+        yield
+    finally:
+        _current_langchain_callbacks.reset(token)
+
+
+def get_current_langchain_callbacks() -> Any | None:  # noqa: ANN401
+    return _current_langchain_callbacks.get()
 
 
 def _mlflow_metadata(context: TraceContext) -> dict[str, str]:
@@ -49,11 +89,74 @@ def _mlflow_tags(context: TraceContext) -> dict[str, str]:
     return tags
 
 
+def _is_mlflow_tracing_enabled() -> bool:
+    try:
+        from apps.common.configs.config import get_settings
+
+        return bool(getattr(get_settings(), "mlflow_tracing_enabled", False))
+    except Exception as exc:
+        logger.warning(f"MLflow tracing disabled because settings lookup failed | error={exc!r}")
+        return False
+
+
+def _enter_mlflow_manager(manager: _TraceManager) -> bool:
+    try:
+        manager.__enter__()
+    except Exception as exc:
+        logger.warning(f"MLflow tracing context enter failed, continuing without tracing | error={exc!r}")
+        return False
+    return True
+
+
+def _exit_mlflow_manager(
+    manager: _TraceManager,
+    exc_type: type[BaseException] | None = None,
+    exc: BaseException | None = None,
+    traceback: TracebackType | None = None,
+) -> None:
+    try:
+        manager.__exit__(exc_type, exc, traceback)
+    except Exception as exit_exc:
+        logger.warning(f"MLflow tracing context exit failed, continuing without tracing | error={exit_exc!r}")
+
+
+def _create_mlflow_manager(
+    mlflow_module: Any,  # noqa: ANN401
+    context_kwargs: dict[str, Any],
+    metadata: dict[str, str],
+    session_id: str | None,
+) -> _TraceManager | None:
+    try:
+        return cast("_TraceManager", mlflow_module.tracing.context(**context_kwargs))
+    except TypeError as exc:
+        logger.warning(f"MLflow tracing context kwargs unsupported, retrying fallback | error={exc!r}")
+        fallback_kwargs: dict[str, Any] = {"metadata": metadata}
+        if session_id:
+            fallback_kwargs["session_id"] = session_id
+        try:
+            return cast("_TraceManager", mlflow_module.tracing.context(**fallback_kwargs))
+        except Exception as fallback_exc:
+            logger.warning(
+                "MLflow tracing context creation failed, continuing without tracing | "
+                f"error={fallback_exc!r}",
+            )
+            return None
+    except Exception as exc:
+        logger.warning(f"MLflow tracing context creation failed, continuing without tracing | error={exc!r}")
+        return None
+
+
 @contextmanager
 def mlflow_trace_context(context: TraceContext) -> Iterator[None]:
+    if not _is_mlflow_tracing_enabled():
+        with nullcontext():
+            yield
+        return
+
     try:
         import mlflow
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"MLflow tracing disabled because mlflow import failed | error={exc!r}")
         with nullcontext():
             yield
         return
@@ -62,25 +165,27 @@ def mlflow_trace_context(context: TraceContext) -> Iterator[None]:
     tags = _mlflow_tags(context)
     session_id = context.scenario_group_id
     context_kwargs: dict[str, Any] = {
-        "client_request_id": context.transaction_id,
         "metadata": metadata,
         "tags": tags,
     }
     if session_id:
         context_kwargs["session_id"] = session_id
 
-    try:
-        manager = mlflow.tracing.context(**context_kwargs)
-    except TypeError:
-        fallback_kwargs: dict[str, Any] = {"metadata": metadata}
-        if session_id:
-            fallback_kwargs["session_id"] = session_id
-        try:
-            manager = mlflow.tracing.context(**fallback_kwargs)
-        except Exception:
-            manager = nullcontext()
-    except Exception:
-        manager = nullcontext()
+    manager = _create_mlflow_manager(mlflow, context_kwargs, metadata, session_id)
+    if manager is None:
+        with nullcontext():
+            yield
+        return
 
-    with manager:
+    if not _enter_mlflow_manager(manager):
+        with nullcontext():
+            yield
+        return
+
+    try:
         yield
+    except BaseException as exc:
+        _exit_mlflow_manager(manager, type(exc), exc, exc.__traceback__)
+        raise
+    else:
+        _exit_mlflow_manager(manager)

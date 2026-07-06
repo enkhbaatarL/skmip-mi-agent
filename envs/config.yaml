@@ -35,13 +35,12 @@ scenario_group_admin_bearer_tokens:
   - ${SCENARIO_GROUP_ADMIN_TOKEN}
 create_signposts_max_concurrent_scenarios: 7
 
-mlflow_tracing_enabled: false
-mlflow_tracking_uri: "http://mlflow:5001"
+mlflow_tracing_enabled: true
+mlflow_tracking_uri: "http://localhost:5001"
 mlflow_experiment_name: "mi-agent-local"
 mlflow_tracking_username: "skmip-mi-agent"
 mlflow_tracking_password: "skgas2ndfloor!"
 mlflow_langchain_run_tracer_inline: false
-mlflow_openai_autolog_enabled: true
 
 callback_oauth2_token_url: https://mi.mingovvv.info/api/v1/oauth2/token
 callback_oauth2_client_id: agent-skgas-client
