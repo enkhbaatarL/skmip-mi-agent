@@ -62,11 +62,64 @@ export type ScenarioRow = {
 export type EventItem = {
   miEventId: number;
   title: string;
+  summary?: string;
   eventTime: string;
   category: string;
   status: "신규" | "갱신";
   recommended: boolean;
+  eventTypeL1?: { id?: number | null; code: string; label: string };
+  eventTypeL2?: { id?: number | null; code: string; label: string };
+  signalReason?: string | null;
+  scenarioSuggestReason?: string | null;
+  relatedScenarioGroup?: {
+    scenarioGroupId?: number | null;
+    status?: string | null;
+    stage?: string | null;
+    deleted?: boolean;
+    scenarioCount?: number;
+    signpostCount?: number;
+    title?: string | null;
+  } | null;
+  scenarioActionState?: {
+    type: "create" | "continue_generation" | "open_detail" | "disabled";
+    label: string;
+    disabled: boolean;
+    reason?: string | null;
+  };
   impacts: Record<"JKM" | "TTF" | "HH", "up" | "down" | "neutral">;
+};
+
+export type EventListResponse = {
+  rows: Array<{
+    miEventId: number;
+    title: string;
+    oneLineSummary?: string;
+    eventTime?: string;
+    occurredAt?: string;
+    category?: string;
+    eventTypeL1?: { id?: number | null; code?: string; label?: string };
+    eventTypeL2?: { id?: number | null; code?: string; label?: string };
+    newYn?: string;
+    signalReason?: string | null;
+    scenarioSuggestYn?: string;
+    scenarioSuggestReason?: string | null;
+    marketImpacts?: Record<string, { direction?: string; label?: string; summary?: string }>;
+    relatedScenarioGroup?: EventItem["relatedScenarioGroup"];
+    scenarioActionState?: EventItem["scenarioActionState"];
+    raw?: unknown;
+  }>;
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    hasPrevious: boolean;
+    hasNext: boolean;
+  };
+  meta: {
+    source: string;
+    fallbackReason?: string | null;
+  };
+  rawSource?: unknown;
 };
 
 export type ScenarioGroupListRow = {

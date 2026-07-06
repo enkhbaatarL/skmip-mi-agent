@@ -825,6 +825,12 @@ tbody tr.deleted-row {
   border-color: #86efac;
 }
 
+.callout.info {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
 .bottom-bar {
   position: fixed;
   left: 0;
@@ -1082,6 +1088,65 @@ summary time {
   color: #243a5a;
   background: #eef2f6;
   font-size: 11px;
+}
+
+.compact-row {
+  min-height: 28px;
+  margin: 8px 0;
+}
+
+.error-inline {
+  color: #b42318;
+  font-size: 12px;
+}
+
+.link-button {
+  display: block;
+  max-width: 360px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #172033;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.event-summary {
+  display: block;
+  max-width: 420px;
+  margin-top: 4px;
+  color: #687386;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.pagination-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.event-detail-panel {
+  margin-bottom: 16px;
+}
+
+.template-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.muted-text {
+  color: #687386;
+  font-size: 13px;
 }
 
 pre {

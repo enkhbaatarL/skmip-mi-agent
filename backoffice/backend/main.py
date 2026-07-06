@@ -18,6 +18,11 @@ from backoffice.backend.schemas import (
     CreateRunIn,
     DeleteScenarioGroupIn,
     DeleteScenarioGroupOut,
+    EventDetailOut,
+    EventListMeta,
+    EventListOut,
+    EventListRow,
+    EventPagination,
     JsonObject,
     OAuthTokenOut,
     RunLifecycleState,
@@ -108,6 +113,65 @@ async def stream_run_events(run_id: str, request: Request) -> StreamingResponse:
             await store.unsubscribe(run_id, queue)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/backoffice/api/events", response_model=EventListOut)
+async def list_events(
+    agent_base_url: str | None = Query(default=None, alias="agentBaseUrl"),
+    keyword: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    event_type_l1_id: int | None = Query(default=None, alias="eventTypeL1Id"),
+    event_type_l2_id: int | None = Query(default=None, alias="eventTypeL2Id"),
+    recommended_only: bool = Query(default=False, alias="recommendedOnly"),
+    date_from: str | None = Query(default=None, alias="dateFrom"),
+    date_to: str | None = Query(default=None, alias="dateTo"),
+    sort: str = Query(default="latest"),
+    page: int = Query(default=1),
+    page_size: int = Query(default=20, alias="pageSize"),
+) -> EventListOut:
+    if not agent_base_url:
+        return _empty_event_list(page=page, page_size=page_size, fallback_reason="agentBaseUrl is required for Agent event data")
+
+    params: JsonObject = {
+        "keyword": keyword,
+        "status": status,
+        "eventTypeL1Id": event_type_l1_id,
+        "eventTypeL2Id": event_type_l2_id,
+        "recommendedOnly": str(recommended_only).lower(),
+        "dateFrom": date_from,
+        "dateTo": date_to,
+        "sort": sort,
+        "page": page,
+        "pageSize": page_size,
+    }
+    params = {key: value for key, value in params.items() if value is not None and value != ""}
+    try:
+        raw_source = await AgentClient(agent_base_url).list_events(params)
+    except (AgentHttpError, httpx.HTTPError) as exc:
+        return _empty_event_list(page=page, page_size=page_size, fallback_reason=str(exc))
+    return _normalize_event_list(raw_source)
+
+
+@app.get("/backoffice/api/events/{mi_event_id}", response_model=EventDetailOut)
+async def get_event_detail(
+    mi_event_id: int,
+    agent_base_url: str | None = Query(default=None, alias="agentBaseUrl"),
+) -> EventDetailOut:
+    if not agent_base_url:
+        raise HTTPException(status_code=400, detail="agentBaseUrl is required")
+    try:
+        raw_source = await AgentClient(agent_base_url).get_event(mi_event_id)
+    except AgentHttpError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail={"message": str(exc)}) from exc
+    event = EventListRow.model_validate(_event_row_payload(raw_source.get("event") or {}))
+    return EventDetailOut(
+        event=event,
+        scenario_template=raw_source.get("scenarioTemplate") or raw_source.get("scenario_template") or {},
+        meta=EventListMeta(source=str((raw_source.get("source") or {}).get("type") or "agent_proxy")),
+        raw_source=raw_source,
+    )
 
 
 @app.get("/backoffice/api/scenario-groups", response_model=ScenarioGroupListOut)
@@ -398,6 +462,8 @@ def _normalize_list_rows(payload: JsonObject, source: str) -> list[ScenarioGroup
                 stage=item.get("stage"),
                 scenario_count=int(item.get("scenarioCount") or item.get("scenario_count") or 0),
                 signpost_count=int(item.get("signpostCount") or item.get("signpost_count") or 0),
+                created_at=item.get("createdAt") or item.get("created_at"),
+                updated_at=item.get("updatedAt") or item.get("updated_at"),
                 deleted=deleted,
                 del_yn="Y" if deleted else "N",
                 latest_run_id=item.get("latestRunId") or item.get("latest_run_id"),
@@ -406,6 +472,59 @@ def _normalize_list_rows(payload: JsonObject, source: str) -> list[ScenarioGroup
             )
         )
     return rows
+
+
+def _empty_event_list(page: int, page_size: int, fallback_reason: str) -> EventListOut:
+    return EventListOut(
+        rows=[],
+        pagination=EventPagination(page=page, page_size=page_size, total=0, has_previous=page > 1, has_next=False),
+        meta=EventListMeta(source="backoffice_empty", fallback_reason=fallback_reason),
+        raw_source={"source": "backoffice_empty", "fallbackReason": fallback_reason},
+    )
+
+
+def _normalize_event_list(payload: JsonObject) -> EventListOut:
+    rows_raw = payload.get("rows") or payload.get("data") or []
+    if isinstance(rows_raw, dict):
+        rows_raw = rows_raw.get("rows") or rows_raw.get("items") or []
+    rows = [EventListRow.model_validate(_event_row_payload(item)) for item in rows_raw if isinstance(item, dict)]
+    pagination_raw = payload.get("pagination") or {}
+    source_raw = payload.get("source") or {}
+    return EventListOut(
+        rows=rows,
+        pagination=EventPagination.model_validate(pagination_raw),
+        meta=EventListMeta(source=str(source_raw.get("type") or "agent_proxy")),
+        raw_source=payload,
+    )
+
+
+def _event_row_payload(item: JsonObject) -> JsonObject:
+    title = item.get("title") or item.get("eventTitle") or item.get("event_title") or item.get("event_title_ko") or ""
+    new_yn = str(item.get("newYn") or item.get("new_yn") or "Y")
+    action = item.get("scenarioActionState") or item.get("scenario_action_state") or {}
+    return {
+        "miEventId": item.get("miEventId") or item.get("mi_event_id"),
+        "title": title,
+        "oneLineSummary": item.get("oneLineSummary") or item.get("one_line_summary") or "",
+        "eventTime": item.get("eventTime") or item.get("event_time") or item.get("occurredAt") or item.get("occurred_at") or "",
+        "occurredAt": item.get("occurredAt") or item.get("occurred_at") or "",
+        "latestRecordFirstCreated": item.get("latestRecordFirstCreated") or item.get("latest_record_first_created") or "",
+        "oldestRecordFirstCreated": item.get("oldestRecordFirstCreated") or item.get("oldest_record_first_created") or "",
+        "category": item.get("category") or "",
+        "eventTypeL1": item.get("eventTypeL1") or item.get("event_type_l1") or {},
+        "eventTypeL2": item.get("eventTypeL2") or item.get("event_type_l2") or {},
+        "newYn": new_yn,
+        "signalYn": item.get("signalYn") or item.get("signal_yn") or "N",
+        "signalConfidence": item.get("signalConfidence") or item.get("signal_confidence"),
+        "signalReason": item.get("signalReason") or item.get("signal_reason"),
+        "scenarioSuggestYn": item.get("scenarioSuggestYn") or item.get("scenario_suggest_yn") or "N",
+        "scenarioSuggestReason": item.get("scenarioSuggestReason") or item.get("scenario_suggest_reason"),
+        "tags": item.get("tags") or [],
+        "marketImpacts": item.get("marketImpacts") or item.get("market_impacts") or {},
+        "relatedScenarioGroup": item.get("relatedScenarioGroup") or item.get("related_scenario_group"),
+        "scenarioActionState": action,
+        "raw": item,
+    }
 
 
 def _already_created_scenario_group_id(body: object) -> int | None:

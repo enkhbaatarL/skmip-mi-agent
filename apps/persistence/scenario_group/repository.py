@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 from apps.persistence.scenario.models import MiScenarioModel
@@ -16,6 +16,44 @@ from apps.persistence.signpost.models import MiSignpostModel
 
 
 class ScenarioGroupRepository(BaseSyncSQLRepository):
+    def list_for_backoffice(
+        self,
+        *,
+        include_deleted: bool = False,
+        mi_event_id: int | None = None,
+        keyword: str | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+        sort: str = "latest",
+    ) -> list[MiScenarioGroupModel]:
+        stmt = select(MiScenarioGroupModel)
+        if not include_deleted:
+            stmt = stmt.where(MiScenarioGroupModel.del_yn == "N")
+        if mi_event_id is not None:
+            stmt = stmt.where(MiScenarioGroupModel.mi_event_id == mi_event_id)
+        if keyword:
+            normalized = keyword.strip()
+            like = f"%{normalized}%"
+            filters = [MiScenarioGroupModel.title.like(like)]
+            if normalized.isdecimal():
+                numeric = int(normalized)
+                filters.extend(
+                    [
+                        MiScenarioGroupModel.scenario_group_id == numeric,
+                        MiScenarioGroupModel.mi_event_id == numeric,
+                    ]
+                )
+            stmt = stmt.where(or_(*filters))
+        if status:
+            stmt = stmt.where(MiScenarioGroupModel.status == status)
+        if stage:
+            stmt = stmt.where(MiScenarioGroupModel.stage == stage)
+        if sort == "oldest":
+            stmt = stmt.order_by(MiScenarioGroupModel.mod_dtm.asc(), MiScenarioGroupModel.scenario_group_id.asc())
+        else:
+            stmt = stmt.order_by(MiScenarioGroupModel.mod_dtm.desc(), MiScenarioGroupModel.scenario_group_id.desc())
+        return list(self.session.execute(stmt).scalars().all())
+
     def fetch_by_id(self, scenario_group_id: int) -> MiScenarioGroupModel | None:
         stmt = select(MiScenarioGroupModel).where(
             MiScenarioGroupModel.scenario_group_id == scenario_group_id,

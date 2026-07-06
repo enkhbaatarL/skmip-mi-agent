@@ -23,7 +23,9 @@ import {
   buildValidationBody,
   createScenarioGroup,
   deleteScenarioGroup,
+  fetchEventDetail,
   fetchScenarioGroupDetail,
+  listEvents,
   listScenarioGroups,
   openRunEvents,
   requestConfirmation,
@@ -111,7 +113,7 @@ export function App() {
   ]);
   const [rawSelection, setRawSelection] = useState<TimelineEvent["type"] | "all">("all");
   const [pendingAction, setPendingAction] = useState<string>("");
-  const [validation, setValidation] = useState<{ state: "idle" | "warning" | "success"; message: string; recommendation: string }>({
+  const [validation, setValidation] = useState<{ state: "idle" | "waiting" | "warning" | "success"; message: string; recommendation: string }>({
     state: "idle",
     message: "",
     recommendation: ""
@@ -146,12 +148,16 @@ export function App() {
       if (event.type === "detail_refreshed" || event.type === "callback" || event.type === "normalized_model_updated") {
         setModel((current) => mergeDetailIntoModel(current, payload));
       }
-      if (event.type === "validation_result" || event.type === "callback") {
+      const callbackType = payload && typeof payload === "object" ? String((payload as Record<string, unknown>).callbackType || "") : "";
+      if (event.type === "validation_result" || callbackType === "validation") {
         const result = readPayloadField(payload, "result");
         const message = readPayloadField(payload, "message") || readPayloadField(payload, "reason") || "callback 결과를 확인하세요.";
         if (result.toLowerCase() === "failure") {
           setValidation({ state: "warning", message, recommendation: "Raw JSON에서 실패 상세를 확인하고 수정하세요." });
           setRunState((current) => ({ ...current, lifecycle: "failed" }));
+        } else {
+          setValidation({ state: "success", message, recommendation: "검토 완료로 Step 2에 진입할 수 있습니다." });
+          setRunState((current) => ({ ...current, lifecycle: "scenario_validated" }));
         }
       }
     };
@@ -202,15 +208,18 @@ export function App() {
     const record = payload as Record<string, unknown>;
     const runId = pickRunId(record) || runtime.runId || `local-${Date.now()}`;
     const scenarioGroupId = pickScenarioGroupId(record);
+    const agentStatus = pickAgentStatus(record) || "creating";
+    const agentStage = pickAgentStage(record) || "ready";
+    const lifecycle = lifecycleFromAgentStage(agentStatus, agentStage);
     patchRuntime({ runId, scenarioGroupId });
     setRunState({
-      lifecycle: "generation_waiting_callback",
-      agentStatus: pickAgentStatus(record) || "creating",
-      agentStage: pickAgentStage(record) || "ready"
+      lifecycle,
+      agentStatus,
+      agentStage
     });
     setModel((current) => mergeDetailIntoModel(current, payload));
     addTimeline("accepted", "Create scenario draft accepted", payload);
-    setWorkspace("design-step-1");
+    setWorkspace(workspaceFromAgentStage(agentStatus, agentStage));
   }
 
   async function handleCreate(overrides: Partial<RuntimeConfig> = {}) {
@@ -285,9 +294,9 @@ export function App() {
       (payload) => {
         addTimeline("accepted", "Validation accepted", payload);
         setValidation({
-          state: "success",
+          state: "waiting",
           message: "변경사항 검토 요청이 접수되었습니다.",
-          recommendation: "validation callback 또는 manual refresh 결과를 확인하세요."
+          recommendation: "validation callback을 기다리는 중입니다."
         });
         setRunState((current) => ({ ...current, lifecycle: "validation_waiting_callback" }));
       }
@@ -589,6 +598,73 @@ function StatusStrip({ lifecycle, agentStatus, agentStage }: { lifecycle: RunLif
   );
 }
 
+function apiEventToItem(row: {
+  miEventId: number;
+  title: string;
+  oneLineSummary?: string;
+  eventTime?: string;
+  occurredAt?: string;
+  category?: string;
+  eventTypeL1?: { id?: number | null; code?: string; label?: string };
+  eventTypeL2?: { id?: number | null; code?: string; label?: string };
+  newYn?: string;
+  scenarioSuggestYn?: string;
+  signalReason?: string | null;
+  scenarioSuggestReason?: string | null;
+  marketImpacts?: Record<string, { direction?: string }>;
+  relatedScenarioGroup?: EventItem["relatedScenarioGroup"];
+  scenarioActionState?: EventItem["scenarioActionState"];
+}): EventItem {
+  const direction = (market: "JKM" | "TTF" | "HH") => normalizeImpact(row.marketImpacts?.[market]?.direction);
+  return {
+    miEventId: row.miEventId,
+    title: row.title,
+    summary: row.oneLineSummary,
+    eventTime: row.eventTime || row.occurredAt || "-",
+    category: row.category || row.eventTypeL1?.label || "-",
+    status: row.newYn === "N" ? "갱신" : "신규",
+    recommended: row.scenarioSuggestYn === "Y",
+    eventTypeL1: {
+      id: row.eventTypeL1?.id,
+      code: row.eventTypeL1?.code || "",
+      label: row.eventTypeL1?.label || ""
+    },
+    eventTypeL2: {
+      id: row.eventTypeL2?.id,
+      code: row.eventTypeL2?.code || "",
+      label: row.eventTypeL2?.label || ""
+    },
+    signalReason: row.signalReason,
+    scenarioSuggestReason: row.scenarioSuggestReason,
+    relatedScenarioGroup: row.relatedScenarioGroup,
+    scenarioActionState: row.scenarioActionState,
+    impacts: {
+      JKM: direction("JKM"),
+      TTF: direction("TTF"),
+      HH: direction("HH")
+    }
+  };
+}
+
+function normalizeImpact(value: string | undefined): "up" | "down" | "neutral" {
+  if (value === "up" || value === "down") return value;
+  return "neutral";
+}
+
+function lifecycleFromAgentStage(status: string, stage: string): RunLifecycle {
+  if (status === "created" && stage === "completed") return "confirmed";
+  if (stage === "signpost_created") return "signpost_created";
+  if (stage === "scenario_validated") return "scenario_validated";
+  if (stage === "scenario_created") return "scenario_created";
+  return "generation_waiting_callback";
+}
+
+function workspaceFromAgentStage(status: string, stage: string): Workspace {
+  if (status === "created" && stage === "completed") return "detail";
+  if (stage === "scenario_validated" || stage === "signpost_created") return "design-step-2";
+  return "design-step-1";
+}
+
 function EventWorkspace({
   topTab,
   runtime,
@@ -610,6 +686,15 @@ function EventWorkspace({
   const [status, setStatus] = useState("전체");
   const [category, setCategory] = useState("all");
   const [keyword, setKeyword] = useState("");
+  const [eventSort, setEventSort] = useState("latest");
+  const [eventPage, setEventPage] = useState(1);
+  const [events, setEvents] = useState<EventItem[]>(seedEvents);
+  const [eventMeta, setEventMeta] = useState("seed fallback");
+  const [eventHasPrevious, setEventHasPrevious] = useState(false);
+  const [eventHasNext, setEventHasNext] = useState(false);
+  const [eventLoading, setEventLoading] = useState(false);
+  const [eventError, setEventError] = useState("");
+  const [eventDetail, setEventDetail] = useState<Record<string, any> | null>(null);
   const [groupKeyword, setGroupKeyword] = useState("");
   const [groupStatus, setGroupStatus] = useState("");
   const [groupStage, setGroupStage] = useState("");
@@ -622,13 +707,54 @@ function EventWorkspace({
   const [deleteTarget, setDeleteTarget] = useState<ScenarioGroupListRow | null>(null);
   const [deleteAuthorization, setDeleteAuthorization] = useState("backoffice-local-token");
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const filtered = seedEvents.filter(
+  const filtered = events.filter(
     (event) =>
       (!recommendedOnly || event.recommended) &&
       (status === "전체" || event.status === status) &&
       (category === "all" || event.category === category) &&
       (!keyword.trim() || event.title.toLowerCase().includes(keyword.trim().toLowerCase()))
   );
+  async function loadEvents(page = eventPage) {
+    setEventLoading(true);
+    setEventError("");
+    try {
+      const response = await listEvents({
+        agentBaseUrl: runtime.agentBaseUrl,
+        keyword,
+        status: status === "신규" ? "new" : status === "갱신" ? "updated" : "",
+        recommendedOnly,
+        sort: eventSort,
+        page,
+        pageSize: 20
+      });
+      const apiEvents = response.rows.map(apiEventToItem);
+      setEvents(apiEvents.length ? apiEvents : seedEvents);
+      setEventMeta(`${response.meta.source}${response.meta.fallbackReason ? ` · ${response.meta.fallbackReason}` : ""}`);
+      setEventPage(response.pagination.page);
+      setEventHasPrevious(response.pagination.hasPrevious);
+      setEventHasNext(response.pagination.hasNext);
+      onTimeline("detail_refreshed", "Event List loaded", response);
+    } catch (caught) {
+      const body = caught && typeof caught === "object" && "body" in caught ? (caught as { body: unknown }).body : caught;
+      setEvents(seedEvents);
+      setEventMeta("seed fallback");
+      setEventError(caught instanceof Error ? caught.message : "Event List load failed");
+      onTimeline("error", "Event List load failed", body);
+    } finally {
+      setEventLoading(false);
+    }
+  }
+  async function openEventDetail(event: EventItem) {
+    onSelectEvent(event);
+    try {
+      const response = await fetchEventDetail(event.miEventId, runtime.agentBaseUrl);
+      setEventDetail(response as Record<string, any>);
+      onTimeline("detail_refreshed", `Event ${event.miEventId} detail loaded`, response);
+    } catch (caught) {
+      const body = caught && typeof caught === "object" && "body" in caught ? (caught as { body: unknown }).body : caught;
+      onTimeline("error", `Event ${event.miEventId} detail failed`, body);
+    }
+  }
   async function loadGroups() {
     setGroupLoading(true);
     setGroupError("");
@@ -685,6 +811,11 @@ function EventWorkspace({
       void loadGroups();
     }
   }, [topTab, includeDeleted, groupSort]);
+  useEffect(() => {
+    if (topTab === "events") {
+      void loadEvents(1);
+    }
+  }, [topTab, eventSort]);
   return (
     <section className="workspace">
       <div className="page-heading">
@@ -718,9 +849,9 @@ function EventWorkspace({
               <option>Geopolitical Risk</option>
             </select>
             <input type="date" defaultValue="2026-07-02" />
-            <select defaultValue="latest" aria-label="sort">
+            <select value={eventSort} aria-label="sort" onChange={(event) => setEventSort(event.target.value)}>
               <option value="latest">Latest first</option>
-              <option value="impact">Impact priority</option>
+              <option value="oldest">Oldest first</option>
             </select>
             <label className="toggle">
               <input type="checkbox" checked={recommendedOnly} onChange={(event) => setRecommendedOnly(event.target.checked)} />
@@ -730,7 +861,65 @@ function EventWorkspace({
               <Search size={16} />
               <input placeholder="Search event name" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
             </label>
+            <button className="button secondary" disabled={eventLoading} onClick={() => loadEvents(1)}>
+              <Search size={16} /> Apply
+            </button>
           </div>
+          <div className="section-title-row compact-row">
+            <p>{eventMeta}</p>
+            {eventError ? <span className="error-inline">{eventError}</span> : null}
+          </div>
+          {eventDetail ? (
+            <section className="section-block event-detail-panel">
+              <div className="section-title-row">
+                <div>
+                  <h2>Event Detail</h2>
+                  <p>{eventDetail.event?.title || eventDetail.event?.eventTitle || "Selected event"}</p>
+                </div>
+                <button className="icon-button" title="Close event detail" onClick={() => setEventDetail(null)}>
+                  <ChevronDown size={18} />
+                </button>
+              </div>
+              <div className="detail-grid">
+                <div>
+                  <h3>Metadata</h3>
+                  <dl className="kv-list">
+                    <div>
+                      <dt>miEventId</dt>
+                      <dd>{eventDetail.event?.miEventId || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Summary</dt>
+                      <dd>{eventDetail.event?.oneLineSummary || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Event Type L1</dt>
+                      <dd>{eventDetail.event?.eventTypeL1?.label || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Event Type L2</dt>
+                      <dd>{eventDetail.event?.eventTypeL2?.label || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Related Scenario Group</dt>
+                      <dd>{eventDetail.event?.relatedScenarioGroup?.scenarioGroupId || "none"}</dd>
+                    </div>
+                  </dl>
+                </div>
+                <div>
+                  <h3>Scenario Template</h3>
+                  <div className="template-list">
+                    {(eventDetail.scenarioTemplate?.dimensions || []).map((dimension: Record<string, any>) => (
+                      <span key={dimension.key || dimension.label} className="event-type">
+                        {dimension.label || dimension.key}
+                      </span>
+                    ))}
+                    {!(eventDetail.scenarioTemplate?.dimensions || []).length ? <span className="muted-text">No template dimensions</span> : null}
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : null}
           <div className="table-wrap">
             <table className="event-table">
               <thead>
@@ -738,6 +927,8 @@ function EventWorkspace({
                   <th>Status</th>
                   <th>Date/Time</th>
                   <th>Category</th>
+                  <th>L1</th>
+                  <th>L2</th>
                   <th>Event</th>
                   <th>JKM</th>
                   <th>TTF</th>
@@ -753,8 +944,19 @@ function EventWorkspace({
                     </td>
                     <td>{event.eventTime}</td>
                     <td>{event.category}</td>
+                    <td>{event.eventTypeL1?.label || "-"}</td>
+                    <td>{event.eventTypeL2?.label || "-"}</td>
                     <td>
-                      <strong>{event.title}</strong>
+                      <button
+                        className="link-button"
+                        onClick={(clickEvent) => {
+                          clickEvent.stopPropagation();
+                          void openEventDetail(event);
+                        }}
+                      >
+                        {event.title}
+                      </button>
+                      {event.summary ? <span className="event-summary">{event.summary}</span> : null}
                       {String(event.miEventId) === runtime.miEventId ? <span className="selected-note">selected</span> : null}
                     </td>
                     {(["JKM", "TTF", "HH"] as const).map((market) => (
@@ -766,26 +968,55 @@ function EventWorkspace({
                       <button
                         className="icon-button"
                         aria-label="Start scenario design"
-                        title="Start scenario design"
+                        title={event.scenarioActionState?.reason || event.scenarioActionState?.label || "Start scenario design"}
+                        disabled={event.scenarioActionState?.disabled}
                         onClick={(clickEvent) => {
                           clickEvent.stopPropagation();
+                          if (event.scenarioActionState?.type === "open_detail" && event.relatedScenarioGroup?.scenarioGroupId) {
+                            onOpenGroupDetail({
+                              scenarioGroupId: event.relatedScenarioGroup.scenarioGroupId,
+                              title: event.relatedScenarioGroup.title || event.title,
+                              baseEventTitle: event.title,
+                              miEventId: event.miEventId,
+                              status: event.relatedScenarioGroup.status,
+                              stage: event.relatedScenarioGroup.stage,
+                              scenarioCount: event.relatedScenarioGroup.scenarioCount || 0,
+                              signpostCount: event.relatedScenarioGroup.signpostCount || 0,
+                              deleted: Boolean(event.relatedScenarioGroup.deleted),
+                              delYn: event.relatedScenarioGroup.deleted ? "Y" : "N",
+                              source: "event_row"
+                            });
+                            return;
+                          }
                           onStartEvent(event);
                         }}
                       >
                         <Sparkles size={18} />
                       </button>
+                      {event.relatedScenarioGroup?.scenarioGroupId ? <span className="selected-note">SG {event.relatedScenarioGroup.scenarioGroupId}</span> : null}
                     </td>
                   </tr>
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td colSpan={8}>
-                      <div className="empty-table-message">조건에 맞는 이벤트가 없습니다. 필터를 조정하거나 runtime bar에서 miEventId를 직접 입력하세요.</div>
+                    <td colSpan={10}>
+                      <div className="empty-table-message">
+                        {eventLoading ? "Event List를 불러오는 중입니다." : "조건에 맞는 이벤트가 없습니다. 필터를 조정하거나 runtime bar에서 miEventId를 직접 입력하세요."}
+                      </div>
                     </td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
+          </div>
+          <div className="pagination-row">
+            <button className="button secondary" disabled={eventLoading || !eventHasPrevious} onClick={() => loadEvents(eventPage - 1)}>
+              Previous
+            </button>
+            <span>Page {eventPage}</span>
+            <button className="button secondary" disabled={eventLoading || !eventHasNext} onClick={() => loadEvents(eventPage + 1)}>
+              Next
+            </button>
           </div>
         </>
       ) : (
@@ -954,7 +1185,7 @@ function StepOne({
   onReset
 }: {
   model: ScenarioDesignModel;
-  validation: { state: "idle" | "warning" | "success"; message: string; recommendation: string };
+  validation: { state: "idle" | "waiting" | "warning" | "success"; message: string; recommendation: string };
   pendingAction: string;
   onBack: () => void;
   onUpdateRow: (id: string, patch: Partial<ScenarioRow>) => void;
@@ -1038,8 +1269,8 @@ function StepOne({
         </button>
         {validation.state !== "idle" ? (
           <Callout
-            tone={validation.state === "warning" ? "warning" : "success"}
-            title={validation.state === "warning" ? "값 조합 적합성" : "Validation requested"}
+            tone={validation.state === "warning" ? "warning" : validation.state === "waiting" ? "info" : "success"}
+            title={validation.state === "warning" ? "값 조합 적합성" : validation.state === "waiting" ? "Validation waiting" : "Validation complete"}
             message={validation.message}
             action={validation.recommendation}
           />
@@ -1522,7 +1753,7 @@ function BottomBar({ children }: { children: ReactNode }) {
   return <div className="bottom-bar">{children}</div>;
 }
 
-function Callout({ tone, title, message, action }: { tone: "warning" | "error" | "success"; title: string; message: string; action: string }) {
+function Callout({ tone, title, message, action }: { tone: "warning" | "error" | "success" | "info"; title: string; message: string; action: string }) {
   return (
     <div className={`callout ${tone}`}>
       <AlertTriangle size={18} />

@@ -15,6 +15,12 @@ class AgentClient:
     async def create_scenario_group(self, payload: JsonObject) -> JsonObject:
         return await self._request("create", "POST", "/scenario-groups", json=payload)
 
+    async def list_events(self, params: dict[str, Any]) -> JsonObject:
+        return await self._request("events", "GET", "/events", params=params)
+
+    async def get_event(self, mi_event_id: int) -> JsonObject:
+        return await self._request("event_detail", "GET", f"/events/{mi_event_id}")
+
     async def get_scenario_group(self, scenario_group_id: int, include_deleted: bool = False) -> JsonObject:
         return await self._request(
             "detail",

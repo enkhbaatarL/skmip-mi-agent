@@ -120,14 +120,16 @@ The product may simplify:
 1. The user opens Backoffice and sees the `Event List` tab.
 2. The user filters events or enters `miEventId` manually from the runtime QA bar.
 3. The user clicks the scenario action on an event row.
-4. Backoffice calls Agent `POST /scenario-groups` and creates a local `runId`.
-5. The UI moves to Scenario Design step 1 and shows a skeleton/loading state while waiting for generation output.
-6. When the generation callback or detail refresh arrives, the branch criteria table becomes editable.
+4. If no scenario group exists for the event, Backoffice calls Agent `POST /scenario-groups` and creates a local `runId`.
+5. If a scenario group already exists and its Agent `status` is `creating`, Backoffice attaches to the existing `scenarioGroupId` and continues from the Agent `stage`.
+6. The UI moves to the matching Scenario Design step and shows a skeleton/loading state while waiting for callback or detail output.
+7. When the generation callback or detail refresh arrives, the branch criteria table becomes editable.
 
 Expected outcome:
 
 - The user can identify the selected base event and the generated branch criteria.
 - The accepted response, generation callback, and normalized UI model are visible in the QA inspector.
+- Existing `creating` scenario groups are not treated as completed detail-only rows; the user can continue the creation workflow from the latest `stage`.
 
 #### Scenario B: Review and validate branch criteria
 
@@ -136,13 +138,15 @@ Expected outcome:
 3. The user clicks `변경사항 검토`.
 4. Backoffice sends the edited table as the validation request body.
 5. The screen keeps the table visible and shows a request overlay while validation is in progress.
-6. When validation returns, the warning or success result is shown below the table.
+6. The accepted response only moves the run to `validation_waiting_callback`; it does not show validation success by itself.
+7. When the validation callback arrives, the warning or success result is shown below the table.
 
 Expected outcome:
 
 - Validation warnings identify the affected scenario, invalid combination, reason, and recommended fix direction.
 - `검토 완료` is enabled only when the run is valid or the latest detail state is compatible with progression.
 - Edited table data is not discarded by validation callbacks, failed callbacks, or delayed SSE.
+- The UI shows the validation callback body result on screen instead of asking the tester to check the callback body manually.
 
 #### Scenario C: Review one-view content and confirm
 
@@ -179,6 +183,8 @@ Use FastAPI for the Backoffice backend.
 
 Agent API proxy endpoints:
 
+- `GET /backoffice/api/events`
+- `GET /backoffice/api/events/{mi_event_id}`
 - `POST /backoffice/api/runs/scenario-groups`
 - `GET /backoffice/api/scenario-groups`
 - `GET /backoffice/api/scenario-groups/{scenario_group_id}`
@@ -225,16 +231,43 @@ State:
 Backoffice-specific read models:
 
 - Event list read model
-  - v1 may be backed by manual input, mocked fixture data, or Agent/API data if available.
+  - Prefer Agent/API data when available; fallback fixture or empty data must expose clear `source` metadata.
   - Must expose the event fields needed by the first screenshot flow:
     - `miEventId`
     - event title
+    - one-line summary
     - event time
+    - `occurredAt`
+    - latest and oldest related record first-created timestamps
     - category
+    - Event Type L1 code and label
+    - Event Type L2 code and label
     - updated/new status
     - recommended flag
+    - `signalYn`, `signalConfidence`, and signal reason when available
+    - `scenarioSuggestYn` and scenario suggest reason when available
+    - tags
     - market impact summaries for `JKM`, `TTF`, and `HH`
     - scenario availability/action state
+    - related scenario group summary when one exists:
+      - `scenarioGroupId`
+      - `status`
+      - `stage`
+      - deleted state
+      - scenario count
+      - signpost count
+  - Must expose pagination metadata for `next` and `previous` button behavior.
+- Event detail read model
+  - Must expose the fields needed by the Event Detail screen:
+    - event metadata and content from the Event list read model
+    - detail analysis body
+    - key bullets
+    - source MI record IDs
+    - Event Type L1 code and label
+    - Event Type L2 code and label
+    - scenario dimension template for the event's `eventTypeL2Id`
+    - raw template JSON for QA
+    - related scenario group summary and action state
 - Scenario design read model
   - Must normalize Agent callback/detail payloads into a structure that supports both step 1 table editing and step 2 one-view cards.
   - Must keep the original raw payload separately from the normalized UI model.
@@ -272,9 +305,18 @@ Backoffice API namespace:
 
 Backend proxy contract:
 
+- `GET /backoffice/api/events`
+  - Lists MI events for the Event List tab.
+  - Query supports `agentBaseUrl`, keyword, new/updated status, event type filters, recommended-only, date range, sort, and paging fields.
+  - Response includes normalized event rows, pagination metadata, row action state, and raw Agent/list source payload when available.
+  - If the Agent does not provide an event list endpoint in the current environment, Backoffice may return fixture or empty rows, but the response must clearly identify the fallback source and limitation.
+- `GET /backoffice/api/events/{mi_event_id}`
+  - Returns the Event Detail read model for one event.
+  - Response includes event information, Event Type L1/L2 labels, scenario dimension template, related scenario group summary, and raw source payloads.
 - `POST /backoffice/api/runs/scenario-groups`
   - Request includes `agentBaseUrl`, `miEventId`, `userId`, and optional QA metadata.
   - Response includes a generated `runId`, local lifecycle state, Agent accepted response, and `scenarioGroupId` when present.
+  - If the event already has a non-deleted scenario group with Agent `status=creating`, Backoffice attaches to that `scenarioGroupId` and continues from its current `stage` instead of treating the row as completed detail-only state.
 - `GET /backoffice/api/scenario-groups`
   - Lists scenario groups for the Scenario Group List tab.
   - Query supports `agentBaseUrl`, `includeDeleted`, optional `miEventId`, optional keyword, optional status/stage filters, and optional paging fields.
@@ -303,7 +345,9 @@ Backend proxy contract:
 Normalized frontend model:
 
 - `eventList`
-  - Events with filterable fields and market impact indicators.
+  - Events with filterable fields, market impact indicators, Event Type labels, pagination metadata, related scenario group summaries, and action states.
+- `eventDetail`
+  - Selected event metadata, analysis, Event Type labels, scenario dimension template, related scenario group summary, and raw source payloads.
 - `scenarioGroupList`
   - Scenario group rows, filters, paging metadata when available, list source, include-deleted state, and latest delete result.
 - `branchCriteriaDraft`
@@ -341,6 +385,15 @@ The lifecycle must separate request progress from callback progress:
 
 UI step states must be derivable from lifecycle plus latest Agent `status`/`stage`; the UI must not infer success solely from an HTTP 202/accepted response.
 
+Continue-generation mapping from Agent `status`/`stage`:
+
+- `creating` + `ready`: generation has been accepted but scenario draft output is not reflected yet; open Scenario Design step 1 in loading state and wait for generation callback or detail refresh.
+- `creating` + `scenario_created`: scenario draft exists; open Scenario Design step 1 with branch criteria editing.
+- `creating` + `scenario_validated`: validation is complete; open Scenario Design step 2 and allow signpost generation/review.
+- `creating` + `signpost_created`: signposts exist; open Scenario Design step 2 and allow confirmation.
+- `created` + `completed`: confirmation is complete; open Scenario Group Detail.
+- Validation failure keeps the group at `creating` + `scenario_created`; the UI stays on step 1 and displays the validation callback result for correction.
+
 Each run must track step-level state separately from Agent `status` and `stage` so the UI can show local request progress even when the Agent detail endpoint has not yet refreshed.
 
 Required run fields:
@@ -371,6 +424,7 @@ Callback handling:
 - Callback payloads that arrive before a run is bound to `scenarioGroupId` must be stored as orphan callbacks and attached after the accepted create response is known.
 - A callback with `result=failure` sets the local step to failed, preserves prior successful UI data, and keeps raw failure payload visible.
 - Callback receiver responses must be fast and return 2xx after local persistence/pub-sub succeeds; expensive detail refreshes should happen asynchronously or from the frontend refresh path.
+- Validation accepted responses must not render a success/warning validation result. The frontend should display callback waiting state until the validation callback or detail-compatible validation state arrives.
 
 SSE events:
 
@@ -406,6 +460,7 @@ Required UI:
 
 - Compact runtime controls for Agent Base URL, `miEventId`, `userId`, `runId`, and `scenarioGroupId`.
 - Event List / Scenario Group List entry area.
+- Event Detail screen with Event Type and template inspection.
 - Scenario Group List table with search/filter controls, detail navigation, and soft-delete action.
 - Scenario Design step 1 table editor.
 - Scenario Design step 2 one-view card editor.
@@ -419,6 +474,9 @@ Required UI:
 
 Frontend behavior:
 
+- Load Event List from Backoffice event API when available and keep fallback source visible in QA inspector.
+- Open Event Detail from an Event List row without losing runtime QA controls.
+- Use Event List row action state to either create a new scenario group, attach to an existing `creating` group and continue, or open completed detail.
 - Open an SSE connection after a run is created.
 - Apply callback events to screen state without page refresh.
 - Refresh Scenario Group List after creation confirmation, detail refresh, and successful soft delete.
@@ -426,6 +484,7 @@ Frontend behavior:
 - Keep soft delete disabled while another delete request for the same row is in flight.
 - Show soft delete success/failure in the row state, timeline, and raw JSON inspector.
 - Build validation, signpost, and confirmation request bodies from the current table state.
+- After validation accepted response, show `validation_waiting_callback` progress and wait for `validation_result`/callback before rendering validation outcome.
 - Allow manual refresh when callback or SSE is delayed.
 - Preserve enough local screen state to continue after a transient frontend reload when a `run_id` is known.
 - Keep visible data on screen during loading overlays; do not blank the page when a request is pending.
@@ -460,26 +519,79 @@ Required elements:
   - updated/new badge
   - date/time
   - category
+  - Event Type L1 label
+  - Event Type L2 label
   - event title
+  - one-line summary
+  - signal/recommended state
   - `JKM`
   - `TTF`
   - `HH`
   - scenario action
 - Event row behavior:
   - selecting a row highlights it and updates the runtime QA bar `miEventId`
-  - clicking the scenario action starts a new run when no active run exists
+  - clicking the event title or detail action opens Event Detail
+  - clicking the scenario action starts a new run when no related scenario group exists
+  - when a related scenario group exists and Agent `status=creating`, clicking `생성하기` attaches to that group and continues from the latest `stage`
+  - when a related scenario group exists and Agent `status=created` with `stage=completed`, clicking `상세보기` opens Scenario Group Detail
   - when a run exists, the UI must ask the user to reset or continue before replacing local draft state
   - rows without scenario generation availability show a disabled action and reason tooltip or inline reason
+- Event row scenario action labels:
+  - no scenario group: `생성하기`
+  - scenario group `creating` + `ready`: `생성하기`, opens step 1 loading/waiting state
+  - scenario group `creating` + `scenario_created`: `생성하기`, opens step 1 review
+  - scenario group `creating` + `scenario_validated`: `생성하기`, opens step 2 review/signpost flow
+  - scenario group `creating` + `signpost_created`: `생성하기`, opens step 2 confirmation-ready flow
+  - scenario group `created` + `completed`: `상세보기`
 - Market impact indicators should preserve the screenshot semantics:
   - market label badge such as `S` or `L`
   - red/green/gray directional bars
   - compact row density for scanning many events
 - Empty state:
   - if no event fixture/API data exists, keep manual `miEventId` input visible and show an empty event table message.
+- Pagination:
+  - show `Previous` and `Next` buttons below the Event List table.
+  - disable `Previous` on the first page and disable `Next` when no next page exists.
+  - keep filters and selected row stable while moving between pages.
 - Backoffice QA overlay:
   - runtime controls and raw JSON inspector may be present, but must not replace the Event List as the first meaningful screen.
 
-#### 5.4.1.1 Scenario Group List
+#### 5.4.1.1 Event Detail
+
+Purpose: inspect the source event and template before or during scenario generation.
+
+Required elements:
+
+- Same `Next-Gen MI` page context and tabs as Event List.
+- Back action to Event List preserving filters and selected `miEventId`.
+- Event metadata section:
+  - `miEventId`
+  - event title
+  - one-line summary
+  - occurred time and related record time range
+  - new/updated badge
+  - signal/recommended state and reasons
+  - tags
+- Event Type section:
+  - Event Type L1 ID/code/label
+  - Event Type L2 ID/code/label
+- Event content section:
+  - key bullets
+  - detail analysis
+  - source MI record IDs
+- Scenario template section:
+  - dimension key
+  - dimension label
+  - required state
+  - enum values
+  - raw template JSON in QA inspector
+- Related Scenario Group section:
+  - no group: `생성하기`
+  - `status=creating`: `생성하기` and continue from current `stage`
+  - `status=created` + `stage=completed`: `상세보기`
+  - show `scenarioGroupId`, `status`, `stage`, scenario count, signpost count, and deleted state when available.
+
+#### 5.4.1.2 Scenario Group List
 
 Purpose: find existing scenario groups, open detail, and remove local test data with soft delete.
 

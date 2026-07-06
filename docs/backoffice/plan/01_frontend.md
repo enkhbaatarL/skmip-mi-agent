@@ -26,28 +26,60 @@ Source requirements:
 - [x] Implement Scenario Design step 2 one-view scenario card editor, signpost generation request, and confirmation request.
 - [x] Implement Scenario Group detail tabs with summary, assumptions, price outlook placeholder, scenario detail, timeline, and raw JSON inspector.
 - [x] Verify with local static checks where possible.
-- [ ] Add Scenario Group List API client calls:
+- [x] Add Event List API client calls:
+  - `GET /backoffice/api/events`
+  - `GET /backoffice/api/events/{miEventId}`
+- [x] Replace seed-only Event List data with API-backed rows and explicit fallback source state.
+- [x] Extend Event List types and UI fields:
+  - Event Type L1/L2 labels
+  - one-line summary
+  - signal/recommended state and reasons
+  - related scenario group `scenarioGroupId`, `status`, `stage`, counts, and deleted state
+  - pagination metadata
+- [x] Add Event List `Previous` and `Next` controls that preserve filters and selected `miEventId`.
+- [x] Add Event Detail workspace:
+  - event metadata and analysis
+  - Event Type L1/L2 IDs/codes/labels
+  - scenario dimension template table
+  - raw event/template JSON inspector evidence
+  - related scenario group action area
+- [x] Implement Event row scenario action policy:
+  - no scenario group: `생성하기` starts a new run
+  - `status=creating`: `생성하기` attaches to the existing `scenarioGroupId` and continues by `stage`
+  - `status=created` + `stage=completed`: `상세보기` opens Scenario Group detail
+- [x] Implement full `status/stage` workspace routing for continuing existing groups:
+  - `creating` + `ready`: Step 1 loading/waiting state
+  - `creating` + `scenario_created`: Step 1 branch criteria review
+  - `creating` + `scenario_validated`: Step 2 one-view/signpost flow
+  - `creating` + `signpost_created`: Step 2 confirmation-ready flow
+  - `created` + `completed`: Scenario Group detail
+- [x] Update validation UX so accepted response only shows callback-waiting state:
+  - remove any message that tells the user to check callback body manually
+  - show `validation_waiting_callback` progress after accepted
+  - render validation callback result in the Step 1 validation callout
+  - enable `검토 완료` based on callback/detail result, not accepted response alone
+- [x] Add Scenario Group List API client calls:
   - `GET /backoffice/api/scenario-groups`
   - `DELETE /backoffice/api/scenario-groups/{scenarioGroupId}`
-- [ ] Add Scenario Group List normalized types, row state, filter state, and delete result state.
-- [ ] Replace the current placeholder/list entry with a real Scenario Group List table:
+- [x] Add Scenario Group List normalized types, row state, filter state, and delete result state.
+- [x] Replace the current placeholder/list entry with a real Scenario Group List table:
   - keyword search
   - status/stage filters
   - date range/sort controls
   - include-deleted toggle
   - refresh action
-- [ ] Add detail navigation from Scenario Group List rows using existing detail workspace.
-- [ ] Add soft-delete confirmation dialog:
+- [x] Add detail navigation from Scenario Group List rows using existing detail workspace.
+- [x] Add soft-delete confirmation dialog:
   - target summary
   - delete authorization input or configured token selector
   - request loading state
   - failure callout
-- [ ] Update list rows after soft delete:
+- [x] Update list rows after soft delete:
   - remove row when include-deleted is off
   - keep row with deleted badge when include-deleted is on
   - record raw delete request/response/error in QA inspector
-- [ ] Add focused frontend verification for Scenario Group List filters, detail action, delete confirm/cancel, delete success, and delete failure.
-- [ ] Update end-to-end test flow so every generated Scenario Group finishes with Scenario Group List detail check and soft-delete cleanup.
+- [x] Add focused frontend verification for Scenario Group List filters, detail action, delete confirm/cancel, delete success, and delete failure.
+- [x] Update end-to-end test flow so every generated Scenario Group finishes with Scenario Group List detail check and soft-delete cleanup.
 
 ## Implementation Notes
 
@@ -55,6 +87,10 @@ Source requirements:
 - The UI keeps editable frontend state as the source for validation, signpost, and confirmation request bodies.
 - SSE events are consumed from `/backoffice/api/runs/{runId}/events` after run creation and added to the timeline/raw inspector.
 - Until the backend exists, the UI includes realistic local seed data so the first screen is a usable Next-Gen MI workflow console instead of a landing page.
+- Event List should prefer `/backoffice/api/events`; seed data is only a fallback and must be labeled as fallback in QA/debug state.
+- Event Detail must be reachable from Event List without clearing runtime controls, active run, timeline, or raw inspector history.
+- Existing `creating` scenario groups are continuation targets. The `생성하기` button should attach to the existing group and route by Agent `stage`, not force duplicate creation.
+- Validation accepted response is request acknowledgement only. Validation warning/success UI must wait for callback, SSE `validation_result`, or a detail state compatible with the validation result.
 - Integration adjustment: API normalizer reads the backend `RunOut` wrapper (`run`, `run.normalized`, `run.detail`) and confirmation request bodies use the Agent-compatible `scenarioGroup + table` shape.
 - New Scenario Group List work must preserve the Event List as the first meaningful screen while making the `Scenario Group List` tab a complete list/detail/delete workspace.
 - Soft delete must call only Backoffice's soft-delete proxy. The frontend must not expose hard delete.

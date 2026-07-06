@@ -20,28 +20,51 @@
 - [x] Implement FastAPI routes for Backoffice proxy APIs, Agent callback receivers, OAuth2 token mock, SSE, and static dist serving.
 - [x] Run compile/import verification without network installs.
 - [x] Document changed files and local execution/verification steps.
-- [ ] Add Backoffice Scenario Group List endpoint:
+- [x] Add Backoffice Event List endpoint:
+  - `GET /backoffice/api/events`
+  - query: `agentBaseUrl`, keyword, new/updated status, event type filters, recommended-only, date range, sort, paging
+  - response: normalized event rows, pagination metadata, source metadata, and raw source payload when available
+- [x] Add Backoffice Event Detail endpoint:
+  - `GET /backoffice/api/events/{mi_event_id}`
+  - response: event detail, Event Type L1/L2 labels, scenario dimension template, related scenario group summary, and raw source payloads
+- [x] Extend `AgentClient` with event list/detail methods:
+  - prefer Agent `GET /events`
+  - prefer Agent `GET /events/{mi_event_id}`
+  - return clear fallback metadata when Agent event APIs are unavailable
+- [x] Add schemas for event list rows, event detail, event type labels, scenario template dimensions, related scenario group summary, action state, and pagination metadata.
+- [x] Normalize event row action state:
+  - `create` when no scenario group exists
+  - `continue_generation` when related scenario group `status=creating`
+  - `open_detail` when related scenario group `status=created` and `stage=completed`
+  - `disabled` when event is not scenario-generatable or deleted
+- [x] Preserve `status/stage` on `continue_generation` rows so the frontend can route to the correct Scenario Design step.
+- [x] Keep seed/empty fallback for Event List only as a labeled fallback source; do not silently mix fixture rows with Agent rows.
+- [x] Update validation accepted/callback handling:
+  - accepted validation response sets local lifecycle to `validation_waiting_callback`
+  - no validation success/warning is emitted from accepted alone
+  - validation callback publishes SSE `validation_result` with normalized display fields and raw payload
+- [x] Add Backoffice Scenario Group List endpoint:
   - `GET /backoffice/api/scenario-groups`
   - query: `agentBaseUrl`, `includeDeleted`, optional `miEventId`, keyword, status, stage, date range, sort, paging
   - response: normalized rows, source metadata, raw source payload when available
-- [ ] Decide list source strategy for current Agent capability:
+- [x] Decide list source strategy for current Agent capability:
   - prefer Agent persisted list endpoint if available
   - otherwise merge Backoffice in-memory runs and fixture/demo rows
   - clearly expose `source` and limitations in the response
-- [ ] Add Backoffice soft-delete endpoint:
+- [x] Add Backoffice soft-delete endpoint:
   - `DELETE /backoffice/api/scenario-groups/{scenario_group_id}`
   - proxy only Agent `DELETE /scenario-groups/{scenario_group_id}`
   - accept `agentBaseUrl`, `userId`, and delete authorization
   - never call Agent hard-delete endpoint
-- [ ] Extend `AgentClient` with list and soft-delete methods, including authorization header forwarding for delete.
-- [ ] Extend schemas for scenario group list rows, list filters, list response metadata, delete request, and delete result.
-- [ ] Update store/run behavior after soft delete:
+- [x] Extend `AgentClient` with list and soft-delete methods, including authorization header forwarding for delete.
+- [x] Extend schemas for scenario group list rows, list filters, list response metadata, delete request, and delete result.
+- [x] Update store/run behavior after soft delete:
   - mark matching run/detail/list row as deleted
   - append timeline event
   - preserve accepted/callback/detail raw history
   - publish SSE event for list/detail refresh if a run is bound
-- [ ] Add backend tests or smoke checks for list empty/source metadata, delete success, delete authorization failure, delete non-existent group, and include-deleted detail refresh.
-- [ ] Support test cleanup flow:
+- [x] Add backend tests or smoke checks for list empty/source metadata, delete success, delete authorization failure, delete non-existent group, and include-deleted detail refresh.
+- [x] Support test cleanup flow:
   - generated group can be found from list by `scenarioGroupId`
   - detail can be opened before deletion
   - delete result is inspectable
@@ -67,6 +90,15 @@
   - `DELETE /backoffice/api/scenario-groups/{scenario_group_id}` forwards only the Agent soft-delete request.
   - delete result is recorded without removing local run history.
   - generated Scenario Groups can be cleaned up at the end of end-to-end tests.
+- Planned Event verification:
+  - `GET /backoffice/api/events` returns rows with Event Type L1/L2 labels, scenario group summary, action state, and pagination metadata.
+  - `GET /backoffice/api/events/{mi_event_id}` returns event detail, template dimensions, related scenario group summary, and raw source payloads.
+  - Event API fallback responses expose `source` and `fallbackReason`.
+  - `continue_generation` action state is produced for `status=creating` groups with the original Agent `stage`.
+- Planned validation callback verification:
+  - accepted validation response does not emit a success validation result.
+  - validation callback emits `validation_result`.
+  - failure callback keeps raw payload and updates the run without clearing current draft data.
 - Lint note:
   - `.venv/bin/ruff check backoffice/backend` was not run because `ruff` is not installed in the local virtualenv.
 

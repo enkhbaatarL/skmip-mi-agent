@@ -59,10 +59,10 @@ def check_existing_scenario_group(state: CreateScenariosState) -> dict[str, obje
         }
     if existing.status == ScenarioGroupStatus.CREATING.value:
         if existing.request_usr_id == state.user_id:
-            raise MIBaseError(
-                ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
-                detail=f"초안 생성 완료. 다음 단계를 진행해주세요. 시나리오 그룹 ID: {existing.scenario_group_id}",
-            )
+            return {
+                "scenario_group_id": existing.scenario_group_id,
+                "scenario_group": existing,
+            }
         raise MIBaseError(
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",

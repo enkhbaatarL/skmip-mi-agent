@@ -73,6 +73,81 @@ def _normalize_probability_scores_to_100(
 
 
 class ScenarioGroupService:
+    def list_groups(
+        self,
+        *,
+        include_deleted: bool = False,
+        mi_event_id: int | None = None,
+        keyword: str | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+        sort: str = "latest",
+    ) -> dict[str, Any]:
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            group_repository = ScenarioGroupRepository(session=session)
+            scenario_repository = ScenarioRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+            groups = group_repository.list_for_backoffice(
+                include_deleted=include_deleted,
+                mi_event_id=mi_event_id,
+                keyword=keyword,
+                status=status,
+                stage=stage,
+                sort=sort,
+            )
+            rows: list[dict[str, Any]] = []
+            for group in groups:
+                scenarios = scenario_repository.fetch_models_by_group_id(
+                    int(group.scenario_group_id),
+                    include_deleted=include_deleted,
+                )
+                signposts = signpost_repository.fetch_models_by_scenario_ids(
+                    [int(scenario.scenario_id) for scenario in scenarios],
+                    include_deleted=include_deleted,
+                )
+                status_value = group.status.value if hasattr(group.status, "value") else group.status
+                stage_value = group.stage.value if hasattr(group.stage, "value") else group.stage
+                rows.append(
+                    {
+                        "scenarioGroupId": int(group.scenario_group_id),
+                        "scenario_group_id": int(group.scenario_group_id),
+                        "title": group.title,
+                        "baseEventTitle": None,
+                        "miEventId": int(group.mi_event_id),
+                        "mi_event_id": int(group.mi_event_id),
+                        "status": status_value,
+                        "stage": stage_value,
+                        "scenarioCount": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
+                        "scenario_count": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
+                        "signpostCount": len([signpost for signpost in signposts if signpost.del_yn != "Y"]),
+                        "signpost_count": len([signpost for signpost in signposts if signpost.del_yn != "Y"]),
+                        "createdAt": group.crt_dtm.isoformat() if group.crt_dtm else None,
+                        "created_at": group.crt_dtm.isoformat() if group.crt_dtm else None,
+                        "updatedAt": group.mod_dtm.isoformat() if group.mod_dtm else None,
+                        "updated_at": group.mod_dtm.isoformat() if group.mod_dtm else None,
+                        "deleted": group.del_yn == "Y",
+                        "delYn": group.del_yn,
+                        "del_yn": group.del_yn,
+                    }
+                )
+            return {
+                "rows": rows,
+                "meta": {
+                    "source": "agent_db",
+                    "total": len(rows),
+                    "returned": len(rows),
+                    "includeDeleted": include_deleted,
+                    "include_deleted": include_deleted,
+                },
+            }
+        finally:
+            session.close()
+
     def load_by_id(self, scenario_group_id: int) -> ScenarioGroupPayload | None:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,

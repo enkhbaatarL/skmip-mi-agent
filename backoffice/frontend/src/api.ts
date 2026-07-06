@@ -1,4 +1,4 @@
-import type { ApiRunResponse, ScenarioDesignModel, ScenarioGroupListResponse, ScenarioRow, Signpost, TableHeader } from "./types";
+import type { ApiRunResponse, EventListResponse, ScenarioDesignModel, ScenarioGroupListResponse, ScenarioRow, Signpost, TableHeader } from "./types";
 
 const API_ROOT = "/backoffice/api";
 
@@ -31,6 +31,25 @@ export function createScenarioGroup(body: CreateScenarioGroupBody) {
 
 export function refreshScenarioGroup(scenarioGroupId: string) {
   return requestJson<unknown>(`/scenario-groups/${encodeURIComponent(scenarioGroupId)}`);
+}
+
+export function listEvents(params: EventListParams) {
+  const query = new URLSearchParams();
+  if (params.agentBaseUrl) query.set("agentBaseUrl", params.agentBaseUrl);
+  if (params.keyword) query.set("keyword", params.keyword);
+  if (params.status) query.set("status", params.status);
+  if (params.recommendedOnly) query.set("recommendedOnly", "true");
+  if (params.sort) query.set("sort", params.sort);
+  query.set("page", String(params.page));
+  query.set("pageSize", String(params.pageSize));
+  return requestJson<EventListResponse>(`/events?${query.toString()}`);
+}
+
+export function fetchEventDetail(miEventId: number, agentBaseUrl: string) {
+  const query = new URLSearchParams();
+  if (agentBaseUrl) query.set("agentBaseUrl", agentBaseUrl);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return requestJson<unknown>(`/events/${encodeURIComponent(miEventId)}${suffix}`);
 }
 
 export function listScenarioGroups(params: ScenarioGroupListParams) {
@@ -96,6 +115,16 @@ export type ScenarioGroupListParams = {
   stage: string;
   miEventId: string;
   sort: string;
+};
+
+export type EventListParams = {
+  agentBaseUrl: string;
+  keyword: string;
+  status: string;
+  recommendedOnly: boolean;
+  sort: string;
+  page: number;
+  pageSize: number;
 };
 
 export type DeleteScenarioGroupBody = {

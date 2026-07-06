@@ -139,6 +139,81 @@ class ScenarioGroupListOut(ApiModel):
     raw_source: JsonObject | None = None
 
 
+class EventTypeInfo(ApiModel):
+    id: int | None = None
+    code: str = ""
+    label: str = ""
+
+
+class RelatedScenarioGroupSummary(ApiModel):
+    scenario_group_id: int | None = None
+    status: str | None = None
+    stage: str | None = None
+    deleted: bool = False
+    del_yn: str = "N"
+    scenario_count: int = 0
+    signpost_count: int = 0
+    title: str | None = None
+
+
+class EventActionState(ApiModel):
+    type: str = "create"
+    label: str = "생성하기"
+    disabled: bool = False
+    reason: str | None = None
+
+
+class EventListRow(ApiModel):
+    mi_event_id: int
+    title: str = ""
+    one_line_summary: str = ""
+    event_time: str = ""
+    occurred_at: str = ""
+    latest_record_first_created: str = ""
+    oldest_record_first_created: str = ""
+    category: str = ""
+    event_type_l1: EventTypeInfo = Field(default_factory=EventTypeInfo)
+    event_type_l2: EventTypeInfo = Field(default_factory=EventTypeInfo)
+    new_yn: str = "Y"
+    signal_yn: str = "N"
+    signal_confidence: float | None = None
+    signal_reason: str | None = None
+    scenario_suggest_yn: str = "N"
+    scenario_suggest_reason: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    market_impacts: JsonObject = Field(default_factory=dict)
+    related_scenario_group: RelatedScenarioGroupSummary | None = None
+    scenario_action_state: EventActionState = Field(default_factory=EventActionState)
+    raw: JsonObject = Field(default_factory=dict)
+
+
+class EventPagination(ApiModel):
+    page: int = 1
+    page_size: int = 20
+    total: int = 0
+    has_previous: bool = False
+    has_next: bool = False
+
+
+class EventListMeta(ApiModel):
+    source: str = "backoffice_empty"
+    fallback_reason: str | None = None
+
+
+class EventListOut(ApiModel):
+    rows: list[EventListRow] = Field(default_factory=list)
+    pagination: EventPagination = Field(default_factory=EventPagination)
+    meta: EventListMeta = Field(default_factory=EventListMeta)
+    raw_source: JsonObject | None = None
+
+
+class EventDetailOut(ApiModel):
+    event: EventListRow
+    scenario_template: JsonObject = Field(default_factory=dict)
+    meta: EventListMeta = Field(default_factory=EventListMeta)
+    raw_source: JsonObject | None = None
+
+
 class DeleteScenarioGroupIn(StrictApiModel):
     agent_base_url: str = Field(min_length=1)
     user_id: int

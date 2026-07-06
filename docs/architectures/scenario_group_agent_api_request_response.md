@@ -76,6 +76,26 @@ sequenceDiagram
 
 ## API
 
+### 0) Event 목록/상세 조회
+
+Backoffice Event List와 Event Detail 화면을 위한 조회 API입니다.
+
+- `GET /events`
+  - Query: `keyword`, `status`(`new`/`updated`), `eventTypeL1Id`, `eventTypeL2Id`, `recommendedOnly`, `dateFrom`, `dateTo`, `sort`, `page`, `pageSize`
+  - Response: `rows`, `pagination`, `source`
+  - 각 row는 `miEventId`, title/summary/time/category, Event Type L1/L2, signal/recommended metadata, market impact summary, `relatedScenarioGroup`, `scenarioActionState`를 포함합니다.
+  - `scenarioActionState.type`은 `create`, `continue_generation`, `open_detail`, `disabled` 중 하나입니다.
+- `GET /events/{mi_event_id}`
+  - Response: `event`, `scenarioTemplate`, `source`
+  - `scenarioTemplate`은 event type L2 기준 `tmm_mi_scenario_dimension_template_m.template_json`을 raw JSON과 display용 dimension 목록으로 반환합니다.
+
+Backoffice Scenario Group List를 위한 목록 API도 제공합니다.
+
+- `GET /scenario-groups`
+  - Query: `includeDeleted`, `miEventId`, `keyword`, `status`, `stage`, `sort`
+  - Response: `rows`, `meta`
+  - 각 row는 scenario group ID/name, base `miEventId`, status/stage, scenario/signpost count, created/updated time, deleted state를 포함합니다.
+
 ### 1) 시나리오 그룹 및 시나리오 생성
 
 - Method/Path: `POST /scenario-groups`

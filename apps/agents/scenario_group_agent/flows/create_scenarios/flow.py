@@ -63,6 +63,7 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
         "stage": group.stage if group else ScenarioGroupStage.READY.value,
         "event_data": state.event_data,
         "user_id": user_id,
+        "should_run_background": (group.stage if group else ScenarioGroupStage.READY.value) == ScenarioGroupStage.READY.value,
     }
 
 
