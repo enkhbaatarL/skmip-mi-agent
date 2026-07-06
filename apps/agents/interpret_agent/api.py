@@ -1,52 +1,40 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter
 
-from apps.agents.interpret_agent.flows.create_interpretation.flow_async import (
-    prepare_create_interpretation,
-    run_create_interpretation_background,
+from apps.agents.interpret_agent.flows.interpret_price.api_schema import (
+    CreatePriceInterpretationPreviewIn,
+    PriceInterpretationPreviewOut,
 )
-from apps.agents.interpret_agent.schemas.api.interpretation import (
-    CreatePriceInterpretationIn,
-    PriceInterpretationAcceptedData,
-    PriceInterpretationAcceptedOut,
-)
+from apps.agents.interpret_agent.flows.interpret_price.flow import run_interpret_price
 
 
 router = APIRouter()
 
 
 @router.post(
-    "/scenario-groups/{scenario_group_id}/price-interpretations",
-    response_model=PriceInterpretationAcceptedOut,
-    summary="가격전망 해석 생성 요청",
+    "/scenario-groups/{scenario_group_id}/price-interpretations/preview",
+    response_model=PriceInterpretationPreviewOut,
+    summary="가격전망 해석 미리보기(동기)",
     description=(
-        "생성 대상 시나리오들의 가격전망 해석 산출을 접수합니다(async). "
-        "대상 시나리오는 MI 수급모델 실행이 선행되어야 하며, 해석 미보유/실패 또는 "
-        "수급모델 재실행(N회차)된 시나리오여야 합니다. "
-        "요청은 접수(PROCESSING) 상태만 즉시 반환하고, 실제 해석 결과는 콜백으로 비동기 전달됩니다. "
-        "콜백 URL은 서버 설정값(callback_base_url + callback_price_interpretations_path)을 사용합니다."
+        "입력 feature(현재 기온) 시계열과 예측 가격 시계열을 MI Base와 비교해, "
+        "시나리오별 '입력 차이 → 예측 가격 결과 → 도메인 해석'과 그룹 종합을 "
+        "동기적으로 산출해 즉시 반환합니다(콜백 없음). "
+        "현재 입력은 샘플 파일(proposal_parameters_sample.json, price_forecast_v2.json)에서 "
+        "로드하며 추후 DB 조회로 대체됩니다. scenarioIds가 비어 있으면 MI Base를 제외한 "
+        "전체 시나리오를 해석합니다."
     ),
 )
-async def create_price_interpretation(
+async def preview_price_interpretation(
     scenario_group_id: int,
-    payload: CreatePriceInterpretationIn,
-    background_tasks: BackgroundTasks,
-) -> PriceInterpretationAcceptedOut:
-    prepared = prepare_create_interpretation(
+    payload: CreatePriceInterpretationPreviewIn | None = None,
+) -> PriceInterpretationPreviewOut:
+    scenario_ids = list(payload.scenario_ids) if payload else []
+    result = await run_interpret_price(
         scenario_group_id=scenario_group_id,
-        scenario_ids=payload.scenario_ids,
+        scenario_ids=scenario_ids,
     )
-    background_tasks.add_task(
-        run_create_interpretation_background,
-        scenario_group_id=int(prepared["scenario_group_id"]),
-        scenario_ids=list(prepared["scenario_ids"]),
-    )
-    return PriceInterpretationAcceptedOut(
-        message="가격전망 해석 생성 요청이 접수되었습니다.",
-        data=PriceInterpretationAcceptedData(
-            scenario_group_id=int(prepared["scenario_group_id"]),
-            scenario_ids=list(prepared["scenario_ids"]),
-            status=str(prepared["status"]),
-        ),
+    return PriceInterpretationPreviewOut(
+        message="가격전망 해석 미리보기 결과입니다.",
+        data=result,
     )
