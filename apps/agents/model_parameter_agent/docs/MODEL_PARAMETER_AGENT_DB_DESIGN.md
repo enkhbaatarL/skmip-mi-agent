@@ -86,9 +86,9 @@ Proposal 생성 상태와 callback 전송 상태는 분리한다.
 | Status | 의미 |
 |---|---|
 | `PROCESSING` | 요청 접수 후 background 생성 중 |
-| `PROPOSED` | proposal 생성 완료. 빈 결과도 정상 완료면 이 상태 |
+| `PROPOSED` | 유효한 proposal parameter가 1개 이상 생성됨 |
 | `CONFIRMED` | 사용자가 confirmation API로 확정 완료 |
-| `FAILED` | proposal 생성 또는 저장 실패 |
+| `FAILED` | proposal 생성/저장 실패 또는 유효한 proposal parameter 없음 |
 
 전이:
 

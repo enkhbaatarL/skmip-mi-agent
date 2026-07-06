@@ -340,26 +340,26 @@ Request body:
 
 `operation`은 내부 검증에만 사용하고 외부 payload에는 포함하지 않는다.
 
-### 8.2 빈 결과
+### 8.2 빈 결과 및 매핑 실패
 
-Agent가 정상 실행됐지만 유효한 proposal value가 없으면 callback은 성공으로 보내되 `proposalParameters=[]`를 전달한다.
+시나리오 context가 없거나 DB 매핑 기준으로 direct/routing 수급모델 input parameter 후보를 찾지 못한 경우는 성공으로 보지 않는다. callback형 proposal API는 background 실행 전에 실패를 반환하고, sync proposal API도 동일하게 `ENTITY_NOT_FOUND` 또는 `INVALID_REQUEST`로 실패한다. 이 경우 proposal row를 만들지 않고 callback도 전송하지 않는다.
+
+DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalParameters`가 비면 접수된 proposal row를 `FAILED`로 전이하고 실패 callback을 전송한다. 외부 payload에서는 `proposalParameters=null` 대신 빈 배열을 사용한다.
 
 ```json
 {
-  "status": "success",
-  "message": "model parameter proposal completed",
+  "status": "error",
+  "message": "[INVALID_REQUEST] 요청이 유효하지 않습니다. - No valid model parameter proposal parameters generated for scenario_id=309",
   "data": {
     "modelParamProposalId": 10001,
     "scenarioId": 309,
     "scenarioGroupId": 61,
     "eventId": 1378,
-    "status": "PROPOSED",
+    "status": "FAILED",
     "proposalParameters": []
   }
 }
 ```
-
-실행 실패는 `status=error`, `data.status=FAILED`로 표현한다.
 
 ### 8.3 근거 작성 규칙
 

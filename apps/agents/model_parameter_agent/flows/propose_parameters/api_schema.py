@@ -5,6 +5,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from apps.persistence.schema_base import ApiModel
+from apps.agents.model_parameter_agent.schemas.api.parameters import (
+    ModelParameterTarget,
+    ProposalParameter,
+)
 
 
 class ProposeParametersIn(ApiModel):
@@ -258,21 +262,6 @@ class LLMValueProposalResponse(ApiModel):
     parameter_adjustments: list[LLMValueAdjustment] = Field(default_factory=list)
 
 
-class ModelParameterTarget(ApiModel):
-    model_file: str
-    model_sheet: str
-    table_name: str
-    value_field_names: list[str] = Field(default_factory=list)
-    slot_axes_field_names: list[str] = Field(default_factory=list)
-
-
-class ProposalParameter(ApiModel):
-    parameter_name: str
-    model_target: ModelParameterTarget
-    rationale: str
-    values: list[dict[str, Any]] = Field(default_factory=list)
-
-
 class ProposeParametersData(ApiModel):
     model_param_proposal_id: int | None = None
     scenario_id: int | None = None
@@ -285,3 +274,24 @@ class ProposeParametersOut(ApiModel):
     status: Literal["success", "error"] = "success"
     message: str = "model parameter proposal completed"
     data: ProposeParametersData
+
+
+class ProposeParametersAcceptedData(ApiModel):
+    model_param_proposal_id: int
+    status: Literal["PROCESSING"] = "PROCESSING"
+
+
+class ProposeParametersAcceptedOut(ApiModel):
+    status: Literal["success", "error"] = "success"
+    message: str = "accepted"
+    data: ProposeParametersAcceptedData
+
+
+class ProposeParametersCallbackData(ProposeParametersData):
+    status: Literal["PROPOSED", "FAILED"]
+
+
+class ProposeParametersCallbackOut(ApiModel):
+    status: Literal["success", "error"] = "success"
+    message: str
+    data: ProposeParametersCallbackData

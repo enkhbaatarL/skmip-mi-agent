@@ -3,7 +3,8 @@ from __future__ import annotations
 from functools import lru_cache
 import json
 import re
-from typing import Any
+import time
+from typing import Any, NoReturn
 
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import END, StateGraph
@@ -19,19 +20,30 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     validate_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
-    ModelParameterTarget,
-    ProposalParameter,
+    ProposeParametersAcceptedData,
+    ProposeParametersAcceptedOut,
+    ProposeParametersCallbackData,
+    ProposeParametersCallbackOut,
     ProposeParametersIn,
     ProposeParametersData,
     ProposeParametersOut,
+)
+from apps.agents.model_parameter_agent.schemas.api.parameters import (
+    ModelParameterTarget,
+    ProposalParameter,
 )
 from apps.agents.model_parameter_agent.persistence.model_input_service import (
     ModelInputService,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.mapping import (
+    get_parameter_knowledge_base_from_resources,
+    match_parameter_candidates,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
+from apps.connectors.callback.callback_client import send_callback
 
 
 def build_graph() -> Runnable:
@@ -78,7 +90,7 @@ def _route_after_candidate_validation(state: ModelParameterProposalState | dict[
     )
     if candidates:
         return "load_basecase_samples"
-    return "finalize_empty_parameter_values"
+    _raise_no_mapping_candidates(state)
 
 
 def _route_after_basecase_filter(state: ModelParameterProposalState | dict[str, Any]) -> str:
@@ -95,6 +107,109 @@ def _route_after_basecase_filter(state: ModelParameterProposalState | dict[str, 
     if selected_slots:
         return "propose_parameter_values"
     return "finalize_empty_parameter_values"
+
+
+def _scenario_id_from_state(state: ModelParameterProposalState | dict[str, Any]) -> Any:
+    if isinstance(state, ModelParameterProposalState):
+        return state.scenario_id
+    return state.get("scenario_id")
+
+
+def _raise_no_mapping_candidates(state: ModelParameterProposalState | dict[str, Any]) -> NoReturn:
+    scenario_id = _scenario_id_from_state(state)
+    raise MIBaseError(
+        ErrorCode.INVALID_REQUEST,
+        detail=(
+            "No model parameter mapping candidates found"
+            f" for scenario_id={scenario_id}"
+        ),
+    )
+
+
+def _ensure_mapping_candidates(data: dict[str, Any]) -> None:
+    if not data.get("candidate_mappings"):
+        _raise_no_mapping_candidates(data)
+
+
+def _raise_no_proposal_parameters(
+    data: dict[str, Any],
+    *,
+    reason: str | None = None,
+) -> NoReturn:
+    scenario_id = _scenario_id_from_state(data)
+    detail = (
+        "No valid model parameter proposal parameters generated"
+        f" for scenario_id={scenario_id}"
+    )
+    if reason:
+        detail = f"{detail}: {reason}"
+    raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=detail)
+
+
+def _ensure_proposal_parameters(
+    data: dict[str, Any],
+    proposal_parameters: list[ProposalParameter],
+) -> None:
+    if proposal_parameters:
+        return
+    warnings = [
+        str(warning)
+        for warning in (data.get("validation_warnings") or [])
+        if str(warning).strip()
+    ]
+    _raise_no_proposal_parameters(
+        data,
+        reason="; ".join(warnings[-3:]) if warnings else None,
+    )
+
+
+def _mapping_candidates_for_context(
+    *,
+    scenario_id: int,
+    scenario_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    state = ModelParameterProposalState(scenario_id=scenario_id)
+    resources = scenario_context.get("parameter_mapping_resources") or {}
+    mapping_rules = resources.get("mapping_rules") or []
+    parameter_definitions = resources.get("parameter_definitions") or []
+    if not mapping_rules or not parameter_definitions:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="parameter mapping resources not loaded from DB",
+        )
+
+    knowledge_base = get_parameter_knowledge_base_from_resources(
+        mapping_rows=mapping_rules,
+        parameter_rows=parameter_definitions,
+        basecase_dir_path=state.basecase_dir_path,
+        max_sample_rows=state.max_basecase_sample_rows,
+        max_sample_cols=state.max_basecase_cols,
+    )
+    candidates, _non_inputs, warnings = match_parameter_candidates(
+        knowledge_base,
+        scenario_context,
+        max_candidates=state.max_candidates,
+    )
+    if not candidates:
+        logger.warning(
+            "[model-parameter] no mapping candidates before callback accept | scenario_id={} warnings={}",
+            scenario_id,
+            warnings,
+        )
+    return candidates
+
+
+def _ensure_context_has_mapping_candidates(
+    *,
+    scenario_id: int,
+    scenario_context: dict[str, Any],
+) -> None:
+    candidates = _mapping_candidates_for_context(
+        scenario_id=scenario_id,
+        scenario_context=scenario_context,
+    )
+    if not candidates:
+        _raise_no_mapping_candidates({"scenario_id": scenario_id})
 
 
 def to_state(payload: dict[str, Any]) -> ModelParameterProposalState:
@@ -374,48 +489,243 @@ def _build_proposal_parameters(
     return proposal_parameters
 
 
-def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposeParametersOut:
-    data = state if isinstance(state, dict) else state.model_dump()
-    scenario_context = data.get("scenario_context") or {}
-    if not scenario_context:
-        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario context not found in state")
-    scenario_id = int(
-        (scenario_context.get("scenario") or {}).get("scenario_id")
-        or data.get("scenario_id"),
-    )
+def _context_ids(
+    scenario_context: dict[str, Any],
+    fallback_scenario_id: Any,
+) -> tuple[int, int | None, int | None]:
     scenario = scenario_context.get("scenario") or {}
     scenario_group = scenario_context.get("scenario_group") or {}
     event = scenario_context.get("event") or {}
+    scenario_id = int(scenario.get("scenario_id") or fallback_scenario_id)
     scenario_group_id = _int_or_none(
         scenario.get("scenario_group_id")
         or scenario_group.get("scenario_group_id"),
     )
     event_id = _int_or_none(event.get("mi_event_id") or scenario_group.get("mi_event_id"))
+    return scenario_id, scenario_group_id, event_id
+
+
+def _proposal_parameters_from_state(
+    data: dict[str, Any],
+) -> list[ProposalParameter]:
     adjustments = data.get("parameter_adjustments") or []
     candidates = data.get("candidate_mappings") or []
+    return _build_proposal_parameters(adjustments, candidates)
+
+
+def _to_response_data(
+    data: dict[str, Any],
+    *,
+    model_param_proposal_id: int,
+    proposal_parameters: list[ProposalParameter],
+) -> ProposeParametersData:
+    scenario_context = data.get("scenario_context") or {}
+    if not scenario_context:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario context not found in state")
+    scenario_id, scenario_group_id, event_id = _context_ids(
+        scenario_context,
+        data.get("scenario_id"),
+    )
+    return ProposeParametersData(
+        model_param_proposal_id=model_param_proposal_id,
+        scenario_id=scenario_id,
+        scenario_group_id=scenario_group_id,
+        event_id=event_id,
+        proposal_parameters=proposal_parameters,
+    )
+
+
+def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposeParametersOut:
+    data = state if isinstance(state, dict) else state.model_dump()
+    scenario_context = data.get("scenario_context") or {}
+    if not scenario_context:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario context not found in state")
+    _ensure_mapping_candidates(data)
+    adjustments = data.get("parameter_adjustments") or []
     warnings = data.get("validation_warnings") or []
-    proposal_parameters = _build_proposal_parameters(adjustments, candidates)
+    proposal_parameters = _proposal_parameters_from_state(data)
+    _ensure_proposal_parameters(data, proposal_parameters)
     model_param_proposal_id = ModelInputService().save_proposal_result(
         scenario_context=scenario_context,
         proposal_parameters=proposal_parameters,
     )
+    response_data = _to_response_data(
+        data,
+        model_param_proposal_id=model_param_proposal_id,
+        proposal_parameters=proposal_parameters,
+    )
     logger.info(
         "[model-parameter] response ready | scenario_id={} proposal_id={} adjustment_count={} non_input_count={} warning_count={}",
-        scenario_id,
+        response_data.scenario_id,
         model_param_proposal_id,
         len(adjustments),
         len(data.get("non_input_items") or []),
         len(warnings),
     )
     return ProposeParametersOut(
-        data=ProposeParametersData(
+        data=response_data,
+    )
+
+
+def prepare_propose_parameters_callback(
+    scenario_id: int,
+) -> dict[str, Any]:
+    model_input_service = ModelInputService()
+    scenario_context = model_input_service.load_context(scenario_id)
+    _ensure_context_has_mapping_candidates(
+        scenario_id=scenario_id,
+        scenario_context=scenario_context,
+    )
+    model_param_proposal_id = model_input_service.create_processing_proposal(
+        scenario_context=scenario_context,
+    )
+    scenario_id_value, scenario_group_id, event_id = _context_ids(
+        scenario_context,
+        scenario_id,
+    )
+    return {
+        "model_param_proposal_id": model_param_proposal_id,
+        "scenario_id": scenario_id_value,
+        "scenario_group_id": scenario_group_id,
+        "event_id": event_id,
+    }
+
+
+def _callback_success_output(
+    response_data: ProposeParametersData,
+) -> ProposeParametersCallbackOut:
+    return ProposeParametersCallbackOut(
+        status="success",
+        message="model parameter proposal completed",
+        data=ProposeParametersCallbackData(
+            **response_data.model_dump(),
+            status="PROPOSED",
+        ),
+    )
+
+
+def _callback_error_output(
+    *,
+    model_param_proposal_id: int,
+    scenario_id: int,
+    scenario_group_id: int | None,
+    event_id: int | None,
+    message: str,
+) -> ProposeParametersCallbackOut:
+    return ProposeParametersCallbackOut(
+        status="error",
+        message=message,
+        data=ProposeParametersCallbackData(
             model_param_proposal_id=model_param_proposal_id,
             scenario_id=scenario_id,
             scenario_group_id=scenario_group_id,
             event_id=event_id,
-            proposal_parameters=proposal_parameters,
+            status="FAILED",
+            proposal_parameters=[],
         ),
     )
+
+
+async def run_propose_parameters_background(
+    *,
+    model_param_proposal_id: int,
+    scenario_id: int,
+    scenario_group_id: int | None,
+    event_id: int | None,
+) -> None:
+    from apps.common.configs.config import get_settings
+
+    cfg = get_settings()
+    callback_path = cfg.callback_model_parameter_proposals_path.format(
+        model_param_proposal_id=model_param_proposal_id,
+        scenario_id=scenario_id,
+        scenario_group_id=scenario_group_id,
+        event_id=event_id,
+    )
+    callback_url = cfg.callback_base_url.rstrip("/") + callback_path
+    model_input_service = ModelInputService()
+
+    logger.info(
+        "[BG][model-parameter] START | proposal_id={} scenario_id={}",
+        model_param_proposal_id,
+        scenario_id,
+    )
+    start = time.perf_counter()
+    callback_payload: ProposeParametersCallbackOut
+    try:
+        final_state = await build_graph().ainvoke(ModelParameterProposalState(scenario_id=scenario_id))
+        data = final_state if isinstance(final_state, dict) else final_state.model_dump()
+        _ensure_mapping_candidates(data)
+        proposal_parameters = _proposal_parameters_from_state(data)
+        _ensure_proposal_parameters(data, proposal_parameters)
+        response_data = _to_response_data(
+            data,
+            model_param_proposal_id=model_param_proposal_id,
+            proposal_parameters=proposal_parameters,
+        )
+        model_input_service.complete_proposal_result(
+            model_param_proposal_id=model_param_proposal_id,
+            proposal_parameters=proposal_parameters,
+        )
+        callback_payload = _callback_success_output(response_data)
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        logger.info(
+            "[BG][model-parameter] PROPOSAL_DONE | proposal_id={} scenario_id={} elapsed={}ms",
+            model_param_proposal_id,
+            scenario_id,
+            elapsed_ms,
+        )
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        message = str(exc)
+        error_code = (
+            exc.error_code.name
+            if isinstance(exc, MIBaseError)
+            else exc.__class__.__name__
+        )
+        logger.error(
+            "[BG][model-parameter] FAILED | proposal_id={} scenario_id={} elapsed={}ms error={!r}",
+            model_param_proposal_id,
+            scenario_id,
+            elapsed_ms,
+            exc,
+        )
+        model_input_service.fail_proposal_result(
+            model_param_proposal_id=model_param_proposal_id,
+            error_code=error_code,
+            error_message=message,
+        )
+        callback_payload = _callback_error_output(
+            model_param_proposal_id=model_param_proposal_id,
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            event_id=event_id,
+            message=message,
+        )
+
+    try:
+        await send_callback(callback_url, callback_payload)
+        model_input_service.update_callback_status(
+            model_param_proposal_id=model_param_proposal_id,
+            callback_status="SUCCEEDED",
+        )
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        logger.info(
+            "[BG][model-parameter] CALLBACK_DONE | proposal_id={} scenario_id={} elapsed={}ms",
+            model_param_proposal_id,
+            scenario_id,
+            elapsed_ms,
+        )
+    except Exception as callback_exc:
+        logger.error(
+            "[BG][model-parameter] CALLBACK_FAILED | proposal_id={} error={!r}",
+            model_param_proposal_id,
+            callback_exc,
+        )
+        model_input_service.update_callback_status(
+            model_param_proposal_id=model_param_proposal_id,
+            callback_status="FAILED",
+        )
 
 
 def build_runnable_graph() -> Runnable:

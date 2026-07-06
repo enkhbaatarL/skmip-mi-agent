@@ -263,6 +263,37 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 → flows/confirm_generation/nodes.py
 ```
 
+`model_parameter_agent`의 현재 매핑은 아래와 같다.
+
+```text
+POST /model-parameters/scenarios/{scenario_id}/proposals
+→ api.py
+→ flows/propose_parameters/api_schema.py
+→ flows/propose_parameters/flow.py
+  - prepare_propose_parameters_callback()
+  - run_propose_parameters_background()
+→ flows/propose_parameters/nodes.py
+→ apps/connectors/callback/callback_client.py
+→ persistence/model_input_service.py
+→ apps/persistence/model_input/repository.py
+
+POST /model-parameters/scenarios/{scenario_id}/proposals/sync
+→ api.py
+→ flows/propose_parameters/api_schema.py
+→ flows/propose_parameters/flow.py
+→ flows/propose_parameters/nodes.py
+→ persistence/model_input_service.py
+→ apps/persistence/model_input/repository.py
+
+POST /model-parameters/proposals/{modelParamProposalId}/confirmation
+→ api.py
+→ flows/confirm_parameters/api_schema.py
+→ flows/confirm_parameters/flow.py
+→ flows/confirm_parameters/validation.py
+→ persistence/model_input_service.py
+→ apps/persistence/model_input/repository.py
+```
+
 ## 도메인 소유권 기준
 
 - 새 Agent에서 공유 DB 테이블 또는 aggregate가 생기면 `apps/persistence/<domain>/models.py`, `repository.py`, `service.py`를 기준 소유 위치로 둔다.

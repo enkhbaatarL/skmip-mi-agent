@@ -16,9 +16,16 @@ from fastapi.routing import APIRoute
 from openpyxl import Workbook, load_workbook
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
+from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
+    ConfirmParametersIn,
+)
+from apps.agents.model_parameter_agent.flows.confirm_parameters.validation import (
+    validate_confirmation_parameters,
+)
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     _route_after_candidate_validation,
     build_graph,
+    prepare_propose_parameters_callback,
     to_output,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
@@ -57,6 +64,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     ParameterAdjustment,
     ParameterValueCell,
     ProposalParameter,
+    ProposeParametersAcceptedOut,
     ProposeParametersIn,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
@@ -130,24 +138,23 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "propose_parameter_values" in graph.nodes
         assert "finalize_empty_parameter_values" in graph.nodes
 
-    def test_graph_routes_empty_candidates_to_finalizer(self) -> None:
-        graph_edges = build_graph().get_graph().edges
-        assert any(
-            edge.source == "validate_parameter_candidates"
-            and edge.target == "finalize_empty_parameter_values"
-            and edge.conditional
-            for edge in graph_edges
-        )
-
+    def test_graph_rejects_empty_candidates(self) -> None:
         state = ModelParameterProposalState(
             scenario_id=100,
             candidate_mappings=[],
         )
 
-        assert _route_after_candidate_validation(state) == "finalize_empty_parameter_values"
-        assert _route_after_candidate_validation({"candidate_mappings": []}) == (
-            "finalize_empty_parameter_values"
+        with self.assertRaises(MIBaseError) as state_error:
+            _route_after_candidate_validation(state)
+        assert "No model parameter mapping candidates found" in (
+            state_error.exception.error_message
         )
+
+        with self.assertRaises(MIBaseError) as dict_error:
+            _route_after_candidate_validation(
+                {"scenario_id": 100, "candidate_mappings": []},
+            )
+        assert "scenario_id=100" in dict_error.exception.error_message
         assert (
             _route_after_candidate_validation(
                 {"candidate_mappings": [{"candidate_key": "c1"}]},
@@ -180,6 +187,18 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             for route in model_parameter_router.routes
             if isinstance(route, APIRoute)
             and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
+        )
+
+        assert route.body_field is None
+        assert route.response_model is ProposeParametersAcceptedOut
+        assert [param.name for param in route.dependant.path_params] == ["scenario_id"]
+
+    def test_model_parameter_sync_endpoint_requires_only_scenario_id(self) -> None:
+        route = next(
+            route
+            for route in model_parameter_router.routes
+            if isinstance(route, APIRoute)
+            and route.path == "/model-parameters/scenarios/{scenario_id}/proposals/sync"
         )
 
         assert route.body_field is None
@@ -1441,6 +1460,100 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "llmUsage" not in dumped
         service_cls.return_value.save_proposal_result.assert_called_once()
 
+    def test_to_output_rejects_empty_mapping_candidates(self) -> None:
+        with self.assertRaises(MIBaseError) as error:
+            to_output(
+                {
+                    "scenario_id": 100,
+                    "scenario_context": {
+                        "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+                        "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+                        "event": {"mi_event_id": 30},
+                    },
+                    "candidate_mappings": [],
+                    "parameter_adjustments": [],
+                },
+            )
+
+        assert "No model parameter mapping candidates found" in (
+            error.exception.error_message
+        )
+
+    def test_prepare_callback_rejects_empty_mapping_before_processing_row(self) -> None:
+        scenario_context = {
+            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+            "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+            "event": {"mi_event_id": 30},
+            "parameter_mapping_resources": {
+                "mapping_rules": [{"dimension_key": "unmapped"}],
+                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+            },
+        }
+
+        with (
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            ) as service_cls,
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "get_parameter_knowledge_base_from_resources",
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "match_parameter_candidates",
+                return_value=([], [], ["no mapped parameter"]),
+            ),
+        ):
+            service_cls.return_value.load_context.return_value = scenario_context
+
+            with self.assertRaises(MIBaseError) as error:
+                prepare_propose_parameters_callback(100)
+
+        assert "No model parameter mapping candidates found" in (
+            error.exception.error_message
+        )
+        service_cls.return_value.create_processing_proposal.assert_not_called()
+
+    def test_prepare_callback_creates_processing_row_when_mapping_exists(self) -> None:
+        scenario_context = {
+            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+            "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+            "event": {"mi_event_id": 30},
+            "parameter_mapping_resources": {
+                "mapping_rules": [{"dimension_key": "transport_disruption"}],
+                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+            },
+        }
+
+        with (
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            ) as service_cls,
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "get_parameter_knowledge_base_from_resources",
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "match_parameter_candidates",
+                return_value=([{"candidate_key": "c1"}], [], []),
+            ),
+        ):
+            service_cls.return_value.load_context.return_value = scenario_context
+            service_cls.return_value.create_processing_proposal.return_value = 901
+
+            result = prepare_propose_parameters_callback(100)
+
+        assert result == {
+            "model_param_proposal_id": 901,
+            "scenario_id": 100,
+            "scenario_group_id": 20,
+            "event_id": 30,
+        }
+        service_cls.return_value.create_processing_proposal.assert_called_once_with(
+            scenario_context=scenario_context,
+        )
+
     def test_to_output_normalizes_slot_axis_fields_for_same_parameter(self) -> None:
         with patch(
             "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
@@ -1652,86 +1765,87 @@ class ModelParameterAgentContractTest(unittest.TestCase):
     def test_year_month_coordinate_allows_explicit_past_month(self) -> None:
         assert _coordinate_issues({"Year": 2026, "Month": 3, "Country": "United States"}) == []
 
-    def test_to_output_excludes_unusable_values(self) -> None:
+    def test_to_output_rejects_empty_final_proposal_parameters(self) -> None:
         with patch(
             "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
         ) as service_cls:
             service_cls.return_value.save_proposal_result.return_value = 779
-            output = to_output(
-                {
-                    "scenario_id": 100,
-                    "scenario_context": {
-                        "scenario": {
-                            "scenario_id": 100,
-                            "scenario_group_id": 20,
+            with self.assertRaises(MIBaseError) as error:
+                to_output(
+                    {
+                        "scenario_id": 100,
+                        "scenario_context": {
+                            "scenario": {
+                                "scenario_id": 100,
+                                "scenario_group_id": 20,
+                            },
+                            "scenario_group": {
+                                "scenario_group_id": 20,
+                                "mi_event_id": 30,
+                            },
+                            "event": {"mi_event_id": 30},
                         },
-                        "scenario_group": {
-                            "scenario_group_id": 20,
-                            "mi_event_id": 30,
-                        },
-                        "event": {"mi_event_id": 30},
+                        "candidate_mappings": [
+                            {
+                                "candidate_key": "null_value",
+                                "parameter_name": "PMI",
+                            },
+                            {
+                                "candidate_key": "unknown_operation",
+                                "parameter_name": "GDP",
+                            },
+                        ],
+                        "parameter_adjustments": [
+                            {
+                                "candidate_key": "null_value",
+                                "model_file": "Demand",
+                                "model_sheet": "PMIAdjustment",
+                                "parameter_name": "PMI",
+                                "selected": True,
+                                "slot_axes": [],
+                                "value_grid": [
+                                    {
+                                        "coordinates": {"Country": "China", "Year": 2026},
+                                        "basecase_value": 49.5,
+                                        "proposed_value": None,
+                                        "unit": "index",
+                                        "operation": "absolute",
+                                        "value_selection_rationale_ko": "China 2026 row",
+                                        "proposed_value_rationale_ko": "정량 근거 없음",
+                                    },
+                                ],
+                                "parameter_selection_rationale_ko": "PMI 조정 후보",
+                                "confidence_overall": 0.5,
+                            },
+                            {
+                                "candidate_key": "unknown_operation",
+                                "model_file": "Demand",
+                                "model_sheet": "GDPPopulationAdjustment",
+                                "parameter_name": "GDP",
+                                "selected": True,
+                                "slot_axes": [],
+                                "value_grid": [
+                                    {
+                                        "coordinates": {"Country": "China", "Year": 2026},
+                                        "basecase_value": 0.04,
+                                        "proposed_value": 0.045,
+                                        "unit": "%",
+                                        "operation": "unknown",
+                                        "value_selection_rationale_ko": "China 2026 row",
+                                        "proposed_value_rationale_ko": "성장률 전망 반영",
+                                    },
+                                ],
+                                "parameter_selection_rationale_ko": "GDP 조정 후보",
+                                "confidence_overall": 0.5,
+                            },
+                        ],
                     },
-                    "candidate_mappings": [
-                        {
-                            "candidate_key": "null_value",
-                            "parameter_name": "PMI",
-                        },
-                        {
-                            "candidate_key": "unknown_operation",
-                            "parameter_name": "GDP",
-                        },
-                    ],
-                    "parameter_adjustments": [
-                        {
-                            "candidate_key": "null_value",
-                            "model_file": "Demand",
-                            "model_sheet": "PMIAdjustment",
-                            "parameter_name": "PMI",
-                            "selected": True,
-                            "slot_axes": [],
-                            "value_grid": [
-                                {
-                                    "coordinates": {"Country": "China", "Year": 2026},
-                                    "basecase_value": 49.5,
-                                    "proposed_value": None,
-                                    "unit": "index",
-                                    "operation": "absolute",
-                                    "value_selection_rationale_ko": "China 2026 row",
-                                    "proposed_value_rationale_ko": "정량 근거 없음",
-                                },
-                            ],
-                            "parameter_selection_rationale_ko": "PMI 조정 후보",
-                            "confidence_overall": 0.5,
-                        },
-                        {
-                            "candidate_key": "unknown_operation",
-                            "model_file": "Demand",
-                            "model_sheet": "GDPPopulationAdjustment",
-                            "parameter_name": "GDP",
-                            "selected": True,
-                            "slot_axes": [],
-                            "value_grid": [
-                                {
-                                    "coordinates": {"Country": "China", "Year": 2026},
-                                    "basecase_value": 0.04,
-                                    "proposed_value": 0.045,
-                                    "unit": "%",
-                                    "operation": "unknown",
-                                    "value_selection_rationale_ko": "China 2026 row",
-                                    "proposed_value_rationale_ko": "성장률 전망 반영",
-                                },
-                            ],
-                            "parameter_selection_rationale_ko": "GDP 조정 후보",
-                            "confidence_overall": 0.5,
-                        },
-                    ],
-                },
-            )
+                )
 
-        dumped = output.model_dump(by_alias=True, exclude_none=True)
-        assert dumped["data"]["scenarioId"] == 100
-        assert dumped["data"]["modelParamProposalId"] == 779
-        assert dumped["data"]["proposalParameters"] == []
+        assert "No valid model parameter proposal parameters generated" in (
+            error.exception.error_message
+        )
+        service_cls.return_value.save_proposal_result.assert_not_called()
 
 
 class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
@@ -3636,6 +3750,305 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["value_grid"] == []
         assert "needs_user_review" not in adjustment
         assert any("동일 slot 좌표" in warning for warning in result["validation_warnings"])
+
+    def test_confirmation_schema_accepts_valid_parameter_payload(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "modelTarget": {
+                            "modelFile": "Demand",
+                            "modelSheet": "PowerMix",
+                            "tableName": "table1",
+                            "valueFieldNames": ["PowerMix"],
+                            "slotAxesFieldNames": ["Country", "Year", "Month"],
+                        },
+                        "rationale": "사용자 확정",
+                        "values": [
+                            {
+                                "Country": "Korea",
+                                "Year": 2026,
+                                "Month": 7,
+                                "basecaseValue": 0.0346,
+                                "proposedValue": 0.0173,
+                                "rationale": "사용자 검토 후 확정",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        validate_confirmation_parameters(parsed.data.confirmation_parameters)
+
+        assert parsed.data.confirmation_parameters[0].parameter_name == "PowerMix"
+
+    def test_confirmation_validation_rejects_empty_parameter_payload(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [],
+            },
+        }
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        with self.assertRaises(MIBaseError) as error:
+            validate_confirmation_parameters(parsed.data.confirmation_parameters)
+
+        assert "must contain at least one parameter" in error.exception.error_message
+
+    def test_confirmation_validation_rejects_duplicate_slots(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "modelTarget": {
+                            "modelFile": "Demand",
+                            "modelSheet": "PowerMix",
+                            "tableName": "table1",
+                            "valueFieldNames": ["PowerMix"],
+                            "slotAxesFieldNames": ["Country", "Year", "Month"],
+                        },
+                        "rationale": "사용자 확정",
+                        "values": [
+                            {
+                                "Country": "Korea",
+                                "Year": 2026,
+                                "Month": 7,
+                                "basecaseValue": 0.0346,
+                                "proposedValue": 0.0173,
+                                "rationale": "사용자 검토 후 확정",
+                            },
+                            {
+                                "Country": "Korea",
+                                "Year": 2026,
+                                "Month": 7,
+                                "basecaseValue": 0.0346,
+                                "proposedValue": 0.02,
+                                "rationale": "중복 slot",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        with self.assertRaises(MIBaseError) as error:
+            validate_confirmation_parameters(parsed.data.confirmation_parameters)
+
+        assert "duplicates slot coordinates" in error.exception.error_message
+
+    def test_confirmation_validation_accepts_unknown_parameter_metadata(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "UserCustomParameter",
+                        "modelTarget": {
+                            "modelFile": "Custom",
+                            "modelSheet": "CustomSheet",
+                            "tableName": "table9",
+                            "valueFieldNames": ["CustomValue"],
+                            "slotAxesFieldNames": ["CustomSlot"],
+                        },
+                        "rationale": "사용자 추가 파라미터",
+                        "values": [
+                            {
+                                "CustomSlot": "A",
+                                "basecaseValue": None,
+                                "proposedValue": 1,
+                                "rationale": "사용자 입력",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+        parameter_definitions = [
+            {
+                "parameter_name": "PowerMix",
+                "model_file": "Demand",
+                "model_sheet": "PowerMixAdjustment",
+                "model_table": "table1",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_column_roles": "B:Year,C:Country,F:% Power Mix",
+            },
+        ]
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        validate_confirmation_parameters(
+            parsed.data.confirmation_parameters,
+            parameter_definitions=parameter_definitions,
+        )
+
+        assert parsed.data.confirmation_parameters[0].parameter_name == "UserCustomParameter"
+
+    def test_confirmation_validation_accepts_known_parameter_metadata(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "modelTarget": {
+                            "modelFile": "Demand",
+                            "modelSheet": "PowerMixAdjustment",
+                            "tableName": "table1",
+                            "valueFieldNames": ["PowerMix"],
+                            "slotAxesFieldNames": ["Year", "Country"],
+                        },
+                        "rationale": "사용자 확정",
+                        "values": [
+                            {
+                                "Year": 2026,
+                                "Country": "Korea",
+                                "basecaseValue": 0.0346,
+                                "proposedValue": 0.0173,
+                                "rationale": "사용자 검토 후 확정",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+        parameter_definitions = [
+            {
+                "parameter_name": "PowerMix",
+                "model_file": "Demand",
+                "model_sheet": "PowerMixAdjustment",
+                "model_table": "table1",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_column_roles": "B:Year,C:Country,F:% Power Mix",
+            },
+        ]
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        validate_confirmation_parameters(
+            parsed.data.confirmation_parameters,
+            parameter_definitions=parameter_definitions,
+        )
+
+        assert parsed.data.confirmation_parameters[0].model_target.model_sheet == (
+            "PowerMixAdjustment"
+        )
+
+    def test_confirmation_validation_rejects_known_parameter_wrong_fields(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "modelTarget": {
+                            "modelFile": "Demand",
+                            "modelSheet": "WrongSheet",
+                            "tableName": "table1",
+                            "valueFieldNames": ["WrongValue"],
+                            "slotAxesFieldNames": ["Year", "WrongAxis"],
+                        },
+                        "rationale": "사용자 확정",
+                        "values": [
+                            {
+                                "Year": 2026,
+                                "WrongAxis": "Korea",
+                                "basecaseValue": 0.0346,
+                                "proposedValue": 0.0173,
+                                "rationale": "사용자 검토 후 확정",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+        parameter_definitions = [
+            {
+                "parameter_name": "PowerMix",
+                "model_file": "Demand",
+                "model_sheet": "PowerMixAdjustment",
+                "model_table": "table1",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_column_roles": "B:Year,C:Country,F:% Power Mix",
+            },
+        ]
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        with self.assertRaises(MIBaseError) as error:
+            validate_confirmation_parameters(
+                parsed.data.confirmation_parameters,
+                parameter_definitions=parameter_definitions,
+            )
+
+        assert "modelTarget.modelSheet must be 'PowerMixAdjustment'" in (
+            error.exception.error_message
+        )
+        assert "valueFieldNames has invalid fields" in error.exception.error_message
+        assert "slotAxesFieldNames has invalid fields" in error.exception.error_message
+
+    def test_confirmation_validation_rejects_parameter_without_values(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "modelTarget": {
+                            "modelFile": "Demand",
+                            "modelSheet": "PowerMixAdjustment",
+                            "tableName": "table1",
+                            "valueFieldNames": ["PowerMix"],
+                            "slotAxesFieldNames": ["Year", "Country"],
+                        },
+                        "rationale": "사용자 확정",
+                        "values": [],
+                    },
+                ],
+            },
+        }
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        with self.assertRaises(MIBaseError) as error:
+            validate_confirmation_parameters(parsed.data.confirmation_parameters)
+
+        assert "values must not be empty" in error.exception.error_message
+
+    def test_confirmation_endpoint_is_registered(self) -> None:
+        route = next(
+            route
+            for route in model_parameter_router.routes
+            if isinstance(route, APIRoute)
+            and route.path == "/model-parameters/proposals/{modelParamProposalId}/confirmation"
+        )
+
+        assert [param.alias for param in route.dependant.path_params] == [
+            "modelParamProposalId",
+        ]
+
+    def test_proposal_callback_endpoint_is_registered(self) -> None:
+        route = next(
+            route
+            for route in model_parameter_router.routes
+            if isinstance(route, APIRoute)
+            and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
+        )
+
+        assert [param.alias for param in route.dependant.path_params] == [
+            "scenario_id",
+        ]
+
+    def test_proposal_callback_accepted_schema_uses_camel_case(self) -> None:
+        payload = ProposeParametersAcceptedOut.model_validate(
+            {
+                "data": {
+                    "modelParamProposalId": 10001,
+                    "status": "PROCESSING",
+                },
+            },
+        )
+
+        assert payload.model_dump(by_alias=True)["data"] == {
+            "modelParamProposalId": 10001,
+            "status": "PROCESSING",
+        }
 
 
 if __name__ == "__main__":

@@ -5,15 +5,9 @@
       "name": "[🚀]launcher: poetry install (.venv) + uvicorn",
       "type": "debugpy",
       "request": "launch",
-      "python": "${command:python.interpreterPath}",
+      "python": "${config:python.defaultInterpreterPath}",
       "module": "uvicorn",
-      "args": [
-        "main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8000"
-      ],
+      "args": ["main:app", "--host", "127.0.0.1", "--port", "8000"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "preLaunchTask": "Poetry Install (.venv)",
@@ -28,15 +22,9 @@
       "name": "[🌱]backend: uvicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
-      "python": "${command:python.interpreterPath}",
+      "python": "${config:python.defaultInterpreterPath}",
       "module": "uvicorn",
-      "args": [
-        "main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8000"
-      ],
+      "args": ["main:app", "--host", "127.0.0.1", "--port", "8000"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole",
       "envFile": "${workspaceFolder}/envs/.env",
@@ -47,10 +35,34 @@
       "justMyCode": false
     },
     {
+      "name": "[🌱]model_parameter: uvicorn (param_main.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${config:python.defaultInterpreterPath}",
+      "module": "uvicorn",
+      "args": [
+        "param_main:app",
+        "--reload",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/envs/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
       "name": "[🌱🌱]backend: gunicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
-      "python": "${command:python.interpreterPath}",
+      "python": "${config:python.defaultInterpreterPath}",
       "module": "gunicorn",
       "args": [
         "main:app",
