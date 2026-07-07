@@ -7,6 +7,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
+from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     check_existing_signposts,
     generate_new_scenario_row_details_node,
@@ -46,7 +47,7 @@ def prepare_create_signposts(
     user_id: int,
     request_table: dict[str, Any],
 ) -> dict[str, Any]:
-    """group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
+    """Group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
     state = CreateSignpostsState(
         scenario_group_id=scenario_group_id,
         user_id=user_id,
@@ -138,9 +139,11 @@ async def run_create_signposts_background(
     logger.info(f"[BG][create_signposts] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
+        agent_config = cfg.get_agent_config(AGENT_NAME)
         trace_context = TraceContext(
             transaction_id=new_transaction_id(),
-            app_identifier="scenario-group-agent",
+            app_identifier=agent_config.aip_app_id,
+            agent_name=AGENT_NAME,
             scenario_group_id=str(scenario_group_id),
         )
         state = CreateSignpostsState(

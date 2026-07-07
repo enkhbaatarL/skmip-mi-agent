@@ -138,9 +138,15 @@ def _extra_headers(trace_context: TraceContext | None) -> dict[str, str] | None:
     return build_aip_headers(trace_context)
 
 
-def _is_mlflow_tracing_enabled() -> bool:
+def _is_mlflow_tracing_enabled(trace_context: TraceContext | None = None) -> bool:
+    if trace_context is None:
+        return False
     try:
-        return bool(getattr(get_settings(), "mlflow_tracing_enabled", False))
+        cfg = get_settings()
+        is_enabled = getattr(cfg, "is_mlflow_tracing_enabled", None)
+        if callable(is_enabled):
+            return bool(is_enabled(agent_name=trace_context.agent_name))
+        return bool(getattr(cfg, "mlflow_tracing_enabled", False))
     except Exception as exc:
         logger.warning("MLflow LLM span disabled because settings lookup failed | error={!r}", exc)
         return False
@@ -155,7 +161,7 @@ def _mlflow_llm_span(
     trace_context: TraceContext | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> Iterator[Any | None]:
-    if not _is_mlflow_tracing_enabled():
+    if not _is_mlflow_tracing_enabled(trace_context):
         with nullcontext(None) as span:
             yield span
         return
@@ -284,8 +290,9 @@ def _start_openai_child_span(
     parent_span: object | None,
     model: str,
     messages: list[dict[str, str]],
+    trace_context: TraceContext | None = None,
 ) -> object | None:
-    if parent_span is None or not _is_mlflow_tracing_enabled():
+    if parent_span is None or not _is_mlflow_tracing_enabled(trace_context):
         return None
 
     try:
@@ -420,6 +427,7 @@ async def _llm_trace_span(
             parent_span=_get_mlflow_span_from_langchain_run(langchain_run_manager),
             model=model,
             messages=messages,
+            trace_context=trace_context,
         )
         trace_run = _LLMTraceRun(langchain_run_manager=langchain_run_manager, openai_span=openai_span)
         try:

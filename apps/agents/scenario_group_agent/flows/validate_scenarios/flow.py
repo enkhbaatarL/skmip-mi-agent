@@ -7,6 +7,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
+from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
     load_scenario_group,
@@ -46,7 +47,7 @@ def prepare_validate_scenarios(
     user_id: int,
     request_table: dict[str, Any],
 ) -> dict[str, Any]:
-    """group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
+    """Group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
     state = ValidateScenariosState(
         scenario_group_id=scenario_group_id,
         user_id=user_id,
@@ -123,16 +124,18 @@ async def run_validate_scenarios_background(
 
     cfg = get_settings()
     callback_path = cfg.callback_validate_scenarios_path.format(
-        scenario_group_id=scenario_group_id
+        scenario_group_id=scenario_group_id,
     )
     callback_url = cfg.callback_base_url.rstrip("/") + callback_path
 
     logger.info(f"[BG][validate_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
+        agent_config = cfg.get_agent_config(AGENT_NAME)
         trace_context = TraceContext(
             transaction_id=new_transaction_id(),
-            app_identifier="scenario-group-agent",
+            app_identifier=agent_config.aip_app_id,
+            agent_name=AGENT_NAME,
             scenario_group_id=str(scenario_group_id),
         )
         state = ValidateScenariosState(
@@ -150,13 +153,13 @@ async def run_validate_scenarios_background(
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
-            f"[BG][validate_scenarios] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms"
+            f"[BG][validate_scenarios] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms",
         )
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.error(
             f"[BG][validate_scenarios] FAILED | group_id={scenario_group_id}"
-            f" | elapsed={elapsed_ms}ms | error={e!r}"
+            f" | elapsed={elapsed_ms}ms | error={e!r}",
         )
         error_payload = CallBackBody(result="failure", reason=str(e))
         try:

@@ -40,8 +40,32 @@ def _sanitized_tracking_uri(tracking_uri: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
-def resolve_experiment_name(cfg: Settings, entrypoint_name: str | None = None) -> str:
-    configured = cfg.mlflow_experiment_name
+def _get_agent_config(cfg: Settings, agent_name: str | None) -> object | None:
+    get_agent_config = getattr(cfg, "get_agent_config", None)
+    if not callable(get_agent_config):
+        return None
+    return get_agent_config(agent_name)
+
+
+def _is_mlflow_tracing_enabled(cfg: Settings, agent_name: str | None = None) -> bool:
+    is_enabled = getattr(cfg, "is_mlflow_tracing_enabled", None)
+    if callable(is_enabled):
+        return bool(is_enabled(agent_name=agent_name))
+    return bool(getattr(cfg, "mlflow_tracing_enabled", False))
+
+
+def resolve_experiment_name(
+    cfg: Settings,
+    agent_name: str | None = None,
+    entrypoint_name: str | None = None,
+) -> str:
+    agent_config = _get_agent_config(cfg, agent_name)
+    if agent_config is not None:
+        experiment_name = getattr(agent_config, "mlflow_experiment_name", "")
+        if experiment_name:
+            return str(experiment_name)
+
+    configured = getattr(cfg, "mlflow_experiment_name", {})
     return (
         configured.get(entrypoint_name or "")
         or configured.get("default")
@@ -49,8 +73,12 @@ def resolve_experiment_name(cfg: Settings, entrypoint_name: str | None = None) -
     )
 
 
-def setup_mlflow_tracing(cfg: Settings, entrypoint_name: str | None = None) -> None:
-    if not cfg.mlflow_tracing_enabled:
+def setup_mlflow_tracing(
+    cfg: Settings,
+    agent_name: str | None = None,
+    entrypoint_name: str | None = None,
+) -> None:
+    if not _is_mlflow_tracing_enabled(cfg, agent_name=agent_name):
         logger.info("MLflow tracing disabled")
         return
 
@@ -61,7 +89,7 @@ def setup_mlflow_tracing(cfg: Settings, entrypoint_name: str | None = None) -> N
         return
 
     tracking_uri = cfg.mlflow_tracking_uri
-    experiment_name = resolve_experiment_name(cfg, entrypoint_name=entrypoint_name)
+    experiment_name = resolve_experiment_name(cfg, agent_name=agent_name, entrypoint_name=entrypoint_name)
     username = cfg.mlflow_tracking_username
     password = cfg.mlflow_tracking_password
 
@@ -69,7 +97,7 @@ def setup_mlflow_tracing(cfg: Settings, entrypoint_name: str | None = None) -> N
         if tracking_uri:
             mlflow.set_tracking_uri(_tracking_uri_with_credentials(tracking_uri, username, password))
         mlflow.set_experiment(experiment_name)
-        
+
         mlflow.langchain.autolog(
             run_tracer_inline=cfg.mlflow_langchain_run_tracer_inline,
         )

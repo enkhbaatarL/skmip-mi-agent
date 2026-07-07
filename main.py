@@ -4,12 +4,12 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import os
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
+from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import validate_schema
 from apps.common.configs.database.sync_database.connection import get_sync_engine
@@ -31,7 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
-    setup_mlflow_tracing(cfg, entrypoint_name=Path(__file__).name)
+    setup_mlflow_tracing(cfg, agent_name=AGENT_NAME)
 
     logger.info("Validating ORM models against the database schema")
     await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
@@ -43,7 +43,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             logger.info("Callback OAuth2 token pre-fetched successfully")
         except Exception:
             logger.exception(
-                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token"
+                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token",
             )
     else:
         logger.error("callback_oauth2_token_url not configured, skipping token pre-fetch")

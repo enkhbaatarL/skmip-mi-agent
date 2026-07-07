@@ -7,6 +7,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
+from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     check_existing_scenario_group,
     create_group_record,
@@ -42,7 +43,7 @@ from apps.persistence.scenario_group.schema import (
 # ---------------------------------------------------------------------------
 
 def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
-    """event 로드 → 기존 그룹 확인 → group row INSERT. 반환값으로 200 응답을 구성한다."""
+    """Event 로드 → 기존 그룹 확인 → group row INSERT. 반환값으로 200 응답을 구성한다."""
     state = CreateScenariosState(mi_event_id=mi_event_id, user_id=user_id)
     state = state.model_copy(update=load_event(state))
     existing_group_result = check_existing_scenario_group(state)  # 충돌·중복 시 MIBaseError raise
@@ -63,7 +64,8 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
         "stage": group.stage if group else ScenarioGroupStage.READY.value,
         "event_data": state.event_data,
         "user_id": user_id,
-        "should_run_background": (group.stage if group else ScenarioGroupStage.READY.value) == ScenarioGroupStage.READY.value,
+        "should_run_background": (group.stage if group else ScenarioGroupStage.READY.value)
+        == ScenarioGroupStage.READY.value,
     }
 
 
@@ -117,16 +119,18 @@ async def run_create_scenarios_background(
 
     cfg = get_settings()
     callback_path = cfg.callback_create_scenarios_path.format(
-        scenario_group_id=scenario_group_id
+        scenario_group_id=scenario_group_id,
     )
     callback_url = cfg.callback_base_url.rstrip("/") + callback_path
 
     logger.info(f"[BG][create_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
+        agent_config = cfg.get_agent_config(AGENT_NAME)
         trace_context = TraceContext(
             transaction_id=new_transaction_id(),
-            app_identifier="scenario-group-agent",
+            app_identifier=agent_config.aip_app_id,
+            agent_name=AGENT_NAME,
             scenario_group_id=str(scenario_group_id),
         )
         state = CreateScenariosState(
@@ -144,13 +148,13 @@ async def run_create_scenarios_background(
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
-            f"[BG][create_scenarios] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms"
+            f"[BG][create_scenarios] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms",
         )
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.error(
             f"[BG][create_scenarios] FAILED | group_id={scenario_group_id}"
-            f" | elapsed={elapsed_ms}ms | error={e!r}"
+            f" | elapsed={elapsed_ms}ms | error={e!r}",
         )
         error_payload = CallBackBody(result="failure", reason=str(e))
         try:

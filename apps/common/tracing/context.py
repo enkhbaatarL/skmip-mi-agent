@@ -15,6 +15,7 @@ from apps.common.logging.logger_config import logger
 class TraceContext(BaseModel):
     transaction_id: str
     app_identifier: str
+    agent_name: str | None = None
     scenario_group_id: str | None = None
 
 
@@ -89,11 +90,15 @@ def _mlflow_tags(context: TraceContext) -> dict[str, str]:
     return tags
 
 
-def _is_mlflow_tracing_enabled() -> bool:
+def _is_mlflow_tracing_enabled(context: TraceContext) -> bool:
     try:
         from apps.common.configs.config import get_settings
 
-        return bool(getattr(get_settings(), "mlflow_tracing_enabled", False))
+        cfg = get_settings()
+        is_enabled = getattr(cfg, "is_mlflow_tracing_enabled", None)
+        if callable(is_enabled):
+            return bool(is_enabled(agent_name=context.agent_name))
+        return bool(getattr(cfg, "mlflow_tracing_enabled", False))
     except Exception as exc:
         logger.warning(f"MLflow tracing disabled because settings lookup failed | error={exc!r}")
         return False
@@ -148,7 +153,7 @@ def _create_mlflow_manager(
 
 @contextmanager
 def mlflow_trace_context(context: TraceContext) -> Iterator[None]:
-    if not _is_mlflow_tracing_enabled():
+    if not _is_mlflow_tracing_enabled(context):
         with nullcontext():
             yield
         return

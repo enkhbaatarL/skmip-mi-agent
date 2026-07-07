@@ -178,6 +178,42 @@ class TracingContextTest(unittest.TestCase):
         self.assertTrue(body_executed)
         self.assertEqual(captured, {})
 
+    def test_mlflow_trace_context_uses_agent_profile_by_agent_name(self) -> None:
+        captured: dict[str, object] = {}
+
+        @contextmanager
+        def fake_context(**kwargs: object) -> Iterator[None]:
+            captured.update(kwargs)
+            yield
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = SimpleNamespace(tracing=SimpleNamespace(context=fake_context))
+        try:
+            context = TraceContext(
+                transaction_id="tx-1",
+                app_identifier="scenario_agent",
+                agent_name="scenario_group_agent",
+            )
+
+            def is_mlflow_tracing_enabled(*, agent_name: str | None = None) -> bool:
+                return agent_name == "scenario_group_agent"
+
+            with patch(
+                "apps.common.configs.config.get_settings",
+                return_value=SimpleNamespace(
+                    is_mlflow_tracing_enabled=is_mlflow_tracing_enabled,
+                ),
+            ), mlflow_trace_context(context):
+                pass
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertEqual(captured["metadata"], {"aip.transaction_id": "tx-1", "aip.app_id": "scenario_agent"})
+        self.assertEqual(captured["tags"], {"app_id": "scenario_agent"})
+
     def test_mlflow_trace_context_continues_when_context_enter_fails(self) -> None:
         class FailingManager:
             def __enter__(self) -> None:
@@ -275,6 +311,42 @@ class TracingContextTest(unittest.TestCase):
                 sys.modules["mlflow"] = previous
 
         self.assertIn(("experiment", "model_parameter"), calls)
+
+    def test_setup_mlflow_tracing_resolves_experiment_from_agent_profile(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        fake_mlflow = SimpleNamespace(
+            set_tracking_uri=lambda uri: calls.append(("tracking_uri", uri)),
+            set_experiment=lambda name: calls.append(("experiment", name)),
+            langchain=SimpleNamespace(autolog=lambda **kwargs: calls.append(("langchain_autolog", kwargs))),
+        )
+
+        def is_mlflow_tracing_enabled(*, agent_name: str | None = None) -> bool:
+            return agent_name == "scenario_group_agent"
+
+        cfg = SimpleNamespace(
+            get_agent_config=lambda agent_name: SimpleNamespace(
+                mlflow_experiment_name=f"{agent_name}_experiment",
+            ),
+            is_mlflow_tracing_enabled=is_mlflow_tracing_enabled,
+            mlflow_tracking_uri="http://mlflow.example",
+            mlflow_tracking_username="",
+            mlflow_tracking_password="",
+            mlflow_langchain_run_tracer_inline=False,
+        )
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = fake_mlflow
+        try:
+            setup_mlflow_tracing(cfg, agent_name="scenario_group_agent")
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertIn(("experiment", "scenario_group_agent_experiment"), calls)
+        self.assertIn(("langchain_autolog", {"run_tracer_inline": False}), calls)
 
     def test_setup_mlflow_tracing_uses_default_for_unknown_entrypoint_mapping(self) -> None:
         calls: list[tuple[str, object]] = []
@@ -380,6 +452,30 @@ class TracingContextTest(unittest.TestCase):
         self.assertEqual(fake_span.inputs, {"messages": [{"role": "user", "content": "hello"}]})
         self.assertEqual(fake_span.outputs, {"content": "world"})
         self.assertTrue(fake_manager.exited)
+
+    def test_mlflow_llm_span_skips_when_trace_context_is_none(self) -> None:
+        captured: dict[str, object] = {}
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = SimpleNamespace(start_span=lambda **kwargs: captured.update(kwargs))
+        try:
+            with patch(
+                "apps.connectors.llm.llm_client.get_settings",
+                return_value=SimpleNamespace(mlflow_tracing_enabled=True),
+            ), _mlflow_llm_span(
+                name="llm.test",
+                model="model-a",
+                messages=[{"role": "user", "content": "hello"}],
+                trace_context=None,
+            ) as span:
+                self.assertIsNone(span)
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertEqual(captured, {})
 
     def test_mlflow_llm_span_preserves_body_exception(self) -> None:
         def raise_body_failed() -> None:
@@ -519,6 +615,11 @@ class TracingContextTest(unittest.TestCase):
                     parent_span=parent_span,
                     model="model-a",
                     messages=[{"role": "user", "content": "hello"}],
+                    trace_context=TraceContext(
+                        transaction_id="tx-1",
+                        app_identifier="scenario_agent",
+                        agent_name="scenario_group_agent",
+                    ),
                 )
         finally:
             if previous is None:
