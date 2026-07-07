@@ -1462,6 +1462,69 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "llmUsage" not in dumped
         service_cls.return_value.save_proposal_result.assert_called_once()
 
+    def test_to_output_uses_basecase_value_column_role_for_value_field(self) -> None:
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+        ) as service_cls:
+            service_cls.return_value.save_proposal_result.return_value = 778
+            output = to_output(
+                {
+                    "scenario_id": 100,
+                    "scenario_context": {
+                        "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+                        "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+                        "event": {"mi_event_id": 30},
+                    },
+                    "candidate_mappings": [
+                        {
+                            "candidate_key": "selected",
+                            "parameter_name": "PowerMix",
+                            "model_file": "Demand",
+                            "model_sheet": "PowerMixAdjustment",
+                            "model_table": "Table2",
+                            "basecase_read_mode": "fixed_columns",
+                            "basecase_column_roles": (
+                                "B:Year,C:Country,F:Scenario Metric"
+                            ),
+                        },
+                    ],
+                    "parameter_adjustments": [
+                        {
+                            "candidate_key": "selected",
+                            "model_file": "Demand",
+                            "model_sheet": "PowerMixAdjustment",
+                            "parameter_name": "PowerMix",
+                            "selected": True,
+                            "slot_axes": [],
+                            "value_grid": [
+                                {
+                                    "coordinates": {
+                                        "Country": "Japan",
+                                        "Year": 2026,
+                                    },
+                                    "basecase_value": 0.323,
+                                    "proposed_value": 0.35,
+                                    "proposed_value_rationale_ko": "DB value 컬럼명을 사용합니다.",
+                                },
+                            ],
+                            "parameter_selection_rationale_ko": "사용자 지정 value field",
+                        },
+                    ],
+                },
+            )
+
+        proposal_parameter = output.model_dump(by_alias=True)["data"][
+            "proposalParameters"
+        ][0]
+        assert proposal_parameter["parameterName"] == "PowerMix"
+        assert proposal_parameter["modelTarget"]["valueFieldNames"] == [
+            "Scenario Metric",
+        ]
+        assert proposal_parameter["modelTarget"]["slotAxesFieldNames"] == [
+            "Country",
+            "Year",
+        ]
+
     def test_to_output_rejects_empty_mapping_candidates(self) -> None:
         with self.assertRaises(MIBaseError) as error:
             to_output(
@@ -3918,6 +3981,54 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert parsed.data.confirmation_parameters[0].model_target.model_sheet == (
             "PowerMixAdjustment"
         )
+
+    def test_confirmation_validation_accepts_db_value_column_role(self) -> None:
+        payload = {
+            "data": {
+                "confirmationParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "modelTarget": {
+                            "modelFile": "Demand",
+                            "modelSheet": "PowerMixAdjustment",
+                            "tableName": "table1",
+                            "valueFieldNames": ["Scenario Metric"],
+                            "slotAxesFieldNames": ["Year", "Country"],
+                        },
+                        "rationale": "사용자 확정",
+                        "values": [
+                            {
+                                "Year": 2026,
+                                "Country": "Korea",
+                                "basecaseValue": 0.0346,
+                                "proposedValue": 0.0173,
+                                "rationale": "사용자 검토 후 확정",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+        parameter_definitions = [
+            {
+                "parameter_name": "PowerMix",
+                "model_file": "Demand",
+                "model_sheet": "PowerMixAdjustment",
+                "model_table": "table1",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_column_roles": "B:Year,C:Country,F:Scenario Metric",
+            },
+        ]
+
+        parsed = ConfirmParametersIn.model_validate(payload)
+        validate_confirmation_parameters(
+            parsed.data.confirmation_parameters,
+            parameter_definitions=parameter_definitions,
+        )
+
+        assert parsed.data.confirmation_parameters[0].model_target.value_field_names == [
+            "Scenario Metric",
+        ]
 
     def test_confirmation_validation_rejects_known_parameter_wrong_fields(self) -> None:
         payload = {

@@ -1272,6 +1272,59 @@ def _fixed_column_spec_from_candidate(candidate: dict[str, Any]) -> FixedColumnS
     )
 
 
+def basecase_value_field_name_from_candidate(candidate: dict[str, Any]) -> str:
+    read_mode = _clean_text(candidate.get("basecase_read_mode")).lower()
+    if read_mode == "fixed_columns":
+        spec = _fixed_column_spec_from_candidate(candidate)
+        if spec is not None:
+            return spec.value_name
+    return _clean_text(
+        candidate.get("parameter_name")
+        or candidate.get("canonical_parameter_name")
+        or "",
+    )
+
+
+def basecase_slot_axis_names_from_candidate(candidate: dict[str, Any]) -> list[str]:
+    read_mode = _clean_text(candidate.get("basecase_read_mode")).lower()
+    if read_mode == "fixed_columns":
+        spec = _fixed_column_spec_from_candidate(candidate)
+        if spec is not None:
+            return [
+                role
+                for col_idx, role in spec.column_roles.items()
+                if col_idx != spec.value_col
+            ]
+
+    axes: list[str] = []
+    if read_mode == "matrix_time_columns":
+        spec = _matrix_time_column_spec_from_candidate(candidate)
+        if spec is not None:
+            axes.extend(spec.axis_columns.values())
+        else:
+            axes.extend(
+                _parse_column_roles(
+                    _clean_text(candidate.get("basecase_column_roles")),
+                ).values(),
+            )
+        for axis_name in ("Year", "Month", "Period"):
+            if axis_name not in axes:
+                axes.append(axis_name)
+        return axes
+
+    value_field_key = _normalize_for_key(
+        basecase_value_field_name_from_candidate(candidate),
+    )
+    for role_name in _parse_column_roles(
+        _clean_text(candidate.get("basecase_column_roles")),
+    ).values():
+        if _normalize_for_key(role_name) == value_field_key:
+            continue
+        if role_name not in axes:
+            axes.append(role_name)
+    return axes
+
+
 def _matrix_time_column_spec_from_candidate(
     candidate: dict[str, Any],
 ) -> MatrixTimeColumnSpec | None:

@@ -208,7 +208,7 @@ Authorization: Bearer {callback-token}
 |---|---|---:|---|
 | `modelFile` | string | Y | 수급모델 파일 또는 모델 영역 |
 | `modelSheet` | string | Y | 수급모델 입력 sheet |
-| `valueFieldNames` | string[] | Y | 실제 값을 입력할 value field 이름 목록 |
+| `valueFieldNames` | string[] | Y | 실제 값을 입력할 value field 이름 목록. DB `basecase_column_roles`에서 식별한 value 컬럼명을 우선 사용하고, 식별할 수 없으면 파라미터명을 사용 |
 | `slotAxesFieldNames` | string[] | Y | `values[]`에서 slot 좌표로 해석해야 하는 field 이름 목록 |
 
 ### 6.3 `values[]`

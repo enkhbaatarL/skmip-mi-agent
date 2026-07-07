@@ -103,6 +103,7 @@ flowchart TD
 - `proposed_value is None`인 cell 제외
 - 동일 좌표/값은 dedup하고 rationale을 병합
 - `modelTarget.valueFieldNames`, `modelTarget.slotAxesFieldNames`, `values[]`를 응답 형태로 재구성
+  - `valueFieldNames`는 DB `basecase_column_roles`에서 식별한 value 컬럼명을 우선 사용하고, 없으면 파라미터명을 사용
 - DB 저장 후 생성된 `modelParamProposalId`를 응답에 포함
 
 현재 코드 기준으로 특정 `event_type_l2_id`를 `to_output()`에서 강제 억제하지 않는다.

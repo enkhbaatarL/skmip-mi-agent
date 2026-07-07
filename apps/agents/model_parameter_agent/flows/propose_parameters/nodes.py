@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any
 
 from apps.agents.model_parameter_agent.mapping import (
+    basecase_slot_axis_names_from_candidate,
     build_basecase_records,
     get_parameter_knowledge_base_from_resources,
     ParameterKnowledgeBase,
@@ -906,6 +907,10 @@ def _column_role_names(raw: Any) -> list[str]:
 
 
 def _allowed_slot_axes_field_names(candidate: dict[str, Any]) -> list[str]:
+    axis_names = basecase_slot_axis_names_from_candidate(candidate)
+    if axis_names:
+        return axis_names
+
     value_field_name = str(
         candidate.get("canonical_parameter_name")
         or candidate.get("parameter_name")

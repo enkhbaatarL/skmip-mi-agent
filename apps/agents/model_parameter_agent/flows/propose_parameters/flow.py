@@ -37,6 +37,8 @@ from apps.agents.model_parameter_agent.persistence.model_input_service import (
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.mapping import (
+    basecase_slot_axis_names_from_candidate,
+    basecase_value_field_name_from_candidate,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
 )
@@ -298,11 +300,10 @@ def _value_field_for(
 ) -> str:
     candidate_key = str(adjustment.get("candidate_key") or "")
     candidate = candidate_index.get(candidate_key) or {}
-    return str(
-        candidate.get("parameter_name")
-        or adjustment.get("parameter_name")
-        or "",
-    )
+    value_field_name = basecase_value_field_name_from_candidate(candidate)
+    if value_field_name:
+        return value_field_name
+    return str(adjustment.get("parameter_name") or "")
 
 
 def _field_key(value: Any) -> str:
@@ -325,6 +326,10 @@ def _allowed_slot_axes_for_candidate(
     candidate: dict[str, Any],
     value_field_name: str,
 ) -> list[str]:
+    axes = basecase_slot_axis_names_from_candidate(candidate)
+    if axes:
+        return axes
+
     value_field_key = _field_key(value_field_name)
     axes: list[str] = []
     for role_name in _column_role_names(candidate.get("basecase_column_roles")):

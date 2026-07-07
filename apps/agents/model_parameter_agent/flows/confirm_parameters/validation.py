@@ -4,6 +4,10 @@ import json
 import re
 from typing import Any
 
+from apps.agents.model_parameter_agent.mapping import (
+    basecase_slot_axis_names_from_candidate,
+    basecase_value_field_name_from_candidate,
+)
 from apps.agents.model_parameter_agent.schemas.api.parameters import (
     ProposalParameter,
 )
@@ -151,7 +155,7 @@ def _append_parameter_definition_errors(
         field_path=f"{location}.modelTarget.tableName",
     )
 
-    expected_value_field = str(definition.get("parameter_name") or "").strip()
+    expected_value_field = basecase_value_field_name_from_candidate(definition)
     expected_value_key = _field_key(expected_value_field)
     invalid_value_fields = [
         field for field in value_fields if _field_key(field) != expected_value_key
@@ -185,6 +189,10 @@ def _append_expected_field_error(
 
 
 def _allowed_slot_axes(definition: dict[str, Any]) -> list[str]:
+    axes = basecase_slot_axis_names_from_candidate(definition)
+    if axes:
+        return axes
+
     role_names = _column_role_names(definition.get("basecase_column_roles"))
     read_mode = str(definition.get("basecase_read_mode") or "").lower()
     if read_mode == "matrix_time_columns":
