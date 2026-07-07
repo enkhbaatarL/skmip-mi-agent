@@ -96,6 +96,8 @@ skmip-mi-agent_*_linux-amd64.bundle.zip
 # Optional: docs / mkdocs / sphinx build
 # =========================
 site/
+docs/backoffice/plan/
+docs/backoffice/tests/
 
 # =========================
 # Optional: PyInstaller
@@ -117,3 +119,4 @@ skmip-mi-agent.code-workspace
 .claude/CLAUDE.md
 .claude/skills/*/.local
 .claude/skills/omc-reference/
+.playwright-mcp/
