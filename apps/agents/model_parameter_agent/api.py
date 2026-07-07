@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Path
+from fastapi import APIRouter, BackgroundTasks, Body, Path
 
 from apps.agents.model_parameter_agent.flows.confirm_parameters.flow import (
     get_runnable_graph as get_confirm_parameters_runnable,
@@ -18,6 +18,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     ProposeParametersAcceptedData,
     ProposeParametersAcceptedOut,
     ProposeParametersOut,
+    ProposeParametersRequest,
 )
 
 
@@ -40,8 +41,15 @@ router = APIRouter()
 )
 async def propose_parameters_sync(
     scenario_id: int,
+    payload: ProposeParametersRequest | None = Body(default=None),
 ) -> ProposeParametersOut:
-    return await get_runnable_graph().ainvoke({"scenario_id": scenario_id})
+    user_id = payload.user_id if payload is not None else None
+    return await get_runnable_graph().ainvoke(
+        {
+            "scenario_id": scenario_id,
+            "user_id": user_id,
+        },
+    )
 
 
 @router.post(
@@ -61,8 +69,13 @@ async def propose_parameters_sync(
 async def propose_parameters(
     scenario_id: int,
     background_tasks: BackgroundTasks,
+    payload: ProposeParametersRequest | None = Body(default=None),
 ) -> ProposeParametersAcceptedOut:
-    result = prepare_propose_parameters_callback(scenario_id)
+    user_id = payload.user_id if payload is not None else None
+    result = prepare_propose_parameters_callback(
+        scenario_id,
+        user_id=user_id,
+    )
     background_tasks.add_task(
         run_propose_parameters_background,
         model_param_proposal_id=result["model_param_proposal_id"],

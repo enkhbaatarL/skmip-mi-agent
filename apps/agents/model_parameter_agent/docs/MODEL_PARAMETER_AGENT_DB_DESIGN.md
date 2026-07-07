@@ -79,6 +79,12 @@ Proposal 생성 상태와 callback 전송 상태는 분리한다.
 
 `event_type_l2_id`는 기본 컬럼에 넣지 않는다. 이벤트 유형별 조회가 필요하면 `scenario_group_id` 또는 `mi_event_id`를 통해 join한다. 운영 조회 성능 요구가 확인되면 optional 컬럼으로 추가한다.
 
+Audit 사용자 ID 저장 규칙:
+
+- proposal 요청의 `userId`는 `request_usr_id`, `crt_usr_logn_id`, 초기 `mod_usr_logn_id`에 저장한다.
+- confirmation 요청의 `userId`는 `mod_usr_logn_id`에 저장한다.
+- proposal `userId`가 없으면 `request_usr_id`는 `NULL`, audit user 컬럼은 기본값 `system`을 사용한다.
+
 ## 4. 상태값
 
 ### 4.1 Proposal status

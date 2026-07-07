@@ -105,7 +105,17 @@ Path parameter:
 |---|---|---:|---|
 | `scenario_id` | integer | Y | 파라미터 제안을 수행할 scenario ID |
 
-Request body는 사용하지 않는다.
+Request body는 선택 사항이다.
+
+```json
+{
+  "userId": 10001
+}
+```
+
+| Field | Type | Required | 설명 |
+|---|---|---:|---|
+| `userId` | integer | N | 요청 사용자 ID. 미입력 시 proposal row의 `request_usr_id`는 `NULL`로 저장한다. |
 
 ### 4.3 Immediate response
 
@@ -258,6 +268,7 @@ Request body:
 
 ```json
 {
+  "userId": 10002,
   "data": {
     "confirmationParameters": [
       {
@@ -287,6 +298,7 @@ Request body:
 
 | Field | Type | Required | 설명 |
 |---|---|---:|---|
+| `userId` | integer | N | 확정 사용자 ID. 입력 시 proposal row의 `mod_usr_logn_id`에 저장한다. |
 | `data.confirmationParameters` | array | Y | 사용자가 최종 확정한 파라미터 전체 set. 형식은 `proposalParameters`와 동일 |
 
 ### 7.3 Success response

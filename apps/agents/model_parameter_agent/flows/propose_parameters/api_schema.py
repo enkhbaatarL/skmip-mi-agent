@@ -20,6 +20,10 @@ class ProposeParametersIn(ApiModel):
     model_name: str | None = Field(default=None)
 
 
+class ProposeParametersRequest(ApiModel):
+    user_id: int | None = Field(default=None)
+
+
 class ParameterCandidate(ApiModel):
     candidate_key: str
     event_no: int | None = None

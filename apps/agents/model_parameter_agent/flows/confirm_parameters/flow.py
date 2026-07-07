@@ -31,6 +31,7 @@ def confirm_parameters(payload: dict[str, Any]) -> ConfirmParametersOut:
     )
     result = model_input_service.confirm_proposal_result(
         model_param_proposal_id=proposal_id,
+        user_id=request.user_id,
         confirmation_parameters=confirmation_parameters,
     )
     logger.info(

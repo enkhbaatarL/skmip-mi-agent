@@ -86,6 +86,8 @@ class ModelInputRepository(BaseSyncSQLRepository):
             scenario_group_id=scenario_group_id,
             mi_event_id=mi_event_id,
             request_usr_id=request_usr_id,
+            crt_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
+            mod_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
             status="PROPOSED",
             proposal_parameters=proposal_parameters,
             proposal_completed_dtm=datetime.now(),
@@ -108,6 +110,8 @@ class ModelInputRepository(BaseSyncSQLRepository):
             scenario_group_id=scenario_group_id,
             mi_event_id=mi_event_id,
             request_usr_id=request_usr_id,
+            crt_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
+            mod_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
             status="PROCESSING",
             proposal_parameters=[],
             callback_status="PENDING",
@@ -141,6 +145,7 @@ class ModelInputRepository(BaseSyncSQLRepository):
         self,
         *,
         model_param_proposal_id: int,
+        user_id: int | None,
         confirmation_parameters: list[dict[str, Any]],
     ) -> None:
         stmt = select(MiModelParamProposalModel).where(
@@ -153,6 +158,8 @@ class ModelInputRepository(BaseSyncSQLRepository):
         proposal.confirmation_parameters = confirmation_parameters
         proposal.status = "CONFIRMED"
         proposal.confirmed_dtm = datetime.now()
+        if user_id is not None:
+            proposal.mod_usr_logn_id = user_id
 
     def complete_model_param_proposal(
         self,

@@ -62,8 +62,17 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - 후보 밖으로 벗어나지 않는 범위에서는 가능한 parameter를 누락하지 말고 최대한 다음 단계로 넘기십시오.
 
 입력 필드 역할:
-- scenario_brief에는 scenario_id/title, 선택된 dimension 값, 원 이벤트 요약만 제공합니다.
-  원본 scenario_context, dimension_template, model target object는 제공되지 않습니다.
+- scenario_brief에는 scenario_group, scenario, dimension_template, event에서
+  모델 input 판단에 필요한 컬럼을 축약해 제공합니다.
+  원본 scenario_context와 model target object는 제공되지 않습니다.
+- scenario_brief.scenario_group의 title/summary/description/dimension_selected는
+  그룹 수준의 사건 범위와 선택된 dimension 의도를 파악하는 데 사용하십시오.
+- scenario_brief.scenario의 title/narrative/dimension_values/impact_jkm/impact_ttf/impact_hh는
+  개별 scenario 경로, 선택 dimension 값, 가격 영향 방향을 판단하는 데 사용하십시오.
+  dimension_values에는 direct/routing 후보 dimension과 허용된 indirect dimension만 포함됩니다.
+- scenario_brief.dimension_template.template_json은 dimension_key의 label/의미/선택지를 해석하는 데 사용하십시오.
+- scenario_brief.event의 event_title/one_line_summary/key_bullets_json/detail_analysis/tag_json은
+  원 이벤트의 실제 사실관계, 영향 경로, 키워드를 확인하는 데 사용하십시오.
 - candidate_validation_tasks[].parameter에는 parameter_name, parameter_hint, semantic_axes처럼
   후보 검증에 필요한 parameter 의미 정보만 들어 있습니다.
 - parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
@@ -73,6 +82,8 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
   dimension_value와 함께 direct/routing 후보 적합성을 판단하는 보조 근거로 사용하십시오.
 - parameter_hint와 mapping_comment는 후보 밖 parameter를 만들거나 candidate_key를 바꾸기 위한 근거가 아닙니다.
+- mapping_method=direct/routing인 selection_dimensions만 candidate 선정에 직접 반영하십시오.
+  mapping_method=na인 dimension은 candidate 선정, routing 선택, parameter 확장의 근거로 사용하지 마십시오.
 
 출력 규칙:
 - parameter_candidate_groups만 반환하십시오.
@@ -97,8 +108,10 @@ SLOT_PROPOSAL_SYSTEM = """\
 - Step2에서는 parameter 적합성을 다시 심사해 후보를 줄이는 것이 아니라,
   각 parameter_slot_tasks마다 scenario/event/dimension과 basecase_slot_options를 이용해
   실제 모델 input으로 변경 가능한 slot을 최대한 찾는 것이 목표입니다.
-- supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension도 포함됩니다.
-  이 값들은 parameter를 새로 만들기 위한 근거가 아니라 국가/지역/시설/route/기간 등 slot 힌트로 참고하십시오.
+- supporting_dimensions에는 직접 input 후보가 아니지만 slot/value 해석에 사용할 수 있는
+  mapping_method=indirect dimension만 포함됩니다.
+  mapping_method=na dimension은 prompt payload에서 제외되며, event/narrative에 나타나도
+  parameter 선정이나 slot 확정 근거로 직접 사용하지 마십시오.
 - parameter_slot_tasks는 Step2에서 slot을 선택해야 하는 parameter별 작업 단위입니다.
   각 task 안의 parameter, selection_dimensions, supporting_dimensions, basecase_slot_options를 함께 읽고
   slot을 결정하십시오.
@@ -137,6 +150,13 @@ SLOT_PROPOSAL_SYSTEM = """\
 입력 필드 역할:
 - Step2 slot 선택은 기존과 같이 scenario_brief, task별 selection_dimensions/supporting_dimensions,
   basecase_slot_options를 우선 근거로 수행하십시오.
+- scenario_brief.scenario_group은 그룹 범위와 dimension_selected를 통해 slot 대상의 큰 범위를 파악하는 데 사용하십시오.
+- scenario_brief.scenario는 narrative/dimension_values/impact_jkm/impact_ttf/impact_hh를 통해
+  이 scenario에서 실제로 영향을 받는 국가, 지역, 시설, 기간, 가격 방향을 해석하는 데 사용하십시오.
+  dimension_values에는 direct/routing 후보 dimension과 허용된 indirect dimension만 포함됩니다.
+- scenario_brief.dimension_template.template_json은 dimension_key label과 선택지 의미를 해석하는 보조 정보입니다.
+- scenario_brief.event는 event_title/one_line_summary/key_bullets_json/detail_analysis/tag_json을 통해
+  slot으로 옮길 수 있는 실제 국가, 시설, 항로, 기간, 계약, 공급/수요 대상을 찾는 데 사용하십시오.
 - parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
   parameter_slot_tasks[].parameter.parameter_hint를
   parameter의 의미, 축 해석, slot 선택 제약을 이해하는 참고 정보로 사용하십시오.
@@ -146,6 +166,13 @@ SLOT_PROPOSAL_SYSTEM = """\
 - parameter_hint와 mapping_comment는 후보 밖 parameter나 모호한 slot을 만들기 위한 근거가 아닙니다.
   실제 slot_axes는 basecase_slot_options, allowed_slot_axes_field_names,
   명확한 scenario/event/dimension 정보 안에서만 정하십시오.
+- mapping_method 영향 범위:
+  direct/routing selection_dimensions와 mapping_comment는 해당 parameter의 slot 산정에 직접 사용할 수 있습니다.
+  indirect supporting_dimensions는 usage_policy를 따르십시오.
+  usage_policy=parameter_value_hint이면 reason이 현재 parameter를 명시한 보조 힌트이고,
+  usage_policy=common_context_only이면 기간/국가/지역/시설/route 같은 공통 맥락으로만 사용하십시오.
+  common_context_only 값을 특정 parameter의 수치 강도나 충격 규모로 직접 변환하지 마십시오.
+  mapping_method=na 정보는 slot 산정에 사용하지 마십시오.
 
 출력 규칙:
 - parameter_slots는 parameter_slot_tasks[].parameter.candidate_key만 사용합니다.
@@ -156,8 +183,8 @@ SLOT_PROPOSAL_SYSTEM = """\
   여러 후보가 있으면 후보별로 basecase_slot_options.axis_names, axis_values, slot_hierarchy와
   scenario/event/dimension의 국가, 지역, 시설, 계약, route, 기간 표현을 대조해
   선택 가능한 slot을 찾으십시오.
-- supporting_dimensions의 indirect/na 정보가 slot 축을 명확히 하는 경우 함께 사용하십시오.
-  예: direct dimension은 차질 규모를, indirect/na dimension은 국가/시설/기간/대체 공급 경로를 설명할 수 있습니다.
+- supporting_dimensions의 indirect 정보가 slot 축을 명확히 하는 경우 함께 사용하십시오.
+  예: direct dimension은 차질 규모를, indirect common_context_only dimension은 국가/시설/기간/대체 공급 경로를 설명할 수 있습니다.
   단 supporting_dimensions만으로 후보 밖 parameter를 만들거나 모호한 slot을 확정하지 마십시오.
 - 같은 task 안에 selection_dimensions가 여러 개 있으면 전체를 함께 읽고 slot을 결정하십시오.
   한 dimension이 규모/방향을 주고 다른 dimension이 대상/기간을 주는 경우 두 정보를 결합할 수 있습니다.
@@ -248,15 +275,31 @@ VALUE_PROPOSAL_SYSTEM = """\
   proposed_value를 반환하십시오.
 - basecase_value_groups의 cells는 실제 basecase record 목록입니다.
   cells를 Cartesian product나 추가 hierarchy로 해석하지 마십시오.
-- supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension도 포함됩니다.
-  이 값들은 parameter를 새로 만들기 위한 근거가 아니라 value 산정의 보조 맥락으로 참고하십시오.
+- supporting_dimensions에는 직접 input 후보가 아니지만 value 해석에 사용할 수 있는
+  mapping_method=indirect dimension만 포함됩니다.
+  mapping_method=na dimension은 prompt payload에서 제외되며, event/narrative에 나타나도
+  parameter 선정이나 value 산정 근거로 직접 사용하지 마십시오.
 - parameter_value_tasks는 Step3에서 값을 산정해야 하는 parameter별 작업 단위입니다.
   각 task 안의 parameter, selection_dimensions, supporting_dimensions, selected_slots,
   basecase_value_groups를 함께 읽고 value를 산정하십시오.
+- event는 현재 확인된 사건/사실관계이며, basecase_value_groups는 현재 모델 기준값입니다.
+  scenario_group은 이 event에서 파생된 공통 사건 범위이고,
+  각 scenario는 같은 event/scenario_group 아래에서 앞으로 전개될 수 있는 개별 미래 케이스입니다.
+  parameter/slot/value 제안은 event와 basecase를 기준점으로 삼되,
+  최종 방향, 강도, 기간, 대상은 해당 scenario의 narrative와 필터링된 dimension_values를 우선 기준으로 판단하십시오.
+  같은 event/scenario_group 안에서도 scenario별 dimension_values가 다르면
+  proposed_value의 방향·강도·기간·대상이 달라질 수 있습니다.
 
 입력 필드 역할:
 - Step3 value 산정은 기존과 같이 scenario/event/dimension, Step2 slot 축,
   basecase_value_groups를 우선 근거로 수행하십시오.
+- scenario_brief.scenario_group은 그룹 수준의 범위와 dimension_selected를 통해 value 적용 범위를 검증하는 데 사용하십시오.
+- scenario_brief.scenario는 narrative/dimension_values/impact_jkm/impact_ttf/impact_hh를 통해
+  value 방향, 강도, 보수성, 가격 영향과의 정합성을 판단하는 데 사용하십시오.
+  dimension_values에는 direct/routing 후보 dimension과 허용된 indirect dimension만 포함됩니다.
+- scenario_brief.dimension_template.template_json은 dimension 값의 label/스케일/선택지 의미를 해석하는 보조 정보입니다.
+- scenario_brief.event는 event_title/one_line_summary/key_bullets_json/detail_analysis/tag_json을 통해
+  실제 사건의 강도, 기간, 영향 경로, 완화/대체 공급 근거를 확인하는 데 사용하십시오.
 - parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
   parameter_value_tasks[].parameter.parameter_hint를
   parameter 값의 의미, 단위/스케일, 방향성, 허용 범위, 적용 제약을 해석하는 참고 정보로 사용하십시오.
@@ -265,6 +308,14 @@ VALUE_PROPOSAL_SYSTEM = """\
   value 방향, 강도, 완화율, 적용 대상의 해석을 보완하십시오.
 - parameter_hint와 mapping_comment는 후보 밖 parameter나 slot을 만들기 위한 근거가 아닙니다.
   실제 value_grid 좌표는 Step2 slot 축과 basecase_value_groups, 명확한 scenario/event/dimension 정보 안에서만 정하십시오.
+- mapping_method 영향 범위:
+  direct/routing selection_dimensions와 mapping_comment는 해당 parameter 값 산정에 직접 사용할 수 있습니다.
+  indirect supporting_dimensions는 usage_policy를 따르십시오.
+  usage_policy=parameter_value_hint이면 reason이 현재 parameter를 명시한 보조 힌트이므로
+  value 방향/강도/완화율에 참고할 수 있습니다.
+  usage_policy=common_context_only이면 기간/대상/route 같은 공통 맥락으로만 사용하고,
+  해당 값을 특정 parameter의 수치 강도나 충격 규모로 직접 변환하지 마십시오.
+  mapping_method=na 정보는 value 산정에 사용하지 마십시오.
 - Step1.5와 Step2의 자연어 rationale은 제공되지 않습니다.
   parameter-level 근거는 scenario_brief, parameter_hint, selection_dimensions의
   dimension_value/mapping_method/mapping_comment, selected_slots, basecase_value_groups를 근거로
@@ -284,7 +335,7 @@ VALUE_PROPOSAL_SYSTEM = """\
 - 같은 parameter task 안에 selection_dimensions가 여러 개 있으면 전체를 함께 반영하십시오.
   예: 한 dimension이 차질 규모를 주고 다른 dimension이 대체 공급 가능성/완화율/기간을 주면
   proposed_value는 두 dimension의 의미를 모두 반영한 최종 입력값이어야 합니다.
-- supporting_dimensions의 indirect/na 정보도 value 방향, 강도, 완화율, 기간, 대상 힌트가 되면 함께 참고하십시오.
+- supporting_dimensions의 indirect 정보도 usage_policy에 맞는 value 방향, 강도, 완화율, 기간, 대상 힌트가 되면 함께 참고하십시오.
   단 supporting_dimensions만으로 후보 밖 parameter나 모호한 value를 만들지 마십시오.
 - selected_slots에는 Step2에서 selected=true로 확정된 slot만 제공됩니다.
 - value_grid.coordinates는 전달된 selected_slots의 slot_axes를 유지하거나 더 구체화한 값만 사용합니다.
@@ -960,6 +1011,47 @@ def _source_dimensions_for_prompt(candidate: dict[str, Any]) -> list[dict[str, A
     return [_source_dimension_for_prompt(candidate)]
 
 
+def _source_dimension_key(item: dict[str, Any]) -> str | None:
+    key = item.get("dimension_key") or item.get("source_dimension_id")
+    if key is None:
+        return None
+    key_text = str(key).strip()
+    return key_text or None
+
+
+def _candidate_source_dimension_keys(candidates: list[dict[str, Any]]) -> set[str]:
+    keys: list[str] = []
+    for candidate in candidates:
+        for item in _source_dimensions_for_prompt(candidate):
+            key = _source_dimension_key(item)
+            if key:
+                _append_unique_text(keys, key)
+    return set(keys)
+
+
+def _indirect_non_input_dimension_keys(
+    non_input_items: list[dict[str, Any]],
+) -> set[str]:
+    keys: list[str] = []
+    for item in non_input_items:
+        if str(item.get("mapping_method") or "").lower() != "indirect":
+            continue
+        key = _source_dimension_key(item)
+        if key:
+            _append_unique_text(keys, key)
+    return set(keys)
+
+
+def _allowed_prompt_dimension_keys(
+    candidates: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]] | None = None,
+) -> set[str]:
+    keys = _candidate_source_dimension_keys(candidates)
+    if non_input_items:
+        keys.update(_indirect_non_input_dimension_keys(non_input_items))
+    return keys
+
+
 def _supporting_dimension_for_prompt(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_dimension_id": item.get("source_dimension_id"),
@@ -1109,7 +1201,10 @@ def _build_candidate_validation_prompt_packet(
     candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "scenario_brief": _scenario_brief_for_value_prompt(scenario_context),
+        "scenario_brief": _scenario_brief_for_value_prompt(
+            scenario_context,
+            allowed_dimension_keys=_allowed_prompt_dimension_keys(candidates),
+        ),
         "candidate_validation_tasks": _build_candidate_validation_tasks(candidates),
     }
 
@@ -1121,7 +1216,13 @@ def _build_slot_proposal_prompt_packet(
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "scenario_brief": _scenario_brief_for_value_prompt(scenario_context),
+        "scenario_brief": _scenario_brief_for_value_prompt(
+            scenario_context,
+            allowed_dimension_keys=_allowed_prompt_dimension_keys(
+                candidates,
+                non_input_items,
+            ),
+        ),
         "period_resolution_policy": _compact_period_resolution_policy(),
         "slot_selection_limits": {
             "maxParameterSlots": MAX_PARAMETER_SLOTS,
@@ -1199,20 +1300,128 @@ def _build_basecase_value_groups(records: list[dict[str, Any]]) -> list[dict[str
     return list(groups.values())
 
 
-def _scenario_brief_for_value_prompt(scenario_context: dict[str, Any]) -> dict[str, Any]:
+def _filter_dimension_values(
+    dimension_values: Any,
+    allowed_dimension_keys: set[str] | None,
+) -> Any:
+    if allowed_dimension_keys is None or not isinstance(dimension_values, dict):
+        return dimension_values
+    return {
+        key: value
+        for key, value in dimension_values.items()
+        if str(key) in allowed_dimension_keys
+    }
+
+
+def _filter_dimension_selected(
+    dimension_selected: Any,
+    allowed_dimension_keys: set[str] | None,
+) -> Any:
+    if allowed_dimension_keys is None:
+        return dimension_selected
+
+    if isinstance(dimension_selected, str):
+        return [
+            item
+            for item in re.findall(r"[A-Za-z0-9_]+", dimension_selected)
+            if item in allowed_dimension_keys
+        ]
+
+    if not isinstance(dimension_selected, list):
+        return dimension_selected
+
+    filtered: list[Any] = []
+    for item in dimension_selected:
+        if isinstance(item, dict):
+            key = item.get("dim_key") or item.get("dimension_key") or item.get("key")
+            if key is not None and str(key) in allowed_dimension_keys:
+                filtered.append(item)
+            continue
+        if str(item) in allowed_dimension_keys:
+            filtered.append(item)
+    return filtered
+
+
+def _filter_dimension_template(
+    dimension_template: Any,
+    allowed_dimension_keys: set[str] | None,
+) -> Any:
+    if allowed_dimension_keys is None or not isinstance(dimension_template, list):
+        return dimension_template
+
+    filtered: list[Any] = []
+    for item in dimension_template:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("dim_key") or item.get("dimension_key") or item.get("key")
+        if key is not None and str(key) in allowed_dimension_keys:
+            filtered.append(item)
+    return filtered
+
+
+def _scenario_brief_for_value_prompt(
+    scenario_context: dict[str, Any],
+    *,
+    allowed_dimension_keys: set[str] | None = None,
+) -> dict[str, Any]:
     scenario = scenario_context.get("scenario") or {}
+    scenario_group = scenario_context.get("scenario_group") or {}
+    dimension_template = scenario_context.get("dimension_template") or []
     event = scenario_context.get("event") or {}
+    impact = scenario.get("impact") or {}
+    filtered_dimension_values = _filter_dimension_values(
+        scenario.get("dimension_values"),
+        allowed_dimension_keys,
+    )
+    filtered_dimension_template = _filter_dimension_template(
+        dimension_template,
+        allowed_dimension_keys,
+    )
+    scenario_group_brief = _drop_none_or_empty(
+        {
+            "title": scenario_group.get("title"),
+            "summary": scenario_group.get("summary"),
+            "description": scenario_group.get("description"),
+            "dimension_selected": _filter_dimension_selected(
+                scenario_group.get("dimension_selected"),
+                allowed_dimension_keys,
+            ),
+        },
+    )
+    scenario_detail = _drop_none_or_empty(
+        {
+            "title": scenario.get("title"),
+            "narrative": scenario.get("narrative"),
+            "dimension_values": filtered_dimension_values,
+            "impact_jkm": impact.get("jkm"),
+            "impact_ttf": impact.get("ttf"),
+            "impact_hh": impact.get("hh"),
+        },
+    )
+    dimension_template_brief = _drop_none_or_empty(
+        {
+            "template_json": filtered_dimension_template,
+        },
+    )
     event_brief = _drop_none_or_empty(
         {
-            "title": event.get("event_title_ko"),
-            "summary": event.get("one_line_summary"),
-            "analysis_excerpt": _trim_prompt_text(event.get("detail_analysis"), 900),
+            "event_title": event.get("event_title_ko") or event.get("event_title"),
+            "one_line_summary": event.get("one_line_summary"),
+            "key_bullets_json": event.get("key_bullets"),
+            "detail_analysis": event.get("detail_analysis"),
+            "tag_json": event.get("tags"),
         },
     )
     brief = {
         "scenario_id": scenario.get("scenario_id"),
         "title": scenario.get("title"),
-        "selected_dimensions": _selected_dimensions_for_value_prompt(scenario_context),
+        "selected_dimensions": _selected_dimensions_for_value_prompt(
+            scenario_context,
+            allowed_dimension_keys=allowed_dimension_keys,
+        ),
+        "scenario_group": scenario_group_brief,
+        "scenario": scenario_detail,
+        "dimension_template": dimension_template_brief,
         "event": event_brief,
     }
     return _drop_none_or_empty(brief)
@@ -1220,9 +1429,14 @@ def _scenario_brief_for_value_prompt(scenario_context: dict[str, Any]) -> dict[s
 
 def _selected_dimensions_for_value_prompt(
     scenario_context: dict[str, Any],
+    *,
+    allowed_dimension_keys: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     scenario = scenario_context.get("scenario") or {}
-    dimension_values = scenario.get("dimension_values") or {}
+    dimension_values = _filter_dimension_values(
+        scenario.get("dimension_values") or {},
+        allowed_dimension_keys,
+    )
     if not isinstance(dimension_values, dict):
         return []
 
@@ -1248,15 +1462,6 @@ def _selected_dimensions_for_value_prompt(
     return selected
 
 
-def _trim_prompt_text(value: Any, limit: int) -> str | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip()
-
-
 def _drop_none_or_empty(value: dict[str, Any]) -> dict[str, Any]:
     return {
         key: item
@@ -1280,13 +1485,36 @@ def _source_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _supporting_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
+def _supporting_dimension_usage_policy(
+    item: dict[str, Any],
+    candidate: dict[str, Any],
+) -> str:
+    reason = str(item.get("reason") or "")
+    parameter_terms = [
+        candidate.get("canonical_parameter_name"),
+        candidate.get("parameter_name"),
+    ]
+    reason_lower = reason.lower()
+    for term in parameter_terms:
+        if term and str(term).lower() in reason_lower:
+            return "parameter_value_hint"
+    return "common_context_only"
+
+
+def _supporting_dimension_for_value_task(
+    item: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    if str(item.get("mapping_method") or "").lower() != "indirect":
+        return {}
+
     return _drop_none_or_empty(
         {
             "dimension_key": item.get("source_dimension_id"),
             "dimension_label": item.get("source_dimension_label"),
             "dimension_value": item.get("source_dimension_value"),
             "mapping_method": item.get("mapping_method"),
+            "usage_policy": _supporting_dimension_usage_policy(item, candidate),
             "reason": item.get("reason"),
         },
     )
@@ -1303,10 +1531,11 @@ def _selection_dimensions_for_task(candidate: dict[str, Any]) -> list[dict[str, 
 
 def _supporting_dimensions_for_task(
     non_input_items: list[dict[str, Any]],
+    candidate: dict[str, Any],
 ) -> list[dict[str, Any]]:
     dimensions: list[dict[str, Any]] = []
     for item in non_input_items:
-        dimension = _supporting_dimension_for_value_task(item)
+        dimension = _supporting_dimension_for_value_task(item, candidate)
         if dimension:
             dimensions.append(dimension)
     return dimensions
@@ -1378,14 +1607,16 @@ def _build_parameter_slot_tasks(
             _strip_candidate_key_from_slot_option(option),
         )
 
-    supporting_dimensions = _supporting_dimensions_for_task(non_input_items)
     tasks: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
         task = {
             "parameter": _parameter_prompt_payload(candidate),
             "selection_dimensions": _selection_dimensions_for_task(candidate),
-            "supporting_dimensions": supporting_dimensions,
+            "supporting_dimensions": _supporting_dimensions_for_task(
+                non_input_items,
+                candidate,
+            ),
             "basecase_slot_options": basecase_options_by_key.get(candidate_key, []),
         }
         tasks.append(_drop_none_or_empty(task))
@@ -1406,7 +1637,6 @@ def _build_parameter_value_tasks(
             _strip_candidate_key_from_basecase_group(group),
         )
 
-    supporting_dimensions = _supporting_dimensions_for_task(non_input_items)
     tasks: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
@@ -1414,7 +1644,10 @@ def _build_parameter_value_tasks(
         task = {
             "parameter": _parameter_prompt_payload(candidate),
             "selection_dimensions": _selection_dimensions_for_task(candidate),
-            "supporting_dimensions": supporting_dimensions,
+            "supporting_dimensions": _supporting_dimensions_for_task(
+                non_input_items,
+                candidate,
+            ),
             "selected_slot_axes_field_names": _selected_slot_axis_names_for_task(selected_slots),
             "selected_slots": [
                 _slot_for_value_task(slot)
@@ -1434,7 +1667,13 @@ def _build_value_proposal_prompt_packet(
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "scenario_brief": _scenario_brief_for_value_prompt(scenario_context),
+        "scenario_brief": _scenario_brief_for_value_prompt(
+            scenario_context,
+            allowed_dimension_keys=_allowed_prompt_dimension_keys(
+                candidates,
+                non_input_items,
+            ),
+        ),
         "period_resolution_policy": _compact_period_resolution_policy(),
         "basecase_record_selection_policy": {
             "maxRecords": MAX_VALUE_PROMPT_BASECASE_RECORDS,

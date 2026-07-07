@@ -35,6 +35,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_value_groups,
     _coordinate_issues,
     _period_start_year_month,
+    _scenario_brief_for_value_prompt,
     filter_basecase_records_by_slots,
     finalize_empty_parameter_values,
     load_scenario_context,
@@ -69,6 +70,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     ProposeParametersData,
     ProposeParametersAcceptedOut,
     ProposeParametersIn,
+    ProposeParametersRequest,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.common.exceptions.custom import MIBaseError
@@ -129,6 +131,21 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert payload.allow_llm_fallback is True
         assert not hasattr(payload, "mapping_excel_path")
 
+    def test_proposal_request_accepts_optional_user_id(self) -> None:
+        assert ProposeParametersRequest().user_id is None
+        assert (
+            ProposeParametersRequest.model_validate(
+                {"userId": 101},
+            ).user_id
+            == 101
+        )
+        assert (
+            ProposeParametersRequest.model_validate(
+                {"user_id": 102},
+            ).user_id
+            == 102
+        )
+
     def test_graph_registers_expected_nodes(self) -> None:
         graph = build_graph().get_graph()
 
@@ -140,6 +157,141 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "filter_basecase_records_by_slots" in graph.nodes
         assert "propose_parameter_values" in graph.nodes
         assert "finalize_empty_parameter_values" in graph.nodes
+
+    def test_scenario_brief_includes_requested_source_table_columns(self) -> None:
+        brief = _scenario_brief_for_value_prompt(
+            {
+                "scenario_group": {
+                    "title": "중동 리스크",
+                    "summary": "공급 리스크 요약",
+                    "description": "시나리오 그룹 상세 설명",
+                    "dimension_selected": ["period", "supply_intensity"],
+                },
+                "scenario": {
+                    "scenario_id": 100,
+                    "title": "단기 차질",
+                    "narrative": "차질이 1개월 내 완화되는 경로",
+                    "dimension_values": {
+                        "period": "1개월 이하",
+                        "supply_intensity": "낮음",
+                    },
+                    "impact": {
+                        "jkm": 1.2,
+                        "ttf": -0.3,
+                        "hh": 0.1,
+                    },
+                },
+                "dimension_template": [
+                    {
+                        "dim_key": "period",
+                        "label": "기간",
+                        "required": True,
+                    },
+                    {
+                        "dim_key": "supply_intensity",
+                        "label": "공급 차질 강도",
+                    },
+                ],
+                "event": {
+                    "event_title_ko": "호르무즈 통항 재개",
+                    "one_line_summary": "운송 리스크가 완화됨",
+                    "key_bullets": ["합의 서명", "통항 재개"],
+                    "detail_analysis": "상세 분석 본문",
+                    "tags": ["geopolitics", "lng"],
+                },
+            },
+        )
+
+        assert brief["scenario_group"] == {
+            "title": "중동 리스크",
+            "summary": "공급 리스크 요약",
+            "description": "시나리오 그룹 상세 설명",
+            "dimension_selected": ["period", "supply_intensity"],
+        }
+        assert brief["scenario"] == {
+            "title": "단기 차질",
+            "narrative": "차질이 1개월 내 완화되는 경로",
+            "dimension_values": {
+                "period": "1개월 이하",
+                "supply_intensity": "낮음",
+            },
+            "impact_jkm": 1.2,
+            "impact_ttf": -0.3,
+            "impact_hh": 0.1,
+        }
+        assert brief["dimension_template"]["template_json"][0]["dim_key"] == "period"
+        assert brief["event"] == {
+            "event_title": "호르무즈 통항 재개",
+            "one_line_summary": "운송 리스크가 완화됨",
+            "key_bullets_json": ["합의 서명", "통항 재개"],
+            "detail_analysis": "상세 분석 본문",
+            "tag_json": ["geopolitics", "lng"],
+        }
+        assert brief["selected_dimensions"] == [
+            {
+                "dimension_key": "period",
+                "dimension_label": "기간",
+                "dimension_value": "1개월 이하",
+            },
+            {
+                "dimension_key": "supply_intensity",
+                "dimension_label": "공급 차질 강도",
+                "dimension_value": "낮음",
+            },
+        ]
+
+    def test_scenario_brief_filters_dimension_context_when_keys_are_restricted(self) -> None:
+        brief = _scenario_brief_for_value_prompt(
+            {
+                "scenario_group": {
+                    "dimension_selected": [
+                        "period",
+                        "economic_intensity",
+                        "demand_impact",
+                    ],
+                },
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": {
+                        "period": "1년",
+                        "economic_intensity": "경기 충격",
+                        "demand_impact": "25%",
+                    },
+                },
+                "dimension_template": [
+                    {"dim_key": "period", "label": "기간"},
+                    {"dim_key": "economic_intensity", "label": "강도"},
+                    {"dim_key": "demand_impact", "label": "LNG 수요 영향 규모"},
+                ],
+            },
+            allowed_dimension_keys={"period", "economic_intensity"},
+        )
+
+        assert brief["scenario_group"]["dimension_selected"] == [
+            "period",
+            "economic_intensity",
+        ]
+        assert brief["scenario"]["dimension_values"] == {
+            "period": "1년",
+            "economic_intensity": "경기 충격",
+        }
+        assert brief["selected_dimensions"] == [
+            {
+                "dimension_key": "period",
+                "dimension_label": "기간",
+                "dimension_value": "1년",
+            },
+            {
+                "dimension_key": "economic_intensity",
+                "dimension_label": "강도",
+                "dimension_value": "경기 충격",
+            },
+        ]
+        assert brief["dimension_template"]["template_json"] == [
+            {"dim_key": "period", "label": "기간"},
+            {"dim_key": "economic_intensity", "label": "강도"},
+        ]
+        assert "demand_impact" not in json.dumps(brief, ensure_ascii=False)
 
     def test_graph_rejects_empty_candidates(self) -> None:
         state = ModelParameterProposalState(
@@ -184,7 +336,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "app.include_router(" in main_source
         assert "preload_parameter_knowledge_base" not in main_source
 
-    def test_model_parameter_endpoint_requires_only_scenario_id(self) -> None:
+    def test_model_parameter_endpoint_accepts_optional_request_body(self) -> None:
         route = next(
             route
             for route in model_parameter_router.routes
@@ -192,11 +344,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
         )
 
-        assert route.body_field is None
+        assert route.body_field is not None
+        assert route.body_field.required is False
         assert route.response_model is ProposeParametersAcceptedOut
         assert [param.name for param in route.dependant.path_params] == ["scenario_id"]
 
-    def test_model_parameter_sync_endpoint_requires_only_scenario_id(self) -> None:
+    def test_model_parameter_sync_endpoint_accepts_optional_request_body(self) -> None:
         route = next(
             route
             for route in model_parameter_router.routes
@@ -204,7 +357,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             and route.path == "/model-parameters/scenarios/{scenario_id}/proposals/sync"
         )
 
-        assert route.body_field is None
+        assert route.body_field is not None
+        assert route.body_field.required is False
         assert [param.name for param in route.dependant.path_params] == ["scenario_id"]
 
     def test_llm_schema_describes_temporal_slot_values_as_integer_numbers(self) -> None:
@@ -520,10 +674,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     "scenario_group": {
                         "scenario_group_id": 20,
                         "mi_event_id": 30,
-                        "request_usr_id": 40,
                     },
                     "event": {"mi_event_id": 30},
                 },
+                user_id=40,
                 proposal_parameters=[
                     ProposalParameter(
                         parameter_name="ShippingCost",
@@ -560,6 +714,200 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert saved_payload[0]["parameterName"] == "ShippingCost"
         assert saved_payload[0]["modelTarget"]["modelFile"] == "Trade"
         assert saved_payload[0]["modelTarget"]["tableName"] == "Table1"
+        assert (
+            repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
+                "request_usr_id"
+            ]
+            == 40
+        )
+
+    def test_model_input_service_does_not_fallback_to_scenario_group_request_user(
+        self,
+    ) -> None:
+        fake_session = SimpleNamespace(
+            commit=Mock(),
+            rollback=Mock(),
+            close=Mock(),
+        )
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
+            ) as repository_cls,
+        ):
+            from apps.agents.model_parameter_agent.persistence.model_input_service import (
+                ModelInputService,
+            )
+
+            repository_cls.return_value.create_model_param_proposal.return_value = 902
+
+            result = ModelInputService().save_proposal_result(
+                scenario_context={
+                    "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+                    "scenario_group": {
+                        "scenario_group_id": 20,
+                        "mi_event_id": 30,
+                        "request_usr_id": 40,
+                    },
+                    "event": {"mi_event_id": 30},
+                },
+                proposal_parameters=[],
+            )
+
+        assert result == 902
+        assert (
+            repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
+                "request_usr_id"
+            ]
+            is None
+        )
+
+    def test_model_input_repository_sets_proposal_user_audit_fields(self) -> None:
+        from apps.persistence.model_input.repository import ModelInputRepository
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.added = None
+
+            def add(self, value) -> None:
+                self.added = value
+
+            def flush(self) -> None:
+                self.added.model_param_proposal_id = 901
+
+        fake_session = FakeSession()
+
+        result = ModelInputRepository(session=fake_session).create_model_param_proposal(
+            scenario_id=100,
+            scenario_group_id=20,
+            mi_event_id=30,
+            request_usr_id=40,
+            proposal_parameters=[],
+        )
+
+        assert result == 901
+        assert fake_session.added.request_usr_id == 40
+        assert fake_session.added.crt_usr_logn_id == 40
+        assert fake_session.added.mod_usr_logn_id == 40
+
+    def test_model_input_repository_sets_processing_user_audit_fields(self) -> None:
+        from apps.persistence.model_input.repository import ModelInputRepository
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.added = None
+
+            def add(self, value) -> None:
+                self.added = value
+
+            def flush(self) -> None:
+                self.added.model_param_proposal_id = 901
+
+        fake_session = FakeSession()
+
+        result = ModelInputRepository(session=fake_session).create_processing_model_param_proposal(
+            scenario_id=100,
+            scenario_group_id=20,
+            mi_event_id=30,
+            request_usr_id=40,
+        )
+
+        assert result == 901
+        assert fake_session.added.request_usr_id == 40
+        assert fake_session.added.crt_usr_logn_id == 40
+        assert fake_session.added.mod_usr_logn_id == 40
+
+    def test_model_input_repository_sets_confirm_user_as_modifier(self) -> None:
+        from apps.persistence.model_input.repository import ModelInputRepository
+
+        proposal = SimpleNamespace(
+            confirmation_parameters=None,
+            status="PROPOSED",
+            confirmed_dtm=None,
+            mod_usr_logn_id=40,
+        )
+
+        class FakeScalarResult:
+            def one_or_none(self):
+                return proposal
+
+        class FakeExecuteResult:
+            def scalars(self):
+                return FakeScalarResult()
+
+        fake_session = SimpleNamespace(execute=Mock(return_value=FakeExecuteResult()))
+
+        ModelInputRepository(session=fake_session).confirm_model_param_proposal(
+            model_param_proposal_id=901,
+            user_id=55,
+            confirmation_parameters=[{"parameterName": "PowerMix"}],
+        )
+
+        assert proposal.confirmation_parameters == [{"parameterName": "PowerMix"}]
+        assert proposal.status == "CONFIRMED"
+        assert proposal.confirmed_dtm is not None
+        assert proposal.mod_usr_logn_id == 55
+
+    def test_model_input_service_passes_confirm_user_id_to_repository(self) -> None:
+        fake_session = SimpleNamespace(
+            commit=Mock(),
+            rollback=Mock(),
+            close=Mock(),
+        )
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
+            ) as repository_cls,
+        ):
+            from apps.agents.model_parameter_agent.persistence.model_input_service import (
+                ModelInputService,
+            )
+
+            repository_cls.return_value.fetch_model_param_proposal.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROPOSED",
+            }
+
+            result = ModelInputService().confirm_proposal_result(
+                model_param_proposal_id=901,
+                user_id=55,
+                confirmation_parameters=[],
+            )
+
+        assert result == {
+            "model_param_proposal_id": 901,
+            "status": "CONFIRMED",
+        }
+        repository_cls.return_value.confirm_model_param_proposal.assert_called_once_with(
+            model_param_proposal_id=901,
+            user_id=55,
+            confirmation_parameters=[],
+        )
 
     def test_model_input_persistence_write_scope_is_proposal_only(self) -> None:
         source = Path(
@@ -1355,6 +1703,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             output = to_output(
                 {
                     "scenario_id": 100,
+                    "user_id": 101,
                     "scenario_context": {
                         "scenario": {"scenario_id": 100, "scenario_group_id": 20},
                         "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
@@ -1453,6 +1802,13 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "needsUserReview" not in str(dumped)
         assert "parameterAdjustments" not in dumped
         assert "nonInputItems" not in dumped
+        service_cls.return_value.save_proposal_result.assert_called_once()
+        assert (
+            service_cls.return_value.save_proposal_result.call_args.kwargs[
+                "user_id"
+            ]
+            == 101
+        )
         assert "validationWarnings" not in dumped
         assert "scenarioContext" not in dumped
         assert "candidateMappings" not in dumped
@@ -1617,6 +1973,50 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         }
         service_cls.return_value.create_processing_proposal.assert_called_once_with(
             scenario_context=scenario_context,
+            user_id=None,
+        )
+
+    def test_prepare_callback_passes_explicit_user_id(self) -> None:
+        scenario_context = {
+            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "mi_event_id": 30,
+                "request_usr_id": 40,
+            },
+            "event": {"mi_event_id": 30},
+            "parameter_mapping_resources": {
+                "mapping_rules": [{"dimension_key": "transport_disruption"}],
+                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+            },
+        }
+
+        with (
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            ) as service_cls,
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "get_parameter_knowledge_base_from_resources",
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "match_parameter_candidates",
+                return_value=([{"candidate_key": "c1"}], [], []),
+            ),
+        ):
+            service_cls.return_value.load_context.return_value = scenario_context
+            service_cls.return_value.create_processing_proposal.return_value = 901
+
+            result = prepare_propose_parameters_callback(
+                100,
+                user_id=101,
+            )
+
+        assert result["model_param_proposal_id"] == 901
+        service_cls.return_value.create_processing_proposal.assert_called_once_with(
+            scenario_context=scenario_context,
+            user_id=101,
         )
 
     def test_to_output_normalizes_slot_axis_fields_for_same_parameter(self) -> None:
@@ -1994,6 +2394,12 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert (
             "mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항"
             in captured_system_contents[0]
+        )
+        assert "scenario_brief.scenario_group의 title/summary/description/dimension_selected" in (
+            captured_system_contents[0]
+        )
+        assert "scenario_brief.event의 event_title/one_line_summary/key_bullets_json/detail_analysis/tag_json" in (
+            captured_system_contents[0]
         )
         assert (
             "특정 dimension에 routing parameter 후보가 하나 이상 있으면"
@@ -2505,9 +2911,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "기간 밖의 future year" in captured_system_contents[0]
         assert "axis_value는 반드시 JSON number integer" in captured_system_contents[0]
         assert '"2026" 같은 문자열은 금지' in captured_system_contents[0]
-        assert "supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension" in captured_system_contents[0]
+        assert "mapping_method=indirect dimension만 포함" in captured_system_contents[0]
         assert "parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항" in captured_system_contents[0]
         assert "mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항" in captured_system_contents[0]
+        assert "scenario_brief.scenario_group은 그룹 범위와 dimension_selected" in captured_system_contents[0]
+        assert "slot으로 옮길 수 있는 실제 국가, 시설, 항로, 기간, 계약" in captured_system_contents[0]
         payload = json.loads(captured_contents[0].split("\n", 1)[1])
         assert "basecase_records" not in payload
         assert "basecase_record_summaries" not in payload
@@ -2524,6 +2932,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "dimension_label": "대체 공급 경로",
                 "dimension_value": "미국 Gulf Coast LNG",
                 "mapping_method": "indirect",
+                "usage_policy": "common_context_only",
                 "reason": "slot 판단 보조 정보",
             },
         ]
@@ -3197,8 +3606,15 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     "source_dimension_id": "alternative_supply_route",
                     "source_dimension_label": "대체 공급 경로",
                     "source_dimension_value": "미국 Gulf Coast LNG",
-                    "mapping_method": "na",
+                    "mapping_method": "indirect",
                     "reason": "value 산정 보조 정보",
+                },
+                {
+                    "source_dimension_id": "demand_impact",
+                    "source_dimension_label": "LNG 수요 영향 규모",
+                    "source_dimension_value": "25%",
+                    "mapping_method": "na",
+                    "reason": "na 정보는 value 산정에서 제외되어야 합니다.",
                 },
             ],
             parameter_slots=[
@@ -3267,7 +3683,12 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert "parameter_value_tasks는 Step3에서 값을 산정해야 하는 parameter별 작업 단위" in captured_system_contents[0]
-        assert "supporting_dimensions의 indirect/na 정보도 value 방향" in captured_system_contents[0]
+        assert "supporting_dimensions의 indirect 정보도 usage_policy에 맞는 value 방향" in captured_system_contents[0]
+        assert "event는 현재 확인된 사건/사실관계" in captured_system_contents[0]
+        assert "각 scenario는 같은 event/scenario_group 아래에서 앞으로 전개될 수 있는 개별 미래 케이스" in captured_system_contents[0]
+        assert "최종 방향, 강도, 기간, 대상은 해당 scenario의 narrative와 필터링된 dimension_values를 우선 기준" in captured_system_contents[0]
+        assert "scenario_brief.scenario_group은 그룹 수준의 범위와 dimension_selected" in captured_system_contents[0]
+        assert "실제 사건의 강도, 기간, 영향 경로, 완화/대체 공급 근거" in captured_system_contents[0]
         payload = json.loads(captured_contents[0].split("\n", 1)[1])
         assert "scenario_context" not in payload
         assert "dimension_template" not in json.dumps(payload, ensure_ascii=False)
@@ -3298,10 +3719,12 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "dimension_key": "alternative_supply_route",
                 "dimension_label": "대체 공급 경로",
                 "dimension_value": "미국 Gulf Coast LNG",
-                "mapping_method": "na",
+                "mapping_method": "indirect",
+                "usage_policy": "common_context_only",
                 "reason": "value 산정 보조 정보",
             },
         ]
+        assert "demand_impact" not in json.dumps(payload, ensure_ascii=False)
         assert payload["parameter_value_tasks"][0]["selected_slot_axes_field_names"] == [
             "Province Country",
             "Year",
@@ -3801,6 +4224,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
     def test_confirmation_schema_accepts_valid_parameter_payload(self) -> None:
         payload = {
+            "userId": 55,
             "data": {
                 "confirmationParameters": [
                     {
@@ -3831,6 +4255,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         parsed = ConfirmParametersIn.model_validate(payload)
         validate_confirmation_parameters(parsed.data.confirmation_parameters)
 
+        assert parsed.user_id == 55
         assert parsed.data.confirmation_parameters[0].parameter_name == "PowerMix"
 
     def test_confirmation_validation_rejects_empty_parameter_payload(self) -> None:

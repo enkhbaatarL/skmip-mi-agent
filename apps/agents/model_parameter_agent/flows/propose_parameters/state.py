@@ -11,6 +11,7 @@ class ModelParameterProposalState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     scenario_id: int
+    user_id: int | None = None
     basecase_dir_path: str | None = None
     max_candidates: int = 8
     max_basecase_sample_rows: int = 5

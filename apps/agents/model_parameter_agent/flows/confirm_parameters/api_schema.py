@@ -15,6 +15,7 @@ class ConfirmParametersDataIn(ApiModel):
 
 
 class ConfirmParametersIn(ApiModel):
+    user_id: int | None = None
     data: ConfirmParametersDataIn
 
 

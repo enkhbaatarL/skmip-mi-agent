@@ -35,6 +35,7 @@ from apps.agents.model_parameter_agent.scripts.evaluate_proposals import (
     _selected_adjustments,
     _stage_summary_table_lines,
 )
+from apps.persistence.model_input.models import MiModelParamProposalModel
 from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
@@ -68,6 +69,391 @@ def _proposal_parameters(final_response: dict[str, Any]) -> list[dict[str, Any]]
     if "proposalParameters" in data:
         return data.get("proposalParameters") or []
     return final_response.get("recommendations") or []
+
+
+def _summarize_text(value: Any, *, max_chars: int = 1200) -> Any:
+    text = str(value or "")
+    if len(text) <= max_chars:
+        return text
+    return {
+        "text_chars": len(text),
+        "text_excerpt": text[:max_chars].rstrip(),
+    }
+
+
+def _scenario_group_context(
+    context: dict[str, Any],
+    target: EventTypeTarget | None = None,
+) -> dict[str, Any]:
+    group = context.get("scenario_group") or {}
+    return {
+        "scenario_group_id": group.get("scenario_group_id")
+        or (target.scenario_group_id if target else None),
+        "mi_event_id": group.get("mi_event_id"),
+        "event_type_l2_id": group.get("event_type_l2_id")
+        or (target.event_type_l2_id if target else None),
+        "request_usr_id": group.get("request_usr_id"),
+        "title": group.get("title") or (target.group_title if target else None),
+        "summary": _summarize_text(group.get("summary")),
+        "description": _summarize_text(group.get("description")),
+        "dimension_selected": group.get("dimension_selected") or [],
+        "scenario_count": group.get("scenario_count"),
+        "status": group.get("status"),
+        "stage": group.get("stage"),
+        "event_type": context.get("event_type") or {},
+    }
+
+
+def _event_type_l2_id(context: dict[str, Any]) -> int | None:
+    group = context.get("scenario_group") or {}
+    event = context.get("event") or {}
+    event_type = context.get("event_type") or {}
+    for raw in (
+        group.get("event_type_l2_id"),
+        event.get("event_type_l2_id"),
+        event_type.get("event_type_l2_id"),
+    ):
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _parameter_definitions_by_name(context: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    resources = context.get("parameter_mapping_resources") or {}
+    definitions = resources.get("parameter_definitions") or []
+    by_name: dict[str, dict[str, Any]] = {}
+    for definition in definitions:
+        if not isinstance(definition, dict):
+            continue
+        name = str(
+            definition.get("canonical_parameter_name")
+            or definition.get("parameter_name")
+            or "",
+        ).strip()
+        if name:
+            by_name[name] = definition
+    return by_name
+
+
+def _mapping_usage_policy(mapping_method: Any) -> str:
+    method = str(mapping_method or "").lower()
+    if method in {"direct", "routing"}:
+        return "direct_parameter_candidate_context"
+    if method == "indirect":
+        return "supporting_context_only_when_allowed"
+    if method == "na":
+        return "excluded_from_parameter_slot_value_prompt"
+    return "unknown"
+
+
+def _scenario_dimension_values_by_scenario(
+    scenario_contexts: list[dict[str, Any]],
+    dimension_key: str,
+) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for scenario_context in scenario_contexts:
+        scenario = scenario_context.get("scenario") or {}
+        dimension_values = scenario.get("dimension_values") or {}
+        values.append(
+            {
+                "scenario_id": scenario.get("scenario_id"),
+                "dimension_value": dimension_values.get(dimension_key),
+                "selected_in_scenario": dimension_key in dimension_values,
+            },
+        )
+    return values
+
+
+def _dimension_parameter_mapping_context(
+    context: dict[str, Any],
+    scenario_contexts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    event_type_l2_id = _event_type_l2_id(context)
+    resources = context.get("parameter_mapping_resources") or {}
+    mapping_rules = resources.get("mapping_rules") or []
+    definitions_by_name = _parameter_definitions_by_name(context)
+    value_contexts = scenario_contexts or [context]
+
+    rows: list[dict[str, Any]] = []
+    for rule in mapping_rules:
+        if not isinstance(rule, dict):
+            continue
+        try:
+            rule_event_type_l2_id = int(rule.get("event_type_l2_id"))
+        except (TypeError, ValueError):
+            continue
+        if event_type_l2_id is not None and rule_event_type_l2_id != event_type_l2_id:
+            continue
+
+        parameter_name = str(rule.get("canonical_parameter_name") or "").strip()
+        definition = definitions_by_name.get(parameter_name, {})
+        model_target = None
+        if parameter_name:
+            model_target = {
+                "model_file": definition.get("model_file"),
+                "model_sheet": definition.get("model_sheet"),
+                "model_table": definition.get("model_table"),
+                "semantic_axes": definition.get("semantic_axes"),
+            }
+        dimension_key = str(rule.get("dimension_key") or "")
+        scenario_values = _scenario_dimension_values_by_scenario(
+            value_contexts,
+            dimension_key,
+        )
+        rows.append(
+            {
+                "dimension_key": dimension_key,
+                "dimension_label": rule.get("dimension_label"),
+                "scenario_dimension_value": (
+                    scenario_values[0].get("dimension_value")
+                    if len(scenario_values) == 1
+                    else None
+                ),
+                "selected_in_scenario": (
+                    scenario_values[0].get("selected_in_scenario")
+                    if len(scenario_values) == 1
+                    else None
+                ),
+                "selected_in_any_scenario": any(
+                    item.get("selected_in_scenario")
+                    for item in scenario_values
+                ),
+                "scenario_dimension_values_by_scenario": scenario_values,
+                "mapping_method": rule.get("mapping_method"),
+                "canonical_parameter_name": parameter_name or None,
+                "model_target": model_target,
+                "comment": rule.get("comment"),
+                "prompt_usage_policy": _mapping_usage_policy(rule.get("mapping_method")),
+            },
+        )
+
+    rows.sort(
+        key=lambda item: (
+            str(item.get("dimension_key") or ""),
+            str(item.get("mapping_method") or ""),
+            str(item.get("canonical_parameter_name") or ""),
+        ),
+    )
+    return {
+        "source_tables": [
+            "tmm_mi_model_param_dimension_map",
+            "tmm_mi_model_param_m",
+        ],
+        "event_type_l2_id": event_type_l2_id,
+        "mapping_count": len(rows),
+        "dimension_parameter_mappings": rows,
+    }
+
+
+def _event_context(context: dict[str, Any]) -> dict[str, Any]:
+    event = context.get("event") or {}
+    return {
+        "mi_event_id": event.get("mi_event_id"),
+        "event_type_l2_id": event.get("event_type_l2_id"),
+        "event_title_ko": event.get("event_title_ko"),
+        "one_line_summary": event.get("one_line_summary"),
+        "occurred_at": event.get("occurred_at"),
+        "created_at": event.get("created_at"),
+        "latest_record_first_created": event.get("latest_record_first_created"),
+        "oldest_record_first_created": event.get("oldest_record_first_created"),
+        "source_mi_record_ids": event.get("source_mi_record_ids"),
+        "key_bullets": event.get("key_bullets") or [],
+        "tags": event.get("tags") or [],
+        "detail_analysis": _summarize_text(
+            event.get("detail_analysis"),
+            max_chars=1600,
+        ),
+    }
+
+
+def _scenario_context(context: dict[str, Any]) -> dict[str, Any]:
+    scenario = context.get("scenario") or {}
+    return {
+        "scenario_id": scenario.get("scenario_id"),
+        "scenario_group_id": scenario.get("scenario_group_id"),
+        "title": scenario.get("title"),
+        "narrative": _summarize_text(scenario.get("narrative"), max_chars=1600),
+        "status": scenario.get("status"),
+        "dimension_values": scenario.get("dimension_values") or {},
+        "probability_score": scenario.get("probability_score"),
+        "probability_delta": scenario.get("probability_delta"),
+        "impact": scenario.get("impact"),
+        "baseline_yn": scenario.get("baseline_yn"),
+    }
+
+
+def _proposal_id(final_response: dict[str, Any]) -> int | None:
+    data = final_response.get("data") or {}
+    raw = data.get("modelParamProposalId") or data.get("model_param_proposal_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_proposal_db_row(model_param_proposal_id: int | None) -> dict[str, Any]:
+    if model_param_proposal_id is None:
+        return {}
+    session = get_sync_session()
+    try:
+        stmt = select(MiModelParamProposalModel).where(
+            MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
+            MiModelParamProposalModel.del_yn == "N",
+        )
+        proposal = session.execute(stmt).scalars().one_or_none()
+        if proposal is None:
+            return {
+                "model_param_proposal_id": model_param_proposal_id,
+                "fetch_status": "NOT_FOUND",
+            }
+        return {
+            "model_param_proposal_id": int(proposal.model_param_proposal_id),
+            "scenario_id": int(proposal.scenario_id),
+            "scenario_group_id": int(proposal.scenario_group_id),
+            "mi_event_id": int(proposal.mi_event_id),
+            "request_usr_id": (
+                int(proposal.request_usr_id)
+                if proposal.request_usr_id is not None
+                else None
+            ),
+            "status": proposal.status,
+            "callback_status": proposal.callback_status,
+            "proposal_completed_dtm": proposal.proposal_completed_dtm,
+            "callback_sent_dtm": proposal.callback_sent_dtm,
+            "confirmed_dtm": proposal.confirmed_dtm,
+            "error_code": proposal.error_code,
+            "error_message": proposal.error_message,
+            "proposal_parameters": proposal.proposal_parameters or [],
+            "confirmation_parameters": proposal.confirmation_parameters,
+        }
+    finally:
+        session.close()
+
+
+def _proposal_parameters_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
+    proposal_row = record.get("proposal_db_row") or {}
+    db_parameters = proposal_row.get("proposal_parameters")
+    if isinstance(db_parameters, list):
+        return db_parameters
+    return _proposal_parameters(record.get("final_response") or {})
+
+
+def _model_target(parameter: dict[str, Any]) -> dict[str, Any]:
+    target = parameter.get("modelTarget") or parameter.get("model_target") or {}
+    return target if isinstance(target, dict) else {}
+
+
+def _parameter_name(parameter: dict[str, Any]) -> str:
+    return str(parameter.get("parameterName") or parameter.get("parameter_name") or "")
+
+
+def _parameter_values(parameter: dict[str, Any]) -> list[dict[str, Any]]:
+    values = parameter.get("values") or []
+    return values if isinstance(values, list) else []
+
+
+def _slot_axis_field_names(parameter: dict[str, Any]) -> list[str]:
+    target = _model_target(parameter)
+    raw = (
+        target.get("slotAxesFieldNames")
+        or target.get("slot_axes_field_names")
+        or []
+    )
+    return [str(item) for item in raw] if isinstance(raw, list) else []
+
+
+def _value_field_names(parameter: dict[str, Any]) -> list[str]:
+    target = _model_target(parameter)
+    raw = target.get("valueFieldNames") or target.get("value_field_names") or []
+    return [str(item) for item in raw] if isinstance(raw, list) else []
+
+
+def _slot_coordinates_for_value(
+    parameter: dict[str, Any],
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        axis: value.get(axis)
+        for axis in _slot_axis_field_names(parameter)
+        if axis in value
+    }
+
+
+def _md_cell(value: Any, *, max_chars: int = 500) -> str:
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "..."
+    return text.replace("\n", "<br>").replace("|", "\\|")
+
+
+def _proposal_parameter_table_lines(parameters: list[dict[str, Any]]) -> list[str]:
+    if not parameters:
+        return ["- 제안 파라미터 없음."]
+    lines = [
+        "| No | parameterName | modelTarget | slot axes | value fields | values | rationale |",
+        "|---:|---|---|---|---|---:|---|",
+    ]
+    for index, parameter in enumerate(parameters, start=1):
+        target = _model_target(parameter)
+        target_summary = {
+            "modelFile": target.get("modelFile") or target.get("model_file"),
+            "modelSheet": target.get("modelSheet") or target.get("model_sheet"),
+            "tableName": target.get("tableName") or target.get("table_name"),
+        }
+        lines.append(
+            "| {index} | {name} | `{target}` | `{slot_axes}` | `{value_fields}` | {value_count} | {rationale} |".format(
+                index=index,
+                name=_md_cell(_parameter_name(parameter), max_chars=120),
+                target=_md_cell(target_summary, max_chars=260),
+                slot_axes=_md_cell(_slot_axis_field_names(parameter), max_chars=220),
+                value_fields=_md_cell(_value_field_names(parameter), max_chars=220),
+                value_count=len(_parameter_values(parameter)),
+                rationale=_md_cell(parameter.get("rationale") or "", max_chars=420),
+            ),
+        )
+    return lines
+
+
+def _proposal_value_table_lines(parameters: list[dict[str, Any]]) -> list[str]:
+    if not parameters:
+        return ["- 제안 value 없음.", ""]
+    lines: list[str] = []
+    for parameter in parameters:
+        values = _parameter_values(parameter)
+        lines.extend([f"###### Proposed Values - {_parameter_name(parameter)}", ""])
+        if not values:
+            lines.extend(["- 제안 value 없음.", ""])
+            continue
+        lines.extend(
+            [
+                "| No | slot coordinates | basecaseValue | proposedValue | rationale |",
+                "|---:|---|---:|---:|---|",
+            ],
+        )
+        for index, value in enumerate(values, start=1):
+            lines.append(
+                "| {index} | `{coordinates}` | {basecase} | {proposed} | {rationale} |".format(
+                    index=index,
+                    coordinates=_md_cell(
+                        _slot_coordinates_for_value(parameter, value),
+                        max_chars=500,
+                    ),
+                    basecase=_md_cell(value.get("basecaseValue"), max_chars=160),
+                    proposed=_md_cell(value.get("proposedValue"), max_chars=160),
+                    rationale=_md_cell(value.get("rationale") or "", max_chars=620),
+                ),
+            )
+        lines.append("")
+    return lines
 
 
 @dataclass(frozen=True)
@@ -401,12 +787,42 @@ def _render_report(
         if len(group_records) > 1 and has_expected and has_selected:
             value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
         group_ok = _group_status(target, records, errors)
+        group_context = group_records[0]["context"] if group_records else {}
         lines.extend(
             [
                 f"### event_type_l2_id={target.event_type_l2_id} {target.event_type_label}",
                 "",
-                f"- scenario_group_id: {target.scenario_group_id}",
-                f"- group_title: {target.group_title}",
+                "#### Scenario Group",
+                "",
+                "```json",
+                _json_pretty(_scenario_group_context(group_context, target)),
+                "```",
+                "",
+                "#### Dimension Template",
+                "",
+                "```json",
+                _json_pretty(group_context.get("dimension_template") or []),
+                "```",
+                "",
+                "#### Dimension -> Parameter Mapping",
+                "",
+                "```json",
+                _json_pretty(
+                    _dimension_parameter_mapping_context(
+                        group_context,
+                        [record["context"] for record in group_records],
+                    ),
+                ),
+                "```",
+                "",
+                "#### Event",
+                "",
+                "```json",
+                _json_pretty(_event_context(group_context)),
+                "```",
+                "",
+                "#### Group Test Summary",
+                "",
                 f"- 대상 scenario_ids: {list(target.scenario_ids)}",
                 f"- scenario_count: {len(target.scenario_ids)}",
                 f"- 매핑 후보 검증: {'PASS' if all(record['mapping_ok'] for record in group_records) and not group_errors else 'FAIL'}",
@@ -441,8 +857,15 @@ def _render_report(
                     "",
                     f"- 소요시간: {_format_duration(record.get('elapsed_seconds'))} ({_format_seconds(record.get('elapsed_seconds'))})",
                     f"- attempt: {record.get('attempt') or 1}",
-                    f"- db_loaded_context: `{_json_preview(_db_load_summary(context), max_chars=1400)}`",
-                    f"- dimension_values: `{_json_preview(scenario.get('dimension_values') or {})}`",
+                    "",
+                    "##### Scenario Major Info",
+                    "",
+                    "```json",
+                    _json_pretty(_scenario_context(context)),
+                    "```",
+                    "",
+                    "##### Validation Summary",
+                    "",
                     f"- expected_parameters: `{_json_preview(expected_names)}`",
                     f"- selected_parameters: `{_json_preview(actual_names)}`",
                     f"- mapping_candidate_coverage: {'PASS' if record['mapping_ok'] else 'FAIL'}",
@@ -461,20 +884,29 @@ def _render_report(
             if record.get("basecase_warnings"):
                 lines.append(f"- basecase_warnings: `{_json_preview(record['basecase_warnings'])}`")
             lines.extend(_stage_summary_table_lines(record.get("step_summary") or {}))
-            lines.extend(_llm_call_table_lines(record.get("llm_calls") or []))
+            proposal_parameters = _proposal_parameters_from_record(record)
             lines.extend(
                 [
-                    "<details>",
-                    "<summary>final response JSON</summary>",
+                    "",
+                    "##### Proposed Parameter Summary",
+                    "",
+                    *_proposal_parameter_table_lines(proposal_parameters),
+                    "",
+                    "##### Proposed Parameter Values",
+                    "",
+                    *_proposal_value_table_lines(proposal_parameters),
+                    "##### Final DB Proposal Row",
+                    "",
+                    "- source_table: `tmm_mi_model_param_proposal_m`",
                     "",
                     "```json",
-                    _json_pretty(record["final_response"]),
+                    _json_pretty(record.get("proposal_db_row") or {}),
                     "```",
-                    "",
-                    "</details>",
                     "",
                 ],
             )
+            lines.extend(_llm_call_table_lines(record.get("llm_calls") or []))
+            lines.append("")
 
     group_status = {
         str(target.scenario_group_id): _group_status(target, records, errors)
@@ -581,6 +1013,9 @@ async def run_event_type_evaluation(
                     result["started_at"] = scenario_started_at.isoformat(timespec="seconds")
                     result["finished_at"] = datetime.now().isoformat(timespec="seconds")
                     result["elapsed_seconds"] = elapsed_seconds
+                    result["proposal_db_row"] = _fetch_proposal_db_row(
+                        _proposal_id(result.get("final_response") or {}),
+                    )
                     records.append(result)
                     print(
                         "OK",

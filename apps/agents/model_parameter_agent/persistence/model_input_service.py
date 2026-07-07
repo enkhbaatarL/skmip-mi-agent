@@ -69,6 +69,7 @@ class ModelInputService:
         self,
         *,
         scenario_context: dict[str, Any],
+        user_id: int | None = None,
         proposal_parameters: list[Any],
     ) -> int:
         from apps.common.configs.database.sync_database.connection import get_sync_session
@@ -88,7 +89,7 @@ class ModelInputService:
             event.get("mi_event_id") or scenario_group.get("mi_event_id"),
             field_name="event.mi_event_id",
         )
-        request_usr_id = _optional_int(scenario_group.get("request_usr_id"))
+        request_usr_id = _optional_int(user_id)
         payload = _json_payload(proposal_parameters)
 
         session = get_sync_session()
@@ -112,6 +113,7 @@ class ModelInputService:
         self,
         *,
         scenario_context: dict[str, Any],
+        user_id: int | None = None,
     ) -> int:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
@@ -130,7 +132,7 @@ class ModelInputService:
             event.get("mi_event_id") or scenario_group.get("mi_event_id"),
             field_name="event.mi_event_id",
         )
-        request_usr_id = _optional_int(scenario_group.get("request_usr_id"))
+        request_usr_id = _optional_int(user_id)
 
         session = get_sync_session()
         try:
@@ -220,6 +222,7 @@ class ModelInputService:
         self,
         *,
         model_param_proposal_id: int,
+        user_id: int | None = None,
         confirmation_parameters: list[Any],
     ) -> dict[str, Any]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
@@ -248,6 +251,7 @@ class ModelInputService:
                 )
             repository.confirm_model_param_proposal(
                 model_param_proposal_id=model_param_proposal_id,
+                user_id=_optional_int(user_id),
                 confirmation_parameters=payload,
             )
             session.commit()

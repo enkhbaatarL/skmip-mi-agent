@@ -549,6 +549,7 @@ def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposePar
     _ensure_proposal_parameters(data, proposal_parameters)
     model_param_proposal_id = ModelInputService().save_proposal_result(
         scenario_context=scenario_context,
+        user_id=data.get("user_id"),
         proposal_parameters=proposal_parameters,
     )
     response_data = _to_response_data(
@@ -571,6 +572,8 @@ def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposePar
 
 def prepare_propose_parameters_callback(
     scenario_id: int,
+    *,
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     model_input_service = ModelInputService()
     scenario_context = model_input_service.load_context(scenario_id)
@@ -580,6 +583,7 @@ def prepare_propose_parameters_callback(
     )
     model_param_proposal_id = model_input_service.create_processing_proposal(
         scenario_context=scenario_context,
+        user_id=user_id,
     )
     scenario_id_value, scenario_group_id, event_id = _context_ids(
         scenario_context,

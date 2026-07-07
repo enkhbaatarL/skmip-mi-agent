@@ -80,10 +80,12 @@ flowchart TD
 
 ### `to_state`
 
-요청 payload에서 `scenario_id`를 필수로 검증하고, 나머지 body는 `ProposeParametersIn`으로 검증한다.
-그 결과를 `ModelParameterProposalState`로 만든다.
+요청 path에서 `scenario_id`를 필수로 받고, 선택 body는 `ProposeParametersRequest`로 검증한다.
+현재 public proposal body는 시나리오 그룹 agent와 동일한 `user_id`(`userId`)만 받는다. 값이 있으면 proposal row의
+`request_usr_id`, `crt_usr_logn_id`, 초기 `mod_usr_logn_id`에 저장하고, 미입력 시 `request_usr_id`는 `NULL`로 저장한다.
+confirmation body의 `user_id`(`userId`)는 proposal row의 `mod_usr_logn_id`에 저장한다.
 
-주요 입력 옵션:
+그래프 실행 상태(`ModelParameterProposalState`)에는 로컬 테스트/검증용 옵션도 포함된다.
 
 - 매핑 정보는 매 요청 시 DB의 `tmm_mi_model_param_m`, `tmm_mi_model_param_dimension_map`에서 조회한다.
 - `basecase_dir_path`: 기본 Basecase 경로 대신 사용할 경로
@@ -168,6 +170,14 @@ LLM 입력:
 - `scenario_brief`
 - `candidate_validation_tasks`
 - Basecase record는 아직 전달하지 않음
+
+`scenario_brief`에는 아래 source context가 들어간다.
+
+- `scenario_group`: `title`, `summary`, `description`, `dimension_selected`
+- `scenario`: `title`, `narrative`, `dimension_values`, `impact_jkm`, `impact_ttf`, `impact_hh`
+- `dimension_template`: `template_json`
+- `event`: `event_title`, `one_line_summary`, `key_bullets_json`, `detail_analysis`, `tag_json`
+- 호환용 top-level field: `scenario_id`, `title`, `selected_dimensions`
 
 핵심 규칙:
 
