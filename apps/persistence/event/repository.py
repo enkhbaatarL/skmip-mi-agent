@@ -57,6 +57,16 @@ class EventRepository(BaseSyncSQLRepository):
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
             "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
+            "latest_record_first_created": (
+                event.latest_record_first_created.isoformat()
+                if event.latest_record_first_created
+                else ""
+            ),
+            "oldest_record_first_created": (
+                event.oldest_record_first_created.isoformat()
+                if event.oldest_record_first_created
+                else ""
+            ),
             "event_type": {
                 "level_1_code": l1.level_1_code if l1 else "",
                 "level_2_code": l2.level_2_code if l2 else "",

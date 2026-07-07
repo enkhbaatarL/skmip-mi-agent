@@ -3,15 +3,15 @@ from __future__ import annotations
 import json
 
 import httpx
+from pydantic import BaseModel
 
 from apps.common.logging.decorators import log_connector
 from apps.common.logging.logger_config import logger
-from apps.common.values.response import CallBackBody
 from apps.connectors.callback.oauth2_token_manager import get_token_manager
 
 
 @log_connector(connector_type="CALLBACK", log_input=True, log_output=True)
-async def send_callback(url: str, payload: CallBackBody) -> None:
+async def send_callback(url: str, payload: BaseModel) -> None:
     """콜백 URL로 payload를 POST한다.
 
     흐름:

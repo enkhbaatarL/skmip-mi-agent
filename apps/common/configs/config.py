@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     callback_validate_scenarios_path: str = Field(default="")
     callback_create_signposts_path: str = Field(default="")
     callback_price_interpretations_path: str = Field(default="")
+    callback_model_parameter_proposals_path: str = Field(default="")
     skip_callback: bool = Field(default=False)
 
     mcp_database_base: str = "mimcp://database"
