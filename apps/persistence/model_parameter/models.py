@@ -8,20 +8,9 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.persistence.event.models import (
-    MiEventModel,
-    MiEventRecordMapModel,
-    MiEventTypeL1Model,
-    MiEventTypeL2Model,
-)
-from apps.persistence.scenario.models import (
-    MiScenarioDimensionTemplateModel,
-    MiScenarioModel,
-)
 from apps.persistence.scenario_group.models import (
     AuditColumnsMixin,
     BIN,
-    MiScenarioGroupModel,
     TABLE_ARGS,
 )
 from apps.common.configs.database.sync_database.base import ORMBase
@@ -333,14 +322,7 @@ class MiModelParamDimensionMapModel(AuditColumnsMixin, ORMBase):
 
 
 __all__ = [
-    "MiEventModel",
-    "MiEventRecordMapModel",
-    "MiEventTypeL1Model",
-    "MiEventTypeL2Model",
     "MiModelParamDimensionMapModel",
     "MiModelParamModel",
     "MiModelParamProposalModel",
-    "MiScenarioDimensionTemplateModel",
-    "MiScenarioGroupModel",
-    "MiScenarioModel",
 ]

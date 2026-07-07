@@ -67,7 +67,7 @@ flowchart TD
 
 로딩 절차의 핵심:
 
-- `ModelInputService.load_context()`: scenario context와 model parameter DB 매핑 row를 함께 조회한다.
+- `ModelParameterService.load_context()`: scenario context와 model parameter DB 매핑 row를 함께 조회한다.
 - `get_parameter_knowledge_base_from_resources()`: 조회된 DB row를 `ParameterKnowledgeBase`로 변환한다.
 - `_resolve_basecase_dir()`: 명시 폴더가 있으면 해당 폴더를 사용하고, 없으면 이름에 `Basecase_20260610`이 포함된 리소스 폴더를 찾는다.
 - `_load_basecase_profiles()`: Demand/Supply/Trade Basecase `.xlsm` 파일을 찾고, 매핑된 sheet의 존재 여부와 샘플/profile 정보를 만든다.
@@ -114,7 +114,7 @@ confirmation body의 `user_id`(`userId`)는 proposal row의 `mod_usr_logn_id`에
 
 ### 1. `load_scenario_context`
 
-`ModelInputService().load_context(state.scenario_id)`로 시나리오 실행 맥락을 읽는다.
+`ModelParameterService().load_context(state.scenario_id)`로 시나리오 실행 맥락을 읽는다.
 
 주요 context:
 
@@ -285,8 +285,9 @@ LLM 입력:
 LLM 출력:
 
 - `parameter_adjustments[]`
-- 각 adjustment의 `slot_axes`
-- 각 cell의 `coordinates`, `basecase_value`, `proposed_value`, rationale, `basecase_reference_ids`
+- 각 adjustment의 `candidate_key`, `rationale_ko`, `value_grid`
+- 각 cell의 `coordinates`, `proposed_value`, rationale, `basecase_reference_ids`
+- Step3 LLM 출력에는 `selected`를 받지 않는다. Step2에서 확정된 selected slot은 value 산정 대상이다.
 
 서버 보정:
 
@@ -296,8 +297,12 @@ LLM 출력:
   - 모호 좌표 cell 제거
   - `proposed_value=null` cell 제거
   - 유효 cell이 없으면 `selected=false`
-  - LLM 응답에서 누락된 candidate는 `selected=false`, `needs_user_review=true`로 보강
+  - LLM 응답에서 누락된 candidate는 value가 없는 것으로 보고 `selected=false` 검토 항목으로 보강
   - `basecase_reference_ids`가 있으면 `_patch_basecase_value()`로 기준값 보강
+- Step3 value 산정 원칙
+  - selected slot에 일치하는 basecase가 있으면 해당 값을 anchor로 삼아 dimension value의 방향·강도·기간에 따라 높이거나 낮춘다.
+  - selected slot에 일치하는 basecase가 없으면 `basecase_value=null`로 두되, 다른 slot의 basecase는 값의 범위·단위·스케일·형식 참고용으로만 사용한다.
+  - basecase 부재를 0으로 해석하지 않는다. no-change/neutral이면 다른 slot 범위와 형식을 참고한 보수적 유지값을 제안한다.
 - `_backfill_rule_based_adjustments()`
   - LLM이 명확한 value grid를 만들지 못한 일부 parameter에 대해 scenario dimension 기반 규칙 보정값을 생성
   - 대상 예: `Temperature`, `CDD`, `HDD`, `PowerMix`, `SupplyDisruption`, `VolumeCancelled`,
@@ -336,10 +341,13 @@ LLM 호출은 세 번이다.
 ## 8. 핵심 소스
 
 - `api.py`: FastAPI endpoint
-- `flows/propose_parameters/flow.py`: LangGraph node 순서, `to_state`, `to_output`, proposal parameter 그룹화 및 저장
-- `flows/propose_parameters/nodes.py`: 각 graph node, LLM prompt, sanitizer, fallback, rule-based backfill
-- `mapping.py`: DB 매핑 resource 변환, candidate 매칭, Basecase profile/record 추출
+- `flows/propose_parameters/flow.py`: LangGraph node 순서, `to_state`, `to_output`, 저장 orchestration
+- `flows/propose_parameters/nodes.py`: 각 graph node, sanitizer, fallback, rule-based backfill
+- `prompts/model_parameter_proposal.py`: LLM 단계별 system prompt
+- `presentation.py`: proposal response, callback payload, parameter summary 생성
+- `utils/parameter_mapping.py`, `utils/basecase.py`: DB 매핑 resource 변환, candidate 매칭, Basecase profile/record 추출
 - `state.py`: `ModelParameterProposalState`
-- `schemas/propose_parameters.py`: API/LLM 구조화 schema
-- `persistence/model_input/service.py`, `repository.py`: scenario context 및 model parameter DB 매핑 조회, proposal 저장
+- `flows/propose_parameters/api_schema.py`, `schemas/model_parameter_proposal.py`: API/LLM 구조화 schema
+- `persistence/model_parameter_service.py`: scenario/event/group repository와 model parameter repository 조합
+- `apps/persistence/model_parameter/repository.py`: model parameter 3개 테이블 조회/저장
 - `tests/test_model_parameter_agent_contract.py`: graph 구성, 후보 검증, Basecase 추출, sanitizer, 출력 계약 테스트

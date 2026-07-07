@@ -13,7 +13,7 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
 
-PACKAGE_DIR = Path(__file__).resolve().parent
+PACKAGE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = PACKAGE_DIR / "resources"
 DEFAULT_MAPPING_GLOB = "260625*.xlsx"
 DEFAULT_BASECASE_DIR_MARKER = "Basecase_20260610"
@@ -316,11 +316,11 @@ def _build_parameter_knowledge_base_from_rows(
 
 
 def _load_db_mapping_resources() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    from apps.agents.model_parameter_agent.persistence.model_input_service import (
-        ModelInputService,
+    from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+        ModelParameterService,
     )
 
-    return ModelInputService().load_parameter_mapping_resources()
+    return ModelParameterService().load_parameter_mapping_resources()
 
 
 @lru_cache(maxsize=8)

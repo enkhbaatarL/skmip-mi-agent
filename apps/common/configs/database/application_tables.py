@@ -8,7 +8,7 @@ from apps.persistence.event.models import (
     MiEventTypeL1Model,
     MiEventTypeL2Model,
 )
-from apps.persistence.model_input.models import (
+from apps.persistence.model_parameter.models import (
     MiModelParamDimensionMapModel,
     MiModelParamModel,
     MiModelParamProposalModel,

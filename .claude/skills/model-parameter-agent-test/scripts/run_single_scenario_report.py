@@ -223,13 +223,11 @@ def _scenario_dimension_values_by_scenario(
 
 def _dimension_parameter_mapping_context(
     context: dict[str, Any],
-    scenario_contexts: list[dict[str, Any]] | None = None,
+    _scenario_contexts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     event_type_l2_id = _event_type_l2_id(context)
     resources = context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
-    definitions_by_name = _parameter_definitions_by_name(context)
-    value_contexts = scenario_contexts or [context]
 
     rows: list[dict[str, Any]] = []
     for rule in mapping_rules:
@@ -243,52 +241,27 @@ def _dimension_parameter_mapping_context(
             continue
 
         parameter_name = str(rule.get("canonical_parameter_name") or "").strip()
-        definition = definitions_by_name.get(parameter_name, {})
-        model_target = None
-        if parameter_name:
-            model_target = {
-                "model_file": definition.get("model_file"),
-                "model_sheet": definition.get("model_sheet"),
-                "model_table": definition.get("model_table"),
-                "semantic_axes": definition.get("semantic_axes"),
-            }
         dimension_key = str(rule.get("dimension_key") or "")
-        scenario_values = _scenario_dimension_values_by_scenario(
-            value_contexts,
-            dimension_key,
+        dimension_label = str(rule.get("dimension_label") or "").strip()
+        dimension = (
+            f"{dimension_key} ({dimension_label})"
+            if dimension_label and dimension_label != dimension_key
+            else dimension_key
         )
         rows.append(
             {
-                "dimension_key": dimension_key,
-                "dimension_label": rule.get("dimension_label"),
-                "scenario_dimension_value": (
-                    scenario_values[0].get("dimension_value")
-                    if len(scenario_values) == 1
-                    else None
-                ),
-                "selected_in_scenario": (
-                    scenario_values[0].get("selected_in_scenario")
-                    if len(scenario_values) == 1
-                    else None
-                ),
-                "selected_in_any_scenario": any(
-                    item.get("selected_in_scenario")
-                    for item in scenario_values
-                ),
-                "scenario_dimension_values_by_scenario": scenario_values,
+                "dimension": dimension,
                 "mapping_method": rule.get("mapping_method"),
-                "canonical_parameter_name": parameter_name or None,
-                "model_target": model_target,
+                "parameter": parameter_name or None,
                 "comment": rule.get("comment"),
-                "prompt_usage_policy": _mapping_usage_policy(rule.get("mapping_method")),
             },
         )
 
     rows.sort(
         key=lambda item: (
-            str(item.get("dimension_key") or ""),
+            str(item.get("dimension") or ""),
             str(item.get("mapping_method") or ""),
-            str(item.get("canonical_parameter_name") or ""),
+            str(item.get("parameter") or ""),
         ),
     )
     return {
@@ -361,7 +334,7 @@ def _fetch_proposal_db_row(model_param_proposal_id: int | None) -> dict[str, Any
     from apps.common.configs.database.sync_database.connection import (  # noqa: PLC0415
         get_sync_session,
     )
-    from apps.persistence.model_input.models import (  # noqa: PLC0415
+    from apps.persistence.model_parameter.models import (  # noqa: PLC0415
         MiModelParamProposalModel,
     )
 
@@ -669,10 +642,8 @@ def _prompt_input_packets(record: dict[str, Any]) -> list[tuple[str, dict[str, A
         _build_value_proposal_prompt_packet,
         _filter_records_by_selected_slots,
     )
-    from apps.agents.model_parameter_agent.mapping import (  # noqa: PLC0415
-        build_basecase_records,
-        get_parameter_knowledge_base,
-    )
+    from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records  # noqa: PLC0415
+    from apps.agents.model_parameter_agent.utils.parameter_mapping import get_parameter_knowledge_base  # noqa: PLC0415
 
     context = record.get("context") or {}
     rule_candidates = record.get("rule_candidates") or []
@@ -733,7 +704,7 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
         raise SystemExit(f"repo root not found: {repo_root}")
     sys.path.insert(0, str(repo_root))
 
-    from apps.agents.model_parameter_agent.scripts.evaluate_proposals import (  # noqa: PLC0415
+    from tests.manual.model_parameter_agent.evaluate_proposals import (  # noqa: PLC0415
         _evaluate_scenario,
         _format_duration,
         _format_seconds,
@@ -742,7 +713,7 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
         _stage_summary_table_lines,
     )
 
-    report_dir = repo_root / "apps/agents/model_parameter_agent/reports"
+    report_dir = repo_root / "tests" / "reports" / "model_parameter_agent"
     report_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now()
     started_monotonic = time.perf_counter()

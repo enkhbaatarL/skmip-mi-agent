@@ -273,25 +273,31 @@ POST /model-parameters/scenarios/{scenario_id}/proposals
   - prepare_propose_parameters_callback()
   - run_propose_parameters_background()
 → flows/propose_parameters/nodes.py
+→ prompts/model_parameter_proposal.py
+→ presentation.py
 → apps/connectors/callback/callback_client.py
-→ persistence/model_input_service.py
-→ apps/persistence/model_input/repository.py
+→ persistence/model_parameter_service.py
+→ apps/persistence/model_parameter/repository.py
 
 POST /model-parameters/scenarios/{scenario_id}/proposals/sync
 → api.py
 → flows/propose_parameters/api_schema.py
 → flows/propose_parameters/flow.py
 → flows/propose_parameters/nodes.py
-→ persistence/model_input_service.py
-→ apps/persistence/model_input/repository.py
+→ prompts/model_parameter_proposal.py
+→ presentation.py
+→ persistence/model_parameter_service.py
+→ apps/persistence/model_parameter/repository.py
 
 POST /model-parameters/proposals/{modelParamProposalId}/confirmation
 → api.py
 → flows/confirm_parameters/api_schema.py
 → flows/confirm_parameters/flow.py
+→ flows/confirm_parameters/state.py
+→ flows/confirm_parameters/nodes.py
 → flows/confirm_parameters/validation.py
-→ persistence/model_input_service.py
-→ apps/persistence/model_input/repository.py
+→ persistence/model_parameter_service.py
+→ apps/persistence/model_parameter/repository.py
 ```
 
 ## 도메인 소유권 기준

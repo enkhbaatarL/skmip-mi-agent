@@ -44,15 +44,15 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     select_parameter_candidates,
     validate_parameter_candidates,
 )
-from apps.agents.model_parameter_agent.mapping import (
+from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     DEFAULT_INPUT_DIR,
     DIMENSION_PARAMETER_MAPPING_SHEET,
     PARAMETER_EXCEL_MAPPING_SHEET,
-    build_basecase_records,
     get_parameter_knowledge_base,
     match_parameter_candidates,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
+from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
+from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     LLMCandidateValidationResponse,
     LLMSlotAxis,
     LLMSlotProposal,
@@ -60,13 +60,17 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     LLMValueAdjustment,
     LLMValueCell,
     LLMValueProposalResponse,
-    ModelParameterTarget,
     ParameterCandidateGroupDecision,
     ParameterSlotAxis,
     ParameterSlotProposal,
     ParameterAdjustment,
     ParameterValueCell,
+)
+from apps.agents.model_parameter_agent.schemas.api.parameters import (
+    ModelParameterTarget,
     ProposalParameter,
+)
+from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
     ProposeParametersData,
     ProposeParametersAcceptedOut,
     ProposeParametersIn,
@@ -385,7 +389,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
 
     def test_default_knowledge_base_loads_mapping_from_db(self) -> None:
-        from apps.agents.model_parameter_agent import mapping as mapping_module
+        from apps.agents.model_parameter_agent.utils import parameter_mapping as mapping_module
 
         mapping_rows = [
             {
@@ -423,8 +427,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             patch(
-                "apps.agents.model_parameter_agent.persistence.model_input_service."
-                "ModelInputService.load_parameter_mapping_resources",
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service."
+                "ModelParameterService.load_parameter_mapping_resources",
                 return_value=(mapping_rows, parameter_rows),
             ) as load_resources,
         ):
@@ -465,14 +469,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
     def test_dimension_mapping_query_excludes_inactive_parameter_refs(self) -> None:
         from sqlalchemy.dialects import mysql
 
-        from apps.persistence.model_input.repository import (
-            ModelInputRepository,
+        from apps.persistence.model_parameter.repository import (
+            ModelParameterRepository,
         )
 
         session = Mock()
         session.execute.return_value.all.return_value = []
 
-        ModelInputRepository(session=session)._fetch_dimension_mapping_rules()
+        ModelParameterRepository(session=session)._fetch_dimension_mapping_rules()
 
         stmt = session.execute.call_args.args[0]
         compiled = str(
@@ -486,7 +490,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "tmm_mi_model_param_m.model_param_id IS NOT NULL" in compiled
         assert "mapping_status" not in compiled
 
-    def test_model_input_service_loads_context_with_parameter_mapping_resources(self) -> None:
+    def test_model_parameter_service_loads_context_with_parameter_mapping_resources(self) -> None:
         fake_session = SimpleNamespace(close=lambda: None)
         fake_connection_module = types.ModuleType(
             "apps.common.configs.database.sync_database.connection",
@@ -503,32 +507,78 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
-            ) as repository_cls,
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ScenarioRepository",
+            ) as scenario_repository_cls,
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ScenarioGroupRepository",
+            ) as group_repository_cls,
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.EventRepository",
+            ) as event_repository_cls,
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as model_parameter_repository_cls,
         ):
-            from apps.agents.model_parameter_agent.persistence.model_input_service import (
-                ModelInputService,
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
             )
 
-            repository_cls.return_value.fetch_context_by_scenario_id.return_value = {
-                "scenario": {"scenario_id": 100},
+            scenario_repository_cls.return_value.fetch_model_by_id.return_value = SimpleNamespace(
+                scenario_id=100,
+                scenario_group_id=20,
+                title="scenario",
+                narrative="",
+                status="READY",
+                dimension_values={},
+                probability_score=None,
+                probability_delta=None,
+                impact_jkm=None,
+                impact_ttf=None,
+                impact_hh=None,
+                baseline_yn="N",
+            )
+            scenario_repository_cls.return_value.fetch_dimension_template.return_value = [
+                {"dim_key": "transport_disruption"},
+            ]
+            group_repository_cls.return_value.fetch_by_id.return_value = SimpleNamespace(
+                scenario_group_id=20,
+                mi_event_id=30,
+                event_type_l2_id=17,
+                request_usr_id=40,
+                title="group",
+                summary="",
+                description="",
+                dimension_selected=[],
+                scenario_count=1,
+                status="READY",
+                stage="DONE",
+            )
+            event_repository_cls.return_value.fetch_event_by_id.return_value = {
+                "mi_event_id": 30,
             }
-            repository_cls.return_value.fetch_parameter_mapping_resources.return_value = (
+            event_repository_cls.return_value.fetch_event_type_by_l2_id.return_value = {
+                "event_type_l2_id": 17,
+            }
+            model_parameter_repository_cls.return_value.fetch_parameter_mapping_resources.return_value = (
                 [{"dimension_key": "transport_disruption"}],
                 [{"parameter_name": "ShippingCost"}],
             )
 
-            result = ModelInputService().load_context(100)
+            result = ModelParameterService().load_context(100)
 
         assert result["scenario"]["scenario_id"] == 100
         assert result["parameter_mapping_resources"] == {
             "mapping_rules": [{"dimension_key": "transport_disruption"}],
             "parameter_definitions": [{"parameter_name": "ShippingCost"}],
         }
-        repository_cls.return_value.fetch_context_by_scenario_id.assert_called_once_with(100)
-        repository_cls.return_value.fetch_parameter_mapping_resources.assert_called_once_with()
+        scenario_repository_cls.return_value.fetch_model_by_id.assert_called_once_with(100)
+        group_repository_cls.return_value.fetch_by_id.assert_called_once_with(20)
+        event_repository_cls.return_value.fetch_event_by_id.assert_called_once_with(30)
+        event_repository_cls.return_value.fetch_event_type_by_l2_id.assert_called_once_with(17)
+        scenario_repository_cls.return_value.fetch_dimension_template.assert_called_once_with(17)
+        model_parameter_repository_cls.return_value.fetch_parameter_mapping_resources.assert_called_once_with()
 
-    def test_model_input_service_loads_parameter_mapping_resources(self) -> None:
+    def test_model_parameter_service_loads_parameter_mapping_resources(self) -> None:
         fake_session = SimpleNamespace(close=lambda: None)
         fake_connection_module = types.ModuleType(
             "apps.common.configs.database.sync_database.connection",
@@ -545,11 +595,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
             ) as repository_cls,
         ):
-            from apps.agents.model_parameter_agent.persistence.model_input_service import (
-                ModelInputService,
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
             )
 
             repository_cls.return_value.fetch_parameter_mapping_resources.return_value = (
@@ -558,7 +608,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             )
 
             mapping_rules, parameter_definitions = (
-                ModelInputService().load_parameter_mapping_resources()
+                ModelParameterService().load_parameter_mapping_resources()
             )
 
         assert mapping_rules == [{"dimension_key": "period"}]
@@ -615,7 +665,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmpdir,
             patch(
                 "apps.agents.model_parameter_agent.flows.propose_parameters.nodes."
-                "ModelInputService",
+                "ModelParameterService",
             ) as service_cls,
         ):
             state = ModelParameterProposalState(
@@ -638,7 +688,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert kb.definition_for("ShippingCost") is not None
         assert selected["candidate_mappings"][0]["canonical_parameter_name"] == "ShippingCost"
 
-    def test_model_input_service_saves_proposal_result(self) -> None:
+    def test_model_parameter_service_saves_proposal_result(self) -> None:
         fake_session = SimpleNamespace(
             commit=Mock(),
             rollback=Mock(),
@@ -659,16 +709,16 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
             ) as repository_cls,
         ):
-            from apps.agents.model_parameter_agent.persistence.model_input_service import (
-                ModelInputService,
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
             )
 
             repository_cls.return_value.create_model_param_proposal.return_value = 901
 
-            result = ModelInputService().save_proposal_result(
+            result = ModelParameterService().save_proposal_result(
                 scenario_context={
                     "scenario": {"scenario_id": 100, "scenario_group_id": 20},
                     "scenario_group": {
@@ -721,7 +771,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             == 40
         )
 
-    def test_model_input_service_does_not_fallback_to_scenario_group_request_user(
+    def test_model_parameter_service_does_not_fallback_to_scenario_group_request_user(
         self,
     ) -> None:
         fake_session = SimpleNamespace(
@@ -744,16 +794,16 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
             ) as repository_cls,
         ):
-            from apps.agents.model_parameter_agent.persistence.model_input_service import (
-                ModelInputService,
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
             )
 
             repository_cls.return_value.create_model_param_proposal.return_value = 902
 
-            result = ModelInputService().save_proposal_result(
+            result = ModelParameterService().save_proposal_result(
                 scenario_context={
                     "scenario": {"scenario_id": 100, "scenario_group_id": 20},
                     "scenario_group": {
@@ -774,8 +824,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             is None
         )
 
-    def test_model_input_repository_sets_proposal_user_audit_fields(self) -> None:
-        from apps.persistence.model_input.repository import ModelInputRepository
+    def test_model_parameter_repository_sets_proposal_user_audit_fields(self) -> None:
+        from apps.persistence.model_parameter.repository import ModelParameterRepository
 
         class FakeSession:
             def __init__(self) -> None:
@@ -789,7 +839,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         fake_session = FakeSession()
 
-        result = ModelInputRepository(session=fake_session).create_model_param_proposal(
+        result = ModelParameterRepository(session=fake_session).create_model_param_proposal(
             scenario_id=100,
             scenario_group_id=20,
             mi_event_id=30,
@@ -802,8 +852,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert fake_session.added.crt_usr_logn_id == 40
         assert fake_session.added.mod_usr_logn_id == 40
 
-    def test_model_input_repository_sets_processing_user_audit_fields(self) -> None:
-        from apps.persistence.model_input.repository import ModelInputRepository
+    def test_model_parameter_repository_sets_processing_user_audit_fields(self) -> None:
+        from apps.persistence.model_parameter.repository import ModelParameterRepository
 
         class FakeSession:
             def __init__(self) -> None:
@@ -817,7 +867,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         fake_session = FakeSession()
 
-        result = ModelInputRepository(session=fake_session).create_processing_model_param_proposal(
+        result = ModelParameterRepository(session=fake_session).create_processing_model_param_proposal(
             scenario_id=100,
             scenario_group_id=20,
             mi_event_id=30,
@@ -829,8 +879,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert fake_session.added.crt_usr_logn_id == 40
         assert fake_session.added.mod_usr_logn_id == 40
 
-    def test_model_input_repository_sets_confirm_user_as_modifier(self) -> None:
-        from apps.persistence.model_input.repository import ModelInputRepository
+    def test_model_parameter_repository_sets_confirm_user_as_modifier(self) -> None:
+        from apps.persistence.model_parameter.repository import ModelParameterRepository
 
         proposal = SimpleNamespace(
             confirmation_parameters=None,
@@ -849,7 +899,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         fake_session = SimpleNamespace(execute=Mock(return_value=FakeExecuteResult()))
 
-        ModelInputRepository(session=fake_session).confirm_model_param_proposal(
+        ModelParameterRepository(session=fake_session).confirm_model_param_proposal(
             model_param_proposal_id=901,
             user_id=55,
             confirmation_parameters=[{"parameterName": "PowerMix"}],
@@ -860,7 +910,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert proposal.confirmed_dtm is not None
         assert proposal.mod_usr_logn_id == 55
 
-    def test_model_input_service_passes_confirm_user_id_to_repository(self) -> None:
+    def test_model_parameter_service_passes_confirm_user_id_to_repository(self) -> None:
         fake_session = SimpleNamespace(
             commit=Mock(),
             rollback=Mock(),
@@ -881,11 +931,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.model_parameter_agent.persistence.model_input_service.ModelInputRepository",
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
             ) as repository_cls,
         ):
-            from apps.agents.model_parameter_agent.persistence.model_input_service import (
-                ModelInputService,
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
             )
 
             repository_cls.return_value.fetch_model_param_proposal.return_value = {
@@ -893,7 +943,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "status": "PROPOSED",
             }
 
-            result = ModelInputService().confirm_proposal_result(
+            result = ModelParameterService().confirm_proposal_result(
                 model_param_proposal_id=901,
                 user_id=55,
                 confirmation_parameters=[],
@@ -909,9 +959,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             confirmation_parameters=[],
         )
 
-    def test_model_input_persistence_write_scope_is_proposal_only(self) -> None:
+    def test_model_parameter_persistence_write_scope_is_proposal_only(self) -> None:
         source = Path(
-            "apps/persistence/model_input/repository.py",
+            "apps/persistence/model_parameter/repository.py",
         ).read_text().lower()
 
         forbidden_tokens = [
@@ -1697,7 +1747,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_to_output_returns_key_content_only(self) -> None:
         with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
         ) as service_cls:
             service_cls.return_value.save_proposal_result.return_value = 777
             output = to_output(
@@ -1820,7 +1870,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_to_output_uses_basecase_value_column_role_for_value_field(self) -> None:
         with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
         ) as service_cls:
             service_cls.return_value.save_proposal_result.return_value = 778
             output = to_output(
@@ -1913,14 +1963,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         with (
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
             ) as service_cls,
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
                 "get_parameter_knowledge_base_from_resources",
             ),
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
                 "match_parameter_candidates",
                 return_value=([], [], ["no mapped parameter"]),
             ),
@@ -1948,14 +1998,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         with (
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
             ) as service_cls,
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
                 "get_parameter_knowledge_base_from_resources",
             ),
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
                 "match_parameter_candidates",
                 return_value=([{"candidate_key": "c1"}], [], []),
             ),
@@ -1993,14 +2043,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         with (
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
             ) as service_cls,
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
                 "get_parameter_knowledge_base_from_resources",
             ),
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow."
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
                 "match_parameter_candidates",
                 return_value=([{"candidate_key": "c1"}], [], []),
             ),
@@ -2021,7 +2071,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_to_output_normalizes_slot_axis_fields_for_same_parameter(self) -> None:
         with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
         ) as service_cls:
             service_cls.return_value.save_proposal_result.return_value = 780
             output = to_output(
@@ -2138,7 +2188,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_event_type_is_not_forcibly_suppressed(self) -> None:
         with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
         ) as service_cls:
             service_cls.return_value.save_proposal_result.return_value = 778
             for event_type_l2_id in (6, 10):
@@ -2228,7 +2278,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_to_output_rejects_empty_final_proposal_parameters(self) -> None:
         with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelInputService",
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
         ) as service_cls:
             service_cls.return_value.save_proposal_result.return_value = 779
             with self.assertRaises(MIBaseError) as error:
@@ -3675,6 +3725,18 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert (
+            "scenario/event/dimension value의 방향·강도·기간에 따라 그 기준값을 높이거나 낮춰"
+            in captured_system_contents[0]
+        )
+        assert (
+            "basecase 부재를 0으로 해석하지 말고"
+            in captured_system_contents[0]
+        )
+        assert (
+            "값의 범위·단위·스케일·소수 자리·형식 참고용으로만 사용"
+            in captured_system_contents[0]
+        )
+        assert (
             "개별 slot/설비/국가/월/record명, basecase_value, proposed_value"
             in captured_system_contents[0]
         )
@@ -3985,18 +4047,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         }
         value_response = LLMValueProposalResponse(
             parameter_adjustments=[
-                ParameterAdjustment(
+                LLMValueAdjustment(
                     candidate_key="routing-regas",
-                    model_file="Supply",
-                    model_sheet="RegasAdjustment",
-                    parameter_name="RegasAdjustment",
-                    selected=False,
-                    slot_axes=[],
                     value_grid=[],
-                    parameter_selection_rationale_ko="LLM이 정량 값을 확정하지 못했습니다.",
-                    confidence_overall=0.2,
-                    needs_user_review=True,
-                    warnings=["정량 값 미확정"],
+                    rationale_ko="LLM이 정량 값을 확정하지 못했습니다.",
                 ),
             ],
         )
@@ -4141,7 +4195,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "needs_user_review" not in adjustment
         assert any("proposed_value가 null" in warning for warning in result["validation_warnings"])
 
-    async def test_llm_value_sanitizer_rejects_duplicate_slot_value_conflicts(self) -> None:
+    async def test_llm_value_sanitizer_keeps_first_duplicate_slot_value_conflict(self) -> None:
         candidate = {
             "candidate_key": "c1",
             "model_file": "Demand",
@@ -4217,8 +4271,9 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_values(state)
 
         adjustment = result["parameter_adjustments"][0]
-        assert adjustment["selected"] is False
-        assert adjustment["value_grid"] == []
+        assert adjustment["selected"] is True
+        assert len(adjustment["value_grid"]) == 1
+        assert adjustment["value_grid"][0]["proposed_value"] == -5
         assert "needs_user_review" not in adjustment
         assert any("동일 slot 좌표" in warning for warning in result["validation_warnings"])
 

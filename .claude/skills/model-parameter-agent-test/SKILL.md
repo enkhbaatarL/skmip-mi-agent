@@ -7,7 +7,7 @@ description: Run and document MI 수급모델파라미터 proposal agent tests a
 
 ## Overview
 
-Run 수급모델파라미터 proposal tests from `/Users/messiah/skg-mi/skmip-mi-agent` and write markdown reports under `apps/agents/model_parameter_agent/reports/`.
+Run 수급모델파라미터 proposal tests from `/Users/messiah/skg-mi/skmip-mi-agent` and write markdown reports under `tests/reports/model_parameter_agent/`.
 
 Use `poetry run` from the repo root. Do not start the API server for these tests.
 
@@ -24,16 +24,28 @@ If the user provides a scenario title instead of an id, resolve the `scenario_id
 For `모든 이벤트타입에 해당하는 시나리오그룹 1개씩 테스트해줘`, run one scenario group per event type and two scenarios per group:
 
 ```bash
-poetry run python apps/agents/model_parameter_agent/scripts/evaluate_event_type_proposals.py --all-event-types --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --all-event-types --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
 ```
 
 For `폭염/한파 이벤트타입에 해당하는 시나리오 테스트해줘`, include event_type_l2_id `6` (겨울 한파) and `7` (여름 폭염). Treat the typo `폭엄` as `폭염`. By default, test all existing groups/scenarios for these two event types:
 
 ```bash
-poetry run python apps/agents/model_parameter_agent/scripts/evaluate_event_type_proposals.py --event-type-l2-ids 6 7 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --event-type-l2-ids 6 7 --concurrency 4 --retries 1 --max-candidates 30
 ```
 
 If the user explicitly says `1개씩`, `샘플`, or asks for a quick check, add `--groups-per-event 1 --scenarios-per-group 2`.
+
+If the user specifies one or more target parameters such as `GDP`, `PMI`, `PowerMix`, `Temperature`, or `LiqUtilAdjustment`, use parameter mode. The script resolves event types where the parameter is a current DB `direct` or `routing` mapping candidate, then writes the report body in `parameter -> event_type -> scenario` order:
+
+```bash
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+```
+
+If the user specifies both target parameters and explicit event types, keep the explicit event type scope while still rendering the report in `parameter -> event_type -> scenario` order:
+
+```bash
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP PMI --event-type-l2-ids 1 2 4 --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+```
 
 ## Report Handling
 
@@ -41,7 +53,12 @@ Use the report path printed as `REPORT` or `REPORT_IN_PROGRESS`. Event-type eval
 
 Write one integrated markdown report per user test request. If an automated script already created a markdown report, append any parameter-specific quality evaluation, findings, and improvement plan to that same file instead of creating a second markdown file. Do not split "raw execution result" and "quality evaluation" into separate report files unless the user explicitly asks for separate files.
 
-For event-type or multi-scenario runs that use `apps/agents/model_parameter_agent/scripts/evaluate_event_type_proposals.py`, treat the generated `REPORT` file as the base integrated report. Before the final response, make sure the same `REPORT` path contains the scenario group, dimension template, event, scenario major information, final DB proposal row, proposed parameter/value details, and parameter-specific quality evaluation. Prompt packet details are appendix material, not the primary report structure.
+Report ordering depends on the user's requested scope:
+
+- If the user specifies event types, scenario groups, or scenarios, keep the current `event_type -> scenario_group -> scenario` order.
+- If the user specifies target parameters, write the main result body in `parameter -> event_type -> scenario` order. The scenario subsection should filter the proposed parameter summary/value tables to the current parameter, while the final DB proposal row remains the full stored row for traceability.
+
+For event-type or multi-scenario runs that use `tests/manual/model_parameter_agent/evaluate_event_type_proposals.py`, treat the generated `REPORT` file as the base integrated report. Before the final response, make sure the same `REPORT` path contains the scenario group, dimension template, event, scenario major information, final DB proposal row, proposed parameter/value details, and parameter-specific quality evaluation. Prompt packet details are appendix material, not the primary report structure.
 
 Every markdown report must include scenario-level execution time and per-LLM-call execution time. A scenario section should show total scenario elapsed time, and a `모델 호출별 소요시간` table with Step1.5 candidate validation, Step2 slot proposal, and Step3 value proposal rows when those LLM calls were executed.
 
@@ -49,7 +66,7 @@ Every markdown report must make the information needed for human proposal review
 
 1. `Scenario Group`: show the DB-loaded scenario group once per group, including `scenario_group_id`, `mi_event_id`, `event_type_l2_id`, event type labels, `title`, `summary`, `description`, `dimension_selected`, `scenario_count`, `status`, and `stage`.
 2. `Dimension Template`: show the full `dimension_template` rows for the event type, including dimension key/label/required/options when present.
-3. `Dimension -> Parameter Mapping`: immediately below the dimension template, show DB-loaded dimension-to-parameter mapping rows for the same `event_type_l2_id`. Include source tables, `mapping_count`, and for each row: `dimension_key`, `dimension_label`, the current scenario's `scenario_dimension_value` when available, `selected_in_scenario`, `selected_in_any_scenario`, `scenario_dimension_values_by_scenario` for multi-scenario reports, `mapping_method`, `canonical_parameter_name`, model target fields (`model_file`, `model_sheet`, `model_table`, `semantic_axes`) when mapped, `comment`, and `prompt_usage_policy`. The usage policy must distinguish `direct/routing` as direct candidate context, `indirect` as supporting context only when allowed, and `na` as excluded from parameter/slot/value prompt influence.
+3. `Dimension -> Parameter Mapping`: immediately below the dimension template, show DB-loaded dimension-to-parameter mapping rows for the same `event_type_l2_id`. Keep this compact. Include source tables, `mapping_count`, and for each row only `dimension`, `mapping_method`, `parameter`, and `comment`.
 4. `Event`: show the DB-loaded event once under the group, including `mi_event_id`, `event_type_l2_id`, `event_title_ko`, `one_line_summary`, date fields, source record ids, `key_bullets`, `tags`, and bounded `detail_analysis`.
 5. `Scenarios`: for each scenario in the group, show scenario major information and the actual final DB proposal row.
 

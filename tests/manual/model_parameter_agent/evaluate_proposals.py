@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 DEFAULT_APP_CONFIG = ROOT_DIR / "envs" / "config.yaml"
@@ -33,17 +33,17 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
 )
-from apps.agents.model_parameter_agent.mapping import (
-    build_basecase_records,
+from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
+from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base,
     match_parameter_candidates,
 )
-from apps.agents.model_parameter_agent.persistence.model_input_service import (
-    ModelInputService,
+from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+    ModelParameterService,
 )
 
 
-REPORT_DIR = Path(__file__).resolve().parents[1] / "reports"
+REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
 RAW_GRAPH = build_graph()
 
 
@@ -695,7 +695,7 @@ async def _evaluate_scenario(
     max_candidates: int,
     allow_llm_fallback: bool,
 ) -> dict[str, Any]:
-    context = ModelInputService().load_context(scenario_id)
+    context = ModelParameterService().load_context(scenario_id)
     kb = get_parameter_knowledge_base()
     candidates, non_inputs, mapping_warnings = match_parameter_candidates(
         kb,

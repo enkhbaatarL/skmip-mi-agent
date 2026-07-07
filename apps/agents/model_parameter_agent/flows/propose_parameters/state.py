@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from apps.agents.model_parameter_agent.mapping import ParameterKnowledgeBase
+from apps.agents.model_parameter_agent.utils.parameter_mapping import ParameterKnowledgeBase
 
 
 class ModelParameterProposalState(BaseModel):

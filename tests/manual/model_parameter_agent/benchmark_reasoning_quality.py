@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 DEFAULT_APP_CONFIG = ROOT_DIR / "envs" / "config.yaml"
@@ -27,24 +27,24 @@ if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
 from apps.agents.model_parameter_agent.flows.propose_parameters import nodes
-from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
+from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     LLMCandidateValidationResponse,
     LLMSlotProposalResponse,
     LLMValueProposalResponse,
 )
-from apps.agents.model_parameter_agent.scripts.benchmark_llm_call_variants import (
+from tests.manual.model_parameter_agent.benchmark_llm_call_variants import (
     Variant,
     _invoke_variant,
     _usage_summary,
 )
-from apps.agents.model_parameter_agent.scripts.evaluate_proposals import (
+from tests.manual.model_parameter_agent.evaluate_proposals import (
     _evaluate_scenario,
 )
 from apps.common.configs.config import get_settings
 from apps.connectors.llm.llm_client import LLMStructuredResult
 
 
-REPORT_DIR = Path(__file__).resolve().parents[1] / "reports"
+REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
 STEP_NAMES = {
     LLMCandidateValidationResponse: "Step1.5 candidate validation",
     LLMSlotProposalResponse: "Step2 slot proposal",

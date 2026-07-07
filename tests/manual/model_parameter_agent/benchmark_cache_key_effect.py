@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
+ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 DEFAULT_APP_CONFIG = ROOT_DIR / "envs" / "config.yaml"
@@ -22,10 +22,10 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
-from apps.agents.model_parameter_agent.scripts.benchmark_llm_call_variants import (
+from tests.manual.model_parameter_agent.benchmark_llm_call_variants import (
     Variant,
 )
-from apps.agents.model_parameter_agent.scripts.benchmark_reasoning_quality import (
+from tests.manual.model_parameter_agent.benchmark_reasoning_quality import (
     RunSpec,
     _mean,
     _run_spec,
@@ -34,7 +34,7 @@ from apps.agents.model_parameter_agent.scripts.benchmark_reasoning_quality impor
 from apps.common.configs.config import get_settings
 
 
-REPORT_DIR = Path(__file__).resolve().parents[1] / "reports"
+REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
 CACHE_KEY_VARIANTS: tuple[Variant, ...] = (
     Variant("chat_nonstream_reasoning_low_no_cache_key", "chat", "nonstream", "low", False),
     Variant("chat_nonstream_reasoning_low_cache_key", "chat", "nonstream", "low", True),

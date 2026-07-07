@@ -29,6 +29,28 @@ class EventRepository(BaseSyncSQLRepository):
             return None
         return self._event_to_pipeline_dict(event)
 
+    def fetch_event_type_by_l2_id(self, event_type_l2_id: int) -> dict[str, Any] | None:
+        stmt = (
+            select(MiEventTypeL2Model)
+            .options(joinedload(MiEventTypeL2Model.level_1))
+            .where(
+                MiEventTypeL2Model.event_type_l2_id == event_type_l2_id,
+                MiEventTypeL2Model.del_yn == "N",
+            )
+        )
+        l2 = self.session.execute(stmt).scalars().one_or_none()
+        if l2 is None:
+            return None
+        l1 = l2.level_1
+        return {
+            "event_type_l1_id": int(l2.event_type_l1_id),
+            "event_type_l2_id": int(l2.event_type_l2_id),
+            "level_1_code": l1.level_1_code if l1 else "",
+            "level_1_label": l1.level_1_label if l1 else "",
+            "level_2_code": l2.level_2_code,
+            "level_2_label": l2.level_2_label,
+        }
+
     def _parse_json_list(self, raw_json: Any) -> list[Any]:
         if raw_json is None:
             return []

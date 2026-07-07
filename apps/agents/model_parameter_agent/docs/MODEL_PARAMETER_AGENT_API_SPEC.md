@@ -5,7 +5,7 @@
 - 참고 코드:
   - `apps/agents/scenario_group_agent/api.py`
   - `apps/agents/scenario_group_agent/schemas/common.py`
-  - `apps/agents/model_parameter_agent/schemas/propose_parameters.py`
+  - `apps/agents/model_parameter_agent/flows/propose_parameters/api_schema.py`
 
 ## 1. 개요
 

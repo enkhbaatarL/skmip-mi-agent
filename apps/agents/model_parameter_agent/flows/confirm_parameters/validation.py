@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from apps.agents.model_parameter_agent.mapping import (
+from apps.agents.model_parameter_agent.utils.basecase import (
     basecase_slot_axis_names_from_candidate,
     basecase_value_field_name_from_candidate,
 )
