@@ -69,14 +69,6 @@ class ParameterValueCell(ApiModel):
     )
     basecase_value: Any = None
     proposed_value: Any = None
-    operation: Literal[
-        "absolute",
-        "delta",
-        "percent_change",
-        "overwrite",
-        "not_applicable",
-        "unknown",
-    ] = "unknown"
     rationale_ko: str
     basecase_reference_ids: list[str] = Field(default_factory=list)
 
@@ -132,14 +124,6 @@ class LLMValueCell(ApiModel):
         ),
     )
     proposed_value: Any = None
-    operation: Literal[
-        "absolute",
-        "delta",
-        "percent_change",
-        "overwrite",
-        "not_applicable",
-        "unknown",
-    ] = "unknown"
     basecase_reference_ids: list[str] = Field(default_factory=list)
     rationale_ko: str
 
@@ -287,11 +271,15 @@ class ProposeParametersAcceptedOut(ApiModel):
     data: ProposeParametersAcceptedData
 
 
-class ProposeParametersCallbackData(ProposeParametersData):
+class ProposeParametersCallbackData(ApiModel):
+    model_param_proposal_id: int | None = None
+    scenario_id: int | None = None
+    scenario_group_id: int | None = None
+    event_id: int | None = None
     status: Literal["PROPOSED", "FAILED"]
 
 
 class ProposeParametersCallbackOut(ApiModel):
     status: Literal["success", "error"] = "success"
     message: str
-    data: ProposeParametersCallbackData
+    data: ProposeParametersCallbackData | None = None

@@ -69,6 +69,7 @@ app.add_middleware(
 app.add_middleware(RequestLoggingMiddleware)
 register_local_openapi_docs(app, INGRESS_PREFIX)
 
+
 app.include_router(
     model_parameter_router,
     prefix="",

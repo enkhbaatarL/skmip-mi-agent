@@ -14,8 +14,8 @@
 1. 외부 시스템이 파라미터 제안을 요청한다.
 2. Agent API는 proposal row를 생성하고 즉시 응답한다.
 3. Agent가 background에서 proposal을 생성한다.
-4. 완료 후 외부 시스템 callback URL로 `proposalParameters` 전체 set을 전달한다.
-5. 사용자는 proposal을 수정/확정해 confirmation API로 전달한다.
+4. 완료 후 외부 시스템 callback URL로 proposal 생성 완료 신호를 전달한다.
+5. Backend/사용자는 저장된 proposal을 조회해 수정/확정한 뒤 confirmation API로 전달한다.
 
 ## 2. 공통 규칙
 
@@ -82,7 +82,7 @@ sequenceDiagram
     EXT->>API: POST /model-parameters/scenarios/{scenarioId}/proposals
     API-->>EXT: status/message/data.modelParamProposalId/status
     API->>BG: proposal 생성 background 실행
-    BG-->>EXT: Callback with proposalParameters
+    BG-->>EXT: Callback signal
     EXT->>API: POST /model-parameters/proposals/{modelParamProposalId}/confirmation
     API-->>EXT: status/message/data.modelParamProposalId/status
 ```
@@ -133,6 +133,15 @@ Agent가 외부 시스템의 callback endpoint로 호출한다.
 
 callback URL은 운영 설정으로 관리한다. scenario group agent처럼 `callbackBaseUrl + callbackPath` 조합을 사용하는 방식을 권장한다.
 
+Callback path:
+
+```http
+POST /api/v1/mi/next-gen/scenarios/{scenarioId}/model-param-proposals/callback
+```
+
+Agent는 proposal 테이블 commit 이후 callback을 발행한다. Backend는 callback을 완료 신호로만 사용하고,
+path의 `scenarioId` 기준으로 Agent proposal 테이블을 재조회한다.
+
 ### 5.2 Callback request
 
 ```http
@@ -152,29 +161,7 @@ Authorization: Bearer {callback-token}
     "scenarioId": 309,
     "scenarioGroupId": 61,
     "eventId": 1378,
-    "status": "PROPOSED",
-    "proposalParameters": [
-      {
-        "parameterName": "Temperature",
-        "modelTarget": {
-          "modelFile": "Demand",
-          "modelSheet": "WeatherAdjustment",
-          "valueFieldNames": ["Temperature"],
-          "slotAxesFieldNames": ["Country", "Year", "Month"]
-        },
-        "rationale": "한파 강도가 기온 하락으로 직접 표현되므로 Temperature 조정 대상입니다.",
-        "values": [
-          {
-            "Country": "Germany",
-            "Year": 2027,
-            "Month": 1,
-            "basecaseValue": 1.2,
-            "proposedValue": -3.8,
-            "rationale": "Germany 2027년 1월 한파 영향을 반영해 제안값을 산정했습니다."
-          }
-        ]
-      }
-    ]
+    "status": "PROPOSED"
   }
 }
 ```
@@ -185,14 +172,7 @@ Authorization: Bearer {callback-token}
 {
   "status": "error",
   "message": "Scenario context not found: scenario_id=309",
-  "data": {
-    "modelParamProposalId": 10001,
-    "scenarioId": 309,
-    "scenarioGroupId": 61,
-    "eventId": 1378,
-    "status": "FAILED",
-    "proposalParameters": []
-  }
+  "data": null
 }
 ```
 
@@ -200,12 +180,12 @@ Authorization: Bearer {callback-token}
 
 | Field | Type | Required | 설명 |
 |---|---|---:|---|
-| `modelParamProposalId` | integer | Y | 파라미터 제안 row ID |
-| `scenarioId` | integer | Y | 요청 scenario ID |
-| `scenarioGroupId` | integer | Y | scenario group ID |
-| `eventId` | integer | Y | MI event ID |
-| `status` | string | Y | 성공 시 `PROPOSED`, 실패 시 `FAILED` |
-| `proposalParameters` | array | Y | Agent가 제안한 파라미터 전체 set. 실패 또는 빈 결과면 `[]` |
+| `data.modelParamProposalId` | integer | N | 파라미터 제안 row ID. 교차검증용 |
+| `data.scenarioId` | integer | N | 요청 scenario ID. path의 `{scenarioId}`와 일치해야 함 |
+| `data.scenarioGroupId` | integer | N | scenario group ID. 교차검증용 |
+| `data.eventId` | integer | N | MI event ID. 교차검증용 |
+| `data.status` | string | N | 성공 시 `PROPOSED`, 실패 시 `FAILED`. 없으면 wrapper `status`로 판정 |
+| `data.proposalParameters` | array | N | Backend는 재조회하므로 생략 가능 |
 
 ## 6. Proposal parameter schema
 
@@ -239,14 +219,13 @@ Authorization: Bearer {callback-token}
 |---|---|---:|---|
 | `{slot axis}` | any | Y | `slotAxesFieldNames`에 포함된 slot 축 값. 예: `Country`, `Year`, `Month` |
 | `basecaseValue` | any/null | Y | basecase에서 확인한 기존 값. basecase가 없으면 `null` |
-| `proposedValue` | any | Y | 외부에서 확인/확정할 Agent 제안값 |
+| `proposedValue` | any | Y | basecase와 같은 단위/스케일/형식의 Agent 최종 입력 제안값 |
 | `rationale` | string | Y | value 1개당 값 산정 근거 |
 
 제외 field:
 
 | Field | 제외 이유 |
 |---|---|
-| `operation` | 외부 응답에서는 적용 방식 metadata를 노출하지 않는다. 내부 검증과 필터링에만 사용한다. |
 | `unit` | 최소 응답 형식 유지. 단위가 필요하면 value별 `rationale` 또는 추후 `modelTarget` 확장으로 다룬다. |
 | `slotKey` | flat slot 구조를 유지하므로 별도 key를 두지 않는다. |
 | `slot` | slot 좌표를 nested object로 감싸지 않는다. |
@@ -265,7 +244,7 @@ slot axis 이름은 아래 예약 field와 충돌하지 않아야 한다.
 POST /model-parameters/proposals/{modelParamProposalId}/confirmation
 ```
 
-사용자가 callback으로 받은 `proposalParameters`를 검토/수정한 뒤 최종 확정값을 전달한다. 이 API는 sync로 동작한다.
+사용자가 저장된 `proposalParameters`를 검토/수정한 뒤 최종 확정값을 전달한다. 이 API는 sync로 동작한다.
 
 ### 7.2 Request
 
@@ -333,31 +312,22 @@ Request body:
 ### 8.1 Proposal 생성 규칙
 
 내부 flow는 callback payload 생성 전 검증 단계에서 아래 value cell을 제외하거나, 해당 parameter를 최종 응답 대상에서 제외할 수 있다.
+`proposed_value`는 basecase와 같은 단위/스케일/형식의 최종 입력값이며, basecase 대비 변화분/변화율/보정률로 해석하지 않는다.
 
 - `proposed_value`가 `null`인 cell
-- 내부 `operation`이 `unknown` 또는 `not_applicable`인 cell
 - 동일 parameter/slot에 서로 다른 value가 충돌해 review 대상으로 분류된 parameter
-
-`operation`은 내부 검증에만 사용하고 외부 payload에는 포함하지 않는다.
 
 ### 8.2 빈 결과 및 매핑 실패
 
 시나리오 context가 없거나 DB 매핑 기준으로 direct/routing 수급모델 input parameter 후보를 찾지 못한 경우는 성공으로 보지 않는다. callback형 proposal API는 background 실행 전에 실패를 반환하고, sync proposal API도 동일하게 `ENTITY_NOT_FOUND` 또는 `INVALID_REQUEST`로 실패한다. 이 경우 proposal row를 만들지 않고 callback도 전송하지 않는다.
 
-DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalParameters`가 비면 접수된 proposal row를 `FAILED`로 전이하고 실패 callback을 전송한다. 외부 payload에서는 `proposalParameters=null` 대신 빈 배열을 사용한다.
+DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalParameters`가 비면 접수된 proposal row를 `FAILED`로 전이하고 실패 callback을 전송한다. 실패 callback의 `data`는 `null`로 전송한다.
 
 ```json
 {
   "status": "error",
   "message": "[INVALID_REQUEST] 요청이 유효하지 않습니다. - No valid model parameter proposal parameters generated for scenario_id=309",
-  "data": {
-    "modelParamProposalId": 10001,
-    "scenarioId": 309,
-    "scenarioGroupId": 61,
-    "eventId": 1378,
-    "status": "FAILED",
-    "proposalParameters": []
-  }
+  "data": null
 }
 ```
 
@@ -382,6 +352,6 @@ DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalPara
 |---|---|---|
 | 제안 요청 응답 | 동기 실행 후 proposal 전체 반환 | 즉시 `modelParamProposalId`, `status=PROCESSING` 반환 |
 | proposal 저장 | 없음 | proposal row 생성 |
-| callback | 없음 | background 완료 후 `proposalParameters` 전체 set callback |
+| callback | 없음 | background 완료 후 proposal 생성 완료 신호 callback |
 | 확정 API | 없음 | `confirmationParameters`를 sync로 저장 |
 | `modelParamProposalId` | 현재 응답에서는 `null` | proposal row 생성 후 integer |

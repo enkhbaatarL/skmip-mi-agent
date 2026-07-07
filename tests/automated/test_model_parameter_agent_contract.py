@@ -23,6 +23,8 @@ from apps.agents.model_parameter_agent.flows.confirm_parameters.validation impor
     validate_confirmation_parameters,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
+    _callback_error_output,
+    _callback_success_output,
     _route_after_candidate_validation,
     build_graph,
     prepare_propose_parameters_callback,
@@ -64,6 +66,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     ParameterAdjustment,
     ParameterValueCell,
     ProposalParameter,
+    ProposeParametersData,
     ProposeParametersAcceptedOut,
     ProposeParametersIn,
 )
@@ -1390,7 +1393,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                     "basecase_value": 0.323,
                                     "proposed_value": 0.35,
                                     "unit": "%",
-                                    "operation": "absolute",
                                     "value_selection_rationale_ko": "Japan Gas 2026 row를 선택했습니다.",
                                     "proposed_value_rationale_ko": "석탄 발전 차질을 반영했습니다.",
                                     "basecase_reference_ids": ["ref1"],
@@ -1600,7 +1602,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                     },
                                     "basecase_value": None,
                                     "proposed_value": 3,
-                                    "operation": "absolute",
                                     "value_selection_rationale_ko": "Norway 2026 row",
                                     "proposed_value_rationale_ko": "3% 차질",
                                 },
@@ -1623,7 +1624,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                     },
                                     "basecase_value": None,
                                     "proposed_value": -0.0,
-                                    "operation": "absolute",
                                     "value_selection_rationale_ko": "Norway 2026 duplicate row",
                                     "proposed_value_rationale_ko": "대체 공급 반영",
                                 },
@@ -1634,7 +1634,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                     },
                                     "basecase_value": None,
                                     "proposed_value": 0,
-                                    "operation": "absolute",
                                     "value_selection_rationale_ko": "Europe 2026 row",
                                     "proposed_value_rationale_ko": "대체 공급 반영",
                                 },
@@ -1718,7 +1717,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                         "basecase_value": 0.1,
                                         "proposed_value": 0.2,
                                         "unit": "%",
-                                        "operation": "absolute",
                                         "value_selection_rationale_ko": "명확한 축",
                                         "proposed_value_rationale_ko": "명확한 값",
                                     },
@@ -1791,7 +1789,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                 "parameter_name": "PMI",
                             },
                             {
-                                "candidate_key": "unknown_operation",
+                                "candidate_key": "null_value_2",
                                 "parameter_name": "GDP",
                             },
                         ],
@@ -1809,7 +1807,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                         "basecase_value": 49.5,
                                         "proposed_value": None,
                                         "unit": "index",
-                                        "operation": "absolute",
                                         "value_selection_rationale_ko": "China 2026 row",
                                         "proposed_value_rationale_ko": "정량 근거 없음",
                                     },
@@ -1818,7 +1815,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                 "confidence_overall": 0.5,
                             },
                             {
-                                "candidate_key": "unknown_operation",
+                                "candidate_key": "null_value_2",
                                 "model_file": "Demand",
                                 "model_sheet": "GDPPopulationAdjustment",
                                 "parameter_name": "GDP",
@@ -1828,11 +1825,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                     {
                                         "coordinates": {"Country": "China", "Year": 2026},
                                         "basecase_value": 0.04,
-                                        "proposed_value": 0.045,
+                                        "proposed_value": None,
                                         "unit": "%",
-                                        "operation": "unknown",
                                         "value_selection_rationale_ko": "China 2026 row",
-                                        "proposed_value_rationale_ko": "성장률 전망 반영",
+                                        "proposed_value_rationale_ko": "정량 근거 없음",
                                     },
                                 ],
                                 "parameter_selection_rationale_ko": "GDP 조정 후보",
@@ -2239,10 +2235,9 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                         LLMValueCell(
                             coordinates={"Year": 2026},
                             proposed_value=1.2,
-                            operation="percent_change",
                             rationale_ko=(
                                 "2026년 ShippingCost basecase record를 선택했고, "
-                                "운송 차질 scenario dimension을 반영해 basecase 대비 20% 상향했습니다."
+                                "운송 차질 scenario dimension을 반영해 최종 입력값을 1.2로 산정했습니다."
                             ),
                             basecase_reference_ids=["ref1"],
                         ),
@@ -3011,7 +3006,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             basecase_value=None,
                             proposed_value=0.01,
                             unit="%",
-                            operation="absolute",
                             value_selection_rationale_ko="대체 공급국 후보를 함께 제시했습니다.",
                             proposed_value_rationale_ko="공급 차질을 반영했습니다.",
                         ),
@@ -3113,7 +3107,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             },
                             basecase_value=None,
                             proposed_value=3,
-                            operation="absolute",
                             value_selection_rationale_ko="Norway 2026 row",
                             proposed_value_rationale_ko="3% 차질",
                         ),
@@ -3199,7 +3192,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert (
-            "보수적인 최소 충격값을 산정"
+            "basecase와 같은 형식의 보수적인 최종 입력값을 산정"
             in captured_system_contents[0]
         )
         assert (
@@ -3298,7 +3291,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             basecase_value=None,
                             proposed_value=0.03,
                             unit="%",
-                            operation="absolute",
                             value_selection_rationale_ko="event에 Norway 2026 차질이 명시되었습니다.",
                             proposed_value_rationale_ko="<5% 범위를 자동 변환해 3%로 산정했습니다.",
                         ),
@@ -3342,7 +3334,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["selected"] is True
         assert adjustment["value_grid"][0]["basecase_value"] is None
         assert adjustment["value_grid"][0]["proposed_value"] == 0.03
-        assert adjustment["value_grid"][0]["operation"] == "absolute"
 
     async def test_llm_value_sanitizer_allows_partial_value_grid_for_multiple_slots(self) -> None:
         candidate = {
@@ -3371,12 +3362,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             basecase_value=None,
                             proposed_value=0.1,
                             unit="USD/mmbtu",
-                            operation="delta",
                             value_selection_rationale_ko=(
                                 "선택된 네 개 slot 중 가장 이른 Asia 2026년 7월 좌표입니다."
                             ),
                             proposed_value_rationale_ko=(
-                                "정량 근거가 약해 보수적인 최소 상승폭을 적용했습니다."
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
                             ),
                         ),
                     ],
@@ -3612,18 +3602,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             basecase_value=49.5,
                             proposed_value=None,
                             unit="index",
-                            operation="absolute",
                             value_selection_rationale_ko="China 2026 row",
                             proposed_value_rationale_ko="정량 근거 없음",
                         ),
                         ParameterValueCell(
                             coordinates={"Country": "China", "Year": 2026},
                             basecase_value=49.5,
-                            proposed_value=48.0,
+                            proposed_value=None,
                             unit="index",
-                            operation="unknown",
                             value_selection_rationale_ko="China 2026 row",
-                            proposed_value_rationale_ko="하락 방향만 제시",
+                            proposed_value_rationale_ko="정량 근거 없음",
                         ),
                     ],
                     parameter_selection_rationale_ko="PMI 조정 후보",
@@ -3666,7 +3654,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["value_grid"] == []
         assert "needs_user_review" not in adjustment
         assert any("proposed_value가 null" in warning for warning in result["validation_warnings"])
-        assert any("operation" in warning for warning in result["validation_warnings"])
 
     async def test_llm_value_sanitizer_rejects_duplicate_slot_value_conflicts(self) -> None:
         candidate = {
@@ -3695,18 +3682,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             basecase_value=None,
                             proposed_value=-5,
                             unit="C",
-                            operation="delta",
                             value_selection_rationale_ko="Germany 2026년 12월 slot입니다.",
-                            proposed_value_rationale_ko="한파 강도를 delta로 산정했습니다.",
+                            proposed_value_rationale_ko="한파 강도를 최종 입력값 -5로 산정했습니다.",
                         ),
                         ParameterValueCell(
                             coordinates={"Country": "Germany", "Year": "2026", "Month": "12"},
                             basecase_value=None,
-                            proposed_value=-5,
+                            proposed_value=-4,
                             unit="C",
-                            operation="absolute",
                             value_selection_rationale_ko="Germany 2026년 12월 slot입니다.",
-                            proposed_value_rationale_ko="한파 강도를 absolute로 산정했습니다.",
+                            proposed_value_rationale_ko="한파 강도를 최종 입력값 -4로 산정했습니다.",
                         ),
                     ],
                     parameter_selection_rationale_ko="기온 조정이 필요합니다.",
@@ -4048,6 +4033,61 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert payload.model_dump(by_alias=True)["data"] == {
             "modelParamProposalId": 10001,
             "status": "PROCESSING",
+        }
+
+    def test_proposal_callback_success_payload_is_signal_only(self) -> None:
+        payload = _callback_success_output(
+            ProposeParametersData(
+                model_param_proposal_id=10001,
+                scenario_id=309,
+                scenario_group_id=61,
+                event_id=1378,
+                proposal_parameters=[
+                    ProposalParameter(
+                        parameter_name="PowerMix",
+                        model_target=ModelParameterTarget(
+                            model_file="Demand",
+                            model_sheet="PowerMixAdjustment",
+                            table_name="Table2",
+                            value_field_names=["PowerMix"],
+                            slot_axes_field_names=["Country", "Year"],
+                        ),
+                        rationale="제안 근거",
+                        values=[
+                            {
+                                "Country": "Japan",
+                                "Year": 2026,
+                                "basecaseValue": 0.3,
+                                "proposedValue": 0.4,
+                                "rationale": "값 근거",
+                            },
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+        assert payload.model_dump(by_alias=True) == {
+            "status": "success",
+            "message": "model parameter proposal completed",
+            "data": {
+                "modelParamProposalId": 10001,
+                "scenarioId": 309,
+                "scenarioGroupId": 61,
+                "eventId": 1378,
+                "status": "PROPOSED",
+            },
+        }
+
+    def test_proposal_callback_error_payload_allows_null_data(self) -> None:
+        payload = _callback_error_output(
+            message="insufficient dimension mapping for event 1378",
+        )
+
+        assert payload.model_dump(by_alias=True) == {
+            "status": "error",
+            "message": "insufficient dimension mapping for event 1378",
+            "data": None,
         }
 
 

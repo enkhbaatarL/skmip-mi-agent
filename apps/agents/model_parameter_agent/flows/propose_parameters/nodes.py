@@ -230,7 +230,7 @@ VALUE_PROPOSAL_SYSTEM = """\
 
 목표:
 - Step3: parameter_value_tasks의 parameter별 selected_slots와 basecase_value_groups를 근거로
-  slot별 입력 값을 제안합니다.
+  slot별 최종 모델 입력 값을 제안합니다.
 - Step1 후보 parameter와 Step2 slot 축은 이미 제한되어 있습니다.
   후보 밖의 parameter, workbook, sheet, candidate_key를 만들지 마십시오.
 - basecase_value_groups는 Step2에서 선택된 slot 축에 매칭되는 현재 Base Case의 실제 설정값 record를
@@ -239,8 +239,12 @@ VALUE_PROPOSAL_SYSTEM = """\
   cell.axes는 Year/Month/Period 같은 시간축 좌표입니다.
   각 cell의 전체 좌표는 group.fixed_axes와 cell.axes를 합친 값입니다.
   cell.basecase_value는 해당 좌표의 현재 기준값이고, cell.reference_id는 원본 basecase record id입니다.
-- basecase_value_groups는 단순 샘플이 아니라 현재 모델 입력 기준값입니다. 비어 있거나 일치 row/value가 없더라도
-  scenario/event/dimension에 명확한 수치, 기간, 방향, 강도가 있으면 반드시 proposed_value를 산정하십시오.
+- basecase_value_groups는 단순 샘플이 아니라 현재 모델 입력 기준값입니다.
+  proposed_value는 반드시 해당 parameter의 basecase_value와 같은 단위/스케일/형식의 최종 입력값입니다.
+  basecase 대비 변화분, 변화율, 보정률, 승수, percent change를 proposed_value로 반환하지 마십시오.
+  basecase_value가 있고 scenario/event/dimension상 추가 조정이 없으면 proposed_value는 basecase_value와 같아야 합니다.
+  basecase_value가 없으면 parameter_hint/mapping_comment에서 같은 형식의 최종 입력값을 명확히 산정할 수 있을 때만
+  proposed_value를 반환하십시오.
 - basecase_value_groups의 cells는 실제 basecase record 목록입니다.
   cells를 Cartesian product나 추가 hierarchy로 해석하지 마십시오.
 - supporting_dimensions에는 직접 input 후보가 아닌 indirect/na dimension도 포함됩니다.
@@ -278,7 +282,7 @@ VALUE_PROPOSAL_SYSTEM = """\
   서버가 candidate_key 기준 metadata와 Step2 slot으로 보정합니다.
 - 같은 parameter task 안에 selection_dimensions가 여러 개 있으면 전체를 함께 반영하십시오.
   예: 한 dimension이 차질 규모를 주고 다른 dimension이 대체 공급 가능성/완화율/기간을 주면
-  proposed_value는 두 dimension의 의미를 모두 반영해야 합니다.
+  proposed_value는 두 dimension의 의미를 모두 반영한 최종 입력값이어야 합니다.
 - supporting_dimensions의 indirect/na 정보도 value 방향, 강도, 완화율, 기간, 대상 힌트가 되면 함께 참고하십시오.
   단 supporting_dimensions만으로 후보 밖 parameter나 모호한 value를 만들지 마십시오.
 - selected_slots에는 Step2에서 selected=true로 확정된 slot만 제공됩니다.
@@ -292,7 +296,7 @@ VALUE_PROPOSAL_SYSTEM = """\
   selected=true로 두십시오.
 - 정량 근거가 약하거나 basecase_value_groups가 비어 있어도, scenario/event/dimension의 방향·강도·기간과
   parameter_hint/mapping_comment 제약 안에서 가장 직접적인 selected slot 1개 이상에 대해
-  보수적인 최소 충격값을 산정하십시오.
+  basecase와 같은 형식의 보수적인 최종 입력값을 산정하십시오.
 - selected_slots가 여러 개이고 전체 slot별 산정 근거가 약하면 모든 slot을 무리하게 채우지 말고,
   영향 대상이 가장 직접적이거나 기간상 가장 이른 slot부터 최소 1개를 선택해 value_grid를 만드십시오.
   여러 slot별 차이가 명확하면 가능한 만큼 더 반환하십시오.
@@ -303,7 +307,7 @@ VALUE_PROPOSAL_SYSTEM = """\
   개별 slot/설비/국가/월/record명, basecase_value, proposed_value, reference_id,
   정확한 환산량, 세부 산식, cell별 계산 과정은 parameter-level 근거에 쓰지 마십시오.
   그런 상세 slot/value 산정 근거는 value_grid[].rationale_ko에만 작성하십시오.
-- value_grid에는 slot별 coordinates, proposed_value, operation, basecase_reference_ids, rationale_ko를 넣습니다.
+- value_grid에는 slot별 coordinates, proposed_value, basecase_reference_ids, rationale_ko를 넣습니다.
 - value_grid.coordinates에는 실제 모델 input으로 넣을 수 있는 명확한 값만 넣습니다.
   미정, 후보, 추정, 또는(or), 일부, 대체 공급국, '?' 같은 모호한 값은 금지입니다.
 - basecase_value_groups의 cell을 사용해 value_grid를 만들 때 coordinates에는
@@ -316,28 +320,29 @@ VALUE_PROPOSAL_SYSTEM = """\
 - slot_axes.axis_name이 Year, Month, Period 중 하나이면 axis_value도 반드시 JSON number integer로 반환하십시오.
 - 여러 좌표가 필요하면 하나의 문자열로 합치지 말고 value_grid 항목을 여러 개 반환하십시오.
 - 같은 candidate_key 안에서 같은 value_grid.coordinates 조합은 정확히 하나의 cell로만 반환하십시오.
-  같은 slot에 여러 operation 또는 여러 proposed_value를 동시에 반환하지 마십시오.
+  같은 slot에 여러 proposed_value를 동시에 반환하지 마십시오.
   여러 해석이 가능하지만 하나로 확정할 수 없으면 selected=false, value_grid=[]로 반환하고
   rationale_ko에 사유를 남기십시오.
 - value_grid[].rationale_ko에는 해당 cell의 slot/record를 선택한 기준과
-  operation/proposed_value를 산정한 기준을 함께 적습니다.
+  proposed_value를 산정한 기준을 함께 적습니다.
   parameter 선택 이유나 dimension이 parameter를 선택하게 된 근거는 반복하지 마십시오.
   cell-level에서는 해당 좌표, 기준값, 제안값, 산정식/강도/기간 보정처럼
   그 cell 하나의 slot/value를 설명하는 데 필요한 상세만 작성하십시오.
 - basecase_value_groups를 사용했다면 value_grid.basecase_reference_ids에 cell.reference_id를 넣습니다.
-- basecase_value_groups에 일치 cell/basecase_value가 있으면 basecase_value를 현재 기준값으로 해석하고 scenario/event 충격을 조정합니다.
-- basecase_value_groups에 일치 cell/basecase_value가 없어도 scenario/event/dimension에 명확한 방향·강도·기간이 있으면
+- basecase_value_groups에 일치 cell/basecase_value가 있으면 basecase_value를 현재 기준값으로 해석하고
+  scenario/event 충격을 반영한 최종 입력값을 proposed_value로 산정합니다.
+- basecase_value_groups에 일치 cell/basecase_value가 없어도 scenario/event/dimension에 명확한 방향·강도·기간이 있고
+  parameter_hint/mapping_comment 기준으로 basecase와 같은 형식의 최종 입력값을 만들 수 있으면
   basecase_value=null로 두고 보수적인 proposed_value를 산정합니다.
 - basecase_value가 null이라는 이유만으로 selected=false를 반환하지 마십시오.
 - 후보 parameter가 입력 가능한 것으로 판단되면 가능한 많은 명확한 좌표/value_grid를 반환하십시오.
-- 범위형 scenario dimension은 자동 변환해 proposed_value를 산정합니다.
-  예: <5%는 3%, ±25% 이내는 방향이 명확하면 25%, +300% 초과는 300% 최소 충격값입니다.
+- 범위형 scenario dimension은 parameter의 최종 입력값 형식으로 변환 가능한 경우에만 proposed_value에 반영합니다.
+  예: basecase_value 1.0인 가동률에 5% 하향을 반영하면 proposed_value는 0.95입니다. proposed_value를 -0.05나 5로 반환하지 마십시오.
 - 정성 값만 있어도 방향·강도·기간이 해석 가능하면 parameter_hint/mapping_comment 제약 안에서
-  보수적인 최소 proposed_value로 변환하십시오.
-- 방향도 불명확하거나 실제 모델 input으로 사용할 수 있는 operation/proposed_value를 만들 수 없는 경우에만
+  basecase와 같은 형식의 보수적인 최종 proposed_value로 변환하십시오.
+- 방향도 불명확하거나 실제 모델 input으로 사용할 수 있는 최종 proposed_value를 만들 수 없는 경우에만
   selected=false, value_grid=[]로 반환하고 rationale_ko에 사유를 남기십시오.
-- selected=true인 value_grid는 proposed_value가 반드시 실제 모델 input으로 사용할 수 있는 명확한 값이어야 하고,
-  operation도 absolute, delta, percent_change, overwrite 중 하나여야 합니다.
+- selected=true인 value_grid는 proposed_value가 반드시 실제 모델 input으로 사용할 수 있는 명확한 최종 입력값이어야 합니다.
 - 근거는 한국어로 작성하되, 각 rationale 필드의 역할을 넘지 않는 범위에서 사용한
   scenario dimension 또는 basecase_value_groups만 명시합니다.
 - 모든 rationale에는 내부 개발 단계나 평가 목적을 드러내는 표현을 쓰지 마십시오.
@@ -459,7 +464,7 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
         llm_validation_warnings: list[str] = []
         llm_call = _llm_call_trace(
             step="Step1.5 candidate validation",
-            model_name=state.model_name,
+            model_name=getattr(result, "model", None) or state.model_name,
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
@@ -632,7 +637,7 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
         usage = result.usage.model_dump() if result.usage is not None else None
         llm_call = _llm_call_trace(
             step="Step3 value proposal",
-            model_name=state.model_name,
+            model_name=getattr(result, "model", None) or state.model_name,
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
@@ -669,11 +674,13 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
     llm_validation_warnings = list(
         getattr(llm_payload, "validation_warnings", []) or [],
     )
+    selected_adjustments = [adjustment for adjustment in adjustments if adjustment.get("selected", True)]
     logger.info(
-        "[model-parameter] proposed parameter values | scenario_id={} adjustment_count={} selected_count={} warning_count={}",
+        "[model-parameter] proposed parameter values | scenario_id={} adjustment_count={} selected_count={} value_counts_by_parameter={} warning_count={}",
         state.scenario_id,
         len(adjustments),
-        len([adjustment for adjustment in adjustments if adjustment.get("selected", True)]),
+        len(selected_adjustments),
+        _value_counts_by_parameter(selected_adjustments),
         len(llm_validation_warnings) + len(validation_warnings),
     )
     return {
@@ -729,7 +736,7 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
         usage = result.usage.model_dump() if result.usage is not None else None
         llm_call = _llm_call_trace(
             step="Step2 slot proposal",
-            model_name=state.model_name,
+            model_name=getattr(result, "model", None) or state.model_name,
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
@@ -770,11 +777,13 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
         item.model_dump()
         for item in llm_non_input_items
     ] or state.non_input_items
+    selected_slots = [slot for slot in slots if slot.get("selected", True)]
     logger.info(
-        "[model-parameter] proposed parameter slots | scenario_id={} slot_count={} selected_count={} warning_count={}",
+        "[model-parameter] proposed parameter slots | scenario_id={} slot_count={} selected_count={} slot_counts_by_parameter={} warning_count={}",
         state.scenario_id,
         len(slots),
-        len([slot for slot in slots if slot.get("selected", True)]),
+        len(selected_slots),
+        _slot_counts_by_parameter(selected_slots, state.candidate_mappings),
         len(llm_validation_warnings) + len(validation_warnings),
     )
     return {
@@ -818,6 +827,32 @@ def _llm_call_trace(
         (usage or {}).get("total_tokens"),
     )
     return trace
+
+
+def _slot_counts_by_parameter(
+    slots: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> dict[str, int]:
+    parameter_by_candidate = {
+        str(candidate.get("candidate_key") or ""): str(
+            candidate.get("parameter_name") or "unknown",
+        )
+        for candidate in candidates
+    }
+    counts: dict[str, int] = {}
+    for slot in slots:
+        key = str(slot.get("candidate_key") or "")
+        parameter_name = parameter_by_candidate.get(key, key or "unknown")
+        counts[parameter_name] = counts.get(parameter_name, 0) + 1
+    return counts
+
+
+def _value_counts_by_parameter(adjustments: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for adjustment in adjustments:
+        parameter_name = str(adjustment.get("parameter_name") or "unknown")
+        counts[parameter_name] = counts.get(parameter_name, 0) + len(adjustment.get("value_grid") or [])
+    return counts
 
 
 async def _invoke_structured(
@@ -1992,7 +2027,6 @@ def _value_cell_signature(cell: ParameterValueCell) -> str:
     return to_compact_json(
         {
             "basecase_value": cell.basecase_value,
-            "operation": cell.operation,
             "proposed_value": cell.proposed_value,
         },
     )
@@ -2017,8 +2051,7 @@ def _dedupe_value_grid_by_slot(
             continue
         conflicts.append(
             "동일 slot 좌표에 서로 다른 value 제안이 반환되었습니다: "
-            f"slot={slot_key}, existingOperation={existing[1].operation}, "
-            f"newOperation={cell.operation}",
+            f"slot={slot_key}",
         )
 
     return deduped, conflicts
@@ -2029,7 +2062,6 @@ def _parameter_value_cell_from_llm(cell: LLMValueCell) -> ParameterValueCell:
         coordinates=cell.coordinates,
         basecase_value=None,
         proposed_value=cell.proposed_value,
-        operation=cell.operation,
         rationale_ko=cell.rationale_ko,
         basecase_reference_ids=cell.basecase_reference_ids,
     )
@@ -2089,19 +2121,12 @@ def _sanitize_llm_adjustments(
                 )
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
                 continue
-            if cell.operation in {"unknown", "not_applicable"}:
-                reason = (
-                    "Step3 응답 value_grid.operation이 실제 모델 input 적용 방식으로 "
-                    f"사용할 수 없어 cell을 제외했습니다: {cell.operation}"
-                )
-                warnings.append(f"{reason}: {adjustment.candidate_key}")
-                continue
             value_grid.append(_patch_basecase_value(cell, basecase_by_reference_id))
 
         value_grid, slot_conflicts = _dedupe_value_grid_by_slot(value_grid)
         if slot_conflicts and selected:
             reason = (
-                "Step3 응답 value_grid에 동일 slot 좌표의 value type/value 충돌이 있어 "
+                "Step3 응답 value_grid에 동일 slot 좌표의 value 충돌이 있어 "
                 "selected=false로 보정했습니다."
             )
             warnings.append(f"{reason}: {adjustment.candidate_key}")
@@ -2366,7 +2391,6 @@ def _fallback_value_response(
                         coordinates={},
                         basecase_value=None,
                         proposed_value=None,
-                        operation="unknown",
                         rationale_ko=reason,
                     ),
                 ],

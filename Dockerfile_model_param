@@ -30,7 +30,7 @@ COPY pyproject.toml poetry.lock ./
 RUN poetry install --only main --no-interaction --no-ansi
 
 COPY apps ./apps
-COPY main.py ./main.py
+COPY model_param.py ./main.py
 COPY envs/config.yaml ./config.yaml
 
 RUN addgroup --gid 1000 usergroup && \
@@ -58,4 +58,4 @@ EXPOSE 8000
 
 USER user
 
-CMD ["sh", "-c", "exec gunicorn param_main:app --worker-class \"${WORKER_CLASS}\" --workers \"${GUNICORN_WORKERS}\" --bind \"${APP_HOST}:${APP_PORT}\" --log-level \"${GUNICORN_LOG_LEVEL}\" --graceful-timeout \"${GRACEFUL_TIMEOUT}\" --timeout \"${TIMEOUT}\" --keep-alive \"${KEEP_ALIVE}\" --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "exec gunicorn main:app --worker-class \"${WORKER_CLASS}\" --workers \"${GUNICORN_WORKERS}\" --bind \"${APP_HOST}:${APP_PORT}\" --log-level \"${GUNICORN_LOG_LEVEL}\" --graceful-timeout \"${GRACEFUL_TIMEOUT}\" --timeout \"${TIMEOUT}\" --keep-alive \"${KEEP_ALIVE}\" --access-logfile - --error-logfile -"]

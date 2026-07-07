@@ -441,9 +441,6 @@ def _build_proposal_parameters(
         for cell in adjustment.get("value_grid") or []:
             if cell.get("proposed_value") is None:
                 continue
-            operation = cell.get("operation") or "unknown"
-            if operation in {"unknown", "not_applicable"}:
-                continue
             slot = _normalize_slot_coordinates(
                 cell.get("coordinates") or fallback_slot,
                 allowed_axes,
@@ -598,7 +595,10 @@ def _callback_success_output(
         status="success",
         message="model parameter proposal completed",
         data=ProposeParametersCallbackData(
-            **response_data.model_dump(),
+            model_param_proposal_id=response_data.model_param_proposal_id,
+            scenario_id=response_data.scenario_id,
+            scenario_group_id=response_data.scenario_group_id,
+            event_id=response_data.event_id,
             status="PROPOSED",
         ),
     )
@@ -606,23 +606,12 @@ def _callback_success_output(
 
 def _callback_error_output(
     *,
-    model_param_proposal_id: int,
-    scenario_id: int,
-    scenario_group_id: int | None,
-    event_id: int | None,
     message: str,
 ) -> ProposeParametersCallbackOut:
     return ProposeParametersCallbackOut(
         status="error",
         message=message,
-        data=ProposeParametersCallbackData(
-            model_param_proposal_id=model_param_proposal_id,
-            scenario_id=scenario_id,
-            scenario_group_id=scenario_group_id,
-            event_id=event_id,
-            status="FAILED",
-            proposal_parameters=[],
-        ),
+        data=None,
     )
 
 
@@ -670,10 +659,11 @@ async def run_propose_parameters_background(
         callback_payload = _callback_success_output(response_data)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
-            "[BG][model-parameter] PROPOSAL_DONE | proposal_id={} scenario_id={} elapsed={}ms",
+            "[BG][model-parameter] PROPOSAL_DONE | proposal_id={} scenario_id={} elapsed={}ms parameter_summary={}",
             model_param_proposal_id,
             scenario_id,
             elapsed_ms,
+            _proposal_parameter_summary(proposal_parameters),
         )
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -696,10 +686,6 @@ async def run_propose_parameters_background(
             error_message=message,
         )
         callback_payload = _callback_error_output(
-            model_param_proposal_id=model_param_proposal_id,
-            scenario_id=scenario_id,
-            scenario_group_id=scenario_group_id,
-            event_id=event_id,
             message=message,
         )
 
@@ -730,6 +716,16 @@ async def run_propose_parameters_background(
 
 def build_runnable_graph() -> Runnable:
     return RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)
+
+
+def _proposal_parameter_summary(proposal_parameters: list[ProposalParameter]) -> list[dict[str, Any]]:
+    return [
+        {
+            "parameter_name": parameter.parameter_name,
+            "value_count": len(parameter.values),
+        }
+        for parameter in proposal_parameters
+    ]
 
 
 @lru_cache(maxsize=1)

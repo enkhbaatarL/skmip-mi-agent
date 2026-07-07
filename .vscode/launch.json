@@ -35,13 +35,13 @@
       "justMyCode": false
     },
     {
-      "name": "[🌱]model_parameter: uvicorn (param_main.py)",
+      "name": "[🌱]model_parameter: uvicorn (model_param.py)",
       "type": "debugpy",
       "request": "launch",
       "python": "${config:python.defaultInterpreterPath}",
       "module": "uvicorn",
       "args": [
-        "param_main:app",
+        "model_param:app",
         "--reload",
         "--host",
         "127.0.0.1",

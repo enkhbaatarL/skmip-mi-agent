@@ -53,7 +53,8 @@ async def propose_parameters_sync(
         "scenario_id의 기본 context와 DB 매핑 후보 존재 여부를 확인하고 "
         "PROCESSING proposal row를 생성한 뒤 즉시 반환합니다. "
         "수급모델 parameter slot/value 제안은 백그라운드에서 수행되며 완료 시 설정된 callback URL로 "
-        "proposalParameters 전체 set을 전달합니다. sync proposal API는 /proposals/sync에서 "
+        "proposal 생성 완료 신호를 전달합니다. Backend는 callback 수신 후 proposal row를 재조회합니다. "
+        "sync proposal API는 /proposals/sync에서 "
         "테스트용으로 제공합니다."
     ),
 )

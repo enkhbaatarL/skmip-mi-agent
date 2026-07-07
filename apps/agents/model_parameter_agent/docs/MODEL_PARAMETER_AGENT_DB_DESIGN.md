@@ -25,7 +25,7 @@ tmm_mi_model_param_proposal_m
 - value 내부 slot/value별 검색, 집계, 부분 수정 요구가 아직 없다.
 - 정규화하면 parameter/value table을 만들더라도 slot axis는 결국 JSON 또는 EAV 형태가 되어 복잡도만 커진다.
 
-따라서 `proposal_parameters`, `confirmation_parameters` JSON에는 API payload와 같은 camelCase 구조를 그대로 저장한다. 외부 payload에서 제외하기로 한 `operation`, `unit`, `slot`, `slotKey`는 이 테이블의 기본 저장 구조에도 포함하지 않는다.
+따라서 `proposal_parameters`, `confirmation_parameters` JSON에는 API payload와 같은 camelCase 구조를 그대로 저장한다. 외부 payload에서 제외하기로 한 `unit`, `slot`, `slotKey`는 이 테이블의 기본 저장 구조에도 포함하지 않는다.
 
 엑셀 매핑 기준정보는 runtime proposal payload와 성격이 다르므로 별도 기준 테이블 2개로 분리한다.
 
@@ -63,7 +63,7 @@ Proposal 생성 상태와 callback 전송 상태는 분리한다.
 | `mi_event_id` | `INT UNSIGNED` | N |  | callback payload의 `eventId` |
 | `request_usr_id` | `INT UNSIGNED` | Y | `NULL` | 요청 사용자 ID. 인증 연동 전까지 nullable |
 | `status` | `VARCHAR(50) COLLATE utf8mb4_bin` | N | `'PROCESSING'` | proposal 상태 |
-| `proposal_parameters` | `JSON` | Y | `NULL` | callback으로 보낼 `proposalParameters` 전체 array |
+| `proposal_parameters` | `JSON` | Y | `NULL` | Backend 재조회 및 confirmation 입력 기준이 되는 `proposalParameters` 전체 array |
 | `confirmation_parameters` | `JSON` | Y | `NULL` | confirmation API로 받은 `confirmationParameters` 전체 array |
 | `proposal_completed_dtm` | `DATETIME(6)` | Y | `NULL` | `PROPOSED` 또는 `FAILED` 전이 시각 |
 | `confirmed_dtm` | `DATETIME(6)` | Y | `NULL` | `CONFIRMED` 전이 시각 |
@@ -185,12 +185,11 @@ unique constraint는 현재 두지 않는다. 같은 scenario에 대한 재요�
 
 저장하지 않는 외부 제외 field:
 
-- `operation`
 - `unit`
 - `slot`
 - `slotKey`
 
-내부 디버깅용으로 `operation` 등 원본 rich state를 보존해야 한다면 `internal_metadata_json` 같은 별도 nullable JSON 컬럼을 추가할 수 있다. 다만 현재 최소 설계에서는 제외한다.
+내부 디버깅용으로 원본 rich state를 보존해야 한다면 `internal_metadata_json` 같은 별도 nullable JSON 컬럼을 추가할 수 있다. 다만 현재 최소 설계에서는 제외한다.
 
 ## 7. DDL 초안
 
@@ -516,7 +515,7 @@ DB schema가 확정되면 `skmip-mi-agent`에서는 다음을 반영한다.
 | 동일 scenario 재요청 | unique 없음, application layer에서 중복 PROCESSING 방지 | 새 proposal 생성인지 기존 row 재사용인지 |
 | confirmation 재호출 | 기본 거부 | 재확정/수정 이력을 허용할지 |
 | callback retry | `callback_status=FAILED` row를 worker가 재시도 | 재시도 횟수, backoff, 실패 사유는 로그/worker 정책으로 관리 |
-| 내부 debug payload | 기본 제외 | `operation`, rich state, prompt trace 보존 필요 여부 |
+| 내부 debug payload | 기본 제외 | rich state, prompt trace 보존 필요 여부 |
 | event type 조회 | 기본 join 조회 | `event_type_l2_id` denormalized 컬럼 추가 여부 |
 | payload 크기 제한 | application layer 제한 | parameter/value 최대 개수 |
 | mapping seed 갱신 | 엑셀 기준 seed SQL 재생성 | 운영에서 수동 수정 허용 여부와 Excel/DB 중 source of truth |

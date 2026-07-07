@@ -101,7 +101,6 @@ flowchart TD
 
 - `selected=false` adjustment는 제외
 - `proposed_value is None`인 cell 제외
-- `operation`이 `unknown` 또는 `not_applicable`인 cell 제외
 - 동일 좌표/값은 dedup하고 rationale을 병합
 - `modelTarget.valueFieldNames`, `modelTarget.slotAxesFieldNames`, `values[]`를 응답 형태로 재구성
 - DB 저장 후 생성된 `modelParamProposalId`를 응답에 포함
@@ -276,7 +275,7 @@ LLM 출력:
 
 - `parameter_adjustments[]`
 - 각 adjustment의 `slot_axes`
-- 각 cell의 `coordinates`, `basecase_value`, `proposed_value`, `operation`, rationale, `basecase_reference_ids`
+- 각 cell의 `coordinates`, `basecase_value`, `proposed_value`, rationale, `basecase_reference_ids`
 
 서버 보정:
 
@@ -285,7 +284,6 @@ LLM 출력:
   - `model_file`, `model_sheet`, `parameter_name`을 candidate 값으로 강제 치환
   - 모호 좌표 cell 제거
   - `proposed_value=null` cell 제거
-  - `operation=unknown/not_applicable` cell 제거
   - 유효 cell이 없으면 `selected=false`
   - LLM 응답에서 누락된 candidate는 `selected=false`, `needs_user_review=true`로 보강
   - `basecase_reference_ids`가 있으면 `_patch_basecase_value()`로 기준값 보강
