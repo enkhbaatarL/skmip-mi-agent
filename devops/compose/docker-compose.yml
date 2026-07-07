@@ -1,65 +1,8 @@
-name: mlflow
+name: skmip
 
 version: "3.9"
 
 services:
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.14.0
-    env_file:
-      - ../../envs/.env
-    ports:
-      - "${MLFLOW_PORT:-5001}:${MLFLOW_PORT:-5001}"
-    volumes:
-      - mlflow-artifacts:/mlflow/artifacts
-      - mlflow-auth:/mlflow/auth
-    environment:
-      MLFLOW_MYSQL_DB: ${MLFLOW_MYSQL_DB:-mlflow}
-      MLFLOW_ARTIFACTS_DESTINATION: /mlflow/artifacts
-      MLFLOW_HOST: ${MLFLOW_HOST:-0.0.0.0}
-      MLFLOW_PORT: ${MLFLOW_PORT:-5001}
-      MLFLOW_AUTH_CONFIG_PATH: /mlflow/auth/basic_auth.ini
-      MLFLOW_AUTH_ADMIN_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:-skmip-mi-agent}
-      MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD:-skgas2ndfloor!}
-      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY:-skmip-mi-agent-local-mlflow-csrf-secret}
-    command:
-      - /bin/bash
-      - -c
-      - |
-        pip install --no-cache-dir pymysql
-        mkdir -p /mlflow/auth
-        cat > "$${MLFLOW_AUTH_CONFIG_PATH}" <<EOF
-        [mlflow]
-        default_permission = READ
-        database_uri = sqlite:////mlflow/auth/basic_auth.db
-        admin_username = $${MLFLOW_AUTH_ADMIN_USERNAME}
-        admin_password = $${MLFLOW_AUTH_ADMIN_PASSWORD}
-        authorization_function = mlflow.server.auth:authenticate_request_basic_auth
-        grant_default_workspace_access = true
-        EOF
-        python -c "import os, re, pymysql; db=os.getenv('MLFLOW_MYSQL_DB', 'mlflow'); assert re.fullmatch(r'[A-Za-z0-9_]+', db), f'invalid database name: {db}'; conn=pymysql.connect(host='host.docker.internal', port=int(os.getenv('METADATA_DB_PORT', '3307')), user=os.getenv('METADATA_DB_USERNAME'), password=os.getenv('METADATA_DB_PASSWORD'), autocommit=True); conn.cursor().execute(f'CREATE DATABASE IF NOT EXISTS {db} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'); conn.close()"
-        export MLFLOW_BACKEND_STORE_URI="mysql+pymysql://$${METADATA_DB_USERNAME}:$${METADATA_DB_PASSWORD}@host.docker.internal:$${METADATA_DB_PORT:-3307}/$${MLFLOW_MYSQL_DB:-mlflow}"
-        mlflow server \
-          --app-name basic-auth \
-          --backend-store-uri "$${MLFLOW_BACKEND_STORE_URI}" \
-          --artifacts-destination "$${MLFLOW_ARTIFACTS_DESTINATION}" \
-          --serve-artifacts \
-          --host "$${MLFLOW_HOST}" \
-          --port "$${MLFLOW_PORT}" \
-          --allowed-hosts "localhost:*,127.0.0.1:*" \
-          --cors-allowed-origins "http://localhost:$${MLFLOW_PORT},http://127.0.0.1:$${MLFLOW_PORT}"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import os, urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ.get('MLFLOW_PORT', '5001')}/health\")",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-    restart: unless-stopped
-
   scenario-group-agent:
     build:
       context: ../..
@@ -73,11 +16,4 @@ services:
       METADATA_DB_HOST: host.docker.internal
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
-    depends_on:
-      mlflow:
-        condition: service_healthy
     restart: unless-stopped
-
-volumes:
-  mlflow-artifacts:
-  mlflow-auth:

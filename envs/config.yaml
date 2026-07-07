@@ -36,8 +36,10 @@ scenario_group_admin_bearer_tokens:
 create_signposts_max_concurrent_scenarios: 7
 
 mlflow_tracing_enabled: true
-mlflow_tracking_uri: "http://localhost:5001"
-mlflow_experiment_name: "mi-agent-local"
+mlflow_tracking_uri: "http://40.82.137.178:5001"
+mlflow_experiment_name:
+  main.py: scenario_agent-local
+  # main_model.py: model_parameter  -> example for future use
 mlflow_tracking_username: "skmip-mi-agent"
 mlflow_tracking_password: "skgas2ndfloor!"
 mlflow_langchain_run_tracer_inline: false

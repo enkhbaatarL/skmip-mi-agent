@@ -132,10 +132,10 @@ class Settings(BaseSettings):
     # MLflow tracing
     mlflow_tracing_enabled: bool = Field(default=False)
     mlflow_tracking_uri: str = Field(default="http://mlflow:5000")
-    mlflow_experiment_name: str = Field(default="mi-agent-local")
+    mlflow_experiment_name: dict[str, str] = Field(default_factory=lambda: {"main.py": "scenario_agent"})
     mlflow_tracking_username: str = Field(default="")
     mlflow_tracking_password: str = Field(default="")
-    mlflow_langchain_run_tracer_inline: bool = Field(default=False)
+    mlflow_langchain_run_tracer_inline: bool = Field(default=False, description="false: LangChain 실행 흐름을 최대한 덜 막도록 trace 처리를 inline으로 하지 않습니다")
 
     # Callback OAuth2 (client_credentials)
     callback_oauth2_token_url: str = Field(default="")

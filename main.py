@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
-    setup_mlflow_tracing(cfg)
+    setup_mlflow_tracing(cfg, entrypoint_name=Path(__file__).name)
 
     logger.info("Validating ORM models against the database schema")
     await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)

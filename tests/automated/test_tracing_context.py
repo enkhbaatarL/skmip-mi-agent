@@ -224,11 +224,12 @@ class TracingContextTest(unittest.TestCase):
                 SimpleNamespace(
                     mlflow_tracing_enabled=True,
                     mlflow_tracking_uri="http://mlflow.example",
-                    mlflow_experiment_name="mi-agent-test",
+                    mlflow_experiment_name={"main.py": "scenario_agent"},
                     mlflow_tracking_username="",
                     mlflow_tracking_password="",
                     mlflow_langchain_run_tracer_inline=False,
                 ),
+                entrypoint_name="main.py",
             )
         finally:
             if previous is None:
@@ -237,9 +238,77 @@ class TracingContextTest(unittest.TestCase):
                 sys.modules["mlflow"] = previous
 
         self.assertIn(("tracking_uri", "http://mlflow.example"), calls)
-        self.assertIn(("experiment", "mi-agent-test"), calls)
+        self.assertIn(("experiment", "scenario_agent"), calls)
         self.assertIn(("langchain_autolog", {"run_tracer_inline": False}), calls)
         self.assertNotIn(("openai_autolog", None), calls)
+
+    def test_setup_mlflow_tracing_resolves_experiment_from_entrypoint_mapping(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        fake_mlflow = SimpleNamespace(
+            set_tracking_uri=lambda uri: calls.append(("tracking_uri", uri)),
+            set_experiment=lambda name: calls.append(("experiment", name)),
+            langchain=SimpleNamespace(autolog=lambda **kwargs: calls.append(("langchain_autolog", kwargs))),
+        )
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = fake_mlflow
+        try:
+            setup_mlflow_tracing(
+                SimpleNamespace(
+                    mlflow_tracing_enabled=True,
+                    mlflow_tracking_uri="http://mlflow.example",
+                    mlflow_experiment_name={
+                        "main.py": "scenario_agent",
+                        "main_model.py": "model_parameter",
+                    },
+                    mlflow_tracking_username="",
+                    mlflow_tracking_password="",
+                    mlflow_langchain_run_tracer_inline=False,
+                ),
+                entrypoint_name="main_model.py",
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertIn(("experiment", "model_parameter"), calls)
+
+    def test_setup_mlflow_tracing_uses_default_for_unknown_entrypoint_mapping(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        fake_mlflow = SimpleNamespace(
+            set_tracking_uri=lambda uri: calls.append(("tracking_uri", uri)),
+            set_experiment=lambda name: calls.append(("experiment", name)),
+            langchain=SimpleNamespace(autolog=lambda **kwargs: calls.append(("langchain_autolog", kwargs))),
+        )
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = fake_mlflow
+        try:
+            setup_mlflow_tracing(
+                SimpleNamespace(
+                    mlflow_tracing_enabled=True,
+                    mlflow_tracking_uri="http://mlflow.example",
+                    mlflow_experiment_name={
+                        "main.py": "scenario_agent",
+                        "default": "mi-agent-local",
+                    },
+                    mlflow_tracking_username="",
+                    mlflow_tracking_password="",
+                    mlflow_langchain_run_tracer_inline=False,
+                ),
+                entrypoint_name="unknown.py",
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertIn(("experiment", "mi-agent-local"), calls)
 
     def test_mlflow_llm_span_sets_inputs_and_outputs(self) -> None:
         class FakeSpan:

@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from apps.common.logging.logger_config import logger
+
+
+if TYPE_CHECKING:
+    from apps.common.configs.config import Settings
+
+
+DEFAULT_EXPERIMENT_NAME = "mi-agent-local"
 
 
 def _tracking_uri_with_credentials(
@@ -32,8 +40,17 @@ def _sanitized_tracking_uri(tracking_uri: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
-def setup_mlflow_tracing(cfg: object) -> None:
-    if not getattr(cfg, "mlflow_tracing_enabled", False):
+def resolve_experiment_name(cfg: Settings, entrypoint_name: str | None = None) -> str:
+    configured = cfg.mlflow_experiment_name
+    return (
+        configured.get(entrypoint_name or "")
+        or configured.get("default")
+        or DEFAULT_EXPERIMENT_NAME
+    )
+
+
+def setup_mlflow_tracing(cfg: Settings, entrypoint_name: str | None = None) -> None:
+    if not cfg.mlflow_tracing_enabled:
         logger.info("MLflow tracing disabled")
         return
 
@@ -43,17 +60,18 @@ def setup_mlflow_tracing(cfg: object) -> None:
         logger.warning(f"MLflow tracing disabled because mlflow import failed | error={exc!r}")
         return
 
-    tracking_uri = str(getattr(cfg, "mlflow_tracking_uri", "") or "")
-    experiment_name = str(getattr(cfg, "mlflow_experiment_name", "") or "mi-agent-local")
-    username = str(getattr(cfg, "mlflow_tracking_username", "") or "")
-    password = str(getattr(cfg, "mlflow_tracking_password", "") or "")
+    tracking_uri = cfg.mlflow_tracking_uri
+    experiment_name = resolve_experiment_name(cfg, entrypoint_name=entrypoint_name)
+    username = cfg.mlflow_tracking_username
+    password = cfg.mlflow_tracking_password
 
     try:
         if tracking_uri:
             mlflow.set_tracking_uri(_tracking_uri_with_credentials(tracking_uri, username, password))
         mlflow.set_experiment(experiment_name)
+        
         mlflow.langchain.autolog(
-            run_tracer_inline=bool(getattr(cfg, "mlflow_langchain_run_tracer_inline", False)),
+            run_tracer_inline=cfg.mlflow_langchain_run_tracer_inline,
         )
         logger.info(
             "MLflow tracing enabled | tracking_uri={} | experiment={}",
