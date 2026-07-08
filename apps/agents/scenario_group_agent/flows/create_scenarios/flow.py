@@ -42,6 +42,7 @@ from apps.persistence.scenario_group.schema import (
 # Prepare (plain function, no LangGraph — DB only)
 # ---------------------------------------------------------------------------
 
+
 def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
     """Event 로드 → 기존 그룹 확인 → group row INSERT. 반환값으로 200 응답을 구성한다."""
     state = CreateScenariosState(mi_event_id=mi_event_id, user_id=user_id)
@@ -53,11 +54,7 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Scenario group ID not found in state")
 
-    group = (
-        ScenarioGroupPayload.model_validate(state.scenario_group)
-        if state.scenario_group
-        else None
-    )
+    group = ScenarioGroupPayload.model_validate(state.scenario_group) if state.scenario_group else None
     return {
         "scenario_group_id": state.scenario_group_id,
         "status": group.status if group else ScenarioGroupStatus.CREATING.value,
@@ -72,6 +69,7 @@ def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Background graph: run_scenario_generation → save_scenarios
 # ---------------------------------------------------------------------------
+
 
 def _build_background_graph() -> Runnable:
     builder = StateGraph(CreateScenariosState, context_schema=TraceContext)
@@ -106,9 +104,40 @@ def get_compiled_graph() -> Runnable:
     return _build_background_graph()
 
 
+async def run_create_scenarios_inline(
+    scenario_group_id: int,
+    event_data: dict[str, Any],
+    user_id: int,
+) -> CreateScenariosOut:
+    """Run the background graph inline and return the callback payload."""
+    from apps.common.configs.config import get_settings
+
+    cfg = get_settings()
+    agent_config = cfg.get_agent_config(AGENT_NAME)
+    trace_context = TraceContext(
+        transaction_id=new_transaction_id(),
+        app_identifier=agent_config.aip_app_id,
+        agent_name=AGENT_NAME,
+        scenario_group_id=str(scenario_group_id),
+    )
+    state = CreateScenariosState(
+        scenario_group_id=scenario_group_id,
+        event_data=event_data,
+        user_id=user_id,
+    )
+    with mlflow_trace_context(trace_context):
+        final_state = await get_compiled_graph().ainvoke(
+            state,
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
+    return _bg_to_output(final_state)
+
+
 # ---------------------------------------------------------------------------
 # Background task function (called via FastAPI BackgroundTasks)
 # ---------------------------------------------------------------------------
+
 
 async def run_create_scenarios_background(
     scenario_group_id: int,
@@ -126,25 +155,11 @@ async def run_create_scenarios_background(
     logger.info(f"[BG][create_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
-        agent_config = cfg.get_agent_config(AGENT_NAME)
-        trace_context = TraceContext(
-            transaction_id=new_transaction_id(),
-            app_identifier=agent_config.aip_app_id,
-            agent_name=AGENT_NAME,
-            scenario_group_id=str(scenario_group_id),
-        )
-        state = CreateScenariosState(
+        callback_payload: CallBackBody = await run_create_scenarios_inline(
             scenario_group_id=scenario_group_id,
             event_data=event_data,
             user_id=user_id,
         )
-        with mlflow_trace_context(trace_context):
-            final_state = await get_compiled_graph().ainvoke(
-                state,
-                config=build_langgraph_config(trace_context),
-                context=trace_context,
-            )
-        callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
@@ -153,8 +168,7 @@ async def run_create_scenarios_background(
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.error(
-            f"[BG][create_scenarios] FAILED | group_id={scenario_group_id}"
-            f" | elapsed={elapsed_ms}ms | error={e!r}",
+            f"[BG][create_scenarios] FAILED | group_id={scenario_group_id} | elapsed={elapsed_ms}ms | error={e!r}",
         )
         error_payload = CallBackBody(result="failure", reason=str(e))
         try:

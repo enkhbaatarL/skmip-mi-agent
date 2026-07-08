@@ -120,6 +120,37 @@ def get_compiled_graph() -> Runnable:
     return _build_background_graph()
 
 
+async def run_create_signposts_inline(
+    scenario_group_id: int,
+    user_id: int,
+    request_table: dict[str, Any],
+) -> CreateSignpostsOut:
+    """Run the background graph inline and return the callback payload."""
+    from apps.common.configs.config import get_settings
+
+    cfg = get_settings()
+    agent_config = cfg.get_agent_config(AGENT_NAME)
+    trace_context = TraceContext(
+        transaction_id=new_transaction_id(),
+        app_identifier=agent_config.aip_app_id,
+        agent_name=AGENT_NAME,
+        scenario_group_id=str(scenario_group_id),
+    )
+    state = CreateSignpostsState(
+        scenario_group_id=scenario_group_id,
+        user_id=user_id,
+        include_details=True,
+        request_table=request_table,
+    )
+    with mlflow_trace_context(trace_context):
+        final_state = await get_compiled_graph().ainvoke(
+            state,
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
+    return _bg_to_output(final_state)
+
+
 # ---------------------------------------------------------------------------
 # Background task function (called via FastAPI BackgroundTasks)
 # ---------------------------------------------------------------------------
@@ -139,26 +170,11 @@ async def run_create_signposts_background(
     logger.info(f"[BG][create_signposts] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
-        agent_config = cfg.get_agent_config(AGENT_NAME)
-        trace_context = TraceContext(
-            transaction_id=new_transaction_id(),
-            app_identifier=agent_config.aip_app_id,
-            agent_name=AGENT_NAME,
-            scenario_group_id=str(scenario_group_id),
-        )
-        state = CreateSignpostsState(
+        callback_payload: CallBackBody = await run_create_signposts_inline(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
-            include_details=True,
             request_table=request_table,
         )
-        with mlflow_trace_context(trace_context):
-            final_state = await get_compiled_graph().ainvoke(
-                state,
-                config=build_langgraph_config(trace_context),
-                context=trace_context,
-            )
-        callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(f"[BG][create_signposts] END | group_id={scenario_group_id} | elapsed={elapsed_ms}ms")

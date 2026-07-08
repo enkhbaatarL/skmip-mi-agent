@@ -42,6 +42,7 @@ from apps.persistence.enums import (
 # Prepare (plain function, no LangGraph — DB only)
 # ---------------------------------------------------------------------------
 
+
 def prepare_validate_scenarios(
     scenario_group_id: int,
     user_id: int,
@@ -67,6 +68,7 @@ def prepare_validate_scenarios(
 # ---------------------------------------------------------------------------
 # Background graph: load_scenario_group → load_scenarios → generate → validate → save
 # ---------------------------------------------------------------------------
+
 
 def _build_background_graph() -> Runnable:
     builder = StateGraph(ValidateScenariosState, context_schema=TraceContext)
@@ -111,9 +113,40 @@ def get_compiled_graph() -> Runnable:
     return _build_background_graph()
 
 
+async def run_validate_scenarios_inline(
+    scenario_group_id: int,
+    user_id: int,
+    request_table: dict[str, Any],
+) -> ValidateScenariosOut:
+    """Run the background graph inline and return the callback payload."""
+    from apps.common.configs.config import get_settings
+
+    cfg = get_settings()
+    agent_config = cfg.get_agent_config(AGENT_NAME)
+    trace_context = TraceContext(
+        transaction_id=new_transaction_id(),
+        app_identifier=agent_config.aip_app_id,
+        agent_name=AGENT_NAME,
+        scenario_group_id=str(scenario_group_id),
+    )
+    state = ValidateScenariosState(
+        scenario_group_id=scenario_group_id,
+        user_id=user_id,
+        request_table=request_table,
+    )
+    with mlflow_trace_context(trace_context):
+        final_state = await get_compiled_graph().ainvoke(
+            state,
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
+    return _bg_to_output(final_state)
+
+
 # ---------------------------------------------------------------------------
 # Background task function (called via FastAPI BackgroundTasks)
 # ---------------------------------------------------------------------------
+
 
 async def run_validate_scenarios_background(
     scenario_group_id: int,
@@ -131,25 +164,11 @@ async def run_validate_scenarios_background(
     logger.info(f"[BG][validate_scenarios] START | group_id={scenario_group_id}")
     start = time.perf_counter()
     try:
-        agent_config = cfg.get_agent_config(AGENT_NAME)
-        trace_context = TraceContext(
-            transaction_id=new_transaction_id(),
-            app_identifier=agent_config.aip_app_id,
-            agent_name=AGENT_NAME,
-            scenario_group_id=str(scenario_group_id),
-        )
-        state = ValidateScenariosState(
+        callback_payload: CallBackBody = await run_validate_scenarios_inline(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
         )
-        with mlflow_trace_context(trace_context):
-            final_state = await get_compiled_graph().ainvoke(
-                state,
-                config=build_langgraph_config(trace_context),
-                context=trace_context,
-            )
-        callback_payload: CallBackBody = _bg_to_output(final_state)
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
@@ -158,8 +177,7 @@ async def run_validate_scenarios_background(
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.error(
-            f"[BG][validate_scenarios] FAILED | group_id={scenario_group_id}"
-            f" | elapsed={elapsed_ms}ms | error={e!r}",
+            f"[BG][validate_scenarios] FAILED | group_id={scenario_group_id} | elapsed={elapsed_ms}ms | error={e!r}",
         )
         error_payload = CallBackBody(result="failure", reason=str(e))
         try:
