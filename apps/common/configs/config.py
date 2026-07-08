@@ -6,14 +6,14 @@ from pathlib import Path
 import re
 from typing import Any
 
-import yaml
-from pydantic import Field, computed_field
+from pydantic import BaseModel, Field, computed_field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+import yaml
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -47,10 +47,16 @@ class EnvYamlConfigSettingsSource(YamlConfigSettingsSource):
     """`${ENV_NAME}` 패턴을 YAML 읽기 전에 환경변수로 치환."""
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:
-        with open(file_path, encoding=self.yaml_file_encoding) as yaml_file:
+        with file_path.open(encoding=self.yaml_file_encoding) as yaml_file:
             yaml_str = _replace_env_placeholders(_normalize_yaml_text(yaml_file.read()))
             loaded = yaml.safe_load(yaml_str)
         return loaded if isinstance(loaded, dict) else {}
+
+
+class AgentConfig(BaseModel):
+    mlflow_experiment_name: str = Field(default="mi_agent_local")
+    aip_app_id: str = Field(default="mi_agent")
+    mlflow_tracing_enabled: bool = Field(default=False)
 
 
 class Settings(BaseSettings):
@@ -135,6 +141,23 @@ class Settings(BaseSettings):
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
     create_signposts_max_concurrent_scenarios: int = Field(default=7, ge=1)
 
+    # Agent profiles
+    agents: dict[str, AgentConfig] = Field(default_factory=lambda: {"default": AgentConfig()})
+
+    # MLflow tracing defaults and legacy fallback
+    mlflow_tracing_enabled: bool = Field(default=False)
+    mlflow_tracking_uri: str = Field(default="http://mlflow:5000")
+    mlflow_experiment_name: dict[str, str] = Field(default_factory=lambda: {"main.py": "scenario_agent"})
+    mlflow_tracking_username: str = Field(default="")
+    mlflow_tracking_password: str = Field(default="")
+    mlflow_langchain_run_tracer_inline: bool = Field(
+        default=False,
+        description=(
+            "false(기본): trace를 백그라운드에 기록해 응답이 느려지지 않게 합니다. "
+            "true: 요청 처리 중 바로 trace를 기록합니다."
+        ),
+    )
+
     # Callback OAuth2 (client_credentials)
     callback_oauth2_token_url: str = Field(default="")
     callback_oauth2_client_id: str = Field(default="")
@@ -181,6 +204,32 @@ class Settings(BaseSettings):
     # LOG
     log_level: str
     debug: bool = Field(default=False)
+
+    def get_agent_config(self, agent_name: str | None = None) -> AgentConfig:
+        if agent_name and agent_name in self.agents:
+            return self.agents[agent_name]
+        if "default" in self.agents:
+            return self.agents["default"]
+
+        experiment_name = (
+            self.mlflow_experiment_name.get(agent_name or "")
+            or self.mlflow_experiment_name.get("default")
+            or self.mlflow_experiment_name.get("main.py")
+            or "mi_agent_local"
+        )
+        legacy_aip_app_ids = {"scenario_group_agent": "scenario-group-agent"}
+        return AgentConfig(
+            mlflow_experiment_name=experiment_name,
+            aip_app_id=legacy_aip_app_ids.get(agent_name or "", agent_name or "mi_agent"),
+            mlflow_tracing_enabled=self.mlflow_tracing_enabled,
+        )
+
+    def is_mlflow_tracing_enabled(
+        self,
+        *,
+        agent_name: str | None = None,
+    ) -> bool:
+        return self.get_agent_config(agent_name).mlflow_tracing_enabled
 
     @property
     def set_backend_app_attributes(self) -> Mapping[str, Any]:

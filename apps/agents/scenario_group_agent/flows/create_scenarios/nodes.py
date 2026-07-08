@@ -1,21 +1,17 @@
 from __future__ import annotations
 
+from langgraph.runtime import Runtime
+
 from apps.agents.scenario_group_agent.flows.create_scenarios.state import (
     CreateScenariosState,
     create_scenarios_state_update,
 )
-from apps.common.exceptions.custom import MIBaseError
-from apps.common.values.error_codes import ErrorCode
-from apps.persistence.enums import (
-    ScenarioGroupStage,
-    ScenarioGroupStatus,
-)
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
-from apps.agents.scenario_group_agent.persistence.scenario_service import (
-    ScenarioService,
-)
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.flow import (
     get_scenario_generation_subgraph,
@@ -25,6 +21,13 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
+)
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.tracing.context import TraceContext, build_langgraph_config
+from apps.common.values.error_codes import ErrorCode
+from apps.persistence.enums import (
+    ScenarioGroupStage,
+    ScenarioGroupStatus,
 )
 
 
@@ -56,10 +59,10 @@ def check_existing_scenario_group(state: CreateScenariosState) -> dict[str, obje
         }
     if existing.status == ScenarioGroupStatus.CREATING.value:
         if existing.request_usr_id == state.user_id:
-            raise MIBaseError(
-                ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
-                detail=f"초안 생성 완료. 다음 단계를 진행해주세요. 시나리오 그룹 ID: {existing.scenario_group_id}",
-            )
+            return {
+                "scenario_group_id": existing.scenario_group_id,
+                "scenario_group": existing,
+            }
         raise MIBaseError(
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"시나리오 작성자: {existing.request_usr_id}, 시나리오 그룹 ID: {existing.scenario_group_id}",
@@ -115,7 +118,10 @@ def create_group_record(state: CreateScenariosState) -> dict[str, object]:
     }
 
 
-async def run_scenario_generation(state: CreateScenariosState) -> dict[str, object]:
+async def run_scenario_generation(
+    state: CreateScenariosState,
+    runtime: Runtime[TraceContext] | None = None,
+) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.event_data is None:
@@ -132,7 +138,12 @@ async def run_scenario_generation(state: CreateScenariosState) -> dict[str, obje
         event_data=state.event_data,
         template=template,
     )
-    result_state = await get_scenario_generation_subgraph().ainvoke(subgraph_state)
+    trace_context = runtime.context if runtime is not None else None
+    result_state = await get_scenario_generation_subgraph().ainvoke(
+        subgraph_state,
+        config=build_langgraph_config(trace_context) if trace_context is not None else None,
+        context=trace_context,
+    )
     result = (
         result_state
         if isinstance(result_state, ScenarioGenerationState)

@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from urllib.parse import quote, urlsplit, urlunsplit
+
+from apps.common.logging.logger_config import logger
+
+
+if TYPE_CHECKING:
+    from apps.common.configs.config import Settings
+
+
+DEFAULT_EXPERIMENT_NAME = "mi-agent-local"
+
+
+def _tracking_uri_with_credentials(
+    tracking_uri: str,
+    username: str,
+    password: str,
+) -> str:
+    if not username:
+        return tracking_uri
+    parts = urlsplit(tracking_uri)
+    if not parts.scheme or not parts.netloc:
+        return tracking_uri
+    host = parts.hostname or ""
+    port = f":{parts.port}" if parts.port is not None else ""
+    auth = quote(username, safe="")
+    if password:
+        auth += f":{quote(password, safe='')}"
+    netloc = f"{auth}@{host}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _sanitized_tracking_uri(tracking_uri: str) -> str:
+    parts = urlsplit(tracking_uri)
+    if "@" not in parts.netloc:
+        return tracking_uri
+    netloc = parts.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _get_agent_config(cfg: Settings, agent_name: str | None) -> object | None:
+    get_agent_config = getattr(cfg, "get_agent_config", None)
+    if not callable(get_agent_config):
+        return None
+    return get_agent_config(agent_name)
+
+
+def _is_mlflow_tracing_enabled(cfg: Settings, agent_name: str | None = None) -> bool:
+    is_enabled = getattr(cfg, "is_mlflow_tracing_enabled", None)
+    if callable(is_enabled):
+        return bool(is_enabled(agent_name=agent_name))
+    return bool(getattr(cfg, "mlflow_tracing_enabled", False))
+
+
+def resolve_experiment_name(
+    cfg: Settings,
+    agent_name: str | None = None,
+    entrypoint_name: str | None = None,
+) -> str:
+    agent_config = _get_agent_config(cfg, agent_name)
+    if agent_config is not None:
+        experiment_name = getattr(agent_config, "mlflow_experiment_name", "")
+        if experiment_name:
+            return str(experiment_name)
+
+    configured = getattr(cfg, "mlflow_experiment_name", {})
+    return (
+        configured.get(entrypoint_name or "")
+        or configured.get("default")
+        or DEFAULT_EXPERIMENT_NAME
+    )
+
+
+def setup_mlflow_tracing(
+    cfg: Settings,
+    agent_name: str | None = None,
+    entrypoint_name: str | None = None,
+) -> None:
+    if not _is_mlflow_tracing_enabled(cfg, agent_name=agent_name):
+        logger.info("MLflow tracing disabled")
+        return
+
+    try:
+        import mlflow
+    except Exception as exc:
+        logger.warning(f"MLflow tracing disabled because mlflow import failed | error={exc!r}")
+        return
+
+    tracking_uri = cfg.mlflow_tracking_uri
+    experiment_name = resolve_experiment_name(cfg, agent_name=agent_name, entrypoint_name=entrypoint_name)
+    username = cfg.mlflow_tracking_username
+    password = cfg.mlflow_tracking_password
+
+    try:
+        if tracking_uri:
+            mlflow.set_tracking_uri(_tracking_uri_with_credentials(tracking_uri, username, password))
+        mlflow.set_experiment(experiment_name)
+
+        mlflow.langchain.autolog(
+            run_tracer_inline=cfg.mlflow_langchain_run_tracer_inline,
+        )
+        logger.info(
+            "MLflow tracing enabled | tracking_uri={} | experiment={}",
+            _sanitized_tracking_uri(tracking_uri),
+            experiment_name,
+        )
+    except Exception as exc:
+        logger.warning(f"MLflow tracing setup failed, continuing without tracing | error={exc!r}")
