@@ -8,9 +8,12 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from apps.agents.interpret_agent.schemas.base import ApiModel
+from apps.common.values.response import CallBackBody
 
 
 class CreatePriceInterpretationPreviewIn(ApiModel):
@@ -77,4 +80,33 @@ class PriceInterpretationPreviewOut(ApiModel):
 
     status: str = "success"
     message: str = ""
+    data: PriceInterpretationResult | None = None
+
+
+class PriceInterpretationAcceptedData(ApiModel):
+    """비동기 요청 접수 응답 data.
+
+    해석 결과 자체는 콜백으로 전달되므로, 접수 응답에는 대상 그룹과
+    처리 상태만 담는다(별도 해석 결과 저장 row가 없어 id는 두지 않는다).
+    """
+
+    scenario_group_id: int
+    status: Literal["PROCESSING"] = "PROCESSING"
+
+
+class PriceInterpretationAcceptedOut(ApiModel):
+    """비동기 접수(202-style) 응답 envelope."""
+
+    status: Literal["success", "error"] = "success"
+    message: str = "accepted"
+    data: PriceInterpretationAcceptedData
+
+
+class PriceInterpretationCallbackOut(CallBackBody):
+    """가격전망 해석 비동기 콜백 payload.
+
+    성공 시 해석 결과(data)를 실어 보내고, 실패 시 result="failure" + reason만 채운다.
+    (result/reason 공통 필드는 CallBackBody에서 상속하며 camelCase alias로 직렬화된다.)
+    """
+
     data: PriceInterpretationResult | None = None

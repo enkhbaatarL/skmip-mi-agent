@@ -48,9 +48,13 @@ def load_input(state: InterpretPriceState) -> dict:
     return {"interpret_input": interpret_input}
 
 
-def _feature_lookup(features: list[FeatureSeries]) -> dict[tuple[str, str, str | None], FeatureSeries]:
-    # (feature, region, qualifier) 로 매칭해 multi-feature/부가구분을 구분한다.
-    return {(f.feature, f.region, f.qualifier): f for f in features}
+def _feature_key(f: FeatureSeries) -> tuple:
+    # (feature, group_keys) 로 매칭해 가변 그룹 축(Country/DegreeDayType 등)을 구분한다.
+    return (f.feature, tuple(sorted(f.group_keys.items())))
+
+
+def _feature_lookup(features: list[FeatureSeries]) -> dict[tuple, FeatureSeries]:
+    return {_feature_key(f): f for f in features}
 
 
 def _price_lookup(prices: list[PriceSeries]) -> dict[str, PriceSeries]:
@@ -86,7 +90,7 @@ def extract_diffs(state: InterpretPriceState) -> dict:
         scen_features = inp.scenario_features.get(sid)
         if scen_features is not None:
             for fs in scen_features.features:
-                base_fs = base_features.get((fs.feature, fs.region, fs.qualifier))
+                base_fs = base_features.get(_feature_key(fs))
                 if base_fs is not None:
                     bundle.feature_diffs.append(analyze_feature_diff(fs, base_fs))
 

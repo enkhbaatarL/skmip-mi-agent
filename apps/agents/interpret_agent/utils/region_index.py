@@ -25,6 +25,14 @@ INDEX_MARKET_LABEL: dict[str, str] = {
     "HH": "미국",
 }
 
+# 지수 → 모델 실행 결과(tmd_mdl_scnrcaseprcl.prc_rgn_nm) 조회 키.
+# index-keyed 안전 상수(가격 결과는 항상 monthly, perd_unit_spt_cd='M').
+INDEX_PRICE_REGION: dict[str, str] = {
+    "JKM": "East Asia Spot",
+    "TTF": "TTF",
+    "HH": "HH",
+}
+
 # 시장 반응 성격 묶음. LLM 소프트 힌트 전용(코드 분기 아님).
 # 수입 파리티 시장(아시아·유럽)과 미국 내수 시장의 반응 성격이 달라 분리한다.
 INDEX_GROUPS: list[dict[str, object]] = [

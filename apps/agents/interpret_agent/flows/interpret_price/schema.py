@@ -39,6 +39,10 @@ class FeatureSeries(ApiModel):
     qualifier: str | None = Field(
         default=None, description="feature 부가 구분(예: energy_source=Gas)"
     )
+    group_keys: dict[str, str] = Field(
+        default_factory=dict,
+        description="비-시간 축(Country/Region/DegreeDayType 등) → 값. 매칭·표시의 원천",
+    )
     periods: list[str] = Field(
         default_factory=list, description="정렬된 기간 키(YYYY-MM 또는 YYYY)"
     )
@@ -121,6 +125,7 @@ class FeatureDiffMetric(ApiModel):
     unit: str = ""
     granularity: str = "monthly"
     qualifier: str | None = None
+    group_keys: dict[str, str] = Field(default_factory=dict)
     mean_diff: float = 0.0
     max_pos: DiffPoint | None = None
     max_neg: DiffPoint | None = None

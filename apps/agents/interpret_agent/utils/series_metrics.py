@@ -31,6 +31,32 @@ PRICE_CONVERGENCE_PCT = 5.0  # 이후 전 구간 |차이|가 base의 이 비율 
 PRICE_MIN_ABS_MOVE = 1.0  # 절대 $ 최소 이동폭(작은 base에서 과민 반응 방지)
 
 
+def _fmt(value: float) -> str:
+    """값 크기에 맞춰 유효 자리를 유지하는 표시 문자열.
+
+    소수점 1자리 고정 시 GDP(0.003)·전원믹스 등 작은 값이 '0.0'으로 뭉개지는
+    문제를 막는다. |값|<1 이면 3자리, <100 이면 1자리, 그 이상은 정수로 표기하고
+    불필요한 0을 제거한다.
+    """
+    if value == 0:
+        return "0"
+    magnitude = abs(value)
+    if magnitude < 1:
+        text = f"{value:.3f}"
+    elif magnitude < 100:
+        text = f"{value:.1f}"
+    else:
+        text = f"{value:.0f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def _fmt_signed(value: float) -> str:
+    text = _fmt(value)
+    return text if text.startswith("-") else f"+{text}"
+
+
 def _resolve_thresholds(feature: str, diffs: list[float]) -> dict[str, float]:
     """등록된 feature는 고정 임계값을, 미등록 feature는 diff 분포 기반 적응 임계값을 사용."""
     if feature in FEATURE_THRESHOLDS:
@@ -103,7 +129,7 @@ def _build_segment(
         end=months[e],
         direction="above" if diffs[peak_idx] > 0 else "below",
         peak_month=months[peak_idx],
-        peak_diff=round(diffs[peak_idx], 1),
+        peak_diff=round(diffs[peak_idx], 3),
     )
 
 
@@ -122,9 +148,9 @@ def _convergence_month(
 def _diff_point(months: list[str], base: list[float], scen: list[float], i: int) -> DiffPoint:
     return DiffPoint(
         month=months[i],
-        diff=round(scen[i] - base[i], 1),
-        base_value=round(base[i], 1),
-        scenario_value=round(scen[i], 1),
+        diff=round(scen[i] - base[i], 3),
+        base_value=round(base[i], 3),
+        scenario_value=round(scen[i], 3),
     )
 
 
@@ -144,6 +170,7 @@ def analyze_feature_diff(
         unit=feature_series.unit,
         granularity=feature_series.granularity,
         qualifier=feature_series.qualifier,
+        group_keys=dict(feature_series.group_keys),
     )
     if not months:
         metric.auto_summary = "공통 구간 없음"
@@ -152,7 +179,7 @@ def analyze_feature_diff(
     diffs = [scen[i] - base[i] for i in range(len(months))]
     thr = _resolve_thresholds(feature_series.feature, diffs)
 
-    metric.mean_diff = round(sum(diffs) / len(diffs), 1)
+    metric.mean_diff = round(sum(diffs) / len(diffs), 3)
     i_max = max(range(len(diffs)), key=lambda k: diffs[k])
     i_min = min(range(len(diffs)), key=lambda k: diffs[k])
     if diffs[i_max] > 0:
@@ -165,8 +192,8 @@ def analyze_feature_diff(
         AnomalyPoint(
             month=months[i],
             kind="extreme_diff",
-            value=round(diffs[i], 1),
-            detail=f"base 대비 {diffs[i]:+.1f}{feature_series.unit} 극단 편차",
+            value=round(diffs[i], 3),
+            detail=f"base 대비 {_fmt_signed(diffs[i])}{feature_series.unit} 극단 편차",
         )
         for i in range(len(months))
         if abs(diffs[i]) >= thr["extreme"]
@@ -179,7 +206,7 @@ def _feature_summary(m: FeatureDiffMetric) -> str:
     parts: list[str] = []
     if m.notable_segments:
         seg_txt = ", ".join(
-            f"{s.start}~{s.end} {'+' if s.direction == 'above' else ''}{s.peak_diff:.1f}{m.unit}"
+            f"{s.start}~{s.end} {_fmt_signed(s.peak_diff)}{m.unit}"
             for s in m.notable_segments[:4]
         )
         parts.append(f"주요 편차 구간: {seg_txt}")
@@ -188,7 +215,7 @@ def _feature_summary(m: FeatureDiffMetric) -> str:
     if m.convergence_from:
         parts.append(f"{m.convergence_from}부터 base 수렴")
     if m.anomalies:
-        an_txt = ", ".join(f"{a.month} {a.value:+.1f}{m.unit}" for a in m.anomalies[:3])
+        an_txt = ", ".join(f"{a.month} {_fmt_signed(a.value)}{m.unit}" for a in m.anomalies[:3])
         parts.append(f"극단 편차(이상치 후보): {an_txt}")
     return " / ".join(parts)
 
@@ -207,9 +234,9 @@ def analyze_price_diff(
         return metric
 
     diffs = [scen[i] - base[i] for i in range(len(months))]
-    metric.mean_base = round(sum(base) / len(base), 1)
-    metric.mean_scenario = round(sum(scen) / len(scen), 1)
-    metric.mean_diff = round(sum(diffs) / len(diffs), 1)
+    metric.mean_base = round(sum(base) / len(base), 3)
+    metric.mean_scenario = round(sum(scen) / len(scen), 3)
+    metric.mean_diff = round(sum(diffs) / len(diffs), 3)
 
     i_max = max(range(len(diffs)), key=lambda k: diffs[k])
     i_min = min(range(len(diffs)), key=lambda k: diffs[k])
@@ -229,7 +256,7 @@ def analyze_price_diff(
                 AnomalyPoint(
                     month=months[i],
                     kind="negative_price",
-                    value=round(scen[i], 1),
+                    value=round(scen[i], 3),
                     detail="예측 가격 음수(비정상)",
                 )
             )
@@ -241,7 +268,7 @@ def analyze_price_diff(
                 AnomalyPoint(
                     month=months[i],
                     kind="spike",
-                    value=round(diffs[i], 1),
+                    value=round(diffs[i], 3),
                     detail=f"base 대비 {pct:+.0f}% 급변",
                 )
             )
@@ -251,14 +278,16 @@ def analyze_price_diff(
 
 
 def _price_summary(m: PriceDiffMetric) -> str:
-    parts = [f"평균 {m.mean_scenario:.1f} vs base {m.mean_base:.1f} ({m.mean_diff:+.1f})"]
+    parts = [
+        f"평균 {_fmt(m.mean_scenario)} vs base {_fmt(m.mean_base)} ({_fmt_signed(m.mean_diff)})"
+    ]
     if m.max_pos:
         parts.append(
-            f"최대 상승 {m.max_pos.month} {m.max_pos.scenario_value:.1f} vs {m.max_pos.base_value:.1f}"
+            f"최대 상승 {m.max_pos.month} {_fmt(m.max_pos.scenario_value)} vs {_fmt(m.max_pos.base_value)}"
         )
     if m.max_neg:
         parts.append(
-            f"최대 하락 {m.max_neg.month} {m.max_neg.scenario_value:.1f} vs {m.max_neg.base_value:.1f}"
+            f"최대 하락 {m.max_neg.month} {_fmt(m.max_neg.scenario_value)} vs {_fmt(m.max_neg.base_value)}"
         )
     if m.convergence_from:
         parts.append(f"{m.convergence_from}부터 수렴")
