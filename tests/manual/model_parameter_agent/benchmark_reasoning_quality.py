@@ -280,7 +280,7 @@ def _quality_assessment(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _run_spec(spec: RunSpec, *, max_candidates: int, max_retries: int) -> dict[str, Any]:
+async def _run_spec(spec: RunSpec, *, max_retries: int) -> dict[str, Any]:
     step_records: list[dict[str, Any]] = []
 
     async def invoke_structured(
@@ -317,11 +317,7 @@ async def _run_spec(spec: RunSpec, *, max_candidates: int, max_retries: int) -> 
     nodes._invoke_structured = invoke_structured
     started = time.perf_counter()
     try:
-        result = await _evaluate_scenario(
-            spec.scenario_id,
-            max_candidates=max_candidates,
-            allow_llm_fallback=False,
-        )
+        result = await _evaluate_scenario(spec.scenario_id)
     finally:
         nodes._invoke_structured = original
 
@@ -538,7 +534,6 @@ async def run(args: argparse.Namespace) -> tuple[Path, Path]:
                         repeat_index=repeat_index,
                         variant=variant,
                     ),
-                    max_candidates=args.max_candidates,
                     max_retries=args.max_retries,
                 )
                 records.append(record)
@@ -552,7 +547,6 @@ async def run(args: argparse.Namespace) -> tuple[Path, Path]:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "scenario_ids": [int(item) for item in args.scenario_ids],
         "repeats": args.repeats,
-        "max_candidates": args.max_candidates,
         "max_retries": args.max_retries,
         "llm_timeout_sec": settings.llm_timeout_sec,
         "variants": [variant.__dict__ for variant in REASONING_VARIANTS],
@@ -584,7 +578,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--scenario-ids", nargs="+", type=int, default=[129, 130])
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--max-candidates", type=int, default=30)
     parser.add_argument("--max-retries", type=int, default=1)
     return parser.parse_args()
 

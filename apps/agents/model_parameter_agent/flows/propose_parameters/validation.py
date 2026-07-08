@@ -99,7 +99,6 @@ def _mapping_candidates_for_context(
     scenario_id: int,
     scenario_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    state = ModelParameterProposalState(scenario_id=scenario_id)
     resources = scenario_context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
     parameter_definitions = resources.get("parameter_definitions") or []
@@ -112,14 +111,10 @@ def _mapping_candidates_for_context(
     knowledge_base = get_parameter_knowledge_base_from_resources(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
-        basecase_dir_path=state.basecase_dir_path,
-        max_sample_rows=state.max_basecase_sample_rows,
-        max_sample_cols=state.max_basecase_cols,
     )
     candidates, _non_inputs, warnings = match_parameter_candidates(
         knowledge_base,
         scenario_context,
-        max_candidates=state.max_candidates,
     )
     if not candidates:
         logger.warning(

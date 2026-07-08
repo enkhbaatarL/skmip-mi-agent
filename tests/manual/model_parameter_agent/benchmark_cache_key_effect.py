@@ -318,7 +318,6 @@ async def run(args: argparse.Namespace) -> tuple[Path, Path]:
                     repeat_index=repeat_index,
                     variant=variant,
                 ),
-                max_candidates=args.max_candidates,
                 max_retries=args.max_retries,
             )
             record["cache_key"] = variant.cache_key
@@ -335,7 +334,6 @@ async def run(args: argparse.Namespace) -> tuple[Path, Path]:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "scenario_id": args.scenario_id,
         "repeats": args.repeats,
-        "max_candidates": args.max_candidates,
         "max_retries": args.max_retries,
         "llm_timeout_sec": settings.llm_timeout_sec,
         "variants": [variant.__dict__ for variant in CACHE_KEY_VARIANTS],
@@ -369,7 +367,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--scenario-id", type=int, default=130)
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--max-candidates", type=int, default=30)
     parser.add_argument("--max-retries", type=int, default=1)
     return parser.parse_args()
 

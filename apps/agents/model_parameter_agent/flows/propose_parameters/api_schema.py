@@ -9,11 +9,6 @@ from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalPar
 
 
 class ProposeParametersIn(ApiModel):
-    basecase_dir_path: str | None = Field(default=None)
-    max_candidates: int = Field(default=8, ge=1, le=30)
-    max_basecase_sample_rows: int = Field(default=5, ge=1, le=20)
-    max_basecase_cols: int = Field(default=18, ge=6, le=60)
-    allow_llm_fallback: bool = Field(default=False)
     model_name: str | None = Field(default=None)
 
 

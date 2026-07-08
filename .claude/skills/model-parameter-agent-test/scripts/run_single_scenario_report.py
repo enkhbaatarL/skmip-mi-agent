@@ -723,11 +723,7 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
     record: dict[str, Any] | None = None
     error: str | None = None
     try:
-        record = await _evaluate_scenario(
-            args.scenario_id,
-            max_candidates=args.max_candidates,
-            allow_llm_fallback=args.allow_llm_fallback,
-        )
+        record = await _evaluate_scenario(args.scenario_id)
     except Exception as exc:  # noqa: BLE001 - report the failure to markdown for test traceability.
         error = repr(exc)
 

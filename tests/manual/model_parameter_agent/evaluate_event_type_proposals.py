@@ -1279,8 +1279,6 @@ def _render_report(
 async def run_event_type_evaluation(
     *,
     event_type_l2_ids: tuple[int, ...],
-    max_candidates: int,
-    allow_llm_fallback: bool,
     concurrency: int,
     retries: int,
     group_title_prefix: str | None = None,
@@ -1370,11 +1368,7 @@ async def run_event_type_evaluation(
             scenario_started_monotonic = time.perf_counter()
             for attempt in range(retries + 1):
                 try:
-                    result = await _evaluate_scenario(
-                        scenario_id,
-                        max_candidates=max_candidates,
-                        allow_llm_fallback=allow_llm_fallback,
-                    )
+                    result = await _evaluate_scenario(scenario_id)
                     elapsed_seconds = time.perf_counter() - scenario_started_monotonic
                     result["target"] = target
                     result["attempt"] = attempt + 1
@@ -1484,8 +1478,6 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event-type-l2-ids", nargs="+", type=int, default=())
     parser.add_argument("--all-event-types", action="store_true")
-    parser.add_argument("--max-candidates", type=int, default=30)
-    parser.add_argument("--allow-llm-fallback", action="store_true")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--group-title-prefix", default=None)
@@ -1498,8 +1490,6 @@ def main() -> None:
     asyncio.run(
         run_event_type_evaluation(
             event_type_l2_ids=() if args.all_event_types else tuple(args.event_type_l2_ids),
-            max_candidates=args.max_candidates,
-            allow_llm_fallback=args.allow_llm_fallback,
             concurrency=args.concurrency,
             retries=args.retries,
             group_title_prefix=args.group_title_prefix,

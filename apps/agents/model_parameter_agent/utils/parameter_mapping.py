@@ -16,7 +16,6 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = PACKAGE_DIR / "resources"
 DEFAULT_BASECASE_DIR = DEFAULT_INPUT_DIR / "basecase"
 DB_MAPPING_SOURCE = "db:tmm_mi_model_param_m,tmm_mi_model_param_dimension_map"
-MAX_DISTINCT_VALUES = 20
 BASECASE_HEADER_SCAN_ROWS = 20
 BASECASE_AXIS_LABELS = {
     "country",
@@ -106,32 +105,7 @@ class BasecaseProfile:
     sheet_exists: bool
     row_count: int = 0
     column_count: int = 0
-    rows_scanned: int = 0
-    non_empty_rows: int = 0
-    non_empty_cells: int = 0
-    header_rows: list[dict[str, Any]] = field(default_factory=list)
-    sample_rows: list[dict[str, Any]] = field(default_factory=list)
-    distinct_values: dict[str, list[str]] = field(default_factory=dict)
-    numeric_summary: dict[str, dict[str, float | int]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
-
-    def for_prompt(self) -> dict[str, Any]:
-        return {
-            "model_file": self.model_file,
-            "workbook_path": self.workbook_path,
-            "sheet_name": self.sheet_name,
-            "sheet_exists": self.sheet_exists,
-            "row_count": self.row_count,
-            "column_count": self.column_count,
-            "rows_scanned": self.rows_scanned,
-            "non_empty_rows": self.non_empty_rows,
-            "non_empty_cells": self.non_empty_cells,
-            "header_rows": self.header_rows,
-            "sample_rows": self.sample_rows,
-            "distinct_values": self.distinct_values,
-            "numeric_summary": self.numeric_summary,
-            "warnings": self.warnings,
-        }
 
 
 @dataclass(frozen=True)
@@ -193,14 +167,10 @@ class ParameterKnowledgeBase:
 
 def get_parameter_knowledge_base(
     basecase_dir_path: str | None = None,
-    max_sample_rows: int = 5,
-    max_sample_cols: int = 18,
 ) -> ParameterKnowledgeBase:
     basecase_dir = _resolve_basecase_dir(basecase_dir_path)
     return _load_parameter_knowledge_base_from_db(
         str(basecase_dir),
-        max_sample_rows,
-        max_sample_cols,
     )
 
 
@@ -209,8 +179,6 @@ def get_parameter_knowledge_base_from_resources(
     mapping_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
     basecase_dir_path: str | None = None,
-    max_sample_rows: int = 5,
-    max_sample_cols: int = 18,
 ) -> ParameterKnowledgeBase:
     basecase_dir = _resolve_basecase_dir(basecase_dir_path)
     return _build_parameter_knowledge_base_from_rows(
@@ -218,15 +186,11 @@ def get_parameter_knowledge_base_from_resources(
         parameter_rows=parameter_rows,
         mapping_source=DB_MAPPING_SOURCE,
         basecase_dir_path=str(basecase_dir),
-        max_sample_rows=max_sample_rows,
-        max_sample_cols=max_sample_cols,
     )
 
 
 def _load_parameter_knowledge_base_from_db(
     basecase_dir_path: str,
-    max_sample_rows: int,
-    max_sample_cols: int,
 ) -> ParameterKnowledgeBase:
     mapping_rows, parameter_rows = _load_db_mapping_resources()
     return _build_parameter_knowledge_base_from_rows(
@@ -234,8 +198,6 @@ def _load_parameter_knowledge_base_from_db(
         parameter_rows=parameter_rows,
         mapping_source=DB_MAPPING_SOURCE,
         basecase_dir_path=basecase_dir_path,
-        max_sample_rows=max_sample_rows,
-        max_sample_cols=max_sample_cols,
     )
 
 
@@ -245,8 +207,6 @@ def _build_parameter_knowledge_base_from_rows(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
-    max_sample_rows: int,
-    max_sample_cols: int,
 ) -> ParameterKnowledgeBase:
     workbook_loader = _require_workbook_loader()
     mapping_rules = _mapping_rules_from_rows(
@@ -261,8 +221,6 @@ def _build_parameter_knowledge_base_from_rows(
         workbook_loader,
         Path(basecase_dir_path),
         parameter_definitions,
-        max_sample_rows=max_sample_rows,
-        max_sample_cols=max_sample_cols,
     )
     return ParameterKnowledgeBase(
         mapping_source=mapping_source,
@@ -284,8 +242,6 @@ def _load_db_mapping_resources() -> tuple[list[dict[str, Any]], list[dict[str, A
 def match_parameter_candidates(
     kb: ParameterKnowledgeBase,
     scenario_context: dict[str, Any],
-    *,
-    max_candidates: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     scenario = scenario_context.get("scenario") or {}
     event_type = scenario_context.get("event_type") or {}
@@ -402,40 +358,12 @@ def match_parameter_candidates(
             "basecase_stop_rule": definition.basecase_stop_rule,
             "basecase_available": bool(profile and profile.sheet_exists),
         })
-        if len(candidates) >= max_candidates:
-            break
 
     if not candidates:
         warnings.append(
             "DB dimension-parameter 매핑 기준 직접 또는 라우팅 parameter 후보를 찾지 못했습니다.",
         )
     return candidates, non_inputs, warnings
-
-
-def build_basecase_samples(
-    kb: ParameterKnowledgeBase,
-    candidates: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    samples: list[dict[str, Any]] = []
-    for candidate in candidates:
-        profile = kb.profile_for(candidate.get("model_file"), candidate.get("model_sheet"))
-        if profile is None:
-            samples.append({
-                "candidate_key": candidate.get("candidate_key"),
-                "parameter_name": candidate.get("canonical_parameter_name"),
-                "sheet_exists": False,
-                "warnings": ["매핑된 basecase workbook/sheet를 찾지 못했습니다."],
-            })
-            continue
-        payload = profile.for_prompt()
-        payload.update({
-            "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": candidate.get("canonical_parameter_name"),
-            "parameter_hint": candidate.get("parameter_hint"),
-            "semantic_axes": candidate.get("semantic_axes"),
-        })
-        samples.append(payload)
-    return samples
 
 
 def build_basecase_records(
@@ -625,9 +553,6 @@ def _load_basecase_profiles(
     workbook_loader: Any,
     basecase_dir: Path,
     parameter_definitions: dict[str, ParameterDefinition],
-    *,
-    max_sample_rows: int,
-    max_sample_cols: int,
 ) -> dict[str, BasecaseProfile]:
     workbook_paths = _discover_basecase_workbooks(basecase_dir)
     profile_targets = {
@@ -653,8 +578,6 @@ def _load_basecase_profiles(
             model_file=model_file,
             workbook_path=workbook_path,
             sheet_name=sheet_name,
-            max_sample_rows=max_sample_rows,
-            max_sample_cols=max_sample_cols,
         )
     return profiles
 
@@ -665,8 +588,6 @@ def _profile_basecase_sheet(
     model_file: str,
     workbook_path: Path,
     sheet_name: str,
-    max_sample_rows: int,
-    max_sample_cols: int,
 ) -> BasecaseProfile:
     wb = workbook_loader(workbook_path, read_only=True, data_only=True, keep_vba=False)
     actual_sheet_name = _find_sheet_name(wb.sheetnames, sheet_name)
@@ -680,76 +601,13 @@ def _profile_basecase_sheet(
         )
 
     ws = wb[actual_sheet_name]
-    row_count = int(ws.max_row or 0)
-    column_count = int(ws.max_column or 0)
-    header_rows: list[dict[str, Any]] = []
-    sample_rows: list[dict[str, Any]] = []
-    distinct_values: dict[int, set[str]] = defaultdict(set)
-    numeric_summary: dict[int, dict[str, float | int]] = {}
-    rows_scanned = 0
-    non_empty_rows = 0
-    non_empty_cells = 0
-
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        rows_scanned += 1
-        values = [_cell_to_json(value) for value in row]
-        non_empty_positions = [
-            index for index, value in enumerate(values, start=1)
-            if _is_meaningful_cell(value)
-        ]
-        if not non_empty_positions:
-            continue
-        non_empty_rows += 1
-        non_empty_cells += len(non_empty_positions)
-
-        if row_idx <= 12 and len(header_rows) < 8:
-            header_rows.append({
-                "row": row_idx,
-                "values": _trim_row(values[:max_sample_cols]),
-            })
-
-        if row_idx > 3 and len(sample_rows) < max_sample_rows:
-            sample_rows.append({
-                "reference_id": f"{model_file}:{actual_sheet_name}:R{row_idx}",
-                "row": row_idx,
-                "values": _trim_row(values[:max_sample_cols]),
-            })
-
-        for col_idx in non_empty_positions[:max_sample_cols]:
-            value = values[col_idx - 1]
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                stats = numeric_summary.setdefault(
-                    col_idx,
-                    {"count": 0, "min": float(value), "max": float(value)},
-                )
-                stats["count"] = int(stats["count"]) + 1
-                stats["min"] = min(float(stats["min"]), float(value))
-                stats["max"] = max(float(stats["max"]), float(value))
-            elif len(distinct_values[col_idx]) < MAX_DISTINCT_VALUES:
-                text = _clean_text(value)
-                if text and text != "#REF!":
-                    distinct_values[col_idx].add(text[:120])
-
     return BasecaseProfile(
         model_file=model_file,
         workbook_path=str(workbook_path),
         sheet_name=actual_sheet_name,
         sheet_exists=True,
-        row_count=row_count,
-        column_count=column_count,
-        rows_scanned=rows_scanned,
-        non_empty_rows=non_empty_rows,
-        non_empty_cells=non_empty_cells,
-        header_rows=header_rows,
-        sample_rows=sample_rows,
-        distinct_values={
-            f"col_{col_idx}": sorted(values)
-            for col_idx, values in distinct_values.items()
-        },
-        numeric_summary={
-            f"col_{col_idx}": stats
-            for col_idx, stats in numeric_summary.items()
-        },
+        row_count=int(ws.max_row or 0),
+        column_count=int(ws.max_column or 0),
     )
 
 
@@ -1595,13 +1453,6 @@ def _is_meaningful_cell(value: Any) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
     return True
-
-
-def _trim_row(values: list[Any]) -> list[Any]:
-    trimmed = list(values)
-    while trimmed and not _is_meaningful_cell(trimmed[-1]):
-        trimmed.pop()
-    return trimmed
 
 
 def to_compact_json(data: Any) -> str:

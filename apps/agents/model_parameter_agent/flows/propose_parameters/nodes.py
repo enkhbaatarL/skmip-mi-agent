@@ -42,9 +42,15 @@ from apps.common.logging.logger_config import logger
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 
-MAX_PARAMETER_SLOTS = 100
-MAX_VALUE_PROMPT_BASECASE_RECORDS = 100
 TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
+
+
+def get_settings() -> Any:
+    from apps.common.configs.config import get_settings as load_settings
+
+    return load_settings()
+
+
 def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
     context = ModelParameterService().load_context(state.scenario_id)
     scenario = context.get("scenario") or {}
@@ -61,7 +67,7 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
 
 
 def _knowledge_base_from_context(
-    state: ModelParameterProposalState,
+    _state: ModelParameterProposalState,
     context: dict[str, Any],
 ) -> ParameterKnowledgeBase:
     resources = context.get("parameter_mapping_resources") or {}
@@ -75,9 +81,6 @@ def _knowledge_base_from_context(
     return get_parameter_knowledge_base_from_resources(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
-        basecase_dir_path=state.basecase_dir_path,
-        max_sample_rows=state.max_basecase_sample_rows,
-        max_sample_cols=state.max_basecase_cols,
     )
 
 
@@ -108,7 +111,6 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
     candidates, non_inputs, warnings = match_parameter_candidates(
         state.parameter_knowledge_base,
         state.scenario_context,
-        max_candidates=state.max_candidates,
     )
     logger.info(
         "[model-parameter] selected candidate mappings | scenario_id={} candidate_count={} candidate_keys={} non_input_count={} warning_count={}",
@@ -165,28 +167,12 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
             success=True,
         )
     except Exception as exc:
-        llm_call = _llm_call_trace(
-            step="Step1.5 candidate validation",
-            model_name=state.model_name,
-            elapsed_seconds=time.perf_counter() - llm_started,
-            usage=None,
-            success=False,
-            error=repr(exc),
-        )
-        if not state.allow_llm_fallback:
-            raise
         logger.warning(
-            "[model-parameter] Step1.5 LLM call failed, using fallback | scenario_id={} error={}",
+            "[model-parameter] Step1.5 LLM call failed | scenario_id={} error={}",
             state.scenario_id,
             repr(exc),
         )
-        fallback_reason = "Step1.5 LLM 후보 검증 실패로 rule-based 후보를 유지했습니다."
-        llm_payload = _fallback_candidate_validation_response(
-            fallback_reason,
-            state.candidate_mappings,
-        )
-        usage = None
-        llm_validation_warnings = [fallback_reason]
+        raise
 
     candidates, validation_warnings = _sanitize_parameter_candidate_group_decisions(
         llm_payload.parameter_candidate_groups,
@@ -341,27 +327,12 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
             success=True,
         )
     except Exception as exc:
-        llm_call = _llm_call_trace(
-            step="Step3 value proposal",
-            model_name=state.model_name,
-            elapsed_seconds=time.perf_counter() - llm_started,
-            usage=None,
-            success=False,
-            error=repr(exc),
-        )
-        if not state.allow_llm_fallback:
-            raise
         logger.warning(
-            "[model-parameter] Step3 LLM call failed, using fallback | scenario_id={} error={}",
+            "[model-parameter] Step3 LLM call failed | scenario_id={} error={}",
             state.scenario_id,
             repr(exc),
         )
-        llm_payload = _fallback_value_response(
-            "Step3 LLM 호출 실패로 Step2 slot 기반의 검토 필요 응답을 생성했습니다.",
-            state.candidate_mappings,
-            state.parameter_slots,
-        )
-        usage = None
+        raise
 
     adjustments, validation_warnings = _sanitize_llm_adjustments(
         llm_payload.parameter_adjustments,
@@ -440,32 +411,16 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
             success=True,
         )
     except Exception as exc:
-        llm_call = _llm_call_trace(
-            step="Step2 slot proposal",
-            model_name=state.model_name,
-            elapsed_seconds=time.perf_counter() - llm_started,
-            usage=None,
-            success=False,
-            error=repr(exc),
-        )
-        if not state.allow_llm_fallback:
-            raise
         logger.warning(
-            "[model-parameter] Step2 LLM call failed, using fallback | scenario_id={} error={}",
+            "[model-parameter] Step2 LLM call failed | scenario_id={} error={}",
             state.scenario_id,
             repr(exc),
         )
-        llm_payload = _fallback_slot_response(
-            "Step2 LLM 호출 실패로 후보 parameter와 basecase records 기반의 "
-            "검토 필요 응답을 생성했습니다.",
-            state.candidate_mappings,
-        )
-        usage = None
+        raise
 
     slots, validation_warnings = _sanitize_llm_slots(
         llm_payload.parameter_slots,
         state.candidate_mappings,
-        max_selected_slots=MAX_PARAMETER_SLOTS,
     )
     llm_non_input_items = list(getattr(llm_payload, "non_input_items", []) or [])
     llm_validation_warnings = list(
@@ -561,13 +516,14 @@ async def _invoke_structured(
 ) -> Any:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     return await invoke_llm_structured_output(
         output_schema=output_schema,
         messages=messages,
         model_name=model_name,
         preference=ModelPreference.QUALITY,
         temperature=0.0,
-        max_retries=1,
+        max_retries=cfg.llm_max_retries,
     )
 
 
@@ -861,6 +817,7 @@ def _build_slot_proposal_prompt_packet(
     basecase_records: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    cfg = get_settings()
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
@@ -871,7 +828,7 @@ def _build_slot_proposal_prompt_packet(
         ),
         "period_resolution_policy": _compact_period_resolution_policy(),
         "slot_selection_limits": {
-            "maxParameterSlots": MAX_PARAMETER_SLOTS,
+            "maxParameterSlots": cfg.model_parameter_max_parameter_slots,
             "priority": [
                 "parameter_slot_tasks[].basecase_slot_options에 존재하고 scenario/event 의미와 일치하는 slot",
                 "basecase에는 없지만 scenario/event에 명확한 실제 모델 input slot",
@@ -1312,6 +1269,7 @@ def _build_value_proposal_prompt_packet(
     basecase_records: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    cfg = get_settings()
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
@@ -1322,7 +1280,7 @@ def _build_value_proposal_prompt_packet(
         ),
         "period_resolution_policy": _compact_period_resolution_policy(),
         "basecase_record_selection_policy": {
-            "maxRecords": MAX_VALUE_PROMPT_BASECASE_RECORDS,
+            "maxRecords": cfg.model_parameter_max_value_prompt_basecase_records,
         },
         "parameter_value_tasks": _build_parameter_value_tasks(
             candidates,
@@ -1476,7 +1434,8 @@ def _filter_records_by_selected_slots(
     if not selected_slots:
         return []
 
-    if len(records) <= MAX_VALUE_PROMPT_BASECASE_RECORDS:
+    max_records = get_settings().model_parameter_max_value_prompt_basecase_records
+    if len(records) <= max_records:
         return records
 
     slots_by_candidate: dict[str, list[dict[str, Any]]] = {}
@@ -1494,7 +1453,7 @@ def _filter_records_by_selected_slots(
             return False
         included_indices.add(index)
         filtered.append(record)
-        return len(filtered) >= MAX_VALUE_PROMPT_BASECASE_RECORDS
+        return len(filtered) >= max_records
 
     for index, record in enumerate(records):
         candidate_key = str(record.get("candidate_key") or "")
@@ -1794,9 +1753,6 @@ def _apply_routing_comment_overrides(
     return ordered, warnings
 
 
-MAX_ROUTING_CANDIDATES_PER_DIMENSION = 2
-
-
 def _cap_routing_candidates_per_dimension(
     selected_candidates: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -1809,8 +1765,9 @@ def _cap_routing_candidates_per_dimension(
 
     dropped_keys: set[str] = set()
     warnings: list[str] = []
+    max_candidates_per_dimension = get_settings().model_parameter_max_routing_candidates_per_dimension
     for group_candidates in _routing_groups_by_dimension(selected_candidates).values():
-        if len(group_candidates) <= MAX_ROUTING_CANDIDATES_PER_DIMENSION:
+        if len(group_candidates) <= max_candidates_per_dimension:
             continue
         matched: list[dict[str, Any]] = []
         unmatched: list[dict[str, Any]] = []
@@ -1822,14 +1779,14 @@ def _cap_routing_candidates_per_dimension(
                 matched.append(candidate)
             else:
                 unmatched.append(candidate)
-        for candidate in (matched + unmatched)[MAX_ROUTING_CANDIDATES_PER_DIMENSION:]:
+        for candidate in (matched + unmatched)[max_candidates_per_dimension:]:
             candidate_key = str(candidate.get("candidate_key") or "")
             if not candidate_key:
                 continue
             dropped_keys.add(candidate_key)
             warnings.append(
                 "routing 후보가 dimension당 최대 "
-                f"{MAX_ROUTING_CANDIDATES_PER_DIMENSION}개를 초과해 제외했습니다: "
+                f"{max_candidates_per_dimension}개를 초과해 제외했습니다: "
                 f"{candidate_key}",
             )
 
@@ -1849,8 +1806,10 @@ def _sanitize_llm_slots(
     slots: list[LLMSlotProposal],
     candidates: list[dict[str, Any]],
     *,
-    max_selected_slots: int = MAX_PARAMETER_SLOTS,
+    max_selected_slots: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
+    if max_selected_slots is None:
+        max_selected_slots = get_settings().model_parameter_max_parameter_slots
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     sanitized: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -2287,76 +2246,6 @@ def _patch_basecase_value(
     return cell, (
         "value cell 좌표와 일치하는 basecase record가 여러 건이라 "
         "basecaseValue를 채우지 않았습니다"
-    )
-
-
-def _fallback_candidate_validation_response(
-    reason: str,
-    candidates: list[dict[str, Any]],
-) -> LLMCandidateValidationResponse:
-    return LLMCandidateValidationResponse(
-        parameter_candidate_groups=[
-            ParameterCandidateGroupDecision(
-                candidate_keys=[
-                    str(candidate_key)
-                    for candidate_key in task.get("candidate_keys") or []
-                ],
-                selected=True,
-            )
-            for task in _build_candidate_validation_tasks(candidates)
-        ],
-    )
-
-
-def _fallback_slot_response(reason: str, candidates: list[dict[str, Any]]) -> LLMSlotProposalResponse:
-    return LLMSlotProposalResponse(
-        parameter_slots=[
-            ParameterSlotProposal(
-                candidate_key=str(candidate["candidate_key"]),
-                selected=True,
-                slot_axes=[
-                    ParameterSlotAxis(
-                        axis_name=str(
-                            candidate.get("source_dimension_label") or "scenario_dimension",
-                        ),
-                        axis_value=str(candidate.get("source_dimension_value") or ""),
-                    ),
-                ],
-            )
-            for candidate in candidates
-        ],
-    )
-
-
-def _fallback_value_response(
-    reason: str,
-    candidates: list[dict[str, Any]],
-    slots: list[dict[str, Any]],
-) -> LLMValueProposalResponse:
-    slots_by_key = {str(slot["candidate_key"]): slot for slot in slots if "candidate_key" in slot}
-    return LLMValueProposalResponse(
-        parameter_adjustments=[
-            LLMValueAdjustment(
-                candidate_key=str(candidate["candidate_key"]),
-                value_grid=[
-                    LLMValueCell(
-                        coordinates={
-                            str(axis.get("axis_name")): axis.get("axis_value")
-                            for axis in (
-                                slots_by_key.get(str(candidate["candidate_key"]), {}).get("slot_axes")
-                                or []
-                            )
-                            if axis.get("axis_name")
-                        },
-                        proposed_value=None,
-                        basecase_reference_ids=[],
-                        rationale_ko=reason,
-                    ),
-                ],
-                rationale_ko=reason,
-            )
-            for candidate in candidates
-        ],
     )
 
 

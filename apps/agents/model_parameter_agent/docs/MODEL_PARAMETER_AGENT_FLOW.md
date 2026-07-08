@@ -69,11 +69,11 @@ flowchart TD
 
 - `ModelParameterService.load_context()`: scenario context와 model parameter DB 매핑 row를 함께 조회한다.
 - `get_parameter_knowledge_base_from_resources()`: 조회된 DB row를 `ParameterKnowledgeBase`로 변환한다.
-- `_resolve_basecase_dir()`: 명시 폴더가 있으면 해당 폴더를 사용하고, 없으면 기본 리소스 폴더 `resources/basecase`를 사용한다.
-- `_load_basecase_profiles()`: Demand/Supply/Trade Basecase `.xlsm` 파일을 찾고, 매핑된 sheet의 존재 여부와 샘플/profile 정보를 만든다.
+- `_resolve_basecase_dir()`: 기본 리소스 폴더 `resources/basecase`를 사용한다.
+- `_load_basecase_profiles()`: Demand/Supply/Trade Basecase `.xlsm` 파일을 찾고, 매핑된 sheet 존재 여부와 workbook/sheet 위치 정보를 만든다.
 - 반환값은 `ParameterKnowledgeBase`이며, 같은 요청 안에서 후보 매칭과 Basecase record 추출에 재사용한다.
 
-정리하면 DB 매핑과 Basecase profile은 startup에서 warm-up하지 않고 요청 시점에 구성한다.
+정리하면 DB 매핑과 Basecase sheet 참조 정보는 startup에서 warm-up하지 않고 요청 시점에 구성한다.
 새 요청이 오면 DB 매핑 row를 다시 읽는다.
 
 ## 4. 전후 변환
@@ -85,13 +85,9 @@ flowchart TD
 `request_usr_id`, `crt_usr_logn_id`, 초기 `mod_usr_logn_id`에 저장하고, 미입력 시 `request_usr_id`는 `NULL`로 저장한다.
 confirmation body의 `user_id`(`userId`)는 proposal row의 `mod_usr_logn_id`에 저장한다.
 
-그래프 실행 상태(`ModelParameterProposalState`)에는 로컬 테스트/검증용 옵션도 포함된다.
+그래프 실행 상태(`ModelParameterProposalState`)에는 내부 실행 정보와 선택적 `model_name` override만 포함된다.
 
 - 매핑 정보는 매 요청 시 DB의 `tmm_mi_model_param_m`, `tmm_mi_model_param_dimension_map`에서 조회한다.
-- `basecase_dir_path`: 기본 Basecase 경로 대신 사용할 경로
-- `max_candidates`: 후보 최대 개수
-- `max_basecase_sample_rows`, `max_basecase_cols`: Basecase profile 샘플링 옵션
-- `allow_llm_fallback`: LLM 실패 시 fallback 허용 여부
 - `model_name`: LLM 모델 지정
 
 ### `to_output`
@@ -134,7 +130,7 @@ confirmation body의 `user_id`(`userId`)는 proposal row의 `mod_usr_logn_id`에
 호출 흐름:
 
 - `state.parameter_knowledge_base`
-- `match_parameter_candidates(kb, scenario_context, max_candidates=...)`
+- `match_parameter_candidates(kb, scenario_context)`
 
 매핑 소스:
 
@@ -323,10 +319,9 @@ LLM 호출은 세 번이다.
 - `invoke_llm_structured_output`
 - `ModelPreference.QUALITY`
 - `temperature=0.0`
-- `max_retries=2`
+- `max_retries=settings.llm_max_retries`
 
-`allow_llm_fallback=False`가 기본값이다. 이 경우 LLM 호출 실패는 예외로 전파된다.
-`allow_llm_fallback=True`일 때만 각 단계별 fallback 응답을 만든다.
+LLM 호출 실패 시 fallback 응답을 만들지 않고 예외로 전파한다.
 
 ## 7. 주요 가드레일
 

@@ -691,22 +691,14 @@ def _build_group_status(
 
 async def _evaluate_scenario(
     scenario_id: int,
-    *,
-    max_candidates: int,
-    allow_llm_fallback: bool,
 ) -> dict[str, Any]:
     context = ModelParameterService().load_context(scenario_id)
     kb = get_parameter_knowledge_base()
     candidates, non_inputs, mapping_warnings = match_parameter_candidates(
         kb,
         context,
-        max_candidates=max_candidates,
     )
-    payload: dict[str, Any] = {
-        "scenario_id": scenario_id,
-        "max_candidates": max_candidates,
-        "allow_llm_fallback": allow_llm_fallback,
-    }
+    payload: dict[str, Any] = {"scenario_id": scenario_id}
     raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
     raw_state = _normalize(raw_output)
     validated_candidates = raw_state.get("candidate_mappings") or []
@@ -780,8 +772,6 @@ def _render_md(
     skipped_event_types: tuple[tuple[int, str], ...],
     records: list[dict[str, Any]],
     errors: list[dict[str, Any]],
-    max_candidates: int,
-    allow_llm_fallback: bool,
     concurrency: int,
 ) -> str:
     lines: list[str] = [
@@ -791,8 +781,6 @@ def _render_md(
         f"- 실행 종료: {finished_at.isoformat(timespec='seconds')}",
         f"- 반복 차수: {iteration}",
         f"- suite: {suite}",
-        f"- maxCandidates: {max_candidates}",
-        f"- allowLlmFallback: {allow_llm_fallback}",
         f"- concurrency: {concurrency}",
         "- 호출 방식: 내부 raw graph 실행 후 `to_output()`으로 final response 생성",
         "",
@@ -939,8 +927,6 @@ async def run_evaluation(
     *,
     iteration: int,
     suite: str,
-    max_candidates: int,
-    allow_llm_fallback: bool,
     concurrency: int,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]]:
     targets = TEST_TARGETS_BY_SUITE[suite]
@@ -979,8 +965,6 @@ async def run_evaluation(
                 skipped_event_types=skipped_event_types,
                 records=ordered_records,
                 errors=ordered_errors,
-                max_candidates=max_candidates,
-                allow_llm_fallback=allow_llm_fallback,
                 concurrency=concurrency,
             ),
             encoding="utf-8",
@@ -990,11 +974,7 @@ async def run_evaluation(
         async with semaphore:
             scenario_started = time.perf_counter()
             try:
-                result = await _evaluate_scenario(
-                    scenario_id,
-                    max_candidates=max_candidates,
-                    allow_llm_fallback=allow_llm_fallback,
-                )
+                result = await _evaluate_scenario(scenario_id)
                 elapsed_seconds = time.perf_counter() - scenario_started
                 result["target"] = target
                 result["_order"] = order
@@ -1097,16 +1077,12 @@ def main() -> None:
         choices=sorted(TEST_TARGETS_BY_SUITE),
         default="core",
     )
-    parser.add_argument("--max-candidates", type=int, default=8)
-    parser.add_argument("--allow-llm-fallback", action="store_true")
     parser.add_argument("--concurrency", type=int, default=1)
     args = parser.parse_args()
     report_path, records, errors = asyncio.run(
         run_evaluation(
             iteration=args.iteration,
             suite=args.suite,
-            max_candidates=args.max_candidates,
-            allow_llm_fallback=args.allow_llm_fallback,
             concurrency=args.concurrency,
         ),
     )

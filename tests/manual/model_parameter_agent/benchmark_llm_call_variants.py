@@ -215,7 +215,6 @@ def _format_int(value: int | None) -> str:
 async def _capture_scenario_prompts(
     scenario_id: int,
     *,
-    max_candidates: int,
     max_retries: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     captured: list[dict[str, Any]] = []
@@ -280,11 +279,7 @@ async def _capture_scenario_prompts(
     original = nodes._invoke_structured
     nodes._invoke_structured = capture_invoke_structured
     try:
-        result = await _evaluate_scenario(
-            scenario_id,
-            max_candidates=max_candidates,
-            allow_llm_fallback=False,
-        )
+        result = await _evaluate_scenario(scenario_id)
     finally:
         nodes._invoke_structured = original
     return result, captured
@@ -824,7 +819,6 @@ async def run_benchmark(args: argparse.Namespace) -> tuple[Path, Path]:
     for scenario_id in scenario_ids:
         result, steps = await _capture_scenario_prompts(
             scenario_id,
-            max_candidates=args.max_candidates,
             max_retries=args.max_retries,
         )
         result_record = {
@@ -896,7 +890,6 @@ async def run_benchmark(args: argparse.Namespace) -> tuple[Path, Path]:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "scenario_ids": list(scenario_ids),
         "repeats": args.repeats,
-        "max_candidates": args.max_candidates,
         "max_retries": args.max_retries,
         "llm_timeout_sec": settings.llm_timeout_sec,
         "model_endpoint": settings.model_endpoint,
@@ -933,7 +926,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--scenario-ids", nargs="+", type=int, default=[129, 130])
     parser.add_argument("--repeats", type=int, default=2)
-    parser.add_argument("--max-candidates", type=int, default=30)
     parser.add_argument("--max-retries", type=int, default=1)
     return parser.parse_args()
 

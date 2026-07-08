@@ -266,7 +266,6 @@ def _compare_to_baseline(
 async def _run_target(
     target: RunTarget,
     *,
-    max_candidates: int,
     max_retries: int,
 ) -> dict[str, Any]:
     step_records: list[dict[str, Any]] = []
@@ -303,11 +302,7 @@ async def _run_target(
     nodes._invoke_structured = invoke_structured
     started = time.perf_counter()
     try:
-        result = await _evaluate_scenario(
-            target.scenario_id,
-            max_candidates=max_candidates,
-            allow_llm_fallback=False,
-        )
+        result = await _evaluate_scenario(target.scenario_id)
     finally:
         nodes._invoke_structured = original
     result["variant"] = target.variant.name
@@ -460,7 +455,6 @@ async def run(args: argparse.Namespace) -> tuple[Path, Path]:
             records.append(
                 await _run_target(
                     RunTarget(scenario_id=scenario_id, variant=variant),
-                    max_candidates=args.max_candidates,
                     max_retries=args.max_retries,
                 ),
             )
@@ -484,7 +478,6 @@ async def run(args: argparse.Namespace) -> tuple[Path, Path]:
     metadata = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "scenario_ids": list(scenario_ids),
-        "max_candidates": args.max_candidates,
         "max_retries": args.max_retries,
         "llm_timeout_sec": settings.llm_timeout_sec,
         "variants": [variant.__dict__ for variant in QUALITY_VARIANTS],
@@ -514,7 +507,6 @@ def parse_args() -> argparse.Namespace:
         description="Compare model_parameter_agent final outputs across reasoning variants.",
     )
     parser.add_argument("--scenario-ids", nargs="+", type=int, default=[129, 130])
-    parser.add_argument("--max-candidates", type=int, default=30)
     parser.add_argument("--max-retries", type=int, default=1)
     return parser.parse_args()
 

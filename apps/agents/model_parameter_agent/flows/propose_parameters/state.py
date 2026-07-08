@@ -12,11 +12,6 @@ class ModelParameterProposalState(BaseModel):
 
     scenario_id: int
     user_id: int | None = None
-    basecase_dir_path: str | None = None
-    max_candidates: int = 8
-    max_basecase_sample_rows: int = 5
-    max_basecase_cols: int = 18
-    allow_llm_fallback: bool = False
     model_name: str | None = None
 
     scenario_context: dict[str, Any] | None = None

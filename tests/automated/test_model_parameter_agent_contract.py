@@ -29,6 +29,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     prepare_propose_parameters_callback,
     to_output,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters import nodes as proposal_nodes
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _build_basecase_value_groups,
@@ -331,17 +332,11 @@ TEST_MAPPING_ROWS: list[dict[str, object]] = [
 ]
 
 
-def _get_db_fixture_kb(
-    *,
-    max_sample_rows: int = 1,
-    max_sample_cols: int = 8,
-):
+def _get_db_fixture_kb():
     return get_parameter_knowledge_base_from_resources(
         mapping_rows=TEST_MAPPING_ROWS,
         parameter_rows=TEST_PARAMETER_ROWS,
         basecase_dir_path=str(_default_basecase_dir()),
-        max_sample_rows=max_sample_rows,
-        max_sample_cols=max_sample_cols,
     )
 
 
@@ -365,19 +360,23 @@ def _record_with(
 
 
 class ModelParameterAgentContractTest(unittest.TestCase):
-    def test_schema_accepts_camel_case_options(self) -> None:
+    def test_schema_ignores_removed_local_tuning_options(self) -> None:
         payload = ProposeParametersIn.model_validate(
             {
                 "maxCandidates": 3,
                 "maxBasecaseSampleRows": 2,
                 "allowLlmFallback": True,
+                "basecaseDirPath": "/tmp/basecase",
+                "modelName": "custom-model",
                 "unknownOption": "ignored",
             },
         )
 
-        assert payload.max_candidates == 3
-        assert payload.max_basecase_sample_rows == 2
-        assert payload.allow_llm_fallback is True
+        assert payload.model_name == "custom-model"
+        assert not hasattr(payload, "max_candidates")
+        assert not hasattr(payload, "max_basecase_sample_rows")
+        assert not hasattr(payload, "allow_llm_fallback")
+        assert not hasattr(payload, "basecase_dir_path")
         assert not hasattr(payload, "unknown_option")
 
     def test_proposal_request_accepts_optional_user_id(self) -> None:
@@ -672,13 +671,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         ):
             kb = get_parameter_knowledge_base(
                 basecase_dir_path=tmpdir,
-                max_sample_rows=1,
-                max_sample_cols=8,
             )
             get_parameter_knowledge_base(
                 basecase_dir_path=tmpdir,
-                max_sample_rows=1,
-                max_sample_cols=8,
             )
 
         assert load_resources.call_count == 2
@@ -696,7 +691,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     {"dim_key": "transport_disruption", "label": "운송 차질"},
                 ],
             },
-            max_candidates=10,
         )
 
         assert not non_inputs
@@ -1213,8 +1207,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "mimodelparamproposalmodel(" in source
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
-    def test_knowledge_base_profiles_scan_entire_mapped_basecase_sheet(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+    def test_knowledge_base_profiles_resolve_mapped_basecase_sheet(self) -> None:
+        kb = _get_db_fixture_kb()
         existing_profiles = [
             profile
             for profile in kb.basecase_profiles.values()
@@ -1224,12 +1218,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert existing_profiles
         assert kb.basecase_profiles["trade::shippingcostinput"].row_count > 18000
         for profile in existing_profiles:
-            assert profile.rows_scanned == profile.row_count
-            assert len(profile.sample_rows) <= 1
+            assert profile.workbook_path
+            assert profile.sheet_name
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_match_candidates_uses_bridge_event_id_and_dimension_key(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1256,7 +1250,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
         assert not warnings
         assert any(candidate["canonical_parameter_name"] == "ShippingCost" for candidate in candidates)
@@ -1269,7 +1262,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_match_candidates_does_not_fallback_when_bridge_key_is_missing(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1288,7 +1281,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
 
         assert candidates == []
@@ -1297,7 +1289,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_bridge_mapping_preserves_multiple_routing_targets(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1312,7 +1304,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
 
         assert not warnings
@@ -1359,8 +1350,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 mapping_rows=mapping_rows,
                 parameter_rows=parameter_rows,
                 basecase_dir_path=temp_dir,
-                max_sample_rows=1,
-                max_sample_cols=8,
             )
 
         candidates, non_inputs, warnings = match_parameter_candidates(
@@ -1375,7 +1364,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     {"dim_key": "transport_disruption", "label": "운송 차질"},
                 ],
             },
-            max_candidates=10,
         )
 
         assert candidates == []
@@ -1384,7 +1372,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_bridge_direct_row_without_target_becomes_non_input(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1399,7 +1387,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
 
         assert candidates == []
@@ -1408,7 +1395,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_flatten_mapped_matrix_sheet(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         candidate = {
             "candidate_key": "c1",
             "model_file": "Supply",
@@ -1448,12 +1435,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert first["axes"]["Year"] == 2026
         assert "Period" in first["axes"]
         assert "value" in first
-        for debug_key in ("workbook_path", "header_rows", "sample_rows", "distinct_values", "numeric_summary"):
+        for debug_key in ("workbook_path", "row_count", "column_count"):
             assert debug_key not in first
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_matrix_time_column_spec_when_available(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1469,7 +1456,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, _, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
         assert not warnings
         liq_candidate = next(
@@ -1519,7 +1505,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_do_not_read_second_liq_prod_matrix_section(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1535,7 +1521,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, _, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
         assert not warnings
         liq_candidate = next(
@@ -1561,7 +1546,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_regas_first_matrix_section_only(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1577,7 +1562,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, _, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
         assert not warnings
         regas_candidate = next(
@@ -1631,7 +1615,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_fixed_column_spec_when_available(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1647,7 +1631,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, _, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
         assert not warnings
         temperature_candidate = next(
@@ -1677,7 +1660,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_powermix_basecase_records_skip_ref_rows_and_start_at_real_data(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1693,7 +1676,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         candidates, _, warnings = match_parameter_candidates(
             kb,
             context,
-            max_candidates=10,
         )
         assert not warnings
         powermix_candidate = next(
@@ -1726,7 +1708,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_degree_day_parameters_use_weather_hdd_cdd_table_with_row_filter(self) -> None:
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         cases = [
             (
                 "CDD",
@@ -1768,7 +1750,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             candidates, _, warnings = match_parameter_candidates(
                 kb,
                 context,
-                max_candidates=10,
             )
             assert not warnings
             candidate = next(
@@ -1828,7 +1809,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "Coal/Gas Futures Price" not in parameter_canonicals
         assert {"Coal Futures Price", "Gas Futures Price"} <= parameter_canonicals
 
-        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb()
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
             {
@@ -1841,7 +1822,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     {"dim_key": "lng_demand_impact_intensity", "label": "LNG 수요 영향 강도"},
                 ],
             },
-            max_candidates=10,
         )
 
         assert not warnings
@@ -2464,6 +2444,20 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
 
 class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._settings_patch = patch.object(
+            proposal_nodes,
+            "get_settings",
+            return_value=SimpleNamespace(
+                llm_max_retries=1,
+                model_parameter_max_parameter_slots=100,
+                model_parameter_max_value_prompt_basecase_records=100,
+                model_parameter_max_routing_candidates_per_dimension=2,
+            ),
+        )
+        self._settings_patch.start()
+        self.addCleanup(self._settings_patch.stop)
+
     async def test_llm_candidate_validation_keeps_direct_and_filters_routing_candidates(self) -> None:
         direct_candidate = {
             "candidate_key": "direct",
@@ -3540,9 +3534,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.nodes."
-            "MAX_VALUE_PROMPT_BASECASE_RECORDS",
-            5,
+            "apps.agents.model_parameter_agent.flows.propose_parameters.nodes.get_settings",
+            return_value=SimpleNamespace(model_parameter_max_value_prompt_basecase_records=5),
         ):
             result = filter_basecase_records_by_slots(state)
 
