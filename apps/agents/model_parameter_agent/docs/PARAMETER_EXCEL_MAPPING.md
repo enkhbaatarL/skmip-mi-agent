@@ -1,6 +1,6 @@
 # Parameter Excel Mapping 정리
 
-> 원본 파일: `resources/260625_시나리오가정_MI수급모델_input_매핑_vfShare.xlsx`
+> 원본 파일: `resources/mapping/260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx`
 > 대상 시트: `Parameter Excel Mapping`
 > 기준: 2026-06-30 현재 로컬 리소스 기준
 

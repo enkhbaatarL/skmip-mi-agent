@@ -196,6 +196,7 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
         state.candidate_mappings,
         candidates,
     )
+    candidates, routing_cap_warnings = _cap_routing_candidates_per_dimension(candidates)
     merged_candidates, merge_warnings = _merge_candidates_by_parameter(candidates)
     logger.info(
         "[model-parameter] validated candidate mappings | scenario_id={} before_count={} after_count={} merged_count={} selected_candidate_keys={} warning_count={}",
@@ -207,6 +208,7 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
         len(llm_validation_warnings)
         + len(validation_warnings)
         + len(routing_warnings)
+        + len(routing_cap_warnings)
         + len(merge_warnings),
     )
     return {
@@ -216,6 +218,7 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
             *llm_validation_warnings,
             *validation_warnings,
             *routing_warnings,
+            *routing_cap_warnings,
             *merge_warnings,
         ],
         "llm_usage": usage,
@@ -1689,6 +1692,21 @@ def _sanitize_parameter_candidate_group_decisions(
     return selected_candidates, warnings
 
 
+def _routing_groups_by_dimension(
+    candidates: list[dict[str, Any]],
+) -> dict[tuple[Any, str], list[dict[str, Any]]]:
+    routing_groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        if str(candidate.get("mapping_method") or "").lower() != "routing":
+            continue
+        group_key = (
+            candidate.get("event_type_l2_id"),
+            str(candidate.get("dimension_key") or candidate.get("source_dimension_id") or ""),
+        )
+        routing_groups.setdefault(group_key, []).append(candidate)
+    return routing_groups
+
+
 ROUTING_COMMENT_GENERIC_TOKENS = {
     "경우",
     "시설",
@@ -1736,15 +1754,7 @@ def _apply_routing_comment_overrides(
         for candidate in selected_candidates
     }
     warnings: list[str] = []
-    routing_groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
-    for candidate in all_candidates:
-        if str(candidate.get("mapping_method") or "").lower() != "routing":
-            continue
-        group_key = (
-            candidate.get("event_type_l2_id"),
-            str(candidate.get("dimension_key") or candidate.get("source_dimension_id") or ""),
-        )
-        routing_groups.setdefault(group_key, []).append(candidate)
+    routing_groups = _routing_groups_by_dimension(all_candidates)
 
     for group_candidates in routing_groups.values():
         matched = [
@@ -1782,6 +1792,57 @@ def _apply_routing_comment_overrides(
         if str(candidate.get("candidate_key") or "") in selected_by_key
     ]
     return ordered, warnings
+
+
+MAX_ROUTING_CANDIDATES_PER_DIMENSION = 2
+
+
+def _cap_routing_candidates_per_dimension(
+    selected_candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Keep at most 2 routing candidates per (event_type_l2_id, dimension_key).
+
+    Must run after _apply_routing_comment_overrides (which may add candidates)
+    and before _merge_candidates_by_parameter (which clears dimension_key).
+    Priority: comment-matched candidates first, then original candidate order.
+    """
+
+    dropped_keys: set[str] = set()
+    warnings: list[str] = []
+    for group_candidates in _routing_groups_by_dimension(selected_candidates).values():
+        if len(group_candidates) <= MAX_ROUTING_CANDIDATES_PER_DIMENSION:
+            continue
+        matched: list[dict[str, Any]] = []
+        unmatched: list[dict[str, Any]] = []
+        for candidate in group_candidates:
+            if _routing_comment_matches_dimension_value(
+                candidate.get("source_dimension_value"),
+                candidate.get("mapping_comment"),
+            ):
+                matched.append(candidate)
+            else:
+                unmatched.append(candidate)
+        for candidate in (matched + unmatched)[MAX_ROUTING_CANDIDATES_PER_DIMENSION:]:
+            candidate_key = str(candidate.get("candidate_key") or "")
+            if not candidate_key:
+                continue
+            dropped_keys.add(candidate_key)
+            warnings.append(
+                "routing 후보가 dimension당 최대 "
+                f"{MAX_ROUTING_CANDIDATES_PER_DIMENSION}개를 초과해 제외했습니다: "
+                f"{candidate_key}",
+            )
+
+    if not dropped_keys:
+        return selected_candidates, warnings
+    return (
+        [
+            candidate
+            for candidate in selected_candidates
+            if str(candidate.get("candidate_key") or "") not in dropped_keys
+        ],
+        warnings,
+    )
 
 
 def _sanitize_llm_slots(
@@ -2006,7 +2067,10 @@ def _sanitize_llm_adjustments(
                 )
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
                 continue
-            value_grid.append(_patch_basecase_value(cell, basecase_by_reference_id))
+            patched_cell, patch_warning = _patch_basecase_value(cell, basecase_by_reference_id)
+            if patch_warning:
+                warnings.append(f"{patch_warning}: {adjustment.candidate_key}")
+            value_grid.append(patched_cell)
 
         value_grid, slot_conflicts = _dedupe_value_grid_by_slot(value_grid)
         if slot_conflicts:
@@ -2080,7 +2144,8 @@ def _period_resolution_policy() -> dict[str, Any]:
         "current_year": year,
         "current_month": month,
         "rules": [
-            "scenario/event에 YYYY-MM 또는 YYYY년 M월처럼 연월이 명확하면 현재 기준월과 무관하게 그대로 사용합니다.",
+            "scenario/event에 YYYY-MM 또는 YYYY년 M월처럼 연월이 명확하고 current_year/current_month 이후이면 그대로 사용합니다.",
+            "명시 연월이 current_year/current_month보다 과거이면 그대로 입력하지 말고 시나리오 전개 기간(현재 이후)으로 재해석합니다. 재해석 시 사건·시나리오의 계절/월 맥락이 좌표 의미에 중요하면 현재 이후 가장 가까운 동일 계절/월로 이월하고, 그렇지 않으면 현재 이후부터 전개합니다.",
             "연도 없이 월만 명시되면 current_year/current_month 이후의 가장 가까운 해당 월로 변환합니다.",
             "affected_period/period가 N개월이면 current_year/current_month부터 N개월 범위의 Year/Month/Period만 사용합니다.",
             "명확한 연월/월 근거가 없으면 추론상 current_year/current_month 이후부터 필요한 period 범위만 전개합니다.",
@@ -2193,18 +2258,36 @@ def _period_start_year_month(
 def _patch_basecase_value(
     cell: ParameterValueCell,
     basecase_by_reference_id: dict[str, dict[str, Any]],
-) -> ParameterValueCell:
+) -> tuple[ParameterValueCell, str | None]:
     if cell.basecase_value is not None or not cell.basecase_reference_ids:
-        return cell
-    matched_values = [
-        basecase_by_reference_id[reference_id].get("value")
+        return cell, None
+    matched_records = [
+        basecase_by_reference_id[reference_id]
         for reference_id in cell.basecase_reference_ids
         if reference_id in basecase_by_reference_id
     ]
-    if not matched_values:
-        return cell
-    basecase_value: Any = matched_values[0] if len(matched_values) == 1 else matched_values
-    return cell.model_copy(update={"basecase_value": basecase_value})
+    if not matched_records:
+        return cell, None
+    cell_coordinate_key = _canonical_coordinate_key(cell.coordinates)
+    exact_matches = [
+        record
+        for record in matched_records
+        if _canonical_coordinate_key(record.get("axes") or {}) == cell_coordinate_key
+    ]
+    if len(exact_matches) == 1:
+        return (
+            cell.model_copy(update={"basecase_value": exact_matches[0].get("value")}),
+            None,
+        )
+    if not exact_matches:
+        return cell, (
+            "참고 basecase record 좌표가 value cell 좌표와 일치하지 않아 "
+            "basecaseValue를 채우지 않았습니다"
+        )
+    return cell, (
+        "value cell 좌표와 일치하는 basecase record가 여러 건이라 "
+        "basecaseValue를 채우지 않았습니다"
+    )
 
 
 def _fallback_candidate_validation_response(

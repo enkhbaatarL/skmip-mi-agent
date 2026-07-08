@@ -13,7 +13,6 @@ import unittest
 from unittest.mock import Mock, patch
 
 from fastapi.routing import APIRoute
-from openpyxl import Workbook, load_workbook
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
@@ -45,10 +44,10 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     validate_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    DEFAULT_BASECASE_DIR,
     DEFAULT_INPUT_DIR,
-    DIMENSION_PARAMETER_MAPPING_SHEET,
-    PARAMETER_EXCEL_MAPPING_SHEET,
     get_parameter_knowledge_base,
+    get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
@@ -80,21 +79,267 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.state import Mod
 from apps.common.exceptions.custom import MIBaseError
 
 
-def _excel_available() -> bool:
-    return DEFAULT_INPUT_DIR.exists() and any(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
+def _default_basecase_dir_or_none() -> Path | None:
+    return DEFAULT_BASECASE_DIR if DEFAULT_BASECASE_DIR.is_dir() else None
 
 
-def _default_mapping_excel_path() -> Path:
-    return next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
+def _basecase_available() -> bool:
+    return _default_basecase_dir_or_none() is not None
 
 
-def _get_excel_kb(
+def _default_basecase_dir() -> Path:
+    path = _default_basecase_dir_or_none()
+    if path is None:
+        raise AssertionError("model parameter basecase directory is not available")
+    return path
+
+
+def _parameter_row(
+    name: str,
+    *,
+    model_file: str,
+    model_sheet: str,
+    semantic_axes: str,
+    basecase_read_mode: str,
+    basecase_header_row: int,
+    basecase_data_start_row: int,
+    basecase_column_roles: str,
+    basecase_row_filter: str | None = None,
+    basecase_year_row: int | None = None,
+    basecase_month_row: int | None = None,
+    basecase_period_row: int | None = None,
+    basecase_value_start_col: str | None = None,
+    basecase_value_end_col: str | None = None,
+) -> dict[str, object]:
+    return {
+        "enabled": True,
+        "canonical_parameter_name": name,
+        "parameter_name": name,
+        "parameter_hint": semantic_axes,
+        "model_file": model_file,
+        "model_sheet": model_sheet,
+        "model_table": None,
+        "semantic_axes": semantic_axes,
+        "basecase_read_mode": basecase_read_mode,
+        "basecase_header_row": basecase_header_row,
+        "basecase_data_start_row": basecase_data_start_row,
+        "basecase_column_roles": basecase_column_roles,
+        "basecase_row_filter": basecase_row_filter,
+        "basecase_year_row": basecase_year_row,
+        "basecase_month_row": basecase_month_row,
+        "basecase_period_row": basecase_period_row,
+        "basecase_value_start_col": basecase_value_start_col,
+        "basecase_value_end_col": basecase_value_end_col,
+        "basecase_stop_rule": "stop_when_all_key_columns_empty",
+    }
+
+
+def _mapping_row(
+    event_type_l2_id: int,
+    dimension_key: str,
+    dimension_label: str,
+    mapping_method: str,
+    canonical_parameter_name: str | None,
+    comment: str,
+    *,
+    enabled: bool = True,
+) -> dict[str, object]:
+    return {
+        "enabled": enabled,
+        "event_type_l2_id": event_type_l2_id,
+        "dimension_key": dimension_key,
+        "dimension_label": dimension_label,
+        "mapping_method": mapping_method,
+        "canonical_parameter_name": canonical_parameter_name,
+        "parameter_name": canonical_parameter_name,
+        "comment": comment,
+    }
+
+
+TEST_PARAMETER_ROWS: list[dict[str, object]] = [
+    _parameter_row(
+        "CDD",
+        model_file="Demand",
+        model_sheet="WeatherAdjustment",
+        semantic_axes="평년 대비 기온편차 변환 - 국가·연·월",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=6,
+        basecase_data_start_row=7,
+        basecase_column_roles="B:Year,C:Month,D:Country,E:DegreeDayType,G:CDD",
+        basecase_row_filter="E=CDD",
+    ),
+    _parameter_row(
+        "Coal Futures Price",
+        model_file="Demand",
+        model_sheet="CoalGasAdjustment",
+        semantic_axes="석탄 선물가격 strip - 지역·월",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=6,
+        basecase_data_start_row=7,
+        basecase_column_roles="B:Month-Year,C:Region,E:Coal Futures Price",
+    ),
+    _parameter_row(
+        "Gas Futures Price",
+        model_file="Demand",
+        model_sheet="CoalGasAdjustment",
+        semantic_axes="가스 선물가격 strip - 지역·월",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=6,
+        basecase_data_start_row=7,
+        basecase_column_roles="H:Month-Year,I:Region,K:Gas Futures Price",
+    ),
+    _parameter_row(
+        "HDD",
+        model_file="Demand",
+        model_sheet="WeatherAdjustment",
+        semantic_axes="평년 대비 기온편차 변환 - 국가·연·월",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=6,
+        basecase_data_start_row=7,
+        basecase_column_roles="B:Year,C:Month,D:Country,E:DegreeDayType,G:HDD",
+        basecase_row_filter="E=HDD",
+    ),
+    _parameter_row(
+        "HurricaneIntensity",
+        model_file="Supply",
+        model_sheet="{USA}Hurricanes",
+        semantic_axes="미국 액화시설 허리케인 차질 - 연·월",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=7,
+        basecase_data_start_row=8,
+        basecase_column_roles="B:Year,C:Month,D:HurricaneIntensity",
+    ),
+    _parameter_row(
+        "LiqProdAdjustment",
+        model_file="Supply",
+        model_sheet="LiqProdAdjustment",
+        semantic_axes="액화시설 생산량 override - Country>Plant>Train·연·월",
+        basecase_read_mode="matrix_time_columns",
+        basecase_header_row=10,
+        basecase_data_start_row=11,
+        basecase_column_roles=(
+            "B:Country,C:LNG Plant,D:LNG Plant Train,"
+            "E:Life Cycle Category,F:Nameplate Capacity"
+        ),
+        basecase_year_row=7,
+        basecase_month_row=8,
+        basecase_period_row=9,
+        basecase_value_start_col="G",
+        basecase_value_end_col="DA",
+    ),
+    _parameter_row(
+        "LiqUtilAdjustment",
+        model_file="Supply",
+        model_sheet="LiqUtilAdjustment",
+        semantic_axes="액화시설 가동률 override - Country>Plant>Train·연·월",
+        basecase_read_mode="matrix_time_columns",
+        basecase_header_row=10,
+        basecase_data_start_row=11,
+        basecase_column_roles=(
+            "B:Country,C:LNG Plant,D:LNG Plant Train,"
+            "E:Life Cycle Category,F:Nameplate Capacity"
+        ),
+        basecase_year_row=7,
+        basecase_month_row=8,
+        basecase_period_row=9,
+        basecase_value_start_col="G",
+        basecase_value_end_col="DA",
+    ),
+    _parameter_row(
+        "PowerMix",
+        model_file="Demand",
+        model_sheet="PowerMixAdjustment",
+        semantic_axes="발전 에너지원 비중 - 국가·에너지원·연",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=6,
+        basecase_data_start_row=12,
+        basecase_column_roles="B:Year,C:Country,D:Energy Source,F:PowerMix",
+    ),
+    _parameter_row(
+        "RegasAdjustment",
+        model_file="Supply",
+        model_sheet="RegasAdjustment",
+        semantic_axes="재기화 설비 capa override - Continent>Region>Country>Plant·연·월",
+        basecase_read_mode="matrix_time_columns",
+        basecase_header_row=10,
+        basecase_data_start_row=11,
+        basecase_column_roles=(
+            "B:Continent,C:Region,D:Country,E:Regasification plant,"
+            "F:Life Cycle Category,G:Nameplate capacity"
+        ),
+        basecase_year_row=9,
+        basecase_month_row=10,
+        basecase_value_start_col="H",
+        basecase_value_end_col="DK",
+    ),
+    _parameter_row(
+        "ShippingCost",
+        model_file="Trade",
+        model_sheet="ShippingCostInput",
+        semantic_axes="Charter/Fuel/Suez/Panama 비용 - impact_scope·연",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=5,
+        basecase_data_start_row=6,
+        basecase_column_roles="B:Year,F:ShippingCost",
+    ),
+    _parameter_row(
+        "SupplyDisruption",
+        model_file="Supply",
+        model_sheet="VolumeAdjustment",
+        semantic_axes="Upstream 생산 차질 - Province·연",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=7,
+        basecase_data_start_row=8,
+        basecase_column_roles="B:Year,C:Province Country,E:SupplyDisruption",
+    ),
+    _parameter_row(
+        "Temperature",
+        model_file="Demand",
+        model_sheet="WeatherAdjustment",
+        semantic_axes="기온 직접 - 국가·연·월",
+        basecase_read_mode="fixed_columns",
+        basecase_header_row=6,
+        basecase_data_start_row=7,
+        basecase_column_roles="K:Year,L:Month,M:Country,O:Temperature",
+    ),
+]
+
+
+TEST_MAPPING_ROWS: list[dict[str, object]] = [
+    _mapping_row(6, "period", "기간", "indirect", None, "동절기 월 슬롯"),
+    _mapping_row(6, "cold_wave_intensity", "한파 강도", "direct", "HDD", "평년 대비 -℃ -> HDD 변환 입력"),
+    _mapping_row(6, "cold_wave_intensity", "한파 강도", "direct", "Temperature", "기온 직접 입력"),
+    _mapping_row(7, "period", "기간", "indirect", None, "하절기 월 슬롯"),
+    _mapping_row(7, "heatwave_intensity", "폭염 강도", "direct", "CDD", "평년 대비 +℃ -> CDD 변환 입력"),
+    _mapping_row(7, "heatwave_intensity", "폭염 강도", "direct", "Temperature", "기온 직접 입력"),
+    _mapping_row(10, "lng_demand_impact_intensity", "LNG 수요 영향 강도", "direct", "Coal Futures Price", "가격기반 석탄-가스 스위칭"),
+    _mapping_row(10, "lng_demand_impact_intensity", "LNG 수요 영향 강도", "direct", "Gas Futures Price", "가격기반 석탄-가스 스위칭"),
+    _mapping_row(10, "lng_demand_impact_intensity", "LNG 수요 영향 강도", "direct", "PowerMix", "구조적 비중 변화"),
+    _mapping_row(10, "alt_energy_absorption", "타 에너지원 흡수 가능성", "direct", "PowerMix", "원전·재생E 등 흡수"),
+    _mapping_row(11, "period", "기간", "indirect", None, "시간축"),
+    _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "SupplyDisruption", "생산 시설 피해 시"),
+    _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "LiqUtilAdjustment", "수출 시설 피해 시"),
+    _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "LiqProdAdjustment", "수출 시설 피해 시"),
+    _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "RegasAdjustment", "수입 시설 피해 시"),
+    _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "HurricaneIntensity", "미국 액화시설 허리케인"),
+    _mapping_row(11, "supply_disruption_intensity", "공급 차질 강도", "direct", None, "시설 가동률 감소율로 변환"),
+    _mapping_row(17, "period", "기간", "indirect", None, "시간축"),
+    _mapping_row(17, "transport_disruption", "운송 차질", "direct", "ShippingCost", "용선료·보험료 상승"),
+    _mapping_row(17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "LiqUtilAdjustment", "액화시설 가동률 감소"),
+    _mapping_row(17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "LiqProdAdjustment", "생산량 직접 감소"),
+    _mapping_row(17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "SupplyDisruption", "upstream 생산 차질 동반 시"),
+]
+
+
+def _get_db_fixture_kb(
     *,
     max_sample_rows: int = 1,
     max_sample_cols: int = 8,
 ):
-    return get_parameter_knowledge_base(
-        mapping_excel_path=str(_default_mapping_excel_path()),
+    return get_parameter_knowledge_base_from_resources(
+        mapping_rows=TEST_MAPPING_ROWS,
+        parameter_rows=TEST_PARAMETER_ROWS,
+        basecase_dir_path=str(_default_basecase_dir()),
         max_sample_rows=max_sample_rows,
         max_sample_cols=max_sample_cols,
     )
@@ -126,14 +371,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "maxCandidates": 3,
                 "maxBasecaseSampleRows": 2,
                 "allowLlmFallback": True,
-                "mappingExcelPath": "/tmp/legacy-mapping.xlsx",
+                "unknownOption": "ignored",
             },
         )
 
         assert payload.max_candidates == 3
         assert payload.max_basecase_sample_rows == 2
         assert payload.allow_llm_fallback is True
-        assert not hasattr(payload, "mapping_excel_path")
+        assert not hasattr(payload, "unknown_option")
 
     def test_proposal_request_accepts_optional_user_id(self) -> None:
         assert ProposeParametersRequest().user_id is None
@@ -374,19 +619,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "integer JSON numbers" in value_schema["properties"]["coordinates"]["description"]
         assert "not strings" in value_schema["properties"]["coordinates"]["description"]
 
-    def test_default_excel_resources_are_packaged_with_agent(self) -> None:
+    def test_default_basecase_resources_are_packaged_with_agent(self) -> None:
         assert DEFAULT_INPUT_DIR.name == "resources"
         assert DEFAULT_INPUT_DIR.parent.name == "model_parameter_agent"
         assert "gen_model_param" not in DEFAULT_INPUT_DIR.parts
-        assert any(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        workbook = load_workbook(mapping_path, read_only=True, data_only=True)
-        assert DIMENSION_PARAMETER_MAPPING_SHEET in workbook.sheetnames
-        assert PARAMETER_EXCEL_MAPPING_SHEET in workbook.sheetnames
-        assert any(
-            child.is_dir() and "Basecase_20260610" in child.name
-            for child in DEFAULT_INPUT_DIR.iterdir()
-        )
+        assert DEFAULT_BASECASE_DIR.parent == DEFAULT_INPUT_DIR
+        assert _default_basecase_dir().name == "basecase"
 
     def test_default_knowledge_base_loads_mapping_from_db(self) -> None:
         from apps.agents.model_parameter_agent.utils import parameter_mapping as mapping_module
@@ -444,7 +682,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             )
 
         assert load_resources.call_count == 2
-        assert kb.mapping_excel_path == mapping_module.DB_MAPPING_SOURCE
+        assert kb.mapping_source == mapping_module.DB_MAPPING_SOURCE
         assert kb.definition_for("ShippingCost") is not None
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
@@ -974,9 +1212,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             assert token not in source
         assert "mimodelparamproposalmodel(" in source
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_knowledge_base_profiles_scan_entire_mapped_basecase_sheet(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         existing_profiles = [
             profile
             for profile in kb.basecase_profiles.values()
@@ -989,9 +1227,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             assert profile.rows_scanned == profile.row_count
             assert len(profile.sample_rows) <= 1
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_match_candidates_uses_bridge_event_id_and_dimension_key(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1029,9 +1267,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             for candidate in candidates
         )
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_match_candidates_does_not_fallback_when_bridge_key_is_missing(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1057,9 +1295,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert non_inputs == []
         assert any("DB dimension-parameter 매핑" in warning for warning in warnings)
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_bridge_mapping_preserves_multiple_routing_targets(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1091,151 +1329,36 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         }
         assert all(candidate["mapping_method"] == "routing" for candidate in candidates)
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
-    def test_knowledge_base_accepts_workbook_with_only_mapping_sheets(self) -> None:
-        source_mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        source_workbook = load_workbook(source_mapping_path, read_only=True, data_only=True)
-        source_dimension_sheet = source_workbook[DIMENSION_PARAMETER_MAPPING_SHEET]
-        source_parameter_sheet = source_workbook[PARAMETER_EXCEL_MAPPING_SHEET]
-        basecase_dir = next(
-            child
-            for child in DEFAULT_INPUT_DIR.iterdir()
-            if child.is_dir() and "Basecase_20260610" in child.name
-        )
-
+    def test_disabled_db_mapping_rows_are_not_mapped(self) -> None:
+        mapping_rows = [
+            _mapping_row(
+                17,
+                "transport_disruption",
+                "운송 차질",
+                "direct",
+                "ShippingCost",
+                "disabled row",
+                enabled=False,
+            ),
+            _mapping_row(
+                999,
+                "transport_disruption",
+                "운송 차질",
+                "direct",
+                "ShippingCost",
+                "active unrelated row",
+            ),
+        ]
+        parameter_rows = [
+            row
+            for row in TEST_PARAMETER_ROWS
+            if row["canonical_parameter_name"] == "ShippingCost"
+        ]
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_path = Path(temp_dir) / "mapping_only.xlsx"
-            workbook = Workbook()
-            target_dimension_sheet = workbook.active
-            target_dimension_sheet.title = DIMENSION_PARAMETER_MAPPING_SHEET
-            for row in source_dimension_sheet.iter_rows(values_only=True):
-                target_dimension_sheet.append(row)
-            target_parameter_sheet = workbook.create_sheet(PARAMETER_EXCEL_MAPPING_SHEET)
-            for row in source_parameter_sheet.iter_rows(values_only=True):
-                target_parameter_sheet.append(row)
-            workbook.save(target_path)
-
-            kb = get_parameter_knowledge_base(
-                mapping_excel_path=str(target_path),
-                basecase_dir_path=str(basecase_dir),
-                max_sample_rows=1,
-                max_sample_cols=8,
-            )
-
-        assert kb.mapping_rules
-        assert kb.parameter_definitions
-        assert kb.profile_for("Trade", "ShippingCostInput") is not None
-
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
-    def test_bridge_mapping_sheet_required_columns_fail_fast(self) -> None:
-        source_mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        source_workbook = load_workbook(source_mapping_path, read_only=True, data_only=True)
-        source_sheet = source_workbook[DIMENSION_PARAMETER_MAPPING_SHEET]
-        source_parameter_sheet = source_workbook[PARAMETER_EXCEL_MAPPING_SHEET]
-        basecase_dir = next(
-            child
-            for child in DEFAULT_INPUT_DIR.iterdir()
-            if child.is_dir() and "Basecase_20260610" in child.name
-        )
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target_path = Path(temp_dir) / "bridge_missing_column.xlsx"
-            workbook = Workbook()
-            target_sheet = workbook.active
-            target_sheet.title = DIMENSION_PARAMETER_MAPPING_SHEET
-            rows = list(source_sheet.iter_rows(values_only=True))
-            headers = list(rows[0])
-            drop_index = headers.index("canonical_parameter_name")
-            target_sheet.append([
-                value for index, value in enumerate(headers)
-                if index != drop_index
-            ])
-            for row in rows[1:4]:
-                target_sheet.append([
-                    value for index, value in enumerate(row)
-                    if index != drop_index
-                ])
-            target_parameter_sheet = workbook.create_sheet(PARAMETER_EXCEL_MAPPING_SHEET)
-            for row in source_parameter_sheet.iter_rows(values_only=True):
-                target_parameter_sheet.append(row)
-            workbook.save(target_path)
-
-            with self.assertRaises(MIBaseError) as raised:
-                get_parameter_knowledge_base(
-                    mapping_excel_path=str(target_path),
-                    basecase_dir_path=str(basecase_dir),
-                    max_sample_rows=1,
-                    max_sample_cols=8,
-                )
-
-        assert "canonical_parameter_name" in str(raised.exception)
-
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
-    def test_parameter_excel_mapping_sheet_is_required(self) -> None:
-        source_mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        source_workbook = load_workbook(source_mapping_path, read_only=True, data_only=True)
-        source_dimension_sheet = source_workbook[DIMENSION_PARAMETER_MAPPING_SHEET]
-        basecase_dir = next(
-            child
-            for child in DEFAULT_INPUT_DIR.iterdir()
-            if child.is_dir() and "Basecase_20260610" in child.name
-        )
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target_path = Path(temp_dir) / "parameter_sheet_missing.xlsx"
-            workbook = Workbook()
-            target_dimension_sheet = workbook.active
-            target_dimension_sheet.title = DIMENSION_PARAMETER_MAPPING_SHEET
-            for row in source_dimension_sheet.iter_rows(values_only=True):
-                target_dimension_sheet.append(row)
-            workbook.save(target_path)
-
-            with self.assertRaises(MIBaseError) as raised:
-                get_parameter_knowledge_base(
-                    mapping_excel_path=str(target_path),
-                    basecase_dir_path=str(basecase_dir),
-                    max_sample_rows=1,
-                    max_sample_cols=8,
-                )
-
-        assert PARAMETER_EXCEL_MAPPING_SHEET in str(raised.exception)
-
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
-    def test_bridge_disabled_rows_are_not_mapped(self) -> None:
-        source_mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        source_workbook = load_workbook(source_mapping_path, read_only=True, data_only=True)
-        source_sheet = source_workbook[DIMENSION_PARAMETER_MAPPING_SHEET]
-        rows = list(source_sheet.iter_rows(values_only=True))
-        headers = list(rows[0])
-        index_by_header = {header: index for index, header in enumerate(headers)}
-        transport_row = next(
-            row for row in rows[1:]
-            if row[index_by_header["event_type_l2_id"]] == 17
-            and row[index_by_header["dimension_key"]] == "transport_disruption"
-        )
-        disabled_row = list(transport_row)
-        disabled_row[index_by_header["enabled"]] = False
-        basecase_dir = next(
-            child
-            for child in DEFAULT_INPUT_DIR.iterdir()
-            if child.is_dir() and "Basecase_20260610" in child.name
-        )
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            target_path = Path(temp_dir) / "bridge_disabled.xlsx"
-            workbook = Workbook()
-            target_sheet = workbook.active
-            target_sheet.title = DIMENSION_PARAMETER_MAPPING_SHEET
-            target_sheet.append(headers)
-            target_sheet.append(disabled_row)
-            target_parameter_sheet = workbook.create_sheet(PARAMETER_EXCEL_MAPPING_SHEET)
-            source_parameter_sheet = source_workbook[PARAMETER_EXCEL_MAPPING_SHEET]
-            for row in source_parameter_sheet.iter_rows(values_only=True):
-                target_parameter_sheet.append(row)
-            workbook.save(target_path)
-            kb = get_parameter_knowledge_base(
-                mapping_excel_path=str(target_path),
-                basecase_dir_path=str(basecase_dir),
+            kb = get_parameter_knowledge_base_from_resources(
+                mapping_rows=mapping_rows,
+                parameter_rows=parameter_rows,
+                basecase_dir_path=temp_dir,
                 max_sample_rows=1,
                 max_sample_cols=8,
             )
@@ -1259,9 +1382,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert non_inputs == []
         assert any("DB dimension-parameter 매핑" in warning for warning in warnings)
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_bridge_direct_row_without_target_becomes_non_input(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1283,9 +1406,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert any("target 정보" in item["reason"] for item in non_inputs)
         assert any("parameter 후보를 찾지 못했습니다" in warning for warning in warnings)
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_flatten_mapped_matrix_sheet(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         candidate = {
             "candidate_key": "c1",
             "model_file": "Supply",
@@ -1328,9 +1451,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         for debug_key in ("workbook_path", "header_rows", "sample_rows", "distinct_values", "numeric_summary"):
             assert debug_key not in first
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_matrix_time_column_spec_when_available(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1394,9 +1517,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert first["value_name"] == "LiqUtilAdjustment"
         assert first["value"] == 0.19018404907975456
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_do_not_read_second_liq_prod_matrix_section(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1436,9 +1559,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert records == []
         assert any("basecase record를 추출하지 못했습니다" in warning for warning in record_warnings)
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_regas_first_matrix_section_only(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1506,9 +1629,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert first["value_name"] == "RegasAdjustment"
         assert first["value"] == 1
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_fixed_column_spec_when_available(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1552,9 +1675,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert first["value_name"] == "Temperature"
         assert first["value"] == 5.5
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_powermix_basecase_records_skip_ref_rows_and_start_at_real_data(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         context = {
             "scenario": {
                 "scenario_id": 100,
@@ -1601,9 +1724,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert first["value_name"] == "PowerMix"
         assert first["value"] == 0.323
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_degree_day_parameters_use_weather_hdd_cdd_table_with_row_filter(self) -> None:
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         cases = [
             (
                 "CDD",
@@ -1667,54 +1790,37 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             assert records == []
             assert any(candidate_key in warning for warning in record_warnings)
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
     def test_fixed_column_spec_is_defined_once_per_parameter(self) -> None:
-        mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        workbook = load_workbook(mapping_path, read_only=True, data_only=True)
-        dimension_sheet = workbook[DIMENSION_PARAMETER_MAPPING_SHEET]
-        parameter_sheet = workbook[PARAMETER_EXCEL_MAPPING_SHEET]
-        dimension_headers = [cell.value for cell in dimension_sheet[1]]
-        parameter_headers = [cell.value for cell in parameter_sheet[1]]
-        dimension_index = {header: index for index, header in enumerate(dimension_headers)}
-        parameter_index = {header: index for index, header in enumerate(parameter_headers)}
-
-        assert "basecase_column_roles" not in dimension_headers
         temperature_dimension_rows = [
-            row for row in dimension_sheet.iter_rows(min_row=2, values_only=True)
-            if row[dimension_index["canonical_parameter_name"]] == "Temperature"
+            row
+            for row in TEST_MAPPING_ROWS
+            if row["canonical_parameter_name"] == "Temperature"
         ]
         temperature_parameter_rows = [
-            row for row in parameter_sheet.iter_rows(min_row=2, values_only=True)
-            if row[parameter_index["canonical_parameter_name"]] == "Temperature"
+            row
+            for row in TEST_PARAMETER_ROWS
+            if row["canonical_parameter_name"] == "Temperature"
         ]
 
+        assert all("basecase_column_roles" not in row for row in temperature_dimension_rows)
         assert len(temperature_dimension_rows) == 2
         assert len(temperature_parameter_rows) == 1
         assert (
-            temperature_parameter_rows[0][parameter_index["basecase_column_roles"]]
+            temperature_parameter_rows[0]["basecase_column_roles"]
             == "K:Year,L:Month,M:Country,O:Temperature"
         )
 
-    @unittest.skipUnless(_excel_available(), "model parameter Excel files are not available")
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_coal_and_gas_futures_are_split_parameters(self) -> None:
-        mapping_path = next(DEFAULT_INPUT_DIR.glob("260625*.xlsx"))
-        workbook = load_workbook(mapping_path, read_only=True, data_only=True)
-        dimension_sheet = workbook[DIMENSION_PARAMETER_MAPPING_SHEET]
-        parameter_sheet = workbook[PARAMETER_EXCEL_MAPPING_SHEET]
-        dimension_headers = [cell.value for cell in dimension_sheet[1]]
-        parameter_headers = [cell.value for cell in parameter_sheet[1]]
-        dimension_index = {header: index for index, header in enumerate(dimension_headers)}
-        parameter_index = {header: index for index, header in enumerate(parameter_headers)}
-
         dimension_canonicals = [
-            row[dimension_index["canonical_parameter_name"]]
-            for row in dimension_sheet.iter_rows(min_row=2, values_only=True)
-            if row[dimension_index["event_type_l2_id"]] == 10
-            and row[dimension_index["dimension_key"]] == "lng_demand_impact_intensity"
+            row["canonical_parameter_name"]
+            for row in TEST_MAPPING_ROWS
+            if row["event_type_l2_id"] == 10
+            and row["dimension_key"] == "lng_demand_impact_intensity"
         ]
         parameter_canonicals = {
-            row[parameter_index["canonical_parameter_name"]]
-            for row in parameter_sheet.iter_rows(min_row=2, values_only=True)
+            row["canonical_parameter_name"]
+            for row in TEST_PARAMETER_ROWS
         }
 
         assert "Coal/Gas Futures Price" not in dimension_canonicals
@@ -1722,7 +1828,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "Coal/Gas Futures Price" not in parameter_canonicals
         assert {"Coal Futures Price", "Gas Futures Price"} <= parameter_canonicals
 
-        kb = _get_excel_kb(max_sample_rows=1, max_sample_cols=8)
+        kb = _get_db_fixture_kb(max_sample_rows=1, max_sample_cols=8)
         candidates, non_inputs, warnings = match_parameter_candidates(
             kb,
             {
@@ -3729,11 +3835,15 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert (
-            "basecase 부재를 0으로 해석하지 말고"
+            "basecase 부재를 0으로 해석하지 마십시오"
             in captured_system_contents[0]
         )
         assert (
-            "값의 범위·단위·스케일·소수 자리·형식 참고용으로만 사용"
+            "단위·스케일·소수 자리·형식 확인용으로만 사용"
+            in captured_system_contents[0]
+        )
+        assert (
+            "수치 수준(level) 기준값으로 삼지 마십시오"
             in captured_system_contents[0]
         )
         assert (

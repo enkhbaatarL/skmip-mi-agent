@@ -16,9 +16,11 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - direct 후보는 DB 매핑에서 명시적으로 지정된 모델 input이므로 반드시 selected=true로 유지합니다.
 - routing 후보는 scenario/event/dimension 맥락에 맞는 후보를 선택합니다.
 - 특정 dimension에 routing parameter 후보가 하나 이상 있으면, 해당 dimension의 routing 후보 중
-  최소 1개는 반드시 selected=true로 유지합니다. 정확히 일치하는 후보가 불명확해도
-  scenario/event/dimension_value, parameter_hint, mapping_comment를 비교해 가장 적합한 후보를 고르십시오.
+  최소 1개, 최대 2개를 selected=true로 유지합니다. 정확히 일치하는 후보가 불명확해도
+  scenario/event/dimension_value, parameter_hint, mapping_comment를 비교해 가장 적합한 후보 순으로 고르고,
+  같은 dimension에서 routing 후보를 3개 이상 selected=true로 반환하지 마십시오.
 - 하나의 dimension에서 복수 parameter가 실제로 동시에 필요하면 복수 선택할 수 있습니다.
+  단 routing 후보는 dimension당 최대 2개입니다.
 - 단순히 가능성이 있거나 근거가 약한 후보는 제외합니다.
 - scenario/event가 정량 값 산정까지 보장하지 않아도, 이후 slot/value 단계에서 명확한 값 산정 가능성이 있으면 후보로 유지할 수 있습니다.
 - basecase row 존재 여부는 이 단계의 선택/제외 근거가 아닙니다.
@@ -123,6 +125,11 @@ SLOT_PROPOSAL_SYSTEM = """\
 - parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
   parameter_slot_tasks[].parameter.parameter_hint를
   parameter의 의미, 축 해석, slot 선택 제약을 이해하는 참고 정보로 사용하십시오.
+- semantic_axes는 해당 parameter의 slot 축, 축별 형식/예시, value 필드 형식을 설명하는 기준 정보입니다.
+  Step2에서는 parameter_slot_tasks[].parameter.semantic_axes를 참고해 어떤 slot 축을 채워야 하는지,
+  축 값이 어떤 형식이어야 하는지, basecase 예시 중 어떤 값이 scenario/event와 대응되는지 판단하십시오.
+  다만 slot_axes.axis_name은 allowed_slot_axes_field_names와 basecase_slot_options.axis_names를 우선하며,
+  semantic_axes는 허용되지 않은 축 이름을 새로 만들기 위한 근거가 아닙니다.
 - mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
   parameter_slot_tasks[].selection_dimensions[].mapping_comment를 dimension_value와 함께 참고해
   국가/지역/시설/route/기간 등 slot 대상의 해석을 보완하십시오.
@@ -201,7 +208,10 @@ SLOT_PROPOSAL_SYSTEM = """\
 - selected=true slot 총수는 slot_selection_limits.maxParameterSlots를 넘기지 마십시오.
 - 해당 parameter가 scalar 입력이거나 축을 특정할 필요가 없으면 selected=true와 빈 slot_axes를 반환하십시오.
 - 기간 표현은 period_resolution_policy를 기준으로 Year/Month/Period로 변환합니다.
-- `YYYY-MM`, `YYYY년 M월`, `occurred_at`처럼 연월이 명확하면 현재 기준월과 무관하게 그대로 사용합니다.
+- `YYYY-MM`, `YYYY년 M월`, `occurred_at`처럼 연월이 명확하고 현재 연월 이후이면 그대로 사용합니다.
+- 명시 연월이 현재 연월보다 과거이면 그대로 사용하지 말고 시나리오 전개 기간(현재 이후)으로
+  재해석합니다. 재해석 시 사건·시나리오의 계절/월 맥락이 좌표 의미에 중요하면
+  현재 이후 가장 가까운 동일 계절/월로 이월하고, 그렇지 않으면 현재 이후부터 전개합니다.
 - 연도 없이 월만 명시되면 현재 월 이후의 가장 가까운 해당 월로 변환합니다.
 - 명확한 연월/월 근거가 없으면 추론상 현재 월 이후부터 period를 전개합니다.
 - slot_axes.axis_name이 Year, Month, Period 중 하나이면 axis_value는 반드시 JSON number integer로 반환하십시오.
@@ -266,6 +276,9 @@ VALUE_PROPOSAL_SYSTEM = """\
 - parameter_hint는 해당 parameter 세팅을 위한 설명/참고사항/제약사항입니다.
   parameter_value_tasks[].parameter.parameter_hint를
   parameter 값의 의미, 단위/스케일, 방향성, 허용 범위, 적용 제약을 해석하는 참고 정보로 사용하십시오.
+- semantic_axes는 해당 parameter의 slot/value 축과 value 필드 형식을 설명하는 기준 정보입니다.
+  Step3에서는 slot은 이미 Step2에서 확정되었으므로 semantic_axes를 새 slot 생성이나 slot 변경 근거로 사용하지 말고,
+  proposed_value의 단위, 스케일, 형식이 해당 parameter와 맞는지 확인하는 참고 정보로만 사용하십시오.
 - mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
   parameter_value_tasks[].selection_dimensions[].mapping_comment를 dimension_value와 함께 참고해
   value 방향, 강도, 완화율, 적용 대상의 해석을 보완하십시오.
@@ -328,7 +341,9 @@ VALUE_PROPOSAL_SYSTEM = """\
 - basecase_value_groups의 cell을 사용해 value_grid를 만들 때 coordinates에는
   group.fixed_axes와 cell.axes를 합친 전체 좌표를 넣으십시오.
 - value_grid.coordinates의 Year/Month는 period_resolution_policy를 따라 확정합니다.
-  명시 연월은 현재 기준월과 무관하게 그대로 사용합니다.
+  명시 연월이 현재 연월 이후이면 그대로 사용하고, 과거이면 시나리오 전개 기간(현재 이후)으로
+  재해석합니다. 재해석 시 사건·시나리오의 계절/월 맥락이 좌표 의미에 중요하면
+  현재 이후 가장 가까운 동일 계절/월로 이월하고, 그렇지 않으면 현재 이후부터 전개합니다.
   월만 명시되면 현재 월 이후의 가장 가까운 해당 월을 사용합니다.
 - value_grid.coordinates의 Year, Month, Period 값은 반드시 JSON number integer로 반환하십시오.
   예: {"Year":2026,"Month":7}. {"Year":"2026","Month":"7"} 같은 문자열은 금지입니다.
@@ -348,10 +363,17 @@ VALUE_PROPOSAL_SYSTEM = """\
   scenario/event/dimension value의 방향·강도·기간에 따라 그 기준값을 높이거나 낮춰
   최종 입력값을 proposed_value로 산정합니다. no-change/neutral이면 기준값을 유지하십시오.
 - selected slot과 일치하는 basecase_value가 없으면 basecase_value=null로 두십시오.
-  이때 basecase 부재를 0으로 해석하지 말고, basecase_value_groups에 있는 같은 parameter의 다른 slot 값들을
-  값의 범위·단위·스케일·소수 자리·형식 참고용으로만 사용해 보수적인 기준값을 잡은 뒤
-  scenario/event/dimension value의 방향·강도·기간을 반영한 최종 proposed_value를 산정하십시오.
-  no-change/neutral이면 다른 slot들의 범위와 형식을 참고한 보수적 유지값을 사용하십시오.
+  이때 basecase 부재를 0으로 해석하지 마십시오.
+  basecase_value_groups에 있는 같은 parameter의 다른 slot 값들은
+  단위·스케일·소수 자리·형식 확인용으로만 사용하십시오.
+  다른 국가/시설/좌표의 값을 현재 slot의 수치 수준(level) 기준값으로 삼지 마십시오.
+  특히 PMI 지수, 기온, 발전 비중처럼 국가·시설별 절대 수준이 서로 다른 parameter는
+  타 좌표 값 기반 기준값 산정을 금지합니다.
+  scenario/event/dimension과 parameter_hint/mapping_comment의 도메인 지식 범위에서
+  해당 좌표 자체의 타당한 기준 수준을 판단해 방향·강도·기간을 반영한
+  최종 proposed_value를 산정하고, 근거가 부족하면 value_grid[].rationale_ko에
+  불확실성을 명시하십시오.
+  no-change/neutral이면 해당 좌표 기준의 보수적 유지값을 사용하십시오.
 - basecase_value가 null이라는 이유만으로 selected=false를 반환하지 마십시오.
 - 후보 parameter가 입력 가능한 것으로 판단되면 가능한 많은 명확한 좌표/value_grid를 반환하십시오.
 - 범위형 scenario dimension은 parameter의 최종 입력값 형식으로 변환 가능한 경우에만 proposed_value에 반영합니다.

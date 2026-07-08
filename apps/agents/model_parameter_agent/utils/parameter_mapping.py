@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from functools import lru_cache
 import json
 from pathlib import Path
 import re
@@ -15,40 +14,8 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = PACKAGE_DIR / "resources"
-DEFAULT_MAPPING_GLOB = "260625*.xlsx"
-DEFAULT_BASECASE_DIR_MARKER = "Basecase_20260610"
+DEFAULT_BASECASE_DIR = DEFAULT_INPUT_DIR / "basecase"
 DB_MAPPING_SOURCE = "db:tmm_mi_model_param_m,tmm_mi_model_param_dimension_map"
-DIMENSION_PARAMETER_MAPPING_SHEET = "Dimension Parameter Mapping"
-PARAMETER_EXCEL_MAPPING_SHEET = "Parameter Excel Mapping"
-BRIDGE_MAPPING_SHEET = DIMENSION_PARAMETER_MAPPING_SHEET
-DIMENSION_MAPPING_REQUIRED_COLUMNS = {
-    "enabled",
-    "event_type_l2_id",
-    "dimension_key",
-    "dimension_label",
-    "mapping_method",
-    "canonical_parameter_name",
-    "comment",
-}
-PARAMETER_EXCEL_MAPPING_REQUIRED_COLUMNS = {
-    "enabled",
-    "canonical_parameter_name",
-    "model_file",
-    "model_sheet",
-    "parameter_name",
-    "semantic_axes",
-    "basecase_read_mode",
-    "basecase_header_row",
-    "basecase_data_start_row",
-    "basecase_column_roles",
-    "basecase_row_filter",
-    "basecase_year_row",
-    "basecase_month_row",
-    "basecase_period_row",
-    "basecase_value_start_col",
-    "basecase_value_end_col",
-    "basecase_stop_rule",
-}
 MAX_DISTINCT_VALUES = 20
 BASECASE_HEADER_SCAN_ROWS = 20
 BASECASE_AXIS_LABELS = {
@@ -209,7 +176,7 @@ class MatrixTimeColumnSpec:
 
 @dataclass(frozen=True)
 class ParameterKnowledgeBase:
-    mapping_excel_path: str
+    mapping_source: str
     basecase_dir_path: str
     parameter_definitions: dict[str, ParameterDefinition]
     mapping_rules: list[MappingRule]
@@ -225,20 +192,11 @@ class ParameterKnowledgeBase:
 
 
 def get_parameter_knowledge_base(
-    mapping_excel_path: str | None = None,
     basecase_dir_path: str | None = None,
     max_sample_rows: int = 5,
     max_sample_cols: int = 18,
 ) -> ParameterKnowledgeBase:
     basecase_dir = _resolve_basecase_dir(basecase_dir_path)
-    if mapping_excel_path:
-        mapping_path = _resolve_mapping_path(mapping_excel_path)
-        return _load_parameter_knowledge_base(
-            str(mapping_path),
-            str(basecase_dir),
-            max_sample_rows,
-            max_sample_cols,
-        )
     return _load_parameter_knowledge_base_from_db(
         str(basecase_dir),
         max_sample_rows,
@@ -307,7 +265,7 @@ def _build_parameter_knowledge_base_from_rows(
         max_sample_cols=max_sample_cols,
     )
     return ParameterKnowledgeBase(
-        mapping_excel_path=mapping_source,
+        mapping_source=mapping_source,
         basecase_dir_path=basecase_dir_path,
         parameter_definitions=parameter_definitions,
         mapping_rules=mapping_rules,
@@ -321,34 +279,6 @@ def _load_db_mapping_resources() -> tuple[list[dict[str, Any]], list[dict[str, A
     )
 
     return ModelParameterService().load_parameter_mapping_resources()
-
-
-@lru_cache(maxsize=8)
-def _load_parameter_knowledge_base(
-    mapping_excel_path: str,
-    basecase_dir_path: str,
-    max_sample_rows: int,
-    max_sample_cols: int,
-) -> ParameterKnowledgeBase:
-    workbook_loader = _require_workbook_loader()
-    mapping_rules, parameter_definitions = _load_mapping_resources(
-        workbook_loader,
-        Path(mapping_excel_path),
-    )
-    basecase_profiles = _load_basecase_profiles(
-        workbook_loader,
-        Path(basecase_dir_path),
-        parameter_definitions,
-        max_sample_rows=max_sample_rows,
-        max_sample_cols=max_sample_cols,
-    )
-    return ParameterKnowledgeBase(
-        mapping_excel_path=mapping_excel_path,
-        basecase_dir_path=basecase_dir_path,
-        parameter_definitions=parameter_definitions,
-        mapping_rules=mapping_rules,
-        basecase_profiles=basecase_profiles,
-    )
 
 
 def match_parameter_candidates(
@@ -607,31 +537,6 @@ def normalize_parameter_name(value: Any) -> str:
     return PARAMETER_ALIASES.get(text, text)
 
 
-def _load_mapping_resources(
-    workbook_loader: Any,
-    path: Path,
-) -> tuple[list[MappingRule], dict[str, ParameterDefinition]]:
-    wb = workbook_loader(path, read_only=True, data_only=True)
-    missing_sheets = [
-        sheet_name
-        for sheet_name in (
-            DIMENSION_PARAMETER_MAPPING_SHEET,
-            PARAMETER_EXCEL_MAPPING_SHEET,
-        )
-        if sheet_name not in wb.sheetnames
-    ]
-    if missing_sheets:
-        raise MIBaseError(
-            ErrorCode.INVALID_REQUEST,
-            detail=f"Mapping workbook required sheets missing: {missing_sheets}",
-        )
-
-    return (
-        _load_dimension_mapping_rules(wb[DIMENSION_PARAMETER_MAPPING_SHEET]),
-        _load_parameter_definitions(wb[PARAMETER_EXCEL_MAPPING_SHEET]),
-    )
-
-
 def _mapping_rules_from_rows(
     rows: list[dict[str, Any]],
     *,
@@ -712,112 +617,7 @@ def _parameter_definitions_from_rows(
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail=f"{source_name} active parameter rows not found",
-        )
-    return definitions
-
-
-def _load_dimension_mapping_rules(ws: Any) -> list[MappingRule]:
-    header = [
-        _clean_text(value)
-        for value in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])
-    ]
-    column_by_name = {name: index for index, name in enumerate(header) if name}
-    missing_columns = sorted(DIMENSION_MAPPING_REQUIRED_COLUMNS - set(column_by_name))
-    if missing_columns:
-        raise MIBaseError(
-            ErrorCode.INVALID_REQUEST,
-            detail=(
-                "Dimension Parameter Mapping sheet required columns missing: "
-                f"{missing_columns}"
-            ),
-        )
-
-    rules: list[MappingRule] = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        row_map = {
-            name: row[index] if index < len(row) else None
-            for name, index in column_by_name.items()
-        }
-        if not _bool_from_cell(row_map.get("enabled"), default=True):
-            continue
-        event_type_l2_id = _int_or_none(row_map.get("event_type_l2_id"))
-        dimension_key = _clean_text(row_map.get("dimension_key"))
-        if event_type_l2_id is None or not dimension_key:
-            continue
-        parameter = _none_if_dash(row_map.get("parameter_name")) or ""
-        canonical = normalize_parameter_name(
-            _none_if_dash(row_map.get("canonical_parameter_name")) or parameter,
-        )
-        rules.append(
-            MappingRule(
-                event_type_l2_id=event_type_l2_id,
-                dimension_key=dimension_key,
-                dimension_label=_clean_text(row_map.get("dimension_label")),
-                canonical_parameter_name=canonical,
-                mapping_method=_normalize_mapping_method(
-                    row_map.get("mapping_method"),
-                ) or "unknown",
-                comment=_none_if_dash(row_map.get("comment")),
-            ),
-        )
-    return rules
-
-
-def _load_parameter_definitions(ws: Any) -> dict[str, ParameterDefinition]:
-    header = [
-        _clean_text(value)
-        for value in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])
-    ]
-    column_by_name = {name: index for index, name in enumerate(header) if name}
-    missing_columns = sorted(PARAMETER_EXCEL_MAPPING_REQUIRED_COLUMNS - set(column_by_name))
-    if missing_columns:
-        raise MIBaseError(
-            ErrorCode.INVALID_REQUEST,
-            detail=(
-                "Parameter Excel Mapping sheet required columns missing: "
-                f"{missing_columns}"
-            ),
-        )
-
-    definitions: dict[str, ParameterDefinition] = {}
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        row_map = {
-            name: row[index] if index < len(row) else None
-            for name, index in column_by_name.items()
-        }
-        if not _bool_from_cell(row_map.get("enabled"), default=True):
-            continue
-        canonical = normalize_parameter_name(row_map.get("canonical_parameter_name"))
-        if not canonical:
-            continue
-        if canonical in definitions:
-            raise MIBaseError(
-                ErrorCode.INVALID_REQUEST,
-                detail=(
-                    "Parameter Excel Mapping sheet duplicate "
-                    f"canonical_parameter_name: {canonical}"
-                ),
-            )
-        definitions[canonical] = ParameterDefinition(
-            canonical_parameter_name=canonical,
-            parameter_hint=_none_if_dash(row_map.get("parameter_hint")),
-            model_file=_clean_text(row_map.get("model_file")),
-            model_sheet=_clean_text(row_map.get("model_sheet")),
-            model_table=_model_table_from_row(row_map),
-            parameter_name=_clean_text(row_map.get("parameter_name")) or canonical,
-            semantic_axes=_none_if_dash(row_map.get("semantic_axes")),
-            basecase_read_mode=_none_if_dash(row_map.get("basecase_read_mode")),
-            basecase_header_row=_int_or_none(row_map.get("basecase_header_row")),
-            basecase_data_start_row=_int_or_none(row_map.get("basecase_data_start_row")),
-            basecase_column_roles=_none_if_dash(row_map.get("basecase_column_roles")),
-            basecase_row_filter=_none_if_dash(row_map.get("basecase_row_filter")),
-            basecase_year_row=_int_or_none(row_map.get("basecase_year_row")),
-            basecase_month_row=_int_or_none(row_map.get("basecase_month_row")),
-            basecase_period_row=_int_or_none(row_map.get("basecase_period_row")),
-            basecase_value_start_col=_none_if_dash(row_map.get("basecase_value_start_col")),
-            basecase_value_end_col=_none_if_dash(row_map.get("basecase_value_end_col")),
-            basecase_stop_rule=_none_if_dash(row_map.get("basecase_stop_rule")),
-        )
+    )
     return definitions
 
 
@@ -1589,10 +1389,6 @@ def _is_record_value(value: Any) -> bool:
     return True
 
 
-def _resolve_mapping_path(path: str | None) -> Path:
-    return _resolve_file(path, DEFAULT_INPUT_DIR, DEFAULT_MAPPING_GLOB)
-
-
 def _resolve_basecase_dir(path: str | None) -> Path:
     if path:
         resolved = Path(path).expanduser()
@@ -1604,23 +1400,9 @@ def _resolve_basecase_dir(path: str | None) -> Path:
             ErrorCode.INVALID_REQUEST,
             detail=f"Excel resource directory not found: {DEFAULT_INPUT_DIR}",
         )
-    for child in DEFAULT_INPUT_DIR.iterdir():
-        if child.is_dir() and DEFAULT_BASECASE_DIR_MARKER in _normalize_unicode(child.name):
-            return child
+    if DEFAULT_BASECASE_DIR.is_dir():
+        return DEFAULT_BASECASE_DIR
     raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="Basecase directory not found")
-
-
-def _resolve_file(path: str | None, root: Path, pattern: str) -> Path:
-    if path:
-        resolved = Path(path).expanduser()
-        if not resolved.is_file():
-            raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=f"Excel file not found: {path}")
-        return resolved
-    for candidate in sorted(root.glob(pattern)):
-        if candidate.name.startswith("~$"):
-            continue
-        return candidate
-    raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=f"Excel file not found: {pattern}")
 
 
 def _discover_basecase_workbooks(basecase_dir: Path) -> dict[str, Path]:
@@ -1641,7 +1423,7 @@ def _require_workbook_loader() -> Any:
     except ImportError as exc:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
-            detail="openpyxl is required to read model parameter Excel files",
+            detail="openpyxl is required to read model parameter basecase Excel files",
         ) from exc
     return load_workbook
 

@@ -14,7 +14,7 @@ description: MI agent 이미지를 로컬 repo에서 빌드해 skmidemoacr.azure
 - scenario Dockerfile: `Dockerfile`
 - scenario compose 경로: `/home/azureuser/mi/mi-agent-scenario`
 - model-parameter 이미지 repo: `skmidemoacr.azurecr.io/mi-agent-model-parameter`
-- model-parameter Dockerfile: `Dockerfile_model_param`
+- model-parameter Dockerfile: `Dockerfile.model_param`
 - model-parameter compose 경로: `/home/azureuser/mi/mi-agent-model-parameter`
 - interpret 이미지 repo: `skmidemoacr.azurecr.io/mi-agent-interpret`
 - interpret Dockerfile: `Dockerfile_interpret`
@@ -89,7 +89,7 @@ docker compose logs --tail=120 app
 `--agent model-parameter`일 때는 아래 값으로 같은 절차를 수행한다.
 
 ```bash
-docker build --platform linux/amd64 --pull -f Dockerfile_model_param \
+docker build --platform linux/amd64 --pull -f Dockerfile.model_param \
   -t skmidemoacr.azurecr.io/mi-agent-model-parameter:v0.0.16 .
 
 docker push skmidemoacr.azurecr.io/mi-agent-model-parameter:v0.0.16

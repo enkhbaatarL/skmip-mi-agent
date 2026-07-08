@@ -75,10 +75,10 @@ app.include_router(
     prefix="",
     tags=["scenario-group"],
 )
-app.include_router(
-    model_parameter_router,
-    prefix="",
-    tags=["model-parameter"],
-)
+# app.include_router(
+#     model_parameter_router,
+#     prefix="",
+#     tags=["model-parameter"],
+# )
 
 app = register_exception_handlers(app)

@@ -78,6 +78,7 @@ downloads/
 artifacts/
 cache/
 apps/agents/model_parameter_agent/reports/
+tests/reports/
 release-artifacts/
 skmip-mi-agent_*_linux-amd64.tar.gz
 skmip-mi-agent_*_linux-amd64.bundle.zip

@@ -2,9 +2,9 @@
 
 > 검증 기준 파일
 >
-> - 매핑 Excel: `resources/260625_시나리오가정_MI수급모델_input_매핑_vfShare.xlsx`
+> - 매핑 Excel: `resources/mapping/260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx`
 > - 범위 문서: `docs/model_input_table_ranges_20260630.md`
-> - Basecase workbook: `resources/LNG수급모델_운영버전_입력시트_Basecase_20260610/*.xlsm`
+> - Basecase workbook: `resources/basecase/*.xlsm`
 
 ## 결론
 

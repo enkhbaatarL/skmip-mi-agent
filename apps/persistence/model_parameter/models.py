@@ -165,7 +165,7 @@ class MiModelParamModel(AuditColumnsMixin, ORMBase):
         comment="수급모델 파라미터명",
     )
     parameter_hint: Mapped[str] = mapped_column(
-        sa.String(500, collation=BIN),
+        sa.Text(collation=BIN),
         nullable=False,
         comment="수급모델 파라미터 설명",
     )
@@ -185,7 +185,7 @@ class MiModelParamModel(AuditColumnsMixin, ORMBase):
         comment="모델 시트 내 테이블명",
     )
     semantic_axes: Mapped[str | None] = mapped_column(
-        sa.String(500, collation=BIN),
+        sa.Text(collation=BIN),
         nullable=True,
         comment="의미 축 설명",
     )

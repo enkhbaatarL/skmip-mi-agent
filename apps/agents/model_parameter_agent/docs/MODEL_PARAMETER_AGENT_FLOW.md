@@ -69,7 +69,7 @@ flowchart TD
 
 - `ModelParameterService.load_context()`: scenario context와 model parameter DB 매핑 row를 함께 조회한다.
 - `get_parameter_knowledge_base_from_resources()`: 조회된 DB row를 `ParameterKnowledgeBase`로 변환한다.
-- `_resolve_basecase_dir()`: 명시 폴더가 있으면 해당 폴더를 사용하고, 없으면 이름에 `Basecase_20260610`이 포함된 리소스 폴더를 찾는다.
+- `_resolve_basecase_dir()`: 명시 폴더가 있으면 해당 폴더를 사용하고, 없으면 기본 리소스 폴더 `resources/basecase`를 사용한다.
 - `_load_basecase_profiles()`: Demand/Supply/Trade Basecase `.xlsm` 파일을 찾고, 매핑된 sheet의 존재 여부와 샘플/profile 정보를 만든다.
 - 반환값은 `ParameterKnowledgeBase`이며, 같은 요청 안에서 후보 매칭과 Basecase record 추출에 재사용한다.
 

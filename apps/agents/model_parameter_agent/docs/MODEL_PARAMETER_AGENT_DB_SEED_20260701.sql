@@ -1,5 +1,5 @@
 -- 수급모델 파라미터 agent Excel mapping seed
--- Source workbook: apps/agents/model_parameter_agent/resources/260625_시나리오가정_MI수급모델_input_매핑_vfShare.xlsx
+-- Source workbook: apps/agents/model_parameter_agent/resources/mapping/260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx
 -- Source sheets: Parameter Excel Mapping (19 rows), Dimension Parameter Mapping (128 rows)
 -- Generated from the current workbook on 2026-07-01.
 

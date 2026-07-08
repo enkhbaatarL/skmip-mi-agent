@@ -359,11 +359,15 @@ apps/agents/model_parameter_agent/
 │   ├── basecase_load_values_full_20260630.csv
 │   └── model_input_table_ranges_20260630.md
 └── resources/
-    ├── 260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx
-    └── LNG수급모델_운영버전_입력시트_Basecase_20260610/
-        ├── 복호화_(Base) Demand Model_Input.xlsm
-        ├── 복호화_(Base) Supply Model_Input.xlsm
-        └── 복호화_(Base) Trade Model_Input.xlsm
+    ├── basecase/
+    │   ├── Demand Model_Input.xlsm
+    │   ├── Supply Model_Input.xlsm
+    │   └── Trade Model_Input.xlsm
+    ├── lut/
+    │   └── *.csv
+    └── mapping/
+        ├── 260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx
+        └── 260702_시나리오가정_MI수급모델_input_매핑_모델파트수정_v0.4.xlsx
 ```
 
 Agent package에서 제거 또는 이동할 항목:

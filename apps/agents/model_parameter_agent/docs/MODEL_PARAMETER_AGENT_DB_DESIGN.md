@@ -443,7 +443,7 @@ apps/agents/model_parameter_agent/docs/MODEL_PARAMETER_AGENT_DB_SEED_20260701.sq
 
 seed 기준:
 
-- source workbook: `apps/agents/model_parameter_agent/resources/260625_시나리오가정_MI수급모델_input_매핑_vfShare.xlsx`
+- source workbook: `apps/agents/model_parameter_agent/resources/mapping/260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx`
 - source sheets: `Parameter Excel Mapping`, `Dimension Parameter Mapping`
 - `tmm_mi_model_param_m`: `parameter_name` unique 기준 upsert
 - `tmm_mi_model_param_dimension_map`: `model_param_dimension_map_id`를 Excel row 순서 기준으로 명시해 재실행 가능하게 구성
