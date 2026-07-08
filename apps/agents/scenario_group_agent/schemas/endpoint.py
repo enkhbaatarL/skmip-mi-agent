@@ -33,6 +33,96 @@ class CreateScenariosIn(ApiModel):
     user_id: int
 
 
+class EventTypeInfo(ApiModel):
+    id: int | None = None
+    code: str = ""
+    label: str = ""
+
+
+class EventMarketImpact(ApiModel):
+    direction: str = "neutral"
+    label: str = "S"
+    summary: str | None = None
+
+
+class EventScenarioActionState(ApiModel):
+    type: str
+    label: str
+    disabled: bool = False
+    reason: str | None = None
+
+
+class RelatedScenarioGroupSummary(ApiModel):
+    scenario_group_id: int
+    status: str
+    stage: str
+    deleted: bool = False
+    del_yn: str = "N"
+    scenario_count: int = 0
+    signpost_count: int = 0
+    title: str | None = None
+
+
+class EventListRow(ApiModel):
+    mi_event_id: int
+    title: str = ""
+    event_title: str = ""
+    one_line_summary: str = ""
+    event_time: str = ""
+    occurred_at: str = ""
+    latest_record_first_created: str = ""
+    oldest_record_first_created: str = ""
+    category: str = ""
+    event_type_l1: EventTypeInfo = Field(default_factory=EventTypeInfo)
+    event_type_l2: EventTypeInfo = Field(default_factory=EventTypeInfo)
+    new_yn: str = "Y"
+    signal_yn: str = "N"
+    signal_confidence: float | None = None
+    signal_reason: str | None = None
+    scenario_suggest_yn: str = "N"
+    scenario_suggest_reason: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    market_impacts: dict[str, EventMarketImpact] = Field(default_factory=dict)
+    related_scenario_group: RelatedScenarioGroupSummary | None = None
+    scenario_action_state: EventScenarioActionState
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventPagination(ApiModel):
+    page: int = 1
+    page_size: int = 20
+    total: int = 0
+    has_previous: bool = False
+    has_next: bool = False
+
+
+class EventListOut(ApiModel):
+    rows: list[EventListRow] = Field(default_factory=list)
+    pagination: EventPagination = Field(default_factory=EventPagination)
+    source: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenarioTemplateDimension(ApiModel):
+    key: str
+    label: str
+    required: bool = False
+    display_order: int = 0
+    enum_values: list[Any] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventScenarioTemplate(ApiModel):
+    event_type_l2_id: int
+    dimensions: list[ScenarioTemplateDimension] = Field(default_factory=list)
+    raw_template_json: list[Any] = Field(default_factory=list)
+
+
+class EventDetailOut(ApiModel):
+    event: EventListRow
+    scenario_template: EventScenarioTemplate
+    source: dict[str, Any] = Field(default_factory=dict)
+
+
 class CreateScenariosOut(CallBackBody):
     scenario_group: ScenarioGroupPayload | None = None
     table: ScenarioTable | None = None

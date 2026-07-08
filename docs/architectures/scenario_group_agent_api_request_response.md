@@ -9,6 +9,9 @@
 
 즉시 응답은 `ScenarioGroupAcceptedOut` 형태이며, 최종 결과 payload는 각 API의 Callback Body를 기준으로 합니다.
 
+테스트 및 로컬 검증용으로 동일한 생성/검증 graph를 HTTP 요청 안에서 끝까지 실행하고 Callback Body를 응답으로 반환하는 sync endpoint도 제공합니다.
+sync endpoint는 callback을 전송하지 않으며 운영 트래픽용 API가 아닙니다.
+
 </aside>
 
 ```mermaid
@@ -75,6 +78,43 @@ sequenceDiagram
 | confirmation | `created` | `completed` | `created` |
 
 ## API
+
+### Sync 테스트 API
+
+아래 API는 기존 background API와 같은 request body를 사용하고, response body는 각 API의 Callback Body와 같습니다.
+
+- `POST /scenario-groups/sync`
+  - 기존 `POST /scenario-groups`의 prepare 및 생성 graph를 동기 실행
+  - Response: `CreateScenariosOut`
+- `POST /scenario-groups/{scenarioGroupId}/validation/sync`
+  - 기존 validation prepare 및 검증 graph를 동기 실행
+  - Response: `ValidateScenariosOut`
+- `POST /scenario-groups/{scenarioGroupId}/signposts/sync`
+  - 기존 signpost prepare 및 생성 graph를 동기 실행
+  - Response: `CreateSignpostsOut`
+
+graph 실행 중 오류가 발생하면 HTTP 200에 `{"result": "failure", "reason": "..."}` 형태의 callback body를 반환합니다.
+prepare 단계의 입력 오류, 권한 오류, 중복 생성 오류는 기존 exception handler 응답을 따릅니다.
+
+### 0) Event 목록/상세 조회
+
+Backoffice Event List와 Event Detail 화면을 위한 조회 API입니다.
+
+- `GET /events`
+  - Query: `keyword`, `status`(`new`/`updated`), `eventTypeL1Id`, `eventTypeL2Id`, `recommendedOnly`, `dateFrom`, `dateTo`, `sort`, `page`, `pageSize`
+  - Response: `rows`, `pagination`, `source`
+  - 각 row는 `miEventId`, title/summary/time/category, Event Type L1/L2, signal/recommended metadata, market impact summary, `relatedScenarioGroup`, `scenarioActionState`를 포함합니다.
+  - `scenarioActionState.type`은 `create`, `continue_generation`, `open_detail`, `disabled` 중 하나입니다.
+- `GET /events/{mi_event_id}`
+  - Response: `event`, `scenarioTemplate`, `source`
+  - `scenarioTemplate`은 event type L2 기준 `tmm_mi_scenario_dimension_template_m.template_json`을 raw JSON과 display용 dimension 목록으로 반환합니다.
+
+Backoffice Scenario Group List를 위한 목록 API도 제공합니다.
+
+- `GET /scenario-groups`
+  - Query: `includeDeleted`, `miEventId`, `keyword`, `status`, `stage`, `sort`
+  - Response: `rows`, `meta`
+  - 각 row는 scenario group ID/name, base `miEventId`, status/stage, scenario/signpost count, created/updated time, deleted state를 포함합니다.
 
 ### 1) 시나리오 그룹 및 시나리오 생성
 

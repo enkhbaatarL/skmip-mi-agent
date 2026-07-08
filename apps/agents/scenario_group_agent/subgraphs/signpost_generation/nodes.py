@@ -14,6 +14,7 @@ import random
 import re
 from typing import Any, Dict, List
 
+from langgraph.runtime import Runtime
 from pydantic import BaseModel
 
 from apps.agents.scenario_group_agent.prompts.signpost_generation import (
@@ -35,6 +36,7 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
 from apps.common.logging.logger_config import logger as app_logger
+from apps.common.tracing.context import TraceContext
 from apps.persistence.enums import (
     DirectionCode,
     SignpostStrength,
@@ -86,6 +88,7 @@ async def _invoke_structured(
     schema_cls: type[BaseModel],
     messages: List[Dict[str, str]],
     temperature: float = 0.0,
+    trace_context: TraceContext | None = None,
 ) -> BaseModel | None:
     """Async structured output LLM call via the project's invoke_llm_structured_output connector."""
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
@@ -95,6 +98,7 @@ async def _invoke_structured(
         messages=messages,
         temperature=temperature,
         max_retries=2,
+        trace_context=trace_context,
     )
     return result.result
 
@@ -107,12 +111,12 @@ async def _ainvoke_with_retry(
     validate_fn,
     hard_constraints: str = "",
     temperature: float = 0.0,
+    trace_context: TraceContext | None = None,
 ) -> BaseModel | None:
     """LLM 호출 with retry + validation + fallback.
 
     Returns parsed Pydantic model on success, None on all retries exhausted.
     """
-    last_exc: Exception | None = None
     last_validation_exc: Exception | None = None
     accumulated_hint = hard_constraints
 
@@ -130,14 +134,18 @@ async def _ainvoke_with_retry(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ]
-            result = await _invoke_structured(schema_cls, messages, temperature=temperature)
+            result = await _invoke_structured(
+                schema_cls,
+                messages,
+                temperature=temperature,
+                trace_context=trace_context,
+            )
             if result is None:
                 raise ValueError("LLM returned None result")
             validate_fn(result)
             return result
 
         except Exception as exc:  # noqa: BLE001
-            last_exc = exc
             is_api = _is_retryable_api_error(exc)
             is_schema = _is_retryable_schema_error(exc)
             is_validation = isinstance(exc, (ValueError, TypeError))
@@ -185,6 +193,7 @@ def _shorten(text: str, n: int) -> str:
 async def stage2_observability_filter(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
+    trace_context: TraceContext | None = None,
 ) -> List[str]:
     """Stage 2 진입점 — 시나리오 1건 → 통과 label_ko 리스트 반환."""
     scenario_id = scenario.get("scenario_id", "S_??")
@@ -218,6 +227,7 @@ async def stage2_observability_filter(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=hard,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -272,6 +282,7 @@ async def stage4_assign_direction_strength(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
     labels: List[str],
+    trace_context: TraceContext | None = None,
 ) -> List[Dict[str, str]]:
     """Stage 4 진입점 — labels → [{label_ko, strength, rationale_ko}, ...]."""
     if not labels:
@@ -342,6 +353,7 @@ async def stage4_assign_direction_strength(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=hard,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -421,6 +433,7 @@ async def stage5_mint_keywords(
     scenario: Dict[str, Any],
     base_event_summary: Dict[str, str],
     labels: List[str],
+    trace_context: TraceContext | None = None,
 ) -> List[List[str]]:
     """Stage 5 진입점 — labels → [keyword_hints, ...] (signpost 별 3~5개)."""
     if not labels:
@@ -462,6 +475,7 @@ async def stage5_mint_keywords(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=STAGE5_HARD_CONSTRAINTS,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -507,31 +521,53 @@ def _scenario_pk(scenario: dict[str, Any]) -> int:
 
 
 class ObservabilityFilterNode(BaseNode):
-    async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: SignpostGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if state.scenario is None:
             return {"error": "scenario is required"}
-        labels = await stage2_observability_filter(
-            state.scenario,
-            state.base_event_summary,
-        )
+        trace_context = runtime.context if runtime is not None else None
+        if trace_context is None:
+            labels = await stage2_observability_filter(state.scenario, state.base_event_summary)
+        else:
+            labels = await stage2_observability_filter(
+                state.scenario,
+                state.base_event_summary,
+                trace_context=trace_context,
+            )
         if not labels:
             app_logger.info("[{}] Stage 2 통과 0건 - signposts 비어있음", _scenario_pk(state.scenario))
         return {"labels": labels}
 
 
 class DirectionStrengthNode(BaseNode):
-    async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: SignpostGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error or not state.labels:
             return {}
         if state.scenario is None:
             return {"error": "scenario is required"}
-        assignments = await stage4_assign_direction_strength(
-            state.scenario,
-            state.base_event_summary,
-            state.labels,
-        )
+        trace_context = runtime.context if runtime is not None else None
+        if trace_context is None:
+            assignments = await stage4_assign_direction_strength(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+            )
+        else:
+            assignments = await stage4_assign_direction_strength(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+                trace_context=trace_context,
+            )
         strengths = [
             SignpostStrength.from_string_or_default(
                 assignment.get("strength"),
@@ -552,18 +588,30 @@ class DirectionStrengthNode(BaseNode):
 
 
 class KeywordHintsNode(BaseNode):
-    async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: SignpostGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error or not state.labels:
             return {}
         if state.scenario is None:
             return {"error": "scenario is required"}
-        return {
-            "stage5_keyword_hints": await stage5_mint_keywords(
+        trace_context = runtime.context if runtime is not None else None
+        if trace_context is None:
+            keyword_hints = await stage5_mint_keywords(
                 state.scenario,
                 state.base_event_summary,
                 state.labels,
-            ),
-        }
+            )
+        else:
+            keyword_hints = await stage5_mint_keywords(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+                trace_context=trace_context,
+            )
+        return {"stage5_keyword_hints": keyword_hints}
 
 
 class AssembleSignpostsNode(BaseNode):
