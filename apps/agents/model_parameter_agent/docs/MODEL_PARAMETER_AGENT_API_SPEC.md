@@ -255,6 +255,8 @@ POST /model-parameters/proposals/{modelParamProposalId}/confirmation
 ```
 
 사용자가 저장된 `proposalParameters`를 검토/수정한 뒤 최종 확정값을 전달한다. 이 API는 sync로 동작한다.
+`status=PROPOSED` 또는 `CONFIRMED`인 proposal에 대해 호출할 수 있으며, 이미 `CONFIRMED`인 proposal은
+기존 `confirmationParameters`를 새 요청값으로 덮어쓴다.
 
 ### 7.2 Request
 
@@ -319,6 +321,13 @@ Request body:
 | `data.modelParamProposalId` | integer | Y | 확정된 파라미터 제안 row ID |
 | `data.status` | string | Y | `CONFIRMED` |
 
+### 7.4 상태 처리
+
+- `PROPOSED` 상태에서 성공하면 `confirmationParameters`를 저장하고 `CONFIRMED`로 전이한다.
+- `CONFIRMED` 상태에서 다시 성공하면 같은 row의 `confirmationParameters`, 확정 시각, 수정자를 새 요청 기준으로 갱신하고 `CONFIRMED`를 유지한다.
+- `PROCESSING`, `FAILED` 상태는 confirm을 거부한다.
+- confirm 요청이 validation 오류, 허용되지 않은 상태, DB 오류 등으로 실패하면 transaction rollback 후 기존 proposal 상태와 저장 payload를 유지한다.
+
 ## 8. 처리 규칙
 
 ### 8.1 Proposal 생성 규칙
@@ -365,5 +374,5 @@ DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalPara
 | 제안 요청 응답 | 동기 실행 후 proposal 전체 반환 | 즉시 `modelParamProposalId`, `status=PROCESSING` 반환 |
 | proposal 저장 | 없음 | proposal row 생성 |
 | callback | 없음 | background 완료 후 proposal 생성 완료 신호 callback |
-| 확정 API | 없음 | `confirmationParameters`를 sync로 저장 |
+| 확정 API | 없음 | `confirmationParameters`를 sync로 저장하고, `CONFIRMED` 재호출 시 overwrite |
 | `modelParamProposalId` | 현재 응답에서는 `null` | proposal row 생성 후 integer |

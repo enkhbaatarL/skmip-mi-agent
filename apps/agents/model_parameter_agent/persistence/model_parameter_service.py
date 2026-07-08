@@ -12,6 +12,8 @@ from apps.persistence.model_parameter.repository import ModelParameterRepository
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 
+CONFIRMABLE_PROPOSAL_STATUSES = {"PROPOSED", "CONFIRMED"}
+
 
 def _json_payload(value: Any) -> Any:
     if isinstance(value, BaseModel):
@@ -279,11 +281,11 @@ class ModelParameterService:
                     ),
                 )
             status = str(proposal.get("status") or "")
-            if status != "PROPOSED":
+            if status not in CONFIRMABLE_PROPOSAL_STATUSES:
                 raise MIBaseError(
                     ErrorCode.INVALID_REQUEST,
                     detail=(
-                        "Model parameter proposal must be PROPOSED before confirmation: "
+                        "Model parameter proposal must be PROPOSED or CONFIRMED before confirmation: "
                         f"model_param_proposal_id={model_param_proposal_id}, status={status}"
                     ),
                 )

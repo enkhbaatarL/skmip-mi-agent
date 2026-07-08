@@ -1191,6 +1191,104 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             confirmation_parameters=[],
         )
 
+    def test_model_parameter_service_allows_reconfirming_confirmed_proposal(self) -> None:
+        fake_session = SimpleNamespace(
+            commit=Mock(),
+            rollback=Mock(),
+            close=Mock(),
+        )
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
+            )
+
+            repository_cls.return_value.fetch_model_param_proposal.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "CONFIRMED",
+            }
+
+            result = ModelParameterService().confirm_proposal_result(
+                model_param_proposal_id=901,
+                user_id=56,
+                confirmation_parameters=[{"parameterName": "PowerMix"}],
+            )
+
+        assert result == {
+            "model_param_proposal_id": 901,
+            "status": "CONFIRMED",
+        }
+        repository_cls.return_value.confirm_model_param_proposal.assert_called_once_with(
+            model_param_proposal_id=901,
+            user_id=56,
+            confirmation_parameters=[{"parameterName": "PowerMix"}],
+        )
+        fake_session.commit.assert_called_once()
+        fake_session.rollback.assert_not_called()
+
+    def test_model_parameter_service_rejects_processing_confirmation_without_status_change(
+        self,
+    ) -> None:
+        fake_session = SimpleNamespace(
+            commit=Mock(),
+            rollback=Mock(),
+            close=Mock(),
+        )
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+                ModelParameterService,
+            )
+
+            repository_cls.return_value.fetch_model_param_proposal.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROCESSING",
+            }
+
+            with self.assertRaises(MIBaseError) as error:
+                ModelParameterService().confirm_proposal_result(
+                    model_param_proposal_id=901,
+                    user_id=56,
+                    confirmation_parameters=[{"parameterName": "PowerMix"}],
+                )
+
+        assert "must be PROPOSED or CONFIRMED" in error.exception.error_message
+        repository_cls.return_value.confirm_model_param_proposal.assert_not_called()
+        fake_session.commit.assert_not_called()
+        fake_session.rollback.assert_called_once()
+
     def test_model_parameter_persistence_write_scope_is_proposal_only(self) -> None:
         source = Path(
             "apps/persistence/model_parameter/repository.py",

@@ -100,6 +100,7 @@ async def propose_parameters(
         "사용자가 검토/수정/추가/삭제한 confirmationParameters를 기본 구조와 "
         "slot 중복 기준으로 검증한 뒤, 해당 model parameter proposal row에 "
         "confirmation_parameters를 저장하고 status를 CONFIRMED로 전이합니다. "
+        "이미 CONFIRMED 상태인 row는 confirmation_parameters를 새 요청값으로 덮어씁니다. "
         "LLM 호출 없이 sync로 동작합니다."
     ),
 )

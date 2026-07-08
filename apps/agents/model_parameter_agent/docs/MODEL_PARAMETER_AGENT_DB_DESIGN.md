@@ -93,7 +93,7 @@ Audit 사용자 ID 저장 규칙:
 |---|---|
 | `PROCESSING` | 요청 접수 후 background 생성 중 |
 | `PROPOSED` | 유효한 proposal parameter가 1개 이상 생성됨 |
-| `CONFIRMED` | 사용자가 confirmation API로 확정 완료 |
+| `CONFIRMED` | 사용자가 confirmation API로 확정 완료. 재호출 시 최종 확정값을 overwrite |
 | `FAILED` | proposal 생성/저장 실패 또는 유효한 proposal parameter 없음 |
 
 전이:
@@ -102,9 +102,11 @@ Audit 사용자 ID 저장 규칙:
 PROCESSING -> PROPOSED
 PROCESSING -> FAILED
 PROPOSED -> CONFIRMED
+CONFIRMED -> CONFIRMED  # confirmation_parameters overwrite
 ```
 
-`FAILED`, `CONFIRMED`는 terminal 상태로 둔다. 재실행 또는 재확정 정책이 필요하면 별도 API/이력 설계를 추가한다.
+`FAILED`는 terminal 상태로 둔다. `CONFIRMED`는 재확정 요청을 허용하며, 같은 row의
+`confirmation_parameters`, `confirmed_dtm`, `mod_usr_logn_id`를 새 요청 기준으로 갱신한다.
 
 ### 4.2 Callback status
 
@@ -506,9 +508,9 @@ DB schema가 확정되면 `skmip-mi-agent`에서는 다음을 반영한다.
   - callback 전송 및 `callback_status` 갱신
 - `POST /model-parameters/proposals/{modelParamProposalId}/confirmation`
   - proposal row 조회
-  - `status=PROPOSED`인지 검증
+  - `status=PROPOSED` 또는 `CONFIRMED`인지 검증
   - `confirmation_parameters` 저장
-  - `status=CONFIRMED` 전이
+  - `status=CONFIRMED` 전이 또는 유지
 - mapping 기준정보 DB 전환
   - `Parameter Excel Mapping` loader를 `tmm_mi_model_param_m` 조회로 대체
   - `Dimension Parameter Mapping` loader를 `tmm_mi_model_param_dimension_map` 조회로 대체
@@ -519,7 +521,7 @@ DB schema가 확정되면 `skmip-mi-agent`에서는 다음을 반영한다.
 | 항목 | 권장안 | 확정 필요 내용 |
 |---|---|---|
 | 동일 scenario 재요청 | unique 없음, application layer에서 중복 PROCESSING 방지 | 새 proposal 생성인지 기존 row 재사용인지 |
-| confirmation 재호출 | 기본 거부 | 재확정/수정 이력을 허용할지 |
+| confirmation 재호출 | 허용 | 같은 row의 최종 `confirmation_parameters` overwrite |
 | callback retry | `callback_status=FAILED` row를 worker가 재시도 | 재시도 횟수, backoff, 실패 사유는 로그/worker 정책으로 관리 |
 | 내부 debug payload | 기본 제외 | rich state, prompt trace 보존 필요 여부 |
 | event type 조회 | 기본 join 조회 | `event_type_l2_id` denormalized 컬럼 추가 여부 |
