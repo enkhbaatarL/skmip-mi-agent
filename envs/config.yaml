@@ -63,6 +63,7 @@ callback_base_url: https://mi.mingovvv.info
 callback_create_scenarios_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/generation/callback
 callback_validate_scenarios_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/validation/callback
 callback_create_signposts_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/signposts/callback
+callback_price_interpretations_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/price-interpretations/callback
 callback_model_parameter_proposals_path: /api/v1/mi/next-gen/scenarios/{scenario_id}/model-param-proposals/callback
 skip_callback: false
 

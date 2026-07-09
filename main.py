@@ -8,6 +8,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from apps.agents.interpret_agent.api import router as interpret_router
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.agents.scenario_group_agent.constants import AGENT_NAME
@@ -77,6 +78,11 @@ app.include_router(
     scenario_group_router,
     prefix="",
     tags=["scenario-group"],
+)
+app.include_router(
+    interpret_router,
+    prefix="",
+    tags=["interpret-agent"],
 )
 # app.include_router(
 #     model_parameter_router,

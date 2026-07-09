@@ -1,0 +1,421 @@
+{
+  "meta": {
+    "scenario_group_id": "sg_미국의_이란_평화안_거부_2026_05_11",
+    "base_event_id": "ev_de01ceb81a0e_update12",
+    "interpretation_date": "2026-05-19",
+    "indices": [
+      "JKM",
+      "TTF",
+      "HH"
+    ],
+    "unit": "$/MMBtu"
+  },
+  "scenarios": [
+    {
+      "scenario_id": "S_01",
+      "title": "1~3개월 제한 충돌, 프리미엄은 낮지만 현물 방어",
+      "dimension_values": {
+        "conflict_duration": "1_3M",
+        "escalation_level": "proxy_limited",
+        "strait_shipping_impact": "intermittent",
+        "risk_premium": "low"
+      },
+      "pattern": {
+        "A": {
+          "peaks": {
+            "JKM": {
+              "index": "JKM",
+              "month": "2026-07",
+              "value": 18.1,
+              "type": "max"
+            },
+            "TTF": {
+              "index": "TTF",
+              "month": "2026-07",
+              "value": 16.7,
+              "type": "max"
+            },
+            "HH": {
+              "index": "HH",
+              "month": "2026-12",
+              "value": 4.4,
+              "type": "max"
+            }
+          }
+        },
+        "B": {
+          "stabilization_start": "2026-10",
+          "stabilized_levels": {
+            "JKM": 16.7,
+            "TTF": 15.7,
+            "HH": 4.2
+          }
+        },
+        "C": {
+          "period_start": "2026-05",
+          "period_end": "2027-12",
+          "averages": {
+            "JKM": 15.9,
+            "TTF": 14.8,
+            "HH": 4.0
+          }
+        }
+      },
+      "causal_narrative": "1~3개월의 짧은 제한 충돌과 대리전 수준의 낮은 확전은 전면적인 공급 중단보다 간헐적 통항 차질을 가격에 반영시킵니다. 리스크 프리미엄이 낮아 시장은 물량 부족 공포보다 운송·보험 비용 상승을 중심으로 반응하며, JKM과 TTF는 초기에 방어적 현물 프리미엄을 유지한 뒤 2026-10부터 안정화됩니다. HH는 걸프 LNG 운송 리스크에 대한 직접 노출이 작아 JKM·TTF보다 낮은 수준에서 완만하게 움직입니다.",
+      "likelihood_prior": "medium"
+    },
+    {
+      "scenario_id": "S_02",
+      "title": "6~12개월 전면 봉쇄, 에너지 안보 프리미엄 급등",
+      "dimension_values": {
+        "conflict_duration": "6_12M",
+        "escalation_level": "high_intensity",
+        "strait_shipping_impact": "full_blockade",
+        "risk_premium": "high"
+      },
+      "pattern": {
+        "A": {
+          "peaks": {
+            "JKM": {
+              "index": "JKM",
+              "month": "2026-12",
+              "value": 29.0,
+              "type": "max"
+            },
+            "TTF": {
+              "index": "TTF",
+              "month": "2026-12",
+              "value": 27.5,
+              "type": "max"
+            },
+            "HH": {
+              "index": "HH",
+              "month": "2026-12",
+              "value": 5.9,
+              "type": "max"
+            }
+          }
+        },
+        "B": {
+          "stabilization_start": "2027-09",
+          "stabilized_levels": {
+            "JKM": 15.7,
+            "TTF": 14.7,
+            "HH": 4.0
+          }
+        },
+        "C": {
+          "period_start": "2026-05",
+          "period_end": "2027-12",
+          "averages": {
+            "JKM": 21.3,
+            "TTF": 20.0,
+            "HH": 4.7
+          }
+        }
+      },
+      "causal_narrative": "6~12개월의 장기 고강도 충돌과 해협 전면 봉쇄는 걸프 LNG·원유 흐름에 직접적인 물리 차질을 만들며, 시장은 이를 높은 공급 리스크 프리미엄으로 가격에 반영합니다. 그 결과 JKM과 TTF는 2026년 말까지 급등해 각각 $29.0, $27.5의 고점을 형성하고, HH도 글로벌 LNG 수급 긴장과 수출 연계 기대를 통해 $5.9까지 오릅니다. 이후 봉쇄 충격이 점차 흡수되면서 2027년에는 하락 압력이 나타나고, 2027-09부터 JKM $15.7 / TTF $14.7 / HH $4.0 부근에서 안정화됩니다.",
+      "likelihood_prior": "very_low"
+    },
+    {
+      "scenario_id": "S_03",
+      "title": "3~6개월 역내 재래식 충돌, 부분 봉쇄가 프리미엄 지지",
+      "dimension_values": {
+        "conflict_duration": "3_6M",
+        "escalation_level": "regional_conventional",
+        "strait_shipping_impact": "partial_blockade",
+        "risk_premium": "mid"
+      },
+      "pattern": {
+        "A": {
+          "peaks": {
+            "JKM": {
+              "index": "JKM",
+              "month": "2026-09",
+              "value": 21.5,
+              "type": "max"
+            },
+            "TTF": {
+              "index": "TTF",
+              "month": "2026-09",
+              "value": 19.8,
+              "type": "max"
+            },
+            "HH": {
+              "index": "HH",
+              "month": "2026-09",
+              "value": 4.7,
+              "type": "max"
+            }
+          }
+        },
+        "B": {
+          "stabilization_start": "2027-07",
+          "stabilized_levels": {
+            "JKM": 14.6,
+            "TTF": 13.8,
+            "HH": 3.9
+          }
+        },
+        "C": {
+          "period_start": "2026-05",
+          "period_end": "2027-12",
+          "averages": {
+            "JKM": 17.2,
+            "TTF": 16.1,
+            "HH": 4.2
+          }
+        }
+      },
+      "causal_narrative": "3~6개월 지속되는 역내 재래식 충돌과 해협 부분 봉쇄는 걸프 LNG 선적 리스크를 높여 중간 수준의 공급 프리미엄을 가격에 반영합니다. 물리적 차질 가능성은 JKM과 TTF를 2026년 중반 이후 끌어올리지만, 대체 조달 여지가 남아 있어 상승폭은 고점 형성 이후 점차 안정화됩니다. HH는 직접적인 걸프 수송 차질보다 글로벌 LNG 연계와 수출 수요 기대를 통해 동반 상승하되, JKM·TTF보다 낮은 가격대에 머뭅니다.",
+      "likelihood_prior": "medium"
+    },
+    {
+      "scenario_id": "S_04",
+      "title": "단기 역내전과 전면 봉쇄, 극단 프리미엄의 급등장",
+      "dimension_values": {
+        "conflict_duration": "1_3M",
+        "escalation_level": "regional_conventional",
+        "strait_shipping_impact": "full_blockade",
+        "risk_premium": "extreme"
+      },
+      "pattern": {
+        "A": {
+          "peaks": {
+            "JKM": {
+              "index": "JKM",
+              "month": "2026-08",
+              "value": 29.5,
+              "type": "max"
+            },
+            "TTF": {
+              "index": "TTF",
+              "month": "2026-08",
+              "value": 27.3,
+              "type": "max"
+            },
+            "HH": {
+              "index": "HH",
+              "month": "2026-08",
+              "value": 5.7,
+              "type": "max"
+            }
+          }
+        },
+        "B": {
+          "stabilization_start": "2027-05",
+          "stabilized_levels": {
+            "JKM": 14.1,
+            "TTF": 13.4,
+            "HH": 3.7
+          }
+        },
+        "C": {
+          "period_start": "2026-05",
+          "period_end": "2027-12",
+          "averages": {
+            "JKM": 17.6,
+            "TTF": 16.5,
+            "HH": 4.1
+          }
+        }
+      },
+      "causal_narrative": "분쟁 기간은 1~3개월로 짧지만, 역내 재래식 충돌과 해협 전면 봉쇄가 결합되면서 걸프 LNG 선적·항로 리스크가 즉각 가격에 반영됩니다. 여기에 극단적 위험 프리미엄이 최악의 확산 가능성까지 선반영하면서 2026년 여름 JKM과 TTF가 급등하고, HH도 글로벌 LNG 연동 심리로 함께 오릅니다. 다만 JKM·TTF는 해상 LNG 조달 차질에 직접 노출되어 HH보다 상승 폭과 평균 가격이 더 높게 나타나며, 단기 충격이 해소되는 과정에서 2027-05부터 안정 구간에 들어섭니다.",
+      "likelihood_prior": "low"
+    },
+    {
+      "scenario_id": "S_05",
+      "title": "1~3개월 고강도 충돌과 장기 폐쇄, 물류 리스크 우위",
+      "dimension_values": {
+        "conflict_duration": "1_3M",
+        "escalation_level": "high_intensity",
+        "strait_shipping_impact": "prolonged_closure",
+        "risk_premium": "mid"
+      },
+      "pattern": {
+        "A": {
+          "peaks": {
+            "JKM": {
+              "index": "JKM",
+              "month": "2026-08",
+              "value": 23.0,
+              "type": "max"
+            },
+            "TTF": {
+              "index": "TTF",
+              "month": "2026-08",
+              "value": 21.3,
+              "type": "max"
+            },
+            "HH": {
+              "index": "HH",
+              "month": "2026-08",
+              "value": 4.7,
+              "type": "max"
+            }
+          }
+        },
+        "B": {
+          "stabilization_start": "2027-08",
+          "stabilized_levels": {
+            "JKM": 14.5,
+            "TTF": 13.6,
+            "HH": 3.8
+          }
+        },
+        "C": {
+          "period_start": "2026-05",
+          "period_end": "2027-12",
+          "averages": {
+            "JKM": 17.7,
+            "TTF": 16.5,
+            "HH": 4.1
+          }
+        }
+      },
+      "causal_narrative": "1~3개월의 고강도 충돌과 장기적인 해협 폐쇄 가정은 단기 LNG 물류 차질을 크게 확대해 2026년 여름 JKM과 TTF를 빠르게 끌어올리는 핵심 동인으로 작용합니다. 다만 리스크 프리미엄이 중간 수준이어서 시장은 폐쇄 리스크를 강하게 반영하되, 장기 공급 구조의 영구적 붕괴까지는 가격에 완전히 반영하지 않습니다. JKM과 TTF는 걸프 물류 리스크에 민감해 큰 폭의 고점을 형성하는 반면, HH는 상대적으로 낮은 가격대에서 제한적으로 상승합니다.",
+      "likelihood_prior": "low"
+    },
+    {
+      "scenario_id": "S_06",
+      "title": "3~6개월 제한전 속 장기 폐쇄, LNG 프리미엄 고착",
+      "dimension_values": {
+        "conflict_duration": "3_6M",
+        "escalation_level": "proxy_limited",
+        "strait_shipping_impact": "prolonged_closure",
+        "risk_premium": "high"
+      },
+      "pattern": {
+        "A": {
+          "peaks": {
+            "JKM": {
+              "index": "JKM",
+              "month": "2026-09",
+              "value": 25.5,
+              "type": "max"
+            },
+            "TTF": {
+              "index": "TTF",
+              "month": "2026-09",
+              "value": 21.6,
+              "type": "max"
+            },
+            "HH": {
+              "index": "HH",
+              "month": "2026-09",
+              "value": 4.8,
+              "type": "max"
+            }
+          }
+        },
+        "B": {
+          "stabilization_start": "2027-08",
+          "stabilized_levels": {
+            "JKM": 15.3,
+            "TTF": 14.0,
+            "HH": 3.9
+          }
+        },
+        "C": {
+          "period_start": "2026-05",
+          "period_end": "2027-12",
+          "averages": {
+            "JKM": 19.4,
+            "TTF": 17.0,
+            "HH": 4.2
+          }
+        }
+      },
+      "causal_narrative": "3~6개월의 제한전이 곧바로 대규모 전쟁으로 번지지는 않더라도, 장기적인 해협 폐쇄가 LNG 선적·항로·도착 일정의 불확실성을 누적시키며 즉각적인 가격 프리미엄을 만듭니다. 대리전 중심의 제한적 충돌이지만 폐쇄 지속성과 높은 리스크 프리미엄이 함께 반영되면서 2026년 여름~초가을 JKM과 TTF가 강하게 상승하고, HH도 글로벌 LNG 연계 심리로 동반 상승합니다. 특히 JKM은 아시아 현물 조달 불안이 크게 반영되어 TTF보다 높은 평균과 고점을 보이며, 프리미엄이 완전히 해소되지 않은 채 2027년 하반기에야 안정화됩니다.",
+      "likelihood_prior": "low"
+    }
+  ],
+  "synthesis": {
+    "ranking": {
+      "most_bullish": "S_02",
+      "most_bearish": "S_01",
+      "by_peak": [
+        {
+          "scenario_id": "S_04",
+          "index": "JKM",
+          "JKM_peak": 29.5,
+          "value": 29.5,
+          "month": "2026-08"
+        },
+        {
+          "scenario_id": "S_02",
+          "index": "JKM",
+          "JKM_peak": 29.0,
+          "value": 29.0,
+          "month": "2026-12"
+        },
+        {
+          "scenario_id": "S_06",
+          "index": "JKM",
+          "JKM_peak": 25.5,
+          "value": 25.5,
+          "month": "2026-09"
+        },
+        {
+          "scenario_id": "S_05",
+          "index": "JKM",
+          "JKM_peak": 23.0,
+          "value": 23.0,
+          "month": "2026-08"
+        },
+        {
+          "scenario_id": "S_03",
+          "index": "JKM",
+          "JKM_peak": 21.5,
+          "value": 21.5,
+          "month": "2026-09"
+        },
+        {
+          "scenario_id": "S_01",
+          "index": "JKM",
+          "JKM_peak": 18.1,
+          "value": 18.1,
+          "month": "2026-07"
+        }
+      ],
+      "by_avg": [
+        {
+          "scenario_id": "S_02",
+          "JKM_avg": 21.3
+        },
+        {
+          "scenario_id": "S_06",
+          "JKM_avg": 19.4
+        },
+        {
+          "scenario_id": "S_05",
+          "JKM_avg": 17.7
+        },
+        {
+          "scenario_id": "S_04",
+          "JKM_avg": 17.6
+        },
+        {
+          "scenario_id": "S_03",
+          "JKM_avg": 17.2
+        },
+        {
+          "scenario_id": "S_01",
+          "JKM_avg": 15.9
+        }
+      ]
+    },
+    "commonalities": [
+      "모든 시나리오에서 지정학적 충돌과 해상 물류 차질이 JKM에 리스크 프리미엄을 더하며, 최소한 2026년 중반~하반기에 가격 상승 압력을 만듭니다.",
+      "고점 시점은 대부분 2026년 7~12월에 집중되어, 충격이 가격에 처음 반영되는 시기는 2026년 하반기로 해석됩니다.",
+      "안정화 시점은 가장 완만한 경우에도 2026년 10월 이후이며, 다수 시나리오에서는 2027년 중반 이후로 밀려 LNG 시장의 정상화가 지연될 가능성을 시사합니다."
+    ],
+    "differences": [
+      "가격 강도의 차이는 해협 영향 수준과 리스크 프리미엄 강도에서 크게 갈립니다. 전면 봉쇄나 장기 폐쇄가 포함된 시나리오는 제한적·간헐적 차질 시나리오보다 고점과 평균 가격이 뚜렷하게 높습니다.",
+      "단기 충돌이라도 전면 봉쇄와 극단 프리미엄이 결합되면 순간 고점은 매우 높아질 수 있지만, 평균 가격은 장기 고착형 시나리오보다 낮게 나타날 수 있습니다.",
+      "가장 약한 상승 시나리오는 제한 충돌과 낮은 프리미엄이 결합된 경우이고, 가장 강한 상승 시나리오는 장기간 전면 봉쇄와 고강도 충돌이 결합된 경우입니다.",
+      "발생 가능성 측면에서는 중간 확률의 제한적·부분 봉쇄 시나리오와, 낮거나 매우 낮은 확률의 전면 봉쇄·장기 폐쇄 시나리오로 나뉘며, 후자는 가격 충격은 크지만 발생 확률은 낮게 평가됩니다."
+    ],
+    "summary_message": "전체적으로 LNG 시장은 충돌의 지속 기간보다 해상 병목, 특히 해협 봉쇄·장기 폐쇄 여부에 더 민감하게 반응하는 구조를 보입니다. 제한적 충돌에서는 JKM 상승이 방어적 수준에 머물 수 있지만, 전면 봉쇄나 장기 폐쇄가 결합되면 단기 급등이나 고평균 가격의 장기화가 나타납니다. 따라서 2026년 하반기는 리스크 프리미엄이 집중되는 핵심 구간이며, 2027년 중반 이후까지 안정화가 지연되는 시나리오가 많은 만큼 조달 포트폴리오·재고·대체 공급선 확보가 그룹 전반의 핵심 대응 과제로 판단됩니다."
+  }
+}
