@@ -84,6 +84,7 @@ class LLMStructuredResult[T: BaseModel](BaseModel):
 
     result: T
     usage: LLMUsageModel | None = None
+    model: str | None = None
 
 
 def _create_openai_client(max_retries: int) -> tuple[AsyncOpenAI, httpx.AsyncClient]:
@@ -595,7 +596,7 @@ async def invoke_llm_structured_output[T: BaseModel](
             parsed_result = output_schema.model_validate_json(content)
             usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
             accumulate_usage(usage)
-            result = LLMStructuredResult[T](result=parsed_result, usage=usage)
+            result = LLMStructuredResult[T](result=parsed_result, usage=usage, model=model)
             await _set_llm_trace_outputs(
                 trace_run,
                 {

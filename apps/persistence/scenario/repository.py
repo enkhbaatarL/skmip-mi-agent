@@ -19,6 +19,17 @@ class ScenarioRepository(BaseSyncSQLRepository):
         )
         return self.session.execute(stmt).scalars().first()
 
+    def fetch_model_by_id(self, scenario_id: int) -> MiScenarioModel | None:
+        stmt = select(MiScenarioModel).where(
+            MiScenarioModel.scenario_id == scenario_id,
+            MiScenarioModel.del_yn == "N",
+        )
+        return self.session.execute(stmt).scalars().one_or_none()
+
+    def fetch_dimension_template(self, event_type_l2_id: int) -> list[dict[str, Any]]:
+        raw = self._load_template_json_from_db(event_type_l2_id)
+        return raw if isinstance(raw, list) else []
+
     def fetch_models_by_group_id(
         self, scenario_group_id: int, *, include_deleted: bool = False
     ) -> list[MiScenarioModel]:

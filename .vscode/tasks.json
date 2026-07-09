@@ -11,8 +11,9 @@
             "options": {
                 "cwd": "${workspaceFolder}",
                 "env": {
-                    "POETRY_VIRTUALENVS_CREATE": "false",
-                    "POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON": "true"
+                    "POETRY_ACTIVE": "0",
+                    "VIRTUAL_ENV": "",
+                    "VIRTUAL_ENV_PROMPT": ""
                 }
             },
             "problemMatcher": [],

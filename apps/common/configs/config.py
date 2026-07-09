@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     # LLM
     llm_concurrency: int
     llm_timeout_sec: float = Field(default=90.0)
+    llm_max_retries: int = Field(default=1, ge=0)
+
+    # Model parameter proposal
+    model_parameter_max_parameter_slots: int = Field(default=100, ge=1)
+    model_parameter_max_value_prompt_basecase_records: int = Field(default=100, ge=1)
+    model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
 
     http_max_concurrency: int
 
@@ -162,6 +168,7 @@ class Settings(BaseSettings):
     callback_create_scenarios_path: str = Field(default="")
     callback_validate_scenarios_path: str = Field(default="")
     callback_create_signposts_path: str = Field(default="")
+    callback_model_parameter_proposals_path: str = Field(default="")
     skip_callback: bool = Field(default=False)
 
     mcp_database_base: str = "mimcp://database"

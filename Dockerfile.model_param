@@ -1,0 +1,61 @@
+ARG PLATFORM_ARCH="linux/amd64"
+ARG BASE_IMAGE="python:3.12-slim-bookworm"
+
+FROM --platform=${PLATFORM_ARCH} ${BASE_IMAGE}
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_HTTP_TIMEOUT=60
+
+ARG POETRY_VERSION="2.3.2"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    default-libmysqlclient-dev \
+    pkg-config \
+    vim \
+    curl \
+    yq \
+    jq \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir "poetry==${POETRY_VERSION}" && \
+    poetry config virtualenvs.create false
+
+WORKDIR /workdir
+
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --only main --no-interaction --no-ansi
+
+COPY apps ./apps
+COPY model_param.py ./main.py
+COPY envs/config.yaml ./config.yaml
+
+RUN addgroup --gid 1000 usergroup && \
+    adduser user \
+    --disabled-password \
+    --uid 1000 \
+    --gecos "" \
+    --ingroup usergroup && \
+    adduser user root && \
+    mkdir -p /workdir/apps && \
+    chown -R user:usergroup /workdir
+
+ENV APP_CONFIG="/workdir/config.yaml" \
+    APP_HOST="0.0.0.0" \
+    APP_PORT="8000" \
+    WORKER_CLASS="uvicorn.workers.UvicornWorker" \
+    GUNICORN_WORKERS="3" \
+    GUNICORN_LOG_LEVEL="info" \
+    GRACEFUL_TIMEOUT="600" \
+    TIMEOUT="600" \
+    KEEP_ALIVE="600"
+
+
+EXPOSE 8000
+
+USER user
+
+CMD ["sh", "-c", "exec gunicorn main:app --worker-class \"${WORKER_CLASS}\" --workers \"${GUNICORN_WORKERS}\" --bind \"${APP_HOST}:${APP_PORT}\" --log-level \"${GUNICORN_LOG_LEVEL}\" --graceful-timeout \"${GRACEFUL_TIMEOUT}\" --timeout \"${TIMEOUT}\" --keep-alive \"${KEEP_ALIVE}\" --access-logfile - --error-logfile -"]

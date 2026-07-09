@@ -107,6 +107,28 @@ class EventRepository(BaseSyncSQLRepository):
             return None
         return self._event_to_backoffice_dict(event)
 
+    def fetch_event_type_by_l2_id(self, event_type_l2_id: int) -> dict[str, Any] | None:
+        stmt = (
+            select(MiEventTypeL2Model)
+            .options(joinedload(MiEventTypeL2Model.level_1))
+            .where(
+                MiEventTypeL2Model.event_type_l2_id == event_type_l2_id,
+                MiEventTypeL2Model.del_yn == "N",
+            )
+        )
+        l2 = self.session.execute(stmt).scalars().one_or_none()
+        if l2 is None:
+            return None
+        l1 = l2.level_1
+        return {
+            "event_type_l1_id": int(l2.event_type_l1_id),
+            "event_type_l2_id": int(l2.event_type_l2_id),
+            "level_1_code": l1.level_1_code if l1 else "",
+            "level_1_label": l1.level_1_label if l1 else "",
+            "level_2_code": l2.level_2_code,
+            "level_2_label": l2.level_2_label,
+        }
+
     def _apply_filters(
         self,
         stmt: Select[tuple[Any]] | Select[tuple[MiEventModel]],
@@ -166,6 +188,16 @@ class EventRepository(BaseSyncSQLRepository):
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
             "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
+            "latest_record_first_created": (
+                event.latest_record_first_created.isoformat()
+                if event.latest_record_first_created
+                else ""
+            ),
+            "oldest_record_first_created": (
+                event.oldest_record_first_created.isoformat()
+                if event.oldest_record_first_created
+                else ""
+            ),
             "event_type": {
                 "level_1_code": l1.level_1_code if l1 else "",
                 "level_2_code": l2.level_2_code if l2 else "",

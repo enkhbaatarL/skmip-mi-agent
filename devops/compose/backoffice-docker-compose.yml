@@ -28,7 +28,7 @@ services:
       MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY:-skmip-mi-agent-local-mlflow-csrf-secret}
       MLFLOW_ALLOWED_HOSTS: localhost:*,127.0.0.1:*,40.82.137.178:5001
       MLFLOW_CORS_ALLOWED_ORIGINS: http://localhost:5001,http://127.0.0.1:5001,http://40.82.137.178:5001
-      
+
     command:
       - /bin/bash
       - -c

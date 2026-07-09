@@ -72,6 +72,7 @@ sqlalchemy = ">=2.0.43"
 sqlglot = ">=25.0.0,<26.0.0"
 tabulate = ">=0.9.0"
 tavily-python = ">=0.7.17"
+openpyxl = "^3.1.5"
 langchain = ">=1.2.0,<2.0.0"
 
 [tool.black]
@@ -112,3 +113,8 @@ multi_line_output = 3
 
 #[tool.uv]
 #index-url="https://skpc-nexus.skpc.cloudzcp.net/repository/pypi-sre-proxy/simple"
+
+[dependency-groups]
+dev = [
+    "debugpy (>=1.8.21,<2.0.0)"
+]

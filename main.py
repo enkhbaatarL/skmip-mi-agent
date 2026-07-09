@@ -8,6 +8,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
@@ -77,5 +78,10 @@ app.include_router(
     prefix="",
     tags=["scenario-group"],
 )
+# app.include_router(
+#     model_parameter_router,
+#     prefix="",
+#     tags=["model-parameter"],
+# )
 
 app = register_exception_handlers(app)
