@@ -830,6 +830,7 @@ def _build_slot_proposal_prompt_packet(
         "slot_selection_limits": {
             "maxParameterSlots": cfg.model_parameter_max_parameter_slots,
             "priority": [
+                "값 변경 여부와 무관하게 scenario/event/dimension/basecase로 합리적으로 특정 가능한 slot",
                 "parameter_slot_tasks[].basecase_slot_options에 존재하고 scenario/event 의미와 일치하는 slot",
                 "basecase에는 없지만 scenario/event에 명확한 실제 모델 input slot",
             ],

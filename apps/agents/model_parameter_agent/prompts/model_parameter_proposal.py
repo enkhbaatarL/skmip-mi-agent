@@ -103,14 +103,20 @@ SLOT_PROPOSAL_SYSTEM = """\
 - slot_selection_limits.maxParameterSlots는 전체 selected slot 상한입니다.
   basecase_slot_options는 충분한 후보 pool이며, pool 전체를 선택하라는 의미가 아닙니다.
   그러나 상한 안에서는 명확한 slot을 대표값 하나로 축소하지 말고 최대한 포함하십시오.
-  각 slot은 다음 중 하나를 만족할 때만 selected=true로 반환하십시오.
+  Step2는 "value를 얼마나 바꿀 수 있는지"를 판정하는 단계가 아닙니다.
+  영향 강도가 약하거나 기간이 짧거나 최종 value가 basecase와 거의 같을 가능성이 있어도
+  scenario/event/dimension 정보로 모델 input 좌표를 합리적으로 특정할 수 있으면 selected=true로 반환하십시오.
+  실제 변경 방향, 변경 폭, basecase 유지 여부는 Step3 value 산정에서 결정합니다.
+  각 slot은 다음 중 하나를 만족하면 selected=true로 반환하십시오.
   (1) scenario/event/dimension이 그 좌표를 명시적으로 지목했습니다.
-  (2) 그 좌표의 모델 input 값이 scenario/event/dimension 때문에 실제로 변경되어야 합니다.
-  두 조건 중 어느 것도 확인되지 않으면 basecase에 있더라도 포함하지 마십시오.
+  (2) scenario/event/dimension이 국가/지역/시설/기간/계약/route/에너지원 같은 slot 축을
+      합리적으로 추론할 수 있는 정보를 제공합니다.
+  (3) basecase_slot_options 또는 semantic_axes의 예시 값 중 scenario/event의 국가/지역/시장/공급 경로와
+      의미상 대응되는 후보가 있습니다.
   조건을 만족하는 좌표는 slot 수를 줄이기 위해 누락하지 말고 모두 포함하십시오.
   basecase에 없더라도 scenario/event에 명확한 실제 모델 input 값은 추가할 수 있습니다.
   이 상한은 목표치가 아니라 토큰/타임아웃 방지용 안전장치입니다.
-  상한에 가까워지면 명시적으로 지목된 좌표와 모델 input 영향이 큰 좌표를 우선 선택하십시오.
+  상한에 가까워지면 명시적으로 지목된 좌표, 기간 안에 들어오는 좌표, basecase에 존재하는 좌표를 우선 선택하십시오.
 
 입력 필드 역할:
 - Step2 slot 선택은 기존과 같이 scenario_brief, task별 selection_dimensions/supporting_dimensions,
@@ -136,6 +142,10 @@ SLOT_PROPOSAL_SYSTEM = """\
 - parameter_hint와 mapping_comment는 후보 밖 parameter나 모호한 slot을 만들기 위한 근거가 아닙니다.
   실제 slot_axes는 basecase_slot_options, allowed_slot_axes_field_names,
   명확한 scenario/event/dimension 정보 안에서만 정하십시오.
+- direct 또는 routing 후보로 들어온 parameter는 Step2에서 이미 검토 대상입니다.
+  시나리오가 약한 충격, 일시적 충격, 발표 단계, 대체 공급 충분, basecase 유지 가능성처럼 보이더라도
+  그 이유만으로 selected=false를 반환하지 마십시오.
+  그런 판단은 Step3에서 basecase와 같거나 매우 작은 변경 value를 산정하는 방식으로 처리하십시오.
 - mapping_method 영향 범위:
   direct/routing selection_dimensions와 mapping_comment는 해당 parameter의 slot 산정에 직접 사용할 수 있습니다.
   indirect supporting_dimensions는 usage_policy를 따르십시오.
@@ -160,17 +170,22 @@ SLOT_PROPOSAL_SYSTEM = """\
   한 dimension이 규모/방향을 주고 다른 dimension이 대상/기간을 주는 경우 두 정보를 결합할 수 있습니다.
 - slot_axes에는 지역/국가/시설/연/월/계약/route 등 해당 sheet에 필요한 축을 넣습니다.
 - 값을 산정하지 마십시오. 값 산정은 Step3에서 수행합니다.
+- Step2에서는 value 변경 필요성, value 변경 폭, value 산정 가능성을 이유로 slot 선택을 제한하지 마십시오.
+  정보가 부족해도 parameter의 허용 slot 축 중 국가/지역/시설/기간/에너지원 등 일부 축을
+  scenario/event/basecase/semantic_axes로 합리적으로 채울 수 있으면 selected=true slot을 만드십시오.
 - slot_axes의 축 이름과 축 값은 basecase_slot_options의 axis_names, axis_values, slot_hierarchy를 우선 사용합니다.
   axis_values의 시간축 값은 선택한 slot_hierarchy path와 조합할 수 있지만, 시간축 값끼리도
-  scenario/event/dimension이 명시적으로 지목했거나 모델 input 변경에 필요한 조합만 만드십시오.
+  scenario/event/dimension의 기간 또는 현재 이후 전개 범위 안에서 합리적으로 대응되는 조합을 만드십시오.
 - slot_hierarchy에 있는 비시간축 값은 같은 path 안의 값만 함께 사용할 수 있습니다.
   서로 다른 path의 Country/Plant/Train/Region/Contract 같은 값을 섞어 Cartesian product를 만들지 마십시오.
-  상위 축 값만 명확하고 하위 축 값이 명확하지 않으면 임의로 하위 축 값을 만들지 말고,
-  해당 parameter의 slot을 selected=false로 두거나 명확한 축까지만 사용 가능한지 설명하십시오.
-  단 mapping_comment/selection_dimensions/supporting_dimensions가 상대적 공급 후보를 요구하는 경우에는
-  하위 Plant/Train이 원문에 직접 없더라도 slot_hierarchy의 같은 leaf path에 포함된 하위 축과
-  Life Cycle Category/Nameplate Capacity 같은 path 속성을 그대로 사용해 완성된 slot을 만들 수 있습니다.
-  이때 leaf path는 scenario/event/dimension 맥락상 왜 선택됐는지 근거를 설명할 수 있어야 합니다.
+  상위 축 값만 명확하고 하위 축 값이 직접 명시되지 않아도, slot_hierarchy의 같은 leaf path로
+  완성 가능한 후보가 있으면 selected=false로 빠지기보다 보수적인 leaf path를 선택하십시오.
+  특히 mapping_comment/selection_dimensions/supporting_dimensions가 상대적 공급 후보, 대체 공급,
+  영향을 받는 시장의 대표 공급/수요 좌표, 전원믹스의 Gas 우선 검토처럼 slot 보완 방향을 주면
+  원문에 하위 Plant/Train/Energy Source가 직접 없더라도 basecase leaf path와 semantic_axes 예시를 사용해
+  완성된 slot을 만들 수 있습니다.
+  이때 leaf path는 scenario/event/dimension 맥락상 설명 가능한 값이어야 하며,
+  설명 가능성이 비슷한 후보가 너무 많으면 maxParameterSlots 안에서 가장 관련성이 높은 후보만 선택하십시오.
   slot_hierarchy leaf path를 사용해 selected=true slot을 만들 때는 slot_hierarchy_axes에 있는 축을
   Country 같은 상위 축만으로 축약하지 말고, 선택한 leaf path의 모든 축 값을 slot_axes에 포함하십시오.
   예: slot_hierarchy_axes가 ["Country","LNG Plant","LNG Plant Train","Life Cycle Category","Nameplate Capacity"]이면
@@ -188,9 +203,11 @@ SLOT_PROPOSAL_SYSTEM = """\
   단순 전수 열거하지는 마십시오. 시나리오가 여러 축 값을 각각 언급했더라도,
   그 축들의 Cartesian product를 자동 전개하지 말고 각 조합이 실제 영향 좌표로 명시되었거나
   모델 입력상 필요한 경우에만 조합을 만드십시오. 반대로 scenario가 명시적으로 지목했거나
-  모델 input 변경이 필요한 조합은 모두 포함하십시오.
-  영향 대상이 불명확하면 임의의 대표 slot을 selected=true로 확정하지 말고
-  selected=false로 두고 slot_axes는 비워 두십시오.
+  scenario/event/dimension 및 basecase 후보로 합리적으로 대응되는 조합은 모두 포함하십시오.
+  영향 대상이 넓게만 주어지면 event/scenario의 국가, 지역, 시장, 공급 경로, 수요 지역을 먼저 사용하고,
+  그래도 여러 후보가 남으면 basecase에 존재하는 대표 좌표를 maxParameterSlots 안에서 선택하십시오.
+  selected=false는 국가/지역/시설/기간/에너지원/계약/route 중 어떤 축도 합리적으로 특정할 수 없고,
+  basecase/semantic_axes 예시로도 보수적 좌표를 만들 수 없는 경우에만 사용하십시오.
 - 기간이 여러 월/연도로 해석될 수 있어도 모델에 Year 또는 Period 축이 있으면
   시나리오 의미를 잃지 않는 범위에서 Year 또는 Period를 사용할 수 있습니다.
   월별 차이가 event/dimension에 명확하거나 월별 입력이 모델 정확도에 필요하면 충분한 Month slot을 전개하십시오.
@@ -218,7 +235,7 @@ SLOT_PROPOSAL_SYSTEM = """\
   예: {"axis_name":"Year","axis_value":2026}. "2026" 같은 문자열은 금지입니다.
 - 미정, 후보, 추정, 또는(or), 일부, 대체 공급국, '?' 같은 모호한 slot 값은 절대 사용하지 마십시오.
 - 여러 값이 명확하면 "A; B"처럼 한 축 값에 합치지 말고 parameter_slots를 여러 개 반환하십시오.
-- 축을 명확한 실제 모델 input 값으로 특정할 수 없으면 selected=false,
+- 위 규칙을 모두 적용해도 축을 실제 모델 input 값으로 합리적으로 특정할 수 없으면 selected=false,
   slot_axes는 비워 두십시오.
   이때 selected=false는 parameter 제외가 아니라 slot 미확정이라는 의미로만 사용하십시오.
 - 단, scenario/event/dimension에서 축이나 기간을 합리적으로 자동 변환할 수 있으면 selected=true로 유지하십시오.

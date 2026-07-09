@@ -222,6 +222,9 @@ Basecase 추출 방식:
 ### 5. `propose_parameter_slots`
 
 Step2 LLM slot 산정 단계다. 여기서는 값을 제안하지 않고 모델 input 좌표 축만 정한다.
+후보 parameter의 value 변경 필요성이나 변경 폭을 미리 판단해 slot을 줄이지 않는다.
+시나리오/이벤트/dimension/basecase/semantic_axes로 합리적으로 특정 가능한 slot은 최대한 Step3으로 넘기고,
+basecase 유지나 매우 작은 변경 여부는 Step3 value 산정에서 판단한다.
 
 LLM 입력:
 
@@ -244,6 +247,7 @@ LLM 입력:
 - slot 축 이름과 값은 Basecase slot option을 우선 사용
 - Basecase에 없더라도 scenario/event에 명확한 input 축 값이 있으면 사용 가능
 - 값 산정은 금지하고 Step3으로 넘김
+- 영향 강도, 기간, 정책 단계, 대체 공급 충분 여부만으로 Step2 selected=false 처리하지 않음
 - 기간 표현은 `period_resolution_policy`로 Year/Month/Period 변환
 
 서버 보정:
