@@ -112,21 +112,13 @@ def _event_type_l2_id_from_context(scenario_context: dict[str, Any]) -> int | No
 
 def _scenario_dimension_keys(scenario_context: dict[str, Any]) -> set[str]:
     scenario = scenario_context.get("scenario") or {}
-    dimension_values = scenario.get("dimension_values") or {}
-    keys = {
+    dimension_values = scenario.get("dimension_values")
+    if not isinstance(dimension_values, dict):
+        return set()
+    return {
         _normalize_key(key)
         for key in dimension_values
         if _normalize_key(key)
-    }
-    if keys:
-        return keys
-
-    template = scenario_context.get("dimension_template") or []
-    return {
-        _normalize_key(item.get("dim_key") or item.get("dimension_key") or item.get("key"))
-        for item in template
-        if isinstance(item, dict)
-        and _normalize_key(item.get("dim_key") or item.get("dimension_key") or item.get("key"))
     }
 
 

@@ -45,6 +45,9 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     select_parameter_candidates,
     validate_parameter_candidates,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    _has_mapping_candidates_from_db_rows,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     BasecaseProfile,
     DEFAULT_BASECASE_DIR,
@@ -717,6 +720,150 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert not warnings
         assert candidates[0]["canonical_parameter_name"] == "ShippingCost"
         assert candidates[0]["model_file"] == "Trade"
+
+    def test_parameter_matching_requires_dimension_values_object(self) -> None:
+        kb = get_parameter_knowledge_base_from_resources(
+            mapping_rows=[
+                _mapping_row(
+                    17,
+                    "transport_disruption",
+                    "운송 차질",
+                    "direct",
+                    "ShippingCost",
+                    "운송 차질은 ShippingCost에 직접 반영",
+                ),
+            ],
+            parameter_rows=[
+                row
+                for row in TEST_PARAMETER_ROWS
+                if row["canonical_parameter_name"] == "ShippingCost"
+            ],
+        )
+
+        candidates, non_inputs, warnings = match_parameter_candidates(
+            kb,
+            {
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": [
+                        {"dim_key": "transport_disruption", "value": "높음"},
+                    ],
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+            },
+        )
+
+        assert candidates == []
+        assert non_inputs == []
+        assert warnings == [
+            "scenario.dimension_values가 JSON object가 아니어서 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        ]
+
+    def test_mapping_precheck_requires_dimension_values_object(self) -> None:
+        assert not _has_mapping_candidates_from_db_rows(
+            scenario_context={
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": [
+                        {"dim_key": "transport_disruption", "value": "높음"},
+                    ],
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+                "parameter_mapping_resources": {
+                    "mapping_rules": [
+                        _mapping_row(
+                            17,
+                            "transport_disruption",
+                            "운송 차질",
+                            "direct",
+                            "ShippingCost",
+                            "운송 차질은 ShippingCost에 직접 반영",
+                        ),
+                    ],
+                    "parameter_definitions": [
+                        row
+                        for row in TEST_PARAMETER_ROWS
+                        if row["canonical_parameter_name"] == "ShippingCost"
+                    ],
+                },
+            },
+        )
+
+    def test_parameter_matching_does_not_use_template_as_mapping_source(self) -> None:
+        kb = get_parameter_knowledge_base_from_resources(
+            mapping_rows=[
+                _mapping_row(
+                    17,
+                    "transport_disruption",
+                    "운송 차질",
+                    "direct",
+                    "ShippingCost",
+                    "운송 차질은 ShippingCost에 직접 반영",
+                ),
+            ],
+            parameter_rows=[
+                row
+                for row in TEST_PARAMETER_ROWS
+                if row["canonical_parameter_name"] == "ShippingCost"
+            ],
+        )
+
+        candidates, non_inputs, warnings = match_parameter_candidates(
+            kb,
+            {
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": {},
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+            },
+        )
+
+        assert candidates == []
+        assert non_inputs == []
+        assert warnings == [
+            "시나리오 dimension key가 없어 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        ]
+
+    def test_mapping_precheck_does_not_use_template_as_mapping_source(self) -> None:
+        assert not _has_mapping_candidates_from_db_rows(
+            scenario_context={
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": {},
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+                "parameter_mapping_resources": {
+                    "mapping_rules": [
+                        _mapping_row(
+                            17,
+                            "transport_disruption",
+                            "운송 차질",
+                            "direct",
+                            "ShippingCost",
+                            "운송 차질은 ShippingCost에 직접 반영",
+                        ),
+                    ],
+                    "parameter_definitions": [
+                        row
+                        for row in TEST_PARAMETER_ROWS
+                        if row["canonical_parameter_name"] == "ShippingCost"
+                    ],
+                },
+            },
+        )
 
     def test_dimension_mapping_query_excludes_inactive_parameter_refs(self) -> None:
         from sqlalchemy.dialects import mysql

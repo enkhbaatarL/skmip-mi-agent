@@ -280,7 +280,8 @@ def match_parameter_candidates(
     event_type = scenario_context.get("event_type") or {}
     event_type_l2_id = _resolve_event_type_l2_id(scenario_context)
     template = scenario_context.get("dimension_template") or []
-    dimension_values = _normalize_dimension_values(scenario.get("dimension_values"))
+    raw_dimension_values = scenario.get("dimension_values")
+    dimension_values = _normalize_dimension_values(raw_dimension_values)
     template_labels = _template_labels_by_key(template)
     warnings: list[str] = []
 
@@ -291,8 +292,15 @@ def match_parameter_candidates(
         return [], [], warnings
 
     scenario_dimension_keys = set(dimension_values)
-    if not scenario_dimension_keys and template_labels:
-        scenario_dimension_keys = set(template_labels)
+    unsupported_dimension_values = (
+        raw_dimension_values is not None
+        and not isinstance(raw_dimension_values, dict)
+    )
+    if not scenario_dimension_keys and unsupported_dimension_values:
+        warnings.append(
+            "scenario.dimension_values가 JSON object가 아니어서 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        )
+        return [], [], warnings
     if not scenario_dimension_keys:
         warnings.append("시나리오 dimension key가 없어 DB dimension-parameter 매핑을 수행하지 않았습니다.")
         return [], [], warnings
@@ -1385,12 +1393,6 @@ def _json_list_from_cell(value: Any) -> list[str]:
 def _normalize_dimension_values(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return {str(key): value for key, value in raw.items() if str(key).strip()}
-    if isinstance(raw, list):
-        return {
-            str(item.get("dim_key")): item.get("value")
-            for item in raw
-            if isinstance(item, dict) and item.get("dim_key")
-        }
     return {}
 
 
@@ -1399,7 +1401,7 @@ def _template_labels_by_key(template: list[dict[str, Any]]) -> dict[str, str]:
     for item in template:
         if not isinstance(item, dict):
             continue
-        key = item.get("dim_key") or item.get("dimension_id") or item.get("id")
+        key = item.get("dim_key")
         if not key:
             continue
         labels[str(key)] = _clean_text(

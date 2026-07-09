@@ -439,13 +439,10 @@ CREATE TABLE `tmm_mi_model_param_dimension_map` (
   COMMENT='수급모델 파라미터 dimension 매핑';
 ```
 
-## 9. 엑셀 기준 seed SQL
+## 9. 엑셀 기준 seed 데이터
 
-현재 엑셀 기준 seed insert query는 아래 파일에 생성했다.
-
-```text
-apps/agents/model_parameter_agent/docs/MODEL_PARAMETER_AGENT_DB_SEED_20260701.sql
-```
+엑셀 기준 seed insert query는 운영 DB/mgmt repo 반영 흐름에서 관리한다.
+agent repo에는 재실행용 seed SQL을 별도로 보관하지 않는다.
 
 seed 기준:
 
@@ -475,7 +472,7 @@ seed 적용 후 기대 검증값:
 - `models/__init__.py`: 신규 class import/export
 - `migrations/versions/0016_*.py`: Alembic migration 추가
 - `sql/versions/0016/0016_01_schema_ddl.sql`: fresh build DDL
-- `sql/versions/0016/0016_02_seed_data.sql`: `MODEL_PARAMETER_AGENT_DB_SEED_20260701.sql` 내용을 mgmt SQL convention에 맞춰 반영
+- `sql/versions/0016/0016_02_seed_data.sql`: 모델 파라미터 seed data를 mgmt SQL convention에 맞춰 반영
 - `sql/versions/0016/0016_03_select_queries.sql`: 검증 조회
 - `sql/versions/0016/0016_04_incremental_apply.sql`: 기존 DB 증분 적용 SQL
 - `sql/versions/0016/0016_05_data_cleansing.sql`: 필요 시 data cleansing
