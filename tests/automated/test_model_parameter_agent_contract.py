@@ -46,11 +46,13 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     validate_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    BasecaseProfile,
     DEFAULT_BASECASE_DIR,
     DEFAULT_INPUT_DIR,
     get_parameter_knowledge_base,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
+    ParameterKnowledgeBase,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
@@ -1508,6 +1510,102 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert candidates == []
         assert any("target 정보" in item["reason"] for item in non_inputs)
         assert any("parameter 후보를 찾지 못했습니다" in warning for warning in warnings)
+
+    def test_basecase_records_reuse_and_close_workbook_per_request(self) -> None:
+        class FakeWorksheet:
+            max_row = 2
+            max_column = 3
+
+            def iter_rows(self, **kwargs):  # noqa: ANN003
+                min_row = int(kwargs.get("min_row") or 1)
+                max_row = int(kwargs.get("max_row") or self.max_row)
+                max_col = int(kwargs.get("max_col") or self.max_column)
+                rows = {
+                    1: ("Japan", 1.0, 2.0),
+                    2: ("Korea", 3.0, 4.0),
+                }
+                for row_idx in range(min_row, max_row + 1):
+                    yield rows[row_idx][:max_col]
+
+        class FakeWorkbook:
+            sheetnames = ["Sheet1"]
+
+            def __init__(self) -> None:
+                self.close_count = 0
+                self.sheet = FakeWorksheet()
+
+            def __getitem__(self, sheet_name: str) -> FakeWorksheet:
+                assert sheet_name == "Sheet1"
+                return self.sheet
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        workbook = FakeWorkbook()
+        load_calls: list[Path] = []
+
+        def fake_loader(path: Path, **kwargs):  # noqa: ANN003
+            assert kwargs == {
+                "read_only": True,
+                "data_only": True,
+                "keep_vba": False,
+            }
+            load_calls.append(path)
+            return workbook
+
+        kb = ParameterKnowledgeBase(
+            mapping_source="test",
+            basecase_dir_path="/tmp",
+            parameter_definitions={},
+            mapping_rules=[],
+            basecase_profiles={
+                "demand::sheet1": BasecaseProfile(
+                    model_file="Demand",
+                    workbook_path="/tmp/Demand Model_Input.xlsm",
+                    sheet_name="Sheet1",
+                    sheet_exists=True,
+                ),
+            },
+        )
+        candidates = [
+            {
+                "candidate_key": "c1",
+                "model_file": "Demand",
+                "model_sheet": "Sheet1",
+                "parameter_name": "ParamA",
+                "canonical_parameter_name": "ParamA",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_data_start_row": 1,
+                "basecase_column_roles": "A:Country,B:ParamA",
+            },
+            {
+                "candidate_key": "c2",
+                "model_file": "Demand",
+                "model_sheet": "Sheet1",
+                "parameter_name": "ParamB",
+                "canonical_parameter_name": "ParamB",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_data_start_row": 1,
+                "basecase_column_roles": "A:Country,C:ParamB",
+            },
+        ]
+
+        with patch(
+            "apps.agents.model_parameter_agent.utils.parameter_mapping._require_workbook_loader",
+            return_value=fake_loader,
+        ):
+            records, warnings = build_basecase_records(kb, candidates, {})
+
+        assert not warnings
+        assert len(load_calls) == 1
+        assert workbook.close_count == 1
+        assert [record["candidate_key"] for record in records] == [
+            "c1",
+            "c1",
+            "c2",
+            "c2",
+        ]
+        assert [record["value"] for record in records] == [1.0, 3.0, 2.0, 4.0]
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_flatten_mapped_matrix_sheet(self) -> None:

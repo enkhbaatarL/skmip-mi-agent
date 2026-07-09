@@ -165,6 +165,38 @@ class ParameterKnowledgeBase:
         return self.parameter_definitions.get(normalize_parameter_name(parameter_name))
 
 
+class _WorkbookCache:
+    def __init__(self, workbook_loader: Any) -> None:
+        self._workbook_loader = workbook_loader
+        self._workbooks: dict[Path, Any] = {}
+
+    def __enter__(self) -> "_WorkbookCache":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close_all()
+
+    def open(self, workbook_path: Path) -> Any:
+        key = Path(workbook_path).resolve(strict=False)
+        workbook = self._workbooks.get(key)
+        if workbook is None:
+            workbook = self._workbook_loader(
+                key,
+                read_only=True,
+                data_only=True,
+                keep_vba=False,
+            )
+            self._workbooks[key] = workbook
+        return workbook
+
+    def close_all(self) -> None:
+        for workbook in self._workbooks.values():
+            close = getattr(workbook, "close", None)
+            if close is not None:
+                close()
+        self._workbooks.clear()
+
+
 def get_parameter_knowledge_base(
     basecase_dir_path: str | None = None,
 ) -> ParameterKnowledgeBase:
@@ -217,11 +249,12 @@ def _build_parameter_knowledge_base_from_rows(
         parameter_rows,
         source_name="tmm_mi_model_param_m",
     )
-    basecase_profiles = _load_basecase_profiles(
-        workbook_loader,
-        Path(basecase_dir_path),
-        parameter_definitions,
-    )
+    with _WorkbookCache(workbook_loader) as workbook_cache:
+        basecase_profiles = _load_basecase_profiles(
+            workbook_cache,
+            Path(basecase_dir_path),
+            parameter_definitions,
+        )
     return ParameterKnowledgeBase(
         mapping_source=mapping_source,
         basecase_dir_path=basecase_dir_path,
@@ -383,35 +416,36 @@ def build_basecase_records(
     workbook_loader = _require_workbook_loader()
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
-    for candidate in candidates:
-        profile = kb.profile_for(candidate.get("model_file"), candidate.get("model_sheet"))
-        candidate_key = str(candidate.get("candidate_key") or "")
-        if profile is None or not profile.sheet_exists:
-            warnings.append(
-                "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
-                f"candidate_key={candidate_key}",
-            )
-            continue
-        try:
-            candidate_records = _extract_basecase_records(
-                workbook_loader,
-                profile=profile,
-                candidate=candidate,
-                scenario_context=scenario_context,
-            )
-        except Exception as exc:
-            warnings.append(
-                "basecase record 추출 중 오류가 발생했습니다: "
-                f"candidate_key={candidate_key}, error={exc}",
-            )
-            continue
-        if not candidate_records:
-            warnings.append(
-                "basecase record를 추출하지 못했습니다: "
-                f"candidate_key={candidate_key}, sheet={profile.sheet_name}",
-            )
-            continue
-        records.extend(candidate_records)
+    with _WorkbookCache(workbook_loader) as workbook_cache:
+        for candidate in candidates:
+            profile = kb.profile_for(candidate.get("model_file"), candidate.get("model_sheet"))
+            candidate_key = str(candidate.get("candidate_key") or "")
+            if profile is None or not profile.sheet_exists:
+                warnings.append(
+                    "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
+                    f"candidate_key={candidate_key}",
+                )
+                continue
+            try:
+                candidate_records = _extract_basecase_records(
+                    workbook_cache,
+                    profile=profile,
+                    candidate=candidate,
+                    scenario_context=scenario_context,
+                )
+            except Exception as exc:
+                warnings.append(
+                    "basecase record 추출 중 오류가 발생했습니다: "
+                    f"candidate_key={candidate_key}, error={exc}",
+                )
+                continue
+            if not candidate_records:
+                warnings.append(
+                    "basecase record를 추출하지 못했습니다: "
+                    f"candidate_key={candidate_key}, sheet={profile.sheet_name}",
+                )
+                continue
+            records.extend(candidate_records)
     return records, warnings
 
 
@@ -550,7 +584,7 @@ def _parameter_definitions_from_rows(
 
 
 def _load_basecase_profiles(
-    workbook_loader: Any,
+    workbook_cache: _WorkbookCache,
     basecase_dir: Path,
     parameter_definitions: dict[str, ParameterDefinition],
 ) -> dict[str, BasecaseProfile]:
@@ -574,7 +608,7 @@ def _load_basecase_profiles(
             )
             continue
         profiles[key] = _profile_basecase_sheet(
-            workbook_loader,
+            workbook_cache,
             model_file=model_file,
             workbook_path=workbook_path,
             sheet_name=sheet_name,
@@ -583,13 +617,13 @@ def _load_basecase_profiles(
 
 
 def _profile_basecase_sheet(
-    workbook_loader: Any,
+    workbook_cache: _WorkbookCache,
     *,
     model_file: str,
     workbook_path: Path,
     sheet_name: str,
 ) -> BasecaseProfile:
-    wb = workbook_loader(workbook_path, read_only=True, data_only=True, keep_vba=False)
+    wb = workbook_cache.open(workbook_path)
     actual_sheet_name = _find_sheet_name(wb.sheetnames, sheet_name)
     if actual_sheet_name is None:
         return BasecaseProfile(
@@ -612,7 +646,7 @@ def _profile_basecase_sheet(
 
 
 def _extract_basecase_records(
-    workbook_loader: Any,
+    workbook_cache: _WorkbookCache,
     *,
     profile: BasecaseProfile,
     candidate: dict[str, Any],
@@ -620,7 +654,7 @@ def _extract_basecase_records(
 ) -> list[dict[str, Any]]:
     _ = scenario_context
     workbook_path = Path(profile.workbook_path)
-    wb = workbook_loader(workbook_path, read_only=True, data_only=True, keep_vba=False)
+    wb = workbook_cache.open(workbook_path)
     actual_sheet_name = _find_sheet_name(wb.sheetnames, profile.sheet_name)
     if actual_sheet_name is None:
         return []
