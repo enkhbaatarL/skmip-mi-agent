@@ -10,6 +10,7 @@ from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalPar
 
 class ProposeParametersIn(ApiModel):
     model_name: str | None = Field(default=None)
+    user_id: int | None = Field(default=None)
 
 
 class ProposeParametersRequest(ApiModel):

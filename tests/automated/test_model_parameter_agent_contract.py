@@ -380,6 +380,23 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert not hasattr(payload, "basecase_dir_path")
         assert not hasattr(payload, "unknown_option")
 
+    def test_to_state_preserves_sync_user_id(self) -> None:
+        camel_state = propose_flow.to_state(
+            {
+                "scenario_id": 100,
+                "userId": 101,
+            },
+        )
+        snake_state = propose_flow.to_state(
+            {
+                "scenario_id": 100,
+                "user_id": 102,
+            },
+        )
+
+        assert camel_state.user_id == 101
+        assert snake_state.user_id == 102
+
     def test_proposal_request_accepts_optional_user_id(self) -> None:
         assert ProposeParametersRequest().user_id is None
         assert (
@@ -2137,29 +2154,39 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_prepare_callback_rejects_empty_mapping_before_processing_row(self) -> None:
         scenario_context = {
-            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
-            "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "mi_event_id": 30,
+                "event_type_l2_id": 17,
+            },
             "event": {"mi_event_id": 30},
             "parameter_mapping_resources": {
-                "mapping_rules": [{"dimension_key": "unmapped"}],
-                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "unmapped",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
             },
         }
 
-        with (
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
-            ) as service_cls,
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "get_parameter_knowledge_base_from_resources",
-            ),
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "match_parameter_candidates",
-                return_value=([], [], ["no mapped parameter"]),
-            ),
-        ):
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
 
             with self.assertRaises(MIBaseError) as error:
@@ -2172,29 +2199,39 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_prepare_callback_creates_processing_row_when_mapping_exists(self) -> None:
         scenario_context = {
-            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
-            "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "mi_event_id": 30,
+                "event_type_l2_id": 17,
+            },
             "event": {"mi_event_id": 30},
             "parameter_mapping_resources": {
-                "mapping_rules": [{"dimension_key": "transport_disruption"}],
-                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "transport_disruption",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
             },
         }
 
-        with (
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
-            ) as service_cls,
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "get_parameter_knowledge_base_from_resources",
-            ),
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "match_parameter_candidates",
-                return_value=([{"candidate_key": "c1"}], [], []),
-            ),
-        ):
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
             service_cls.return_value.create_processing_proposal.return_value = 901
 
@@ -2213,33 +2250,40 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_prepare_callback_passes_explicit_user_id(self) -> None:
         scenario_context = {
-            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
             "scenario_group": {
                 "scenario_group_id": 20,
                 "mi_event_id": 30,
+                "event_type_l2_id": 17,
                 "request_usr_id": 40,
             },
             "event": {"mi_event_id": 30},
             "parameter_mapping_resources": {
-                "mapping_rules": [{"dimension_key": "transport_disruption"}],
-                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "transport_disruption",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
             },
         }
 
-        with (
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
-            ) as service_cls,
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "get_parameter_knowledge_base_from_resources",
-            ),
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "match_parameter_candidates",
-                return_value=([{"candidate_key": "c1"}], [], []),
-            ),
-        ):
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
             service_cls.return_value.create_processing_proposal.return_value = 901
 
