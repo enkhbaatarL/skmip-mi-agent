@@ -1915,6 +1915,60 @@ def _slot_axes_for_candidate(slots: list[dict[str, Any]]) -> list[ParameterSlotA
     return slot_axes
 
 
+def _coordinates_for_selected_slot(slot: dict[str, Any]) -> dict[str, Any]:
+    coordinates: dict[str, Any] = {}
+    for axis in slot.get("slot_axes") or []:
+        axis_name = str(axis.get("axis_name") or "").strip()
+        if not axis_name:
+            continue
+        coordinates[axis_name] = _slot_axis_value(axis_name, axis.get("axis_value"))
+    return coordinates
+
+
+def _requested_slot_coordinates(slots: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    requested: dict[str, dict[str, Any]] = {}
+    for slot in slots:
+        coordinates = _coordinates_for_selected_slot(slot)
+        if coordinates:
+            requested[_canonical_coordinate_key(coordinates)] = coordinates
+    return requested
+
+
+def _coordinate_request_issues(
+    coordinates: dict[str, Any],
+    requested_coordinates_by_key: dict[str, dict[str, Any]],
+) -> list[str]:
+    if not requested_coordinates_by_key:
+        return ["Step2 selected slot이 없어 value_grid cell을 받을 수 없습니다"]
+
+    coordinate_key = _canonical_coordinate_key(coordinates)
+    if coordinate_key in requested_coordinates_by_key:
+        return []
+
+    requested_axis_names: set[str] = set()
+    for requested_coordinates in requested_coordinates_by_key.values():
+        requested_axis_names.update(requested_coordinates)
+    provided_axis_names = {
+        str(axis_name).strip()
+        for axis_name in (coordinates or {})
+        if str(axis_name).strip()
+    }
+
+    issues: list[str] = []
+    missing_axis_names = sorted(requested_axis_names - provided_axis_names)
+    extra_axis_names = sorted(provided_axis_names - requested_axis_names)
+    if missing_axis_names:
+        issues.append(f"요청 slot axis 누락: {', '.join(missing_axis_names)}")
+    if extra_axis_names:
+        issues.append(f"요청하지 않은 slot axis 포함: {', '.join(extra_axis_names)}")
+    if not issues:
+        issues.append(
+            "요청 selected_slots에 없는 좌표: "
+            f"{to_compact_json(coordinates or {})}",
+        )
+    return issues
+
+
 def _canonical_coordinate_key(coordinates: dict[str, Any]) -> str:
     normalized = {
         axis_name: _normalize_axis_value(_slot_axis_value(axis_name, axis_value))
@@ -1999,7 +2053,10 @@ def _sanitize_llm_adjustments(
             )
             continue
         returned_candidate_keys.add(adjustment.candidate_key)
-        slot_axes = _slot_axes_for_candidate(slots_by_key.get(adjustment.candidate_key, []))
+        selected_slots = slots_by_key.get(adjustment.candidate_key, [])
+        slot_axes = _slot_axes_for_candidate(selected_slots)
+        requested_coordinates_by_key = _requested_slot_coordinates(selected_slots)
+        returned_coordinate_keys: set[str] = set()
         slot_issues = _slot_axis_issues(slot_axes)
         if slot_issues:
             reason = (
@@ -2019,6 +2076,17 @@ def _sanitize_llm_adjustments(
                 )
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
                 continue
+            coordinate_request_issues = _coordinate_request_issues(
+                cell.coordinates,
+                requested_coordinates_by_key,
+            )
+            if coordinate_request_issues:
+                reason = (
+                    "Step3 응답 value_grid.coordinates가 요청 기준 slot 좌표를 그대로 반영하지 않아 "
+                    f"cell을 제외했습니다: {', '.join(coordinate_request_issues)}"
+                )
+                warnings.append(f"{reason}: {adjustment.candidate_key}")
+                continue
             if cell.proposed_value is None:
                 reason = (
                     "Step3 응답 value_grid.proposed_value가 null이라 "
@@ -2030,6 +2098,7 @@ def _sanitize_llm_adjustments(
             if patch_warning:
                 warnings.append(f"{patch_warning}: {adjustment.candidate_key}")
             value_grid.append(patched_cell)
+            returned_coordinate_keys.add(_canonical_coordinate_key(patched_cell.coordinates))
 
         value_grid, slot_conflicts = _dedupe_value_grid_by_slot(value_grid)
         if slot_conflicts:
@@ -2039,6 +2108,18 @@ def _sanitize_llm_adjustments(
             )
             warnings.append(f"{reason}: {adjustment.candidate_key}")
             warnings.extend(f"{conflict}: {adjustment.candidate_key}" for conflict in slot_conflicts)
+
+        missing_coordinate_keys = sorted(set(requested_coordinates_by_key) - returned_coordinate_keys)
+        if missing_coordinate_keys:
+            missing_coordinates = [
+                requested_coordinates_by_key[key]
+                for key in missing_coordinate_keys
+            ]
+            warnings.append(
+                "Step3 응답 value_grid에 요청 selected_slot 좌표가 누락되었습니다: "
+                f"{to_compact_json(missing_coordinates)}: {adjustment.candidate_key}",
+            )
+            value_grid = []
 
         selected = bool(value_grid)
         if not selected:

@@ -292,10 +292,12 @@ CREATE TABLE `tmm_mi_model_param_proposal_m` (
 | `model_param_id` | `INT UNSIGNED` | N | AI | PK |
 | `use_yn` | `CHAR(1) COLLATE utf8mb4_bin` | N | `'Y'` | Excel `enabled` |
 | `parameter_name` | `VARCHAR(150) COLLATE utf8mb4_bin` | N |  | 수급모델 parameter명. 현재 canonical name 역할 |
+| `parameter_hint` | `TEXT COLLATE utf8mb4_bin` | N |  | parameter 산정/제약/참고 설명 |
 | `model_file` | `VARCHAR(100) COLLATE utf8mb4_bin` | N |  | basecase workbook group |
 | `model_sheet` | `VARCHAR(150) COLLATE utf8mb4_bin` | N |  | target sheet |
+| `model_table` | `VARCHAR(50) COLLATE utf8mb4_bin` | N |  | model sheet 내 table 구분 |
 | `unit` | `VARCHAR(100) COLLATE utf8mb4_bin` | Y | `NULL` | 기준정보용 단위 |
-| `semantic_axes` | `VARCHAR(500) COLLATE utf8mb4_bin` | Y | `NULL` | parameter 의미/축 설명 |
+| `semantic_axes` | `TEXT COLLATE utf8mb4_bin` | Y | `NULL` | parameter 의미/축 설명 |
 | `basecase_read_mode` | `VARCHAR(50) COLLATE utf8mb4_bin` | N |  | `fixed_columns`, `matrix_time_columns` |
 | `basecase_header_row` | `SMALLINT UNSIGNED` | N |  | header row |
 | `basecase_data_start_row` | `SMALLINT UNSIGNED` | N |  | data start row |
@@ -365,10 +367,12 @@ CREATE TABLE `tmm_mi_model_param_m` (
     `model_param_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '수급모델 파라미터 ID',
     `use_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'Y' COMMENT '사용 여부',
     `parameter_name` VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT '수급모델 파라미터명',
+    `parameter_hint` TEXT COLLATE utf8mb4_bin NOT NULL COMMENT '수급모델 파라미터 설명',
     `model_file` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL COMMENT '모델 파일 구분',
     `model_sheet` VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT '모델 시트명',
+    `model_table` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT '모델 시트 내 테이블명',
     `unit` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '단위',
-    `semantic_axes` VARCHAR(500) COLLATE utf8mb4_bin NULL COMMENT '의미 축 설명',
+    `semantic_axes` TEXT COLLATE utf8mb4_bin NULL COMMENT '의미 축 설명',
     `basecase_read_mode` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT 'Basecase 읽기 방식',
     `basecase_header_row` SMALLINT UNSIGNED NOT NULL COMMENT 'Basecase header row',
     `basecase_data_start_row` SMALLINT UNSIGNED NOT NULL COMMENT 'Basecase data start row',

@@ -29,6 +29,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     prepare_propose_parameters_callback,
     to_output,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters import flow as propose_flow
 from apps.agents.model_parameter_agent.flows.propose_parameters import nodes as proposal_nodes
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
@@ -3914,13 +3915,18 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert (
-            "selected_slots가 1개 이상 있는 parameter_value_task는 최소 1개의 valid value_grid cell"
+            "Step3는 slot을 평가, 선택, 변경하거나 새 slot을 만들지 않습니다"
             in captured_system_contents[0]
         )
         assert (
-            "basecase와 같은 형식의 보수적인 최종 입력값을 산정"
+            "selected_slots가 1개 이상 있는 parameter_value_task는 모든 selected_slots"
             in captured_system_contents[0]
         )
+        assert (
+            "각 selected_slot에 대해 basecase와 같은 형식의"
+            in captured_system_contents[0]
+        )
+        assert "보수적인 최종 입력값을 산정" in captured_system_contents[0]
         assert (
             "scenario/event/dimension value의 방향·강도·기간에 따라 그 기준값을 높이거나 낮춰"
             in captured_system_contents[0]
@@ -3942,7 +3948,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert (
-            "그런 상세 slot/value 산정 근거는 value_grid[].rationale_ko에만"
+            "해당 요청 slot 좌표와 참조 record를 해석한 기준"
             in captured_system_contents[0]
         )
         assert "parameter_value_tasks는 Step3에서 값을 산정해야 하는 parameter별 작업 단위" in captured_system_contents[0]
@@ -4084,7 +4090,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert adjustment["value_grid"][0]["basecase_value"] is None
         assert adjustment["value_grid"][0]["proposed_value"] == 0.03
 
-    async def test_llm_value_sanitizer_allows_partial_value_grid_for_multiple_slots(self) -> None:
+    async def test_llm_value_sanitizer_keeps_values_for_all_requested_slots(self) -> None:
         candidate = {
             "candidate_key": "c1",
             "model_file": "Demand",
@@ -4114,6 +4120,48 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             value_selection_rationale_ko=(
                                 "선택된 네 개 slot 중 가장 이른 Asia 2026년 7월 좌표입니다."
                             ),
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
+                            ),
+                        ),
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Asia",
+                                "Year": 2026,
+                                "Month": 8,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.08,
+                            unit="USD/mmbtu",
+                            value_selection_rationale_ko="Asia 2026년 8월 요청 slot입니다.",
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
+                            ),
+                        ),
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Europe",
+                                "Year": 2026,
+                                "Month": 7,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.07,
+                            unit="USD/mmbtu",
+                            value_selection_rationale_ko="Europe 2026년 7월 요청 slot입니다.",
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
+                            ),
+                        ),
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Europe",
+                                "Year": 2026,
+                                "Month": 8,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.06,
+                            unit="USD/mmbtu",
+                            value_selection_rationale_ko="Europe 2026년 8월 요청 slot입니다.",
                             proposed_value_rationale_ko=(
                                 "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
                             ),
@@ -4182,13 +4230,262 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         adjustment = result["parameter_adjustments"][0]
         assert adjustment["selected"] is True
-        assert len(adjustment["value_grid"]) == 1
-        assert adjustment["value_grid"][0]["coordinates"] == {
-            "Region": "Asia",
-            "Year": 2026,
-            "Month": 7,
+        assert len(adjustment["value_grid"]) == 4
+        assert [cell["coordinates"] for cell in adjustment["value_grid"]] == [
+            {
+                "Region": "Asia",
+                "Year": 2026,
+                "Month": 7,
+            },
+            {
+                "Region": "Asia",
+                "Year": 2026,
+                "Month": 8,
+            },
+            {
+                "Region": "Europe",
+                "Year": 2026,
+                "Month": 7,
+            },
+            {
+                "Region": "Europe",
+                "Year": 2026,
+                "Month": 8,
+            },
+        ]
+        assert [cell["proposed_value"] for cell in adjustment["value_grid"]] == [
+            0.1,
+            0.08,
+            0.07,
+            0.06,
+        ]
+        assert not any("요청 selected_slot 좌표가 누락" in warning for warning in result["validation_warnings"])
+
+    async def test_llm_value_sanitizer_rejects_cell_missing_requested_slot_axis(self) -> None:
+        candidate = {
+            "candidate_key": "c1",
+            "model_file": "Demand",
+            "model_sheet": "CoalGasAdjustment",
+            "parameter_name": "Gas Futures Price",
+            "canonical_parameter_name": "Gas Futures Price",
         }
-        assert adjustment["value_grid"][0]["proposed_value"] == 0.1
+        value_response = LLMValueProposalResponse(
+            parameter_adjustments=[
+                ParameterAdjustment(
+                    candidate_key="c1",
+                    model_file="Demand",
+                    model_sheet="CoalGasAdjustment",
+                    parameter_name="Gas Futures Price",
+                    selected=True,
+                    slot_axes=[],
+                    value_grid=[
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Asia",
+                                "Year": 2026,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.1,
+                            unit="USD/mmbtu",
+                            value_selection_rationale_ko="Month 좌표가 누락된 응답입니다.",
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
+                            ),
+                        ),
+                    ],
+                    parameter_selection_rationale_ko=(
+                        "운송 규제 영향이 가스 가격 변수와 연결됩니다."
+                    ),
+                    confidence_overall=0.5,
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMValueProposalResponse
+            return SimpleNamespace(result=value_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=281,
+            scenario_context={"scenario": {"scenario_id": 281}},
+            candidate_mappings=[candidate],
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Asia"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 7},
+                    ],
+                },
+            ],
+            basecase_records=[],
+        )
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}):
+            result = await propose_parameter_values(state)
+
+        adjustment = result["parameter_adjustments"][0]
+        assert adjustment["selected"] is False
+        assert adjustment["value_grid"] == []
+        assert any("요청 slot axis 누락: Month" in warning for warning in result["validation_warnings"])
+        assert any("요청 selected_slot 좌표가 누락" in warning for warning in result["validation_warnings"])
+
+    async def test_llm_value_sanitizer_rejects_coordinates_outside_requested_slots(self) -> None:
+        candidate = {
+            "candidate_key": "c1",
+            "model_file": "Demand",
+            "model_sheet": "CoalGasAdjustment",
+            "parameter_name": "Gas Futures Price",
+            "canonical_parameter_name": "Gas Futures Price",
+        }
+        value_response = LLMValueProposalResponse(
+            parameter_adjustments=[
+                ParameterAdjustment(
+                    candidate_key="c1",
+                    model_file="Demand",
+                    model_sheet="CoalGasAdjustment",
+                    parameter_name="Gas Futures Price",
+                    selected=True,
+                    slot_axes=[],
+                    value_grid=[
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Asia",
+                                "Year": 2026,
+                                "Month": 9,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.1,
+                            unit="USD/mmbtu",
+                            value_selection_rationale_ko="요청되지 않은 9월 좌표입니다.",
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
+                            ),
+                        ),
+                    ],
+                    parameter_selection_rationale_ko=(
+                        "운송 규제 영향이 가스 가격 변수와 연결됩니다."
+                    ),
+                    confidence_overall=0.5,
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMValueProposalResponse
+            return SimpleNamespace(result=value_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=281,
+            scenario_context={"scenario": {"scenario_id": 281}},
+            candidate_mappings=[candidate],
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Asia"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 7},
+                    ],
+                },
+            ],
+            basecase_records=[],
+        )
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}):
+            result = await propose_parameter_values(state)
+
+        adjustment = result["parameter_adjustments"][0]
+        assert adjustment["selected"] is False
+        assert adjustment["value_grid"] == []
+        assert any("요청 selected_slots에 없는 좌표" in warning for warning in result["validation_warnings"])
+        assert any("요청 selected_slot 좌표가 누락" in warning for warning in result["validation_warnings"])
+
+    async def test_llm_value_sanitizer_rejects_partial_response_missing_requested_slots(self) -> None:
+        candidate = {
+            "candidate_key": "c1",
+            "model_file": "Demand",
+            "model_sheet": "CoalGasAdjustment",
+            "parameter_name": "Gas Futures Price",
+            "canonical_parameter_name": "Gas Futures Price",
+        }
+        value_response = LLMValueProposalResponse(
+            parameter_adjustments=[
+                ParameterAdjustment(
+                    candidate_key="c1",
+                    model_file="Demand",
+                    model_sheet="CoalGasAdjustment",
+                    parameter_name="Gas Futures Price",
+                    selected=True,
+                    slot_axes=[],
+                    value_grid=[
+                        ParameterValueCell(
+                            coordinates={
+                                "Region": "Asia",
+                                "Year": 2026,
+                                "Month": 7,
+                            },
+                            basecase_value=None,
+                            proposed_value=0.1,
+                            unit="USD/mmbtu",
+                            value_selection_rationale_ko="Asia 2026년 7월 요청 slot입니다.",
+                            proposed_value_rationale_ko=(
+                                "정량 근거가 약해 보수적인 최종 입력값을 적용했습니다."
+                            ),
+                        ),
+                    ],
+                    parameter_selection_rationale_ko=(
+                        "운송 규제 영향이 가스 가격 변수와 연결됩니다."
+                    ),
+                    confidence_overall=0.5,
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMValueProposalResponse
+            return SimpleNamespace(result=value_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=281,
+            scenario_context={"scenario": {"scenario_id": 281}},
+            candidate_mappings=[candidate],
+            parameter_slots=[
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Asia"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 7},
+                    ],
+                },
+                {
+                    "candidate_key": "c1",
+                    "selected": True,
+                    "slot_axes": [
+                        {"axis_name": "Region", "axis_value": "Asia"},
+                        {"axis_name": "Year", "axis_value": 2026},
+                        {"axis_name": "Month", "axis_value": 8},
+                    ],
+                },
+            ],
+            basecase_records=[],
+        )
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}):
+            result = await propose_parameter_values(state)
+
+        adjustment = result["parameter_adjustments"][0]
+        assert adjustment["selected"] is False
+        assert adjustment["value_grid"] == []
+        assert any("요청 selected_slot 좌표가 누락" in warning for warning in result["validation_warnings"])
 
     async def test_empty_llm_value_is_not_rule_backfilled(self) -> None:
         candidate = {
@@ -4881,6 +5178,151 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "message": "insufficient dimension mapping for event 1378",
             "data": None,
         }
+
+    async def test_background_marks_callback_skipped_when_skip_callback_enabled(self) -> None:
+        class FakeGraph:
+            async def ainvoke(self, state: ModelParameterProposalState) -> dict[str, object]:
+                assert state.scenario_id == 309
+                return {}
+
+        class FakeModelParameterService:
+            def __init__(self) -> None:
+                self.callback_statuses: list[str] = []
+
+            def complete_proposal_result(
+                self,
+                *,
+                model_param_proposal_id: int,
+                proposal_parameters: list[object],
+            ) -> None:
+                assert model_param_proposal_id == 10001
+                assert proposal_parameters == []
+
+            def fail_proposal_result(self, **kwargs: object) -> None:
+                raise AssertionError(f"unexpected proposal failure: {kwargs}")
+
+            def update_callback_status(
+                self,
+                *,
+                model_param_proposal_id: int,
+                callback_status: str,
+            ) -> None:
+                assert model_param_proposal_id == 10001
+                self.callback_statuses.append(callback_status)
+
+        service = FakeModelParameterService()
+        sent_urls: list[str] = []
+
+        async def fake_send_callback(url: str, payload: object) -> None:
+            sent_urls.append(url)
+
+        response_data = ProposeParametersData(
+            model_param_proposal_id=10001,
+            scenario_id=309,
+            scenario_group_id=61,
+            event_id=1378,
+            proposal_parameters=[],
+        )
+        settings = SimpleNamespace(
+            callback_base_url="https://callback.example",
+            callback_model_parameter_proposals_path="/scenarios/{scenario_id}/callback",
+            skip_callback=True,
+        )
+        fake_config_module = types.ModuleType("apps.common.configs.config")
+        fake_config_module.get_settings = lambda: settings
+
+        with (
+            patch.dict(sys.modules, {"apps.common.configs.config": fake_config_module}),
+            patch.object(propose_flow, "build_graph", return_value=FakeGraph()),
+            patch.object(propose_flow, "ModelParameterService", return_value=service),
+            patch.object(propose_flow, "send_callback", side_effect=fake_send_callback),
+            patch.object(propose_flow, "_ensure_mapping_candidates"),
+            patch.object(propose_flow, "_proposal_parameters_from_state", return_value=[]),
+            patch.object(propose_flow, "_ensure_proposal_parameters"),
+            patch.object(propose_flow, "_to_response_data", return_value=response_data),
+        ):
+            await propose_flow.run_propose_parameters_background(
+                model_param_proposal_id=10001,
+                scenario_id=309,
+                scenario_group_id=61,
+                event_id=1378,
+            )
+
+        assert sent_urls == ["https://callback.example/scenarios/309/callback"]
+        assert service.callback_statuses == ["SKIPPED"]
+
+    async def test_background_marks_callback_failed_when_callback_path_format_fails(self) -> None:
+        class FakeGraph:
+            async def ainvoke(self, state: ModelParameterProposalState) -> dict[str, object]:
+                assert state.scenario_id == 309
+                return {}
+
+        class FakeModelParameterService:
+            def __init__(self) -> None:
+                self.completed = False
+                self.callback_statuses: list[str] = []
+
+            def complete_proposal_result(
+                self,
+                *,
+                model_param_proposal_id: int,
+                proposal_parameters: list[object],
+            ) -> None:
+                assert model_param_proposal_id == 10001
+                assert proposal_parameters == []
+                self.completed = True
+
+            def fail_proposal_result(self, **kwargs: object) -> None:
+                raise AssertionError(f"callback path formatting must not fail proposal: {kwargs}")
+
+            def update_callback_status(
+                self,
+                *,
+                model_param_proposal_id: int,
+                callback_status: str,
+            ) -> None:
+                assert model_param_proposal_id == 10001
+                self.callback_statuses.append(callback_status)
+
+        service = FakeModelParameterService()
+
+        async def fake_send_callback(url: str, payload: object) -> None:
+            raise AssertionError(f"send_callback should not run when URL format fails: {url}")
+
+        response_data = ProposeParametersData(
+            model_param_proposal_id=10001,
+            scenario_id=309,
+            scenario_group_id=61,
+            event_id=1378,
+            proposal_parameters=[],
+        )
+        settings = SimpleNamespace(
+            callback_base_url="https://callback.example",
+            callback_model_parameter_proposals_path="/scenarios/{scenarioId}/callback",
+            skip_callback=False,
+        )
+        fake_config_module = types.ModuleType("apps.common.configs.config")
+        fake_config_module.get_settings = lambda: settings
+
+        with (
+            patch.dict(sys.modules, {"apps.common.configs.config": fake_config_module}),
+            patch.object(propose_flow, "build_graph", return_value=FakeGraph()),
+            patch.object(propose_flow, "ModelParameterService", return_value=service),
+            patch.object(propose_flow, "send_callback", side_effect=fake_send_callback),
+            patch.object(propose_flow, "_ensure_mapping_candidates"),
+            patch.object(propose_flow, "_proposal_parameters_from_state", return_value=[]),
+            patch.object(propose_flow, "_ensure_proposal_parameters"),
+            patch.object(propose_flow, "_to_response_data", return_value=response_data),
+        ):
+            await propose_flow.run_propose_parameters_background(
+                model_param_proposal_id=10001,
+                scenario_id=309,
+                scenario_group_id=61,
+                event_id=1378,
+            )
+
+        assert service.completed is True
+        assert service.callback_statuses == ["FAILED"]
 
 
 if __name__ == "__main__":

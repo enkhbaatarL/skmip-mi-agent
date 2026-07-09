@@ -167,13 +167,6 @@ async def run_propose_parameters_background(
     from apps.common.configs.config import get_settings
 
     cfg = get_settings()
-    callback_path = cfg.callback_model_parameter_proposals_path.format(
-        model_param_proposal_id=model_param_proposal_id,
-        scenario_id=scenario_id,
-        scenario_group_id=scenario_group_id,
-        event_id=event_id,
-    )
-    callback_url = cfg.callback_base_url.rstrip("/") + callback_path
     model_parameter_service = ModelParameterService()
 
     logger.info(
@@ -232,16 +225,23 @@ async def run_propose_parameters_background(
         )
 
     try:
+        callback_path = cfg.callback_model_parameter_proposals_path.format(
+            scenario_id=scenario_id,
+        )
+        callback_url = cfg.callback_base_url.rstrip("/") + callback_path
         await send_callback(callback_url, callback_payload)
+        callback_status = "SKIPPED" if cfg.skip_callback else "SUCCEEDED"
         model_parameter_service.update_callback_status(
             model_param_proposal_id=model_param_proposal_id,
-            callback_status="SUCCEEDED",
+            callback_status=callback_status,
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
-            "[BG][model-parameter] CALLBACK_DONE | proposal_id={} scenario_id={} elapsed={}ms",
+            "[BG][model-parameter] CALLBACK_DONE | proposal_id={} scenario_id={} "
+            "callback_status={} elapsed={}ms",
             model_param_proposal_id,
             scenario_id,
+            callback_status,
             elapsed_ms,
         )
     except Exception as callback_exc:

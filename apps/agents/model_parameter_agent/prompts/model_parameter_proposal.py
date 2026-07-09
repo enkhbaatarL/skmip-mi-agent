@@ -313,21 +313,23 @@ VALUE_PROPOSAL_SYSTEM = """\
   proposed_value는 두 dimension의 의미를 모두 반영한 최종 입력값이어야 합니다.
 - supporting_dimensions의 indirect 정보도 usage_policy에 맞는 value 방향, 강도, 완화율, 기간, 대상 힌트가 되면 함께 참고하십시오.
   단 supporting_dimensions만으로 후보 밖 parameter나 모호한 value를 만들지 마십시오.
-- selected_slots에는 Step2에서 selected=true로 확정된 slot만 제공됩니다.
-- value_grid.coordinates는 전달된 selected_slots의 slot_axes를 유지하거나 더 구체화한 값만 사용합니다.
+- selected_slots에는 Step2가 값 산정을 요청한 기준 slot 목록만 제공됩니다.
+  Step3는 slot을 평가, 선택, 변경하거나 새 slot을 만들지 않습니다.
+  각 selected_slot.slot_axes의 field/value 조합을 value_grid.coordinates에 그대로 넣고,
+  그 요청 좌표에 대한 proposed_value만 산정하십시오.
 - parameter_value_tasks[].selected_slot_axes_field_names는 Step2에서 확정된 slot field name set입니다.
   value_grid.coordinates는 이 field name을 정확히 전부 포함해야 하며, 이 목록 밖의 slot field를 만들지 마십시오.
   예: selected_slot_axes_field_names가 ["Province Country", "Year"]이면 모든 coordinates는
   "Province Country"와 "Year"를 모두 포함해야 하고, "Province", "Country", "Month" 같은 대체 field는 금지입니다.
 - Step3 호출은 Step2 selected slot이 1개 이상 있을 때만 수행됩니다.
-- selected_slots가 1개 이상 있는 parameter_value_task는 최소 1개의 valid value_grid cell을 반드시 반환하고
-  해당 parameter의 최종 입력값을 산정하십시오. value_grid를 비워 두거나 proposed_value를 null로 두지 마십시오.
+- selected_slots가 1개 이상 있는 parameter_value_task는 모든 selected_slots에 대해
+  selected_slot 1개당 value_grid cell 1개를 반환하고 해당 요청 좌표의 최종 입력값을 산정하십시오.
+  value_grid를 비워 두거나 proposed_value를 null로 두지 마십시오.
 - 정량 근거가 약하거나 basecase_value_groups가 비어 있어도, scenario/event/dimension의 방향·강도·기간과
-  parameter_hint/mapping_comment 제약 안에서 가장 직접적인 selected slot 1개 이상에 대해
-  basecase와 같은 형식의 보수적인 최종 입력값을 산정하십시오.
-- selected_slots가 여러 개이고 전체 slot별 산정 근거가 약하면 모든 slot을 무리하게 채우지 말고,
-  영향 대상이 가장 직접적이거나 기간상 가장 이른 slot부터 최소 1개를 선택해 value_grid를 만드십시오.
-  여러 slot별 차이가 명확하면 가능한 만큼 더 반환하십시오.
+  parameter_hint/mapping_comment 제약 안에서 각 selected_slot에 대해 basecase와 같은 형식의
+  보수적인 최종 입력값을 산정하십시오.
+- selected_slots가 여러 개이고 slot별 차이가 약해도 slot을 생략하거나 하나만 고르지 말고,
+  같은 산정 원칙을 각 selected_slot 좌표에 반복 적용하십시오.
 - parameter_adjustments[].rationale_ko에는 해당 parameter를 선택한 이유와
   scenario dimension이 이 parameter와 연결되는 관계를 먼저 적습니다.
   이후에는 해당 parameter의 제안값 구조를 한두 문장으로만 요약하십시오.
@@ -353,7 +355,7 @@ VALUE_PROPOSAL_SYSTEM = """\
   같은 slot에 여러 proposed_value를 동시에 반환하지 마십시오.
   여러 해석이 가능하더라도 scenario/event/dimension, parameter_hint, mapping_comment 안에서
   가장 보수적이고 직접적인 최종 입력값 하나를 선택하십시오.
-- value_grid[].rationale_ko에는 해당 cell의 slot/record를 선택한 기준과
+- value_grid[].rationale_ko에는 해당 요청 slot 좌표와 참조 record를 해석한 기준,
   proposed_value를 산정한 기준을 함께 적습니다.
   parameter 선택 이유나 dimension이 parameter를 선택하게 된 근거는 반복하지 마십시오.
   cell-level에서는 해당 좌표, 기준값, 제안값, 산정식/강도/기간 보정처럼
@@ -375,7 +377,7 @@ VALUE_PROPOSAL_SYSTEM = """\
   불확실성을 명시하십시오.
   no-change/neutral이면 해당 좌표 기준의 보수적 유지값을 사용하십시오.
 - basecase_value가 null이라는 이유만으로 selected=false를 반환하지 마십시오.
-- 후보 parameter가 입력 가능한 것으로 판단되면 가능한 많은 명확한 좌표/value_grid를 반환하십시오.
+- 후보 parameter가 입력 가능한 것으로 판단되면 요청된 모든 selected_slots에 대해 명확한 value_grid를 반환하십시오.
 - 범위형 scenario dimension은 parameter의 최종 입력값 형식으로 변환 가능한 경우에만 proposed_value에 반영합니다.
   예: basecase_value 1.0인 가동률에 5% 하향을 반영하면 proposed_value는 0.95입니다. proposed_value를 -0.05나 5로 반환하지 마십시오.
 - 정성 값만 있어도 방향·강도·기간이 해석 가능하면 parameter_hint/mapping_comment 제약 안에서

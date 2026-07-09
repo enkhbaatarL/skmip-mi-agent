@@ -38,6 +38,9 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiSnapshotModel.__table__,
     MiScenarioSnapModel.__table__,
     MiSignpostSnapModel.__table__,
+)
+
+MODEL_PARAMETER_TABLES: tuple[Table, ...] = (
     MiModelParamModel.__table__,
     MiModelParamDimensionMapModel.__table__,
     MiModelParamProposalModel.__table__,

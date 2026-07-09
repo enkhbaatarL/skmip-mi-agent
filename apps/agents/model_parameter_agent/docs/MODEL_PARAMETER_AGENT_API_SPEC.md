@@ -79,7 +79,7 @@ sequenceDiagram
     participant API as Model Parameter Agent API
     participant BG as Background Worker
 
-    EXT->>API: POST /model-parameters/scenarios/{scenarioId}/proposals
+    EXT->>API: POST /model-parameters/scenarios/{scenario_id}/proposals
     API-->>EXT: status/message/data.modelParamProposalId/status
     API->>BG: proposal 생성 background 실행
     BG-->>EXT: Callback signal
@@ -146,11 +146,11 @@ callback URL은 운영 설정으로 관리한다. scenario group agent처럼 `ca
 Callback path:
 
 ```http
-POST /api/v1/mi/next-gen/scenarios/{scenarioId}/model-param-proposals/callback
+POST /api/v1/mi/next-gen/scenarios/{scenario_id}/model-param-proposals/callback
 ```
 
 Agent는 proposal 테이블 commit 이후 callback을 발행한다. Backend는 callback을 완료 신호로만 사용하고,
-path의 `scenarioId` 기준으로 Agent proposal 테이블을 재조회한다.
+path의 `scenario_id` 기준으로 Agent proposal 테이블을 재조회한다.
 
 ### 5.2 Callback request
 
@@ -191,7 +191,7 @@ Authorization: Bearer {callback-token}
 | Field | Type | Required | 설명 |
 |---|---|---:|---|
 | `data.modelParamProposalId` | integer | N | 파라미터 제안 row ID. 교차검증용 |
-| `data.scenarioId` | integer | N | 요청 scenario ID. path의 `{scenarioId}`와 일치해야 함 |
+| `data.scenarioId` | integer | N | 요청 scenario ID. path의 `{scenario_id}`와 일치해야 함 |
 | `data.scenarioGroupId` | integer | N | scenario group ID. 교차검증용 |
 | `data.eventId` | integer | N | MI event ID. 교차검증용 |
 | `data.status` | string | N | 성공 시 `PROPOSED`, 실패 시 `FAILED`. 없으면 wrapper `status`로 판정 |
