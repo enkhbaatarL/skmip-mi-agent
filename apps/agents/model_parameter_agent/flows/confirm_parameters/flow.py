@@ -4,40 +4,42 @@ from functools import lru_cache
 from typing import Any
 
 from langchain_core.runnables import Runnable, RunnableLambda
+from langgraph.graph import END, StateGraph
 
 from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
     ConfirmParametersDataOut,
     ConfirmParametersIn,
     ConfirmParametersOut,
 )
-from apps.agents.model_parameter_agent.flows.confirm_parameters.validation import (
-    validate_confirmation_parameters,
+from apps.agents.model_parameter_agent.flows.confirm_parameters.nodes import (
+    confirm_parameters,
 )
-from apps.agents.model_parameter_agent.persistence.model_input_service import (
-    ModelInputService,
+from apps.agents.model_parameter_agent.flows.confirm_parameters.state import (
+    ConfirmParametersState,
 )
-from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalParameter
-from apps.common.logging.logger_config import logger
 
 
-def confirm_parameters(payload: dict[str, Any]) -> ConfirmParametersOut:
+def to_state(payload: dict[str, Any]) -> ConfirmParametersState:
     proposal_id = int(payload["model_param_proposal_id"])
     request = ConfirmParametersIn.model_validate(payload)
-    confirmation_parameters = request.data.confirmation_parameters
-    model_input_service = ModelInputService()
-    validate_confirmation_parameters(
-        confirmation_parameters,
-        parameter_definitions=model_input_service.load_model_parameter_definitions(),
-    )
-    result = model_input_service.confirm_proposal_result(
+    return ConfirmParametersState(
         model_param_proposal_id=proposal_id,
-        confirmation_parameters=confirmation_parameters,
+        user_id=request.user_id,
+        confirmation_parameters=request.data.confirmation_parameters,
     )
-    logger.info(
-        "[model-parameter] confirmation completed | proposal_id={} parameter_summary={}",
-        proposal_id,
-        _proposal_parameter_summary(confirmation_parameters),
-    )
+
+
+def build_graph() -> Runnable:
+    builder = StateGraph(ConfirmParametersState)
+    builder.add_node("confirm_parameters", confirm_parameters)
+    builder.set_entry_point("confirm_parameters")
+    builder.add_edge("confirm_parameters", END)
+    return builder.compile()
+
+
+def to_output(state: dict[str, Any] | ConfirmParametersState) -> ConfirmParametersOut:
+    data = state if isinstance(state, dict) else state.model_dump()
+    result = data.get("result") or {}
     return ConfirmParametersOut(
         data=ConfirmParametersDataOut(
             model_param_proposal_id=result["model_param_proposal_id"],
@@ -46,21 +48,8 @@ def confirm_parameters(payload: dict[str, Any]) -> ConfirmParametersOut:
     )
 
 
-def _proposal_parameter_summary(parameters: list[ProposalParameter]) -> list[dict[str, Any]]:
-    return [
-        {
-            "parameter_name": parameter.parameter_name,
-            "value_count": len(parameter.values),
-        }
-        for parameter in parameters
-    ]
-
-
 def build_runnable_graph() -> Runnable:
-    return RunnableLambda(confirm_parameters).with_types(
-        input_type=ConfirmParametersIn,
-        output_type=ConfirmParametersOut,
-    )
+    return RunnableLambda(to_state) | build_graph() | RunnableLambda(to_output)
 
 
 @lru_cache(maxsize=1)

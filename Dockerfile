@@ -1,5 +1,5 @@
 ARG PLATFORM_ARCH="linux/amd64"
-ARG BASE_IMAGE="python:3.12-slim-bookworm"
+ARG BASE_IMAGE="python:3.13-slim-bookworm"
 
 FROM --platform=${PLATFORM_ARCH} ${BASE_IMAGE}
 

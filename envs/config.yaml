@@ -27,6 +27,10 @@ deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 http_timeout: 60
 http_connect_timeout: 10
 llm_timeout_sec: 310
+llm_max_retries: 1
+model_parameter_max_parameter_slots: 100
+model_parameter_max_value_prompt_basecase_records: 100
+model_parameter_max_routing_candidates_per_dimension: 2
 http_verify: true
 http2: true
 http_max_connection: 100
@@ -35,6 +39,21 @@ http_max_keepalive: 20
 scenario_group_admin_bearer_tokens:
   - ${SCENARIO_GROUP_ADMIN_TOKEN}
 create_signposts_max_concurrent_scenarios: 7
+
+agents:
+  scenario_group_agent:
+    mlflow_experiment_name: scenario_agent_local
+    aip_app_id: scenario_agent
+    mlflow_tracing_enabled: true
+  default:
+    mlflow_experiment_name: mi_agent_local
+    aip_app_id: mi_agent
+    mlflow_tracing_enabled: false
+
+mlflow_tracking_uri: "http://40.82.137.178:5001"
+mlflow_tracking_username: "skmip-mi-agent"
+mlflow_tracking_password: "skgas2ndfloor!"
+mlflow_langchain_run_tracer_inline: false
 
 callback_oauth2_token_url: https://mi.mingovvv.info/api/v1/oauth2/token
 callback_oauth2_client_id: agent-skgas-client

@@ -213,6 +213,11 @@ class MiEventModel(MiEventContentColumnsMixin, AuditColumnsMixin, ORMBase):
         nullable=True,
         comment="시나리오화 추천 근거",
     )
+    institution_view_synthesis: Mapped[str | None] = mapped_column(
+        sqlalchemy.String(1000, collation="utf8mb4_bin"),
+        nullable=True,
+        comment="기관 전망 View 종합",
+    )
     new_yn: Mapped[str] = mapped_column(
         sqlalchemy.CHAR(1, collation="utf8mb4_bin"),
         nullable=False,

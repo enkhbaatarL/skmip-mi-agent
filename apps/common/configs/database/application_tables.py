@@ -8,7 +8,7 @@ from apps.persistence.event.models import (
     MiEventTypeL1Model,
     MiEventTypeL2Model,
 )
-from apps.persistence.model_input.models import (
+from apps.persistence.model_parameter.models import (
     MiModelParamDimensionMapModel,
     MiModelParamModel,
     MiModelParamProposalModel,
@@ -38,6 +38,9 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiSnapshotModel.__table__,
     MiScenarioSnapModel.__table__,
     MiSignpostSnapModel.__table__,
+)
+
+MODEL_PARAMETER_TABLES: tuple[Table, ...] = (
     MiModelParamModel.__table__,
     MiModelParamDimensionMapModel.__table__,
     MiModelParamProposalModel.__table__,

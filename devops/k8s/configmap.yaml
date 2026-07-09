@@ -61,6 +61,10 @@ data:
     skip_callback: true
 
     llm_concurrency: 4
+    llm_max_retries: 1
+    model_parameter_max_parameter_slots: 100
+    model_parameter_max_value_prompt_basecase_records: 100
+    model_parameter_max_routing_candidates_per_dimension: 2
     mcp_max_concurrency: 8
     http_max_concurrency: 16
     rdb_exec_max_parallel: 4

@@ -11,6 +11,7 @@ import re
 from typing import Any, Dict, List, Tuple
 import uuid
 
+from langgraph.runtime import Runtime
 from pydantic import BaseModel
 
 from apps.agents.scenario_group_agent.prompts.scenario_generation import (
@@ -66,6 +67,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
 )
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import TraceContext
 from apps.persistence.scenario.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
@@ -159,6 +161,7 @@ async def _invoke_structured(
     schema_cls: type[BaseModel],
     messages: List[Dict[str, str]],
     temperature: float = 0.0,
+    trace_context: TraceContext | None = None,
 ) -> BaseModel:
     """Structured output LLM call via the project's async connector."""
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
@@ -168,6 +171,7 @@ async def _invoke_structured(
         messages=messages,
         temperature=temperature or REF_TEMPERATURE,
         max_retries=2,
+        trace_context=trace_context,
     )
     return result.result
 
@@ -179,6 +183,7 @@ async def _ainvoke_with_retry(
     user_prompt: str,
     validate_fn,
     hard_constraints: str = "",
+    trace_context: TraceContext | None = None,
 ) -> BaseModel | None:
     """LLM 호출 with retry + validation + fallback.
 
@@ -203,7 +208,12 @@ async def _ainvoke_with_retry(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ]
-            result = await _invoke_structured(schema_cls, messages, temperature=REF_TEMPERATURE)
+            result = await _invoke_structured(
+                schema_cls,
+                messages,
+                temperature=REF_TEMPERATURE,
+                trace_context=trace_context,
+            )
             if validate_fn:
                 validate_fn(result)
             return result
@@ -277,6 +287,7 @@ async def stage2_select_dimensions(
     event: Dict,
     template: ScenarioTemplate,
     llm_client=None,
+    trace_context: TraceContext | None = None,
 ) -> Stage2DimensionSelection:
     """Stage 2 진입점 — 8개 Dim 중 3~5개 선택 (LLM)."""
     template_dim_ids = [dimension.dim_key for dimension in template.ordered_dimensions()]
@@ -319,6 +330,7 @@ async def stage2_select_dimensions(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=STAGE2_HARD_CONSTRAINTS,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -403,6 +415,7 @@ async def stage3_reduce_values(
     selected: Stage2DimensionSelection,
     template: ScenarioTemplate,
     llm_client=None,
+    trace_context: TraceContext | None = None,
 ) -> Stage3ValueSelection:
     """Stage 3 진입점 — 선택된 Dim 별로 LLM 호출하여 Enum 축소."""
     dim_idx = _dim_index(template)
@@ -439,6 +452,7 @@ async def stage3_reduce_values(
             user_prompt=user_prompt,
             validate_fn=_validate,
             hard_constraints=STAGE3_HARD_CONSTRAINTS,
+            trace_context=trace_context,
         )
 
         if out is None:
@@ -750,6 +764,7 @@ async def stage4_synthesize_scenarios(
     validation_repairs: list[Stage5RepairInstruction] | None = None,
     previous_stage4: Stage4ScenarioSynthesis | None = None,
     llm_client=None,
+    trace_context: TraceContext | None = None,
 ) -> Stage4ScenarioSynthesis:
     """Stage 4 진입점 — Cartesian → Compat → 5~7건 선정 → Narrative LLM."""
     combos_all = _cartesian_combos(stage3)
@@ -820,6 +835,7 @@ async def stage4_synthesize_scenarios(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=STAGE4_HARD_CONSTRAINTS,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -870,6 +886,7 @@ async def stage4_synthesize_fixed_scenarios(
     pack: Stage1ContextPack,
     dimension_values_list: List[DimensionValueMap],
     llm_client=None,
+    trace_context: TraceContext | None = None,
 ) -> Stage4ScenarioSynthesis:
     """Generate narratives for caller-provided Dim combinations without reselecting them."""
     target = [
@@ -909,6 +926,7 @@ async def stage4_synthesize_fixed_scenarios(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=STAGE4_HARD_CONSTRAINTS,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -943,6 +961,7 @@ async def stage_generate_scenario_group_metadata(
     event: Dict,
     stage4: Stage4ScenarioSynthesis,
     llm_client=None,
+    trace_context: TraceContext | None = None,
 ) -> ScenarioGroupMetadata:
     """Generate scenario group title/description for UI display."""
     detail_excerpt = _shorten(event.get("detail_analysis", ""), 1200)
@@ -959,6 +978,7 @@ async def stage_generate_scenario_group_metadata(
         user_prompt=user_prompt,
         validate_fn=None,
         hard_constraints=SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -979,6 +999,7 @@ async def stage6_validate(
     pack: Stage1ContextPack,
     stage4: Stage4ScenarioSynthesis,
     llm_client=None,
+    trace_context: TraceContext | None = None,
 ) -> Stage5Validation:
     """Stage 6 진입점 — MECE 통과 여부 + 5단계 Prior 부여."""
     sc_ids = [s.scenario_id for s in stage4.scenarios]
@@ -1003,6 +1024,7 @@ async def stage6_validate(
         user_prompt=user_prompt,
         validate_fn=_validate,
         hard_constraints=STAGE6_HARD_CONSTRAINTS,
+        trace_context=trace_context,
     )
 
     if out is None:
@@ -1313,6 +1335,7 @@ def _stage5_compatibility_feedback(
 async def _stage5_check_compatibility(
     stage4: Stage4ScenarioSynthesis,
     template: ScenarioTemplate,
+    trace_context: TraceContext | None = None,
 ) -> tuple[bool, str | None, list[Stage5RepairInstruction]]:
     expected_ids = set(range(1, len(stage4.scenarios) + 1))
 
@@ -1326,6 +1349,7 @@ async def _stage5_check_compatibility(
         user_prompt=_stage5_compatibility_user_prompt(stage4, template),
         validate_fn=_validate,
         hard_constraints="",
+        trace_context=trace_context,
     )
     if out is None:
         print("  ↳ Stage 5 compatibility fallback: LLM 호출 실패 — 검증 통과로 처리")
@@ -1357,6 +1381,7 @@ async def stage5_quick_validate(
     stage3: Stage3ValueSelection,
     stage4: Stage4ScenarioSynthesis,
     template: ScenarioTemplate,
+    trace_context: TraceContext | None = None,
 ) -> tuple[bool, str | None, list[Stage5RepairInstruction]]:
     """Stage 5 진입점 — 빠른 규칙 검증.
 
@@ -1383,7 +1408,7 @@ async def stage5_quick_validate(
     if duplicate_feedback is not None:
         return False, duplicate_feedback, []
 
-    return await _stage5_check_compatibility(stage4, template)
+    return await _stage5_check_compatibility(stage4, template, trace_context=trace_context)
 
 # ==============================================
 # LangGraph Node Classes
@@ -1407,7 +1432,11 @@ class BuildContextNode(BaseNode):
 
 
 class SelectDimensionsNode(BaseNode):
-    async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: ScenarioGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if state.event_data is None or state.template is None or state.stage1_context_pack is None:
@@ -1417,12 +1446,17 @@ class SelectDimensionsNode(BaseNode):
                 state.stage1_context_pack,
                 state.event_data,
                 state.template,
+                trace_context=runtime.context if runtime is not None else None,
             ),
         }
 
 
 class ReduceValuesNode(BaseNode):
-    async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: ScenarioGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if state.template is None or state.stage1_context_pack is None or state.stage2_dimension_selection is None:
@@ -1432,12 +1466,17 @@ class ReduceValuesNode(BaseNode):
                 state.stage1_context_pack,
                 state.stage2_dimension_selection,
                 state.template,
+                trace_context=runtime.context if runtime is not None else None,
             ),
         }
 
 
 class SynthesizeScenariosNode(BaseNode):
-    async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: ScenarioGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if state.template is None or state.stage1_context_pack is None or state.stage3_value_selection is None:
@@ -1450,12 +1489,17 @@ class SynthesizeScenariosNode(BaseNode):
                 validation_feedback=state.validation_feedback,
                 validation_repairs=state.validation_repairs,
                 previous_stage4=state.stage4_scenario_synthesis,
+                trace_context=runtime.context if runtime is not None else None,
             ),
         }
 
 
 class QuickValidateNode(BaseNode):
-    async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: ScenarioGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if (
@@ -1471,6 +1515,7 @@ class QuickValidateNode(BaseNode):
             state.stage3_value_selection,
             state.stage4_scenario_synthesis,
             state.template,
+            trace_context=runtime.context if runtime is not None else None,
         )
         if passed:
             if state.quick_validate_retry_count > 0:
@@ -1496,7 +1541,11 @@ class QuickValidateNode(BaseNode):
         }
 
 class ValidateScenariosNode(BaseNode):
-    async def run(self, state: ScenarioGenerationState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: ScenarioGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_generation or state.error:
             return {}
         if (
@@ -1511,11 +1560,13 @@ class ValidateScenariosNode(BaseNode):
         stage6 = await stage6_validate(
             state.stage1_context_pack,
             state.stage4_scenario_synthesis,
+            trace_context=runtime.context if runtime is not None else None,
         )
         scenario_group_metadata = await stage_generate_scenario_group_metadata(
             state.stage1_context_pack,
             state.event_data,
             state.stage4_scenario_synthesis,
+            trace_context=runtime.context if runtime is not None else None,
         )
         event_type_l2_id = int(state.event_data.get("event_type_l2_id") or 0)
         stage4 = state.stage4_scenario_synthesis

@@ -10,7 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
-from apps.common.configs.database.application_tables import APPLICATION_TABLES
+from apps.common.configs.database.application_tables import (
+    APPLICATION_TABLES,
+    MODEL_PARAMETER_TABLES,
+)
 from apps.common.configs.database.schema_validation import validate_schema
 from apps.common.configs.database.sync_database.connection import get_sync_engine
 from apps.common.logging.logger_config import logger, setup_logging
@@ -32,7 +35,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
 
     logger.info("Validating ORM models against the database schema")
-    await asyncio.to_thread(validate_schema, get_sync_engine(), APPLICATION_TABLES)
+    await asyncio.to_thread(
+        validate_schema,
+        get_sync_engine(),
+        APPLICATION_TABLES + MODEL_PARAMETER_TABLES,
+    )
     logger.info("ORM/DB schema validation completed")
     if cfg.callback_oauth2_token_url:
         logger.info("Pre-fetching callback OAuth2 token")

@@ -58,6 +58,7 @@ BASE_CONFIG = textwrap.dedent(
     rdb_search_metadata_repo_id: 00000000-0000-0000-0000-000000000000
 
     llm_concurrency: 4
+    llm_max_retries: 1
     mcp_max_concurrency: 8
     http_max_concurrency: 16
     rdb_exec_max_parallel: 4
@@ -88,14 +89,14 @@ class ConfigLoaderTest(unittest.TestCase):
                 env.update(extra_env)
 
             script_lines = [
-                "from apps.common.configs.settings import get_settings",
+                "from apps.common.configs.config import get_settings",
                 "cfg = get_settings()",
             ]
             script_lines.extend(
                 print_lines
                 or [
                     "print(cfg.METADATA_DB_HOST)",
-                    "print(cfg.mcp_client_sse_read_timeout)",
+                    "print(cfg.llm_max_retries)",
                     "print(cfg.http_timeout)",
                     "print(cfg.log_level)",
                 ]
@@ -121,26 +122,26 @@ class ConfigLoaderTest(unittest.TestCase):
     def test_lf_config_loads(self) -> None:
         lines = self.run_settings_import(BASE_CONFIG)
 
-        self.assertEqual(lines, ["db-host", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
 
     def test_real_crlf_config_loads(self) -> None:
         lines = self.run_settings_import(BASE_CONFIG.replace("\n", "\r\n"))
 
-        self.assertEqual(lines, ["db-host", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
 
     def test_literal_escaped_crlf_config_loads(self) -> None:
         escaped_config = BASE_CONFIG.replace("\n", r"\r\n")
 
         lines = self.run_settings_import(escaped_config)
 
-        self.assertEqual(lines, ["db-host", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
 
     def test_literal_escaped_crlf_config_with_trailing_newline_loads(self) -> None:
         escaped_config = BASE_CONFIG.replace("\n", r"\r\n") + "\n"
 
         lines = self.run_settings_import(escaped_config)
 
-        self.assertEqual(lines, ["db-host", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
 
     def test_env_placeholders_are_replaced_after_newline_normalization(self) -> None:
         escaped_config = BASE_CONFIG.replace("METADATA_DB_HOST: db-host", "METADATA_DB_HOST: ${TEST_DB_HOST}")
@@ -148,7 +149,7 @@ class ConfigLoaderTest(unittest.TestCase):
 
         lines = self.run_settings_import(escaped_config, {"TEST_DB_HOST": "db-from-env"})
 
-        self.assertEqual(lines, ["db-from-env", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["db-from-env", "1", "60.0", "DEBUG"])
 
     def test_missing_env_placeholder_is_left_literal(self) -> None:
         escaped_config = BASE_CONFIG.replace("METADATA_DB_HOST: db-host", "METADATA_DB_HOST: ${MISSING_TEST_DB_HOST}")
@@ -156,7 +157,7 @@ class ConfigLoaderTest(unittest.TestCase):
 
         lines = self.run_settings_import(escaped_config)
 
-        self.assertEqual(lines, ["${MISSING_TEST_DB_HOST}", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["${MISSING_TEST_DB_HOST}", "1", "60.0", "DEBUG"])
 
     def test_multiline_yaml_preserves_literal_escaped_newline_value(self) -> None:
         config_text = BASE_CONFIG + "\ncallback_oauth2_client_secret: 'line1\\r\\nline2'"
@@ -190,7 +191,7 @@ class ConfigLoaderTest(unittest.TestCase):
             else:
                 os.environ["METADATA_DB_HOST"] = original
 
-        self.assertEqual(lines, ["db-host", "60.0", "60.0", "DEBUG"])
+        self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
 
 
 if __name__ == "__main__":

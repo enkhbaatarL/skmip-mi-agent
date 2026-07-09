@@ -5,7 +5,7 @@
 - 참고 코드:
   - `apps/agents/scenario_group_agent/api.py`
   - `apps/agents/scenario_group_agent/schemas/common.py`
-  - `apps/agents/model_parameter_agent/schemas/propose_parameters.py`
+  - `apps/agents/model_parameter_agent/flows/propose_parameters/api_schema.py`
 
 ## 1. 개요
 
@@ -79,7 +79,7 @@ sequenceDiagram
     participant API as Model Parameter Agent API
     participant BG as Background Worker
 
-    EXT->>API: POST /model-parameters/scenarios/{scenarioId}/proposals
+    EXT->>API: POST /model-parameters/scenarios/{scenario_id}/proposals
     API-->>EXT: status/message/data.modelParamProposalId/status
     API->>BG: proposal 생성 background 실행
     BG-->>EXT: Callback signal
@@ -105,7 +105,17 @@ Path parameter:
 |---|---|---:|---|
 | `scenario_id` | integer | Y | 파라미터 제안을 수행할 scenario ID |
 
-Request body는 사용하지 않는다.
+Request body는 선택 사항이다.
+
+```json
+{
+  "userId": 10001
+}
+```
+
+| Field | Type | Required | 설명 |
+|---|---|---:|---|
+| `userId` | integer | N | 요청 사용자 ID. 미입력 시 proposal row의 `request_usr_id`는 `NULL`로 저장한다. |
 
 ### 4.3 Immediate response
 
@@ -136,11 +146,11 @@ callback URL은 운영 설정으로 관리한다. scenario group agent처럼 `ca
 Callback path:
 
 ```http
-POST /api/v1/mi/next-gen/scenarios/{scenarioId}/model-param-proposals/callback
+POST /api/v1/mi/next-gen/scenarios/{scenario_id}/model-param-proposals/callback
 ```
 
 Agent는 proposal 테이블 commit 이후 callback을 발행한다. Backend는 callback을 완료 신호로만 사용하고,
-path의 `scenarioId` 기준으로 Agent proposal 테이블을 재조회한다.
+path의 `scenario_id` 기준으로 Agent proposal 테이블을 재조회한다.
 
 ### 5.2 Callback request
 
@@ -181,7 +191,7 @@ Authorization: Bearer {callback-token}
 | Field | Type | Required | 설명 |
 |---|---|---:|---|
 | `data.modelParamProposalId` | integer | N | 파라미터 제안 row ID. 교차검증용 |
-| `data.scenarioId` | integer | N | 요청 scenario ID. path의 `{scenarioId}`와 일치해야 함 |
+| `data.scenarioId` | integer | N | 요청 scenario ID. path의 `{scenario_id}`와 일치해야 함 |
 | `data.scenarioGroupId` | integer | N | scenario group ID. 교차검증용 |
 | `data.eventId` | integer | N | MI event ID. 교차검증용 |
 | `data.status` | string | N | 성공 시 `PROPOSED`, 실패 시 `FAILED`. 없으면 wrapper `status`로 판정 |
@@ -208,7 +218,8 @@ Authorization: Bearer {callback-token}
 |---|---|---:|---|
 | `modelFile` | string | Y | 수급모델 파일 또는 모델 영역 |
 | `modelSheet` | string | Y | 수급모델 입력 sheet |
-| `valueFieldNames` | string[] | Y | 실제 값을 입력할 value field 이름 목록 |
+| `tableName` | string | Y | model sheet 내 table 구분 |
+| `valueFieldNames` | string[] | Y | 실제 값을 입력할 value field 이름 목록. DB `basecase_column_roles`에서 식별한 value 컬럼명을 우선 사용하고, 식별할 수 없으면 파라미터명을 사용 |
 | `slotAxesFieldNames` | string[] | Y | `values[]`에서 slot 좌표로 해석해야 하는 field 이름 목록 |
 
 ### 6.3 `values[]`
@@ -245,6 +256,8 @@ POST /model-parameters/proposals/{modelParamProposalId}/confirmation
 ```
 
 사용자가 저장된 `proposalParameters`를 검토/수정한 뒤 최종 확정값을 전달한다. 이 API는 sync로 동작한다.
+`status=PROPOSED` 또는 `CONFIRMED`인 proposal에 대해 호출할 수 있으며, 이미 `CONFIRMED`인 proposal은
+기존 `confirmationParameters`를 새 요청값으로 덮어쓴다.
 
 ### 7.2 Request
 
@@ -258,6 +271,7 @@ Request body:
 
 ```json
 {
+  "userId": 10002,
   "data": {
     "confirmationParameters": [
       {
@@ -265,6 +279,7 @@ Request body:
         "modelTarget": {
           "modelFile": "Demand",
           "modelSheet": "WeatherAdjustment",
+          "tableName": "WeatherAdjustment",
           "valueFieldNames": ["Temperature"],
           "slotAxesFieldNames": ["Country", "Year", "Month"]
         },
@@ -287,6 +302,7 @@ Request body:
 
 | Field | Type | Required | 설명 |
 |---|---|---:|---|
+| `userId` | integer | N | 확정 사용자 ID. 입력 시 proposal row의 `mod_usr_logn_id`에 저장한다. |
 | `data.confirmationParameters` | array | Y | 사용자가 최종 확정한 파라미터 전체 set. 형식은 `proposalParameters`와 동일 |
 
 ### 7.3 Success response
@@ -306,6 +322,13 @@ Request body:
 |---|---|---:|---|
 | `data.modelParamProposalId` | integer | Y | 확정된 파라미터 제안 row ID |
 | `data.status` | string | Y | `CONFIRMED` |
+
+### 7.4 상태 처리
+
+- `PROPOSED` 상태에서 성공하면 `confirmationParameters`를 저장하고 `CONFIRMED`로 전이한다.
+- `CONFIRMED` 상태에서 다시 성공하면 같은 row의 `confirmationParameters`, 확정 시각, 수정자를 새 요청 기준으로 갱신하고 `CONFIRMED`를 유지한다.
+- `PROCESSING`, `FAILED` 상태는 confirm을 거부한다.
+- confirm 요청이 validation 오류, 허용되지 않은 상태, DB 오류 등으로 실패하면 transaction rollback 후 기존 proposal 상태와 저장 payload를 유지한다.
 
 ## 8. 처리 규칙
 
@@ -353,5 +376,5 @@ DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalPara
 | 제안 요청 응답 | 동기 실행 후 proposal 전체 반환 | 즉시 `modelParamProposalId`, `status=PROCESSING` 반환 |
 | proposal 저장 | 없음 | proposal row 생성 |
 | callback | 없음 | background 완료 후 proposal 생성 완료 신호 callback |
-| 확정 API | 없음 | `confirmationParameters`를 sync로 저장 |
+| 확정 API | 없음 | `confirmationParameters`를 sync로 저장하고, `CONFIRMED` 재호출 시 overwrite |
 | `modelParamProposalId` | 현재 응답에서는 `null` | proposal row 생성 후 integer |

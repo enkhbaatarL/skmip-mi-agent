@@ -4,26 +4,39 @@ import asyncio
 from decimal import Decimal
 from typing import Any
 
+from langgraph.runtime import Runtime
+
 from apps.agents.scenario_group_agent.flows.create_signposts.state import (
     CreateSignpostsState,
     create_signposts_state_update,
+)
+from apps.agents.scenario_group_agent.persistence.event_service import EventService
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
+    ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
+)
+from apps.agents.scenario_group_agent.persistence.signpost_service import (
+    SignpostService,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
     stage1_build_context_pack,
     stage4_synthesize_fixed_scenarios,
     stage6_validate,
 )
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
+    get_signpost_generation_subgraph,
+)
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     GeneratedSignpost,
     SignpostGenerationResult,
-)
-from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
-    get_signpost_generation_subgraph,
 )
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
     SignpostGenerationState,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.tracing.context import TraceContext, build_langgraph_config
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
     ScenarioGroupStage,
@@ -31,18 +44,8 @@ from apps.persistence.enums import (
     ScenarioStatus,
 )
 from apps.persistence.event.schema import EventPayload
-from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.persistence.scenario.schema import (
     NewScenarioGeneratedDetails,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_service import (
-    ScenarioService,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
-    ScenarioGroupService,
-)
-from apps.agents.scenario_group_agent.persistence.signpost_service import (
-    SignpostService,
 )
 
 
@@ -73,6 +76,7 @@ def load_scenario_group(state: CreateSignpostsState) -> dict[str, object]:
 async def generate_new_scenario_row_details(
     event_data: EventPayload | dict[str, Any],
     dimension_values_list: list[dict[str, Any]],
+    trace_context: TraceContext | None = None,
 ) -> list[NewScenarioGeneratedDetails]:
     if not dimension_values_list:
         return []
@@ -84,8 +88,9 @@ async def generate_new_scenario_row_details(
             {str(key): str(value) for key, value in dimension_values.items()}
             for dimension_values in dimension_values_list
         ],
+        trace_context=trace_context,
     )
-    stage6 = await stage6_validate(pack, stage4)
+    stage6 = await stage6_validate(pack, stage4, trace_context=trace_context)
     likelihoods = [stage6.likelihood_prior.get(scenario.scenario_id, "medium") for scenario in stage4.scenarios]
     details: list[NewScenarioGeneratedDetails] = []
     for scenario, likelihood in zip(stage4.scenarios, likelihoods, strict=False):
@@ -109,6 +114,7 @@ async def generate_new_scenario_row_details(
 
 async def generate_new_scenario_row_details_node(
     state: CreateSignpostsState,
+    runtime: Runtime[TraceContext] | None = None,
 ) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
@@ -131,10 +137,15 @@ async def generate_new_scenario_row_details_node(
         )
         for row in new_rows
     ]
-    details = await generate_new_scenario_row_details(
-        event_data,
-        dimension_values_list,
-    )
+    trace_context = runtime.context if runtime is not None else None
+    if trace_context is None:
+        details = await generate_new_scenario_row_details(event_data, dimension_values_list)
+    else:
+        details = await generate_new_scenario_row_details(
+            event_data,
+            dimension_values_list,
+            trace_context=trace_context,
+        )
     return {"new_scenario_row_details": details}
 
 
@@ -180,7 +191,10 @@ def check_existing_signposts(state: CreateSignpostsState) -> dict[str, object]:
     return {"signposts": existing}
 
 
-async def run_signpost_generation(state: CreateSignpostsState) -> dict[str, object]:
+async def run_signpost_generation(
+    state: CreateSignpostsState,
+    runtime: Runtime[TraceContext] | None = None,
+) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
     if state.mi_event_id is None:
@@ -215,6 +229,7 @@ async def run_signpost_generation(state: CreateSignpostsState) -> dict[str, obje
     from apps.common.configs.config import get_settings
 
     sem = asyncio.Semaphore(get_settings().create_signposts_max_concurrent_scenarios)
+    trace_context = runtime.context if runtime is not None else None
 
     async def process_one(
         scenario: dict[str, Any],
@@ -225,6 +240,8 @@ async def run_signpost_generation(state: CreateSignpostsState) -> dict[str, obje
                     scenario=scenario,
                     base_event_summary=base_event_summary,
                 ),
+                config=build_langgraph_config(trace_context) if trace_context is not None else None,
+                context=trace_context,
             )
             result = (
                 result_state

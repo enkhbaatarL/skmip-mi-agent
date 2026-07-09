@@ -79,6 +79,12 @@ Proposal 생성 상태와 callback 전송 상태는 분리한다.
 
 `event_type_l2_id`는 기본 컬럼에 넣지 않는다. 이벤트 유형별 조회가 필요하면 `scenario_group_id` 또는 `mi_event_id`를 통해 join한다. 운영 조회 성능 요구가 확인되면 optional 컬럼으로 추가한다.
 
+Audit 사용자 ID 저장 규칙:
+
+- proposal 요청의 `userId`는 `request_usr_id`, `crt_usr_logn_id`, 초기 `mod_usr_logn_id`에 저장한다.
+- confirmation 요청의 `userId`는 `mod_usr_logn_id`에 저장한다.
+- proposal `userId`가 없으면 `request_usr_id`는 `NULL`, audit user 컬럼은 기본값 `system`을 사용한다.
+
 ## 4. 상태값
 
 ### 4.1 Proposal status
@@ -87,7 +93,7 @@ Proposal 생성 상태와 callback 전송 상태는 분리한다.
 |---|---|
 | `PROCESSING` | 요청 접수 후 background 생성 중 |
 | `PROPOSED` | 유효한 proposal parameter가 1개 이상 생성됨 |
-| `CONFIRMED` | 사용자가 confirmation API로 확정 완료 |
+| `CONFIRMED` | 사용자가 confirmation API로 확정 완료. 재호출 시 최종 확정값을 overwrite |
 | `FAILED` | proposal 생성/저장 실패 또는 유효한 proposal parameter 없음 |
 
 전이:
@@ -96,9 +102,11 @@ Proposal 생성 상태와 callback 전송 상태는 분리한다.
 PROCESSING -> PROPOSED
 PROCESSING -> FAILED
 PROPOSED -> CONFIRMED
+CONFIRMED -> CONFIRMED  # confirmation_parameters overwrite
 ```
 
-`FAILED`, `CONFIRMED`는 terminal 상태로 둔다. 재실행 또는 재확정 정책이 필요하면 별도 API/이력 설계를 추가한다.
+`FAILED`는 terminal 상태로 둔다. `CONFIRMED`는 재확정 요청을 허용하며, 같은 row의
+`confirmation_parameters`, `confirmed_dtm`, `mod_usr_logn_id`를 새 요청 기준으로 갱신한다.
 
 ### 4.2 Callback status
 
@@ -284,10 +292,12 @@ CREATE TABLE `tmm_mi_model_param_proposal_m` (
 | `model_param_id` | `INT UNSIGNED` | N | AI | PK |
 | `use_yn` | `CHAR(1) COLLATE utf8mb4_bin` | N | `'Y'` | Excel `enabled` |
 | `parameter_name` | `VARCHAR(150) COLLATE utf8mb4_bin` | N |  | 수급모델 parameter명. 현재 canonical name 역할 |
+| `parameter_hint` | `TEXT COLLATE utf8mb4_bin` | N |  | parameter 산정/제약/참고 설명 |
 | `model_file` | `VARCHAR(100) COLLATE utf8mb4_bin` | N |  | basecase workbook group |
 | `model_sheet` | `VARCHAR(150) COLLATE utf8mb4_bin` | N |  | target sheet |
+| `model_table` | `VARCHAR(50) COLLATE utf8mb4_bin` | N |  | model sheet 내 table 구분 |
 | `unit` | `VARCHAR(100) COLLATE utf8mb4_bin` | Y | `NULL` | 기준정보용 단위 |
-| `semantic_axes` | `VARCHAR(500) COLLATE utf8mb4_bin` | Y | `NULL` | parameter 의미/축 설명 |
+| `semantic_axes` | `TEXT COLLATE utf8mb4_bin` | Y | `NULL` | parameter 의미/축 설명 |
 | `basecase_read_mode` | `VARCHAR(50) COLLATE utf8mb4_bin` | N |  | `fixed_columns`, `matrix_time_columns` |
 | `basecase_header_row` | `SMALLINT UNSIGNED` | N |  | header row |
 | `basecase_data_start_row` | `SMALLINT UNSIGNED` | N |  | data start row |
@@ -357,10 +367,12 @@ CREATE TABLE `tmm_mi_model_param_m` (
     `model_param_id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '수급모델 파라미터 ID',
     `use_yn` CHAR(1) COLLATE utf8mb4_bin NOT NULL DEFAULT 'Y' COMMENT '사용 여부',
     `parameter_name` VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT '수급모델 파라미터명',
+    `parameter_hint` TEXT COLLATE utf8mb4_bin NOT NULL COMMENT '수급모델 파라미터 설명',
     `model_file` VARCHAR(100) COLLATE utf8mb4_bin NOT NULL COMMENT '모델 파일 구분',
     `model_sheet` VARCHAR(150) COLLATE utf8mb4_bin NOT NULL COMMENT '모델 시트명',
+    `model_table` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT '모델 시트 내 테이블명',
     `unit` VARCHAR(100) COLLATE utf8mb4_bin NULL COMMENT '단위',
-    `semantic_axes` VARCHAR(500) COLLATE utf8mb4_bin NULL COMMENT '의미 축 설명',
+    `semantic_axes` TEXT COLLATE utf8mb4_bin NULL COMMENT '의미 축 설명',
     `basecase_read_mode` VARCHAR(50) COLLATE utf8mb4_bin NOT NULL COMMENT 'Basecase 읽기 방식',
     `basecase_header_row` SMALLINT UNSIGNED NOT NULL COMMENT 'Basecase header row',
     `basecase_data_start_row` SMALLINT UNSIGNED NOT NULL COMMENT 'Basecase data start row',
@@ -427,17 +439,14 @@ CREATE TABLE `tmm_mi_model_param_dimension_map` (
   COMMENT='수급모델 파라미터 dimension 매핑';
 ```
 
-## 9. 엑셀 기준 seed SQL
+## 9. 엑셀 기준 seed 데이터
 
-현재 엑셀 기준 seed insert query는 아래 파일에 생성했다.
-
-```text
-apps/agents/model_parameter_agent/docs/MODEL_PARAMETER_AGENT_DB_SEED_20260701.sql
-```
+엑셀 기준 seed insert query는 운영 DB/mgmt repo 반영 흐름에서 관리한다.
+agent repo에는 재실행용 seed SQL을 별도로 보관하지 않는다.
 
 seed 기준:
 
-- source workbook: `apps/agents/model_parameter_agent/resources/260625_시나리오가정_MI수급모델_input_매핑_vfShare.xlsx`
+- source workbook: `apps/agents/model_parameter_agent/resources/mapping/260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx`
 - source sheets: `Parameter Excel Mapping`, `Dimension Parameter Mapping`
 - `tmm_mi_model_param_m`: `parameter_name` unique 기준 upsert
 - `tmm_mi_model_param_dimension_map`: `model_param_dimension_map_id`를 Excel row 순서 기준으로 명시해 재실행 가능하게 구성
@@ -463,7 +472,7 @@ seed 적용 후 기대 검증값:
 - `models/__init__.py`: 신규 class import/export
 - `migrations/versions/0016_*.py`: Alembic migration 추가
 - `sql/versions/0016/0016_01_schema_ddl.sql`: fresh build DDL
-- `sql/versions/0016/0016_02_seed_data.sql`: `MODEL_PARAMETER_AGENT_DB_SEED_20260701.sql` 내용을 mgmt SQL convention에 맞춰 반영
+- `sql/versions/0016/0016_02_seed_data.sql`: 모델 파라미터 seed data를 mgmt SQL convention에 맞춰 반영
 - `sql/versions/0016/0016_03_select_queries.sql`: 검증 조회
 - `sql/versions/0016/0016_04_incremental_apply.sql`: 기존 DB 증분 적용 SQL
 - `sql/versions/0016/0016_05_data_cleansing.sql`: 필요 시 data cleansing
@@ -500,9 +509,9 @@ DB schema가 확정되면 `skmip-mi-agent`에서는 다음을 반영한다.
   - callback 전송 및 `callback_status` 갱신
 - `POST /model-parameters/proposals/{modelParamProposalId}/confirmation`
   - proposal row 조회
-  - `status=PROPOSED`인지 검증
+  - `status=PROPOSED` 또는 `CONFIRMED`인지 검증
   - `confirmation_parameters` 저장
-  - `status=CONFIRMED` 전이
+  - `status=CONFIRMED` 전이 또는 유지
 - mapping 기준정보 DB 전환
   - `Parameter Excel Mapping` loader를 `tmm_mi_model_param_m` 조회로 대체
   - `Dimension Parameter Mapping` loader를 `tmm_mi_model_param_dimension_map` 조회로 대체
@@ -513,7 +522,7 @@ DB schema가 확정되면 `skmip-mi-agent`에서는 다음을 반영한다.
 | 항목 | 권장안 | 확정 필요 내용 |
 |---|---|---|
 | 동일 scenario 재요청 | unique 없음, application layer에서 중복 PROCESSING 방지 | 새 proposal 생성인지 기존 row 재사용인지 |
-| confirmation 재호출 | 기본 거부 | 재확정/수정 이력을 허용할지 |
+| confirmation 재호출 | 허용 | 같은 row의 최종 `confirmation_parameters` overwrite |
 | callback retry | `callback_status=FAILED` row를 worker가 재시도 | 재시도 횟수, backoff, 실패 사유는 로그/worker 정책으로 관리 |
 | 내부 debug payload | 기본 제외 | rich state, prompt trace 보존 필요 여부 |
 | event type 조회 | 기본 join 조회 | `event_type_l2_id` denormalized 컬럼 추가 여부 |

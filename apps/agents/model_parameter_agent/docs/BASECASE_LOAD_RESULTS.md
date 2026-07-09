@@ -6,8 +6,8 @@
 
 ## 실행 기준
 
-- 매핑 파일: `resources/260625_시나리오가정_MI수급모델_input_매핑_vfShare.xlsx`
-- Basecase 폴더: `resources/LNG수급모델_운영버전_입력시트_Basecase_20260610`
+- 매핑 파일: `resources/mapping/260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx`
+- Basecase 폴더: `resources/basecase`
 - 로딩 함수: `get_parameter_knowledge_base()` + `build_basecase_records()`
 - 대상: `Parameter Excel Mapping`에 정의된 canonical parameter 전체
 - 후보 구성: 실제 flow처럼 `basecase_read_mode`, `basecase_column_roles`, `basecase_value_*`, `basecase_row_filter` 등 매핑 스펙을 후보 dict에 포함

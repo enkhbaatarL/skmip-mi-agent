@@ -75,6 +75,12 @@ apps/agents/<agent_name>/
 ├── __init__.py
 ├── api.py
 ├── presentation.py
+├── routers/
+│   ├── __init__.py
+│   ├── events.py
+│   ├── scenario_generation.py
+│   ├── scenario_group_management.py
+│   └── security.py
 ├── persistence/
 │   ├── event_service.py
 │   ├── scenario_service.py
@@ -119,8 +125,12 @@ apps/agents/<agent_name>/
 ## 디렉터리별 역할
 
 - `api.py`
+  - Agent router 조립을 담당한다.
+  - 실제 FastAPI endpoint 선언은 `routers/` 하위 파일에 둔다.
+- `routers/`
   - FastAPI endpoint 선언, request schema 수신, background task 등록, flow 진입점 호출을 담당한다.
   - endpoint 내부에 도메인 로직을 길게 두지 않고 schema 변환, validation, flow/service 호출까지만 담당한다.
+  - workflow API는 `scenario_generation.py`, Scenario Group 조회/관리 API는 `scenario_group_management.py`, Event 조회 API는 `events.py`에 둔다.
 - `presentation.py`
   - API 응답 표현 계층이다.
   - API 응답 payload, table, 표시값 등 입출력 shape을 조립/정규화한다.
@@ -220,6 +230,7 @@ apps/agents/<agent_name>/
 ```text
 POST /scenario-groups
 → api.py
+→ routers/scenario_generation.py
 → schemas/endpoint.py
 → flows/create_scenarios/flow.py
 → flows/create_scenarios/nodes.py
@@ -227,19 +238,23 @@ POST /scenario-groups
 
 GET /scenario-groups/{scenario_group_id}
 → api.py
+→ routers/scenario_group_management.py
 → apps/agents/scenario_group_agent/persistence/scenario_group_service.py
 → presentation.py
 
 DELETE /scenario-groups/{scenario_group_id}
 → api.py
+→ routers/scenario_group_management.py
 → apps/agents/scenario_group_agent/persistence/scenario_group_service.py
 
-DELETE /admin/scenario-groups/{scenario_group_id}/hard
+DELETE /scenario-groups/{scenario_group_id}/hard
 → api.py
+→ routers/scenario_group_management.py
 → apps/agents/scenario_group_agent/persistence/scenario_group_service.py
 
 POST /scenario-groups/{scenario_group_id}/validation
 → api.py
+→ routers/scenario_generation.py
 → schemas/endpoint.py
 → flows/validate_scenarios/flow.py
 → flows/validate_scenarios/nodes.py
@@ -247,10 +262,12 @@ POST /scenario-groups/{scenario_group_id}/validation
 
 DELETE /scenario-groups/{scenario_group_id}/signposts
 → api.py
+→ routers/scenario_group_management.py
 → apps/agents/scenario_group_agent/persistence/scenario_group_service.py
 
 POST /scenario-groups/{scenario_group_id}/signposts
 → api.py
+→ routers/scenario_generation.py
 → schemas/endpoint.py
 → flows/create_signposts/flow.py
 → flows/create_signposts/nodes.py
@@ -258,6 +275,7 @@ POST /scenario-groups/{scenario_group_id}/signposts
 
 POST /scenario-groups/{scenario_group_id}/confirmation
 → api.py
+→ routers/scenario_generation.py
 → schemas/endpoint.py
 → flows/confirm_generation/flow.py
 → flows/confirm_generation/nodes.py
@@ -273,25 +291,31 @@ POST /model-parameters/scenarios/{scenario_id}/proposals
   - prepare_propose_parameters_callback()
   - run_propose_parameters_background()
 → flows/propose_parameters/nodes.py
+→ prompts/model_parameter_proposal.py
+→ presentation.py
 → apps/connectors/callback/callback_client.py
-→ persistence/model_input_service.py
-→ apps/persistence/model_input/repository.py
+→ persistence/model_parameter_service.py
+→ apps/persistence/model_parameter/repository.py
 
 POST /model-parameters/scenarios/{scenario_id}/proposals/sync
 → api.py
 → flows/propose_parameters/api_schema.py
 → flows/propose_parameters/flow.py
 → flows/propose_parameters/nodes.py
-→ persistence/model_input_service.py
-→ apps/persistence/model_input/repository.py
+→ prompts/model_parameter_proposal.py
+→ presentation.py
+→ persistence/model_parameter_service.py
+→ apps/persistence/model_parameter/repository.py
 
 POST /model-parameters/proposals/{modelParamProposalId}/confirmation
 → api.py
 → flows/confirm_parameters/api_schema.py
 → flows/confirm_parameters/flow.py
+→ flows/confirm_parameters/state.py
+→ flows/confirm_parameters/nodes.py
 → flows/confirm_parameters/validation.py
-→ persistence/model_input_service.py
-→ apps/persistence/model_input/repository.py
+→ persistence/model_parameter_service.py
+→ apps/persistence/model_parameter/repository.py
 ```
 
 ## 도메인 소유권 기준

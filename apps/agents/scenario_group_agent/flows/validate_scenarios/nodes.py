@@ -2,31 +2,34 @@ from __future__ import annotations
 
 from typing import Any
 
+from langgraph.runtime import Runtime
+
 from apps.agents.scenario_group_agent.flows.validate_scenarios.state import (
     ValidateScenariosState,
     validate_scenarios_state_update,
 )
-from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
-    generate_new_dimension_values,
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
+    ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
     get_scenario_review_subgraph,
+)
+from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
+    generate_new_dimension_values,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.state import (
     ScenarioReviewState,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.tracing.context import TraceContext, build_langgraph_config
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
     ScenarioStatus,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_service import (
-    ScenarioService,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
-    ScenarioGroupService,
 )
 
 
@@ -69,7 +72,10 @@ def load_scenarios(state: ValidateScenariosState) -> dict[str, object]:
     return {"scenarios": scenarios, "dimension_template": dimension_template}
 
 
-async def generate_dimension_values(state: ValidateScenariosState) -> dict[str, object]:
+async def generate_dimension_values(
+    state: ValidateScenariosState,
+    runtime: Runtime[TraceContext] | None = None,
+) -> dict[str, object]:
     if state.status == "failure":
         return {}
 
@@ -179,6 +185,7 @@ async def generate_dimension_values(state: ValidateScenariosState) -> dict[str, 
         and any((row.get("cells") or {}).get(key) is None for row in rows)
     ]
     if fillable_dims:
+        trace_context = runtime.context if runtime is not None else None
         generated = await generate_new_dimension_values(
             template,
             build_dimension_generation_rows(
@@ -186,6 +193,7 @@ async def generate_dimension_values(state: ValidateScenariosState) -> dict[str, 
                 [_model_or_dict_dump(scenario) for scenario in state.scenarios],
             ),
             fillable_dims,
+            trace_context=trace_context,
         )
         for index, row in enumerate(rows):
             values = generated.get(index) or {}
@@ -202,7 +210,10 @@ async def generate_dimension_values(state: ValidateScenariosState) -> dict[str, 
     return validate_scenarios_state_update(request_table=request_table)
 
 
-async def run_scenario_review(state: ValidateScenariosState) -> dict[str, object]:
+async def run_scenario_review(
+    state: ValidateScenariosState,
+    runtime: Runtime[TraceContext] | None = None,
+) -> dict[str, object]:
     if state.status == "failure":
         return {}
     request_table = state.request_table.model_dump() if state.request_table is not None else {}
@@ -214,7 +225,12 @@ async def run_scenario_review(state: ValidateScenariosState) -> dict[str, object
         persisted_scenarios=[_model_or_dict_dump(scenario) for scenario in state.scenarios],
         template_dims=[_model_or_dict_dump(dimension) for dimension in state.dimension_template],
     )
-    result_state = await get_scenario_review_subgraph().ainvoke(subgraph_state)
+    trace_context = runtime.context if runtime is not None else None
+    result_state = await get_scenario_review_subgraph().ainvoke(
+        subgraph_state,
+        config=build_langgraph_config(trace_context) if trace_context is not None else None,
+        context=trace_context,
+    )
     result = (
         result_state
         if isinstance(result_state, ScenarioReviewState)

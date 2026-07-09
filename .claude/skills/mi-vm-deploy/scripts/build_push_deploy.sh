@@ -6,13 +6,27 @@ VM_USER="azureuser"
 DEFAULT_PEM="/Users/messiah/sk-mi-demo-vm-key.pem"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_CONFIG="${SCRIPT_DIR}/../.local"
-SCENARIO_DIR="/home/azureuser/mi/mi-agent-scenario"
-DEFAULT_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-scenario"
-DEFAULT_DOCKERFILE="Dockerfile"
+SCENARIO_COMPOSE_DIR="/home/azureuser/mi/mi-agent-scenario"
+MODEL_PARAMETER_COMPOSE_DIR="/home/azureuser/mi/mi-agent-model-parameter"
+INTERPRET_COMPOSE_DIR="/home/azureuser/mi/mi-agent-interpret"
+SCENARIO_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-scenario"
+MODEL_PARAMETER_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-model-parameter"
+INTERPRET_IMAGE_REPO="skmidemoacr.azurecr.io/mi-agent-interpret"
+SCENARIO_DOCKERFILE="Dockerfile"
+MODEL_PARAMETER_DOCKERFILE="Dockerfile.model_param"
+INTERPRET_DOCKERFILE="Dockerfile_interpret"
+SCENARIO_HOST_PORT=""
+MODEL_PARAMETER_HOST_PORT="8002"
+INTERPRET_HOST_PORT="8003"
 DEFAULT_PLATFORM="linux/amd64"
+DEFAULT_COMPOSE_SERVICE="app"
 
-IMAGE_REPO="$DEFAULT_IMAGE_REPO"
-DOCKERFILE="$DEFAULT_DOCKERFILE"
+AGENT="scenario"
+IMAGE_REPO=""
+DOCKERFILE=""
+COMPOSE_DIR=""
+COMPOSE_SERVICE="$DEFAULT_COMPOSE_SERVICE"
+HOST_PORT=""
 PLATFORM="$DEFAULT_PLATFORM"
 PEM="$DEFAULT_PEM"
 PULL=1
@@ -64,14 +78,15 @@ Commands:
   build-push-deploy <version>  Build image, push to ACR, then deploy on demo VM
   build-push <version>         Build image and push to ACR only
   deploy <version>             Update remote compose IMAGE and recreate app only
-  status                       Show remote scenario agent compose status
-  logs [tail]                  Show remote scenario agent logs; default tail=120
+  status                       Show remote agent compose status
+  logs [tail]                  Show remote agent logs; default tail=120
 
 Options:
+  --agent <name>               Target agent: scenario (default), model-parameter, or interpret
   --pem <path>                 SSH PEM path. Defaults to MI_DEMO_VM_PEM, skill .local, or /Users/messiah/sk-mi-demo-vm-key.pem
-  --dockerfile <path>          Dockerfile path. Default: Dockerfile
+  --dockerfile <path>          Dockerfile path. Defaults by agent
   --platform <platform>        Docker platform. Default: linux/amd64
-  --image-repo <repo>          Image repo. Default: skmidemoacr.azurecr.io/mi-agent-scenario
+  --image-repo <repo>          Image repo. Defaults by agent
   --no-cache                   Add --no-cache to docker build
   --no-pull                    Do not add --pull to docker build
   --dry-run                    Print commands without executing them
@@ -105,6 +120,11 @@ require_arg() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --agent)
+      require_arg "$1" "${2:-}"
+      AGENT="$2"
+      shift 2
+      ;;
     --pem)
       require_arg "$1" "${2:-}"
       PEM="$2"
@@ -157,6 +177,49 @@ if [[ -z "$COMMAND" ]]; then
   exit 2
 fi
 
+configure_agent() {
+  case "$AGENT" in
+    scenario|mi-agent-scenario)
+      AGENT="scenario"
+      if [[ -z "$IMAGE_REPO" ]]; then
+        IMAGE_REPO="$SCENARIO_IMAGE_REPO"
+      fi
+      if [[ -z "$DOCKERFILE" ]]; then
+        DOCKERFILE="$SCENARIO_DOCKERFILE"
+      fi
+      COMPOSE_DIR="$SCENARIO_COMPOSE_DIR"
+      ;;
+    model-parameter|model_parameter|model-param|model_parameter_agent|mi-agent-model-parameter)
+      AGENT="model-parameter"
+      if [[ -z "$IMAGE_REPO" ]]; then
+        IMAGE_REPO="$MODEL_PARAMETER_IMAGE_REPO"
+      fi
+      if [[ -z "$DOCKERFILE" ]]; then
+        DOCKERFILE="$MODEL_PARAMETER_DOCKERFILE"
+      fi
+      COMPOSE_DIR="$MODEL_PARAMETER_COMPOSE_DIR"
+      HOST_PORT="$MODEL_PARAMETER_HOST_PORT"
+      ;;
+    interpret|interpret-agent|mi-agent-interpret)
+      AGENT="interpret"
+      if [[ -z "$IMAGE_REPO" ]]; then
+        IMAGE_REPO="$INTERPRET_IMAGE_REPO"
+      fi
+      if [[ -z "$DOCKERFILE" ]]; then
+        DOCKERFILE="$INTERPRET_DOCKERFILE"
+      fi
+      COMPOSE_DIR="$INTERPRET_COMPOSE_DIR"
+      HOST_PORT="$INTERPRET_HOST_PORT"
+      ;;
+    *)
+      echo "ERROR: unsupported agent: $AGENT. Use scenario, model-parameter, or interpret." >&2
+      exit 2
+      ;;
+  esac
+}
+
+configure_agent
+
 normalize_version() {
   local version="$1"
   if [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}([-+][A-Za-z0-9._-]+)?$ ]]; then
@@ -187,6 +250,10 @@ ensure_repo_context() {
   root="$(repo_root)"
   cd "$root"
   if [[ ! -f "$DOCKERFILE" ]]; then
+    if [[ "$DRY_RUN" == "1" ]]; then
+      echo "WARN: Dockerfile not found for dry-run: $DOCKERFILE" >&2
+      return
+    fi
     echo "ERROR: Dockerfile not found: $DOCKERFILE" >&2
     exit 2
   fi
@@ -275,27 +342,30 @@ remote_deploy() {
 
   remote_script <<EOF
 set -euo pipefail
-cd "$SCENARIO_DIR"
-echo "[scenario] path=\$(pwd)"
+cd "$COMPOSE_DIR"
+echo "[$AGENT] path=\$(pwd)"
+if [[ -n "$HOST_PORT" ]]; then
+  echo "[$AGENT] expected_host_port=$HOST_PORT"
+fi
 if [[ ! -f .env ]]; then
-  echo "ERROR: .env not found in $SCENARIO_DIR" >&2
+  echo "ERROR: .env not found in $COMPOSE_DIR" >&2
   exit 1
 fi
-echo "[scenario] before:"
+echo "[$AGENT] before:"
 grep -n '^IMAGE=' .env || true
 if grep -q '^IMAGE=' .env; then
   perl -0pi -e 's#^IMAGE=.*#IMAGE=$image#m' .env
 else
   printf '\nIMAGE=$image\n' >> .env
 fi
-echo "[scenario] after:"
+echo "[$AGENT] after:"
 grep -n '^IMAGE=' .env
-docker compose --progress plain pull app
-docker compose --progress plain up -d --force-recreate app
+docker compose --progress plain pull "$COMPOSE_SERVICE"
+docker compose --progress plain up -d --force-recreate "$COMPOSE_SERVICE"
 docker compose ps
-docker compose logs --tail=120 app | tee /tmp/mi-agent-scenario-deploy.log
-if grep -q 'Application startup complete' /tmp/mi-agent-scenario-deploy.log; then
-  echo "[scenario] startup=complete"
+docker compose logs --tail=120 "$COMPOSE_SERVICE" | tee "/tmp/mi-agent-$AGENT-deploy.log"
+if grep -q 'Application startup complete' "/tmp/mi-agent-$AGENT-deploy.log"; then
+  echo "[$AGENT] startup=complete"
 else
   echo "WARN: startup marker not found in the last 120 log lines." >&2
 fi
@@ -305,8 +375,11 @@ EOF
 remote_status() {
   remote_script <<EOF
 set -euo pipefail
-cd "$SCENARIO_DIR"
-echo "[scenario] path=\$(pwd)"
+cd "$COMPOSE_DIR"
+echo "[$AGENT] path=\$(pwd)"
+if [[ -n "$HOST_PORT" ]]; then
+  echo "[$AGENT] expected_host_port=$HOST_PORT"
+fi
 grep -n '^IMAGE=' .env || true
 docker compose ps
 EOF
@@ -316,9 +389,12 @@ remote_logs() {
   local tail="$1"
   remote_script <<EOF
 set -euo pipefail
-cd "$SCENARIO_DIR"
-echo "[scenario] path=\$(pwd)"
-docker compose logs --tail=$tail app
+cd "$COMPOSE_DIR"
+echo "[$AGENT] path=\$(pwd)"
+if [[ -n "$HOST_PORT" ]]; then
+  echo "[$AGENT] expected_host_port=$HOST_PORT"
+fi
+docker compose logs --tail=$tail "$COMPOSE_SERVICE"
 EOF
 }
 

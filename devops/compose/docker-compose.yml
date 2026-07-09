@@ -1,8 +1,9 @@
+name: skmip
+
 version: "3.9"
 
 services:
   scenario-group-agent:
-    container_name: skmip-mi-agent
     build:
       context: ../..
       dockerfile: Dockerfile

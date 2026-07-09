@@ -7,8 +7,6 @@ from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
     REF_QUICK_VALIDATE_MAX_RETRIES,
-)
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
     BuildContextNode,
     QuickValidateNode,
     ReduceValuesNode,
@@ -20,6 +18,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import
     ScenarioGenerationState,
 )
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import TraceContext
 
 
 def _route_after_quick_validate(state: ScenarioGenerationState) -> str:
@@ -41,7 +40,7 @@ def _route_after_quick_validate(state: ScenarioGenerationState) -> str:
 
 
 def build_scenario_generation_subgraph() -> Runnable:
-    graph = StateGraph(state_schema=ScenarioGenerationState)
+    graph = StateGraph(state_schema=ScenarioGenerationState, context_schema=TraceContext)
     graph.add_node("build_context", BuildContextNode())
     graph.add_node("select_dimensions", SelectDimensionsNode())
     graph.add_node("reduce_values", ReduceValuesNode())

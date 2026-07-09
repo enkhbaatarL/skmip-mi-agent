@@ -6,6 +6,8 @@ from decimal import Decimal, InvalidOperation
 import re
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from langgraph.runtime import Runtime
+
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     COMPAT_SYSTEM_PROMPT,
     CompatibilityItem,
@@ -20,6 +22,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.schema import (
     ReviewContext,
     ReviewReport,
 )
+from apps.common.tracing.context import TraceContext
 from apps.persistence.scenario.baseline_contrast import (
     apply_single_baseline_by_probability,
     check_baseline_contrast_coverage,
@@ -29,7 +32,6 @@ from apps.persistence.scenario.baseline_contrast import (
 if TYPE_CHECKING:
     from apps.persistence.scenario.schema import (
         ScenarioTemplate,
-        ScenarioTemplateDimension,
     )
 
 
@@ -419,7 +421,10 @@ def _has_only_unusable_enum_recommendations(
     return True
 
 
-async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
+async def _check_compatibility(
+    ctx: ReviewContext,
+    trace_context: TraceContext | None = None,
+) -> CheckResult:
     if not ctx.scenarios:
         return CheckResult(
             "R03",
@@ -450,7 +455,7 @@ async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
         {"role": "user", "content": user_prompt},
     ]
     try:
-        result = await _invoke_compatibility(messages=messages)
+        result = await _invoke_compatibility(messages=messages, trace_context=trace_context)
         items = result.result.items
         expected = {scenario["scenario_id"] for scenario in ctx.scenarios}
         actual = {item.scenario_id for item in items}
@@ -505,12 +510,14 @@ async def _check_compatibility(ctx: ReviewContext) -> CheckResult:
 async def _invoke_compatibility(
     *,
     messages: list[dict[str, str]],
+    trace_context: TraceContext | None = None,
 ) -> CompatibilityInvocationResult:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
     return await invoke_llm_structured_output(
         CompatibilityStructuredOutput,
         messages=messages,
+        trace_context=trace_context,
     )
 
 
@@ -521,12 +528,14 @@ class DimensionValueInvocationResult(Protocol):
 async def _invoke_dimension_values(
     *,
     messages: list[dict[str, str]],
+    trace_context: TraceContext | None = None,
 ) -> DimensionValueInvocationResult:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
     return await invoke_llm_structured_output(
         DimensionValueStructuredOutput,
         messages=messages,
+        trace_context=trace_context,
     )
 
 
@@ -534,6 +543,7 @@ async def generate_new_dimension_values(
     template: "ScenarioTemplate",
     rows: list[dict[str, Any]],
     new_dimensions: list[str],
+    trace_context: TraceContext | None = None,
 ) -> dict[int, dict[str, str]]:
     """새로 추가된 Dimension 의 null 값을 LLM 으로 생성한다.
 
@@ -559,6 +569,7 @@ async def generate_new_dimension_values(
     try:
         result = await _invoke_dimension_values(
             messages=build_dimension_value_messages(dimensions=target_dimensions, rows=rows),
+            trace_context=trace_context,
         )
         for item in result.result.items:
             if item.dim_key not in enum_by_key:
@@ -784,7 +795,7 @@ def _build_reason(notable: list[CheckResult], label_map: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-async def run_review(ctx: ReviewContext) -> ReviewReport:
+async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = None) -> ReviewReport:
     if ctx.unchanged:
         # 요청 본문이 DB(create scenario 결과)와 동일 → 사용자가 수정한 것이
         # 없으므로 불필요한 warning 없이 그대로 통과 처리한다.
@@ -809,7 +820,7 @@ async def run_review(ctx: ReviewContext) -> ReviewReport:
                     f"검사 예외: {type(exc).__name__}: {exc}",
                 ),
             )
-    checks.append(await _check_compatibility(ctx))
+    checks.append(await _check_compatibility(ctx, trace_context=trace_context))
     # R05(확률/증감 값 범위) 검토 비활성화(always):
     # 서비스 사용자가 시나리오 추가 시 probability 가 null 등으로 들어올 수 있어
     # 0~100 범위 검토가 무의미하므로 항상 비활성화한다.
@@ -858,7 +869,11 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.state import (
 
 
 class RunReviewNode(BaseNode):
-    async def run(self, state: ScenarioReviewState) -> dict[str, Any]:
+    async def run(
+        self,
+        state: ScenarioReviewState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
         if state.skip_review or state.error:
             return {}
         return {
@@ -869,6 +884,7 @@ class RunReviewNode(BaseNode):
                     persisted_scenarios=state.persisted_scenarios,
                     template_dims=state.template_dims,
                     requested_headers=state.requested_headers,
-                )
+                ),
+                trace_context=runtime.context if runtime is not None else None,
             ),
         }

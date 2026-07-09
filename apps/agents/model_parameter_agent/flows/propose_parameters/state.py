@@ -4,18 +4,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from apps.agents.model_parameter_agent.mapping import ParameterKnowledgeBase
+from apps.agents.model_parameter_agent.utils.parameter_mapping import ParameterKnowledgeBase
 
 
 class ModelParameterProposalState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     scenario_id: int
-    basecase_dir_path: str | None = None
-    max_candidates: int = 8
-    max_basecase_sample_rows: int = 5
-    max_basecase_cols: int = 18
-    allow_llm_fallback: bool = False
+    user_id: int | None = None
     model_name: str | None = None
 
     scenario_context: dict[str, Any] | None = None

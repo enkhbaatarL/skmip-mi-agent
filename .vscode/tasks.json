@@ -57,6 +57,26 @@
             "command": "docker push skmidemoacr.azurecr.io/mi-agent-scenario:${input:dockerImageTag}",
             "problemMatcher": [],
             "group": "build"
+        },
+        {
+            "label": "Docker Compose Up MLflow",
+            "type": "shell",
+            "command": "docker compose -f devops/compose/docker-compose.yml up -d mlflow",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "Docker Compose Down MLflow",
+            "type": "shell",
+            "command": "docker compose -f devops/compose/docker-compose.yml stop mlflow && docker compose -f devops/compose/docker-compose.yml rm -f mlflow",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "group": "build"
         }
     ],
     "inputs": [

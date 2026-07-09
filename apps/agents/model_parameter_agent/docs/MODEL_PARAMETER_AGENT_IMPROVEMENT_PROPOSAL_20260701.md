@@ -1,8 +1,8 @@
 # 수급모델 파라미터 Agent 개선 제안
 
 - 작성일: 2026-07-01
-- 결과 파일: `apps/agents/model_parameter_agent/reports/model_parameter_proposal_evaluation_event_types_6_7_20260630_233109.md`
-- 기준 코드: `flows/propose_parameters/flow.py`, `flows/propose_parameters/nodes.py`, `mapping.py`, `scripts/evaluate_proposals.py`
+- 결과 파일: `tests/reports/model_parameter_agent/model_parameter_proposal_evaluation_event_types_6_7_20260630_233109.md`
+- 기준 코드: `flows/propose_parameters/flow.py`, `flows/propose_parameters/nodes.py`, `utils/parameter_mapping.py`, `tests/manual/model_parameter_agent/evaluate_proposals.py`
 - 협업 방식: Codex가 결과 JSON과 현재 코드를 재검증했고, Claude가 동일 파일을 독립 리뷰한 초안(`.codex/claude/model_parameter_agent_improvement_review.md`)을 작성했다. 최종 문서는 양쪽 의견을 합치되, 결과 파일에서 확인된 사실과 현재 코드 기준으로 보정했다.
 
 ## 1. 결론 요약
@@ -112,7 +112,7 @@ flowchart TD
 
 현재 구조:
 - `main.py` startup에서 `preload_parameter_knowledge_base()`를 `asyncio.to_thread()`로 실행해 기본 mapping Excel/Basecase profile을 warm-up한다.
-- `mapping.py`의 `_load_parameter_knowledge_base()`는 `@lru_cache(maxsize=8)`로 cache된다.
+- `utils/parameter_mapping.py`의 `_load_parameter_knowledge_base()`는 `@lru_cache(maxsize=8)`로 cache된다.
 - 다만 cache key는 file path와 sample 옵션 중심이고, 파일 변경 감지/버전 관리/운영 중 refresh 정책은 명시되어 있지 않다.
 - `build_basecase_records()`는 요청 중 basecase record를 추출한다. profile cache는 있지만, slot/value 조회에 최적화된 normalized index는 없다.
 

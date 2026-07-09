@@ -77,7 +77,13 @@ uploads/
 downloads/
 artifacts/
 cache/
+backoffice/frontend/dist/
+backoffice/frontend/node_modules/
+backoffice/frontend/*.tsbuildinfo
+backoffice/frontend/vite.config.js
+backoffice/frontend/vite.config.d.ts
 apps/agents/model_parameter_agent/reports/
+tests/reports/
 release-artifacts/
 skmip-mi-agent_*_linux-amd64.tar.gz
 skmip-mi-agent_*_linux-amd64.bundle.zip
@@ -92,6 +98,8 @@ skmip-mi-agent_*_linux-amd64.bundle.zip
 # Optional: docs / mkdocs / sphinx build
 # =========================
 site/
+docs/backoffice/plan/
+docs/backoffice/tests/
 
 # =========================
 # Optional: PyInstaller
@@ -113,3 +121,4 @@ skmip-mi-agent.code-workspace
 .claude/CLAUDE.md
 .claude/skills/*/.local
 .claude/skills/omc-reference/
+.playwright-mcp/
