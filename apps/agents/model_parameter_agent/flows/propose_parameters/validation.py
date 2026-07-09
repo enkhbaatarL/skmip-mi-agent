@@ -4,10 +4,6 @@ from typing import Any, NoReturn
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalParameter
-from apps.agents.model_parameter_agent.utils.parameter_mapping import (
-    get_parameter_knowledge_base_from_resources,
-    match_parameter_candidates,
-)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
@@ -94,11 +90,60 @@ def _ensure_proposal_parameters(
     )
 
 
-def _mapping_candidates_for_context(
+def _normalize_key(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _event_type_l2_id_from_context(scenario_context: dict[str, Any]) -> int | None:
+    scenario_group = scenario_context.get("scenario_group") or {}
+    event_type = scenario_context.get("event_type") or {}
+    raw_value = (
+        scenario_group.get("event_type_l2_id")
+        or event_type.get("event_type_l2_id")
+        or event_type.get("level_2_id")
+    )
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _scenario_dimension_keys(scenario_context: dict[str, Any]) -> set[str]:
+    scenario = scenario_context.get("scenario") or {}
+    dimension_values = scenario.get("dimension_values")
+    if not isinstance(dimension_values, dict):
+        return set()
+    return {
+        _normalize_key(key)
+        for key in dimension_values
+        if _normalize_key(key)
+    }
+
+
+def _parameter_definitions_by_name(
+    parameter_definitions: list[dict[str, Any]],
+) -> set[str]:
+    return {
+        _normalize_key(
+            definition.get("canonical_parameter_name")
+            or definition.get("parameter_name"),
+        )
+        for definition in parameter_definitions
+        if _normalize_key(
+            definition.get("canonical_parameter_name")
+            or definition.get("parameter_name"),
+        )
+        and _normalize_key(definition.get("model_file"))
+        and _normalize_key(definition.get("model_sheet"))
+    }
+
+
+def _has_mapping_candidates_from_db_rows(
     *,
-    scenario_id: int,
     scenario_context: dict[str, Any],
-) -> list[dict[str, Any]]:
+) -> bool:
     resources = scenario_context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
     parameter_definitions = resources.get("parameter_definitions") or []
@@ -108,21 +153,30 @@ def _mapping_candidates_for_context(
             detail="parameter mapping resources not loaded from DB",
         )
 
-    knowledge_base = get_parameter_knowledge_base_from_resources(
-        mapping_rows=mapping_rules,
-        parameter_rows=parameter_definitions,
-    )
-    candidates, _non_inputs, warnings = match_parameter_candidates(
-        knowledge_base,
-        scenario_context,
-    )
-    if not candidates:
-        logger.warning(
-            "[model-parameter] no mapping candidates before callback accept | scenario_id={} warnings={}",
-            scenario_id,
-            warnings,
+    event_type_l2_id = _event_type_l2_id_from_context(scenario_context)
+    dimension_keys = _scenario_dimension_keys(scenario_context)
+    parameter_names = _parameter_definitions_by_name(parameter_definitions)
+    if event_type_l2_id is None or not dimension_keys or not parameter_names:
+        return False
+
+    for rule in mapping_rules:
+        if str(rule.get("mapping_method") or "").strip() not in {"direct", "routing"}:
+            continue
+        try:
+            rule_event_type_l2_id = int(rule.get("event_type_l2_id"))
+        except (TypeError, ValueError):
+            continue
+        if rule_event_type_l2_id != event_type_l2_id:
+            continue
+        if _normalize_key(rule.get("dimension_key")) not in dimension_keys:
+            continue
+        parameter_name = _normalize_key(
+            rule.get("canonical_parameter_name")
+            or rule.get("parameter_name"),
         )
-    return candidates
+        if parameter_name in parameter_names:
+            return True
+    return False
 
 
 def _ensure_context_has_mapping_candidates(
@@ -130,9 +184,12 @@ def _ensure_context_has_mapping_candidates(
     scenario_id: int,
     scenario_context: dict[str, Any],
 ) -> None:
-    candidates = _mapping_candidates_for_context(
-        scenario_id=scenario_id,
+    if _has_mapping_candidates_from_db_rows(
         scenario_context=scenario_context,
+    ):
+        return
+    logger.warning(
+        "[model-parameter] no DB mapping candidates before callback accept | scenario_id={}",
+        scenario_id,
     )
-    if not candidates:
-        _raise_no_mapping_candidates({"scenario_id": scenario_id})
+    _raise_no_mapping_candidates({"scenario_id": scenario_id})

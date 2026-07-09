@@ -117,7 +117,7 @@ def validate_schema(engine: Engine, tables: Sequence[Table]) -> None:
         from apps.common.logging.logger_config import logger
 
         details = "\n".join(f"- {warning}" for warning in result.warnings)
-        logger.warning("ORM/DB schema validation warnings (non-blocking):\n%s", details)
+        logger.warning("ORM/DB schema validation warnings (non-blocking):\n{}", details)
     if result.errors:
         details = "\n".join(f"- {error}" for error in result.errors)
         raise SchemaMismatchError(f"ORM/DB schema validation failed:\n{details}")

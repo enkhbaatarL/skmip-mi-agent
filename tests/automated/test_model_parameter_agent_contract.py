@@ -45,12 +45,17 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     select_parameter_candidates,
     validate_parameter_candidates,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    _has_mapping_candidates_from_db_rows,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    BasecaseProfile,
     DEFAULT_BASECASE_DIR,
     DEFAULT_INPUT_DIR,
     get_parameter_knowledge_base,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
+    ParameterKnowledgeBase,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
@@ -380,6 +385,23 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert not hasattr(payload, "basecase_dir_path")
         assert not hasattr(payload, "unknown_option")
 
+    def test_to_state_preserves_sync_user_id(self) -> None:
+        camel_state = propose_flow.to_state(
+            {
+                "scenario_id": 100,
+                "userId": 101,
+            },
+        )
+        snake_state = propose_flow.to_state(
+            {
+                "scenario_id": 100,
+                "user_id": 102,
+            },
+        )
+
+        assert camel_state.user_id == 101
+        assert snake_state.user_id == 102
+
     def test_proposal_request_accepts_optional_user_id(self) -> None:
         assert ProposeParametersRequest().user_id is None
         assert (
@@ -698,6 +720,150 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert not warnings
         assert candidates[0]["canonical_parameter_name"] == "ShippingCost"
         assert candidates[0]["model_file"] == "Trade"
+
+    def test_parameter_matching_requires_dimension_values_object(self) -> None:
+        kb = get_parameter_knowledge_base_from_resources(
+            mapping_rows=[
+                _mapping_row(
+                    17,
+                    "transport_disruption",
+                    "운송 차질",
+                    "direct",
+                    "ShippingCost",
+                    "운송 차질은 ShippingCost에 직접 반영",
+                ),
+            ],
+            parameter_rows=[
+                row
+                for row in TEST_PARAMETER_ROWS
+                if row["canonical_parameter_name"] == "ShippingCost"
+            ],
+        )
+
+        candidates, non_inputs, warnings = match_parameter_candidates(
+            kb,
+            {
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": [
+                        {"dim_key": "transport_disruption", "value": "높음"},
+                    ],
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+            },
+        )
+
+        assert candidates == []
+        assert non_inputs == []
+        assert warnings == [
+            "scenario.dimension_values가 JSON object가 아니어서 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        ]
+
+    def test_mapping_precheck_requires_dimension_values_object(self) -> None:
+        assert not _has_mapping_candidates_from_db_rows(
+            scenario_context={
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": [
+                        {"dim_key": "transport_disruption", "value": "높음"},
+                    ],
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+                "parameter_mapping_resources": {
+                    "mapping_rules": [
+                        _mapping_row(
+                            17,
+                            "transport_disruption",
+                            "운송 차질",
+                            "direct",
+                            "ShippingCost",
+                            "운송 차질은 ShippingCost에 직접 반영",
+                        ),
+                    ],
+                    "parameter_definitions": [
+                        row
+                        for row in TEST_PARAMETER_ROWS
+                        if row["canonical_parameter_name"] == "ShippingCost"
+                    ],
+                },
+            },
+        )
+
+    def test_parameter_matching_does_not_use_template_as_mapping_source(self) -> None:
+        kb = get_parameter_knowledge_base_from_resources(
+            mapping_rows=[
+                _mapping_row(
+                    17,
+                    "transport_disruption",
+                    "운송 차질",
+                    "direct",
+                    "ShippingCost",
+                    "운송 차질은 ShippingCost에 직접 반영",
+                ),
+            ],
+            parameter_rows=[
+                row
+                for row in TEST_PARAMETER_ROWS
+                if row["canonical_parameter_name"] == "ShippingCost"
+            ],
+        )
+
+        candidates, non_inputs, warnings = match_parameter_candidates(
+            kb,
+            {
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": {},
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+            },
+        )
+
+        assert candidates == []
+        assert non_inputs == []
+        assert warnings == [
+            "시나리오 dimension key가 없어 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        ]
+
+    def test_mapping_precheck_does_not_use_template_as_mapping_source(self) -> None:
+        assert not _has_mapping_candidates_from_db_rows(
+            scenario_context={
+                "scenario": {
+                    "scenario_id": 100,
+                    "dimension_values": {},
+                },
+                "scenario_group": {"event_type_l2_id": 17},
+                "dimension_template": [
+                    {"dim_key": "transport_disruption", "label": "운송 차질"},
+                ],
+                "parameter_mapping_resources": {
+                    "mapping_rules": [
+                        _mapping_row(
+                            17,
+                            "transport_disruption",
+                            "운송 차질",
+                            "direct",
+                            "ShippingCost",
+                            "운송 차질은 ShippingCost에 직접 반영",
+                        ),
+                    ],
+                    "parameter_definitions": [
+                        row
+                        for row in TEST_PARAMETER_ROWS
+                        if row["canonical_parameter_name"] == "ShippingCost"
+                    ],
+                },
+            },
+        )
 
     def test_dimension_mapping_query_excludes_inactive_parameter_refs(self) -> None:
         from sqlalchemy.dialects import mysql
@@ -1492,6 +1658,102 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert any("target 정보" in item["reason"] for item in non_inputs)
         assert any("parameter 후보를 찾지 못했습니다" in warning for warning in warnings)
 
+    def test_basecase_records_reuse_and_close_workbook_per_request(self) -> None:
+        class FakeWorksheet:
+            max_row = 2
+            max_column = 3
+
+            def iter_rows(self, **kwargs):  # noqa: ANN003
+                min_row = int(kwargs.get("min_row") or 1)
+                max_row = int(kwargs.get("max_row") or self.max_row)
+                max_col = int(kwargs.get("max_col") or self.max_column)
+                rows = {
+                    1: ("Japan", 1.0, 2.0),
+                    2: ("Korea", 3.0, 4.0),
+                }
+                for row_idx in range(min_row, max_row + 1):
+                    yield rows[row_idx][:max_col]
+
+        class FakeWorkbook:
+            sheetnames = ["Sheet1"]
+
+            def __init__(self) -> None:
+                self.close_count = 0
+                self.sheet = FakeWorksheet()
+
+            def __getitem__(self, sheet_name: str) -> FakeWorksheet:
+                assert sheet_name == "Sheet1"
+                return self.sheet
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        workbook = FakeWorkbook()
+        load_calls: list[Path] = []
+
+        def fake_loader(path: Path, **kwargs):  # noqa: ANN003
+            assert kwargs == {
+                "read_only": True,
+                "data_only": True,
+                "keep_vba": False,
+            }
+            load_calls.append(path)
+            return workbook
+
+        kb = ParameterKnowledgeBase(
+            mapping_source="test",
+            basecase_dir_path="/tmp",
+            parameter_definitions={},
+            mapping_rules=[],
+            basecase_profiles={
+                "demand::sheet1": BasecaseProfile(
+                    model_file="Demand",
+                    workbook_path="/tmp/Demand Model_Input.xlsm",
+                    sheet_name="Sheet1",
+                    sheet_exists=True,
+                ),
+            },
+        )
+        candidates = [
+            {
+                "candidate_key": "c1",
+                "model_file": "Demand",
+                "model_sheet": "Sheet1",
+                "parameter_name": "ParamA",
+                "canonical_parameter_name": "ParamA",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_data_start_row": 1,
+                "basecase_column_roles": "A:Country,B:ParamA",
+            },
+            {
+                "candidate_key": "c2",
+                "model_file": "Demand",
+                "model_sheet": "Sheet1",
+                "parameter_name": "ParamB",
+                "canonical_parameter_name": "ParamB",
+                "basecase_read_mode": "fixed_columns",
+                "basecase_data_start_row": 1,
+                "basecase_column_roles": "A:Country,C:ParamB",
+            },
+        ]
+
+        with patch(
+            "apps.agents.model_parameter_agent.utils.parameter_mapping._require_workbook_loader",
+            return_value=fake_loader,
+        ):
+            records, warnings = build_basecase_records(kb, candidates, {})
+
+        assert not warnings
+        assert len(load_calls) == 1
+        assert workbook.close_count == 1
+        assert [record["candidate_key"] for record in records] == [
+            "c1",
+            "c1",
+            "c2",
+            "c2",
+        ]
+        assert [record["value"] for record in records] == [1.0, 3.0, 2.0, 4.0]
+
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_flatten_mapped_matrix_sheet(self) -> None:
         kb = _get_db_fixture_kb()
@@ -2137,29 +2399,39 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_prepare_callback_rejects_empty_mapping_before_processing_row(self) -> None:
         scenario_context = {
-            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
-            "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "mi_event_id": 30,
+                "event_type_l2_id": 17,
+            },
             "event": {"mi_event_id": 30},
             "parameter_mapping_resources": {
-                "mapping_rules": [{"dimension_key": "unmapped"}],
-                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "unmapped",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
             },
         }
 
-        with (
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
-            ) as service_cls,
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "get_parameter_knowledge_base_from_resources",
-            ),
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "match_parameter_candidates",
-                return_value=([], [], ["no mapped parameter"]),
-            ),
-        ):
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
 
             with self.assertRaises(MIBaseError) as error:
@@ -2172,29 +2444,39 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_prepare_callback_creates_processing_row_when_mapping_exists(self) -> None:
         scenario_context = {
-            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
-            "scenario_group": {"scenario_group_id": 20, "mi_event_id": 30},
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "mi_event_id": 30,
+                "event_type_l2_id": 17,
+            },
             "event": {"mi_event_id": 30},
             "parameter_mapping_resources": {
-                "mapping_rules": [{"dimension_key": "transport_disruption"}],
-                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "transport_disruption",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
             },
         }
 
-        with (
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
-            ) as service_cls,
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "get_parameter_knowledge_base_from_resources",
-            ),
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "match_parameter_candidates",
-                return_value=([{"candidate_key": "c1"}], [], []),
-            ),
-        ):
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
             service_cls.return_value.create_processing_proposal.return_value = 901
 
@@ -2213,33 +2495,40 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_prepare_callback_passes_explicit_user_id(self) -> None:
         scenario_context = {
-            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
             "scenario_group": {
                 "scenario_group_id": 20,
                 "mi_event_id": 30,
+                "event_type_l2_id": 17,
                 "request_usr_id": 40,
             },
             "event": {"mi_event_id": 30},
             "parameter_mapping_resources": {
-                "mapping_rules": [{"dimension_key": "transport_disruption"}],
-                "parameter_definitions": [{"parameter_name": "ShippingCost"}],
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "transport_disruption",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
             },
         }
 
-        with (
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
-            ) as service_cls,
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "get_parameter_knowledge_base_from_resources",
-            ),
-            patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
-                "match_parameter_candidates",
-                return_value=([{"candidate_key": "c1"}], [], []),
-            ),
-        ):
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
             service_cls.return_value.create_processing_proposal.return_value = 901
 
