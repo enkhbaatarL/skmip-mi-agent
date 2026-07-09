@@ -54,7 +54,7 @@ def get_compiled_graph() -> Runnable:
 
 async def run_interpret_price(
     scenario_group_id: int | None,
-    scenario_ids: list[str] | None = None,
+    scenario_ids: list[int] | None = None,
 ) -> PriceInterpretationResult:
     state = InterpretPriceState(
         scenario_group_id=scenario_group_id,
@@ -82,7 +82,7 @@ async def run_interpret_price(
 
 def prepare_price_interpretation(
     scenario_group_id: int,
-    scenario_ids: list[str],
+    scenario_ids: list[int],
 ) -> dict[str, object]:
     """비동기 요청 접수 전 경량 검증 후 백그라운드 실행에 넘길 값을 구성한다.
 
@@ -108,7 +108,7 @@ def _resolve_callback_url(scenario_group_id: int) -> str:
 
 async def run_price_interpretation_background(
     scenario_group_id: int,
-    scenario_ids: list[str] | None = None,
+    scenario_ids: list[int] | None = None,
 ) -> None:
     """백그라운드에서 interpret_price graph를 실행하고 결과를 콜백으로 전송한다."""
     from apps.connectors.callback.callback_client import send_callback

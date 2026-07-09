@@ -2,7 +2,7 @@
 
 데이터 출처(라이브 DB):
 - 입력 feature: `tmm_mi_model_param_proposal_m.proposal_parameters` JSON
-  (`ModelInputRepository`, 기존 ORM). `values[*].basecaseValue`=MI Base 입력,
+  (`ModelParameterRepository`). `values[*].basecaseValue`=MI Base 입력,
   `proposedValue`=시나리오 입력. 그룹화 축(Country/Region/DegreeDayType 등)은
   `modelTarget.slotAxesFieldNames` 로 가변 정의되며, Year/Month 는 시간 축으로 분리한다.
 - 예측 가격 결과: 모델 실행 결과 테이블(`ModelResultRepository`, read-only raw SQL).
@@ -29,7 +29,7 @@ from apps.agents.interpret_agent.utils.region_index import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
-from apps.persistence.model_input.repository import ModelInputRepository
+from apps.persistence.model_parameter.repository import ModelParameterRepository
 from apps.persistence.model_result.repository import ModelResultRepository
 
 # 시간 축(그룹 키에서 제외하고 기간 키 생성에 사용).
@@ -116,7 +116,7 @@ class ProposalParameterService:
     def load_interpret_input(
         self,
         scenario_group_id: int | None = None,
-        scenario_ids: list[str] | None = None,
+        scenario_ids: list[int] | None = None,
     ) -> InterpretInput:
         if scenario_group_id is None:
             raise MIBaseError(
@@ -135,7 +135,7 @@ class ProposalParameterService:
             wanted_ids = (
                 [int(str(s).strip()) for s in scenario_ids] if scenario_ids else None
             )
-            proposals = ModelInputRepository(session=session).fetch_proposals_by_group(
+            proposals = ModelParameterRepository(session=session).fetch_proposals_by_group(
                 scenario_group_id, wanted_ids
             )
             if not proposals:

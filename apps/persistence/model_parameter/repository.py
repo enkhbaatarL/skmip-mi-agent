@@ -90,10 +90,13 @@ class ModelParameterRepository(BaseSyncSQLRepository):
     ) -> list[dict[str, Any]]:
         """그룹 내 시나리오별 최신 제안 파라미터(read-only).
 
-        가격전망 해석 입력용. 제안이 확정(CONFIRMED)된 행도 proposal_parameters를
-        그대로 보유하므로 PROPOSED/CONFIRMED 를 모두 포함하고, proposal_parameters가
+        가격전망 해석 입력용. PROPOSED/CONFIRMED 를 모두 포함하고, proposal_parameters가
         비어 있지 않은 행만 대상으로 한다. 시나리오별로 가장 큰
         model_param_proposal_id(최신) 1건만 반환한다.
+
+        CONFIRMED 행은 사용자가 확정 단계에서 수정한 최종값이 confirmation_parameters에
+        저장되므로, 값이 있으면 confirmation_parameters를 우선 사용하고 없을 때만
+        proposal_parameters로 fallback한다(가격 결과와 feature diff 기준을 일치시킨다).
         """
         stmt = (
             select(MiModelParamProposalModel)
@@ -123,7 +126,11 @@ class ModelParameterRepository(BaseSyncSQLRepository):
                 "scenario_group_id": int(proposal.scenario_group_id),
                 "mi_event_id": int(proposal.mi_event_id),
                 "status": proposal.status,
-                "proposal_parameters": _json_safe(proposal.proposal_parameters),
+                "proposal_parameters": _json_safe(
+                    proposal.confirmation_parameters
+                    if proposal.status == "CONFIRMED" and proposal.confirmation_parameters
+                    else proposal.proposal_parameters
+                ),
             }
             for proposal in latest.values()
         ]

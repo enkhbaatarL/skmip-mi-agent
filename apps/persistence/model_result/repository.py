@@ -16,7 +16,7 @@ from sqlalchemy import text
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 
 
-# MI Base(최신 MI_BASE case)의 base_case_prc 시계열.
+# MI Base(최신 완료 MI_BASE case)의 base_case_prc 시계열.
 _MI_BASE_PRICE_SQL = text(
     """
     SELECT p.perd_key AS period_key,
@@ -27,7 +27,12 @@ _MI_BASE_PRICE_SQL = text(
     WHERE c.case_id = (
         SELECT MAX(mb.case_id)
         FROM tmd_mdl_scnrcasem mb
-        WHERE mb.exec_type_cd = 'MI_BASE' AND mb.del_yn = 'N'
+        JOIN tmd_mdl_scnrcaseh mh ON mh.run_id = mb.last_run_id
+        WHERE mb.exec_type_cd = 'MI_BASE'
+          AND mb.del_yn = 'N'
+          AND mb.case_stat_cd = 'COMPLETED'
+          AND mh.exec_stat_cd = 'COMPLETED'
+          AND mh.del_yn = 'N'
     )
     AND p.prc_rgn_nm = :prc_rgn_nm
     AND p.perd_unit_spt_cd = 'M'

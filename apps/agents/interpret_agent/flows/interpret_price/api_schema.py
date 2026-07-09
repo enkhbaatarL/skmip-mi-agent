@@ -23,7 +23,7 @@ class CreatePriceInterpretationPreviewIn(ApiModel):
     입력에 존재하는 (MI Base 제외) 전체 시나리오를 해석한다.
     """
 
-    scenario_ids: list[str] = Field(
+    scenario_ids: list[int] = Field(
         default_factory=list,
         description="해석 대상 시나리오 ID 목록(비우면 전체, MI Base는 항상 제외)",
     )

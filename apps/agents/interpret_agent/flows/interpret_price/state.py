@@ -17,7 +17,7 @@ from apps.agents.interpret_agent.flows.interpret_price.schema import (
 
 class InterpretPriceState(BaseModel):
     scenario_group_id: int | None = None
-    scenario_ids: list[str] = Field(default_factory=list)
+    scenario_ids: list[int] = Field(default_factory=list)
 
     interpret_input: InterpretInput | None = None
     diff_bundles: dict[str, ScenarioDiffBundle] = Field(default_factory=dict)
