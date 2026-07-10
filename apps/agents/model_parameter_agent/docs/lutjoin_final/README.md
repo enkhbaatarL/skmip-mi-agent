@@ -196,17 +196,18 @@ Claude 최종 리포트에서는 LiqUtil 26건이 basecase와 LUT 양쪽에 없�
 - Step2 응답을 canonical key로 바꿔 catalog membership 검사
 - 양쪽 source에 없는 좌표는 자동 proposal이 아니라 unresolved/review로 분리
 
-### P0-4. PowerMix 최종 합계 검증이 없음
+### 검토 완료. PowerMix 최종 합계 검증 여부
 
 LUT 원본의 Country/Year별 PowerMix 합이 1이라는 검증은 있으나, LLM 제안 후 전체 source vector 합계 검증은 없다. 일부 source만 변경하면 최종 합이 1이 아니게 된다.
 
-권고:
+초기 리뷰에서는 전체 vector 제공과 합계 검증을 권고했으나, 최종 정책에서는 PowerMix 값을 Energy Source별 독립 override로 취급한다.
 
-- 동일 Country/Year의 전체 Energy Source vector를 Step3 context로 제공
-- 서버에서 범위 및 합계 1.0 검증
-- 재배분 정책이 없으면 자동 정규화하지 않고 review 처리
+- LLM이 변경 대상으로 명시한 Energy Source 값만 사용한다.
+- 같은 Country/Year의 나머지 Energy Source를 자동 생성하거나 변경하지 않는다.
+- 서버가 전체 합계를 1로 정규화하거나 group 전체를 제외하지 않는다.
+- 각 명시 cell의 exact coordinate와 value schema 검증만 수행한다.
 
-### P0-5. LUT universe를 proposal universe로 사용함
+### P0-4. LUT universe를 proposal universe로 사용함
 
 Codex 수동 리포트에는 broad scenario에서 PowerMix 또는 LiqUtil slot이 94~100개까지 선택된 사례가 있다. 일부는 실제 조정 없이 current value를 유지하는 no-change proposal이다.
 
@@ -355,7 +356,7 @@ Claude 문서는 최종 28/28 scenario 성공을 기록한다. 다만 PASS 기�
 
 다음은 검증하지 않는다.
 
-- PowerMix 최종 합계 1
+- PowerMix 최종 합계 1. 단, 인터뷰 결과 최종 정책에서는 Energy Source별 독립 override를 허용하므로 합계 검증을 요구하지 않는다.
 - slot이 실제 LUT/basecase 좌표인지
 - 관련 없는 no-change slot 과다 선택
 - unresolved reference의 자동 적용 가능 여부
@@ -377,7 +378,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
                     │
                     ▼
           Immutable LutCatalog / Index
-          - schema·duplicate·invariant 검증
+          - schema·duplicate·value 검증
           - parameter별 exact lookup
           - compact slot hierarchy
                     │
@@ -405,7 +406,8 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
                     ▼
           Server Materializer / Validator
           - metadata 복원
-          - completeness·range·invariant 검증
+          - 명시 cell의 coordinate·schema 검증
+          - 누락 생성·aggregate 후처리 없음
                     │
                     ▼
               API/DB + provenance
@@ -453,7 +455,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 |---|---|---|
 | GDP | Country + Year | 절대 GDP, 이전 연도 GDP, transform 정보 |
 | PMI | Demand Country + Year + Month | reference country |
-| PowerMix | Country + Year + Energy Source | Country/Year 전체 vector 정보 |
+| PowerMix | Country + Year + Energy Source | Energy Source별 독립 override 값 |
 | Temperature | Country + Year + Month | HDD, CDD, transform branch |
 | LiqUtilAdjustment | Country + LNG Plant + LNG Plant Train + Year + Month | Period, Life Cycle Category, Nameplate Capacity |
 
@@ -503,9 +505,8 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 4. Step2 strict membership validation
 5. 시나리오 relevance prefilter
 6. source-aware EffectiveReference 모델
-7. PowerMix 최종 vector 정합성 검증
-8. API provenance 계약 확정
-9. LUT off 모드가 main과 동일한지 snapshot 검증
+7. API provenance 계약 확정
+8. LUT off 모드가 main과 동일한지 snapshot 검증
 
 ### P1 — 운영 전 필수
 
@@ -535,7 +536,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 7. LUT 미지원 parameter 회귀
 8. feature off 시 main API snapshot 일치
 9. partial LLM response, reference ID 누락, 중복 cell
-10. PowerMix 합계 및 parameter별 range/invariant
+10. PowerMix 일부 Energy Source만 반환할 때 명시 cell만 유지되고 합계 정규화가 발생하지 않는지 검증
 11. API provenance와 기존 소비자 호환성
 12. prompt token, state 직렬화 크기, cold/warm latency
 13. 동시 요청 메모리와 cache race
@@ -551,7 +552,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | DECIDED | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter의 Step2/Step3 task와 prompt에 동일 적용 |
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
-| D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
+| D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
 | D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
 | D-09 | feature rollout과 streaming 설정 | PENDING | 미정 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
@@ -874,7 +875,6 @@ Step3 적용:
 - 해당 parameter의 selected slot과 exact reference를 우선 제공한다.
 - supplemental context가 필요한 parameter는 남은 예산 안에서 추가한다.
 - selected slot의 필수 exact reference가 상한 때문에 조용히 누락되면 안 된다. 필요한 reference가 상한보다 많으면 명시적 validation error 또는 재선택 대상으로 처리한다.
-- PowerMix처럼 group 전체 vector가 필요한 parameter는 group context까지 고려해 reference 상한을 정한다.
 
 #### D-05 no-change 처리 상세
 
@@ -917,7 +917,26 @@ Claude 현재 기준과 차이:
 5. 명시적으로 반환된 proposedValue가 기준값과 같아도 유효한 no-change proposal로 유지한다.
 6. selected slot 수, valid response cell 수, missing/invalid cell 수는 내부 sync/test 응답과 metric에서 진단할 수 있다.
 
-이 결정은 cell 단위 일반 정책이다. PowerMix처럼 여러 cell이 하나의 원자적 제약을 구성하는 경우의 저장 단위는 D-07에서 별도로 결정한다.
+이 결정은 PowerMix를 포함한 모든 parameter의 기본 cell 단위 정책이다.
+
+### 14.7 D-07 확정 — PowerMix 독립 override 처리
+
+Codex 현재 기준:
+
+- 선택된 Energy Source cell만 Step3에서 변경하며 Country/Year 전체 합계를 검증하거나 정규화하지 않는다.
+
+Claude 현재 기준:
+
+- 구현상 전체 vector 합계 검증과 자동 정규화가 없으며 선택된 Energy Source cell을 개별 proposal로 처리한다.
+
+확정 처리:
+
+1. PowerMix의 각 `Country + Year + Energy Source` cell을 독립적인 override로 취급한다.
+2. Step3에는 시나리오와 관련되어 선택된 Energy Source만 변경 대상으로 전달할 수 있다.
+3. LLM이 명시적으로 반환하고 검증을 통과한 Energy Source 값만 저장한다.
+4. 같은 Country/Year의 미선택 또는 누락 Energy Source를 서버가 채우거나 변경하지 않는다.
+5. 서버가 전체 합을 1로 맞추는 정규화, 재배분 또는 group 단위 폐기를 수행하지 않는다.
+6. 서버 검증은 exact coordinate 존재와 cell value schema 같은 객관적 유효성에 한정한다.
 
 ## 15. 인터뷰 진행 원칙
 
@@ -935,7 +954,7 @@ Claude 현재 기준과 차이:
 
 ## 16. 다음 인터뷰 항목
 
-D-07: PowerMix의 동일 Country/Year 전체 energy source 합계가 1이어야 하는 제약을 서버가 어떻게 보장할지 결정한다.
+D-08: Period, Life Cycle Category, Nameplate Capacity 같은 metadata 축을 어느 parameter에서 숨기고 서버가 복원할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -954,3 +973,4 @@ D-07: PowerMix의 동일 Country/Year 전체 energy source 합계가 1이어야 
 | 2026-07-10 | D-05 제한값 검토: GDP부터 100/100 적용 결정 |
 | 2026-07-10 | D-05 완료: parameter별 map 없이 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task/prompt에 동일 적용 |
 | 2026-07-10 | D-06 완료: LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지하며 누락 자동 보완과 candidate 전체 폐기를 모두 금지 |
+| 2026-07-10 | D-07 완료: PowerMix를 Energy Source별 독립 override로 처리하고 전체 vector 강제·합계 검증·정규화 후처리를 하지 않음 |
