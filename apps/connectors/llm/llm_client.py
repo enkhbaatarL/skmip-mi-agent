@@ -38,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager, nullcontext
 from inspect import isawaitable
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import httpx
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -63,6 +63,15 @@ from apps.common.values.llm_usage import LLMUsageModel
 
 
 T = TypeVar("T", bound=BaseModel)
+ReasoningEffortOption = Literal[
+    "default",
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+]
 
 
 class _LLMTraceRun:
@@ -131,6 +140,119 @@ def _require_content(content: str | None) -> str:
         message = "LLM 응답 content가 비어 있습니다."
         raise ValueError(message)
     return content
+
+
+def _structured_output_response_format(output_schema: type[BaseModel]) -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": output_schema.__name__,
+            "schema": output_schema.model_json_schema(),
+            "strict": False,
+        },
+    }
+
+
+def _structured_output_request_kwargs(
+    *,
+    output_schema: type[BaseModel],
+    model: str,
+    messages: list[dict[str, str]],
+    trace_context: TraceContext | None,
+    stream: bool,
+    reasoning_effort: ReasoningEffortOption | None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "extra_headers": _extra_headers(trace_context),
+        "response_format": _structured_output_response_format(output_schema),
+    }
+    if reasoning_effort not in (None, "default"):
+        kwargs["reasoning_effort"] = reasoning_effort
+    if stream:
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+    return kwargs
+
+
+def _structured_output_usage(raw_usage: Any) -> LLMUsageModel | None:  # noqa: ANN401
+    if raw_usage is None:
+        return None
+    model_dump = getattr(raw_usage, "model_dump", None)
+    payload = model_dump() if callable(model_dump) else raw_usage
+    return LLMUsageModel.model_validate(payload)
+
+
+def _parse_structured_output[T: BaseModel](
+    *,
+    output_schema: type[T],
+    content: str | None,
+    raw_usage: Any,  # noqa: ANN401
+) -> tuple[str, T, LLMUsageModel | None]:
+    completed_content = _require_content(content)
+    return (
+        completed_content,
+        output_schema.model_validate_json(completed_content),
+        _structured_output_usage(raw_usage),
+    )
+
+
+async def _consume_structured_output_stream[T: BaseModel](
+    *,
+    output_schema: type[T],
+    stream_response: Any,  # noqa: ANN401
+) -> tuple[str, T, LLMUsageModel | None]:
+    content_chunks: list[str] = []
+    raw_usage: Any = None
+    async for chunk in stream_response:
+        chunk_usage = getattr(chunk, "usage", None)
+        if chunk_usage is not None:
+            raw_usage = chunk_usage
+
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None)
+        if content:
+            content_chunks.append(content)
+
+    return _parse_structured_output(
+        output_schema=output_schema,
+        content="".join(content_chunks),
+        raw_usage=raw_usage,
+    )
+
+
+async def _request_structured_output_stream[T: BaseModel](
+    *,
+    create: Any,  # noqa: ANN401
+    output_schema: type[T],
+    request_kwargs: dict[str, Any],
+    retries_remaining: int,
+) -> tuple[str, T, LLMUsageModel | None]:
+    try:
+        stream_response = await create(**request_kwargs)
+        return await _consume_structured_output_stream(
+            output_schema=output_schema,
+            stream_response=stream_response,
+        )
+    except Exception as exc:
+        if retries_remaining <= 0:
+            raise
+        logger.warning(
+            "Structured output stream failed; retrying the complete request with a fresh buffer "
+            "| retries_remaining={} error={!r}",
+            retries_remaining,
+            exc,
+        )
+        return await _request_structured_output_stream(
+            create=create,
+            output_schema=output_schema,
+            request_kwargs=request_kwargs,
+            retries_remaining=retries_remaining - 1,
+        )
 
 
 def _extra_headers(trace_context: TraceContext | None) -> dict[str, str] | None:
@@ -551,10 +673,15 @@ async def invoke_llm_structured_output[T: BaseModel](
     temperature: float = 0.0,
     max_retries: int = 2,
     trace_context: TraceContext | None = None,
+    stream: bool = False,
+    reasoning_effort: ReasoningEffortOption | None = None,
 ) -> LLMStructuredResult[T]:
     """Structured output LLM 호출. 결과와 usage 정보를 함께 반환."""
     await ensure_runtime_context_ready()
-    client, http_client = _create_openai_client(max_retries=max_retries)
+    # Streaming failures can occur after the SDK has returned a response object.
+    # Disable SDK retries for that path and retry create + consume + parse here so
+    # no partial content buffer can leak into the next attempt.
+    client, http_client = _create_openai_client(max_retries=0 if stream else max_retries)
 
     model = _resolve_model_name(model_name, preference)
     llm_sem = get_llm_semaphore()
@@ -578,23 +705,28 @@ async def invoke_llm_structured_output[T: BaseModel](
                 },
             ) as trace_run,
         ):
-            resp = await client.chat.completions.create(
+            request_kwargs = _structured_output_request_kwargs(
+                output_schema=output_schema,
                 model=model,
                 messages=messages,
-                extra_headers=_extra_headers(trace_context),
-                # temperature=temperature,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": output_schema.__name__,
-                        "schema": output_schema.model_json_schema(),
-                        "strict": False,
-                    },
-                },
+                trace_context=trace_context,
+                stream=stream,
+                reasoning_effort=reasoning_effort,
             )
-            content = resp.choices[0].message.content
-            parsed_result = output_schema.model_validate_json(content)
-            usage = LLMUsageModel.model_validate(resp.usage.model_dump()) if resp.usage else None
+            if stream:
+                content, parsed_result, usage = await _request_structured_output_stream(
+                    create=client.chat.completions.create,
+                    output_schema=output_schema,
+                    request_kwargs=request_kwargs,
+                    retries_remaining=max(0, max_retries),
+                )
+            else:
+                resp = await client.chat.completions.create(**request_kwargs)
+                content, parsed_result, usage = _parse_structured_output(
+                    output_schema=output_schema,
+                    content=resp.choices[0].message.content,
+                    raw_usage=resp.usage,
+                )
             accumulate_usage(usage)
             result = LLMStructuredResult[T](result=parsed_result, usage=usage, model=model)
             await _set_llm_trace_outputs(
