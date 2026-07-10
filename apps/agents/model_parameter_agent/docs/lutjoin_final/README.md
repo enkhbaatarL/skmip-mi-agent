@@ -548,7 +548,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
 | D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
-| D-05 | scenario prefilter, ranking, slot cap | IN_PROGRESS | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. Step2 slot/Step3 reference 상한은 parameter별 config로 적용. 실제 숫자 미정 |
+| D-05 | scenario prefilter, ranking, slot cap | IN_PROGRESS | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. Step2 slot/Step3 reference 상한은 parameter별 config로 적용. GDP는 100/100 확정, 나머지 실제 숫자 미정 |
 | D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
 | D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
@@ -848,8 +848,8 @@ Codex는 model_parameter_max_parameter_slots 기본값과 실제 설정이 모�
         max_parameter_slots: <미정>
         max_value_reference_records: <미정>
       GDP:
-        max_parameter_slots: <미정>
-        max_value_reference_records: <미정>
+        max_parameter_slots: 100
+        max_value_reference_records: 100
       PMI:
         max_parameter_slots: <미정>
         max_value_reference_records: <미정>
@@ -885,6 +885,8 @@ Step2 task 예시:
 
 위 30은 구조 설명용 예시이며 확정값이 아니다.
 
+GDP의 초기 설정값은 Step2 selected slot 100개, Step3 value reference 100개로 확정한다. 두 값은 운영 설정으로 변경할 수 있다. Step2의 100은 목표 개수가 아니며, GDP task의 scenario/event/dimension 관련 slot이 더 적으면 관련된 slot만 반환해야 한다.
+
 Step3 적용:
 
 - 각 parameter_value_tasks 항목에 limits.maxReferenceRecords를 넣는다.
@@ -895,8 +897,8 @@ Step3 적용:
 
 D-05의 미확정 항목:
 
-- GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment 각각의 max_parameter_slots 실제 숫자
-- GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment 각각의 max_value_reference_records 실제 숫자
+- PMI, PowerMix, Temperature, LiqUtilAdjustment 각각의 max_parameter_slots 실제 숫자
+- PMI, PowerMix, Temperature, LiqUtilAdjustment 각각의 max_value_reference_records 실제 숫자
 - LUT 미지원 parameter에 적용할 default 제한값
 
 #### D-05 no-change 처리 상세
@@ -935,7 +937,7 @@ Claude 현재 기준과 관계:
 
 ## 16. 다음 인터뷰 항목
 
-D-05 계속: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment별 max_parameter_slots와 max_value_reference_records 실제 설정값을 확정한다.
+D-05 계속: PMI의 max_parameter_slots와 max_value_reference_records 실제 설정값을 확정한다.
 
 ## 17. 변경 이력
 
@@ -951,3 +953,4 @@ D-05 계속: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment별 max_parameter
 | 2026-07-10 | D-05 no-change 정책 확정: LLM이 명시한 동일값은 저장하고 누락 cell은 서버가 자동 보완하지 않음 |
 | 2026-07-10 | D-05 제한 의미 보강: Step2 input catalog 크기와 selected slot 100개, Step3 reference 100개를 구분 |
 | 2026-07-10 | D-05 제한 구조 확정: Step2 slot과 Step3 reference 상한을 parameter별 config와 task별 prompt 제한으로 변경 |
+| 2026-07-10 | D-05 GDP 제한값 확정: Step2 selected slot 100개, Step3 value reference 100개 |
