@@ -110,7 +110,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | 축 이름 정렬 | 하드코딩 이름 일치 전제 | DB 단위 접미사까지 정규화 | Claude 방향. fuzzy prefix 대신 명시 alias 사용 |
 | 중복 LUT | 첫 record 유지 후 warning | last-wins 또는 미매칭 중복 유지 가능 | 둘 다 개선. 값 충돌 중복은 적재 실패 |
 | effective provenance | basecase/lut value와 양쪽 reference, effective_source 보존 | source와 lut_value 중심 | Codex 모델 |
-| Step3의 LUT 비교값 | override 좌표의 LUT 값을 prompt에서 제외 | override 값과 LUT default를 함께 제공 | Claude 방식 |
+| Step3 기준값 전달 | basecase 우선, 없으면 LUT인 effective 값 하나만 전달 | basecase override와 LUT default를 함께 전달 | Codex 방향. LLM에는 단일 기준값만 전달하고 내부에서만 두 값을 보존 |
 | Step2 state | non-Liq compact, Liq 41,079건 full | 최대 40,000건 full effective state | 둘 다 폐기. compact catalog만 state에 저장 |
 | slot universe cap | full universe 유지하지만 state 비대 | 40,000건 초과분 삭제 | raw cap 금지 |
 | metadata 처리 | LiqUtil에 한정한 hidden-axis 복원 | 모든 parameter에서 Period/Lifecycle/Nameplate 제외 | parameter spec 기반으로 제한적 일반화 |
@@ -244,15 +244,13 @@ Claude는 반대로 한 cell 누락 시 candidate 전체를 비선택으로 만�
 
 현재 API 문서는 basecase가 없으면 basecaseValue=null이라고 정의한다. 두 브랜치는 LUT-only 좌표에서도 effective LUT 값을 basecaseValue에 넣는다.
 
-권고 필드 초안:
+확정 방향:
 
-- basecaseValue: 실제 basecase override 또는 null
-- referenceValue: 제안 산정에 사용한 effective 값
-- referenceSource: basecase_override, basecase_only, lut_default, unresolved
-- lutDefaultValue
-- basecaseReferenceId, lutReferenceId, lutVersion
-
-외부 계약 변경이 어렵다면 소비자 영향 조사와 API 문서 변경을 먼저 확정해야 한다.
+- 운영 DB와 frontend용 API의 basecaseValue는 기존 의미와 구조를 유지한다.
+- 실제 basecase 값이 있을 때만 basecaseValue에 저장한다.
+- LUT-only slot이면 LLM 기준값으로 LUT를 사용하더라도 저장되는 basecaseValue는 null이다.
+- 운영 proposal DB에는 LUT value/source 필드를 추가하지 않는다.
+- 내부 테스트용 sync API는 basecase와 LUT를 함께 반환할 수 있다.
 
 ### P1-4. Claude 설정과 테스트 결과 불일치
 
@@ -437,8 +435,9 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 - metadata
 - effective_value
 - effective_source
-- basecase_value
+- actual_basecase_value
 - lut_default_value
+- llm_reference_value
 - basecase_reference_id
 - lut_reference_id
 - lut_version
@@ -463,7 +462,6 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 - horizon 설정 개념
 - LUT feature flag
 - DB 축 이름과 LUT 축 이름 정렬 개념
-- Step3에서 override 값과 LUT default를 함께 제공
 - reference record 기준 metadata 보정
 
 ### Codex에서 가져올 요소
@@ -471,6 +469,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 - parameter별 명시 business key
 - effective_source와 양쪽 value/reference provenance
 - Step2용 compact reference와 Step3용 exact reference 분리 개념
+- Step3 LLM에 effective 기준값 하나만 전달하는 방향
 - LiqUtil hidden metadata 복원 개념
 - duplicate warning과 robust scalar parsing
 - 호출별 structured streaming 옵션
@@ -482,10 +481,12 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 - Claude의 full effective state
 - Claude의 모든 structured output 전역 streaming
 - Claude의 모든 parameter 대상 metadata 제외
+- Claude의 Step3 prompt에 basecase와 LUT 두 값을 동시에 노출하는 방식
 - Codex의 full LiqUtil state와 request당 재구성
 - Codex의 raw GDP 163국 universe
 - Codex의 nearest Year/Month slot 변경
 - Codex의 누락 응답 자동 no-change 성공 처리
+- 두 브랜치의 LUT-only effective 값을 운영 basecaseValue로 저장하는 방식
 - 두 구현의 global/순서 의존 slot cap
 
 ## 12. 개선 백로그 초안
@@ -542,7 +543,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 |---|---|---|---|
 | D-01 | LUT-only slot 허용 범위 | DECIDED | 5개 parameter 모두 LUT-only slot 허용. basecase 부재는 제외 사유가 아니며, scenario/event 관련성이 있으면 선택 가능 |
 | D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
-| D-03 | effective 기준값 우선순위와 API provenance | PENDING | 미정 |
+| D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | PENDING | 미정 |
 | D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
@@ -559,7 +560,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 - basecase에 좌표가 없다는 이유만으로 slot을 제외하지 않는다.
 - scenario/event 정보와 의미적으로 관련된 LUT slot이면 Step2에서 선택될 수 있어야 한다.
 - LiqUtilAdjustment도 basecase 기존 Train으로 제한하지 않고 LUT에 있는 유효 Train을 선택할 수 있다.
-- 같은 좌표에 basecase와 LUT가 모두 있는 경우의 value 우선순위와 외부 API 표현은 D-03에서 확정한다.
+- 같은 좌표에 basecase와 LUT가 모두 있으면 LLM 기준값은 basecase를 사용하고, 운영 DB/API에도 실제 basecase만 basecaseValue로 저장한다.
 
 Codex 현재 기준:
 
@@ -698,6 +699,79 @@ Claude 현재 기준과 보완점:
 - horizon 밖 basecase record도 proposal 후보에서는 제외되는지 확인
 - start_year > end_year 설정이 애플리케이션 시작 시 실패하는지 확인
 
+### 14.4 D-03 확정 — LLM 기준값과 운영 API/DB 투영
+
+확정 내용:
+
+- 내부 reference 모델에서는 actual basecase와 LUT default를 모두 보존한다.
+- LLM Step3에는 한 좌표당 숫자 기준값을 하나만 전달한다.
+- actual basecase가 있으면 그 값을 LLM의 basecase 기준값으로 전달한다.
+- actual basecase가 없고 LUT가 있으면 LUT 값을 LLM의 basecase 기준값으로 전달한다.
+- LLM에는 actual basecase와 LUT default를 동시에 노출하지 않는다.
+- 운영 proposal DB와 frontend API의 구조와 basecaseValue 의미는 변경하지 않는다.
+- actual basecase가 있으면 basecaseValue에 실제 basecase 값을 저장한다.
+- LUT-only slot이면 basecaseValue는 null로 저장한다.
+- 내부 테스트용 sync API는 검증을 위해 actual basecase와 LUT default를 모두 반환할 수 있다.
+
+Codex 현재 기준과 차이:
+
+- Codex는 내부 effective record에 basecase_value, lut_value, 양쪽 reference와 effective_source를 보존한다.
+- Step3 prompt에는 effective record의 value 하나를 basecase_value로 전달하므로 LLM 입력 방향은 확정안에 가깝다.
+- 하지만 sanitizer가 effective LUT 값을 ParameterValueCell.basecase_value에 채우고 presentation이 이를 basecaseValue로 저장하므로 LUT-only의 운영 DB/API 의미는 확정안과 다르다.
+- 최종안에서는 prompt용 llm_reference_value와 저장용 actual_basecase_value를 분리해야 한다.
+
+Claude 현재 기준과 차이:
+
+- Claude도 내부에서 basecase 우선 effective 값과 lut_value를 보존한다.
+- Step3 prompt에서 basecase override가 있는 좌표에 lut_default_value도 함께 전달하므로 확정안보다 값 정보가 많다.
+- LUT-only 좌표는 value_source=lut_default와 함께 LUT 값을 basecase 기준값으로 전달한다.
+- 최종 presentation에서는 LUT-only effective 값이 basecaseValue로 저장되므로 운영 계약을 위반한다.
+- 최종안에서는 Claude의 dual-value prompt와 effective-to-basecaseValue 투영을 사용하지 않는다.
+
+내부 필드 의미:
+
+- actual_basecase_value: workbook에서 실제로 읽은 값. 없으면 null
+- lut_default_value: LUT에서 읽은 default. 없으면 null
+- llm_reference_value: actual_basecase_value가 있으면 그 값, 없으면 lut_default_value
+- effective_source: basecase 또는 lut
+
+LLM prompt cell 초안:
+
+    {
+      "reference_id": "internal-reference-id",
+      "axes": { ... },
+      "basecase_value": 0.42
+    }
+
+위 basecase_value는 LLM 판단을 위한 단일 기준값이다. 운영 DB의 basecaseValue와 같은 저장 필드로 직접 재사용하지 않는다.
+
+운영 DB/frontend projection:
+
+    {
+      "basecaseValue": null,
+      "proposedValue": 0.45,
+      "rationale": "..."
+    }
+
+위 예시는 LUT-only slot이다. LLM은 내부적으로 LUT 0.42를 기준으로 사용했지만 실제 basecase가 없으므로 basecaseValue는 null이다.
+
+내부 테스트용 sync API는 필요 시 다음 정보를 별도로 반환할 수 있다.
+
+    {
+      "basecaseValue": null,
+      "lutValue": 0.42,
+      "llmReferenceValue": 0.42,
+      "referenceSource": "lut"
+    }
+
+필수 테스트:
+
+- basecase와 LUT가 모두 있으면 LLM prompt에 basecase 숫자 하나만 전달되는지 확인
+- LUT-only이면 LLM prompt에는 LUT 숫자가 전달되지만 운영 DB basecaseValue는 null인지 확인
+- basecase-only이면 LLM prompt와 운영 DB basecaseValue가 모두 실제 basecase인지 확인
+- 운영 proposal API snapshot이 기존 구조와 동일한지 확인
+- sync API에서만 basecase/LUT 양쪽 검증값을 반환하는지 확인
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -714,7 +788,7 @@ Claude 현재 기준과 보완점:
 
 ## 16. 다음 인터뷰 항목
 
-D-03: 같은 좌표에 basecase와 LUT가 모두 있을 때 어떤 값을 effective 기준값으로 사용할지, 그리고 basecaseValue/referenceSource를 API에 어떻게 표현할지 결정한다.
+D-05: scenario/event와 관련된 LUT slot을 LLM에 어느 범위까지 보여줄지, 서버 prefilter·ranking과 slot 상한을 어떻게 적용할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -725,3 +799,4 @@ D-03: 같은 좌표에 basecase와 LUT가 모두 있을 때 어떤 값을 effect
 | 2026-07-10 | 인터뷰 형식에 Codex/Claude 현재 기준을 추가하고 D-01 조합 오류 발생 조건과 예시 보강 |
 | 2026-07-10 | D-04 조기 확정: basecase/LUT 양쪽에 exact 조합이 없으면 최종 제외, nearest 좌표 치환 금지 |
 | 2026-07-10 | D-02 확정: config 기반 2026~2030 proposal horizon, GDP 2025 계산용 lookback 허용 |
+| 2026-07-10 | D-03 확정: LLM 단일 기준값, 운영 basecaseValue 기존 의미 유지, LUT-only null, sync API 양쪽 값 허용 |
