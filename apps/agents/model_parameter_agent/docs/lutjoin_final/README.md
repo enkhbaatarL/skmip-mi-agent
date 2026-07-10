@@ -116,7 +116,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | metadata 처리 | LiqUtil에 한정한 hidden-axis 복원 | 모든 parameter에서 Period/Lifecycle/Nameplate 제외 | parameter spec 기반으로 제한적 일반화 |
 | 없는 시점 처리 | 가장 가까운 Year/Month로 실제 slot 변경 | 원 slot을 유지하나 unresolved 값도 통과 가능 | exact-only가 기본. nearest는 별도 review 참고값 |
 | LLM 누락 처리 | 현재값 유지 cell로 자동 성공 보정 | candidate 전체를 비선택 처리 | 재시도 후 incomplete/review 처리 |
-| slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 두 제한 모두 canonical parameter별 config로 변경. 최대치일 뿐 채워야 할 목표 수가 아님 |
+| slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task에 동일 적용. 최대치일 뿐 채워야 할 목표 수가 아님 |
 | streaming | 호출별 옵션, model parameter에서 명시 | 모든 structured output에 전역 적용 | Codex 방식 |
 | 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled 제공 | off/shadow/on 3단계로 확장 |
 | 테스트 강점 | flow integration, Liq 복원, partial fallback | loader fixture, horizon, 축 보정, 실 LLM 리포트 | 양쪽 테스트를 통합 |
@@ -548,7 +548,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
 | D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
-| D-05 | scenario prefilter, ranking, slot cap | IN_PROGRESS | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. Step2 slot/Step3 reference 상한은 parameter별 config로 적용. GDP는 100/100 확정, 나머지 실제 숫자 미정 |
+| D-05 | scenario prefilter, ranking, slot cap | DECIDED | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter의 Step2/Step3 task와 prompt에 동일 적용 |
 | D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
 | D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
@@ -837,39 +837,21 @@ model_parameter_max_parameter_slots=100은 Step2 prompt에 주입되는 후보 o
 
 Codex는 model_parameter_max_parameter_slots 기본값과 실제 설정이 모두 100이다. Claude는 Settings 기본값이 20이지만 envs/config.yaml과 K8s ConfigMap이 100으로 덮어쓰므로 실제 테스트에서는 100이 사용됐다.
 
-#### 최종안의 parameter별 제한 구조
+#### 최종안의 공통 제한 구조
 
-두 제한 모두 전체 요청에 적용되는 단일 int가 아니라 canonical parameter별 설정으로 변경한다.
+parameter별 설정 map을 추가하지 않는다. 기존 전역 정수 설정 2개를 그대로 사용한다.
 
-설정 구조 초안:
+    model_parameter_max_parameter_slots: 100
+    model_parameter_max_value_prompt_basecase_records: 100
 
-    model_parameter_limits:
-      default:
-        max_parameter_slots: <미정>
-        max_value_reference_records: <미정>
-      GDP:
-        max_parameter_slots: 100
-        max_value_reference_records: 100
-      PMI:
-        max_parameter_slots: <미정>
-        max_value_reference_records: <미정>
-      PowerMix:
-        max_parameter_slots: <미정>
-        max_value_reference_records: <미정>
-      Temperature:
-        max_parameter_slots: <미정>
-        max_value_reference_records: <미정>
-      LiqUtilAdjustment:
-        max_parameter_slots: <미정>
-        max_value_reference_records: <미정>
+설정값은 공통이지만 적용과 검증 단위는 parameter task이다. 예를 들어 GDP와 PowerMix가 함께 선택되면 각 Step2 task에 동일한 maxParameterSlots 100을 전달하고 각 parameter가 최대 100개까지 선택할 수 있다. 한 parameter가 선택한 slot 수가 다른 parameter의 한도를 차감하지 않는다.
 
 Step2 prompt 적용:
 
-- 기존 global slot_selection_limits.maxParameterSlots를 제거한다.
-- 각 parameter_slot_tasks 항목에 limits.maxParameterSlots를 넣는다.
+- model_parameter_max_parameter_slots 전역값을 각 parameter_slot_tasks 항목의 limits.maxParameterSlots에 동일하게 넣는다.
 - system prompt에는 maxParameterSlots가 목표 개수나 최소 개수가 아니라 hard maximum임을 명시한다.
 - LLM은 scenario/event/dimension과 관련된 slot만 선택하며 상한까지 억지로 채우지 않는다.
-- 서버 sanitizer도 전체 selected count가 아니라 candidate/canonical parameter별 count를 검증한다.
+- 서버 sanitizer도 전체 요청 합계가 아니라 candidate/canonical parameter별 count를 동일한 전역 상한으로 검증한다.
 - 여러 parameter가 동시에 선택돼도 먼저 반환된 parameter가 다른 parameter의 예산을 차지하지 않는다.
 
 Step2 task 예시:
@@ -877,29 +859,21 @@ Step2 task 예시:
     {
       "parameter": {"parameter_name": "PowerMix"},
       "limits": {
-        "maxParameterSlots": 30,
+        "maxParameterSlots": 100,
         "instruction": "관련된 slot만 선택하며 최대치를 채울 필요는 없음"
       },
       "basecase_slot_options": [ ... ]
     }
 
-위 30은 구조 설명용 예시이며 확정값이 아니다.
-
-GDP의 초기 설정값은 Step2 selected slot 100개, Step3 value reference 100개로 확정한다. 두 값은 운영 설정으로 변경할 수 있다. Step2의 100은 목표 개수가 아니며, GDP task의 scenario/event/dimension 관련 slot이 더 적으면 관련된 slot만 반환해야 한다.
+GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment 및 LUT 미지원 parameter에는 모두 Step2 selected slot 100개, Step3 value reference 100개를 동일하게 적용한다. Step2의 100은 목표 개수가 아니며, 각 task의 scenario/event/dimension 관련 slot이 더 적으면 관련된 slot만 반환해야 한다.
 
 Step3 적용:
 
-- 각 parameter_value_tasks 항목에 limits.maxReferenceRecords를 넣는다.
+- model_parameter_max_value_prompt_basecase_records 전역값을 각 parameter_value_tasks 항목의 limits.maxReferenceRecords에 동일하게 넣는다.
 - 해당 parameter의 selected slot과 exact reference를 우선 제공한다.
 - supplemental context가 필요한 parameter는 남은 예산 안에서 추가한다.
 - selected slot의 필수 exact reference가 상한 때문에 조용히 누락되면 안 된다. 필요한 reference가 상한보다 많으면 명시적 validation error 또는 재선택 대상으로 처리한다.
 - PowerMix처럼 group 전체 vector가 필요한 parameter는 group context까지 고려해 reference 상한을 정한다.
-
-D-05의 미확정 항목:
-
-- PMI, PowerMix, Temperature, LiqUtilAdjustment 각각의 max_parameter_slots 실제 숫자
-- PMI, PowerMix, Temperature, LiqUtilAdjustment 각각의 max_value_reference_records 실제 숫자
-- LUT 미지원 parameter에 적용할 default 제한값
 
 #### D-05 no-change 처리 상세
 
@@ -937,7 +911,7 @@ Claude 현재 기준과 관계:
 
 ## 16. 다음 인터뷰 항목
 
-D-05 계속: PMI의 max_parameter_slots와 max_value_reference_records 실제 설정값을 확정한다.
+D-06: Step3가 일부 slot에 대해서만 유효한 값을 반환했을 때 유효한 partial cell을 저장할지, candidate 전체를 제외할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -952,5 +926,6 @@ D-05 계속: PMI의 max_parameter_slots와 max_value_reference_records 실제 �
 | 2026-07-10 | D-05 일부 확정: 객관적 유효성 filter 후 전체 compact catalog를 제공하고 관련성 선택은 LLM에 위임 |
 | 2026-07-10 | D-05 no-change 정책 확정: LLM이 명시한 동일값은 저장하고 누락 cell은 서버가 자동 보완하지 않음 |
 | 2026-07-10 | D-05 제한 의미 보강: Step2 input catalog 크기와 selected slot 100개, Step3 reference 100개를 구분 |
-| 2026-07-10 | D-05 제한 구조 확정: Step2 slot과 Step3 reference 상한을 parameter별 config와 task별 prompt 제한으로 변경 |
-| 2026-07-10 | D-05 GDP 제한값 확정: Step2 selected slot 100개, Step3 value reference 100개 |
+| 2026-07-10 | D-05 제한 구조 초안: Step2 slot과 Step3 reference 상한을 parameter별 config와 task별 prompt 제한으로 검토 |
+| 2026-07-10 | D-05 제한값 검토: GDP부터 100/100 적용 결정 |
+| 2026-07-10 | D-05 완료: parameter별 map 없이 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task/prompt에 동일 적용 |
