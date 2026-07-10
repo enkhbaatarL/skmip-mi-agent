@@ -37,7 +37,8 @@ RUN addgroup --gid 1000 usergroup && \
     mkdir -p /workdir/apps && \
     chown -R user:usergroup /workdir
 
-ENV APP_CONFIG="/workdir/config.yaml" \
+ENV TZ="Asia/Seoul" \
+    APP_CONFIG="/workdir/config.yaml" \
     APP_HOST="0.0.0.0" \
     APP_PORT="8000" \
     WORKER_CLASS="uvicorn.workers.UvicornWorker" \
