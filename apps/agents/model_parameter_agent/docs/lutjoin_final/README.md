@@ -32,7 +32,7 @@
 
 - LUT loader, horizon, feature flag: Claude 구현을 기반으로 개선
 - 국가 후보 범위: 각 parameter의 실제 LUT에 존재하는 국가를 사용하며 Full Country List 보조 파일은 사용하지 않음
-- 파라미터별 명시 join key, provenance, Step2/Step3 reference 분리, 호출별 streaming: Codex 구현에서 선별
+- 파라미터별 명시 join key, provenance, Step2/Step3 reference 분리, 호출별 LLM 옵션: Codex 구현에서 선별
 - full LUT를 LangGraph state에 적재하는 방식: 폐기
 - raw/effective record를 40,000건에서 먼저 자르는 방식: 폐기
 - process-level immutable LUT index와 compact SlotCatalog를 만들고, Step2에서 선택된 좌표만 exact lookup하는 방식으로 재설계
@@ -119,6 +119,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | LLM 누락 처리 | 현재값 유지 cell로 자동 성공 보정 | candidate 전체를 비선택 처리 | LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지. 누락 cell 자동 생성 및 candidate 전체 폐기 금지 |
 | slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task에 동일 적용. 최대치일 뿐 채워야 할 목표 수가 아님 |
 | streaming | 공통 connector의 호출별 옵션, model parameter에서 명시 | 공통 connector 내부 전역 설정으로 모든 structured output에 적용 | 공통 connector가 optional stream 인자를 제공하되 기본 false. 각 호출자가 설정값을 전달 |
+| reasoning effort | 지원하지 않음 | 지원하지 않음 | 공통 connector optional 인자로 추가. Model Parameter 설정을 모든 structured-output 호출에 전달하며 default/None은 필드 생략, none은 API에 그대로 전송 |
 | 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled boolean 제공, 기본 true | boolean off/on 사용. 기본 false이며 환경에서 true를 명시해야 활성화 |
 | 테스트 강점 | flow integration, Liq 복원, partial fallback | loader fixture, horizon, 축 보정, 실 LLM 리포트 | 양쪽 테스트를 통합 |
 
@@ -612,7 +613,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 
 1. startup/readiness LUT schema 검증
 2. LUT boolean off/on rollout과 basecase-only snapshot 회귀
-3. per-call streaming과 중단/retry 테스트
+3. per-call streaming, reasoning_effort 전달과 중단/retry 테스트
 4. parameter task별 공통 100 cap 검증
 5. Step3 valid/missing/invalid cell 진단 metric
 6. LUT file hash/version 기반 cache
@@ -642,6 +643,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 13. 동시 요청 메모리와 cache race
 14. 최종 코드·배포 설정으로 28개 scenario 전체 재실행
 15. stream 인자 생략/false/true의 parsed output 동일성, usage 수집, 중간 연결 단절 시 전체 호출 retry
+16. reasoning_effort 미입력/None/default 시 요청 필드 생략, none과 나머지 지원값은 그대로 전송, invalid 설정 거부
 
 ## 14. 인터뷰 의사결정 로그
 
@@ -655,7 +657,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
 | D-08 | LUT spec, adapter, metadata 축 관리 | DECIDED | 최소 YAML spec과 단일 `tabular` 공통 adapter의 row/year_columns layout 사용. GDP·Temperature·LiqUtil만 전용 adapter 유지. LiqUtil metadata만 exact reference에서 복원. GDP General 파일과 PMI t1 파일은 미사용 |
-| D-09 | feature rollout과 streaming 설정 | DECIDED | LUT flag 기본 false, YAML 미등록 parameter는 basecase-only. 공통 connector의 stream 인자는 기본 false이며 호출자가 선택. Model Parameter Agent는 자기 설정값을 호출 시 전달하고 동일한 parsed result를 받음 |
+| D-09 | feature rollout과 LLM 호출 옵션 | DECIDED | LUT flag 기본 false, YAML 미등록 parameter는 basecase-only. 공통 connector의 stream 기본 false. reasoning_effort는 optional이며 default/None은 생략, none은 그대로 전송. Model Parameter가 설정값을 모든 structured-output 호출에 전달 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
 
 ### 14.1 D-01 확정 — LUT-only slot 허용 범위
@@ -1075,7 +1077,7 @@ Claude 현재 기준:
 
 공통 adapter의 `axis_columns` 왼쪽은 canonical DB/API axis, 오른쪽은 실제 CSV header다. custom adapter의 required_columns는 실제 CSV header 문자열 목록이다. 개별 row의 null 허용 여부와 row 제외 규칙은 adapter가 담당한다.
 
-### 14.9 D-09 확정 — LUT feature flag와 streaming
+### 14.9 D-09 확정 — LUT feature flag와 LLM 호출 옵션
 
 #### LUT feature flag 확정
 
@@ -1136,6 +1138,49 @@ Claude 현재 기준:
 7. stream 도중 연결이 끊기면 partial JSON을 반환하지 않고 해당 LLM 호출 전체를 실패·재시도한다.
 8. streaming 경로에서도 usage 수집을 지원하고, provider가 usage를 주지 않으면 기존 nullable usage 계약을 유지한다.
 
+#### reasoning_effort 확정
+
+Codex와 Claude 브랜치 모두 현재 `reasoning_effort`를 지원하지 않는다. 최종안에서 공통 structured-output connector의 optional 호출 인자로 추가한다.
+
+공통 interface:
+
+    ReasoningEffortOption = Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
+
+    async def invoke_llm_structured_output(
+        ...,
+        stream: bool = False,
+        reasoning_effort: ReasoningEffortOption | None = None,
+    ) -> LLMStructuredResult:
+        ...
+
+Model Parameter 설정:
+
+    model_parameter_llm_reasoning_effort: default
+
+전달 규칙:
+
+| method 입력 | 실제 Chat Completions 요청 |
+|---|---|
+| 인자 생략 | `reasoning_effort` field를 보내지 않음 |
+| Python `None` | field를 보내지 않음 |
+| 문자열 `default` | field를 보내지 않음 |
+| 문자열 `none` | `reasoning_effort="none"`을 그대로 전송 |
+| minimal/low/medium/high/xhigh | 입력값을 그대로 전송 |
+
+`default`는 애플리케이션 내부의 “provider/model 기본값 사용” 표기이며 OpenAI API로 보내는 값이 아니다. 반면 `none`은 공식 API가 정의한 실제 reasoning effort 값이므로 None으로 변환하면 안 된다. 지원값은 모델별로 다를 수 있다. 참고: [OpenAI reasoning effort 문서](https://developers.openai.com/api/docs/guides/reasoning#reasoning-effort)
+
+구현 시 `reasoning_effort=None`을 keyword로 전달하는 대신, None 또는 default이면 request kwargs에서 key 자체를 제외한다. stream/non-stream 양쪽 request builder에 같은 정규화 helper를 적용한다.
+
+Model Parameter Agent는 `model_parameter_llm_reasoning_effort` 설정값을 Step1.5·Step2·Step3의 모든 structured-output 호출에 명시적으로 전달한다. 다른 caller는 인자를 생략하면 기존 provider/model 기본 동작을 유지한다. reasoning effort는 응답 schema를 바꾸지 않으므로 호출자는 기존과 동일한 parsed result를 받는다.
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -1178,3 +1223,4 @@ D-10: 최종 구현을 어느 브랜치를 기반으로 시작하고 어떤 순�
 | 2026-07-10 | D-08 adapter 정책 보강: PMI와 PowerMix는 단일 tabular 공통 adapter의 year_columns/row layout을 사용하고 GDP·Temperature·LiqUtil만 전용 adapter로 구현 |
 | 2026-07-10 | D-09 일부 완료: model_parameter_lut_enabled 기본 false, true에서도 YAML 미등록 parameter는 정상 basecase-only 처리 |
 | 2026-07-10 | D-09 완료: 공통 connector stream 인자 기본 false, Model Parameter Agent가 자기 설정을 호출 시 전달하고 동일한 parsed result 계약 유지 |
+| 2026-07-10 | D-09 reasoning_effort 보강: Model Parameter 설정을 모든 structured-output 호출에 전달하고 default/None은 생략, none은 API 값으로 그대로 전송 |
