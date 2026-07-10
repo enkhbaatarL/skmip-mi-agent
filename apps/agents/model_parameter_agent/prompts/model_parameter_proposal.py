@@ -63,6 +63,12 @@ SLOT_PROPOSAL_SYSTEM = """\
 - period_resolution_policy는 자연어 기간을 현재 이후 Year/Month/Period로 해석하는 기준입니다.
 
 선택 규칙:
+- parameter_slot_tasks에 들어온 parameter는 이전 단계에서 proposal 대상 후보로 확정된 것입니다.
+- slot_catalog.leaves가 1개 이상 있는 task는 반드시 최소 1개의 exact slot을 반환하십시오.
+- 값 변화가 0%, 영향 제한적, 완충 가능, 대체 가능처럼 해석되더라도 task를 생략하지 마십시오.
+  이런 경우에도 no-change 또는 minimal-change 판단을 위해 가장 직접 관련된 exact slot을 선택하십시오.
+- task를 생략할 수 있는 경우는 slot_catalog가 비어 있거나, 활성 catalog 안에 scenario/event/dimension과
+  연결할 수 있는 exact 좌표가 전혀 없는 경우뿐입니다.
 - 선택한 모든 slot은 scenario/event/dimension과의 연관성을 설명할 수 있어야 합니다.
 - 연관된 slot이 하나 이상 있으면 해당 parameter에서 최소 1개를 선택하십시오.
 - 연관성을 설명할 수 없는 parameter는 parameter_slots 항목을 반환하지 마십시오.
