@@ -2,7 +2,7 @@
 
 - 작성일: 2026-07-10
 - 작업 브랜치: design/model-param-lut-final-merge
-- 문서 상태: DRAFT — D-01~D-10 확정, D-11 추가 인터뷰 진행
+- 문서 상태: FINAL — D-01~D-11 확정
 - 비교 기준 브랜치:
   - Codex: feature/model-param-lut-basecase, commit 7a7a753
   - Claude: feat/lut-basecase-integration, commit 8d1f72b
@@ -22,7 +22,7 @@
 5. 사용자 인터뷰 항목과 확정된 결정
 6. 최종 머지 범위, 구현 순서, 테스트 게이트
 
-D-10까지의 인터뷰 결정은 완료됐으며, 확정된 정책은 14장 의사결정 로그를 기준으로 한다. D-11은 추가 정합성 점검에서 발견한 마지막 경계 조건이다.
+D-01~D-11 인터뷰는 모두 완료됐으며, 확정된 정책은 14장 의사결정 로그를 기준으로 한다.
 
 ## 2. 요약 결론
 
@@ -30,13 +30,14 @@ D-10까지의 인터뷰 결정은 완료됐으며, 확정된 정책은 14장 의
 
 확정 구현 방향은 다음과 같다.
 
-- 현재 설계 브랜치의 main 기준선에서 새 구조를 구현하고 두 feature HEAD는 참고 소스로만 사용
+- 현재 설계 브랜치의 main 기준선에서 새 구조를 구현하고 두 feature branch는 읽기 전용 참고 소스로만 사용
 - Claude에서는 exact year-1 GDP, horizon/feature flag 개념과 loader test를 선별
 - 국가 후보 범위: 각 parameter의 실제 LUT에 존재하는 국가를 사용하며 Full Country List 보조 파일은 사용하지 않음
 - 파라미터별 명시 join key, provenance, Step2/Step3 reference 분리, 호출별 LLM 옵션: Codex 구현에서 선별
 - full LUT를 LangGraph state에 적재하는 방식: 폐기
 - raw/effective record를 40,000건에서 먼저 자르는 방식: 폐기
 - process-level immutable LUT index와 compact SlotCatalog를 만들고, Step2에서 선택된 좌표만 exact lookup하는 방식으로 재설계
+- LUT flag와 parameter 등록 여부는 reference source만 결정하고, 이후 slot/value 처리 pipeline은 하나로 유지
 
 두 브랜치는 모두 아래 기본 방향은 동일하다.
 
@@ -110,7 +111,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | GDP 성장률 | 정렬된 직전 available row 사용 | 정확한 year-1 값 사용 | Claude 방식 |
 | join key | parameter별 business key 명시 | metadata 제외 나머지 축 전체 | parameter별 key_axes를 YAML에 명시 |
 | 축 이름 정렬 | 하드코딩 이름 일치 전제 | DB 단위 접미사까지 fuzzy 정규화 | canonical DB/API axis와 실제 CSV header를 YAML axis_columns로 직접 매핑. fuzzy/alias 추론 없음 |
-| 중복 LUT | 첫 record 유지 후 warning | last-wins 또는 미매칭 중복 유지 가능 | 둘 다 개선. 값 충돌 중복은 적재 실패 |
+| 중복 LUT | 첫 record 유지 후 warning | last-wins 또는 미매칭 중복 유지 가능 | 둘 다 개선. 동일 key의 value 또는 metadata 충돌은 적재 실패 |
 | effective provenance | basecase/lut value와 양쪽 reference, effective_source 보존 | source와 lut_value 중심 | Codex 모델 |
 | Step3 기준값 전달 | basecase 우선, 없으면 LUT인 effective 값 하나만 전달 | basecase override와 LUT default를 함께 전달 | Codex 방향. LLM에는 단일 기준값만 전달하고 내부에서만 두 값을 보존 |
 | Step2 state | non-Liq compact, Liq 41,079건 full | 최대 40,000건 full effective state | 둘 다 폐기. compact catalog만 state에 저장 |
@@ -121,7 +122,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task에 동일 적용. 최대치일 뿐 채워야 할 목표 수가 아님 |
 | streaming | 공통 connector의 호출별 옵션, model parameter에서 명시 | 공통 connector 내부 전역 설정으로 모든 structured output에 적용 | 공통 connector가 optional stream 인자를 제공하되 기본 false. 각 호출자가 설정값을 전달 |
 | reasoning effort | 지원하지 않음 | 지원하지 않음 | 공통 connector optional 인자로 추가. Model Parameter 설정을 모든 structured-output 호출에 전달하며 default/None은 필드 생략, none은 API에 그대로 전송 |
-| 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled boolean 제공, 기본 true | boolean off/on 사용. 기본 false이며 환경에서 true를 명시해야 활성화 |
+| LUT source 제어 | LUT 전용 flag 없음 | model_parameter_lut_enabled boolean 제공, 기본 true | boolean 기본 false. flag와 parameter 등록 여부는 LUT source 포함 여부만 제어하고 이후 pipeline은 동일 |
 | 테스트 강점 | flow integration, Liq 복원, partial fallback | loader fixture, horizon, 축 보정, 실 LLM 리포트 | 양쪽 테스트를 통합 |
 
 ## 6. 독립 측정 결과
@@ -261,7 +262,7 @@ Claude는 반대로 한 cell 누락 시 candidate 전체를 비선택으로 만�
 - 검증을 통과한 cell만 그대로 사용
 - 반환되지 않은 cell을 기준값으로 자동 생성하지 않음
 - 일부 cell이 누락됐다는 이유로 같은 candidate의 다른 유효 cell까지 폐기하지 않음
-- 누락 수는 내부 sync/test 진단값과 metric으로만 관찰 가능
+- 누락 수는 내부 sync/test 응답과 metric으로 관찰하고 운영 proposal에는 cell을 생성하지 않음
 
 ### P1-3. basecaseValue API 의미 변경
 
@@ -273,7 +274,7 @@ Claude는 반대로 한 cell 누락 시 candidate 전체를 비선택으로 만�
 - 실제 basecase 값이 있을 때만 basecaseValue에 저장한다.
 - LUT-only slot이면 LLM 기준값으로 LUT를 사용하더라도 저장되는 basecaseValue는 null이다.
 - 운영 proposal DB에는 LUT value/source 필드를 추가하지 않는다.
-- 내부 테스트용 sync API는 basecase와 LUT를 함께 반환할 수 있다.
+- 내부 테스트용 sync API는 검증을 위해 basecase와 LUT를 함께 반환한다.
 
 ### P1-4. Claude 설정과 테스트 결과 불일치
 
@@ -305,7 +306,7 @@ Codex는 invoke_llm_structured_output 호출별 stream 옵션을 추가해 model
 
 - YAML에 등록된 parameter의 필수 LUT schema를 startup/readiness에서 검증
 - 파일 hash, 필수 column, row count, uniqueness, 값 타입·finite 검사
-- 값이 다른 duplicate key는 first/last wins 금지
+- 같은 key에서 value 또는 authoritative metadata가 다른 duplicate는 first/last wins 금지
 - LUT on 모드에서 YAML 미등록 parameter는 basecase-only로 처리하고, 등록된 파일 오류는 domain error로 처리
 
 ### P2-1. metadata 제외 규칙의 범위
@@ -388,16 +389,21 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 
 ## 9. 최종 구조
 
+    resources/lut/config/lut_parameters.yaml
+      └─ 항상 parse/구조 검증하는 ParameterSpecRegistry
+           ├─ 등록 parameter: YAML key_axes/metadata_axes
+           └─ 미등록 parameter: basecase/candidate canonical axes 전체를 key로 사용
+                               metadata_axes는 빈 목록
+
+    Request Basecase loader ─────────────────────────► BasecaseIndex
+
     model_parameter_lut_enabled
-      ├─ false
-      │    └─ 기존 main basecase-only graph 그대로 실행
+      ├─ false ──► LUT CSV/catalog 미로딩 ──────────► no LutCatalog
       └─ true
-           ├─ YAML 미등록 parameter
-           │    └─ basecase-only source로 새 pipeline 실행 여부는 D-11에서 확정
-           ├─ YAML 등록 오류
-           │    └─ 명시적 설정 오류
+           ├─ YAML 미등록 parameter ────────────────► no LutCatalog
+           ├─ YAML/등록 LUT 오류 ───────────────────► 명시적 설정 오류
            └─ YAML 등록·유효
-                └─ LUT CSV + resources/lut/config/lut_parameters.yaml
+                └─ LUT CSV
                      └─ ParameterLutAdapter registry
                           ├─ TabularAdapter
                           │    ├─ PMI: year_columns
@@ -409,9 +415,11 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
                                    ▼
                          Immutable LutCatalog / Index
 
-    Request Basecase loader ──► BasecaseIndex
+    BasecaseIndex + optional LutCatalog
+      - LUT 없음: basecase-only source
+      - LUT 있음: basecase + LUT source
+      - 아래부터는 동일한 하나의 pipeline
                                    │
-    optional LutCatalog ───────────┤
                                    ▼
                          Full Compact SlotCatalog Packet
                          - numeric effective merge 전
@@ -509,6 +517,23 @@ YAML 필드는 최소화한다.
           value_column: Power Generation Data_Power Mix
       key_axes: [Country, Year, Energy Source]
 
+    Temperature:
+      adapter: temperature_degree_days
+      files:
+        hdd:
+          path: Demand_Model_Input_WeatherInput_value_based_t1.csv
+          required_columns:
+            - Base Case HDD Input_Country
+            - Base Case HDD Input_Month
+            - Base Case HDD Input_{year}.0
+        cdd:
+          path: Demand_Model_Input_WeatherInput_value_based_t2.csv
+          required_columns:
+            - Base Case CDD Input_Country
+            - Base Case CDD Input_Month
+            - Base Case CDD Input_{year}.0
+      key_axes: [Country, Year, Month]
+
     LiqUtilAdjustment:
       adapter: liq_util
       files:
@@ -530,7 +555,7 @@ YAML 필드는 최소화한다.
         - Life Cycle Category
         - Nameplate Capacity
 
-`{year}`는 설정 horizon의 각 연도로 확장해 실제 header 존재를 검증한다. 현재는 2026~2030의 5개 연도 column이다.
+`required_columns` 또는 `year_value_column`의 `{year}`는 설정 horizon의 각 연도로 확장해 실제 header 존재를 검증한다. 현재는 2026~2030의 5개 연도 column이다.
 
 `axis_columns`의 왼쪽은 canonical DB/API axis 이름이고 오른쪽은 실제 CSV header다. 내부 역할명 alias는 YAML에 두지 않는다. `axis_columns`, `value_column`, `year_value_column`에 지정된 header는 자동으로 필수 column이 된다.
 
@@ -541,12 +566,16 @@ adapter 구성:
 | GDP | gdp_growth | 전용 계산 | 절대 GDP에서 exact 전년 대비 성장률 계산 |
 | PMI | tabular / year_columns | 공통 | 한 행의 연도별 column을 Country/Year/Month record로 전개 |
 | PowerMix | tabular / row | 공통 | axis column과 value column을 행 단위로 그대로 읽음 |
-| Temperature | temperature_degree_days | 전용 계산 | HDD/CDD 결합 및 temperature 계산 |
+| Temperature | temperature_degree_days | 전용 계산 | exact key의 HDD가 양수면 18-HDD/30, 아니고 CDD가 양수면 18+CDD/30, 둘 다 아니면 18 |
 | LiqUtilAdjustment | liq_util | 전용 계산 | Closed 제외, capacity 변환, metadata 복원용 값 생성 |
 
 신규 parameter가 한 CSV의 지정 axis/value column을 그대로 읽는 형태이면 공통 `tabular` adapter를 사용한다. 한 행이 record 하나이면 `layout: row`, 연도별 값이 column으로 펼쳐져 있으면 `layout: year_columns`를 지정한다. 새로운 계산, 여러 파일 결합, 별도 filter·metadata 변환이 필요한 경우에만 Python adapter를 추가하고 allowlist registry에 등록한다.
 
 YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon 값, slot/reference 상한을 넣지 않는다. adapter 값은 임의 import path가 아니라 코드에 등록된 이름만 허용한다. horizon 2026~2030과 GDP 2025 lookback은 기존 app settings와 adapter가 적용한다.
+
+이 YAML은 LUT file loader 설정인 동시에 등록 parameter의 canonical processing schema다. 따라서 애플리케이션은 feature flag와 무관하게 YAML의 parse, unknown field, adapter/layout allowlist, canonical key/metadata 축과 상대 경로 형식을 검증해 `ParameterSpecRegistry`를 만든다. `model_parameter_lut_enabled=false`일 때는 실제 CSV를 열거나 header/value/duplicate를 검사하거나 `LutCatalog`를 만들지 않는다.
+
+YAML 미등록 parameter는 기존 basecase/candidate schema가 제공하는 canonical axis 전체를 exact business key로 사용하고 `metadata_axes=[]`로 처리한다. 즉 이름이 Period, Lifecycle, Nameplate라는 이유로 축을 제거하지 않는다. YAML 등록 여부와 관계없이 이 schema normalization 이후에는 같은 compact catalog와 Step2/Step3 pipeline을 사용한다.
 
 ### 10.2 EffectiveReference
 
@@ -568,6 +597,8 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 - diagnostics
 
 YAML을 단순하게 유지하기 위해 version 필드를 수동 입력하지 않는다. `lut_version`은 canonicalized YAML bytes, 참조된 CSV별 hash, source/proposal horizon, adapter schema version을 정렬해 자동 hash한 값이다. 같은 값을 immutable catalog cache key, readiness/로그와 sync diagnostics에 사용한다.
+
+해당 reference source에 활성 `LutCatalog`가 없으면 `lut_version`은 null이다. YAML schema hash를 LUT data version처럼 가장하지 않는다.
 
 ### 10.3 business key
 
@@ -598,7 +629,7 @@ YAML을 단순하게 유지하기 위해 version 필드를 수동 입력하지 �
 - Step2용 compact reference와 Step3용 exact reference 분리 개념
 - Step3 LLM에 effective 기준값 하나만 전달하는 방향
 - LiqUtil hidden metadata 복원 개념
-- robust scalar parsing. 동일 key 충돌 duplicate는 warning 후 진행하지 않고 적재 실패
+- robust scalar parsing. 동일 key에서 value나 authoritative metadata가 충돌하는 duplicate는 warning 후 진행하지 않고 적재 실패
 - 호출별 structured streaming 옵션
 - partial response와 reference 누락에 대한 테스트 사례
 
@@ -628,11 +659,11 @@ YAML을 단순하게 유지하기 위해 version 필드를 수동 입력하지 �
 6. 전체 compact catalog 제공과 LLM relevance 선택 prompt 계약 적용
 7. source-aware EffectiveReference 모델
 8. 기존 API/DB projection 계약과 basecaseValue 의미 회귀 검증
-9. LUT off 모드가 main과 동일한지 snapshot 검증
+9. LUT source 유무와 무관하게 같은 slot/value pipeline과 운영 API/DB projection을 사용하는지 검증
 
 ### P1 — 운영 전 필수
 
-1. LUT boolean off/on rollout과 basecase-only snapshot 회귀
+1. LUT boolean off/on rollout과 source matrix 회귀
 2. per-call streaming, reasoning_effort 전달과 중단/retry 테스트
 3. parameter task별 공통 100 cap 검증
 4. Step3 valid/missing/invalid cell 진단 metric
@@ -651,12 +682,12 @@ YAML을 단순하게 유지하기 위해 version 필드를 수동 입력하지 �
 1. 5개 loader fixture와 2026~2030 최종 record 수: GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040, LiqUtil 19,366
 2. GDP source window 2025~2030과 proposal window 2026~2030 분리, 2025 slot 미노출, exact 전년 누락 시 해당 growth 제외
 3. PMI t2-only 84개국, 7개 Other 미노출, t1/General 파일 미접근
-4. malformed YAML, unknown field/adapter/layout, path escape, 파일/header/year template 누락, key/metadata 중복과 start_year>end_year 실패
-5. flag=false이면 YAML/CSV를 읽지 않고 main prompt/slot/value/API snapshot과 동일
-6. flag=true + YAML 미등록 parameter의 basecase-only 동작과 등록 파일/header 오류의 명시 실패
-7. model slot universe와 value availability 분리, basecase/LUT 전체 business key 매핑률 회귀
+4. malformed/missing YAML, unknown field/adapter/layout, path escape, key/metadata 축 중복과 start_year>end_year는 flag와 무관하게 실패. flag=true에서는 파일/header/year template 누락도 실패
+5. flag=false이면 유효한 YAML processing schema는 검증하지만 누락·손상된 LUT CSV를 열지 않고 basecase-only source로 공통 pipeline을 실행
+6. flag=false와 flag=true+YAML 미등록이 같은 basecase 입력에서 동일한 Step2/Step3 정책·결과를 사용하고, 등록 파일/header 오류는 명시적으로 실패
+7. model slot universe와 value availability 분리, basecase/LUT 전체 business key 매핑률 회귀, YAML 미등록 parameter는 모든 canonical basecase/candidate axis를 key로 보존
 8. basecase override, basecase-only, LUT-only와 양쪽 exact reference 부재 시 제외 분기
-9. 동일 duplicate dedupe와 값 충돌 duplicate 적재 실패
+9. value와 metadata까지 동일한 duplicate dedupe, 동일 key의 value 또는 metadata 충돌 시 적재 실패
 10. 실제 path에 없는 Year/Month 조합 거부와 leaf별 available period 보존
 11. partial Step3에서 반환된 valid cell 유지, 누락 cell 미생성, 일부 누락으로 candidate 전체 폐기 금지
 12. 명시적 no-change 저장, 미반환 cell 미저장, reference ID 누락·중복 cell 진단
@@ -666,7 +697,7 @@ YAML을 단순하게 유지하기 위해 version 필드를 수동 입력하지 �
 16. parameter별 selected slot 100 cap이 다른 parameter 예산을 차감하지 않고 reference 100 cap이 task별 적용되는지 검증
 17. prompt token, state 직렬화 크기, cold/warm latency, 동시 요청 메모리와 cache race
 18. stream 인자 생략/false/true의 parsed output 동일성, usage 수집, 중간 연결 단절 시 buffer 초기화·전체 호출 retry
-19. reasoning_effort 미입력/None/default 시 요청 key 생략, none과 지원값 그대로 전송, stream 조합, invalid/unsupported 값 오류
+19. reasoning_effort 미입력/None/default 시 요청 key 생략, none과 enum 지원값 그대로 전송, stream 조합, invalid config 거부와 provider/model 미지원 오류 전파
 20. envs/config.yaml과 K8s ConfigMap의 LUT flag, horizon, 두 cap, stream, reasoning effort resolved 값 일치
 21. LUT enabled=true, horizon=2026~2030과 최종 stream/reasoning 설정으로 28개 scenario 전체 재실행 및 리포트에 resolved config/lut_version 기록
 
@@ -676,15 +707,15 @@ YAML을 단순하게 유지하기 위해 version 필드를 수동 입력하지 �
 |---|---|---|---|
 | D-01 | LUT-only slot 허용 범위 | DECIDED | 5개 parameter 모두 LUT-only slot 허용. basecase 부재는 제외 사유가 아니며, scenario/event 관련성이 있으면 선택 가능 |
 | D-02 | slot universe와 horizon 정책 | DECIDED | config horizon 2026~2030 적용, GDP는 2026 계산을 위해 2025 source 값만 내부 참조. 국가 범위는 각 parameter LUT 자체를 사용하며 Full Country List 보조 파일은 사용하지 않음 |
-| D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
+| D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. 내부 sync API는 양쪽 값과 source를 반환 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | DECIDED | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter의 Step2/Step3 task와 prompt에 동일 적용 |
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
 | D-08 | LUT spec, adapter, metadata 축 관리 | DECIDED | 최소 YAML spec과 단일 `tabular` 공통 adapter의 row/year_columns layout 사용. GDP·Temperature·LiqUtil만 전용 adapter 유지. LiqUtil metadata만 exact reference에서 복원. GDP General 파일과 PMI t1 파일은 미사용 |
-| D-09 | feature rollout과 LLM 호출 옵션 | DECIDED | LUT flag 기본 false, YAML 미등록 parameter는 basecase-only. 공통 connector의 stream 기본 false. reasoning_effort는 optional이며 default/None은 생략, none은 그대로 전송. Model Parameter가 설정값을 모든 structured-output 호출에 전달 |
-| D-10 | 실제 구현 기반 브랜치와 머지 순서 | DECIDED | 현재 `design/model-param-lut-final-merge`에서 새 구조로 구현. Codex·Claude feature HEAD는 통째 merge/cherry-pick하지 않고 검증된 로직과 테스트만 파일·함수 단위로 선별 이식 |
-| D-11 | LUT=true + YAML 미등록 parameter 실행 정책 | PENDING | basecase source만 사용한다는 결정은 확정. 새 pipeline의 horizon/cap/partial 정책을 적용할지 legacy parameter 경로를 유지할지 추가 확정 필요 |
+| D-09 | feature rollout과 LLM 호출 옵션 | DECIDED | LUT flag 기본 false. flag=false와 YAML 미등록 parameter는 basecase-only source를 사용하되 공통 pipeline은 동일. 공통 connector의 stream 기본 false. reasoning_effort는 optional이며 default/None은 생략, none은 그대로 전송. Model Parameter가 설정값을 모든 structured-output 호출에 전달 |
+| D-10 | 실제 구현 기반 브랜치와 머지 순서 | DECIDED | 현재 `design/model-param-lut-final-merge`에서 새 구조로 구현. Codex·Claude feature commit은 merge/cherry-pick하지 않고 검증된 로직과 테스트 아이디어만 파일·함수 단위로 수동 이식 |
+| D-11 | LUT source 유무에 따른 pipeline 정책 | DECIDED | pipeline은 하나만 사용. LUT를 사용할 수 있으면 basecase+LUT, flag=false 또는 YAML 미등록이면 basecase만 공급하며 horizon/cap/exact/partial을 포함한 이후 동작은 동일 |
 
 ### 14.1 D-01 확정 — LUT-only slot 허용 범위
 
@@ -845,7 +876,7 @@ Claude 현재 기준과 보완점:
 - 운영 proposal DB와 frontend API의 구조와 basecaseValue 의미는 변경하지 않는다.
 - actual basecase가 있으면 basecaseValue에 실제 basecase 값을 저장한다.
 - LUT-only slot이면 basecaseValue는 null로 저장한다.
-- 내부 테스트용 sync API는 검증을 위해 actual basecase와 LUT default를 모두 반환할 수 있다.
+- 내부 테스트용 sync API는 검증을 위해 actual basecase, LUT default와 reference source를 모두 반환한다.
 
 Codex 현재 기준과 차이:
 
@@ -889,7 +920,7 @@ LLM prompt cell:
 
 위 예시는 LUT-only slot이다. LLM은 내부적으로 LUT 0.42를 기준으로 사용했지만 실제 basecase가 없으므로 basecaseValue는 null이다.
 
-내부 테스트용 sync API는 필요 시 다음 정보를 별도로 반환할 수 있다.
+내부 테스트용 sync API는 다음 정보를 별도로 반환한다.
 
     {
       "basecaseValue": null,
@@ -1023,7 +1054,7 @@ Claude 현재 기준과 관계:
 
 - LLM 입력 기준값 0.42, 명시 응답 proposedValue 0.42: 운영 proposal에 저장
 - LLM 입력 기준값 0.42, 해당 좌표 응답 자체가 없음: 서버가 0.42 cell을 생성하지 않음
-- 내부 sync/test 결과에서는 selected slot 대비 LLM 응답 누락 수를 별도 진단값으로 반환 가능
+- 내부 sync/test 결과에서는 selected slot 대비 LLM 응답 누락 수를 별도 진단값으로 반환
 
 ### 14.6 D-06 확정 — Step3 partial 응답 처리
 
@@ -1044,7 +1075,7 @@ Claude 현재 기준과 차이:
 3. 응답에 없는 selected slot은 생성하거나 기준값으로 채우지 않는다.
 4. 일부 slot이 누락돼도 같은 candidate에서 검증을 통과한 다른 cell은 유지한다.
 5. 명시적으로 반환된 proposedValue가 기준값과 같아도 유효한 no-change proposal로 유지한다.
-6. selected slot 수, valid response cell 수, missing/invalid cell 수는 내부 sync/test 응답과 metric에서 진단할 수 있다.
+6. selected slot 수, valid response cell 수, missing/invalid cell 수는 내부 sync/test 응답에 포함하고 metric에서도 진단할 수 있게 한다.
 
 이 결정은 PowerMix를 포함한 모든 parameter의 기본 cell 단위 정책이다.
 
@@ -1124,14 +1155,14 @@ Claude 현재 기준:
 
 | 전역 flag | parameter YAML 등록 | 처리 |
 |---|---|---|
-| false | 무관 | 모든 parameter가 기존 basecase-only 경로 사용. LUT YAML/CSV를 로드하지 않음 |
-| true | 미등록 | 해당 parameter만 정상적인 basecase-only 경로 사용 |
-| true | 등록 및 유효 | 해당 parameter에서 basecase와 LUT를 함께 사용 |
+| false | 무관 | YAML processing schema만 로드하고 LUT CSV/catalog는 만들지 않으며 basecase-only source를 공통 pipeline에 공급 |
+| true | 미등록 | 해당 parameter의 basecase-only source를 공통 pipeline에 공급 |
+| true | 등록 및 유효 | 해당 parameter의 basecase+LUT source를 공통 pipeline에 공급 |
 | true | 등록했지만 파일 누락·header 오류 | 설정 오류로 실패. 조용히 basecase-only로 강등하지 않음 |
 
-`model_parameter_lut_enabled=true`이면 catalog YAML 파일 자체는 반드시 존재하고 parse/validation을 통과해야 한다. 유효한 `lut_parameters.yaml` 안에 특정 parameter가 없다는 사실만 오류나 warning이 아니며 LUT 미지원 parameter의 정상 상태다. 반대로 catalog 자체가 없거나, YAML에 path를 명시한 뒤 파일이 없거나 필수 header가 깨진 경우는 운영 설정 오류이므로 명시적으로 실패한다.
+`lut_parameters.yaml`은 feature flag와 무관하게 존재해야 하고 parse/구조 validation을 통과해야 한다. 유효한 YAML 안에 특정 parameter가 없다는 사실만 오류나 warning이 아니며 LUT 미지원 parameter의 정상 상태다. flag=false에서는 CSV를 열지 않는다. flag=true에서 YAML에 path를 명시한 파일이 없거나 필수 header가 깨진 경우는 운영 설정 오류이므로 명시적으로 실패한다.
 
-코드 기본값은 false로 두고 실제 환경의 `envs/config.yaml`과 K8s ConfigMap에서 true를 명시한 경우에만 활성화한다. off 회귀 테스트는 기존 main의 basecase-only prompt, slot, value, API/DB 결과가 동일한지 snapshot으로 확인한다.
+코드 기본값은 false로 두고 실제 환경의 `envs/config.yaml`과 K8s ConfigMap에서 true를 명시한 경우에만 LUT source를 활성화한다. flag와 YAML 등록 여부는 reference source 구성까지만 제어한다. source가 구성된 뒤에는 같은 compact catalog 생성, Step2/Step3 prompt, 2026~2030 proposal horizon, task별 100/100 cap, exact membership, explicit-cell-only 정책을 사용한다. 따라서 별도 legacy graph나 parameter별 처리 분기를 만들지 않는다.
 
 #### structured-output streaming 확정
 
@@ -1205,6 +1236,8 @@ Model Parameter 설정:
 
 구현 시 `reasoning_effort=None`을 keyword로 전달하는 대신, None 또는 default이면 request kwargs에서 key 자체를 제외한다. stream/non-stream 양쪽 request builder에 같은 정규화 helper를 적용한다.
 
+애플리케이션은 모델별 capability table을 하드코딩하지 않는다. enum 밖 설정은 app config validation에서 거부하고, enum 안의 값이 현재 provider/model에서 지원되지 않으면 provider 응답을 기존 connector/domain error 계약으로 전파한다. 이 경우 default로 조용히 재시도하거나 값을 제거하지 않는다.
+
 Model Parameter Agent는 `model_parameter_llm_reasoning_effort` 설정값을 Step1.5·Step2·Step3의 모든 structured-output 호출에 명시적으로 전달한다. 다른 caller는 인자를 생략하면 기존 provider/model 기본 동작을 유지한다. reasoning effort는 응답 schema를 바꾸지 않으므로 호출자는 기존과 동일한 parsed result를 받는다.
 
 ### 14.10 D-10 확정 — 구현 기반 브랜치와 선별 이식 순서
@@ -1222,8 +1255,8 @@ Claude 브랜치 기준:
 최종 결정:
 
 1. 현재 `design/model-param-lut-final-merge` 브랜치에서 구현을 계속한다.
-2. 이 브랜치는 공통 merge base인 main 위에 최종 의사결정 문서만 추가한 상태이므로 기존 basecase-only 동작을 기준선으로 삼는다.
-3. `feature/model-param-lut-basecase`와 `feat/lut-basecase-integration`의 HEAD나 대형 feature commit을 통째로 merge 또는 cherry-pick하지 않는다.
+2. 이 브랜치는 공통 merge base인 main 소스 트리 위에 최종 의사결정 문서만 추가한 상태다. main을 구현 기준선으로 사용하되 런타임은 LUT source 유무와 무관한 신규 공통 pipeline 하나로 구성한다.
+3. `feature/model-param-lut-basecase`와 `feat/lut-basecase-integration`의 commit을 merge 또는 cherry-pick하지 않는다.
 4. 필요한 로직과 테스트는 `git show`/diff로 확인해 현재 구조에 맞게 파일·함수 단위로 옮긴다.
 5. 사용자 소유의 기존 변경과 미추적 파일은 구현 범위에 포함하지 않는다.
 
@@ -1244,29 +1277,37 @@ Claude 브랜치 기준:
 5. Step2에 전체 compact catalog, task별 공통 100 cap, relevance prompt와 strict exact membership validation을 연결한다.
 6. Step3에 선택 좌표의 단일 기준값, task별 reference 100 cap과 explicit valid cell-only 처리를 연결한다.
 7. LiqUtil metadata 복원과 운영 API/DB의 기존 basecaseValue projection을 적용하고 sync API diagnostics를 보강한다.
-8. feature off snapshot, LUT 미등록 parameter basecase-only, config/file 오류, stream/reasoning, 성능·메모리 테스트를 실행한다.
-9. 최종 코드와 배포 설정으로 28개 scenario를 재실행하고 문서·환경 설정을 동기화한다.
+8. LUT source matrix, YAML 미등록 parameter basecase-only, config/file 오류, stream/reasoning, 성능·메모리 테스트를 실행한다.
+9. 검증 환경이 있으면 최종 코드와 배포 설정으로 28개 scenario를 재실행하고 문서·환경 설정을 동기화한다. 환경이 없으면 blocker와 미검증 위험을 기록한다.
 
 각 단계는 독립적으로 review/revert할 수 있는 작은 commit으로 분리한다. 공통 connector 변경과 LUT 도메인 변경도 별도 commit으로 유지한다.
 
-### 14.11 D-11 진행 중 — LUT=true인 미등록 parameter의 pipeline 정책
+### 14.11 D-11 확정 — LUT source 유무와 공통 pipeline
 
-이미 확정된 내용:
+Codex 현재 기준:
 
-- `model_parameter_lut_enabled=false`이면 YAML/CSV를 읽지 않고 기존 main basecase-only graph를 그대로 실행한다.
-- `model_parameter_lut_enabled=true`여도 YAML에 등록되지 않은 parameter는 LUT 없이 basecase source만 사용한다.
+- LUT feature flag나 YAML 등록 개념은 없지만, 하드코딩된 LUT builder가 없는 parameter는 LUT record만 빈 목록이 된다.
+- 해당 parameter도 별도 legacy graph로 분기하지 않고 LUT 통합으로 변경된 Step2/Step3 graph를 그대로 사용한다.
+- 다만 공통 cap이 parameter별이 아니고, 누락 cell 자동 생성과 candidate fallback 등 최종 D-05/D-06과 다른 정책도 함께 적용한다.
 
-추가로 확정할 내용은 “basecase source만 사용”할 때 processing policy를 어느 쪽으로 둘지다.
+Claude 현재 기준:
 
-1. 새 pipeline 적용안
-   - basecase record만 Full Compact SlotCatalog에 넣는다.
-   - D-02의 proposal horizon 2026~2030, D-05의 task별 100 cap, D-06의 explicit valid cell-only 정책과 strict membership을 동일하게 적용한다.
-   - 등록 parameter와 미등록 parameter가 한 요청에 함께 있어도 동일한 Step2/Step3 계약을 사용한다.
-2. parameter별 legacy 유지안
-   - YAML 미등록 parameter는 기존 prompt/sanitizer/fallback/기간 정책까지 유지한다.
-   - 한 요청 안에서 parameter별로 서로 다른 Step2/Step3 semantics를 운용해야 한다.
+- flag=true에서 LUT 미지원 parameter는 LUT record만 빈 목록이 되어 basecase-only source로 남는다.
+- 별도 legacy graph로 분기하지 않고 변경된 공통 Step2/Step3 graph를 그대로 사용한다.
+- 다만 horizon은 LUT record에만 적용하고 전역 metadata 제외와 partial candidate 전체 폐기 등 최종 결정과 다른 정책도 함께 적용한다.
+- flag=false도 LUT merge만 건너뛸 뿐 기존 main graph로 되돌아가는 rollback 스위치는 아니다.
 
-권장안은 1번이다. global flag=false만 완전 rollback 경계로 사용하고, flag=true에서는 LUT 등록 여부와 무관하게 새 pipeline을 사용하되 미등록 parameter의 reference source만 basecase로 제한하는 편이 단순하고 D-02/D-05/D-06 결정을 일관되게 적용한다.
+최종 결정:
+
+1. 처리 pipeline은 하나만 둔다.
+2. `model_parameter_lut_enabled=false`이면 YAML processing schema는 사용하되 LUT CSV/catalog를 읽지 않고 basecase만 source로 사용한다.
+3. flag=true이지만 YAML에 parameter가 등록되지 않았으면 해당 parameter는 basecase만 source로 사용한다.
+4. flag=true이고 등록·검증된 LUT가 있으면 basecase와 LUT를 함께 source로 사용한다.
+5. source 구성 이후에는 LUT 유무와 관계없이 동일한 compact catalog, Step2/Step3 prompt, proposal horizon, task별 100/100 cap, exact membership, explicit-cell-only 정책을 사용한다.
+6. 같은 요청에 LUT 지원·미지원 parameter가 섞여도 parameter별 legacy 분기나 서로 다른 sanitizer/fallback을 사용하지 않는다.
+7. LUT source가 없는 것은 정상적인 입력 상태이며, 등록된 LUT 설정이나 파일이 잘못된 것은 명시적 설정 오류다.
+
+즉 LUT 여부는 “어떤 reference record를 입력으로 합칠지”만 바꾸며, slot 선택과 value 선정 동작 자체를 바꾸지 않는다.
 
 ## 15. 인터뷰 진행 원칙
 
@@ -1282,11 +1323,315 @@ Claude 브랜치 기준:
 
 한 번에 한 항목만 결정했다.
 
-## 16. 다음 인터뷰 항목
+## 16. 인터뷰 완료
 
-D-11: LUT=true이지만 YAML에 등록되지 않은 parameter가 basecase source만 사용할 때, 새 pipeline의 horizon/cap/partial 정책을 적용할지 parameter별 legacy 동작을 유지할지 확정한다.
+D-01~D-11을 모두 확정했다. 구현 중 새로운 공용 API 변경, DB schema 변경 또는 이 문서와 충돌하는 요구가 발견될 때만 별도 결정을 추가한다.
 
-## 17. 변경 이력
+## 17. 개발 에이전트 인계 프롬프트
+
+아래 프롬프트는 다른 개발 에이전트에게 그대로 전달할 수 있는 구현 지시문이다.
+
+```text
+# Model Parameter LUT + Basecase 최종 통합 구현 요청
+
+작업 저장소:
+`/Users/messiah/skg-mi/skmip-mi-agent`
+
+작업 기준 브랜치:
+`design/model-param-lut-final-merge`
+
+## 1. 작업 전 필독 자료
+
+아래 문서를 처음부터 끝까지 읽고 구현 기준으로 삼아라.
+
+1. `/Users/messiah/skg-mi/skmip-mi-agent/AGENTS.md`
+2. `/Users/messiah/skg-mi/skmip-mi-agent/.claude/rules/python-conventions.md`
+3. `/Users/messiah/skg-mi/skmip-mi-agent/docs/architectures/project_directory_structure.md`
+4. 최종 의사결정 문서:
+   `/Users/messiah/skg-mi/skmip-mi-agent/apps/agents/model_parameter_agent/docs/lutjoin_final/README.md`
+
+최종 문서의 D-01~D-11과 테스트 게이트를 구현의 최우선 기준으로 사용하라.
+
+비교·참고 브랜치:
+
+- Codex: `feature/model-param-lut-basecase`, commit `7a7a753`
+- Claude: `feat/lut-basecase-integration`, commit `8d1f72b`
+- 공통 merge base: `main`, commit `7ba92b8`
+
+비교 문서(현재 기준 브랜치에는 없으므로 아래 branch-qualified path에서 읽는다):
+
+- Codex: `feature/model-param-lut-basecase:apps/agents/model_parameter_agent/docs/lutjoin/`
+- Claude: `feat/lut-basecase-integration:apps/agents/model_parameter_agent/docs/lutjoin_claude/`
+
+`git ls-tree -r --name-only <branch> -- <path>`로 비교 파일 목록을 확인하고 `git show <branch>:<file>`로 내용을 읽어라. 두 feature branch의 commit은 크기와 관계없이 merge/cherry-pick하지 마라. 현재 브랜치에서 `git show`와 `git diff`로 필요한 함수·테스트만 확인하고, 최종 문서 11장과 14.10의 선별 이식 기준에 맞춰 파일·함수·테스트 아이디어를 수동 재구현하라. 비교를 위해 다른 branch를 checkout하지 마라.
+
+기존 사용자 변경과 미추적 파일을 보존하고 관련 없는 refactor, formatting, 파일 이동을 하지 마라. `review-node` skill은 사용하지 마라. OpenAI `reasoning_effort` 규격을 다시 확인해야 할 때는 `openai-docs` skill과 공식 OpenAI 문서만 사용하라.
+
+## 2. 핵심 구조: pipeline은 하나다
+
+LUT 활성 여부에 따라 별도 legacy flow나 별도 Step2/Step3 pipeline을 만들지 마라. LUT 여부는 초기 reference source만 바꾼다.
+
+    lut_parameters.yaml
+      -> flag와 무관하게 processing schema parse/구조 검증
+      -> 등록 parameter는 YAML key_axes/metadata_axes 사용
+      -> 미등록 parameter는 basecase/candidate canonical axes 전체를 key로 사용
+
+    Basecase load
+      +
+    LUT source 결정
+      - flag=false                         -> basecase-only
+      - flag=true + YAML 미등록 parameter -> basecase-only
+      - flag=true + YAML 등록·유효         -> basecase + LUT
+      - flag=true + YAML 등록 오류         -> 명시적 실패
+      |
+      v
+    동일 SlotCatalog builder
+      -> 동일 Step2 prompt/cap/sanitizer
+      -> 동일 exact membership validation
+      -> 동일 EffectiveReferenceResolver
+      -> 동일 Step3 prompt/cap/partial-cell policy
+      -> 동일 API/DB projection
+
+flag=false는 과거 node 체계로 우회하는 rollback switch가 아니다. LUT record를 source에서 제외할 뿐이다. proposal horizon, parameter별 cap, compact catalog, exact membership, nearest 금지, partial response, metadata 복원과 API/DB projection은 모든 source mode에서 동일하게 적용하라.
+
+## 3. 확정 기능 요구사항
+
+### Reference source와 exact key
+
+- 대상 LUT parameter는 GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment다.
+- 5개 모두 scenario/event와 관련된 LUT-only slot을 허용한다.
+- 동일 exact key에 basecase와 LUT가 모두 있으면 LLM 기준값은 actual basecase다.
+- basecase-only는 유지하고 LUT-only는 LUT default를 LLM 기준값으로 사용한다.
+- 활성 source 어디에도 exact key가 없으면 Step3 전에 제외한다.
+- 가까운 연도·월·국가·Plant·Train으로 자동 치환하거나 nearest reference를 조회하지 마라.
+- canonical business key:
+  - GDP: `Country + Year`
+  - PMI: `Country + Year + Month`
+  - PowerMix: `Country + Year + Energy Source`
+  - Temperature: `Country + Year + Month`
+  - LiqUtilAdjustment: `Country + LNG Plant + LNG Plant Train + Year + Month`
+- key는 candidate identity별로 격리하고 fuzzy prefix 추론 대신 YAML의 canonical axis와 CSV header 직접 mapping을 사용하라.
+- YAML 미등록 parameter는 basecase/candidate schema의 canonical axis 전체를 exact key로 사용하고 `metadata_axes=[]`로 처리하라. 축 이름만으로 metadata를 추론하지 마라.
+
+### Horizon
+
+- `model_parameter_lut_horizon_start_year=2026`
+- `model_parameter_lut_horizon_end_year=2030`
+- basecase와 LUT의 proposal 후보에 같은 2026~2030 horizon을 적용한다.
+- GDP는 2026 성장률 계산을 위해 2025 absolute GDP를 source lookback으로 사용할 수 있지만 2025 slot을 proposal에 노출하지 않는다.
+- `start_year <= end_year`를 설정 validation에서 보장한다.
+- horizon과 LUT file/catalog hash를 cache identity에 반영한다.
+
+### 최소 LUT YAML과 adapter
+
+신규 설정 파일:
+`apps/agents/model_parameter_agent/resources/lut/config/lut_parameters.yaml`
+
+최소 필드만 사용한다.
+
+- `adapter`
+- optional `layout: row | year_columns`
+- `files`/`path`
+- custom adapter의 `required_columns`
+- tabular adapter의 `axis_columns`
+- `value_column` 또는 `year_value_column`
+- `key_axes`
+- optional `metadata_axes`
+
+YAML에 임의 Python import, 계산식, validator DSL, horizon/cap을 넣지 말고 DB LUT spec table도 만들지 마라.
+
+YAML은 LUT loader 설정과 등록 parameter의 processing schema를 겸한다. feature flag와 무관하게 YAML 구조와 key/metadata 축을 검증하되, flag=false에서는 실제 CSV를 열거나 LutCatalog를 만들지 않는다.
+
+- 공통 `tabular` adapter:
+  - PMI: `year_columns`
+  - PowerMix: `row`
+- 전용 adapter:
+  - GDP growth
+  - Temperature degree-days
+  - LiqUtil
+
+GDP General 파일, Full Country List, PMI t1 reference-country file/fallback은 사용하지 않는다. PMI는 t2 파일의 84개국만 LUT 후보로 사용하고, 국가 범위는 parameter별 실제 LUT distinct를 따른다.
+
+### Loader 검증과 오류
+
+등록된 LUT에 대해 파일, 필수 header, 값 타입/finite, exact key uniqueness, horizon과 file hash를 검증한다.
+
+- 같은 key의 value와 authoritative metadata까지 완전히 같은 duplicate만 deterministic dedupe하고 진단을 남긴다.
+- 같은 key의 value 또는 authoritative metadata가 하나라도 다르면 first/last-wins 없이 적재 실패한다.
+- flag=false이면 YAML processing schema는 검증하지만 LUT CSV/catalog는 읽지 않는다.
+- flag=true + parameter 미등록은 정상 basecase-only source다.
+- flag=true + 등록·유효는 basecase+LUT source다.
+- flag=true + catalog/file/header/duplicate 오류는 명시적 domain/config error다.
+- 등록 오류를 warning만 남기고 basecase-only로 강등하지 마라.
+
+### Catalog와 state
+
+full LUT 또는 full effective record를 LangGraph state에 넣지 마라.
+
+- process-level immutable `LutCatalog`
+- request 단위 `BasecaseIndex`
+- Step2용 compact `SlotCatalog`
+- Step2가 반환하고 서버 검증을 통과한 selected key
+- 선택된 key의 `EffectiveReference`만 Step3 state에 저장
+
+compact catalog에는 canonical axis, 비시간 leaf hierarchy, leaf별 실제 available Year/Month와 활성 basecase/LUT source의 union을 보존한다. raw/effective record를 40,000건 같은 전역 cap으로 먼저 자르지 마라.
+
+### Step2
+
+- 서버는 horizon, schema, exact path, LiqUtil Closed 제외 같은 객관적 유효성만 적용한다.
+- scenario/event 관련성은 전체 유효 compact catalog를 받은 LLM이 판단한다.
+- 전수 선택이나 최대치 채우기를 지시하지 마라.
+- `model_parameter_max_parameter_slots=100`을 각 parameter task의 독립 hard maximum으로 prompt와 validator에 적용한다.
+- 한 parameter가 다른 parameter의 예산을 차감하면 안 된다.
+- LLM 결과를 canonical key로 바꿔 활성 `BasecaseIndex union LutCatalog`에서 exact membership을 검증한다.
+
+### EffectiveReference와 Step3
+
+내부 모델에서 최소한 다음을 구분한다.
+
+- `actual_basecase_value`
+- `lut_default_value`
+- `llm_reference_value`
+- `effective_source`
+- `basecase_reference_id`
+- `lut_reference_id`
+- `lut_version`
+- `diagnostics`
+
+`llm_reference_value`는 actual basecase가 있으면 그 값, 없으면 LUT default다. LLM에는 좌표당 기준 숫자 하나만 전달하고 basecase와 LUT 두 숫자를 동시에 노출하지 마라.
+
+`model_parameter_max_value_prompt_basecase_records=100`을 각 parameter task에 독립 적용한다. cap 때문에 필수 selected reference를 조용히 누락하지 마라.
+
+Step3는 cell 단위로 처리한다.
+
+- LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지한다.
+- 누락 cell을 no-change cell로 자동 생성하지 않는다.
+- 일부 누락 때문에 같은 candidate의 valid cell 전체를 폐기하지 않는다.
+- LLM이 기준값과 같은 값을 명시적으로 반환한 경우 정상 no-change proposal로 저장한다.
+- selected/valid/missing/invalid cell 수는 내부 sync/test diagnostics와 metric으로 제공한다.
+
+### LiqUtil metadata와 PowerMix
+
+metadata 복원은 현재 LiqUtil에만 적용한다.
+
+- Period
+- Life Cycle Category
+- Nameplate Capacity
+
+이 필드는 business key가 아니며 LLM이 만들지 않는다. actual basecase가 있는 exact key는 basecase metadata를, LUT-only exact key는 LUT metadata를 복원한다. Nameplate Capacity는 MTPM x 12로 MTPA를 만들고 Bcm/month column은 사용하지 않는다. Closed lifecycle은 case-insensitive하게 제외한다. 다른 parameter에서 이름만 보고 이 metadata를 전역 제외하지 마라.
+
+PowerMix는 `Country + Year + Energy Source`별 독립 override다. LLM이 반환한 source cell만 저장하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 자동 보완과 group 전체 폐기를 하지 마라.
+
+### 운영 API/DB projection
+
+운영 proposal DB와 frontend API의 기존 구조·의미를 변경하지 마라.
+
+- actual basecase가 있으면 `basecaseValue=actual_basecase_value`
+- LUT-only이면 LLM 기준값이 LUT여도 운영 `basecaseValue=null`
+- LUT용 운영 DB column을 추가하지 않는다.
+- 내부 sync/test API는 LUT value/source/provenance를 진단용으로 반환한다. 운영 API에는 추가하지 않는다.
+
+내부 EffectiveReference와 운영 ParameterValueCell projection을 분리하라.
+
+## 4. 공통 LLM connector
+
+`invoke_llm_structured_output`에 optional 호출 인자를 추가한다.
+
+    stream: bool = False
+    reasoning_effort: ReasoningEffortOption | None = None
+
+- 기존 caller가 생략하면 non-stream/provider-default로 동작한다.
+- connector가 stream 관련 global Settings를 직접 읽지 않는다.
+- Model Parameter Agent가 Step1.5, Step2, Step3의 모든 structured-output 호출에 자기 설정값을 전달한다.
+- stream/non-stream 모두 완성된 동일 `LLMStructuredResult`를 반환한다.
+- stream partial JSON을 반환하지 않고 중단 시 전체 호출을 실패·retry한다.
+- provider가 usage를 주지 않으면 nullable 계약을 유지한다.
+
+reasoning_effort 규칙:
+
+- 생략, Python None, 문자열 `default`: request key 자체 생략
+- 문자열 `none`: `none`을 그대로 전송
+- `minimal/low/medium/high/xhigh`: 그대로 전송
+- invalid 설정: 시작/설정 validation에서 거부
+- enum 안의 값이 provider/model에서 미지원이면 기존 connector/domain error로 전파하고 default로 fallback하지 않음
+
+코드 기본값:
+
+    model_parameter_lut_enabled: false
+    model_parameter_llm_stream_enabled: false
+    model_parameter_llm_reasoning_effort: default
+
+checked-in `envs/config.yaml`과 K8s ConfigMap에도 별도 배포 활성화 요청이 없는 한 위 세 값은 각각 false, false, default로 명시하고, horizon 2026/2030과 두 cap 100/100을 일치시켜라. 수동 LUT 통합 테스트에서만 `model_parameter_lut_enabled=true`를 명시적으로 override한다. 환경 활성화 여부를 임의로 바꾸지 마라.
+
+## 5. 구현 및 commit 순서
+
+소스 변경 전에 예상 변경 파일, 영향 범위와 주요 위험을 먼저 보고한 뒤 다음 순서로 구현하라. 각 단계는 독립 review/revert 가능한 작은 commit으로 분리한다.
+
+1. 공통 connector optional stream/reasoning_effort와 독립 테스트
+2. app settings, horizon validation, LUT YAML, typed spec loader
+3. tabular adapter와 GDP/Temperature/LiqUtil 전용 adapter
+4. immutable LutCatalog, request BasecaseIndex, compact SlotCatalog
+5. 단일 source-selection 단계와 공통 pipeline 연결
+6. Step2 전체 compact catalog, parameter별 cap, strict exact membership
+7. selected-key EffectiveReference와 Step3 단일 기준값/partial policy
+8. LiqUtil metadata, PowerMix 정책, 운영 projection, sync diagnostics
+9. source matrix, 오류, cache, 성능·메모리 테스트
+10. 검증 환경이 있으면 최종 28개 scenario를 재실행하고 설정·문서를 동기화한다. 환경이 없으면 blocker와 미검증 위험을 기록한다.
+
+공통 connector 변경과 LUT domain 변경을 분리하고 사용자 변경을 commit에 섞지 마라. push, MR, 배포는 별도 요청이 없으면 수행하지 마라.
+
+## 6. 필수 검증
+
+양쪽 branch의 기존 테스트 사례는 최종 정책에 맞게 선별·재작성한다.
+
+- Codex 참고: `feature/model-param-lut-basecase:tests/automated/test_model_parameter_lut_integration.py`
+- Claude 참고: `feat/lut-basecase-integration:tests/automated/test_lut_repository.py`
+- 현재 브랜치 contract: `tests/automated/test_model_parameter_agent_contract.py`
+
+최소 자동화 게이트:
+
+1. 5개 loader/transform과 최종 문서 13장의 기대 record 수
+2. 2026~2030 horizon, GDP 2025 lookback과 2025 slot 미노출
+3. PMI t2-only 84개국, t1/General/Full Country List 미접근
+4. basecase override, basecase-only, LUT-only와 exact miss 제외
+5. value/metadata가 모두 같은 duplicate dedupe, 동일 key의 value/metadata 충돌 실패
+6. leaf에 없는 Year/Month 거부와 nearest 미사용
+7. flag/source matrix 네 경우와 source 이후 동일 pipeline; flag=false에서도 YAML 구조 오류는 실패하지만 LUT CSV는 열지 않음
+8. LUT 미지원 parameter의 canonical axis 전체 보존과 이름 기반 metadata 제외 미발생
+9. parameter별 Step2/Step3 100 cap 독립성
+10. explicit no-change 저장과 partial valid/missing/invalid cell 정책
+11. PowerMix 독립 override와 비정규화
+12. LUT-only 운영 basecaseValue null과 sync diagnostics provenance
+13. state에 full LUT/effective record가 없고 raw cap 없이 compact leaf/period 보존
+14. stream false/true parsed output, 중단 retry, empty content, nullable usage
+15. reasoning_effort 생략/default/none/지원값/invalid와 stream 조합, provider/model 미지원 오류 전파와 무음 fallback 금지
+16. cold/warm load, state 직렬화 크기, concurrent cache race
+
+검증 명령에는 관련 pytest, `tests/automated/test_model_parameter_agent_contract.py`, compile check, `git diff --check`와 프로젝트 formatter/linter의 변경 파일 범위 검사를 포함하라.
+
+수동 검증이 가능한 환경이면 `model-parameter-agent-test` skill 절차에 따라 LUT enabled=true, horizon=2026~2030과 최종 stream/reasoning 설정으로 5개 parameter 대상 28개 scenario를 재실행하라. 결과에 resolved config, lut_version, LUT-only/exact reference, missing/invalid cell과 source별 수를 기록하라. 실행할 수 없다면 이유와 남는 위험을 명확히 보고하고 성공을 추정하지 마라.
+
+## 7. 완료 조건과 보고
+
+구현과 실제 코드에 맞춰 이 최종 문서를 갱신하라. package ownership, flow 경계 또는 endpoint mapping을 바꾼 경우 관련 architecture 문서도 갱신한다.
+
+최종 보고에는 다음을 포함하라.
+
+1. 변경 목적과 단일 pipeline/source-selection 동작
+2. D-01~D-11 반영 위치와 주요 변경 파일
+3. 운영 API/DB 하위호환성
+4. 성능·메모리·운영 위험
+5. 수행한 테스트 명령과 실제 결과
+6. 28개 scenario report 경로와 요약 또는 실행 blocker
+7. 미검증 항목과 제약
+8. 생성한 commit 목록과 hash
+9. 실제 설정의 LUT/stream/reasoning 상태
+10. push/MR/배포를 수행하지 않았다는 확인
+
+관련 자동화 테스트, source matrix, exact membership, partial/API projection 회귀, state/raw-cap 검증과 문서·설정 동기화가 끝나기 전에는 완료로 보고하지 마라.
+```
+
+## 18. 변경 이력
 
 | 일시 | 변경 내용 |
 |---|---|
@@ -1295,7 +1640,7 @@ D-11: LUT=true이지만 YAML에 등록되지 않은 parameter가 basecase source
 | 2026-07-10 | 인터뷰 형식에 Codex/Claude 현재 기준을 추가하고 D-01 조합 오류 발생 조건과 예시 보강 |
 | 2026-07-10 | D-04 조기 확정: basecase/LUT 양쪽에 exact 조합이 없으면 최종 제외, nearest 좌표 치환 금지 |
 | 2026-07-10 | D-02 확정: config 기반 2026~2030 proposal horizon, GDP 2025 계산용 lookback 허용 |
-| 2026-07-10 | D-03 확정: LLM 단일 기준값, 운영 basecaseValue 기존 의미 유지, LUT-only null, sync API 양쪽 값 허용 |
+| 2026-07-10 | D-03 확정: LLM 단일 기준값, 운영 basecaseValue 기존 의미 유지, LUT-only null, 내부 sync API에서 양쪽 값·source 제공 |
 | 2026-07-10 | D-05 일부 확정: 객관적 유효성 filter 후 전체 compact catalog를 제공하고 관련성 선택은 LLM에 위임 |
 | 2026-07-10 | D-05 no-change 정책 확정: LLM이 명시한 동일값은 저장하고 누락 cell은 서버가 자동 보완하지 않음 |
 | 2026-07-10 | D-05 제한 의미 보강: Step2 input catalog 크기와 selected slot 100개, Step3 reference 100개를 구분 |
@@ -1308,8 +1653,11 @@ D-11: LUT=true이지만 YAML에 등록되지 않은 parameter가 basecase source
 | 2026-07-10 | D-02 국가 범위 보강: Full Country List 보조 파일을 제거하고 각 parameter LUT 자체의 국가 distinct를 사용 |
 | 2026-07-10 | D-08 PMI source 보강: t2 파일만 사용하고 t1 reference-country mapping 및 7개 Other 국가 fallback 제거 |
 | 2026-07-10 | D-08 adapter 정책 보강: PMI와 PowerMix는 단일 tabular 공통 adapter의 year_columns/row layout을 사용하고 GDP·Temperature·LiqUtil만 전용 adapter로 구현 |
-| 2026-07-10 | D-09 일부 완료: model_parameter_lut_enabled 기본 false, true에서도 YAML 미등록 parameter는 정상 basecase-only 처리 |
+| 2026-07-10 | D-09 일부 완료: model_parameter_lut_enabled 기본 false, true에서도 YAML 미등록 parameter는 basecase-only source 사용 |
 | 2026-07-10 | D-09 완료: 공통 connector stream 인자 기본 false, Model Parameter Agent가 자기 설정을 호출 시 전달하고 동일한 parsed result 계약 유지 |
 | 2026-07-10 | D-09 reasoning_effort 보강: Model Parameter 설정을 모든 structured-output 호출에 전달하고 default/None은 생략, none은 API 값으로 그대로 전송 |
-| 2026-07-10 | D-10 완료: 현재 설계 브랜치에서 새 구조로 구현하고 Codex·Claude feature HEAD는 통째 merge하지 않으며 검증된 로직·테스트만 선별 이식 |
+| 2026-07-10 | D-10 완료: 현재 설계 브랜치에서 새 구조로 구현하고 Codex·Claude feature commit은 merge/cherry-pick하지 않으며 검증된 로직·테스트 아이디어만 수동 이식 |
 | 2026-07-10 | D-10 후 전체 문서 정합성 감사: D-11 fallback pipeline 의미를 추가 인터뷰 항목으로 등록 |
+| 2026-07-10 | D-11 완료: LUT 유무는 source 구성만 제어하고 horizon/cap/exact/partial을 포함한 동일 공통 pipeline 적용 |
+| 2026-07-10 | 최종 구현 감사: YAML processing schema와 LUT CSV 적재를 분리하고 미등록 key 규칙, sync 진단 계약, metadata duplicate, Temperature spec, reasoning 미지원 오류 계약을 보강 |
+| 2026-07-10 | 최종 개발 에이전트 인계 프롬프트 추가 및 문서 상태 FINAL 전환 |
