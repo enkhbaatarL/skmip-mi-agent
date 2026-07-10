@@ -216,7 +216,8 @@ Codex 수동 리포트에는 broad scenario에서 PowerMix 또는 LiqUtil slot�
 - horizon, Closed lifecycle, exact path 같은 객관적 유효성만 서버에서 먼저 적용
 - 유효한 전체 compact catalog를 Step2에 전달하고 scenario/event 관련성은 LLM이 판단
 - prompt에서 전수 열거나 최대한 많이 선택하지 말고 관련성이 높은 slot만 선택하도록 제한
-- 의미 없는 no-change cell은 최종 proposal에서 기본 제외
+- LLM이 기준값과 같은 값을 명시적으로 반환한 no-change cell은 의도된 제안으로 보고 저장
+- LLM이 반환하지 않은 cell을 서버가 no-change로 자동 생성하지 않음
 
 ### P1-1. Codex nearest-time 보정이 실제 적용 좌표를 바꿈
 
@@ -547,7 +548,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
 | D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
-| D-05 | scenario prefilter, ranking, slot cap | IN_PROGRESS | 전체 유효 compact catalog를 LLM에 제공하고 관련성 높은 slot 선택은 LLM이 담당. no-change 저장 여부와 cap은 추가 결정 필요 |
+| D-05 | scenario prefilter, ranking, slot cap | IN_PROGRESS | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change는 저장하고 누락 cell은 서버가 채우지 않음. slot cap은 추가 결정 필요 |
 | D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
 | D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
@@ -784,6 +785,8 @@ LLM prompt cell 초안:
 - scenario/event와 관련성이 높은 slot을 고르는 책임은 LLM에 둔다.
 - raw LUT row를 그대로 보내지 않고 axis 값, hierarchy, leaf별 유효 기간을 보존하는 compact 구조를 사용한다.
 - Claude의 40,000건 raw record cap처럼 catalog 일부를 먼저 삭제하지 않는다.
+- LLM이 proposedValue를 기준값과 동일하게 명시해도 정상적인 no-change 의사결정으로 보고 운영 proposal에 저장한다.
+- LLM이 반환하지 않은 selected slot을 서버가 현재 기준값 유지 cell로 자동 생성하지 않는다.
 
 Codex 현재 기준과 차이:
 
@@ -812,8 +815,27 @@ Step2 compact packet 원칙:
 
 D-05의 미확정 항목:
 
-- 관련성은 높지만 LLM이 최종적으로 값 변경이 필요 없다고 판단한 no-change slot을 운영 proposal에 저장할지 여부
 - parameter별 selected slot 상한과 전체 global 상한
+
+#### D-05 no-change 처리 상세
+
+Codex 현재 기준과 차이:
+
+- LLM이 명시한 no-change cell을 저장한다.
+- LLM이 일부 cell 또는 candidate를 누락해도 서버가 effective 기준값을 proposedValue로 넣은 fallback cell을 생성할 수 있다.
+- 확정안에서는 명시적 no-change 저장은 유지하지만 Codex의 누락 fallback 생성은 사용하지 않는다.
+
+Claude 현재 기준과 관계:
+
+- LLM이 기준값과 같은 proposedValue를 명시적으로 반환하면 저장한다.
+- 누락 cell을 기준값 유지 cell로 자동 생성하지 않는다.
+- 다만 현재 Claude 구현은 selected slot 하나라도 누락되면 해당 candidate의 전체 value_grid를 비우므로, 유효한 partial cell을 유지할지는 D-06에서 별도 결정한다.
+
+확정 처리 예시:
+
+- LLM 입력 기준값 0.42, 명시 응답 proposedValue 0.42: 운영 proposal에 저장
+- LLM 입력 기준값 0.42, 해당 좌표 응답 자체가 없음: 서버가 0.42 cell을 생성하지 않음
+- 내부 sync/test 결과에서는 selected slot 대비 LLM 응답 누락 수를 별도 진단값으로 반환 가능
 
 ## 15. 인터뷰 진행 원칙
 
@@ -831,7 +853,7 @@ D-05의 미확정 항목:
 
 ## 16. 다음 인터뷰 항목
 
-D-05 계속: 관련성이 있어 Step2에서 선택됐지만 Step3에서 proposedValue가 기준값과 동일한 no-change slot을 운영 DB/frontend proposal에 포함할지 결정한다.
+D-05 계속: 전체 compact catalog에서 LLM이 선택할 수 있는 slot 상한을 global 하나로 둘지, parameter별 상한과 global 상한을 함께 둘지 결정한다.
 
 ## 17. 변경 이력
 
@@ -844,3 +866,4 @@ D-05 계속: 관련성이 있어 Step2에서 선택됐지만 Step3에서 propose
 | 2026-07-10 | D-02 확정: config 기반 2026~2030 proposal horizon, GDP 2025 계산용 lookback 허용 |
 | 2026-07-10 | D-03 확정: LLM 단일 기준값, 운영 basecaseValue 기존 의미 유지, LUT-only null, sync API 양쪽 값 허용 |
 | 2026-07-10 | D-05 일부 확정: 객관적 유효성 filter 후 전체 compact catalog를 제공하고 관련성 선택은 LLM에 위임 |
+| 2026-07-10 | D-05 no-change 정책 확정: LLM이 명시한 동일값은 저장하고 누락 cell은 서버가 자동 보완하지 않음 |
