@@ -118,7 +118,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | 없는 시점 처리 | 가장 가까운 Year/Month로 실제 slot 변경 | 원 slot을 유지하나 unresolved 값도 통과 가능 | exact-only가 기본. nearest는 별도 review 참고값 |
 | LLM 누락 처리 | 현재값 유지 cell로 자동 성공 보정 | candidate 전체를 비선택 처리 | LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지. 누락 cell 자동 생성 및 candidate 전체 폐기 금지 |
 | slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task에 동일 적용. 최대치일 뿐 채워야 할 목표 수가 아님 |
-| streaming | 호출별 옵션, model parameter에서 명시 | 모든 structured output에 전역 적용 | Codex 방식 |
+| streaming | 공통 connector의 호출별 옵션, model parameter에서 명시 | 공통 connector 내부 전역 설정으로 모든 structured output에 적용 | 공통 connector가 optional stream 인자를 제공하되 기본 false. 각 호출자가 설정값을 전달 |
 | 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled boolean 제공, 기본 true | boolean off/on 사용. 기본 false이며 환경에서 true를 명시해야 활성화 |
 | 테스트 강점 | flow integration, Liq 복원, partial fallback | loader fixture, horizon, 축 보정, 실 LLM 리포트 | 양쪽 테스트를 통합 |
 
@@ -288,8 +288,11 @@ Codex는 invoke_llm_structured_output 호출별 stream 옵션을 추가해 model
 
 권고:
 
-- 공통 connector는 호출별 옵션만 제공
-- model parameter flow 설정에서 명시적으로 켬
+- 공통 connector 메서드가 optional `stream: bool = False` 인자를 제공
+- 인자를 생략한 기존 호출자는 non-stream으로 동작
+- model parameter flow는 자기 설정값을 호출 시 명시적으로 전달
+- connector 내부에서 전역 Settings를 직접 읽지 않음
+- stream 여부와 무관하게 같은 parsed result 타입을 반환
 - stream 중단, empty content, usage 누락, retry 테스트 추가
 
 ### P1-6. LUT 파일 오류가 조용히 basecase-only로 퇴행
@@ -638,6 +641,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 12. prompt token, state 직렬화 크기, cold/warm latency
 13. 동시 요청 메모리와 cache race
 14. 최종 코드·배포 설정으로 28개 scenario 전체 재실행
+15. stream 인자 생략/false/true의 parsed output 동일성, usage 수집, 중간 연결 단절 시 전체 호출 retry
 
 ## 14. 인터뷰 의사결정 로그
 
@@ -651,7 +655,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
 | D-08 | LUT spec, adapter, metadata 축 관리 | DECIDED | 최소 YAML spec과 단일 `tabular` 공통 adapter의 row/year_columns layout 사용. GDP·Temperature·LiqUtil만 전용 adapter 유지. LiqUtil metadata만 exact reference에서 복원. GDP General 파일과 PMI t1 파일은 미사용 |
-| D-09 | feature rollout과 streaming 설정 | IN_PROGRESS | LUT는 전역 boolean 설정으로 제어하며 기본 false. true여도 YAML에 등록되지 않은 parameter는 정상적인 basecase-only로 동작. streaming 정책은 미정 |
+| D-09 | feature rollout과 streaming 설정 | DECIDED | LUT flag 기본 false, YAML 미등록 parameter는 basecase-only. 공통 connector의 stream 인자는 기본 false이며 호출자가 선택. Model Parameter Agent는 자기 설정값을 호출 시 전달하고 동일한 parsed result를 받음 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
 
 ### 14.1 D-01 확정 — LUT-only slot 허용 범위
@@ -1071,7 +1075,7 @@ Claude 현재 기준:
 
 공통 adapter의 `axis_columns` 왼쪽은 canonical DB/API axis, 오른쪽은 실제 CSV header다. custom adapter의 required_columns는 실제 CSV header 문자열 목록이다. 개별 row의 null 허용 여부와 row 제외 규칙은 adapter가 담당한다.
 
-### 14.9 D-09 진행 중 — LUT feature flag와 streaming
+### 14.9 D-09 확정 — LUT feature flag와 streaming
 
 #### LUT feature flag 확정
 
@@ -1101,7 +1105,36 @@ Claude 현재 기준:
 
 코드 기본값은 false로 두고 실제 환경의 `envs/config.yaml`과 K8s ConfigMap에서 true를 명시한 경우에만 활성화한다. off 회귀 테스트는 기존 main의 basecase-only prompt, slot, value, API/DB 결과가 동일한지 snapshot으로 확인한다.
 
-structured-output streaming 적용 범위는 다음 인터뷰에서 별도로 결정한다.
+#### structured-output streaming 확정
+
+Codex 현재 기준:
+
+- 공통 structured-output connector 메서드에 호출별 `stream` 인자를 추가하고 Model Parameter Agent가 자기 설정을 전달한다.
+
+Claude 현재 기준:
+
+- 공통 connector가 `llm_structured_stream_enabled` 전역 Settings를 직접 읽어 활성화 시 모든 structured-output 호출에 적용한다.
+
+최종안은 공통 connector에서 기능을 제공한다는 Claude 방향을 따르되, 기존 caller 호환성과 호출별 제어를 위해 optional method parameter를 사용한다.
+
+공통 interface:
+
+    async def invoke_llm_structured_output(
+        ...,
+        stream: bool = False,
+    ) -> LLMStructuredResult:
+        ...
+
+확정 동작:
+
+1. `stream` 인자를 전달하지 않은 모든 기존 caller는 false로 동작한다.
+2. 공통 connector는 내부에서 stream 관련 Settings를 직접 읽지 않는다.
+3. Model Parameter Agent는 `model_parameter_llm_stream_enabled` 설정값을 Step1.5·Step2·Step3의 모든 structured-output 호출에 `stream=...`으로 전달한다.
+4. 설정의 코드 기본값은 false로 두며 실제 환경에서 필요할 때 true를 명시한다.
+5. non-stream은 단일 response content를, stream은 delta chunk를 내부에서 모두 결합한 content를 동일한 Pydantic output schema로 검증한다.
+6. 호출자는 두 경로 모두 동일한 `LLMStructuredResult`와 완성된 parsed data를 받으므로 이후 node 로직은 분기하지 않는다.
+7. stream 도중 연결이 끊기면 partial JSON을 반환하지 않고 해당 LLM 호출 전체를 실패·재시도한다.
+8. streaming 경로에서도 usage 수집을 지원하고, provider가 usage를 주지 않으면 기존 nullable usage 계약을 유지한다.
 
 ## 15. 인터뷰 진행 원칙
 
@@ -1119,7 +1152,7 @@ structured-output streaming 적용 범위는 다음 인터뷰에서 별도로 �
 
 ## 16. 다음 인터뷰 항목
 
-D-09 계속: structured-output streaming을 model parameter LLM 호출에만 적용할지, 공통 connector 전체에 적용할지 결정한다.
+D-10: 최종 구현을 어느 브랜치를 기반으로 시작하고 어떤 순서로 선별 이식할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -1144,3 +1177,4 @@ D-09 계속: structured-output streaming을 model parameter LLM 호출에만 적
 | 2026-07-10 | D-08 PMI source 보강: t2 파일만 사용하고 t1 reference-country mapping 및 7개 Other 국가 fallback 제거 |
 | 2026-07-10 | D-08 adapter 정책 보강: PMI와 PowerMix는 단일 tabular 공통 adapter의 year_columns/row layout을 사용하고 GDP·Temperature·LiqUtil만 전용 adapter로 구현 |
 | 2026-07-10 | D-09 일부 완료: model_parameter_lut_enabled 기본 false, true에서도 YAML 미등록 parameter는 정상 basecase-only 처리 |
+| 2026-07-10 | D-09 완료: 공통 connector stream 인자 기본 false, Model Parameter Agent가 자기 설정을 호출 시 전달하고 동일한 parsed result 계약 유지 |
