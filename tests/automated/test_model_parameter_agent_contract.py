@@ -602,6 +602,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "model_parameter_router" in main_source
         assert "app.include_router(" in main_source
         assert "validate_lut_startup" in main_source
+        assert "preload_basecase_runtime_cache" in main_source
         assert "preload_parameter_knowledge_base" not in main_source
 
     def test_model_parameter_endpoint_accepts_optional_request_body(self) -> None:

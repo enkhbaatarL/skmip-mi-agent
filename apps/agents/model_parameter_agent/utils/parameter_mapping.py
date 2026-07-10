@@ -8,6 +8,11 @@ import re
 from typing import Any
 import unicodedata
 
+from apps.agents.model_parameter_agent.utils.runtime_cache import (
+    RuntimeLruCache,
+    file_signature,
+    stable_digest,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -47,6 +52,25 @@ BASECASE_SPEC_COLUMNS = {
     "basecase_value_end_col",
     "basecase_stop_rule",
 }
+PARAMETER_KNOWLEDGE_BASE_CACHE_MAX_ENTRIES = 8
+BASECASE_RECORD_CACHE_MAX_ENTRIES = 32
+CANDIDATE_BASECASE_CACHE_FIELDS = (
+    "model_file",
+    "model_sheet",
+    "parameter_name",
+    "canonical_parameter_name",
+    "basecase_read_mode",
+    "basecase_header_row",
+    "basecase_data_start_row",
+    "basecase_column_roles",
+    "basecase_row_filter",
+    "basecase_year_row",
+    "basecase_month_row",
+    "basecase_period_row",
+    "basecase_value_start_col",
+    "basecase_value_end_col",
+    "basecase_stop_rule",
+)
 PARAMETER_ALIASES = {
     "Gas Demand[BCM/Mt]": "User-Adjusted Gas Demand",
     "Gas Demand [BCM/Mt]": "User-Adjusted Gas Demand",
@@ -59,11 +83,20 @@ PARAMETER_ALIASES = {
     "PNG Contract Volume": "PNG Contract Volume",
 }
 
+
+_PARAMETER_KB_CACHE: RuntimeLruCache[ParameterKnowledgeBase] = RuntimeLruCache(
+    max_entries=PARAMETER_KNOWLEDGE_BASE_CACHE_MAX_ENTRIES,
+)
+_BASECASE_RECORD_CACHE: RuntimeLruCache[tuple[dict[str, Any], ...]] = RuntimeLruCache(
+    max_entries=BASECASE_RECORD_CACHE_MAX_ENTRIES,
+)
+
 MODEL_FILE_MARKERS = {
     "Demand": "Demand Model_Input",
     "Supply": "Supply Model_Input",
     "Trade": "Trade Model_Input",
 }
+
 
 @dataclass(frozen=True)
 class ParameterDefinition:
@@ -165,6 +198,16 @@ class ParameterKnowledgeBase:
         return self.parameter_definitions.get(normalize_parameter_name(parameter_name))
 
 
+@dataclass(frozen=True)
+class BasecaseRuntimeCacheSummary:
+    parameter_count: int
+    profile_count: int
+    sheet_available_count: int
+    record_count: int
+    warning_count: int
+    warnings: tuple[str, ...] = ()
+
+
 class _WorkbookCache:
     def __init__(self, workbook_loader: Any) -> None:
         self._workbook_loader = workbook_loader
@@ -197,6 +240,82 @@ class _WorkbookCache:
         self._workbooks.clear()
 
 
+def _basecase_workbook_signatures(basecase_dir: Path) -> tuple[tuple[str, str, int | None, int | None], ...]:
+    return tuple(
+        (model_file, *signature)
+        for model_file, workbook_path in sorted(_discover_basecase_workbooks(basecase_dir).items())
+        for signature in (file_signature(workbook_path),)
+    )
+
+
+def _parameter_knowledge_base_cache_key(
+    *,
+    mapping_rows: list[dict[str, Any]],
+    parameter_rows: list[dict[str, Any]],
+    mapping_source: str,
+    basecase_dir_path: str,
+) -> tuple[Any, ...]:
+    basecase_dir = Path(basecase_dir_path).expanduser().resolve(strict=False)
+    return (
+        "parameter-knowledge-base-v1",
+        mapping_source,
+        str(basecase_dir),
+        stable_digest(mapping_rows),
+        stable_digest(parameter_rows),
+        _basecase_workbook_signatures(basecase_dir),
+    )
+
+
+def _candidate_basecase_records_cache_key(
+    *,
+    profile: BasecaseProfile,
+    candidate: dict[str, Any],
+) -> tuple[Any, ...]:
+    return (
+        "basecase-records-v1",
+        file_signature(Path(profile.workbook_path)),
+        profile.sheet_name,
+        stable_digest(
+            {
+                field_name: candidate.get(field_name)
+                for field_name in CANDIDATE_BASECASE_CACHE_FIELDS
+            },
+        ),
+    )
+
+
+def _copy_record(record: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(record)
+    axes = copied.get("axes")
+    if isinstance(axes, dict):
+        copied["axes"] = dict(axes)
+    return copied
+
+
+def _copy_records_for_candidate(
+    records: tuple[dict[str, Any], ...],
+    candidate: dict[str, Any],
+) -> list[dict[str, Any]]:
+    candidate_key = str(candidate.get("candidate_key") or "")
+    parameter_name = str(
+        candidate.get("canonical_parameter_name")
+        or candidate.get("parameter_name")
+        or "",
+    )
+    copied_records: list[dict[str, Any]] = []
+    for record in records:
+        copied = _copy_record(record)
+        copied["candidate_key"] = candidate_key
+        copied["parameter_name"] = parameter_name
+        copied_records.append(copied)
+    return copied_records
+
+
+def clear_parameter_mapping_runtime_cache() -> None:
+    _PARAMETER_KB_CACHE.clear()
+    _BASECASE_RECORD_CACHE.clear()
+
+
 def get_parameter_knowledge_base(
     basecase_dir_path: str | None = None,
 ) -> ParameterKnowledgeBase:
@@ -221,6 +340,107 @@ def get_parameter_knowledge_base_from_resources(
     )
 
 
+def preload_basecase_runtime_cache(
+    basecase_dir_path: str | None = None,
+    *,
+    preload_records: bool = True,
+) -> BasecaseRuntimeCacheSummary:
+    kb = get_parameter_knowledge_base(basecase_dir_path)
+    candidates = _basecase_preload_candidates(kb)
+    warnings = [
+        warning
+        for profile in kb.basecase_profiles.values()
+        for warning in profile.warnings
+    ]
+    record_count = 0
+
+    if preload_records:
+        _BASECASE_RECORD_CACHE.ensure_capacity(len(candidates))
+        workbook_loader = _require_workbook_loader()
+        with _WorkbookCache(workbook_loader) as workbook_cache:
+            for candidate in candidates:
+                profile = kb.profile_for(
+                    candidate.get("model_file"),
+                    candidate.get("model_sheet"),
+                )
+                candidate_key = str(candidate.get("candidate_key") or "")
+                if profile is None or not profile.sheet_exists:
+                    warnings.append(
+                        "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
+                        f"candidate_key={candidate_key}",
+                    )
+                    continue
+                try:
+                    candidate_records = _cached_extract_basecase_records(
+                        workbook_cache,
+                        profile=profile,
+                        candidate=candidate,
+                        scenario_context={},
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        "basecase record startup preload 중 오류가 발생했습니다: "
+                        f"candidate_key={candidate_key}, error={exc}",
+                    )
+                    continue
+                if not candidate_records:
+                    warnings.append(
+                        "basecase record를 startup preload하지 못했습니다: "
+                        f"candidate_key={candidate_key}, sheet={profile.sheet_name}",
+                    )
+                    continue
+                record_count += len(candidate_records)
+
+    sheet_available_count = sum(
+        1
+        for profile in kb.basecase_profiles.values()
+        if profile.sheet_exists
+    )
+    return BasecaseRuntimeCacheSummary(
+        parameter_count=len(kb.parameter_definitions),
+        profile_count=len(kb.basecase_profiles),
+        sheet_available_count=sheet_available_count,
+        record_count=record_count,
+        warning_count=len(warnings),
+        warnings=tuple(warnings[:100]),
+    )
+
+
+def _basecase_preload_candidates(kb: ParameterKnowledgeBase) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for definition in kb.parameter_definitions.values():
+        canonical = normalize_parameter_name(
+            definition.canonical_parameter_name or definition.parameter_name,
+        )
+        candidates.append({
+            "candidate_key": "|".join([
+                "startup",
+                _normalize_for_key(canonical),
+                _normalize_for_key(definition.model_file),
+                _normalize_for_key(definition.model_sheet),
+            ]),
+            "model_file": definition.model_file,
+            "model_sheet": definition.model_sheet,
+            "model_table": definition.model_table,
+            "parameter_name": definition.parameter_name,
+            "canonical_parameter_name": canonical,
+            "parameter_hint": definition.parameter_hint,
+            "semantic_axes": definition.semantic_axes,
+            "basecase_read_mode": definition.basecase_read_mode,
+            "basecase_header_row": definition.basecase_header_row,
+            "basecase_data_start_row": definition.basecase_data_start_row,
+            "basecase_column_roles": definition.basecase_column_roles,
+            "basecase_row_filter": definition.basecase_row_filter,
+            "basecase_year_row": definition.basecase_year_row,
+            "basecase_month_row": definition.basecase_month_row,
+            "basecase_period_row": definition.basecase_period_row,
+            "basecase_value_start_col": definition.basecase_value_start_col,
+            "basecase_value_end_col": definition.basecase_value_end_col,
+            "basecase_stop_rule": definition.basecase_stop_rule,
+        })
+    return candidates
+
+
 def _load_parameter_knowledge_base_from_db(
     basecase_dir_path: str,
 ) -> ParameterKnowledgeBase:
@@ -234,6 +454,30 @@ def _load_parameter_knowledge_base_from_db(
 
 
 def _build_parameter_knowledge_base_from_rows(
+    *,
+    mapping_rows: list[dict[str, Any]],
+    parameter_rows: list[dict[str, Any]],
+    mapping_source: str,
+    basecase_dir_path: str,
+) -> ParameterKnowledgeBase:
+    cache_key = _parameter_knowledge_base_cache_key(
+        mapping_rows=mapping_rows,
+        parameter_rows=parameter_rows,
+        mapping_source=mapping_source,
+        basecase_dir_path=basecase_dir_path,
+    )
+    return _PARAMETER_KB_CACHE.get_or_build(
+        cache_key,
+        builder=lambda: _build_parameter_knowledge_base_from_rows_uncached(
+            mapping_rows=mapping_rows,
+            parameter_rows=parameter_rows,
+            mapping_source=mapping_source,
+            basecase_dir_path=basecase_dir_path,
+        ),
+    )
+
+
+def _build_parameter_knowledge_base_from_rows_uncached(
     *,
     mapping_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
@@ -435,7 +679,7 @@ def build_basecase_records(
                 )
                 continue
             try:
-                candidate_records = _extract_basecase_records(
+                candidate_records = _cached_extract_basecase_records(
                     workbook_cache,
                     profile=profile,
                     candidate=candidate,
@@ -455,6 +699,38 @@ def build_basecase_records(
                 continue
             records.extend(candidate_records)
     return records, warnings
+
+
+def _cached_extract_basecase_records(
+    workbook_cache: _WorkbookCache,
+    *,
+    profile: BasecaseProfile,
+    candidate: dict[str, Any],
+    scenario_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    # Basecase extraction currently depends only on the workbook/profile and
+    # candidate basecase mapping fields. If scenario-specific filtering is added,
+    # include those fields in this cache key before reusing records across scenarios.
+    _ = scenario_context
+    cache_key = _candidate_basecase_records_cache_key(
+        profile=profile,
+        candidate=candidate,
+    )
+
+    def build() -> tuple[dict[str, Any], ...]:
+        records = _extract_basecase_records(
+            workbook_cache,
+            profile=profile,
+            candidate=candidate,
+            scenario_context=scenario_context,
+        )
+        return tuple(_copy_record(record) for record in records)
+
+    cached_records = _BASECASE_RECORD_CACHE.get_or_build(
+        cache_key,
+        builder=build,
+    )
+    return _copy_records_for_candidate(cached_records, candidate)
 
 
 def build_llm_prompt_packet(

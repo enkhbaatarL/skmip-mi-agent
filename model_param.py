@@ -56,8 +56,28 @@ def _lut_catalog_debug_json(lut_catalog: Any) -> str:
     )
 
 
+def _basecase_cache_debug_json(summary: Any) -> str:
+    payload = {
+        "parameter_count": summary.parameter_count,
+        "profile_count": summary.profile_count,
+        "sheet_available_count": summary.sheet_available_count,
+        "record_count": summary.record_count,
+        "warning_count": summary.warning_count,
+        "warnings": list(summary.warnings),
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        default=str,
+        indent=2,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    from apps.agents.model_parameter_agent.utils.basecase import (
+        preload_basecase_runtime_cache,
+    )
     from apps.agents.model_parameter_agent.utils.lut import (
         LutLoadPolicy,
         validate_lut_startup,
@@ -68,6 +88,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+
+    logger.info("Validating ORM models against the database schema")
+    await asyncio.to_thread(
+        validate_schema,
+        get_sync_engine(),
+        APPLICATION_TABLES + MODEL_PARAMETER_TABLES,
+    )
+    logger.info("ORM/DB schema validation completed")
 
     lut_policy = LutLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
@@ -88,13 +116,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         lambda: _lut_catalog_debug_json(lut_catalog),
     )
 
-    logger.info("Validating ORM models against the database schema")
-    await asyncio.to_thread(
-        validate_schema,
-        get_sync_engine(),
-        APPLICATION_TABLES + MODEL_PARAMETER_TABLES,
+    basecase_summary = await asyncio.to_thread(preload_basecase_runtime_cache)
+    logger.info(
+        "Model Parameter Basecase startup preload completed | parameters={} profiles={} "
+        "available_sheets={} records={} warnings={}",
+        basecase_summary.parameter_count,
+        basecase_summary.profile_count,
+        basecase_summary.sheet_available_count,
+        basecase_summary.record_count,
+        basecase_summary.warning_count,
     )
-    logger.info("ORM/DB schema validation completed")
+    logger.opt(lazy=True).debug(
+        "[model-parameter][basecase][summary] startup_cache=\n{}",
+        lambda: _basecase_cache_debug_json(basecase_summary),
+    )
+
     if cfg.callback_oauth2_token_url:
         logger.info("Pre-fetching callback OAuth2 token")
         try:
