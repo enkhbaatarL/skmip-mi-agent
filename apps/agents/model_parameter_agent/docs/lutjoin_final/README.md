@@ -213,8 +213,9 @@ Codex 수동 리포트에는 broad scenario에서 PowerMix 또는 LiqUtil slot�
 권고:
 
 - LUT는 lookup 가능한 universe이며 전수 proposal 목록이 아님
-- 시나리오의 국가, 지역, 시설, 기간을 서버가 먼저 추출해 candidate를 줄임
-- relevance ranking 후 소수 후보만 Step2에 전달
+- horizon, Closed lifecycle, exact path 같은 객관적 유효성만 서버에서 먼저 적용
+- 유효한 전체 compact catalog를 Step2에 전달하고 scenario/event 관련성은 LLM이 판단
+- prompt에서 전수 열거나 최대한 많이 선택하지 말고 관련성이 높은 slot만 선택하도록 제한
 - 의미 없는 no-change cell은 최종 proposal에서 기본 제외
 
 ### P1-1. Codex nearest-time 보정이 실제 적용 좌표를 바꿈
@@ -382,12 +383,13 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
                     ▼
           EffectiveReferenceResolver
                     │
-    Scenario context ──► SlotCandidateResolver
-                         - entity/region/time prefilter
-                         - relevance ranking
-                    │
-                    ▼
-                  Step2 LLM
+    Scenario context ──┐
+                       ├─► Full Compact SlotCatalog Packet
+    Valid SlotCatalog ─┘   - 의미 prefilter 없음
+                           - 객관적 유효성 filter만 적용
+                                    │
+                                    ▼
+                                  Step2 LLM
                     │
                     ▼
               Strict SlotValidator
@@ -545,7 +547,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
 | D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
-| D-05 | scenario prefilter, ranking, slot cap | PENDING | 미정 |
+| D-05 | scenario prefilter, ranking, slot cap | IN_PROGRESS | 전체 유효 compact catalog를 LLM에 제공하고 관련성 높은 slot 선택은 LLM이 담당. no-change 저장 여부와 cap은 추가 결정 필요 |
 | D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
 | D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
@@ -772,6 +774,47 @@ LLM prompt cell 초안:
 - 운영 proposal API snapshot이 기존 구조와 동일한지 확인
 - sync API에서만 basecase/LUT 양쪽 검증값을 반환하는지 확인
 
+### 14.5 D-05 진행 중 — 전체 compact catalog와 LLM 관련성 판단
+
+확정된 내용:
+
+- 서버가 scenario/event 의미를 기준으로 Country, Plant, Train 등 후보를 미리 제거하지 않는다.
+- horizon 2026~2030, Closed lifecycle 제외, schema 정합성, exact path처럼 객관적으로 유효하지 않은 좌표만 catalog 구성 단계에서 제외한다.
+- 남은 전체 유효 slot universe를 compact 형태로 Step2 LLM에 제공한다.
+- scenario/event와 관련성이 높은 slot을 고르는 책임은 LLM에 둔다.
+- raw LUT row를 그대로 보내지 않고 axis 값, hierarchy, leaf별 유효 기간을 보존하는 compact 구조를 사용한다.
+- Claude의 40,000건 raw record cap처럼 catalog 일부를 먼저 삭제하지 않는다.
+
+Codex 현재 기준과 차이:
+
+- Codex는 non-Liq parameter에 대해 전체 union을 compact해 전달하므로 확정 방향에 가깝다.
+- LiqUtil은 hierarchy를 compact하지만 전체 41,079 reference record를 state에 함께 저장한다.
+- prompt가 관련 slot을 엄격히 좁히기보다 가능한 slot을 최대한 포함하도록 반복 지시한다.
+- 실제 broad scenario에서 94~100 slot과 다수 no-change proposal이 생성됐다.
+- 최종안에서는 Codex의 전체 compact 제공 개념은 사용하되 full Liq state와 최대 선택 지침은 제거한다.
+
+Claude 현재 기준과 차이:
+
+- Claude도 semantic prefilter 없이 전체 effective union에서 compact option을 만든다.
+- 그러나 compact option 생성 전에 raw effective record를 40,000건으로 잘라 일부 유효 leaf와 기간이 사라진다.
+- 코드 기본 slot cap은 20이지만 실제 local/K8s 설정은 100이라 테스트 동작과 문서가 일치하지 않는다.
+- 최종안에서는 Claude의 raw cap과 설정 불일치를 제거하고 전체 유효 compact catalog를 보장한다.
+
+Step2 compact packet 원칙:
+
+1. value row는 포함하지 않는다.
+2. parameter별 canonical axis 이름을 제공한다.
+3. 비시간축은 실제 leaf path 관계를 유지하는 hierarchy로 제공한다.
+4. 시간축은 가능하면 leaf별 available period를 함께 표현한다.
+5. basecase-only와 LUT-only가 모두 후보임을 설명하되 Step3 숫자 값은 노출하지 않는다.
+6. prompt는 관련성이 높은 slot만 선택하고 단순 전수 열거하지 않도록 명시한다.
+7. Step2 결과는 D-04의 exact membership 검증을 통과해야 한다.
+
+D-05의 미확정 항목:
+
+- 관련성은 높지만 LLM이 최종적으로 값 변경이 필요 없다고 판단한 no-change slot을 운영 proposal에 저장할지 여부
+- parameter별 selected slot 상한과 전체 global 상한
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -788,7 +831,7 @@ LLM prompt cell 초안:
 
 ## 16. 다음 인터뷰 항목
 
-D-05: scenario/event와 관련된 LUT slot을 LLM에 어느 범위까지 보여줄지, 서버 prefilter·ranking과 slot 상한을 어떻게 적용할지 결정한다.
+D-05 계속: 관련성이 있어 Step2에서 선택됐지만 Step3에서 proposedValue가 기준값과 동일한 no-change slot을 운영 DB/frontend proposal에 포함할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -800,3 +843,4 @@ D-05: scenario/event와 관련된 LUT slot을 LLM에 어느 범위까지 보여�
 | 2026-07-10 | D-04 조기 확정: basecase/LUT 양쪽에 exact 조합이 없으면 최종 제외, nearest 좌표 치환 금지 |
 | 2026-07-10 | D-02 확정: config 기반 2026~2030 proposal horizon, GDP 2025 계산용 lookback 허용 |
 | 2026-07-10 | D-03 확정: LLM 단일 기준값, 운영 basecaseValue 기존 의미 유지, LUT-only null, sync API 양쪽 값 허용 |
+| 2026-07-10 | D-05 일부 확정: 객관적 유효성 filter 후 전체 compact catalog를 제공하고 관련성 선택은 LLM에 위임 |
