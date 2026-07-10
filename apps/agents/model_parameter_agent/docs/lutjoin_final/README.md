@@ -138,6 +138,8 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 
 Codex Step2 effective reference는 5개 parameter 동시 후보, basecase 없음 기준 약 42,320건이며 대부분 LiqUtil이다.
 
+두 브랜치의 PMI 8,736건은 t1 reference map을 이용해 t2에 없는 7개 `Other ...` 국가까지 91개국으로 확장한 현재 구현 결과다. 최종안은 t2만 사용하므로 2026~2030 기준 PMI LUT는 84개국 × 12개월 × 5년인 5,040건이다.
+
 ### 6.2 Claude global cap 손실
 
 Claude의 5개 parameter LUT 합계는 54,717건이다. 40,000건 cap을 적용하면 LiqUtil은 다음과 같이 줄어든다.
@@ -438,45 +440,93 @@ DB table이나 복잡한 범용 DSL을 만들지 않고 다음 단일 YAML 파�
 YAML 필드는 최소화한다.
 
 - 최상위 parameter 이름: canonical parameter 이름
+- adapter: allowlist에 등록된 공통 또는 계산 adapter 이름
+- layout: 공통 tabular adapter의 CSV 배치 형태인 row 또는 year_columns
 - files: 해당 parameter가 읽는 LUT 파일 역할 목록
 - path: `resources/lut/` 기준 상대 경로
-- columns: Python adapter가 사용하는 의미 역할과 실제 필수 CSV header 매핑
+- required_columns: 계산 adapter가 읽어야 하는 실제 CSV header 목록
+- axis_columns: 공통 adapter에서 canonical DB/API axis와 실제 CSV header를 직접 연결
+- value_column: tabular row layout이 값으로 읽는 실제 CSV header
+- year_value_column: tabular year_columns layout이 horizon 연도별 값으로 읽는 CSV header template
 - key_axes: exact lookup과 Step2 선택에 사용하는 canonical axis 이름
-- metadata_axes: key에서 제외하고 exact reference에서 복원할 canonical metadata와 column 역할 매핑
+- metadata_axes: key에서 제외하고 exact reference에서 복원할 canonical metadata 이름
 
 예시:
 
     GDP:
+      adapter: gdp_growth
       files:
         values:
           path: Demand_Model_LUT_BCInput_value_based_t2.csv
-          columns:
-            country: RE Base Case GDP and Population Data_Country
-            year: RE Base Case GDP and Population Data_Year
-            value: RE Base Case GDP and Population Data_GDP
+          required_columns:
+            - RE Base Case GDP and Population Data_Country
+            - RE Base Case GDP and Population Data_Year
+            - RE Base Case GDP and Population Data_GDP
       key_axes: [Country, Year]
 
+    PMI:
+      adapter: tabular
+      layout: year_columns
+      files:
+        values:
+          path: Demand_Model_Input_PMIInput_value_based_t2.csv
+          axis_columns:
+            Country: Base Case PMI Input (do not change)_Country
+            Month: Base Case PMI Input (do not change)_Month
+          year_value_column: Base Case PMI Input (do not change)_{year}.0
+      key_axes: [Country, Year, Month]
+
+    PowerMix:
+      adapter: tabular
+      layout: row
+      files:
+        values:
+          path: Demand_Model_LUT_BCInput_value_based_t3.csv
+          axis_columns:
+            Country: Power Generation Data_Country
+            Year: Power Generation Data_Year
+            Energy Source: Power Generation Data_Energy Source Use
+          value_column: Power Generation Data_Power Mix
+      key_axes: [Country, Year, Energy Source]
+
     LiqUtilAdjustment:
+      adapter: liq_util
       files:
         values:
           path: BCLiquefaction.csv
-          columns:
-            country: Country
-            plant: Plant Name
-            train: Plant Train
-            year: Year
-            month: Month
-            period: Period
-            lifecycle: Infra Life Cycle
-            capacity_mtpm: LNG train capacity (Million tonnes LNG per month)
-            value: LNG plant utilisation %
+          required_columns:
+            - Country
+            - Plant Name
+            - Plant Train
+            - Year
+            - Month
+            - Period
+            - Infra Life Cycle
+            - LNG train capacity (Million tonnes LNG per month)
+            - LNG plant utilisation %
       key_axes: [Country, LNG Plant, LNG Plant Train, Year, Month]
       metadata_axes:
-        Period: period
-        Life Cycle Category: lifecycle
-        Nameplate Capacity: capacity_mtpm
+        - Period
+        - Life Cycle Category
+        - Nameplate Capacity
 
-YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon 값, slot/reference 상한을 넣지 않는다. GDP 성장률, PMI reference fallback, Temperature 변환, LiqUtil Closed 제외와 단위 변환은 검증된 Python adapter에 유지한다. horizon 2026~2030과 GDP 2025 lookback은 기존 app settings와 adapter가 적용한다.
+`{year}`는 설정 horizon의 각 연도로 확장해 실제 header 존재를 검증한다. 현재는 2026~2030의 5개 연도 column이다.
+
+`axis_columns`의 왼쪽은 canonical DB/API axis 이름이고 오른쪽은 실제 CSV header다. 내부 역할명 alias는 YAML에 두지 않는다. `axis_columns`, `value_column`, `year_value_column`에 지정된 header는 자동으로 필수 column이 된다.
+
+adapter 구성:
+
+| Parameter | Adapter | 구분 | 처리 |
+|---|---|---|---|
+| GDP | gdp_growth | 전용 계산 | 절대 GDP에서 exact 전년 대비 성장률 계산 |
+| PMI | tabular / year_columns | 공통 | 한 행의 연도별 column을 Country/Year/Month record로 전개 |
+| PowerMix | tabular / row | 공통 | axis column과 value column을 행 단위로 그대로 읽음 |
+| Temperature | temperature_degree_days | 전용 계산 | HDD/CDD 결합 및 temperature 계산 |
+| LiqUtilAdjustment | liq_util | 전용 계산 | Closed 제외, capacity 변환, metadata 복원용 값 생성 |
+
+신규 parameter가 한 CSV의 지정 axis/value column을 그대로 읽는 형태이면 공통 `tabular` adapter를 사용한다. 한 행이 record 하나이면 `layout: row`, 연도별 값이 column으로 펼쳐져 있으면 `layout: year_columns`를 지정한다. 새로운 계산, 여러 파일 결합, 별도 filter·metadata 변환이 필요한 경우에만 Python adapter를 추가하고 allowlist registry에 등록한다.
+
+YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon 값, slot/reference 상한을 넣지 않는다. adapter 값은 임의 import path가 아니라 코드에 등록된 이름만 허용한다. horizon 2026~2030과 GDP 2025 lookback은 기존 app settings와 adapter가 적용한다.
 
 ### 10.2 EffectiveReference
 
@@ -502,7 +552,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 | Parameter | Business key | Metadata 또는 파생값 |
 |---|---|---|
 | GDP | Country + Year | 절대 GDP, 이전 연도 GDP, transform 정보 |
-| PMI | Demand Country + Year + Month | reference country |
+| PMI | Country + Year + Month | t2 wide year column에서 직접 읽은 값 |
 | PowerMix | Country + Year + Energy Source | Energy Source별 독립 override 값 |
 | Temperature | Country + Year + Month | HDD, CDD, transform branch |
 | LiqUtilAdjustment | Country + LNG Plant + LNG Plant Train + Year + Month | Period, Life Cycle Category, Nameplate Capacity |
@@ -600,7 +650,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 | D-05 | scenario prefilter, ranking, slot cap | DECIDED | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter의 Step2/Step3 task와 prompt에 동일 적용 |
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
-| D-08 | LUT spec과 metadata 축 관리 | DECIDED | `resources/lut/config/lut_parameters.yaml`에 파일·필수 컬럼·key_axes·metadata_axes만 관리. LiqUtil metadata만 key에서 제외해 exact reference에서 복원하고 다른 parameter에는 이름 기반 전역 제외를 적용하지 않음 |
+| D-08 | LUT spec, adapter, metadata 축 관리 | DECIDED | 최소 YAML spec과 단일 `tabular` 공통 adapter의 row/year_columns layout 사용. GDP·Temperature·LiqUtil만 전용 adapter 유지. LiqUtil metadata만 exact reference에서 복원. GDP General 파일과 PMI t1 파일은 미사용 |
 | D-09 | feature rollout과 streaming 설정 | PENDING | 미정 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
 
@@ -992,17 +1042,19 @@ Codex 현재 기준:
 - LUT 파일명, 필수 column, parameter별 business key가 Python `utils/lut.py`에 하드코딩돼 있다.
 - LiqUtilAdjustment에 한정해 Period, Life Cycle Category, Nameplate Capacity를 key에서 제외하고 복원한다.
 - GDP 국가 범위는 GDP LUT 자체이며 Full Country List를 사용하지 않는다.
+- PMI t1의 demand→reference country mapping을 거쳐 t2 값을 조회한다.
 
 Claude 현재 기준:
 
 - LUT 파일명과 column이 Python `utils/lut_repository.py`에 하드코딩돼 있다.
 - Period, Life Cycle Category, Nameplate Capacity 이름을 모든 parameter에서 전역 제외한다.
 - Full Country List를 GDP와 PowerMix 국가 필터로 사용한다.
+- PMI t2에 demand country 값이 있으면 직접 사용하고, 없는 7개 `Other ...` 국가만 t1 reference country로 fallback한다.
 
 확정 처리:
 
 1. DB table은 만들지 않고 `apps/agents/model_parameter_agent/resources/lut/config/lut_parameters.yaml`을 사용한다.
-2. YAML에는 parameter별 LUT file path, Python adapter가 읽는 필수 column, key_axes, metadata_axes만 둔다.
+2. YAML에는 parameter별 adapter 이름, LUT file path, 필수 CSV header 또는 tabular column mapping, key_axes, metadata_axes만 둔다.
 3. 계산식, filter 알고리즘, 타입 변환, horizon과 prompt 제한값은 YAML에 넣지 않고 Python adapter와 app settings에 유지한다.
 4. YAML에 선언한 실제 CSV header가 없으면 LUT enabled 상태의 적재를 명시적으로 실패시킨다.
 5. GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment의 key_axes는 10.3 business key를 따른다.
@@ -1011,8 +1063,13 @@ Claude 현재 기준:
 8. 다른 parameter에는 column 이름만 보고 metadata를 전역 제외하지 않는다.
 9. 국가 범위는 각 parameter의 자체 LUT distinct를 사용한다. `Demand_Model_LUT_General_value_based_t6.csv`는 읽지 않는다.
 10. GDP는 2026~2030 각 연도의 exact 전년도 값이 있는 LUT 국가만 노출하며, 현재 데이터 기준 163개국이다.
+11. PMI는 `Demand_Model_Input_PMIInput_value_based_t2.csv`만 사용하고 t1 reference-country mapping과 fallback을 사용하지 않는다.
+12. PMI LUT 국가 범위는 t2의 84개국이며, t1에만 있는 7개 `Other ...` 집계 국가는 LUT-only 후보로 만들지 않는다. 기존 basecase에 해당 좌표가 있다면 basecase-only 정책으로는 유지된다.
+13. 계산 없이 한 CSV의 지정 axis/value column을 읽는 parameter는 단일 `tabular` 공통 adapter를 사용한다.
+14. PowerMix는 `layout: row`, PMI는 `layout: year_columns`를 사용한다.
+15. 신규 tabular parameter는 YAML 추가만으로 지원하고, 새로운 계산이나 여러 파일 결합·filter·metadata 변환이 필요한 경우에만 전용 Python adapter와 registry 등록을 추가한다.
 
-YAML의 columns는 의미 역할에서 실제 CSV header로의 매핑이며 모두 필수 header다. 개별 row의 null 허용 여부와 row 제외 규칙은 각 Python adapter가 담당한다.
+공통 adapter의 `axis_columns` 왼쪽은 canonical DB/API axis, 오른쪽은 실제 CSV header다. custom adapter의 required_columns는 실제 CSV header 문자열 목록이다. 개별 row의 null 허용 여부와 row 제외 규칙은 adapter가 담당한다.
 
 ## 15. 인터뷰 진행 원칙
 
@@ -1052,3 +1109,5 @@ D-09: LUT 기능의 off/shadow/on rollout과 structured-output streaming 적용 
 | 2026-07-10 | D-07 완료: PowerMix를 Energy Source별 독립 override로 처리하고 전체 vector 강제·합계 검증·정규화 후처리를 하지 않음 |
 | 2026-07-10 | D-08 완료: resources/lut/config의 최소 YAML spec으로 파일·필수 컬럼·key/metadata 축만 관리하고 LiqUtil metadata만 exact reference에서 복원 |
 | 2026-07-10 | D-02 국가 범위 보강: Full Country List 보조 파일을 제거하고 각 parameter LUT 자체의 국가 distinct를 사용 |
+| 2026-07-10 | D-08 PMI source 보강: t2 파일만 사용하고 t1 reference-country mapping 및 7개 Other 국가 fallback 제거 |
+| 2026-07-10 | D-08 adapter 정책 보강: PMI와 PowerMix는 단일 tabular 공통 adapter의 year_columns/row layout을 사용하고 GDP·Temperature·LiqUtil만 전용 adapter로 구현 |
