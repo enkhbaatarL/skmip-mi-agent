@@ -28,9 +28,14 @@ http_timeout: 60
 http_connect_timeout: 10
 llm_timeout_sec: 310
 llm_max_retries: 1
+model_parameter_lut_enabled: false
+model_parameter_lut_horizon_start_year: 2026
+model_parameter_lut_horizon_end_year: 2030
 model_parameter_max_parameter_slots: 100
 model_parameter_max_value_prompt_basecase_records: 100
 model_parameter_max_routing_candidates_per_dimension: 2
+model_parameter_llm_stream_enabled: false
+model_parameter_llm_reasoning_effort: default
 http_verify: true
 http2: true
 http_max_connection: 100

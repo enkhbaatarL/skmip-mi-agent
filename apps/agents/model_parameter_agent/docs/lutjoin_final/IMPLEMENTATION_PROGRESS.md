@@ -145,6 +145,36 @@ git diff --check -- \
 - Ruff check/format: 통과
 - diff check: 통과
 
+## 6. Model Parameter 설정 — DONE
+
+### 변경
+
+- `model_parameter_lut_enabled=false`
+- `model_parameter_lut_horizon_start_year=2026`
+- `model_parameter_lut_horizon_end_year=2030`
+- `model_parameter_max_parameter_slots=100`
+- `model_parameter_max_value_prompt_basecase_records=100`
+- `model_parameter_llm_stream_enabled=false`
+- `model_parameter_llm_reasoning_effort=default`
+- `start_year <= end_year` Pydantic 설정 검증
+- `envs/config.yaml`과 K8s ConfigMap의 resolved 기본값 동기화
+
+### 검증
+
+```bash
+poetry run pytest -q tests/test_config_loader.py
+uvx ruff check apps/common/configs/config.py
+uvx ruff format --check apps/common/configs/config.py
+git diff --check -- \
+  apps/common/configs/config.py envs/config.yaml \
+  devops/k8s/configmap.yaml tests/test_config_loader.py
+```
+
+- pytest: `13 passed, 6 subtests passed`
+- Settings Ruff check/format: 통과
+- diff check: 통과
+- `tests/test_config_loader.py` 전체 Ruff에는 이번 변경과 무관한 기존 unittest/subprocess 규칙 위반이 남아 있어 파일 전체 lint gate에는 사용하지 않았다.
+
 ### 현재 DB 기반 실 테스트 후보 사전 확인
 
 dotenv를 수동 테스트 스크립트와 동일하게 선행 로드한 뒤 읽기 전용으로 확인했다.

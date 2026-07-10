@@ -119,6 +119,37 @@ class ConfigLoaderTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             return result.stdout.strip().splitlines()
 
+    def assert_settings_import_fails(
+        self,
+        config_text: str,
+    ) -> str:
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.yaml"
+            config_path.write_text(config_text, encoding="utf-8")
+            env = {key: value for key, value in os.environ.items() if key in PRESERVED_SUBPROCESS_ENV_KEYS}
+            env["APP_CONFIG"] = str(config_path)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from apps.common.configs.config import get_settings; get_settings()",
+                ],
+                cwd=repo_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+
+            self.assertNotEqual(  # noqa: PT009
+                result.returncode,
+                0,
+                result.stderr + result.stdout,
+            )
+            return result.stderr + result.stdout
+
     def test_lf_config_loads(self) -> None:
         lines = self.run_settings_import(BASE_CONFIG)
 
@@ -192,6 +223,54 @@ class ConfigLoaderTest(unittest.TestCase):
                 os.environ["METADATA_DB_HOST"] = original
 
         self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
+
+    def test_model_parameter_lut_and_llm_settings_use_safe_defaults(self) -> None:
+        lines = self.run_settings_import(
+            BASE_CONFIG,
+            print_lines=[
+                "print(cfg.model_parameter_lut_enabled)",
+                "print(cfg.model_parameter_lut_horizon_start_year)",
+                "print(cfg.model_parameter_lut_horizon_end_year)",
+                "print(cfg.model_parameter_max_parameter_slots)",
+                "print(cfg.model_parameter_max_value_prompt_basecase_records)",
+                "print(cfg.model_parameter_llm_stream_enabled)",
+                "print(cfg.model_parameter_llm_reasoning_effort)",
+            ],
+        )
+
+        self.assertEqual(  # noqa: PT009
+            lines,
+            ["False", "2026", "2030", "100", "100", "False", "default"],
+        )
+
+    def test_model_parameter_reasoning_effort_accepts_supported_values(self) -> None:
+        for value in ("none", "minimal", "low", "medium", "high", "xhigh"):
+            with self.subTest(value=value):
+                lines = self.run_settings_import(
+                    f"{BASE_CONFIG}\nmodel_parameter_llm_reasoning_effort: {value}",
+                    print_lines=["print(cfg.model_parameter_llm_reasoning_effort)"],
+                )
+                self.assertEqual(lines, [value])  # noqa: PT009
+
+    def test_model_parameter_reasoning_effort_rejects_invalid_value(self) -> None:
+        output = self.assert_settings_import_fails(
+            f"{BASE_CONFIG}\nmodel_parameter_llm_reasoning_effort: extreme",
+        )
+
+        self.assertIn(  # noqa: PT009
+            "model_parameter_llm_reasoning_effort",
+            output,
+        )
+
+    def test_model_parameter_lut_horizon_rejects_reversed_range(self) -> None:
+        output = self.assert_settings_import_fails(
+            f"{BASE_CONFIG}\nmodel_parameter_lut_horizon_start_year: 2031\nmodel_parameter_lut_horizon_end_year: 2030",
+        )
+
+        self.assertIn(  # noqa: PT009
+            "model_parameter_lut_horizon_start_year",
+            output,
+        )
 
 
 if __name__ == "__main__":
