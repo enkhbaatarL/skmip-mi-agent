@@ -119,7 +119,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | LLM 누락 처리 | 현재값 유지 cell로 자동 성공 보정 | candidate 전체를 비선택 처리 | LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지. 누락 cell 자동 생성 및 candidate 전체 폐기 금지 |
 | slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task에 동일 적용. 최대치일 뿐 채워야 할 목표 수가 아님 |
 | streaming | 호출별 옵션, model parameter에서 명시 | 모든 structured output에 전역 적용 | Codex 방식 |
-| 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled 제공 | off/shadow/on 3단계로 확장 |
+| 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled boolean 제공, 기본 true | boolean off/on 사용. 기본 false이며 환경에서 true를 명시해야 활성화 |
 | 테스트 강점 | flow integration, Liq 복원, partial fallback | loader fixture, horizon, 축 보정, 실 LLM 리포트 | 양쪽 테스트를 통합 |
 
 ## 6. 독립 측정 결과
@@ -608,7 +608,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 ### P1 — 운영 전 필수
 
 1. startup/readiness LUT schema 검증
-2. off/shadow/on rollout
+2. LUT boolean off/on rollout과 basecase-only snapshot 회귀
 3. per-call streaming과 중단/retry 테스트
 4. parameter task별 공통 100 cap 검증
 5. Step3 valid/missing/invalid cell 진단 metric
@@ -651,7 +651,7 @@ YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon �
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
 | D-08 | LUT spec, adapter, metadata 축 관리 | DECIDED | 최소 YAML spec과 단일 `tabular` 공통 adapter의 row/year_columns layout 사용. GDP·Temperature·LiqUtil만 전용 adapter 유지. LiqUtil metadata만 exact reference에서 복원. GDP General 파일과 PMI t1 파일은 미사용 |
-| D-09 | feature rollout과 streaming 설정 | PENDING | 미정 |
+| D-09 | feature rollout과 streaming 설정 | IN_PROGRESS | LUT는 전역 boolean 설정으로 제어하며 기본 false. true여도 YAML에 등록되지 않은 parameter는 정상적인 basecase-only로 동작. streaming 정책은 미정 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
 
 ### 14.1 D-01 확정 — LUT-only slot 허용 범위
@@ -1071,6 +1071,38 @@ Claude 현재 기준:
 
 공통 adapter의 `axis_columns` 왼쪽은 canonical DB/API axis, 오른쪽은 실제 CSV header다. custom adapter의 required_columns는 실제 CSV header 문자열 목록이다. 개별 row의 null 허용 여부와 row 제외 규칙은 adapter가 담당한다.
 
+### 14.9 D-09 진행 중 — LUT feature flag와 streaming
+
+#### LUT feature flag 확정
+
+Codex 현재 기준:
+
+- LUT 전용 feature flag가 없어 LUT 통합 경로를 설정으로 끌 수 없다.
+
+Claude 현재 기준:
+
+- `model_parameter_lut_enabled` boolean이 있고 코드 기본값은 true다.
+- flag가 false여도 LUT 변경과 함께 들어간 전역 metadata 제외, prompt, streaming 등의 영향이 완전히 원복되는지는 보장되지 않는다.
+
+확정 설정:
+
+    model_parameter_lut_enabled: false
+
+확정 동작:
+
+| 전역 flag | parameter YAML 등록 | 처리 |
+|---|---|---|
+| false | 무관 | 모든 parameter가 기존 basecase-only 경로 사용. LUT YAML/CSV를 로드하지 않음 |
+| true | 미등록 | 해당 parameter만 정상적인 basecase-only 경로 사용 |
+| true | 등록 및 유효 | 해당 parameter에서 basecase와 LUT를 함께 사용 |
+| true | 등록했지만 파일 누락·header 오류 | 설정 오류로 실패. 조용히 basecase-only로 강등하지 않음 |
+
+`lut_parameters.yaml`에는 실제 LUT를 사용할 parameter만 등록한다. parameter가 YAML에 없다는 사실은 오류나 warning이 아니며 LUT 미지원 parameter의 정상 상태다. 반대로 YAML에 path를 명시한 뒤 파일이 없거나 필수 header가 깨진 경우는 운영 설정 오류이므로 명시적으로 실패한다.
+
+코드 기본값은 false로 두고 실제 환경의 `envs/config.yaml`과 K8s ConfigMap에서 true를 명시한 경우에만 활성화한다. off 회귀 테스트는 기존 main의 basecase-only prompt, slot, value, API/DB 결과가 동일한지 snapshot으로 확인한다.
+
+structured-output streaming 적용 범위는 다음 인터뷰에서 별도로 결정한다.
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -1087,7 +1119,7 @@ Claude 현재 기준:
 
 ## 16. 다음 인터뷰 항목
 
-D-09: LUT 기능의 off/shadow/on rollout과 structured-output streaming 적용 범위를 결정한다.
+D-09 계속: structured-output streaming을 model parameter LLM 호출에만 적용할지, 공통 connector 전체에 적용할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -1111,3 +1143,4 @@ D-09: LUT 기능의 off/shadow/on rollout과 structured-output streaming 적용 
 | 2026-07-10 | D-02 국가 범위 보강: Full Country List 보조 파일을 제거하고 각 parameter LUT 자체의 국가 distinct를 사용 |
 | 2026-07-10 | D-08 PMI source 보강: t2 파일만 사용하고 t1 reference-country mapping 및 7개 Other 국가 fallback 제거 |
 | 2026-07-10 | D-08 adapter 정책 보강: PMI와 PowerMix는 단일 tabular 공통 adapter의 year_columns/row layout을 사용하고 GDP·Temperature·LiqUtil만 전용 adapter로 구현 |
+| 2026-07-10 | D-09 일부 완료: model_parameter_lut_enabled 기본 false, true에서도 YAML 미등록 parameter는 정상 basecase-only 처리 |
