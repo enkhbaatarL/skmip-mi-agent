@@ -30,7 +30,8 @@
 
 현재 가장 안전한 조합은 다음과 같다.
 
-- LUT loader, Full Country List, horizon, feature flag: Claude 구현을 기반으로 개선
+- LUT loader, horizon, feature flag: Claude 구현을 기반으로 개선
+- 국가 후보 범위: 각 parameter의 실제 LUT에 존재하는 국가를 사용하며 Full Country List 보조 파일은 사용하지 않음
 - 파라미터별 명시 join key, provenance, Step2/Step3 reference 분리, 호출별 streaming: Codex 구현에서 선별
 - full LUT를 LangGraph state에 적재하는 방식: 폐기
 - raw/effective record를 40,000건에서 먼저 자르는 방식: 폐기
@@ -104,7 +105,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 
 | 항목 | Codex | Claude | 현재 권고 |
 |---|---|---|---|
-| LUT 대상 국가·기간 | GDP raw 163국, Liq 2017~2050 포함 | Full Country List와 config horizon 적용 | Claude 기반. 최종 설정 범위는 2026~2030, GDP 계산용 2025 lookback 허용 |
+| LUT 대상 국가·기간 | GDP raw 163국, Liq 2017~2050 포함 | Full Country List와 config horizon 적용 | 국가 범위는 각 LUT 자체 기준, 기간은 config 2026~2030. GDP 계산용 2025 lookback 허용 |
 | GDP 성장률 | 정렬된 직전 available row 사용 | 정확한 year-1 값 사용 | Claude 방식 |
 | join key | parameter별 business key 명시 | metadata 제외 나머지 축 전체 | Codex key + Claude axis alias |
 | 축 이름 정렬 | 하드코딩 이름 일치 전제 | DB 단위 접미사까지 정규화 | Claude 방향. fuzzy prefix 대신 명시 alias 사용 |
@@ -148,6 +149,18 @@ Claude의 5개 parameter LUT 합계는 54,717건이다. 40,000건 cap을 적용�
 
 cap이 prompt 크기만 제한하는 것이 아니라 Step2의 유효 slot universe를 삭제한다.
 
+### 6.3 GDP LUT와 Full Country List 국가 비교
+
+2026~2030 GDP 절대값은 GDP LUT의 169개국에 모두 존재한다. 2025 값을 이용해 2026~2030 성장률을 계산할 수 있는 국가는 163개다.
+
+- Full Country List: 91개
+- GDP 성장률 계산 가능 국가: 163개
+- 양쪽 공통: 84개
+- GDP LUT에만 있는 성장률 계산 가능 국가: 79개
+- Full Country List에만 있고 GDP 성장률을 계산할 수 없는 `Other ...` 집계 국가: 7개
+
+최종안은 Full Country List와 교차하지 않고 GDP LUT에서 exact 전년도 값을 확보할 수 있는 163개국을 사용한다. `Demand_Model_LUT_General_value_based_t6.csv`는 최종 LUT 로딩 경로에서 제외한다.
+
 ## 7. 주요 검토 Findings
 
 ### P0-1. full LUT state와 raw cap 모두 부적합
@@ -173,18 +186,20 @@ Claude는 전체 effective record를 먼저 병합한 뒤 40,000건에서 자른
 - state에는 compact SlotCatalog와 selected key만 저장
 - Step2 완료 후 selected key만 exact lookup
 
-### P0-2. Codex GDP slot universe가 모델 범위보다 큼
+### 검토 완료. GDP 국가 범위
 
 Codex GDP loader는 raw GDP table에 있는 163개국을 모두 사용한다. Full Country List 또는 모델 입력 가능 국가와 교차하지 않아 LLM이 모델에 없는 국가를 선택할 수 있다.
 
-권고:
+Claude는 Full Country List와 교차하여 84개국으로 제한한다.
 
-- model slot universe와 default value availability를 분리
-- Full Country List 91개는 slot universe로 관리
-- 실제 default 값이 있는 84개국은 default_available=true로 표시
-- Other 계열처럼 default가 없는 slot은 unresolved 정책을 적용
+최종 결정:
 
-### P0-3. 실제 path-time 좌표 membership 검증이 없음
+- 별도 Full Country List를 국가 허용 목록으로 사용하지 않는다.
+- 각 parameter의 LUT 파일에 존재하는 국가를 해당 parameter의 후보 범위로 사용한다.
+- GDP는 2026~2030 각각에 대해 exact 전년도 값까지 있어 성장률 계산이 가능한 163개국을 노출한다.
+- 시나리오·이벤트 관련성은 Step2 LLM이 판단하고, exact LUT 좌표가 없는 조합은 기존 결정대로 제외한다.
+
+### P0-2. 실제 path-time 좌표 membership 검증이 없음
 
 두 구현 모두 비시간 hierarchy와 전역 Year/Month distinct 목록을 분리한다. 특정 Plant/Train에 존재하지 않는 Year/Month 조합도 LLM이 만들 수 있다.
 
@@ -207,7 +222,7 @@ LUT 원본의 Country/Year별 PowerMix 합이 1이라는 검증은 있으나, LL
 - 서버가 전체 합계를 1로 정규화하거나 group 전체를 제외하지 않는다.
 - 각 명시 cell의 exact coordinate와 value schema 검증만 수행한다.
 
-### P0-4. LUT universe를 proposal universe로 사용함
+### P0-3. LUT universe를 proposal universe로 사용함
 
 Codex 수동 리포트에는 broad scenario에서 PowerMix 또는 LiqUtil slot이 94~100개까지 선택된 사례가 있다. 일부는 실제 조정 없이 current value를 유지하는 no-change proposal이다.
 
@@ -292,7 +307,7 @@ Claude는 Period, Life Cycle, Nameplate를 모든 parameter에서 reference key�
 
 권고:
 
-- ParameterLutSpec 또는 ParameterReferenceSpec에 key_axes와 metadata_axes를 명시
+- `resources/lut/config/lut_parameters.yaml`에 parameter별 file, 필수 column, key_axes, metadata_axes만 명시
 - 우선 5개 대상 parameter에만 적용
 - 기존 parameter 일반화는 별도 회귀 테스트 후 수행
 
@@ -302,11 +317,11 @@ Claude는 Period, Life Cycle, Nameplate를 모든 parameter에서 reference key�
 
 권고:
 
-- candidate별 상한
-- 전체 상한
-- candidate별 최소 quota
-- relevance score 기반 deterministic 정렬
-- enrichment 이후 최종 cap 재검증
+- 기존 전역 설정값 100을 각 parameter task에 동일하게 적용
+- 전체 요청 합계 counter나 parameter별 설정 map은 사용하지 않음
+- parameter별 selected slot count를 각각 검증
+- 100은 목표 수가 아니라 hard maximum임을 prompt에 명시
+- enrichment 이후에도 parameter별 최종 cap 재검증
 
 ### P2-3. cache와 설정 결합
 
@@ -416,19 +431,52 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 
 ### 10.1 ParameterLutSpec
 
-필드 초안:
+DB table이나 복잡한 범용 DSL을 만들지 않고 다음 단일 YAML 파일로 시작한다.
 
-- parameter_name
-- files
-- universe_source
-- business_key_axes
-- metadata_axes
-- axis_aliases
-- transform
-- row_filter
-- horizon_policy
-- value_validator
-- group_validator
+    apps/agents/model_parameter_agent/resources/lut/config/lut_parameters.yaml
+
+YAML 필드는 최소화한다.
+
+- 최상위 parameter 이름: canonical parameter 이름
+- files: 해당 parameter가 읽는 LUT 파일 역할 목록
+- path: `resources/lut/` 기준 상대 경로
+- columns: Python adapter가 사용하는 의미 역할과 실제 필수 CSV header 매핑
+- key_axes: exact lookup과 Step2 선택에 사용하는 canonical axis 이름
+- metadata_axes: key에서 제외하고 exact reference에서 복원할 canonical metadata와 column 역할 매핑
+
+예시:
+
+    GDP:
+      files:
+        values:
+          path: Demand_Model_LUT_BCInput_value_based_t2.csv
+          columns:
+            country: RE Base Case GDP and Population Data_Country
+            year: RE Base Case GDP and Population Data_Year
+            value: RE Base Case GDP and Population Data_GDP
+      key_axes: [Country, Year]
+
+    LiqUtilAdjustment:
+      files:
+        values:
+          path: BCLiquefaction.csv
+          columns:
+            country: Country
+            plant: Plant Name
+            train: Plant Train
+            year: Year
+            month: Month
+            period: Period
+            lifecycle: Infra Life Cycle
+            capacity_mtpm: LNG train capacity (Million tonnes LNG per month)
+            value: LNG plant utilisation %
+      key_axes: [Country, LNG Plant, LNG Plant Train, Year, Month]
+      metadata_axes:
+        Period: period
+        Life Cycle Category: lifecycle
+        Nameplate Capacity: capacity_mtpm
+
+YAML에는 계산식, 임의 Python import, 타입 DSL, validator DSL, horizon 값, slot/reference 상한을 넣지 않는다. GDP 성장률, PMI reference fallback, Temperature 변환, LiqUtil Closed 제외와 단위 변환은 검증된 Python adapter에 유지한다. horizon 2026~2030과 GDP 2025 lookback은 기존 app settings와 adapter가 적용한다.
 
 ### 10.2 EffectiveReference
 
@@ -463,7 +511,6 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 
 ### Claude에서 가져올 요소
 
-- Full Country List 기반 모델 범위 제한
 - 정확한 year-1 GDP 계산
 - horizon 설정 개념
 - LUT feature flag
@@ -486,10 +533,10 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 - Claude의 global 40,000 raw record cap
 - Claude의 full effective state
 - Claude의 모든 structured output 전역 streaming
+- Claude의 Full Country List 기반 GDP/PowerMix 국가 필터
 - Claude의 모든 parameter 대상 metadata 제외
 - Claude의 Step3 prompt에 basecase와 LUT 두 값을 동시에 노출하는 방식
 - Codex의 full LiqUtil state와 request당 재구성
-- Codex의 raw GDP 163국 universe
 - Codex의 nearest Year/Month slot 변경
 - Codex의 누락 응답 자동 no-change 성공 처리
 - 두 브랜치의 LUT-only effective 값을 운영 basecaseValue로 저장하는 방식
@@ -499,11 +546,11 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 
 ### P0 — 머지 전 필수
 
-1. ParameterLutSpec과 canonical business key 확정
+1. 최소 LUT YAML spec과 canonical business key 확정
 2. immutable LutCatalog와 exact lookup index 구현
 3. full LUT state와 global raw cap 제거
 4. Step2 strict membership validation
-5. 시나리오 relevance prefilter
+5. 전체 compact catalog 제공과 LLM relevance 선택 prompt 계약 적용
 6. source-aware EffectiveReference 모델
 7. API provenance 계약 확정
 8. LUT off 모드가 main과 동일한지 snapshot 검증
@@ -513,8 +560,8 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 1. startup/readiness LUT schema 검증
 2. off/shadow/on rollout
 3. per-call streaming과 중단/retry 테스트
-4. candidate별 quota와 global cap
-5. incomplete/review 상태 모델
+4. parameter task별 공통 100 cap 검증
+5. Step3 valid/missing/invalid cell 진단 metric
 6. LUT file hash/version 기반 cache
 7. 최종 배포 설정과 문서 일치
 
@@ -547,13 +594,13 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | ID | 결정 항목 | 상태 | 확정 내용 |
 |---|---|---|---|
 | D-01 | LUT-only slot 허용 범위 | DECIDED | 5개 parameter 모두 LUT-only slot 허용. basecase 부재는 제외 사유가 아니며, scenario/event 관련성이 있으면 선택 가능 |
-| D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
+| D-02 | slot universe와 horizon 정책 | DECIDED | config horizon 2026~2030 적용, GDP는 2026 계산을 위해 2025 source 값만 내부 참조. 국가 범위는 각 parameter LUT 자체를 사용하며 Full Country List 보조 파일은 사용하지 않음 |
 | D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | DECIDED | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter의 Step2/Step3 task와 prompt에 동일 적용 |
 | D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | DECIDED | PowerMix는 Energy Source별 독립 override로 처리. LLM이 명시한 값만 사용하고 전체 vector 강제, 합계 1 검증·정규화, 미선택 source 보완을 하지 않음 |
-| D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
+| D-08 | LUT spec과 metadata 축 관리 | DECIDED | `resources/lut/config/lut_parameters.yaml`에 파일·필수 컬럼·key_axes·metadata_axes만 관리. LiqUtil metadata만 key에서 제외해 exact reference에서 복원하고 다른 parameter에는 이름 기반 전역 제외를 적용하지 않음 |
 | D-09 | feature rollout과 streaming 설정 | PENDING | 미정 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
 
@@ -938,6 +985,35 @@ Claude 현재 기준:
 5. 서버가 전체 합을 1로 맞추는 정규화, 재배분 또는 group 단위 폐기를 수행하지 않는다.
 6. 서버 검증은 exact coordinate 존재와 cell value schema 같은 객관적 유효성에 한정한다.
 
+### 14.8 D-08 확정 — 최소 LUT YAML spec과 metadata 복원
+
+Codex 현재 기준:
+
+- LUT 파일명, 필수 column, parameter별 business key가 Python `utils/lut.py`에 하드코딩돼 있다.
+- LiqUtilAdjustment에 한정해 Period, Life Cycle Category, Nameplate Capacity를 key에서 제외하고 복원한다.
+- GDP 국가 범위는 GDP LUT 자체이며 Full Country List를 사용하지 않는다.
+
+Claude 현재 기준:
+
+- LUT 파일명과 column이 Python `utils/lut_repository.py`에 하드코딩돼 있다.
+- Period, Life Cycle Category, Nameplate Capacity 이름을 모든 parameter에서 전역 제외한다.
+- Full Country List를 GDP와 PowerMix 국가 필터로 사용한다.
+
+확정 처리:
+
+1. DB table은 만들지 않고 `apps/agents/model_parameter_agent/resources/lut/config/lut_parameters.yaml`을 사용한다.
+2. YAML에는 parameter별 LUT file path, Python adapter가 읽는 필수 column, key_axes, metadata_axes만 둔다.
+3. 계산식, filter 알고리즘, 타입 변환, horizon과 prompt 제한값은 YAML에 넣지 않고 Python adapter와 app settings에 유지한다.
+4. YAML에 선언한 실제 CSV header가 없으면 LUT enabled 상태의 적재를 명시적으로 실패시킨다.
+5. GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment의 key_axes는 10.3 business key를 따른다.
+6. 현재 metadata_axes는 LiqUtilAdjustment의 Period, Life Cycle Category, Nameplate Capacity에만 적용한다.
+7. LiqUtil metadata는 LLM이 선택하거나 생성하지 않고 basecase가 있으면 exact basecase record, LUT-only이면 exact LUT record에서 복원한다.
+8. 다른 parameter에는 column 이름만 보고 metadata를 전역 제외하지 않는다.
+9. 국가 범위는 각 parameter의 자체 LUT distinct를 사용한다. `Demand_Model_LUT_General_value_based_t6.csv`는 읽지 않는다.
+10. GDP는 2026~2030 각 연도의 exact 전년도 값이 있는 LUT 국가만 노출하며, 현재 데이터 기준 163개국이다.
+
+YAML의 columns는 의미 역할에서 실제 CSV header로의 매핑이며 모두 필수 header다. 개별 row의 null 허용 여부와 row 제외 규칙은 각 Python adapter가 담당한다.
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -954,7 +1030,7 @@ Claude 현재 기준:
 
 ## 16. 다음 인터뷰 항목
 
-D-08: Period, Life Cycle Category, Nameplate Capacity 같은 metadata 축을 어느 parameter에서 숨기고 서버가 복원할지 결정한다.
+D-09: LUT 기능의 off/shadow/on rollout과 structured-output streaming 적용 범위를 결정한다.
 
 ## 17. 변경 이력
 
@@ -974,3 +1050,5 @@ D-08: Period, Life Cycle Category, Nameplate Capacity 같은 metadata 축을 어
 | 2026-07-10 | D-05 완료: parameter별 map 없이 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task/prompt에 동일 적용 |
 | 2026-07-10 | D-06 완료: LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지하며 누락 자동 보완과 candidate 전체 폐기를 모두 금지 |
 | 2026-07-10 | D-07 완료: PowerMix를 Energy Source별 독립 override로 처리하고 전체 vector 강제·합계 검증·정규화 후처리를 하지 않음 |
+| 2026-07-10 | D-08 완료: resources/lut/config의 최소 YAML spec으로 파일·필수 컬럼·key/metadata 축만 관리하고 LiqUtil metadata만 exact reference에서 복원 |
+| 2026-07-10 | D-02 국가 범위 보강: Full Country List 보조 파일을 제거하고 각 parameter LUT 자체의 국가 distinct를 사용 |
