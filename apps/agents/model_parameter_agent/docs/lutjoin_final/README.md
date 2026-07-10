@@ -813,6 +813,30 @@ Step2 compact packet 원칙:
 6. prompt는 관련성이 높은 slot만 선택하고 단순 전수 열거하지 않도록 명시한다.
 7. Step2 결과는 D-04의 exact membership 검증을 통과해야 한다.
 
+#### 현재 코드의 100개 제한 의미
+
+model_parameter_max_parameter_slots=100은 Step2 prompt에 주입되는 후보 option 개수 제한이 아니다.
+
+현재 처리 순서:
+
+1. 서버가 전체 compact slot catalog를 Step2 prompt payload에 넣는다.
+2. 같은 payload의 slot_selection_limits.maxParameterSlots에 100을 넣어 LLM에 최대 출력 수를 지시한다.
+3. LLM이 parameter_slots를 반환한다.
+4. 서버 _sanitize_llm_slots가 selected=true slot을 전체 candidate 합계 100개까지만 유지한다.
+
+따라서 전체 compact catalog에 수백 개 leaf가 있어도 모두 prompt에 들어갈 수 있고, 100은 그중 LLM이 최종 선택해 반환할 수 있는 완성 slot 좌표 수다.
+
+관련 설정은 서로 의미가 다르다.
+
+| 설정 또는 제한 | 적용 단계 | 현재 의미 |
+|---|---|---|
+| model_parameter_max_parameter_slots | Step2 output | LLM이 선택해 반환할 selected slot 최대 수. prompt 지시와 서버 sanitizer 양쪽에서 사용 |
+| model_parameter_max_value_prompt_basecase_records | Step3 input | 선택된 slot의 값을 판단할 때 LLM에 제공할 reference record 최대 수. 현재 100 |
+| model_parameter_max_effective_reference_records | Step2 이전 state | Claude가 effective raw record를 자르는 최대 수. 현재 40,000이며 최종안에서는 제거 대상 |
+| compact catalog option 수 | Step2 input | 현재 100과 무관. 최종안은 객관적으로 유효한 전체 compact catalog 제공 |
+
+Codex는 model_parameter_max_parameter_slots 기본값과 실제 설정이 모두 100이다. Claude는 Settings 기본값이 20이지만 envs/config.yaml과 K8s ConfigMap이 100으로 덮어쓰므로 실제 테스트에서는 100이 사용됐다.
+
 D-05의 미확정 항목:
 
 - parameter별 selected slot 상한과 전체 global 상한
@@ -867,3 +891,4 @@ D-05 계속: 전체 compact catalog에서 LLM이 선택할 수 있는 slot 상�
 | 2026-07-10 | D-03 확정: LLM 단일 기준값, 운영 basecaseValue 기존 의미 유지, LUT-only null, sync API 양쪽 값 허용 |
 | 2026-07-10 | D-05 일부 확정: 객관적 유효성 filter 후 전체 compact catalog를 제공하고 관련성 선택은 LLM에 위임 |
 | 2026-07-10 | D-05 no-change 정책 확정: LLM이 명시한 동일값은 저장하고 누락 cell은 서버가 자동 보완하지 않음 |
+| 2026-07-10 | D-05 제한 의미 보강: Step2 input catalog 크기와 selected slot 100개, Step3 reference 100개를 구분 |
