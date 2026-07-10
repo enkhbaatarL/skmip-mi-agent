@@ -275,6 +275,29 @@ poetry run pytest -q tests/automated/test_model_parameter_agent_contract.py
 - 기존 contract: `100 passed, 8 warnings`
 - 검증된 정책: source matrix, exact miss/no-nearest, basecase override/basecase-only/LUT-only, 독립 cap, single reference, partial/no-change, Liq metadata, PowerMix, state 직렬화, sync/callback 분리
 
+## 9. 5-parameter 명시 시나리오 report runner — DONE
+
+### 변경
+
+- 수동 evaluator에 `--parameter-scenarios PARAMETER=SCENARIO_ID`를 추가했다.
+- `--target-parameters`와 parameter 집합이 정확히 일치해야 하며 형식, 중복 parameter, 중복 scenario, 누락·삭제 scenario를 실행 전에 거부한다.
+- 같은 group을 공유하는 GDP=305와 PMI=306도 target identity로 분리해 parameter당 정확히 한 번, 총 5회만 실행한다.
+- 대상 parameter가 mapping 후보와 selected adjustment 양쪽에 실제 존재해야 해당 parameter-scenario를 PASS로 판단한다.
+- raw state의 resolved config, LUT version, selected provenance와 cell diagnostics를 scenario 및 최종 요약에 기록한다.
+- 기존 event-type discovery/report mode는 유지한다.
+
+### 검증
+
+```bash
+poetry run pytest -q tests/automated/test_model_parameter_report_scope.py
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --help
+```
+
+- report scope 자동화: `16 passed, 8 warnings`
+- 실제 DB read-only scope 확인: GDP=305, PMI=306, PowerMix=287, Temperature=289, LiqUtilAdjustment=105, execution count 5
+- py_compile, 신규 test Ruff/format, manual script `F,E9,I` Ruff, diff check: 통과
+- 실제 LLM/DB proposal 실행은 Claude 구현 리뷰 및 전체 자동화 gate 이후 단계 10에서 수행한다.
+
 ## 다음 재개 지점
 
 1. proposal graph/state/prompt/presentation의 신규 exact pipeline 테스트와 기존 contract assertion을 최종 D-policy에 맞춘다.

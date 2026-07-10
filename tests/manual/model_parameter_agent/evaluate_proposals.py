@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import os
-import sys
-import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import os
 from pathlib import Path
+import sys
+import time
 from typing import Any
+
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
@@ -33,13 +34,13 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
 )
+from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+    ModelParameterService,
+)
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base,
     match_parameter_candidates,
-)
-from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
-    ModelParameterService,
 )
 
 
@@ -752,6 +753,9 @@ async def _evaluate_scenario(
         "result": result,
         "final_response": final_response,
         "llm_calls": llm_calls,
+        "resolved_config": raw_state.get("resolved_config") or {},
+        "lut_version": raw_state.get("lut_version"),
+        "reference_diagnostics": raw_state.get("reference_diagnostics") or {},
         "mapping_ok": candidate_coverage_ok,
         "mapping_messages": candidate_coverage_messages,
         "selected_ok": selected_ok,
@@ -873,6 +877,10 @@ def _render_md(
                     f"- mapping_candidate_coverage: {'PASS' if record['mapping_ok'] else 'FAIL'}",
                     f"- selected_result: {'PASS' if record['selected_ok'] else 'FAIL'}",
                     f"- routing_result: {record['routing_status']}",
+                    f"- resolved_config: `{_json_preview(record.get('resolved_config') or {}, max_chars=2400)}`",
+                    f"- lut_version: `{record.get('lut_version') or 'null'}`",
+                    "- reference_diagnostics: "
+                    f"`{_json_preview(record.get('reference_diagnostics') or {}, max_chars=3200)}`",
                 ],
             )
             if record["mapping_messages"]:
@@ -898,12 +906,22 @@ def _render_md(
                 ],
             )
 
+    reference_runtime_by_scenario = [
+        {
+            "scenario_id": record["scenario_id"],
+            "resolved_config": record.get("resolved_config") or {},
+            "lut_version": record.get("lut_version"),
+            "reference_diagnostics": record.get("reference_diagnostics") or {},
+        }
+        for record in records
+    ]
     lines.extend(
         [
             "## 최종 요약",
             "",
             f"- ERROR_COUNT: {len(errors)}",
             f"- GROUP_STATUS: `{_json_preview(_build_group_status(targets=targets, records=records), max_chars=2000)}`",
+            f"- REFERENCE_RUNTIME_BY_SCENARIO: `{_json_preview(reference_runtime_by_scenario, max_chars=4000)}`",
             "",
             "## 오류 및 반복 이력",
             "",
