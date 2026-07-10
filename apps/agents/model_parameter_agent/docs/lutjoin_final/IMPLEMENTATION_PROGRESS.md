@@ -23,8 +23,8 @@
 | 2. 비교 브랜치 선별 분석 | DONE | 두 feature commit은 merge/cherry-pick하지 않고 함수·테스트 아이디어만 선별 |
 | 3. Claude 대화형 설계 리뷰 | DONE | state/source/diagnostics/streaming 위험을 교차 검토하고 최종 구현 경계 확정 |
 | 4. 공통 connector stream/reasoning | DONE | 호출별 옵션, fresh-buffer retry, usage/trace 계약과 독립 테스트 완료 |
-| 5. 설정·YAML·typed LUT domain | IN_PROGRESS | 구현 및 독립 테스트 진행 중 |
-| 6. 단일 proposal pipeline 통합 | PENDING | Step2 exact membership, EffectiveReference, Step3 partial 정책 연결 |
+| 5. 설정·YAML·typed LUT domain | DONE | 5개 adapter, immutable catalog/index, compact leaf/period와 실제 CSV count 검증 완료 |
+| 6. 단일 proposal pipeline 통합 | IN_PROGRESS | Step2 exact membership, EffectiveReference, Step3 partial 정책 연결 및 회귀 조정 중 |
 | 7. 운영 projection·sync diagnostics | PENDING | DB/운영 JSON 불변, sync-only 진단 노출 |
 | 8. 자동화·정적·성능 검증 | PENDING | 관련 pytest, contract, compile, ruff, diff check |
 | 9. Claude 구현 리뷰·수정 | PENDING | diff/test 결과 교차 리뷰 후 최소 수정 |
@@ -190,8 +190,56 @@ dotenv를 수동 테스트 스크립트와 동일하게 선행 로드한 뒤 읽
 - 다섯 시나리오 모두 현재 DB에서 조회됐고 mapping warning은 0건이었다.
 - GDP/PMI 및 Temperature 시나리오는 같은 graph 실행에서 다른 mapping 후보도 함께 나올 수 있으므로 최종 품질 평가는 대상 parameter별로 필터링한다.
 
+## 7. Typed LUT domain과 실제 resource 검증 — DONE
+
+### 변경
+
+- `resources/lut/config/lut_parameters.yaml`에 파일, adapter/layout, CSV column, canonical key와 LiqUtil metadata 축만 선언했다.
+- 공통 `tabular` adapter의 `row`/`year_columns`와 GDP growth, Temperature degree-days, LiqUtil 전용 adapter를 구현했다.
+- YAML은 extra field/path escape/key-metadata 중복을 거부하고, enabled 상태의 CSV는 header/type/finite/Month 범위/exact duplicate를 검증한다.
+- GDP는 exact `year - 1`만 사용하고 2025는 2026 계산용 lookback으로만 읽는다.
+- PMI는 t2의 84개국만 사용하며 t1, General, Full Country List는 registry path에 포함하지 않는다.
+- process-level immutable `LutCatalog`, request `BasecaseIndex`, 값 없는 leaf별 period `SlotCatalog`, exact `EffectiveReference` resolver를 구현했다.
+- compact catalog는 full exact-key set을 별도로 복제하지 않고 leaf/period 구조 자체로 membership을 확인한다.
+
+### 검증
+
+```bash
+poetry run pytest -q tests/automated/test_model_parameter_lut_domain.py
+uvx ruff check \
+  apps/agents/model_parameter_agent/utils/lut \
+  tests/automated/test_model_parameter_lut_domain.py
+uvx ruff format --check \
+  apps/agents/model_parameter_agent/utils/lut \
+  tests/automated/test_model_parameter_lut_domain.py
+git diff --check -- \
+  apps/agents/model_parameter_agent/resources/lut/config \
+  apps/agents/model_parameter_agent/utils/lut \
+  tests/automated/test_model_parameter_lut_domain.py
+```
+
+- pytest: `21 passed`
+- 실제 2026~2030 record: GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040, LiqUtilAdjustment 19,366
+- Ruff check/format 및 diff check: 통과
+- 실제 catalog cold load는 로컬 기준 약 1.6초였고, 같은 hash/horizon warm/concurrent 호출은 동일 immutable instance를 재사용했다.
+
+### 실제 basecase 호환성 사전 검증
+
+LLM 호출 전 읽기 전용으로 다섯 대상 scenario의 workbook record를 exact index로 변환했다.
+
+| scenario_id | 관련 후보 | raw basecase | horizon exact index | compact leaf |
+|---:|---|---:|---:|---:|
+| 305 | GDP, PMI | 141 | 96 | 247 |
+| 306 | GDP, PMI | 141 | 96 | 247 |
+| 287 | PowerMix 2개 mapping 후보 | 114 | 110 | 1,680 (Step1.5 merge 전) |
+| 289 | Temperature, PowerMix | 207 | 205 | 924 |
+| 105 | LiqUtilAdjustment | 21,656 | 14,411 | 347 (LUT enabled union 기준) |
+
+- exact duplicate/conflict나 metadata schema 오류는 발생하지 않았다.
+- LiqUtil 요청의 serialized compact payload는 full raw 21,656행을 넣지 않고 약 124KB였다(LUT disabled basecase-only 사전 측정).
+
 ## 다음 재개 지점
 
-1. 병렬 구현 중인 connector와 LUT domain/settings 결과를 회수한다.
-2. 각 diff를 검토하고 독립 테스트 후 단계별 작은 커밋을 만든다.
-3. proposal graph/state/prompt/presentation을 단일 pipeline으로 통합한다.
+1. proposal graph/state/prompt/presentation의 신규 exact pipeline 테스트와 기존 contract assertion을 최종 D-policy에 맞춘다.
+2. sync diagnostics와 수동 5-scenario report runner를 검증하고 단계별 커밋을 만든다.
+3. 전체 정적/자동화 검증 후 Claude에게 구현 diff와 테스트 결과를 다시 리뷰받는다.
