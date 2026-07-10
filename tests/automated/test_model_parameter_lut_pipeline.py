@@ -14,6 +14,7 @@ import pytest
 os.environ.setdefault("METADATA_DB_PORT", "3306")
 
 from apps.agents.model_parameter_agent.flows.propose_parameters import nodes
+from apps.agents.model_parameter_agent.flows.propose_parameters.flow import build_graph
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
     ModelParameterProposalState,
 )
@@ -406,6 +407,118 @@ def test_partial_valid_cell_and_explicit_no_change_survive_with_diagnostics() ->
     assert operational["values"][0]["proposedValue"] == 50.0
 
 
+def test_step3_projects_canonical_effective_reference_axes_to_operational_cell() -> None:
+    candidate = _candidate("GDP", "gdp")
+    authoritative_axes = {"Country": "United States", "Year": 2026}
+    slots = [_slot("gdp", authoritative_axes)]
+    references = [
+        _reference(
+            "gdp",
+            "GDP",
+            authoritative_axes,
+            actual_basecase_value=0.03,
+            lut_default_value=0.02,
+        ),
+    ]
+    adjustment = LLMValueAdjustment(
+        candidate_key="gdp",
+        rationale_ko="canonical representation test",
+        value_grid=[
+            LLMValueCell(
+                coordinates={"Country": "united states ", "Year": "2026"},
+                proposed_value=0.01,
+                rationale_ko="LLM representation differs",
+            ),
+        ],
+    )
+
+    sanitized, warnings, diagnostics = nodes._sanitize_llm_adjustments(
+        [adjustment],
+        [candidate],
+        slots,
+        references,
+    )
+
+    assert warnings == []
+    assert diagnostics["valid_cell_count"] == 1
+    assert sanitized[0]["value_grid"][0]["coordinates"] == authoritative_axes
+    operational = _build_proposal_parameters(sanitized, [candidate])[0].model_dump(
+        by_alias=True,
+    )
+    assert operational["values"][0]["Country"] == "United States"
+    assert operational["values"][0]["Year"] == 2026
+
+
+@pytest.mark.parametrize("proposed_values", [(1.1, 1.1), (1.1, 9.9)])
+def test_step3_rejects_all_duplicate_candidate_adjustments_deterministically(
+    proposed_values: tuple[float, float],
+) -> None:
+    candidate = _candidate("GDP", "gdp")
+    axes = {"Country": "Japan", "Year": 2026}
+    slots = [_slot("gdp", axes)]
+    references = [
+        _reference(
+            "gdp",
+            "GDP",
+            axes,
+            actual_basecase_value=0.02,
+            lut_default_value=0.03,
+        ),
+    ]
+
+    def adjustment(value: float) -> LLMValueAdjustment:
+        return LLMValueAdjustment(
+            candidate_key="gdp",
+            rationale_ko=f"duplicate {value}",
+            value_grid=[
+                LLMValueCell(
+                    coordinates=axes,
+                    proposed_value=value,
+                    rationale_ko="duplicate cell",
+                ),
+            ],
+        )
+
+    first = [adjustment(value) for value in proposed_values]
+    second = list(reversed(first))
+    first_result = nodes._sanitize_llm_adjustments(
+        first,
+        [candidate],
+        slots,
+        references,
+    )
+    second_result = nodes._sanitize_llm_adjustments(
+        second,
+        [candidate],
+        slots,
+        references,
+    )
+
+    for sanitized, warnings, diagnostics in (first_result, second_result):
+        assert len(sanitized) == 1
+        assert sanitized[0]["selected"] is False
+        assert sanitized[0]["value_grid"] == []
+        assert diagnostics == {
+            "selected_cell_count": 1,
+            "returned_cell_count": 2,
+            "valid_cell_count": 0,
+            "missing_cell_count": 1,
+            "invalid_cell_count": 2,
+            "by_candidate": {
+                "gdp": {
+                    "selected_cell_count": 1,
+                    "returned_cell_count": 2,
+                    "valid_cell_count": 0,
+                    "missing_cell_count": 1,
+                    "invalid_cell_count": 2,
+                },
+            },
+        }
+        assert any("동일 candidate_key" in warning for warning in warnings)
+    assert first_result[0] == second_result[0]
+    assert first_result[2] == second_result[2]
+
+
 def test_liq_metadata_is_restored_from_exact_effective_reference(
     real_domain: tuple[ParameterSpecRegistry, LutCatalog],
 ) -> None:
@@ -574,6 +687,13 @@ def test_state_dump_excludes_basecase_index_and_contains_no_full_rows(
     assert dumped["basecase_records"] == []
     assert dumped["slot_catalog"] == compact_catalog
     assert "records" not in _all_mapping_keys(dumped["slot_catalog"])
+
+
+def test_graph_output_excludes_request_local_runtime_indexes() -> None:
+    graph = build_graph()
+
+    assert "basecase_index" not in graph.output_channels
+    assert "parameter_knowledge_base" not in graph.output_channels
 
 
 def test_sync_diagnostics_are_projected_but_operational_callback_stays_signal_only() -> None:

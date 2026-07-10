@@ -42,7 +42,10 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
+    ModelParameterProposalOutputState,
+    ModelParameterProposalState,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
@@ -50,7 +53,10 @@ from apps.connectors.callback.callback_client import send_callback
 
 
 def build_graph() -> Runnable:
-    builder = StateGraph(ModelParameterProposalState)
+    builder = StateGraph(
+        ModelParameterProposalState,
+        output_schema=ModelParameterProposalOutputState,
+    )
     builder.add_node("load_scenario_context", load_scenario_context)
     builder.add_node("select_parameter_candidates", select_parameter_candidates)
     builder.add_node("validate_parameter_candidates", validate_parameter_candidates)

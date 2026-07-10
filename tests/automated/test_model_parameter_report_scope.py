@@ -15,6 +15,10 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
     _render_report,
     _runtime_reference_lines,
 )
+from tests.manual.model_parameter_agent.evaluate_proposals import (
+    _build_step_summary,
+    _value_reference_records,
+)
 
 
 TARGET_PARAMETERS = (
@@ -184,6 +188,58 @@ def test_reference_runtime_lines_include_raw_state_diagnostics() -> None:
     assert "model_parameter_lut_enabled" in rendered
     assert "lut-v1" in rendered
     assert '"missing": 1' in rendered
+
+
+def test_step_summary_uses_effective_references_with_per_candidate_cap() -> None:
+    effective_references = [
+        {"candidate_key": candidate_key, "axes": {"Year": index}}
+        for candidate_key in ("gdp", "pmi")
+        for index in range(60)
+    ]
+    assert (
+        _value_reference_records(
+            {
+                "effective_references": effective_references,
+                "basecase_records": [{"candidate_key": "legacy"}],
+            },
+        )
+        == effective_references
+    )
+    assert _value_reference_records(
+        {"basecase_records": [{"candidate_key": "legacy"}]},
+    ) == [{"candidate_key": "legacy"}]
+    assert _value_reference_records(
+        {
+            "effective_references": [],
+            "basecase_records": [{"candidate_key": "legacy"}],
+        },
+    ) == []
+
+    summary = _build_step_summary(
+        rule_candidates=[{"candidate_key": "gdp"}, {"candidate_key": "pmi"}],
+        validated_candidates=[
+            {"candidate_key": "gdp"},
+            {"candidate_key": "pmi"},
+        ],
+        parameter_slots=[
+            {"candidate_key": "gdp", "selected": True, "slot_axes": []},
+            {"candidate_key": "pmi", "selected": True, "slot_axes": []},
+        ],
+        slot_basecase_records=[{"candidate_key": "gdp"}],
+        slot_options=[],
+        value_reference_records=effective_references,
+        adjustments=[],
+        final_response={"data": {"proposalParameters": []}},
+        llm_calls=[{"step": "Step3"}],
+        routing_status="PASS",
+    )
+
+    assert summary["basecase_status"] == "PASS"
+    assert summary["value_reference_record_count"] == 120
+    assert summary["value_reference_counts_by_candidate"] == {
+        "gdp": 60,
+        "pmi": 60,
+    }
 
 
 def test_parameter_report_keeps_same_group_scenarios_in_their_parameter_sections() -> None:

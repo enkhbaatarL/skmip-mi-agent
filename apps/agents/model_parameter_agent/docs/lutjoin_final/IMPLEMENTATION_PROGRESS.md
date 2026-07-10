@@ -26,9 +26,9 @@
 | 5. 설정·YAML·typed LUT domain | DONE | 5개 adapter, immutable catalog/index, compact leaf/period와 실제 CSV count 검증 완료 |
 | 6. 단일 proposal pipeline 통합 | DONE | 공통 source 구성, compact Step2, exact resolver, 단일 기준값 Step3 연결 완료 |
 | 7. 운영 projection·sync diagnostics | DONE | DB/운영 JSON 불변, sync-only provenance/cell 진단과 report 수집 완료 |
-| 8. 자동화·정적·성능 검증 | IN_PROGRESS | 신규 45개와 기존 contract 100개 통과, 전체 변경 범위 정적 검사 진행 중 |
-| 9. Claude 구현 리뷰·수정 | PENDING | diff/test 결과 교차 리뷰 후 최소 수정 |
-| 10. 대상 파라미터 5개 실제 테스트 | PENDING | 파라미터별 시나리오 1개, 통합 리포트, 실패 시 반복 수정 |
+| 8. 자동화·정적·성능 검증 | DONE | 관련 전체 195개 테스트와 14 subtest, focused 29개, 정적 검사 통과 |
+| 9. Claude 구현 리뷰·수정 | DONE | 독립 리뷰와 Claude 최종 리뷰 반영, 필수 미해결 항목 없음 |
+| 10. 대상 파라미터 5개 실제 테스트 | IN_PROGRESS | 파라미터별 시나리오와 실행 명령·판정 기준 확정, 실제 LLM/DB 실행 대기 |
 | 11. 최종 문서·커밋 목록 정리 | PENDING | 최종 README와 본 진행 기록 동기화 |
 
 ## 1. 분석 및 기준선 — DONE
@@ -298,8 +298,87 @@ poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposa
 - py_compile, 신규 test Ruff/format, manual script `F,E9,I` Ruff, diff check: 통과
 - 실제 LLM/DB proposal 실행은 Claude 구현 리뷰 및 전체 자동화 gate 이후 단계 10에서 수행한다.
 
+## 10. 최종 자동화 gate 및 Claude 구현 리뷰 — DONE
+
+### 독립 코드 리뷰와 반영
+
+- canonical exact key를 찾은 뒤 LLM이 되돌린 axis/metadata가 운영 결과를 오염시킬 수 있던 경로를 수정했다. 최종 cell 좌표와 metadata는 항상 서버가 보관한 `EffectiveReference`를 기준으로 materialize한다.
+- 같은 candidate key의 Step3 adjustment가 중복되면 순서에 따라 첫 응답이 채택될 수 있던 경로를 수정했다. 동일값/상이값과 입력 순서에 무관하게 해당 candidate의 모든 adjustment를 거부하고 진단을 남긴다.
+- request runtime object가 graph 최종 출력에 노출되지 않도록 직렬화 output state와 runtime state를 분리하고 graph `output_schema`를 지정했다.
+- 수동 report가 runtime `effective_references` 대신 legacy basecase만 읽어 LUT-only 실행을 0건으로 오판하던 경로를 수정했다. parameter task별 100 cap도 report에서 동일하게 판정한다.
+- P0 finding은 없었다.
+
+### Claude Code CLI 최종 리뷰와 판단
+
+Claude Code CLI를 read-only feedback mode로 다시 실행해 수정 diff와 테스트를 검토했다.
+
+1. `effective_references=[]`를 legacy payload와 구분하지 못하는 truthiness fallback — 수용 후 key 존재 여부로 수정했다.
+2. duplicate adjustment 거부 분기에서 slot-axis warning이 누락됨 — 수용 후 동일 진단을 추가했다.
+3. metadata가 axes와 충돌할 수 있다는 정보성 의견 — registry validator가 key/metadata 중복을 이미 거부하므로 추가 변경하지 않았다.
+4. unknown candidate 중복의 별도 진단 의견 — 기존 unknown-candidate 정책과 동일하게 처리되는 정보성 항목이므로 변경하지 않았다.
+
+Claude의 최종 결론은 실제 테스트 전에 필수로 고칠 항목이 없다는 것이었다. 현재 graph는 checkpointer를 사용하지 않으므로 runtime object checkpoint 직렬화는 현 계약의 문제가 아니다. 향후 checkpointer를 도입한다면 runtime object 재수화 전략이나 별도 runtime store가 필요하다는 제약을 남긴다.
+
+### 자동화·정적 검증
+
+```bash
+poetry run pytest -q \
+  tests/automated/test_llm_structured_output.py \
+  tests/automated/test_tracing_context.py \
+  tests/test_config_loader.py \
+  tests/automated/test_model_parameter_lut_domain.py \
+  tests/automated/test_model_parameter_lut_pipeline.py \
+  tests/automated/test_model_parameter_report_scope.py \
+  tests/automated/test_model_parameter_agent_contract.py
+```
+
+- 전체 관련 범위: `195 passed, 8 warnings, 14 subtests passed in 41.98s`
+- Claude 지적 2건 반영 후 focused 재검증: `29 passed, 8 warnings in 1.15s`
+- `compileall`, 변경 파일 Ruff `F,E9`, 신규 테스트/state 전체 Ruff, format check, `git diff --check`: 통과
+- 기존 대형 pipeline/manual 파일의 이번 변경과 무관한 formatting debt는 관련 없는 대량 변경을 피하기 위해 그대로 유지했다.
+
+## 11. 5-parameter 실제 테스트 준비 — IN_PROGRESS
+
+### 확정 대상
+
+| Parameter | scenario_id | event_type_l2_id | scenario_group_id |
+|---|---:|---:|---:|
+| GDP | 305 | 21 | 60 |
+| PMI | 306 | 21 | 60 |
+| PowerMix | 287 | 5 | 51 |
+| Temperature | 289 | 6 | 52 |
+| LiqUtilAdjustment | 105 | 2 | 18 |
+
+### 재개 시 실행 명령
+
+API server를 시작하지 않고 `model_param.py`와 동일한 proposal graph를 직접 실행한다.
+
+```bash
+MODEL_PARAMETER_LUT_ENABLED=true poetry run python \
+  tests/manual/model_parameter_agent/evaluate_event_type_proposals.py \
+  --target-parameters GDP PMI PowerMix Temperature LiqUtilAdjustment \
+  --parameter-scenarios \
+    GDP=305 PMI=306 PowerMix=287 Temperature=289 LiqUtilAdjustment=105 \
+  --concurrency 2 --retries 1
+```
+
+### 완료 판정
+
+- `ERROR_COUNT=0`, `SCENARIO_EXECUTION_COUNT=5`
+- 다섯 parameter-scenario 모두 `status=passed`
+- 각 대상 parameter가 현재 DB mapping candidate와 실제 selected result에 모두 존재
+- `mapping_candidate_coverage`와 `selected_result`가 PASS
+- 빈 recommendation 0건
+- resolved config가 LUT enabled, 2026~2030, task별 cap 100/100, 확정 stream/reasoning 값을 표시
+- 다섯 실행이 동일한 non-empty LUT version을 표시
+- 최종 proposal DB row를 read-back하고 저장 JSON에 대상 parameter/value가 존재
+- 생성된 단일 markdown report에 skill의 9개 `Parameter Quality Evaluation` 기준을 parameter별 실제 근거로 추가
+
+실행 중 agent logic/report 문제가 확인되면 최소 범위로 수정하고 focused/전체 자동화 검증과 해당 실제 시나리오를 다시 실행한다. DB mapping 데이터는 변경하지 않는다.
+
 ## 다음 재개 지점
 
-1. proposal graph/state/prompt/presentation의 신규 exact pipeline 테스트와 기존 contract assertion을 최종 D-policy에 맞춘다.
-2. sync diagnostics와 수동 5-scenario report runner를 검증하고 단계별 커밋을 만든다.
-3. 전체 정적/자동화 검증 후 Claude에게 구현 diff와 테스트 결과를 다시 리뷰받는다.
+1. 위 명령으로 5개 실제 LLM/DB proposal을 실행하고 출력된 `REPORT` 경로를 기록한다.
+2. report의 오류·mapping·selection·resolved config·LUT provenance와 최종 DB row를 점검한다.
+3. 같은 report에 parameter별 9개 품질 판정표를 추가하고, 실패 시 수정·재검증을 반복한다.
+4. 단계 10/11 상태와 최종 README를 동기화하고 최종 테스트·커밋 목록을 기록한다.

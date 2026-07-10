@@ -2495,7 +2495,7 @@ def _materialize_effective_cell(
     reference: dict[str, Any],
 ) -> ParameterValueCell:
     coordinates = {
-        **cell.coordinates,
+        **(reference.get("axes") or {}),
         **(reference.get("metadata") or {}),
     }
     basecase_reference_id = reference.get("basecase_reference_id")
@@ -2539,7 +2539,89 @@ def _sanitize_llm_adjustments(
         "invalid_cell_count": 0,
         "by_candidate": {},
     }
+    adjustments_by_candidate: dict[str, list[LLMValueAdjustment]] = {}
     for adjustment in adjustments:
+        adjustments_by_candidate.setdefault(adjustment.candidate_key, []).append(
+            adjustment,
+        )
+    duplicate_candidate_keys = {
+        candidate_key
+        for candidate_key, candidate_adjustments in adjustments_by_candidate.items()
+        if len(candidate_adjustments) > 1
+    }
+    handled_duplicate_candidate_keys: set[str] = set()
+
+    for adjustment in adjustments:
+        if adjustment.candidate_key in duplicate_candidate_keys:
+            if adjustment.candidate_key in handled_duplicate_candidate_keys:
+                continue
+            handled_duplicate_candidate_keys.add(adjustment.candidate_key)
+            candidate = candidate_by_key.get(adjustment.candidate_key)
+            if candidate is None:
+                warnings.append(
+                    "LLM이 알 수 없는 candidate_key를 중복 반환해 모두 제외했습니다: "
+                    f"{adjustment.candidate_key}",
+                )
+                continue
+
+            returned_candidate_keys.add(adjustment.candidate_key)
+            selected_slots = slots_by_key.get(adjustment.candidate_key, [])
+            slot_axes = _slot_axes_for_candidate(selected_slots)
+            slot_issues = _slot_axis_issues(slot_axes)
+            if slot_issues:
+                warnings.append(
+                    "Step2 selected slot_axes에 실제 모델 input으로 사용할 수 없는 "
+                    "값이 있어 검토 경고로 기록했습니다: "
+                    f"{', '.join(slot_issues)}: {adjustment.candidate_key}",
+                )
+            selected_count = len(_requested_slot_coordinates(selected_slots))
+            returned_count = sum(
+                len(candidate_adjustment.value_grid)
+                for candidate_adjustment in adjustments_by_candidate[
+                    adjustment.candidate_key
+                ]
+            )
+            reason = (
+                "LLM Step3 응답에 동일 candidate_key의 adjustment가 중복되어 "
+                "해당 candidate 응답을 모두 제외했습니다."
+            )
+            candidate_diagnostics = {
+                "selected_cell_count": selected_count,
+                "returned_cell_count": returned_count,
+                "valid_cell_count": 0,
+                "missing_cell_count": selected_count,
+                "invalid_cell_count": returned_count,
+            }
+            diagnostics["by_candidate"][adjustment.candidate_key] = (
+                candidate_diagnostics
+            )
+            for field_name in (
+                "selected_cell_count",
+                "returned_cell_count",
+                "valid_cell_count",
+                "missing_cell_count",
+                "invalid_cell_count",
+            ):
+                diagnostics[field_name] += candidate_diagnostics[field_name]
+            sanitized.append(
+                ParameterAdjustment(
+                    candidate_key=adjustment.candidate_key,
+                    model_file=str(candidate.get("model_file") or ""),
+                    model_sheet=str(candidate.get("model_sheet") or ""),
+                    parameter_name=str(
+                        candidate.get("canonical_parameter_name")
+                        or candidate.get("parameter_name")
+                        or "",
+                    ),
+                    selected=False,
+                    slot_axes=slot_axes,
+                    value_grid=[],
+                    parameter_selection_rationale_ko=reason,
+                ).model_dump(),
+            )
+            warnings.append(f"{reason}: {adjustment.candidate_key}")
+            continue
+
         candidate = candidate_by_key.get(adjustment.candidate_key)
         if candidate is None:
             warnings.append(
