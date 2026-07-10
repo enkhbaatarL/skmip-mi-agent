@@ -7,6 +7,9 @@
   - Codex: feature/model-param-lut-basecase, commit 7a7a753
   - Claude: feat/lut-basecase-integration, commit 8d1f72b
   - 공통 merge base: main, commit 7ba92b8
+- 구현 진행 기록: [IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md)
+- 구현 완료 보고서: [IMPLEMENTATION_FINAL_REPORT.md](IMPLEMENTATION_FINAL_REPORT.md)
+- 5-parameter 실제 실행 report: [model_parameter_proposal_evaluation_parameters_GDP_PMI_PowerMix_Temperature_LiqUtilAdjustment_20260710_180134.md](../../../../../tests/reports/model_parameter_agent/model_parameter_proposal_evaluation_parameters_GDP_PMI_PowerMix_Temperature_LiqUtilAdjustment_20260710_180134.md)
 
 ## 1. 문서 목적
 

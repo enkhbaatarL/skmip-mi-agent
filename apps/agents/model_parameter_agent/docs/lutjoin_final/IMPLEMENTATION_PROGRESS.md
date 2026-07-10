@@ -3,7 +3,7 @@
 - 작업 브랜치: `design/model-param-lut-final-merge`
 - 시작 HEAD: `2b49c8a`
 - 시작일: 2026-07-10
-- 상태: 구현 진행 중
+- 상태: 구현·실제 테스트·최종 검증 완료
 - 재개 기준: 아래에서 가장 마지막 `DONE` 단계 다음 항목부터 진행한다.
 
 ## 사용자 소유 변경 보존
@@ -28,8 +28,8 @@
 | 7. 운영 projection·sync diagnostics | DONE | DB/운영 JSON 불변, sync-only provenance/cell 진단과 report 수집 완료 |
 | 8. 자동화·정적·성능 검증 | DONE | 관련 전체 195개 테스트와 14 subtest, focused 29개, 정적 검사 통과 |
 | 9. Claude 구현 리뷰·수정 | DONE | 독립 리뷰와 Claude 최종 리뷰 반영, 필수 미해결 항목 없음 |
-| 10. 대상 파라미터 5개 실제 테스트 | IN_PROGRESS | 파라미터별 시나리오와 실행 명령·판정 기준 확정, 실제 LLM/DB 실행 대기 |
-| 11. 최종 문서·커밋 목록 정리 | PENDING | 최종 README와 본 진행 기록 동기화 |
+| 10. 대상 파라미터 5개 실제 테스트 | DONE | 실제 LLM/DB 경로 5/5 첫 시도 성공, ERROR_COUNT=0, proposal 395~399 read-back |
+| 11. 최종 문서·커밋 목록 정리 | DONE | 통합 report 품질표/Claude 판정/완료 보고서 반영, 최종 195-test gate 통과 |
 
 ## 1. 분석 및 기준선 — DONE
 
@@ -337,7 +337,7 @@ poetry run pytest -q \
 - `compileall`, 변경 파일 Ruff `F,E9`, 신규 테스트/state 전체 Ruff, format check, `git diff --check`: 통과
 - 기존 대형 pipeline/manual 파일의 이번 변경과 무관한 formatting debt는 관련 없는 대량 변경을 피하기 위해 그대로 유지했다.
 
-## 11. 5-parameter 실제 테스트 준비 — IN_PROGRESS
+## 11. 5-parameter 실제 테스트 — DONE
 
 ### 확정 대상
 
@@ -376,9 +376,63 @@ MODEL_PARAMETER_LUT_ENABLED=true poetry run python \
 
 실행 중 agent logic/report 문제가 확인되면 최소 범위로 수정하고 focused/전체 자동화 검증과 해당 실제 시나리오를 다시 실행한다. DB mapping 데이터는 변경하지 않는다.
 
+### 실제 실행 결과
+
+- 실행 시각: 2026-07-10 18:01:34~18:03:48 KST
+- 총 소요시간: 133.374초
+- concurrency=2, retries=1
+- 실제 결과: `ERROR_COUNT=0`, `SCENARIO_EXECUTION_COUNT=5`, 5건 모두 attempt 1
+- 통합 report: `tests/reports/model_parameter_agent/model_parameter_proposal_evaluation_parameters_GDP_PMI_PowerMix_Temperature_LiqUtilAdjustment_20260710_180134.md`
+
+| Parameter | scenario_id | proposal_id | elapsed | mapping | selected | exact cell | 결과 |
+|---|---:|---:|---:|---|---|---|---|
+| GDP | 305 | 395 | 40.562s | PASS | PASS | 4/4 valid | PASS |
+| PMI | 306 | 397 | 78.006s | PASS | PASS | 24/24 valid | PASS |
+| PowerMix | 287 | 396 | 26.060s | PASS | PASS | 1/1 valid | PASS |
+| Temperature | 289 | 399 | 66.735s | PASS | PASS | 1/1 target valid | PASS |
+| LiqUtilAdjustment | 105 | 398 | 33.604s | PASS | PASS | 5/5 valid | PASS |
+
+- 다섯 실행 모두 동일 LUT version `e1e19f78d71b32c49d1a3b205e876d644b7d1e225aac91c8e0f3b81709b47809`을 사용했다.
+- resolved config는 LUT enabled, horizon 2026~2030, cap 100/100, stream false, reasoning default로 일치했다.
+- 모든 target에서 invalid/missing/rejected exact cell이 0이고 빈 recommendation도 0이었다.
+- 최종 DB proposal row 395~399를 read-back했으며 status는 모두 `PROPOSED`, 대상 parameter와 value가 저장됐다.
+- callback은 raw graph 수동 검증 계약에 따라 `SKIPPED`였고 외부 callback은 보내지 않았다.
+
+### 실제 결과 Claude 교차 리뷰
+
+Claude Code CLI session `fc23336b-5578-4f90-876f-0f96cba0ae6e`에서 최종 명세와 4,511줄 report를 read-only로 대조했다.
+
+- 필수 코드 수정 또는 재실행이 필요한 finding은 없었다.
+- Temperature 2027-03은 과거의 2026-03 이벤트 월을 실행일 이후 가장 가까운 같은 월로 이월한 정책상 exact 결과지만, “차기 동절기 재발” 가정이 rationale에 명시되지 않아 품질 `REVIEW`로 남겼다.
+- PowerMix LUT-only 0.36505 no-change는 `basecaseValue=null`이라는 D-03 운영 투영 때문에 `null -> 값`으로 오독할 수 있어 품질 `REVIEW`로 남겼다. 운영 schema를 바꾸거나 LUT를 basecase로 투영하지 않는다.
+- LiqUtil T4 Planned/T5 Speculative `0 -> 0`은 exact/Closed 제외/no-change 계약상 유효하지만 현재 운영 Train 감산에는 불필요한 리뷰 노이즈라 품질 `REVIEW`로 남겼다.
+- LiqUtil 결과를 서버에서 lifecycle/no-change로 후처리 제외하면 D-05의 LLM 명시 cell 보존을 위반할 수 있어 변경하지 않았다. 현재 Step2 prompt도 약한/neutral direct mapping은 slot을 선택하고 Step3에서 no-change를 판단하도록 명시하므로, 이번 한 건만으로 정책을 역전하지 않았다.
+- 같은 report에 parameter별 9개 고정 품질 기준, 구체 근거, REVIEW 개선 방향을 추가했다.
+
+## 12. 최종 문서 및 재검증 — DONE
+
+- `IMPLEMENTATION_FINAL_REPORT.md`에 변경 목적, 구조, 리뷰, 실제 5건, 영향/리스크와 구현 커밋을 정리했다.
+- 최종 실제 report는 기본 gitignore 대상이므로 이번 실행 파일 하나만 명시적으로 추적했다.
+- report에서 API key, authorization, password, secret, access token 등 민감정보 패턴이 없음을 확인했다.
+- 사용자 소유 dirty 변경은 stage/commit 대상에서 계속 제외했다.
+
+최종 관련 자동화 gate:
+
+```bash
+poetry run pytest -q \
+  tests/automated/test_llm_structured_output.py \
+  tests/automated/test_tracing_context.py \
+  tests/test_config_loader.py \
+  tests/automated/test_model_parameter_lut_domain.py \
+  tests/automated/test_model_parameter_lut_pipeline.py \
+  tests/automated/test_model_parameter_report_scope.py \
+  tests/automated/test_model_parameter_agent_contract.py
+```
+
+- 결과: `195 passed, 8 warnings, 14 subtests passed in 42.55s`
+- warning: 기존 Pydantic ForwardRef deprecation 7건, LangGraph cache `allowed_objects` pending deprecation 1건
+- 실패: 0
+
 ## 다음 재개 지점
 
-1. 위 명령으로 5개 실제 LLM/DB proposal을 실행하고 출력된 `REPORT` 경로를 기록한다.
-2. report의 오류·mapping·selection·resolved config·LUT provenance와 최종 DB row를 점검한다.
-3. 같은 report에 parameter별 9개 품질 판정표를 추가하고, 실패 시 수정·재검증을 반복한다.
-4. 단계 10/11 상태와 최종 README를 동기화하고 최종 테스트·커밋 목록을 기록한다.
+모든 구현·리뷰·실제 테스트·품질 평가·최종 자동화 gate가 완료됐다. 재개가 필요하면 현재 문서와 `IMPLEMENTATION_FINAL_REPORT.md`, 추적된 실제 report를 기준으로 최종 문서 커밋 상태만 확인한다.
