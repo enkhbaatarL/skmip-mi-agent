@@ -173,21 +173,20 @@ def test_explicit_parameter_status_requires_target_candidate_and_selection() -> 
     )
 
 
-def test_reference_runtime_lines_include_raw_state_diagnostics() -> None:
+def test_reference_runtime_lines_include_config_and_lut_version_only() -> None:
     lines = _runtime_reference_lines(
         {
             "resolved_config": {"model_parameter_lut_enabled": True},
             "lut_version": "lut-v1",
-            "reference_diagnostics": {"selected": 3, "missing": 1},
         },
         heading="######",
     )
     rendered = "\n".join(lines)
 
-    assert "Reference Runtime Diagnostics" in rendered
+    assert "Reference Runtime" in rendered
     assert "model_parameter_lut_enabled" in rendered
     assert "lut-v1" in rendered
-    assert '"missing": 1' in rendered
+    assert "reference_diagnostics" not in rendered
 
 
 def test_step_summary_uses_effective_references_with_per_candidate_cap() -> None:
@@ -289,7 +288,6 @@ def test_parameter_report_keeps_same_group_scenarios_in_their_parameter_sections
             "attempt": 1,
             "resolved_config": {"model_parameter_lut_enabled": True},
             "lut_version": "lut-v1",
-            "reference_diagnostics": {"selected": 1},
         }
 
     report = _render_report(
@@ -318,5 +316,5 @@ def test_parameter_report_keeps_same_group_scenarios_in_their_parameter_sections
     assert "COMPLETED_SCENARIO_EXECUTIONS: 2" in report
     assert "scenario_group 1개, scenario 2개" in report
     assert "PARAMETER_SCENARIO_STATUS" in report
-    assert "Reference Runtime Diagnostics" in report
+    assert "Reference Runtime" in report
     assert "lut-v1" in report

@@ -173,13 +173,19 @@ def _normalize_slot_coordinates(
     return normalized
 
 
-def _finalize_group_values(group: dict[str, Any]) -> None:
+def _finalize_group_values(
+    group: dict[str, Any],
+    *,
+    include_lut_value: bool,
+) -> None:
     axes = group["slot_axes_field_names"]
     finalized_values: list[dict[str, Any]] = []
     slot_index: dict[str, int] = {}
     for value in group["values"]:
         finalized = {axis_name: value.get(axis_name) for axis_name in axes}
         finalized["basecaseValue"] = value.get("basecaseValue")
+        if include_lut_value:
+            finalized["lutValue"] = value.get("lutValue")
         finalized["proposedValue"] = value.get("proposedValue")
         finalized["rationale"] = value.get("rationale")
         slot_key = _slot_value_key(finalized, axes)
@@ -198,6 +204,8 @@ def _finalize_group_values(group: dict[str, Any]) -> None:
 def _build_proposal_parameters(
     adjustments: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
+    *,
+    include_lut_value: bool = False,
 ) -> list[ProposalParameter]:
     candidate_index = {
         str(candidate.get("candidate_key") or ""): candidate
@@ -253,6 +261,8 @@ def _build_proposal_parameters(
                 "proposedValue": cell.get("proposed_value"),
                 "rationale": _value_rationale(cell),
             }
+            if include_lut_value:
+                value["lutValue"] = cell.get("lut_value")
             value_key = _value_key(value)
             if value_key in group["value_index"]:
                 existing = group["values"][group["value_index"][value_key]]
@@ -267,7 +277,10 @@ def _build_proposal_parameters(
     for group in grouped.values():
         if not group["values"]:
             continue
-        _finalize_group_values(group)
+        _finalize_group_values(
+            group,
+            include_lut_value=include_lut_value,
+        )
         proposal_parameters.append(
             ProposalParameter(
                 parameter_name=group["parameter_name"],
@@ -304,10 +317,16 @@ def _context_ids(
 
 def _proposal_parameters_from_state(
     data: dict[str, Any],
+    *,
+    include_lut_value: bool = False,
 ) -> list[ProposalParameter]:
     adjustments = data.get("parameter_adjustments") or []
     candidates = data.get("candidate_mappings") or []
-    return _build_proposal_parameters(adjustments, candidates)
+    return _build_proposal_parameters(
+        adjustments,
+        candidates,
+        include_lut_value=include_lut_value,
+    )
 
 
 def _to_response_data(
@@ -329,7 +348,6 @@ def _to_response_data(
         scenario_group_id=scenario_group_id,
         event_id=event_id,
         proposal_parameters=proposal_parameters,
-        diagnostics=data.get("reference_diagnostics") or None,
     )
 
 

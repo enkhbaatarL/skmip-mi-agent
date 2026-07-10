@@ -991,7 +991,6 @@ def _runtime_reference_payload(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "resolved_config": record.get("resolved_config") or {},
         "lut_version": record.get("lut_version"),
-        "reference_diagnostics": record.get("reference_diagnostics") or {},
     }
 
 
@@ -1002,7 +1001,7 @@ def _runtime_reference_lines(
 ) -> list[str]:
     return [
         "",
-        f"{heading} Reference Runtime Diagnostics",
+        f"{heading} Reference Runtime",
         "",
         "```json",
         _json_pretty(_runtime_reference_payload(record)),

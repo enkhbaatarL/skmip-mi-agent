@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import json
 import time
 from typing import Any
 
@@ -50,6 +51,31 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.error_codes import ErrorCode
 from apps.connectors.callback.callback_client import send_callback
+
+
+def _debug_final_storage_payload(
+    *,
+    stage: str,
+    scenario_id: int,
+    model_param_proposal_id: int | None,
+    proposal_parameters: list[Any],
+) -> None:
+    """Log the exact proposalParameters JSON passed to the persistence service."""
+    logger.opt(lazy=True).debug(
+        f"[model-parameter][storage][raw] stage={stage} scenario_id={scenario_id} "
+        f"model_param_proposal_id={model_param_proposal_id} proposal_parameters=\n{{}}",
+        lambda: json.dumps(
+            [
+                parameter.model_dump(mode="json", by_alias=True)
+                if hasattr(parameter, "model_dump")
+                else parameter
+                for parameter in proposal_parameters
+            ],
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        ),
+    )
 
 
 def build_graph() -> Runnable:
@@ -118,10 +144,27 @@ def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposePar
         user_id=data.get("user_id"),
         proposal_parameters=proposal_parameters,
     )
+    sync_proposal_parameters = _proposal_parameters_from_state(
+        data,
+        include_lut_value=True,
+    )
+    logger.opt(lazy=True).debug(
+        f"[model-parameter][sync][output] scenario_id={int(data['scenario_id'])} "
+        "proposal_parameters=\n{}",
+        lambda: json.dumps(
+            [
+                parameter.model_dump(mode="json", by_alias=True)
+                for parameter in sync_proposal_parameters
+            ],
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        ),
+    )
     response_data = _to_response_data(
         data,
         model_param_proposal_id=model_param_proposal_id,
-        proposal_parameters=proposal_parameters,
+        proposal_parameters=sync_proposal_parameters,
     )
     logger.info(
         "[model-parameter] response ready | scenario_id={} proposal_id={} adjustment_count={} non_input_count={} warning_count={}",
@@ -190,6 +233,12 @@ async def run_propose_parameters_background(
         _ensure_proposal_parameters(data, proposal_parameters)
         response_data = _to_response_data(
             data,
+            model_param_proposal_id=model_param_proposal_id,
+            proposal_parameters=proposal_parameters,
+        )
+        _debug_final_storage_payload(
+            stage="background.before_complete_proposal_result",
+            scenario_id=scenario_id,
             model_param_proposal_id=model_param_proposal_id,
             proposal_parameters=proposal_parameters,
         )

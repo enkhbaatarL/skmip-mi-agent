@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import json
 import os
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +24,36 @@ from apps.common.openapi.local_docs import register_local_openapi_docs
 
 
 INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
+
+
+def _lut_catalog_debug_json(lut_catalog: Any) -> str:
+    if lut_catalog is None:
+        payload = {
+            "version": None,
+            "record_count": 0,
+            "record_counts_by_parameter": {},
+        }
+    else:
+        counts_by_parameter: dict[str, int] = {}
+        for record in lut_catalog.records:
+            counts_by_parameter[record.parameter_name] = (
+                counts_by_parameter.get(record.parameter_name, 0) + 1
+            )
+        payload = {
+            "version": lut_catalog.version,
+            "policy": {
+                "start_year": lut_catalog.policy.start_year,
+                "end_year": lut_catalog.policy.end_year,
+            },
+            "record_count": len(lut_catalog.records),
+            "record_counts_by_parameter": counts_by_parameter,
+        }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        default=str,
+        indent=2,
+    )
 
 
 @asynccontextmanager
@@ -50,6 +82,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         "Model Parameter LUT startup validation completed | enabled={} version={}",
         cfg.model_parameter_lut_enabled,
         lut_catalog.version if lut_catalog is not None else None,
+    )
+    logger.opt(lazy=True).debug(
+        "[model-parameter][lut][summary] startup_catalog=\n{}",
+        lambda: _lut_catalog_debug_json(lut_catalog),
     )
 
     logger.info("Validating ORM models against the database schema")

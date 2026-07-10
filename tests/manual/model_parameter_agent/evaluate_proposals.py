@@ -771,7 +771,6 @@ async def _evaluate_scenario(
         "llm_calls": llm_calls,
         "resolved_config": raw_state.get("resolved_config") or {},
         "lut_version": raw_state.get("lut_version"),
-        "reference_diagnostics": raw_state.get("reference_diagnostics") or {},
         "mapping_ok": candidate_coverage_ok,
         "mapping_messages": candidate_coverage_messages,
         "selected_ok": selected_ok,
@@ -895,8 +894,6 @@ def _render_md(
                     f"- routing_result: {record['routing_status']}",
                     f"- resolved_config: `{_json_preview(record.get('resolved_config') or {}, max_chars=2400)}`",
                     f"- lut_version: `{record.get('lut_version') or 'null'}`",
-                    "- reference_diagnostics: "
-                    f"`{_json_preview(record.get('reference_diagnostics') or {}, max_chars=3200)}`",
                 ],
             )
             if record["mapping_messages"]:
@@ -927,7 +924,6 @@ def _render_md(
             "scenario_id": record["scenario_id"],
             "resolved_config": record.get("resolved_config") or {},
             "lut_version": record.get("lut_version"),
-            "reference_diagnostics": record.get("reference_diagnostics") or {},
         }
         for record in records
     ]

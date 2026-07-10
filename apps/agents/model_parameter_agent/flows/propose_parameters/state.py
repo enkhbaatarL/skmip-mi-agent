@@ -19,9 +19,8 @@ class ModelParameterProposalOutputState(BaseModel):
     candidate_mappings: list[dict[str, Any]] = Field(default_factory=list)
     non_input_items: list[dict[str, Any]] = Field(default_factory=list)
     slot_catalog: list[dict[str, Any]] = Field(default_factory=list)
-    selected_slot_keys: list[dict[str, Any]] = Field(default_factory=list)
+    slot_candidate_mappings: list[dict[str, Any]] = Field(default_factory=list)
     effective_references: list[dict[str, Any]] = Field(default_factory=list)
-    reference_diagnostics: dict[str, Any] = Field(default_factory=dict)
     resolved_config: dict[str, Any] = Field(default_factory=dict)
     lut_version: str | None = None
 

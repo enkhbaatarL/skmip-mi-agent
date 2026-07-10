@@ -41,13 +41,6 @@ BASE_CONFIG = textwrap.dedent(
     lightly_thinking_model_api_deployment_name: model
     deeply_thinking_model_api_deployment_name: model
 
-    MCP_POOL_URLS: {}
-    COMPANY_MCP_MAP: {}
-    mcp_pool_size: 10
-    mcp_per_session_limit: 5
-    mcp_client_timeout: 30
-    mcp_client_sse_read_timeout: 60
-
     http_timeout: 60
     http_connect_timeout: 10
     http_verify: true
@@ -55,13 +48,9 @@ BASE_CONFIG = textwrap.dedent(
     http_max_connection: 100
     http_max_keepalive: 20
 
-    rdb_search_metadata_repo_id: 00000000-0000-0000-0000-000000000000
-
     llm_concurrency: 4
     llm_max_retries: 1
-    mcp_max_concurrency: 8
     http_max_concurrency: 16
-    rdb_exec_max_parallel: 4
     log_level: DEBUG
     """
 ).strip()

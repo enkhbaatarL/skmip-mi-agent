@@ -36,7 +36,8 @@ router = APIRouter()
         "수급모델 parameter slot/value를 제안합니다. "
         "제안 결과를 DB에 저장한 뒤 status/message/data wrapper의 "
         "modelParamProposalId와 proposalParameters로 반환합니다. "
-        "테스트 및 로컬 검증용 sync API입니다."
+        "테스트 및 로컬 검증용 sync API이며 values에는 LUT 기준값을 "
+        "lutValue로 추가해 반환합니다. lutValue는 DB 저장 payload와 운영 callback에는 포함되지 않습니다."
     ),
 )
 async def propose_parameters_sync(

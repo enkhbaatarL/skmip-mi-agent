@@ -3,7 +3,7 @@
 - 작업 브랜치: `design/model-param-lut-final-merge`
 - 시작 HEAD: `2b49c8a`
 - 시작일: 2026-07-10
-- 상태: 구현·실제 테스트·최종 검증 완료
+- 상태: 구현·전체 매핑 이벤트타입 확장 테스트·LUT 감사 완료, Event 19 별도 확인 대기
 - 재개 기준: 아래에서 가장 마지막 `DONE` 단계 다음 항목부터 진행한다.
 
 ## 사용자 소유 변경 보존
@@ -30,6 +30,9 @@
 | 9. Claude 구현 리뷰·수정 | DONE | 독립 리뷰와 Claude 최종 리뷰 반영, 필수 미해결 항목 없음 |
 | 10. 대상 파라미터 5개 실제 테스트 | DONE | 실제 LLM/DB 경로 5/5 첫 시도 성공, ERROR_COUNT=0, proposal 395~399 read-back |
 | 11. 최종 문서·커밋 목록 정리 | DONE | 통합 report 품질표/Claude 판정/완료 보고서 반영, 최종 195-test gate 통과 |
+| 13. 전체 매핑 이벤트타입 확장 테스트 | DONE | stream=true/LUT=true로 DB 가용 최대 18그룹·36시나리오 실행, 35 성공·1 Step2 실패 확인 |
+| 14. Event 19 routing 별도 검토 | HOLD | PowerMix routing 0개 불허가 원인임을 Claude/독립 리뷰로 확인, 사용자 별도 확인 전 소스·API·DB 변경 보류 |
+| 15. 실제 결과·LUT 감사·별도 report | DONE | 35개 성공 950 reference 전수 확인, 나머지 34건 우선 품질 검토와 parameter별 9개 표 작성 |
 
 ## 1. 분석 및 기준선 — DONE
 
@@ -433,6 +436,98 @@ poetry run pytest -q \
 - warning: 기존 Pydantic ForwardRef deprecation 7건, LangGraph cache `allowed_objects` pending deprecation 1건
 - 실패: 0
 
+## 13. 전체 매핑 이벤트타입 확장 테스트 — DONE
+
+### DB 가용 범위
+
+- 5개 대상 parameter의 현재 매핑 합집합은 event_type_l2_id `1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 17, 18, 19, 21`이다.
+- 요청한 이벤트별 2그룹 × 그룹별 2시나리오를 모두 충족하는 이벤트는 `2, 6, 7, 18` 4개다.
+- 나머지 10개 이벤트는 활성 시나리오 2개 이상인 그룹이 1개뿐이다. DB mapping/scenario 데이터를 변경하지 않는 조건에서 가용 최대 범위는 18그룹 × 2 = 36시나리오다.
+
+### 올바른 실행 설정
+
+첫 실행은 `MODEL_PARAMETER_LLM_STREAM_ENABLED`를 누락해 `resolved_config.stream=false`임을 확인한 즉시 중단했다. 해당 부분 report는 최종 판정에서 제외한다.
+
+- 제외 report: `tests/reports/model_parameter_agent/model_parameter_proposal_evaluation_parameters_GDP_PMI_PowerMix_Temperature_LiqUtilAdjustment_20260710_182047.md`
+- 최종 원본 report: `tests/reports/model_parameter_agent/model_parameter_proposal_evaluation_parameters_GDP_PMI_PowerMix_Temperature_LiqUtilAdjustment_20260710_182853.md`
+
+```bash
+MODEL_PARAMETER_LUT_ENABLED=true \
+MODEL_PARAMETER_LLM_STREAM_ENABLED=true \
+poetry run python \
+  tests/manual/model_parameter_agent/evaluate_event_type_proposals.py \
+  --target-parameters GDP PMI PowerMix Temperature LiqUtilAdjustment \
+  --groups-per-event 2 --scenarios-per-group 2 \
+  --concurrency 4 --retries 1
+```
+
+- 전 36회에서 resolved config의 `lut_enabled=true`, `stream=true`, reasoning=`default`를 확인했다.
+- 35건은 proposal 저장까지 성공했다. scenario 281 한 건은 두 attempt 모두 Step2 selected slot 0개로 실패했다.
+- scenario 282는 첫 Step2 streaming 지연/실패 후 시나리오 retry에서 22개 slot을 선택해 성공했다.
+
+## 14. Event 19 routing 별도 검토 — HOLD
+
+### 최초 실패 격리
+
+- 대상: event 19, group 48, scenario 281 `IMO 운송 규제 보통 강도`
+- Step1.5를 통과한 candidate: `19|impactintensity|powermix|demand|powermixadjustment`
+- basecase/LUT source와 compact catalog — 정상
+- Step2 — `slot_count=1`, `selected_count=0`, `selected=false`
+- Step3 value 산정 — selected slot이 없어 미실행
+
+단독 `stream=true`, LUT=true 실행을 retries=2로 추가해 3회 모두 같은 결과를 얻었다. 본 배치 2회와 합쳐 5/5 재현이다.
+
+- 단독 실패 report: `tests/reports/model_parameter_agent/model_parameter_proposal_evaluation_parameters_PowerMix_20260710_184926.md`
+
+### 사용자 지적 후 DB·scenario 재대조
+
+- candidate key 문자열과 달리 실제 DB row의 `mapping_method`는 `routing`이다.
+- routing comment는 전원믹스·발전설비·연료전환으로 발전 비중이 구조적으로 바뀌는 정책일 때만 PowerMix를 선택하도록 한다.
+- scenario 281은 `3개월 / 보통 / 시행 확정 / 단발적·한시`이며 narrative는 LNG 운송비 프리미엄이다.
+- scenario 282는 `1년 / 큼 / 시행 확정 / 구조적·영구`지만 narrative 핵심은 LNG 운송비와 항로 제약이다. 구조적 규제가 곧 발전 믹스 구조 변화라는 근거는 아니다.
+- scenario group 자체도 ShippingCost 계열 선택 검증용이다. ShippingCost는 현재 지원 대상 5개 parameter에 없다.
+- 따라서 281의 Step2 미선택은 타당할 가능성이 높고, 282의 11개국 Gas × 2년 = 22 slot은 routing over-selection 가능성이 높다.
+- 진짜 원인 후보는 `CANDIDATE_VALIDATION_SYSTEM`이 routing 후보가 있으면 dimension별 최소 1개를 강제하여, 유일한 지원 후보 PowerMix를 의미 불일치에도 Step1.5에서 통과시킨 정책이다.
+
+### 폐기한 접근과 현재 상태
+
+- 초기에 direct 후보로 잘못 해석해 조건부 Step2 LLM 재호출 prototype을 작성했으나, 사용자 지적과 실제 DB 확인 후 전부 제거했다.
+- 사용자는 추가 LLM 재호출을 명시적으로 금지했다. 이후 fix는 기존 Step1.5/Step2 각 1회 호출 구조를 유지한다.
+- Claude와 독립 리뷰에서 routing 0개 허용 정책, API의 후보 0개 계약, 수동 report의 N/A 판정을 검토했다.
+- 공통 결론은 281/282 모두 현재 서술로 PowerMix 조건을 충족하지 않고, Step1.5의 routing 최소 1개 강제가 PowerMix를 사실상 direct로 만든다는 것이다.
+- 281은 Step2가 잘못 통과한 후보를 뒤늦게 거절했으며, 282의 11개국 Gas × 2년은 정상 성공이 아니라 false positive/over-selection으로 판단했다.
+- 사용자가 이 이슈를 별도로 확인하기로 했으므로 소스·DB·API 계약을 수정하거나 전체 배치를 재실행하지 않았다.
+- 상세 report: `tests/reports/model_parameter_agent/model_parameter_event19_routing_review_20260710.md`
+
+## 15. 전체 결과 및 LUT 감사 — DONE
+
+### 나머지 34개 시나리오
+
+- Event 19의 281/282를 제외한 34개는 모두 첫 attempt에 proposal 저장까지 성공했다.
+- selected/returned/valid reference는 928/928/928, missing/invalid/rejected는 0/0/0이다.
+- actual basecase 우선 reference 683개, LUT-only reference 245개다.
+- 의미 품질 우선 finding은 scenario 280의 수입 시설→Wheatstone 감산, scenario 317의 `6월 Peak`→2026-07 시간 선택이다.
+- scenario 289의 미래 이월 설명, 287/267/105의 no-change/provenance 노이즈, 93/130/136의 대량 slot·성능을 REVIEW로 남겼다.
+
+### 성공 35건 LUT 전수 감사
+
+- 같은 catalog hash `e1e19f78d71b32c49d1a3b205e876d644b7d1e225aac91c8e0f3b81709b47809`를 사용했다.
+- selected reference 950개가 모두 current catalog exact row와 일치했다.
+- actual basecase 우선 705개, LUT-only 245개이며 final DB axis/value도 950/950 일치했다.
+- LUT-only 245개 모두 운영 `basecaseValue=null`을 유지했다.
+- scenario 267, 268, 280을 CSV 원행으로 역검증해 axes/metadata/value exact 일치를 확인했다.
+- Event 19와 scenario 280의 문제는 LUT 데이터 오류가 아니라 의미 routing/selection 문제다.
+
+### 최종 문서
+
+- 메인 report: `tests/reports/model_parameter_agent/model_parameter_full_event_stream_lut_review_20260710.md`
+- Event 19 별도 report: `tests/reports/model_parameter_agent/model_parameter_event19_routing_review_20260710.md`
+- 메인 report에도 Event 19의 dimension 비교, slot/value 단계, 원인, LUT 무관성, HOLD 상태를 유지했다.
+- parameter 5개 각각 동일한 9개 `Parameter Quality Evaluation` 기준으로 결과를 작성했다.
+
 ## 다음 재개 지점
 
-모든 구현·리뷰·실제 테스트·품질 평가·최종 자동화 gate가 완료됐다. 재개가 필요하면 현재 문서와 `IMPLEMENTATION_FINAL_REPORT.md`, 추적된 실제 report를 기준으로 최종 문서 커밋 상태만 확인한다.
+1. 사용자가 Event 19 별도 report를 확인해 routing 0개 처리와 운영 API empty 계약을 결정한다.
+2. 승인되면 추가 LLM 재호출 없이 기존 Step1.5 한 번에서 routing 0개를 허용하는 최소 수정과 자동화 테스트를 적용한다.
+3. scenario 281·282, 명시적 PowerMix 양성 fixture, scenario 280을 `stream=true`/LUT=true로 재검증한다.
+4. 전체 36개 회귀에서 기존 정상 후보와 950-cell exact/LUT 불변식이 유지되는지 확인한다.
