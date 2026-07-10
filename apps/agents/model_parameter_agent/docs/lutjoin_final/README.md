@@ -104,7 +104,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 
 | 항목 | Codex | Claude | 현재 권고 |
 |---|---|---|---|
-| LUT 대상 국가·기간 | GDP raw 163국, Liq 2017~2050 포함 | Full Country List와 2024~2031 horizon | Claude 기반. 단, 고정 horizon은 동적 정책으로 개선 |
+| LUT 대상 국가·기간 | GDP raw 163국, Liq 2017~2050 포함 | Full Country List와 config horizon 적용 | Claude 기반. 최종 설정 범위는 2026~2030, GDP 계산용 2025 lookback 허용 |
 | GDP 성장률 | 정렬된 직전 available row 사용 | 정확한 year-1 값 사용 | Claude 방식 |
 | join key | parameter별 business key 명시 | metadata 제외 나머지 축 전체 | Codex key + Claude axis alias |
 | 축 이름 정렬 | 하드코딩 이름 일치 전제 | DB 단위 접미사까지 정규화 | Claude 방향. fuzzy prefix 대신 명시 alias 사용 |
@@ -541,7 +541,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | ID | 결정 항목 | 상태 | 확정 내용 |
 |---|---|---|---|
 | D-01 | LUT-only slot 허용 범위 | DECIDED | 5개 parameter 모두 LUT-only slot 허용. basecase 부재는 제외 사유가 아니며, scenario/event 관련성이 있으면 선택 가능 |
-| D-02 | slot universe와 horizon 정책 | PENDING | 미정 |
+| D-02 | slot universe와 horizon 정책 | DECIDED | Claude 방식의 config horizon 적용. 현재 proposal 가능 범위는 2026~2030, GDP는 2026 계산을 위해 2025 source 값만 내부 참조 |
 | D-03 | effective 기준값 우선순위와 API provenance | PENDING | 미정 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | PENDING | 미정 |
@@ -653,6 +653,51 @@ Claude 현재 기준과 차이:
 
 LiqUtil의 business key는 Country + LNG Plant + LNG Plant Train + Year + Month다. Period, Life Cycle Category, Nameplate Capacity는 authoritative record에서 복원하는 metadata이므로 이 값이 LLM 응답과 다르다는 이유만으로 business-key 조합을 제외하지 않고 서버 값으로 교정한다.
 
+### 14.3 D-02 확정 — slot universe와 horizon 정책
+
+확정 내용:
+
+- Claude 구현처럼 LUT proposal 기간을 config로 관리한다.
+- 현재 최종 proposal에 노출할 연도 범위는 2026~2030이다.
+- GDP의 2026년 성장률 계산을 위해 2025년 absolute GDP를 내부 source 값으로 참조할 수 있다.
+- GDP 2025년 값은 계산용 lookback일 뿐 2025년 proposal slot으로 노출하지 않는다.
+- config horizon 밖 좌표는 raw LUT/basecase에 존재하더라도 Step2/Step3 최종 후보에서 제외한다.
+- 향후 모델 적용 기간이 바뀌면 코드 수정이 아니라 config 변경으로 대응한다.
+
+Codex 현재 기준과 차이:
+
+- Codex에는 LUT horizon 전용 설정이 없다.
+- GDP 2019~2031, PowerMix 2022~2031, LiqUtil 2017~2050 등 파일에 존재하는 기간이 그대로 후보에 포함된다.
+- prompt에서 현재 이후 기간을 선택하라고 지시하지만 서버가 config 범위로 강제하지 않는다.
+- 따라서 최종안에서는 Codex loader의 무제한 기간 노출을 채택하지 않는다.
+
+Claude 현재 기준과 보완점:
+
+- 이미 Settings에 model_parameter_lut_horizon_start_year와 model_parameter_lut_horizon_end_year가 존재한다.
+- 현재 Claude 기본값은 2024와 2031이다.
+- LUT loader는 해당 range를 적용하지만 basecase record에는 같은 범위 제한을 일관되게 적용하지 않는다.
+- envs/config.yaml과 devops/k8s/configmap.yaml에도 두 값을 명시하지 않았다.
+- start_year가 end_year보다 큰 설정을 차단하는 validator가 없다.
+
+최종 구현 기준:
+
+1. model_parameter_lut_horizon_start_year=2026
+2. model_parameter_lut_horizon_end_year=2030
+3. local/dev/K8s 설정에 동일 값을 명시
+4. start_year <= end_year 설정 검증 추가
+5. Step2에 노출되는 basecase와 LUT union 모두 동일한 2026~2030 proposal horizon 적용
+6. parameter adapter가 계산용 source window와 proposal window를 분리할 수 있게 구성
+7. GDP source window는 2025~2030, proposal window는 2026~2030
+8. LUT cache key 또는 preload version에 horizon 포함
+
+필수 테스트:
+
+- 2026과 2030 slot은 포함되고 2025와 2031 slot은 제외되는지 확인
+- GDP 2026 growth가 2025 absolute GDP를 사용해 계산되는지 확인
+- GDP 2025 record가 Step2 slot option에는 나타나지 않는지 확인
+- horizon 밖 basecase record도 proposal 후보에서는 제외되는지 확인
+- start_year > end_year 설정이 애플리케이션 시작 시 실패하는지 확인
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -669,7 +714,7 @@ LiqUtil의 business key는 Country + LNG Plant + LNG Plant Train + Year + Month�
 
 ## 16. 다음 인터뷰 항목
 
-D-02: slot universe와 horizon을 고정 2024~2031로 제한할지, 모델 지원 기간과 scenario/event 기간을 기준으로 동적으로 조회할지 결정한다.
+D-03: 같은 좌표에 basecase와 LUT가 모두 있을 때 어떤 값을 effective 기준값으로 사용할지, 그리고 basecaseValue/referenceSource를 API에 어떻게 표현할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -679,3 +724,4 @@ D-02: slot universe와 horizon을 고정 2024~2031로 제한할지, 모델 지�
 | 2026-07-10 | D-01 확정: 5개 parameter 모두 scenario/event 관련 LUT-only slot 선택 허용, 서버 검증 의미 명시 |
 | 2026-07-10 | 인터뷰 형식에 Codex/Claude 현재 기준을 추가하고 D-01 조합 오류 발생 조건과 예시 보강 |
 | 2026-07-10 | D-04 조기 확정: basecase/LUT 양쪽에 exact 조합이 없으면 최종 제외, nearest 좌표 치환 금지 |
+| 2026-07-10 | D-02 확정: config 기반 2026~2030 proposal horizon, GDP 2025 계산용 lookback 허용 |
