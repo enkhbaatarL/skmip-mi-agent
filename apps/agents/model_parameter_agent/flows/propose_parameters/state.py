@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.agents.model_parameter_agent.utils.lut.models import BasecaseIndex
 from apps.agents.model_parameter_agent.utils.parameter_mapping import ParameterKnowledgeBase
 
 
@@ -18,6 +19,18 @@ class ModelParameterProposalState(BaseModel):
     parameter_knowledge_base: ParameterKnowledgeBase | None = None
     candidate_mappings: list[dict[str, Any]] = Field(default_factory=list)
     non_input_items: list[dict[str, Any]] = Field(default_factory=list)
+    # Request-scoped exact lookup index. It is intentionally excluded from
+    # serialization so workbook rows do not become graph/checkpoint payloads.
+    basecase_index: BasecaseIndex | None = Field(default=None, exclude=True, repr=False)
+    slot_catalog: list[dict[str, Any]] = Field(default_factory=list)
+    selected_slot_keys: list[dict[str, Any]] = Field(default_factory=list)
+    effective_references: list[dict[str, Any]] = Field(default_factory=list)
+    reference_diagnostics: dict[str, Any] = Field(default_factory=dict)
+    resolved_config: dict[str, Any] = Field(default_factory=dict)
+    lut_version: str | None = None
+
+    # Kept as a compatibility/debug surface for existing local tools. The LUT
+    # pipeline never stores full LUT or full effective rows in this field.
     basecase_records: list[dict[str, Any]] = Field(default_factory=list)
     parameter_slots: list[dict[str, Any]] = Field(default_factory=list)
     parameter_adjustments: list[dict[str, Any]] = Field(default_factory=list)

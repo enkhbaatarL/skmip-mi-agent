@@ -8,7 +8,8 @@
 ## 1. 목적
 
 `model_parameter_agent`는 `scenario_id`로 시나리오, 이벤트, dimension 맥락을 조회한 뒤
-DB 매핑 정보와 LNG 수급모델 Basecase 입력시트를 근거로 Demand/Supply/Trade 모델 input parameter 조정안을 제안한다.
+DB 매핑 정보, LNG 수급모델 Basecase 입력시트와 선택적 LUT source를 근거로
+Demand/Supply/Trade 모델 input parameter 조정안을 제안한다.
 
 - API: `POST /model-parameters/scenarios/{scenario_id}/proposals`
 - 실행 파이프: `to_state` → `build_graph()` → `to_output`
@@ -18,7 +19,8 @@ DB 매핑 정보와 LNG 수급모델 Basecase 입력시트를 근거로 Demand/S
 
 ## 2. 현재 Graph Flow
 
-`flow.py`의 `build_graph()`는 조건 edge가 없는 선형 그래프다.
+`flow.py`의 `build_graph()`는 후보 또는 exact 검증을 통과한 slot이 없으면
+`finalize_empty_parameter_values`로 종료하는 조건 edge를 사용한다.
 
 ```mermaid
 flowchart TD
@@ -26,21 +28,28 @@ flowchart TD
     B --> C[1. load_scenario_context]
     C --> D[2. select_parameter_candidates]
     D --> E[3. validate_parameter_candidates]
-    E --> F[4. load_basecase_samples]
+    E -->|candidate 있음| F[4. load_basecase_samples]
+    E -->|candidate 없음| X[finalize_empty_parameter_values]
     F --> G[5. propose_parameter_slots]
     G --> H[6. filter_basecase_records_by_slots]
-    H --> I[7. propose_parameter_values]
+    H -->|exact selected slot 있음| I[7. propose_parameter_values]
+    H -->|exact selected slot 없음| X
     I --> J[to_output<br/>proposalParameters 변환 및 DB 저장]
+    X --> J
     J --> K[ProposeParametersOut]
 ```
 
-`build_graph()` 기준 entry point는 `load_scenario_context`, finish point는 `propose_parameter_values`다.
+`build_graph()` 기준 entry point는 `load_scenario_context`이며, `propose_parameter_values` 또는
+`finalize_empty_parameter_values` 이후 종료한다.
 `to_output()`은 그래프 종료 후 `RunnableLambda`로 실행된다.
 
 ## 3. App Load / Request Resource Load
 
 현재 코드 기준으로 model parameter DB 매핑 정보와 Basecase profile은 앱 startup에서 preload하지 않는다.
-`main.py`의 FastAPI `lifespan()`은 DB schema validation만 수행한다.
+Model Parameter Agent의 실행 엔트리포인트는 `model_param.py`다. 이 파일의 FastAPI `lifespan()`은
+DB schema validation 전에 LUT YAML processing schema를 항상 검증한다. 설정의
+`model_parameter_lut_enabled=true`일 때만 실제 CSV를 읽어 immutable `LutCatalog`를 preload하며,
+false일 때는 CSV/catalog를 열지 않는다.
 
 실제 API 요청이 들어오면 `load_scenario_context` 단계에서 scenario/group/event context와 함께
 아래 DB 매핑 테이블을 같은 세션에서 조회한다.
@@ -54,15 +63,20 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[FastAPI lifespan startup] --> B[settings/logging 초기화]
-    B --> C[DB schema validation]
-    C --> D[API 요청 대기]
-    D --> E[load_scenario_context]
+    B --> C[LUT YAML schema validation]
+    C --> C1{LUT enabled?}
+    C1 -->|yes| C2[CSV 검증 및 immutable LutCatalog preload]
+    C1 -->|no| C3[CSV 미접근]
+    C2 --> D[DB schema validation]
+    C3 --> D
+    D --> E0[API 요청 대기]
+    E0 --> E[load_scenario_context]
     E --> F[scenario/group/event 조회]
     E --> G[model parameter DB 매핑 조회]
     G --> H[ParameterKnowledgeBase 생성]
     H --> I[Basecase workbook 탐색 및 sheet profile 생성]
-    I --> J[state.parameter_knowledge_base 저장]
-    J --> K[select_parameter_candidates / load_basecase_samples에서 요청 내 재사용]
+    I --> J[request BasecaseIndex + compact SlotCatalog 생성]
+    J --> K[Step2 exact membership / selected EffectiveReference / Step3 재사용]
 ```
 
 로딩 절차의 핵심:
@@ -71,7 +85,8 @@ flowchart TD
 - `get_parameter_knowledge_base_from_resources()`: 조회된 DB row를 `ParameterKnowledgeBase`로 변환한다.
 - `_resolve_basecase_dir()`: 기본 리소스 폴더 `resources/basecase`를 사용한다.
 - `_load_basecase_profiles()`: Demand/Supply/Trade Basecase `.xlsm` 파일을 찾고, 매핑된 sheet 존재 여부와 workbook/sheet 위치 정보를 만든다.
-- 반환값은 `ParameterKnowledgeBase`이며, 같은 요청 안에서 후보 매칭과 Basecase record 추출에 재사용한다.
+- `utils/lut/`: typed YAML registry, process-level immutable `LutCatalog`, request `BasecaseIndex`, compact `SlotCatalog`와 exact `EffectiveReference`를 소유한다.
+- full LUT/raw effective row는 serialized LangGraph state에 넣지 않고, Step2가 선택해 exact 검증을 통과한 reference만 Step3 state에 둔다.
 
 정리하면 DB 매핑과 Basecase sheet 참조 정보는 startup에서 warm-up하지 않고 요청 시점에 구성한다.
 새 요청이 오면 DB 매핑 row를 다시 읽는다.

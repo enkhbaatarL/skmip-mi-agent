@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
-from apps.persistence.schema_base import ApiModel
 from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalParameter
+from apps.persistence.schema_base import ApiModel
 
 
 class ProposeParametersIn(ApiModel):
@@ -23,6 +23,13 @@ class ProposeParametersData(ApiModel):
     scenario_group_id: int | None = None
     event_id: int | None = None
     proposal_parameters: list[ProposalParameter] = Field(default_factory=list)
+    diagnostics: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Sync/local verification diagnostics. This field is not stored in "
+            "proposalParameters and is not included in the operational callback."
+        ),
+    )
 
 
 class ProposeParametersOut(ApiModel):

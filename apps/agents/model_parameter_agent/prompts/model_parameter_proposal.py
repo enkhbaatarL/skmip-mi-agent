@@ -70,39 +70,37 @@ SLOT_PROPOSAL_SYSTEM = """\
   후보 parameter의 slot 축만 결정합니다.
 - Step1 후보 parameter는 DB 매핑으로 이미 제한되어 있습니다.
   후보 밖의 parameter, workbook, sheet를 만들지 마십시오.
-- Step2에서는 parameter 적합성을 다시 심사해 후보를 줄이는 것이 아니라,
-  각 parameter_slot_tasks마다 scenario/event/dimension과 basecase_slot_options를 이용해
-  실제 모델 input으로 변경 가능한 slot을 최대한 찾는 것이 목표입니다.
+- Step2에서는 각 parameter_slot_tasks마다 scenario/event/dimension과 slot_catalog를 이용해
+  실제 source에 존재하면서 시나리오와 직접 관련된 slot만 선택합니다.
+- slot_catalog에 없는 좌표를 만들거나 가까운 국가/연도/월/시설로 치환하지 마십시오.
+- task별 limits.maxParameterSlots는 hard maximum이며 목표 개수나 최소 개수가 아닙니다.
+  관련성이 약한 slot로 최대치를 채우지 마십시오.
 - supporting_dimensions에는 직접 input 후보가 아니지만 slot/value 해석에 사용할 수 있는
   mapping_method=indirect dimension만 포함됩니다.
   mapping_method=na dimension은 prompt payload에서 제외되며, event/narrative에 나타나도
   parameter 선정이나 slot 확정 근거로 직접 사용하지 마십시오.
 - parameter_slot_tasks는 Step2에서 slot을 선택해야 하는 parameter별 작업 단위입니다.
-  각 task 안의 parameter, selection_dimensions, supporting_dimensions, basecase_slot_options를 함께 읽고
+  각 task 안의 parameter, selection_dimensions, supporting_dimensions, slot_catalog를 함께 읽고
   slot을 결정하십시오.
-- basecase_slot_options는 현재 Base Case에 설정된 실제 입력 row/value에서
-  candidate별 축 이름, 시간축 distinct 값, 비시간축 유효 조합 계층을 모은 현재 기준 축 후보입니다.
-  axis_values에는 Year/Month/Period 같은 시간축 후보 값만 들어갑니다.
-  slot_hierarchy에는 시간축이 아닌 축들의 현재 Base Case 유효 path만 들어갑니다.
-  slot_hierarchy_axes 순서와 slot_hierarchy path를 함께 읽어야 합니다.
-- basecase_slot_options.axis_values와 slot_hierarchy에 있는 값은 해당 parameter의 현재 모델 입력에서
-  사용할 수 있는 후보 pool입니다. Country가 slot_hierarchy_axes에 있으면 해당 parameter에서 사용 가능한
-  모델 국가 후보로 해석하십시오.
+- slot_catalog는 활성 BasecaseIndex와 optional LutCatalog의 union을 값 없이 압축한 authoritative 후보입니다.
+  key_axes와 leaves[].fixed_axes를 그대로 사용하고, 시간축은 같은 leaf의
+  leaves[].available_periods에 실제 존재하는 Year/Month 조합만 선택하십시오.
+  time_axis_names가 ["Year","Month"]이면 available_periods의 각 항목은
+  {"Year":연도,"Months":[월,...]} 형태이며, 같은 Year 항목의 Months에 든 월만 조합하십시오.
+- Country가 key_axes에 있으면 해당 parameter의 활성 source에 존재하는 국가 후보로 해석하십시오.
   mapping_comment/selection_dimensions/supporting_dimensions 또는 scenario/event가 타 공급국, 인접국, 대체 공급국처럼
-  상대적 대상 선택을 요구하면, 코드에 고정된 국가 목록 없이 slot_hierarchy의 Country path 안에서
+  상대적 대상 선택을 요구하면, 코드에 고정된 국가 목록 없이 slot_catalog의 Country leaf 안에서
   scenario/event/dimension 문맥상 근거를 설명할 수 있는 국가 값을 후보로 검토하십시오.
-  다만 문맥상 타당한 근거 없이 임의 대표 국가를 만들거나 axis_values/slot_hierarchy에 없는 값을 선택하지 마십시오.
+  다만 문맥상 타당한 근거 없이 임의 대표 국가를 만들거나 slot_catalog에 없는 값을 선택하지 마십시오.
   특히 mapping_comment/selection_dimensions/supporting_dimensions가 "타 공급국", "대체 공급", "인접 공급국",
-  "액화 가동률 상향"처럼 상대적 공급 후보를 요구하고, slot_hierarchy에 Country/LNG Plant/LNG Plant Train 같은
+  "액화 가동률 상향"처럼 상대적 공급 후보를 요구하고, slot_catalog에 Country/LNG Plant/LNG Plant Train 같은
   유효 공급국/시설 path가 있으면 특정 plant/train이 원문에 직접 명시되지 않았다는 이유만으로 selected=false로
-  두지 마십시오. 피해 국가, 수요 지역, 대체 공급 경로, 시장 연결성 관점에서 설명 가능한 slot_hierarchy leaf path를
+  두지 마십시오. 피해 국가, 수요 지역, 대체 공급 경로, 시장 연결성 관점에서 설명 가능한 leaf path를
   선택하십시오. 후보를 전혀 좁힐 근거가 없는 경우에만 selected=false를 사용하십시오.
-- basecase_slot_options는 slot 후보를 찾는 참고 자료일 뿐입니다.
-  여기에 값이 없거나 빈 목록이어도 scenario/event/dimension에 명확한 모델 input 축 값이 있으면
-  반드시 그 값을 사용해 slot을 선택하십시오.
-- slot_selection_limits.maxParameterSlots는 전체 selected slot 상한입니다.
-  basecase_slot_options는 충분한 후보 pool이며, pool 전체를 선택하라는 의미가 아닙니다.
-  그러나 상한 안에서는 명확한 slot을 대표값 하나로 축소하지 말고 최대한 포함하십시오.
+- slot_catalog는 참고 목록이 아니라 exact membership의 기준입니다.
+  catalog가 비어 있거나 scenario/event에 언급된 좌표가 catalog에 없으면 그 좌표를 선택하지 마십시오.
+- parameter_slot_tasks[].limits.maxParameterSlots는 해당 task의 독립 selected slot 상한입니다.
+  다른 parameter task가 이 예산을 차감하지 않습니다.
   Step2는 "value를 얼마나 바꿀 수 있는지"를 판정하는 단계가 아닙니다.
   영향 강도가 약하거나 기간이 짧거나 최종 value가 basecase와 거의 같을 가능성이 있어도
   scenario/event/dimension 정보로 모델 input 좌표를 합리적으로 특정할 수 있으면 selected=true로 반환하십시오.
@@ -111,16 +109,15 @@ SLOT_PROPOSAL_SYSTEM = """\
   (1) scenario/event/dimension이 그 좌표를 명시적으로 지목했습니다.
   (2) scenario/event/dimension이 국가/지역/시설/기간/계약/route/에너지원 같은 slot 축을
       합리적으로 추론할 수 있는 정보를 제공합니다.
-  (3) basecase_slot_options 또는 semantic_axes의 예시 값 중 scenario/event의 국가/지역/시장/공급 경로와
+  (3) slot_catalog의 실제 leaf 중 scenario/event의 국가/지역/시장/공급 경로와
       의미상 대응되는 후보가 있습니다.
-  조건을 만족하는 좌표는 slot 수를 줄이기 위해 누락하지 말고 모두 포함하십시오.
-  basecase에 없더라도 scenario/event에 명확한 실제 모델 input 값은 추가할 수 있습니다.
-  이 상한은 목표치가 아니라 토큰/타임아웃 방지용 안전장치입니다.
-  상한에 가까워지면 명시적으로 지목된 좌표, 기간 안에 들어오는 좌표, basecase에 존재하는 좌표를 우선 선택하십시오.
+  조건을 만족하더라도 scenario/event와 직접 관련된 좌표만 선택하십시오.
+  LUT-only 좌표는 slot_catalog에 존재하면 선택할 수 있지만, 양쪽 source에 없는 좌표는 만들지 마십시오.
+  상한에 가까워지면 명시적으로 지목된 좌표와 영향이 직접적인 좌표를 우선 선택하십시오.
 
 입력 필드 역할:
-- Step2 slot 선택은 기존과 같이 scenario_brief, task별 selection_dimensions/supporting_dimensions,
-  basecase_slot_options를 우선 근거로 수행하십시오.
+- Step2 slot 선택은 scenario_brief, task별 selection_dimensions/supporting_dimensions,
+  slot_catalog를 우선 근거로 수행하십시오.
 - scenario_brief.scenario_group은 그룹 범위와 dimension_selected를 통해 slot 대상의 큰 범위를 파악하는 데 사용하십시오.
 - scenario_brief.scenario는 narrative/dimension_values/impact_jkm/impact_ttf/impact_hh를 통해
   이 scenario에서 실제로 영향을 받는 국가, 지역, 시설, 기간, 가격 방향을 해석하는 데 사용하십시오.
@@ -134,13 +131,13 @@ SLOT_PROPOSAL_SYSTEM = """\
 - semantic_axes는 해당 parameter의 slot 축, 축별 형식/예시, value 필드 형식을 설명하는 기준 정보입니다.
   Step2에서는 parameter_slot_tasks[].parameter.semantic_axes를 참고해 어떤 slot 축을 채워야 하는지,
   축 값이 어떤 형식이어야 하는지, basecase 예시 중 어떤 값이 scenario/event와 대응되는지 판단하십시오.
-  다만 slot_axes.axis_name은 allowed_slot_axes_field_names와 basecase_slot_options.axis_names를 우선하며,
+  다만 slot_axes.axis_name은 slot_catalog.key_axes와 allowed_slot_axes_field_names를 우선하며,
   semantic_axes는 허용되지 않은 축 이름을 새로 만들기 위한 근거가 아닙니다.
 - mapping_comment는 해당 scenario dimension에 의해 parameter가 선택된 경우의 추가 참고사항입니다.
   parameter_slot_tasks[].selection_dimensions[].mapping_comment를 dimension_value와 함께 참고해
   국가/지역/시설/route/기간 등 slot 대상의 해석을 보완하십시오.
 - parameter_hint와 mapping_comment는 후보 밖 parameter나 모호한 slot을 만들기 위한 근거가 아닙니다.
-  실제 slot_axes는 basecase_slot_options, allowed_slot_axes_field_names,
+  실제 slot_axes는 slot_catalog, allowed_slot_axes_field_names,
   명확한 scenario/event/dimension 정보 안에서만 정하십시오.
 - direct 또는 routing 후보로 들어온 parameter는 Step2에서 이미 검토 대상입니다.
   시나리오가 약한 충격, 일시적 충격, 발표 단계, 대체 공급 충분, basecase 유지 가능성처럼 보이더라도
@@ -160,7 +157,7 @@ SLOT_PROPOSAL_SYSTEM = """\
 - 이 외 metadata, 자연어 근거, 검토 플래그는 반환하지 마십시오.
   서버가 candidate_key 기준 metadata와 검증 경고를 보정합니다.
 - parameter_slot_tasks의 각 candidate_key를 독립적으로 검토하십시오.
-  여러 후보가 있으면 후보별로 basecase_slot_options.axis_names, axis_values, slot_hierarchy와
+  여러 후보가 있으면 후보별로 slot_catalog.key_axes, leaves[].fixed_axes, leaves[].available_periods와
   scenario/event/dimension의 국가, 지역, 시설, 계약, route, 기간 표현을 대조해
   선택 가능한 slot을 찾으십시오.
 - supporting_dimensions의 indirect 정보가 slot 축을 명확히 하는 경우 함께 사용하십시오.
@@ -173,12 +170,10 @@ SLOT_PROPOSAL_SYSTEM = """\
 - Step2에서는 value 변경 필요성, value 변경 폭, value 산정 가능성을 이유로 slot 선택을 제한하지 마십시오.
   정보가 부족해도 parameter의 허용 slot 축 중 국가/지역/시설/기간/에너지원 등 일부 축을
   scenario/event/basecase/semantic_axes로 합리적으로 채울 수 있으면 selected=true slot을 만드십시오.
-- slot_axes의 축 이름과 축 값은 basecase_slot_options의 axis_names, axis_values, slot_hierarchy를 우선 사용합니다.
-  axis_values의 시간축 값은 선택한 slot_hierarchy path와 조합할 수 있지만, 시간축 값끼리도
-  scenario/event/dimension의 기간 또는 현재 이후 전개 범위 안에서 합리적으로 대응되는 조합을 만드십시오.
-- slot_hierarchy에 있는 비시간축 값은 같은 path 안의 값만 함께 사용할 수 있습니다.
+- slot_axes의 축 이름과 축 값은 slot_catalog의 key_axes와 실제 leaf/period 조합만 사용합니다.
+- 같은 leaf에 기록된 available_periods만 함께 사용할 수 있습니다.
   서로 다른 path의 Country/Plant/Train/Region/Contract 같은 값을 섞어 Cartesian product를 만들지 마십시오.
-  상위 축 값만 명확하고 하위 축 값이 직접 명시되지 않아도, slot_hierarchy의 같은 leaf path로
+  상위 축 값만 명확하고 하위 축 값이 직접 명시되지 않아도, slot_catalog의 같은 leaf path로
   완성 가능한 후보가 있으면 selected=false로 빠지기보다 보수적인 leaf path를 선택하십시오.
   특히 mapping_comment/selection_dimensions/supporting_dimensions가 상대적 공급 후보, 대체 공급,
   영향을 받는 시장의 대표 공급/수요 좌표, 전원믹스의 Gas 우선 검토처럼 slot 보완 방향을 주면
@@ -186,20 +181,17 @@ SLOT_PROPOSAL_SYSTEM = """\
   완성된 slot을 만들 수 있습니다.
   이때 leaf path는 scenario/event/dimension 맥락상 설명 가능한 값이어야 하며,
   설명 가능성이 비슷한 후보가 너무 많으면 maxParameterSlots 안에서 가장 관련성이 높은 후보만 선택하십시오.
-  slot_hierarchy leaf path를 사용해 selected=true slot을 만들 때는 slot_hierarchy_axes에 있는 축을
+  slot_catalog leaf path를 사용해 selected=true slot을 만들 때는 key_axes에 있는 business-key 축을
   Country 같은 상위 축만으로 축약하지 말고, 선택한 leaf path의 모든 축 값을 slot_axes에 포함하십시오.
-  예: slot_hierarchy_axes가 ["Country","LNG Plant","LNG Plant Train","Life Cycle Category","Nameplate Capacity"]이면
-  selected=true slot_axes에도 이 다섯 축을 모두 넣습니다.
-- basecase_slot_options에 없어도 scenario/event에 명확히 명시된 모델 input 축 값은 사용할 수 있습니다.
-- basecase_slot_options가 비어 있거나 특정 축 값이 없다는 이유만으로 selected=false를 반환하지 마십시오.
-- basecase에 있는 축 값 중 scenario/event 의미와 일치하는 값을 먼저 선택하고,
-  basecase에 없는 값은 scenario/event가 명확히 지목한 실제 모델 input 값일 때만 추가하십시오.
-- scenario/event/dimension의 값이 basecase_slot_options.axis_values 또는 slot_hierarchy path에 정확히 존재하거나
-  명확하게 같은 의미의 모델 input 축 값으로 대응되면 selected=true slot으로 반환하십시오.
+  예: LiqUtilAdjustment key_axes가 ["Country","LNG Plant","LNG Plant Train","Year","Month"]이면
+  selected=true slot_axes에도 이 다섯 축을 모두 넣습니다. Period, Life Cycle Category,
+  Nameplate Capacity 같은 metadata_axes는 반환하지 마십시오. 서버가 exact reference에서 복원합니다.
+- slot_catalog에 없는 모델 input 축 값은 사용하지 마십시오.
+- scenario/event/dimension의 값이 slot_catalog의 leaf/period 조합에 정확히 존재하면 selected=true로 반환할 수 있습니다.
   다른 candidate의 slot이 더 명확하다는 이유만으로 현재 candidate의 명확한 slot을 누락하지 마십시오.
 - scenario/event/dimension에서 특정 국가, 지역, 설비, 계약, 기간이 여러 개 명확하면
   위 선택 조건을 만족하는 slot들은 모두 포함하십시오.
-  다만 시나리오와 직접 관련 없는 basecase_slot_options의 전체 국가/지역/설비/월 조합을
+  다만 시나리오와 직접 관련 없는 slot_catalog의 전체 국가/지역/설비/월 조합을
   단순 전수 열거하지는 마십시오. 시나리오가 여러 축 값을 각각 언급했더라도,
   그 축들의 Cartesian product를 자동 전개하지 말고 각 조합이 실제 영향 좌표로 명시되었거나
   모델 입력상 필요한 경우에만 조합을 만드십시오. 반대로 scenario가 명시적으로 지목했거나
@@ -211,8 +203,7 @@ SLOT_PROPOSAL_SYSTEM = """\
 - 기간이 여러 월/연도로 해석될 수 있어도 모델에 Year 또는 Period 축이 있으면
   시나리오 의미를 잃지 않는 범위에서 Year 또는 Period를 사용할 수 있습니다.
   월별 차이가 event/dimension에 명확하거나 월별 입력이 모델 정확도에 필요하면 충분한 Month slot을 전개하십시오.
-- basecase_slot_options.axis_names에 Year, Month, Period가 모두 있고 월 단위 slot을 선택하는 경우에는
-  Year와 Month만 반환하지 말고 해당 월에 대응되는 Period도 slot_axes에 포함하십시오.
+- Period가 해당 parameter의 key_axes일 때만 Period를 반환하십시오.
 - scenario dimension의 period/affected_period가 "1개월 이하", "3개월", "6개월"처럼 기간 길이를 명시하면
   period_resolution_policy의 current_year/current_month부터 그 기간에 포함되는 Year/Month/Period만 선택하십시오.
   모델에 Year 축만 있으면 해당 기간이 걸치는 연도만 선택하고,
@@ -222,7 +213,7 @@ SLOT_PROPOSAL_SYSTEM = """\
   예: allowed에 "Province Country"가 있으면 "Province", "Country"가 아니라 반드시 "Province Country"를 사용합니다.
 - 같은 candidate_key에서 selected=true인 parameter_slots는 모두 동일한 slot_axes.axis_name set을 사용하십시오.
   여러 값이 필요하면 같은 axis_name set으로 parameter_slots를 여러 개 반환하십시오.
-- selected=true slot 총수는 slot_selection_limits.maxParameterSlots를 넘기지 마십시오.
+- 각 candidate_key의 selected=true slot 수는 해당 task의 limits.maxParameterSlots를 넘기지 마십시오.
 - 해당 parameter가 scalar 입력이거나 축을 특정할 필요가 없으면 selected=true와 빈 slot_axes를 반환하십시오.
 - 기간 표현은 period_resolution_policy를 기준으로 Year/Month/Period로 변환합니다.
 - `YYYY-MM`, `YYYY년 M월`, `occurred_at`처럼 연월이 명확하고 현재 연월 이후이면 그대로 사용합니다.
@@ -251,19 +242,20 @@ VALUE_PROPOSAL_SYSTEM = """\
   slot별 최종 모델 입력 값을 제안합니다.
 - Step1 후보 parameter와 Step2 slot 축은 이미 제한되어 있습니다.
   후보 밖의 parameter, workbook, sheet, candidate_key를 만들지 마십시오.
-- basecase_value_groups는 Step2에서 선택된 slot 축에 매칭되는 현재 Base Case의 실제 설정값 record를
-  fixed_axes와 cells로 압축한 값입니다.
+- basecase_value_groups는 Step2에서 선택되고 서버의 exact membership 검증을 통과한 좌표별
+  단일 LLM 기준값을 fixed_axes와 cells로 압축한 값입니다.
   group.fixed_axes는 group.cells 전체에 공통으로 적용되는 좌표입니다.
   cell.axes는 Year/Month/Period 같은 시간축 좌표입니다.
   각 cell의 전체 좌표는 group.fixed_axes와 cell.axes를 합친 값입니다.
-  cell.basecase_value는 해당 좌표의 현재 기준값이고, cell.reference_id는 원본 basecase record id입니다.
-- basecase_value_groups는 단순 샘플이 아니라 현재 모델 입력 기준값입니다.
-  proposed_value는 반드시 해당 parameter의 basecase_value와 같은 단위/스케일/형식의 최종 입력값입니다.
-  basecase 대비 변화분, 변화율, 보정률, 승수, percent change를 proposed_value로 반환하지 마십시오.
-  basecase_value가 있고 scenario/event/dimension상 추가 조정이 없으면 proposed_value는 basecase_value와 같아야 합니다.
-  basecase_value가 없으면 parameter_hint/mapping_comment에서 같은 형식의 최종 입력값을 명확히 산정할 수 있을 때만
-  proposed_value를 반환하십시오.
-- basecase_value_groups의 cells는 실제 basecase record 목록입니다.
+  cell.llm_reference_value는 해당 좌표의 단일 기준값이고, cell.reference_id는 서버가 발급한 내부 reference id입니다.
+  actual basecase가 있으면 그 값을, 없고 LUT만 있으면 LUT default를 기준값으로 사용합니다.
+  두 source 값이나 provenance를 동시에 제공하지 않습니다.
+- basecase_value_groups는 단순 샘플이 아니라 선택 좌표의 authoritative LLM 기준값입니다.
+  proposed_value는 반드시 해당 parameter의 llm_reference_value와 같은 단위/스케일/형식의 최종 입력값입니다.
+  기준값 대비 변화분, 변화율, 보정률, 승수, percent change를 proposed_value로 반환하지 마십시오.
+  scenario/event/dimension상 추가 조정이 없으면 proposed_value는 llm_reference_value와 같아야 합니다.
+  selected slot에는 항상 exact reference가 제공됩니다. reference가 없는 새 좌표를 만들지 마십시오.
+- basecase_value_groups의 cells는 선택된 exact EffectiveReference 목록입니다.
   cells를 Cartesian product나 추가 hierarchy로 해석하지 마십시오.
 - supporting_dimensions에는 직접 input 후보가 아니지만 value 해석에 사용할 수 있는
   mapping_method=indirect dimension만 포함됩니다.
@@ -342,21 +334,23 @@ VALUE_PROPOSAL_SYSTEM = """\
 - selected_slots가 1개 이상 있는 parameter_value_task는 모든 selected_slots에 대해
   selected_slot 1개당 value_grid cell 1개를 반환하고 해당 요청 좌표의 최종 입력값을 산정하십시오.
   value_grid를 비워 두거나 proposed_value를 null로 두지 마십시오.
-- 정량 근거가 약하거나 basecase_value_groups가 비어 있어도, scenario/event/dimension의 방향·강도·기간과
-  parameter_hint/mapping_comment 제약 안에서 각 selected_slot에 대해 basecase와 같은 형식의
-  보수적인 최종 입력값을 산정하십시오.
+- 정량 근거가 약해도 제공된 단일 기준값과 scenario/event/dimension의 방향·강도·기간을 이용해
+  각 selected_slot에 대해 같은 형식의 보수적인 최종 입력값을 산정하십시오.
 - selected_slots가 여러 개이고 slot별 차이가 약해도 slot을 생략하거나 하나만 고르지 말고,
   같은 산정 원칙을 각 selected_slot 좌표에 반복 적용하십시오.
 - parameter_adjustments[].rationale_ko에는 해당 parameter를 선택한 이유와
   scenario dimension이 이 parameter와 연결되는 관계를 먼저 적습니다.
   이후에는 해당 parameter의 제안값 구조를 한두 문장으로만 요약하십시오.
   예: 상향/하향/유지 방향, 적용 기간/대상 범위, 배분 원칙, 상한/제약.
-  개별 slot/설비/국가/월/record명, basecase_value, proposed_value, reference_id,
+  개별 slot/설비/국가/월/record명, llm_reference_value, proposed_value, reference_id,
   정확한 환산량, 세부 산식, cell별 계산 과정은 parameter-level 근거에 쓰지 마십시오.
   그런 상세 slot/value 산정 근거는 value_grid[].rationale_ko에만 작성하십시오.
 - value_grid에는 slot별 coordinates, proposed_value, basecase_reference_ids, rationale_ko를 넣습니다.
 - value_grid.coordinates에는 실제 모델 input으로 넣을 수 있는 명확한 값만 넣습니다.
   미정, 후보, 추정, 또는(or), 일부, 대체 공급국, '?' 같은 모호한 값은 금지입니다.
+- value_grid.coordinates에는 selected slot의 business-key 축만 반환하십시오.
+  Period, Life Cycle Category, Nameplate Capacity처럼 task에서 좌표로 주지 않은 metadata는
+  만들지 마십시오. 서버가 exact reference에서 복원합니다.
 - basecase_value_groups의 cell을 사용해 value_grid를 만들 때 coordinates에는
   group.fixed_axes와 cell.axes를 합친 전체 좌표를 넣으십시오.
 - value_grid.coordinates의 Year/Month는 period_resolution_policy를 따라 확정합니다.
@@ -377,26 +371,15 @@ VALUE_PROPOSAL_SYSTEM = """\
   parameter 선택 이유나 dimension이 parameter를 선택하게 된 근거는 반복하지 마십시오.
   cell-level에서는 해당 좌표, 기준값, 제안값, 산정식/강도/기간 보정처럼
   그 cell 하나의 slot/value를 설명하는 데 필요한 상세만 작성하십시오.
-- basecase_value_groups를 사용했다면 value_grid.basecase_reference_ids에 cell.reference_id를 넣습니다.
-- basecase_value_groups에 일치 cell/basecase_value가 있으면 basecase_value를 현재 기준값으로 해석하고
+- basecase_value_groups를 사용했다면 호환 출력 필드인 value_grid.basecase_reference_ids에 cell.reference_id를 넣습니다.
+- basecase_value_groups에 일치 cell/llm_reference_value가 있으면 llm_reference_value를 현재 기준값으로 해석하고
   scenario/event/dimension value의 방향·강도·기간에 따라 그 기준값을 높이거나 낮춰
   최종 입력값을 proposed_value로 산정합니다. no-change/neutral이면 기준값을 유지하십시오.
-- selected slot과 일치하는 basecase_value가 없으면 basecase_value=null로 두십시오.
-  이때 basecase 부재를 0으로 해석하지 마십시오.
-  basecase_value_groups에 있는 같은 parameter의 다른 slot 값들은
-  단위·스케일·소수 자리·형식 확인용으로만 사용하십시오.
-  다른 국가/시설/좌표의 값을 현재 slot의 수치 수준(level) 기준값으로 삼지 마십시오.
-  특히 PMI 지수, 기온, 발전 비중처럼 국가·시설별 절대 수준이 서로 다른 parameter는
-  타 좌표 값 기반 기준값 산정을 금지합니다.
-  scenario/event/dimension과 parameter_hint/mapping_comment의 도메인 지식 범위에서
-  해당 좌표 자체의 타당한 기준 수준을 판단해 방향·강도·기간을 반영한
-  최종 proposed_value를 산정하고, 근거가 부족하면 value_grid[].rationale_ko에
-  불확실성을 명시하십시오.
-  no-change/neutral이면 해당 좌표 기준의 보수적 유지값을 사용하십시오.
-- basecase_value가 null이라는 이유만으로 selected=false를 반환하지 마십시오.
+- selected slot과 일치하는 기준값이 없다고 판단되면 임의의 다른 좌표 값을 사용하거나
+  nearest 좌표로 바꾸지 마십시오. 해당 cell을 만들지 마십시오.
 - 후보 parameter가 입력 가능한 것으로 판단되면 요청된 모든 selected_slots에 대해 명확한 value_grid를 반환하십시오.
 - 범위형 scenario dimension은 parameter의 최종 입력값 형식으로 변환 가능한 경우에만 proposed_value에 반영합니다.
-  예: basecase_value 1.0인 가동률에 5% 하향을 반영하면 proposed_value는 0.95입니다. proposed_value를 -0.05나 5로 반환하지 마십시오.
+  예: llm_reference_value 1.0인 가동률에 5% 하향을 반영하면 proposed_value는 0.95입니다. proposed_value를 -0.05나 5로 반환하지 마십시오.
 - 정성 값만 있어도 방향·강도·기간이 해석 가능하면 parameter_hint/mapping_comment 제약 안에서
   basecase와 같은 형식의 보수적인 최종 proposed_value로 변환하십시오.
 - 방향이나 강도 해석이 어렵더라도 selected_slots, scenario/event/dimension, parameter_hint,

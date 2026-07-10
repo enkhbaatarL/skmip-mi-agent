@@ -1,20 +1,11 @@
 from __future__ import annotations
 
+from datetime import date
 import re
 import time
-from datetime import date
 from typing import Any
 
-from apps.agents.model_parameter_agent.utils.basecase import (
-    basecase_slot_axis_names_from_candidate,
-    build_basecase_records,
-)
-from apps.agents.model_parameter_agent.utils.parameter_mapping import (
-    get_parameter_knowledge_base_from_resources,
-    ParameterKnowledgeBase,
-    match_parameter_candidates,
-    to_compact_json,
-)
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -32,15 +23,39 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     LLMValueProposalResponse,
     ParameterAdjustment,
     ParameterCandidateGroupDecision,
-    ParameterSlotProposal,
     ParameterSlotAxis,
+    ParameterSlotProposal,
     ParameterValueCell,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.utils.basecase import (
+    basecase_slot_axis_names_from_candidate,
+    build_basecase_records,
+)
+from apps.agents.model_parameter_agent.utils.lut import (
+    BasecaseIndex,
+    EffectiveReference,
+    LutLoadPolicy,
+    build_basecase_index,
+    build_slot_catalog,
+    get_lut_catalog,
+    get_parameter_spec_registry,
+    resolve_effective_reference,
+)
+from apps.agents.model_parameter_agent.utils.lut.models import (
+    CandidateSlotCatalog,
+    SlotCatalog,
+)
+from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    ParameterKnowledgeBase,
+    get_parameter_knowledge_base_from_resources,
+    match_parameter_candidates,
+    to_compact_json,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
+
 
 TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
 
@@ -49,6 +64,111 @@ def get_settings() -> Any:
     from apps.common.configs.config import get_settings as load_settings
 
     return load_settings()
+
+
+def _available_periods_for_prompt(
+    candidate: CandidateSlotCatalog,
+    periods: list[dict[str, int]],
+) -> list[dict[str, Any]]:
+    if candidate.time_axes == ("Year", "Month"):
+        months_by_year: dict[int, list[int]] = {}
+        for period in periods:
+            year = int(period["Year"])
+            month = int(period["Month"])
+            months = months_by_year.setdefault(year, [])
+            if month not in months:
+                months.append(month)
+        return [
+            {"Year": year, "Months": sorted(months)}
+            for year, months in sorted(months_by_year.items())
+        ]
+    return periods
+
+
+def _candidate_slot_catalog_for_prompt(
+    candidate: CandidateSlotCatalog,
+) -> dict[str, Any]:
+    leaves: list[dict[str, Any]] = []
+    for leaf in candidate.leaves:
+        periods = [dict(period.values) for period in leaf.available_periods]
+        leaves.append(
+            {
+                "fixed_axes": dict(leaf.axes),
+                "available_periods": _available_periods_for_prompt(
+                    candidate,
+                    periods,
+                ),
+            },
+        )
+    return {
+        "candidate_key": candidate.candidate_key,
+        "parameter_name": candidate.parameter_name,
+        "key_axes": list(candidate.key_axes),
+        "fixed_axis_names": list(candidate.non_time_axes),
+        "time_axis_names": list(candidate.time_axes),
+        "leaves": leaves,
+    }
+
+
+def _slot_catalog_for_prompt(slot_catalog: SlotCatalog) -> list[dict[str, Any]]:
+    return [
+        _candidate_slot_catalog_for_prompt(candidate)
+        for candidate in slot_catalog.candidates
+    ]
+
+
+def _slot_axis_rationale(slot: dict[str, Any], axis_name: str) -> str | None:
+    for axis in slot.get("slot_axes") or []:
+        if str(axis.get("axis_name") or "") == axis_name:
+            rationale = str(axis.get("rationale") or "").strip()
+            return rationale or None
+    return None
+
+
+def _effective_reference_to_state(reference: EffectiveReference) -> dict[str, Any]:
+    return {
+        "candidate_key": reference.candidate_key,
+        "parameter_name": reference.parameter_name,
+        "axes": dict(reference.axes),
+        "metadata": dict(reference.metadata),
+        "actual_basecase_value": reference.actual_basecase_value,
+        "lut_default_value": reference.lut_default_value,
+        "llm_reference_value": reference.llm_reference_value,
+        "effective_source": reference.effective_source,
+        "basecase_reference_id": reference.basecase_reference_id,
+        "lut_reference_id": reference.lut_reference_id,
+        "lut_version": reference.lut_version,
+        "diagnostics": list(reference.diagnostics),
+    }
+
+
+def _effective_reference_diagnostics(
+    references: list[dict[str, Any]],
+    *,
+    rejected_slot_count: int,
+) -> dict[str, Any]:
+    source_counts = {"basecase": 0, "lut": 0}
+    lut_only_count = 0
+    basecase_and_lut_count = 0
+    for reference in references:
+        source = str(reference.get("effective_source") or "")
+        if source in source_counts:
+            source_counts[source] += 1
+        if reference.get("actual_basecase_value") is None:
+            lut_only_count += 1
+        if (
+            reference.get("actual_basecase_value") is not None
+            and reference.get("lut_default_value") is not None
+        ):
+            basecase_and_lut_count += 1
+    return {
+        "selected_reference_count": len(references),
+        "rejected_exact_slot_count": rejected_slot_count,
+        "effective_source_counts": source_counts,
+        "lut_only_count": lut_only_count,
+        "basecase_and_lut_count": basecase_and_lut_count,
+        "references": references,
+    }
 
 
 def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
@@ -223,35 +343,229 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.candidate_mappings,
         state.scenario_context or {},
     )
+    cfg = get_settings()
+    policy = LutLoadPolicy(
+        start_year=cfg.model_parameter_lut_horizon_start_year,
+        end_year=cfg.model_parameter_lut_horizon_end_year,
+    )
+    registry = get_parameter_spec_registry()
+    lut_catalog = (
+        get_lut_catalog(policy, registry=registry)
+        if cfg.model_parameter_lut_enabled
+        else None
+    )
+    basecase_index = build_basecase_index(
+        records,
+        state.candidate_mappings,
+        policy=policy,
+        registry=registry,
+    )
+    slot_catalog = build_slot_catalog(basecase_index, lut_catalog)
+    lut_record_count_by_parameter: dict[str, int] = {}
+    if lut_catalog is not None:
+        for parameter_name in sorted(set(basecase_index.candidate_parameters.values())):
+            lut_record_count_by_parameter[parameter_name] = len(
+                lut_catalog.records_for_parameter(parameter_name),
+            )
+    basecase_record_count_by_candidate = {
+        candidate_key: len(basecase_index.records_for_candidate(candidate_key))
+        for candidate_key in basecase_index.candidate_parameters
+    }
+    slot_leaf_count_by_candidate = {
+        candidate.candidate_key: len(candidate.leaves)
+        for candidate in slot_catalog.candidates
+    }
     counts_by_candidate: dict[str, int] = {}
     for record in records:
         key = str(record.get("candidate_key") or "")
         counts_by_candidate[key] = counts_by_candidate.get(key, 0) + 1
     logger.info(
-        "[model-parameter] loaded basecase records | scenario_id={} record_count={} counts_by_candidate={} warning_count={}",
+        "[model-parameter] loaded reference sources | scenario_id={} basecase_record_count={} "
+        "counts_by_candidate={} lut_enabled={} lut_version={} slot_leaf_count={} warning_count={}",
         state.scenario_id,
         len(records),
         counts_by_candidate,
+        cfg.model_parameter_lut_enabled,
+        lut_catalog.version if lut_catalog is not None else None,
+        sum(len(candidate.leaves) for candidate in slot_catalog.candidates),
         len(warnings),
     )
     return {
-        "basecase_records": records,
+        # Full basecase/LUT rows are deliberately kept out of serialized graph state.
+        "basecase_records": [],
+        "basecase_index": basecase_index,
+        "slot_catalog": _slot_catalog_for_prompt(slot_catalog),
+        "effective_references": [],
+        "selected_slot_keys": [],
+        "lut_version": lut_catalog.version if lut_catalog is not None else None,
+        "resolved_config": {
+            "model_parameter_lut_enabled": cfg.model_parameter_lut_enabled,
+            "model_parameter_lut_horizon_start_year": policy.start_year,
+            "model_parameter_lut_horizon_end_year": policy.end_year,
+            "model_parameter_max_parameter_slots": cfg.model_parameter_max_parameter_slots,
+            "model_parameter_max_value_prompt_basecase_records": (
+                cfg.model_parameter_max_value_prompt_basecase_records
+            ),
+            "model_parameter_llm_stream_enabled": cfg.model_parameter_llm_stream_enabled,
+            "model_parameter_llm_reasoning_effort": cfg.model_parameter_llm_reasoning_effort,
+        },
+        "reference_diagnostics": {
+            "source": {
+                "basecase_record_count": len(basecase_index.records),
+                "basecase_record_count_by_candidate": basecase_record_count_by_candidate,
+                "lut_record_count": sum(lut_record_count_by_parameter.values()),
+                "lut_record_count_by_parameter": lut_record_count_by_parameter,
+                "slot_leaf_count": sum(slot_leaf_count_by_candidate.values()),
+                "slot_leaf_count_by_candidate": slot_leaf_count_by_candidate,
+            },
+        },
         "validation_warnings": [*state.validation_warnings, *warnings],
     }
 
 
 def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict[str, Any]:
+    if not isinstance(state.basecase_index, BasecaseIndex):
+        # Compatibility path for direct unit/local-tool calls created before the
+        # request-scoped exact index was introduced. The runnable graph always
+        # supplies BasecaseIndex through load_basecase_samples().
+        records = state.basecase_records or []
+        filtered = _filter_records_by_selected_slots(records, state.parameter_slots)
+        return {
+            "basecase_records": filtered,
+            "validation_warnings": state.validation_warnings,
+        }
+
+    cfg = get_settings()
+    policy = state.basecase_index.policy
+    registry = get_parameter_spec_registry()
+    lut_catalog = (
+        get_lut_catalog(policy, registry=registry)
+        if bool(state.resolved_config.get("model_parameter_lut_enabled"))
+        else None
+    )
+    effective_references: list[dict[str, Any]] = []
+    selected_slot_keys: list[dict[str, Any]] = []
+    patched_slots: list[dict[str, Any]] = []
+    warnings = list(state.validation_warnings)
+    counts_by_candidate: dict[str, int] = {}
+    rejected_exact_slot_count = 0
+    seen_selected_keys: set[tuple[str, str]] = set()
+
+    for raw_slot in state.parameter_slots:
+        slot = dict(raw_slot)
+        if slot.get("selected", True) is False:
+            patched_slots.append(slot)
+            continue
+        candidate_key = str(slot.get("candidate_key") or "")
+        coordinates = _coordinates_for_selected_slot(slot)
+        expected_axes = state.basecase_index.candidate_key_axes.get(candidate_key)
+        provided_axis_names = [
+            str(axis.get("axis_name") or "").strip()
+            for axis in slot.get("slot_axes") or []
+            if str(axis.get("axis_name") or "").strip()
+        ]
+        schema_matches = (
+            expected_axes is not None
+            and len(provided_axis_names) == len(expected_axes)
+            and set(provided_axis_names) == set(expected_axes)
+        )
+        if not schema_matches:
+            reference = None
+            warnings.append(
+                "Step2 selected slot의 axis schema가 canonical business key와 달라 "
+                f"제외했습니다: candidate={candidate_key}, expected={list(expected_axes or ())}, "
+                f"provided={provided_axis_names}",
+            )
+        else:
+            try:
+                reference = resolve_effective_reference(
+                    candidate_key,
+                    coordinates,
+                    state.basecase_index,
+                    lut_catalog,
+                )
+            except MIBaseError as exc:
+                reference = None
+                warnings.append(
+                    "Step2 selected slot의 canonical exact key가 유효하지 않아 제외했습니다: "
+                    f"candidate={candidate_key}, coordinates={to_compact_json(coordinates)}, "
+                    f"detail={exc}",
+                )
+        if reference is None:
+            slot["selected"] = False
+            slot["slot_axes"] = []
+            rejected_exact_slot_count += 1
+            warnings.append(
+                "Step2 selected slot이 활성 BasecaseIndex/LutCatalog exact union에 없어 "
+                f"제외했습니다: candidate={candidate_key}, coordinates={to_compact_json(coordinates)}",
+            )
+            patched_slots.append(slot)
+            continue
+
+        selected_key = (
+            candidate_key,
+            _canonical_coordinate_key(dict(reference.axes)),
+        )
+        if selected_key in seen_selected_keys:
+            slot["selected"] = False
+            slot["slot_axes"] = []
+            rejected_exact_slot_count += 1
+            warnings.append(
+                "Step2가 동일한 canonical exact slot을 중복 반환해 후속 항목을 "
+                f"제외했습니다: candidate={candidate_key}, coordinates={selected_key[1]}",
+            )
+            patched_slots.append(slot)
+            continue
+        seen_selected_keys.add(selected_key)
+
+        candidate_count = counts_by_candidate.get(candidate_key, 0) + 1
+        if candidate_count > cfg.model_parameter_max_value_prompt_basecase_records:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "selected exact references exceed the per-parameter Step3 limit: "
+                    f"candidate={candidate_key}, limit="
+                    f"{cfg.model_parameter_max_value_prompt_basecase_records}"
+                ),
+            )
+        counts_by_candidate[candidate_key] = candidate_count
+        canonical_axes = dict(reference.axes)
+        slot["slot_axes"] = [
+            {
+                "axis_name": axis_name,
+                "axis_value": axis_value,
+                "rationale": _slot_axis_rationale(slot, axis_name),
+            }
+            for axis_name, axis_value in canonical_axes.items()
+        ]
+        patched_slots.append(slot)
+        selected_slot_keys.append(
+            {"candidate_key": candidate_key, "axes": canonical_axes},
+        )
+        effective_references.append(_effective_reference_to_state(reference))
+
     records = state.basecase_records or []
-    filtered = _filter_records_by_selected_slots(records, state.parameter_slots)
     logger.info(
-        "[model-parameter] filtered basecase records by slots | scenario_id={} before_count={} after_count={}",
+        "[model-parameter] resolved exact selected references | scenario_id={} "
+        "selected_reference_count={} counts_by_candidate={} rejected_slot_count={}",
         state.scenario_id,
-        len(records),
-        len(filtered),
+        len(effective_references),
+        counts_by_candidate,
+        rejected_exact_slot_count,
     )
     return {
-        "basecase_records": filtered,
-        "validation_warnings": state.validation_warnings,
+        "basecase_records": records,
+        "parameter_slots": patched_slots,
+        "selected_slot_keys": selected_slot_keys,
+        "effective_references": effective_references,
+        "reference_diagnostics": {
+            **state.reference_diagnostics,
+            "selected_references": _effective_reference_diagnostics(
+                effective_references,
+                rejected_slot_count=rejected_exact_slot_count,
+            ),
+        },
+        "validation_warnings": warnings,
     }
 
 
@@ -292,11 +606,12 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
     if not selected_slots:
         return finalize_empty_parameter_values(state)
 
+    value_references = state.effective_references or state.basecase_records
     packet = _build_value_proposal_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
         state.parameter_slots,
-        state.basecase_records,
+        value_references,
         state.non_input_items,
     )
     messages = [
@@ -334,11 +649,11 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
         )
         raise
 
-    adjustments, validation_warnings = _sanitize_llm_adjustments(
+    adjustments, validation_warnings, cell_diagnostics = _sanitize_llm_adjustments(
         llm_payload.parameter_adjustments,
         state.candidate_mappings,
         state.parameter_slots,
-        state.basecase_records,
+        value_references,
     )
     llm_validation_warnings = list(
         getattr(llm_payload, "validation_warnings", []) or [],
@@ -361,6 +676,10 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
         ],
         "llm_usage": usage,
         "llm_calls": [*state.llm_calls, llm_call],
+        "reference_diagnostics": {
+            **state.reference_diagnostics,
+            "cell_validation": cell_diagnostics,
+        },
     }
 
 
@@ -371,17 +690,25 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
             "validation_warnings": state.validation_warnings,
         }
 
+    slot_catalog = state.slot_catalog or _legacy_slot_catalog_for_prompt(
+        state.candidate_mappings,
+        state.basecase_records,
+    )
     packet = _build_slot_proposal_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
-        state.basecase_records,
+        slot_catalog,
         state.non_input_items,
     )
     logger.info(
-        "[model-parameter] built basecase slot options | scenario_id={} candidate_count={} record_count={}",
+        "[model-parameter] built compact slot catalog prompt | scenario_id={} "
+        "candidate_count={} leaf_count={}",
         state.scenario_id,
         len(packet["parameter_slot_tasks"]),
-        len(state.basecase_records),
+        sum(
+            len((task.get("slot_catalog") or {}).get("leaves") or [])
+            for task in packet["parameter_slot_tasks"]
+        ),
     )
     messages = [
         {"role": "system", "content": SLOT_PROPOSAL_SYSTEM},
@@ -524,6 +851,12 @@ async def _invoke_structured(
         preference=ModelPreference.QUALITY,
         temperature=0.0,
         max_retries=cfg.llm_max_retries,
+        stream=getattr(cfg, "model_parameter_llm_stream_enabled", False),
+        reasoning_effort=getattr(
+            cfg,
+            "model_parameter_llm_reasoning_effort",
+            "default",
+        ),
     )
 
 
@@ -811,10 +1144,66 @@ def _build_candidate_validation_prompt_packet(
     }
 
 
+def _legacy_slot_catalog_for_prompt(
+    candidates: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build the new compact shape for older direct callers with raw rows."""
+    records_by_candidate: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        records_by_candidate.setdefault(
+            str(record.get("candidate_key") or ""),
+            [],
+        ).append(record)
+
+    catalogs: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_key = str(candidate.get("candidate_key") or "")
+        candidate_records = records_by_candidate.get(candidate_key, [])
+        key_axes: list[str] = []
+        for record in candidate_records:
+            for axis_name in (record.get("axes") or {}):
+                _append_unique_text(key_axes, axis_name)
+        non_time_axes = [axis for axis in key_axes if not _is_time_slot_axis(axis)]
+        time_axes = [axis for axis in key_axes if _is_time_slot_axis(axis)]
+        leaves_by_key: dict[str, dict[str, Any]] = {}
+        for record in candidate_records:
+            axes = record.get("axes") or {}
+            fixed_axes = {
+                axis_name: _slot_option_value(axes.get(axis_name))
+                for axis_name in non_time_axes
+            }
+            leaf_key = to_compact_json(fixed_axes)
+            leaf = leaves_by_key.setdefault(
+                leaf_key,
+                {"fixed_axes": fixed_axes, "available_periods": []},
+            )
+            period = {
+                axis_name: _slot_option_value(axes.get(axis_name))
+                for axis_name in time_axes
+            }
+            if period not in leaf["available_periods"]:
+                leaf["available_periods"].append(period)
+        catalogs.append(
+            {
+                "candidate_key": candidate_key,
+                "parameter_name": (
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                ),
+                "key_axes": key_axes,
+                "fixed_axis_names": non_time_axes,
+                "time_axis_names": time_axes,
+                "leaves": list(leaves_by_key.values()),
+            },
+        )
+    return catalogs
+
+
 def _build_slot_proposal_prompt_packet(
     scenario_context: dict[str, Any],
     candidates: list[dict[str, Any]],
-    basecase_records: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     cfg = get_settings()
@@ -829,15 +1218,16 @@ def _build_slot_proposal_prompt_packet(
         "period_resolution_policy": _compact_period_resolution_policy(),
         "slot_selection_limits": {
             "maxParameterSlots": cfg.model_parameter_max_parameter_slots,
+            "applicationScope": "independent_per_parameter_task",
             "priority": [
-                "값 변경 여부와 무관하게 scenario/event/dimension/basecase로 합리적으로 특정 가능한 slot",
-                "parameter_slot_tasks[].basecase_slot_options에 존재하고 scenario/event 의미와 일치하는 slot",
-                "basecase에는 없지만 scenario/event에 명확한 실제 모델 input slot",
+                "scenario/event/dimension과 직접 관련되고 task slot_catalog에 exact 존재하는 slot",
+                "LUT-only를 포함하되 active source에 실제 존재하는 slot",
+                "최대치를 채우지 말고 관련성이 높은 slot만 선택",
             ],
         },
         "parameter_slot_tasks": _build_parameter_slot_tasks(
             candidates,
-            basecase_records,
+            slot_catalog,
             non_input_items,
         ),
     }
@@ -878,7 +1268,7 @@ def _build_basecase_value_groups(records: list[dict[str, Any]]) -> list[dict[str
         group_key = to_compact_json(
             [
                 record.get("candidate_key"),
-                record.get("value_name"),
+                record.get("value_name") or record.get("parameter_name"),
                 fixed_axes,
             ],
         )
@@ -886,7 +1276,7 @@ def _build_basecase_value_groups(records: list[dict[str, Any]]) -> list[dict[str
             group_key,
             {
                 "candidate_key": record.get("candidate_key"),
-                "value_name": record.get("value_name"),
+                "value_name": record.get("value_name") or record.get("parameter_name"),
                 "fixed_axes": fixed_axes,
                 "variable_axis_names": [],
                 "cells": [],
@@ -896,9 +1286,21 @@ def _build_basecase_value_groups(records: list[dict[str, Any]]) -> list[dict[str
             _append_unique_text(group["variable_axis_names"], axis_name)
         group["cells"].append(
             {
-                "reference_id": record.get("reference_id"),
+                "reference_id": (
+                    record.get("basecase_reference_id")
+                    or record.get("lut_reference_id")
+                    or record.get("reference_id")
+                ),
                 "axes": cell_axes,
-                "basecase_value": record.get("value"),
+                (
+                    "llm_reference_value"
+                    if "llm_reference_value" in record
+                    else "basecase_value"
+                ): (
+                    record.get("llm_reference_value")
+                    if "llm_reference_value" in record
+                    else record.get("value")
+                ),
             },
         )
     return list(groups.values())
@@ -1184,7 +1586,11 @@ def _compact_period_resolution_policy() -> dict[str, Any]:
     }
 
 
-def _parameter_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+def _parameter_prompt_payload(
+    candidate: dict[str, Any],
+    *,
+    allowed_slot_axes: list[str] | None = None,
+) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
             "candidate_key": candidate.get("candidate_key"),
@@ -1194,34 +1600,61 @@ def _parameter_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
             ),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
-            "allowed_slot_axes_field_names": _allowed_slot_axes_field_names(candidate),
+            "allowed_slot_axes_field_names": (
+                allowed_slot_axes
+                if allowed_slot_axes is not None
+                else _allowed_slot_axes_field_names(candidate)
+            ),
         },
     )
 
 
 def _build_parameter_slot_tasks(
     candidates: list[dict[str, Any]],
-    basecase_records: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    basecase_options_by_key: dict[str, list[dict[str, Any]]] = {}
-    for option in _build_basecase_slot_options(basecase_records):
-        candidate_key = str(option.get("candidate_key") or "")
-        basecase_options_by_key.setdefault(candidate_key, []).append(
-            _strip_candidate_key_from_slot_option(option),
-        )
+    max_parameter_slots = get_settings().model_parameter_max_parameter_slots
+    catalog_by_key = {
+        str(candidate_catalog.get("candidate_key") or ""): {
+            key: value
+            for key, value in candidate_catalog.items()
+            if key != "candidate_key"
+        }
+        for candidate_catalog in slot_catalog
+    }
 
     tasks: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
+        candidate_catalog = catalog_by_key.get(
+            candidate_key,
+            {
+                "parameter_name": (
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                ),
+                "key_axes": _allowed_slot_axes_field_names(candidate),
+                "fixed_axis_names": [],
+                "time_axis_names": [],
+                "leaves": [],
+            },
+        )
         task = {
-            "parameter": _parameter_prompt_payload(candidate),
+            "parameter": _parameter_prompt_payload(
+                candidate,
+                allowed_slot_axes=list(candidate_catalog.get("key_axes") or []),
+            ),
+            "limits": {
+                "maxParameterSlots": max_parameter_slots,
+                "instruction": "관련된 slot만 선택하며 최대치를 채울 필요는 없음",
+            },
             "selection_dimensions": _selection_dimensions_for_task(candidate),
             "supporting_dimensions": _supporting_dimensions_for_task(
                 non_input_items,
                 candidate,
             ),
-            "basecase_slot_options": basecase_options_by_key.get(candidate_key, []),
+            "slot_catalog": candidate_catalog,
         }
         tasks.append(_drop_none_or_empty(task))
     return tasks
@@ -1233,6 +1666,7 @@ def _build_parameter_value_tasks(
     basecase_records: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    max_reference_records = get_settings().model_parameter_max_value_prompt_basecase_records
     selected_slots_by_key = _group_selected_slots_by_candidate(parameter_slots)
     basecase_groups_by_key: dict[str, list[dict[str, Any]]] = {}
     for group in _build_basecase_value_groups(basecase_records):
@@ -1245,14 +1679,19 @@ def _build_parameter_value_tasks(
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
         selected_slots = selected_slots_by_key.get(candidate_key, [])
+        selected_axis_names = _selected_slot_axis_names_for_task(selected_slots)
         task = {
             "parameter": _parameter_prompt_payload(candidate),
+            "limits": {
+                "maxReferenceRecords": max_reference_records,
+                "applicationScope": "independent_per_parameter_task",
+            },
             "selection_dimensions": _selection_dimensions_for_task(candidate),
             "supporting_dimensions": _supporting_dimensions_for_task(
                 non_input_items,
                 candidate,
             ),
-            "selected_slot_axes_field_names": _selected_slot_axis_names_for_task(selected_slots),
+            "selected_slot_axes_field_names": selected_axis_names,
             "selected_slots": [
                 _slot_for_value_task(slot)
                 for slot in selected_slots
@@ -1814,7 +2253,7 @@ def _sanitize_llm_slots(
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     sanitized: list[dict[str, Any]] = []
     warnings: list[str] = []
-    selected_slot_count = 0
+    selected_slot_count_by_candidate: dict[str, int] = {}
     for slot in slots:
         if slot.candidate_key not in candidate_by_key:
             warnings.append(
@@ -1838,10 +2277,11 @@ def _sanitize_llm_slots(
             sanitized.append(_parameter_slot_from_llm(patched))
             continue
         if slot.selected is not False:
-            selected_slot_count += 1
+            selected_slot_count = selected_slot_count_by_candidate.get(slot.candidate_key, 0) + 1
+            selected_slot_count_by_candidate[slot.candidate_key] = selected_slot_count
             if selected_slot_count > max_selected_slots:
                 reason = (
-                    "LLM이 slot_selection_limits.maxParameterSlots를 초과해 반환하여 "
+                    "LLM이 parameter task의 limits.maxParameterSlots를 초과해 반환하여 "
                     "초과 slot을 selected=false로 보정했습니다."
                 )
                 warnings.append(f"{reason}: {slot.candidate_key}")
@@ -1910,7 +2350,7 @@ def _slot_axes_for_candidate(slots: list[dict[str, Any]]) -> list[ParameterSlotA
             slot_axes.append(
                 ParameterSlotAxis(
                     axis_name=axis_name,
-                    axis_value=str(axis_value),
+                    axis_value=axis_value,
                 ),
             )
     return slot_axes
@@ -1930,8 +2370,7 @@ def _requested_slot_coordinates(slots: list[dict[str, Any]]) -> dict[str, dict[s
     requested: dict[str, dict[str, Any]] = {}
     for slot in slots:
         coordinates = _coordinates_for_selected_slot(slot)
-        if coordinates:
-            requested[_canonical_coordinate_key(coordinates)] = coordinates
+        requested[_canonical_coordinate_key(coordinates)] = coordinates
     return requested
 
 
@@ -2029,22 +2468,77 @@ def _parameter_value_cell_from_llm(cell: LLMValueCell) -> ParameterValueCell:
     )
 
 
+def _effective_references_by_candidate_and_coordinate(
+    records: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    indexed: dict[str, dict[str, dict[str, Any]]] = {}
+    for record in records:
+        if "llm_reference_value" not in record:
+            continue
+        candidate_key = str(record.get("candidate_key") or "")
+        coordinate_key = _canonical_coordinate_key(record.get("axes") or {})
+        candidate_records = indexed.setdefault(candidate_key, {})
+        if coordinate_key in candidate_records:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "selected EffectiveReference contains a duplicate exact coordinate: "
+                    f"candidate={candidate_key}, coordinates={coordinate_key}"
+                ),
+            )
+        candidate_records[coordinate_key] = record
+    return indexed
+
+
+def _materialize_effective_cell(
+    cell: ParameterValueCell,
+    reference: dict[str, Any],
+) -> ParameterValueCell:
+    coordinates = {
+        **cell.coordinates,
+        **(reference.get("metadata") or {}),
+    }
+    basecase_reference_id = reference.get("basecase_reference_id")
+    return cell.model_copy(
+        update={
+            "coordinates": coordinates,
+            "basecase_value": reference.get("actual_basecase_value"),
+            "basecase_reference_ids": (
+                [str(basecase_reference_id)]
+                if basecase_reference_id is not None
+                else []
+            ),
+        },
+    )
+
+
 def _sanitize_llm_adjustments(
     adjustments: list[LLMValueAdjustment],
     candidates: list[dict[str, Any]],
     slots: list[dict[str, Any]],
-    basecase_records: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
+    reference_records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
+    effective_by_candidate = _effective_references_by_candidate_and_coordinate(
+        reference_records,
+    )
     basecase_by_reference_id = {
         str(record["reference_id"]): record
-        for record in basecase_records
+        for record in reference_records
         if record.get("reference_id") is not None
     }
     sanitized: list[dict[str, Any]] = []
     warnings: list[str] = []
     returned_candidate_keys: set[str] = set()
+    diagnostics: dict[str, Any] = {
+        "selected_cell_count": 0,
+        "returned_cell_count": 0,
+        "valid_cell_count": 0,
+        "missing_cell_count": 0,
+        "invalid_cell_count": 0,
+        "by_candidate": {},
+    }
     for adjustment in adjustments:
         candidate = candidate_by_key.get(adjustment.candidate_key)
         if candidate is None:
@@ -2058,6 +2552,13 @@ def _sanitize_llm_adjustments(
         slot_axes = _slot_axes_for_candidate(selected_slots)
         requested_coordinates_by_key = _requested_slot_coordinates(selected_slots)
         returned_coordinate_keys: set[str] = set()
+        candidate_diagnostics = {
+            "selected_cell_count": len(requested_coordinates_by_key),
+            "returned_cell_count": len(adjustment.value_grid),
+            "valid_cell_count": 0,
+            "missing_cell_count": 0,
+            "invalid_cell_count": 0,
+        }
         slot_issues = _slot_axis_issues(slot_axes)
         if slot_issues:
             reason = (
@@ -2076,6 +2577,7 @@ def _sanitize_llm_adjustments(
                     f"cell을 제외했습니다: {', '.join(coordinate_issues)}"
                 )
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
+                candidate_diagnostics["invalid_cell_count"] += 1
                 continue
             coordinate_request_issues = _coordinate_request_issues(
                 cell.coordinates,
@@ -2087,6 +2589,7 @@ def _sanitize_llm_adjustments(
                     f"cell을 제외했습니다: {', '.join(coordinate_request_issues)}"
                 )
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
+                candidate_diagnostics["invalid_cell_count"] += 1
                 continue
             if cell.proposed_value is None:
                 reason = (
@@ -2094,12 +2597,31 @@ def _sanitize_llm_adjustments(
                     "cell을 제외했습니다. 범위형 dimension은 자동 변환해야 합니다."
                 )
                 warnings.append(f"{reason}: {adjustment.candidate_key}")
+                candidate_diagnostics["invalid_cell_count"] += 1
                 continue
-            patched_cell, patch_warning = _patch_basecase_value(cell, basecase_by_reference_id)
-            if patch_warning:
-                warnings.append(f"{patch_warning}: {adjustment.candidate_key}")
+            business_coordinate_key = _canonical_coordinate_key(cell.coordinates)
+            effective_reference = effective_by_candidate.get(
+                adjustment.candidate_key,
+                {},
+            ).get(business_coordinate_key)
+            if effective_by_candidate and effective_reference is None:
+                warnings.append(
+                    "Step3 응답 좌표에 대응하는 selected EffectiveReference가 없어 "
+                    f"cell을 제외했습니다: {adjustment.candidate_key}",
+                )
+                candidate_diagnostics["invalid_cell_count"] += 1
+                continue
+            if effective_reference is not None:
+                patched_cell = _materialize_effective_cell(cell, effective_reference)
+            else:
+                patched_cell, patch_warning = _patch_basecase_value(
+                    cell,
+                    basecase_by_reference_id,
+                )
+                if patch_warning:
+                    warnings.append(f"{patch_warning}: {adjustment.candidate_key}")
             value_grid.append(patched_cell)
-            returned_coordinate_keys.add(_canonical_coordinate_key(patched_cell.coordinates))
+            returned_coordinate_keys.add(business_coordinate_key)
 
         value_grid, slot_conflicts = _dedupe_value_grid_by_slot(value_grid)
         if slot_conflicts:
@@ -2109,6 +2631,7 @@ def _sanitize_llm_adjustments(
             )
             warnings.append(f"{reason}: {adjustment.candidate_key}")
             warnings.extend(f"{conflict}: {adjustment.candidate_key}" for conflict in slot_conflicts)
+            candidate_diagnostics["invalid_cell_count"] += len(slot_conflicts)
 
         missing_coordinate_keys = sorted(set(requested_coordinates_by_key) - returned_coordinate_keys)
         if missing_coordinate_keys:
@@ -2120,7 +2643,18 @@ def _sanitize_llm_adjustments(
                 "Step3 응답 value_grid에 요청 selected_slot 좌표가 누락되었습니다: "
                 f"{to_compact_json(missing_coordinates)}: {adjustment.candidate_key}",
             )
-            value_grid = []
+
+        candidate_diagnostics["valid_cell_count"] = len(value_grid)
+        candidate_diagnostics["missing_cell_count"] = len(missing_coordinate_keys)
+        diagnostics["by_candidate"][adjustment.candidate_key] = candidate_diagnostics
+        for field_name in (
+            "selected_cell_count",
+            "returned_cell_count",
+            "valid_cell_count",
+            "missing_cell_count",
+            "invalid_cell_count",
+        ):
+            diagnostics[field_name] += candidate_diagnostics[field_name]
 
         selected = bool(value_grid)
         if not selected:
@@ -2170,7 +2704,18 @@ def _sanitize_llm_adjustments(
             ).model_dump(),
         )
         warnings.append(f"{reason}: {candidate_key}")
-    return sanitized, warnings
+        missing_count = len(_requested_slot_coordinates(slots_by_key.get(candidate_key, [])))
+        candidate_diagnostics = {
+            "selected_cell_count": missing_count,
+            "returned_cell_count": 0,
+            "valid_cell_count": 0,
+            "missing_cell_count": missing_count,
+            "invalid_cell_count": 0,
+        }
+        diagnostics["by_candidate"][candidate_key] = candidate_diagnostics
+        diagnostics["selected_cell_count"] += missing_count
+        diagnostics["missing_cell_count"] += missing_count
+    return sanitized, warnings, diagnostics
 
 
 def _current_year_month() -> tuple[int, int]:

@@ -24,9 +24,9 @@
 | 3. Claude 대화형 설계 리뷰 | DONE | state/source/diagnostics/streaming 위험을 교차 검토하고 최종 구현 경계 확정 |
 | 4. 공통 connector stream/reasoning | DONE | 호출별 옵션, fresh-buffer retry, usage/trace 계약과 독립 테스트 완료 |
 | 5. 설정·YAML·typed LUT domain | DONE | 5개 adapter, immutable catalog/index, compact leaf/period와 실제 CSV count 검증 완료 |
-| 6. 단일 proposal pipeline 통합 | IN_PROGRESS | Step2 exact membership, EffectiveReference, Step3 partial 정책 연결 및 회귀 조정 중 |
-| 7. 운영 projection·sync diagnostics | PENDING | DB/운영 JSON 불변, sync-only 진단 노출 |
-| 8. 자동화·정적·성능 검증 | PENDING | 관련 pytest, contract, compile, ruff, diff check |
+| 6. 단일 proposal pipeline 통합 | DONE | 공통 source 구성, compact Step2, exact resolver, 단일 기준값 Step3 연결 완료 |
+| 7. 운영 projection·sync diagnostics | DONE | DB/운영 JSON 불변, sync-only provenance/cell 진단과 report 수집 완료 |
+| 8. 자동화·정적·성능 검증 | IN_PROGRESS | 신규 45개와 기존 contract 100개 통과, 전체 변경 범위 정적 검사 진행 중 |
 | 9. Claude 구현 리뷰·수정 | PENDING | diff/test 결과 교차 리뷰 후 최소 수정 |
 | 10. 대상 파라미터 5개 실제 테스트 | PENDING | 파라미터별 시나리오 1개, 통합 리포트, 실패 시 반복 수정 |
 | 11. 최종 문서·커밋 목록 정리 | PENDING | 최종 README와 본 진행 기록 동기화 |
@@ -55,7 +55,7 @@ poetry run pytest -q tests/automated/test_model_parameter_agent_contract.py
 - 운영 proposal DB와 `proposalParameters` JSON 구조는 변경하지 않는다.
 - actual basecase만 운영 `basecaseValue`에 저장한다.
 - LUT provenance와 cell 진단은 테스트용 sync 응답/state에만 둔다.
-- model-parameter router가 현재 `main.py`에서 주석 처리된 상태는 이번 작업에서 임의로 바꾸지 않는다.
+- 실제 실행 엔트리포인트는 `model_param.py`이며 model-parameter router가 등록돼 있다. 공용 `main.py`의 주석 상태는 이 Agent 실행 계약과 무관하므로 변경하지 않는다.
 
 ## 2. 비교 브랜치 선별 분석 — DONE
 
@@ -237,6 +237,43 @@ LLM 호출 전 읽기 전용으로 다섯 대상 scenario의 workbook record를 
 
 - exact duplicate/conflict나 metadata schema 오류는 발생하지 않았다.
 - LiqUtil 요청의 serialized compact payload는 full raw 21,656행을 넣지 않고 약 124KB였다(LUT disabled basecase-only 사전 측정).
+
+### 실행 엔트리포인트 정정
+
+- 구현 중 공용 `main.py`를 startup 연결 지점으로 잘못 판단했으나 사용자 확인으로 실제 엔트리포인트가 `model_param.py`임을 바로잡았다.
+- `main.py` 변경은 완전히 제거했으며, YAML 상시 검증과 enabled 시 catalog preload는 `model_param.py` lifespan에 연결했다.
+- `Dockerfile.model_param`이 배포 이미지에서 `model_param.py`를 `main.py`로 복사하는 실행 계약과 router 등록을 확인했다.
+- `MODEL_PARAMETER_AGENT_FLOW.md`와 project directory architecture의 엔트리포인트·LUT resource 흐름도 함께 갱신했다.
+
+## 8. 단일 proposal pipeline·운영 projection — DONE
+
+### 변경
+
+- `load_basecase_samples`가 flag와 무관하게 동일한 2026~2030 horizon의 request `BasecaseIndex`와 값 없는 compact `SlotCatalog`를 만든다.
+- flag=true일 때만 process `LutCatalog`를 source union에 넣고, false 또는 YAML 미등록 parameter는 basecase-only로 같은 pipeline을 계속 사용한다.
+- Step2 task에는 전체 leaf/leaf별 actual period catalog와 parameter별 독립 100 hard cap을 제공한다.
+- Step2 결과는 canonical business-key axis set과 exact membership을 검사하며 nearest/부분 key/중복 exact slot은 제외한다.
+- 선택된 exact key만 `EffectiveReference`로 state에 넣고 Step3에는 좌표당 `llm_reference_value` 숫자 하나만 제공한다.
+- Step3 reference 100 cap도 parameter task별로 적용하며, selected exact reference가 cap을 넘으면 조용히 자르지 않고 요청 오류로 실패한다.
+- Step3는 명시적 valid cell만 유지한다. 누락 cell을 생성하지 않고, 일부 누락/invalid 때문에 같은 candidate의 다른 valid cell을 폐기하지 않는다.
+- actual basecase가 있는 cell만 운영 `basecaseValue`에 값을 넣고 LUT-only는 `null`로 유지한다.
+- LiqUtil의 Period/Life Cycle/Nameplate Capacity는 exact reference metadata에서 서버가 복원하며 LLM business key에는 노출하지 않는다.
+- PowerMix는 source별 독립 cell로 유지하고 전체 vector 보완·합계 검증·정규화를 하지 않는다.
+- sync 테스트 응답의 optional `diagnostics`에 source/provenance/selected-valid-missing-invalid count를 제공하되 callback과 proposal DB JSON에는 넣지 않는다.
+
+### 자동화 검증
+
+```bash
+poetry run pytest -q \
+  tests/automated/test_model_parameter_lut_domain.py \
+  tests/automated/test_model_parameter_lut_pipeline.py \
+  tests/automated/test_model_parameter_report_scope.py
+poetry run pytest -q tests/automated/test_model_parameter_agent_contract.py
+```
+
+- 신규 domain/pipeline/report: `45 passed`
+- 기존 contract: `100 passed, 8 warnings`
+- 검증된 정책: source matrix, exact miss/no-nearest, basecase override/basecase-only/LUT-only, 독립 cap, single reference, partial/no-change, Liq metadata, PowerMix, state 직렬화, sync/callback 분리
 
 ## 다음 재개 지점
 

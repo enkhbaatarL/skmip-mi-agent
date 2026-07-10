@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
-import sys
-import types
 from datetime import date
+import json
 from pathlib import Path
-from types import SimpleNamespace
+import sys
 import tempfile
+import types
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -21,6 +21,13 @@ from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema impor
 from apps.agents.model_parameter_agent.flows.confirm_parameters.validation import (
     validate_confirmation_parameters,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters import flow as propose_flow, nodes as proposal_nodes
+from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
+    ProposeParametersAcceptedOut,
+    ProposeParametersData,
+    ProposeParametersIn,
+    ProposeParametersRequest,
+)
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     _callback_error_output,
     _callback_success_output,
@@ -29,8 +36,6 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     prepare_propose_parameters_callback,
     to_output,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters import flow as propose_flow
-from apps.agents.model_parameter_agent.flows.propose_parameters import nodes as proposal_nodes
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _build_basecase_value_groups,
@@ -45,19 +50,14 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     select_parameter_candidates,
     validate_parameter_candidates,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
     _has_mapping_candidates_from_db_rows,
 )
-from apps.agents.model_parameter_agent.utils.parameter_mapping import (
-    BasecaseProfile,
-    DEFAULT_BASECASE_DIR,
-    DEFAULT_INPUT_DIR,
-    get_parameter_knowledge_base,
-    get_parameter_knowledge_base_from_resources,
-    match_parameter_candidates,
-    ParameterKnowledgeBase,
+from apps.agents.model_parameter_agent.schemas.api.parameters import (
+    ModelParameterTarget,
+    ProposalParameter,
 )
-from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     LLMCandidateValidationResponse,
     LLMSlotAxis,
@@ -66,23 +66,22 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     LLMValueAdjustment,
     LLMValueCell,
     LLMValueProposalResponse,
+    ParameterAdjustment,
     ParameterCandidateGroupDecision,
     ParameterSlotAxis,
     ParameterSlotProposal,
-    ParameterAdjustment,
     ParameterValueCell,
 )
-from apps.agents.model_parameter_agent.schemas.api.parameters import (
-    ModelParameterTarget,
-    ProposalParameter,
+from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
+from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    DEFAULT_BASECASE_DIR,
+    DEFAULT_INPUT_DIR,
+    BasecaseProfile,
+    ParameterKnowledgeBase,
+    get_parameter_knowledge_base,
+    get_parameter_knowledge_base_from_resources,
+    match_parameter_candidates,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
-    ProposeParametersData,
-    ProposeParametersAcceptedOut,
-    ProposeParametersIn,
-    ProposeParametersRequest,
-)
-from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.common.exceptions.custom import MIBaseError
 
 
@@ -600,11 +599,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "Step1/Step1.5 candidate 결과가 없어" in result["validation_warnings"][0]
         assert "Step2 selected slot" not in result["validation_warnings"][0]
 
-    def test_main_registers_model_parameter_router(self) -> None:
-        main_source = Path("main.py").read_text()
+    def test_model_param_entrypoint_registers_router_and_lut_startup(self) -> None:
+        main_source = Path("model_param.py").read_text()
 
         assert "model_parameter_router" in main_source
         assert "app.include_router(" in main_source
+        assert "validate_lut_startup" in main_source
         assert "preload_parameter_knowledge_base" not in main_source
 
     def test_model_parameter_endpoint_accepts_optional_request_body(self) -> None:
@@ -3431,10 +3431,9 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert result["parameter_slots"][0]["candidate_key"] == "c1"
         assert captured_contents
         assert captured_system_contents
-        assert "basecase_slot_options는 충분한 후보 pool" in captured_system_contents[0]
-        assert "axis_values에는 Year/Month/Period 같은 시간축 후보 값만" in captured_system_contents[0]
-        assert "slot_hierarchy에는 시간축이 아닌 축들의 현재 Base Case 유효 path" in captured_system_contents[0]
-        assert "slot 수를 줄이기 위해 누락하지 말고 모두 포함" in captured_system_contents[0]
+        assert "slot_catalog는 활성 BasecaseIndex와 optional LutCatalog의 union" in captured_system_contents[0]
+        assert "leaves[].available_periods에 실제 존재하는 Year/Month 조합만" in captured_system_contents[0]
+        assert "limits.maxParameterSlots는 hard maximum" in captured_system_contents[0]
         assert "Step2는 \"value를 얼마나 바꿀 수 있는지\"를 판정하는 단계가 아닙니다" in captured_system_contents[0]
         assert "그 이유만으로 selected=false를 반환하지 마십시오" in captured_system_contents[0]
         assert "value 변경 필요성, value 변경 폭, value 산정 가능성을 이유로 slot 선택을 제한하지 마십시오" in captured_system_contents[0]
@@ -3442,10 +3441,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "Cartesian product를 자동 전개하지 말고" in captured_system_contents[0]
         assert "서로 다른 path의 Country/Plant/Train/Region/Contract 같은 값을 섞어" in captured_system_contents[0]
         assert '"타 공급국", "대체 공급", "인접 공급국"' in captured_system_contents[0]
-        assert "slot_hierarchy leaf path" in captured_system_contents[0]
-        assert "basecase leaf path와 semantic_axes 예시를 사용해" in captured_system_contents[0]
+        assert "slot_catalog leaf path" in captured_system_contents[0]
         assert "선택한 leaf path의 모든 축 값을 slot_axes에 포함" in captured_system_contents[0]
-        assert "해당 월에 대응되는 Period도 slot_axes에 포함" in captured_system_contents[0]
         assert "axis_combinations" not in captured_system_contents[0]
         assert "기간 길이를 명시하면" in captured_system_contents[0]
         assert "기간 밖의 future year" in captured_system_contents[0]
@@ -3479,28 +3476,27 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert task["parameter"] == {
             "candidate_key": "c1",
             "parameter_name": "LiqUtilAdjustment",
-            "allowed_slot_axes_field_names": [
-                "Country",
-                "LNG Plant",
-                "LNG Plant Train",
-                "Year",
-                "Month",
-                "Period",
-            ],
+            "allowed_slot_axes_field_names": ["Plant", "Year"],
         }
         assert "model_file" not in json.dumps(payload, ensure_ascii=False)
         assert "model_sheet" not in json.dumps(payload, ensure_ascii=False)
         assert "model_table" not in json.dumps(payload, ensure_ascii=False)
-        assert task["basecase_slot_options"] == [
-            {
-                "axis_names": ["Plant", "Year"],
-                "axis_values": {
-                    "Year": [2026, 2027],
+        assert task["slot_catalog"] == {
+            "parameter_name": "LiqUtilAdjustment",
+            "key_axes": ["Plant", "Year"],
+            "fixed_axis_names": ["Plant"],
+            "time_axis_names": ["Year"],
+            "leaves": [
+                {
+                    "fixed_axes": {"Plant": "Cameron"},
+                    "available_periods": [{"Year": 2026}],
                 },
-                "slot_hierarchy_axes": ["Plant"],
-                "slot_hierarchy": ["Cameron", "Sabine"],
-            },
-        ]
+                {
+                    "fixed_axes": {"Plant": "Sabine"},
+                    "available_periods": [{"Year": 2027}],
+                },
+            ],
+        }
         assert "cameron-2026-a" not in captured_contents[0]
         assert "sabine-2027" not in captured_contents[0]
         assert "axis_combinations" not in captured_contents[0]
@@ -4214,7 +4210,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             in captured_system_contents[0]
         )
         assert (
-            "각 selected_slot에 대해 basecase와 같은 형식의"
+            "각 selected_slot에 대해 같은 형식의"
             in captured_system_contents[0]
         )
         assert "보수적인 최종 입력값을 산정" in captured_system_contents[0]
@@ -4222,20 +4218,13 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "scenario/event/dimension value의 방향·강도·기간에 따라 그 기준값을 높이거나 낮춰"
             in captured_system_contents[0]
         )
+        assert "cell.llm_reference_value는 해당 좌표의 단일 기준값" in captured_system_contents[0]
+        assert "actual basecase가 있으면 그 값을, 없고 LUT만 있으면 LUT default" in captured_system_contents[0]
+        assert "두 source 값이나 provenance를 동시에 제공하지 않습니다" in captured_system_contents[0]
+        assert "선택된 exact EffectiveReference 목록" in captured_system_contents[0]
+        assert "서버가 exact reference에서 복원합니다" in captured_system_contents[0]
         assert (
-            "basecase 부재를 0으로 해석하지 마십시오"
-            in captured_system_contents[0]
-        )
-        assert (
-            "단위·스케일·소수 자리·형식 확인용으로만 사용"
-            in captured_system_contents[0]
-        )
-        assert (
-            "수치 수준(level) 기준값으로 삼지 마십시오"
-            in captured_system_contents[0]
-        )
-        assert (
-            "개별 slot/설비/국가/월/record명, basecase_value, proposed_value"
+            "개별 slot/설비/국가/월/record명, llm_reference_value, proposed_value"
             in captured_system_contents[0]
         )
         assert (
@@ -4697,7 +4686,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert any("요청 selected_slots에 없는 좌표" in warning for warning in result["validation_warnings"])
         assert any("요청 selected_slot 좌표가 누락" in warning for warning in result["validation_warnings"])
 
-    async def test_llm_value_sanitizer_rejects_partial_response_missing_requested_slots(self) -> None:
+    async def test_llm_value_sanitizer_keeps_valid_cells_from_partial_response(self) -> None:
         candidate = {
             "candidate_key": "c1",
             "model_file": "Demand",
@@ -4774,9 +4763,30 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_values(state)
 
         adjustment = result["parameter_adjustments"][0]
-        assert adjustment["selected"] is False
-        assert adjustment["value_grid"] == []
+        assert adjustment["selected"] is True
+        assert len(adjustment["value_grid"]) == 1
+        assert adjustment["value_grid"][0]["coordinates"] == {
+            "Region": "Asia",
+            "Year": 2026,
+            "Month": 7,
+        }
         assert any("요청 selected_slot 좌표가 누락" in warning for warning in result["validation_warnings"])
+        assert result["reference_diagnostics"]["cell_validation"] == {
+            "selected_cell_count": 2,
+            "returned_cell_count": 1,
+            "valid_cell_count": 1,
+            "missing_cell_count": 1,
+            "invalid_cell_count": 0,
+            "by_candidate": {
+                "c1": {
+                    "selected_cell_count": 2,
+                    "returned_cell_count": 1,
+                    "valid_cell_count": 1,
+                    "missing_cell_count": 1,
+                    "invalid_cell_count": 0,
+                },
+            },
+        }
 
     async def test_empty_llm_value_is_not_rule_backfilled(self) -> None:
         candidate = {

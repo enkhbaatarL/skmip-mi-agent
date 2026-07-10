@@ -329,6 +329,7 @@ def _to_response_data(
         scenario_group_id=scenario_group_id,
         event_id=event_id,
         proposal_parameters=proposal_parameters,
+        diagnostics=data.get("reference_diagnostics") or None,
     )
 
 

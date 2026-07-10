@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
-from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.common.configs.database.application_tables import (
     APPLICATION_TABLES,
     MODEL_PARAMETER_TABLES,
@@ -27,12 +26,31 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    from apps.agents.model_parameter_agent.utils.lut import (
+        LutLoadPolicy,
+        validate_lut_startup,
+    )
     from apps.common.configs.config import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
 
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+
+    lut_policy = LutLoadPolicy(
+        start_year=cfg.model_parameter_lut_horizon_start_year,
+        end_year=cfg.model_parameter_lut_horizon_end_year,
+    )
+    _, lut_catalog = await asyncio.to_thread(
+        validate_lut_startup,
+        cfg.model_parameter_lut_enabled,
+        lut_policy,
+    )
+    logger.info(
+        "Model Parameter LUT startup validation completed | enabled={} version={}",
+        cfg.model_parameter_lut_enabled,
+        lut_catalog.version if lut_catalog is not None else None,
+    )
 
     logger.info("Validating ORM models against the database schema")
     await asyncio.to_thread(
@@ -48,7 +66,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             logger.info("Callback OAuth2 token pre-fetched successfully")
         except Exception:
             logger.exception(
-                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token"
+                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token",
             )
     else:
         logger.error("callback_oauth2_token_url not configured, skipping token pre-fetch")
