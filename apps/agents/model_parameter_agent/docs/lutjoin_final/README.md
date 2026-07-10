@@ -115,7 +115,7 @@ Claude 브랜치의 아래 문서는 Codex 문서와 내용이 동일한 파일�
 | slot universe cap | full universe 유지하지만 state 비대 | 40,000건 초과분 삭제 | raw cap 금지 |
 | metadata 처리 | LiqUtil에 한정한 hidden-axis 복원 | 모든 parameter에서 Period/Lifecycle/Nameplate 제외 | parameter spec 기반으로 제한적 일반화 |
 | 없는 시점 처리 | 가장 가까운 Year/Month로 실제 slot 변경 | 원 slot을 유지하나 unresolved 값도 통과 가능 | exact-only가 기본. nearest는 별도 review 참고값 |
-| LLM 누락 처리 | 현재값 유지 cell로 자동 성공 보정 | candidate 전체를 비선택 처리 | 재시도 후 incomplete/review 처리 |
+| LLM 누락 처리 | 현재값 유지 cell로 자동 성공 보정 | candidate 전체를 비선택 처리 | LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지. 누락 cell 자동 생성 및 candidate 전체 폐기 금지 |
 | slot/reference 상한 | Step2 selected slot 100, Step3 reference 100을 전체 parameter가 공유 | Step2 코드 기본 20이나 YAML/K8s 100, Step3 reference 100을 공유 | 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task에 동일 적용. 최대치일 뿐 채워야 할 목표 수가 아님 |
 | streaming | 호출별 옵션, model parameter에서 명시 | 모든 structured output에 전역 적용 | Codex 방식 |
 | 기능 rollback | LUT 전용 flag 없음 | model_parameter_lut_enabled 제공 | off/shadow/on 3단계로 확장 |
@@ -237,10 +237,11 @@ Claude는 반대로 한 cell 누락 시 candidate 전체를 비선택으로 만�
 
 권고:
 
-- 우선 동일 요청 재시도
-- 계속 누락되면 incomplete 또는 review_required
-- fallback을 사용한다면 generated_by=server_fallback과 fallback_reason을 구조적으로 보존
-- 자동 적용 대상에서는 제외
+- LLM이 명시적으로 반환한 각 cell을 독립적으로 좌표·형식 검증
+- 검증을 통과한 cell만 그대로 사용
+- 반환되지 않은 cell을 기준값으로 자동 생성하지 않음
+- 일부 cell이 누락됐다는 이유로 같은 candidate의 다른 유효 cell까지 폐기하지 않음
+- 누락 수는 내부 sync/test 진단값과 metric으로만 관찰 가능
 
 ### P1-3. basecaseValue API 의미 변경
 
@@ -549,7 +550,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-03 | effective 기준값 우선순위와 API provenance | DECIDED | 내부에서 basecase/LUT 모두 관리. LLM에는 basecase 우선·없으면 LUT인 단일 값만 전달. 운영 basecaseValue는 실제 basecase만 저장하며 LUT-only는 null. sync API는 양쪽 반환 가능 |
 | D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | DECIDED | 전체 compact catalog 제공, 관련성 선택은 LLM 담당. 명시적 no-change 저장, 누락 자동 보완 금지. 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter의 Step2/Step3 task와 prompt에 동일 적용 |
-| D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
+| D-06 | Step3 LLM 역할과 partial fallback | DECIDED | LLM이 명시적으로 반환하고 서버 검증을 통과한 cell만 사용. 누락 cell 자동 생성 금지, 일부 누락을 이유로 candidate 전체 폐기 금지 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
 | D-08 | metadata 축 복원의 적용 범위 | PENDING | 미정 |
 | D-09 | feature rollout과 streaming 설정 | PENDING | 미정 |
@@ -775,7 +776,7 @@ LLM prompt cell 초안:
 - 운영 proposal API snapshot이 기존 구조와 동일한지 확인
 - sync API에서만 basecase/LUT 양쪽 검증값을 반환하는지 확인
 
-### 14.5 D-05 진행 중 — 전체 compact catalog와 LLM 관련성 판단
+### 14.5 D-05 확정 — 전체 compact catalog와 LLM 관련성 판단
 
 확정된 내용:
 
@@ -895,6 +896,29 @@ Claude 현재 기준과 관계:
 - LLM 입력 기준값 0.42, 해당 좌표 응답 자체가 없음: 서버가 0.42 cell을 생성하지 않음
 - 내부 sync/test 결과에서는 selected slot 대비 LLM 응답 누락 수를 별도 진단값으로 반환 가능
 
+### 14.6 D-06 확정 — Step3 partial 응답 처리
+
+Codex 현재 기준과 차이:
+
+- Codex는 Step3가 누락한 cell 또는 candidate를 effective 기준값의 no-change proposal로 자동 생성할 수 있다.
+- 최종안은 이 fallback을 사용하지 않는다. LLM이 값을 주지 않은 좌표에는 운영 proposal cell을 만들지 않는다.
+
+Claude 현재 기준과 차이:
+
+- Claude는 selected slot 중 하나라도 누락되면 같은 candidate의 value_grid 전체를 비워 명시적으로 반환된 유효값까지 잃을 수 있다.
+- 최종안은 candidate 전체를 일괄 폐기하지 않고 각 cell을 독립적으로 검증한다.
+
+확정 처리:
+
+1. Step3 응답에 명시된 cell만 canonical coordinate와 value schema를 검증한다.
+2. 검증을 통과한 cell은 LLM이 준 proposedValue 그대로 사용한다.
+3. 응답에 없는 selected slot은 생성하거나 기준값으로 채우지 않는다.
+4. 일부 slot이 누락돼도 같은 candidate에서 검증을 통과한 다른 cell은 유지한다.
+5. 명시적으로 반환된 proposedValue가 기준값과 같아도 유효한 no-change proposal로 유지한다.
+6. selected slot 수, valid response cell 수, missing/invalid cell 수는 내부 sync/test 응답과 metric에서 진단할 수 있다.
+
+이 결정은 cell 단위 일반 정책이다. PowerMix처럼 여러 cell이 하나의 원자적 제약을 구성하는 경우의 저장 단위는 D-07에서 별도로 결정한다.
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
@@ -911,7 +935,7 @@ Claude 현재 기준과 관계:
 
 ## 16. 다음 인터뷰 항목
 
-D-06: Step3가 일부 slot에 대해서만 유효한 값을 반환했을 때 유효한 partial cell을 저장할지, candidate 전체를 제외할지 결정한다.
+D-07: PowerMix의 동일 Country/Year 전체 energy source 합계가 1이어야 하는 제약을 서버가 어떻게 보장할지 결정한다.
 
 ## 17. 변경 이력
 
@@ -929,3 +953,4 @@ D-06: Step3가 일부 slot에 대해서만 유효한 값을 반환했을 때 유
 | 2026-07-10 | D-05 제한 구조 초안: Step2 slot과 Step3 reference 상한을 parameter별 config와 task별 prompt 제한으로 검토 |
 | 2026-07-10 | D-05 제한값 검토: GDP부터 100/100 적용 결정 |
 | 2026-07-10 | D-05 완료: parameter별 map 없이 기존 전역 설정 2개를 100/100으로 유지하고 각 parameter task/prompt에 동일 적용 |
+| 2026-07-10 | D-06 완료: LLM이 명시적으로 반환하고 검증을 통과한 cell만 유지하며 누락 자동 보완과 candidate 전체 폐기를 모두 금지 |
