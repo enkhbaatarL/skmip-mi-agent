@@ -540,7 +540,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 
 | ID | 결정 항목 | 상태 | 확정 내용 |
 |---|---|---|---|
-| D-01 | LUT-only slot 허용 범위 | PENDING | 미정 |
+| D-01 | LUT-only slot 허용 범위 | DECIDED | 5개 parameter 모두 LUT-only slot 허용. basecase 부재는 제외 사유가 아니며, scenario/event 관련성이 있으면 선택 가능 |
 | D-02 | slot universe와 horizon 정책 | PENDING | 미정 |
 | D-03 | effective 기준값 우선순위와 API provenance | PENDING | 미정 |
 | D-04 | exact reference 부재와 nearest 처리 | PENDING | 미정 |
@@ -551,24 +551,98 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-09 | feature rollout과 streaming 설정 | PENDING | 미정 |
 | D-10 | 실제 구현 기반 브랜치와 머지 순서 | PENDING | 미정 |
 
+### 14.1 D-01 확정 — LUT-only slot 허용 범위
+
+확정 내용:
+
+- GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment 모두 LUT-only slot을 실제 proposal 대상으로 허용한다.
+- basecase에 좌표가 없다는 이유만으로 slot을 제외하지 않는다.
+- scenario/event 정보와 의미적으로 관련된 LUT slot이면 Step2에서 선택될 수 있어야 한다.
+- LiqUtilAdjustment도 basecase 기존 Train으로 제한하지 않고 LUT에 있는 유효 Train을 선택할 수 있다.
+- 같은 좌표에 basecase와 LUT가 모두 있는 경우의 value 우선순위와 외부 API 표현은 D-03에서 확정한다.
+
+Codex 현재 기준:
+
+- basecase와 LUT의 union을 Step2 후보로 사용해 LUT-only slot을 허용한다.
+- non-Liq parameter는 비시간축 조합과 시간축 값을 compact record로 분리한다.
+- LiqUtil은 Country/Plant/Train hierarchy와 전체 Year/Month 후보를 따로 제공한다.
+- 일반 slot sanitizer는 candidate, 모호한 값, 개수 상한을 확인하지만 최종 exact 좌표가 LUT/basecase에 존재하는지는 검사하지 않는다.
+- LiqUtil exact 시점이 없으면 가장 가까운 reference 시점으로 slot 자체를 바꿀 수 있다.
+
+Claude 현재 기준:
+
+- basecase와 LUT를 먼저 effective record로 합쳐 LUT-only slot을 허용한다.
+- LUT record는 기본 2024~2031 horizon을 적용한다.
+- 비시간 hierarchy와 전체 record의 Year/Month distinct 목록을 분리해 제공한다.
+- metadata 축은 서버가 보정하지만 Step2 결과의 exact LUT/basecase membership 검사는 없다.
+- 최종 테스트 리포트에서도 LiqUtil 일부 좌표는 basecase와 LUT 양쪽 reference가 없는 상태로 통과했다.
+
+이 결정에서 말하는 서버 검증은 관련성을 서버가 대신 판단하거나 basecase-only로 제한한다는 의미가 아니다.
+LLM이 scenario/event를 해석해 선택한 결과가 실제 모델 입력으로 적용 가능한 좌표인지 확인하는 방어 단계다.
+
+#### 조합 오류가 발생하는 경우
+
+조합 오류는 각 axis 값이 개별적으로는 유효하지만, 합쳐진 하나의 slot key가 실제 record로 존재하지 않을 때 발생한다.
+
+대표적인 발생 경로:
+
+1. hierarchy path 혼합
+   - LUT에는 Canada + Plant A + Train A와 Qatar + Plant B + Train B가 각각 존재한다.
+   - LLM이 Canada + Plant A + Train B처럼 서로 다른 path의 값을 섞는다.
+2. leaf와 전역 시간축의 Cartesian 조합
+   - 특정 planned Train은 2027년 이후 record만 존재한다.
+   - Step2에는 전체 LiqUtil의 Year 목록 2024~2031이 별도로 제공된다.
+   - LLM이 해당 Train과 2025년을 결합하면 각 값은 후보 목록에 있지만 완성 좌표는 존재하지 않는다.
+3. metadata 불일치
+   - Country/Plant/Train/Year/Month는 맞지만 LLM이 Period, Life Cycle, Nameplate Capacity를 다른 record 값으로 채운다.
+   - 실제 Claude 보정 과정에서도 LLM Period 112를 record Period 103으로 고치는 사례가 있었다.
+4. 축 이름 또는 단위 alias 불일치
+   - Nameplate Capacity와 Nameplate Capacity (MTPA)가 같은 축으로 정렬되지 않으면 동일한 논리 좌표가 별도 좌표처럼 보이거나 merge되지 않는다.
+5. prompt에서 event-explicit 신규 좌표를 허용
+   - 현재 prompt는 basecase option에 없어도 scenario/event에 명시된 실제 model input이면 만들 수 있도록 허용한다.
+   - 해당 좌표가 LUT에도 없으면 기준값과 authoritative metadata가 없는 proposal이 된다.
+
+예를 들어 Rio Grande LNG T5가 2027-01부터만 LUT에 있는데 LLM이 2026-09를 선택하면 Train과 Year, Month는 각각 알려진 값이어도 Rio Grande LNG T5 + 2026-09 record는 없다. Codex는 이런 경우 2027-01로 좌표를 이동시킬 수 있고, Claude는 reference가 없는 원 좌표를 유지할 수 있다. 최종안은 둘 다 그대로 채택하지 않고 exact 검증 후 unresolved/review 정책을 적용하는 방향을 검토한다.
+
+서버 검증 범위 초안:
+
+1. candidate와 parameter가 Step1에서 허용된 대상인지 확인한다.
+2. axis 이름과 타입을 DB/LUT canonical spec으로 정규화한다.
+3. Country, Plant, Train, Energy Source 같은 값의 조합이 basecase 또는 LUT에 실제 존재하는지 exact key로 확인한다.
+4. Year/Month가 해당 leaf path에서 실제 사용 가능한 기간인지 확인한다.
+5. LiqUtil의 Closed lifecycle 제외 등 parameter별 적용 가능 조건을 확인한다.
+6. 유효한 LUT-only 좌표이면 LUT default를 reference로 연결하고 metadata를 서버에서 복원한다.
+
+예시:
+
+- basecase에 없는 Japan + 2026 + Coal PowerMix 좌표가 LUT에 있고 사건과 관련됨: 허용
+- LUT에 각각 존재하는 Canada Plant와 Qatar Train을 LLM이 잘못 조합함: 거부 또는 review
+- LUT Train은 존재하지만 선택 Year/Month에는 아직 유효하지 않음: 그대로 적용하지 않고 review
+
+basecase와 LUT 양쪽에 모두 없는 event-explicit 좌표를 자동 proposal로 허용할지는 D-04에서 별도로 결정한다.
+
 ## 15. 인터뷰 진행 원칙
 
 각 결정은 다음 순서로 진행한다.
 
-1. 두 구현의 차이 설명
-2. 운영·정확성·성능 trade-off 설명
-3. 권장안 제시
-4. 사용자 결정 확인
-5. 본 문서의 의사결정 로그와 관련 설계 문단 수정
+1. Codex 브랜치의 현재 기준과 동작 설명
+2. Claude 브랜치의 현재 기준과 동작 설명
+3. 두 구현의 차이 설명
+4. 운영·정확성·성능 trade-off 설명
+5. 권장안 제시
+6. 사용자 결정 확인
+7. 본 문서의 의사결정 로그와 관련 설계 문단 수정
 
 한 번에 한 항목만 결정한다.
 
 ## 16. 다음 인터뷰 항목
 
-D-01: LUT-only slot을 5개 parameter 모두 실제 proposal 대상으로 허용할지, LiqUtil 등 일부 parameter를 제한할지 결정한다.
+D-02: slot universe와 horizon을 고정 2024~2031로 제한할지, 모델 지원 기간과 scenario/event 기간을 기준으로 동적으로 조회할지 결정한다.
 
 ## 17. 변경 이력
 
 | 일시 | 변경 내용 |
 |---|---|
 | 2026-07-10 | 두 브랜치 전체 비교, 독립 측정, 테스트 결과, 구조 초안과 인터뷰 로그 최초 작성 |
+| 2026-07-10 | D-01 확정: 5개 parameter 모두 scenario/event 관련 LUT-only slot 선택 허용, 서버 검증 의미 명시 |
+| 2026-07-10 | 인터뷰 형식에 Codex/Claude 현재 기준을 추가하고 D-01 조합 오류 발생 조건과 예시 보강 |
