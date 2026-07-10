@@ -543,7 +543,7 @@ Codex 문서는 최종 cleanup 이후 자동화 테스트는 재실행했지만 
 | D-01 | LUT-only slot 허용 범위 | DECIDED | 5개 parameter 모두 LUT-only slot 허용. basecase 부재는 제외 사유가 아니며, scenario/event 관련성이 있으면 선택 가능 |
 | D-02 | slot universe와 horizon 정책 | PENDING | 미정 |
 | D-03 | effective 기준값 우선순위와 API provenance | PENDING | 미정 |
-| D-04 | exact reference 부재와 nearest 처리 | PENDING | 미정 |
+| D-04 | exact reference 부재와 nearest 처리 | DECIDED | basecase와 LUT 양쪽에 exact business-key 조합이 없으면 최종 proposal에서 제외. nearest 좌표 자동 치환 금지 |
 | D-05 | scenario prefilter, ranking, slot cap | PENDING | 미정 |
 | D-06 | Step3 LLM 역할과 partial fallback | PENDING | 미정 |
 | D-07 | PowerMix 등 parameter별 invariant 처리 | PENDING | 미정 |
@@ -602,7 +602,7 @@ LLM이 scenario/event를 해석해 선택한 결과가 실제 모델 입력으�
    - 현재 prompt는 basecase option에 없어도 scenario/event에 명시된 실제 model input이면 만들 수 있도록 허용한다.
    - 해당 좌표가 LUT에도 없으면 기준값과 authoritative metadata가 없는 proposal이 된다.
 
-예를 들어 Rio Grande LNG T5가 2027-01부터만 LUT에 있는데 LLM이 2026-09를 선택하면 Train과 Year, Month는 각각 알려진 값이어도 Rio Grande LNG T5 + 2026-09 record는 없다. Codex는 이런 경우 2027-01로 좌표를 이동시킬 수 있고, Claude는 reference가 없는 원 좌표를 유지할 수 있다. 최종안은 둘 다 그대로 채택하지 않고 exact 검증 후 unresolved/review 정책을 적용하는 방향을 검토한다.
+예를 들어 Rio Grande LNG T5가 2027-01부터만 LUT에 있는데 LLM이 2026-09를 선택하면 Train과 Year, Month는 각각 알려진 값이어도 Rio Grande LNG T5 + 2026-09 record는 없다. Codex는 이런 경우 2027-01로 좌표를 이동시킬 수 있고, Claude는 reference가 없는 원 좌표를 유지할 수 있다. 최종안에서는 해당 slot을 최종 proposal에서 제외한다.
 
 서버 검증 범위 초안:
 
@@ -616,10 +616,42 @@ LLM이 scenario/event를 해석해 선택한 결과가 실제 모델 입력으�
 예시:
 
 - basecase에 없는 Japan + 2026 + Coal PowerMix 좌표가 LUT에 있고 사건과 관련됨: 허용
-- LUT에 각각 존재하는 Canada Plant와 Qatar Train을 LLM이 잘못 조합함: 거부 또는 review
-- LUT Train은 존재하지만 선택 Year/Month에는 아직 유효하지 않음: 그대로 적용하지 않고 review
+- LUT에 각각 존재하는 Canada Plant와 Qatar Train을 LLM이 잘못 조합함: 최종 proposal에서 제외
+- LUT Train은 존재하지만 선택 Year/Month에는 아직 유효하지 않음: 최종 proposal에서 제외
 
-basecase와 LUT 양쪽에 모두 없는 event-explicit 좌표를 자동 proposal로 허용할지는 D-04에서 별도로 결정한다.
+basecase와 LUT 양쪽에 모두 없는 event-explicit 좌표도 최종 proposal에서는 제외한다.
+
+### 14.2 D-04 확정 — exact 조합 부재와 nearest 처리
+
+확정 내용:
+
+- parameter별 business key로 만든 exact 조합이 basecase와 LUT 양쪽에 없으면 최종 proposal에서 제외한다.
+- scenario/event에 명시된 좌표라도 basecase와 LUT 양쪽에 authoritative record가 없으면 자동 proposal로 만들지 않는다.
+- exact reference가 없다는 이유로 가까운 Year/Month, 다른 Plant/Train, 다른 국가 좌표로 자동 치환하지 않는다.
+- 제외된 slot은 validation warning과 metric에는 남기되 API/DB의 최종 proposal value에는 포함하지 않는다.
+- 한 candidate의 모든 selected slot이 제외되면 해당 candidate의 최종 selected는 false로 처리한다.
+
+Codex 현재 기준과 차이:
+
+- Codex는 일반 slot sanitizer에서 exact union membership을 검사하지 않는다.
+- LiqUtil은 exact reference가 없을 때 가장 가까운 month/year record를 선택해 원래 slot 좌표를 변경할 수 있다.
+- 따라서 확정안에서는 Codex의 nearest enrichment를 제거하고 exact lookup만 유지해야 한다.
+
+Claude 현재 기준과 차이:
+
+- Claude도 Step2 결과의 exact union membership을 검사하지 않는다.
+- reference ID나 좌표로 기준값을 보정하지만 exact record가 없을 때 LLM proposed value가 있으면 reference 없이 통과할 수 있다.
+- 따라서 확정안에서는 Step3 이전 strict validation을 추가해 reference 없는 조합이 value 제안 단계로 넘어가지 않게 해야 한다.
+
+검증 시점과 처리 순서:
+
+1. Step2 LLM 결과를 parameter별 canonical business key로 변환한다.
+2. BasecaseIndex와 LutCatalog에서 exact key를 조회한다.
+3. 양쪽에 모두 없으면 즉시 제외하고 Step3 task에 넣지 않는다.
+4. 하나 이상 존재하면 effective reference를 만든 뒤 Step3에 전달한다.
+5. Step3 이후에도 output cell 좌표가 선택·검증된 key와 동일한지 다시 확인한다.
+
+LiqUtil의 business key는 Country + LNG Plant + LNG Plant Train + Year + Month다. Period, Life Cycle Category, Nameplate Capacity는 authoritative record에서 복원하는 metadata이므로 이 값이 LLM 응답과 다르다는 이유만으로 business-key 조합을 제외하지 않고 서버 값으로 교정한다.
 
 ## 15. 인터뷰 진행 원칙
 
@@ -646,3 +678,4 @@ D-02: slot universe와 horizon을 고정 2024~2031로 제한할지, 모델 지�
 | 2026-07-10 | 두 브랜치 전체 비교, 독립 측정, 테스트 결과, 구조 초안과 인터뷰 로그 최초 작성 |
 | 2026-07-10 | D-01 확정: 5개 parameter 모두 scenario/event 관련 LUT-only slot 선택 허용, 서버 검증 의미 명시 |
 | 2026-07-10 | 인터뷰 형식에 Codex/Claude 현재 기준을 추가하고 D-01 조합 오류 발생 조건과 예시 보강 |
+| 2026-07-10 | D-04 조기 확정: basecase/LUT 양쪽에 exact 조합이 없으면 최종 제외, nearest 좌표 치환 금지 |
