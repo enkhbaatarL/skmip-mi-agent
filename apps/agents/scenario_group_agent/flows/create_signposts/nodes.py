@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from decimal import Decimal
 from typing import Any
 
@@ -25,23 +24,22 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import
     stage4_synthesize_fixed_scenarios,
     stage6_validate,
 )
-from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
-    get_signpost_generation_subgraph,
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.nodes import (
+    stage2_observability_filter_batch,
+    stage45_enrich_signposts_batch,
 )
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     GeneratedSignpost,
     SignpostGenerationResult,
 )
-from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
-    SignpostGenerationState,
-)
 from apps.common.exceptions.custom import MIBaseError
-from apps.common.tracing.context import TraceContext, build_langgraph_config
+from apps.common.tracing.context import TraceContext
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
     ScenarioStatus,
+    SignpostStrength,
 )
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.schema import (
@@ -226,45 +224,53 @@ async def run_signpost_generation(
             ),
         )
 
-    from apps.common.configs.config import get_settings
-
-    sem = asyncio.Semaphore(get_settings().create_signposts_max_concurrent_scenarios)
     trace_context = runtime.context if runtime is not None else None
-
-    async def process_one(
-        scenario: dict[str, Any],
-    ) -> tuple[list[GeneratedSignpost], dict[str, Any]]:
-        async with sem:
-            result_state = await get_signpost_generation_subgraph().ainvoke(
-                SignpostGenerationState(
-                    scenario=scenario,
-                    base_event_summary=base_event_summary,
-                ),
-                config=build_langgraph_config(trace_context) if trace_context is not None else None,
-                context=trace_context,
-            )
-            result = (
-                result_state
-                if isinstance(result_state, SignpostGenerationState)
-                else SignpostGenerationState.model_validate(result_state)
-            )
-            if result.error:
-                raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=result.error)
-            generated_signposts = list(result.signposts or [])
-            return generated_signposts, {
-                "scenario_id": scenario["scenario_id"],
-                "status": "success",
-                "signpost_count": len(generated_signposts),
-            }
-
-    results = await asyncio.gather(
-        *(process_one(scenario) for scenario in scenarios_to_process),
+    labels_by_scenario_id = await stage2_observability_filter_batch(
+        scenarios_to_process,
+        base_event_summary,
+        trace_context=trace_context,
+    )
+    details_by_scenario_id = await stage45_enrich_signposts_batch(
+        scenarios_to_process,
+        base_event_summary,
+        labels_by_scenario_id,
+        trace_context=trace_context,
     )
     generated: list[GeneratedSignpost] = []
     scenario_results: list[dict[str, Any]] = []
-    for signposts, scenario_result in results:
-        generated.extend(signposts)
-        scenario_results.append(scenario_result)
+    for scenario in scenarios_to_process:
+        scenario_id = int(scenario["scenario_id"])
+        labels = labels_by_scenario_id.get(scenario_id, [])
+        assignments, keyword_hints_list = details_by_scenario_id.get(scenario_id, ([], []))
+        scenario_signposts: list[GeneratedSignpost] = []
+        for label, assignment, keyword_hints in zip(
+            labels,
+            assignments,
+            keyword_hints_list,
+            strict=False,
+        ):
+            scenario_signposts.append(
+                GeneratedSignpost(
+                    scenario_id=scenario_id,
+                    signpost_class="observation",
+                    label=label,
+                    signpost_source="mi_record",
+                    strength=SignpostStrength.from_string_or_default(
+                        assignment.get("strength"),
+                        default=SignpostStrength.MEDIUM,
+                    ),
+                    rationale_ko=assignment.get("rationale_ko", ""),
+                    keyword_hints=keyword_hints,
+                )
+            )
+        generated.extend(scenario_signposts)
+        scenario_results.append(
+            {
+                "scenario_id": scenario["scenario_id"],
+                "status": "success",
+                "signpost_count": len(scenario_signposts),
+            }
+        )
 
     return create_signposts_state_update(
         signpost_result=SignpostGenerationResult(

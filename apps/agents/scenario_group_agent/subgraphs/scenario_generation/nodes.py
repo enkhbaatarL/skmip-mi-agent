@@ -28,20 +28,22 @@ from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     NarrativeOnly,
     ScenarioGroupMetadataStructuredOutput,
     Stage2StructuredOutput,
+    Stage3BatchStructuredOutput,
     Stage3StructuredOutput,
     Stage4StructuredOutput,
     Stage6StructuredOutput,
     build_scenario_group_metadata_user_prompt,
     build_stage2_user_prompt,
-    build_stage3_user_prompt,
+    build_stage3_batch_user_prompt,
     build_stage4_fixed_user_prompt,
     build_stage4_user_prompt,
     build_stage6_user_prompt,
 )
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
-    COMPAT_SYSTEM_PROMPT,
     CompatibilityItem,
     CompatibilityStructuredOutput,
+    QUICK_COMPAT_SYSTEM_PROMPT,
+    QuickCompatibilityStructuredOutput,
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
@@ -77,7 +79,7 @@ from apps.persistence.scenario.baseline_contrast import (
 REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 REF_TARGET_SCENARIOS: int = int(os.getenv("REF_TARGET_SCENARIOS", "6"))
 REF_TEMPERATURE: float = float(os.getenv("REF_TEMPERATURE", "0.0"))
-REF_QUICK_VALIDATE_MAX_RETRIES: int = int(os.getenv("REF_QUICK_VALIDATE_MAX_RETRIES", "2"))
+REF_QUICK_VALIDATE_MAX_RETRIES: int = int(os.getenv("REF_QUICK_VALIDATE_MAX_RETRIES", "1"))
 
 
 # ==============================================
@@ -417,52 +419,64 @@ async def stage3_reduce_values(
     llm_client=None,
     trace_context: TraceContext | None = None,
 ) -> Stage3ValueSelection:
-    """Stage 3 진입점 — 선택된 Dim 별로 LLM 호출하여 Enum 축소."""
+    """Stage 3 진입점 — 선택된 Dim 전체를 한 번의 LLM 호출로 Enum 축소."""
     dim_idx = _dim_index(template)
 
-    per_dim: List[PerDimensionValue] = []
+    selected_dims: list[dict[str, Any]] = []
     for sd in selected.selected_dimensions:
         dim = dim_idx.get(sd.dim_key)
         if dim is None:
             print(f"  ↳ 경고: Stage3 — '{sd.dim_key}' 템플릿 누락. 스킵.")
             continue
+        selected_dims.append(dim)
 
-        enum_full = _enum_id_set(dim)
-        # Format enum block with labels only. Enum order and tail flags are not probability signals.
-        enum_full_block = ", ".join(
-            f"{e['id']}({e.get('label','')})"
-            for e in dim["enum"]
-        )
+    if not selected_dims:
+        return Stage3ValueSelection(per_dimension=[])
 
-        user_prompt = build_stage3_user_prompt(
-            pack=pack,
-            dim=dim,
-            enum_full_block=enum_full_block,
-        )
+    enum_by_dim = {dim["dim_key"]: _enum_id_set(dim) for dim in selected_dims}
+    user_prompt = build_stage3_batch_user_prompt(
+        pack=pack,
+        dimensions=selected_dims,
+    )
 
-        def _validate(out: Stage3StructuredOutput) -> None:
-            unknown = set(out.selected_enum) - set(enum_full)
+    out = await _ainvoke_with_retry(
+        stage_label="Stage 3 batch",
+        schema_cls=Stage3BatchStructuredOutput,
+        system_prompt=STAGE3_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        validate_fn=None,
+        hard_constraints=STAGE3_HARD_CONSTRAINTS,
+        trace_context=trace_context,
+    )
+
+    output_by_dim: dict[str, Stage3StructuredOutput] = {}
+    if out is not None:
+        for item in out.dimensions:
+            if item.dim_key in output_by_dim or item.dim_key not in enum_by_dim:
+                continue
+            unknown = set(item.selected_enum) - set(enum_by_dim[item.dim_key])
             if unknown:
-                raise ValueError(f"value_enums 외 값 사용: {unknown}")
+                logger.info(
+                    "[SCENARIO_GENERATION][stage3] partial fallback for invalid enum "
+                    f"| dim_key={item.dim_key} | unknown={sorted(unknown)}",
+                )
+                continue
+            output_by_dim[item.dim_key] = Stage3StructuredOutput(selected_enum=item.selected_enum)
 
-        out = await _ainvoke_with_retry(
-            stage_label=f"Stage 3 [{dim['dim_key']}]",
-            schema_cls=Stage3StructuredOutput,
-            system_prompt=STAGE3_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            validate_fn=_validate,
-            hard_constraints=STAGE3_HARD_CONSTRAINTS,
-            trace_context=trace_context,
+    per_dim: List[PerDimensionValue] = []
+    for dim in selected_dims:
+        enum_full = enum_by_dim[dim["dim_key"]]
+        dim_out = output_by_dim.get(dim["dim_key"])
+        if dim_out is None:
+            dim_out = _stage3_fallback(dim)
+
+        per_dim.append(
+            PerDimensionValue(
+                dim_key=dim["dim_key"],
+                template_enum_full=enum_full,
+                selected_enum=dim_out.selected_enum,
+            )
         )
-
-        if out is None:
-            out = _stage3_fallback(dim)
-
-        per_dim.append(PerDimensionValue(
-            dim_key=dim["dim_key"],
-            template_enum_full=enum_full,
-            selected_enum=out.selected_enum,
-        ))
 
     return Stage3ValueSelection(per_dimension=per_dim)
 
@@ -1185,14 +1199,14 @@ def _stage5_compatibility_user_prompt(
 
 
 def _validate_stage5_compatibility_output(
-    out: CompatibilityStructuredOutput,
+    out: CompatibilityStructuredOutput | QuickCompatibilityStructuredOutput,
     expected_ids: set[int],
 ) -> None:
     actual_ids = {item.scenario_id for item in out.items}
-    if len(out.items) != len(actual_ids) or actual_ids != expected_ids:
+    if len(out.items) != len(actual_ids) or not actual_ids <= expected_ids:
         raise ValueError(
             "compatibility scenario_id 집합 불일치: "
-            f"누락={expected_ids - actual_ids}, 여분={actual_ids - expected_ids}",
+            f"허용되지 않는 scenario_id={actual_ids - expected_ids}",
         )
 
 
@@ -1216,14 +1230,14 @@ def _resolve_stage5_dim_key(
 
 
 def _stage5_compatibility_overrides(
-    out: CompatibilityStructuredOutput,
+    out: CompatibilityStructuredOutput | QuickCompatibilityStructuredOutput,
     stage4: Stage4ScenarioSynthesis,
     template: ScenarioTemplate,
 ) -> list[Stage5RepairInstruction]:
     label_by_key, key_by_label = _stage5_dimension_label_maps(template)
     repairs: list[Stage5RepairInstruction] = []
     for item in out.items:
-        if item.compatible or item.recommended_value_b is None:
+        if getattr(item, "compatible", False) or item.recommended_value_b is None:
             continue
         index = item.scenario_id - 1
         if not 0 <= index < len(stage4.scenarios):
@@ -1306,12 +1320,12 @@ def _stage5_compatibility_advice(item: CompatibilityItem, scenario_title: str) -
 
 
 def _stage5_compatibility_feedback(
-    out: CompatibilityStructuredOutput,
+    out: CompatibilityStructuredOutput | QuickCompatibilityStructuredOutput,
     stage4: Stage4ScenarioSynthesis,
 ) -> str:
     lines: list[str] = []
     for item in out.items:
-        if item.compatible:
+        if getattr(item, "compatible", False):
             continue
         scenario_title = ""
         index = item.scenario_id - 1
@@ -1339,13 +1353,13 @@ async def _stage5_check_compatibility(
 ) -> tuple[bool, str | None, list[Stage5RepairInstruction]]:
     expected_ids = set(range(1, len(stage4.scenarios) + 1))
 
-    def _validate(out: CompatibilityStructuredOutput) -> None:
+    def _validate(out: QuickCompatibilityStructuredOutput) -> None:
         _validate_stage5_compatibility_output(out, expected_ids)
 
     out = await _ainvoke_with_retry(
         stage_label="Stage 5 Compatibility",
-        schema_cls=CompatibilityStructuredOutput,
-        system_prompt=COMPAT_SYSTEM_PROMPT,
+        schema_cls=QuickCompatibilityStructuredOutput,
+        system_prompt=QUICK_COMPAT_SYSTEM_PROMPT,
         user_prompt=_stage5_compatibility_user_prompt(stage4, template),
         validate_fn=_validate,
         hard_constraints="",
@@ -1355,7 +1369,7 @@ async def _stage5_check_compatibility(
         print("  ↳ Stage 5 compatibility fallback: LLM 호출 실패 — 검증 통과로 처리")
         return True, None, []
 
-    incompatible = [item for item in out.items if not item.compatible]
+    incompatible = list(out.items)
     if not incompatible:
         return True, None, []
 
@@ -1557,16 +1571,19 @@ class ValidateScenariosNode(BaseNode):
         ):
             return {"error": "scenario generation stage output is incomplete"}
 
-        stage6 = await stage6_validate(
-            state.stage1_context_pack,
-            state.stage4_scenario_synthesis,
-            trace_context=runtime.context if runtime is not None else None,
-        )
-        scenario_group_metadata = await stage_generate_scenario_group_metadata(
-            state.stage1_context_pack,
-            state.event_data,
-            state.stage4_scenario_synthesis,
-            trace_context=runtime.context if runtime is not None else None,
+        trace_context = runtime.context if runtime is not None else None
+        stage6, scenario_group_metadata = await asyncio.gather(
+            stage6_validate(
+                state.stage1_context_pack,
+                state.stage4_scenario_synthesis,
+                trace_context=trace_context,
+            ),
+            stage_generate_scenario_group_metadata(
+                state.stage1_context_pack,
+                state.event_data,
+                state.stage4_scenario_synthesis,
+                trace_context=trace_context,
+            ),
         )
         event_type_l2_id = int(state.event_data.get("event_type_l2_id") or 0)
         stage4 = state.stage4_scenario_synthesis

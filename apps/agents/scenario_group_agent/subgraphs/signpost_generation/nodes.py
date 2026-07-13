@@ -23,9 +23,17 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     STAGE2_SYSTEM_PROMPT,
     STAGE5_HARD_CONSTRAINTS,
     STAGE5_SYSTEM_PROMPT,
+    Stage45BatchStructuredOutput,
+    Stage45StructuredOutput,
+    Stage2BatchStructuredOutput,
     Stage2StructuredOutput,
     Stage4StructuredOutput,
     Stage5StructuredOutput,
+    build_stage45_batch_user_prompt,
+    build_stage45_hard_constraints,
+    build_stage45_system_prompt,
+    build_stage45_user_prompt,
+    build_stage2_batch_user_prompt,
     build_stage2_hard_constraints,
     build_stage2_user_prompt,
     build_stage4_hard_constraints,
@@ -210,10 +218,10 @@ async def stage2_observability_filter(
     )
 
     def _validate(out: Stage2StructuredOutput) -> None:
-        passing = [c for c in out.candidates if c.passes_filter]
-        if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= len(passing) <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
+        candidate_count = len(out.candidates)
+        if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= candidate_count <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
             raise ValueError(
-                f"통과 후보 수 {len(passing)} 이 허용 범위 "
+                f"후보 수 {candidate_count} 이 허용 범위 "
                 f"[{REF_SIGNPOSTS_PER_SCENARIO_MIN}, {REF_SIGNPOSTS_PER_SCENARIO_MAX}] 밖."
             )
 
@@ -235,15 +243,73 @@ async def stage2_observability_filter(
         app_logger.info("[{}] Stage 2 fallback labels={}", scenario_id, len(labels))
         return labels
 
-    passing = [c for c in out.candidates if c.passes_filter]
-    passing = passing[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
+    candidates = out.candidates[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
     app_logger.info(
-        "[{}] Stage 2 candidates={} passed={}",
+        "[{}] Stage 2 passed_labels={}",
         scenario_id,
-        len(out.candidates),
-        len(passing),
+        len(candidates),
     )
-    return [c.label_ko.strip() for c in passing]
+    return [c.label_ko.strip() for c in candidates]
+
+
+async def stage2_observability_filter_batch(
+    scenarios: list[dict[str, Any]],
+    base_event_summary: Dict[str, str],
+    trace_context: TraceContext | None = None,
+) -> dict[int, list[str]]:
+    """Stage 2 batch — 시나리오 목록 전체의 통과 label_ko 를 한 번에 생성."""
+    if not scenarios:
+        return {}
+
+    scenario_ids = {int(scenario["scenario_id"]) for scenario in scenarios}
+    user_prompt = build_stage2_batch_user_prompt(
+        scenarios=scenarios,
+        base_event_summary=base_event_summary,
+        min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
+        max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
+    )
+    hard = build_stage2_hard_constraints(
+        min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
+        max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
+    )
+
+    out = await _ainvoke_with_retry(
+        stage_label="Stage 2 batch",
+        schema_cls=Stage2BatchStructuredOutput,
+        system_prompt=STAGE2_SYSTEM_PROMPT.format(
+            min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
+            max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
+        ),
+        user_prompt=user_prompt,
+        validate_fn=None,
+        hard_constraints=hard,
+        trace_context=trace_context,
+    )
+
+    scenario_by_id = {int(scenario["scenario_id"]): scenario for scenario in scenarios}
+    labels_by_id: dict[int, list[str]] = {}
+    seen_ids: set[int] = set()
+    if out is not None:
+        for item in out.scenarios:
+            if item.scenario_id not in scenario_ids or item.scenario_id in seen_ids:
+                continue
+            seen_ids.add(item.scenario_id)
+            candidate_count = len(item.candidates)
+            if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= candidate_count <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
+                app_logger.info(
+                    "[{}] Stage 2 batch partial fallback: candidate_count={}",
+                    item.scenario_id,
+                    candidate_count,
+                )
+                continue
+            labels_by_id[item.scenario_id] = [
+                candidate.label_ko.strip()
+                for candidate in item.candidates[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
+            ]
+
+    for scenario_id, scenario in scenario_by_id.items():
+        labels_by_id.setdefault(scenario_id, _stage2_fallback(scenario))
+    return labels_by_id
 
 
 def _stage2_fallback(scenario: Dict[str, Any]) -> List[str]:
@@ -422,6 +488,235 @@ def _stage4_fallback(labels: List[str]) -> List[Dict[str, str]]:
     return out
 
 
+async def stage45_enrich_signposts(
+    scenario: Dict[str, Any],
+    base_event_summary: Dict[str, str],
+    labels: List[str],
+    trace_context: TraceContext | None = None,
+) -> tuple[List[Dict[str, str]], List[List[str]]]:
+    """Stage 4+5 진입점 — strength/rationale/keyword_hints 를 한 번에 생성."""
+    if not labels:
+        return [], []
+
+    user_prompt = build_stage45_user_prompt(
+        scenario=scenario,
+        base_event_summary=base_event_summary,
+        scenario_description=_shorten(scenario.get("description", ""), 600),
+        labels=labels,
+    )
+    label_set = [lbl.strip() for lbl in labels]
+    hard = build_stage45_hard_constraints(
+        strong_min=REF_STRONG_QUOTA_MIN,
+        strong_max=REF_STRONG_QUOTA_MAX,
+        early_min=REF_EARLY_QUOTA_MIN,
+        early_max=REF_EARLY_QUOTA_MAX,
+    )
+
+    def _validate(out: Stage45StructuredOutput) -> None:
+        if len(out.signposts) != len(labels):
+            raise ValueError(
+                f"signposts 길이 불일치: {len(out.signposts)} != {len(labels)}"
+            )
+        out_labels = [item.label_ko.strip() for item in out.signposts]
+        if out_labels != label_set:
+            raise ValueError(
+                "signposts 의 label_ko 순서가 입력과 다름. "
+                f"expected={label_set}, got={out_labels}"
+            )
+        n_strong = sum(
+            1
+            for item in out.signposts
+            if item.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
+        )
+        n_early = sum(
+            1
+            for item in out.signposts
+            if item.strength
+            in (
+                SignpostStrength.MEDIUM,
+                SignpostStrength.WEAK,
+                SignpostStrength.VERYWEAK,
+            )
+        )
+        if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
+            raise ValueError(
+                f"STRONG 쿼터 위반: {n_strong} "
+                f"(허용 {REF_STRONG_QUOTA_MIN}~{REF_STRONG_QUOTA_MAX})"
+            )
+        if not (REF_EARLY_QUOTA_MIN <= n_early <= REF_EARLY_QUOTA_MAX):
+            raise ValueError(
+                f"MEDIUM+WEAK 쿼터 위반: {n_early} "
+                f"(허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})"
+            )
+        for item in out.signposts:
+            if not (KEYWORD_HINTS_MIN <= len(item.keyword_hints) <= KEYWORD_HINTS_MAX):
+                raise ValueError(
+                    f"keyword_hints 길이 위반 ({len(item.keyword_hints)}): "
+                    f"허용 {KEYWORD_HINTS_MIN}~{KEYWORD_HINTS_MAX}"
+                )
+            if any(not str(kw).strip() for kw in item.keyword_hints):
+                raise ValueError("keyword_hints 안에 빈 문자열 존재.")
+
+    out = await _ainvoke_with_retry(
+        stage_label="Stage 4+5",
+        schema_cls=Stage45StructuredOutput,
+        system_prompt=build_stage45_system_prompt(
+            stage4_strength_guide=SignpostStrength.stage4_prompt_guide_text(),
+            strong_min=REF_STRONG_QUOTA_MIN,
+            strong_max=REF_STRONG_QUOTA_MAX,
+            early_min=REF_EARLY_QUOTA_MIN,
+            early_max=REF_EARLY_QUOTA_MAX,
+        ),
+        user_prompt=user_prompt,
+        validate_fn=_validate,
+        hard_constraints=hard,
+        trace_context=trace_context,
+    )
+
+    if out is None:
+        return _stage4_fallback(labels), [_stage5_fallback_keywords(label) for label in labels]
+
+    assignments = [
+        {
+            "label_ko": item.label_ko.strip(),
+            "strength": item.strength.to_string(),
+            "rationale_ko": item.rationale_ko,
+        }
+        for item in out.signposts
+    ]
+    keyword_hints = [[kw.strip() for kw in item.keyword_hints] for item in out.signposts]
+    return assignments, keyword_hints
+
+
+async def stage45_enrich_signposts_batch(
+    scenarios: list[dict[str, Any]],
+    base_event_summary: Dict[str, str],
+    labels_by_scenario_id: dict[int, list[str]],
+    trace_context: TraceContext | None = None,
+) -> dict[int, tuple[List[Dict[str, str]], List[List[str]]]]:
+    """Stage 4+5 batch — scenario 목록 전체의 상세 signpost를 한 번에 생성."""
+    scenarios_with_labels = [
+        scenario for scenario in scenarios if labels_by_scenario_id.get(int(scenario["scenario_id"]))
+    ]
+    if not scenarios_with_labels:
+        return {}
+
+    scenario_ids = {int(scenario["scenario_id"]) for scenario in scenarios_with_labels}
+    hard = build_stage45_hard_constraints(
+        strong_min=REF_STRONG_QUOTA_MIN,
+        strong_max=REF_STRONG_QUOTA_MAX,
+        early_min=REF_EARLY_QUOTA_MIN,
+        early_max=REF_EARLY_QUOTA_MAX,
+    )
+    label_sets = {
+        scenario_id: [label.strip() for label in labels]
+        for scenario_id, labels in labels_by_scenario_id.items()
+    }
+
+    out = await _ainvoke_with_retry(
+        stage_label="Stage 4+5 batch",
+        schema_cls=Stage45BatchStructuredOutput,
+        system_prompt=build_stage45_system_prompt(
+            stage4_strength_guide=SignpostStrength.stage4_prompt_guide_text(),
+            strong_min=REF_STRONG_QUOTA_MIN,
+            strong_max=REF_STRONG_QUOTA_MAX,
+            early_min=REF_EARLY_QUOTA_MIN,
+            early_max=REF_EARLY_QUOTA_MAX,
+        ),
+        user_prompt=build_stage45_batch_user_prompt(
+            scenarios=scenarios_with_labels,
+            base_event_summary=base_event_summary,
+            labels_by_scenario_id=label_sets,
+        ),
+        validate_fn=None,
+        hard_constraints=hard,
+        trace_context=trace_context,
+    )
+
+    result: dict[int, tuple[List[Dict[str, str]], List[List[str]]]] = {}
+    seen_ids: set[int] = set()
+    for scenario_out in out.scenarios if out is not None else []:
+        if scenario_out.scenario_id not in scenario_ids or scenario_out.scenario_id in seen_ids:
+            continue
+        seen_ids.add(scenario_out.scenario_id)
+        labels = label_sets[scenario_out.scenario_id]
+        if len(scenario_out.signposts) != len(labels):
+            app_logger.info(
+                "[{}] Stage 4+5 batch partial fallback: signpost_count={} expected={}",
+                scenario_out.scenario_id,
+                len(scenario_out.signposts),
+                len(labels),
+            )
+            continue
+        out_labels = [item.label_ko.strip() for item in scenario_out.signposts]
+        if out_labels != labels:
+            app_logger.info(
+                "[{}] Stage 4+5 batch partial fallback: label order mismatch",
+                scenario_out.scenario_id,
+            )
+            continue
+        n_strong = sum(
+            1
+            for item in scenario_out.signposts
+            if item.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
+        )
+        n_early = sum(
+            1
+            for item in scenario_out.signposts
+            if item.strength
+            in (
+                SignpostStrength.MEDIUM,
+                SignpostStrength.WEAK,
+                SignpostStrength.VERYWEAK,
+            )
+        )
+        if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
+            app_logger.info(
+                "[{}] Stage 4+5 batch partial fallback: strong_quota={}",
+                scenario_out.scenario_id,
+                n_strong,
+            )
+            continue
+        if not (REF_EARLY_QUOTA_MIN <= n_early <= REF_EARLY_QUOTA_MAX):
+            app_logger.info(
+                "[{}] Stage 4+5 batch partial fallback: early_quota={}",
+                scenario_out.scenario_id,
+                n_early,
+            )
+            continue
+        has_bad_hints = any(
+            not (KEYWORD_HINTS_MIN <= len(item.keyword_hints) <= KEYWORD_HINTS_MAX)
+            or any(not str(kw).strip() for kw in item.keyword_hints)
+            for item in scenario_out.signposts
+        )
+        if has_bad_hints:
+            app_logger.info(
+                "[{}] Stage 4+5 batch partial fallback: invalid keyword_hints",
+                scenario_out.scenario_id,
+            )
+            continue
+        assignments = [
+            {
+                "label_ko": item.label_ko.strip(),
+                "strength": item.strength.to_string(),
+                "rationale_ko": item.rationale_ko,
+            }
+            for item in scenario_out.signposts
+        ]
+        keyword_hints = [[kw.strip() for kw in item.keyword_hints] for item in scenario_out.signposts]
+        result[scenario_out.scenario_id] = (assignments, keyword_hints)
+    for scenario in scenarios_with_labels:
+        scenario_id = int(scenario["scenario_id"])
+        if scenario_id in result:
+            continue
+        labels = label_sets[scenario_id]
+        result[scenario_id] = (
+            _stage4_fallback(labels),
+            [_stage5_fallback_keywords(label) for label in labels],
+        )
+    return result
+
+
 # ==============================================
 # 7. Stage 5 — Keyword Hint Mint
 # ==============================================
@@ -585,6 +880,50 @@ class DirectionStrengthNode(BaseNode):
             sum(1 for strength in strengths if strength == SignpostStrength.VERYWEAK),
         )
         return {"stage4_assignments": assignments}
+
+
+class EnrichSignpostsNode(BaseNode):
+    async def run(
+        self,
+        state: SignpostGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
+        if state.skip_generation or state.error or not state.labels:
+            return {}
+        if state.scenario is None:
+            return {"error": "scenario is required"}
+        trace_context = runtime.context if runtime is not None else None
+        if trace_context is None:
+            assignments, keyword_hints = await stage45_enrich_signposts(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+            )
+        else:
+            assignments, keyword_hints = await stage45_enrich_signposts(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+                trace_context=trace_context,
+            )
+        strengths = [
+            SignpostStrength.from_string_or_default(
+                assignment.get("strength"),
+                default=SignpostStrength.MEDIUM,
+            )
+            for assignment in assignments
+        ]
+        app_logger.info(
+            "[{}] Stage 4+5 vs={} s={} m={} w={} vw={} hints={}",
+            _scenario_pk(state.scenario),
+            sum(1 for strength in strengths if strength == SignpostStrength.VERYSTRONG),
+            sum(1 for strength in strengths if strength == SignpostStrength.STRONG),
+            sum(1 for strength in strengths if strength == SignpostStrength.MEDIUM),
+            sum(1 for strength in strengths if strength == SignpostStrength.WEAK),
+            sum(1 for strength in strengths if strength == SignpostStrength.VERYWEAK),
+            len(keyword_hints),
+        )
+        return {"stage4_assignments": assignments, "stage5_keyword_hints": keyword_hints}
 
 
 class KeywordHintsNode(BaseNode):

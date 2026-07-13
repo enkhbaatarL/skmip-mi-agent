@@ -771,6 +771,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--base-url", default="http://localhost:8000", help="Agent API base URL")
     parser.add_argument("--mi-event-id", type=int, help="단건 실행할 MI 이벤트 ID")
+    parser.add_argument("--event-type-l2-id", type=int, help="단건 실행 시 SQLite에 기록할 eventTypeL2Id")
     parser.add_argument("--recent-events", type=int, help="GET /events sort=latest 기준 최근 N개 이벤트를 실행")
     parser.add_argument("--user-id", type=int, required=True, help="요청 사용자 ID")
     parser.add_argument("--timeout", type=int, default=900, help="httpx timeout seconds")
@@ -838,7 +839,7 @@ def main() -> int:
         elif args.recent_events:
             targets = discover_recent_event_ids(client, args)
         else:
-            targets = [TargetEvent(mi_event_id=args.mi_event_id)]
+            targets = [TargetEvent(mi_event_id=args.mi_event_id, event_type_l2_id=args.event_type_l2_id)]
 
         if not targets:
             print("실행할 miEventId가 없습니다.")

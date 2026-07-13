@@ -25,6 +25,28 @@ COMPAT_SYSTEM_PROMPT = """\
 - compatible=true인 경우 위 다섯 필드는 비워 둡니다(null).
 """
 
+QUICK_COMPAT_SYSTEM_PROMPT = """\
+당신은 LNG 멀티시나리오의 Quick Compatibility Judge 입니다.
+각 시나리오는 Dimension과 값의 조합으로 정의됩니다. create scenario 내부 자동 재생성에 필요한
+명백한 물리적 또는 논리적 모순만 찾으십시오.
+
+- 명백한 물리적 또는 논리적 모순이 있을 때만 compatible=false로 판정합니다.
+- 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
+- narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
+- 출력 items에는 재생성 또는 사용자 검토가 필요한 incompatible 시나리오만 포함합니다.
+- 모든 시나리오가 compatible이면 items=[] 로 반환합니다.
+- compatible=true 항목은 출력하지 않습니다.
+- reason은 한국어 한 줄로 작성합니다.
+- recommended_value_b는 반드시 입력에 제공된 해당 Dimension의 enum 중 하나여야 합니다.
+- enum 안에서 모순을 해소하는 대체값이 있을 때만 compatible=false로 판정합니다.
+- 논리적으로 더 자연스러운 값이 enum 밖에만 있고, enum 안의 값으로는 명확히 해소할 수 없다면
+  현재 조합을 허용 가능한 차선으로 보고 출력하지 않습니다.
+- compatible=false인 경우, 모순을 일으키는 두 항목을 다음 필드로 함께 채웁니다.
+  · conflict_dim_a / conflict_value_a : 충돌하는 첫 번째 항목명과 값 (입력에 표시된 항목명·값 그대로)
+  · conflict_dim_b / conflict_value_b : 충돌하는 두 번째 항목명과 값
+  · recommended_value_b : conflict_value_b 를 대체하면 모순이 해소되는 enum 안의 권장 값
+"""
+
 DIMENSION_VALUE_SYSTEM_PROMPT = """\
 당신은 LNG 멀티시나리오 테이블 보정 도우미입니다.
 사용자가 새로 추가한 Dimension 컬럼의 빈 값을, 시나리오 제목/서술/기존 Dimension 값을 근거로
@@ -49,6 +71,20 @@ class CompatibilityItem(BaseModel):
 
 class CompatibilityStructuredOutput(BaseModel):
     items: list[CompatibilityItem] = Field(default_factory=list)
+
+
+class QuickCompatibilityItem(BaseModel):
+    scenario_id: int
+    reason: str
+    conflict_dim_a: str | None = None
+    conflict_value_a: str | None = None
+    conflict_dim_b: str | None = None
+    conflict_value_b: str | None = None
+    recommended_value_b: str | None = None
+
+
+class QuickCompatibilityStructuredOutput(BaseModel):
+    items: list[QuickCompatibilityItem] = Field(default_factory=list)
 
 
 class GeneratedDimensionCell(BaseModel):

@@ -35,8 +35,8 @@ def test_signpost_generation_subgraph_returns_generated_signposts(monkeypatch) -
     async def fake_stage2(scenario, base_event_summary):
         return ["정부 공식 발표", "주요 터미널 가동률 보도", "선박 운임 급등 보도"]
 
-    async def fake_stage4(scenario, base_event_summary, labels):
-        return [
+    async def fake_stage45(scenario, base_event_summary, labels):
+        assignments = [
             {
                 "label_ko": label,
                 "strength": SignpostStrength.MEDIUM.to_string(),
@@ -44,13 +44,11 @@ def test_signpost_generation_subgraph_returns_generated_signposts(monkeypatch) -
             }
             for label in labels
         ]
-
-    async def fake_stage5(scenario, base_event_summary, labels):
-        return [[label, "보도", "확인"] for label in labels]
+        keyword_hints = [[label, "보도", "확인"] for label in labels]
+        return assignments, keyword_hints
 
     monkeypatch.setattr(nodes, "stage2_observability_filter", fake_stage2)
-    monkeypatch.setattr(nodes, "stage4_assign_direction_strength", fake_stage4)
-    monkeypatch.setattr(nodes, "stage5_mint_keywords", fake_stage5)
+    monkeypatch.setattr(nodes, "stage45_enrich_signposts", fake_stage45)
 
     output = asyncio.run(
         get_signpost_generation_subgraph().ainvoke(
@@ -90,7 +88,7 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
     async def fake_stage2(scenario, base_event_summary):
         return ["공식 비축 방출 발표", "수입 입찰 증가 보도"]
 
-    async def fake_stage4(scenario, base_event_summary, labels):
+    async def fake_stage45(scenario, base_event_summary, labels):
         return [
             {
                 "label_ko": labels[0],
@@ -102,14 +100,10 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
                 "strength": SignpostStrength.WEAK.to_string(),
                 "rationale_ko": "약한 근거",
             },
-        ]
-
-    async def fake_stage5(scenario, base_event_summary, labels):
-        return [["비축", "방출", "발표"], ["입찰", "수입", "보도"]]
+        ], [["비축", "방출", "발표"], ["입찰", "수입", "보도"]]
 
     monkeypatch.setattr(nodes, "stage2_observability_filter", fake_stage2)
-    monkeypatch.setattr(nodes, "stage4_assign_direction_strength", fake_stage4)
-    monkeypatch.setattr(nodes, "stage5_mint_keywords", fake_stage5)
+    monkeypatch.setattr(nodes, "stage45_enrich_signposts", fake_stage45)
 
     output = asyncio.run(
         get_signpost_generation_subgraph().ainvoke(
