@@ -41,6 +41,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     generate_new_scenario_row_details,
     generate_new_scenario_row_details_node,
+    run_signpost_generation,
     save_signposts,
     sync_scenarios_from_table,
 )
@@ -85,6 +86,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import ScenarioGenerationState
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 class TestScenarioState(
@@ -1446,6 +1448,183 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             user_id=101,
         )
         assert result["scenario_group"]["stage"] == "signpost_created"
+
+    def test_signpost_generation_preserves_success_when_one_scenario_fails(
+        self,
+    ) -> None:
+        state = TestScenarioState(
+            scenario_group_id=10,
+            mi_event_id=20,
+            user_id=101,
+            scenarios=[
+                {"scenario_id": 100, "title": "success"},
+                {"scenario_id": 101, "title": "failure"},
+            ],
+        )
+
+        async def invoke_one(signpost_state, **_kwargs):
+            scenario_id = int(signpost_state.scenario["scenario_id"])
+            if scenario_id == 101:
+                raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail="failed")
+            return {
+                "signposts": [
+                    GeneratedSignpost(scenario_id=scenario_id, label="signal"),
+                ],
+            }
+
+        subgraph = Mock()
+        subgraph.ainvoke = AsyncMock(side_effect=invoke_one)
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.EventService.load_event",
+                return_value={
+                    "mi_event_id": "20",
+                    "event_title_ko": "event",
+                    "event_type_l1_id": 1,
+                    "event_type_l2_id": 2,
+                    "one_line_summary": "summary",
+                },
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "get_signpost_generation_subgraph",
+                return_value=subgraph,
+            ),
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.config": types.SimpleNamespace(
+                        get_settings=lambda: types.SimpleNamespace(
+                            create_signposts_max_concurrent_scenarios=7,
+                        ),
+                    ),
+                },
+            ),
+        ):
+            result = asyncio.run(run_signpost_generation(state))
+
+        assert subgraph.ainvoke.await_count == 2
+        generation_result = result["signpost_result"]
+        assert len(generation_result["signposts"]) == 1
+        statuses = {
+            item["scenario_id"]: item["status"]
+            for item in generation_result["scenario_results"]
+        }
+        assert statuses == {100: "success", 101: "failure"}
+
+    def test_signpost_generation_runs_scenarios_in_parallel_with_configured_limit(
+        self,
+    ) -> None:
+        state = TestScenarioState(
+            scenario_group_id=10,
+            mi_event_id=20,
+            user_id=101,
+            scenarios=[
+                {"scenario_id": 100, "title": "one"},
+                {"scenario_id": 101, "title": "two"},
+                {"scenario_id": 102, "title": "three"},
+            ],
+        )
+        active = 0
+        max_active = 0
+
+        async def invoke_one(signpost_state, **_kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            scenario_id = int(signpost_state.scenario["scenario_id"])
+            return {
+                "signposts": [
+                    GeneratedSignpost(scenario_id=scenario_id, label="signal"),
+                ],
+            }
+
+        subgraph = Mock()
+        subgraph.ainvoke = AsyncMock(side_effect=invoke_one)
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.EventService.load_event",
+                return_value={
+                    "mi_event_id": "20",
+                    "event_title_ko": "event",
+                    "event_type_l1_id": 1,
+                    "event_type_l2_id": 2,
+                    "one_line_summary": "summary",
+                },
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "get_signpost_generation_subgraph",
+                return_value=subgraph,
+            ),
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.config": types.SimpleNamespace(
+                        get_settings=lambda: types.SimpleNamespace(
+                            create_signposts_max_concurrent_scenarios=2,
+                        ),
+                    ),
+                },
+            ),
+        ):
+            result = asyncio.run(run_signpost_generation(state))
+
+        assert max_active == 2
+        assert len(result["signpost_result"]["signposts"]) == 3
+        assert all(
+            item["status"] == "success"
+            for item in result["signpost_result"]["scenario_results"]
+        )
+
+    def test_signpost_partial_failure_saves_successes_without_advancing_stage(
+        self,
+    ) -> None:
+        generated = GeneratedSignpost(scenario_id=100, label="signal")
+        state = TestScenarioState(
+            scenario_group_id=10,
+            user_id=101,
+            scenarios=[{"scenario_id": 100}, {"scenario_id": 101}],
+            signpost_result=SignpostGenerationResult(
+                scenario_group_id=10,
+                scenario_results=[
+                    {"scenario_id": 100, "status": "success", "signpost_count": 1},
+                    {"scenario_id": 101, "status": "failure", "signpost_count": 0},
+                ],
+                signposts=[generated],
+            ),
+        )
+
+        with (
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.ScenarioGroupService.load_by_id",
+                return_value={"scenario_group_id": 10},
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "SignpostService.save_generated_signposts",
+                return_value=[1000],
+            ) as save_generated,
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "ScenarioService.update_status",
+            ) as update_scenario_status,
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
+                "ScenarioGroupService.update_state",
+            ) as update_group_state,
+            self.assertRaises(MIBaseError) as error,
+        ):
+            save_signposts(state)
+
+        save_generated.assert_called_once_with([generated], user_id=101)
+        update_scenario_status.assert_not_called()
+        update_group_state.assert_not_called()
+        assert "실패 scenario_id=[101]" in str(error.exception)
 
     def test_signpost_save_does_not_save_when_group_missing(self) -> None:
         state = TestScenarioState(

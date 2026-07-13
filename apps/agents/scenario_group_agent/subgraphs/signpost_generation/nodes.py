@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-import re
 from typing import Any, Dict, List
 
 from langgraph.runtime import Runtime
@@ -23,17 +22,13 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     STAGE2_SYSTEM_PROMPT,
     STAGE5_HARD_CONSTRAINTS,
     STAGE5_SYSTEM_PROMPT,
-    Stage45BatchStructuredOutput,
     Stage45StructuredOutput,
-    Stage2BatchStructuredOutput,
     Stage2StructuredOutput,
     Stage4StructuredOutput,
     Stage5StructuredOutput,
-    build_stage45_batch_user_prompt,
     build_stage45_hard_constraints,
     build_stage45_system_prompt,
     build_stage45_user_prompt,
-    build_stage2_batch_user_prompt,
     build_stage2_hard_constraints,
     build_stage2_user_prompt,
     build_stage4_hard_constraints,
@@ -43,8 +38,10 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger as app_logger
 from apps.common.tracing.context import TraceContext
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
     DirectionCode,
     SignpostStrength,
@@ -72,19 +69,30 @@ REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 # 3. LLM Infrastructure
 # ==============================================
 
+def _exception_chain(exc: Exception) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def _is_retryable_api_error(exc: Exception) -> bool:
-    status_code = getattr(exc, "status_code", None)
-    if status_code in {429, 500, 502, 503, 529}:
+    chain = _exception_chain(exc)
+    status_codes = {getattr(item, "status_code", None) for item in chain[1:] or chain}
+    if status_codes & {408, 429, 500, 502, 503, 504, 529}:
         return True
-    name = exc.__class__.__name__.lower()
-    msg = str(exc).lower()
+    name = " ".join(item.__class__.__name__.lower() for item in chain)
+    msg = " ".join(str(item).lower() for item in chain)
     keywords = ("overloaded", "rate limit", "too many requests", "timeout", "connection")
     return any(k in name or k in msg for k in keywords)
 
 
 def _is_retryable_schema_error(exc: Exception) -> bool:
-    name = exc.__class__.__name__.lower()
-    msg = str(exc).lower()
+    chain = _exception_chain(exc)
+    name = " ".join(item.__class__.__name__.lower() for item in chain)
+    msg = " ".join(str(item).lower() for item in chain)
     keywords = (
         "validationerror", "validation error", "structured", "min_length",
         "max_length", "json", "output parsing", "literal", "enum",
@@ -105,10 +113,34 @@ async def _invoke_structured(
         output_schema=schema_cls,
         messages=messages,
         temperature=temperature,
-        max_retries=2,
+        max_retries=0,
         trace_context=trace_context,
     )
     return result.result
+
+
+def _raise_llm_failure(stage_label: str, exc: Exception | None) -> None:
+    if exc is None:
+        raise MIBaseError(
+            ErrorCode.LLM_INVOCATION_ERROR,
+            detail=f"{stage_label} LLM 호출 결과가 없습니다.",
+        )
+    combined = " ".join(
+        f"{item.__class__.__name__}: {item}".lower()
+        for item in _exception_chain(exc)
+    )
+    if "timeout" in combined or "timed out" in combined:
+        error_code = ErrorCode.LLM_RESPONSE_TIMEOUT
+    elif _is_retryable_schema_error(exc) or any(
+        isinstance(item, (TypeError, ValueError)) for item in _exception_chain(exc)
+    ):
+        error_code = ErrorCode.LLM_INVALID_RESPONSE_ERROR
+    else:
+        error_code = ErrorCode.LLM_INVOCATION_ERROR
+    raise MIBaseError(
+        error_code,
+        detail=f"{stage_label} LLM 호출이 {REF_MAX_RETRIES}회 시도 후 실패했습니다.",
+    ) from exc
 
 
 async def _ainvoke_with_retry(
@@ -120,11 +152,9 @@ async def _ainvoke_with_retry(
     hard_constraints: str = "",
     temperature: float = 0.0,
     trace_context: TraceContext | None = None,
-) -> BaseModel | None:
-    """LLM 호출 with retry + validation + fallback.
-
-    Returns parsed Pydantic model on success, None on all retries exhausted.
-    """
+) -> BaseModel:
+    """Invoke the LLM with bounded retries and fail closed."""
+    last_exc: Exception | None = None
     last_validation_exc: Exception | None = None
     accumulated_hint = hard_constraints
 
@@ -155,6 +185,7 @@ async def _ainvoke_with_retry(
             return result
 
         except Exception as exc:  # noqa: BLE001
+            last_exc = exc
             is_api = _is_retryable_api_error(exc)
             is_schema = _is_retryable_schema_error(exc)
             is_validation = isinstance(exc, (ValueError, TypeError))
@@ -191,8 +222,8 @@ async def _ainvoke_with_retry(
             )
             await asyncio.sleep(wait_sec)
 
-    app_logger.warning("[{}] 재시도 소진 — fallback 진입", stage_label)
-    return None
+    app_logger.warning("[{}] 재시도 소진", stage_label)
+    _raise_llm_failure(stage_label, last_exc)
 
 
 # ==============================================
@@ -245,11 +276,8 @@ async def stage2_observability_filter(
         hard_constraints=hard,
         trace_context=trace_context,
     )
-
     if out is None:
-        labels = _stage2_fallback(scenario)
-        app_logger.info("[{}] Stage 2 fallback labels={}", scenario_id, len(labels))
-        return labels
+        _raise_llm_failure("Stage 2", None)
 
     candidates = out.candidates[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
     app_logger.info(
@@ -258,94 +286,6 @@ async def stage2_observability_filter(
         len(candidates),
     )
     return [c.label_ko.strip() for c in candidates]
-
-
-async def stage2_observability_filter_batch(
-    scenarios: list[dict[str, Any]],
-    base_event_summary: Dict[str, str],
-    trace_context: TraceContext | None = None,
-) -> dict[int, list[str]]:
-    """Stage 2 batch — 시나리오 목록 전체의 통과 label_ko 를 한 번에 생성."""
-    if not scenarios:
-        return {}
-
-    scenario_ids = {int(scenario["scenario_id"]) for scenario in scenarios}
-    user_prompt = build_stage2_batch_user_prompt(
-        scenarios=scenarios,
-        base_event_summary=base_event_summary,
-        min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
-        max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
-    )
-    hard = build_stage2_hard_constraints(
-        min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
-        max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
-    )
-
-    out = await _ainvoke_with_retry(
-        stage_label="Stage 2 batch",
-        schema_cls=Stage2BatchStructuredOutput,
-        system_prompt=STAGE2_SYSTEM_PROMPT.format(
-            min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
-            max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
-        ),
-        user_prompt=user_prompt,
-        validate_fn=None,
-        hard_constraints=hard,
-        trace_context=trace_context,
-    )
-
-    scenario_by_id = {int(scenario["scenario_id"]): scenario for scenario in scenarios}
-    labels_by_id: dict[int, list[str]] = {}
-    seen_ids: set[int] = set()
-    if out is not None:
-        for item in out.scenarios:
-            if item.scenario_id not in scenario_ids or item.scenario_id in seen_ids:
-                continue
-            seen_ids.add(item.scenario_id)
-            candidate_count = len(item.candidates)
-            if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= candidate_count <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
-                app_logger.info(
-                    "[{}] Stage 2 batch partial fallback: candidate_count={}",
-                    item.scenario_id,
-                    candidate_count,
-                )
-                continue
-            labels_by_id[item.scenario_id] = [
-                candidate.label_ko.strip()
-                for candidate in item.candidates[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
-            ]
-
-    for scenario_id, scenario in scenario_by_id.items():
-        labels_by_id.setdefault(scenario_id, _stage2_fallback(scenario))
-    return labels_by_id
-
-
-def _stage2_fallback(scenario: Dict[str, Any]) -> List[str]:
-    """LLM 실패 시 — 시나리오 description / dimension_values 키워드로 안전 라벨 생성."""
-    sid = scenario.get("scenario_id", "S_??")
-    dims = scenario.get("dimension_values") or {}
-    dim_pairs = [(k, v) for k, v in dims.items()]
-    base = (scenario.get("title") or "").strip() or "시나리오 관측 신호"
-
-    fallbacks = [
-        f"{base} — 관련 공식 발표 보도 ({sid})",
-        f"{base} — 주요 매체의 가격 영향 분석 보도 ({sid})",
-    ]
-    for k, v in dim_pairs[:2]:
-        fallbacks.append(f"{base} — {k}={v} 공식 확인 보도")
-
-    seen: set = set()
-    out: List[str] = []
-    for lbl in fallbacks:
-        if lbl in seen:
-            continue
-        seen.add(lbl)
-        out.append(lbl)
-        if len(out) >= REF_SIGNPOSTS_PER_SCENARIO_MAX:
-            break
-    while len(out) < REF_SIGNPOSTS_PER_SCENARIO_MIN:
-        out.append(f"{base} — 추가 관측 #{len(out)+1}")
-    return out
 
 
 # ==============================================
@@ -429,9 +369,8 @@ async def stage4_assign_direction_strength(
         hard_constraints=hard,
         trace_context=trace_context,
     )
-
     if out is None:
-        return _stage4_fallback(labels)
+        _raise_llm_failure("Stage 4", None)
 
     return [
         {
@@ -441,59 +380,6 @@ async def stage4_assign_direction_strength(
         }
         for a in out.assignments
     ]
-
-
-def _stage4_fallback(labels: List[str]) -> List[Dict[str, str]]:
-    """LLM 실패 시 — 쿼터 내에서 균형 분배."""
-    n = len(labels)
-    n_strong = max(REF_STRONG_QUOTA_MIN, min(REF_STRONG_QUOTA_MAX, round(n / 3) or 1))
-    n_early = n - n_strong
-
-    if n_early > REF_EARLY_QUOTA_MAX:
-        overflow = n_early - REF_EARLY_QUOTA_MAX
-        bump = min(overflow, REF_STRONG_QUOTA_MAX - n_strong)
-        n_strong += bump
-        n_early -= bump
-    if n_early < REF_EARLY_QUOTA_MIN and n_strong > REF_STRONG_QUOTA_MIN:
-        shift = min(REF_EARLY_QUOTA_MIN - n_early, n_strong - REF_STRONG_QUOTA_MIN)
-        n_strong -= shift
-        n_early += shift
-
-    n_verystrong = 1 if n_strong >= 2 else 0
-    n_strong_only = n_strong - n_verystrong
-    n_med = (n_early + 1) // 2
-    n_remaining_early = n_early - n_med
-    n_weak = (n_remaining_early + 1) // 2
-    n_veryweak = n_remaining_early - n_weak
-
-    app_logger.info(
-        "Stage 4 fallback: N={} → VS={} S={} M={} W={} VW={}",
-        n,
-        n_verystrong,
-        n_strong_only,
-        n_med,
-        n_weak,
-        n_veryweak,
-    )
-
-    sequence = (
-        ([SignpostStrength.VERYSTRONG.to_string()] * n_verystrong)
-        + ([SignpostStrength.STRONG.to_string()] * n_strong_only)
-        + ([SignpostStrength.MEDIUM.to_string()] * n_med)
-        + ([SignpostStrength.WEAK.to_string()] * n_weak)
-        + ([SignpostStrength.VERYWEAK.to_string()] * n_veryweak)
-    )
-    out: List[Dict[str, str]] = []
-    for lbl, strength in zip(labels, sequence):
-        out.append({
-            "label_ko": lbl,
-            "strength": strength,
-            "rationale_ko": (
-                "Fallback — LLM 실패로 분포 기반 안전 strength 부여. "
-                "후속 재실행을 통해 정밀 평가 필요."
-            ),
-        })
-    return out
 
 
 async def stage45_enrich_signposts(
@@ -580,9 +466,8 @@ async def stage45_enrich_signposts(
         hard_constraints=hard,
         trace_context=trace_context,
     )
-
     if out is None:
-        return _stage4_fallback(labels), [_stage5_fallback_keywords(label) for label in labels]
+        _raise_llm_failure("Stage 4+5", None)
 
     assignments = [
         {
@@ -596,141 +481,9 @@ async def stage45_enrich_signposts(
     return assignments, keyword_hints
 
 
-async def stage45_enrich_signposts_batch(
-    scenarios: list[dict[str, Any]],
-    base_event_summary: Dict[str, str],
-    labels_by_scenario_id: dict[int, list[str]],
-    trace_context: TraceContext | None = None,
-) -> dict[int, tuple[List[Dict[str, str]], List[List[str]]]]:
-    """Stage 4+5 batch — scenario 목록 전체의 상세 signpost를 한 번에 생성."""
-    scenarios_with_labels = [
-        scenario for scenario in scenarios if labels_by_scenario_id.get(int(scenario["scenario_id"]))
-    ]
-    if not scenarios_with_labels:
-        return {}
-
-    scenario_ids = {int(scenario["scenario_id"]) for scenario in scenarios_with_labels}
-    hard = build_stage45_hard_constraints(
-        strong_min=REF_STRONG_QUOTA_MIN,
-        strong_max=REF_STRONG_QUOTA_MAX,
-        early_min=REF_EARLY_QUOTA_MIN,
-        early_max=REF_EARLY_QUOTA_MAX,
-    )
-    label_sets = {
-        scenario_id: [label.strip() for label in labels]
-        for scenario_id, labels in labels_by_scenario_id.items()
-    }
-
-    out = await _ainvoke_with_retry(
-        stage_label="Stage 4+5 batch",
-        schema_cls=Stage45BatchStructuredOutput,
-        system_prompt=build_stage45_system_prompt(
-            stage4_strength_guide=SignpostStrength.stage4_prompt_guide_text(),
-            strong_min=REF_STRONG_QUOTA_MIN,
-            strong_max=REF_STRONG_QUOTA_MAX,
-            early_min=REF_EARLY_QUOTA_MIN,
-            early_max=REF_EARLY_QUOTA_MAX,
-        ),
-        user_prompt=build_stage45_batch_user_prompt(
-            scenarios=scenarios_with_labels,
-            base_event_summary=base_event_summary,
-            labels_by_scenario_id=label_sets,
-        ),
-        validate_fn=None,
-        hard_constraints=hard,
-        trace_context=trace_context,
-    )
-
-    result: dict[int, tuple[List[Dict[str, str]], List[List[str]]]] = {}
-    seen_ids: set[int] = set()
-    for scenario_out in out.scenarios if out is not None else []:
-        if scenario_out.scenario_id not in scenario_ids or scenario_out.scenario_id in seen_ids:
-            continue
-        seen_ids.add(scenario_out.scenario_id)
-        labels = label_sets[scenario_out.scenario_id]
-        if len(scenario_out.signposts) != len(labels):
-            app_logger.info(
-                "[{}] Stage 4+5 batch partial fallback: signpost_count={} expected={}",
-                scenario_out.scenario_id,
-                len(scenario_out.signposts),
-                len(labels),
-            )
-            continue
-        out_labels = [item.label_ko.strip() for item in scenario_out.signposts]
-        if out_labels != labels:
-            app_logger.info(
-                "[{}] Stage 4+5 batch partial fallback: label order mismatch",
-                scenario_out.scenario_id,
-            )
-            continue
-        n_strong = sum(
-            1
-            for item in scenario_out.signposts
-            if item.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
-        )
-        n_early = sum(
-            1
-            for item in scenario_out.signposts
-            if item.strength
-            in (
-                SignpostStrength.MEDIUM,
-                SignpostStrength.WEAK,
-                SignpostStrength.VERYWEAK,
-            )
-        )
-        if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
-            app_logger.info(
-                "[{}] Stage 4+5 batch partial fallback: strong_quota={}",
-                scenario_out.scenario_id,
-                n_strong,
-            )
-            continue
-        if not (REF_EARLY_QUOTA_MIN <= n_early <= REF_EARLY_QUOTA_MAX):
-            app_logger.info(
-                "[{}] Stage 4+5 batch partial fallback: early_quota={}",
-                scenario_out.scenario_id,
-                n_early,
-            )
-            continue
-        has_bad_hints = any(
-            not (KEYWORD_HINTS_MIN <= len(item.keyword_hints) <= KEYWORD_HINTS_MAX)
-            or any(not str(kw).strip() for kw in item.keyword_hints)
-            for item in scenario_out.signposts
-        )
-        if has_bad_hints:
-            app_logger.info(
-                "[{}] Stage 4+5 batch partial fallback: invalid keyword_hints",
-                scenario_out.scenario_id,
-            )
-            continue
-        assignments = [
-            {
-                "label_ko": item.label_ko.strip(),
-                "strength": item.strength.to_string(),
-                "rationale_ko": item.rationale_ko,
-            }
-            for item in scenario_out.signposts
-        ]
-        keyword_hints = [[kw.strip() for kw in item.keyword_hints] for item in scenario_out.signposts]
-        result[scenario_out.scenario_id] = (assignments, keyword_hints)
-    for scenario in scenarios_with_labels:
-        scenario_id = int(scenario["scenario_id"])
-        if scenario_id in result:
-            continue
-        labels = label_sets[scenario_id]
-        result[scenario_id] = (
-            _stage4_fallback(labels),
-            [_stage5_fallback_keywords(label) for label in labels],
-        )
-    return result
-
-
 # ==============================================
 # 7. Stage 5 — Keyword Hint Mint
 # ==============================================
-
-_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-]+|[가-힣]+")
-
 
 async def stage5_mint_keywords(
     scenario: Dict[str, Any],
@@ -780,32 +533,11 @@ async def stage5_mint_keywords(
         hard_constraints=STAGE5_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        return [_stage5_fallback_keywords(lbl) for lbl in labels]
+        _raise_llm_failure("Stage 5", None)
 
     return [[kw.strip() for kw in h.keyword_hints] for h in out.hints]
 
-
-def _stage5_fallback_keywords(label: str) -> List[str]:
-    """LLM 실패 시 — label 의 명사 토큰 + 정형 행위어로 안전 3개 키워드 구성."""
-    tokens = [t for t in _TOKEN_PATTERN.findall(label) if len(t) >= 2]
-    seen: set = set()
-    proper: List[str] = []
-    for t in tokens:
-        if t in seen:
-            continue
-        seen.add(t)
-        proper.append(t)
-        if len(proper) >= 2:
-            break
-    fallback_action = "보도"
-    out = list(proper)
-    if fallback_action not in out:
-        out.append(fallback_action)
-    while len(out) < KEYWORD_HINTS_MIN:
-        out.append(f"신호{len(out)+1}")
-    return out[:KEYWORD_HINTS_MAX]
 
 # ==============================================
 # LangGraph Node Classes

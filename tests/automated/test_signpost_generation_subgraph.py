@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
     get_signpost_generation_subgraph,
@@ -11,6 +13,7 @@ from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import 
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
     SignpostGenerationState,
 )
+from apps.common.exceptions.custom import MIBaseError
 from apps.persistence.enums import SignpostStrength
 
 
@@ -121,3 +124,24 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
     assert second.strength == SignpostStrength.WEAK
     assert second.rationale_ko == "약한 근거"
     assert second.keyword_hints == ["입찰", "수입", "보도"]
+
+
+def test_retry_exhaustion_raises_original_llm_error(monkeypatch) -> None:
+    async def fail_invoke(*_args, **_kwargs):
+        raise TimeoutError("gateway timeout")
+
+    monkeypatch.setattr(nodes, "REF_MAX_RETRIES", 1)
+    monkeypatch.setattr(nodes, "_invoke_structured", fail_invoke)
+
+    with pytest.raises(MIBaseError) as error:
+        asyncio.run(
+            nodes._ainvoke_with_retry(
+                stage_label="Stage 2",
+                schema_cls=nodes.Stage2StructuredOutput,
+                system_prompt="system",
+                user_prompt="user",
+                validate_fn=None,
+            )
+        )
+
+    assert isinstance(error.value.__cause__, TimeoutError)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 from typing import Any
 
@@ -24,28 +25,28 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import
     stage4_synthesize_fixed_scenarios,
     stage6_validate,
 )
-from apps.agents.scenario_group_agent.subgraphs.signpost_generation.nodes import (
-    stage2_observability_filter_batch,
-    stage45_enrich_signposts_batch,
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
+    get_signpost_generation_subgraph,
 )
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import (
     GeneratedSignpost,
     SignpostGenerationResult,
 )
+from apps.agents.scenario_group_agent.subgraphs.signpost_generation.state import (
+    SignpostGenerationState,
+)
 from apps.common.exceptions.custom import MIBaseError
-from apps.common.tracing.context import TraceContext
+from apps.common.tracing.context import TraceContext, build_langgraph_config
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
     ScenarioStatus,
-    SignpostStrength,
 )
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.schema import (
     NewScenarioGeneratedDetails,
 )
-
 
 _LIKELIHOOD_WEIGHTS: dict[str, int] = {
     "very_low": 5,
@@ -209,11 +210,14 @@ async def run_signpost_generation(
         "driver": c1.get("driver", ""),
     }
     existing_scenario_ids = {int(signpost.scenario_id) for signpost in state.signposts}
-    target_ids = {int(scenario_id) for scenario_id in state.signpost_target_scenario_ids}
+    target_ids = {
+        int(scenario_id) for scenario_id in state.signpost_target_scenario_ids
+    }
     scenarios_to_process = [
         scenario.model_dump()
         for scenario in state.scenarios
-        if int(scenario.scenario_id) in target_ids or int(scenario.scenario_id) not in existing_scenario_ids
+        if int(scenario.scenario_id) in target_ids
+        or int(scenario.scenario_id) not in existing_scenario_ids
     ]
     if not scenarios_to_process:
         return create_signposts_state_update(
@@ -225,50 +229,60 @@ async def run_signpost_generation(
         )
 
     trace_context = runtime.context if runtime is not None else None
-    labels_by_scenario_id = await stage2_observability_filter_batch(
-        scenarios_to_process,
-        base_event_summary,
-        trace_context=trace_context,
+
+    from apps.common.configs.config import get_settings
+
+    semaphore = asyncio.Semaphore(
+        get_settings().create_signposts_max_concurrent_scenarios
     )
-    details_by_scenario_id = await stage45_enrich_signposts_batch(
-        scenarios_to_process,
-        base_event_summary,
-        labels_by_scenario_id,
-        trace_context=trace_context,
+
+    async def process_one(scenario: dict[str, Any]) -> list[GeneratedSignpost]:
+        async with semaphore:
+            result_state = await get_signpost_generation_subgraph().ainvoke(
+                SignpostGenerationState(
+                    scenario=scenario,
+                    base_event_summary=base_event_summary,
+                ),
+                config=(
+                    build_langgraph_config(trace_context)
+                    if trace_context is not None
+                    else None
+                ),
+                context=trace_context,
+            )
+            result = (
+                result_state
+                if isinstance(result_state, SignpostGenerationState)
+                else SignpostGenerationState.model_validate(result_state)
+            )
+            if result.error:
+                raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=result.error)
+            return list(result.signposts)
+
+    results = await asyncio.gather(
+        *(process_one(scenario) for scenario in scenarios_to_process),
+        return_exceptions=True,
     )
     generated: list[GeneratedSignpost] = []
     scenario_results: list[dict[str, Any]] = []
-    for scenario in scenarios_to_process:
+    for scenario, result in zip(scenarios_to_process, results, strict=True):
         scenario_id = int(scenario["scenario_id"])
-        labels = labels_by_scenario_id.get(scenario_id, [])
-        assignments, keyword_hints_list = details_by_scenario_id.get(scenario_id, ([], []))
-        scenario_signposts: list[GeneratedSignpost] = []
-        for label, assignment, keyword_hints in zip(
-            labels,
-            assignments,
-            keyword_hints_list,
-            strict=False,
-        ):
-            scenario_signposts.append(
-                GeneratedSignpost(
-                    scenario_id=scenario_id,
-                    signpost_class="observation",
-                    label=label,
-                    signpost_source="mi_record",
-                    strength=SignpostStrength.from_string_or_default(
-                        assignment.get("strength"),
-                        default=SignpostStrength.MEDIUM,
-                    ),
-                    rationale_ko=assignment.get("rationale_ko", ""),
-                    keyword_hints=keyword_hints,
-                )
+        if isinstance(result, BaseException):
+            scenario_results.append(
+                {
+                    "scenario_id": scenario_id,
+                    "status": "failure",
+                    "reason": f"Signpost 생성 실패: {str(result)[:200]}",
+                    "signpost_count": 0,
+                }
             )
-        generated.extend(scenario_signposts)
+            continue
+        generated.extend(result)
         scenario_results.append(
             {
-                "scenario_id": scenario["scenario_id"],
+                "scenario_id": scenario_id,
                 "status": "success",
-                "signpost_count": len(scenario_signposts),
+                "signpost_count": len(result),
             }
         )
 
@@ -296,6 +310,26 @@ def save_signposts(state: CreateSignpostsState) -> dict[str, object]:
         )
 
     saved_ids = SignpostService().save_generated_signposts(generated, user_id=state.user_id) if generated else []
+    failed_results = [
+        result
+        for result in (signpost_result.scenario_results if signpost_result is not None else [])
+        if result.get("status") == "failure"
+    ]
+    if failed_results:
+        failed_ids = [int(result["scenario_id"]) for result in failed_results]
+        success_count = sum(
+            1
+            for result in signpost_result.scenario_results
+            if result.get("status") == "success"
+        )
+        raise MIBaseError(
+            ErrorCode.LLM_INVOCATION_ERROR,
+            detail=(
+                "Signpost 일부 scenario 생성 실패. "
+                f"성공={success_count}, 실패={len(failed_ids)}, "
+                f"실패 scenario_id={failed_ids}. 재시도가 필요합니다."
+            ),
+        )
     all_signposts = SignpostService().load_by_scenario_ids(
         [int(scenario.scenario_id) for scenario in state.scenarios],
     )

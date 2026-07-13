@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field, conlist, model_validator
 
 from apps.persistence.enums import SignpostStrength
 
-
 KEYWORD_HINTS_MIN: int = 3
 KEYWORD_HINTS_MAX: int = 5
 
@@ -35,19 +34,6 @@ class Stage2StructuredOutput(BaseModel):
                 raise ValueError(f"label_ko 중복: '{key}'")
             seen.add(key)
         return self
-
-
-class Stage2ScenarioCandidates(BaseModel):
-    scenario_id: int = Field(description="입력 scenario_id echo.")
-    candidates: list[Stage2Candidate] = Field(
-        description="해당 scenario에서 3-필터를 통과한 Observability 후보만 포함.",
-    )
-
-
-class Stage2BatchStructuredOutput(BaseModel):
-    scenarios: list[Stage2ScenarioCandidates] = Field(
-        description="입력 scenario 목록과 동일한 scenario_id 집합.",
-    )
 
 
 class Stage4Assignment(BaseModel):
@@ -98,19 +84,6 @@ class Stage45StructuredOutput(BaseModel):
     )
 
 
-class Stage45ScenarioSignposts(BaseModel):
-    scenario_id: int = Field(description="입력 scenario_id echo.")
-    signposts: list[Stage45SignpostDetail] = Field(
-        description="해당 scenario의 입력 label 순서와 동일한 상세 결과.",
-    )
-
-
-class Stage45BatchStructuredOutput(BaseModel):
-    scenarios: list[Stage45ScenarioSignposts] = Field(
-        description="입력 scenario 목록과 동일한 scenario_id 집합.",
-    )
-
-
 def build_stage2_user_prompt(
     *,
     scenario: dict[str, Any],
@@ -144,55 +117,6 @@ def build_stage2_user_prompt(
 - 각 후보는 label_ko + filter_reason 만 포함.
 - 탈락 후보, passes_filter=false 후보, 검토용 후보는 출력하지 말 것.
 - **MAX 를 채우지 말 것** — 결합도 강한 만큼만 출력.
-"""
-
-
-def _format_scenario_for_prompt(scenario: dict[str, Any], *, description_len: int) -> str:
-    dim_values_block = ", ".join(
-        f"{key}={value}" for key, value in (scenario.get("dimension_values") or {}).items()
-    ) or "(없음)"
-    price_block = ", ".join(
-        f"{key}={value}" for key, value in (scenario.get("price_direction") or {}).items()
-    ) or "(없음)"
-    description = str(scenario.get("description") or "").strip()
-    if len(description) > description_len:
-        description = description[:description_len] + " ...(생략)"
-    return (
-        f"- scenario_id: {scenario.get('scenario_id', 'S_??')}\n"
-        f"  title: {scenario.get('title', '')}\n"
-        f"  description: {description}\n"
-        f"  dimension_values: {dim_values_block}\n"
-        f"  price_direction: {price_block}"
-    )
-
-
-def build_stage2_batch_user_prompt(
-    *,
-    scenarios: list[dict[str, Any]],
-    base_event_summary: dict[str, str],
-    min_n: int,
-    max_n: int,
-) -> str:
-    scenario_block = "\n".join(
-        _format_scenario_for_prompt(scenario, description_len=500)
-        for scenario in scenarios
-    )
-    scenario_ids = ", ".join(str(scenario.get("scenario_id")) for scenario in scenarios)
-    return f"""\
-## Base Event 요약
-- title: {base_event_summary.get("title", "")}
-- summary: {base_event_summary.get("summary", "")}
-- driver: {base_event_summary.get("driver", "")}
-
-## 대상 시나리오 목록
-{scenario_block}
-
-## 산출
-- scenarios 에는 다음 scenario_id 를 정확히 한 번씩 포함: {scenario_ids}
-- 각 scenario 의 candidates 는 3-필터를 모두 통과한 후보만 {min_n}~{max_n}개.
-- 각 후보는 label_ko + filter_reason 만 포함.
-- 탈락 후보, passes_filter=false 후보, 검토용 후보는 출력하지 말 것.
-- **MAX 를 채우지 말 것** — scenario별 결합도 강한 만큼만 출력.
 """
 
 
@@ -319,42 +243,6 @@ def build_stage45_user_prompt(
 ## 산출
 - signposts 길이 = {len(labels)}, label_ko 순서 유지.
 - 각 항목에 strength, rationale_ko, keyword_hints 를 모두 채움.
-- direction 은 downstream 에서 SUP 로 고정하므로 출력하지 않음.
-"""
-
-
-def build_stage45_batch_user_prompt(
-    *,
-    scenarios: list[dict[str, Any]],
-    base_event_summary: dict[str, str],
-    labels_by_scenario_id: dict[int, list[str]],
-) -> str:
-    blocks: list[str] = []
-    for scenario in scenarios:
-        scenario_id = int(scenario.get("scenario_id") or 0)
-        label_block = "\n".join(
-            f"    [{index + 1}] {label}"
-            for index, label in enumerate(labels_by_scenario_id.get(scenario_id, []))
-        )
-        blocks.append(
-            _format_scenario_for_prompt(scenario, description_len=500)
-            + "\n"
-            + "  입력 Signpost labels:\n"
-            + (label_block or "    (없음)")
-        )
-    scenario_ids = ", ".join(str(scenario.get("scenario_id")) for scenario in scenarios)
-    return f"""\
-## Base Event 요약
-- title: {base_event_summary.get("title", "")}
-- summary: {base_event_summary.get("summary", "")}
-
-## 대상 시나리오 및 입력 Signpost label
-{chr(10).join(blocks)}
-
-## 산출
-- scenarios 에는 다음 scenario_id 를 정확히 한 번씩 포함: {scenario_ids}
-- 각 scenario.signposts 길이와 label_ko 순서는 해당 scenario의 입력 Signpost labels와 동일.
-- 각 signpost 항목에 strength, rationale_ko, keyword_hints 를 모두 채움.
 - direction 은 downstream 에서 SUP 로 고정하므로 출력하지 않음.
 """
 
