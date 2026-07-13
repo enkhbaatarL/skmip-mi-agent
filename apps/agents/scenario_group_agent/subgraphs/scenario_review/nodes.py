@@ -5,6 +5,7 @@ from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 import re
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+import unicodedata
 
 from langgraph.runtime import Runtime
 
@@ -14,6 +15,7 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     CompatibilityStructuredOutput,
     DimensionValueStructuredOutput,
     GeneratedDimensionCell as _GeneratedDimensionCell,
+    SimilarTitlePair,
     build_dimension_value_messages,
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
@@ -242,6 +244,58 @@ def _scenario_label(scenario: dict[str, Any]) -> str:
     return f"시나리오 {_sid(scenario)}"
 
 
+def _normalize_title_for_duplicate_check(value: object) -> str:
+    """표현상 차이만 있는 제목을 완전 중복으로 비교할 canonical key를 만든다."""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(
+        character
+        for character in normalized
+        if not character.isspace() and not unicodedata.category(character).startswith("P")
+    )
+
+
+def _title_pair_key(scenario_id_a: int, scenario_id_b: int) -> tuple[int, int]:
+    return min(scenario_id_a, scenario_id_b), max(scenario_id_a, scenario_id_b)
+
+
+def _exact_duplicate_title_pairs(
+    ctx: ReviewContext,
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    seen: dict[str, list[dict[str, Any]]] = {}
+    duplicates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for scenario in ctx.scenarios:
+        normalized = _normalize_title_for_duplicate_check(scenario.get("title"))
+        if not normalized:
+            continue
+        originals = seen.setdefault(normalized, [])
+        duplicates.extend((original, scenario) for original in originals)
+        originals.append(scenario)
+    return duplicates
+
+
+def _check_exact_title_duplicates(ctx: ReviewContext) -> CheckResult:
+    duplicate_pairs = _exact_duplicate_title_pairs(ctx)
+    offenders = [
+        f"{_sid(original)} = {_sid(duplicate)}"
+        for original, duplicate in duplicate_pairs
+    ]
+    advice = [
+        f"시나리오명 '{_scenario_label(original)}'와(과) "
+        f"'{_scenario_label(duplicate)}'가 동일합니다. 분기 기준의 차이가 드러나도록 "
+        "서로 다른 시나리오명으로 수정해주세요."
+        for original, duplicate in duplicate_pairs
+    ]
+    return CheckResult(
+        "R00",
+        "Stage2",
+        "시나리오명 완전 중복",
+        "FAIL" if duplicate_pairs else "PASS",
+        "모든 시나리오명 유일" if not duplicate_pairs else f"완전 중복 {len(duplicate_pairs)}쌍",
+        offenders,
+        advice,
+    )
+
+
 def _dim_label(ctx: ReviewContext, key: str) -> str:
     dimension = ctx.dim_index.get(key) or {}
     return str(dimension.get("label") or key)
@@ -423,18 +477,91 @@ def _has_only_unusable_enum_recommendations(
     return True
 
 
+def _build_similar_title_check(
+    ctx: ReviewContext,
+    output: CompatibilityStructuredOutput,
+    expected_ids: set[int],
+    title_by_id: dict[int, str],
+) -> CheckResult:
+    exact_pair_keys = {
+        _title_pair_key(
+            int(original["scenario_id"]),
+            int(duplicate["scenario_id"]),
+        )
+        for original, duplicate in _exact_duplicate_title_pairs(ctx)
+    }
+    seen_pairs: set[tuple[int, int]] = set()
+    similar_pairs: list[SimilarTitlePair] = []
+    for pair in output.similar_title_pairs:
+        scenario_id_a = pair.scenario_id_a
+        scenario_id_b = pair.scenario_id_b
+        if scenario_id_a == scenario_id_b:
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=f"유사 시나리오명 LLM 응답에 self-pair가 있습니다: {scenario_id_a}",
+            )
+        if scenario_id_a not in expected_ids or scenario_id_b not in expected_ids:
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=(
+                    "유사 시나리오명 LLM 응답에 알 수 없는 scenario_id가 있습니다: "
+                    f"{scenario_id_a}, {scenario_id_b}"
+                ),
+            )
+        pair_key = _title_pair_key(scenario_id_a, scenario_id_b)
+        if pair_key in seen_pairs:
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=f"유사 시나리오명 LLM 응답 pair가 중복되었습니다: {pair_key}",
+            )
+        seen_pairs.add(pair_key)
+        if pair_key not in exact_pair_keys:
+            similar_pairs.append(pair)
+
+    offenders = [
+        f"{pair.scenario_id_a} = {pair.scenario_id_b}: {pair.reason}"
+        for pair in similar_pairs
+    ]
+    advice = [
+        f"시나리오명 '{title_by_id[pair.scenario_id_a]}'와(과) "
+        f"'{title_by_id[pair.scenario_id_b]}'가 유사하게 읽힙니다 — {pair.reason} "
+        f"수정 권고: {pair.suggested_fix}"
+        for pair in similar_pairs
+    ]
+    return CheckResult(
+        "R06",
+        "Stage4",
+        "의미상 유사한 시나리오명 — LLM 판정",
+        "WARN" if similar_pairs else "PASS",
+        "의미상 유사한 시나리오명 없음"
+        if not similar_pairs
+        else f"유사한 시나리오명 {len(similar_pairs)}쌍",
+        offenders,
+        advice,
+    )
+
+
 async def _check_compatibility(
     ctx: ReviewContext,
     trace_context: TraceContext | None = None,
-) -> CheckResult:
+) -> list[CheckResult]:
     if not ctx.scenarios:
-        return CheckResult(
-            "R03",
-            "Stage4",
-            "Compatibility(조합 모순) — LLM 판정",
-            "INFO",
-            "검증할 시나리오 없음",
-        )
+        return [
+            CheckResult(
+                "R03",
+                "Stage4",
+                "Compatibility(조합 모순) — LLM 판정",
+                "INFO",
+                "검증할 시나리오 없음",
+            ),
+            CheckResult(
+                "R06",
+                "Stage4",
+                "의미상 유사한 시나리오명 — LLM 판정",
+                "INFO",
+                "검증할 시나리오 없음",
+            ),
+        ]
     lines: list[str] = []
     for scenario in ctx.scenarios:
         rendered_pairs: list[str] = []
@@ -475,29 +602,38 @@ async def _check_compatibility(
         }
         incompatible = [item for item in items if not item.compatible]
         if _has_only_unusable_enum_recommendations(ctx, incompatible):
-            return CheckResult(
+            compatibility_check = CheckResult(
                 "R03",
                 "Stage4",
                 "Compatibility(조합 모순) — LLM 판정",
                 "PASS",
                 f"{len(items)}건 판정 — enum 안 실행 가능한 권장 변경 없음",
             )
-        offenders = [f"{item.scenario_id}: {item.reason}" for item in incompatible]
-        advice = [
-            _compat_advice(item, title_by_id.get(item.scenario_id))
-            for item in incompatible
-        ]
-        return CheckResult(
-            "R03",
-            "Stage4",
-            "Compatibility(조합 모순) — LLM 판정",
-            "PASS" if not incompatible else "WARN",
-            f"{len(items)}건 판정 — 모순 없음"
-            if not incompatible
-            else f"모순 {len(incompatible)}건",
-            offenders,
-            advice,
+        else:
+            offenders = [f"{item.scenario_id}: {item.reason}" for item in incompatible]
+            advice = [
+                _compat_advice(item, title_by_id.get(item.scenario_id))
+                for item in incompatible
+            ]
+            compatibility_check = CheckResult(
+                "R03",
+                "Stage4",
+                "Compatibility(조합 모순) — LLM 판정",
+                "PASS" if not incompatible else "WARN",
+                f"{len(items)}건 판정 — 모순 없음"
+                if not incompatible
+                else f"모순 {len(incompatible)}건",
+                offenders,
+                advice,
+            )
+
+        similar_title_check = _build_similar_title_check(
+            ctx,
+            result.result,
+            expected,
+            title_by_id,
         )
+        return [compatibility_check, similar_title_check]
     except MIBaseError:
         raise
     except Exception as exc:
@@ -675,6 +811,7 @@ def _check_probability_range(ctx: ReviewContext) -> CheckResult:
 
 
 CHECKS: list[Callable[[ReviewContext], CheckResult]] = [
+    _check_exact_title_duplicates,
     _check_baseline_contrast_covered,
     _check_value_diversity,
 ]
@@ -682,7 +819,7 @@ CHECKS: list[Callable[[ReviewContext], CheckResult]] = [
 _STATUS_LABEL = {"FAIL": "실패", "WARN": "주의"}
 
 # 현업 사용자에게 표출할 친화 문구. 내부 검사 코드(R01~)는 조회 키로만 쓰고
-# 화면에는 노출하지 않는다. 모든 검사는 WARN(주의)로만 분류되며 검증을 막지 않는다.
+# 화면에는 노출하지 않는다. FAIL은 차단, WARN은 수정 권고 후 재검토 대상으로 분류한다.
 #   - title       : 검사 항목을 가리키는 직관적 제목
 #   - issue       : 문제 건수를 붙여 표시할 문제 설명 (예: "<issue> 2건")
 #   - issue_empty : 건수가 없는 경우(자동 점검 실패 등) 단독 문장
@@ -691,13 +828,22 @@ _STATUS_LABEL = {"FAIL": "실패", "WARN": "주의"}
 #   - show_detail : 원본 detail 을 보조 설명으로 덧붙일지 여부
 #   - suggestion  : 개선 제안 (advice 가 채워진 검사에서는 advice 가 우선)
 #
-# 적용 검사 (5개)
+# 적용 검사
+#   R00) 시나리오명 완전 중복   : 정규화 후 동일한 제목 쌍(FAIL)
 #   R01) 시나리오 다양성        : baseline 대비 대안값을 각 선택 항목에 최소 1개 포함
 #   R02) 값 다양성              : 각 항목에 서로 다른 값 2개 이상
 #   R03) 값 조합 적합성         : 함께 가질 수 없는 값 조합(LLM 판정)
 #   R04) 시나리오 조합 중복     : 두 시나리오의 값 조합이 모두 같음
 #   R05) 확률·증감 값 범위      : 확률 0~100 / 증감 ±100
+#   R06) 시나리오명 의미 중복   : 표현은 달라도 동일한 의미인 제목 쌍(LLM 판정)
 CHECK_DISPLAY: dict[str, dict[str, Any]] = {
+    "R00": {
+        "title": "시나리오명 중복",
+        "issue": "동일한 시나리오명",
+        "unit": "쌍",
+        "target_word": "해당 시나리오",
+        "suggestion": "분기 기준의 차이가 드러나도록 서로 다른 시나리오명으로 수정하세요.",
+    },
     "R01": {
         "title": "시나리오 다양성",
         "issue": "baseline 대비 대안값이 빠진 항목",
@@ -731,6 +877,15 @@ CHECK_DISPLAY: dict[str, dict[str, Any]] = {
         "issue": "허용 범위를 벗어난 값",
         "target_word": "해당 값",
         "suggestion": "확률·증감 값을 허용 범위(확률 0~100, 증감 -100~100) 안으로 수정하세요.",
+    },
+    "R06": {
+        "title": "유사한 시나리오명",
+        "issue": "의미가 유사한 시나리오명",
+        "unit": "쌍",
+        "target_word": "해당 시나리오",
+        "suggestion": (
+            "각 시나리오의 시간, 강도, 방향 또는 범위 차이가 제목에 드러나도록 수정하세요."
+        ),
     },
 }
 
@@ -804,7 +959,9 @@ def _render_check(check: CheckResult, label_map: dict[str, str]) -> list[str]:
 
 def _build_reason(notable: list[CheckResult], label_map: dict[str, str]) -> str:
     counts = Counter(check.status for check in notable)
-    lines = [f"검토 결과 — 주의 {counts.get('WARN', 0)}건"]
+    lines = [
+        f"검토 결과 — 실패 {counts.get('FAIL', 0)}건, 주의 {counts.get('WARN', 0)}건",
+    ]
     for check in notable:
         lines.extend(_render_check(check, label_map))
     return "\n".join(lines)
@@ -835,7 +992,7 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
                     f"검사 예외: {type(exc).__name__}: {exc}",
                 ),
             )
-    checks.append(await _check_compatibility(ctx, trace_context=trace_context))
+    checks.extend(await _check_compatibility(ctx, trace_context=trace_context))
     # R05(확률/증감 값 범위) 검토 비활성화(always):
     # 서비스 사용자가 시나리오 추가 시 probability 가 null 등으로 들어올 수 있어
     # 0~100 범위 검토가 무의미하므로 항상 비활성화한다.
@@ -856,11 +1013,14 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
     summary = {
         status: counts.get(status, 0) for status in ("PASS", "WARN", "FAIL", "INFO")
     }
-    # 모든 검사는 WARN(주의)로만 분류되므로 검증을 막지 않는다(BLOCK 없음).
-    verdict: Literal["PASS", "REVIEW", "BLOCK"] = (
-        "REVIEW" if summary["WARN"] else "PASS"
-    )
-    notable = [check for check in checks if check.status == "WARN"]
+    verdict: Literal["PASS", "REVIEW", "BLOCK"]
+    if summary["FAIL"]:
+        verdict = "BLOCK"
+    elif summary["WARN"]:
+        verdict = "REVIEW"
+    else:
+        verdict = "PASS"
+    notable = [check for check in checks if check.status in {"FAIL", "WARN"}]
     reason = (
         _build_reason(notable, _dim_label_map(ctx))
         if notable

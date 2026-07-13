@@ -10,6 +10,9 @@ COMPAT_SYSTEM_PROMPT = """\
 각 시나리오는 Dimension과 값의 조합으로 정의됩니다. 조합 안의 값들이 서로
 물리적 또는 논리적으로 모순되는지 판정하십시오.
 
+각 시나리오의 title도 함께 비교해, 표현은 다르지만 동일한 상황이나 결과를
+의미하는 제목 쌍을 similar_title_pairs에 출력하십시오.
+
 - 명백한 물리적 또는 논리적 모순이 있을 때만 compatible=false로 판정합니다.
 - 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
 - narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
@@ -23,6 +26,14 @@ COMPAT_SYSTEM_PROMPT = """\
   · conflict_dim_b / conflict_value_b : 충돌하는 두 번째 항목명과 값
   · recommended_value_b : conflict_value_b 를 대체하면 모순이 해소되는 enum 안의 권장 값
 - compatible=true인 경우 위 다섯 필드는 비워 둡니다(null).
+- similar_title_pairs는 다음 기준을 모두 만족하는 쌍만 출력합니다.
+  · '~함', '~임' 같은 종결어미 차이 또는 동의 표현 때문에 문구는 다르지만 핵심 상황·결과가 같은 경우
+  · 시나리오를 구분하는 시간, 강도, 방향, 범위 등 핵심 차이가 제목에 드러나지 않는 경우
+- 공통 단어가 있거나 같은 이벤트를 다룬다는 이유만으로 유사 제목으로 판정하지 않습니다.
+- 의미상 구분되는 제목은 출력하지 않고, 완전히 같은 문자열의 제목도 출력하지 않습니다.
+- 각 쌍은 scenario_id_a < scenario_id_b 순서로 한 번만 출력하며 self-pair는 금지합니다.
+- reason은 두 제목이 같은 의미로 읽히는 이유를 한국어 한 줄로 작성합니다.
+- suggested_fix는 두 제목이 분기 기준의 차이를 드러내도록 수정하는 방향을 한국어 한 줄로 작성합니다.
 """
 
 QUICK_COMPAT_SYSTEM_PROMPT = """\
@@ -69,8 +80,16 @@ class CompatibilityItem(BaseModel):
     recommended_value_b: str | None = None
 
 
+class SimilarTitlePair(BaseModel):
+    scenario_id_a: int
+    scenario_id_b: int
+    reason: str
+    suggested_fix: str
+
+
 class CompatibilityStructuredOutput(BaseModel):
     items: list[CompatibilityItem] = Field(default_factory=list)
+    similar_title_pairs: list[SimilarTitlePair] = Field(default_factory=list)
 
 
 class QuickCompatibilityItem(BaseModel):

@@ -28,6 +28,7 @@ from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     NarrativeOnly,
     Stage4StructuredOutput,
 )
+from apps.agents.scenario_group_agent.prompts.scenario_validation import SimilarTitlePair
 from apps.common.exceptions.custom import MIBaseError
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
@@ -112,8 +113,16 @@ ROWS = [
 ]
 
 
-def _llm_result(*items: CompatibilityItem) -> SimpleNamespace:
-    return SimpleNamespace(result=CompatibilityOutput(items=list(items)))
+def _llm_result(
+    *items: CompatibilityItem,
+    similar_title_pairs: list[SimilarTitlePair] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        result=CompatibilityOutput(
+            items=list(items),
+            similar_title_pairs=similar_title_pairs or [],
+        ),
+    )
 
 
 class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
@@ -133,8 +142,8 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert report.verdict == "PASS"
         assert report.is_valid
-        # R05(확률/증감 값 범위)는 비활성화되어 검사 4종(R01~R04)만 수행된다.
-        assert report.summary == {"PASS": 4, "WARN": 0, "FAIL": 0, "INFO": 0}
+        # R05(확률/증감 값 범위)는 비활성화된다.
+        assert report.summary == {"PASS": 6, "WARN": 0, "FAIL": 0, "INFO": 0}
 
     async def test_requested_headers_define_review_dimensions(self) -> None:
         group = {
@@ -174,7 +183,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
 
         assert context.selected_dims == ["period", "severity"]
         assert report.verdict == "PASS"
-        assert report.summary == {"PASS": 4, "WARN": 0, "FAIL": 0, "INFO": 0}
+        assert report.summary == {"PASS": 6, "WARN": 0, "FAIL": 0, "INFO": 0}
 
     async def test_unchanged_request_skips_review(self) -> None:
         # 요청 본문이 DB(create scenario 결과)와 정확히 일치하면 사용자가 수정한
@@ -347,6 +356,97 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             report = await run_review(context)
 
         assert report.checks != []
+
+    async def test_normalized_exact_duplicate_title_blocks_without_raising(self) -> None:
+        rows = [dict(ROWS[0]), dict(ROWS[1])]
+        rows[0]["title"] = "LNG 공급 차질"
+        rows[1]["title"] = " lng-공급, 차질 "
+        context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+            similar_title_pairs=[
+                SimilarTitlePair(
+                    scenario_id_a=100,
+                    scenario_id_b=101,
+                    reason="표현상 동일",
+                    suggested_fix="기간 차이를 제목에 표시",
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "BLOCK"
+        assert not report.is_valid
+        assert report.summary["FAIL"] == 1
+        assert next(check for check in report.checks if check.check_id == "R00").status == "FAIL"
+        assert next(check for check in report.checks if check.check_id == "R06").status == "PASS"
+        assert "[실패] 시나리오명 중복" in report.reason
+
+    async def test_semantically_similar_title_is_warning_and_blocks_review(self) -> None:
+        rows = [dict(ROWS[0]), dict(ROWS[1])]
+        rows[0]["title"] = "가격 상승함"
+        rows[1]["title"] = "가격 상승임"
+        context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+            similar_title_pairs=[
+                SimilarTitlePair(
+                    scenario_id_a=100,
+                    scenario_id_b=101,
+                    reason="종결어미만 다르고 같은 가격 상승을 의미합니다.",
+                    suggested_fix="단기 상승과 장기 상승처럼 기간 차이를 표시하세요.",
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "REVIEW"
+        assert not report.is_valid
+        title_check = next(check for check in report.checks if check.check_id == "R06")
+        assert title_check.status == "WARN"
+        assert "[주의] 유사한 시나리오명" in report.reason
+        assert "단기 상승과 장기 상승" in report.reason
+
+    async def test_invalid_similar_title_pairs_raise_llm_response_error(self) -> None:
+        invalid_pair_sets = [
+            [SimilarTitlePair(scenario_id_a=100, scenario_id_b=100, reason="self", suggested_fix="fix")],
+            [SimilarTitlePair(scenario_id_a=100, scenario_id_b=999, reason="unknown", suggested_fix="fix")],
+            [
+                SimilarTitlePair(scenario_id_a=100, scenario_id_b=101, reason="first", suggested_fix="fix"),
+                SimilarTitlePair(scenario_id_a=101, scenario_id_b=100, reason="duplicate", suggested_fix="fix"),
+            ],
+        ]
+        context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
+
+        for pairs in invalid_pair_sets:
+            with self.subTest(pairs=pairs):
+                result = _llm_result(
+                    CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+                    CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+                    similar_title_pairs=pairs,
+                )
+                with patch(
+                    "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
+                    "_invoke_compatibility",
+                    new=AsyncMock(return_value=result),
+                ):
+                    with self.assertRaises(MIBaseError) as error:
+                        await run_review(context)
+                assert error.exception.error_code.name == "LLM_INVALID_RESPONSE_ERROR"
 
     async def test_warning_sets_invalid(self) -> None:
         rows = [dict(ROWS[0]), dict(ROWS[1])]

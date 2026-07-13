@@ -1286,6 +1286,20 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert state.validation_result is not None
         assert state.validation_result.summary == {"PASS": 3, "WARN": 1, "FAIL": 0, "INFO": 0}
 
+    def test_validation_result_accepts_block_verdict(self) -> None:
+        state = TestScenarioState(
+            validation_result={
+                "scenario_group_id": 10,
+                "scenario_count": 2,
+                "verdict": "BLOCK",
+                "summary": {"PASS": 5, "WARN": 0, "FAIL": 1, "INFO": 0},
+                "checks": [],
+            },
+        )
+
+        assert state.validation_result is not None
+        assert state.validation_result.verdict == "BLOCK"
+
     def test_request_table_row_coerces_typed_nested_fields(self) -> None:
         state = TestScenarioState(
             request_table={

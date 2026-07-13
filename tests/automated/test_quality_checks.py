@@ -17,7 +17,12 @@ from quality_eval.layer1_checks import CheckResult, run_layer1_checks
 from quality_eval.report import render_quality_report
 from quality_eval.runtime_config import DEFAULT_USER_ID, load_runtime_target
 from quality_eval.storage import QualityStore
-from eval_validation_probe import MUTATION_IDS, mutate_table, normalize_validation_table
+from eval_validation_probe import (
+    MUTATION_IDS,
+    classify_probe_result,
+    mutate_table,
+    normalize_validation_table,
+)
 from eval_trace_utils import SpanSummary, TraceSummary
 
 
@@ -283,6 +288,12 @@ def test_mutations_are_pure_and_apply_the_expected_table_shape() -> None:
     assert {tuple(sorted(row["cells"].items())) for row in baseline_converged["rows"]} == {
         tuple(sorted(baseline_converged["rows"][0]["cells"].items())),
     }
+    exact_title_duplicate = mutate_table(original, "V-08")
+    assert exact_title_duplicate["rows"][0]["title"] == "LNG 공급 차질"
+    assert exact_title_duplicate["rows"][1]["title"] == " lng-공급, 차질 "
+    semantic_title_duplicate = mutate_table(original, "V-09")
+    assert semantic_title_duplicate["rows"][0]["title"] == "가격 상승함"
+    assert semantic_title_duplicate["rows"][1]["title"] == "가격 상승임"
 
 
 def test_validation_probe_normalizes_callback_table_before_live_request() -> None:
@@ -300,6 +311,25 @@ def test_validation_probe_normalizes_callback_table_before_live_request() -> Non
     normalized = normalize_validation_table(table)
 
     assert set(normalized["rows"][0]) == {"scenarioId", "displayOrder", "title", "cells"}
+
+
+def test_title_duplicate_probe_results_require_rejection_and_matching_reason() -> None:
+    for mutation_id, reason in (
+        ("V-08", "시나리오명 중복"),
+        ("V-09", "유사한 시나리오명 수정 권고"),
+    ):
+        observed, verdict, _ = classify_probe_result(
+            mutation_id,
+            {
+                "isValid": False,
+                "reason": reason,
+                "scenarioGroup": {"stage": "scenario_created"},
+            },
+            http_status=200,
+        )
+
+        assert observed == "rejected"
+        assert verdict == "PASS"
 
 
 def test_report_connects_slowest_api_to_trace_bottleneck_stage(tmp_path: Path) -> None:

@@ -93,7 +93,7 @@ mutation probe는 성공 run의 create table을 사용해 confirmation 전 valid
   --probe \
   --agent local \
   --user-id 10603 \
-  --probe-mutations V-00,V-01,V-04,V-05,V-06,V-07
+  --probe-mutations V-00,V-01,V-04,V-05,V-06,V-07,V-08,V-09
 ```
 
 단일 table의 mutation 형태만 먼저 확인하려면 별도 probe CLI의 `--dry-run`을 쓴다.
@@ -177,6 +177,8 @@ Probe는 validation review의 실제 책임 범위에 맞춘다.
 - `V-05`: optional dimension header 추가 + 일부/전체 null cell. enum 내 값 자동생성 기대.
 - `V-06`: required dimension header 삭제 또는 required cell null. API/input validation error 기대.
 - `V-07`: title wording만 의미 보존 변경. review path 진입 후 clean pass 기대, WARN 발생 시 false positive 후보.
+- `V-08`: 두 scenario title을 공백·문장부호 정규화 후 동일하게 변경. 완전 중복 FAIL과 `isValid=false` 기대.
+- `V-09`: 두 scenario title을 `가격 상승함`/`가격 상승임`처럼 의미상 같게 변경. 유사 제목 WARN과 `isValid=false` 기대.
 
 현재 API가 `checks[]`를 노출하지 않으면 `isValid`, `scenarioGroup.stage`, `reason` keyword, callback table 변화, MLflow trace 순서로 판정한다. reason 파싱은 취약하므로 check-id 단위 정밀 판정이 필요하면 API 관측성 개선을 제안한다.
 

@@ -550,17 +550,19 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 - `nodes.py`: LangGraph node wrapper
 - `schema.py`: review context, check result, report DTO
 - `state.py`: review subgraph 전용 state
-- `nodes.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현, LangGraph node wrapper
+- `nodes.py`: review context 구성, dimension value 자동 생성 helper, R00~R06 검사 구현, LangGraph node wrapper
 
-##### `run_review` 검사 규칙 (R01~R05)
+##### `run_review` 검사 규칙 (R00~R06)
 
 | 규칙 | 목적 | 현재 동작 | enum/custom 영향 |
 |---|---|---|---|
+| R00 title exact duplicate | 완전 중복 시나리오명 차단 | Unicode·대소문자·공백·문장부호를 정규화한 제목이 동일한 쌍을 `FAIL`로 판정 | dimension enum과 무관 |
 | R01 baseline contrast coverage | baseline 대비 시나리오 구분력 확인 | 각 selected dimension에서 baseline과 다른 값이 최소 1개 이상 존재하는지 검사 | enum 순서나 tail flag가 아니라 실제 값 문자열 비교로 판단 |
 | R02 value diversity | dimension별 값 다양성 확인 | 각 selected dimension에서 서로 다른 값이 2개 이상인지 검사 | custom text도 일반 값으로 집계되므로 동의어가 다양성으로 과대 계산될 수 있음 |
 | R03 compatibility | 값 조합의 물리/논리 정합성 확인 | scenario별 dimension value 조합과 narrative를 LLM에 전달해 모순 여부를 평가 | enum 밖 custom value도 그대로 검토 입력에 포함 |
 | R04 MECE | 시나리오 조합 중복 방지 | 모든 dimension value 조합이 완전히 동일한 scenario 쌍을 탐지 | 문자열 완전 일치 비교이므로 표기 차이가 있으면 중복으로 잡히지 않을 수 있음 |
 | R05 probability range | 수치 범위 유효성 확인 | 확률(0~100), 증감(-100~100) 검사 함수가 있으나 현재 `run_review`에서는 비활성 | 현재 validation verdict에 영향 없음 |
+| R06 semantic title duplicate | 의미상 유사한 시나리오명 수정 권고 | R03 compatibility와 같은 LLM 호출에서 유사 제목 쌍·사유·수정 방향을 받아 `WARN`으로 판정 | dimension 값 차이를 제목에 드러내는 권고에 활용 |
 
 추가로, 요청 table이 DB의 create 결과와 동일하면 review를 skip하고 PASS를 반환한다.
 동일성 비교는 validation request body가 실제로 받을 수 있는 row 필드만 기준으로 한다.
@@ -572,10 +574,11 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 사용자가 수정 가능한 필드가 바뀌지 않았으면 변경 없음으로 보고 LLM review를 건너뛴다.
 
 - `is_valid=True`: verdict가 `PASS`
-- `is_valid=False`: verdict가 `REVIEW`
+- `is_valid=False`: verdict가 `REVIEW` 또는 `BLOCK`
 
-현재 review는 모든 검사 실패를 `WARN`으로 분류하므로 `BLOCK` verdict를 생성하지 않는다.
-`WARN`이 하나라도 있으면 verdict는 `REVIEW`가 되고, `is_valid=False`로 반환된다.
+`FAIL`이 하나라도 있으면 verdict는 `BLOCK`, `FAIL` 없이 `WARN`이 있으면 `REVIEW`가 된다.
+두 verdict 모두 콘텐츠 검토 결과이므로 예외를 raise하지 않고 callback `result=success`, `is_valid=False`로 반환한다.
+LLM 호출 실패나 잘못된 structured output 같은 처리 오류만 `MIBaseError`를 raise한다.
 
 ## Confirm Generation Flow
 
@@ -622,7 +625,7 @@ flowchart LR
 | 실행 방식 | prepare + 백그라운드 | prepare + 백그라운드 | prepare + 백그라운드 | 동기 ainvoke |
 | 입력 payload | `user_id` | `user_id`, `table` | `user_id`, `table` | `user_id`, `scenario_group`, `table` |
 | 핵심 외부 처리 | scenario LLM pipeline (6 stage) | 신규 row fixed scenario detail 생성 + signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증 | snapshot 생성 (DB only) |
-| 중복 처리 | 기존 group 존재 시 에러 raise | 미생성 scenario + target_ids 대상만 생성 | 해당 없음 | 해당 없음 |
+| 중복 처리 | 기존 group 존재 시 에러 raise | 미생성 scenario + target_ids 대상만 생성 | 제목 완전 중복 FAIL, 의미 중복 WARN | 해당 없음 |
 | stage 갱신 | `scenario_created` | `signpost_created` | `scenario_validated` 또는 `scenario_created` | `completed` |
 | 최종 DB 변경 | group/scenarios 생성 | signposts 생성, scenario 상태 갱신 | judgment stage 갱신 | snapshot 생성, 변경 사항 적용 |
 

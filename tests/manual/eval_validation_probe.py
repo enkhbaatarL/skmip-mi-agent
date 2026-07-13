@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Mutation probes for the validation/sync endpoint.
 
-The mutation functions are intentionally pure: tests can verify every V-00…V-07
+The mutation functions are intentionally pure: tests can verify every V-00…V-09
 without a live agent.  The CLI needs an explicit ``--base-url`` even in
 ``--dry-run`` mode, preventing an accidental implicit target selection.
 """
@@ -27,7 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by module invocation
     from tests.manual.quality_eval.storage import QualityStore
 
 
-MUTATION_IDS = tuple(f"V-{number:02d}" for number in range(8))
+MUTATION_IDS = tuple(f"V-{number:02d}" for number in range(10))
 EXPECTED = {
     "V-00": "fast-path PASS; isValid=true, stage=scenario_validated",
     "V-01": "MECE duplicate detected; isValid=false",
@@ -37,6 +37,8 @@ EXPECTED = {
     "V-05": "optional dimension null cells auto-generated with non-null values",
     "V-06": "input validation error for deleted required header/cell",
     "V-07": "review path clean pass; no false-positive warning",
+    "V-08": "normalized exact duplicate title detected; isValid=false",
+    "V-09": "semantically duplicate title warning detected; isValid=false",
 }
 
 
@@ -82,6 +84,12 @@ def mutate_table(table: dict[str, Any], mutation_id: str) -> dict[str, Any]:
                 (row.get("cells") or {}).pop(deleted_key, None)
     elif mutation_id == "V-07":
         rows[0]["title"] = f"{rows[0].get('title') or '시나리오'} (표현 정리)"
+    elif mutation_id == "V-08" and len(rows) > 1:
+        rows[0]["title"] = "LNG 공급 차질"
+        rows[1]["title"] = " lng-공급, 차질 "
+    elif mutation_id == "V-09" and len(rows) > 1:
+        rows[0]["title"] = "가격 상승함"
+        rows[1]["title"] = "가격 상승임"
     return mutated
 
 
@@ -117,6 +125,18 @@ def classify_probe_result(mutation_id: str, payload: dict[str, Any], *, http_sta
         return _verdict(generated, "optional values generated" if generated else "optional null values remained", reason)
     if mutation_id == "V-06":
         return _verdict(rejected, "input validation rejected" if rejected else "required input unexpectedly accepted", reason)
+    if mutation_id in {"V-08", "V-09"}:
+        words = {
+            "V-08": ("시나리오명", "중복", "동일"),
+            "V-09": ("시나리오명", "유사", "수정 권고"),
+        }[mutation_id]
+        keyword_hit = any(word in lower_reason for word in words)
+        detail = f"isValid={is_valid}, stage={stage}, reason={reason or '-'}"
+        return (
+            "rejected" if rejected else "accepted",
+            "PASS" if rejected and keyword_hit else "WARN",
+            detail,
+        )
     detail = f"isValid={is_valid}, stage={stage}, reason={reason or '-'}"
     return ("clean-pass" if valid else "warning-or-rejection", "PASS" if valid else "WARN", detail)
 
@@ -157,7 +177,7 @@ def run_probe(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Scenario validation mutation probe (V-00…V-07)")
+    parser = argparse.ArgumentParser(description="Scenario validation mutation probe (V-00…V-09)")
     parser.add_argument("--agent", choices=sorted(AGENT_ALIASES), help="agent target alias: mi-vm or local")
     parser.add_argument("--base-url", help="agent URL; takes precedence over --agent and test_info.local")
     parser.add_argument("--test-info", type=Path, help="ignored local config; defaults to skill/test_info.local when present")
