@@ -88,6 +88,17 @@ def _format_dimensions_block(template: Any) -> str:
     return "\n".join(lines)
 
 
+def _format_compact_event_context(pack: Stage1ContextPack) -> str:
+    base_event = pack.C1_base_event
+    facts = "\n".join(f"  - {fact}" for fact in base_event.key_facts) or "  - (없음)"
+    tags = ", ".join(base_event.tags) or "(없음)"
+    return f"""\\
+- occurred_at: {base_event.occurred_at or "(없음)"}
+- key_facts:
+{facts}
+- tags: {tags}"""
+
+
 def build_stage2_user_prompt(
     *,
     pack: Stage1ContextPack,
@@ -102,6 +113,8 @@ def build_stage2_user_prompt(
 - event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+- compact_event_context:
+{_format_compact_event_context(pack)}
 - detail_analysis(요약): {detail_excerpt}
 
 ## Template (event_type_l1_l2 = {pack.C1_base_event.event_type_l1_l2})
@@ -128,6 +141,7 @@ def build_stage3_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 정보
 - dim_key: {dim["dim_key"]}
@@ -162,6 +176,7 @@ def build_stage3_batch_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 정보
 {chr(10).join(dimension_blocks)}
@@ -203,6 +218,7 @@ def build_stage4_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
 {dim_label_block}
@@ -230,6 +246,7 @@ def build_stage4_fixed_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
 {dim_label_block}
@@ -278,6 +295,7 @@ def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenari
 ## Base Event 요약
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
+{_format_compact_event_context(pack)}
 
 ## 시나리오 목록 ({len(scenarios)}건)
 {scenarios_block}

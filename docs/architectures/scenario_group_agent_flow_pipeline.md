@@ -163,7 +163,15 @@ flowchart LR
 - `C1_base_event`: event ID, 제목, event type, 요약, 핵심 driver
 - `C2_linked_records`, `C3_historical_analogs`, `C4_related_events`: 현재 stub
 
-핵심 driver는 `key_bullets`의 첫 항목을 우선 사용하고, 없으면 `detail_analysis`의 첫 문장을 사용한다.
+핵심 driver는 `key_bullets`의 첫 항목을 최대 160자로 사용하고, 없으면 `detail_analysis`의 첫 문장을 사용한다.
+Stage 1은 driver와 별도로 signpost·scenario 서술용 compact event context도 만든다.
+
+- `occurred_at`, 비어 있지 않은 `tags` 최대 8개
+- `key_bullets` 최대 5개(항목별 최대 280자)
+- bullet이 3개 미만이거나 총 300자 미만이면 `detail_analysis` 앞 600자를 fallback fact로 추가
+
+Scenario Stage 2·3·4·6과 signpost 생성 Stage 2·4+5는 이 context를 사용한다. 이 처리는 이미
+조회한 event payload를 정규화할 뿐 추가 DB 조회나 LLM 호출을 만들지 않는다.
 
 #### Template 조회
 
@@ -357,7 +365,10 @@ flowchart LR
 
 세 가지 필터(공식 채널 관측 가능, binary 판정 가능, scenario 가정과 직접 연결)를 모두 통과한
 후보만 출력한다. 탈락 후보와 `passes_filter=false` 항목은 output token 절감을 위해 받지 않는다.
-통과 개수는 코드 검증 기준 기본 3~6개다.
+동일 scenario 안에서는 관측 대상·판정 사실·시간축/단계가 실질적으로 다른 후보만 허용하고,
+같은 사건의 표현 변형은 하나만 남긴다. 통과 개수는 최종 저장 기준 기본 3~6개다. 7개 이상이면
+시나리오 고유성·후보 간 차별성 우선순서로 반환된 앞의 6개만 사용하고, 3개 미만이면 재시도 후
+해당 scenario를 저장하지 않는다.
 
 ##### Stage 4+5: Strength와 Keyword Hint 생성
 
@@ -370,6 +381,9 @@ Stage 4+5 응답은 다음 조건을 확인한다.
 - `label_ko` 순서가 Stage 2 label 순서와 동일해야 한다.
 - strong/early strength quota를 만족해야 한다.
 - 각 signpost의 `keyword_hints`는 3~5개이고 빈 문자열이 없어야 한다.
+
+최종 조립 전에는 label, Stage 4+5 결과, keyword hints의 길이가 모두 같고 signpost 개수가 3~6개인지
+재검증한다. 이 계약을 만족하지 못한 scenario 결과는 저장하지 않는다.
 
 검증이나 LLM 호출이 최종 실패하면 해당 scenario의 signpost를 저장하지 않고 다른 scenario 결과는 보존한다.
 

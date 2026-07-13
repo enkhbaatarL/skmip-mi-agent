@@ -120,6 +120,24 @@ def _extract_driver_hint(event: Dict) -> str:
     return head[:160]
 
 
+def _build_key_facts(event: Dict) -> List[str]:
+    """Build a bounded event-fact context without another retrieval or LLM call."""
+    facts = [
+        _shorten(str(bullet).strip(), 280)
+        for bullet in event.get("key_bullets", []) or []
+        if str(bullet).strip()
+    ][:5]
+    if len(facts) < 3 or len(" ".join(facts)) < 300:
+        detail_excerpt = _shorten(str(event.get("detail_analysis", "")).strip(), 600)
+        if detail_excerpt:
+            facts.append(detail_excerpt)
+    return facts
+
+
+def _build_event_tags(event: Dict) -> List[str]:
+    return [str(tag).strip() for tag in event.get("tags", []) or [] if str(tag).strip()][:8]
+
+
 def _build_c1_base_event(event: Dict) -> C1BaseEvent:
     """단일 Base Event JSON 으로부터 C1 슬롯을 채움."""
     et = event.get("event_type", {}) or {}
@@ -128,11 +146,14 @@ def _build_c1_base_event(event: Dict) -> C1BaseEvent:
     et_key = f"{l1}::{l2}" if l1 and l2 else ""
 
     return C1BaseEvent(
-        event_id=event.get("mi_event_id", ""),
+        event_id=str(event.get("mi_event_id", "") or ""),
         title=event.get("event_title_ko", ""),
         event_type_l1_l2=et_key,
         summary=event.get("one_line_summary", ""),
         driver=_extract_driver_hint(event),
+        occurred_at=str(event.get("occurred_at", "") or ""),
+        key_facts=_build_key_facts(event),
+        tags=_build_event_tags(event),
     )
 
 

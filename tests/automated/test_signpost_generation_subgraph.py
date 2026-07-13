@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from apps.agents.scenario_group_agent.prompts.signpost_generation import Stage2Candidate
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.flow import (
     get_signpost_generation_subgraph,
@@ -31,6 +32,18 @@ def _event_summary() -> dict[str, str]:
         "title": "기준 이벤트",
         "summary": "공급 차질 가능성",
         "driver": "수급",
+    }
+
+
+def _event_context() -> dict[str, object]:
+    return {
+        **_event_summary(),
+        "occurred_at": "2026-06-01T06:00:00",
+        "key_facts": [
+            "조건부 최종투자결정은 인허가 취득을 전제로 한다.",
+            "상업화는 2028년 이후로 언급됐다.",
+        ],
+        "tags": ["EemsEnergyTerminal", "Gasunie", "Vopak"],
     }
 
 
@@ -84,12 +97,14 @@ def test_stage2_empty_result_still_completes(monkeypatch) -> None:
         ),
     )
 
-    assert SignpostGenerationState.model_validate(output).signposts == []
+    result = SignpostGenerationState.model_validate(output)
+    assert result.signposts == []
+    assert result.error is not None
 
 
 def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
     async def fake_stage2(scenario, base_event_summary):
-        return ["공식 비축 방출 발표", "수입 입찰 증가 보도"]
+        return ["공식 비축 방출 발표", "수입 입찰 증가 보도", "재고 수준 공식 발표"]
 
     async def fake_stage45(scenario, base_event_summary, labels):
         return [
@@ -103,7 +118,12 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
                 "strength": SignpostStrength.WEAK.to_string(),
                 "rationale_ko": "약한 근거",
             },
-        ], [["비축", "방출", "발표"], ["입찰", "수입", "보도"]]
+            {
+                "label_ko": labels[2],
+                "strength": SignpostStrength.MEDIUM.to_string(),
+                "rationale_ko": "중간 근거",
+            },
+        ], [["비축", "방출", "발표"], ["입찰", "수입", "보도"], ["재고", "수준", "발표"]]
 
     monkeypatch.setattr(nodes, "stage2_observability_filter", fake_stage2)
     monkeypatch.setattr(nodes, "stage45_enrich_signposts", fake_stage45)
@@ -117,7 +137,7 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
         ),
     )
 
-    first, second = SignpostGenerationState.model_validate(output).signposts
+    first, second = SignpostGenerationState.model_validate(output).signposts[:2]
     assert first.strength == SignpostStrength.STRONG
     assert first.rationale_ko == "강한 근거"
     assert first.keyword_hints == ["비축", "방출", "발표"]
@@ -145,3 +165,55 @@ def test_retry_exhaustion_raises_original_llm_error(monkeypatch) -> None:
         )
 
     assert isinstance(error.value.__cause__, TimeoutError)
+
+
+def test_stage2_truncates_candidates_above_max_without_retry(monkeypatch) -> None:
+    async def fake_invoke(*_args, **_kwargs):
+        return nodes.Stage2StructuredOutput(
+            candidates=[
+                Stage2Candidate(label_ko=f"관측 신호 {index}")
+                for index in range(1, 8)
+            ]
+        )
+
+    monkeypatch.setattr(nodes, "_invoke_structured", fake_invoke)
+    monkeypatch.setattr(nodes, "REF_MAX_RETRIES", 1)
+
+    labels = asyncio.run(nodes.stage2_observability_filter(_scenario(), _event_context()))
+
+    assert labels == [f"관측 신호 {index}" for index in range(1, 7)]
+
+
+def test_stage2_rejects_candidates_below_minimum(monkeypatch) -> None:
+    async def fake_invoke(*_args, **_kwargs):
+        return nodes.Stage2StructuredOutput(
+            candidates=[
+                Stage2Candidate(label_ko=f"관측 신호 {index}")
+                for index in range(1, 3)
+            ]
+        )
+
+    monkeypatch.setattr(nodes, "_invoke_structured", fake_invoke)
+    monkeypatch.setattr(nodes, "REF_MAX_RETRIES", 1)
+
+    with pytest.raises(MIBaseError):
+        asyncio.run(nodes.stage2_observability_filter(_scenario(), _event_context()))
+
+
+def test_assemble_signposts_rejects_count_outside_contract() -> None:
+    labels = [f"신호 {index}" for index in range(7)]
+    output = asyncio.run(
+        nodes.AssembleSignpostsNode().run(
+            SignpostGenerationState(
+                scenario=_scenario(),
+                labels=labels,
+                stage4_assignments=[
+                    {"strength": SignpostStrength.MEDIUM.to_string()}
+                    for _ in labels
+                ],
+                stage5_keyword_hints=[["a", "b", "c"] for _ in labels],
+            )
+        )
+    )
+
+    assert "허용 범위" in output["error"]

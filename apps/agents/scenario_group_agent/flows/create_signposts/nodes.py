@@ -208,6 +208,9 @@ async def run_signpost_generation(
         "title": c1.get("title", ""),
         "summary": c1.get("summary", ""),
         "driver": c1.get("driver", ""),
+        "occurred_at": c1.get("occurred_at", ""),
+        "key_facts": c1.get("key_facts", []),
+        "tags": c1.get("tags", []),
     }
     existing_scenario_ids = {int(signpost.scenario_id) for signpost in state.signposts}
     target_ids = {

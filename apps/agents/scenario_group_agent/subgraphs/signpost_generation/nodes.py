@@ -239,7 +239,7 @@ def _shorten(text: str, n: int) -> str:
 
 async def stage2_observability_filter(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     trace_context: TraceContext | None = None,
 ) -> List[str]:
     """Stage 2 진입점 — 시나리오 1건 → 통과 label_ko 리스트 반환."""
@@ -258,10 +258,10 @@ async def stage2_observability_filter(
 
     def _validate(out: Stage2StructuredOutput) -> None:
         candidate_count = len(out.candidates)
-        if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= candidate_count <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
+        if candidate_count < REF_SIGNPOSTS_PER_SCENARIO_MIN:
             raise ValueError(
-                f"후보 수 {candidate_count} 이 허용 범위 "
-                f"[{REF_SIGNPOSTS_PER_SCENARIO_MIN}, {REF_SIGNPOSTS_PER_SCENARIO_MAX}] 밖."
+                f"후보 수 {candidate_count} 이 최소 허용 개수 "
+                f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}개 미만."
             )
 
     out = await _ainvoke_with_retry(
@@ -294,7 +294,7 @@ async def stage2_observability_filter(
 
 async def stage4_assign_direction_strength(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     labels: List[str],
     trace_context: TraceContext | None = None,
 ) -> List[Dict[str, str]]:
@@ -384,7 +384,7 @@ async def stage4_assign_direction_strength(
 
 async def stage45_enrich_signposts(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     labels: List[str],
     trace_context: TraceContext | None = None,
 ) -> tuple[List[Dict[str, str]], List[List[str]]]:
@@ -487,7 +487,7 @@ async def stage45_enrich_signposts(
 
 async def stage5_mint_keywords(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     labels: List[str],
     trace_context: TraceContext | None = None,
 ) -> List[List[str]]:
@@ -575,7 +575,12 @@ class ObservabilityFilterNode(BaseNode):
                 trace_context=trace_context,
             )
         if not labels:
-            app_logger.info("[{}] Stage 2 통과 0건 - signposts 비어있음", _scenario_pk(state.scenario))
+            return {
+                "error": (
+                    "Stage 2 signpost 후보가 최소 "
+                    f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}개에 미달했습니다."
+                )
+            }
         return {"labels": labels}
 
 
@@ -697,6 +702,22 @@ class AssembleSignpostsNode(BaseNode):
     async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
         if state.skip_generation or state.error or state.scenario is None:
             return {}
+        count = len(state.labels)
+        if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= count <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
+            return {
+                "error": (
+                    f"Signpost 최종 개수 {count}가 허용 범위 "
+                    f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}~{REF_SIGNPOSTS_PER_SCENARIO_MAX} 밖입니다."
+                )
+            }
+        if len(state.stage4_assignments) != count or len(state.stage5_keyword_hints) != count:
+            return {
+                "error": (
+                    "Signpost enrichment 결과 길이가 label 수와 일치하지 않습니다: "
+                    f"labels={count}, assignments={len(state.stage4_assignments)}, "
+                    f"keyword_hints={len(state.stage5_keyword_hints)}"
+                )
+            }
         axes = {
             "signpost_class": "observation",
             "signpost_source": "mi_record",

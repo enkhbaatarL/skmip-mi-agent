@@ -122,6 +122,9 @@ class C1BaseEvent(BaseModel):
     event_type_l1_l2: str = Field(default="", description="'l1_code::l2_code' 형태")
     summary: str = Field(default="", description="이벤트 한 줄 요약 (one_line_summary)")
     driver: str = Field(default="", description="핵심 드라이버 (자유 서술)")
+    occurred_at: str = Field(default="", description="이벤트 발생·발표 시각")
+    key_facts: List[str] = Field(default_factory=list, description="정규화된 핵심 사실 목록")
+    tags: List[str] = Field(default_factory=list, description="이벤트 핵심 개체·시장 태그")
 
 
 class C2LinkedRecords(BaseModel):

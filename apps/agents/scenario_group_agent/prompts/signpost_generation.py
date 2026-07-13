@@ -84,10 +84,24 @@ class Stage45StructuredOutput(BaseModel):
     )
 
 
+def _format_compact_event_context(base_event_summary: dict[str, Any]) -> str:
+    facts = "\n".join(
+        f"  - {fact}"
+        for fact in base_event_summary.get("key_facts", [])
+        if str(fact).strip()
+    ) or "  - (없음)"
+    tags = ", ".join(str(tag) for tag in base_event_summary.get("tags", []) if str(tag).strip()) or "(없음)"
+    return f"""\\
+- occurred_at: {base_event_summary.get("occurred_at", "") or "(없음)"}
+- key_facts:
+{facts}
+- tags: {tags}"""
+
+
 def build_stage2_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, str],
+    base_event_summary: dict[str, Any],
     scenario_description: str,
     min_n: int,
     max_n: int,
@@ -104,6 +118,7 @@ def build_stage2_user_prompt(
 - title: {base_event_summary.get("title", "")}
 - summary: {base_event_summary.get("summary", "")}
 - driver: {base_event_summary.get("driver", "")}
+{_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오
 - scenario_id: {scenario_id}
@@ -117,6 +132,7 @@ def build_stage2_user_prompt(
 - 각 후보는 label_ko + filter_reason 만 포함.
 - 탈락 후보, passes_filter=false 후보, 검토용 후보는 출력하지 말 것.
 - **MAX 를 채우지 말 것** — 결합도 강한 만큼만 출력.
+- 후보는 시나리오 고유성 및 다른 후보와의 차별성이 높은 순서로 정렬할 것.
 """
 
 
@@ -159,7 +175,7 @@ def build_stage4_hard_constraints(
 def build_stage4_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, str],
+    base_event_summary: dict[str, Any],
     scenario_description: str,
     labels: list[str],
 ) -> str:
@@ -191,7 +207,7 @@ def build_stage4_user_prompt(
 def build_stage5_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, str],
+    base_event_summary: dict[str, Any],
     scenario_description: str,
     labels: list[str],
 ) -> str:
@@ -217,7 +233,7 @@ def build_stage5_user_prompt(
 def build_stage45_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, str],
+    base_event_summary: dict[str, Any],
     scenario_description: str,
     labels: list[str],
 ) -> str:
@@ -230,12 +246,15 @@ def build_stage45_user_prompt(
 ## Base Event 요약
 - title: {base_event_summary.get("title", "")}
 - summary: {base_event_summary.get("summary", "")}
+- driver: {base_event_summary.get("driver", "")}
+{_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오
 - scenario_id: {scenario_id}
 - title: {scenario.get("title", "")}
 - description: {scenario_description}
 - dimension_values: {dim_values}
+- price_direction: {", ".join(f"{k}={v}" for k, v in (scenario.get("price_direction") or {}).items()) or "(없음)"}
 
 ## 입력 Signpost label ({len(labels)}개) — 이 순서를 유지하여 signposts 출력
 {label_block}
@@ -267,6 +286,12 @@ STAGE2_SYSTEM_PROMPT = """\
 3. 시나리오 결합도: 일반 뉴스가 아니라 입력된 시나리오 가정치(특정 지명/봉쇄 단계/
    리스크 프리미엄 수준 등)와 직접 연결되어야 함.
 
+## 동일 시나리오 내 후보 차별성
+- 각 후보는 관측 대상, 판정 가능한 사실, 시간축·투자/운영 단계 중 최소 하나가 다른 후보와
+  실질적으로 달라야 함.
+- 같은 사건을 표현만 바꾼 후보(예: '인허가 승인 발표'와 '인허가 취득 공식화')는 하나만 남길 것.
+- 일반 시장 배경이나 Base Event의 직접 영향이 아닌 사실은 후보에서 제외할 것.
+
 ## 출력 후보 수 — **시나리오 결합도에 비례**
 - 허용 범위: {min_n}~{max_n} 개.
 - **MAX 를 채우는 것이 목표가 아닙니다.** 시나리오 가정치(dimension_values)와
@@ -287,6 +312,8 @@ STAGE2_HARD_CONSTRAINTS = """\
 - MAX({max_n}) 채우기를 목표로 삼지 말 것. 시나리오 결합도가 높은 후보가 적다면
   MIN({min_n})만 출력하는 것이 정답.
 - 모든 label_ko 는 서로 달라야 함 (중복 금지).
+- 관측 대상·판정 사실·시간축/단계가 같은 표현 변형 후보를 함께 출력하지 말 것.
+- candidates 는 시나리오 고유성 및 후보 간 차별성이 높은 순서로 정렬할 것.
 - 'observation' class 만 생성. 의견/감정/모호 표현 금지.
 - Content Provider 이름을 추적 범위를 좁히는 주체어로 쓰지 말 것
   (예: 'LSEG가 집계한 미국 9개 LNG 수출시설 feedgas 월평균' 대신
