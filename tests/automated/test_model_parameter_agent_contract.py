@@ -53,6 +53,9 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.state import Mod
 from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
     _has_mapping_candidates_from_db_rows,
 )
+from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+    ModelParameterService,
+)
 from apps.agents.model_parameter_agent.schemas.api.parameters import (
     ModelParameterTarget,
     ProposalParameter,
@@ -78,6 +81,7 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
+    normalize_parameter_name,
 )
 from apps.common.exceptions.custom import MIBaseError
 
@@ -362,6 +366,10 @@ def _record_with(
 
 
 class ModelParameterAgentContractTest(unittest.TestCase):
+    def test_parameter_name_normalization_does_not_apply_code_aliases(self) -> None:
+        assert normalize_parameter_name("Gas Demand [BCM/Mt]") == "Gas Demand [BCM/Mt]"
+        assert normalize_parameter_name(" ShippingCost ") == "ShippingCost"
+
     def test_schema_ignores_removed_local_tuning_options(self) -> None:
         payload = ProposeParametersIn.model_validate(
             {
@@ -1335,7 +1343,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 ModelParameterService,
             )
 
-            repository_cls.return_value.fetch_model_param_proposal.return_value = {
+            repository_cls.return_value.fetch_model_param_proposal_for_update.return_value = {
                 "model_param_proposal_id": 901,
                 "status": "PROPOSED",
             }
@@ -1384,7 +1392,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 ModelParameterService,
             )
 
-            repository_cls.return_value.fetch_model_param_proposal.return_value = {
+            repository_cls.return_value.fetch_model_param_proposal_for_update.return_value = {
                 "model_param_proposal_id": 901,
                 "status": "CONFIRMED",
             }
@@ -1437,7 +1445,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 ModelParameterService,
             )
 
-            repository_cls.return_value.fetch_model_param_proposal.return_value = {
+            repository_cls.return_value.fetch_model_param_proposal_for_update.return_value = {
                 "model_param_proposal_id": 901,
                 "status": "PROCESSING",
             }
@@ -1451,6 +1459,225 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         assert "must be PROPOSED or CONFIRMED" in error.exception.error_message
         repository_cls.return_value.confirm_model_param_proposal.assert_not_called()
+        fake_session.commit.assert_not_called()
+        fake_session.rollback.assert_called_once()
+
+    def test_model_parameter_service_completes_only_locked_processing_row(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROCESSING",
+            }
+            repository.complete_model_param_proposal.return_value = True
+
+            ModelParameterService().complete_proposal_result(
+                model_param_proposal_id=901,
+                proposal_parameters=[{"parameterName": "GDP"}],
+            )
+
+        repository.fetch_model_param_proposal_for_update.assert_called_once_with(901)
+        repository.complete_model_param_proposal.assert_called_once()
+        fake_session.commit.assert_called_once()
+        fake_session.rollback.assert_not_called()
+
+    def test_model_parameter_service_rejects_completion_from_proposed_status(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROPOSED",
+            }
+
+            with self.assertRaises(MIBaseError) as error:
+                ModelParameterService().complete_proposal_result(
+                    model_param_proposal_id=901,
+                    proposal_parameters=[],
+                )
+
+        assert "must be PROCESSING before completion" in error.exception.error_message
+        repository.complete_model_param_proposal.assert_not_called()
+        fake_session.commit.assert_not_called()
+        fake_session.rollback.assert_called_once()
+
+    def test_model_parameter_service_rejects_missing_transition_row(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository_cls.return_value.fetch_model_param_proposal_for_update.return_value = None
+
+            with self.assertRaises(MIBaseError) as error:
+                ModelParameterService().fail_proposal_result(
+                    model_param_proposal_id=901,
+                    error_code="INVALID_REQUEST",
+                    error_message="failed",
+                )
+
+        assert error.exception.error_code.name == "ENTITY_NOT_FOUND"
+        fake_session.commit.assert_not_called()
+        fake_session.rollback.assert_called_once()
+
+    def test_model_parameter_service_fails_only_locked_processing_row(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROCESSING",
+            }
+            repository.fail_model_param_proposal.return_value = True
+
+            ModelParameterService().fail_proposal_result(
+                model_param_proposal_id=901,
+                error_code="INVALID_REQUEST",
+                error_message="failed",
+            )
+
+        repository.fail_model_param_proposal.assert_called_once()
+        fake_session.commit.assert_called_once()
+        fake_session.rollback.assert_not_called()
+
+    def test_model_parameter_service_rejects_zero_row_transition_update(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROCESSING",
+            }
+            repository.complete_model_param_proposal.return_value = False
+
+            with self.assertRaises(MIBaseError) as error:
+                ModelParameterService().complete_proposal_result(
+                    model_param_proposal_id=901,
+                    proposal_parameters=[],
+                )
+
+        assert error.exception.error_code.name == "ENTITY_NOT_FOUND"
+        fake_session.commit.assert_not_called()
+        fake_session.rollback.assert_called_once()
+
+    def test_model_parameter_service_checks_callback_pending_state(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        fake_connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROPOSED",
+                "callback_status": "SUCCEEDED",
+            }
+
+            with self.assertRaises(MIBaseError) as error:
+                ModelParameterService().update_callback_status(
+                    model_param_proposal_id=901,
+                    callback_status="FAILED",
+                )
+
+        assert "must be PENDING" in error.exception.error_message
+        repository.update_model_param_callback_status.assert_not_called()
         fake_session.commit.assert_not_called()
         fake_session.rollback.assert_called_once()
 
@@ -3106,10 +3333,15 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_context={"scenario": {"scenario_id": 100}},
             candidate_mappings=candidates,
         )
-        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
-        fake_module.invoke_llm_structured_output = fake_invoke
         with (
-            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(
+                proposal_nodes,
+                "get_settings",
+                return_value=SimpleNamespace(
+                    model_parameter_max_routing_candidates_per_dimension=3,
+                ),
+            ),
+            patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
             patch.object(proposal_nodes, "_debug_stage_payload") as debug_stage,
         ):
             result = await validate_parameter_candidates(state)
@@ -3126,7 +3358,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         system_prompt = captured_messages[0][0]["content"]
-        assert "각 task에서 최소 1개, 최대 2개" in system_prompt
+        assert "각 task에서 최소 1개, 최대 3개" in system_prompt
         assert "서버에서 이미 처리" in system_prompt
         payload = json.loads(captured_messages[0][1]["content"].split("\n", 1)[1])
         assert len(payload["routing_tasks"]) == 1
@@ -3264,7 +3496,22 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_id=100,
             scenario_context={"scenario": {"scenario_id": 100}},
             candidate_mappings=[candidate, omitted_candidate],
-            basecase_records=[
+            slot_catalog=[
+                {
+                    "candidate_key": "c1",
+                    "parameter_name": "ShippingCost",
+                    "key_axes": ["Year"],
+                    "fixed_axis_names": [],
+                    "time_axis_names": ["Year"],
+                    "leaves": [
+                        {
+                            "fixed_axes": {},
+                            "available_periods": [{"Year": 2026}],
+                        },
+                    ],
+                },
+            ],
+            effective_references=[
                 {
                     "candidate_key": "c1",
                     "reference_id": "ref1",
@@ -3402,7 +3649,25 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     "reason": "slot 판단 보조 정보",
                 },
             ],
-            basecase_records=records,
+            slot_catalog=[
+                {
+                    "candidate_key": "c1",
+                    "parameter_name": "LiqUtilAdjustment",
+                    "key_axes": ["Plant", "Year"],
+                    "fixed_axis_names": ["Plant"],
+                    "time_axis_names": ["Year"],
+                    "leaves": [
+                        {
+                            "fixed_axes": {"Plant": "Cameron"},
+                            "available_periods": [{"Year": 2026}],
+                        },
+                        {
+                            "fixed_axes": {"Plant": "Sabine"},
+                            "available_periods": [{"Year": 2027}],
+                        },
+                    ],
+                },
+            ],
         )
         fake_module = types.ModuleType("apps.connectors.llm.llm_client")
         fake_module.invoke_llm_structured_output = fake_invoke
@@ -3649,18 +3914,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "event": {"event_type_l2_id": 7, "event_title_ko": "일본 폭염"},
             },
             candidate_mappings=[candidate],
-            basecase_records=[
-                {
-                    "candidate_key": "temperature-direct",
-                    "reference_id": "temp-jp-2026-8",
-                    "model_file": "Demand",
-                    "sheet_name": "TemperatureAdjustment",
-                    "parameter_name": "Temperature",
-                    "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
-                    "value_name": "Temperature",
-                    "value": 27.5,
-                },
-            ],
         )
         fake_module = types.ModuleType("apps.connectors.llm.llm_client")
         fake_module.invoke_llm_structured_output = fake_invoke
@@ -3671,188 +3924,23 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert result["parameter_slots"][0]["candidate_key"] == "temperature-direct"
         assert result["parameter_slots"][0]["slot_axes"][0]["axis_value"] == "Japan"
 
-    def test_basecase_records_under_limit_are_not_filtered_for_value_prompt(self) -> None:
-        records = [
-            {
-                "candidate_key": "c1",
-                "reference_id": "cameron-2026-a",
-                "axes": {"Plant": "Cameron", "Year": 2026},
-                "value": 1.0,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "cameron-2026-b",
-                "axes": {"Plant": "Cameron", "Year": 2026},
-                "value": 2.0,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "sabine-2026",
-                "axes": {"Plant": "Sabine", "Year": 2026},
-                "value": 1.0,
-            },
-            {
-                "candidate_key": "c2",
-                "reference_id": "other-2026",
-                "axes": {"Plant": "Cameron", "Year": 2026},
-                "value": 1.0,
-            },
-        ]
+    def test_exact_slot_filter_requires_basecase_index(self) -> None:
         state = ModelParameterProposalState(
             scenario_id=100,
-            basecase_records=records,
             parameter_slots=[
                 {
                     "candidate_key": "c1",
-                    "selected": True,
                     "slot_axes": [
-                        {
-                            "axis_name": "Plant",
-                            "axis_value": "Cameron",
-                            "rationale": "event에 명시된 설비",
-                        },
-                        {
-                            "axis_name": "Year",
-                            "axis_value": "2026",
-                            "rationale": "event 발생 연도",
-                        },
-                    ],
-                    "rationale_ko_overall": "명확한 설비와 연도",
-                    "confidence_overall": 0.8,
-                    "needs_user_review": False,
-                    "warnings": [],
-                },
-            ],
-        )
-
-        result = filter_basecase_records_by_slots(state)
-
-        assert [record["reference_id"] for record in result["basecase_records"]] == [
-            "cameron-2026-a",
-            "cameron-2026-b",
-            "sabine-2026",
-            "other-2026",
-        ]
-
-    def test_basecase_records_without_selected_slots_are_filtered_out(self) -> None:
-        records = [
-            {
-                "candidate_key": "c1",
-                "reference_id": "norway-2026",
-                "axes": {"Country": "Norway", "Year": 2026},
-                "value": 1.0,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "us-2026",
-                "axes": {"Country": "United States", "Year": 2026},
-                "value": 2.0,
-            },
-        ]
-        state = ModelParameterProposalState(
-            scenario_id=100,
-            basecase_records=records,
-            parameter_slots=[
-                {
-                    "candidate_key": "c1",
-                    "selected": False,
-                    "slot_axes": [
-                        {"axis_name": "Country", "axis_value": "Norway"},
+                        {"axis_name": "Plant", "axis_value": "Cameron"},
                     ],
                 },
             ],
         )
 
-        result = filter_basecase_records_by_slots(state)
+        with self.assertRaises(MIBaseError) as error:
+            filter_basecase_records_by_slots(state)
 
-        assert result["basecase_records"] == []
-
-    def test_large_basecase_records_prioritize_deeper_prefix_matches(self) -> None:
-        records = [
-            {
-                "candidate_key": "c1",
-                "reference_id": "month-only-first",
-                "axes": {"Country": "China", "Year": 2025, "Month": 8},
-                "value": 10,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "full-1",
-                "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
-                "value": 11,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "country-1",
-                "axes": {"Country": "Japan", "Year": 2025, "Month": 1},
-                "value": 12,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "country-year-late",
-                "axes": {"Country": "Japan", "Year": 2026, "Month": 9},
-                "value": 12.5,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "year-1",
-                "axes": {"Country": "Korea", "Year": 2026, "Month": 3},
-                "value": 13,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "full-2",
-                "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
-                "value": 14,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "country-2",
-                "axes": {"Country": "Japan", "Year": 2027, "Month": 2},
-                "value": 15,
-            },
-            {
-                "candidate_key": "c2",
-                "reference_id": "other-candidate-full",
-                "axes": {"Country": "Japan", "Year": 2026, "Month": 8},
-                "value": 16,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "unrelated",
-                "axes": {"Country": "China", "Year": 2025, "Month": 9},
-                "value": 17,
-            },
-        ]
-        state = ModelParameterProposalState(
-            scenario_id=100,
-            basecase_records=records,
-            parameter_slots=[
-                {
-                    "candidate_key": "c1",
-                    "selected": True,
-                    "slot_axes": [
-                        {"axis_name": "Country", "axis_value": "Japan"},
-                        {"axis_name": "Year", "axis_value": 2026},
-                        {"axis_name": "Month", "axis_value": 8},
-                    ],
-                },
-            ],
-        )
-
-        with patch(
-            "apps.agents.model_parameter_agent.flows.propose_parameters.nodes.get_settings",
-            return_value=SimpleNamespace(model_parameter_max_value_prompt_basecase_records=5),
-        ):
-            result = filter_basecase_records_by_slots(state)
-
-        assert [record["reference_id"] for record in result["basecase_records"]] == [
-            "full-1",
-            "full-2",
-            "country-year-late",
-            "country-1",
-            "country-2",
-        ]
+        assert "BasecaseIndex is required" in error.exception.error_message
 
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:
         candidate = {
@@ -3885,7 +3973,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_id=100,
             scenario_context={"scenario": {"scenario_id": 100}},
             candidate_mappings=[candidate],
-            basecase_records=[],
         )
         fake_module = types.ModuleType("apps.connectors.llm.llm_client")
         fake_module.invoke_llm_structured_output = fake_invoke
@@ -4338,16 +4425,144 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-    def test_proposal_callback_error_payload_allows_null_data(self) -> None:
+    def test_proposal_callback_error_payload_includes_failed_context(self) -> None:
         payload = _callback_error_output(
             message="insufficient dimension mapping for event 1378",
+            model_param_proposal_id=10001,
+            scenario_id=309,
+            scenario_group_id=61,
+            event_id=1378,
         )
 
         assert payload.model_dump(by_alias=True) == {
             "status": "error",
             "message": "insufficient dimension mapping for event 1378",
-            "data": None,
+            "data": {
+                "modelParamProposalId": 10001,
+                "scenarioId": 309,
+                "scenarioGroupId": 61,
+                "eventId": 1378,
+                "status": "FAILED",
+            },
         }
+
+    async def test_async_proposal_accept_offloads_sync_prepare(self) -> None:
+        from apps.agents.model_parameter_agent import api as model_parameter_api
+
+        scheduled: list[tuple[object, dict[str, object]]] = []
+
+        class FakeBackgroundTasks:
+            def add_task(self, func: object, **kwargs: object) -> None:
+                scheduled.append((func, kwargs))
+
+        offloaded: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+        async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+            offloaded.append((func, args, kwargs))
+            return func(*args, **kwargs)  # type: ignore[operator]
+
+        prepared = {
+            "model_param_proposal_id": 10001,
+            "scenario_id": 309,
+            "scenario_group_id": 61,
+            "event_id": 1378,
+        }
+        with (
+            patch.object(
+                model_parameter_api,
+                "prepare_propose_parameters_callback",
+                return_value=prepared,
+            ) as prepare,
+            patch.object(
+                model_parameter_api.asyncio,
+                "to_thread",
+                side_effect=fake_to_thread,
+            ),
+        ):
+            response = await model_parameter_api.propose_parameters(
+                309,
+                FakeBackgroundTasks(),  # type: ignore[arg-type]
+                ProposeParametersRequest(user_id=77),
+            )
+
+        assert offloaded == [(prepare, (309,), {"user_id": 77})]
+        assert response.data.model_param_proposal_id == 10001
+        assert len(scheduled) == 1
+
+    async def test_background_failure_callback_contains_failed_context(self) -> None:
+        class FakeGraph:
+            async def ainvoke(self, state: ModelParameterProposalState) -> dict[str, object]:
+                assert state.scenario_id == 309
+                raise ValueError("value proposal failed")
+
+        class FakeModelParameterService:
+            def __init__(self) -> None:
+                self.failures: list[dict[str, object]] = []
+                self.callback_statuses: list[str] = []
+
+            def complete_proposal_result(self, **kwargs: object) -> None:
+                raise AssertionError(f"unexpected proposal completion: {kwargs}")
+
+            def fail_proposal_result(self, **kwargs: object) -> None:
+                self.failures.append(kwargs)
+
+            def update_callback_status(
+                self,
+                *,
+                model_param_proposal_id: int,
+                callback_status: str,
+            ) -> None:
+                assert model_param_proposal_id == 10001
+                self.callback_statuses.append(callback_status)
+
+        service = FakeModelParameterService()
+        sent_payloads: list[dict[str, object]] = []
+
+        async def fake_send_callback(_url: str, payload: object) -> None:
+            sent_payloads.append(payload.model_dump(by_alias=True))  # type: ignore[attr-defined]
+
+        settings = SimpleNamespace(
+            callback_base_url="https://callback.example",
+            callback_model_parameter_proposals_path="/scenarios/{scenario_id}/callback",
+            skip_callback=False,
+        )
+        fake_config_module = types.ModuleType("apps.common.configs.config")
+        fake_config_module.get_settings = lambda: settings
+
+        with (
+            patch.dict(sys.modules, {"apps.common.configs.config": fake_config_module}),
+            patch.object(propose_flow, "build_graph", return_value=FakeGraph()),
+            patch.object(propose_flow, "ModelParameterService", return_value=service),
+            patch.object(propose_flow, "send_callback", side_effect=fake_send_callback),
+        ):
+            await propose_flow.run_propose_parameters_background(
+                model_param_proposal_id=10001,
+                scenario_id=309,
+                scenario_group_id=61,
+                event_id=1378,
+            )
+
+        assert service.failures == [
+            {
+                "model_param_proposal_id": 10001,
+                "error_code": "ValueError",
+                "error_message": "value proposal failed",
+            },
+        ]
+        assert service.callback_statuses == ["SUCCEEDED"]
+        assert sent_payloads == [
+            {
+                "status": "error",
+                "message": "value proposal failed",
+                "data": {
+                    "modelParamProposalId": 10001,
+                    "scenarioId": 309,
+                    "scenarioGroupId": 61,
+                    "eventId": 1378,
+                    "status": "FAILED",
+                },
+            },
+        ]
 
     async def test_background_marks_callback_skipped_when_skip_callback_enabled(self) -> None:
         class FakeGraph:

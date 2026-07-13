@@ -24,9 +24,6 @@ class ModelParameterProposalOutputState(BaseModel):
     resolved_config: dict[str, Any] = Field(default_factory=dict)
     lut_version: str | None = None
 
-    # Kept as a compatibility/debug surface for existing local tools. The LUT
-    # pipeline never stores full LUT or full effective rows in this field.
-    basecase_records: list[dict[str, Any]] = Field(default_factory=list)
     parameter_slots: list[dict[str, Any]] = Field(default_factory=list)
     parameter_adjustments: list[dict[str, Any]] = Field(default_factory=list)
     validation_warnings: list[str] = Field(default_factory=list)

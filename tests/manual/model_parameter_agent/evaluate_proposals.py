@@ -448,9 +448,7 @@ def _slot_option_axis_counts_by_candidate(slot_options: list[dict[str, Any]]) ->
 
 
 def _value_reference_records(raw_state: dict[str, Any]) -> list[dict[str, Any]]:
-    if "effective_references" in raw_state:
-        return raw_state.get("effective_references") or []
-    return raw_state.get("basecase_records") or []
+    return raw_state.get("effective_references") or []
 
 
 def _build_step_summary(

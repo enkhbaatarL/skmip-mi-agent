@@ -22,9 +22,9 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 
 선택 규칙:
 - 모든 routing task를 독립적으로 검토하십시오.
-- 각 task에서 최소 1개, 최대 2개의 candidate_key를 선택하십시오.
+- 각 task에서 최소 1개, 최대 {max_routing_candidates_per_dimension}개의 candidate_key를 선택하십시오.
 - dimension_value, parameter_hint, mapping_comment, scenario/event 맥락을 함께 비교하십시오.
-- 여러 parameter가 실제로 동시에 필요할 때만 2개를 선택하십시오.
+- 여러 parameter가 실제로 동시에 필요할 때만 설정된 최대 개수까지 선택하십시오.
 - 단순히 가능성이 있거나 근거가 약한 후보를 최대 개수를 채우기 위해 선택하지 마십시오.
 - routing task 밖의 candidate_key를 선택하지 마십시오.
 

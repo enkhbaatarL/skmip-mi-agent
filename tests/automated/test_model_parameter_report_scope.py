@@ -206,7 +206,7 @@ def test_step_summary_uses_effective_references_with_per_candidate_cap() -> None
     )
     assert _value_reference_records(
         {"basecase_records": [{"candidate_key": "legacy"}]},
-    ) == [{"candidate_key": "legacy"}]
+    ) == []
     assert _value_reference_records(
         {
             "effective_references": [],

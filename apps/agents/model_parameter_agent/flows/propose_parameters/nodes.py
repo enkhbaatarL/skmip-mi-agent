@@ -389,7 +389,14 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
             routing_tasks,
         )
         messages = [
-            {"role": "system", "content": CANDIDATE_VALIDATION_SYSTEM},
+            {
+                "role": "system",
+                "content": CANDIDATE_VALIDATION_SYSTEM.format(
+                    max_routing_candidates_per_dimension=(
+                        get_settings().model_parameter_max_routing_candidates_per_dimension
+                    ),
+                ),
+            },
             {
                 "role": "user",
                 "content": (
@@ -519,8 +526,6 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
     )
     prompt_slot_catalog = _slot_catalog_for_prompt(slot_catalog)
     output = {
-        # Full basecase/LUT rows are deliberately kept out of serialized graph state.
-        "basecase_records": [],
         "basecase_index": basecase_index,
         "slot_catalog": prompt_slot_catalog,
         "effective_references": [],
@@ -544,29 +549,17 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
 
 def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict[str, Any]:
     if not isinstance(state.basecase_index, BasecaseIndex):
-        # Compatibility path for direct unit/local-tool calls created before the
-        # request-scoped exact index was introduced. The runnable graph always
-        # supplies BasecaseIndex through load_basecase_samples().
-        records = state.basecase_records or []
-        slots = _assign_slot_keys(state.parameter_slots)
-        filtered = _filter_records_by_selected_slots(records, slots)
-        candidate_keys = {
-            str(slot.get("candidate_key") or "")
-            for slot in slots
-        }
-        output = {
-            "basecase_records": filtered,
-            "parameter_slots": slots,
-            "slot_candidate_mappings": [
-                candidate
-                for candidate in state.candidate_mappings
-                if str(candidate.get("candidate_key") or "") in candidate_keys
-            ],
-            "validation_warnings": state.validation_warnings,
-        }
-        return output
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="BasecaseIndex is required before exact slot validation",
+        )
 
     cfg = get_settings()
+    step3_slot_limit = min(
+        cfg.model_parameter_max_parameter_slots,
+        cfg.model_parameter_max_value_prompt_basecase_records,
+        HARD_MAX_PARAMETER_SLOTS,
+    )
     policy = state.basecase_index.policy
     registry = get_parameter_spec_registry()
     lut_catalog = (
@@ -580,6 +573,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     counts_by_candidate: dict[str, int] = {}
     rejected_exact_slot_count = 0
     seen_selected_keys: set[tuple[str, str]] = set()
+    truncated_slot_counts: dict[str, int] = {}
 
     for raw_slot in state.parameter_slots:
         slot = dict(raw_slot)
@@ -648,19 +642,11 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         seen_selected_keys.add(selected_key)
 
         candidate_count = counts_by_candidate.get(candidate_key, 0) + 1
-        step3_slot_limit = min(
-            cfg.model_parameter_max_value_prompt_basecase_records,
-            HARD_MAX_PARAMETER_SLOTS,
-        )
         if candidate_count > step3_slot_limit:
-            raise MIBaseError(
-                ErrorCode.INVALID_REQUEST,
-                detail=(
-                    "selected exact references exceed the per-parameter Step3 limit: "
-                    f"candidate={candidate_key}, limit="
-                    f"{step3_slot_limit}"
-                ),
+            truncated_slot_counts[candidate_key] = (
+                truncated_slot_counts.get(candidate_key, 0) + 1
             )
+            continue
         counts_by_candidate[candidate_key] = candidate_count
         canonical_axes = dict(reference.axes)
         slot_key = f"slot-{candidate_count}"
@@ -677,7 +663,15 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
             _effective_reference_to_state(reference, slot_key=slot_key),
         )
 
-    records = state.basecase_records or []
+    for candidate_key, truncated_count in sorted(truncated_slot_counts.items()):
+        warning = (
+            "Step2의 exact·중복 검증을 통과한 slot이 parameter별 상한을 초과해 "
+            f"초과분을 제외했습니다: candidate={candidate_key}, "
+            f"limit={step3_slot_limit}, excluded={truncated_count}"
+        )
+        logger.warning("[model-parameter] {}", warning)
+        warnings.append(warning)
+
     valid_candidate_keys = set(counts_by_candidate)
     slot_candidate_mappings = [
         candidate
@@ -705,7 +699,6 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         excluded_candidates,
     )
     output = {
-        "basecase_records": records,
         "parameter_slots": valid_slots,
         "slot_candidate_mappings": slot_candidate_mappings,
         "effective_references": effective_references,
@@ -762,7 +755,7 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
     if not selected_slots:
         return finalize_empty_parameter_values(state)
 
-    value_references = state.effective_references or state.basecase_records
+    value_references = state.effective_references
     packet = _build_value_proposal_prompt_packet(
         state.scenario_context or {},
         value_candidates,
@@ -850,10 +843,7 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
         )
         return output
 
-    slot_catalog = state.slot_catalog or _legacy_slot_catalog_for_prompt(
-        state.candidate_mappings,
-        state.basecase_records,
-    )
+    slot_catalog = state.slot_catalog
     packet = _build_slot_proposal_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
@@ -1339,62 +1329,6 @@ def _build_candidate_validation_prompt_packet(
             for task in routing_tasks
         ],
     }
-
-
-def _legacy_slot_catalog_for_prompt(
-    candidates: list[dict[str, Any]],
-    records: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Build the new compact shape for older direct callers with raw rows."""
-    records_by_candidate: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        records_by_candidate.setdefault(
-            str(record.get("candidate_key") or ""),
-            [],
-        ).append(record)
-
-    catalogs: list[dict[str, Any]] = []
-    for candidate in candidates:
-        candidate_key = str(candidate.get("candidate_key") or "")
-        candidate_records = records_by_candidate.get(candidate_key, [])
-        key_axes: list[str] = []
-        for record in candidate_records:
-            for axis_name in (record.get("axes") or {}):
-                _append_unique_text(key_axes, axis_name)
-        non_time_axes = [axis for axis in key_axes if not _is_time_slot_axis(axis)]
-        time_axes = [axis for axis in key_axes if _is_time_slot_axis(axis)]
-        leaves_by_key: dict[str, dict[str, Any]] = {}
-        for record in candidate_records:
-            axes = record.get("axes") or {}
-            fixed_axes = {
-                axis_name: _slot_option_value(axes.get(axis_name))
-                for axis_name in non_time_axes
-            }
-            leaf_key = to_compact_json(fixed_axes)
-            leaf = leaves_by_key.setdefault(
-                leaf_key,
-                {"fixed_axes": fixed_axes, "available_periods": []},
-            )
-            period = {
-                axis_name: _slot_option_value(axes.get(axis_name))
-                for axis_name in time_axes
-            }
-            if period not in leaf["available_periods"]:
-                leaf["available_periods"].append(period)
-        catalogs.append(
-            {
-                "candidate_key": candidate_key,
-                "parameter_name": (
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                ),
-                "key_axes": key_axes,
-                "fixed_axis_names": non_time_axes,
-                "time_axis_names": time_axes,
-                "leaves": list(leaves_by_key.values()),
-            },
-        )
-    return catalogs
 
 
 def _build_slot_proposal_prompt_packet(
@@ -1975,110 +1909,6 @@ def _normalize_axis_value(value: Any) -> str:
     return " ".join(str(value).strip().lower().split())
 
 
-def _slot_axis_pairs(slot: dict[str, Any]) -> list[tuple[str, Any]]:
-    pairs: list[tuple[str, Any]] = []
-    for axis in slot.get("slot_axes") or []:
-        axis_name = axis.get("axis_name")
-        if axis_name:
-            pairs.append((str(axis_name), axis.get("axis_value")))
-    return pairs
-
-
-def _record_axis_matches(
-    record_axes: dict[str, Any],
-    axis_name: str,
-    axis_value: Any,
-) -> bool:
-    return (
-        axis_name in record_axes
-        and _normalize_axis_value(record_axes.get(axis_name))
-        == _normalize_axis_value(axis_value)
-    )
-
-
-def _record_fully_matches_slot(record: dict[str, Any], slot: dict[str, Any]) -> bool:
-    record_axes = record.get("axes") or {}
-    axis_pairs = _slot_axis_pairs(slot)
-    if not axis_pairs:
-        return True
-    for axis_name, axis_value in axis_pairs:
-        if not _record_axis_matches(record_axes, axis_name, axis_value):
-            return False
-    return True
-
-
-def _record_matches_slot_prefix_depth(
-    record: dict[str, Any],
-    slot: dict[str, Any],
-    depth: int,
-) -> bool:
-    axis_pairs = _slot_axis_pairs(slot)
-    if depth <= 0 or depth > len(axis_pairs):
-        return False
-    record_axes = record.get("axes") or {}
-    return all(
-        _record_axis_matches(record_axes, axis_name, axis_value)
-        for axis_name, axis_value in axis_pairs[:depth]
-    )
-
-
-def _filter_records_by_selected_slots(
-    records: list[dict[str, Any]],
-    slots: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    selected_slots = _selected_parameter_slots(slots)
-    if not selected_slots:
-        return []
-
-    max_records = get_settings().model_parameter_max_value_prompt_basecase_records
-    if len(records) <= max_records:
-        return records
-
-    slots_by_candidate: dict[str, list[dict[str, Any]]] = {}
-    for slot in selected_slots:
-        candidate_key = str(slot.get("candidate_key") or "")
-        if not candidate_key:
-            continue
-        slots_by_candidate.setdefault(candidate_key, []).append(slot)
-
-    filtered: list[dict[str, Any]] = []
-    included_indices: set[int] = set()
-
-    def append_record(index: int, record: dict[str, Any]) -> bool:
-        if index in included_indices:
-            return False
-        included_indices.add(index)
-        filtered.append(record)
-        return len(filtered) >= max_records
-
-    for index, record in enumerate(records):
-        candidate_key = str(record.get("candidate_key") or "")
-        candidate_slots = slots_by_candidate.get(candidate_key) or []
-        if any(_record_fully_matches_slot(record, slot) for slot in candidate_slots):
-            if append_record(index, record):
-                return filtered
-
-    max_axis_count = max(
-        (
-            len(_slot_axis_pairs(slot))
-            for candidate_slots in slots_by_candidate.values()
-            for slot in candidate_slots
-        ),
-        default=0,
-    )
-    for depth in range(max_axis_count - 1, 0, -1):
-        for index, record in enumerate(records):
-            candidate_key = str(record.get("candidate_key") or "")
-            candidate_slots = slots_by_candidate.get(candidate_key) or []
-            if any(
-                _record_matches_slot_prefix_depth(record, slot, depth)
-                for slot in candidate_slots
-            ):
-                if append_record(index, record):
-                    return filtered
-    return filtered
-
-
 def _slot_option_value(value: Any) -> Any:
     if isinstance(value, float) and value.is_integer():
         return int(value)
@@ -2245,16 +2075,10 @@ def _sanitize_routing_decisions(
 def _sanitize_llm_slots(
     slots: list[LLMSlotProposal],
     candidates: list[dict[str, Any]],
-    *,
-    max_selected_slots: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    if max_selected_slots is None:
-        max_selected_slots = get_settings().model_parameter_max_parameter_slots
-    max_selected_slots = min(max_selected_slots, HARD_MAX_PARAMETER_SLOTS)
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     sanitized: list[dict[str, Any]] = []
     warnings: list[str] = []
-    selected_slot_count_by_candidate: dict[str, int] = {}
     for slot in slots:
         if slot.candidate_key not in candidate_by_key:
             warning = (
@@ -2269,16 +2093,6 @@ def _sanitize_llm_slots(
             warning = (
                 "LLM이 실제 모델 input으로 사용할 수 없는 모호한 slot 값을 반환해 "
                 f"제외했습니다: {', '.join(issues)}: {slot.candidate_key}"
-            )
-            logger.warning("[model-parameter] {}", warning)
-            warnings.append(warning)
-            continue
-        selected_slot_count = selected_slot_count_by_candidate.get(slot.candidate_key, 0) + 1
-        selected_slot_count_by_candidate[slot.candidate_key] = selected_slot_count
-        if selected_slot_count > max_selected_slots:
-            warning = (
-                "LLM이 parameter task의 limits.maxParameterSlots를 초과해 반환하여 "
-                f"초과 slot을 제외했습니다: {slot.candidate_key}"
             )
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)

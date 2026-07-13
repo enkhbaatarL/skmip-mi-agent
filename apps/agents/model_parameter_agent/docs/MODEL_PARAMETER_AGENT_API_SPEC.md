@@ -181,8 +181,14 @@ Authorization: Bearer {callback-token}
 ```json
 {
   "status": "error",
-  "message": "Scenario context not found: scenario_id=309",
-  "data": null
+  "message": "[INVALID_REQUEST] 요청이 유효하지 않습니다. - No valid model parameter proposal parameters generated for scenario_id=309",
+  "data": {
+    "modelParamProposalId": 10001,
+    "scenarioId": 309,
+    "scenarioGroupId": 61,
+    "eventId": 1378,
+    "status": "FAILED"
+  }
 }
 ```
 
@@ -194,7 +200,7 @@ Authorization: Bearer {callback-token}
 | `data.scenarioId` | integer | N | 요청 scenario ID. path의 `{scenario_id}`와 일치해야 함 |
 | `data.scenarioGroupId` | integer | N | scenario group ID. 교차검증용 |
 | `data.eventId` | integer | N | MI event ID. 교차검증용 |
-| `data.status` | string | N | 성공 시 `PROPOSED`, 실패 시 `FAILED`. 없으면 wrapper `status`로 판정 |
+| `data.status` | string | Y | 성공 시 `PROPOSED`, 실패 시 `FAILED` |
 | `data.proposalParameters` | array | N | Backend는 재조회하므로 생략 가능 |
 
 ## 6. Proposal parameter schema
@@ -344,13 +350,19 @@ Request body:
 
 시나리오 context가 없거나 DB 매핑 기준으로 direct/routing 수급모델 input parameter 후보를 찾지 못한 경우는 성공으로 보지 않는다. callback형 proposal API는 background 실행 전에 실패를 반환하고, sync proposal API도 동일하게 `ENTITY_NOT_FOUND` 또는 `INVALID_REQUEST`로 실패한다. 이 경우 proposal row를 만들지 않고 callback도 전송하지 않는다.
 
-DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalParameters`가 비면 접수된 proposal row를 `FAILED`로 전이하고 실패 callback을 전송한다. 실패 callback의 `data`는 `null`로 전송한다.
+DB 매핑 후보는 있었지만 LLM/후처리 단계에서 최종 `proposalParameters`가 비면 접수된 proposal row를 `FAILED`로 전이하고 실패 callback을 전송한다. 실패 callback의 `data`에는 접수 시 확정된 ID와 `status=FAILED`를 포함한다.
 
 ```json
 {
   "status": "error",
   "message": "[INVALID_REQUEST] 요청이 유효하지 않습니다. - No valid model parameter proposal parameters generated for scenario_id=309",
-  "data": null
+  "data": {
+    "modelParamProposalId": 10001,
+    "scenarioId": 309,
+    "scenarioGroupId": 61,
+    "eventId": 1378,
+    "status": "FAILED"
+  }
 }
 ```
 

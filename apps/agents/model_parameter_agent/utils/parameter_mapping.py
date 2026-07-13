@@ -71,19 +71,6 @@ CANDIDATE_BASECASE_CACHE_FIELDS = (
     "basecase_value_end_col",
     "basecase_stop_rule",
 )
-PARAMETER_ALIASES = {
-    "Gas Demand[BCM/Mt]": "User-Adjusted Gas Demand",
-    "Gas Demand [BCM/Mt]": "User-Adjusted Gas Demand",
-    "VolumeCancelled": "VolumeCancelled",
-    "Volume Cancelled": "VolumeCancelled",
-    "RemainingUnrestrictedAmount": "RemainingUnrestrictedAmount",
-    "ShippingCost (Charter/Fuel)": "ShippingCost",
-    "ShippingCost (Suez/Panama Crossing·Disruption)": "ShippingCost",
-    "ShippingCost": "ShippingCost",
-    "PNG Contract Volume": "PNG Contract Volume",
-}
-
-
 _PARAMETER_KB_CACHE: RuntimeLruCache[ParameterKnowledgeBase] = RuntimeLruCache(
     max_entries=PARAMETER_KNOWLEDGE_BASE_CACHE_MAX_ENTRIES,
 )
@@ -779,8 +766,7 @@ def build_llm_prompt_packet(
 
 
 def normalize_parameter_name(value: Any) -> str:
-    text = _clean_text(value)
-    return PARAMETER_ALIASES.get(text, text)
+    return _clean_text(value)
 
 
 def _mapping_rules_from_rows(

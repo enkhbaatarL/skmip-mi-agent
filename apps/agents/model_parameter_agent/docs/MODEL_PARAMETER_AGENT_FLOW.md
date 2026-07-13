@@ -102,7 +102,8 @@ flowchart TD
 }
 ```
 
-- task마다 최소 1개, 최대 2개를 선택하도록 프롬프트에 명시한다.
+- task마다 최소 1개, 최대 `model_parameter_max_routing_candidates_per_dimension`개를
+  선택하도록 프롬프트에 명시한다(기본값 2).
 - 서버는 이 수를 다시 채우거나 자르지 않는다.
 - 알 수 없는 dimension/candidate key만 제외한다.
 - `rationale`, `confidence`, `warnings`는 LLM 출력에 받지 않는다.
@@ -186,6 +187,8 @@ parameter별 task는 다음 구조다.
 
 `filter_basecase_records_by_slots`가 Step 2 좌표를 active Basecase/LUT union에서 exact 검증한다.
 검증에 성공한 slot에는 candidate 내부에서 유일한 `slot_key`를 서버가 부여한다.
+축 schema, exact 존재 여부와 중복을 먼저 검증한 뒤 parameter별 최대 100개를 적용한다.
+유효 slot이 상한을 넘으면 앞선 100개만 Step 3으로 전달하고 초과 개수는 validation warning에 남긴다.
 
 ```json
 {

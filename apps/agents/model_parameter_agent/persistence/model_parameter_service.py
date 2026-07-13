@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from decimal import Decimal
 from typing import Any
 
@@ -12,7 +13,10 @@ from apps.persistence.model_parameter.repository import ModelParameterRepository
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 
-CONFIRMABLE_PROPOSAL_STATUSES = {"PROPOSED", "CONFIRMED"}
+CONFIRMABLE_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED")
+PROCESSING_PROPOSAL_STATUSES = ("PROCESSING",)
+CALLBACK_READY_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED", "FAILED")
+CALLBACK_TARGET_STATUSES = {"SUCCEEDED", "FAILED", "SKIPPED"}
 
 
 def _json_payload(value: Any) -> Any:
@@ -35,6 +39,60 @@ def _json_safe(value: Any) -> Any:
     if hasattr(value, "value"):
         return value.value
     return value
+
+
+def _proposal_for_update(
+    repository: ModelParameterRepository,
+    model_param_proposal_id: int,
+) -> dict[str, Any]:
+    proposal = repository.fetch_model_param_proposal_for_update(
+        model_param_proposal_id,
+    )
+    if proposal is None:
+        raise MIBaseError(
+            ErrorCode.ENTITY_NOT_FOUND,
+            detail=(
+                "Model parameter proposal not found: "
+                f"model_param_proposal_id={model_param_proposal_id}"
+            ),
+        )
+    return proposal
+
+
+def _ensure_proposal_status(
+    proposal: dict[str, Any],
+    *,
+    model_param_proposal_id: int,
+    allowed_statuses: Collection[str],
+    action: str,
+) -> None:
+    status = str(proposal.get("status") or "")
+    if status in allowed_statuses:
+        return
+    expected = " or ".join(allowed_statuses)
+    raise MIBaseError(
+        ErrorCode.INVALID_REQUEST,
+        detail=(
+            f"Model parameter proposal must be {expected} before {action}: "
+            f"model_param_proposal_id={model_param_proposal_id}, status={status}"
+        ),
+    )
+
+
+def _ensure_transition_updated(
+    updated: bool,
+    *,
+    model_param_proposal_id: int,
+) -> None:
+    if updated:
+        return
+    raise MIBaseError(
+        ErrorCode.ENTITY_NOT_FOUND,
+        detail=(
+            "Model parameter proposal disappeared during state transition: "
+            f"model_param_proposal_id={model_param_proposal_id}"
+        ),
+    )
 
 
 class ModelParameterService:
@@ -203,9 +261,21 @@ class ModelParameterService:
         payload = _json_payload(proposal_parameters)
         session = get_sync_session()
         try:
-            ModelParameterRepository(session=session).complete_model_param_proposal(
+            repository = ModelParameterRepository(session=session)
+            proposal = _proposal_for_update(repository, model_param_proposal_id)
+            _ensure_proposal_status(
+                proposal,
+                model_param_proposal_id=model_param_proposal_id,
+                allowed_statuses=PROCESSING_PROPOSAL_STATUSES,
+                action="completion",
+            )
+            updated = repository.complete_model_param_proposal(
                 model_param_proposal_id=model_param_proposal_id,
                 proposal_parameters=payload,
+            )
+            _ensure_transition_updated(
+                updated,
+                model_param_proposal_id=model_param_proposal_id,
             )
             session.commit()
         except Exception:
@@ -225,10 +295,22 @@ class ModelParameterService:
 
         session = get_sync_session()
         try:
-            ModelParameterRepository(session=session).fail_model_param_proposal(
+            repository = ModelParameterRepository(session=session)
+            proposal = _proposal_for_update(repository, model_param_proposal_id)
+            _ensure_proposal_status(
+                proposal,
+                model_param_proposal_id=model_param_proposal_id,
+                allowed_statuses=PROCESSING_PROPOSAL_STATUSES,
+                action="failure",
+            )
+            updated = repository.fail_model_param_proposal(
                 model_param_proposal_id=model_param_proposal_id,
                 error_code=error_code,
                 error_message=error_message,
+            )
+            _ensure_transition_updated(
+                updated,
+                model_param_proposal_id=model_param_proposal_id,
             )
             session.commit()
         except Exception:
@@ -245,11 +327,38 @@ class ModelParameterService:
     ) -> None:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
+        if callback_status not in CALLBACK_TARGET_STATUSES:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"Unsupported model parameter callback status: {callback_status}",
+            )
         session = get_sync_session()
         try:
-            ModelParameterRepository(session=session).update_model_param_callback_status(
+            repository = ModelParameterRepository(session=session)
+            proposal = _proposal_for_update(repository, model_param_proposal_id)
+            _ensure_proposal_status(
+                proposal,
+                model_param_proposal_id=model_param_proposal_id,
+                allowed_statuses=CALLBACK_READY_PROPOSAL_STATUSES,
+                action="callback status update",
+            )
+            current_callback_status = str(proposal.get("callback_status") or "")
+            if current_callback_status != "PENDING":
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=(
+                        "Model parameter callback status must be PENDING before update: "
+                        f"model_param_proposal_id={model_param_proposal_id}, "
+                        f"callback_status={current_callback_status}"
+                    ),
+                )
+            updated = repository.update_model_param_callback_status(
                 model_param_proposal_id=model_param_proposal_id,
                 callback_status=callback_status,
+            )
+            _ensure_transition_updated(
+                updated,
+                model_param_proposal_id=model_param_proposal_id,
             )
             session.commit()
         except Exception:
@@ -271,28 +380,21 @@ class ModelParameterService:
         session = get_sync_session()
         try:
             repository = ModelParameterRepository(session=session)
-            proposal = repository.fetch_model_param_proposal(model_param_proposal_id)
-            if proposal is None:
-                raise MIBaseError(
-                    ErrorCode.ENTITY_NOT_FOUND,
-                    detail=(
-                        "Model parameter proposal not found: "
-                        f"model_param_proposal_id={model_param_proposal_id}"
-                    ),
-                )
-            status = str(proposal.get("status") or "")
-            if status not in CONFIRMABLE_PROPOSAL_STATUSES:
-                raise MIBaseError(
-                    ErrorCode.INVALID_REQUEST,
-                    detail=(
-                        "Model parameter proposal must be PROPOSED or CONFIRMED before confirmation: "
-                        f"model_param_proposal_id={model_param_proposal_id}, status={status}"
-                    ),
-                )
-            repository.confirm_model_param_proposal(
+            proposal = _proposal_for_update(repository, model_param_proposal_id)
+            _ensure_proposal_status(
+                proposal,
+                model_param_proposal_id=model_param_proposal_id,
+                allowed_statuses=CONFIRMABLE_PROPOSAL_STATUSES,
+                action="confirmation",
+            )
+            updated = repository.confirm_model_param_proposal(
                 model_param_proposal_id=model_param_proposal_id,
                 user_id=_optional_int(user_id),
                 confirmation_parameters=payload,
+            )
+            _ensure_transition_updated(
+                updated,
+                model_param_proposal_id=model_param_proposal_id,
             )
             session.commit()
             return {

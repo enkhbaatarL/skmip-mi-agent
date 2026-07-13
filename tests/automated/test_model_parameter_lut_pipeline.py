@@ -219,18 +219,65 @@ def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
         for candidate_key in ("gdp", "pmi")
         for index in range(101)
     ]
-    sanitized, warnings = nodes._sanitize_llm_slots(
-        llm_slots,
-        candidates,
-        max_selected_slots=200,
-    )
+    sanitized, warnings = nodes._sanitize_llm_slots(llm_slots, candidates)
     slot_count_by_candidate = {
         candidate_key: sum(1 for slot in sanitized if slot["candidate_key"] == candidate_key)
         for candidate_key in ("gdp", "pmi")
     }
-    assert slot_count_by_candidate == {"gdp": 100, "pmi": 100}
+    assert slot_count_by_candidate == {"gdp": 101, "pmi": 101}
     assert all("selected" not in slot for slot in sanitized)
-    assert len(warnings) == 2
+    assert warnings == []
+
+
+def test_exact_valid_slots_are_capped_after_invalid_and_duplicate_rejection(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, _ = real_domain
+    candidate = _candidate("GDP", "gdp")
+    basecase_records = [
+        {
+            "candidate_key": "gdp",
+            "reference_id": f"gdp-country-{index}",
+            "axes": {"Country": f"Country-{index}", "Year": 2026},
+            "value": 0.02,
+        }
+        for index in range(101)
+    ]
+    basecase_index = build_basecase_index(
+        basecase_records,
+        [candidate],
+        registry=registry,
+    )
+    valid_slots = [
+        _slot("gdp", record["axes"])
+        for record in basecase_records
+    ]
+    state = ModelParameterProposalState(
+        scenario_id=1,
+        candidate_mappings=[candidate],
+        basecase_index=basecase_index,
+        resolved_config={"model_parameter_lut_enabled": False},
+        parameter_slots=[
+            _slot("gdp", {"Country": "Exact Miss", "Year": 2026}),
+            valid_slots[0],
+            valid_slots[0],
+            *valid_slots[1:],
+        ],
+    )
+
+    with patch.object(nodes, "get_parameter_spec_registry", return_value=registry):
+        result = nodes.filter_basecase_records_by_slots(state)
+
+    assert len(result["parameter_slots"]) == 100
+    assert len(result["effective_references"]) == 100
+    assert result["parameter_slots"][0]["slot_key"] == "slot-1"
+    assert result["parameter_slots"][-1]["slot_key"] == "slot-100"
+    assert any("Exact Miss" in warning for warning in result["validation_warnings"])
+    assert any("중복 반환" in warning for warning in result["validation_warnings"])
+    assert any(
+        "limit=100, excluded=1" in warning
+        for warning in result["validation_warnings"]
+    )
 
 
 def test_exact_miss_is_rejected_without_nearest_and_all_reference_modes_resolve(
@@ -701,7 +748,6 @@ def test_state_dump_excludes_basecase_index_and_contains_no_full_rows(
         scenario_id=1,
         candidate_mappings=[candidate],
         basecase_index=basecase_index,
-        basecase_records=[],
         slot_catalog=compact_catalog,
         effective_references=[
             _reference(
@@ -717,7 +763,7 @@ def test_state_dump_excludes_basecase_index_and_contains_no_full_rows(
     dumped = state.model_dump()
 
     assert "basecase_index" not in dumped
-    assert dumped["basecase_records"] == []
+    assert "basecase_records" not in dumped
     assert dumped["slot_catalog"] == compact_catalog
     assert "records" not in _all_mapping_keys(dumped["slot_catalog"])
 

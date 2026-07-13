@@ -370,11 +370,21 @@ def _callback_success_output(
 def _callback_error_output(
     *,
     message: str,
+    model_param_proposal_id: int,
+    scenario_id: int,
+    scenario_group_id: int | None,
+    event_id: int | None,
 ) -> ProposeParametersCallbackOut:
     return ProposeParametersCallbackOut(
         status="error",
         message=message,
-        data=None,
+        data=ProposeParametersCallbackData(
+            model_param_proposal_id=model_param_proposal_id,
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            event_id=event_id,
+            status="FAILED",
+        ),
     )
 
 

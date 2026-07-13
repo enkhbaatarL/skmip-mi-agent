@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Body, Path
 
 from apps.agents.model_parameter_agent.flows.confirm_parameters.flow import (
@@ -73,7 +75,8 @@ async def propose_parameters(
     payload: ProposeParametersRequest | None = Body(default=None),
 ) -> ProposeParametersAcceptedOut:
     user_id = payload.user_id if payload is not None else None
-    result = prepare_propose_parameters_callback(
+    result = await asyncio.to_thread(
+        prepare_propose_parameters_callback,
         scenario_id,
         user_id=user_id,
     )

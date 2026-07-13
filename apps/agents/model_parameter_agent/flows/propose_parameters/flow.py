@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 import json
 import time
@@ -99,7 +100,6 @@ def build_graph() -> Runnable:
         _route_after_candidate_validation,
         {
             "load_basecase_samples": "load_basecase_samples",
-            "finalize_empty_parameter_values": "finalize_empty_parameter_values",
         },
     )
     builder.add_edge("load_basecase_samples", "propose_parameter_slots")
@@ -242,7 +242,8 @@ async def run_propose_parameters_background(
             model_param_proposal_id=model_param_proposal_id,
             proposal_parameters=proposal_parameters,
         )
-        model_parameter_service.complete_proposal_result(
+        await asyncio.to_thread(
+            model_parameter_service.complete_proposal_result,
             model_param_proposal_id=model_param_proposal_id,
             proposal_parameters=proposal_parameters,
         )
@@ -270,13 +271,18 @@ async def run_propose_parameters_background(
             elapsed_ms,
             exc,
         )
-        model_parameter_service.fail_proposal_result(
+        await asyncio.to_thread(
+            model_parameter_service.fail_proposal_result,
             model_param_proposal_id=model_param_proposal_id,
             error_code=error_code,
             error_message=message,
         )
         callback_payload = _callback_error_output(
             message=message,
+            model_param_proposal_id=model_param_proposal_id,
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            event_id=event_id,
         )
 
     try:
@@ -286,7 +292,8 @@ async def run_propose_parameters_background(
         callback_url = cfg.callback_base_url.rstrip("/") + callback_path
         await send_callback(callback_url, callback_payload)
         callback_status = "SKIPPED" if cfg.skip_callback else "SUCCEEDED"
-        model_parameter_service.update_callback_status(
+        await asyncio.to_thread(
+            model_parameter_service.update_callback_status,
             model_param_proposal_id=model_param_proposal_id,
             callback_status=callback_status,
         )
@@ -305,7 +312,8 @@ async def run_propose_parameters_background(
             model_param_proposal_id,
             callback_exc,
         )
-        model_parameter_service.update_callback_status(
+        await asyncio.to_thread(
+            model_parameter_service.update_callback_status,
             model_param_proposal_id=model_param_proposal_id,
             callback_status="FAILED",
         )
