@@ -56,7 +56,7 @@ async def preview_price_interpretation(
         "가격전망 해석 요청을 즉시 접수하고 status=PROCESSING으로 반환합니다. "
         "실제 해석(입력 차이 → 예측 가격 결과 → 도메인 해석, 그룹 종합)은 백그라운드에서 "
         "동기 preview와 동일한 interpret_price 그래프로 수행되며, 완료 시 설정된 콜백 URL로 "
-        "결과(성공 시 result=success + data, 실패 시 result=failure + reason)를 전달합니다. "
+        "결과(성공 시 result=success + interpretations, 실패 시 result=failure + reason)를 전달합니다. "
         "콜백 수신 엔드포인트는 "
         "/api/v1/mi/next-gen/scenario-groups/{scenarioGroupId}/price-interpretations/callback 입니다. "
         "입력 조회 규칙은 동기 preview(/price-interpretations/preview)와 동일하며, "

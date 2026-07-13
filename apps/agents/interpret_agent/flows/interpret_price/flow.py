@@ -18,8 +18,10 @@ from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (
+    PriceInterpretationCallbackItem,
     PriceInterpretationCallbackOut,
     PriceInterpretationResult,
+    ScenarioComparisonOut,
 )
 from apps.agents.interpret_agent.flows.interpret_price.nodes import (
     extract_diffs,
@@ -106,6 +108,27 @@ def _resolve_callback_url(scenario_group_id: int) -> str:
     return cfg.callback_base_url.rstrip("/") + callback_path
 
 
+def _format_interpretation_content(interpretation: ScenarioComparisonOut) -> str:
+    return (
+        f"# {interpretation.identity}\n\n"
+        f"## 동인 및 국면\n{interpretation.driver_phase}\n\n"
+        f"## 가격 특성\n{interpretation.price_character}\n\n"
+        f"## 시나리오 요약\n{interpretation.summary}"
+    )
+
+
+def _to_callback_interpretations(
+    result: PriceInterpretationResult,
+) -> list[PriceInterpretationCallbackItem]:
+    return [
+        PriceInterpretationCallbackItem(
+            scenario_id=int(interpretation.scenario_id),
+            content=_format_interpretation_content(interpretation),
+        )
+        for interpretation in result.scenarios
+    ]
+
+
 async def run_price_interpretation_background(
     scenario_group_id: int,
     scenario_ids: list[int] | None = None,
@@ -125,7 +148,10 @@ async def run_price_interpretation_background(
             scenario_group_id=scenario_group_id,
             scenario_ids=list(scenario_ids or []),
         )
-        callback_payload = PriceInterpretationCallbackOut(result="success", data=result)
+        callback_payload = PriceInterpretationCallbackOut(
+            result="success",
+            interpretations=_to_callback_interpretations(result),
+        )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
             f"[BG][interpret_price] INTERPRET_DONE | group_id={scenario_group_id} "

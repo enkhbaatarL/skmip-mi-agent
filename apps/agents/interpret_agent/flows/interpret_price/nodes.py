@@ -132,6 +132,7 @@ async def _interpret_one(
         ],
         preference=ModelPreference.QUALITY,
         temperature=0.0,
+        stream=True,
     )
     llm = result.result
     return ScenarioComparisonOut(
@@ -190,6 +191,7 @@ async def synthesize_group(state: InterpretPriceState) -> dict:
         ],
         preference=ModelPreference.QUALITY,
         temperature=0.0,
+        stream=True,
     )
     return {"synthesis": GroupSynthesisOut(overall_message=result.result.overall_message)}
 
