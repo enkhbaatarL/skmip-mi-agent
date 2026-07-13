@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -12,6 +13,8 @@ from typing import Any
 import uuid
 
 import httpx
+
+from quality_eval.runtime_config import AGENT_ALIASES, load_runtime_target
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -582,6 +585,22 @@ def run_pipeline(
             f"actionState={target.initial_action_state}",
         )
 
+        try:
+            event_detail = request_json(
+                client,
+                metrics,
+                run_id,
+                step="get_event_detail",
+                method="GET",
+                url=f"{args.base_url}/events/{target.mi_event_id}",
+            )
+        except PipelineStop as exc:
+            # Event detail enriches quality evaluation only; it must not turn an
+            # otherwise runnable create/validation/signpost pipeline into failure.
+            print(f"  ⚠ event detail unavailable; quality R-04 will SKIP | {exc.reason}")
+        else:
+            write_json(OUTPUT_DIR / batch_id / f"{target.mi_event_id}_event_detail.json", event_detail)
+
         if args.delete_existing or target.initial_scenario_group_id is not None:
             soft_delete_existing_group(
                 client,
@@ -769,11 +788,13 @@ def parse_args() -> argparse.Namespace:
         description="Sync API manual/integration runner for scenario generation pipeline",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--base-url", default="http://localhost:8000", help="Agent API base URL")
+    parser.add_argument("--agent", choices=sorted(AGENT_ALIASES), help="agent target alias: mi-vm or local")
+    parser.add_argument("--base-url", help="Agent URL; takes precedence over --agent and test_info.local")
+    parser.add_argument("--test-info", type=Path, help="ignored local config; defaults to skill/test_info.local when present")
     parser.add_argument("--mi-event-id", type=int, help="단건 실행할 MI 이벤트 ID")
     parser.add_argument("--event-type-l2-id", type=int, help="단건 실행 시 SQLite에 기록할 eventTypeL2Id")
     parser.add_argument("--recent-events", type=int, help="GET /events sort=latest 기준 최근 N개 이벤트를 실행")
-    parser.add_argument("--user-id", type=int, required=True, help="요청 사용자 ID")
+    parser.add_argument("--user-id", type=int, help="요청 사용자 ID; defaults to 10603 or test_info.local")
     parser.add_argument("--timeout", type=int, default=900, help="httpx timeout seconds")
     parser.add_argument("--yes", action="store_true", help="사용자 확인 없이 다음 API로 자동 진행")
     parser.add_argument(
@@ -817,6 +838,20 @@ def selected_modes(args: argparse.Namespace) -> list[str]:
 
 def main() -> int:
     args = parse_args()
+    try:
+        target = load_runtime_target(
+            agent=args.agent,
+            base_url=args.base_url,
+            user_id=args.user_id,
+            test_info_path=args.test_info,
+        )
+    except ValueError as exc:
+        print(f"대상 설정 오류: {exc}")
+        return 2
+    args.base_url = target.base_url or "http://localhost:8000"
+    args.user_id = target.user_id
+    if not args.admin_token:
+        args.admin_token = os.environ.get("SCENARIO_GROUP_ADMIN_TOKEN")
     modes = selected_modes(args)
     if not modes:
         print("--mi-event-id, --all-event-types, --recent-events 중 하나가 필요합니다.")
