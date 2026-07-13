@@ -30,24 +30,32 @@ data:
     lightly_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
     deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 
-    MCP_POOL_URLS: {}
-    COMPANY_MCP_MAP: {}
-    mcp_pool_size: 10
-    mcp_per_session_limit: 5
-    mcp_client_timeout: 30
-    mcp_client_sse_read_timeout: 60
-
     http_timeout: 60
     http_connect_timeout: 10
+    llm_timeout_sec: 310
     http_verify: true
     http2: true
     http_max_connection: 100
     http_max_keepalive: 20
 
-    rdb_search_metadata_repo_id: 00000000-0000-0000-0000-000000000000
-
     scenario_group_admin_bearer_tokens:
       - ${SCENARIO_GROUP_ADMIN_TOKEN}
+    create_signposts_max_concurrent_scenarios: 7
+
+    agents:
+      scenario_group_agent:
+        mlflow_experiment_name: scenario_agent_local
+        aip_app_id: scenario_agent
+        mlflow_tracing_enabled: true
+      default:
+        mlflow_experiment_name: mi_agent_local
+        aip_app_id: mi_agent
+        mlflow_tracing_enabled: false
+
+    mlflow_tracking_uri: "http://40.82.137.178:5001"
+    mlflow_tracking_username: "skmip-mi-agent"
+    mlflow_tracking_password: "skgas2ndfloor!"
+    mlflow_langchain_run_tracer_inline: false
 
     callback_oauth2_token_url: https://mi.mingovvv.info/api/v1/oauth2/token
     callback_oauth2_client_id: agent-skgas-client
@@ -58,14 +66,18 @@ data:
     callback_validate_scenarios_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/validation/callback
     callback_create_signposts_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/signposts/callback
     callback_price_interpretations_path: /api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/price-interpretations/callback
+    callback_model_parameter_proposals_path: /api/v1/mi/next-gen/scenarios/{scenario_id}/model-param-proposals/callback
     skip_callback: true
 
-    llm_concurrency: 4
+    llm_concurrency: 10
     llm_max_retries: 1
+    model_parameter_lut_enabled: false
+    model_parameter_lut_horizon_start_year: 2026
+    model_parameter_lut_horizon_end_year: 2030
     model_parameter_max_parameter_slots: 100
     model_parameter_max_value_prompt_basecase_records: 100
     model_parameter_max_routing_candidates_per_dimension: 2
-    mcp_max_concurrency: 8
-    http_max_concurrency: 16
-    rdb_exec_max_parallel: 4
+    model_parameter_llm_stream_enabled: false
+    model_parameter_llm_reasoning_effort: default
+    http_max_concurrency: 20
     log_level: DEBUG

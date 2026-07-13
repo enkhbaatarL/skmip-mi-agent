@@ -108,6 +108,11 @@ CONFIRMED -> CONFIRMED  # confirmation_parameters overwrite
 `FAILED`는 terminal 상태로 둔다. `CONFIRMED`는 재확정 요청을 허용하며, 같은 row의
 `confirmation_parameters`, `confirmed_dtm`, `mod_usr_logn_id`를 새 요청 기준으로 갱신한다.
 
+상태 전이 쓰기는 대상 row를 `SELECT ... FOR UPDATE`로 잠근 뒤 현재 상태를 확인한다.
+row가 없거나 soft-delete 상태면 `ENTITY_NOT_FOUND`, 허용되지 않은 현재 상태면
+`INVALID_REQUEST`로 처리하고 commit하지 않는다. callback 상태는 proposal이 종결 상태이고
+현재 `callback_status=PENDING`일 때만 `SUCCEEDED`, `FAILED`, `SKIPPED`로 전이한다.
+
 ### 4.2 Callback status
 
 | Status | 의미 |

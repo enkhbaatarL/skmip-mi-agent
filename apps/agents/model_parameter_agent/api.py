@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, BackgroundTasks, Body, Path
 
 from apps.agents.model_parameter_agent.flows.confirm_parameters.flow import (
-    get_runnable_graph as get_confirm_parameters_runnable,
+    run_confirm_parameters,
 )
 from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
     ConfirmParametersIn,
     ConfirmParametersOut,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
-    get_runnable_graph,
     prepare_propose_parameters_callback,
     run_propose_parameters_background,
+    run_propose_parameters_sync,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
     ProposeParametersAcceptedData,
@@ -36,7 +38,8 @@ router = APIRouter()
         "수급모델 parameter slot/value를 제안합니다. "
         "제안 결과를 DB에 저장한 뒤 status/message/data wrapper의 "
         "modelParamProposalId와 proposalParameters로 반환합니다. "
-        "테스트 및 로컬 검증용 sync API입니다."
+        "테스트 및 로컬 검증용 sync API이며 values에는 LUT 기준값을 "
+        "lutValue로 추가해 반환합니다. lutValue는 DB 저장 payload와 운영 callback에는 포함되지 않습니다."
     ),
 )
 async def propose_parameters_sync(
@@ -44,7 +47,7 @@ async def propose_parameters_sync(
     payload: ProposeParametersRequest | None = Body(default=None),
 ) -> ProposeParametersOut:
     user_id = payload.user_id if payload is not None else None
-    return await get_runnable_graph().ainvoke(
+    return await run_propose_parameters_sync(
         {
             "scenario_id": scenario_id,
             "user_id": user_id,
@@ -72,7 +75,8 @@ async def propose_parameters(
     payload: ProposeParametersRequest | None = Body(default=None),
 ) -> ProposeParametersAcceptedOut:
     user_id = payload.user_id if payload is not None else None
-    result = prepare_propose_parameters_callback(
+    result = await asyncio.to_thread(
+        prepare_propose_parameters_callback,
         scenario_id,
         user_id=user_id,
     )
@@ -108,7 +112,7 @@ async def confirm_parameters(
     payload: ConfirmParametersIn,
     model_param_proposal_id: int = Path(alias="modelParamProposalId"),
 ) -> ConfirmParametersOut:
-    return await get_confirm_parameters_runnable().ainvoke(
+    return await run_confirm_parameters(
         {
             "model_param_proposal_id": model_param_proposal_id,
             **payload.model_dump(exclude_unset=True),

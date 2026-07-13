@@ -17,6 +17,8 @@ from apps.agents.model_parameter_agent.flows.confirm_parameters.nodes import (
 from apps.agents.model_parameter_agent.flows.confirm_parameters.state import (
     ConfirmParametersState,
 )
+from apps.agents.model_parameter_agent.utils.tracing import build_trace_context
+from apps.common.tracing.context import TraceContext, build_langgraph_config, mlflow_trace_context
 
 
 def to_state(payload: dict[str, Any]) -> ConfirmParametersState:
@@ -30,7 +32,7 @@ def to_state(payload: dict[str, Any]) -> ConfirmParametersState:
 
 
 def build_graph() -> Runnable:
-    builder = StateGraph(ConfirmParametersState)
+    builder = StateGraph(ConfirmParametersState, context_schema=TraceContext)
     builder.add_node("confirm_parameters", confirm_parameters)
     builder.set_entry_point("confirm_parameters")
     builder.add_edge("confirm_parameters", END)
@@ -46,6 +48,17 @@ def to_output(state: dict[str, Any] | ConfirmParametersState) -> ConfirmParamete
             status=result["status"],
         ),
     )
+
+
+async def run_confirm_parameters(payload: dict[str, Any]) -> ConfirmParametersOut:
+    trace_context = build_trace_context(session_id=str(payload["model_param_proposal_id"]))
+    with mlflow_trace_context(trace_context):
+        final_state = await build_graph().ainvoke(
+            to_state(payload),
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
+    return to_output(final_state)
 
 
 def build_runnable_graph() -> Runnable:

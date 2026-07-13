@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import os
-import sys
-import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import os
 from pathlib import Path
+import sys
+import time
 from typing import Any
 
 from sqlalchemy import func, select
+
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
@@ -27,14 +28,6 @@ if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
 from apps.persistence.event.models import MiEventTypeL2Model
-from tests.manual.model_parameter_agent.evaluate_proposals import (
-    _evaluate_scenario,
-    _json_pretty,
-    _json_preview,
-    _llm_call_table_lines,
-    _selected_adjustments,
-    _stage_summary_table_lines,
-)
 from apps.persistence.model_parameter.models import (
     MiModelParamDimensionMapModel,
     MiModelParamModel,
@@ -44,7 +37,14 @@ from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
 )
-from apps.common.configs.database.sync_database.connection import get_sync_session
+from tests.manual.model_parameter_agent.evaluate_proposals import (
+    _evaluate_scenario,
+    _json_pretty,
+    _json_preview,
+    _llm_call_table_lines,
+    _selected_adjustments,
+    _stage_summary_table_lines,
+)
 
 
 REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
@@ -277,6 +277,8 @@ def _proposal_id(final_response: dict[str, Any]) -> int | None:
 def _fetch_proposal_db_row(model_param_proposal_id: int | None) -> dict[str, Any]:
     if model_param_proposal_id is None:
         return {}
+    from apps.common.configs.database.sync_database.connection import get_sync_session
+
     session = get_sync_session()
     try:
         stmt = select(MiModelParamProposalModel).where(
@@ -483,6 +485,235 @@ class EventTypeTarget:
     scenario_group_id: int
     group_title: str
     scenario_ids: tuple[int, ...]
+    target_parameter: str | None = None
+
+
+@dataclass(frozen=True)
+class ParameterScenarioSelection:
+    parameter_name: str
+    scenario_id: int
+
+
+def _target_parameter_names_by_key(
+    target_parameters: tuple[str, ...],
+) -> dict[str, str]:
+    target_by_key: dict[str, str] = {}
+    for parameter in target_parameters:
+        parameter_name = str(parameter or "").strip()
+        parameter_key = _normalize_parameter_name_for_report(parameter_name)
+        if not parameter_key:
+            message = "--target-parameters contains an empty parameter name"
+            raise ValueError(message)
+        if parameter_key in target_by_key:
+            message = f"duplicate --target-parameters entry: {parameter_name}"
+            raise ValueError(message)
+        target_by_key[parameter_key] = parameter_name
+    return target_by_key
+
+
+def _parse_parameter_scenario_entry(raw_value: str) -> tuple[str, str, int]:
+    raw_text = str(raw_value or "").strip()
+    if raw_text.count("=") != 1:
+        message = f"invalid --parameter-scenarios entry; expected PARAMETER=SCENARIO_ID: {raw_text or '<empty>'}"
+        raise ValueError(message)
+    raw_parameter, raw_scenario_id = raw_text.split("=", 1)
+    parameter_name = raw_parameter.strip()
+    parameter_key = _normalize_parameter_name_for_report(parameter_name)
+    if not parameter_key or not raw_scenario_id.strip():
+        message = f"invalid --parameter-scenarios entry; expected PARAMETER=SCENARIO_ID: {raw_text}"
+        raise ValueError(message)
+    try:
+        scenario_id = int(raw_scenario_id.strip())
+    except ValueError as exc:
+        message = f"invalid scenario id in --parameter-scenarios entry: {raw_text}"
+        raise ValueError(message) from exc
+    if scenario_id <= 0:
+        message = f"scenario id must be positive in --parameter-scenarios entry: {raw_text}"
+        raise ValueError(message)
+    return parameter_key, parameter_name, scenario_id
+
+
+def _parse_parameter_scenarios(
+    raw_values: tuple[str, ...],
+    target_parameters: tuple[str, ...],
+) -> tuple[ParameterScenarioSelection, ...]:
+    if not raw_values:
+        return ()
+    if not target_parameters:
+        message = "--parameter-scenarios requires --target-parameters"
+        raise ValueError(message)
+
+    target_by_key = _target_parameter_names_by_key(target_parameters)
+    scenario_id_by_parameter: dict[str, int] = {}
+    parameter_by_scenario_id: dict[int, str] = {}
+    for raw_value in raw_values:
+        parameter_key, parameter_name, scenario_id = _parse_parameter_scenario_entry(raw_value)
+        if parameter_key in scenario_id_by_parameter:
+            message = f"duplicate parameter in --parameter-scenarios: {parameter_name}"
+            raise ValueError(message)
+        if scenario_id in parameter_by_scenario_id:
+            message = (
+                "duplicate scenario id in --parameter-scenarios: "
+                f"{scenario_id} ({parameter_by_scenario_id[scenario_id]}, {parameter_name})"
+            )
+            raise ValueError(message)
+        scenario_id_by_parameter[parameter_key] = scenario_id
+        parameter_by_scenario_id[scenario_id] = parameter_name
+
+    expected_keys = set(target_by_key)
+    actual_keys = set(scenario_id_by_parameter)
+    if actual_keys != expected_keys:
+        missing = [target_by_key[key] for key in target_by_key if key not in actual_keys]
+        unexpected = sorted(
+            parameter
+            for parameter in (str(raw_value).split("=", 1)[0].strip() for raw_value in raw_values)
+            if _normalize_parameter_name_for_report(parameter) not in expected_keys
+        )
+        message = (
+            "--parameter-scenarios must match --target-parameters exactly: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+        raise ValueError(message)
+
+    return tuple(
+        ParameterScenarioSelection(
+            parameter_name=parameter_name,
+            scenario_id=scenario_id_by_parameter[parameter_key],
+        )
+        for parameter_key, parameter_name in target_by_key.items()
+    )
+
+
+def _build_parameter_scenario_targets(
+    selections: tuple[ParameterScenarioSelection, ...],
+    scenario_rows: list[tuple[int, int, int, str, str]],
+) -> tuple[EventTypeTarget, ...]:
+    context_by_scenario_id = {
+        int(scenario_id): (
+            int(event_type_l2_id),
+            int(scenario_group_id),
+            str(group_title or ""),
+            str(event_type_label or ""),
+        )
+        for scenario_id, event_type_l2_id, scenario_group_id, group_title, event_type_label in scenario_rows
+    }
+    missing_scenario_ids = sorted(
+        selection.scenario_id for selection in selections if selection.scenario_id not in context_by_scenario_id
+    )
+    if missing_scenario_ids:
+        message = f"--parameter-scenarios references missing or deleted scenarios: {missing_scenario_ids}"
+        raise ValueError(message)
+
+    targets: list[EventTypeTarget] = []
+    for selection in selections:
+        event_type_l2_id, scenario_group_id, group_title, event_type_label = context_by_scenario_id[
+            selection.scenario_id
+        ]
+        targets.append(
+            EventTypeTarget(
+                event_type_l2_id=event_type_l2_id,
+                event_type_label=event_type_label,
+                scenario_group_id=scenario_group_id,
+                group_title=group_title,
+                scenario_ids=(selection.scenario_id,),
+                target_parameter=selection.parameter_name,
+            ),
+        )
+    return tuple(targets)
+
+
+def _discover_parameter_scenario_targets(
+    selections: tuple[ParameterScenarioSelection, ...],
+) -> tuple[EventTypeTarget, ...]:
+    from apps.common.configs.database.sync_database.connection import get_sync_session
+
+    scenario_ids = tuple(selection.scenario_id for selection in selections)
+    session = get_sync_session()
+    try:
+        stmt = (
+            select(
+                MiScenarioModel.scenario_id,
+                MiScenarioGroupModel.event_type_l2_id,
+                MiScenarioGroupModel.scenario_group_id,
+                MiScenarioGroupModel.title,
+                MiEventTypeL2Model.level_2_label,
+            )
+            .join(
+                MiScenarioGroupModel,
+                MiScenarioGroupModel.scenario_group_id == MiScenarioModel.scenario_group_id,
+            )
+            .join(
+                MiEventTypeL2Model,
+                MiEventTypeL2Model.event_type_l2_id == MiScenarioGroupModel.event_type_l2_id,
+            )
+            .where(
+                MiScenarioModel.scenario_id.in_(scenario_ids),
+                MiScenarioModel.del_yn == "N",
+                MiScenarioGroupModel.del_yn == "N",
+                MiEventTypeL2Model.del_yn == "N",
+            )
+            .order_by(MiScenarioModel.scenario_id)
+        )
+        rows = session.execute(stmt).all()
+    finally:
+        session.close()
+    return _build_parameter_scenario_targets(selections, list(rows))
+
+
+def _resolve_evaluation_scope(
+    *,
+    event_type_l2_ids: tuple[int, ...],
+    group_title_prefix: str | None,
+    groups_per_event: int | None,
+    scenarios_per_group: int | None,
+    target_parameters: tuple[str, ...],
+    target_event_type_l2_ids_by_parameter: dict[str, tuple[int, ...]],
+    resolve_event_type_l2_ids_from_parameters: bool,
+    parameter_scenarios: tuple[ParameterScenarioSelection, ...],
+) -> tuple[
+    tuple[int, ...],
+    tuple[EventTypeTarget, ...],
+    tuple[ParameterScenarioSelection, ...],
+]:
+    if parameter_scenarios:
+        validated_selections = _parse_parameter_scenarios(
+            tuple(f"{selection.parameter_name}={selection.scenario_id}" for selection in parameter_scenarios),
+            target_parameters,
+        )
+        if event_type_l2_ids:
+            message = "parameter_scenarios cannot be combined with event_type_l2_ids"
+            raise ValueError(message)
+        if group_title_prefix or groups_per_event is not None or scenarios_per_group is not None:
+            message = "parameter_scenarios cannot be combined with group/scenario discovery filters"
+            raise ValueError(message)
+        targets = _discover_parameter_scenario_targets(validated_selections)
+        resolved_event_type_l2_ids = tuple(
+            sorted({target.event_type_l2_id for target in targets}),
+        )
+        return resolved_event_type_l2_ids, targets, validated_selections
+
+    resolved_event_type_l2_ids = event_type_l2_ids
+    if resolve_event_type_l2_ids_from_parameters:
+        resolved_event_type_l2_ids = tuple(
+            sorted(
+                {
+                    event_type_l2_id
+                    for parameter_event_type_ids in target_event_type_l2_ids_by_parameter.values()
+                    for event_type_l2_id in parameter_event_type_ids
+                },
+            ),
+        )
+        if not resolved_event_type_l2_ids:
+            message = f"No direct/routing event_type_l2_ids found for target parameters: {', '.join(target_parameters)}"
+            raise SystemExit(message)
+
+    targets = _discover_targets(
+        resolved_event_type_l2_ids,
+        group_title_prefix=group_title_prefix,
+        groups_per_event=groups_per_event,
+        scenarios_per_group=scenarios_per_group,
+    )
+    return resolved_event_type_l2_ids, targets, ()
 
 
 def _discover_targets(
@@ -492,6 +723,8 @@ def _discover_targets(
     groups_per_event: int | None = None,
     scenarios_per_group: int | None = None,
 ) -> tuple[EventTypeTarget, ...]:
+    from apps.common.configs.database.sync_database.connection import get_sync_session
+
     session = get_sync_session()
     try:
         label_stmt = select(
@@ -608,6 +841,8 @@ def _discover_event_type_l2_ids_for_parameters(
     event_type_ids_by_parameter: dict[str, set[int]] = {
         parameter: set() for parameter in normalized_targets.values()
     }
+    from apps.common.configs.database.sync_database.connection import get_sync_session
+
     session = get_sync_session()
     try:
         stmt = (
@@ -728,17 +963,71 @@ def _db_load_summary(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _records_for_target(
+    target: EventTypeTarget,
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if target.target_parameter is not None:
+        return [record for record in records if record.get("target") == target]
+    return [record for record in records if record["target"].scenario_group_id == target.scenario_group_id]
+
+
+def _errors_for_target(
+    target: EventTypeTarget,
+    errors: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if target.target_parameter is not None:
+        return [error for error in errors if error.get("target") == target]
+    return [error for error in errors if error["target"].scenario_group_id == target.scenario_group_id]
+
+
+def _target_status_key(target: EventTypeTarget) -> str:
+    if target.target_parameter is not None:
+        return f"{target.target_parameter}={target.scenario_ids[0]}"
+    return str(target.scenario_group_id)
+
+
+def _runtime_reference_payload(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "resolved_config": record.get("resolved_config") or {},
+        "lut_version": record.get("lut_version"),
+    }
+
+
+def _runtime_reference_lines(
+    record: dict[str, Any],
+    *,
+    heading: str,
+) -> list[str]:
+    return [
+        "",
+        f"{heading} Reference Runtime",
+        "",
+        "```json",
+        _json_pretty(_runtime_reference_payload(record)),
+        "```",
+        "",
+    ]
+
+
+def _target_parameter_present_in_record(
+    record: dict[str, Any],
+    target_parameter: str,
+) -> bool:
+    expected_present = any(
+        _parameter_name_matches(_candidate_parameter_name(candidate), target_parameter)
+        for candidate in record.get("expected_candidates") or []
+    )
+    selected_present = any(
+        _parameter_name_matches(adjustment.get("parameter_name"), target_parameter)
+        for adjustment in _selected_adjustments(record.get("result") or {})
+    )
+    return expected_present and selected_present
+
+
 def _group_status(target: EventTypeTarget, records: list[dict[str, Any]], errors: list[dict[str, Any]]) -> bool:
-    group_records = [
-        record
-        for record in records
-        if record["target"].scenario_group_id == target.scenario_group_id
-    ]
-    group_errors = [
-        error
-        for error in errors
-        if error["target"].scenario_group_id == target.scenario_group_id
-    ]
+    group_records = _records_for_target(target, records)
+    group_errors = _errors_for_target(target, errors)
     has_expected = any(record["expected_candidates"] for record in group_records)
     has_selected = any(_selected_adjustments(record["result"]) for record in group_records)
     value_diff_ok = (
@@ -747,11 +1036,19 @@ def _group_status(target: EventTypeTarget, records: list[dict[str, Any]], errors
         or not has_selected
         or len({_signature(record) for record in group_records}) > 1
     )
+    target_parameter_ok = target.target_parameter is None or (
+        bool(group_records)
+        and all(
+            _target_parameter_present_in_record(record, target.target_parameter)
+            for record in group_records
+        )
+    )
     return (
         not group_errors
         and len(group_records) == len(target.scenario_ids)
         and all(record["mapping_ok"] for record in group_records)
         and all(record["selected_ok"] for record in group_records)
+        and target_parameter_ok
         and value_diff_ok
     )
 
@@ -785,8 +1082,6 @@ def _render_parameter_ordered_result_lines(
     targets: tuple[EventTypeTarget, ...],
     records: list[dict[str, Any]],
     errors: list[dict[str, Any]],
-    records_by_group: dict[int, list[dict[str, Any]]],
-    errors_by_group: dict[int, list[dict[str, Any]]],
     target_event_type_l2_ids_by_parameter: dict[str, tuple[int, ...]],
 ) -> list[str]:
     lines: list[str] = []
@@ -797,7 +1092,14 @@ def _render_parameter_ordered_result_lines(
         )
         matching_targets: list[EventTypeTarget] = []
         for target in targets:
-            group_records = records_by_group.get(target.scenario_group_id, [])
+            group_records = _records_for_target(target, records)
+            if target.target_parameter is not None:
+                if _parameter_name_matches(
+                    target.target_parameter,
+                    target_parameter,
+                ):
+                    matching_targets.append(target)
+                continue
             if parameter_event_type_ids:
                 if target.event_type_l2_id in parameter_event_type_ids:
                     matching_targets.append(target)
@@ -825,10 +1127,10 @@ def _render_parameter_ordered_result_lines(
 
         for target in matching_targets:
             group_records = sorted(
-                records_by_group.get(target.scenario_group_id, []),
+                _records_for_target(target, records),
                 key=lambda item: item["scenario_id"],
             )
-            group_errors = errors_by_group.get(target.scenario_group_id, [])
+            group_errors = _errors_for_target(target, errors)
             signatures = {_signature(record) for record in group_records}
             has_expected = any(record["expected_candidates"] for record in group_records)
             has_selected = any(
@@ -955,6 +1257,7 @@ def _render_parameter_ordered_result_lines(
                     lines.append(f"- mapping_warnings: `{_json_preview(record['mapping_warnings'])}`")
                 if record.get("basecase_warnings"):
                     lines.append(f"- basecase_warnings: `{_json_preview(record['basecase_warnings'])}`")
+                lines.extend(_runtime_reference_lines(record, heading="######"))
                 lines.extend(_stage_summary_table_lines(record.get("step_summary") or {}))
                 lines.extend(
                     [
@@ -994,16 +1297,25 @@ def _render_report(
     target_parameters: tuple[str, ...] = (),
     target_event_type_l2_ids_by_parameter: dict[str, tuple[int, ...]] | None = None,
 ) -> str:
-    event_group_count: dict[int, int] = defaultdict(int)
+    event_group_ids: dict[int, set[int]] = defaultdict(set)
     event_scenario_count: dict[int, int] = defaultdict(int)
     for target in targets:
-        event_group_count[target.event_type_l2_id] += 1
+        event_group_ids[target.event_type_l2_id].add(target.scenario_group_id)
         event_scenario_count[target.event_type_l2_id] += len(target.scenario_ids)
 
     report_title = (
         "# Model Parameter Proposal Evaluation - Parameters"
         if target_parameters
         else "# Model Parameter Proposal Evaluation - Event Types"
+    )
+    parameter_scenario_scope = {
+        target.target_parameter: target.scenario_ids[0] for target in targets if target.target_parameter is not None
+    }
+    planned_execution_count = sum(len(target.scenario_ids) for target in targets)
+    target_collection_method = (
+        "명시적 parameter=scenario_id를 검증하고 midb에서 event/group context 조회"
+        if parameter_scenario_scope
+        else "midb의 scenario_group/scenario를 event_type_l2_id 기준으로 동적 조회"
     )
     lines: list[str] = [
         report_title,
@@ -1015,7 +1327,9 @@ def _render_report(
         f"- 대상 parameters: {list(target_parameters)}",
         f"- concurrency: {concurrency}",
         f"- retries: {retries}",
-        "- 대상 수집 방식: midb의 scenario_group/scenario를 event_type_l2_id 기준으로 동적 조회",
+        f"- parameter_scenarios: {parameter_scenario_scope}",
+        f"- planned scenario executions: {planned_execution_count}",
+        f"- 대상 수집 방식: {target_collection_method}",
         "- 호출 방식: 내부 raw graph 실행 후 `to_output()`으로 final response 생성",
         "",
         "## 대상 요약",
@@ -1028,7 +1342,7 @@ def _render_report(
         )
         lines.append(
             f"- event_type_l2_id={event_type_l2_id} {label}: "
-            f"scenario_group {event_group_count[event_type_l2_id]}개, "
+            f"scenario_group {len(event_group_ids[event_type_l2_id])}개, "
             f"scenario {event_scenario_count[event_type_l2_id]}개",
         )
 
@@ -1076,6 +1390,32 @@ def _render_report(
                 f"{attempts} | {_format_duration(elapsed_seconds)} | {_format_seconds(elapsed_seconds)} |",
             )
 
+    if records:
+        reference_runtime_summary = [
+            {
+                "target_parameter": record["target"].target_parameter,
+                "scenario_id": record["scenario_id"],
+                **_runtime_reference_payload(record),
+            }
+            for record in sorted(
+                records,
+                key=lambda item: (
+                    str(item["target"].target_parameter or ""),
+                    item["scenario_id"],
+                ),
+            )
+        ]
+        lines.extend(
+            [
+                "",
+                "## Reference Runtime Summary",
+                "",
+                "```json",
+                _json_pretty(reference_runtime_summary),
+                "```",
+            ],
+        )
+
     lines.extend(["", "## 호출 결과", ""])
 
     records_by_group: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -1093,8 +1433,6 @@ def _render_report(
                 targets=targets,
                 records=records,
                 errors=errors,
-                records_by_group=records_by_group,
-                errors_by_group=errors_by_group,
                 target_event_type_l2_ids_by_parameter=target_event_type_l2_ids_by_parameter,
             ),
         )
@@ -1211,6 +1549,7 @@ def _render_report(
                 lines.append(f"- mapping_warnings: `{_json_preview(record['mapping_warnings'])}`")
             if record.get("basecase_warnings"):
                 lines.append(f"- basecase_warnings: `{_json_preview(record['basecase_warnings'])}`")
+            lines.extend(_runtime_reference_lines(record, heading="#####"))
             lines.extend(_stage_summary_table_lines(record.get("step_summary") or {}))
             proposal_parameters = _proposal_parameters_from_record(record)
             lines.extend(
@@ -1236,25 +1575,37 @@ def _render_report(
             lines.extend(_llm_call_table_lines(record.get("llm_calls") or []))
             lines.append("")
 
-    group_status = {
-        str(target.scenario_group_id): _group_status(target, records, errors)
-        for target in targets
-    }
-    empty_recommendation_records = [
-        {
-            "scenario_group_id": record["target"].scenario_group_id,
-            "scenario_id": record["scenario_id"],
-            "title": (record["context"].get("scenario") or {}).get("title"),
-        }
-        for record in sorted(records, key=lambda item: (item["target"].scenario_group_id, item["scenario_id"]))
-        if not _proposal_parameters(record["final_response"])
-    ]
+    group_status = {_target_status_key(target): _group_status(target, records, errors) for target in targets}
+    empty_recommendation_records: list[dict[str, Any]] = []
+    for record in sorted(records, key=lambda item: (item["target"].scenario_group_id, item["scenario_id"])):
+        target = record["target"]
+        proposal_parameters = _filter_parameters_by_name(
+            _proposal_parameters(record["final_response"]),
+            target.target_parameter,
+        )
+        if not proposal_parameters:
+            empty_recommendation_records.append(
+                {
+                    "target_parameter": target.target_parameter,
+                    "scenario_group_id": target.scenario_group_id,
+                    "scenario_id": record["scenario_id"],
+                    "title": (record["context"].get("scenario") or {}).get("title"),
+                },
+            )
+    status_label = (
+        "PARAMETER_SCENARIO_STATUS"
+        if parameter_scenario_scope
+        else "GROUP_STATUS_BY_SCENARIO_GROUP"
+    )
     lines.extend(
         [
             "## 최종 요약",
             "",
             f"- ERROR_COUNT: {len(errors)}",
-            f"- GROUP_STATUS_BY_SCENARIO_GROUP: `{json.dumps(group_status, ensure_ascii=False, sort_keys=True)}`",
+            f"- PLANNED_SCENARIO_EXECUTIONS: {planned_execution_count}",
+            f"- COMPLETED_SCENARIO_EXECUTIONS: {len(records) + len(errors)}",
+            f"- PARAMETER_SCENARIOS: `{json.dumps(parameter_scenario_scope, ensure_ascii=False, sort_keys=True)}`",
+            f"- {status_label}: `{json.dumps(group_status, ensure_ascii=False, sort_keys=True)}`",
             f"- EMPTY_RECOMMENDATIONS: {len(empty_recommendation_records)}",
             f"- EMPTY_RECOMMENDATION_SCENARIOS: `{_json_preview(empty_recommendation_records, max_chars=1200)}`",
             "",
@@ -1286,38 +1637,23 @@ async def run_event_type_evaluation(
     scenarios_per_group: int | None = None,
     target_parameters: tuple[str, ...] = (),
     resolve_event_type_l2_ids_from_parameters: bool = False,
+    parameter_scenarios: tuple[ParameterScenarioSelection, ...] = (),
 ) -> Path:
     target_event_type_l2_ids_by_parameter = (
-        _discover_event_type_l2_ids_for_parameters(target_parameters)
-        if target_parameters
-        else {}
+        _discover_event_type_l2_ids_for_parameters(target_parameters) if target_parameters else {}
     )
-    resolved_event_type_l2_ids = event_type_l2_ids
-    if resolve_event_type_l2_ids_from_parameters:
-        resolved_event_type_l2_ids = tuple(
-            sorted(
-                {
-                    event_type_l2_id
-                    for event_type_l2_ids in target_event_type_l2_ids_by_parameter.values()
-                    for event_type_l2_id in event_type_l2_ids
-                },
-            ),
-        )
-        if not resolved_event_type_l2_ids:
-            raise SystemExit(
-                "No direct/routing event_type_l2_ids found for target parameters: "
-                f"{', '.join(target_parameters)}",
-            )
-
-    targets = _discover_targets(
-        resolved_event_type_l2_ids,
+    resolved_event_type_l2_ids, targets, parameter_scenarios = _resolve_evaluation_scope(
+        event_type_l2_ids=event_type_l2_ids,
         group_title_prefix=group_title_prefix,
         groups_per_event=groups_per_event,
         scenarios_per_group=scenarios_per_group,
+        target_parameters=target_parameters,
+        target_event_type_l2_ids_by_parameter=target_event_type_l2_ids_by_parameter,
+        resolve_event_type_l2_ids_from_parameters=resolve_event_type_l2_ids_from_parameters,
+        parameter_scenarios=parameter_scenarios,
     )
-    report_event_type_l2_ids = (
-        resolved_event_type_l2_ids
-        or tuple(sorted({target.event_type_l2_id for target in targets}))
+    report_event_type_l2_ids = resolved_event_type_l2_ids or tuple(
+        sorted({target.event_type_l2_id for target in targets})
     )
     started_at = datetime.now()
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1442,6 +1778,14 @@ async def run_event_type_evaluation(
     print("REPORT_IN_PROGRESS", report_path)
     if target_parameters:
         print("TARGET_PARAMETERS", json.dumps(list(target_parameters), ensure_ascii=False))
+        if parameter_scenarios:
+            print(
+                "PARAMETER_SCENARIOS",
+                json.dumps(
+                    {selection.parameter_name: selection.scenario_id for selection in parameter_scenarios},
+                    ensure_ascii=False,
+                ),
+            )
         print(
             "TARGET_EVENT_TYPE_L2_IDS_BY_PARAMETER",
             json.dumps(
@@ -1460,13 +1804,27 @@ async def run_event_type_evaluation(
     write_report(finished_at=datetime.now())
     print("REPORT", report_path)
     print("ERROR_COUNT", len(errors))
+    print("SCENARIO_EXECUTION_COUNT", len(records) + len(errors))
+    if parameter_scenarios:
+        print(
+            "PARAMETER_SCENARIO_STATUS",
+            json.dumps(
+                {
+                    target.target_parameter: {
+                        "scenario_id": target.scenario_ids[0],
+                        "passed": _group_status(target, records, errors),
+                    }
+                    for target in targets
+                    if target.target_parameter is not None
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
     print(
         "GROUP_STATUS_BY_SCENARIO_GROUP",
         json.dumps(
-            {
-                str(target.scenario_group_id): _group_status(target, records, errors)
-                for target in targets
-            },
+            {_target_status_key(target): _group_status(target, records, errors) for target in targets},
             ensure_ascii=False,
             sort_keys=True,
         ),
@@ -1484,25 +1842,54 @@ def main() -> None:
     parser.add_argument("--groups-per-event", type=int, default=None)
     parser.add_argument("--scenarios-per-group", type=int, default=None)
     parser.add_argument("--target-parameters", nargs="+", default=())
+    parser.add_argument(
+        "--parameter-scenarios",
+        nargs="+",
+        default=(),
+        metavar="PARAMETER=SCENARIO_ID",
+    )
     args = parser.parse_args()
     if not args.all_event_types and not args.event_type_l2_ids and not args.target_parameters:
         parser.error("--event-type-l2-ids, --all-event-types, or --target-parameters is required")
-    asyncio.run(
-        run_event_type_evaluation(
-            event_type_l2_ids=() if args.all_event_types else tuple(args.event_type_l2_ids),
-            concurrency=args.concurrency,
-            retries=args.retries,
-            group_title_prefix=args.group_title_prefix,
-            groups_per_event=args.groups_per_event,
-            scenarios_per_group=args.scenarios_per_group,
-            target_parameters=tuple(args.target_parameters),
-            resolve_event_type_l2_ids_from_parameters=(
-                bool(args.target_parameters)
-                and not args.all_event_types
-                and not args.event_type_l2_ids
+    try:
+        parameter_scenarios = _parse_parameter_scenarios(
+            tuple(args.parameter_scenarios),
+            tuple(args.target_parameters),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if parameter_scenarios:
+        if args.all_event_types or args.event_type_l2_ids:
+            parser.error(
+                "--parameter-scenarios cannot be combined with --all-event-types or --event-type-l2-ids",
+            )
+        if args.group_title_prefix or args.groups_per_event is not None or args.scenarios_per_group is not None:
+            parser.error(
+                "--parameter-scenarios cannot be combined with group/scenario discovery filters",
+            )
+    try:
+        asyncio.run(
+            run_event_type_evaluation(
+                event_type_l2_ids=(() if args.all_event_types else tuple(args.event_type_l2_ids)),
+                concurrency=args.concurrency,
+                retries=args.retries,
+                group_title_prefix=args.group_title_prefix,
+                groups_per_event=args.groups_per_event,
+                scenarios_per_group=args.scenarios_per_group,
+                target_parameters=tuple(args.target_parameters),
+                resolve_event_type_l2_ids_from_parameters=(
+                    bool(args.target_parameters)
+                    and not args.all_event_types
+                    and not args.event_type_l2_ids
+                    and not parameter_scenarios
+                ),
+                parameter_scenarios=parameter_scenarios,
             ),
-        ),
-    )
+        )
+    except ValueError as exc:
+        if parameter_scenarios:
+            parser.error(str(exc))
+        raise
 
 
 if __name__ == "__main__":

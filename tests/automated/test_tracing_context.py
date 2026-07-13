@@ -63,7 +63,7 @@ class TracingContextTest(unittest.TestCase):
         context = TraceContext(
             transaction_id="tx-1",
             app_identifier="scenario-group-agent",
-            scenario_group_id="42",
+            session_id="42",
         )
 
         self.assertEqual(
@@ -87,7 +87,7 @@ class TracingContextTest(unittest.TestCase):
         context = TraceContext(
             transaction_id="tx-1",
             app_identifier="scenario-group-agent",
-            scenario_group_id="77",
+            session_id="77",
         )
 
         self.assertEqual(
@@ -95,7 +95,7 @@ class TracingContextTest(unittest.TestCase):
             {
                 "configurable": {
                     "thread_id": "77",
-                    "scenario_group_id": "77",
+                    "session_id": "77",
                     "transaction_id": "tx-1",
                 },
             },
@@ -108,7 +108,7 @@ class TracingContextTest(unittest.TestCase):
         context = TraceContext(
             transaction_id="tx-1",
             app_identifier="scenario-group-agent",
-            scenario_group_id="42",
+            session_id="42",
         )
 
         self.assertEqual(_extra_headers(context), build_aip_headers(context))
@@ -127,7 +127,7 @@ class TracingContextTest(unittest.TestCase):
             context = TraceContext(
                 transaction_id="tx-1",
                 app_identifier="scenario-group-agent",
-                scenario_group_id="42",
+                session_id="42",
             )
             with patch(
                 "apps.common.configs.config.get_settings",
@@ -146,10 +146,10 @@ class TracingContextTest(unittest.TestCase):
             {
                 "aip.transaction_id": "tx-1",
                 "aip.app_id": "scenario-group-agent",
-                "scenario_group_id": "42",
+                "session_id": "42",
             },
         )
-        self.assertEqual(captured["tags"], {"app_id": "scenario-group-agent", "scenario_group_id": "42"})
+        self.assertEqual(captured["tags"], {"app_id": "scenario-group-agent", "session_id": "42"})
 
     def test_mlflow_trace_context_skips_mlflow_when_disabled(self) -> None:
         captured: dict[str, object] = {}
@@ -420,7 +420,7 @@ class TracingContextTest(unittest.TestCase):
             trace_context = TraceContext(
                 transaction_id="tx-1",
                 app_identifier="scenario-group-agent",
-                scenario_group_id="42",
+                session_id="42",
             )
             with patch(
                 "apps.connectors.llm.llm_client.get_settings",
@@ -446,7 +446,7 @@ class TracingContextTest(unittest.TestCase):
                 "model": "model-a",
                 "aip.transaction_id": "tx-1",
                 "aip.app_id": "scenario-group-agent",
-                "scenario_group_id": "42",
+                "session_id": "42",
             },
         )
         self.assertEqual(fake_span.inputs, {"messages": [{"role": "user", "content": "hello"}]})
@@ -570,7 +570,7 @@ class TracingContextTest(unittest.TestCase):
         trace_context = TraceContext(
             transaction_id="tx-1",
             app_identifier="scenario-group-agent",
-            scenario_group_id="42",
+            session_id="42",
         )
 
         async def run_case() -> object:
@@ -592,7 +592,7 @@ class TracingContextTest(unittest.TestCase):
         self.assertNotIn("metadata", captured["kwargs"])
         self.assertEqual(captured["kwargs"]["aip.transaction_id"], "tx-1")
         self.assertEqual(captured["kwargs"]["aip.app_id"], "scenario-group-agent")
-        self.assertEqual(captured["kwargs"]["scenario_group_id"], "42")
+        self.assertEqual(captured["kwargs"]["session_id"], "42")
         self.assertEqual(captured["kwargs"]["llm.call_type"], "structured_output")
 
     def test_openai_child_span_uses_langchain_llm_span_as_parent(self) -> None:

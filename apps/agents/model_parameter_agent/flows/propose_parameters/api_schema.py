@@ -4,8 +4,8 @@ from typing import Literal
 
 from pydantic import Field
 
-from apps.persistence.schema_base import ApiModel
 from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalParameter
+from apps.persistence.schema_base import ApiModel
 
 
 class ProposeParametersIn(ApiModel):

@@ -283,6 +283,9 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 
 `model_parameter_agent`의 현재 매핑은 아래와 같다.
 
+실행 엔트리포인트는 저장소 루트의 `model_param.py`이며,
+`Dockerfile.model_param`이 이미지 안에서 이 파일을 `main.py`로 복사한다.
+
 ```text
 POST /model-parameters/scenarios/{scenario_id}/proposals
 → api.py
@@ -291,6 +294,8 @@ POST /model-parameters/scenarios/{scenario_id}/proposals
   - prepare_propose_parameters_callback()
   - run_propose_parameters_background()
 → flows/propose_parameters/nodes.py
+→ utils/basecase.py
+→ utils/lut/ + resources/lut/config/lut_parameters.yaml
 → prompts/model_parameter_proposal.py
 → presentation.py
 → apps/connectors/callback/callback_client.py
@@ -302,6 +307,8 @@ POST /model-parameters/scenarios/{scenario_id}/proposals/sync
 → flows/propose_parameters/api_schema.py
 → flows/propose_parameters/flow.py
 → flows/propose_parameters/nodes.py
+→ utils/basecase.py
+→ utils/lut/ + resources/lut/config/lut_parameters.yaml
 → prompts/model_parameter_proposal.py
 → presentation.py
 → persistence/model_parameter_service.py

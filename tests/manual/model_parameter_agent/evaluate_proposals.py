@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import os
-import sys
-import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import os
 from pathlib import Path
+import sys
+import time
 from typing import Any
+
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
@@ -33,13 +34,13 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
 )
+from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+    ModelParameterService,
+)
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base,
     match_parameter_candidates,
-)
-from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
-    ModelParameterService,
 )
 
 
@@ -446,6 +447,10 @@ def _slot_option_axis_counts_by_candidate(slot_options: list[dict[str, Any]]) ->
     return summary
 
 
+def _value_reference_records(raw_state: dict[str, Any]) -> list[dict[str, Any]]:
+    return raw_state.get("effective_references") or []
+
+
 def _build_step_summary(
     *,
     rule_candidates: list[dict[str, Any]],
@@ -453,7 +458,7 @@ def _build_step_summary(
     parameter_slots: list[dict[str, Any]],
     slot_basecase_records: list[dict[str, Any]],
     slot_options: list[dict[str, Any]],
-    value_basecase_records: list[dict[str, Any]],
+    value_reference_records: list[dict[str, Any]],
     adjustments: list[dict[str, Any]],
     final_response: dict[str, Any],
     llm_calls: list[dict[str, Any]],
@@ -503,11 +508,18 @@ def _build_step_summary(
     else:
         slot_status = "PASS"
 
+    reference_counts_by_candidate: dict[str, int] = {}
+    for record in value_reference_records:
+        candidate_key = str(record.get("candidate_key") or "")
+        reference_counts_by_candidate[candidate_key] = (
+            reference_counts_by_candidate.get(candidate_key, 0) + 1
+        )
+
     if not selected_slots:
         basecase_status = "N/A"
-    elif len(value_basecase_records) > 100:
+    elif any(count > 100 for count in reference_counts_by_candidate.values()):
         basecase_status = "FAIL"
-    elif slot_basecase_records and not value_basecase_records:
+    elif slot_basecase_records and not value_reference_records:
         basecase_status = "REVIEW"
     else:
         basecase_status = "PASS"
@@ -535,7 +547,8 @@ def _build_step_summary(
         "selected_slot_count": len(selected_slots),
         "slot_issue_messages": slot_issues,
         "slot_basecase_record_count": len(slot_basecase_records),
-        "value_basecase_record_count": len(value_basecase_records),
+        "value_reference_record_count": len(value_reference_records),
+        "value_reference_counts_by_candidate": reference_counts_by_candidate,
         "value_cell_count": value_cell_count,
         "value_cell_with_basecase_count": value_cell_with_basecase_count,
         "value_issue_messages": value_issues,
@@ -578,9 +591,11 @@ def _stage_summary_table_lines(step_summary: dict[str, Any]) -> list[str]:
             f"{step_summary.get('slot_status') or ''} |"
         ),
         (
-            f"| Step3 basecase 샘플 | "
-            f"prompt_records={step_summary.get('value_basecase_record_count', 0)}, "
-            "limit=100 | "
+            f"| Step3 exact reference | "
+            f"references={step_summary.get('value_reference_record_count', 0)}, "
+            "limit_per_candidate=100, "
+            "per_candidate="
+            f"`{_json_preview(step_summary.get('value_reference_counts_by_candidate') or {}, max_chars=1200)}` | "
             f"{step_summary.get('basecase_status') or ''} |"
         ),
         (
@@ -709,7 +724,7 @@ async def _evaluate_scenario(
     )
     slot_options = _build_basecase_slot_options(slot_basecase_records)
     parameter_slots = raw_state.get("parameter_slots") or []
-    value_basecase_records = raw_state.get("basecase_records") or []
+    value_reference_records = _value_reference_records(raw_state)
     result = {
         "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
         "non_input_items": raw_state.get("non_input_items") or [],
@@ -733,7 +748,7 @@ async def _evaluate_scenario(
         parameter_slots=parameter_slots,
         slot_basecase_records=slot_basecase_records,
         slot_options=slot_options,
-        value_basecase_records=value_basecase_records,
+        value_reference_records=value_reference_records,
         adjustments=result["parameter_adjustments"],
         final_response=final_response,
         llm_calls=llm_calls,
@@ -752,6 +767,8 @@ async def _evaluate_scenario(
         "result": result,
         "final_response": final_response,
         "llm_calls": llm_calls,
+        "resolved_config": raw_state.get("resolved_config") or {},
+        "lut_version": raw_state.get("lut_version"),
         "mapping_ok": candidate_coverage_ok,
         "mapping_messages": candidate_coverage_messages,
         "selected_ok": selected_ok,
@@ -873,6 +890,8 @@ def _render_md(
                     f"- mapping_candidate_coverage: {'PASS' if record['mapping_ok'] else 'FAIL'}",
                     f"- selected_result: {'PASS' if record['selected_ok'] else 'FAIL'}",
                     f"- routing_result: {record['routing_status']}",
+                    f"- resolved_config: `{_json_preview(record.get('resolved_config') or {}, max_chars=2400)}`",
+                    f"- lut_version: `{record.get('lut_version') or 'null'}`",
                 ],
             )
             if record["mapping_messages"]:
@@ -898,12 +917,21 @@ def _render_md(
                 ],
             )
 
+    reference_runtime_by_scenario = [
+        {
+            "scenario_id": record["scenario_id"],
+            "resolved_config": record.get("resolved_config") or {},
+            "lut_version": record.get("lut_version"),
+        }
+        for record in records
+    ]
     lines.extend(
         [
             "## 최종 요약",
             "",
             f"- ERROR_COUNT: {len(errors)}",
             f"- GROUP_STATUS: `{_json_preview(_build_group_status(targets=targets, records=records), max_chars=2000)}`",
+            f"- REFERENCE_RUNTIME_BY_SCENARIO: `{_json_preview(reference_runtime_by_scenario, max_chars=4000)}`",
             "",
             "## 오류 및 반복 이력",
             "",
