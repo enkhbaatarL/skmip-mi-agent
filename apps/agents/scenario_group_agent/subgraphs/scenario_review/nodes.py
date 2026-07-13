@@ -22,7 +22,9 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.schema import (
     ReviewContext,
     ReviewReport,
 )
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.scenario.baseline_contrast import (
     apply_single_baseline_by_probability,
     check_baseline_contrast_coverage,
@@ -460,13 +462,12 @@ async def _check_compatibility(
         expected = {scenario["scenario_id"] for scenario in ctx.scenarios}
         actual = {item.scenario_id for item in items}
         if len(items) != len(actual) or actual != expected:
-            return CheckResult(
-                "R03",
-                "Stage4",
-                "Compatibility(조합 모순) — LLM 판정",
-                "WARN",
-                "LLM 응답 scenario_id 집합 불일치: "
-                f"누락={expected - actual}, 여분={actual - expected}",
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=(
+                    "Compatibility LLM 응답 scenario_id 집합 불일치: "
+                    f"누락={expected - actual}, 여분={actual - expected}"
+                ),
             )
         title_by_id = {
             scenario["scenario_id"]: _scenario_label(scenario)
@@ -497,14 +498,13 @@ async def _check_compatibility(
             offenders,
             advice,
         )
+    except MIBaseError:
+        raise
     except Exception as exc:
-        return CheckResult(
-            "R03",
-            "Stage4",
-            "Compatibility(조합 모순) — LLM 판정",
-            "WARN",
-            f"LLM 판정 실패: {type(exc).__name__}: {str(exc)[:120]}",
-        )
+        raise MIBaseError(
+            ErrorCode.LLM_INVOCATION_ERROR,
+            detail="Compatibility LLM 판정 호출에 실패했습니다.",
+        ) from exc
 
 
 async def _invoke_compatibility(
@@ -573,25 +573,40 @@ async def generate_new_dimension_values(
         )
         for item in result.result.items:
             if item.dim_key not in enum_by_key:
-                continue
+                raise ValueError(f"unknown dim_key: {item.dim_key}")
             if not 0 <= item.scenario_index < len(rows):
-                continue
+                raise ValueError(f"scenario_index out of range: {item.scenario_index}")
             allowed = enum_by_key[item.dim_key]
-            value = item.value if item.value in allowed else None
-            if value is None:
-                continue
-            generated.setdefault(item.scenario_index, {})[item.dim_key] = value
-    except Exception:
-        generated = {}
+            if item.value not in allowed:
+                raise ValueError(
+                    f"enum 밖 dimension value: dim_key={item.dim_key}, value={item.value}"
+                )
+            row_values = generated.setdefault(item.scenario_index, {})
+            if item.dim_key in row_values:
+                raise ValueError(
+                    f"duplicate dimension value: scenario_index={item.scenario_index}, dim_key={item.dim_key}"
+                )
+            row_values[item.dim_key] = item.value
+    except MIBaseError:
+        raise
+    except Exception as exc:
+        raise MIBaseError(
+            ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+            detail=f"Dimension value LLM 응답이 유효하지 않습니다: {str(exc)[:200]}",
+        ) from exc
 
-    # 누락된 (scenario_index, dim_key) 는 결정론적 폴백(첫 enum)으로 채운다.
-    for index in range(len(rows)):
-        for dimension in target_dimensions:
-            labels = enum_by_key[dimension.dimension_id]
-            if not labels:
-                continue
-            row_values = generated.setdefault(index, {})
-            row_values.setdefault(dimension.dimension_id, labels[0])
+    missing = [
+        (index, dimension.dimension_id)
+        for index, row in enumerate(rows)
+        for dimension in target_dimensions
+        if (row.get("cells") or {}).get(dimension.dimension_id) is None
+        and dimension.dimension_id not in generated.get(index, {})
+    ]
+    if missing:
+        raise MIBaseError(
+            ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+            detail=f"Dimension value LLM 응답 누락: {missing[:10]}",
+        )
     return generated
 
 

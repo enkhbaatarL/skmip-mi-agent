@@ -25,7 +25,6 @@ from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     STAGE4_SYSTEM_PROMPT,
     STAGE6_HARD_CONSTRAINTS,
     STAGE6_SYSTEM_PROMPT,
-    NarrativeOnly,
     ScenarioGroupMetadataStructuredOutput,
     Stage2StructuredOutput,
     Stage3BatchStructuredOutput,
@@ -67,9 +66,11 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
     Stage5RepairInstruction,
     Stage5Validation,
 )
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.decorators import log_tool
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.scenario.baseline_contrast import (
     check_baseline_contrast_coverage,
 )
@@ -139,19 +140,30 @@ def _build_c1_base_event(event: Dict) -> C1BaseEvent:
 # 4. LLM Infrastructure
 # ==============================================
 
+def _exception_chain(exc: Exception) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def _is_retryable_api_error(exc: Exception) -> bool:
-    status_code = getattr(exc, "status_code", None)
-    if status_code in {429, 500, 502, 503, 529}:
+    chain = _exception_chain(exc)
+    status_codes = {getattr(item, "status_code", None) for item in chain[1:] or chain}
+    if status_codes & {408, 429, 500, 502, 503, 504, 529}:
         return True
-    name = exc.__class__.__name__.lower()
-    msg = str(exc).lower()
+    name = " ".join(item.__class__.__name__.lower() for item in chain)
+    msg = " ".join(str(item).lower() for item in chain)
     keywords = ("overloaded", "rate limit", "too many requests", "timeout", "connection")
     return any(k in name or k in msg for k in keywords)
 
 
 def _is_retryable_schema_error(exc: Exception) -> bool:
-    name = exc.__class__.__name__.lower()
-    msg = str(exc).lower()
+    chain = _exception_chain(exc)
+    name = " ".join(item.__class__.__name__.lower() for item in chain)
+    msg = " ".join(str(item).lower() for item in chain)
     keywords = (
         "validationerror", "validation error", "structured", "min_length",
         "max_length", "json", "output parsing", "literal", "enum",
@@ -172,10 +184,34 @@ async def _invoke_structured(
         output_schema=schema_cls,
         messages=messages,
         temperature=temperature or REF_TEMPERATURE,
-        max_retries=2,
+        max_retries=0,
         trace_context=trace_context,
     )
     return result.result
+
+
+def _raise_llm_failure(stage_label: str, exc: Exception | None) -> None:
+    if exc is None:
+        raise MIBaseError(
+            ErrorCode.LLM_INVOCATION_ERROR,
+            detail=f"{stage_label} LLM 호출 결과가 없습니다.",
+        )
+    combined = " ".join(
+        f"{item.__class__.__name__}: {item}".lower()
+        for item in _exception_chain(exc)
+    )
+    if "timeout" in combined or "timed out" in combined:
+        error_code = ErrorCode.LLM_RESPONSE_TIMEOUT
+    elif _is_retryable_schema_error(exc) or any(
+        isinstance(item, (TypeError, ValueError)) for item in _exception_chain(exc)
+    ):
+        error_code = ErrorCode.LLM_INVALID_RESPONSE_ERROR
+    else:
+        error_code = ErrorCode.LLM_INVOCATION_ERROR
+    raise MIBaseError(
+        error_code,
+        detail=f"{stage_label} LLM 호출이 {REF_MAX_RETRIES}회 시도 후 실패했습니다.",
+    ) from exc
 
 
 async def _ainvoke_with_retry(
@@ -186,11 +222,8 @@ async def _ainvoke_with_retry(
     validate_fn,
     hard_constraints: str = "",
     trace_context: TraceContext | None = None,
-) -> BaseModel | None:
-    """LLM 호출 with retry + validation + fallback.
-
-    Returns parsed Pydantic model on success, None on all retries exhausted.
-    """
+) -> BaseModel:
+    """Invoke the LLM with bounded retries and fail closed."""
     last_exc: Exception | None = None
     last_validation_exc: Exception | None = None
     accumulated_hint = hard_constraints
@@ -260,8 +293,8 @@ async def _ainvoke_with_retry(
             )
             await asyncio.sleep(wait_sec)
 
-    logger.warning("{} retry exhausted; fallback starts | last_error={}", stage_label, type(last_exc).__name__)
-    return None
+    logger.warning("{} retry exhausted | last_error={}", stage_label, type(last_exc).__name__)
+    _raise_llm_failure(stage_label, last_exc)
 
 
 # ==============================================
@@ -334,9 +367,8 @@ async def stage2_select_dimensions(
         hard_constraints=STAGE2_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        out = _stage2_fallback(template_dim_ids)
+        _raise_llm_failure("Stage 2", None)
 
     # excluded 보강: LLM 이 빠뜨린 미선택 Dim 자동 채움
     selected_dimensions = list(out.selected_dimensions)
@@ -390,23 +422,6 @@ async def stage2_select_dimensions(
     )
 
 
-def _stage2_fallback(template_dim_ids: List[str]) -> Stage2StructuredOutput:
-    """LLM 실패 시 — 템플릿 앞 4개 Dim 을 (a) 코드로 안전 채택."""
-    print("  ↳ Stage 2 fallback: 템플릿 앞 4개 Dim 안전 선택")
-    selected = [
-        SelectedDimension(
-            dim_key=did,
-            rationale="(a) Fallback 안전 선택 — Base Event 와 잠재적 관련성 가정.",
-        )
-        for did in template_dim_ids[:4]
-    ]
-    excluded = [
-        ExcludedDimension(dim_key=did, reason="Fallback 자동 제외")
-        for did in template_dim_ids[4:]
-    ]
-    return Stage2StructuredOutput(selected_dimensions=selected, excluded_dimensions=excluded)
-
-
 # ==============================================
 # 8. Stage 3 — Value Reducer (LLM per-dimension)
 # ==============================================
@@ -439,36 +454,48 @@ async def stage3_reduce_values(
         dimensions=selected_dims,
     )
 
+    def _validate(out: Stage3BatchStructuredOutput) -> None:
+        seen: set[str] = set()
+        for item in out.dimensions:
+            if item.dim_key in seen or item.dim_key not in enum_by_dim:
+                raise ValueError(
+                    f"dimension이 중복되었거나 유효하지 않습니다: {item.dim_key}"
+                )
+            seen.add(item.dim_key)
+            unknown = set(item.selected_enum) - set(enum_by_dim[item.dim_key])
+            if unknown:
+                raise ValueError(
+                    f"enum 밖 값이 있습니다: {item.dim_key}={sorted(unknown)}"
+                )
+        missing = set(enum_by_dim) - seen
+        if missing:
+            raise ValueError(f"dimension이 누락되었습니다: {sorted(missing)}")
+
     out = await _ainvoke_with_retry(
         stage_label="Stage 3 batch",
         schema_cls=Stage3BatchStructuredOutput,
         system_prompt=STAGE3_SYSTEM_PROMPT,
         user_prompt=user_prompt,
-        validate_fn=None,
+        validate_fn=_validate,
         hard_constraints=STAGE3_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
+    if out is None:
+        _raise_llm_failure("Stage 3 batch", None)
 
     output_by_dim: dict[str, Stage3StructuredOutput] = {}
-    if out is not None:
-        for item in out.dimensions:
-            if item.dim_key in output_by_dim or item.dim_key not in enum_by_dim:
-                continue
-            unknown = set(item.selected_enum) - set(enum_by_dim[item.dim_key])
-            if unknown:
-                logger.info(
-                    "[SCENARIO_GENERATION][stage3] partial fallback for invalid enum "
-                    f"| dim_key={item.dim_key} | unknown={sorted(unknown)}",
-                )
-                continue
-            output_by_dim[item.dim_key] = Stage3StructuredOutput(selected_enum=item.selected_enum)
+    for item in out.dimensions:
+        output_by_dim[item.dim_key] = Stage3StructuredOutput(selected_enum=item.selected_enum)
 
     per_dim: List[PerDimensionValue] = []
     for dim in selected_dims:
         enum_full = enum_by_dim[dim["dim_key"]]
         dim_out = output_by_dim.get(dim["dim_key"])
         if dim_out is None:
-            dim_out = _stage3_fallback(dim)
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=f"Stage 3 LLM 응답에서 dimension이 누락되었습니다: {dim['dim_key']}",
+            )
 
         per_dim.append(
             PerDimensionValue(
@@ -479,27 +506,6 @@ async def stage3_reduce_values(
         )
 
     return Stage3ValueSelection(per_dimension=per_dim)
-
-
-def _stage3_fallback(dim: Dict) -> Stage3StructuredOutput:
-    """LLM 실패 시 — 첫 1개 + 중간 1개 + 마지막 1개 안전 채택."""
-    print(f"  ↳ Stage 3 fallback ({dim['dim_key']}): 안전 3개 Enum 선택")
-    enum_full = _enum_id_set(dim)
-    base = enum_full[0]
-    mid = enum_full[len(enum_full) // 2] if len(enum_full) >= 2 else enum_full[0]
-    last = enum_full[-1]
-    selected = []
-    for cand in (base, mid, last):
-        if cand and cand not in selected:
-            selected.append(cand)
-    while len(selected) < 2 and enum_full:
-        for cand in enum_full:
-            if cand not in selected:
-                selected.append(cand)
-                break
-        else:
-            break
-    return Stage3StructuredOutput(selected_enum=selected[:4])
 
 
 # ==============================================
@@ -851,9 +857,8 @@ async def stage4_synthesize_scenarios(
         hard_constraints=STAGE4_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        out = _stage4_fallback(target)
+        _raise_llm_failure("Stage 4", None)
 
     scenarios: List[Scenario] = []
     for i, (combo, narr) in enumerate(zip(target, out.narratives), start=1):
@@ -874,25 +879,6 @@ async def stage4_synthesize_scenarios(
         filtered_by_compatibility=len(passed),
         scenarios=scenarios,
     )
-
-
-def _stage4_fallback(target: List[DimensionValueMap]) -> Stage4StructuredOutput:
-    """LLM 실패 시 — 모든 조합에 대해 중립 시나리오 narrative 생성."""
-    print(f"  ↳ Stage 4 fallback: {len(target)}개 중립 narrative 생성")
-    narratives = [
-        NarrativeOnly(
-            title=f"[Fallback] 조합 #{i+1} 시나리오",
-            description=(
-                "LLM 호출 실패로 fallback 서사가 적용됨.\n"
-                f"가정치 조합: {', '.join(f'{k}={v}' for k, v in combo.items())}\n"
-                "전개 양상 판단 보류 — 후속 재실행 필요."
-            ),
-            derivation_rationale="LLM 실패 — 안전 기본값.",
-            price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
-        )
-        for i, combo in enumerate(target)
-    ]
-    return Stage4StructuredOutput(narratives=narratives)
 
 
 @log_tool
@@ -942,9 +928,8 @@ async def stage4_synthesize_fixed_scenarios(
         hard_constraints=STAGE4_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        out = _stage4_fallback(target)
+        _raise_llm_failure("Stage 4 fixed", None)
 
     scenarios: List[Scenario] = []
     for i, (combo, narr) in enumerate(zip(target, out.narratives), start=1):
@@ -994,12 +979,8 @@ async def stage_generate_scenario_group_metadata(
         hard_constraints=SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        return ScenarioGroupMetadata(
-            title=pack.C1_base_event.title or f"Scenario group {pack.C1_base_event.event_id}",
-            description=pack.C1_base_event.summary or "",
-        )
+        _raise_llm_failure("Scenario Group Metadata", None)
 
     return ScenarioGroupMetadata(title=out.title, description=out.description)
 
@@ -1040,9 +1021,8 @@ async def stage6_validate(
         hard_constraints=STAGE6_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        out = _stage6_fallback(sc_ids)
+        _raise_llm_failure("Stage 6", None)
 
     # 방어적 후처리: 입력 범위 밖 키/값 정리
     cleaned: Dict[str, str] = {}
@@ -1075,16 +1055,6 @@ def _all_dim_values_unique(scenarios: List[Scenario]) -> bool:
             return False
         seen.add(key)
     return True
-
-
-def _stage6_fallback(sc_ids: List[str]) -> Stage6StructuredOutput:
-    """LLM 실패 시 — 모두 'medium' 으로 안전 부여."""
-    print("  ↳ Stage 6 fallback: 전체 'medium' Prior 안전 부여")
-    return Stage6StructuredOutput(
-        mutually_exclusive=True,
-        rationale="Fallback — Prior 카테고리 정밀 판정 보류.",
-        likelihood_prior={sid: "medium" for sid in sc_ids},
-    )
 
 
 # ==============================================
@@ -1366,10 +1336,8 @@ async def _stage5_check_compatibility(
         trace_context=trace_context,
     )
     if out is None:
-        print("  ↳ Stage 5 compatibility fallback: LLM 호출 실패 — 검증 통과로 처리")
-        return True, None, []
-
-    incompatible = list(out.items)
+        _raise_llm_failure("Stage 5 Compatibility", None)
+    incompatible = [item for item in out.items if not item.compatible]
     if not incompatible:
         return True, None, []
 

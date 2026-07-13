@@ -177,7 +177,7 @@ structured-output LLM으로 선택한다.
 
 - 검증: template 외 ID 금지, 선택 수 3~5개, `(b)` 기준 사용 금지
 - 후처리: LLM이 누락한 미선택 dimension은 자동으로 excluded 목록에 추가
-- fallback: template 앞 4개 dimension 선택
+- LLM 호출 또는 응답 검증 실패: retry 소진 후 flow 실패
 
 #### Stage 3: Dimension별 enum 축소
 
@@ -186,8 +186,7 @@ dimension별 전체 enum을 2~4개로 줄인다.
 
 - 선택 enum은 template enum의 부분집합이어야 한다.
 - LLM 응답은 입력된 모든 dim_key를 정확히 한 번 포함해야 한다.
-- LLM 호출 실패 또는 특정 dimension 누락 시 해당 dimension은 fallback으로 채운다.
-- fallback: 첫 값, 중간 값, 마지막 값을 조합해 최소 2개 확보
+- LLM 호출 실패, dimension 누락·중복, template 밖 enum 반환은 retry 소진 후 flow 실패로 처리한다.
 
 #### Stage 4: Scenario 합성
 
@@ -201,7 +200,7 @@ compatibility feedback에 `recommended_value`가 있으면 해당 시나리오�
 template enum 안의 값이면 사용할 수 있다.
 
 선택한 각 조합에 대해 LLM이 `title`, `description`, `derivation_rationale`,
-`price_direction.brent/jkm/ttf`를 생성한다. 실패 시 중립 가격 방향 fallback 사용.
+`price_direction.brent/jkm/ttf`를 생성한다. 호출 또는 응답 검증 실패 시 scenario를 저장하지 않는다.
 최종 scenario ID는 `S_01`, `S_02` 형식으로 부여된다.
 
 #### Stage 5: Quick Validate (재시도 루프)
@@ -229,13 +228,12 @@ template enum 안의 값이면 사용할 수 있다.
 (`very_low | low | medium | high | very_high`)로 분류한다.
 
 LLM은 MECE 판정도 반환하지만, 최종 `mutually_exclusive` 값은 코드가 `dimension_values` 조합의
-중복 여부를 검사한 결정론적 결과를 우선 사용한다. LLM 실패 시 모든 scenario의 likelihood는
-`medium`으로 설정된다.
+중복 여부를 검사한 결정론적 결과를 우선 사용한다. likelihood LLM 실패는 flow 실패로 처리한다.
 
 #### 재시도와 반환 구조
 
-Stage 2~5의 LLM 호출은 `REF_MAX_RETRIES`만큼 재시도한다. 소진 후에는 stage별 fallback으로
-pipeline을 계속 진행한다.
+Stage 2~6의 LLM 호출은 retry 가능한 오류에 한해 `REF_MAX_RETRIES`만큼 재시도한다.
+소진 후에는 원인에 맞는 `MIBaseError`를 raise하고 failure callback을 전송한다.
 
 최종 `scenario_result` 주요 필드:
 
@@ -503,7 +501,7 @@ fillable_dims =
 이 처리는 validation 요청 schema가 row의 수정 가능 필드를 제한하기 때문에 필요하다.
 사용자가 validation 요청에서 narrative를 보내지 않아도 LLM은 기존 scenario 서술을 참고할 수 있다.
 
-##### 생성값 정규화와 fallback
+##### 생성값 검증과 실패 처리
 
 `generate_new_dimension_values`는 자동 생성 대상 dimension별 enum label 목록을 prompt에 포함해 structured-output LLM을
 호출한다. LLM 응답은 다음 기준으로 필터링된다.
@@ -512,9 +510,8 @@ fillable_dims =
 - `scenario_index`가 요청 row 범위 안이어야 한다.
 - `value`가 해당 dimension의 enum label 중 하나여야 한다.
 
-LLM이 enum 밖 값을 반환하거나 일부 cell을 누락하면 해당 값은 버리고, 누락된
-`(scenario_index, dim_key)` 조합은 결정론적 fallback으로 해당 dimension의 첫 번째 enum label을 사용한다.
-LLM 호출 자체가 실패해도 동일한 fallback으로 모든 누락 cell을 채운다.
+LLM이 enum 밖 값을 반환하거나 필수 생성 cell을 누락하면 `LLM_INVALID_RESPONSE_ERROR`를 raise한다.
+LLM 호출 자체가 실패해도 request table을 임의로 변경하지 않으며 validation flow는 failure callback으로 종료한다.
 
 ##### request_table 갱신 규칙
 

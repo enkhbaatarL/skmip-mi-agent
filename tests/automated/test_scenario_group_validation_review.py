@@ -24,6 +24,11 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
     Stage5RepairInstruction,
     TemplateDimension,
 )
+from apps.agents.scenario_group_agent.prompts.scenario_generation import (
+    NarrativeOnly,
+    Stage4StructuredOutput,
+)
+from apps.common.exceptions.custom import MIBaseError
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
 )
@@ -528,7 +533,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert r03.status == "PASS"
         assert "enum 안 실행 가능한 권장 변경 없음" in r03.detail
 
-    async def test_llm_error_sets_invalid(self) -> None:
+    async def test_llm_error_raises_instead_of_marking_content_invalid(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
 
         with patch(
@@ -536,11 +541,10 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             "_invoke_compatibility",
             new=AsyncMock(side_effect=RuntimeError("unavailable")),
         ):
-            report = await run_review(context)
+            with self.assertRaises(MIBaseError) as error:
+                await run_review(context)
 
-        assert report.verdict == "REVIEW"
-        assert not report.is_valid
-        assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
+        assert error.exception.error_code.name == "LLM_INVOCATION_ERROR"
 
     async def test_new_scenario_gets_temp_negative_id(self) -> None:
         rows = [
@@ -1049,7 +1053,23 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         with patch(
             "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
             "nodes._ainvoke_with_retry",
-            new=AsyncMock(return_value=None),
+            new=AsyncMock(
+                return_value=Stage4StructuredOutput(
+                    narratives=[
+                        NarrativeOnly(
+                            title=f"scenario {index}",
+                            description="generated narrative",
+                            derivation_rationale="generated rationale",
+                            price_direction=PriceDirection(
+                                jkm="neutral",
+                                ttf="neutral",
+                                hh="neutral",
+                            ),
+                        )
+                        for index in range(6)
+                    ],
+                ),
+            ),
         ):
             stage4 = asyncio.run(
                 stage4_synthesize_scenarios(
