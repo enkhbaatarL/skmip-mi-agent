@@ -356,8 +356,8 @@ def _mlflow_trace_attributes(trace_context: TraceContext | None) -> dict[str, st
         "aip.transaction_id": trace_context.transaction_id,
         "aip.app_id": trace_context.app_identifier,
     }
-    if trace_context.scenario_group_id:
-        attributes["scenario_group_id"] = trace_context.scenario_group_id
+    if trace_context.session_id:
+        attributes["session_id"] = trace_context.session_id
     return attributes
 
 
@@ -564,6 +564,11 @@ async def _llm_trace_span(
             raise
         return
 
+    logger.debug(
+        "[CONNECTOR][LLM] no langchain callbacks in context; falling back to standalone MLflow span "
+        "(may create a separate trace) | name={}",
+        name,
+    )
     with _mlflow_llm_span(
         name=name,
         model=model,

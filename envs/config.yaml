@@ -59,6 +59,10 @@ agents:
     mlflow_experiment_name: scenario_agent_local
     aip_app_id: scenario_agent
     mlflow_tracing_enabled: true
+  parameter_agent:
+    mlflow_experiment_name: parameter_agent_local
+    aip_app_id: parameter_agent
+    mlflow_tracing_enabled: true
   default:
     mlflow_experiment_name: mi_agent_local
     aip_app_id: mi_agent

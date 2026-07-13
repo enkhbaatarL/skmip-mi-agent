@@ -107,7 +107,7 @@ async def run_new_agent_background(resource_id: int, payload: dict[str, object])
         transaction_id=new_transaction_id(),
         app_identifier=agent_config.aip_app_id,
         agent_name=AGENT_NAME,
-        scenario_group_id=str(resource_id),
+        session_id=str(resource_id),
     )
 
     state = NewAgentState(
@@ -132,8 +132,9 @@ async def run_new_agent_background(resource_id: int, payload: dict[str, object])
   - 따라서 배포 환경, endpoint, 요청마다 바뀌는 값이 아니라 "어떤 Agent가 호출했는지"를 식별하는 안정적인 app id로 정합니다.
   - 권장 형식은 소문자 snake_case입니다. 예: `scenario_agent`, `market_research_agent`
 - `agent_name`은 `AGENT_NAME` constant를 사용합니다. MLflow trace on/off와 experiment profile 조회 기준입니다.
-- `scenario_group_id`처럼 사용자가 MLflow UI에서 묶어 보고 싶은 business id를 넣습니다.
-- business id가 없다면 `scenario_group_id`는 생략해도 됩니다. 이 경우 `transaction_id`가 LangGraph thread id가 됩니다.
+- `session_id`에는 사용자가 MLflow UI에서 세션으로 묶어 보고 싶은 business id를 넣습니다.
+  Agent마다 기준이 다릅니다. 예: scenario agent는 `scenario_group_id`, parameter agent는 `model_param_proposal_id`.
+- business id가 없다면 `session_id`는 생략해도 됩니다. 이 경우 `transaction_id`가 LangGraph thread id가 됩니다.
 
 ## 4) Graph와 Subgraph 전파 규칙
 
@@ -224,6 +225,38 @@ class GenerateAnswerNode:
 node가 공통 `BaseNode` 패턴을 쓰는 경우에도 원칙은 같습니다.
 `run(self, state, runtime)`에서 `runtime.context`를 꺼내 connector 또는 하위 함수로 전달합니다.
 
+중요: LLM 호출을 graph trace의 child span으로 묶으려면 `trace_context` 외에
+**LangChain callbacks 전파**가 반드시 필요합니다. `BaseNode`는 `__call__`에서
+node `config`의 callbacks를 `langchain_callbacks_context()`로 자동 설정하지만,
+`BaseNode`를 쓰지 않는 plain 함수 node는 직접 전파해야 합니다.
+전파하지 않으면 LLM 호출마다 **별도의 root trace가 생성**됩니다.
+
+```python
+from typing import Optional
+
+from langchain_core.runnables.config import RunnableConfig
+from apps.common.tracing.context import TraceContext, langchain_callbacks_context
+
+
+async def my_llm_node(
+    state: MyState,
+    runtime: Runtime[TraceContext] | None = None,
+    # LangGraph가 자동 주입. `from __future__ import annotations` 파일에서는 반드시
+    # Optional[RunnableConfig]로 표기해야 함 — langgraph가 annotation 문자열
+    # "RunnableConfig" / "Optional[RunnableConfig]"만 config 주입 대상으로 인식하고,
+    # "RunnableConfig | None"은 UserWarning과 함께 주입을 건너뜀 (LLM trace가 분리되는 원인)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, object]:
+    callbacks = config.get("callbacks") if isinstance(config, dict) else None
+    with langchain_callbacks_context(callbacks):
+        result = await invoke_llm_structured_output(
+            output_schema=MyOutput,
+            messages=messages,
+            trace_context=runtime.context if runtime is not None else None,
+        )
+    return {"answer": result.result}
+```
+
 `invoke_llm_function_call()`, `invoke_llm_structured_output()`, `invoke_llm_text()`의 `trace_context`는
 선택 인자입니다. 넘기지 않으면 `None`으로 처리되어 LLM 호출은 정상 수행되지만, AIP header와 MLflow trace는 붙지 않습니다.
 
@@ -250,9 +283,9 @@ trace_context 없음
 | ------------------------ | --------------------------------------------------------------------------------------- |
 | MLflow experiment        | `agents.<agent_name>.mlflow_experiment_name` 또는 `agents.default.mlflow_experiment_name` |
 | MLflow trace on/off      | `TraceContext.agent_name` 기준의 `agents.<agent_name>.mlflow_tracing_enabled`              |
-| MLflow trace metadata    | `aip.transaction_id`, `aip.app_id`, `scenario_group_id`                                 |
-| MLflow trace tag         | `app_id`, `scenario_group_id`                                                           |
-| LangGraph thread/session | `scenario_group_id`가 있으면 해당 값, 없으면 `transaction_id`                                     |
+| MLflow trace metadata    | `aip.transaction_id`, `aip.app_id`, `session_id`                                        |
+| MLflow trace tag         | `app_id`, `session_id`                                                                  |
+| LangGraph thread/session | `session_id`가 있으면 해당 값, 없으면 `transaction_id`                                           |
 | AIP request header       | `aip-transaction-id`, `aip-app-id`, `aip-chat-id`                                       |
 
 
@@ -276,6 +309,13 @@ trace_context 없음
 - MLflow UI에서 experiment, session/thread, LLM span, metadata/tag가 보이는지 확인한다.
 
 ## 8) 자주 생기는 누락
+
+### 요청 1회에 trace가 여러 개 생김 (graph trace + LLM trace 분리)
+
+LLM connector 호출 시점에 LangChain callbacks가 context에 없어서,
+connector가 standalone MLflow span으로 폴백해 LLM 호출마다 새 root trace를 만든 경우입니다.
+`BaseNode`를 쓰지 않는 plain 함수 node라면 5)의 예시처럼 node `config`의 callbacks를
+`langchain_callbacks_context()`로 감싸서 전파합니다.
 
 ### MLflow UI에 graph는 보이는데 LLM span이 비어 있음
 

@@ -4,7 +4,10 @@ from datetime import date
 import json
 import re
 import time
-from typing import Any
+from typing import Any, Optional
+
+from langchain_core.runnables.config import RunnableConfig
+from langgraph.runtime import Runtime
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
@@ -54,6 +57,7 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import TraceContext, langchain_callbacks_context
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 
@@ -359,7 +363,12 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
     return output
 
 
-async def validate_parameter_candidates(state: ModelParameterProposalState) -> dict[str, Any]:
+async def validate_parameter_candidates(
+    state: ModelParameterProposalState,
+    runtime: Runtime[TraceContext] | None = None,
+    # langgraph가 문자열 annotation "Optional[RunnableConfig]"만 config 주입 대상으로 인식함 (PEP 563 환경)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, Any]:
     if not state.candidate_mappings:
         output = {
             "candidate_mappings": [],
@@ -412,6 +421,8 @@ async def validate_parameter_candidates(state: ModelParameterProposalState) -> d
                 output_schema=LLMCandidateValidationResponse,
                 messages=messages,
                 model_name=state.model_name,
+                trace_context=runtime.context if runtime is not None else None,
+                config=config,
             )
             llm_payload = result.result
             usage = result.usage.model_dump() if result.usage is not None else None
@@ -731,7 +742,12 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
     return output
 
 
-async def propose_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
+async def propose_parameter_values(
+    state: ModelParameterProposalState,
+    runtime: Runtime[TraceContext] | None = None,
+    # langgraph가 문자열 annotation "Optional[RunnableConfig]"만 config 주입 대상으로 인식함 (PEP 563 환경)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, Any]:
     value_candidates = state.slot_candidate_mappings or [
         candidate
         for candidate in state.candidate_mappings
@@ -780,6 +796,8 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
             output_schema=LLMValueProposalResponse,
             messages=messages,
             model_name=state.model_name,
+            trace_context=runtime.context if runtime is not None else None,
+            config=config,
         )
         llm_payload = result.result
         usage = result.usage.model_dump() if result.usage is not None else None
@@ -830,7 +848,12 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
     return output
 
 
-async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[str, Any]:
+async def propose_parameter_slots(
+    state: ModelParameterProposalState,
+    runtime: Runtime[TraceContext] | None = None,
+    # langgraph가 문자열 annotation "Optional[RunnableConfig]"만 config 주입 대상으로 인식함 (PEP 563 환경)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, Any]:
     if not state.candidate_mappings:
         output = {
             "parameter_slots": [],
@@ -877,6 +900,8 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
             output_schema=LLMSlotProposalResponse,
             messages=messages,
             model_name=state.model_name,
+            trace_context=runtime.context if runtime is not None else None,
+            config=config,
         )
         llm_payload = result.result
         usage = result.usage.model_dump() if result.usage is not None else None
@@ -991,6 +1016,8 @@ async def _invoke_structured(
     output_schema: type[Any],
     messages: list[dict[str, str]],
     model_name: str | None,
+    trace_context: TraceContext | None = None,
+    config: RunnableConfig | None = None,
 ) -> Any:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
@@ -1000,6 +1027,14 @@ async def _invoke_structured(
         cfg,
         "model_parameter_llm_reasoning_effort",
         "default",
+    )
+    # LangGraph 노드 config의 callbacks를 전파해야 LLM 호출이 그래프 trace의 child span으로 묶임
+    callbacks = config.get("callbacks") if isinstance(config, dict) else None
+    logger.debug(
+        "[model-parameter][llm] trace callbacks | config_type={} callbacks_type={} handlers={}",
+        type(config).__name__,
+        type(callbacks).__name__,
+        [type(h).__name__ for h in getattr(callbacks, "handlers", [])],
     )
     logger.debug(
         "[model-parameter][llm] invoke | output_schema={} model_name={} "
@@ -1013,16 +1048,18 @@ async def _invoke_structured(
         getattr(cfg, "http_connect_timeout", None),
         cfg.llm_max_retries,
     )
-    return await invoke_llm_structured_output(
-        output_schema=output_schema,
-        messages=messages,
-        model_name=model_name,
-        preference=ModelPreference.QUALITY,
-        temperature=0.0,
-        max_retries=cfg.llm_max_retries,
-        stream=stream,
-        reasoning_effort=reasoning_effort,
-    )
+    with langchain_callbacks_context(callbacks):
+        return await invoke_llm_structured_output(
+            output_schema=output_schema,
+            messages=messages,
+            model_name=model_name,
+            preference=ModelPreference.QUALITY,
+            temperature=0.0,
+            max_retries=cfg.llm_max_retries,
+            trace_context=trace_context,
+            stream=stream,
+            reasoning_effort=reasoning_effort,
+        )
 
 
 def _field_key(value: Any) -> str:

@@ -134,7 +134,7 @@ async def run_create_signposts_inline(
         transaction_id=new_transaction_id(),
         app_identifier=agent_config.aip_app_id,
         agent_name=AGENT_NAME,
-        scenario_group_id=str(scenario_group_id),
+        session_id=str(scenario_group_id),
     )
     state = CreateSignpostsState(
         scenario_group_id=scenario_group_id,

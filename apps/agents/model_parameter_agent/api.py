@@ -5,16 +5,16 @@ import asyncio
 from fastapi import APIRouter, BackgroundTasks, Body, Path
 
 from apps.agents.model_parameter_agent.flows.confirm_parameters.flow import (
-    get_runnable_graph as get_confirm_parameters_runnable,
+    run_confirm_parameters,
 )
 from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
     ConfirmParametersIn,
     ConfirmParametersOut,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
-    get_runnable_graph,
     prepare_propose_parameters_callback,
     run_propose_parameters_background,
+    run_propose_parameters_sync,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
     ProposeParametersAcceptedData,
@@ -47,7 +47,7 @@ async def propose_parameters_sync(
     payload: ProposeParametersRequest | None = Body(default=None),
 ) -> ProposeParametersOut:
     user_id = payload.user_id if payload is not None else None
-    return await get_runnable_graph().ainvoke(
+    return await run_propose_parameters_sync(
         {
             "scenario_id": scenario_id,
             "user_id": user_id,
@@ -112,7 +112,7 @@ async def confirm_parameters(
     payload: ConfirmParametersIn,
     model_param_proposal_id: int = Path(alias="modelParamProposalId"),
 ) -> ConfirmParametersOut:
-    return await get_confirm_parameters_runnable().ainvoke(
+    return await run_confirm_parameters(
         {
             "model_param_proposal_id": model_param_proposal_id,
             **payload.model_dump(exclude_unset=True),

@@ -4491,7 +4491,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_background_failure_callback_contains_failed_context(self) -> None:
         class FakeGraph:
-            async def ainvoke(self, state: ModelParameterProposalState) -> dict[str, object]:
+            async def ainvoke(self, state: ModelParameterProposalState, **kwargs: object) -> dict[str, object]:
                 assert state.scenario_id == 309
                 raise ValueError("value proposal failed")
 
@@ -4566,7 +4566,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_background_marks_callback_skipped_when_skip_callback_enabled(self) -> None:
         class FakeGraph:
-            async def ainvoke(self, state: ModelParameterProposalState) -> dict[str, object]:
+            async def ainvoke(self, state: ModelParameterProposalState, **kwargs: object) -> dict[str, object]:
                 assert state.scenario_id == 309
                 return {}
 
@@ -4638,7 +4638,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_background_marks_callback_failed_when_callback_path_format_fails(self) -> None:
         class FakeGraph:
-            async def ainvoke(self, state: ModelParameterProposalState) -> dict[str, object]:
+            async def ainvoke(self, state: ModelParameterProposalState, **kwargs: object) -> dict[str, object]:
                 assert state.scenario_id == 309
                 return {}
 

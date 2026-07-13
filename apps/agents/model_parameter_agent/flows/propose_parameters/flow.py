@@ -48,8 +48,14 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
     ModelParameterProposalOutputState,
     ModelParameterProposalState,
 )
+from apps.agents.model_parameter_agent.utils.tracing import build_trace_context
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import (
+    TraceContext,
+    build_langgraph_config,
+    mlflow_trace_context,
+)
 from apps.common.values.error_codes import ErrorCode
 from apps.connectors.callback.callback_client import send_callback
 
@@ -82,6 +88,7 @@ def _debug_final_storage_payload(
 def build_graph() -> Runnable:
     builder = StateGraph(
         ModelParameterProposalState,
+        context_schema=TraceContext,
         output_schema=ModelParameterProposalOutputState,
     )
     builder.add_node("load_scenario_context", load_scenario_context)
@@ -225,8 +232,14 @@ async def run_propose_parameters_background(
     )
     start = time.perf_counter()
     callback_payload: ProposeParametersCallbackOut
+    trace_context = build_trace_context(session_id=str(model_param_proposal_id))
     try:
-        final_state = await build_graph().ainvoke(ModelParameterProposalState(scenario_id=scenario_id))
+        with mlflow_trace_context(trace_context):
+            final_state = await build_graph().ainvoke(
+                ModelParameterProposalState(scenario_id=scenario_id),
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
         data = final_state if isinstance(final_state, dict) else final_state.model_dump()
         _ensure_mapping_candidates(data)
         proposal_parameters = _proposal_parameters_from_state(data)
@@ -317,6 +330,18 @@ async def run_propose_parameters_background(
             model_param_proposal_id=model_param_proposal_id,
             callback_status="FAILED",
         )
+
+
+async def run_propose_parameters_sync(payload: dict[str, Any]) -> ProposeParametersOut:
+    # sync 테스트 경로는 proposal row가 실행 중에 생성되므로 session_id 없이(transaction 단위) 트레이싱
+    trace_context = build_trace_context()
+    with mlflow_trace_context(trace_context):
+        final_state = await build_graph().ainvoke(
+            to_state(payload),
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
+    return to_output(final_state)
 
 
 def build_runnable_graph() -> Runnable:
