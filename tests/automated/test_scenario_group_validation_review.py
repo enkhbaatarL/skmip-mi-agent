@@ -28,7 +28,11 @@ from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     NarrativeOnly,
     Stage4StructuredOutput,
 )
-from apps.agents.scenario_group_agent.prompts.scenario_validation import SimilarTitlePair
+from apps.agents.scenario_group_agent.prompts.scenario_validation import (
+    QuickCompatibilityItem,
+    QuickCompatibilityStructuredOutput,
+    SimilarTitlePair,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
@@ -873,16 +877,10 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                 ),
             ],
         )
-        compat_output = CompatibilityOutput(
+        compat_output = QuickCompatibilityStructuredOutput(
             items=[
-                CompatibilityItem(
-                    scenario_id=1,
-                    compatible=True,
-                    reason="정상",
-                ),
-                CompatibilityItem(
+                QuickCompatibilityItem(
                     scenario_id=2,
-                    compatible=False,
                     reason="대체 LNG 50%와 수요 감소 100%는 동시 적용이 과도함",
                     conflict_dim_a="대체 LNG 확보량 (alt_lng)",
                     conflict_value_a="50%",

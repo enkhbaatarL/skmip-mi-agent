@@ -1358,7 +1358,10 @@ async def _stage5_check_compatibility(
     )
     if out is None:
         _raise_llm_failure("Stage 5 Compatibility", None)
-    incompatible = [item for item in out.items if not item.compatible]
+    # QuickCompatibilityStructuredOutput contains only incompatible items and
+    # therefore omits `compatible`. Keep the fallback for compatibility with
+    # legacy full compatibility outputs used by existing callers/tests.
+    incompatible = [item for item in out.items if not getattr(item, "compatible", False)]
     if not incompatible:
         return True, None, []
 
