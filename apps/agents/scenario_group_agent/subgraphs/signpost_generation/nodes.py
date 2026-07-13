@@ -150,7 +150,8 @@ async def _ainvoke_with_retry(
             )
             if result is None:
                 raise ValueError("LLM returned None result")
-            validate_fn(result)
+            if validate_fn:
+                validate_fn(result)
             return result
 
         except Exception as exc:  # noqa: BLE001
@@ -180,7 +181,14 @@ async def _ainvoke_with_retry(
                 reason = "기타 재시도"
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
-            app_logger.info("[{}] 재시도 ({}/{}) — {}, {:.1f}s 후", stage_label, attempt, REF_MAX_RETRIES, reason, wait_sec)
+            app_logger.info(
+                "[{}] 재시도 ({}/{}) — {}, {:.1f}s 후",
+                stage_label,
+                attempt,
+                REF_MAX_RETRIES,
+                reason,
+                wait_sec,
+            )
             await asyncio.sleep(wait_sec)
 
     app_logger.warning("[{}] 재시도 소진 — fallback 진입", stage_label)

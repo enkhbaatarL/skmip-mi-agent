@@ -181,11 +181,13 @@ structured-output LLM으로 선택한다.
 
 #### Stage 3: Dimension별 enum 축소
 
-`stage3_reduce_values()`은 선택된 각 dimension마다 별도 LLM 호출로 전체 enum을 2~4개로 줄인다.
+`stage3_reduce_values()`은 선택된 dimension 전체를 하나의 structured-output LLM 호출로 받아,
+dimension별 전체 enum을 2~4개로 줄인다.
 
 - 선택 enum은 template enum의 부분집합이어야 한다.
-- 최소 하나의 tail-risk enum을 포함해야 한다.
-- fallback: 첫 값, 중간 값, tail 값을 조합해 최소 2개 확보
+- LLM 응답은 입력된 모든 dim_key를 정확히 한 번 포함해야 한다.
+- LLM 호출 실패 또는 특정 dimension 누락 시 해당 dimension은 fallback으로 채운다.
+- fallback: 첫 값, 중간 값, 마지막 값을 조합해 최소 2개 확보
 
 #### Stage 4: Scenario 합성
 
@@ -215,9 +217,11 @@ template enum 안의 값이면 사용할 수 있다.
   - compatibility 실패에서 LLM이 권장한 값은 `Stage5RepairInstruction` 형태로 Stage 4 재생성에 전달된다.
     이는 Stage 6으로 직행하는 직접 보정이 아니라, Stage 4가 해당 target 조합과 narrative를 다시 만들기 위한
     override 입력이다.
+  - compatibility LLM은 재생성이 필요한 incompatible 항목만 반환한다. 모든 조합이 통과하면 `items=[]`로 처리한다.
   - Stage 4는 feedback을 반영해 조합을 재선정하고, 새 조합에 맞춰 `title`, `description`,
     `derivation_rationale`, `price_direction`을 다시 생성한다.
 - `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: 남은 feedback이 있어도 Stage 6으로 진행
+  - 기본값은 1이다. 즉 quick validate 실패 후 Stage 4 재생성은 최대 1회 수행한다.
 
 #### Stage 6: MECE 및 Likelihood 검증
 
@@ -308,14 +312,10 @@ flowchart LR
 flowchart TD
     A[scenarios] --> B[기존 signpost scenario_id 집합]
     B --> C[target_ids 또는 미생성 scenario 필터링]
-    C --> D{Semaphore 최대 7개}
-    D --> G1[Scenario 1 Pipeline]
-    D --> G2[Scenario 2 Pipeline]
-    D --> G3[Scenario N Pipeline]
-    G1 --> H[asyncio.gather]
-    G2 --> H
-    G3 --> H
-    H --> I[생성 결과 병합 → signpost_result]
+    C --> D[Stage 2 batch<br/>전체 scenario labels 생성]
+    D --> E[Stage 4+5 batch<br/>전체 signpost 상세 생성]
+    E --> F[GeneratedSignpost 조립]
+    F --> G[생성 결과 병합 → signpost_result]
 ```
 
 #### 대상 scenario 결정
@@ -332,34 +332,53 @@ scenarios_to_process = [
 `target_ids`는 `sync_scenarios_from_table`이 테이블 편집(dimension 변경 등)을 감지해 설정한다.
 기존 signpost가 이미 있는 scenario라도 `target_ids`에 포함되면 재생성된다.
 
-#### Scenario 내부 signpost subgraph
+#### Signpost batch 생성
 
-`run_signpost_generation`은 대상 scenario 필터링, event summary 구성, semaphore 기반 병렬 fan-out만 담당한다.
-시나리오 1건 처리는 `subgraphs/signpost_generation/flow.py`의 `get_signpost_generation_subgraph() 직접 호출.ainvoke(...)`로 위임한다.
+`run_signpost_generation`은 대상 scenario 필터링과 event summary 구성 후, 대상 scenario 전체를 batch LLM
+호출로 처리한다. scenario별 병렬 fan-out은 호출 수가 scenario 수만큼 증가하고 rate-limit retry에 취약하므로,
+운영 API 경로에서는 Stage 2 batch 1회 + Stage 4+5 batch 1회로 생성한다.
+
+batch 호출은 전체 응답을 한 번에 reject하지 않는다. `_ainvoke_with_retry(..., validate_fn=None)`로
+structured output parsing까지만 수행하고, Stage 2/4+5 batch 함수 내부에서 scenario별 partial validation을 한다.
+이 구조는 scenario 하나의 누락이나 label 순서 오류 때문에 정상 scenario 결과까지 버리고 batch 전체를 재시도하는
+tail latency를 줄이기 위한 것이다.
+
+단일 scenario subgraph(`subgraphs/signpost_generation/flow.py`)는 테스트와 재사용 경로를 위해 유지한다.
 
 ```mermaid
 flowchart LR
-    A[Scenario] --> B[Stage 2<br/>Observability Filter]
-    B --> C[Stage 4<br/>Direction·Strength]
-    C --> D[Stage 5<br/>Keyword Hints]
-    D --> E[Stage 3<br/>Fixed Axes·조립]
-    E --> F[Signpost Dict List]
+    A[Scenario List] --> B[Stage 2 batch<br/>Observability Filter]
+    B --> C[Stage 4+5 batch<br/>Strength·Rationale·Keyword Hints]
+    C --> D[Stage 3<br/>Fixed Axes·조립]
+    D --> E[Signpost Dict List]
 ```
 
-코드의 stage 번호는 개념적 설계 번호를 유지하므로 실행 순서가 `2 → 4 → 5 → 3/조립` 형태다.
+코드의 stage 번호는 개념적 설계 번호를 유지하되, 실행 시간 단축을 위해 Stage 4와 Stage 5는
+하나의 structured-output LLM 호출로 통합한다. 운영 API 실행 순서는 `2 batch → 4+5 batch → 3/조립` 형태다.
 
 ##### Stage 2: Observability Filter
 
-관측 가능한 후보 5~10개를 생성하고 세 가지 필터(공식 채널 관측 가능, binary 판정 가능,
-scenario 가정과 직접 연결)를 적용한다. 통과 개수는 기본 3~6개.
+세 가지 필터(공식 채널 관측 가능, binary 판정 가능, scenario 가정과 직접 연결)를 모두 통과한
+후보만 출력한다. 탈락 후보와 `passes_filter=false` 항목은 output token 절감을 위해 받지 않는다.
+통과 개수는 코드 검증 기준 기본 3~6개다.
 
-##### Stage 4: Direction과 Strength
+Stage 2 batch 응답에서 scenario_id가 누락되거나 후보 수가 범위를 벗어난 scenario는 해당 scenario만
+`_stage2_fallback()`으로 보정한다. 정상 scenario의 label 결과는 그대로 보존한다.
 
-각 signpost에 `STRONG | MEDIUM | WEAK`과 한국어 근거를 부여한다. `direction`은 항상 `"SUP"`로 고정.
+##### Stage 4+5: Strength와 Keyword Hint 생성
 
-##### Stage 5: Keyword Hint 생성
+각 signpost에 strength, 한국어 근거, record 검색용 keyword 3~5개를 한 번에 부여한다.
+`direction`은 항상 `"SUP"`로 고정한다.
 
-각 label에 record 검색용 keyword 3~5개를 부여한다.
+Stage 4+5 batch 응답은 scenario별로 다음 조건을 확인한다.
+
+- 입력 label 수와 출력 signpost 수가 동일해야 한다.
+- `label_ko` 순서가 Stage 2 label 순서와 동일해야 한다.
+- strong/early strength quota를 만족해야 한다.
+- 각 signpost의 `keyword_hints`는 3~5개이고 빈 문자열이 없어야 한다.
+
+조건을 만족한 scenario는 LLM 결과를 사용한다. 실패한 scenario만 Stage 4 fallback과 Stage 5 keyword fallback으로
+보정한다.
 
 ##### Stage 3 및 최종 조립
 
@@ -371,9 +390,9 @@ scenario 가정과 직접 연결)를 적용한다. 통과 개수는 기본 3~6�
 | `label` | Stage 2 결과 |
 | `signpost_source` | `"mi_record"` |
 | `direction` | `"SUP"` |
-| `strength` | Stage 4 결과 |
-| `rationale_ko` | Stage 4 결과 |
-| `keyword_hints` | Stage 5 결과 |
+| `strength` | Stage 4+5 결과 |
+| `rationale_ko` | Stage 4+5 결과 |
+| `keyword_hints` | Stage 4+5 결과 |
 
 ## Validate Scenarios Flow
 
