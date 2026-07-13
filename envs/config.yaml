@@ -38,7 +38,7 @@ http_max_keepalive: 20
 
 scenario_group_admin_bearer_tokens:
   - ${SCENARIO_GROUP_ADMIN_TOKEN}
-create_signposts_max_concurrent_scenarios: 7
+create_signposts_max_concurrent_scenarios: 10
 
 agents:
   scenario_group_agent:
