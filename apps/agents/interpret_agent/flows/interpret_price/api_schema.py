@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from apps.agents.interpret_agent.schemas.base import ApiModel
 from apps.common.values.response import CallBackBody
@@ -38,7 +38,7 @@ class ScenarioComparisonOut(ApiModel):
 
     scenario_id: str
     identity: str = Field(
-        description="한 줄 정체성(굵게 표기되는 시나리오 헤드라인 문장)"
+        description="한 줄 정체성(시나리오 헤드라인 문장)"
     )
     driver_phase: str = Field(
         description="동인 및 국면(Driver Phase). 여러 feature 움직임과 지역·수렴 시점을 종합"
@@ -102,11 +102,32 @@ class PriceInterpretationAcceptedOut(ApiModel):
     data: PriceInterpretationAcceptedData
 
 
+class PriceInterpretationCallbackItem(ApiModel):
+    """시나리오별 가격전망 해석 callback 항목."""
+
+    scenario_id: int = Field(description="대상 시나리오 ID")
+    content: str = Field(description="제목과 항목별 해석을 개행으로 구분한 일반 텍스트")
+
+
 class PriceInterpretationCallbackOut(CallBackBody):
     """가격전망 해석 비동기 콜백 payload.
 
-    성공 시 해석 결과(data)를 실어 보내고, 실패 시 result="failure" + reason만 채운다.
-    (result/reason 공통 필드는 CallBackBody에서 상속하며 camelCase alias로 직렬화된다.)
+    성공 시 interpretations에 시나리오별 일반 텍스트 해석을 실어 보내고,
+    실패 시 interpretations=null과 실패 사유를 전달한다.
     """
 
-    data: PriceInterpretationResult | None = None
+    interpretations: list[PriceInterpretationCallbackItem] | None = Field(
+        default=None,
+        description="시나리오별 가격전망 해석 목록",
+    )
+
+    @model_validator(mode="after")
+    def validate_result_payload(self) -> Self:
+        if self.result == "success":
+            if self.reason is not None:
+                raise ValueError("success callback의 reason은 null이어야 합니다.")
+            if self.interpretations is None:
+                raise ValueError("success callback에는 interpretations가 필요합니다.")
+        elif self.interpretations is not None:
+            raise ValueError("failure callback의 interpretations는 null이어야 합니다.")
+        return self

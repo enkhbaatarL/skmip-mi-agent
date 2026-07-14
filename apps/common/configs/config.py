@@ -33,23 +33,30 @@ def _normalize_yaml_text(yaml_str: str) -> str:
     return normalized
 
 
-def _replace_env_placeholders(yaml_str: str) -> str:
-    """Replace `${ENV_NAME}` placeholders with environment values when present."""
-    for env_name in ENV_PLACEHOLDER_PATTERN.findall(yaml_str):
-        yaml_str = yaml_str.replace(
-            f"${{{env_name}}}",
-            os.environ.get(env_name, f"${{{env_name}}}"),
+def _replace_env_placeholders(value: Any) -> Any:  # noqa: ANN401
+    """Replace placeholders after YAML parsing so environment values stay YAML-safe."""
+    if isinstance(value, str):
+        return ENV_PLACEHOLDER_PATTERN.sub(
+            lambda match: os.environ.get(match.group(1), match.group(0)),
+            value,
         )
-    return yaml_str
+    if isinstance(value, list):
+        return [_replace_env_placeholders(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            _replace_env_placeholders(key): _replace_env_placeholders(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 class EnvYamlConfigSettingsSource(YamlConfigSettingsSource):
-    """`${ENV_NAME}` 패턴을 YAML 읽기 전에 환경변수로 치환."""
+    """`${ENV_NAME}` 패턴을 YAML 파싱 후 환경변수로 치환."""
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:
         with file_path.open(encoding=self.yaml_file_encoding) as yaml_file:
-            yaml_str = _replace_env_placeholders(_normalize_yaml_text(yaml_file.read()))
-            loaded = yaml.safe_load(yaml_str)
+            loaded = yaml.safe_load(_normalize_yaml_text(yaml_file.read()))
+            loaded = _replace_env_placeholders(loaded)
         return loaded if isinstance(loaded, dict) else {}
 
 

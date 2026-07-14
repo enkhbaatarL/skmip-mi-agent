@@ -10,6 +10,10 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Optional
+
+from langchain_core.runnables.config import RunnableConfig
+from langgraph.runtime import Runtime
 
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (
     GroupSynthesisOut,
@@ -36,6 +40,7 @@ from apps.agents.interpret_agent.utils.series_metrics import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import TraceContext, langchain_callbacks_context
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 
@@ -114,7 +119,9 @@ def extract_diffs(state: InterpretPriceState) -> dict:
 
 
 async def _interpret_one(
-    sid: str, bundle: ScenarioDiffBundle
+    sid: str,
+    bundle: ScenarioDiffBundle,
+    trace_context: TraceContext | None = None,
 ) -> ScenarioComparisonOut:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
@@ -132,6 +139,8 @@ async def _interpret_one(
         ],
         preference=ModelPreference.QUALITY,
         temperature=0.0,
+        trace_context=trace_context,
+        stream=True,
     )
     llm = result.result
     return ScenarioComparisonOut(
@@ -143,17 +152,26 @@ async def _interpret_one(
     )
 
 
-async def interpret_scenarios(state: InterpretPriceState) -> dict:
+async def interpret_scenarios(
+    state: InterpretPriceState,
+    runtime: Runtime[TraceContext] | None = None,
+    # LangGraph는 future annotations 환경에서 Optional[RunnableConfig] 문자열만
+    # config 주입 대상으로 인식한다.
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict:
     inp = state.interpret_input
     if inp is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="interpret_input 미로딩")
 
-    tasks = [
-        _interpret_one(sid, state.diff_bundles[sid])
-        for sid in inp.scenario_ids
-        if sid in state.diff_bundles
-    ]
-    interpretations = await asyncio.gather(*tasks)
+    trace_context = runtime.context if runtime is not None else None
+    callbacks = config.get("callbacks") if isinstance(config, dict) else None
+    with langchain_callbacks_context(callbacks):
+        tasks = [
+            _interpret_one(sid, state.diff_bundles[sid], trace_context)
+            for sid in inp.scenario_ids
+            if sid in state.diff_bundles
+        ]
+        interpretations = await asyncio.gather(*tasks)
     return {"interpretations": list(interpretations)}
 
 
@@ -176,21 +194,32 @@ def _scenarios_brief(
     ]
 
 
-async def synthesize_group(state: InterpretPriceState) -> dict:
+async def synthesize_group(
+    state: InterpretPriceState,
+    runtime: Runtime[TraceContext] | None = None,
+    # LangGraph는 future annotations 환경에서 Optional[RunnableConfig] 문자열만
+    # config 주입 대상으로 인식한다.
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
     brief = _scenarios_brief(state.interpretations, state.diff_bundles)
     user = gs_prompt.build_user_prompt(scenarios_brief=brief)
 
-    result = await invoke_llm_structured_output(
-        output_schema=gs_prompt.GroupSynthesisLLMOutput,
-        messages=[
-            {"role": "system", "content": gs_prompt.SYSTEM_PROMPT},
-            {"role": "user", "content": user},
-        ],
-        preference=ModelPreference.QUALITY,
-        temperature=0.0,
-    )
+    trace_context = runtime.context if runtime is not None else None
+    callbacks = config.get("callbacks") if isinstance(config, dict) else None
+    with langchain_callbacks_context(callbacks):
+        result = await invoke_llm_structured_output(
+            output_schema=gs_prompt.GroupSynthesisLLMOutput,
+            messages=[
+                {"role": "system", "content": gs_prompt.SYSTEM_PROMPT},
+                {"role": "user", "content": user},
+            ],
+            preference=ModelPreference.QUALITY,
+            temperature=0.0,
+            trace_context=trace_context,
+            stream=True,
+        )
     return {"synthesis": GroupSynthesisOut(overall_message=result.result.overall_message)}
 
 
