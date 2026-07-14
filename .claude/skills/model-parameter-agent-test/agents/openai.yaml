@@ -1,4 +1,4 @@
 interface:
   display_name: "Model Parameter Agent Test"
-  short_description: "Run MI parameter tests with DB-backed proposal reports"
-  default_prompt: "Use $model-parameter-agent-test to test scenario 289 and write one integrated Markdown report with scenario group, event, dimension template, and final DB proposal details."
+  short_description: "Test MI parameter proposals and confirmation contracts"
+  default_prompt: "Use $model-parameter-agent-test to test scenario 289, confirm every successful proposal, verify confirmation success and rollback cases, and write one integrated Markdown report."
