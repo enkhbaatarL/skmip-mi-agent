@@ -7,18 +7,42 @@ from types import TracebackType
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from apps.common.logging.logger_config import logger
 
 
 class TraceContext(BaseModel):
-    transaction_id: str
-    app_identifier: str
-    agent_name: str | None = None
-    api_identifier: str | None = None
-    # MLflow session_id. 에이전트별 세션 키(scenario_group_id, model_param_proposal_id 등)를 문자열로 전달
-    session_id: str | None = None
+    transaction_id: str = Field(
+        description=(
+            "요청 단위 trace ID. AIP aip-transaction-id header, MLflow aip.transaction_id, "
+            "LangGraph transaction_id로 사용된다."
+        ),
+    )
+    app_identifier: str = Field(
+        description=(
+            "A.X Platform app ID. AIP aip-app-id header, MLflow aip.app_id/app_id로 사용된다."
+        ),
+    )
+    agent_name: str | None = Field(
+        default=None,
+        description=(
+            "Agent 설정 profile key. MLflow tracing on/off와 experiment 설정 조회 기준으로 사용된다."
+        ),
+    )
+    api_identifier: str | None = Field(
+        default=None,
+        description=(
+            "API/flow 단위 식별자. MLflow api_identifier metadata/tag로 기록된다. 예: create_scenarios"
+        ),
+    )
+    session_id: str | None = Field(
+        default=None,
+        description=(
+            "business session ID. MLflow session_id, LangGraph thread_id/session_id, "
+            "AIP aip-chat-id header로 사용된다."
+        ),
+    )
 
 
 class _TraceManager(Protocol):
