@@ -54,7 +54,6 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
     ExcludedDimension,
     MECECheck,
     PerDimensionValue,
-    PriceDirection,
     Scenario,
     ScenarioGroupMetadata,
     ScenarioTemplate,
@@ -107,31 +106,13 @@ def _shorten(text: str, max_len: int) -> str:
     return text[:max_len] + "..."
 
 
-def _extract_driver_hint(event: Dict) -> str:
-    """Driver 힌트 — detail_analysis 첫 문장 또는 첫 key_bullet 으로 대체."""
-    bullets = event.get("key_bullets") or []
-    if bullets:
-        first = str(bullets[0]).strip()
-        return first[:160]
-    detail = str(event.get("detail_analysis", "")).strip()
-    if not detail:
-        return ""
-    head = detail.split(".")[0].strip()
-    return head[:160]
-
-
 def _build_key_facts(event: Dict) -> List[str]:
-    """Build a bounded event-fact context without another retrieval or LLM call."""
-    facts = [
+    """Build a bounded event-fact context from normalized key bullets."""
+    return [
         _shorten(str(bullet).strip(), 280)
         for bullet in event.get("key_bullets", []) or []
         if str(bullet).strip()
     ][:5]
-    if len(facts) < 3 or len(" ".join(facts)) < 300:
-        detail_excerpt = _shorten(str(event.get("detail_analysis", "")).strip(), 600)
-        if detail_excerpt:
-            facts.append(detail_excerpt)
-    return facts
 
 
 def _build_event_tags(event: Dict) -> List[str]:
@@ -150,7 +131,6 @@ def _build_c1_base_event(event: Dict) -> C1BaseEvent:
         title=event.get("event_title_ko", ""),
         event_type_l1_l2=et_key,
         summary=event.get("one_line_summary", ""),
-        driver=_extract_driver_hint(event),
         occurred_at=str(event.get("occurred_at", "") or ""),
         key_facts=_build_key_facts(event),
         tags=_build_event_tags(event),
@@ -344,7 +324,6 @@ def stage1_build_context_pack(event: Dict) -> Stage1ContextPack:
 @log_tool
 async def stage2_select_dimensions(
     pack: Stage1ContextPack,
-    event: Dict,
     template: ScenarioTemplate,
     llm_client=None,
     trace_context: TraceContext | None = None,
@@ -361,12 +340,9 @@ async def stage2_select_dimensions(
             "required=true 인 dim_key 가 5개를 초과하여 Stage2(3~5개 선택) 규칙과 충돌합니다. "
             f"required_dim_keys={required_dim_ids}"
         )
-    detail_excerpt = _shorten(event.get("detail_analysis", ""), 600)
-
     user_prompt = build_stage2_user_prompt(
         pack=pack,
         template=template,
-        detail_excerpt=detail_excerpt,
         required_dim_ids=required_dim_ids,
     )
 
@@ -982,16 +958,13 @@ async def stage4_synthesize_fixed_scenarios(
 @log_tool
 async def stage_generate_scenario_group_metadata(
     pack: Stage1ContextPack,
-    event: Dict,
     stage4: Stage4ScenarioSynthesis,
     llm_client=None,
     trace_context: TraceContext | None = None,
 ) -> ScenarioGroupMetadata:
     """Generate scenario group title/description for UI display."""
-    detail_excerpt = _shorten(event.get("detail_analysis", ""), 1200)
     user_prompt = build_scenario_group_metadata_user_prompt(
         pack=pack,
-        detail_excerpt=detail_excerpt,
         scenarios=stage4.scenarios,
     )
 
@@ -1454,7 +1427,6 @@ class SelectDimensionsNode(BaseNode):
         return {
             "stage2_dimension_selection": await stage2_select_dimensions(
                 state.stage1_context_pack,
-                state.event_data,
                 state.template,
                 trace_context=runtime.context if runtime is not None else None,
             ),
@@ -1576,7 +1548,6 @@ class ValidateScenariosNode(BaseNode):
             ),
             stage_generate_scenario_group_metadata(
                 state.stage1_context_pack,
-                state.event_data,
                 state.stage4_scenario_synthesis,
                 trace_context=trace_context,
             ),

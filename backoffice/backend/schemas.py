@@ -207,8 +207,17 @@ class EventListOut(ApiModel):
     raw_source: JsonObject | None = None
 
 
+class EventDetailEvent(EventListRow):
+    key_bullets: list[str] = Field(default_factory=list)
+    detail_analysis: str = ""
+    source_mi_record_ids: list[int] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+    language: str = "ko"
+
+
 class EventDetailOut(ApiModel):
-    event: EventListRow
+    event: EventDetailEvent
     scenario_template: JsonObject = Field(default_factory=dict)
     meta: EventListMeta = Field(default_factory=EventListMeta)
     raw_source: JsonObject | None = None

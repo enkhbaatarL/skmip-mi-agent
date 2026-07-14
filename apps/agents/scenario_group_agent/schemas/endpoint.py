@@ -103,6 +103,15 @@ class EventListOut(ApiModel):
     source: dict[str, Any] = Field(default_factory=dict)
 
 
+class EventDetailEvent(EventListRow):
+    key_bullets: list[str] = Field(default_factory=list)
+    detail_analysis: str = ""
+    source_mi_record_ids: list[int] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+    language: str = "ko"
+
+
 class ScenarioTemplateDimension(ApiModel):
     key: str
     label: str
@@ -119,7 +128,7 @@ class EventScenarioTemplate(ApiModel):
 
 
 class EventDetailOut(ApiModel):
-    event: EventListRow
+    event: EventDetailEvent
     scenario_template: EventScenarioTemplate
     source: dict[str, Any] = Field(default_factory=dict)
 

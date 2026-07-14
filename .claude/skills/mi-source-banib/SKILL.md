@@ -67,6 +67,11 @@ BASE_BRANCH=main
 TARGET_COMMIT="$(git rev-parse "origin/${BASE_BRANCH}^{commit}")"
 PREVIOUS_TAG="$(git tag --merged "$TARGET_COMMIT" --sort=-v:refname | grep -E '^v[0-9]+(\.[0-9]+){1,3}([-+][A-Za-z0-9._-]+)?$' | grep -F -x -v "$TAG" | head -n1 || true)"
 git log "${PREVIOUS_TAG:+${PREVIOUS_TAG}..}${TARGET_COMMIT}" --no-merges --pretty=format:"%s%n%b"
+if [[ -n "$PREVIOUS_TAG" ]]; then
+  git diff --name-only "${PREVIOUS_TAG}..${TARGET_COMMIT}"
+else
+  git ls-tree -r --name-only "$TARGET_COMMIT"
+fi
 ```
 
 그 커밋 목록을 Codex/Claude가 분석해 아래 release note 포맷으로 markdown 파일을 만든다.
@@ -101,6 +106,12 @@ release-artifacts/
 Release note는 직전 release tag와 현재 tag를 비교해 달라진 commit만 포함하도록 Codex/Claude가 작성한다.
 포맷은 `main-mr`의 MR 메시지 포맷과 동일하게 유지한다.
 
+변경 파일 -> 범위 매핑:
+- `apps/agents/<agent_directory>/...` -> `<agent_directory>`
+- 위 경로 밖의 모든 파일 -> `common`
+
+커밋이 여러 범위를 건드리면 경로별 변경 내용을 분석해 각 범위에 맞는 불릿으로 나눈다. 같은 포괄 문구를 여러 범위에 그대로 복제하지 말라.
+
 커밋 prefix -> 섹션 매핑:
 - `feat:` / `feature:` -> **Feature**
 - `refact:` / `refactor:` -> **Refactor**
@@ -112,22 +123,42 @@ Release note는 직전 release tag와 현재 tag를 비교해 달라진 commit�
 ```text
 # <제목: 이전 tag와 비교한 전체 변경 내용을 한 줄로 요약>
 
-## Feature
+## scenario_group_agent
+
+### Feature
 - ...
 
-## Refactor
+### Refactor
+- 없음
+
+### BugFix
 - ...
 
-## BugFix
+### Ops
 - ...
 
-## Ops
+## common
+
+### Feature
+- 없음
+
+### Refactor
+- ...
+
+### BugFix
+- 없음
+
+### Ops
 - ...
 ```
 
 규칙:
-- 섹션 순서: Feature -> Refactor -> BugFix -> Ops 고정
-- 빈 섹션은 `- 없음` 으로 표시 (섹션 자체를 삭제하지 말 것)
+- agent 범위는 `apps/agents` 바로 아래의 실제 Python 패키지 디렉터리명을 그대로 사용한다. `__pycache__`와 같은 생성 디렉터리는 제외한다.
+- 변경된 agent 범위와 `common`만 출력한다.
+- 범위 순서는 agent 디렉터리명 오름차순, `common` 마지막으로 고정한다.
+- 각 범위의 하위 섹션 순서는 Feature -> Refactor -> BugFix -> Ops로 고정한다.
+- 출력된 범위 안의 빈 하위 섹션은 `- 없음`으로 표시하고 섹션을 삭제하지 말라.
+- Ops는 변경 유형이며 `common` 전용이 아니다. agent 내부의 CI, Docker, 설정, 문서 변경은 해당 agent의 Ops에, 프로젝트 전역 변경은 `common` Ops에 넣는다.
 - 불릿은 `- ` 형식
 - 사용자 요청 없이 추가 섹션 금지
 - 내용은 간결하게 작성

@@ -109,6 +109,7 @@ Backoffice Event List와 Event Detail 화면을 위한 조회 API입니다.
   - `scenarioActionState.type`은 `create`, `continue_generation`, `open_detail`, `disabled` 중 하나입니다.
 - `GET /events/{mi_event_id}`
   - Response: `event`, `scenarioTemplate`, `source`
+  - `event` detail에는 `keyBullets`, `tags`, `detailAnalysis`, `sourceMiRecordIds`, `createdAt`, `updatedAt`, `language`를 포함합니다.
   - `scenarioTemplate`은 event type L2 기준 `tmm_mi_scenario_dimension_template_m.template_json`을 raw JSON과 display용 dimension 목록으로 반환합니다.
 
 Backoffice Scenario Group List를 위한 목록 API도 제공합니다.

@@ -160,17 +160,20 @@ class EventRepository(BaseSyncSQLRepository):
             stmt = stmt.where(MiEventModel.occurred_at < date_to)
         return stmt
 
-    def _parse_json_list(self, raw_json: Any) -> list[Any]:
+    def _parse_json_list(self, raw_json: Any, *, wrapper_key: str) -> list[Any]:
         if raw_json is None:
             return []
         if isinstance(raw_json, list):
             return raw_json
+        if isinstance(raw_json, dict):
+            wrapped = raw_json.get(wrapper_key)
+            return wrapped if isinstance(wrapped, list) else []
         if isinstance(raw_json, str):
             try:
                 parsed = json.loads(raw_json)
             except (json.JSONDecodeError, TypeError):
                 return []
-            return parsed if isinstance(parsed, list) else []
+            return self._parse_json_list(parsed, wrapper_key=wrapper_key)
         return []
 
     def _event_to_pipeline_dict(self, event: MiEventModel) -> dict[str, Any]:
@@ -183,7 +186,11 @@ class EventRepository(BaseSyncSQLRepository):
             "event_type_l2_id": int(event.event_type_l2_id),
             "event_title_ko": event.event_title or "",
             "one_line_summary": event.one_line_summary or "",
-            "key_bullets": [str(item).strip() for item in self._parse_json_list(event.key_bullets_json) if item],
+            "key_bullets": [
+                str(item).strip()
+                for item in self._parse_json_list(event.key_bullets_json, wrapper_key="bullets")
+                if item
+            ],
             "detail_analysis": event.detail_analysis or "",
             "source_mi_record_ids": source_record_ids,
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
@@ -204,7 +211,11 @@ class EventRepository(BaseSyncSQLRepository):
             },
             "language": "ko",
             "occurred_at": event.occurred_at.isoformat() if event.occurred_at else "",
-            "tags": [str(item).strip() for item in self._parse_json_list(event.tags_json) if item],
+            "tags": [
+                str(item).strip()
+                for item in self._parse_json_list(event.tags_json, wrapper_key="tags")
+                if item
+            ],
         }
 
     def _event_to_backoffice_dict(self, event: MiEventModel) -> dict[str, Any]:

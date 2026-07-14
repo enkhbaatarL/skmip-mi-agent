@@ -67,13 +67,6 @@ MANIFEST_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.manifest.txt"
 RELEASE_NOTES_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.release-notes.md"
 IMPORT_SCRIPT=".claude/skills/mi-source-banib/scripts/import_source_bundle.sh"
 
-for heading in "## Feature" "## Refactor" "## BugFix" "## Ops"; do
-  if ! grep -qx "$heading" "$RELEASE_NOTES_SOURCE"; then
-    echo "ERROR: RELEASE_NOTES_SOURCE must follow the main-mr release note format. Missing heading: $heading" >&2
-    exit 1
-  fi
-done
-
 echo "[1/9] Fetching ${REMOTE}/${BASE_BRANCH} and checking tag metadata..."
 git fetch "$REMOTE" "$BASE_BRANCH" --prune
 git fetch "$REMOTE" --tags --prune

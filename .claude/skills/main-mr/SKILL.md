@@ -20,6 +20,10 @@ main merge 이후의 tag, source bundle, image bundle 생성은 이 스킬에서
 
 !`git log origin/main..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null || git log main..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null`
 
+## main 이후 변경 파일 목록
+
+!`git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only main...HEAD 2>/dev/null`
+
 ---
 
 ## 범위
@@ -37,7 +41,13 @@ Codex가 수행하지 않음:
 
 ## Step 1: MR 메시지 생성
 
-위 커밋을 분석해서 아래 포맷으로 **한국어** MR 메시지를 작성한다.
+위 커밋과 변경 파일을 함께 분석해서 아래 포맷으로 **한국어** MR 메시지를 작성한다.
+
+변경 파일 -> 범위 매핑:
+- `apps/agents/<agent_directory>/...` -> `<agent_directory>`
+- 위 경로 밖의 모든 파일 -> `common`
+
+커밋이 여러 범위를 건드리면 경로별 변경 내용을 분석해 각 범위에 맞는 불릿으로 나눈다. 같은 포괄 문구를 여러 범위에 그대로 복제하지 말고, 각 범위에 해당하는 변경을 구체적으로 적는다.
 
 커밋 prefix -> 섹션 매핑:
 - `feat:` / `feature:` -> **Feature**
@@ -50,22 +60,42 @@ Codex가 수행하지 않음:
 ```text
 # <제목: 전체 변경 내용을 한 줄로 요약>
 
-## Feature
+## scenario_group_agent
+
+### Feature
 - ...
 
-## Refactor
+### Refactor
+- 없음
+
+### BugFix
 - ...
 
-## BugFix
+### Ops
 - ...
 
-## Ops
+## common
+
+### Feature
+- 없음
+
+### Refactor
+- ...
+
+### BugFix
+- 없음
+
+### Ops
 - ...
 ```
 
 규칙:
-- 섹션 순서: Feature -> Refactor -> BugFix -> Ops 고정
-- 빈 섹션은 `- 없음` 으로 표시 (섹션 자체를 삭제하지 말 것)
+- agent 범위는 `apps/agents` 바로 아래의 실제 Python 패키지 디렉터리명을 그대로 사용한다. `__pycache__`와 같은 생성 디렉터리는 제외한다.
+- 변경된 agent 범위와 `common`만 출력한다.
+- 범위 순서는 agent 디렉터리명 오름차순, `common` 마지막으로 고정한다.
+- 각 범위의 하위 섹션 순서는 Feature -> Refactor -> BugFix -> Ops로 고정한다.
+- 출력된 범위 안의 빈 하위 섹션은 `- 없음`으로 표시하고 섹션을 삭제하지 말라.
+- Ops는 변경 유형이며 `common` 전용이 아니다. agent 내부의 CI, Docker, 설정, 문서 변경은 해당 agent의 Ops에, 프로젝트 전역 변경은 `common` Ops에 넣는다.
 - 불릿은 `- ` 형식
 - 사용자 요청 없이 추가 섹션 금지
 - 내용은 간결하게 작성
