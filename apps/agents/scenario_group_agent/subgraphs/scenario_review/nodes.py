@@ -648,12 +648,16 @@ async def _invoke_compatibility(
     messages: list[dict[str, str]],
     trace_context: TraceContext | None = None,
 ) -> CompatibilityInvocationResult:
+    from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     return await invoke_llm_structured_output(
         CompatibilityStructuredOutput,
         messages=messages,
         trace_context=trace_context,
+        stream=cfg.llm_stream_enabled,
+        reasoning_effort=cfg.llm_reasoning_effort,
     )
 
 
@@ -666,12 +670,16 @@ async def _invoke_dimension_values(
     messages: list[dict[str, str]],
     trace_context: TraceContext | None = None,
 ) -> DimensionValueInvocationResult:
+    from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     return await invoke_llm_structured_output(
         DimensionValueStructuredOutput,
         messages=messages,
         trace_context=trace_context,
+        stream=cfg.llm_stream_enabled,
+        reasoning_effort=cfg.llm_reasoning_effort,
     )
 
 

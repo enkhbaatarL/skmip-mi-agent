@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     llm_concurrency: int
     llm_timeout_sec: float = Field(default=90.0)
     llm_max_retries: int = Field(default=1, ge=0)
+    llm_stream_enabled: bool = Field(default=False)
+    llm_reasoning_effort: Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ] = "default"
 
     # Model parameter proposal
     model_parameter_lut_enabled: bool = Field(default=False)

@@ -199,14 +199,18 @@ async def _invoke_structured(
     trace_context: TraceContext | None = None,
 ) -> BaseModel:
     """Structured output LLM call via the project's async connector."""
+    from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     result = await invoke_llm_structured_output(
         output_schema=schema_cls,
         messages=messages,
         temperature=temperature or REF_TEMPERATURE,
         max_retries=0,
         trace_context=trace_context,
+        stream=cfg.llm_stream_enabled,
+        reasoning_effort=cfg.llm_reasoning_effort,
     )
     return result.result
 

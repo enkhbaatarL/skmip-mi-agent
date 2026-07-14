@@ -28,6 +28,8 @@ deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 llm_timeout_sec: 310
 llm_max_retries: 1
 llm_concurrency: 10
+llm_stream_enabled: true
+llm_reasoning_effort: default
 
 # HTTP client
 http_timeout: 60
