@@ -312,22 +312,26 @@ def _json_pretty(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=str)
 
 
-def _llm_call_table_lines(llm_calls: list[dict[str, Any]]) -> list[str]:
+def _llm_call_table_lines(
+    llm_calls: list[dict[str, Any]],
+    *,
+    heading: str = "##### 모델 호출별 소요시간",
+) -> list[str]:
     if not llm_calls:
         return ["", "- 모델 호출별 소요시간: `[]`"]
     lines = [
         "",
-        "##### 모델 호출별 소요시간",
+        heading,
         "",
-        "| step | success | model_name | 소요시간 | elapsed_seconds | prompt_tokens | completion_tokens | total_tokens |",
-        "|---|---|---|---:|---:|---:|---:|---:|",
+        "| step | success | model_name | 소요시간 | elapsed_seconds | prompt_tokens | completion_tokens | total_tokens | error |",
+        "|---|---|---|---:|---:|---:|---:|---:|---|",
     ]
     for call in llm_calls:
         usage = call.get("usage") or {}
         elapsed = call.get("elapsed_seconds")
         lines.append(
             "| {step} | {success} | {model_name} | {duration} | {elapsed_seconds} | "
-            "{prompt_tokens} | {completion_tokens} | {total_tokens} |".format(
+            "{prompt_tokens} | {completion_tokens} | {total_tokens} | {error} |".format(
                 step=call.get("step") or "",
                 success=call.get("success"),
                 model_name=call.get("model_name") or "",
@@ -336,6 +340,7 @@ def _llm_call_table_lines(llm_calls: list[dict[str, Any]]) -> list[str]:
                 prompt_tokens=usage.get("prompt_tokens", ""),
                 completion_tokens=usage.get("completion_tokens", ""),
                 total_tokens=usage.get("total_tokens", ""),
+                error=" ".join(str(call.get("error") or "").split()).replace("|", "\\|"),
             ),
         )
     return lines
@@ -556,12 +561,16 @@ def _build_step_summary(
     }
 
 
-def _stage_summary_table_lines(step_summary: dict[str, Any]) -> list[str]:
+def _stage_summary_table_lines(
+    step_summary: dict[str, Any],
+    *,
+    heading: str = "##### 단계별 실행 요약",
+) -> list[str]:
     if not step_summary:
         return ["", "- 단계별 실행 요약: `{}`"]
     return [
         "",
-        "##### 단계별 실행 요약",
+        heading,
         "",
         "| 항목 | 값 | 판정 |",
         "|---|---:|---|",
@@ -609,6 +618,109 @@ def _stage_summary_table_lines(step_summary: dict[str, Any]) -> list[str]:
             f"`{_json_preview(step_summary.get('slot_option_axis_counts_by_candidate') or {}, max_chars=1200)}` | |"
         ),
     ]
+
+
+def _failure_stage_trace_table_lines(
+    trace: dict[str, Any],
+    *,
+    heading: str = "##### 단계별 Failure Trace",
+) -> list[str]:
+    summary = trace.get("step_summary") or {}
+    failed_stage = str(trace.get("failed_stage") or "unknown")
+    error = " ".join(str(trace.get("error") or "").split())
+    termination = str(summary.get("termination_stage") or "partial state 미수집")
+    partial_state_captured = trace.get("partial_state_captured")
+    if partial_state_captured is None:
+        partial_state_captured = bool(summary) and "partial state 미수집" not in termination
+    mapping_trace_captured = bool(trace.get("mapping_trace_captured")) or bool(partial_state_captured)
+    llm_steps = [
+        str(call.get("step") or "")
+        for call in (trace.get("llm_calls") or [])
+        if isinstance(call, dict)
+    ]
+
+    if summary and partial_state_captured:
+        rule_count = int(summary.get("rule_candidate_count") or 0)
+        validated_count = int(summary.get("validated_candidate_count") or 0)
+        selected_slot_count = int(summary.get("selected_slot_count") or 0)
+        basecase_count = int(summary.get("slot_basecase_record_count") or 0)
+        value_count = int(summary.get("value_cell_count") or 0)
+        step1_status = "PASS" if rule_count else "FAIL"
+        if validated_count:
+            step15_status = "PASS"
+        elif rule_count:
+            step15_status = "FAIL"
+        else:
+            step15_status = "NOT_REACHED"
+        if selected_slot_count:
+            step2_status = "PASS"
+        elif validated_count:
+            step2_status = "FAIL"
+        else:
+            step2_status = "NOT_REACHED"
+        if value_count:
+            step3_status = "PASS"
+        elif selected_slot_count:
+            step3_status = "FAIL"
+        elif validated_count:
+            step3_status = "SKIPPED"
+        else:
+            step3_status = "NOT_REACHED"
+    elif mapping_trace_captured:
+        rule_count = int(summary.get("rule_candidate_count") or 0)
+        validated_count = selected_slot_count = basecase_count = value_count = 0
+        step1_status = "PASS" if rule_count else "FAIL"
+        downstream_status = "UNKNOWN" if rule_count else "NOT_REACHED"
+        step15_status = step2_status = step3_status = downstream_status
+    else:
+        rule_count = validated_count = selected_slot_count = basecase_count = value_count = 0
+        step1_status = "FAIL" if failed_stage == "Step1 parameter candidate matching" else "NOT_REACHED"
+        step15_status = step2_status = step3_status = "NOT_REACHED"
+
+    context_status = "PASS" if trace.get("context") else "FAIL"
+    output_status = "FAIL" if failed_stage == "output validation/persistence" else "NOT_REACHED"
+
+    rows = (
+        ("Scenario context load", context_status, f"context_captured={bool(trace.get('context'))}", failed_stage),
+        ("Step1 mapping", step1_status, f"rule_candidates={rule_count}", termination),
+        ("Step1.5 candidate validation", step15_status, f"validated_candidates={validated_count}", termination),
+        (
+            "Step2 slot proposal/filter",
+            step2_status,
+            f"selected_slots={selected_slot_count}, basecase_rows={basecase_count}",
+            termination,
+        ),
+        (
+            "Step3 value proposal",
+            step3_status,
+            f"llm_called={any('Step3' in step for step in llm_steps)}, value_cells={value_count}",
+            termination,
+        ),
+        (
+            "Output validation/persistence",
+            output_status,
+            f"failed_stage={failed_stage}",
+            error or termination,
+        ),
+        ("Failure boundary", "FAIL", f"failed_stage={failed_stage}", error or termination),
+    )
+    lines = [
+        "",
+        heading,
+        "",
+        "| 단계 | 상태 | 관측값 | 종료/오류 근거 |",
+        "|---|---|---|---|",
+    ]
+    for stage, status, observed, reason in rows:
+        lines.append(
+            "| {stage} | {status} | {observed} | {reason} |".format(
+                stage=stage,
+                status=status,
+                observed=str(observed).replace("|", "\\|"),
+                reason=" ".join(str(reason).split())[:500].replace("|", "\\|"),
+            ),
+        )
+    return lines
 
 
 def _all_adjustments(result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -704,79 +816,192 @@ def _build_group_status(
     return group_status
 
 
+_FAILURE_TRACE_ATTR = "_model_parameter_failure_trace"
+
+
+def _uncaptured_step_summary(rule_candidate_count: int = 0) -> dict[str, Any]:
+    return {
+        "termination_stage": "그래프 실행 중 실패 - partial state 미수집",
+        "parameter_status": "N/A",
+        "slot_status": "N/A",
+        "basecase_status": "N/A",
+        "value_status": "N/A",
+        "rule_candidate_count": rule_candidate_count,
+        "validated_candidate_count": 0,
+        "selected_parameter_count": 0,
+        "proposal_parameter_count": 0,
+        "slot_option_candidate_count": 0,
+        "slot_option_axis_value_count": 0,
+        "slot_option_axis_counts_by_candidate": {},
+        "selected_slot_count": 0,
+        "slot_basecase_record_count": 0,
+        "value_reference_record_count": 0,
+        "value_reference_counts_by_candidate": {},
+        "value_cell_count": 0,
+        "value_cell_with_basecase_count": 0,
+        "llm_steps": [],
+    }
+
+
+def _initial_failure_trace(scenario_id: int) -> dict[str, Any]:
+    return {
+        "scenario_id": scenario_id,
+        "context": {},
+        "rule_candidates": [],
+        "expected_candidates": [],
+        "result": {
+            "parameter_adjustments": [],
+            "non_input_items": [],
+            "validation_warnings": [],
+        },
+        "mapping_warnings": [],
+        "basecase_warnings": [],
+        "step_summary": _uncaptured_step_summary(),
+        "llm_calls": [],
+        "mapping_trace_captured": False,
+        "partial_state_captured": False,
+        "failed_stage": "scenario context load",
+    }
+
+
+def _failure_trace_from_exception(exc: BaseException) -> dict[str, Any]:
+    trace = getattr(exc, _FAILURE_TRACE_ATTR, None)
+    return trace if isinstance(trace, dict) else {}
+
+
+def _attach_failure_trace(exc: BaseException, trace: dict[str, Any]) -> None:
+    try:
+        setattr(exc, _FAILURE_TRACE_ATTR, trace)
+    except Exception:  # noqa: BLE001 - some third-party exceptions may disallow attributes.
+        return
+
+
 async def _evaluate_scenario(
     scenario_id: int,
 ) -> dict[str, Any]:
-    context = ModelParameterService().load_context(scenario_id)
-    kb = get_parameter_knowledge_base()
-    candidates, non_inputs, mapping_warnings = match_parameter_candidates(
-        kb,
-        context,
-    )
-    payload: dict[str, Any] = {"scenario_id": scenario_id}
-    raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
-    raw_state = _normalize(raw_output)
-    validated_candidates = raw_state.get("candidate_mappings") or []
-    slot_basecase_records, basecase_warnings = build_basecase_records(
-        kb,
-        validated_candidates,
-        context,
-    )
-    slot_options = _build_basecase_slot_options(slot_basecase_records)
-    parameter_slots = raw_state.get("parameter_slots") or []
-    value_reference_records = _value_reference_records(raw_state)
-    result = {
-        "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
-        "non_input_items": raw_state.get("non_input_items") or [],
-        "validation_warnings": raw_state.get("validation_warnings") or [],
-    }
-    final_response = to_output(raw_state).model_dump(by_alias=True, exclude_none=True)
-    llm_calls = raw_state.get("llm_calls") or []
-    candidate_coverage_ok, candidate_coverage_messages = _compare_candidate_coverage(
-        validated_candidates,
-        result,
-    )
-    selected_ok, selected_messages = _review_selected_parameters(validated_candidates, result)
-    routing_status, routing_messages = _review_routing_selection(
-        scenario_id,
-        validated_candidates,
-        result,
-    )
-    step_summary = _build_step_summary(
-        rule_candidates=candidates,
-        validated_candidates=validated_candidates,
-        parameter_slots=parameter_slots,
-        slot_basecase_records=slot_basecase_records,
-        slot_options=slot_options,
-        value_reference_records=value_reference_records,
-        adjustments=result["parameter_adjustments"],
-        final_response=final_response,
-        llm_calls=llm_calls,
-        routing_status=routing_status,
-    )
-    return {
-        "scenario_id": scenario_id,
-        "context": context,
-        "rule_candidates": candidates,
-        "expected_candidates": validated_candidates,
-        "non_input_items": non_inputs,
-        "mapping_warnings": mapping_warnings,
-        "basecase_warnings": basecase_warnings,
-        "parameter_slots": parameter_slots,
-        "step_summary": step_summary,
-        "result": result,
-        "final_response": final_response,
-        "llm_calls": llm_calls,
-        "resolved_config": raw_state.get("resolved_config") or {},
-        "lut_version": raw_state.get("lut_version"),
-        "mapping_ok": candidate_coverage_ok,
-        "mapping_messages": candidate_coverage_messages,
-        "selected_ok": selected_ok,
-        "selected_messages": selected_messages,
-        "routing_status": routing_status,
-        "routing_messages": routing_messages,
-        "value_signature": _value_signature(_selected_adjustments(result)),
-    }
+    failure_trace = _initial_failure_trace(scenario_id)
+    failed_stage = "scenario context load"
+    try:
+        context = ModelParameterService().load_context(scenario_id)
+        failure_trace["context"] = context
+
+        failed_stage = "Step1 parameter candidate matching"
+        kb = get_parameter_knowledge_base()
+        candidates, non_inputs, mapping_warnings = match_parameter_candidates(
+            kb,
+            context,
+        )
+        failure_trace.update(
+            {
+                "rule_candidates": candidates,
+                "mapping_warnings": mapping_warnings,
+                "mapping_trace_captured": True,
+                "step_summary": _uncaptured_step_summary(len(candidates)),
+            },
+        )
+
+        failed_stage = "graph execution"
+        payload: dict[str, Any] = {"scenario_id": scenario_id}
+        raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
+        raw_state = _normalize(raw_output)
+        validated_candidates = raw_state.get("candidate_mappings") or []
+        parameter_slots = raw_state.get("parameter_slots") or []
+        llm_calls = raw_state.get("llm_calls") or []
+        result = {
+            "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
+            "non_input_items": raw_state.get("non_input_items") or [],
+            "validation_warnings": raw_state.get("validation_warnings") or [],
+        }
+        failure_trace.update(
+            {
+                "expected_candidates": validated_candidates,
+                "parameter_slots": parameter_slots,
+                "result": result,
+                "llm_calls": llm_calls,
+                "partial_state_captured": True,
+            },
+        )
+
+        failed_stage = "post-graph trace enrichment"
+        slot_basecase_records, basecase_warnings = build_basecase_records(
+            kb,
+            validated_candidates,
+            context,
+        )
+        slot_options = _build_basecase_slot_options(slot_basecase_records)
+        value_reference_records = _value_reference_records(raw_state)
+        candidate_coverage_ok, candidate_coverage_messages = _compare_candidate_coverage(
+            validated_candidates,
+            result,
+        )
+        selected_ok, selected_messages = _review_selected_parameters(validated_candidates, result)
+        routing_status, routing_messages = _review_routing_selection(
+            scenario_id,
+            validated_candidates,
+            result,
+        )
+        step_summary = _build_step_summary(
+            rule_candidates=candidates,
+            validated_candidates=validated_candidates,
+            parameter_slots=parameter_slots,
+            slot_basecase_records=slot_basecase_records,
+            slot_options=slot_options,
+            value_reference_records=value_reference_records,
+            adjustments=result["parameter_adjustments"],
+            final_response={},
+            llm_calls=llm_calls,
+            routing_status=routing_status,
+        )
+        record = {
+            "scenario_id": scenario_id,
+            "context": context,
+            "rule_candidates": candidates,
+            "expected_candidates": validated_candidates,
+            "non_input_items": non_inputs,
+            "mapping_warnings": mapping_warnings,
+            "basecase_warnings": basecase_warnings,
+            "parameter_slots": parameter_slots,
+            "step_summary": step_summary,
+            "result": result,
+            "final_response": {},
+            "llm_calls": llm_calls,
+            "resolved_config": raw_state.get("resolved_config") or {},
+            "lut_version": raw_state.get("lut_version"),
+            "mapping_ok": candidate_coverage_ok,
+            "mapping_messages": candidate_coverage_messages,
+            "selected_ok": selected_ok,
+            "selected_messages": selected_messages,
+            "routing_status": routing_status,
+            "routing_messages": routing_messages,
+            "value_signature": _value_signature(_selected_adjustments(result)),
+        }
+        failure_trace = {
+            **record,
+            "mapping_trace_captured": True,
+            "partial_state_captured": True,
+        }
+
+        failed_stage = "output validation/persistence"
+        final_response = to_output(raw_state).model_dump(by_alias=True, exclude_none=True)
+        record["final_response"] = final_response
+        record["step_summary"] = _build_step_summary(
+            rule_candidates=candidates,
+            validated_candidates=validated_candidates,
+            parameter_slots=parameter_slots,
+            slot_basecase_records=slot_basecase_records,
+            slot_options=slot_options,
+            value_reference_records=value_reference_records,
+            adjustments=result["parameter_adjustments"],
+            final_response=final_response,
+            llm_calls=llm_calls,
+            routing_status=routing_status,
+        )
+        return record
+    except Exception as exc:
+        failure_trace["failed_stage"] = failed_stage
+        failure_trace["error"] = repr(exc)
+        _attach_failure_trace(exc, failure_trace)
+        raise
 
 
 def _render_md(

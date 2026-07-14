@@ -39,6 +39,8 @@ from apps.persistence.scenario_group.models import (
 )
 from tests.manual.model_parameter_agent.evaluate_proposals import (
     _evaluate_scenario,
+    _failure_stage_trace_table_lines,
+    _failure_trace_from_exception,
     _json_pretty,
     _json_preview,
     _llm_call_table_lines,
@@ -1139,8 +1141,8 @@ def _scenario_result_table_lines(
     lines = [
         "### 시나리오별 결과",
         "",
-        "| 시나리오그룹 | 시나리오 | 이벤트타입 | 파라미터 | 결과요약 | 소요시간 |",
-        "|---|---|---|---|---|---:|",
+        "| 시나리오그룹 | 시나리오 | 이벤트타입 | 파라미터 | 결과요약 | 소요시간 | Token (입력/출력/합계) |",
+        "|---|---|---|---|---|---:|---:|",
     ]
     completed_count = 0
     for target in targets:
@@ -1164,7 +1166,7 @@ def _scenario_result_table_lines(
                 continue
 
             completed_count += 1
-            context = (record or {}).get("context") or {}
+            context = (record or error or {}).get("context") or {}
             scenario = context.get("scenario") or {}
             scenario_title = scenario.get("title") or (error or {}).get("scenario_title") or ""
             parameters = mapped_parameters
@@ -1178,7 +1180,7 @@ def _scenario_result_table_lines(
                 )
             elapsed_seconds = (record or error or {}).get("elapsed_seconds")
             lines.append(
-                "| {group} | {scenario} | {event_type} | {parameters} | {summary} | {elapsed} |".format(
+                "| {group} | {scenario} | {event_type} | {parameters} | {summary} | {elapsed} | {tokens} |".format(
                     group=_md_cell(
                         f"{target.scenario_group_id} · {target.group_title}",
                         max_chars=220,
@@ -1196,10 +1198,155 @@ def _scenario_result_table_lines(
                     elapsed=(
                         f"{_format_duration(elapsed_seconds)} ({_format_seconds(elapsed_seconds)})"
                     ),
+                    tokens=_scenario_token_summary(record),
                 ),
             )
     if completed_count == 0:
-        lines.append("| - | - | - | - | 실행 완료 시나리오 없음 | - |")
+        lines.append("| - | - | - | - | 실행 완료 시나리오 없음 | - | - |")
+    return lines
+
+
+def _scenario_token_summary(record: dict[str, Any] | None) -> str:
+    if record is None:
+        return "N/A"
+
+    llm_calls = record.get("llm_calls") or []
+    if not llm_calls:
+        return "0 / 0 / 0"
+
+    totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for call in llm_calls:
+        if not isinstance(call, dict) or not isinstance(call.get("usage"), dict):
+            return "N/A"
+        usage = call["usage"]
+        for field in totals:
+            value = usage.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                return "N/A"
+            totals[field] += value
+
+    return (
+        f"{totals['prompt_tokens']:,} / "
+        f"{totals['completion_tokens']:,} / "
+        f"{totals['total_tokens']:,}"
+    )
+
+
+def _group_context(
+    records: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    for item in [*records, *errors]:
+        context = item.get("context") or {}
+        if context:
+            return context
+    return {}
+
+
+def _group_scenario_contexts(
+    records: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        context
+        for item in [*records, *errors]
+        if (context := item.get("context") or {})
+    ]
+
+
+def _failed_scenario_detail_lines(
+    error: dict[str, Any],
+    *,
+    heading_level: int,
+    target_parameter: str | None = None,
+) -> list[str]:
+    heading = "#" * heading_level
+    detail_heading = "#" * min(6, heading_level + 1)
+    context = error.get("context") or {}
+    scenario = context.get("scenario") or {}
+    scenario_title = scenario.get("title") or error.get("scenario_title") or ""
+    attempts = error.get("attempt_traces") or []
+    if not attempts:
+        attempts = [
+            {
+                "attempt": error.get("attempts") or 1,
+                "elapsed_seconds": error.get("elapsed_seconds"),
+                "error": error.get("error"),
+                "failed_stage": "unknown",
+                "step_summary": error.get("step_summary") or {},
+                "llm_calls": error.get("llm_calls") or [],
+            },
+        ]
+
+    lines = [
+        f"{heading} scenario_id={error['scenario_id']} {scenario_title}",
+        "",
+    ]
+    if target_parameter is not None:
+        lines.append(f"- target_parameter: `{target_parameter}`")
+    lines.extend(
+        [
+            "- result: FAIL",
+            f"- 소요시간: {_format_duration(error.get('elapsed_seconds'))} ({_format_seconds(error.get('elapsed_seconds'))})",
+            f"- attempts: {error.get('attempts') or len(attempts)}",
+            f"- 소요시간 특이사항: {_timing_special_note(elapsed_seconds=error.get('elapsed_seconds'), attempts=int(error.get('attempts') or len(attempts)), failed=True, error=error.get('error'))}",
+            "- Confirmation: N/A · proposal 실패로 미수행",
+            f"- final_error: `{_md_cell(error.get('error') or 'N/A', max_chars=1200)}`",
+            "",
+            f"{detail_heading} Scenario Major Info",
+            "",
+            "```json",
+            _json_pretty(
+                _scenario_context(context)
+                if context
+                else {
+                    "scenario_id": error.get("scenario_id"),
+                    "trace_status": "scenario context 수집 실패",
+                },
+            ),
+            "```",
+            "",
+            f"{detail_heading} Attempt별 단계 Tracing",
+            "",
+        ],
+    )
+
+    for attempt_trace in attempts:
+        trace = dict(attempt_trace)
+        trace.setdefault("error", error.get("error"))
+        expected_names = [
+            _candidate_parameter_name(candidate)
+            for candidate in (trace.get("expected_candidates") or [])
+        ]
+        selected_names = [
+            _parameter_name(adjustment)
+            for adjustment in _selected_adjustments(trace.get("result") or {})
+        ]
+        lines.extend(
+            [
+                f"**Attempt {trace.get('attempt') or 1}**",
+                "",
+                f"- elapsed: {_format_duration(trace.get('elapsed_seconds'))} ({_format_seconds(trace.get('elapsed_seconds'))})",
+                f"- failed_stage: `{trace.get('failed_stage') or 'unknown'}`",
+                f"- expected_parameters: `{_json_preview(expected_names)}`",
+                f"- selected_parameters: `{_json_preview(selected_names)}`",
+                f"- validation_warnings: `{_json_preview((trace.get('result') or {}).get('validation_warnings') or [], max_chars=1600)}`",
+                f"- error: `{_md_cell(trace.get('error') or 'N/A', max_chars=1200)}`",
+            ],
+        )
+        lines.extend(
+            _failure_stage_trace_table_lines(
+                trace,
+                heading="**단계별 Failure Trace**",
+            ),
+        )
+        lines.extend(
+            _llm_call_table_lines(
+                trace.get("llm_calls") or [],
+                heading="**모델 호출별 소요시간 및 Token**",
+            ),
+        )
+        lines.append("")
     return lines
 
 
@@ -1349,7 +1496,7 @@ def _render_parameter_ordered_result_lines(
             if len(group_records) > 1 and has_expected and has_selected:
                 value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
             group_ok = _group_status(target, records, errors)
-            group_context = group_records[0]["context"] if group_records else {}
+            group_context = _group_context(group_records, group_errors)
 
             lines.extend(
                 [
@@ -1373,7 +1520,7 @@ def _render_parameter_ordered_result_lines(
                     _json_pretty(
                         _dimension_parameter_mapping_context(
                             group_context,
-                            [record["context"] for record in group_records],
+                            _group_scenario_contexts(group_records, group_errors),
                         ),
                     ),
                     "```",
@@ -1393,24 +1540,18 @@ def _render_parameter_ordered_result_lines(
                     f"- 라우팅 선택 검증: {', '.join(sorted({record['routing_status'] for record in group_records})) if group_records else 'N/A'}",
                     f"- scenario별 value 차이: {value_diff_status}",
                     f"- 그룹 종합: {'PASS' if group_ok else 'FAIL'}",
+                    f"- 실패 scenario_ids: {[error['scenario_id'] for error in group_errors]}",
                     "",
                 ],
             )
             for error in group_errors:
-                timing_note = _timing_special_note(
-                    elapsed_seconds=error.get("elapsed_seconds"),
-                    attempts=int(error.get("attempts") or 1),
-                    failed=True,
-                    error=error.get("error"),
+                lines.extend(
+                    _failed_scenario_detail_lines(
+                        error,
+                        heading_level=5,
+                        target_parameter=target_parameter,
+                    ),
                 )
-                lines.append(
-                    f"- ERROR scenario_id={error['scenario_id']} "
-                    f"elapsed={_format_duration(error.get('elapsed_seconds'))} "
-                    f"({_format_seconds(error.get('elapsed_seconds'))}): `{error['error']}`",
-                )
-                lines.append(f"  - 소요시간 특이사항: {timing_note}")
-            if group_errors:
-                lines.append("")
 
             for record in group_records:
                 context = record["context"]
@@ -1621,7 +1762,7 @@ def _render_report(
         if len(group_records) > 1 and has_expected and has_selected:
             value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
         group_ok = _group_status(target, records, errors)
-        group_context = group_records[0]["context"] if group_records else {}
+        group_context = _group_context(group_records, group_errors)
         lines.extend(
             [
                 f"### event_type_l2_id={target.event_type_l2_id} {target.event_type_label}",
@@ -1644,7 +1785,7 @@ def _render_report(
                 _json_pretty(
                     _dimension_parameter_mapping_context(
                         group_context,
-                        [record["context"] for record in group_records],
+                        _group_scenario_contexts(group_records, group_errors),
                     ),
                 ),
                 "```",
@@ -1664,24 +1805,17 @@ def _render_report(
                 f"- 라우팅 선택 검증: {', '.join(sorted({record['routing_status'] for record in group_records})) if group_records else 'N/A'}",
                 f"- scenario별 value 차이: {value_diff_status}",
                 f"- 그룹 종합: {'PASS' if group_ok else 'FAIL'}",
+                f"- 실패 scenario_ids: {[error['scenario_id'] for error in group_errors]}",
                 "",
             ],
         )
         for error in group_errors:
-            timing_note = _timing_special_note(
-                elapsed_seconds=error.get("elapsed_seconds"),
-                attempts=int(error.get("attempts") or 1),
-                failed=True,
-                error=error.get("error"),
+            lines.extend(
+                _failed_scenario_detail_lines(
+                    error,
+                    heading_level=4,
+                ),
             )
-            lines.append(
-                f"- ERROR scenario_id={error['scenario_id']} "
-                f"elapsed={_format_duration(error.get('elapsed_seconds'))} "
-                f"({_format_seconds(error.get('elapsed_seconds'))}): `{error['error']}`",
-            )
-            lines.append(f"  - 소요시간 특이사항: {timing_note}")
-        if group_errors:
-            lines.append("")
 
         for record in group_records:
             context = record["context"]
@@ -1883,9 +2017,11 @@ async def run_event_type_evaluation(
     async def run_one(target: EventTypeTarget, scenario_id: int) -> None:
         async with semaphore:
             last_error: Exception | None = None
+            attempt_traces: list[dict[str, Any]] = []
             scenario_started_at = datetime.now()
             scenario_started_monotonic = time.perf_counter()
             for attempt in range(retries + 1):
+                attempt_started_monotonic = time.perf_counter()
                 try:
                     result = await _evaluate_scenario(scenario_id)
                     elapsed_seconds = time.perf_counter() - scenario_started_monotonic
@@ -1911,6 +2047,14 @@ async def run_event_type_evaluation(
                     break
                 except Exception as exc:  # noqa: BLE001
                     last_error = exc
+                    attempt_elapsed_seconds = time.perf_counter() - attempt_started_monotonic
+                    attempt_trace = {
+                        **_failure_trace_from_exception(exc),
+                        "attempt": attempt + 1,
+                        "elapsed_seconds": attempt_elapsed_seconds,
+                        "error": repr(exc),
+                    }
+                    attempt_traces.append(attempt_trace)
                     if attempt < retries:
                         delay = 2.0 * (attempt + 1)
                         print(
@@ -1927,12 +2071,27 @@ async def run_event_type_evaluation(
                         await asyncio.sleep(delay)
                         continue
                     elapsed_seconds = time.perf_counter() - scenario_started_monotonic
+                    context = next(
+                        (
+                            trace.get("context") or {}
+                            for trace in reversed(attempt_traces)
+                            if trace.get("context")
+                        ),
+                        {},
+                    )
+                    scenario = context.get("scenario") or {}
+                    final_trace = attempt_traces[-1] if attempt_traces else {}
                     errors.append(
                         {
                             "target": target,
                             "scenario_id": scenario_id,
+                            "scenario_title": scenario.get("title") or "",
+                            "context": context,
                             "error": repr(last_error),
-                            "attempts": retries + 1,
+                            "attempts": len(attempt_traces) or retries + 1,
+                            "attempt_traces": attempt_traces,
+                            "step_summary": final_trace.get("step_summary") or {},
+                            "llm_calls": final_trace.get("llm_calls") or [],
                             "started_at": scenario_started_at.isoformat(timespec="seconds"),
                             "finished_at": datetime.now().isoformat(timespec="seconds"),
                             "elapsed_seconds": elapsed_seconds,

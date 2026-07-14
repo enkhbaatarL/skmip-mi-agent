@@ -3080,6 +3080,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "get_settings",
             return_value=SimpleNamespace(
                 llm_max_retries=1,
+                llm_stream_enabled=False,
+                llm_reasoning_effort="default",
                 model_parameter_max_parameter_slots=100,
                 model_parameter_max_value_prompt_basecase_records=100,
                 model_parameter_max_routing_candidates_per_dimension=2,
@@ -3100,8 +3102,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         logger = Mock()
         settings = SimpleNamespace(
             llm_max_retries=3,
-            model_parameter_llm_stream_enabled=True,
-            model_parameter_llm_reasoning_effort="high",
+            llm_stream_enabled=True,
+            llm_reasoning_effort="high",
             llm_timeout_sec=310,
             http_connect_timeout=10,
         )

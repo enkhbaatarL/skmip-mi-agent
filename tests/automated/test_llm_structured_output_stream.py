@@ -126,7 +126,7 @@ class StructuredOutputStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(create.await_args.kwargs["stream_options"], {"include_usage": True})
         accumulate_usage.assert_called_once_with(result.usage)
 
-    async def test_interpret_llm_calls_enable_stream(self) -> None:
+    async def test_interpret_llm_calls_use_shared_settings(self) -> None:
         calls: list[dict[str, object]] = []
 
         async def fake_invoke_llm_structured_output(**kwargs: object) -> object:
@@ -146,7 +146,11 @@ class StructuredOutputStreamTest(unittest.IsolatedAsyncioTestCase):
         fake_llm_client = ModuleType("apps.connectors.llm.llm_client")
         fake_llm_client.invoke_llm_structured_output = fake_invoke_llm_structured_output
 
-        with patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_llm_client}):
+        settings = SimpleNamespace(llm_stream_enabled=False, llm_reasoning_effort="high")
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_llm_client}),
+            patch.object(nodes, "get_settings", return_value=settings),
+        ):
             await nodes._interpret_one("305", ScenarioDiffBundle(scenario_id="305"))
             await nodes.synthesize_group(
                 InterpretPriceState(
@@ -162,7 +166,8 @@ class StructuredOutputStreamTest(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
-        self.assertEqual([call["stream"] for call in calls], [True, True])
+        self.assertEqual([call["stream"] for call in calls], [False, False])
+        self.assertEqual([call["reasoning_effort"] for call in calls], ["high", "high"])
 
 
 if __name__ == "__main__":

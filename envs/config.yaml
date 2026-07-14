@@ -52,9 +52,6 @@ model_parameter_lut_horizon_end_year: 2030
 model_parameter_max_parameter_slots: 100
 model_parameter_max_value_prompt_basecase_records: 100
 model_parameter_max_routing_candidates_per_dimension: 2
-model_parameter_llm_stream_enabled: true
-model_parameter_llm_reasoning_effort: default
-
 # Agent profiles
 agents:
   scenario_group_agent:

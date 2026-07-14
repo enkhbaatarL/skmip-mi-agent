@@ -239,14 +239,12 @@ class ConfigLoaderTest(unittest.TestCase):
                 "print(cfg.model_parameter_lut_horizon_end_year)",
                 "print(cfg.model_parameter_max_parameter_slots)",
                 "print(cfg.model_parameter_max_value_prompt_basecase_records)",
-                "print(cfg.model_parameter_llm_stream_enabled)",
-                "print(cfg.model_parameter_llm_reasoning_effort)",
             ],
         )
 
         self.assertEqual(  # noqa: PT009
             lines,
-            ["False", "default", "False", "2026", "2030", "100", "100", "False", "default"],
+            ["False", "default", "False", "2026", "2030", "100", "100"],
         )
 
     def test_llm_reasoning_effort_accepts_supported_values(self) -> None:
@@ -265,25 +263,6 @@ class ConfigLoaderTest(unittest.TestCase):
 
         self.assertIn(  # noqa: PT009
             "llm_reasoning_effort",
-            output,
-        )
-
-    def test_model_parameter_reasoning_effort_accepts_supported_values(self) -> None:
-        for value in ("none", "minimal", "low", "medium", "high", "xhigh"):
-            with self.subTest(value=value):
-                lines = self.run_settings_import(
-                    f"{BASE_CONFIG}\nmodel_parameter_llm_reasoning_effort: {value}",
-                    print_lines=["print(cfg.model_parameter_llm_reasoning_effort)"],
-                )
-                self.assertEqual(lines, [value])  # noqa: PT009
-
-    def test_model_parameter_reasoning_effort_rejects_invalid_value(self) -> None:
-        output = self.assert_settings_import_fails(
-            f"{BASE_CONFIG}\nmodel_parameter_llm_reasoning_effort: extreme",
-        )
-
-        self.assertIn(  # noqa: PT009
-            "model_parameter_llm_reasoning_effort",
             output,
         )
 

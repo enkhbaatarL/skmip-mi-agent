@@ -636,66 +636,10 @@ def _summarize_prompt_packet(step: str, packet: dict[str, Any]) -> dict[str, Any
 
 
 def _prompt_input_packets(record: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (  # noqa: PLC0415
-        _build_candidate_validation_prompt_packet,
-        _build_slot_proposal_prompt_packet,
-        _build_value_proposal_prompt_packet,
-        _filter_records_by_selected_slots,
-    )
-    from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records  # noqa: PLC0415
-    from apps.agents.model_parameter_agent.utils.parameter_mapping import get_parameter_knowledge_base  # noqa: PLC0415
-
-    context = record.get("context") or {}
-    rule_candidates = record.get("rule_candidates") or []
-    validated_candidates = record.get("expected_candidates") or []
-    non_input_items = record.get("non_input_items") or []
-    parameter_slots = record.get("parameter_slots") or []
-
-    packets: list[tuple[str, dict[str, Any]]] = []
-    if rule_candidates:
-        packets.append(
-            (
-                "Step1.5 candidate validation",
-                _build_candidate_validation_prompt_packet(context, rule_candidates),
-            ),
-        )
-
-    if validated_candidates:
-        kb = get_parameter_knowledge_base()
-        slot_basecase_records, _warnings = build_basecase_records(
-            kb,
-            validated_candidates,
-            context,
-        )
-        packets.append(
-            (
-                "Step2 slot proposal",
-                _build_slot_proposal_prompt_packet(
-                    context,
-                    validated_candidates,
-                    slot_basecase_records,
-                    non_input_items,
-                ),
-            ),
-        )
-        selected_value_records = _filter_records_by_selected_slots(
-            slot_basecase_records,
-            parameter_slots,
-        )
-        if parameter_slots:
-            packets.append(
-                (
-                    "Step3 value proposal",
-                    _build_value_proposal_prompt_packet(
-                        context,
-                        validated_candidates,
-                        parameter_slots,
-                        selected_value_records,
-                        non_input_items,
-                    ),
-                ),
-            )
-    return packets
+    # Prompt packets are already represented by the stage/result trace. Rebuilding
+    # them here depended on removed internal helpers and could fail after a
+    # successful proposal was persisted.
+    return []
 
 
 async def _run(args: argparse.Namespace) -> tuple[Path, str]:
@@ -706,6 +650,8 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
 
     from tests.manual.model_parameter_agent.evaluate_proposals import (  # noqa: PLC0415
         _evaluate_scenario,
+        _failure_stage_trace_table_lines,
+        _failure_trace_from_exception,
         _format_duration,
         _format_seconds,
         _llm_call_table_lines,
@@ -722,14 +668,24 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
 
     record: dict[str, Any] | None = None
     error: str | None = None
+    failure_trace: dict[str, Any] = {}
     try:
         record = await _evaluate_scenario(args.scenario_id)
     except Exception as exc:  # noqa: BLE001 - report the failure to markdown for test traceability.
         error = repr(exc)
+        failure_trace = _failure_trace_from_exception(exc)
 
     finished_at = datetime.now()
     elapsed_seconds = time.perf_counter() - started_monotonic
     status = _status(record, error)
+    if failure_trace:
+        failure_trace.update(
+            {
+                "attempt": 1,
+                "elapsed_seconds": elapsed_seconds,
+                "error": error,
+            },
+        )
 
     lines: list[str] = [
         "# Model Parameter Proposal Evaluation - Single Scenario",
@@ -745,6 +701,7 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
     ]
 
     if error:
+        context = failure_trace.get("context") or {}
         lines.extend(
             [
                 "## Error",
@@ -753,8 +710,55 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
                 error,
                 "```",
                 "",
+                "## Scenario Group",
+                "",
+                "```json",
+                _json(_scenario_group_context(context)),
+                "```",
+                "",
+                "## Event",
+                "",
+                "```json",
+                _json(_event_context(context)),
+                "```",
+                "",
+                f"## Scenario {args.scenario_id} Failure Result",
+                "",
+                "### Scenario Major Info",
+                "",
+                "```json",
+                _json(
+                    _scenario_context(context)
+                    if context
+                    else {
+                        "scenario_id": args.scenario_id,
+                        "trace_status": "scenario context 수집 실패",
+                    },
+                ),
+                "```",
+                "",
+                "### Attempt별 단계 Tracing",
+                "",
+                "**Attempt 1**",
+                "",
+                f"- failed_stage: `{failure_trace.get('failed_stage') or 'unknown'}`",
+                f"- elapsed: {_format_duration(elapsed_seconds)} ({_format_seconds(elapsed_seconds)})",
+                f"- error: `{error}`",
             ],
         )
+        lines.extend(
+            _failure_stage_trace_table_lines(
+                failure_trace,
+                heading="**단계별 Failure Trace**",
+            ),
+        )
+        lines.extend(
+            _llm_call_table_lines(
+                failure_trace.get("llm_calls") or [],
+                heading="**모델 호출별 소요시간 및 Token**",
+            ),
+        )
+        lines.append("")
     elif record:
         context = record.get("context") or {}
         scenario = context.get("scenario") or {}

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
 
+from tests.manual.model_parameter_agent import evaluate_proposals as proposal_evaluation
 from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
     EventTypeTarget,
     _build_parameter_scenario_targets,
+    _failed_scenario_detail_lines,
     _group_status,
     _lut_summary_line,
     _parse_parameter_scenarios,
@@ -18,6 +21,7 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
     _render_report,
     _scenario_result_summary,
     _scenario_result_table_lines,
+    _scenario_token_summary,
     _timing_special_note,
     _timing_special_summary,
 )
@@ -163,7 +167,209 @@ def test_scenario_result_table_includes_failed_execution() -> None:
 
     assert len([line for line in lines if line.startswith("| 100 ·")]) == 1
     assert "| 619 | 1 · Upstream Utilization 변동 | LiqUtilAdjustment |" in lines[-1]
-    assert "FAIL · 매핑 후보 없음 | 00:03.391 (3.391s)" in lines[-1]
+    assert "FAIL · 매핑 후보 없음 | 00:03.391 (3.391s) | N/A |" in lines[-1]
+
+
+def test_failed_scenario_detail_includes_context_and_attempt_stage_tracing() -> None:
+    context = {
+        "scenario": {
+            "scenario_id": 637,
+            "scenario_group_id": 105,
+            "title": "단기 고가동 뒤 빠르게 정상화",
+            "narrative": "단기 흡수력 증가 후 정상화된다.",
+            "dimension_values": {"period": "1개월"},
+        },
+    }
+    step_summary = {
+        "termination_stage": "Step2 종료 - selected slot 없음",
+        "rule_candidate_count": 2,
+        "validated_candidate_count": 1,
+        "selected_slot_count": 0,
+        "slot_basecase_record_count": 21656,
+        "value_cell_count": 0,
+    }
+    attempt_trace = {
+        "context": context,
+        "attempt": 1,
+        "elapsed_seconds": 25.5,
+        "failed_stage": "output validation/persistence",
+        "error": "No valid model parameter proposal parameters generated",
+        "expected_candidates": [
+            {"canonical_parameter_name": "LiqUtilAdjustment"},
+        ],
+        "result": {
+            "parameter_adjustments": [],
+            "validation_warnings": ["Step2 selected slot 없음"],
+        },
+        "step_summary": step_summary,
+        "llm_calls": [
+            {
+                "step": "Step2 slot proposal",
+                "success": True,
+                "model_name": "gpt-test",
+                "elapsed_seconds": 20.0,
+                "usage": {
+                    "prompt_tokens": 1000,
+                    "completion_tokens": 50,
+                    "total_tokens": 1050,
+                },
+            },
+        ],
+    }
+    error = {
+        "scenario_id": 637,
+        "context": context,
+        "error": "No valid model parameter proposal parameters generated",
+        "attempts": 2,
+        "elapsed_seconds": 53.611,
+        "attempt_traces": [
+            attempt_trace,
+            {**attempt_trace, "attempt": 2, "elapsed_seconds": 26.0},
+        ],
+    }
+
+    report = "\n".join(
+        _failed_scenario_detail_lines(
+            error,
+            heading_level=5,
+            target_parameter="LiqUtilAdjustment",
+        ),
+    )
+
+    assert "##### scenario_id=637 단기 고가동 뒤 빠르게 정상화" in report
+    assert "###### Scenario Major Info" in report
+    assert '"period": "1개월"' in report
+    assert "###### Attempt별 단계 Tracing" in report
+    assert "**Attempt 1**" in report
+    assert "**Attempt 2**" in report
+    assert "| Step1 mapping | PASS | rule_candidates=2 |" in report
+    assert "| Step1.5 candidate validation | PASS | validated_candidates=1 |" in report
+    assert "| Step2 slot proposal/filter | FAIL |" in report
+    assert "| Step3 value proposal | SKIPPED |" in report
+    assert "| Output validation/persistence | FAIL |" in report
+    assert "| Step2 slot proposal | True | gpt-test | 00:20.000 | 20.000 | 1000 | 50 | 1050 |" in report
+    assert "Confirmation: N/A · proposal 실패로 미수행" in report
+
+
+def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = {
+        "scenario": {
+            "scenario_id": 637,
+            "scenario_group_id": 105,
+            "title": "단기 고가동 뒤 빠르게 정상화",
+        },
+    }
+    candidate = {
+        "candidate_key": "liq",
+        "canonical_parameter_name": "LiqUtilAdjustment",
+        "model_file": "model.xlsx",
+        "model_sheet": "LiqUtilAdjustment",
+        "mapping_method": "direct",
+    }
+
+    class FakeService:
+        def load_context(self, scenario_id: int) -> dict[str, object]:
+            assert scenario_id == 637
+            return context
+
+    class FakeGraph:
+        async def ainvoke(self, _state: object) -> dict[str, object]:
+            return {
+                "candidate_mappings": [candidate],
+                "parameter_slots": [],
+                "parameter_adjustments": [
+                    {
+                        "candidate_key": "liq",
+                        "parameter_name": "LiqUtilAdjustment",
+                        "model_file": "model.xlsx",
+                        "model_sheet": "LiqUtilAdjustment",
+                        "selected": False,
+                    },
+                ],
+                "validation_warnings": ["Step2 selected slot 없음"],
+                "llm_calls": [
+                    {
+                        "step": "Step2 slot proposal",
+                        "success": True,
+                        "usage": {
+                            "prompt_tokens": 100,
+                            "completion_tokens": 10,
+                            "total_tokens": 110,
+                        },
+                    },
+                ],
+            }
+
+    def raise_output_error(_state: object) -> None:
+        raise RuntimeError("No valid model parameter proposal parameters generated")
+
+    monkeypatch.setattr(proposal_evaluation, "ModelParameterService", FakeService)
+    monkeypatch.setattr(proposal_evaluation, "get_parameter_knowledge_base", object)
+    monkeypatch.setattr(
+        proposal_evaluation,
+        "match_parameter_candidates",
+        lambda _kb, _context: ([candidate], [], []),
+    )
+    monkeypatch.setattr(proposal_evaluation, "RAW_GRAPH", FakeGraph())
+    monkeypatch.setattr(
+        proposal_evaluation,
+        "build_basecase_records",
+        lambda _kb, _candidates, _context: ([], []),
+    )
+    monkeypatch.setattr(proposal_evaluation, "to_output", raise_output_error)
+
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(proposal_evaluation._evaluate_scenario(637))
+
+    trace = proposal_evaluation._failure_trace_from_exception(caught.value)
+    assert trace["context"] == context
+    assert trace["failed_stage"] == "output validation/persistence"
+    assert trace["step_summary"]["termination_stage"] == "Step2 종료 - selected slot 없음"
+    assert trace["step_summary"]["validated_candidate_count"] == 1
+    assert trace["step_summary"]["selected_slot_count"] == 0
+    assert trace["llm_calls"][0]["usage"]["total_tokens"] == 110
+
+
+def test_scenario_token_summary_sums_all_recorded_llm_calls() -> None:
+    assert _scenario_token_summary(
+        {
+            "llm_calls": [
+                {
+                    "step": "Step2",
+                    "usage": {
+                        "prompt_tokens": 1234,
+                        "completion_tokens": 56,
+                        "total_tokens": 1290,
+                    },
+                },
+                {
+                    "step": "Step3",
+                    "usage": {
+                        "prompt_tokens": 2000,
+                        "completion_tokens": 100,
+                        "total_tokens": 2100,
+                    },
+                },
+            ],
+        },
+    ) == "3,234 / 156 / 3,390"
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        ({"llm_calls": []}, "0 / 0 / 0"),
+        (None, "N/A"),
+        ({"llm_calls": [{"step": "Step2"}]}, "N/A"),
+    ],
+)
+def test_scenario_token_summary_handles_unavailable_usage(
+    record: dict[str, object] | None,
+    expected: str,
+) -> None:
+    assert _scenario_token_summary(record) == expected
 
 
 def test_proposal_value_table_includes_basecase_and_lut_samples() -> None:
@@ -481,7 +687,24 @@ def test_parameter_report_keeps_same_group_scenarios_in_their_parameter_sections
             "mapping_warnings": [],
             "basecase_warnings": [],
             "step_summary": {},
-            "llm_calls": [],
+            "llm_calls": [
+                {
+                    "step": "Step2",
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 20,
+                        "total_tokens": 120,
+                    },
+                },
+                {
+                    "step": "Step3",
+                    "usage": {
+                        "prompt_tokens": 50,
+                        "completion_tokens": 10,
+                        "total_tokens": 60,
+                    },
+                },
+            ],
             "elapsed_seconds": 1.0,
             "attempt": 1,
             "resolved_config": {"model_parameter_lut_enabled": True},
@@ -526,11 +749,12 @@ def test_parameter_report_keeps_same_group_scenarios_in_their_parameter_sections
     result_index = report.index("## 호출 결과")
     assert target_summary_index < scenario_table_index < result_index
     assert (
-        "| 시나리오그룹 | 시나리오 | 이벤트타입 | 파라미터 | 결과요약 | 소요시간 |"
+        "| 시나리오그룹 | 시나리오 | 이벤트타입 | 파라미터 | 결과요약 | 소요시간 | Token (입력/출력/합계) |"
         in report
     )
     assert "| 60 · 국가별 경기 | 305 · scenario-305 | 21 · 국가별 경기 | GDP |" in report
     assert "| 60 · 국가별 경기 | 306 · scenario-306 | 21 · 국가별 경기 | PMI |" in report
+    assert report[scenario_table_index:result_index].count("| 150 / 30 / 180 |") == 2
     assert report[scenario_table_index:result_index].count("\n| 60 · 국가별 경기 |") == 2
     assert "느린 테스트케이스 상위 10%" not in report
     assert "최장 scenario_id=305 (1.000s)" in report

@@ -154,17 +154,6 @@ class Settings(BaseSettings):
     model_parameter_max_parameter_slots: int = Field(default=100, ge=1)
     model_parameter_max_value_prompt_basecase_records: int = Field(default=100, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
-    model_parameter_llm_stream_enabled: bool = Field(default=False)
-    model_parameter_llm_reasoning_effort: Literal[
-        "default",
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-    ] = "default"
-
     @model_validator(mode="after")
     def validate_model_parameter_lut_horizon(self) -> "Settings":
         if self.model_parameter_lut_horizon_start_year > self.model_parameter_lut_horizon_end_year:

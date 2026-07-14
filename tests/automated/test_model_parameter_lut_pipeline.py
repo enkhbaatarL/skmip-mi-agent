@@ -136,8 +136,8 @@ def fixed_pipeline_settings() -> Iterator[SimpleNamespace]:
         model_parameter_lut_enabled=True,
         model_parameter_lut_horizon_start_year=2026,
         model_parameter_lut_horizon_end_year=2030,
-        model_parameter_llm_stream_enabled=False,
-        model_parameter_llm_reasoning_effort="default",
+        llm_stream_enabled=False,
+        llm_reasoning_effort="default",
     )
     with patch.object(nodes, "get_settings", return_value=settings):
         yield settings

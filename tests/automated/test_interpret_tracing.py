@@ -199,6 +199,14 @@ class InterpretFlowTracingTest(unittest.IsolatedAsyncioTestCase):
                 "load_interpret_input",
                 return_value=interpret_input,
             ),
+            patch.object(
+                nodes,
+                "get_settings",
+                return_value=SimpleNamespace(
+                    llm_stream_enabled=True,
+                    llm_reasoning_effort="default",
+                ),
+            ),
             patch(
                 "apps.connectors.llm.llm_client.invoke_llm_structured_output",
                 new=fake_invoke_llm_structured_output,

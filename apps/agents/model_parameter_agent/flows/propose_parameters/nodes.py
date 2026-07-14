@@ -550,8 +550,8 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_max_value_prompt_basecase_records": (
                 cfg.model_parameter_max_value_prompt_basecase_records
             ),
-            "model_parameter_llm_stream_enabled": cfg.model_parameter_llm_stream_enabled,
-            "model_parameter_llm_reasoning_effort": cfg.model_parameter_llm_reasoning_effort,
+            "llm_stream_enabled": cfg.llm_stream_enabled,
+            "llm_reasoning_effort": cfg.llm_reasoning_effort,
         },
         "validation_warnings": [*state.validation_warnings, *warnings],
     }
@@ -1022,12 +1022,8 @@ async def _invoke_structured(
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
     cfg = get_settings()
-    stream = getattr(cfg, "model_parameter_llm_stream_enabled", False)
-    reasoning_effort = getattr(
-        cfg,
-        "model_parameter_llm_reasoning_effort",
-        "default",
-    )
+    stream = cfg.llm_stream_enabled
+    reasoning_effort = cfg.llm_reasoning_effort
     # LangGraph 노드 config의 callbacks를 전파해야 LLM 호출이 그래프 trace의 child span으로 묶임
     callbacks = config.get("callbacks") if isinstance(config, dict) else None
     logger.debug(

@@ -38,6 +38,7 @@ from apps.agents.interpret_agent.utils.series_metrics import (
     analyze_feature_diff,
     analyze_price_diff,
 )
+from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, langchain_callbacks_context
@@ -125,6 +126,7 @@ async def _interpret_one(
 ) -> ScenarioComparisonOut:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     user = si_prompt.build_user_prompt(
         scenario_id=sid,
         feature_metrics=bundle.feature_diffs,
@@ -140,7 +142,8 @@ async def _interpret_one(
         preference=ModelPreference.QUALITY,
         temperature=0.0,
         trace_context=trace_context,
-        stream=True,
+        stream=cfg.llm_stream_enabled,
+        reasoning_effort=cfg.llm_reasoning_effort,
     )
     llm = result.result
     return ScenarioComparisonOut(
@@ -203,6 +206,7 @@ async def synthesize_group(
 ) -> dict:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     brief = _scenarios_brief(state.interpretations, state.diff_bundles)
     user = gs_prompt.build_user_prompt(scenarios_brief=brief)
 
@@ -218,7 +222,8 @@ async def synthesize_group(
             preference=ModelPreference.QUALITY,
             temperature=0.0,
             trace_context=trace_context,
-            stream=True,
+            stream=cfg.llm_stream_enabled,
+            reasoning_effort=cfg.llm_reasoning_effort,
         )
     return {"synthesis": GroupSynthesisOut(overall_message=result.result.overall_message)}
 
