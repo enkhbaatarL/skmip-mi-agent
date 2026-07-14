@@ -18,6 +18,7 @@ from backoffice.backend.schemas import (
     CreateRunIn,
     DeleteScenarioGroupIn,
     DeleteScenarioGroupOut,
+    EventDetailEvent,
     EventDetailOut,
     EventListMeta,
     EventListOut,
@@ -165,7 +166,7 @@ async def get_event_detail(
         raise HTTPException(status_code=exc.status_code, detail=exc.body) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail={"message": str(exc)}) from exc
-    event = EventListRow.model_validate(_event_row_payload(raw_source.get("event") or {}))
+    event = EventDetailEvent.model_validate(_event_row_payload(raw_source.get("event") or {}))
     return EventDetailOut(
         event=event,
         scenario_template=raw_source.get("scenarioTemplate") or raw_source.get("scenario_template") or {},
@@ -520,6 +521,12 @@ def _event_row_payload(item: JsonObject) -> JsonObject:
         "scenarioSuggestYn": item.get("scenarioSuggestYn") or item.get("scenario_suggest_yn") or "N",
         "scenarioSuggestReason": item.get("scenarioSuggestReason") or item.get("scenario_suggest_reason"),
         "tags": item.get("tags") or [],
+        "keyBullets": item.get("keyBullets") or item.get("key_bullets") or [],
+        "detailAnalysis": item.get("detailAnalysis") or item.get("detail_analysis") or "",
+        "sourceMiRecordIds": item.get("sourceMiRecordIds") or item.get("source_mi_record_ids") or [],
+        "createdAt": item.get("createdAt") or item.get("created_at") or "",
+        "updatedAt": item.get("updatedAt") or item.get("updated_at") or "",
+        "language": item.get("language") or "ko",
         "marketImpacts": item.get("marketImpacts") or item.get("market_impacts") or {},
         "relatedScenarioGroup": item.get("relatedScenarioGroup") or item.get("related_scenario_group"),
         "scenarioActionState": action,

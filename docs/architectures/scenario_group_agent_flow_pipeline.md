@@ -160,15 +160,19 @@ flowchart LR
 
 `stage1_build_context_pack()`은 DB에서 읽은 event dict를 `Stage1ContextPack`으로 변환한다.
 
-- `C1_base_event`: event ID, 제목, event type, 요약, 핵심 driver
+- `C1_base_event`: event ID, 제목, event type, 요약, 발생 시각, key facts, tags
 - `C2_linked_records`, `C3_historical_analogs`, `C4_related_events`: 현재 stub
 
-핵심 driver는 `key_bullets`의 첫 항목을 최대 160자로 사용하고, 없으면 `detail_analysis`의 첫 문장을 사용한다.
-Stage 1은 driver와 별도로 signpost·scenario 서술용 compact event context도 만든다.
+Stage 1은 signpost·scenario 서술용 compact event context를 만든다. 프롬프트를 구성할 때
+서버 로컬 날짜를 `current_date`(`YYYY-MM-DD`)로 추가하며, 운영 Docker 환경에서는
+`TZ=Asia/Seoul` 설정에 따라 KST 날짜가 사용된다.
 
+- `current_date`: 최근 N일/개월, 계절, 과거·현재·미래 판단의 기준일
 - `occurred_at`, 비어 있지 않은 `tags` 최대 8개
 - `key_bullets` 최대 5개(항목별 최대 280자)
-- bullet이 3개 미만이거나 총 300자 미만이면 `detail_analysis` 앞 600자를 fallback fact로 추가
+- `detail_analysis`는 compact context와 LLM prompt에 사용하지 않음
+- DB의 `occurred_at`이 `NULL`이면 record 생성일을 대신 사용하지 않고 빈 값으로 유지
+- `occurred_at`은 `current_date`와 구분되는 Base Event 발생 시점으로 안내
 
 Scenario Stage 2·3·4·6과 signpost 생성 Stage 2·4+5는 이 context를 사용한다. 이 처리는 이미
 조회한 event payload를 정규화할 뿐 추가 DB 조회나 LLM 호출을 만들지 않는다.

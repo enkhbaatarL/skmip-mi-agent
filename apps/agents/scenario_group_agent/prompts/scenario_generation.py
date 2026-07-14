@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field, conlist, model_validator
@@ -88,12 +89,19 @@ def _format_dimensions_block(template: Any) -> str:
     return "\n".join(lines)
 
 
+def _current_date() -> str:
+    return date.today().strftime("%Y-%m-%d")  # noqa: DTZ011
+
+
 def _format_compact_event_context(pack: Stage1ContextPack) -> str:
     base_event = pack.C1_base_event
     facts = "\n".join(f"  - {fact}" for fact in base_event.key_facts) or "  - (없음)"
     tags = ", ".join(base_event.tags) or "(없음)"
     return f"""\\
+- current_date: {_current_date()}
 - occurred_at: {base_event.occurred_at or "(없음)"}
+- temporal_reference: 최근 N일/개월, 계절 및 과거·현재·미래 판단은 current_date를 기준으로 할 것.
+  occurred_at은 Base Event 발생 시점으로 구분할 것.
 - key_facts:
 {facts}
 - tags: {tags}"""
@@ -103,7 +111,6 @@ def build_stage2_user_prompt(
     *,
     pack: Stage1ContextPack,
     template: Any,
-    detail_excerpt: str,
     required_dim_ids: list[str],
 ) -> str:
     return f"""\
@@ -112,10 +119,7 @@ def build_stage2_user_prompt(
 - title: {pack.C1_base_event.title}
 - event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
 - summary: {pack.C1_base_event.summary}
-- driver: {pack.C1_base_event.driver}
-- compact_event_context:
 {_format_compact_event_context(pack)}
-- detail_analysis(요약): {detail_excerpt}
 
 ## Template (event_type_l1_l2 = {pack.C1_base_event.event_type_l1_l2})
 - template_dimensions_total: {template.resolved_total()}
@@ -140,7 +144,6 @@ def build_stage3_user_prompt(
 ## Base Event 요약
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
-- driver: {pack.C1_base_event.driver}
 {_format_compact_event_context(pack)}
 
 ## Dimension 정보
@@ -175,7 +178,6 @@ def build_stage3_batch_user_prompt(
 ## Base Event 요약
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
-- driver: {pack.C1_base_event.driver}
 {_format_compact_event_context(pack)}
 
 ## Dimension 정보
@@ -217,7 +219,6 @@ def build_stage4_user_prompt(
 ## Base Event
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
-- driver: {pack.C1_base_event.driver}
 {_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
@@ -245,7 +246,6 @@ def build_stage4_fixed_user_prompt(
 ## Base Event
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
-- driver: {pack.C1_base_event.driver}
 {_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
@@ -264,7 +264,6 @@ def build_stage4_fixed_user_prompt(
 def build_scenario_group_metadata_user_prompt(
     *,
     pack: Stage1ContextPack,
-    detail_excerpt: str,
     scenarios: list[Scenario],
 ) -> str:
     scenarios_block = "\n".join(
@@ -276,8 +275,7 @@ def build_scenario_group_metadata_user_prompt(
 ## Base Event
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
-- driver: {pack.C1_base_event.driver}
-- detail_analysis(참고용 발췌): {detail_excerpt}
+{_format_compact_event_context(pack)}
 
 ## 생성된 시나리오 목록 ({len(scenarios)}건)
 {scenarios_block}

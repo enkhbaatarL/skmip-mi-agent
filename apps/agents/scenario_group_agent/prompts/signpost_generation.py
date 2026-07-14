@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
 from apps.persistence.enums import SignpostStrength
+
 
 KEYWORD_HINTS_MIN: int = 3
 KEYWORD_HINTS_MAX: int = 5
@@ -84,6 +86,10 @@ class Stage45StructuredOutput(BaseModel):
     )
 
 
+def _current_date() -> str:
+    return date.today().strftime("%Y-%m-%d")  # noqa: DTZ011
+
+
 def _format_compact_event_context(base_event_summary: dict[str, Any]) -> str:
     facts = "\n".join(
         f"  - {fact}"
@@ -92,7 +98,10 @@ def _format_compact_event_context(base_event_summary: dict[str, Any]) -> str:
     ) or "  - (없음)"
     tags = ", ".join(str(tag) for tag in base_event_summary.get("tags", []) if str(tag).strip()) or "(없음)"
     return f"""\\
+- current_date: {_current_date()}
 - occurred_at: {base_event_summary.get("occurred_at", "") or "(없음)"}
+- temporal_reference: 최근 N일/개월, 계절 및 과거·현재·미래 판단은 current_date를 기준으로 할 것.
+  occurred_at은 Base Event 발생 시점으로 구분할 것.
 - key_facts:
 {facts}
 - tags: {tags}"""
@@ -117,7 +126,6 @@ def build_stage2_user_prompt(
 ## Base Event 요약
 - title: {base_event_summary.get("title", "")}
 - summary: {base_event_summary.get("summary", "")}
-- driver: {base_event_summary.get("driver", "")}
 {_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오
@@ -246,7 +254,6 @@ def build_stage45_user_prompt(
 ## Base Event 요약
 - title: {base_event_summary.get("title", "")}
 - summary: {base_event_summary.get("summary", "")}
-- driver: {base_event_summary.get("driver", "")}
 {_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오
