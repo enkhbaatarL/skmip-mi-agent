@@ -82,6 +82,8 @@ sequenceDiagram
 ### Sync 테스트 API
 
 아래 API는 기존 background API와 같은 request body를 사용하고, response body는 각 API의 Callback Body와 같습니다.
+sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가될 수 있습니다.
+`usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`는 해당 sync 요청 안에서 누적된 LLM token 사용량입니다.
 
 - `POST /scenario-groups/sync`
   - 기존 `POST /scenario-groups`의 prepare 및 생성 graph를 동기 실행

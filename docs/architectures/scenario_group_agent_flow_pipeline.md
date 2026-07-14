@@ -163,7 +163,15 @@ flowchart LR
 - `C1_base_event`: event ID, 제목, event type, 요약, 핵심 driver
 - `C2_linked_records`, `C3_historical_analogs`, `C4_related_events`: 현재 stub
 
-핵심 driver는 `key_bullets`의 첫 항목을 우선 사용하고, 없으면 `detail_analysis`의 첫 문장을 사용한다.
+핵심 driver는 `key_bullets`의 첫 항목을 최대 160자로 사용하고, 없으면 `detail_analysis`의 첫 문장을 사용한다.
+Stage 1은 driver와 별도로 signpost·scenario 서술용 compact event context도 만든다.
+
+- `occurred_at`, 비어 있지 않은 `tags` 최대 8개
+- `key_bullets` 최대 5개(항목별 최대 280자)
+- bullet이 3개 미만이거나 총 300자 미만이면 `detail_analysis` 앞 600자를 fallback fact로 추가
+
+Scenario Stage 2·3·4·6과 signpost 생성 Stage 2·4+5는 이 context를 사용한다. 이 처리는 이미
+조회한 event payload를 정규화할 뿐 추가 DB 조회나 LLM 호출을 만들지 않는다.
 
 #### Template 조회
 
@@ -177,15 +185,16 @@ structured-output LLM으로 선택한다.
 
 - 검증: template 외 ID 금지, 선택 수 3~5개, `(b)` 기준 사용 금지
 - 후처리: LLM이 누락한 미선택 dimension은 자동으로 excluded 목록에 추가
-- fallback: template 앞 4개 dimension 선택
+- LLM 호출 또는 응답 검증 실패: retry 소진 후 flow 실패
 
 #### Stage 3: Dimension별 enum 축소
 
-`stage3_reduce_values()`은 선택된 각 dimension마다 별도 LLM 호출로 전체 enum을 2~4개로 줄인다.
+`stage3_reduce_values()`은 선택된 dimension 전체를 하나의 structured-output LLM 호출로 받아,
+dimension별 전체 enum을 2~4개로 줄인다.
 
 - 선택 enum은 template enum의 부분집합이어야 한다.
-- 최소 하나의 tail-risk enum을 포함해야 한다.
-- fallback: 첫 값, 중간 값, tail 값을 조합해 최소 2개 확보
+- LLM 응답은 입력된 모든 dim_key를 정확히 한 번 포함해야 한다.
+- LLM 호출 실패, dimension 누락·중복, template 밖 enum 반환은 retry 소진 후 flow 실패로 처리한다.
 
 #### Stage 4: Scenario 합성
 
@@ -199,7 +208,7 @@ compatibility feedback에 `recommended_value`가 있으면 해당 시나리오�
 template enum 안의 값이면 사용할 수 있다.
 
 선택한 각 조합에 대해 LLM이 `title`, `description`, `derivation_rationale`,
-`price_direction.brent/jkm/ttf`를 생성한다. 실패 시 중립 가격 방향 fallback 사용.
+`price_direction.brent/jkm/ttf`를 생성한다. 호출 또는 응답 검증 실패 시 scenario를 저장하지 않는다.
 최종 scenario ID는 `S_01`, `S_02` 형식으로 부여된다.
 
 #### Stage 5: Quick Validate (재시도 루프)
@@ -215,9 +224,11 @@ template enum 안의 값이면 사용할 수 있다.
   - compatibility 실패에서 LLM이 권장한 값은 `Stage5RepairInstruction` 형태로 Stage 4 재생성에 전달된다.
     이는 Stage 6으로 직행하는 직접 보정이 아니라, Stage 4가 해당 target 조합과 narrative를 다시 만들기 위한
     override 입력이다.
+  - compatibility LLM은 재생성이 필요한 incompatible 항목만 반환한다. 모든 조합이 통과하면 `items=[]`로 처리한다.
   - Stage 4는 feedback을 반영해 조합을 재선정하고, 새 조합에 맞춰 `title`, `description`,
     `derivation_rationale`, `price_direction`을 다시 생성한다.
 - `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: 남은 feedback이 있어도 Stage 6으로 진행
+  - 기본값은 1이다. 즉 quick validate 실패 후 Stage 4 재생성은 최대 1회 수행한다.
 
 #### Stage 6: MECE 및 Likelihood 검증
 
@@ -225,13 +236,12 @@ template enum 안의 값이면 사용할 수 있다.
 (`very_low | low | medium | high | very_high`)로 분류한다.
 
 LLM은 MECE 판정도 반환하지만, 최종 `mutually_exclusive` 값은 코드가 `dimension_values` 조합의
-중복 여부를 검사한 결정론적 결과를 우선 사용한다. LLM 실패 시 모든 scenario의 likelihood는
-`medium`으로 설정된다.
+중복 여부를 검사한 결정론적 결과를 우선 사용한다. likelihood LLM 실패는 flow 실패로 처리한다.
 
 #### 재시도와 반환 구조
 
-Stage 2~5의 LLM 호출은 `REF_MAX_RETRIES`만큼 재시도한다. 소진 후에는 stage별 fallback으로
-pipeline을 계속 진행한다.
+Stage 2~6의 LLM 호출은 retry 가능한 오류에 한해 `REF_MAX_RETRIES`만큼 재시도한다.
+소진 후에는 원인에 맞는 `MIBaseError`를 raise하고 failure callback을 전송한다.
 
 최종 `scenario_result` 주요 필드:
 
@@ -308,14 +318,11 @@ flowchart LR
 flowchart TD
     A[scenarios] --> B[기존 signpost scenario_id 집합]
     B --> C[target_ids 또는 미생성 scenario 필터링]
-    C --> D{Semaphore 최대 7개}
-    D --> G1[Scenario 1 Pipeline]
-    D --> G2[Scenario 2 Pipeline]
-    D --> G3[Scenario N Pipeline]
-    G1 --> H[asyncio.gather]
-    G2 --> H
-    G3 --> H
-    H --> I[생성 결과 병합 → signpost_result]
+    C --> D[scenario별 비동기 fan-out<br/>semaphore 제한]
+    D --> E[Stage 2<br/>labels 생성]
+    E --> F[Stage 4+5<br/>상세 생성]
+    F --> G[GeneratedSignpost 조립]
+    G --> H[scenario 결과 병합]
 ```
 
 #### 대상 scenario 결정
@@ -332,34 +339,53 @@ scenarios_to_process = [
 `target_ids`는 `sync_scenarios_from_table`이 테이블 편집(dimension 변경 등)을 감지해 설정한다.
 기존 signpost가 이미 있는 scenario라도 `target_ids`에 포함되면 재생성된다.
 
-#### Scenario 내부 signpost subgraph
+#### Scenario별 병렬 생성
 
-`run_signpost_generation`은 대상 scenario 필터링, event summary 구성, semaphore 기반 병렬 fan-out만 담당한다.
-시나리오 1건 처리는 `subgraphs/signpost_generation/flow.py`의 `get_signpost_generation_subgraph() 직접 호출.ainvoke(...)`로 위임한다.
+`run_signpost_generation`은 대상 scenario마다 단일 scenario subgraph를 실행하고 `asyncio.gather()`로 결과를 병합한다.
+동시 실행 수는 `create_signposts_max_concurrent_scenarios` 설정값으로 제한한다. 각 scenario 내부에서는 Stage 2가
+끝난 뒤 Stage 4+5를 실행하지만, 서로 다른 scenario는 병렬로 진행해 대형 batch 응답의 tail latency와 gateway
+timeout 위험을 피한다.
+
+한 scenario가 실패해도 다른 scenario의 정상 결과는 보존한다. 성공 signpost는 저장하되 실패 scenario가 하나라도
+있으면 group stage를 변경하지 않고 failure callback을 보낸다. 다음 요청에서는 기존 정상 signpost를 건너뛰고
+미생성 scenario만 다시 처리한다.
 
 ```mermaid
 flowchart LR
-    A[Scenario] --> B[Stage 2<br/>Observability Filter]
-    B --> C[Stage 4<br/>Direction·Strength]
-    C --> D[Stage 5<br/>Keyword Hints]
-    D --> E[Stage 3<br/>Fixed Axes·조립]
-    E --> F[Signpost Dict List]
+    A[Single Scenario] --> B[Stage 2<br/>Observability Filter]
+    B --> C[Stage 4+5<br/>Strength·Rationale·Keyword Hints]
+    C --> D[Stage 3<br/>Fixed Axes·조립]
+    D --> E[Signpost Dict List]
 ```
 
-코드의 stage 번호는 개념적 설계 번호를 유지하므로 실행 순서가 `2 → 4 → 5 → 3/조립` 형태다.
+코드의 stage 번호는 개념적 설계 번호를 유지하되, 실행 시간 단축을 위해 Stage 4와 Stage 5는
+하나의 structured-output LLM 호출로 통합한다. scenario별 실행 순서는 `2 → 4+5 → 3/조립` 형태다.
 
 ##### Stage 2: Observability Filter
 
-관측 가능한 후보 5~10개를 생성하고 세 가지 필터(공식 채널 관측 가능, binary 판정 가능,
-scenario 가정과 직접 연결)를 적용한다. 통과 개수는 기본 3~6개.
+세 가지 필터(공식 채널 관측 가능, binary 판정 가능, scenario 가정과 직접 연결)를 모두 통과한
+후보만 출력한다. 탈락 후보와 `passes_filter=false` 항목은 output token 절감을 위해 받지 않는다.
+동일 scenario 안에서는 관측 대상·판정 사실·시간축/단계가 실질적으로 다른 후보만 허용하고,
+같은 사건의 표현 변형은 하나만 남긴다. 통과 개수는 최종 저장 기준 기본 3~6개다. 7개 이상이면
+시나리오 고유성·후보 간 차별성 우선순서로 반환된 앞의 6개만 사용하고, 3개 미만이면 재시도 후
+해당 scenario를 저장하지 않는다.
 
-##### Stage 4: Direction과 Strength
+##### Stage 4+5: Strength와 Keyword Hint 생성
 
-각 signpost에 `STRONG | MEDIUM | WEAK`과 한국어 근거를 부여한다. `direction`은 항상 `"SUP"`로 고정.
+각 signpost에 strength, 한국어 근거, record 검색용 keyword 3~5개를 한 번에 부여한다.
+`direction`은 항상 `"SUP"`로 고정한다.
 
-##### Stage 5: Keyword Hint 생성
+Stage 4+5 응답은 다음 조건을 확인한다.
 
-각 label에 record 검색용 keyword 3~5개를 부여한다.
+- 입력 label 수와 출력 signpost 수가 동일해야 한다.
+- `label_ko` 순서가 Stage 2 label 순서와 동일해야 한다.
+- strong/early strength quota를 만족해야 한다.
+- 각 signpost의 `keyword_hints`는 3~5개이고 빈 문자열이 없어야 한다.
+
+최종 조립 전에는 label, Stage 4+5 결과, keyword hints의 길이가 모두 같고 signpost 개수가 3~6개인지
+재검증한다. 이 계약을 만족하지 못한 scenario 결과는 저장하지 않는다.
+
+검증이나 LLM 호출이 최종 실패하면 해당 scenario의 signpost를 저장하지 않고 다른 scenario 결과는 보존한다.
 
 ##### Stage 3 및 최종 조립
 
@@ -371,9 +397,9 @@ scenario 가정과 직접 연결)를 적용한다. 통과 개수는 기본 3~6�
 | `label` | Stage 2 결과 |
 | `signpost_source` | `"mi_record"` |
 | `direction` | `"SUP"` |
-| `strength` | Stage 4 결과 |
-| `rationale_ko` | Stage 4 결과 |
-| `keyword_hints` | Stage 5 결과 |
+| `strength` | Stage 4+5 결과 |
+| `rationale_ko` | Stage 4+5 결과 |
+| `keyword_hints` | Stage 4+5 결과 |
 
 ## Validate Scenarios Flow
 
@@ -489,7 +515,7 @@ fillable_dims =
 이 처리는 validation 요청 schema가 row의 수정 가능 필드를 제한하기 때문에 필요하다.
 사용자가 validation 요청에서 narrative를 보내지 않아도 LLM은 기존 scenario 서술을 참고할 수 있다.
 
-##### 생성값 정규화와 fallback
+##### 생성값 검증과 실패 처리
 
 `generate_new_dimension_values`는 자동 생성 대상 dimension별 enum label 목록을 prompt에 포함해 structured-output LLM을
 호출한다. LLM 응답은 다음 기준으로 필터링된다.
@@ -498,9 +524,8 @@ fillable_dims =
 - `scenario_index`가 요청 row 범위 안이어야 한다.
 - `value`가 해당 dimension의 enum label 중 하나여야 한다.
 
-LLM이 enum 밖 값을 반환하거나 일부 cell을 누락하면 해당 값은 버리고, 누락된
-`(scenario_index, dim_key)` 조합은 결정론적 fallback으로 해당 dimension의 첫 번째 enum label을 사용한다.
-LLM 호출 자체가 실패해도 동일한 fallback으로 모든 누락 cell을 채운다.
+LLM이 enum 밖 값을 반환하거나 필수 생성 cell을 누락하면 `LLM_INVALID_RESPONSE_ERROR`를 raise한다.
+LLM 호출 자체가 실패해도 request table을 임의로 변경하지 않으며 validation flow는 failure callback으로 종료한다.
 
 ##### request_table 갱신 규칙
 
@@ -539,17 +564,19 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 - `nodes.py`: LangGraph node wrapper
 - `schema.py`: review context, check result, report DTO
 - `state.py`: review subgraph 전용 state
-- `nodes.py`: review context 구성, dimension value 자동 생성 helper, R01~R05 검사 구현, LangGraph node wrapper
+- `nodes.py`: review context 구성, dimension value 자동 생성 helper, R00~R06 검사 구현, LangGraph node wrapper
 
-##### `run_review` 검사 규칙 (R01~R05)
+##### `run_review` 검사 규칙 (R00~R06)
 
 | 규칙 | 목적 | 현재 동작 | enum/custom 영향 |
 |---|---|---|---|
+| R00 title exact duplicate | 완전 중복 시나리오명 차단 | Unicode·대소문자·공백·문장부호를 정규화한 제목이 동일한 쌍을 `FAIL`로 판정 | dimension enum과 무관 |
 | R01 baseline contrast coverage | baseline 대비 시나리오 구분력 확인 | 각 selected dimension에서 baseline과 다른 값이 최소 1개 이상 존재하는지 검사 | enum 순서나 tail flag가 아니라 실제 값 문자열 비교로 판단 |
 | R02 value diversity | dimension별 값 다양성 확인 | 각 selected dimension에서 서로 다른 값이 2개 이상인지 검사 | custom text도 일반 값으로 집계되므로 동의어가 다양성으로 과대 계산될 수 있음 |
 | R03 compatibility | 값 조합의 물리/논리 정합성 확인 | scenario별 dimension value 조합과 narrative를 LLM에 전달해 모순 여부를 평가 | enum 밖 custom value도 그대로 검토 입력에 포함 |
 | R04 MECE | 시나리오 조합 중복 방지 | 모든 dimension value 조합이 완전히 동일한 scenario 쌍을 탐지 | 문자열 완전 일치 비교이므로 표기 차이가 있으면 중복으로 잡히지 않을 수 있음 |
 | R05 probability range | 수치 범위 유효성 확인 | 확률(0~100), 증감(-100~100) 검사 함수가 있으나 현재 `run_review`에서는 비활성 | 현재 validation verdict에 영향 없음 |
+| R06 semantic title duplicate | 의미상 유사한 시나리오명 수정 권고 | R03 compatibility와 같은 LLM 호출에서 유사 제목 쌍·사유·수정 방향을 받아 `WARN`으로 판정 | dimension 값 차이를 제목에 드러내는 권고에 활용 |
 
 추가로, 요청 table이 DB의 create 결과와 동일하면 review를 skip하고 PASS를 반환한다.
 동일성 비교는 validation request body가 실제로 받을 수 있는 row 필드만 기준으로 한다.
@@ -561,10 +588,11 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 사용자가 수정 가능한 필드가 바뀌지 않았으면 변경 없음으로 보고 LLM review를 건너뛴다.
 
 - `is_valid=True`: verdict가 `PASS`
-- `is_valid=False`: verdict가 `REVIEW`
+- `is_valid=False`: verdict가 `REVIEW` 또는 `BLOCK`
 
-현재 review는 모든 검사 실패를 `WARN`으로 분류하므로 `BLOCK` verdict를 생성하지 않는다.
-`WARN`이 하나라도 있으면 verdict는 `REVIEW`가 되고, `is_valid=False`로 반환된다.
+`FAIL`이 하나라도 있으면 verdict는 `BLOCK`, `FAIL` 없이 `WARN`이 있으면 `REVIEW`가 된다.
+두 verdict 모두 콘텐츠 검토 결과이므로 예외를 raise하지 않고 callback `result=success`, `is_valid=False`로 반환한다.
+LLM 호출 실패나 잘못된 structured output 같은 처리 오류만 `MIBaseError`를 raise한다.
 
 ## Confirm Generation Flow
 
@@ -611,7 +639,7 @@ flowchart LR
 | 실행 방식 | prepare + 백그라운드 | prepare + 백그라운드 | prepare + 백그라운드 | 동기 ainvoke |
 | 입력 payload | `user_id` | `user_id`, `table` | `user_id`, `table` | `user_id`, `scenario_group`, `table` |
 | 핵심 외부 처리 | scenario LLM pipeline (6 stage) | 신규 row fixed scenario detail 생성 + signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증 | snapshot 생성 (DB only) |
-| 중복 처리 | 기존 group 존재 시 에러 raise | 미생성 scenario + target_ids 대상만 생성 | 해당 없음 | 해당 없음 |
+| 중복 처리 | 기존 group 존재 시 에러 raise | 미생성 scenario + target_ids 대상만 생성 | 제목 완전 중복 FAIL, 의미 중복 WARN | 해당 없음 |
 | stage 갱신 | `scenario_created` | `signpost_created` | `scenario_validated` 또는 `scenario_created` | `completed` |
 | 최종 DB 변경 | group/scenarios 생성 | signposts 생성, scenario 상태 갱신 | judgment stage 갱신 | snapshot 생성, 변경 사항 적용 |
 

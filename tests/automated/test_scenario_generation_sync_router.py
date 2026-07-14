@@ -41,7 +41,13 @@ class TestScenarioGenerationSyncRouter:
             response = _client().post("/scenario-groups/sync", json={"miEventId": 100, "userId": 101})
 
         assert response.status_code == 200
-        assert response.json() == {"result": "success", "reason": None, "scenarioGroup": None, "table": None}
+        assert response.json() == {
+            "result": "success",
+            "reason": None,
+            "scenarioGroup": None,
+            "table": None,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
         prepare.assert_called_once_with(100, 101)
         run_inline.assert_awaited_once_with(
             scenario_group_id=10,
@@ -117,4 +123,5 @@ class TestScenarioGenerationSyncRouter:
             "reason": "graph failed",
             "scenarioGroup": None,
             "table": None,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }

@@ -28,6 +28,8 @@ deeply_thinking_model_api_deployment_name: "skmidev-gpt-5.5-20260424"
 llm_timeout_sec: 310
 llm_max_retries: 1
 llm_concurrency: 10
+llm_stream_enabled: true
+llm_reasoning_effort: default
 
 # HTTP client
 http_timeout: 60
@@ -41,7 +43,7 @@ http_max_concurrency: 20
 # Scenario group
 scenario_group_admin_bearer_tokens:
   - ${SCENARIO_GROUP_ADMIN_TOKEN}
-create_signposts_max_concurrent_scenarios: 7
+create_signposts_max_concurrent_scenarios: 10
 
 # Model parameter
 model_parameter_lut_enabled: true

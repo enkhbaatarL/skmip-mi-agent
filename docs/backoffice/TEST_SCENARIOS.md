@@ -563,6 +563,36 @@ Scenario Group을 생성하거나 기존 Scenario Group을 상세 조회한 테�
 - Event List로 이동해 새 Scenario Group 생성을 시작할 수 있다.
 - 목록 빈 상태에서도 runtime bar와 QA Inspector는 계속 사용 가능하다.
 
+### TC-E-017 완전 중복 시나리오명
+
+절차:
+
+1. 서로 다른 두 row의 시나리오명을 `LNG 공급 차질`, ` lng-공급, 차질 `로 입력한다.
+2. `변경사항 검토`를 클릭한다.
+3. validation callback과 `검토 완료` 버튼 상태를 확인한다.
+
+기대결과:
+
+- 공백·문장부호·대소문자를 정규화한 시나리오명이 동일한 것으로 판정된다.
+- callback은 `result=success`, `isValid=false`, `stage=scenario_created`를 반환한다.
+- 실패 안내에 두 시나리오명과 서로 다른 이름으로 수정하라는 방향이 표시된다.
+- `검토 완료`는 disabled 상태를 유지한다.
+
+### TC-E-018 의미상 유사한 시나리오명
+
+절차:
+
+1. 서로 다른 두 row의 시나리오명을 `가격 상승함`, `가격 상승임`으로 입력한다.
+2. `변경사항 검토`를 클릭한다.
+3. validation callback과 수정 권고를 확인한다.
+
+기대결과:
+
+- compatibility LLM이 종결어미만 다르고 의미가 같은 제목 쌍을 반환한다.
+- callback은 `result=success`, `isValid=false`, `stage=scenario_created`를 반환한다.
+- 주의 안내에 두 시나리오명, 유사 판정 사유, 분기 차이를 드러내는 수정 방향이 표시된다.
+- 수정 후 재검증하기 전까지 `검토 완료`는 disabled 상태를 유지한다.
+
 ## 6. 회귀 체크리스트
 
 - [ ] Backoffice root URL이 정상 렌더링된다.

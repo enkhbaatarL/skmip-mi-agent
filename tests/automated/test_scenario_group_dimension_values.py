@@ -404,7 +404,7 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
         assert "narrative" not in returned_row
         assert returned_row["cells"]["recovery"] == "빠름"
 
-    async def test_out_of_enum_value_falls_back(self) -> None:
+    async def test_out_of_enum_value_raises_llm_invalid_response(self) -> None:
         headers = HEADERS + [{"key": "recovery", "label": "회복", "display_order": 3}]
         rows = [
             {
@@ -434,10 +434,11 @@ class GenerateDimensionValuesNodeTest(unittest.IsolatedAsyncioTestCase):
             "_invoke_dimension_values",
             new=AsyncMock(return_value=generated),
         ):
-            result = await generate_dimension_values(state)
+            with self.assertRaises(MIBaseError) as context:
+                await generate_dimension_values(state)
 
-        # Out-of-enum value is replaced by the deterministic fallback (first enum).
-        assert result["request_table"]["rows"][0]["cells"]["recovery"] == "빠름"
+        assert context.exception.error_code.name == "LLM_INVALID_RESPONSE_ERROR"
+        assert state.request_table.rows[0].cells["recovery"] is None
 
 
 if __name__ == "__main__":
