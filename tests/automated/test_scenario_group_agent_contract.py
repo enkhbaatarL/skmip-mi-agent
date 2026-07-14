@@ -1824,6 +1824,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert serialized["isValid"]
         assert serialized["scenarioGroup"]["scenarioGroupId"] == 10
         assert serialized["scenarioGroup"]["stage"] == "scenario_validated"
+        assert "usage" not in serialized
 
     def test_scenario_insert_payload_matches_orm(self) -> None:
         payload = {

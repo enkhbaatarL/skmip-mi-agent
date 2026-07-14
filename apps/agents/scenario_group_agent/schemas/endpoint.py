@@ -12,6 +12,7 @@ from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioQueryTable,
     ScenarioTable,
 )
+from apps.common.values.llm_usage import LLMUsageModel
 from apps.common.values.response import CallBackBody, CommonResponse
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
@@ -128,6 +129,10 @@ class CreateScenariosOut(CallBackBody):
     table: ScenarioTable | None = None
 
 
+class CreateScenariosSyncOut(CreateScenariosOut):
+    usage: LLMUsageModel | None = None
+
+
 class ValidateScenariosHeaderIn(ScenarioHeader):
     model_config = ConfigDict(
         alias_generator=ApiModel.model_config["alias_generator"],
@@ -183,6 +188,10 @@ class ValidateScenariosOut(CallBackBody):
     table: ScenarioTable | None = None
 
 
+class ValidateScenariosSyncOut(ValidateScenariosOut):
+    usage: LLMUsageModel | None = None
+
+
 class CreateSignpostsHeaderIn(ScenarioHeader):
     model_config = ConfigDict(
         alias_generator=ApiModel.model_config["alias_generator"],
@@ -229,6 +238,10 @@ class CreateSignpostsIn(ApiModel):
 class CreateSignpostsOut(CallBackBody):
     scenario_group: ScenarioGroupPayload | None = None
     table: ScenarioTable | None = None
+
+
+class CreateSignpostsSyncOut(CreateSignpostsOut):
+    usage: LLMUsageModel | None = None
 
 
 class ConfirmScenarioGroupIn(ConfirmScenarioGroupState):
