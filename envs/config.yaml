@@ -63,6 +63,10 @@ agents:
     mlflow_experiment_name: parameter_agent_local
     aip_app_id: parameter_agent
     mlflow_tracing_enabled: true
+  interpret_agent:
+    mlflow_experiment_name: interpret_agent_local
+    aip_app_id: interpret_agent
+    mlflow_tracing_enabled: true
   default:
     mlflow_experiment_name: mi_agent_local
     aip_app_id: mi_agent
@@ -70,8 +74,8 @@ agents:
 
 # MLflow
 mlflow_tracking_uri: "http://40.82.137.178:5001"
-mlflow_tracking_username: "skmip-mi-agent"
-mlflow_tracking_password: "skgas2ndfloor!"
+mlflow_tracking_username: "${MLFLOW_TRACKING_USERNAME}"
+mlflow_tracking_password: "${MLFLOW_TRACKING_PASSWORD}"
 mlflow_langchain_run_tracer_inline: false
 
 # Callback OAuth2

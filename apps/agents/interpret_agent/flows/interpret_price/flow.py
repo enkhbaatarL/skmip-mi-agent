@@ -17,6 +17,7 @@ import time
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
+from apps.agents.interpret_agent.constants import AGENT_NAME
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (
     PriceInterpretationCallbackItem,
     PriceInterpretationCallbackOut,
@@ -33,12 +34,18 @@ from apps.agents.interpret_agent.flows.interpret_price.nodes import (
 from apps.agents.interpret_agent.flows.interpret_price.state import InterpretPriceState
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import (
+    TraceContext,
+    build_langgraph_config,
+    mlflow_trace_context,
+    new_transaction_id,
+)
 from apps.common.values.error_codes import ErrorCode
 
 
 @lru_cache(maxsize=1)
 def get_compiled_graph() -> Runnable:
-    builder = StateGraph(InterpretPriceState)
+    builder = StateGraph(InterpretPriceState, context_schema=TraceContext)
     builder.add_node("load_input", load_input)
     builder.add_node("extract_diffs", extract_diffs)
     builder.add_node("interpret_scenarios", interpret_scenarios)
@@ -58,11 +65,26 @@ async def run_interpret_price(
     scenario_group_id: int | None,
     scenario_ids: list[int] | None = None,
 ) -> PriceInterpretationResult:
+    from apps.common.configs.config import get_settings
+
+    cfg = get_settings()
+    agent_config = cfg.get_agent_config(AGENT_NAME)
+    trace_context = TraceContext(
+        transaction_id=new_transaction_id(),
+        app_identifier=agent_config.aip_app_id,
+        agent_name=AGENT_NAME,
+        session_id=str(scenario_group_id) if scenario_group_id is not None else None,
+    )
     state = InterpretPriceState(
         scenario_group_id=scenario_group_id,
         scenario_ids=list(scenario_ids or []),
     )
-    final_state = await get_compiled_graph().ainvoke(state)
+    with mlflow_trace_context(trace_context):
+        final_state = await get_compiled_graph().ainvoke(
+            state,
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
     if isinstance(final_state, InterpretPriceState):
         result = final_state.result
     elif isinstance(final_state, dict):

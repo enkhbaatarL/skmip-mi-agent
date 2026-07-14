@@ -171,6 +171,21 @@ class ConfigLoaderTest(unittest.TestCase):
 
         self.assertEqual(lines, ["db-from-env", "1", "60.0", "DEBUG"])
 
+    def test_env_placeholder_value_with_yaml_special_characters_loads_safely(self) -> None:
+        config_text = BASE_CONFIG.replace(
+            "api_key: api-key",
+            'api_key: "prefix-${TEST_SPECIAL_SECRET}-suffix"',
+        )
+        special_secret = 'p"a:ss #word\\path'
+
+        lines = self.run_settings_import(
+            config_text,
+            {"TEST_SPECIAL_SECRET": special_secret},
+            print_lines=["print(repr(cfg.api_key))"],
+        )
+
+        self.assertEqual(lines, [repr(f"prefix-{special_secret}-suffix")])
+
     def test_missing_env_placeholder_is_left_literal(self) -> None:
         escaped_config = BASE_CONFIG.replace("METADATA_DB_HOST: db-host", "METADATA_DB_HOST: ${MISSING_TEST_DB_HOST}")
         escaped_config = escaped_config.replace("\n", r"\r\n")
