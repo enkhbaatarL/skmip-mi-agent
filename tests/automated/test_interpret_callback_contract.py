@@ -84,10 +84,13 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
                     {
                         "scenarioId": 315,
                         "content": (
-                            "# 공급 충격 이후 점진적 정상화\n\n"
-                            "## 동인 및 국면\n공급 감소가 초기 상승을 주도합니다.\n\n"
-                            "## 가격 특성\nJKM과 TTF가 먼저 상승한 뒤 안정화됩니다.\n\n"
-                            "## 시나리오 요약\n조달 다변화와 재고 확보가 필요합니다."
+                            "공급 충격 이후 점진적 정상화\n"
+                            "동인 및 국면\n"
+                            "공급 감소가 초기 상승을 주도합니다.\n"
+                            "가격 특성\n"
+                            "JKM과 TTF가 먼저 상승한 뒤 안정화됩니다.\n"
+                            "시나리오 요약\n"
+                            "조달 다변화와 재고 확보가 필요합니다."
                         ),
                     }
                 ],

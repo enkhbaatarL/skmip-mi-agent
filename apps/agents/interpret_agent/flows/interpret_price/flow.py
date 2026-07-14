@@ -131,11 +131,16 @@ def _resolve_callback_url(scenario_group_id: int) -> str:
 
 
 def _format_interpretation_content(interpretation: ScenarioComparisonOut) -> str:
-    return (
-        f"# {interpretation.identity}\n\n"
-        f"## 동인 및 국면\n{interpretation.driver_phase}\n\n"
-        f"## 가격 특성\n{interpretation.price_character}\n\n"
-        f"## 시나리오 요약\n{interpretation.summary}"
+    return "\n".join(
+        (
+            interpretation.identity,
+            "동인 및 국면",
+            interpretation.driver_phase,
+            "가격 특성",
+            interpretation.price_character,
+            "시나리오 요약",
+            interpretation.summary,
+        )
     )
 
 

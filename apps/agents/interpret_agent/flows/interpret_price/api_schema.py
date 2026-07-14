@@ -38,7 +38,7 @@ class ScenarioComparisonOut(ApiModel):
 
     scenario_id: str
     identity: str = Field(
-        description="한 줄 정체성(굵게 표기되는 시나리오 헤드라인 문장)"
+        description="한 줄 정체성(시나리오 헤드라인 문장)"
     )
     driver_phase: str = Field(
         description="동인 및 국면(Driver Phase). 여러 feature 움직임과 지역·수렴 시점을 종합"
@@ -106,13 +106,13 @@ class PriceInterpretationCallbackItem(ApiModel):
     """시나리오별 가격전망 해석 callback 항목."""
 
     scenario_id: int = Field(description="대상 시나리오 ID")
-    content: str = Field(description="제목과 항목별 해석을 담은 Markdown 문자열")
+    content: str = Field(description="제목과 항목별 해석을 개행으로 구분한 일반 텍스트")
 
 
 class PriceInterpretationCallbackOut(CallBackBody):
     """가격전망 해석 비동기 콜백 payload.
 
-    성공 시 interpretations에 시나리오별 Markdown 해석을 실어 보내고,
+    성공 시 interpretations에 시나리오별 일반 텍스트 해석을 실어 보내고,
     실패 시 interpretations=null과 실패 사유를 전달한다.
     """
 
