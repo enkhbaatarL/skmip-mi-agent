@@ -124,3 +124,4 @@ skmip-mi-agent.code-workspace
 .claude/skills/*/*.local
 .claude/skills/omc-reference/
 .playwright-mcp/
+.codex/config.toml
