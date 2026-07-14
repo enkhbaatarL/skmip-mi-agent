@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
+import json
 import time
 from typing import Any
 
@@ -42,15 +44,53 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
+    ModelParameterProposalOutputState,
+    ModelParameterProposalState,
+)
+from apps.agents.model_parameter_agent.utils.tracing import build_trace_context
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import (
+    TraceContext,
+    build_langgraph_config,
+    mlflow_trace_context,
+)
 from apps.common.values.error_codes import ErrorCode
 from apps.connectors.callback.callback_client import send_callback
 
 
+def _debug_final_storage_payload(
+    *,
+    stage: str,
+    scenario_id: int,
+    model_param_proposal_id: int | None,
+    proposal_parameters: list[Any],
+) -> None:
+    """Log the exact proposalParameters JSON passed to the persistence service."""
+    logger.opt(lazy=True).debug(
+        f"[model-parameter][storage][raw] stage={stage} scenario_id={scenario_id} "
+        f"model_param_proposal_id={model_param_proposal_id} proposal_parameters=\n{{}}",
+        lambda: json.dumps(
+            [
+                parameter.model_dump(mode="json", by_alias=True)
+                if hasattr(parameter, "model_dump")
+                else parameter
+                for parameter in proposal_parameters
+            ],
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        ),
+    )
+
+
 def build_graph() -> Runnable:
-    builder = StateGraph(ModelParameterProposalState)
+    builder = StateGraph(
+        ModelParameterProposalState,
+        context_schema=TraceContext,
+        output_schema=ModelParameterProposalOutputState,
+    )
     builder.add_node("load_scenario_context", load_scenario_context)
     builder.add_node("select_parameter_candidates", select_parameter_candidates)
     builder.add_node("validate_parameter_candidates", validate_parameter_candidates)
@@ -67,7 +107,6 @@ def build_graph() -> Runnable:
         _route_after_candidate_validation,
         {
             "load_basecase_samples": "load_basecase_samples",
-            "finalize_empty_parameter_values": "finalize_empty_parameter_values",
         },
     )
     builder.add_edge("load_basecase_samples", "propose_parameter_slots")
@@ -112,10 +151,27 @@ def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposePar
         user_id=data.get("user_id"),
         proposal_parameters=proposal_parameters,
     )
+    sync_proposal_parameters = _proposal_parameters_from_state(
+        data,
+        include_lut_value=True,
+    )
+    logger.opt(lazy=True).debug(
+        f"[model-parameter][sync][output] scenario_id={int(data['scenario_id'])} "
+        "proposal_parameters=\n{}",
+        lambda: json.dumps(
+            [
+                parameter.model_dump(mode="json", by_alias=True)
+                for parameter in sync_proposal_parameters
+            ],
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        ),
+    )
     response_data = _to_response_data(
         data,
         model_param_proposal_id=model_param_proposal_id,
-        proposal_parameters=proposal_parameters,
+        proposal_parameters=sync_proposal_parameters,
     )
     logger.info(
         "[model-parameter] response ready | scenario_id={} proposal_id={} adjustment_count={} non_input_count={} warning_count={}",
@@ -176,8 +232,14 @@ async def run_propose_parameters_background(
     )
     start = time.perf_counter()
     callback_payload: ProposeParametersCallbackOut
+    trace_context = build_trace_context(session_id=str(model_param_proposal_id))
     try:
-        final_state = await build_graph().ainvoke(ModelParameterProposalState(scenario_id=scenario_id))
+        with mlflow_trace_context(trace_context):
+            final_state = await build_graph().ainvoke(
+                ModelParameterProposalState(scenario_id=scenario_id),
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
         data = final_state if isinstance(final_state, dict) else final_state.model_dump()
         _ensure_mapping_candidates(data)
         proposal_parameters = _proposal_parameters_from_state(data)
@@ -187,7 +249,14 @@ async def run_propose_parameters_background(
             model_param_proposal_id=model_param_proposal_id,
             proposal_parameters=proposal_parameters,
         )
-        model_parameter_service.complete_proposal_result(
+        _debug_final_storage_payload(
+            stage="background.before_complete_proposal_result",
+            scenario_id=scenario_id,
+            model_param_proposal_id=model_param_proposal_id,
+            proposal_parameters=proposal_parameters,
+        )
+        await asyncio.to_thread(
+            model_parameter_service.complete_proposal_result,
             model_param_proposal_id=model_param_proposal_id,
             proposal_parameters=proposal_parameters,
         )
@@ -215,13 +284,18 @@ async def run_propose_parameters_background(
             elapsed_ms,
             exc,
         )
-        model_parameter_service.fail_proposal_result(
+        await asyncio.to_thread(
+            model_parameter_service.fail_proposal_result,
             model_param_proposal_id=model_param_proposal_id,
             error_code=error_code,
             error_message=message,
         )
         callback_payload = _callback_error_output(
             message=message,
+            model_param_proposal_id=model_param_proposal_id,
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            event_id=event_id,
         )
 
     try:
@@ -231,7 +305,8 @@ async def run_propose_parameters_background(
         callback_url = cfg.callback_base_url.rstrip("/") + callback_path
         await send_callback(callback_url, callback_payload)
         callback_status = "SKIPPED" if cfg.skip_callback else "SUCCEEDED"
-        model_parameter_service.update_callback_status(
+        await asyncio.to_thread(
+            model_parameter_service.update_callback_status,
             model_param_proposal_id=model_param_proposal_id,
             callback_status=callback_status,
         )
@@ -250,10 +325,23 @@ async def run_propose_parameters_background(
             model_param_proposal_id,
             callback_exc,
         )
-        model_parameter_service.update_callback_status(
+        await asyncio.to_thread(
+            model_parameter_service.update_callback_status,
             model_param_proposal_id=model_param_proposal_id,
             callback_status="FAILED",
         )
+
+
+async def run_propose_parameters_sync(payload: dict[str, Any]) -> ProposeParametersOut:
+    # sync 테스트 경로는 proposal row가 실행 중에 생성되므로 session_id 없이(transaction 단위) 트레이싱
+    trace_context = build_trace_context()
+    with mlflow_trace_context(trace_context):
+        final_state = await build_graph().ainvoke(
+            to_state(payload),
+            config=build_langgraph_config(trace_context),
+            context=trace_context,
+        )
+    return to_output(final_state)
 
 
 def build_runnable_graph() -> Runnable:

@@ -144,6 +144,28 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             MiModelParamProposalModel.del_yn == "N",
         )
         proposal = self.session.execute(stmt).scalars().one_or_none()
+        return self._proposal_to_dict(proposal)
+
+    def fetch_model_param_proposal_for_update(
+        self,
+        model_param_proposal_id: int,
+    ) -> dict[str, Any] | None:
+        stmt = (
+            select(MiModelParamProposalModel)
+            .where(
+                MiModelParamProposalModel.model_param_proposal_id
+                == model_param_proposal_id,
+                MiModelParamProposalModel.del_yn == "N",
+            )
+            .with_for_update()
+        )
+        proposal = self.session.execute(stmt).scalars().one_or_none()
+        return self._proposal_to_dict(proposal)
+
+    @staticmethod
+    def _proposal_to_dict(
+        proposal: MiModelParamProposalModel | None,
+    ) -> dict[str, Any] | None:
         if proposal is None:
             return None
         return {
@@ -152,6 +174,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             "scenario_group_id": int(proposal.scenario_group_id),
             "mi_event_id": int(proposal.mi_event_id),
             "status": proposal.status,
+            "callback_status": proposal.callback_status,
             "proposal_parameters": _json_safe(proposal.proposal_parameters),
             "confirmation_parameters": _json_safe(proposal.confirmation_parameters),
         }
@@ -162,38 +185,40 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         model_param_proposal_id: int,
         user_id: int | None,
         confirmation_parameters: list[dict[str, Any]],
-    ) -> None:
+    ) -> bool:
         stmt = select(MiModelParamProposalModel).where(
             MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
             MiModelParamProposalModel.del_yn == "N",
         )
         proposal = self.session.execute(stmt).scalars().one_or_none()
         if proposal is None:
-            return
+            return False
         proposal.confirmation_parameters = confirmation_parameters
         proposal.status = "CONFIRMED"
         proposal.confirmed_dtm = datetime.now()
         if user_id is not None:
             proposal.mod_usr_logn_id = user_id
+        return True
 
     def complete_model_param_proposal(
         self,
         *,
         model_param_proposal_id: int,
         proposal_parameters: list[dict[str, Any]],
-    ) -> None:
+    ) -> bool:
         stmt = select(MiModelParamProposalModel).where(
             MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
             MiModelParamProposalModel.del_yn == "N",
         )
         proposal = self.session.execute(stmt).scalars().one_or_none()
         if proposal is None:
-            return
+            return False
         proposal.proposal_parameters = proposal_parameters
         proposal.status = "PROPOSED"
         proposal.proposal_completed_dtm = datetime.now()
         proposal.error_code = None
         proposal.error_message = None
+        return True
 
     def fail_model_param_proposal(
         self,
@@ -201,36 +226,38 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         model_param_proposal_id: int,
         error_code: str,
         error_message: str,
-    ) -> None:
+    ) -> bool:
         stmt = select(MiModelParamProposalModel).where(
             MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
             MiModelParamProposalModel.del_yn == "N",
         )
         proposal = self.session.execute(stmt).scalars().one_or_none()
         if proposal is None:
-            return
+            return False
         proposal.proposal_parameters = []
         proposal.status = "FAILED"
         proposal.proposal_completed_dtm = datetime.now()
         proposal.error_code = error_code
         proposal.error_message = error_message
+        return True
 
     def update_model_param_callback_status(
         self,
         *,
         model_param_proposal_id: int,
         callback_status: str,
-    ) -> None:
+    ) -> bool:
         stmt = select(MiModelParamProposalModel).where(
             MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
             MiModelParamProposalModel.del_yn == "N",
         )
         proposal = self.session.execute(stmt).scalars().one_or_none()
         if proposal is None:
-            return
+            return False
         proposal.callback_status = callback_status
         if callback_status == "SUCCEEDED":
             proposal.callback_sent_dtm = datetime.now()
+        return True
 
     def _fetch_model_parameter_definitions(self) -> list[dict[str, Any]]:
         stmt = (

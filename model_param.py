@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import json
 import os
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
-from apps.agents.scenario_group_agent.api import router as scenario_group_router
+from apps.agents.model_parameter_agent.constants import AGENT_NAME
 from apps.common.configs.database.application_tables import (
     APPLICATION_TABLES,
     MODEL_PARAMETER_TABLES,
@@ -25,14 +27,70 @@ from apps.common.openapi.local_docs import register_local_openapi_docs
 INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 
+def _lut_catalog_debug_json(lut_catalog: Any) -> str:
+    if lut_catalog is None:
+        payload = {
+            "version": None,
+            "record_count": 0,
+            "record_counts_by_parameter": {},
+        }
+    else:
+        counts_by_parameter: dict[str, int] = {}
+        for record in lut_catalog.records:
+            counts_by_parameter[record.parameter_name] = (
+                counts_by_parameter.get(record.parameter_name, 0) + 1
+            )
+        payload = {
+            "version": lut_catalog.version,
+            "policy": {
+                "start_year": lut_catalog.policy.start_year,
+                "end_year": lut_catalog.policy.end_year,
+            },
+            "record_count": len(lut_catalog.records),
+            "record_counts_by_parameter": counts_by_parameter,
+        }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        default=str,
+        indent=2,
+    )
+
+
+def _basecase_cache_debug_json(summary: Any) -> str:
+    payload = {
+        "parameter_count": summary.parameter_count,
+        "profile_count": summary.profile_count,
+        "sheet_available_count": summary.sheet_available_count,
+        "record_count": summary.record_count,
+        "warning_count": summary.warning_count,
+        "warnings": list(summary.warnings),
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        default=str,
+        indent=2,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    from apps.agents.model_parameter_agent.utils.basecase import (
+        preload_basecase_runtime_cache,
+    )
+    from apps.agents.model_parameter_agent.utils.lut import (
+        LutLoadPolicy,
+        validate_lut_startup,
+    )
     from apps.common.configs.config import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
+    from apps.connectors.mlflow.tracing import setup_mlflow_tracing
 
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+    setup_mlflow_tracing(cfg, agent_name=AGENT_NAME)
 
     logger.info("Validating ORM models against the database schema")
     await asyncio.to_thread(
@@ -41,6 +99,41 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         APPLICATION_TABLES + MODEL_PARAMETER_TABLES,
     )
     logger.info("ORM/DB schema validation completed")
+
+    lut_policy = LutLoadPolicy(
+        start_year=cfg.model_parameter_lut_horizon_start_year,
+        end_year=cfg.model_parameter_lut_horizon_end_year,
+    )
+    _, lut_catalog = await asyncio.to_thread(
+        validate_lut_startup,
+        cfg.model_parameter_lut_enabled,
+        lut_policy,
+    )
+    logger.info(
+        "Model Parameter LUT startup validation completed | enabled={} version={}",
+        cfg.model_parameter_lut_enabled,
+        lut_catalog.version if lut_catalog is not None else None,
+    )
+    logger.opt(lazy=True).debug(
+        "[model-parameter][lut][summary] startup_catalog=\n{}",
+        lambda: _lut_catalog_debug_json(lut_catalog),
+    )
+
+    basecase_summary = await asyncio.to_thread(preload_basecase_runtime_cache)
+    logger.info(
+        "Model Parameter Basecase startup preload completed | parameters={} profiles={} "
+        "available_sheets={} records={} warnings={}",
+        basecase_summary.parameter_count,
+        basecase_summary.profile_count,
+        basecase_summary.sheet_available_count,
+        basecase_summary.record_count,
+        basecase_summary.warning_count,
+    )
+    logger.opt(lazy=True).debug(
+        "[model-parameter][basecase][summary] startup_cache=\n{}",
+        lambda: _basecase_cache_debug_json(basecase_summary),
+    )
+
     if cfg.callback_oauth2_token_url:
         logger.info("Pre-fetching callback OAuth2 token")
         try:
@@ -48,7 +141,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             logger.info("Callback OAuth2 token pre-fetched successfully")
         except Exception:
             logger.exception(
-                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token"
+                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token",
             )
     else:
         logger.error("callback_oauth2_token_url not configured, skipping token pre-fetch")

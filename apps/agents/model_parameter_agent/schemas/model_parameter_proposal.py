@@ -55,6 +55,7 @@ class ParameterValueCell(ApiModel):
         ),
     )
     basecase_value: Any = None
+    lut_value: Any = None
     proposed_value: Any = None
     rationale_ko: str
     basecase_reference_ids: list[str] = Field(default_factory=list)
@@ -103,78 +104,34 @@ class ParameterAdjustment(ApiModel):
 
 
 class LLMValueCell(ApiModel):
-    coordinates: dict[str, Any] = Field(
-        default_factory=dict,
+    # Optional only at the receive boundary so a malformed item can be dropped
+    # without retrying the entire LLM call. The prompt still requires every key.
+    slot_key: str | None = Field(
+        default=None,
         description=(
-            "Exact slot coordinates. Values for Year, Month, and Period keys must be "
-            'integer JSON numbers such as 2026, not strings such as "2026".'
+            "Return the exact input slot_key for every slot. The nullable receive "
+            "boundary exists only so malformed items can be dropped without retry."
         ),
     )
-    proposed_value: Any = None
-    basecase_reference_ids: list[str] = Field(default_factory=list)
+    proposed_value: Any
     rationale_ko: str
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_legacy_cell(cls, value: Any) -> Any:
-        if isinstance(value, BaseModel):
-            value = value.model_dump()
-        if not isinstance(value, dict):
-            return value
-        if value.get("rationale_ko"):
-            return value
-        value_selection = str(value.get("value_selection_rationale_ko") or "").strip()
-        proposed_value = str(value.get("proposed_value_rationale_ko") or "").strip()
-        rationale = " ".join(
-            item
-            for item in (value_selection, proposed_value)
-            if item
-        )
-        return {
-            **value,
-            "rationale_ko": rationale or "값 선택 및 제안 근거가 제공되지 않았습니다.",
-        }
 
 
 class LLMValueAdjustment(ApiModel):
     candidate_key: str
-    value_grid: list[LLMValueCell] = Field(default_factory=list)
+    slot_values: list[LLMValueCell] = Field(default_factory=list)
     rationale_ko: str
 
-    @field_validator("value_grid", mode="before")
+    @field_validator("slot_values", mode="before")
     @classmethod
-    def _coerce_value_grid(cls, value: Any) -> Any:
+    def _coerce_slot_values(cls, value: Any) -> Any:
         return value or []
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_legacy_adjustment(cls, value: Any) -> Any:
-        if isinstance(value, BaseModel):
-            value = value.model_dump()
-        if not isinstance(value, dict):
-            return value
-        if value.get("rationale_ko"):
-            return value
-        return {
-            **value,
-            "rationale_ko": (
-                value.get("parameter_selection_rationale_ko")
-                or "파라미터 선택 및 값 제안 근거가 제공되지 않았습니다."
-            ),
-        }
 
 
 class LLMSlotProposal(ApiModel):
     candidate_key: str
-    selected: bool = True
     slot_axes: list[LLMSlotAxis] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_legacy_slot(cls, value: Any) -> Any:
-        if isinstance(value, BaseModel):
-            return value.model_dump()
-        return value
+    rationale_ko: str
 
     @field_validator("slot_axes", mode="before")
     @classmethod
@@ -184,8 +141,9 @@ class LLMSlotProposal(ApiModel):
 
 class ParameterSlotProposal(ApiModel):
     candidate_key: str
-    selected: bool = True
+    slot_key: str | None = None
     slot_axes: list[ParameterSlotAxis] = Field(default_factory=list)
+    rationale_ko: str
 
     @field_validator("slot_axes", mode="before")
     @classmethod
@@ -193,9 +151,9 @@ class ParameterSlotProposal(ApiModel):
         return value or []
 
 
-class ParameterCandidateGroupDecision(ApiModel):
-    candidate_keys: list[str] = Field(default_factory=list)
-    selected: bool
+class RoutingDecision(ApiModel):
+    dimension_key: str
+    selected_candidate_keys: list[str] = Field(default_factory=list)
 
 
 class NonInputItem(ApiModel):
@@ -219,7 +177,7 @@ class BasecaseRecord(ApiModel):
 
 
 class LLMCandidateValidationResponse(ApiModel):
-    parameter_candidate_groups: list[ParameterCandidateGroupDecision] = Field(
+    routing_decisions: list[RoutingDecision] = Field(
         default_factory=list,
     )
 

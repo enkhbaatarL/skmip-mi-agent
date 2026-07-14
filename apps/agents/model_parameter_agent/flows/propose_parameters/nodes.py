@@ -1,20 +1,15 @@
 from __future__ import annotations
 
+from datetime import date
+import json
 import re
 import time
-from datetime import date
-from typing import Any
+from typing import Any, Optional
 
-from apps.agents.model_parameter_agent.utils.basecase import (
-    basecase_slot_axis_names_from_candidate,
-    build_basecase_records,
-)
-from apps.agents.model_parameter_agent.utils.parameter_mapping import (
-    get_parameter_knowledge_base_from_resources,
-    ParameterKnowledgeBase,
-    match_parameter_candidates,
-    to_compact_json,
-)
+from langchain_core.runnables.config import RunnableConfig
+from langgraph.runtime import Runtime
+
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -31,24 +26,254 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     LLMValueCell,
     LLMValueProposalResponse,
     ParameterAdjustment,
-    ParameterCandidateGroupDecision,
-    ParameterSlotProposal,
     ParameterSlotAxis,
+    ParameterSlotProposal,
     ParameterValueCell,
+    RoutingDecision,
 )
-from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.utils.basecase import (
+    basecase_slot_axis_names_from_candidate,
+    build_basecase_records,
+)
+from apps.agents.model_parameter_agent.utils.lut import (
+    BasecaseIndex,
+    EffectiveReference,
+    LutLoadPolicy,
+    build_basecase_index,
+    build_slot_catalog,
+    get_lut_catalog,
+    get_parameter_spec_registry,
+    resolve_effective_reference,
+)
+from apps.agents.model_parameter_agent.utils.lut.models import (
+    CandidateSlotCatalog,
+    SlotCatalog,
+)
+from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    ParameterKnowledgeBase,
+    get_parameter_knowledge_base_from_resources,
+    match_parameter_candidates,
+    to_compact_json,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.tracing.context import TraceContext, langchain_callbacks_context
 from apps.common.values.enums import ModelPreference
 from apps.common.values.error_codes import ErrorCode
 
+
 TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
+HARD_MAX_PARAMETER_SLOTS = 100
+
+
+def _debug_stage_payload(
+    stage: str,
+    scenario_id: int,
+    payload: dict[str, Any],
+) -> None:
+    """Log one readable multiline result for a model-parameter processing step."""
+    logger.opt(lazy=True).debug(
+        f"[model-parameter][summary] stage={stage} scenario_id={scenario_id} payload=\n{{}}",
+        lambda: json.dumps(
+            payload,
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        ),
+    )
+
+
+def _scenario_event_debug_summary(
+    scenario_context: dict[str, Any] | None,
+    scenario_id: int,
+) -> dict[str, Any]:
+    context = scenario_context or {}
+    scenario = context.get("scenario") or {}
+    scenario_group = context.get("scenario_group") or {}
+    event = context.get("event") or {}
+    return {
+        "scenario": {
+            "scenario_id": scenario.get("scenario_id") or scenario_id,
+            "scenario_group_id": scenario.get("scenario_group_id"),
+            "title": scenario.get("title"),
+            "dimension_values": scenario.get("dimension_values") or {},
+        },
+        "event": {
+            "mi_event_id": event.get("mi_event_id") or scenario_group.get("mi_event_id"),
+            "event_type_l2_id": (
+                event.get("event_type_l2_id")
+                or scenario_group.get("event_type_l2_id")
+            ),
+            "title": (
+                event.get("event_title")
+                or event.get("event_title_ko")
+                or event.get("title")
+            ),
+        },
+    }
+
+
+def _parameter_names(
+    candidates: list[dict[str, Any]],
+) -> list[str]:
+    names: list[str] = []
+    for candidate in candidates:
+        name = str(
+            candidate.get("canonical_parameter_name")
+            or candidate.get("parameter_name")
+            or "",
+        ).strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _parameter_selection_summary(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    summaries: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        parameter_name = str(
+            candidate.get("canonical_parameter_name")
+            or candidate.get("parameter_name")
+            or "",
+        ).strip()
+        raw_mapping_method = str(candidate.get("mapping_method") or "").lower()
+        mapping_method = "route" if raw_mapping_method == "routing" else raw_mapping_method
+        summary_key = (parameter_name, mapping_method)
+        if not parameter_name or summary_key in seen:
+            continue
+        seen.add(summary_key)
+        summaries.append(
+            {
+                "parameter_name": parameter_name,
+                "mapping_method": mapping_method,
+            },
+        )
+    return summaries
+
+
+def _slot_debug_summary(
+    slots: list[Any],
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    parameter_by_candidate = {
+        str(candidate.get("candidate_key") or ""): str(
+            candidate.get("canonical_parameter_name")
+            or candidate.get("parameter_name")
+            or "",
+        )
+        for candidate in candidates
+    }
+    summaries: list[dict[str, Any]] = []
+    for raw_slot in slots:
+        slot = raw_slot.model_dump() if hasattr(raw_slot, "model_dump") else raw_slot
+        candidate_key = str(slot.get("candidate_key") or "")
+        summary = {
+            "parameter_name": parameter_by_candidate.get(candidate_key) or candidate_key,
+            "coordinates": _coordinates_for_selected_slot(slot),
+        }
+        if slot.get("slot_key") is not None:
+            summary["slot_key"] = slot["slot_key"]
+        summaries.append(summary)
+    return summaries
+
+
+def _adjustment_debug_summary(
+    adjustments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for adjustment in adjustments:
+        parameter_name = adjustment.get("parameter_name")
+        for cell in adjustment.get("value_grid") or []:
+            summaries.append(
+                {
+                    "parameter_name": parameter_name,
+                    "slot": cell.get("coordinates") or {},
+                    "value": cell.get("proposed_value"),
+                },
+            )
+    return summaries
 
 
 def get_settings() -> Any:
     from apps.common.configs.config import get_settings as load_settings
 
     return load_settings()
+
+
+def _available_periods_for_prompt(
+    candidate: CandidateSlotCatalog,
+    periods: list[dict[str, int]],
+) -> list[dict[str, Any]]:
+    if candidate.time_axes == ("Year", "Month"):
+        months_by_year: dict[int, list[int]] = {}
+        for period in periods:
+            year = int(period["Year"])
+            month = int(period["Month"])
+            months = months_by_year.setdefault(year, [])
+            if month not in months:
+                months.append(month)
+        return [
+            {"Year": year, "Months": sorted(months)}
+            for year, months in sorted(months_by_year.items())
+        ]
+    return periods
+
+
+def _candidate_slot_catalog_for_prompt(
+    candidate: CandidateSlotCatalog,
+) -> dict[str, Any]:
+    leaves: list[dict[str, Any]] = []
+    for leaf in candidate.leaves:
+        periods = [dict(period.values) for period in leaf.available_periods]
+        leaves.append(
+            {
+                "fixed_axes": dict(leaf.axes),
+                "available_periods": _available_periods_for_prompt(
+                    candidate,
+                    periods,
+                ),
+            },
+        )
+    return {
+        "candidate_key": candidate.candidate_key,
+        "parameter_name": candidate.parameter_name,
+        "key_axes": list(candidate.key_axes),
+        "fixed_axis_names": list(candidate.non_time_axes),
+        "time_axis_names": list(candidate.time_axes),
+        "leaves": leaves,
+    }
+
+
+def _slot_catalog_for_prompt(slot_catalog: SlotCatalog) -> list[dict[str, Any]]:
+    return [
+        _candidate_slot_catalog_for_prompt(candidate)
+        for candidate in slot_catalog.candidates
+    ]
+
+
+def _effective_reference_to_state(
+    reference: EffectiveReference,
+    *,
+    slot_key: str,
+) -> dict[str, Any]:
+    return {
+        "slot_key": slot_key,
+        "candidate_key": reference.candidate_key,
+        "parameter_name": reference.parameter_name,
+        "axes": dict(reference.axes),
+        "metadata": dict(reference.metadata),
+        "actual_basecase_value": reference.actual_basecase_value,
+        "lut_default_value": reference.lut_default_value,
+        "llm_reference_value": reference.llm_reference_value,
+        "effective_source": reference.effective_source,
+        "basecase_reference_id": reference.basecase_reference_id,
+        "lut_reference_id": reference.lut_reference_id,
+        "lut_version": reference.lut_version,
+        "diagnostics": list(reference.diagnostics),
+    }
 
 
 def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
@@ -62,6 +287,11 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
         sorted((scenario.get("dimension_values") or {}).keys()),
         len(kb.parameter_definitions),
         len(kb.mapping_rules),
+    )
+    _debug_stage_payload(
+        "load_scenario_context.result",
+        state.scenario_id,
+        _scenario_event_debug_summary(context, state.scenario_id),
     )
     return {"scenario_context": context, "parameter_knowledge_base": kb}
 
@@ -120,96 +350,145 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
         len(non_inputs),
         len(warnings),
     )
-    return {
+    output = {
         "candidate_mappings": candidates,
         "non_input_items": non_inputs,
         "validation_warnings": [*state.validation_warnings, *warnings],
     }
+    _debug_stage_payload(
+        "select_parameter_candidates.result",
+        state.scenario_id,
+        {"selected_parameters": _parameter_selection_summary(candidates)},
+    )
+    return output
 
 
-async def validate_parameter_candidates(state: ModelParameterProposalState) -> dict[str, Any]:
+async def validate_parameter_candidates(
+    state: ModelParameterProposalState,
+    runtime: Runtime[TraceContext] | None = None,
+    # langgraph가 문자열 annotation "Optional[RunnableConfig]"만 config 주입 대상으로 인식함 (PEP 563 환경)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, Any]:
     if not state.candidate_mappings:
-        return {
+        output = {
             "candidate_mappings": [],
             "validation_warnings": state.validation_warnings,
         }
-
-    packet = _build_candidate_validation_prompt_packet(
-        state.scenario_context or {},
-        state.candidate_mappings,
-    )
-    messages = [
-        {"role": "system", "content": CANDIDATE_VALIDATION_SYSTEM},
-        {
-            "role": "user",
-            "content": (
-                "아래 JSON만 근거로 Step1.5 수급모델 parameter 후보를 검증하십시오.\n"
-                f"{to_compact_json(packet)}"
-            ),
-        },
-    ]
-
-    llm_started = time.perf_counter()
-    try:
-        result = await _invoke_structured(
-            output_schema=LLMCandidateValidationResponse,
-            messages=messages,
-            model_name=state.model_name,
-        )
-        llm_payload = result.result
-        usage = result.usage.model_dump() if result.usage is not None else None
-        llm_validation_warnings: list[str] = []
-        llm_call = _llm_call_trace(
-            step="Step1.5 candidate validation",
-            model_name=getattr(result, "model", None) or state.model_name,
-            elapsed_seconds=time.perf_counter() - llm_started,
-            usage=usage,
-            success=True,
-        )
-    except Exception as exc:
-        logger.warning(
-            "[model-parameter] Step1.5 LLM call failed | scenario_id={} error={}",
+        _debug_stage_payload(
+            "step1.5.result",
             state.scenario_id,
-            repr(exc),
+            {
+                "selection_method": "skip_llm",
+                "selected_parameters": [],
+            },
         )
-        raise
+        return output
 
-    candidates, validation_warnings = _sanitize_parameter_candidate_group_decisions(
-        llm_payload.parameter_candidate_groups,
+    deterministic_candidates, routing_tasks = _partition_candidate_validation_work(
         state.candidate_mappings,
     )
-    candidates, routing_warnings = _apply_routing_comment_overrides(
-        state.candidate_mappings,
-        candidates,
-    )
-    candidates, routing_cap_warnings = _cap_routing_candidates_per_dimension(candidates)
+    selected_routing_candidates: list[dict[str, Any]] = []
+    validation_warnings: list[str] = []
+    usage: dict[str, Any] | None = None
+    llm_call: dict[str, Any] | None = None
+
+    if routing_tasks:
+        packet = _build_candidate_validation_prompt_packet(
+            state.scenario_context or {},
+            routing_tasks,
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": CANDIDATE_VALIDATION_SYSTEM.format(
+                    max_routing_candidates_per_dimension=(
+                        get_settings().model_parameter_max_routing_candidates_per_dimension
+                    ),
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n"
+                    f"{to_compact_json(packet)}"
+                ),
+            },
+        ]
+
+        llm_started = time.perf_counter()
+        try:
+            result = await _invoke_structured(
+                output_schema=LLMCandidateValidationResponse,
+                messages=messages,
+                model_name=state.model_name,
+                trace_context=runtime.context if runtime is not None else None,
+                config=config,
+            )
+            llm_payload = result.result
+            usage = result.usage.model_dump() if result.usage is not None else None
+            llm_call = _llm_call_trace(
+                step="Step1.5 routing selection",
+                model_name=getattr(result, "model", None) or state.model_name,
+                elapsed_seconds=time.perf_counter() - llm_started,
+                usage=usage,
+                success=True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[model-parameter] Step1.5 LLM call failed | scenario_id={} error={}",
+                state.scenario_id,
+                repr(exc),
+            )
+            raise
+
+        selected_routing_candidates, validation_warnings = _sanitize_routing_decisions(
+            llm_payload.routing_decisions,
+            routing_tasks,
+        )
+
+    selected_candidate_keys = {
+        str(candidate.get("candidate_key") or "")
+        for candidate in [*deterministic_candidates, *selected_routing_candidates]
+    }
+    candidates = [
+        candidate
+        for candidate in state.candidate_mappings
+        if str(candidate.get("candidate_key") or "") in selected_candidate_keys
+    ]
     merged_candidates, merge_warnings = _merge_candidates_by_parameter(candidates)
     logger.info(
-        "[model-parameter] validated candidate mappings | scenario_id={} before_count={} after_count={} merged_count={} selected_candidate_keys={} warning_count={}",
+        "[model-parameter] validated candidate mappings | scenario_id={} before_count={} "
+        "deterministic_count={} routing_task_count={} after_count={} merged_count={} "
+        "selected_candidate_keys={} warning_count={}",
         state.scenario_id,
         len(state.candidate_mappings),
+        len(deterministic_candidates),
+        len(routing_tasks),
         len(candidates),
         len(merged_candidates),
         [candidate.get("candidate_key") for candidate in merged_candidates],
-        len(llm_validation_warnings)
-        + len(validation_warnings)
-        + len(routing_warnings)
-        + len(routing_cap_warnings)
-        + len(merge_warnings),
+        len(validation_warnings) + len(merge_warnings),
     )
-    return {
+    output: dict[str, Any] = {
         "candidate_mappings": merged_candidates,
         "validation_warnings": [
             *state.validation_warnings,
-            *llm_validation_warnings,
             *validation_warnings,
-            *routing_warnings,
-            *routing_cap_warnings,
             *merge_warnings,
         ],
-        "llm_usage": usage,
-        "llm_calls": [*state.llm_calls, llm_call],
     }
+    if llm_call is not None:
+        output["llm_usage"] = usage
+        output["llm_calls"] = [*state.llm_calls, llm_call]
+    _debug_stage_payload(
+        "step1.5.result",
+        state.scenario_id,
+        {
+            "selection_method": "llm" if llm_call is not None else "skip_llm",
+            "selected_parameters": _parameter_names(merged_candidates),
+        },
+    )
+    return output
 
 
 def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
@@ -223,36 +502,220 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.candidate_mappings,
         state.scenario_context or {},
     )
+    cfg = get_settings()
+    policy = LutLoadPolicy(
+        start_year=cfg.model_parameter_lut_horizon_start_year,
+        end_year=cfg.model_parameter_lut_horizon_end_year,
+    )
+    registry = get_parameter_spec_registry()
+    lut_catalog = (
+        get_lut_catalog(policy, registry=registry)
+        if cfg.model_parameter_lut_enabled
+        else None
+    )
+    basecase_index = build_basecase_index(
+        records,
+        state.candidate_mappings,
+        policy=policy,
+        registry=registry,
+    )
+    slot_catalog = build_slot_catalog(basecase_index, lut_catalog)
     counts_by_candidate: dict[str, int] = {}
     for record in records:
         key = str(record.get("candidate_key") or "")
         counts_by_candidate[key] = counts_by_candidate.get(key, 0) + 1
     logger.info(
-        "[model-parameter] loaded basecase records | scenario_id={} record_count={} counts_by_candidate={} warning_count={}",
+        "[model-parameter] loaded reference sources | scenario_id={} basecase_record_count={} "
+        "counts_by_candidate={} lut_enabled={} lut_version={} slot_leaf_count={} warning_count={}",
         state.scenario_id,
         len(records),
         counts_by_candidate,
+        cfg.model_parameter_lut_enabled,
+        lut_catalog.version if lut_catalog is not None else None,
+        sum(len(candidate.leaves) for candidate in slot_catalog.candidates),
         len(warnings),
     )
-    return {
-        "basecase_records": records,
+    prompt_slot_catalog = _slot_catalog_for_prompt(slot_catalog)
+    output = {
+        "basecase_index": basecase_index,
+        "slot_catalog": prompt_slot_catalog,
+        "effective_references": [],
+        "slot_candidate_mappings": [],
+        "lut_version": lut_catalog.version if lut_catalog is not None else None,
+        "resolved_config": {
+            "model_parameter_lut_enabled": cfg.model_parameter_lut_enabled,
+            "model_parameter_lut_horizon_start_year": policy.start_year,
+            "model_parameter_lut_horizon_end_year": policy.end_year,
+            "model_parameter_max_parameter_slots": cfg.model_parameter_max_parameter_slots,
+            "model_parameter_max_value_prompt_basecase_records": (
+                cfg.model_parameter_max_value_prompt_basecase_records
+            ),
+            "model_parameter_llm_stream_enabled": cfg.model_parameter_llm_stream_enabled,
+            "model_parameter_llm_reasoning_effort": cfg.model_parameter_llm_reasoning_effort,
+        },
         "validation_warnings": [*state.validation_warnings, *warnings],
     }
+    return output
 
 
 def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict[str, Any]:
-    records = state.basecase_records or []
-    filtered = _filter_records_by_selected_slots(records, state.parameter_slots)
-    logger.info(
-        "[model-parameter] filtered basecase records by slots | scenario_id={} before_count={} after_count={}",
-        state.scenario_id,
-        len(records),
-        len(filtered),
+    if not isinstance(state.basecase_index, BasecaseIndex):
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="BasecaseIndex is required before exact slot validation",
+        )
+
+    cfg = get_settings()
+    step3_slot_limit = min(
+        cfg.model_parameter_max_parameter_slots,
+        cfg.model_parameter_max_value_prompt_basecase_records,
+        HARD_MAX_PARAMETER_SLOTS,
     )
-    return {
-        "basecase_records": filtered,
-        "validation_warnings": state.validation_warnings,
+    policy = state.basecase_index.policy
+    registry = get_parameter_spec_registry()
+    lut_catalog = (
+        get_lut_catalog(policy, registry=registry)
+        if bool(state.resolved_config.get("model_parameter_lut_enabled"))
+        else None
+    )
+    effective_references: list[dict[str, Any]] = []
+    valid_slots: list[dict[str, Any]] = []
+    warnings = list(state.validation_warnings)
+    counts_by_candidate: dict[str, int] = {}
+    rejected_exact_slot_count = 0
+    seen_selected_keys: set[tuple[str, str]] = set()
+    truncated_slot_counts: dict[str, int] = {}
+
+    for raw_slot in state.parameter_slots:
+        slot = dict(raw_slot)
+        candidate_key = str(slot.get("candidate_key") or "")
+        coordinates = _coordinates_for_selected_slot(slot)
+        expected_axes = state.basecase_index.candidate_key_axes.get(candidate_key)
+        provided_axis_names = [
+            str(axis.get("axis_name") or "").strip()
+            for axis in slot.get("slot_axes") or []
+            if str(axis.get("axis_name") or "").strip()
+        ]
+        schema_matches = (
+            expected_axes is not None
+            and len(provided_axis_names) == len(expected_axes)
+            and set(provided_axis_names) == set(expected_axes)
+        )
+        if not schema_matches:
+            reference = None
+            warning = (
+                "Step2 selected slot의 axis schema가 canonical business key와 달라 "
+                f"제외했습니다: candidate={candidate_key}, expected={list(expected_axes or ())}, "
+                f"provided={provided_axis_names}"
+            )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
+        else:
+            try:
+                reference = resolve_effective_reference(
+                    candidate_key,
+                    coordinates,
+                    state.basecase_index,
+                    lut_catalog,
+                )
+            except MIBaseError as exc:
+                reference = None
+                warning = (
+                    "Step2 selected slot의 canonical exact key가 유효하지 않아 제외했습니다: "
+                    f"candidate={candidate_key}, coordinates={to_compact_json(coordinates)}, "
+                    f"detail={exc}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+        if reference is None:
+            rejected_exact_slot_count += 1
+            warning = (
+                "Step2 selected slot이 활성 BasecaseIndex/LutCatalog exact union에 없어 "
+                f"제외했습니다: candidate={candidate_key}, coordinates={to_compact_json(coordinates)}"
+            )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
+            continue
+
+        selected_key = (
+            candidate_key,
+            _canonical_coordinate_key(dict(reference.axes)),
+        )
+        if selected_key in seen_selected_keys:
+            rejected_exact_slot_count += 1
+            warning = (
+                "Step2가 동일한 canonical exact slot을 중복 반환해 후속 항목을 "
+                f"제외했습니다: candidate={candidate_key}, coordinates={selected_key[1]}"
+            )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
+            continue
+        seen_selected_keys.add(selected_key)
+
+        candidate_count = counts_by_candidate.get(candidate_key, 0) + 1
+        if candidate_count > step3_slot_limit:
+            truncated_slot_counts[candidate_key] = (
+                truncated_slot_counts.get(candidate_key, 0) + 1
+            )
+            continue
+        counts_by_candidate[candidate_key] = candidate_count
+        canonical_axes = dict(reference.axes)
+        slot_key = f"slot-{candidate_count}"
+        slot["slot_key"] = slot_key
+        slot["slot_axes"] = [
+            {
+                "axis_name": axis_name,
+                "axis_value": axis_value,
+            }
+            for axis_name, axis_value in canonical_axes.items()
+        ]
+        valid_slots.append(slot)
+        effective_references.append(
+            _effective_reference_to_state(reference, slot_key=slot_key),
+        )
+
+    for candidate_key, truncated_count in sorted(truncated_slot_counts.items()):
+        warning = (
+            "Step2의 exact·중복 검증을 통과한 slot이 parameter별 상한을 초과해 "
+            f"초과분을 제외했습니다: candidate={candidate_key}, "
+            f"limit={step3_slot_limit}, excluded={truncated_count}"
+        )
+        logger.warning("[model-parameter] {}", warning)
+        warnings.append(warning)
+
+    valid_candidate_keys = set(counts_by_candidate)
+    slot_candidate_mappings = [
+        candidate
+        for candidate in state.candidate_mappings
+        if str(candidate.get("candidate_key") or "") in valid_candidate_keys
+    ]
+    excluded_candidates = [
+        str(
+            candidate.get("canonical_parameter_name")
+            or candidate.get("parameter_name")
+            or candidate.get("candidate_key")
+            or "",
+        )
+        for candidate in state.candidate_mappings
+        if str(candidate.get("candidate_key") or "") not in valid_candidate_keys
+    ]
+    logger.info(
+        "[model-parameter] resolved exact selected references | scenario_id={} "
+        "selected_reference_count={} counts_by_candidate={} rejected_slot_count={} "
+        "excluded_parameters={}",
+        state.scenario_id,
+        len(effective_references),
+        counts_by_candidate,
+        rejected_exact_slot_count,
+        excluded_candidates,
+    )
+    output = {
+        "parameter_slots": valid_slots,
+        "slot_candidate_mappings": slot_candidate_mappings,
+        "effective_references": effective_references,
+        "validation_warnings": warnings,
     }
+    return output
 
 
 def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
@@ -269,34 +732,51 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
         len(state.candidate_mappings),
         reason,
     )
-    return {
+    output = {
         "parameter_adjustments": _unselected_adjustments_for_missing_slots(
             state.candidate_mappings,
             reason,
         ),
         "validation_warnings": [*state.validation_warnings, reason],
     }
+    return output
 
 
-async def propose_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
-    if not state.candidate_mappings:
-        return {
+async def propose_parameter_values(
+    state: ModelParameterProposalState,
+    runtime: Runtime[TraceContext] | None = None,
+    # langgraph가 문자열 annotation "Optional[RunnableConfig]"만 config 주입 대상으로 인식함 (PEP 563 환경)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, Any]:
+    value_candidates = state.slot_candidate_mappings or [
+        candidate
+        for candidate in state.candidate_mappings
+        if str(candidate.get("candidate_key") or "")
+        in {
+            str(slot.get("candidate_key") or "")
+            for slot in _selected_parameter_slots(state.parameter_slots)
+        }
+    ]
+    if not value_candidates:
+        output = {
             "parameter_adjustments": [],
             "validation_warnings": [
                 *state.validation_warnings,
-                "Step1.5 candidate 결과가 없어 Step3 value 산정을 수행하지 않았습니다.",
+                "Step2 exact slot이 있는 parameter가 없어 Step3 value 산정을 수행하지 않았습니다.",
             ],
         }
+        return output
 
     selected_slots = _selected_parameter_slots(state.parameter_slots)
     if not selected_slots:
         return finalize_empty_parameter_values(state)
 
+    value_references = state.effective_references
     packet = _build_value_proposal_prompt_packet(
         state.scenario_context or {},
-        state.candidate_mappings,
+        value_candidates,
         state.parameter_slots,
-        state.basecase_records,
+        value_references,
         state.non_input_items,
     )
     messages = [
@@ -304,7 +784,7 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
         {
             "role": "user",
             "content": (
-                "아래 JSON만 근거로 Step3 수급모델 parameter value_grid를 제안하십시오.\n"
+                "아래 JSON만 근거로 Step3 수급모델 parameter slot 값을 제안하십시오.\n"
                 f"{to_compact_json(packet)}"
             ),
         },
@@ -316,6 +796,8 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
             output_schema=LLMValueProposalResponse,
             messages=messages,
             model_name=state.model_name,
+            trace_context=runtime.context if runtime is not None else None,
+            config=config,
         )
         llm_payload = result.result
         usage = result.usage.model_dump() if result.usage is not None else None
@@ -336,12 +818,9 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
 
     adjustments, validation_warnings = _sanitize_llm_adjustments(
         llm_payload.parameter_adjustments,
-        state.candidate_mappings,
+        value_candidates,
         state.parameter_slots,
-        state.basecase_records,
-    )
-    llm_validation_warnings = list(
-        getattr(llm_payload, "validation_warnings", []) or [],
+        value_references,
     )
     selected_adjustments = [adjustment for adjustment in adjustments if adjustment.get("selected", True)]
     logger.info(
@@ -350,38 +829,59 @@ async def propose_parameter_values(state: ModelParameterProposalState) -> dict[s
         len(adjustments),
         len(selected_adjustments),
         _value_counts_by_parameter(selected_adjustments),
-        len(llm_validation_warnings) + len(validation_warnings),
+        len(validation_warnings),
     )
-    return {
+    output = {
         "parameter_adjustments": adjustments,
         "validation_warnings": [
             *state.validation_warnings,
-            *llm_validation_warnings,
             *validation_warnings,
         ],
         "llm_usage": usage,
         "llm_calls": [*state.llm_calls, llm_call],
     }
+    _debug_stage_payload(
+        "step3.result",
+        state.scenario_id,
+        {"slot_values": _adjustment_debug_summary(adjustments)},
+    )
+    return output
 
 
-async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[str, Any]:
+async def propose_parameter_slots(
+    state: ModelParameterProposalState,
+    runtime: Runtime[TraceContext] | None = None,
+    # langgraph가 문자열 annotation "Optional[RunnableConfig]"만 config 주입 대상으로 인식함 (PEP 563 환경)
+    config: Optional[RunnableConfig] = None,  # noqa: UP045
+) -> dict[str, Any]:
     if not state.candidate_mappings:
-        return {
+        output = {
             "parameter_slots": [],
             "validation_warnings": state.validation_warnings,
         }
+        _debug_stage_payload(
+            "step2.result",
+            state.scenario_id,
+            {"selected_slots": []},
+        )
+        return output
 
+    slot_catalog = state.slot_catalog
     packet = _build_slot_proposal_prompt_packet(
         state.scenario_context or {},
         state.candidate_mappings,
-        state.basecase_records,
+        slot_catalog,
         state.non_input_items,
     )
     logger.info(
-        "[model-parameter] built basecase slot options | scenario_id={} candidate_count={} record_count={}",
+        "[model-parameter] built compact slot catalog prompt | scenario_id={} "
+        "candidate_count={} leaf_count={}",
         state.scenario_id,
         len(packet["parameter_slot_tasks"]),
-        len(state.basecase_records),
+        sum(
+            len((task.get("slot_catalog") or {}).get("leaves") or [])
+            for task in packet["parameter_slot_tasks"]
+        ),
     )
     messages = [
         {"role": "system", "content": SLOT_PROPOSAL_SYSTEM},
@@ -400,6 +900,8 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
             output_schema=LLMSlotProposalResponse,
             messages=messages,
             model_name=state.model_name,
+            trace_context=runtime.context if runtime is not None else None,
+            config=config,
         )
         llm_payload = result.result
         usage = result.usage.model_dump() if result.usage is not None else None
@@ -422,34 +924,35 @@ async def propose_parameter_slots(state: ModelParameterProposalState) -> dict[st
         llm_payload.parameter_slots,
         state.candidate_mappings,
     )
-    llm_non_input_items = list(getattr(llm_payload, "non_input_items", []) or [])
-    llm_validation_warnings = list(
-        getattr(llm_payload, "validation_warnings", []) or [],
-    )
-    non_inputs = [
-        item.model_dump()
-        for item in llm_non_input_items
-    ] or state.non_input_items
-    selected_slots = [slot for slot in slots if slot.get("selected", True)]
     logger.info(
-        "[model-parameter] proposed parameter slots | scenario_id={} slot_count={} selected_count={} slot_counts_by_parameter={} warning_count={}",
+        "[model-parameter] proposed parameter slots | scenario_id={} slot_count={} "
+        "slot_counts_by_parameter={} warning_count={}",
         state.scenario_id,
         len(slots),
-        len(selected_slots),
-        _slot_counts_by_parameter(selected_slots, state.candidate_mappings),
-        len(llm_validation_warnings) + len(validation_warnings),
+        _slot_counts_by_parameter(slots, state.candidate_mappings),
+        len(validation_warnings),
     )
-    return {
+    output = {
         "parameter_slots": slots,
-        "non_input_items": non_inputs,
+        "non_input_items": state.non_input_items,
         "validation_warnings": [
             *state.validation_warnings,
-            *llm_validation_warnings,
             *validation_warnings,
         ],
         "llm_usage": usage,
         "llm_calls": [*state.llm_calls, llm_call],
     }
+    _debug_stage_payload(
+        "step2.result",
+        state.scenario_id,
+        {
+            "selected_slots": _slot_debug_summary(
+                slots,
+                state.candidate_mappings,
+            ),
+        },
+    )
+    return output
 
 
 def _llm_call_trace(
@@ -513,18 +1016,50 @@ async def _invoke_structured(
     output_schema: type[Any],
     messages: list[dict[str, str]],
     model_name: str | None,
+    trace_context: TraceContext | None = None,
+    config: RunnableConfig | None = None,
 ) -> Any:
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
     cfg = get_settings()
-    return await invoke_llm_structured_output(
-        output_schema=output_schema,
-        messages=messages,
-        model_name=model_name,
-        preference=ModelPreference.QUALITY,
-        temperature=0.0,
-        max_retries=cfg.llm_max_retries,
+    stream = getattr(cfg, "model_parameter_llm_stream_enabled", False)
+    reasoning_effort = getattr(
+        cfg,
+        "model_parameter_llm_reasoning_effort",
+        "default",
     )
+    # LangGraph 노드 config의 callbacks를 전파해야 LLM 호출이 그래프 trace의 child span으로 묶임
+    callbacks = config.get("callbacks") if isinstance(config, dict) else None
+    logger.debug(
+        "[model-parameter][llm] trace callbacks | config_type={} callbacks_type={} handlers={}",
+        type(config).__name__,
+        type(callbacks).__name__,
+        [type(h).__name__ for h in getattr(callbacks, "handlers", [])],
+    )
+    logger.debug(
+        "[model-parameter][llm] invoke | output_schema={} model_name={} "
+        "stream={} reasoning_effort={} timeout_sec={} connect_timeout_sec={} "
+        "max_retries={}",
+        output_schema.__name__,
+        model_name,
+        stream,
+        reasoning_effort,
+        getattr(cfg, "llm_timeout_sec", None),
+        getattr(cfg, "http_connect_timeout", None),
+        cfg.llm_max_retries,
+    )
+    with langchain_callbacks_context(callbacks):
+        return await invoke_llm_structured_output(
+            output_schema=output_schema,
+            messages=messages,
+            model_name=model_name,
+            preference=ModelPreference.QUALITY,
+            temperature=0.0,
+            max_retries=cfg.llm_max_retries,
+            trace_context=trace_context,
+            stream=stream,
+            reasoning_effort=reasoning_effort,
+        )
 
 
 def _field_key(value: Any) -> str:
@@ -751,70 +1286,92 @@ def _merge_candidates_by_parameter(
     return merged_candidates, []
 
 
-def _parameter_validation_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
+            "candidate_key": candidate.get("candidate_key"),
             "parameter_name": (
                 candidate.get("canonical_parameter_name")
                 or candidate.get("parameter_name")
             ),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "mapping_comment": candidate.get("mapping_comment"),
         },
     )
 
 
-def _build_candidate_validation_tasks(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+def _partition_candidate_validation_work(
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    deterministic: list[dict[str, Any]] = []
+    routing_candidates: list[dict[str, Any]] = []
     for candidate in candidates:
-        key = _candidate_group_key(candidate)
-        task = groups.setdefault(
-            key,
+        mapping_method = str(candidate.get("mapping_method") or "").lower()
+        if mapping_method == "direct":
+            deterministic.append(candidate)
+        elif mapping_method == "routing":
+            routing_candidates.append(candidate)
+
+    routing_tasks: list[dict[str, Any]] = []
+    for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
+        if len(group_candidates) == 1:
+            deterministic.extend(group_candidates)
+            continue
+        first = group_candidates[0]
+        routing_tasks.append(
             {
-                "parameter": _parameter_validation_prompt_payload(candidate),
-                "candidate_keys": [],
-                "selection_dimensions": [],
+                "dimension_key": (
+                    first.get("dimension_key")
+                    or first.get("source_dimension_id")
+                ),
+                "dimension_label": first.get("source_dimension_label"),
+                "dimension_value": first.get("source_dimension_value"),
+                "candidates": group_candidates,
             },
         )
-        parameter = task["parameter"]
-        if "parameter_hint" not in parameter and candidate.get("parameter_hint"):
-            parameter["parameter_hint"] = candidate.get("parameter_hint")
-        if "semantic_axes" not in parameter and candidate.get("semantic_axes"):
-            parameter["semantic_axes"] = candidate.get("semantic_axes")
+    return deterministic, routing_tasks
 
-        for candidate_key in (
-            candidate.get("merged_candidate_keys")
-            or [candidate.get("candidate_key")]
-        ):
-            _append_unique_text(task["candidate_keys"], candidate_key)
-        for source_dimension in _source_dimensions_for_prompt(candidate):
-            dimension = _source_dimension_for_value_task(source_dimension)
-            if dimension:
-                _append_unique_source_dimension(task["selection_dimensions"], dimension)
 
-    return [
-        _drop_none_or_empty(task)
-        for task in groups.values()
-    ]
+def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
+    return _drop_none_or_empty(
+        {
+            "dimension_key": task.get("dimension_key"),
+            "dimension_label": task.get("dimension_label"),
+            "dimension_value": task.get("dimension_value"),
+            "candidates": [
+                _routing_candidate_prompt_payload(candidate)
+                for candidate in task.get("candidates") or []
+            ],
+        },
+    )
 
 
 def _build_candidate_validation_prompt_packet(
     scenario_context: dict[str, Any],
-    candidates: list[dict[str, Any]],
+    routing_tasks: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    allowed_dimension_keys = {
+        str(task.get("dimension_key") or "")
+        for task in routing_tasks
+        if str(task.get("dimension_key") or "")
+    }
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
-            allowed_dimension_keys=_allowed_prompt_dimension_keys(candidates),
+            allowed_dimension_keys=allowed_dimension_keys,
         ),
-        "candidate_validation_tasks": _build_candidate_validation_tasks(candidates),
+        "routing_tasks": [
+            _routing_task_for_prompt(task)
+            for task in routing_tasks
+        ],
     }
 
 
 def _build_slot_proposal_prompt_packet(
     scenario_context: dict[str, Any],
     candidates: list[dict[str, Any]],
-    basecase_records: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     cfg = get_settings()
@@ -828,27 +1385,22 @@ def _build_slot_proposal_prompt_packet(
         ),
         "period_resolution_policy": _compact_period_resolution_policy(),
         "slot_selection_limits": {
-            "maxParameterSlots": cfg.model_parameter_max_parameter_slots,
+            "maxParameterSlots": min(
+                cfg.model_parameter_max_parameter_slots,
+                HARD_MAX_PARAMETER_SLOTS,
+            ),
+            "applicationScope": "independent_per_parameter_task",
             "priority": [
-                "값 변경 여부와 무관하게 scenario/event/dimension/basecase로 합리적으로 특정 가능한 slot",
-                "parameter_slot_tasks[].basecase_slot_options에 존재하고 scenario/event 의미와 일치하는 slot",
-                "basecase에는 없지만 scenario/event에 명확한 실제 모델 input slot",
+                "scenario/event/dimension과 직접 관련되고 task slot_catalog에 exact 존재하는 slot",
+                "LUT-only를 포함하되 active source에 실제 존재하는 slot",
+                "최대치를 채우지 말고 관련성이 높은 slot만 선택",
             ],
         },
         "parameter_slot_tasks": _build_parameter_slot_tasks(
             candidates,
-            basecase_records,
+            slot_catalog,
             non_input_items,
         ),
-    }
-
-
-def _slot_for_value_prompt(slot: dict[str, Any]) -> dict[str, Any]:
-    slot_axes = slot.get("slot_axes") or []
-    return {
-        "candidate_key": slot.get("candidate_key"),
-        "slot_axes": slot_axes,
-        "selected_slot_axes_field_names": _slot_axis_names(slot_axes),
     }
 
 
@@ -859,49 +1411,6 @@ def _slot_axis_names(slot_axes: list[dict[str, Any]]) -> list[str]:
         if axis_name:
             _append_unique_text(axis_names, axis_name)
     return axis_names
-
-
-def _build_basecase_value_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[str, dict[str, Any]] = {}
-    for record in records:
-        axes = record.get("axes") or {}
-        fixed_axes: dict[str, Any] = {}
-        cell_axes: dict[str, Any] = {}
-        for axis_name, axis_value in axes.items():
-            axis_name_text = str(axis_name)
-            display_value = _slot_option_value(axis_value)
-            if _is_time_slot_axis(axis_name_text):
-                cell_axes[axis_name_text] = display_value
-            else:
-                fixed_axes[axis_name_text] = display_value
-
-        group_key = to_compact_json(
-            [
-                record.get("candidate_key"),
-                record.get("value_name"),
-                fixed_axes,
-            ],
-        )
-        group = groups.setdefault(
-            group_key,
-            {
-                "candidate_key": record.get("candidate_key"),
-                "value_name": record.get("value_name"),
-                "fixed_axes": fixed_axes,
-                "variable_axis_names": [],
-                "cells": [],
-            },
-        )
-        for axis_name in cell_axes:
-            _append_unique_text(group["variable_axis_names"], axis_name)
-        group["cells"].append(
-            {
-                "reference_id": record.get("reference_id"),
-                "axes": cell_axes,
-                "basecase_value": record.get("value"),
-            },
-        )
-    return list(groups.values())
 
 
 def _filter_dimension_values(
@@ -1145,34 +1654,64 @@ def _supporting_dimensions_for_task(
     return dimensions
 
 
-def _slot_for_value_task(slot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "slot_axes": slot.get("slot_axes") or [],
+def _slot_reference_contexts(
+    parameter_slots: list[dict[str, Any]],
+    reference_records: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    references_by_slot_key = {
+        (str(record.get("candidate_key") or ""), str(record.get("slot_key") or "")): record
+        for record in reference_records
+        if str(record.get("slot_key") or "")
     }
-
-
-def _strip_candidate_key_from_basecase_group(group: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in group.items()
-        if key != "candidate_key"
+    references_by_coordinate = {
+        (
+            str(record.get("candidate_key") or ""),
+            _canonical_coordinate_key(record.get("axes") or {}),
+        ): record
+        for record in reference_records
     }
+    contexts: dict[str, dict[str, dict[str, Any]]] = {}
+    for slot in _assign_slot_keys(parameter_slots):
+        candidate_key = str(slot.get("candidate_key") or "")
+        slot_key = str(slot.get("slot_key") or "")
+        coordinates = _coordinates_for_selected_slot(slot)
+        reference = references_by_slot_key.get((candidate_key, slot_key))
+        if reference is None:
+            reference = references_by_coordinate.get(
+                (candidate_key, _canonical_coordinate_key(coordinates)),
+            )
+        if reference is None:
+            logger.warning(
+                "[model-parameter] selected slot has no reference and was excluded | "
+                "candidate_key={} slot_key={} coordinates={}",
+                candidate_key,
+                slot_key,
+                to_compact_json(coordinates),
+            )
+            continue
+        contexts.setdefault(candidate_key, {})[slot_key] = {
+            "slot": slot,
+            "reference": reference,
+        }
+    return contexts
 
 
-def _strip_candidate_key_from_slot_option(option: dict[str, Any]) -> dict[str, Any]:
+def _slot_for_value_task(
+    *,
+    slot_key: str,
+    slot: dict[str, Any],
+    reference: dict[str, Any],
+) -> dict[str, Any]:
     return {
-        key: value
-        for key, value in option.items()
-        if key != "candidate_key"
+        "slot_key": slot_key,
+        "coordinates": dict(reference.get("axes") or _coordinates_for_selected_slot(slot)),
+        "slot_rationale_ko": slot.get("rationale_ko"),
+        "reference_value": (
+            reference.get("llm_reference_value")
+            if "llm_reference_value" in reference
+            else reference.get("value")
+        ),
     }
-
-
-def _selected_slot_axis_names_for_task(slots: list[dict[str, Any]]) -> list[str]:
-    axis_names: list[str] = []
-    for slot in slots:
-        for axis_name in _slot_axis_names(slot.get("slot_axes") or []):
-            _append_unique_text(axis_names, axis_name)
-    return axis_names
 
 
 def _compact_period_resolution_policy() -> dict[str, Any]:
@@ -1184,7 +1723,11 @@ def _compact_period_resolution_policy() -> dict[str, Any]:
     }
 
 
-def _parameter_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+def _parameter_prompt_payload(
+    candidate: dict[str, Any],
+    *,
+    allowed_slot_axes: list[str] | None = None,
+) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
             "candidate_key": candidate.get("candidate_key"),
@@ -1194,34 +1737,64 @@ def _parameter_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
             ),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
-            "allowed_slot_axes_field_names": _allowed_slot_axes_field_names(candidate),
+            "allowed_slot_axes_field_names": (
+                allowed_slot_axes
+                if allowed_slot_axes is not None
+                else _allowed_slot_axes_field_names(candidate)
+            ),
         },
     )
 
 
 def _build_parameter_slot_tasks(
     candidates: list[dict[str, Any]],
-    basecase_records: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    basecase_options_by_key: dict[str, list[dict[str, Any]]] = {}
-    for option in _build_basecase_slot_options(basecase_records):
-        candidate_key = str(option.get("candidate_key") or "")
-        basecase_options_by_key.setdefault(candidate_key, []).append(
-            _strip_candidate_key_from_slot_option(option),
-        )
+    max_parameter_slots = min(
+        get_settings().model_parameter_max_parameter_slots,
+        HARD_MAX_PARAMETER_SLOTS,
+    )
+    catalog_by_key = {
+        str(candidate_catalog.get("candidate_key") or ""): {
+            key: value
+            for key, value in candidate_catalog.items()
+            if key != "candidate_key"
+        }
+        for candidate_catalog in slot_catalog
+    }
 
     tasks: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
+        candidate_catalog = catalog_by_key.get(
+            candidate_key,
+            {
+                "parameter_name": (
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                ),
+                "key_axes": _allowed_slot_axes_field_names(candidate),
+                "fixed_axis_names": [],
+                "time_axis_names": [],
+                "leaves": [],
+            },
+        )
         task = {
-            "parameter": _parameter_prompt_payload(candidate),
+            "parameter": _parameter_prompt_payload(
+                candidate,
+                allowed_slot_axes=list(candidate_catalog.get("key_axes") or []),
+            ),
+            "limits": {
+                "maxParameterSlots": max_parameter_slots,
+                "instruction": "관련된 slot만 선택하며 최대치를 채울 필요는 없음",
+            },
             "selection_dimensions": _selection_dimensions_for_task(candidate),
             "supporting_dimensions": _supporting_dimensions_for_task(
                 non_input_items,
                 candidate,
             ),
-            "basecase_slot_options": basecase_options_by_key.get(candidate_key, []),
+            "slot_catalog": candidate_catalog,
         }
         tasks.append(_drop_none_or_empty(task))
     return tasks
@@ -1233,18 +1806,14 @@ def _build_parameter_value_tasks(
     basecase_records: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    selected_slots_by_key = _group_selected_slots_by_candidate(parameter_slots)
-    basecase_groups_by_key: dict[str, list[dict[str, Any]]] = {}
-    for group in _build_basecase_value_groups(basecase_records):
-        candidate_key = str(group.get("candidate_key") or "")
-        basecase_groups_by_key.setdefault(candidate_key, []).append(
-            _strip_candidate_key_from_basecase_group(group),
-        )
+    slot_contexts = _slot_reference_contexts(parameter_slots, basecase_records)
 
     tasks: list[dict[str, Any]] = []
     for candidate in candidates:
         candidate_key = str(candidate.get("candidate_key") or "")
-        selected_slots = selected_slots_by_key.get(candidate_key, [])
+        candidate_slot_contexts = slot_contexts.get(candidate_key) or {}
+        if not candidate_slot_contexts:
+            continue
         task = {
             "parameter": _parameter_prompt_payload(candidate),
             "selection_dimensions": _selection_dimensions_for_task(candidate),
@@ -1252,12 +1821,14 @@ def _build_parameter_value_tasks(
                 non_input_items,
                 candidate,
             ),
-            "selected_slot_axes_field_names": _selected_slot_axis_names_for_task(selected_slots),
-            "selected_slots": [
-                _slot_for_value_task(slot)
-                for slot in selected_slots
+            "slots": [
+                _slot_for_value_task(
+                    slot_key=slot_key,
+                    slot=context["slot"],
+                    reference=context["reference"],
+                )
+                for slot_key, context in candidate_slot_contexts.items()
             ],
-            "basecase_value_groups": basecase_groups_by_key.get(candidate_key, []),
         }
         tasks.append(_drop_none_or_empty(task))
     return tasks
@@ -1270,7 +1841,6 @@ def _build_value_proposal_prompt_packet(
     basecase_records: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    cfg = get_settings()
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
@@ -1279,10 +1849,6 @@ def _build_value_proposal_prompt_packet(
                 non_input_items,
             ),
         ),
-        "period_resolution_policy": _compact_period_resolution_policy(),
-        "basecase_record_selection_policy": {
-            "maxRecords": cfg.model_parameter_max_value_prompt_basecase_records,
-        },
         "parameter_value_tasks": _build_parameter_value_tasks(
             candidates,
             parameter_slots,
@@ -1380,110 +1946,6 @@ def _normalize_axis_value(value: Any) -> str:
     return " ".join(str(value).strip().lower().split())
 
 
-def _slot_axis_pairs(slot: dict[str, Any]) -> list[tuple[str, Any]]:
-    pairs: list[tuple[str, Any]] = []
-    for axis in slot.get("slot_axes") or []:
-        axis_name = axis.get("axis_name")
-        if axis_name:
-            pairs.append((str(axis_name), axis.get("axis_value")))
-    return pairs
-
-
-def _record_axis_matches(
-    record_axes: dict[str, Any],
-    axis_name: str,
-    axis_value: Any,
-) -> bool:
-    return (
-        axis_name in record_axes
-        and _normalize_axis_value(record_axes.get(axis_name))
-        == _normalize_axis_value(axis_value)
-    )
-
-
-def _record_fully_matches_slot(record: dict[str, Any], slot: dict[str, Any]) -> bool:
-    record_axes = record.get("axes") or {}
-    axis_pairs = _slot_axis_pairs(slot)
-    if not axis_pairs:
-        return True
-    for axis_name, axis_value in axis_pairs:
-        if not _record_axis_matches(record_axes, axis_name, axis_value):
-            return False
-    return True
-
-
-def _record_matches_slot_prefix_depth(
-    record: dict[str, Any],
-    slot: dict[str, Any],
-    depth: int,
-) -> bool:
-    axis_pairs = _slot_axis_pairs(slot)
-    if depth <= 0 or depth > len(axis_pairs):
-        return False
-    record_axes = record.get("axes") or {}
-    return all(
-        _record_axis_matches(record_axes, axis_name, axis_value)
-        for axis_name, axis_value in axis_pairs[:depth]
-    )
-
-
-def _filter_records_by_selected_slots(
-    records: list[dict[str, Any]],
-    slots: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    selected_slots = _selected_parameter_slots(slots)
-    if not selected_slots:
-        return []
-
-    max_records = get_settings().model_parameter_max_value_prompt_basecase_records
-    if len(records) <= max_records:
-        return records
-
-    slots_by_candidate: dict[str, list[dict[str, Any]]] = {}
-    for slot in selected_slots:
-        candidate_key = str(slot.get("candidate_key") or "")
-        if not candidate_key:
-            continue
-        slots_by_candidate.setdefault(candidate_key, []).append(slot)
-
-    filtered: list[dict[str, Any]] = []
-    included_indices: set[int] = set()
-
-    def append_record(index: int, record: dict[str, Any]) -> bool:
-        if index in included_indices:
-            return False
-        included_indices.add(index)
-        filtered.append(record)
-        return len(filtered) >= max_records
-
-    for index, record in enumerate(records):
-        candidate_key = str(record.get("candidate_key") or "")
-        candidate_slots = slots_by_candidate.get(candidate_key) or []
-        if any(_record_fully_matches_slot(record, slot) for slot in candidate_slots):
-            if append_record(index, record):
-                return filtered
-
-    max_axis_count = max(
-        (
-            len(_slot_axis_pairs(slot))
-            for candidate_slots in slots_by_candidate.values()
-            for slot in candidate_slots
-        ),
-        default=0,
-    )
-    for depth in range(max_axis_count - 1, 0, -1):
-        for index, record in enumerate(records):
-            candidate_key = str(record.get("candidate_key") or "")
-            candidate_slots = slots_by_candidate.get(candidate_key) or []
-            if any(
-                _record_matches_slot_prefix_depth(record, slot, depth)
-                for slot in candidate_slots
-            ):
-                if append_record(index, record):
-                    return filtered
-    return filtered
-
-
 def _slot_option_value(value: Any) -> Any:
     if isinstance(value, float) and value.is_integer():
         return int(value)
@@ -1574,84 +2036,6 @@ def _build_basecase_slot_options(records: list[dict[str, Any]]) -> list[dict[str
     return list(options.values())
 
 
-def _sanitize_parameter_candidate_group_decisions(
-    groups: list[ParameterCandidateGroupDecision],
-    candidates: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
-    selected_by_key: dict[str, dict[str, Any]] = {}
-    warnings: list[str] = []
-    returned_keys: set[str] = set()
-
-    for group in groups:
-        group_candidate_keys = [
-            str(candidate_key)
-            for candidate_key in group.candidate_keys
-            if str(candidate_key or "").strip()
-        ]
-        if not group_candidate_keys:
-            warnings.append("LLM parameter_candidate_groups에 빈 candidate_keys가 있어 제외했습니다.")
-            continue
-
-        known_keys = [
-            candidate_key
-            for candidate_key in group_candidate_keys
-            if candidate_key in candidate_by_key
-        ]
-        unknown_keys = sorted(set(group_candidate_keys) - set(known_keys))
-        if unknown_keys:
-            warnings.append(
-                "LLM이 알 수 없는 candidate_key를 parameter_candidate_groups에 반환해 제외했습니다: "
-                f"{unknown_keys}",
-            )
-        returned_keys.update(known_keys)
-        if not group.selected:
-            continue
-
-        for candidate_key in known_keys:
-            candidate = candidate_by_key[candidate_key]
-            selected_by_key[candidate_key] = dict(candidate)
-
-    for candidate in candidates:
-        candidate_key = str(candidate.get("candidate_key") or "")
-        if candidate_key in selected_by_key:
-            continue
-        mapping_method = str(candidate.get("mapping_method") or "").lower()
-        if mapping_method == "direct":
-            enriched = dict(candidate)
-            if candidate_key in returned_keys:
-                warning = (
-                    "direct 후보는 LLM parameter group selected=false와 무관하게 유지했습니다: "
-                    f"{candidate_key}"
-                )
-            else:
-                warning = (
-                    "LLM parameter group 응답에 누락된 direct candidate_key는 유지했습니다: "
-                    f"{candidate_key}"
-                )
-            selected_by_key[candidate_key] = enriched
-            warnings.append(warning)
-
-    missing_keys = sorted(
-        key
-        for key in set(candidate_by_key) - returned_keys
-        if str(candidate_by_key[key].get("mapping_method") or "").lower() != "direct"
-    )
-    if missing_keys:
-        warnings.append(
-            "LLM parameter group 응답에 누락된 candidate_key는 제외했습니다: "
-            f"{missing_keys}",
-        )
-    selected_candidates = [
-        selected_by_key[str(candidate.get("candidate_key") or "")]
-        for candidate in candidates
-        if str(candidate.get("candidate_key") or "") in selected_by_key
-    ]
-    if candidates and not selected_candidates:
-        warnings.append("LLM parameter group 검증 결과 selected=true candidate가 없습니다.")
-    return selected_candidates, warnings
-
-
 def _routing_groups_by_dimension(
     candidates: list[dict[str, Any]],
 ) -> dict[tuple[Any, str], list[dict[str, Any]]]:
@@ -1667,191 +2051,89 @@ def _routing_groups_by_dimension(
     return routing_groups
 
 
-ROUTING_COMMENT_GENERIC_TOKENS = {
-    "경우",
-    "시설",
-    "시",
-    "영향",
-    "유형",
-    "피해",
-    "facility",
-    "impact",
-    "type",
-    "when",
-}
-
-def _routing_match_tokens(value: Any) -> list[str]:
-    tokens = re.findall(r"[0-9a-zA-Z가-힣]+", str(value or "").lower())
-    return [
-        token
-        for token in tokens
-        if len(token) >= 2 and token not in ROUTING_COMMENT_GENERIC_TOKENS
-    ]
-
-
-def _routing_comment_matches_dimension_value(value: Any, comment: Any) -> bool:
-    value_tokens = _routing_match_tokens(value)
-    comment_tokens = _routing_match_tokens(comment)
-    if not value_tokens or not comment_tokens:
-        return False
-    comment_text = " ".join(comment_tokens)
-    return all(token in comment_text for token in value_tokens)
-
-
-def _apply_routing_comment_overrides(
-    all_candidates: list[dict[str, Any]],
-    selected_candidates: list[dict[str, Any]],
+def _sanitize_routing_decisions(
+    decisions: list[RoutingDecision],
+    routing_tasks: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Use bridge-sheet routing comments as deterministic tiebreakers.
-
-    LLM still performs the candidate gate, but when the DB dimension value
-    clearly matches a routing row comment such as "생산 시설 피해 시", that row is
-    the authoritative route for the dimension.
-    """
-
-    selected_by_key = {
-        str(candidate.get("candidate_key") or ""): dict(candidate)
-        for candidate in selected_candidates
+    task_by_dimension = {
+        str(task.get("dimension_key") or ""): task
+        for task in routing_tasks
     }
+    selected_keys: set[str] = set()
+    returned_dimensions: set[str] = set()
     warnings: list[str] = []
-    routing_groups = _routing_groups_by_dimension(all_candidates)
 
-    for group_candidates in routing_groups.values():
-        matched = [
-            candidate
-            for candidate in group_candidates
-            if _routing_comment_matches_dimension_value(
-                candidate.get("source_dimension_value"),
-                candidate.get("mapping_comment"),
+    for decision in decisions:
+        dimension_key = str(decision.dimension_key or "")
+        task = task_by_dimension.get(dimension_key)
+        if task is None:
+            warning = (
+                "LLM이 알 수 없는 dimension_key를 routing_decisions에 반환해 제외했습니다: "
+                f"{dimension_key}"
             )
-        ]
-        if not matched:
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
             continue
-        matched_keys = {str(candidate.get("candidate_key") or "") for candidate in matched}
-        for candidate in group_candidates:
-            candidate_key = str(candidate.get("candidate_key") or "")
-            if candidate_key in matched_keys:
-                if candidate_key not in selected_by_key:
-                    enriched = dict(candidate)
-                    selected_by_key[candidate_key] = enriched
-                    warnings.append(
-                        "routing 후보를 DB 매핑 comment 기준으로 selected=true 보정했습니다: "
-                        f"{candidate_key}",
-                    )
+        returned_dimensions.add(dimension_key)
+        allowed_keys = {
+            str(candidate.get("candidate_key") or "")
+            for candidate in task.get("candidates") or []
+        }
+        for raw_candidate_key in decision.selected_candidate_keys:
+            candidate_key = str(raw_candidate_key or "")
+            if candidate_key in allowed_keys:
+                selected_keys.add(candidate_key)
                 continue
-            if candidate_key in selected_by_key:
-                selected_by_key.pop(candidate_key, None)
-                warnings.append(
-                    "routing 후보를 DB 매핑 comment 기준으로 selected=false 보정했습니다: "
-                    f"{candidate_key}",
-                )
+            warning = (
+                "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
+                f"dimension={dimension_key}, candidate={candidate_key}"
+            )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
 
-    ordered = [
-        selected_by_key[str(candidate.get("candidate_key") or "")]
-        for candidate in all_candidates
-        if str(candidate.get("candidate_key") or "") in selected_by_key
+    missing_dimensions = sorted(set(task_by_dimension) - returned_dimensions)
+    if missing_dimensions:
+        warning = (
+            "LLM routing_decisions에 누락된 dimension task가 있어 해당 routing 후보를 제외했습니다: "
+            f"{missing_dimensions}"
+        )
+        logger.warning("[model-parameter] {}", warning)
+        warnings.append(warning)
+
+    selected_candidates = [
+        candidate
+        for task in routing_tasks
+        for candidate in task.get("candidates") or []
+        if str(candidate.get("candidate_key") or "") in selected_keys
     ]
-    return ordered, warnings
-
-
-def _cap_routing_candidates_per_dimension(
-    selected_candidates: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Keep at most 2 routing candidates per (event_type_l2_id, dimension_key).
-
-    Must run after _apply_routing_comment_overrides (which may add candidates)
-    and before _merge_candidates_by_parameter (which clears dimension_key).
-    Priority: comment-matched candidates first, then original candidate order.
-    """
-
-    dropped_keys: set[str] = set()
-    warnings: list[str] = []
-    max_candidates_per_dimension = get_settings().model_parameter_max_routing_candidates_per_dimension
-    for group_candidates in _routing_groups_by_dimension(selected_candidates).values():
-        if len(group_candidates) <= max_candidates_per_dimension:
-            continue
-        matched: list[dict[str, Any]] = []
-        unmatched: list[dict[str, Any]] = []
-        for candidate in group_candidates:
-            if _routing_comment_matches_dimension_value(
-                candidate.get("source_dimension_value"),
-                candidate.get("mapping_comment"),
-            ):
-                matched.append(candidate)
-            else:
-                unmatched.append(candidate)
-        for candidate in (matched + unmatched)[max_candidates_per_dimension:]:
-            candidate_key = str(candidate.get("candidate_key") or "")
-            if not candidate_key:
-                continue
-            dropped_keys.add(candidate_key)
-            warnings.append(
-                "routing 후보가 dimension당 최대 "
-                f"{max_candidates_per_dimension}개를 초과해 제외했습니다: "
-                f"{candidate_key}",
-            )
-
-    if not dropped_keys:
-        return selected_candidates, warnings
-    return (
-        [
-            candidate
-            for candidate in selected_candidates
-            if str(candidate.get("candidate_key") or "") not in dropped_keys
-        ],
-        warnings,
-    )
+    return selected_candidates, warnings
 
 
 def _sanitize_llm_slots(
     slots: list[LLMSlotProposal],
     candidates: list[dict[str, Any]],
-    *,
-    max_selected_slots: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    if max_selected_slots is None:
-        max_selected_slots = get_settings().model_parameter_max_parameter_slots
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     sanitized: list[dict[str, Any]] = []
     warnings: list[str] = []
-    selected_slot_count = 0
     for slot in slots:
         if slot.candidate_key not in candidate_by_key:
-            warnings.append(
+            warning = (
                 "LLM이 알 수 없는 candidate_key를 반환해 slot을 제외했습니다: "
-                f"{slot.candidate_key}",
+                f"{slot.candidate_key}"
             )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
             continue
         issues = _slot_axis_issues(slot.slot_axes)
         if issues:
-            reason = (
+            warning = (
                 "LLM이 실제 모델 input으로 사용할 수 없는 모호한 slot 값을 반환해 "
-                f"selected=false로 보정했습니다: {', '.join(issues)}"
+                f"제외했습니다: {', '.join(issues)}: {slot.candidate_key}"
             )
-            warnings.append(f"{reason}: {slot.candidate_key}")
-            patched = slot.model_copy(
-                update={
-                    "selected": False,
-                    "slot_axes": [],
-                },
-            )
-            sanitized.append(_parameter_slot_from_llm(patched))
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
             continue
-        if slot.selected is not False:
-            selected_slot_count += 1
-            if selected_slot_count > max_selected_slots:
-                reason = (
-                    "LLM이 slot_selection_limits.maxParameterSlots를 초과해 반환하여 "
-                    "초과 slot을 selected=false로 보정했습니다."
-                )
-                warnings.append(f"{reason}: {slot.candidate_key}")
-                patched = slot.model_copy(
-                    update={
-                        "selected": False,
-                    },
-                )
-                sanitized.append(_parameter_slot_from_llm(patched))
-                continue
         sanitized.append(_parameter_slot_from_llm(slot))
     return sanitized, warnings
 
@@ -1859,7 +2141,6 @@ def _sanitize_llm_slots(
 def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
     return ParameterSlotProposal(
         candidate_key=slot.candidate_key,
-        selected=slot.selected,
         slot_axes=[
             ParameterSlotAxis(
                 axis_name=axis.axis_name,
@@ -1867,6 +2148,7 @@ def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
             )
             for axis in slot.slot_axes
         ],
+        rationale_ko=slot.rationale_ko,
     ).model_dump()
 
 
@@ -1880,6 +2162,19 @@ def _group_selected_slots_by_candidate(
             continue
         grouped.setdefault(candidate_key, []).append(slot)
     return grouped
+
+
+def _assign_slot_keys(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts_by_candidate: dict[str, int] = {}
+    assigned: list[dict[str, Any]] = []
+    for raw_slot in _selected_parameter_slots(slots):
+        slot = dict(raw_slot)
+        candidate_key = str(slot.get("candidate_key") or "")
+        count = counts_by_candidate.get(candidate_key, 0) + 1
+        counts_by_candidate[candidate_key] = count
+        slot["slot_key"] = str(slot.get("slot_key") or f"slot-{count}")
+        assigned.append(slot)
+    return assigned
 
 
 def _selected_parameter_slots(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1910,7 +2205,7 @@ def _slot_axes_for_candidate(slots: list[dict[str, Any]]) -> list[ParameterSlotA
             slot_axes.append(
                 ParameterSlotAxis(
                     axis_name=axis_name,
-                    axis_value=str(axis_value),
+                    axis_value=axis_value,
                 ),
             )
     return slot_axes
@@ -1924,50 +2219,6 @@ def _coordinates_for_selected_slot(slot: dict[str, Any]) -> dict[str, Any]:
             continue
         coordinates[axis_name] = _slot_axis_value(axis_name, axis.get("axis_value"))
     return coordinates
-
-
-def _requested_slot_coordinates(slots: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    requested: dict[str, dict[str, Any]] = {}
-    for slot in slots:
-        coordinates = _coordinates_for_selected_slot(slot)
-        if coordinates:
-            requested[_canonical_coordinate_key(coordinates)] = coordinates
-    return requested
-
-
-def _coordinate_request_issues(
-    coordinates: dict[str, Any],
-    requested_coordinates_by_key: dict[str, dict[str, Any]],
-) -> list[str]:
-    if not requested_coordinates_by_key:
-        return ["Step2 selected slot이 없어 value_grid cell을 받을 수 없습니다"]
-
-    coordinate_key = _canonical_coordinate_key(coordinates)
-    if coordinate_key in requested_coordinates_by_key:
-        return []
-
-    requested_axis_names: set[str] = set()
-    for requested_coordinates in requested_coordinates_by_key.values():
-        requested_axis_names.update(requested_coordinates)
-    provided_axis_names = {
-        str(axis_name).strip()
-        for axis_name in (coordinates or {})
-        if str(axis_name).strip()
-    }
-
-    issues: list[str] = []
-    missing_axis_names = sorted(requested_axis_names - provided_axis_names)
-    extra_axis_names = sorted(provided_axis_names - requested_axis_names)
-    if missing_axis_names:
-        issues.append(f"요청 slot axis 누락: {', '.join(missing_axis_names)}")
-    if extra_axis_names:
-        issues.append(f"요청하지 않은 slot axis 포함: {', '.join(extra_axis_names)}")
-    if not issues:
-        issues.append(
-            "요청 selected_slots에 없는 좌표: "
-            f"{to_compact_json(coordinates or {})}",
-        )
-    return issues
 
 
 def _canonical_coordinate_key(coordinates: dict[str, Any]) -> str:
@@ -1985,47 +2236,33 @@ def _canonical_coordinate_key(coordinates: dict[str, Any]) -> str:
     return to_compact_json(normalized)
 
 
-def _value_cell_signature(cell: ParameterValueCell) -> str:
-    return to_compact_json(
-        {
-            "basecase_value": cell.basecase_value,
-            "proposed_value": cell.proposed_value,
-        },
-    )
-
-
-def _dedupe_value_grid_by_slot(
-    cells: list[ParameterValueCell],
-) -> tuple[list[ParameterValueCell], list[str]]:
-    deduped: list[ParameterValueCell] = []
-    seen_by_slot: dict[str, tuple[str, ParameterValueCell]] = {}
-    conflicts: list[str] = []
-
-    for cell in cells:
-        slot_key = _canonical_coordinate_key(cell.coordinates)
-        signature = _value_cell_signature(cell)
-        existing = seen_by_slot.get(slot_key)
-        if existing is None:
-            seen_by_slot[slot_key] = (signature, cell)
-            deduped.append(cell)
-            continue
-        if existing[0] == signature:
-            continue
-        conflicts.append(
-            "동일 slot 좌표에 서로 다른 value 제안이 반환되었습니다: "
-            f"slot={slot_key}",
-        )
-
-    return deduped, conflicts
-
-
-def _parameter_value_cell_from_llm(cell: LLMValueCell) -> ParameterValueCell:
+def _parameter_value_cell_from_slot_value(
+    slot_value: LLMValueCell,
+    reference: dict[str, Any],
+) -> ParameterValueCell:
+    coordinates = {
+        **(reference.get("axes") or {}),
+        **(reference.get("metadata") or {}),
+    }
+    if "llm_reference_value" in reference:
+        basecase_value = reference.get("actual_basecase_value")
+        lut_value = reference.get("lut_default_value")
+        basecase_reference_id = reference.get("basecase_reference_id")
+    else:
+        basecase_value = reference.get("value")
+        lut_value = None
+        basecase_reference_id = reference.get("reference_id")
     return ParameterValueCell(
-        coordinates=cell.coordinates,
-        basecase_value=None,
-        proposed_value=cell.proposed_value,
-        rationale_ko=cell.rationale_ko,
-        basecase_reference_ids=cell.basecase_reference_ids,
+        coordinates=coordinates,
+        basecase_value=basecase_value,
+        lut_value=lut_value,
+        proposed_value=slot_value.proposed_value,
+        rationale_ko=slot_value.rationale_ko,
+        basecase_reference_ids=(
+            [str(basecase_reference_id)]
+            if basecase_reference_id is not None
+            else []
+        ),
     )
 
 
@@ -2033,101 +2270,118 @@ def _sanitize_llm_adjustments(
     adjustments: list[LLMValueAdjustment],
     candidates: list[dict[str, Any]],
     slots: list[dict[str, Any]],
-    basecase_records: list[dict[str, Any]],
+    reference_records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
-    basecase_by_reference_id = {
-        str(record["reference_id"]): record
-        for record in basecase_records
-        if record.get("reference_id") is not None
-    }
+    slot_contexts = _slot_reference_contexts(
+        slots,
+        reference_records,
+    )
     sanitized: list[dict[str, Any]] = []
     warnings: list[str] = []
-    returned_candidate_keys: set[str] = set()
+    adjustments_by_candidate: dict[str, list[LLMValueAdjustment]] = {}
     for adjustment in adjustments:
+        adjustments_by_candidate.setdefault(adjustment.candidate_key, []).append(
+            adjustment,
+        )
+    duplicate_candidate_keys = {
+        candidate_key
+        for candidate_key, candidate_adjustments in adjustments_by_candidate.items()
+        if len(candidate_adjustments) > 1
+    }
+    for duplicate_candidate_key in sorted(duplicate_candidate_keys):
+        warning = (
+            "LLM Step3 응답에 동일 candidate_key의 adjustment가 중복되어 "
+            f"모두 제외했습니다: {duplicate_candidate_key}"
+        )
+        logger.warning("[model-parameter] {}", warning)
+        warnings.append(warning)
+
+    processed_candidate_keys: set[str] = set()
+    for adjustment in adjustments:
+        if adjustment.candidate_key in duplicate_candidate_keys:
+            continue
         candidate = candidate_by_key.get(adjustment.candidate_key)
         if candidate is None:
-            warnings.append(
+            warning = (
                 "LLM이 알 수 없는 candidate_key를 반환해 제외했습니다: "
-                f"{adjustment.candidate_key}",
+                f"{adjustment.candidate_key}"
             )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
             continue
-        returned_candidate_keys.add(adjustment.candidate_key)
+        processed_candidate_keys.add(adjustment.candidate_key)
         selected_slots = slots_by_key.get(adjustment.candidate_key, [])
         slot_axes = _slot_axes_for_candidate(selected_slots)
-        requested_coordinates_by_key = _requested_slot_coordinates(selected_slots)
-        returned_coordinate_keys: set[str] = set()
         slot_issues = _slot_axis_issues(slot_axes)
         if slot_issues:
-            reason = (
+            warning = (
                 "Step2 selected slot_axes에 실제 모델 input으로 사용할 수 없는 값이 있어 "
-                f"검토 경고로 기록했습니다: {', '.join(slot_issues)}"
+                f"검토 경고로 기록했습니다: {', '.join(slot_issues)}: "
+                f"{adjustment.candidate_key}"
             )
-            warnings.append(f"{reason}: {adjustment.candidate_key}")
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
 
+        expected_contexts = slot_contexts.get(adjustment.candidate_key) or {}
+        returned_slot_keys: set[str] = set()
         value_grid: list[ParameterValueCell] = []
-        for raw_cell in adjustment.value_grid:
-            cell = _parameter_value_cell_from_llm(raw_cell)
-            coordinate_issues = _coordinate_issues(cell.coordinates)
-            if coordinate_issues:
-                reason = (
-                    "Step3 응답 value_grid.coordinates에 모호한 값이 있어 "
-                    f"cell을 제외했습니다: {', '.join(coordinate_issues)}"
+        for slot_value in adjustment.slot_values:
+            slot_key = str(slot_value.slot_key or "").strip()
+            context = expected_contexts.get(slot_key)
+            if context is None:
+                warning = (
+                    "Step3 응답의 slotKey가 요청 목록에 없어 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key or '<empty>'}"
                 )
-                warnings.append(f"{reason}: {adjustment.candidate_key}")
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
                 continue
-            coordinate_request_issues = _coordinate_request_issues(
-                cell.coordinates,
-                requested_coordinates_by_key,
-            )
-            if coordinate_request_issues:
-                reason = (
-                    "Step3 응답 value_grid.coordinates가 요청 기준 slot 좌표를 그대로 반영하지 않아 "
-                    f"cell을 제외했습니다: {', '.join(coordinate_request_issues)}"
+            if slot_key in returned_slot_keys:
+                warning = (
+                    "Step3 응답이 동일 slotKey를 중복 반환해 후속 값을 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}"
                 )
-                warnings.append(f"{reason}: {adjustment.candidate_key}")
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
                 continue
-            if cell.proposed_value is None:
-                reason = (
-                    "Step3 응답 value_grid.proposed_value가 null이라 "
-                    "cell을 제외했습니다. 범위형 dimension은 자동 변환해야 합니다."
+            if slot_value.proposed_value is None:
+                warning = (
+                    "Step3 응답의 proposedValue가 null이라 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}"
                 )
-                warnings.append(f"{reason}: {adjustment.candidate_key}")
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
                 continue
-            patched_cell, patch_warning = _patch_basecase_value(cell, basecase_by_reference_id)
-            if patch_warning:
-                warnings.append(f"{patch_warning}: {adjustment.candidate_key}")
-            value_grid.append(patched_cell)
-            returned_coordinate_keys.add(_canonical_coordinate_key(patched_cell.coordinates))
-
-        value_grid, slot_conflicts = _dedupe_value_grid_by_slot(value_grid)
-        if slot_conflicts:
-            reason = (
-                "Step3 응답 value_grid에 동일 slot 좌표의 value 충돌이 있어 "
-                "첫 번째 유효 cell만 유지했습니다."
+            returned_slot_keys.add(slot_key)
+            value_grid.append(
+                _parameter_value_cell_from_slot_value(
+                    slot_value,
+                    context["reference"],
+                ),
             )
-            warnings.append(f"{reason}: {adjustment.candidate_key}")
-            warnings.extend(f"{conflict}: {adjustment.candidate_key}" for conflict in slot_conflicts)
 
-        missing_coordinate_keys = sorted(set(requested_coordinates_by_key) - returned_coordinate_keys)
-        if missing_coordinate_keys:
-            missing_coordinates = [
-                requested_coordinates_by_key[key]
-                for key in missing_coordinate_keys
-            ]
-            warnings.append(
-                "Step3 응답 value_grid에 요청 selected_slot 좌표가 누락되었습니다: "
-                f"{to_compact_json(missing_coordinates)}: {adjustment.candidate_key}",
+        missing_slot_keys = sorted(set(expected_contexts) - returned_slot_keys)
+        if missing_slot_keys:
+            warning = (
+                "Step3 응답에 요청한 slotKey가 누락되었습니다. 재호출 없이 누락 값을 "
+                f"제외하고 진행합니다: candidate={adjustment.candidate_key}, "
+                f"slotKeys={missing_slot_keys}"
             )
-            value_grid = []
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
 
-        selected = bool(value_grid)
-        if not selected:
-            reason = "명확한 value_grid 좌표/제안값이 없어 selected=false로 보정했습니다."
-            warnings.append(f"{reason}: {adjustment.candidate_key}")
+        if not value_grid:
+            warning = (
+                "Step3 응답에 유효한 slot 값이 없어 parameter를 제외했습니다: "
+                f"{adjustment.candidate_key}"
+            )
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
+            continue
 
-        patched = ParameterAdjustment(
+        sanitized.append(ParameterAdjustment(
             candidate_key=adjustment.candidate_key,
             model_file=str(candidate.get("model_file") or ""),
             model_sheet=str(candidate.get("model_sheet") or ""),
@@ -2136,40 +2390,22 @@ def _sanitize_llm_adjustments(
                 or candidate.get("parameter_name")
                 or "",
             ),
-            selected=selected,
+            selected=True,
             slot_axes=slot_axes,
-            value_grid=value_grid if selected else [],
+            value_grid=value_grid,
             parameter_selection_rationale_ko=adjustment.rationale_ko,
-        )
-        sanitized.append(patched.model_dump())
+        ).model_dump())
 
-    missing_candidate_keys = sorted(set(candidate_by_key) - returned_candidate_keys)
+    missing_candidate_keys = sorted(
+        set(candidate_by_key) - processed_candidate_keys - duplicate_candidate_keys,
+    )
     for candidate_key in missing_candidate_keys:
-        candidate = candidate_by_key[candidate_key]
-        reason = (
-            "LLM Step3 응답에 candidate_key가 누락되어 서버가 selected=false "
-            "검토 항목으로 보강했습니다."
+        warning = (
+            "LLM Step3 응답에 candidate_key가 누락되었습니다. 재호출이나 보강 없이 "
+            f"해당 parameter를 제외합니다: {candidate_key}"
         )
-        slot_axes = [
-            *_slot_axes_for_candidate(slots_by_key.get(candidate_key, [])),
-        ]
-        sanitized.append(
-            ParameterAdjustment(
-                candidate_key=candidate_key,
-                model_file=str(candidate.get("model_file") or ""),
-                model_sheet=str(candidate.get("model_sheet") or ""),
-                parameter_name=str(
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                    or "",
-                ),
-                selected=False,
-                slot_axes=slot_axes,
-                value_grid=[],
-                parameter_selection_rationale_ko=reason,
-            ).model_dump(),
-        )
-        warnings.append(f"{reason}: {candidate_key}")
+        logger.warning("[model-parameter] {}", warning)
+        warnings.append(warning)
     return sanitized, warnings
 
 
@@ -2294,41 +2530,6 @@ def _period_start_year_month(
 
     current_year, current_month = _current_year_month()
     return current_year, current_month, "명확한 연월 근거가 없어 현재 월부터 전개"
-
-
-def _patch_basecase_value(
-    cell: ParameterValueCell,
-    basecase_by_reference_id: dict[str, dict[str, Any]],
-) -> tuple[ParameterValueCell, str | None]:
-    if cell.basecase_value is not None or not cell.basecase_reference_ids:
-        return cell, None
-    matched_records = [
-        basecase_by_reference_id[reference_id]
-        for reference_id in cell.basecase_reference_ids
-        if reference_id in basecase_by_reference_id
-    ]
-    if not matched_records:
-        return cell, None
-    cell_coordinate_key = _canonical_coordinate_key(cell.coordinates)
-    exact_matches = [
-        record
-        for record in matched_records
-        if _canonical_coordinate_key(record.get("axes") or {}) == cell_coordinate_key
-    ]
-    if len(exact_matches) == 1:
-        return (
-            cell.model_copy(update={"basecase_value": exact_matches[0].get("value")}),
-            None,
-        )
-    if not exact_matches:
-        return cell, (
-            "참고 basecase record 좌표가 value cell 좌표와 일치하지 않아 "
-            "basecaseValue를 채우지 않았습니다"
-        )
-    return cell, (
-        "value cell 좌표와 일치하는 basecase record가 여러 건이라 "
-        "basecaseValue를 채우지 않았습니다"
-    )
 
 
 def _unselected_adjustments_for_missing_slots(

@@ -1,352 +1,324 @@
 # 수급모델 파라미터 제안 Agent Flow
 
-> 기준 소스: `apps/agents/model_parameter_agent/flows/propose_parameters/flow.py`
->
-> 이 문서는 현재 코드의 LangGraph 노드 순서를 단계 기준으로 삼는다. `to_state()`와 `to_output()`은
-> `build_runnable_graph()`의 전후 변환이며, 그래프 내부 단계에는 포함하지 않는다.
+> 기준 소스: `apps/agents/model_parameter_agent/flows/propose_parameters/`
 
 ## 1. 목적
 
-`model_parameter_agent`는 `scenario_id`로 시나리오, 이벤트, dimension 맥락을 조회한 뒤
-DB 매핑 정보와 LNG 수급모델 Basecase 입력시트를 근거로 Demand/Supply/Trade 모델 input parameter 조정안을 제안한다.
+`model_parameter_agent`는 scenario/event/dimension 맥락과 DB parameter mapping,
+Basecase 및 선택적 LUT를 이용해 모델 input parameter의 적용 좌표와 값을 제안한다.
 
-- API: `POST /model-parameters/scenarios/{scenario_id}/proposals`
-- 실행 파이프: `to_state` → `build_graph()` → `to_output`
-- 그래프 출력: `parameter_adjustments`
-- API 출력: `ProposeParametersOut.data.proposalParameters[]`
-- 저장 여부: 제안 결과는 `tmm_mi_model_param_proposal_m`에 저장한 뒤 `modelParamProposalId`를 응답한다.
+- sync 테스트 API: `POST /model-parameters/scenarios/{scenario_id}/proposals/sync`
+- 운영 접수 API: `POST /model-parameters/scenarios/{scenario_id}/proposals`
+- 최종 저장값: `proposalParameters[]`
+- LLM 내부 식별자인 `candidate_key`, `slot_key`는 운영 응답에 노출하지 않는다.
+- sync와 callback 응답에는 별도 `diagnostics` 구조를 제공하지 않는다. 제외 사유는 서버 로그와
+  기존 `validation_warnings`에 남긴다.
+- 테스트용 sync API의 `values[]`에만 `lutValue`를 추가한다. DB 저장값과 운영 callback에는
+  `lutValue`를 넣지 않는다.
 
-## 2. 현재 Graph Flow
-
-`flow.py`의 `build_graph()`는 조건 edge가 없는 선형 그래프다.
-
-```mermaid
-flowchart TD
-    A[API payload<br/>scenario_id + options] --> B[to_state<br/>입력 검증 및 State 생성]
-    B --> C[1. load_scenario_context]
-    C --> D[2. select_parameter_candidates]
-    D --> E[3. validate_parameter_candidates]
-    E --> F[4. load_basecase_samples]
-    F --> G[5. propose_parameter_slots]
-    G --> H[6. filter_basecase_records_by_slots]
-    H --> I[7. propose_parameter_values]
-    I --> J[to_output<br/>proposalParameters 변환 및 DB 저장]
-    J --> K[ProposeParametersOut]
-```
-
-`build_graph()` 기준 entry point는 `load_scenario_context`, finish point는 `propose_parameter_values`다.
-`to_output()`은 그래프 종료 후 `RunnableLambda`로 실행된다.
-
-## 3. App Load / Request Resource Load
-
-현재 코드 기준으로 model parameter DB 매핑 정보와 Basecase profile은 앱 startup에서 preload하지 않는다.
-`main.py`의 FastAPI `lifespan()`은 DB schema validation만 수행한다.
-
-실제 API 요청이 들어오면 `load_scenario_context` 단계에서 scenario/group/event context와 함께
-아래 DB 매핑 테이블을 같은 세션에서 조회한다.
-
-- `tmm_mi_model_param_m`
-- `tmm_mi_model_param_dimension_map`
-
-이후 해당 요청의 state에 `ParameterKnowledgeBase`를 담아 `select_parameter_candidates`와
-`load_basecase_samples`에서 재사용한다. 새 요청이 들어오면 DB 매핑 정보는 다시 조회한다.
+## 2. Graph 순서
 
 ```mermaid
 flowchart TD
-    A[FastAPI lifespan startup] --> B[settings/logging 초기화]
-    B --> C[DB schema validation]
-    C --> D[API 요청 대기]
-    D --> E[load_scenario_context]
-    E --> F[scenario/group/event 조회]
-    E --> G[model parameter DB 매핑 조회]
-    G --> H[ParameterKnowledgeBase 생성]
-    H --> I[Basecase workbook 탐색 및 sheet profile 생성]
-    I --> J[state.parameter_knowledge_base 저장]
-    J --> K[select_parameter_candidates / load_basecase_samples에서 요청 내 재사용]
+    A[load_scenario_context] --> B[select_parameter_candidates]
+    B --> C[Step1.5 validate_parameter_candidates]
+    C -->|candidate 있음| D[load_basecase_samples]
+    D --> E[Step2 propose_parameter_slots]
+    E --> F[filter_basecase_records_by_slots]
+    F -->|유효 slot 있음| G[Step3 propose_parameter_values]
+    F -->|유효 slot 없음| X[빈 결과 종료]
+    G --> H[to_output 및 DB 저장]
 ```
 
-로딩 절차의 핵심:
-
-- `ModelParameterService.load_context()`: scenario context와 model parameter DB 매핑 row를 함께 조회한다.
-- `get_parameter_knowledge_base_from_resources()`: 조회된 DB row를 `ParameterKnowledgeBase`로 변환한다.
-- `_resolve_basecase_dir()`: 기본 리소스 폴더 `resources/basecase`를 사용한다.
-- `_load_basecase_profiles()`: Demand/Supply/Trade Basecase `.xlsm` 파일을 찾고, 매핑된 sheet 존재 여부와 workbook/sheet 위치 정보를 만든다.
-- 반환값은 `ParameterKnowledgeBase`이며, 같은 요청 안에서 후보 매칭과 Basecase record 추출에 재사용한다.
-
-정리하면 DB 매핑과 Basecase sheet 참조 정보는 startup에서 warm-up하지 않고 요청 시점에 구성한다.
-새 요청이 오면 DB 매핑 row를 다시 읽는다.
-
-## 4. 전후 변환
-
-### `to_state`
-
-요청 path에서 `scenario_id`를 필수로 받고, 선택 body는 `ProposeParametersRequest`로 검증한다.
-현재 public proposal body는 시나리오 그룹 agent와 동일한 `user_id`(`userId`)만 받는다. 값이 있으면 proposal row의
-`request_usr_id`, `crt_usr_logn_id`, 초기 `mod_usr_logn_id`에 저장하고, 미입력 시 `request_usr_id`는 `NULL`로 저장한다.
-confirmation body의 `user_id`(`userId`)는 proposal row의 `mod_usr_logn_id`에 저장한다.
-
-그래프 실행 상태(`ModelParameterProposalState`)에는 내부 실행 정보와 선택적 `model_name` override만 포함된다.
-
-- 매핑 정보는 매 요청 시 DB의 `tmm_mi_model_param_m`, `tmm_mi_model_param_dimension_map`에서 조회한다.
-- `model_name`: LLM 모델 지정
-
-### `to_output`
-
-그래프가 만든 `parameter_adjustments`를 API 응답용 `ProposalParameter` 목록으로 그룹화한다.
-그룹 기준은 `(model_file, model_sheet, parameter_name)`이다.
-
-출력 정리 규칙:
-
-- `selected=false` adjustment는 제외
-- `proposed_value is None`인 cell 제외
-- 동일 좌표/값은 dedup하고 rationale을 병합
-- `modelTarget.valueFieldNames`, `modelTarget.slotAxesFieldNames`, `values[]`를 응답 형태로 재구성
-  - `valueFieldNames`는 DB `basecase_column_roles`에서 식별한 value 컬럼명을 우선 사용하고, 없으면 파라미터명을 사용
-- DB 저장 후 생성된 `modelParamProposalId`를 응답에 포함
-
-현재 코드 기준으로 특정 `event_type_l2_id`를 `to_output()`에서 강제 억제하지 않는다.
-
-## 5. 단계별 핵심 로직
-
-### 1. `load_scenario_context`
-
-`ModelParameterService().load_context(state.scenario_id)`로 시나리오 실행 맥락을 읽는다.
-
-주요 context:
-
-- `scenario`: scenario id, title, narrative, dimension values
-- `scenario_group`: event type, scenario group 설명
-- `event_type`: L2 이벤트 타입 정보
-- `event`: 원 이벤트 제목, 요약, 상세, 발생 시점
-- `dimension_template`: dimension key/label 정의
-- `parameter_mapping_resources`: model parameter DB 매핑 row
-
-이 단계는 DB 읽기 전용이다. 이후 모든 노드는 이 context와 요청 단위 `ParameterKnowledgeBase`를 기준으로 후보, slot, value를 산정한다.
-
-### 2. `select_parameter_candidates`
-
-매핑 지식베이스를 로드하고 scenario dimension을 수급모델 parameter 후보로 연결한다.
-
-호출 흐름:
-
-- `state.parameter_knowledge_base`
-- `match_parameter_candidates(kb, scenario_context)`
-
-매핑 소스:
-
-- `tmm_mi_model_param_dimension_map`: `event_type_l2_id` + `dimension_key`를 parameter로 연결
-- `tmm_mi_model_param_m`: parameter를 model file, sheet, unit, semantic axes, Basecase 읽기 스펙으로 연결
-- Basecase workbook profile: candidate가 참조할 실제 sheet 존재 여부 확인
-
-후보 생성 조건:
-
-- scenario context에서 `event_type_l2_id`를 찾을 수 있어야 한다.
-- scenario dimension key 또는 template key가 DB 매핑 rule과 일치해야 한다.
-- `mapping_method`가 `direct` 또는 `routing`이어야 한다.
-- `tmm_mi_model_param_m`에 model target이 있어야 한다.
-
-후보에 포함되는 주요 값:
-
-- `candidate_key`
-- `event_type_l2_id`, `dimension_key`, `source_dimension_value`
-- `mapping_method`, `mapping_comment`
-- `model_file`, `model_sheet`, `canonical_parameter_name`, `parameter_name`
-- `unit`, `semantic_axes`
-- `basecase_read_mode`, `basecase_column_roles`, `basecase_row_filter`, `basecase_value_*`
-- `basecase_available`
-
-모델 input으로 직접 연결되지 않는 항목은 `non_input_items`로 분리한다.
-
-### 3. `validate_parameter_candidates`
-
-Step1.5 LLM 후보 검증 단계다. DB mapping rule로 만들어진 후보 안에서 다음 단계로 넘길 candidate만 선택한다.
-
-LLM 입력:
-
-- `scenario_brief`
-- `candidate_validation_tasks`
-- Basecase record는 아직 전달하지 않음
-
-`scenario_brief`에는 아래 source context가 들어간다.
-
-- `scenario_group`: `title`, `summary`, `description`, `dimension_selected`
-- `scenario`: `title`, `narrative`, `dimension_values`, `impact_jkm`, `impact_ttf`, `impact_hh`
-- `dimension_template`: `template_json`
-- `event`: `event_title`, `one_line_summary`, `key_bullets_json`, `detail_analysis`, `tag_json`
-- 호환용 top-level field: `scenario_id`, `title`, `selected_dimensions`
-
-핵심 규칙:
-
-- 후보 밖의 parameter, workbook, sheet, candidate key 생성 금지
-- direct 후보는 DB 매핑에서 명시된 input이므로 서버 sanitizer가 유지한다.
-- routing 후보는 LLM 판단 후 bridge comment와 DB dimension 값 매칭으로 한 번 더 보정한다.
-
-서버 보정:
-
-- `_sanitize_parameter_candidate_group_decisions()`
-  - 알 수 없는 candidate key 제거
-  - direct 후보는 LLM이 누락하거나 `selected=false`를 반환해도 유지
-  - routing 후보는 LLM 응답 누락 또는 `selected=false`면 제외
-- `_apply_routing_comment_overrides()`
-  - routing comment가 dimension value와 명확히 맞으면 해당 후보를 선택
-  - 같은 routing 그룹의 비일치 후보는 제외
-
-후보가 없으면 이후 LLM 단계는 early return으로 빈 결과를 만든다.
-
-### 4. `load_basecase_samples`
-
-노드명은 samples지만 현재 핵심 동작은 Basecase record 추출이다.
-
-호출 흐름:
-
-- `state.parameter_knowledge_base`
-- `build_basecase_records(kb, state.candidate_mappings, state.scenario_context)`
-
-각 record 구조:
-
-- `candidate_key`
-- `model_file`, `sheet_name`, `parameter_name`
-- `reference_id`: `Model:Sheet:R{row}C{col}`
-- `axes`: Country, Year, Month, Plant 등 좌표 축
-- `value_name`, `value`, `unit`
-- `source_row`, `source_col`
-
-Basecase 추출 방식:
-
-- `fixed_columns`: `tmm_mi_model_param_m`의 column role, row filter, stop rule 기준으로 행/값 추출
-- `matrix_time_columns`: 축 컬럼과 Year/Month/Period 헤더 행을 조합해 시간축 matrix 값을 추출
-- 자동 matrix 탐지: 명시 스펙이 없으면 초기 행에서 Base Case block을 탐지
-
-이 단계는 후보별 record 수를 로그로 남기고, 추출 실패는 `validation_warnings`에 누적한다.
-
-### 5. `propose_parameter_slots`
-
-Step2 LLM slot 산정 단계다. 여기서는 값을 제안하지 않고 모델 input 좌표 축만 정한다.
-후보 parameter의 value 변경 필요성이나 변경 폭을 미리 판단해 slot을 줄이지 않는다.
-시나리오/이벤트/dimension/basecase/semantic_axes로 합리적으로 특정 가능한 slot은 최대한 Step3으로 넘기고,
-basecase 유지나 매우 작은 변경 여부는 Step3 value 산정에서 판단한다.
-
-LLM 입력:
-
-- scenario/event context
-- 검증된 `candidate_mappings`
-- `non_input_items`
-- `period_resolution_policy`
-- `_build_basecase_slot_options(state.basecase_records)`
-
-`basecase_slot_options`는 raw row/value 전체가 아니라 candidate별 축 후보 요약이다.
-
-- `record_count`
-- `axis_names`
-- `axis_values`
-- `value_names`
-
-핵심 규칙:
-
-- 후보 밖 parameter/sheet 생성 금지
-- slot 축 이름과 값은 Basecase slot option을 우선 사용
-- Basecase에 없더라도 scenario/event에 명확한 input 축 값이 있으면 사용 가능
-- 값 산정은 금지하고 Step3으로 넘김
-- 영향 강도, 기간, 정책 단계, 대체 공급 충분 여부만으로 Step2 selected=false 처리하지 않음
-- 기간 표현은 `period_resolution_policy`로 Year/Month/Period 변환
-
-서버 보정:
-
-- `_sanitize_llm_slots()`가 모호한 slot 값을 차단한다.
-- `미정`, `후보`, `추정`, `?`, `또는`, `or`, 세미콜론 결합, 미변환 기간 표현은 `selected=false`, `needs_user_review=true`로 보정한다.
-
-### 6. `filter_basecase_records_by_slots`
-
-Step2에서 선택된 slot과 일치하는 Basecase record만 Step3에 전달한다.
-
-동작:
-
-- `selected=false` slot은 제외
-- candidate key별로 slot을 묶음
-- record의 `axes`와 slot의 `slot_axes`를 정규화 비교
-- 비교 가능한 축이 하나 이상 있고 값이 모두 일치하면 통과
-
-slot이 없는 candidate record는 통과하지 않는다. 다만 Step3 prompt는 Basecase record가 비어 있어도
-scenario/event/dimension에 명확한 수치가 있으면 proposed value를 산정하도록 지시한다.
-
-### 7. `propose_parameter_values`
-
-Step3 LLM value 산정 단계다. Step2 slot과 필터된 Basecase record를 근거로 최종 `value_grid`를 만든다.
-
-LLM 입력:
-
-- scenario/event context
-- 검증된 `candidate_mappings`
-- `non_input_items`
-- slot 필터를 통과한 `basecase_records`
-- `parameter_slots`
-- `period_resolution_policy`
-
-LLM 출력:
-
-- `parameter_adjustments[]`
-- 각 adjustment의 `candidate_key`, `rationale_ko`, `value_grid`
-- 각 cell의 `coordinates`, `proposed_value`, rationale, `basecase_reference_ids`
-- Step3 LLM 출력에는 `selected`를 받지 않는다. Step2에서 확정된 selected slot은 value 산정 대상이다.
-
-서버 보정:
-
-- `_sanitize_llm_adjustments()`
-  - 알 수 없는 candidate key 제거
-  - `model_file`, `model_sheet`, `parameter_name`을 candidate 값으로 강제 치환
-  - 모호 좌표 cell 제거
-  - `proposed_value=null` cell 제거
-  - 유효 cell이 없으면 `selected=false`
-  - LLM 응답에서 누락된 candidate는 value가 없는 것으로 보고 `selected=false` 검토 항목으로 보강
-  - `basecase_reference_ids`가 있으면 `_patch_basecase_value()`로 기준값 보강
-- Step3 value 산정 원칙
-  - selected slot에 일치하는 basecase가 있으면 해당 값을 anchor로 삼아 dimension value의 방향·강도·기간에 따라 높이거나 낮춘다.
-  - selected slot에 일치하는 basecase가 없으면 `basecase_value=null`로 두되, 다른 slot의 basecase는 값의 범위·단위·스케일·형식 참고용으로만 사용한다.
-  - basecase 부재를 0으로 해석하지 않는다. no-change/neutral이면 다른 slot 범위와 형식을 참고한 보수적 유지값을 제안한다.
-- `_backfill_rule_based_adjustments()`
-  - LLM이 명확한 value grid를 만들지 못한 일부 parameter에 대해 scenario dimension 기반 규칙 보정값을 생성
-  - 대상 예: `Temperature`, `CDD`, `HDD`, `PowerMix`, `SupplyDisruption`, `VolumeCancelled`,
-    `ShippingCost`, `RegasAdjustment`, `LiqUtilAdjustment`, `LiqProdAdjustment`, `User-Adjusted Gas Demand`
-
-## 6. LLM 호출 구조
-
-LLM 호출은 세 번이다.
-
-| 단계 | 함수 | 목적 | 출력 schema |
-|---|---|---|---|
-| Step1.5 | `validate_parameter_candidates` | 후보 검증 | `LLMCandidateValidationResponse` |
-| Step2 | `propose_parameter_slots` | slot 축 결정 | `LLMSlotProposalResponse` |
-| Step3 | `propose_parameter_values` | value grid 산정 | `LLMValueProposalResponse` |
-
-공통 설정:
-
-- `invoke_llm_structured_output`
-- `ModelPreference.QUALITY`
-- `temperature=0.0`
-- `max_retries=settings.llm_max_retries`
-
-LLM 호출 실패 시 fallback 응답을 만들지 않고 예외로 전파한다.
-
-## 7. 주요 가드레일
-
-- 후보 범위 고정: 모든 LLM 단계는 기존 `candidate_mappings` 안의 candidate key만 사용할 수 있다.
-- direct 후보 유지: Step1.5에서 direct 후보는 LLM 누락/거절과 무관하게 유지된다.
-- routing 보정: bridge comment와 DB dimension value가 명확히 일치하면 routing 후보를 결정적으로 보정한다.
-- Basecase 근거 보존: `reference_id`, `source_row`, `source_col`로 실제 기준값 위치를 추적한다.
-- 모호한 축/좌표 차단: 미정, 후보, 추정, 복수값 결합, 과거 Year/Month 좌표 등을 제거하거나 검토 필요로 보정한다.
-- 최종 출력 정리: selected adjustment와 실제 적용 가능한 value cell만 `proposalParameters`에 포함한다.
-- 저장: 최종 `proposalParameters`를 `tmm_mi_model_param_proposal_m.proposal_parameters`에 저장한다.
-
-## 8. 핵심 소스
-
-- `api.py`: FastAPI endpoint
-- `flows/propose_parameters/flow.py`: LangGraph node 순서, `to_state`, `to_output`, 저장 orchestration
-- `flows/propose_parameters/nodes.py`: 각 graph node, sanitizer, fallback, rule-based backfill
-- `prompts/model_parameter_proposal.py`: LLM 단계별 system prompt
-- `presentation.py`: proposal response, callback payload, parameter summary 생성
-- `utils/parameter_mapping.py`, `utils/basecase.py`: DB 매핑 resource 변환, candidate 매칭, Basecase profile/record 추출
-- `state.py`: `ModelParameterProposalState`
-- `flows/propose_parameters/api_schema.py`, `schemas/model_parameter_proposal.py`: API/LLM 구조화 schema
-- `persistence/model_parameter_service.py`: scenario/event/group repository와 model parameter repository 조합
-- `apps/persistence/model_parameter/repository.py`: model parameter 3개 테이블 조회/저장
-- `tests/test_model_parameter_agent_contract.py`: graph 구성, 후보 검증, Basecase 추출, sanitizer, 출력 계약 테스트
+## 3. Step 1: DB 후보 생성
+
+`select_parameter_candidates`는 다음 두 DB resource를 이용한다.
+
+- `tmm_mi_model_param_dimension_map`: event type과 dimension을 parameter에 연결
+- `tmm_mi_model_param_m`: parameter의 model target, hint, Basecase 읽기 규칙 제공
+
+`mapping_method=direct` 또는 `routing`인 항목만 candidate가 된다. `indirect`는 Step 2/3의
+보조 맥락으로 유지하고 `na`는 LLM 판단 근거에서 제외한다.
+
+주요 candidate 필드:
+
+```json
+{
+  "candidate_key": "...",
+  "dimension_key": "affected_facility_type",
+  "source_dimension_value": "수입 시설",
+  "mapping_method": "routing",
+  "mapping_comment": "...",
+  "parameter_name": "RegasAdjustment",
+  "parameter_hint": "...",
+  "semantic_axes": "...",
+  "model_file": "Supply",
+  "model_sheet": "RegasAdjustment"
+}
+```
+
+## 4. Step 1.5: routing 후보 선택
+
+### 호출 조건
+
+- `direct`: LLM에 보내지 않고 그대로 통과
+- 같은 dimension의 `routing` 후보가 1개: LLM에 묻지 않고 그대로 통과
+- 같은 dimension의 `routing` 후보가 2개 이상: LLM 판단 대상
+- 여러 routing dimension이 있어도 한 요청의 `routing_tasks[]`로 묶어 LLM은 최대 한 번 호출
+
+### LLM 입력
+
+```json
+{
+  "scenario_brief": {},
+  "routing_tasks": [
+    {
+      "dimension_key": "affected_facility_type",
+      "dimension_value": "수입 시설",
+      "candidates": [
+        {
+          "candidate_key": "route-a",
+          "parameter_name": "RegasAdjustment",
+          "parameter_hint": "...",
+          "semantic_axes": "...",
+          "mapping_comment": "..."
+        }
+      ]
+    }
+  ]
+}
+```
+
+### LLM 출력
+
+```json
+{
+  "routing_decisions": [
+    {
+      "dimension_key": "affected_facility_type",
+      "selected_candidate_keys": ["route-a"]
+    }
+  ]
+}
+```
+
+- task마다 최소 1개, 최대 `model_parameter_max_routing_candidates_per_dimension`개를
+  선택하도록 프롬프트에 명시한다(기본값 2).
+- 서버는 이 수를 다시 채우거나 자르지 않는다.
+- 알 수 없는 dimension/candidate key만 제외한다.
+- `rationale`, `confidence`, `warnings`는 LLM 출력에 받지 않는다.
+- routing comment로 LLM 결정을 다시 덮어쓰지 않는다.
+
+## 5. Basecase/LUT 좌표 catalog
+
+`load_basecase_samples`는 Basecase workbook을 읽어 요청 단위 `BasecaseIndex`를 만들고,
+LUT가 활성화되어 있으면 immutable `LutCatalog`와 합쳐 값 없는 exact `SlotCatalog`를 만든다.
+
+- Step 2에는 좌표 catalog만 전달하며 value는 전달하지 않는다.
+- full Basecase/LUT row는 serialized graph state에 저장하지 않는다.
+- Step 2가 선택한 좌표는 exact membership을 통과해야 Step 3으로 간다.
+- 실제 Basecase 값이 있으면 Basecase가 기준값이고, 없으면 같은 exact 좌표의 LUT 값이 기준값이다.
+
+## 6. Step 2: exact slot 좌표 선택
+
+이 단계는 좌표만 선택한다. 기준값과 proposed value, 변경 방향·폭은 판단하지 않는다.
+
+### LLM 입력
+
+parameter별 task는 다음 구조다.
+
+```json
+{
+  "parameter": {
+    "candidate_key": "candidate-a",
+    "parameter_name": "PMI",
+    "parameter_hint": "...",
+    "semantic_axes": "...",
+    "allowed_slot_axes_field_names": ["Country", "Year", "Month"]
+  },
+  "limits": {
+    "maxParameterSlots": 100,
+    "instruction": "관련된 slot만 선택하며 최대치를 채울 필요는 없음"
+  },
+  "selection_dimensions": [],
+  "supporting_dimensions": [],
+  "slot_catalog": {
+    "key_axes": ["Country", "Year", "Month"],
+    "fixed_axis_names": ["Country"],
+    "time_axis_names": ["Year", "Month"],
+    "leaves": []
+  }
+}
+```
+
+### 선택 수
+
+- scenario/event/dimension과 연관된 exact slot이 있으면 parameter별 최소 1개
+- 연관된 slot만 선택
+- parameter별 최대 100개
+- 100개는 hard maximum일 뿐 목표나 권장 개수가 아님
+
+### LLM 출력
+
+```json
+{
+  "parameter_slots": [
+    {
+      "candidate_key": "candidate-a",
+      "slot_axes": [
+        {"axis_name": "Country", "axis_value": "Japan"},
+        {"axis_name": "Year", "axis_value": 2026},
+        {"axis_name": "Month", "axis_value": 7}
+      ],
+      "rationale_ko": "이 시나리오가 일본의 2026년 7월 수요에 영향을 주므로 해당 좌표를 선택했습니다."
+    }
+  ]
+}
+```
+
+- 반환하는 항목은 모두 실제 사용할 slot이다. `selected` 필드는 없다.
+- `rationale_ko`는 시나리오/이벤트와 좌표의 연관성만 설명한다.
+- value 산정 근거는 작성하지 않는다.
+- catalog에 없는 exact 좌표, 축 누락, 중복, 모호한 값은 서버가 제외하고 로그를 남긴다.
+- 유효 slot이 0개인 parameter는 Step 3 입력 candidate에서 제외한다.
+- 다른 parameter에 유효 slot이 하나라도 있으면 남은 parameter만 Step 3으로 진행한다.
+
+## 7. Step 2.5: exact reference와 slotKey 부여
+
+`filter_basecase_records_by_slots`가 Step 2 좌표를 active Basecase/LUT union에서 exact 검증한다.
+검증에 성공한 slot에는 candidate 내부에서 유일한 `slot_key`를 서버가 부여한다.
+축 schema, exact 존재 여부와 중복을 먼저 검증한 뒤 parameter별 최대 100개를 적용한다.
+유효 slot이 상한을 넘으면 앞선 100개만 Step 3으로 전달하고 초과 개수는 validation warning에 남긴다.
+
+```json
+{
+  "slot_key": "slot-1",
+  "coordinates": {"Country": "Japan", "Year": 2026, "Month": 7},
+  "slot_rationale_ko": "...",
+  "reference_value": 50.2
+}
+```
+
+`slot_key`는 좌표 정보를 대신하지 않는다. LLM 입력에는 좌표가 함께 들어가며, LLM 출력과 서버 좌표를
+안전하게 연결하기 위한 요청 내부 ID다.
+
+## 8. Step 3: slot별 value 제안
+
+### LLM 입력
+
+유효 slot이 하나 이상인 parameter만 `parameter_value_tasks[]`에 포함한다.
+
+```json
+{
+  "scenario_brief": {},
+  "parameter_value_tasks": [
+    {
+      "parameter": {
+        "candidate_key": "candidate-a",
+        "parameter_name": "PMI",
+        "parameter_hint": "...",
+        "semantic_axes": "..."
+      },
+      "selection_dimensions": [],
+      "supporting_dimensions": [],
+      "slots": [
+        {
+          "slot_key": "slot-1",
+          "coordinates": {"Country": "Japan", "Year": 2026, "Month": 7},
+          "slot_rationale_ko": "일본의 7월 수요와 연관된 좌표입니다.",
+          "reference_value": 50.2
+        }
+      ]
+    }
+  ]
+}
+```
+
+- slot마다 actual Basecase 또는 LUT 중 하나의 `reference_value`만 제공한다.
+- provenance와 reference ID는 LLM에 주지 않는다.
+- 값의 의미를 전역적으로 절대값/변화량/변화율/승수 중 하나로 고정하지 않는다.
+- `parameter_hint`, `mapping_comment`, dimension 맥락, reference value의 형식을 함께 참고한다.
+
+### LLM 출력
+
+```json
+{
+  "parameter_adjustments": [
+    {
+      "candidate_key": "candidate-a",
+      "rationale_ko": "사용자에게 보여줄 상세한 parameter-level 설명",
+      "slot_values": [
+        {
+          "slot_key": "slot-1",
+          "proposed_value": 53.1,
+          "rationale_ko": "좌표 선택 이유와 값 산정 근거를 보여주는 짧은 설명"
+        }
+      ]
+    }
+  ]
+}
+```
+
+- 입력 slot 1개당 출력 `slot_values` 1개를 요구한다.
+- 출력에는 좌표와 reference ID를 다시 받지 않는다.
+- `proposed_value=null`, 누락, 알 수 없는/중복 `slot_key`는 제외한다.
+- 누락 시 LLM을 재호출하지 않고 서버가 값을 생성해 채우지도 않는다.
+- 같은 parameter에 유효 값이 하나라도 남으면 그 값으로 진행한다.
+- 유효 값이 0개인 parameter는 최종 제안에서 제외한다.
+- 모든 parameter에서 유효 값이 없으면 최종 proposal 생성은 실패한다.
+
+### rationale 역할
+
+- Parameter-level `rationale_ko`
+  - 화면 최상단에 표시
+  - parameter 선택 이유와 scenario dimension의 관계 설명
+  - 전체 적용 기간, 대상 범위, 배분 원칙, 주요 제약을 충분히 설명
+  - 글자 수 제한 없음
+  - 내부 candidate/slot/reference/LLM 용어 사용 금지
+- Slot-level `slot_values[].rationale_ko`
+  - slot tooltip에 표시
+  - Step 2의 slot rationale을 활용
+  - 해당 slot 선택 이유와 reference value를 바탕으로 한 값 산정 근거를 간결하게 설명
+
+## 9. 최종 변환
+
+서버는 유효한 `slot_key`를 authoritative reference 좌표로 되돌려 내부 `value_grid`를 구성한다.
+`presentation.py`는 이를 `(model_file, model_sheet, parameter_name)` 단위로 묶어
+`proposalParameters[]`를 만든다.
+
+- 실제 Basecase가 있으면 `basecaseValue`에 표시한다.
+- LUT-only reference는 값 산정 기준으로 쓰지만 운영 `basecaseValue`는 `null`이다.
+- 테스트용 sync 응답은 exact slot의 LUT default를 `lutValue`로 함께 표시한다. LUT가 없는
+  slot은 `lutValue=null`이다.
+- slot tooltip rationale은 각 `values[].rationale`에 표시한다.
+- parameter-level rationale은 `proposalParameters[].rationale`에 표시한다.
+
+## 10. LLM 호출 수
+
+| 단계 | 호출 조건 | 요청당 횟수 | 출력 schema |
+|---|---|---:|---|
+| Step 1.5 | routing 후보가 같은 dimension에 2개 이상일 때 | 0 또는 1 | `LLMCandidateValidationResponse` |
+| Step 2 | 검증된 candidate가 있을 때 | 1 | `LLMSlotProposalResponse` |
+| Step 3 | exact 검증을 통과한 slot이 있을 때 | 1 | `LLMValueProposalResponse` |
+
+LLM 호출 자체가 실패하면 fallback 응답을 만들지 않고 예외를 전파한다.
+
+## 11. DEBUG 요약 로그
+
+`log_level=DEBUG`일 때 단계별 prompt 전문이나 LLM 전달 input 전체는 기록하지 않는다.
+단계별 결과 로그는 다음 다섯 종류만 기록한다.
+모든 JSON payload는 한글을 유지한 `indent=2` 다중 행 형식으로 출력한다.
+
+- `load_scenario_context.result`: scenario/event ID·제목과 scenario dimension 값
+- `select_parameter_candidates.result`: Step 1에서 선택된 parameter 이름
+- `step1.5.result`: Step 1.5를 통과한 최종 parameter 이름
+- `step2.result`: sanitizer를 통과한 parameter별 slot 좌표
+- `step3.result`: 최종 slot 좌표와 proposed value
+- 각 LLM 호출 직전: output schema, model name, `stream`, `reasoning_effort`,
+  `timeout_sec`, `connect_timeout_sec`, `max_retries`
+- sync 실행은 DB에는 없는 테스트용 `lutValue`를 포함한 최종 output을 여러 줄 pretty JSON으로 한 번 출력
+- background 실행은 persistence service에 전달하기 직전의 최종 `proposalParameters`를 여러 줄
+  pretty JSON으로 한 번 출력
+
+LUT startup 로그는 전체 LUT row를 반복 출력하지 않고 version, horizon, 전체/파라미터별 record 수를
+한 번만 기록한다.

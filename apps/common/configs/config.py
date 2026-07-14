@@ -4,9 +4,9 @@ from collections.abc import Mapping
 import os
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -131,9 +131,32 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(default=1, ge=0)
 
     # Model parameter proposal
+    model_parameter_lut_enabled: bool = Field(default=False)
+    model_parameter_lut_horizon_start_year: int = Field(default=2026)
+    model_parameter_lut_horizon_end_year: int = Field(default=2030)
     model_parameter_max_parameter_slots: int = Field(default=100, ge=1)
     model_parameter_max_value_prompt_basecase_records: int = Field(default=100, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
+    model_parameter_llm_stream_enabled: bool = Field(default=False)
+    model_parameter_llm_reasoning_effort: Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ] = "default"
+
+    @model_validator(mode="after")
+    def validate_model_parameter_lut_horizon(self) -> "Settings":
+        if self.model_parameter_lut_horizon_start_year > self.model_parameter_lut_horizon_end_year:
+            message = (
+                "model_parameter_lut_horizon_start_year must be less than or equal to "
+                "model_parameter_lut_horizon_end_year"
+            )
+            raise ValueError(message)
+        return self
 
     http_max_concurrency: int
 

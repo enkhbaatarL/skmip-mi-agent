@@ -16,7 +16,8 @@ class TraceContext(BaseModel):
     transaction_id: str
     app_identifier: str
     agent_name: str | None = None
-    scenario_group_id: str | None = None
+    # MLflow session_id. 에이전트별 세션 키(scenario_group_id, model_param_proposal_id 등)를 문자열로 전달
+    session_id: str | None = None
 
 
 class _TraceManager(Protocol):
@@ -44,19 +45,19 @@ def build_aip_headers(context: TraceContext) -> dict[str, str]:
         "aip-transaction-id": context.transaction_id,
         "aip-app-id": context.app_identifier,
     }
-    if context.scenario_group_id:
-        headers["aip-chat-id"] = context.scenario_group_id
+    if context.session_id:
+        headers["aip-chat-id"] = context.session_id
     return headers
 
 
 def build_langgraph_config(context: TraceContext) -> dict[str, object]:
     # thread_id 가 mlflow의 session_id가 됨. mlflow 에서 키값을 고정해놓음
     configurable = {
-        "thread_id": context.scenario_group_id or context.transaction_id,
+        "thread_id": context.session_id or context.transaction_id,
         "transaction_id": context.transaction_id,
     }
-    if context.scenario_group_id:
-        configurable["scenario_group_id"] = context.scenario_group_id
+    if context.session_id:
+        configurable["session_id"] = context.session_id
     return {"configurable": configurable}
 
 
@@ -78,15 +79,15 @@ def _mlflow_metadata(context: TraceContext) -> dict[str, str]:
         "aip.transaction_id": context.transaction_id,
         "aip.app_id": context.app_identifier,
     }
-    if context.scenario_group_id:
-        metadata["scenario_group_id"] = context.scenario_group_id
+    if context.session_id:
+        metadata["session_id"] = context.session_id
     return metadata
 
 
 def _mlflow_tags(context: TraceContext) -> dict[str, str]:
     tags = {"app_id": context.app_identifier}
-    if context.scenario_group_id:
-        tags["scenario_group_id"] = context.scenario_group_id
+    if context.session_id:
+        tags["session_id"] = context.session_id
     return tags
 
 
@@ -168,7 +169,7 @@ def mlflow_trace_context(context: TraceContext) -> Iterator[None]:
 
     metadata = _mlflow_metadata(context)
     tags = _mlflow_tags(context)
-    session_id = context.scenario_group_id
+    session_id = context.session_id
     context_kwargs: dict[str, Any] = {
         "metadata": metadata,
         "tags": tags,

@@ -4,10 +4,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.agents.model_parameter_agent.utils.lut.models import BasecaseIndex
 from apps.agents.model_parameter_agent.utils.parameter_mapping import ParameterKnowledgeBase
 
 
-class ModelParameterProposalState(BaseModel):
+class ModelParameterProposalOutputState(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     scenario_id: int
@@ -15,12 +16,31 @@ class ModelParameterProposalState(BaseModel):
     model_name: str | None = None
 
     scenario_context: dict[str, Any] | None = None
-    parameter_knowledge_base: ParameterKnowledgeBase | None = None
     candidate_mappings: list[dict[str, Any]] = Field(default_factory=list)
     non_input_items: list[dict[str, Any]] = Field(default_factory=list)
-    basecase_records: list[dict[str, Any]] = Field(default_factory=list)
+    slot_catalog: list[dict[str, Any]] = Field(default_factory=list)
+    slot_candidate_mappings: list[dict[str, Any]] = Field(default_factory=list)
+    effective_references: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_config: dict[str, Any] = Field(default_factory=dict)
+    lut_version: str | None = None
+
     parameter_slots: list[dict[str, Any]] = Field(default_factory=list)
     parameter_adjustments: list[dict[str, Any]] = Field(default_factory=list)
     validation_warnings: list[str] = Field(default_factory=list)
     llm_usage: dict[str, Any] | None = None
     llm_calls: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ModelParameterProposalState(ModelParameterProposalOutputState):
+    # Request-local runtime objects are omitted from Pydantic dumps and the
+    # graph output schema so full workbook rows never become API/trace output.
+    parameter_knowledge_base: ParameterKnowledgeBase | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
+    basecase_index: BasecaseIndex | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
