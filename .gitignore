@@ -120,5 +120,6 @@ skmip-mi-agent.code-workspace
 .claude/settings.local.json
 .claude/CLAUDE.md
 .claude/skills/*/.local
+.claude/skills/*/*.local
 .claude/skills/omc-reference/
 .playwright-mcp/

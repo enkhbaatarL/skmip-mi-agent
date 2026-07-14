@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks
 
 from apps.agents.scenario_group_agent.flows.confirm_generation.flow import (
-    get_runnable_graph as get_confirm_generation_runnable,
+    run_confirm_generation,
 )
 from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
     prepare_create_scenarios,
@@ -151,7 +151,7 @@ async def confirm_generation(
     scenario_group_id: int,
     payload: ConfirmGenerationIn,
 ) -> ConfirmGenerationOut:
-    result = await get_confirm_generation_runnable().ainvoke(
+    result = await run_confirm_generation(
         {
             "scenario_group_id": scenario_group_id,
             **payload.model_dump(exclude_unset=True),

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -12,6 +13,8 @@ from typing import Any
 import uuid
 
 import httpx
+
+from quality_eval.runtime_config import AGENT_ALIASES, load_runtime_target
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -39,6 +42,13 @@ class TargetEvent:
     initial_scenario_group_id: int | None = None
     initial_action_state: str | None = None
     initial_action_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
 
 
 class PipelineStop(Exception):
@@ -90,12 +100,16 @@ class MetricsStore:
                 status_code INTEGER,
                 ok INTEGER NOT NULL,
                 elapsed_ms INTEGER NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
                 reason TEXT,
                 created_at REAL NOT NULL
             );
             """,
         )
         self._ensure_pipeline_run_columns()
+        self._ensure_api_call_columns()
         self.conn.commit()
 
     def _ensure_pipeline_run_columns(self) -> None:
@@ -109,6 +123,20 @@ class MetricsStore:
             "initial_action_reason": "ALTER TABLE pipeline_runs ADD COLUMN initial_action_reason TEXT",
             "pre_deleted": "ALTER TABLE pipeline_runs ADD COLUMN pre_deleted INTEGER NOT NULL DEFAULT 0",
             "retried_create": "ALTER TABLE pipeline_runs ADD COLUMN retried_create INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, statement in migrations.items():
+            if column not in existing_columns:
+                self.conn.execute(statement)
+
+    def _ensure_api_call_columns(self) -> None:
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(api_call_metrics)").fetchall()
+        }
+        migrations = {
+            "prompt_tokens": "ALTER TABLE api_call_metrics ADD COLUMN prompt_tokens INTEGER",
+            "completion_tokens": "ALTER TABLE api_call_metrics ADD COLUMN completion_tokens INTEGER",
+            "total_tokens": "ALTER TABLE api_call_metrics ADD COLUMN total_tokens INTEGER",
         }
         for column, statement in migrations.items():
             if column not in existing_columns:
@@ -197,15 +225,40 @@ class MetricsStore:
         ok: bool,
         elapsed_ms: int,
         reason: str | None = None,
+        token_usage: TokenUsage | None = None,
     ) -> None:
         self.conn.execute(
             """
             INSERT INTO api_call_metrics (
-                run_id, step, method, url, status_code, ok, elapsed_ms, reason, created_at
+                run_id,
+                step,
+                method,
+                url,
+                status_code,
+                ok,
+                elapsed_ms,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                reason,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (run_id, step, method, url, status_code, int(ok), elapsed_ms, reason, time.time()),
+            (
+                run_id,
+                step,
+                method,
+                url,
+                status_code,
+                int(ok),
+                elapsed_ms,
+                token_usage.prompt_tokens if token_usage else None,
+                token_usage.completion_tokens if token_usage else None,
+                token_usage.total_tokens if token_usage else None,
+                reason,
+                time.time(),
+            ),
         )
         self.conn.commit()
 
@@ -267,6 +320,81 @@ class MetricsStore:
                 f"min={row['min_ms']}ms max={row['max_ms']}ms",
             )
 
+        token_rows = self.conn.execute(
+            """
+            SELECT m.step,
+                   COUNT(*) AS count,
+                   ROUND(AVG(m.prompt_tokens), 1) AS avg_input,
+                   MIN(m.prompt_tokens) AS min_input,
+                   MAX(m.prompt_tokens) AS max_input,
+                   ROUND(AVG(m.completion_tokens), 1) AS avg_output,
+                   MIN(m.completion_tokens) AS min_output,
+                   MAX(m.completion_tokens) AS max_output,
+                   ROUND(AVG(m.total_tokens), 1) AS avg_total,
+                   MIN(m.total_tokens) AS min_total,
+                   MAX(m.total_tokens) AS max_total
+              FROM api_call_metrics m
+              JOIN pipeline_runs r ON r.run_id = m.run_id
+             WHERE r.batch_id = ?
+               AND m.total_tokens IS NOT NULL
+             GROUP BY m.step
+             ORDER BY MIN(m.id)
+            """,
+            (batch_id,),
+        ).fetchall()
+        if token_rows:
+            print("\n[API token usage]")
+            for row in token_rows:
+                print(
+                    "  "
+                    f"{row['step']}: count={row['count']} "
+                    f"input(avg/min/max)={row['avg_input']}/{row['min_input']}/{row['max_input']} "
+                    f"output(avg/min/max)={row['avg_output']}/{row['min_output']}/{row['max_output']} "
+                    f"total(avg/min/max)={row['avg_total']}/{row['min_total']}/{row['max_total']}",
+                )
+
+            pipeline_tokens = self.conn.execute(
+                """
+                WITH per_run AS (
+                    SELECT r.run_id,
+                           SUM(m.prompt_tokens) AS input_tokens,
+                           SUM(m.completion_tokens) AS output_tokens,
+                           SUM(m.total_tokens) AS total_tokens
+                      FROM pipeline_runs r
+                      JOIN api_call_metrics m ON m.run_id = r.run_id
+                     WHERE r.batch_id = ?
+                       AND m.total_tokens IS NOT NULL
+                     GROUP BY r.run_id
+                )
+                SELECT COUNT(*) AS pipelines,
+                       ROUND(AVG(input_tokens), 1) AS avg_input,
+                       MIN(input_tokens) AS min_input,
+                       MAX(input_tokens) AS max_input,
+                       ROUND(AVG(output_tokens), 1) AS avg_output,
+                       MIN(output_tokens) AS min_output,
+                       MAX(output_tokens) AS max_output,
+                       ROUND(AVG(total_tokens), 1) AS avg_total,
+                       MIN(total_tokens) AS min_total,
+                       MAX(total_tokens) AS max_total
+                  FROM per_run
+                """,
+                (batch_id,),
+            ).fetchone()
+            print("\n[Pipeline token usage]")
+            print(
+                "  "
+                f"pipelines={pipeline_tokens['pipelines']} "
+                f"input(avg/min/max)="
+                f"{pipeline_tokens['avg_input']}/{pipeline_tokens['min_input']}/{pipeline_tokens['max_input']} "
+                f"output(avg/min/max)="
+                f"{pipeline_tokens['avg_output']}/{pipeline_tokens['min_output']}/{pipeline_tokens['max_output']} "
+                f"total(avg/min/max)="
+                f"{pipeline_tokens['avg_total']}/{pipeline_tokens['min_total']}/{pipeline_tokens['max_total']}",
+            )
+        else:
+            print("\n[Token usage]")
+            print("  token usage was not captured; sync API response did not include non-zero usage.")
+
         failures = self.conn.execute(
             """
             SELECT event_type_l2_id,
@@ -294,6 +422,73 @@ class MetricsStore:
                 )
         print(f"\nSQLite metrics: {self.db_path}")
         print(f"{'=' * 80}\n")
+
+
+def _int_value(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _usage_field(payload: dict[str, Any], *names: str) -> int | None:
+    for name in names:
+        if name in payload:
+            value = _int_value(payload[name])
+            if value is not None:
+                return value
+    return None
+
+
+def token_usage_from(payload: dict[str, Any]) -> TokenUsage | None:
+    candidates: list[Any] = [
+        payload.get("usage"),
+        payload.get("llmUsage"),
+        payload.get("llm_usage"),
+        payload.get("tokenUsage"),
+        payload.get("token_usage"),
+    ]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        candidates.extend(
+            [
+                data.get("usage"),
+                data.get("llmUsage"),
+                data.get("llm_usage"),
+                data.get("tokenUsage"),
+                data.get("token_usage"),
+            ],
+        )
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        prompt_tokens = _usage_field(candidate, "prompt_tokens", "promptTokens", "input_tokens", "inputTokens")
+        completion_tokens = _usage_field(
+            candidate,
+            "completion_tokens",
+            "completionTokens",
+            "output_tokens",
+            "outputTokens",
+        )
+        total_tokens = _usage_field(candidate, "total_tokens", "totalTokens")
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
+        if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+            continue
+        prompt_tokens = prompt_tokens or 0
+        completion_tokens = completion_tokens or 0
+        total_tokens = total_tokens or prompt_tokens + completion_tokens
+        if total_tokens == 0:
+            continue
+        return TokenUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+    return None
 
 
 def request_json(
@@ -343,6 +538,7 @@ def request_json(
         raise PipelineStop(step, str(exc)) from exc
 
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    token_usage = token_usage_from(payload)
     metrics.record_api_call(
         run_id,
         step=step,
@@ -352,8 +548,15 @@ def request_json(
         ok=True,
         elapsed_ms=elapsed_ms,
         reason=callback_reason(payload),
+        token_usage=token_usage,
     )
-    print(f"  - {step}: {elapsed_ms}ms")
+    token_summary = (
+        f" | tokens input={token_usage.prompt_tokens} output={token_usage.completion_tokens} "
+        f"total={token_usage.total_tokens}"
+        if token_usage
+        else ""
+    )
+    print(f"  - {step}: {elapsed_ms}ms{token_summary}")
     return payload
 
 
@@ -582,6 +785,22 @@ def run_pipeline(
             f"actionState={target.initial_action_state}",
         )
 
+        try:
+            event_detail = request_json(
+                client,
+                metrics,
+                run_id,
+                step="get_event_detail",
+                method="GET",
+                url=f"{args.base_url}/events/{target.mi_event_id}",
+            )
+        except PipelineStop as exc:
+            # Event detail enriches quality evaluation only; it must not turn an
+            # otherwise runnable create/validation/signpost pipeline into failure.
+            print(f"  ⚠ event detail unavailable; quality R-04 will SKIP | {exc.reason}")
+        else:
+            write_json(OUTPUT_DIR / batch_id / f"{target.mi_event_id}_event_detail.json", event_detail)
+
         if args.delete_existing or target.initial_scenario_group_id is not None:
             soft_delete_existing_group(
                 client,
@@ -769,10 +988,13 @@ def parse_args() -> argparse.Namespace:
         description="Sync API manual/integration runner for scenario generation pipeline",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--base-url", default="http://localhost:8000", help="Agent API base URL")
+    parser.add_argument("--agent", choices=sorted(AGENT_ALIASES), help="agent target alias: mi-vm or local")
+    parser.add_argument("--base-url", help="Agent URL; takes precedence over --agent and test_info.local")
+    parser.add_argument("--test-info", type=Path, help="ignored local config; defaults to skill/test_info.local when present")
     parser.add_argument("--mi-event-id", type=int, help="단건 실행할 MI 이벤트 ID")
+    parser.add_argument("--event-type-l2-id", type=int, help="단건 실행 시 SQLite에 기록할 eventTypeL2Id")
     parser.add_argument("--recent-events", type=int, help="GET /events sort=latest 기준 최근 N개 이벤트를 실행")
-    parser.add_argument("--user-id", type=int, required=True, help="요청 사용자 ID")
+    parser.add_argument("--user-id", type=int, help="요청 사용자 ID; defaults to 10603 or test_info.local")
     parser.add_argument("--timeout", type=int, default=900, help="httpx timeout seconds")
     parser.add_argument("--yes", action="store_true", help="사용자 확인 없이 다음 API로 자동 진행")
     parser.add_argument(
@@ -816,6 +1038,20 @@ def selected_modes(args: argparse.Namespace) -> list[str]:
 
 def main() -> int:
     args = parse_args()
+    try:
+        target = load_runtime_target(
+            agent=args.agent,
+            base_url=args.base_url,
+            user_id=args.user_id,
+            test_info_path=args.test_info,
+        )
+    except ValueError as exc:
+        print(f"대상 설정 오류: {exc}")
+        return 2
+    args.base_url = target.base_url or "http://localhost:8000"
+    args.user_id = target.user_id
+    if not args.admin_token:
+        args.admin_token = os.environ.get("SCENARIO_GROUP_ADMIN_TOKEN")
     modes = selected_modes(args)
     if not modes:
         print("--mi-event-id, --all-event-types, --recent-events 중 하나가 필요합니다.")
@@ -838,7 +1074,7 @@ def main() -> int:
         elif args.recent_events:
             targets = discover_recent_event_ids(client, args)
         else:
-            targets = [TargetEvent(mi_event_id=args.mi_event_id)]
+            targets = [TargetEvent(mi_event_id=args.mi_event_id, event_type_l2_id=args.event_type_l2_id)]
 
         if not targets:
             print("실행할 miEventId가 없습니다.")

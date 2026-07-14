@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-import re
 from typing import Any, Dict, List
 
 from langgraph.runtime import Runtime
@@ -23,9 +22,13 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     STAGE2_SYSTEM_PROMPT,
     STAGE5_HARD_CONSTRAINTS,
     STAGE5_SYSTEM_PROMPT,
+    Stage45StructuredOutput,
     Stage2StructuredOutput,
     Stage4StructuredOutput,
     Stage5StructuredOutput,
+    build_stage45_hard_constraints,
+    build_stage45_system_prompt,
+    build_stage45_user_prompt,
     build_stage2_hard_constraints,
     build_stage2_user_prompt,
     build_stage4_hard_constraints,
@@ -35,8 +38,10 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger as app_logger
 from apps.common.tracing.context import TraceContext
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
     DirectionCode,
     SignpostStrength,
@@ -64,19 +69,30 @@ REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 # 3. LLM Infrastructure
 # ==============================================
 
+def _exception_chain(exc: Exception) -> list[BaseException]:
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def _is_retryable_api_error(exc: Exception) -> bool:
-    status_code = getattr(exc, "status_code", None)
-    if status_code in {429, 500, 502, 503, 529}:
+    chain = _exception_chain(exc)
+    status_codes = {getattr(item, "status_code", None) for item in chain[1:] or chain}
+    if status_codes & {408, 429, 500, 502, 503, 504, 529}:
         return True
-    name = exc.__class__.__name__.lower()
-    msg = str(exc).lower()
+    name = " ".join(item.__class__.__name__.lower() for item in chain)
+    msg = " ".join(str(item).lower() for item in chain)
     keywords = ("overloaded", "rate limit", "too many requests", "timeout", "connection")
     return any(k in name or k in msg for k in keywords)
 
 
 def _is_retryable_schema_error(exc: Exception) -> bool:
-    name = exc.__class__.__name__.lower()
-    msg = str(exc).lower()
+    chain = _exception_chain(exc)
+    name = " ".join(item.__class__.__name__.lower() for item in chain)
+    msg = " ".join(str(item).lower() for item in chain)
     keywords = (
         "validationerror", "validation error", "structured", "min_length",
         "max_length", "json", "output parsing", "literal", "enum",
@@ -91,16 +107,44 @@ async def _invoke_structured(
     trace_context: TraceContext | None = None,
 ) -> BaseModel | None:
     """Async structured output LLM call via the project's invoke_llm_structured_output connector."""
+    from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
+    cfg = get_settings()
     result = await invoke_llm_structured_output(
         output_schema=schema_cls,
         messages=messages,
         temperature=temperature,
-        max_retries=2,
+        max_retries=0,
         trace_context=trace_context,
+        stream=cfg.llm_stream_enabled,
+        reasoning_effort=cfg.llm_reasoning_effort,
     )
     return result.result
+
+
+def _raise_llm_failure(stage_label: str, exc: Exception | None) -> None:
+    if exc is None:
+        raise MIBaseError(
+            ErrorCode.LLM_INVOCATION_ERROR,
+            detail=f"{stage_label} LLM 호출 결과가 없습니다.",
+        )
+    combined = " ".join(
+        f"{item.__class__.__name__}: {item}".lower()
+        for item in _exception_chain(exc)
+    )
+    if "timeout" in combined or "timed out" in combined:
+        error_code = ErrorCode.LLM_RESPONSE_TIMEOUT
+    elif _is_retryable_schema_error(exc) or any(
+        isinstance(item, (TypeError, ValueError)) for item in _exception_chain(exc)
+    ):
+        error_code = ErrorCode.LLM_INVALID_RESPONSE_ERROR
+    else:
+        error_code = ErrorCode.LLM_INVOCATION_ERROR
+    raise MIBaseError(
+        error_code,
+        detail=f"{stage_label} LLM 호출이 {REF_MAX_RETRIES}회 시도 후 실패했습니다.",
+    ) from exc
 
 
 async def _ainvoke_with_retry(
@@ -112,11 +156,9 @@ async def _ainvoke_with_retry(
     hard_constraints: str = "",
     temperature: float = 0.0,
     trace_context: TraceContext | None = None,
-) -> BaseModel | None:
-    """LLM 호출 with retry + validation + fallback.
-
-    Returns parsed Pydantic model on success, None on all retries exhausted.
-    """
+) -> BaseModel:
+    """Invoke the LLM with bounded retries and fail closed."""
+    last_exc: Exception | None = None
     last_validation_exc: Exception | None = None
     accumulated_hint = hard_constraints
 
@@ -142,10 +184,12 @@ async def _ainvoke_with_retry(
             )
             if result is None:
                 raise ValueError("LLM returned None result")
-            validate_fn(result)
+            if validate_fn:
+                validate_fn(result)
             return result
 
         except Exception as exc:  # noqa: BLE001
+            last_exc = exc
             is_api = _is_retryable_api_error(exc)
             is_schema = _is_retryable_schema_error(exc)
             is_validation = isinstance(exc, (ValueError, TypeError))
@@ -172,11 +216,18 @@ async def _ainvoke_with_retry(
                 reason = "기타 재시도"
 
             wait_sec = min(20.0, 1.5 ** (attempt - 1)) + random.uniform(0, 0.7)
-            app_logger.info("[{}] 재시도 ({}/{}) — {}, {:.1f}s 후", stage_label, attempt, REF_MAX_RETRIES, reason, wait_sec)
+            app_logger.info(
+                "[{}] 재시도 ({}/{}) — {}, {:.1f}s 후",
+                stage_label,
+                attempt,
+                REF_MAX_RETRIES,
+                reason,
+                wait_sec,
+            )
             await asyncio.sleep(wait_sec)
 
-    app_logger.warning("[{}] 재시도 소진 — fallback 진입", stage_label)
-    return None
+    app_logger.warning("[{}] 재시도 소진", stage_label)
+    _raise_llm_failure(stage_label, last_exc)
 
 
 # ==============================================
@@ -192,7 +243,7 @@ def _shorten(text: str, n: int) -> str:
 
 async def stage2_observability_filter(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     trace_context: TraceContext | None = None,
 ) -> List[str]:
     """Stage 2 진입점 — 시나리오 1건 → 통과 label_ko 리스트 반환."""
@@ -210,11 +261,11 @@ async def stage2_observability_filter(
     )
 
     def _validate(out: Stage2StructuredOutput) -> None:
-        passing = [c for c in out.candidates if c.passes_filter]
-        if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= len(passing) <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
+        candidate_count = len(out.candidates)
+        if candidate_count < REF_SIGNPOSTS_PER_SCENARIO_MIN:
             raise ValueError(
-                f"통과 후보 수 {len(passing)} 이 허용 범위 "
-                f"[{REF_SIGNPOSTS_PER_SCENARIO_MIN}, {REF_SIGNPOSTS_PER_SCENARIO_MAX}] 밖."
+                f"후보 수 {candidate_count} 이 최소 허용 개수 "
+                f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}개 미만."
             )
 
     out = await _ainvoke_with_retry(
@@ -229,49 +280,16 @@ async def stage2_observability_filter(
         hard_constraints=hard,
         trace_context=trace_context,
     )
-
     if out is None:
-        labels = _stage2_fallback(scenario)
-        app_logger.info("[{}] Stage 2 fallback labels={}", scenario_id, len(labels))
-        return labels
+        _raise_llm_failure("Stage 2", None)
 
-    passing = [c for c in out.candidates if c.passes_filter]
-    passing = passing[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
+    candidates = out.candidates[:REF_SIGNPOSTS_PER_SCENARIO_MAX]
     app_logger.info(
-        "[{}] Stage 2 candidates={} passed={}",
+        "[{}] Stage 2 passed_labels={}",
         scenario_id,
-        len(out.candidates),
-        len(passing),
+        len(candidates),
     )
-    return [c.label_ko.strip() for c in passing]
-
-
-def _stage2_fallback(scenario: Dict[str, Any]) -> List[str]:
-    """LLM 실패 시 — 시나리오 description / dimension_values 키워드로 안전 라벨 생성."""
-    sid = scenario.get("scenario_id", "S_??")
-    dims = scenario.get("dimension_values") or {}
-    dim_pairs = [(k, v) for k, v in dims.items()]
-    base = (scenario.get("title") or "").strip() or "시나리오 관측 신호"
-
-    fallbacks = [
-        f"{base} — 관련 공식 발표 보도 ({sid})",
-        f"{base} — 주요 매체의 가격 영향 분석 보도 ({sid})",
-    ]
-    for k, v in dim_pairs[:2]:
-        fallbacks.append(f"{base} — {k}={v} 공식 확인 보도")
-
-    seen: set = set()
-    out: List[str] = []
-    for lbl in fallbacks:
-        if lbl in seen:
-            continue
-        seen.add(lbl)
-        out.append(lbl)
-        if len(out) >= REF_SIGNPOSTS_PER_SCENARIO_MAX:
-            break
-    while len(out) < REF_SIGNPOSTS_PER_SCENARIO_MIN:
-        out.append(f"{base} — 추가 관측 #{len(out)+1}")
-    return out
+    return [c.label_ko.strip() for c in candidates]
 
 
 # ==============================================
@@ -280,7 +298,7 @@ def _stage2_fallback(scenario: Dict[str, Any]) -> List[str]:
 
 async def stage4_assign_direction_strength(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     labels: List[str],
     trace_context: TraceContext | None = None,
 ) -> List[Dict[str, str]]:
@@ -355,9 +373,8 @@ async def stage4_assign_direction_strength(
         hard_constraints=hard,
         trace_context=trace_context,
     )
-
     if out is None:
-        return _stage4_fallback(labels)
+        _raise_llm_failure("Stage 4", None)
 
     return [
         {
@@ -369,69 +386,112 @@ async def stage4_assign_direction_strength(
     ]
 
 
-def _stage4_fallback(labels: List[str]) -> List[Dict[str, str]]:
-    """LLM 실패 시 — 쿼터 내에서 균형 분배."""
-    n = len(labels)
-    n_strong = max(REF_STRONG_QUOTA_MIN, min(REF_STRONG_QUOTA_MAX, round(n / 3) or 1))
-    n_early = n - n_strong
+async def stage45_enrich_signposts(
+    scenario: Dict[str, Any],
+    base_event_summary: Dict[str, Any],
+    labels: List[str],
+    trace_context: TraceContext | None = None,
+) -> tuple[List[Dict[str, str]], List[List[str]]]:
+    """Stage 4+5 진입점 — strength/rationale/keyword_hints 를 한 번에 생성."""
+    if not labels:
+        return [], []
 
-    if n_early > REF_EARLY_QUOTA_MAX:
-        overflow = n_early - REF_EARLY_QUOTA_MAX
-        bump = min(overflow, REF_STRONG_QUOTA_MAX - n_strong)
-        n_strong += bump
-        n_early -= bump
-    if n_early < REF_EARLY_QUOTA_MIN and n_strong > REF_STRONG_QUOTA_MIN:
-        shift = min(REF_EARLY_QUOTA_MIN - n_early, n_strong - REF_STRONG_QUOTA_MIN)
-        n_strong -= shift
-        n_early += shift
-
-    n_verystrong = 1 if n_strong >= 2 else 0
-    n_strong_only = n_strong - n_verystrong
-    n_med = (n_early + 1) // 2
-    n_remaining_early = n_early - n_med
-    n_weak = (n_remaining_early + 1) // 2
-    n_veryweak = n_remaining_early - n_weak
-
-    app_logger.info(
-        "Stage 4 fallback: N={} → VS={} S={} M={} W={} VW={}",
-        n,
-        n_verystrong,
-        n_strong_only,
-        n_med,
-        n_weak,
-        n_veryweak,
+    user_prompt = build_stage45_user_prompt(
+        scenario=scenario,
+        base_event_summary=base_event_summary,
+        scenario_description=_shorten(scenario.get("description", ""), 600),
+        labels=labels,
+    )
+    label_set = [lbl.strip() for lbl in labels]
+    hard = build_stage45_hard_constraints(
+        strong_min=REF_STRONG_QUOTA_MIN,
+        strong_max=REF_STRONG_QUOTA_MAX,
+        early_min=REF_EARLY_QUOTA_MIN,
+        early_max=REF_EARLY_QUOTA_MAX,
     )
 
-    sequence = (
-        ([SignpostStrength.VERYSTRONG.to_string()] * n_verystrong)
-        + ([SignpostStrength.STRONG.to_string()] * n_strong_only)
-        + ([SignpostStrength.MEDIUM.to_string()] * n_med)
-        + ([SignpostStrength.WEAK.to_string()] * n_weak)
-        + ([SignpostStrength.VERYWEAK.to_string()] * n_veryweak)
+    def _validate(out: Stage45StructuredOutput) -> None:
+        if len(out.signposts) != len(labels):
+            raise ValueError(
+                f"signposts 길이 불일치: {len(out.signposts)} != {len(labels)}"
+            )
+        out_labels = [item.label_ko.strip() for item in out.signposts]
+        if out_labels != label_set:
+            raise ValueError(
+                "signposts 의 label_ko 순서가 입력과 다름. "
+                f"expected={label_set}, got={out_labels}"
+            )
+        n_strong = sum(
+            1
+            for item in out.signposts
+            if item.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
+        )
+        n_early = sum(
+            1
+            for item in out.signposts
+            if item.strength
+            in (
+                SignpostStrength.MEDIUM,
+                SignpostStrength.WEAK,
+                SignpostStrength.VERYWEAK,
+            )
+        )
+        if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
+            raise ValueError(
+                f"STRONG 쿼터 위반: {n_strong} "
+                f"(허용 {REF_STRONG_QUOTA_MIN}~{REF_STRONG_QUOTA_MAX})"
+            )
+        if not (REF_EARLY_QUOTA_MIN <= n_early <= REF_EARLY_QUOTA_MAX):
+            raise ValueError(
+                f"MEDIUM+WEAK 쿼터 위반: {n_early} "
+                f"(허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})"
+            )
+        for item in out.signposts:
+            if not (KEYWORD_HINTS_MIN <= len(item.keyword_hints) <= KEYWORD_HINTS_MAX):
+                raise ValueError(
+                    f"keyword_hints 길이 위반 ({len(item.keyword_hints)}): "
+                    f"허용 {KEYWORD_HINTS_MIN}~{KEYWORD_HINTS_MAX}"
+                )
+            if any(not str(kw).strip() for kw in item.keyword_hints):
+                raise ValueError("keyword_hints 안에 빈 문자열 존재.")
+
+    out = await _ainvoke_with_retry(
+        stage_label="Stage 4+5",
+        schema_cls=Stage45StructuredOutput,
+        system_prompt=build_stage45_system_prompt(
+            stage4_strength_guide=SignpostStrength.stage4_prompt_guide_text(),
+            strong_min=REF_STRONG_QUOTA_MIN,
+            strong_max=REF_STRONG_QUOTA_MAX,
+            early_min=REF_EARLY_QUOTA_MIN,
+            early_max=REF_EARLY_QUOTA_MAX,
+        ),
+        user_prompt=user_prompt,
+        validate_fn=_validate,
+        hard_constraints=hard,
+        trace_context=trace_context,
     )
-    out: List[Dict[str, str]] = []
-    for lbl, strength in zip(labels, sequence):
-        out.append({
-            "label_ko": lbl,
-            "strength": strength,
-            "rationale_ko": (
-                "Fallback — LLM 실패로 분포 기반 안전 strength 부여. "
-                "후속 재실행을 통해 정밀 평가 필요."
-            ),
-        })
-    return out
+    if out is None:
+        _raise_llm_failure("Stage 4+5", None)
+
+    assignments = [
+        {
+            "label_ko": item.label_ko.strip(),
+            "strength": item.strength.to_string(),
+            "rationale_ko": item.rationale_ko,
+        }
+        for item in out.signposts
+    ]
+    keyword_hints = [[kw.strip() for kw in item.keyword_hints] for item in out.signposts]
+    return assignments, keyword_hints
 
 
 # ==============================================
 # 7. Stage 5 — Keyword Hint Mint
 # ==============================================
 
-_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\-]+|[가-힣]+")
-
-
 async def stage5_mint_keywords(
     scenario: Dict[str, Any],
-    base_event_summary: Dict[str, str],
+    base_event_summary: Dict[str, Any],
     labels: List[str],
     trace_context: TraceContext | None = None,
 ) -> List[List[str]]:
@@ -477,32 +537,11 @@ async def stage5_mint_keywords(
         hard_constraints=STAGE5_HARD_CONSTRAINTS,
         trace_context=trace_context,
     )
-
     if out is None:
-        return [_stage5_fallback_keywords(lbl) for lbl in labels]
+        _raise_llm_failure("Stage 5", None)
 
     return [[kw.strip() for kw in h.keyword_hints] for h in out.hints]
 
-
-def _stage5_fallback_keywords(label: str) -> List[str]:
-    """LLM 실패 시 — label 의 명사 토큰 + 정형 행위어로 안전 3개 키워드 구성."""
-    tokens = [t for t in _TOKEN_PATTERN.findall(label) if len(t) >= 2]
-    seen: set = set()
-    proper: List[str] = []
-    for t in tokens:
-        if t in seen:
-            continue
-        seen.add(t)
-        proper.append(t)
-        if len(proper) >= 2:
-            break
-    fallback_action = "보도"
-    out = list(proper)
-    if fallback_action not in out:
-        out.append(fallback_action)
-    while len(out) < KEYWORD_HINTS_MIN:
-        out.append(f"신호{len(out)+1}")
-    return out[:KEYWORD_HINTS_MAX]
 
 # ==============================================
 # LangGraph Node Classes
@@ -540,7 +579,12 @@ class ObservabilityFilterNode(BaseNode):
                 trace_context=trace_context,
             )
         if not labels:
-            app_logger.info("[{}] Stage 2 통과 0건 - signposts 비어있음", _scenario_pk(state.scenario))
+            return {
+                "error": (
+                    "Stage 2 signpost 후보가 최소 "
+                    f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}개에 미달했습니다."
+                )
+            }
         return {"labels": labels}
 
 
@@ -587,6 +631,50 @@ class DirectionStrengthNode(BaseNode):
         return {"stage4_assignments": assignments}
 
 
+class EnrichSignpostsNode(BaseNode):
+    async def run(
+        self,
+        state: SignpostGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
+        if state.skip_generation or state.error or not state.labels:
+            return {}
+        if state.scenario is None:
+            return {"error": "scenario is required"}
+        trace_context = runtime.context if runtime is not None else None
+        if trace_context is None:
+            assignments, keyword_hints = await stage45_enrich_signposts(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+            )
+        else:
+            assignments, keyword_hints = await stage45_enrich_signposts(
+                state.scenario,
+                state.base_event_summary,
+                state.labels,
+                trace_context=trace_context,
+            )
+        strengths = [
+            SignpostStrength.from_string_or_default(
+                assignment.get("strength"),
+                default=SignpostStrength.MEDIUM,
+            )
+            for assignment in assignments
+        ]
+        app_logger.info(
+            "[{}] Stage 4+5 vs={} s={} m={} w={} vw={} hints={}",
+            _scenario_pk(state.scenario),
+            sum(1 for strength in strengths if strength == SignpostStrength.VERYSTRONG),
+            sum(1 for strength in strengths if strength == SignpostStrength.STRONG),
+            sum(1 for strength in strengths if strength == SignpostStrength.MEDIUM),
+            sum(1 for strength in strengths if strength == SignpostStrength.WEAK),
+            sum(1 for strength in strengths if strength == SignpostStrength.VERYWEAK),
+            len(keyword_hints),
+        )
+        return {"stage4_assignments": assignments, "stage5_keyword_hints": keyword_hints}
+
+
 class KeywordHintsNode(BaseNode):
     async def run(
         self,
@@ -618,6 +706,22 @@ class AssembleSignpostsNode(BaseNode):
     async def run(self, state: SignpostGenerationState) -> dict[str, Any]:
         if state.skip_generation or state.error or state.scenario is None:
             return {}
+        count = len(state.labels)
+        if not (REF_SIGNPOSTS_PER_SCENARIO_MIN <= count <= REF_SIGNPOSTS_PER_SCENARIO_MAX):
+            return {
+                "error": (
+                    f"Signpost 최종 개수 {count}가 허용 범위 "
+                    f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}~{REF_SIGNPOSTS_PER_SCENARIO_MAX} 밖입니다."
+                )
+            }
+        if len(state.stage4_assignments) != count or len(state.stage5_keyword_hints) != count:
+            return {
+                "error": (
+                    "Signpost enrichment 결과 길이가 label 수와 일치하지 않습니다: "
+                    f"labels={count}, assignments={len(state.stage4_assignments)}, "
+                    f"keyword_hints={len(state.stage5_keyword_hints)}"
+                )
+            }
         axes = {
             "signpost_class": "observation",
             "signpost_source": "mi_record",

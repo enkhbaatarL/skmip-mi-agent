@@ -38,6 +38,19 @@ class Stage3StructuredOutput(BaseModel):
     )
 
 
+class Stage3DimensionSelection(BaseModel):
+    dim_key: str = Field(description="입력 Dimension 의 dim_key.")
+    selected_enum: conlist(str, min_length=2, max_length=4) = Field(  # type: ignore[valid-type]
+        description="채택 값 2~4개. 반드시 해당 Dimension value_enums 의 부분집합.",
+    )
+
+
+class Stage3BatchStructuredOutput(BaseModel):
+    dimensions: list[Stage3DimensionSelection] = Field(
+        description="입력된 Dimension 별 value 축소 결과. 각 dim_key 를 정확히 한 번 포함.",
+    )
+
+
 class NarrativeOnly(BaseModel):
     title: str = Field(description="시장 참여자 관점 한 줄 요약. 공백과 문장부호를 포함해 100자 이내.")
     description: str = Field(description="3~5줄 시나리오 서술. 공백과 문장부호를 포함해 300~500자.")
@@ -75,6 +88,17 @@ def _format_dimensions_block(template: Any) -> str:
     return "\n".join(lines)
 
 
+def _format_compact_event_context(pack: Stage1ContextPack) -> str:
+    base_event = pack.C1_base_event
+    facts = "\n".join(f"  - {fact}" for fact in base_event.key_facts) or "  - (없음)"
+    tags = ", ".join(base_event.tags) or "(없음)"
+    return f"""\\
+- occurred_at: {base_event.occurred_at or "(없음)"}
+- key_facts:
+{facts}
+- tags: {tags}"""
+
+
 def build_stage2_user_prompt(
     *,
     pack: Stage1ContextPack,
@@ -89,6 +113,8 @@ def build_stage2_user_prompt(
 - event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+- compact_event_context:
+{_format_compact_event_context(pack)}
 - detail_analysis(요약): {detail_excerpt}
 
 ## Template (event_type_l1_l2 = {pack.C1_base_event.event_type_l1_l2})
@@ -115,6 +141,7 @@ def build_stage3_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 정보
 - dim_key: {dim["dim_key"]}
@@ -124,6 +151,40 @@ def build_stage3_user_prompt(
 
 ## 산출
 - 채택 값 2~4개.
+"""
+
+
+def build_stage3_batch_user_prompt(
+    *,
+    pack: Stage1ContextPack,
+    dimensions: list[dict[str, Any]],
+) -> str:
+    dimension_blocks: list[str] = []
+    for dim in dimensions:
+        enum_full_block = ", ".join(
+            f"{enum['id']}({enum.get('label', '')})"
+            for enum in dim["enum"]
+        )
+        dimension_blocks.append(
+            f"- dim_key: {dim['dim_key']}\n"
+            f"  label_ko: {dim.get('label_ko', '')}\n"
+            f"  description: {dim.get('description', '')}\n"
+            f"  value_enums: {enum_full_block}",
+        )
+    return f"""\
+## Base Event 요약
+- title: {pack.C1_base_event.title}
+- summary: {pack.C1_base_event.summary}
+- driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
+
+## Dimension 정보
+{chr(10).join(dimension_blocks)}
+
+## 산출
+- dimensions 에는 위 모든 dim_key 를 정확히 한 번씩 포함.
+- 각 dim_key 마다 selected_enum 2~4개를 선택.
+- selected_enum 은 반드시 해당 dim_key 의 value_enums 안에서만 선택.
 """
 
 
@@ -157,6 +218,7 @@ def build_stage4_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
 {dim_label_block}
@@ -184,6 +246,7 @@ def build_stage4_fixed_user_prompt(
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
 - driver: {pack.C1_base_event.driver}
+{_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
 {dim_label_block}
@@ -232,6 +295,7 @@ def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenari
 ## Base Event 요약
 - title: {pack.C1_base_event.title}
 - summary: {pack.C1_base_event.summary}
+{_format_compact_event_context(pack)}
 
 ## 시나리오 목록 ({len(scenarios)}건)
 {scenarios_block}
@@ -274,7 +338,7 @@ STAGE2_HARD_CONSTRAINTS = """\
 
 STAGE3_SYSTEM_PROMPT = """\
 당신은 멀티시나리오 생성을 위한 'Value Reducer' 입니다.
-하나의 Dimension 의 value_enums 중에서 **2~4개 값만** 채택하십시오.
+입력된 각 Dimension 의 value_enums 중에서 Dimension 별로 **2~4개 값만** 채택하십시오.
 
 ## 선택 규칙 (반드시 준수)
 - 최종 수: 2~4개.
@@ -300,8 +364,9 @@ STAGE3_SYSTEM_PROMPT = """\
 
 STAGE3_HARD_CONSTRAINTS = """\
 [중요한 출력 제약 — Stage 3]
-- selected_enum 길이는 반드시 2~4.
-- selected_enum 의 모든 값은 입력된 value_enums 안에 있어야 함.
+- 입력된 모든 dim_key 를 정확히 한 번 포함.
+- 각 dim_key 의 selected_enum 길이는 반드시 2~4.
+- selected_enum 의 모든 값은 해당 dim_key 의 value_enums 안에 있어야 함.
 - 인접 병합 사유로 Enum 제거 금지.
 """
 

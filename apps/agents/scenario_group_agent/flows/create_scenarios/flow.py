@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
-from apps.agents.scenario_group_agent.constants import AGENT_NAME
+from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_CREATE_SCENARIOS
 from apps.agents.scenario_group_agent.flows.create_scenarios.nodes import (
     check_existing_scenario_group,
     create_group_record,
@@ -118,6 +118,7 @@ async def run_create_scenarios_inline(
         transaction_id=new_transaction_id(),
         app_identifier=agent_config.aip_app_id,
         agent_name=AGENT_NAME,
+        api_identifier=API_IDENTIFIER_CREATE_SCENARIOS,
         session_id=str(scenario_group_id),
     )
     state = CreateScenariosState(

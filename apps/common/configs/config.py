@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     llm_concurrency: int
     llm_timeout_sec: float = Field(default=90.0)
     llm_max_retries: int = Field(default=1, ge=0)
+    llm_stream_enabled: bool = Field(default=False)
+    llm_reasoning_effort: Literal[
+        "default",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ] = "default"
 
     # Model parameter proposal
     model_parameter_lut_enabled: bool = Field(default=False)
@@ -162,7 +172,7 @@ class Settings(BaseSettings):
 
     # Scenario group admin/test APIs
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
-    create_signposts_max_concurrent_scenarios: int = Field(default=7, ge=1)
+    create_signposts_max_concurrent_scenarios: int = Field(default=10, ge=1)
 
     # Agent profiles
     agents: dict[str, AgentConfig] = Field(default_factory=lambda: {"default": AgentConfig()})
