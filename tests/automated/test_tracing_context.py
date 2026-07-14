@@ -151,6 +151,52 @@ class TracingContextTest(unittest.TestCase):
         )
         self.assertEqual(captured["tags"], {"app_id": "scenario-group-agent", "session_id": "42"})
 
+    def test_mlflow_trace_context_sets_api_identifier_metadata_and_tag(self) -> None:
+        captured: dict[str, object] = {}
+
+        @contextmanager
+        def fake_context(**kwargs: object) -> Iterator[None]:
+            captured.update(kwargs)
+            yield
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = SimpleNamespace(tracing=SimpleNamespace(context=fake_context))
+        try:
+            context = TraceContext(
+                transaction_id="tx-1",
+                app_identifier="scenario-group-agent",
+                api_identifier="create_scenarios",
+                session_id="42",
+            )
+            with patch(
+                "apps.common.configs.config.get_settings",
+                return_value=SimpleNamespace(mlflow_tracing_enabled=True),
+            ), mlflow_trace_context(context):
+                pass
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertEqual(
+            captured["metadata"],
+            {
+                "aip.transaction_id": "tx-1",
+                "aip.app_id": "scenario-group-agent",
+                "session_id": "42",
+                "api_identifier": "create_scenarios",
+            },
+        )
+        self.assertEqual(
+            captured["tags"],
+            {
+                "app_id": "scenario-group-agent",
+                "session_id": "42",
+                "api_identifier": "create_scenarios",
+            },
+        )
+
     def test_mlflow_trace_context_skips_mlflow_when_disabled(self) -> None:
         captured: dict[str, object] = {}
 

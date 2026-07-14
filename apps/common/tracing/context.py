@@ -16,6 +16,7 @@ class TraceContext(BaseModel):
     transaction_id: str
     app_identifier: str
     agent_name: str | None = None
+    api_identifier: str | None = None
     # MLflow session_id. 에이전트별 세션 키(scenario_group_id, model_param_proposal_id 등)를 문자열로 전달
     session_id: str | None = None
 
@@ -81,6 +82,8 @@ def _mlflow_metadata(context: TraceContext) -> dict[str, str]:
     }
     if context.session_id:
         metadata["session_id"] = context.session_id
+    if context.api_identifier:
+        metadata["api_identifier"] = context.api_identifier
     return metadata
 
 
@@ -88,6 +91,8 @@ def _mlflow_tags(context: TraceContext) -> dict[str, str]:
     tags = {"app_id": context.app_identifier}
     if context.session_id:
         tags["session_id"] = context.session_id
+    if context.api_identifier:
+        tags["api_identifier"] = context.api_identifier
     return tags
 
 

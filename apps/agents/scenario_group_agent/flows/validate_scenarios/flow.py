@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
-from apps.agents.scenario_group_agent.constants import AGENT_NAME
+from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_VALIDATE_SCENARIOS
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     generate_dimension_values,
     load_scenario_group,
@@ -127,6 +127,7 @@ async def run_validate_scenarios_inline(
         transaction_id=new_transaction_id(),
         app_identifier=agent_config.aip_app_id,
         agent_name=AGENT_NAME,
+        api_identifier=API_IDENTIFIER_VALIDATE_SCENARIOS,
         session_id=str(scenario_group_id),
     )
     state = ValidateScenariosState(
