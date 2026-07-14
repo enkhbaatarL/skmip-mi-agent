@@ -113,6 +113,7 @@ docs/backoffice/tests/
 # Optional: Local files
 # =========================
 mysql_data/
+local/plan/
 local/
 .omc/
 skmip-mi-agent.code-workspace
