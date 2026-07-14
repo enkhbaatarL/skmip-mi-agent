@@ -13,8 +13,11 @@ description: MI Scenario Group Agent sync 파이프라인 테스트를 실행하
 
 - Agent API 서버가 실행 중이고 `--base-url`로 접근 가능한지 확인한다.
 - 테스트 대상은 `--base-url`로 선택한다.
-  - 로컬 agent: `http://localhost:8000`
+  - 로컬 agent: `http://localhost:8001`
   - public demo VM agent: `http://40.82.137.178:8001`
+- 로컬 agent를 직접 실행할 때는 repo root의 `envs/config.yaml`을 기준 설정으로 사용한다.
+  `config.yaml`의 `${...}` placeholder는 `envs/.env` 값으로 채워야 하므로, 다음 형태로 실행한다:
+  `poetry run dotenv -f envs/.env run --no-override uvicorn main:app --host 127.0.0.1 --port 8001`
 - 유효한 `--user-id`를 사용한다.
 - 최근 N개 실행이나 기존 group 재시도가 필요한 실행에서는 `SCENARIO_GROUP_ADMIN_TOKEN` 환경변수(또는 명시 `--admin-token`)가 필요하다. 환경변수를 쓰면 bearer token이 process argument에 노출되지 않는다.
 - create/validation/signpost sync API는 HTTP 요청 안에서 graph를 끝까지 실행하므로 timeout을 길게 잡는다.
@@ -25,7 +28,7 @@ description: MI Scenario Group Agent sync 파이프라인 테스트를 실행하
 `.claude/skills/scenario-quality-eval/test_info.local`이며 Git에는 포함되지 않는다.
 
 ```ini
-agent=mi-vm  # mi-vm=http://40.82.137.178:8001, local=http://localhost:8000
+agent=mi-vm  # mi-vm=http://40.82.137.178:8001, local=http://localhost:8001
 user_id=10603
 ```
 
@@ -69,7 +72,7 @@ public demo VM의 agent 주소는 `http://40.82.137.178:8001/`이다. VM agent�
 
 ```bash
 python tests/manual/test_sync_pipeline_api.py \
-  --base-url http://localhost:8000 \
+  --base-url http://localhost:8001 \
   --mi-event-id 12345 \
   --user-id 10001 \
   --yes
@@ -91,7 +94,7 @@ python tests/manual/test_sync_pipeline_api.py \
 
 ```bash
 python tests/manual/test_sync_pipeline_api.py \
-  --base-url http://localhost:8000 \
+  --base-url http://localhost:8001 \
   --user-id 10001 \
   --all-event-types \
   --events-per-type 1 \

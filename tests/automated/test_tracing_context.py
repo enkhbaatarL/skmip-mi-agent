@@ -16,6 +16,8 @@ from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 from typing_extensions import TypedDict
 
+from apps.agents.scenario_group_agent.constants import API_IDENTIFIER_CONFIRM_GENERATION
+from apps.agents.scenario_group_agent.flows.confirm_generation.flow import run_confirm_generation
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.common.tracing.context import (
     TraceContext,
@@ -585,6 +587,78 @@ class TracingContextTest(unittest.TestCase):
         )
 
         self.assertEqual(result["transaction_id"], "tx-1")
+
+    def test_confirm_generation_api_runner_sets_trace_context(self) -> None:
+        captured: dict[str, object] = {}
+        expected_state = {
+            "scenario_group_id": 42,
+            "scenario_group": {"status": "created", "stage": "completed"},
+            "message": "Generation confirmed",
+        }
+
+        class FakeGraph:
+            async def ainvoke(
+                self,
+                state: object,
+                config: dict[str, object] | None = None,
+                context: TraceContext | None = None,
+            ) -> dict[str, object]:
+                captured["state"] = state
+                captured["config"] = config
+                captured["context"] = context
+                return expected_state
+
+        @contextmanager
+        def fake_mlflow_trace_context(context: TraceContext) -> Iterator[None]:
+            captured["mlflow_context"] = context
+            yield
+
+        payload = {
+            "scenario_group_id": 42,
+            "user_id": 10001,
+            "scenario_group": {"title": "confirmed group"},
+            "table": {"headers": [{"key": "period", "label": "Period", "displayOrder": 1}], "rows": []},
+        }
+
+        with patch(
+            "apps.common.configs.config.get_settings",
+            return_value=SimpleNamespace(
+                get_agent_config=lambda _: SimpleNamespace(aip_app_id="scenario-group-agent"),
+            ),
+        ), patch(
+            "apps.agents.scenario_group_agent.flows.confirm_generation.flow.new_transaction_id",
+            return_value="tx-confirm",
+        ), patch(
+            "apps.agents.scenario_group_agent.flows.confirm_generation.flow.get_compiled_graph",
+            return_value=FakeGraph(),
+        ), patch(
+            "apps.agents.scenario_group_agent.flows.confirm_generation.flow.mlflow_trace_context",
+            side_effect=fake_mlflow_trace_context,
+        ):
+            result = asyncio.run(run_confirm_generation(payload))
+
+        trace_context = captured["context"]
+        self.assertIsInstance(trace_context, TraceContext)
+        if not isinstance(trace_context, TraceContext):
+            self.fail("trace context was not passed to confirmation graph")
+        self.assertEqual(trace_context.transaction_id, "tx-confirm")
+        self.assertEqual(trace_context.app_identifier, "scenario-group-agent")
+        self.assertEqual(trace_context.api_identifier, API_IDENTIFIER_CONFIRM_GENERATION)
+        self.assertEqual(trace_context.session_id, "42")
+        self.assertIs(captured["mlflow_context"], trace_context)
+        self.assertEqual(
+            captured["config"],
+            {
+                "configurable": {
+                    "thread_id": "42",
+                    "transaction_id": "tx-confirm",
+                    "session_id": "42",
+                },
+            },
+        )
+        self.assertEqual(result.data.scenario_group_id, 42)
+        self.assertEqual(result.data.status, "created")
+        self.assertEqual(result.data.stage, "completed")
 
     def test_base_node_exposes_runnable_config_callbacks_during_run(self) -> None:
         expected_callbacks = SimpleNamespace(name="callbacks")

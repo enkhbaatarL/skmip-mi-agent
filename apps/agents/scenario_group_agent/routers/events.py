@@ -25,9 +25,17 @@ async def list_events(
     event_type_l1_id: int | None = Query(default=None, alias="eventTypeL1Id"),
     event_type_l2_id: int | None = Query(default=None, alias="eventTypeL2Id"),
     recommended_only: Annotated[bool, Query(alias="recommendedOnly")] = False,
-    date_from: str | None = Query(default=None, alias="dateFrom"),
-    date_to: str | None = Query(default=None, alias="dateTo"),
-    sort: str = Query(default="latest"),
+    date_from: str | None = Query(
+        default=None,
+        alias="dateFrom",
+        description="조회 시작일. ISO 형식 YYYY-MM-DD",
+    ),
+    date_to: str | None = Query(
+        default=None,
+        alias="dateTo",
+        description="조회 종료일. ISO 형식 YYYY-MM-DD",
+    ),
+    sort: str = Query(default="latest", description="latest 또는 oldest"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> EventListOut:
