@@ -83,6 +83,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         LutLoadPolicy,
         validate_lut_startup,
     )
+    from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
+        ensure_model_parameter_resource_runtime,
+    )
+    from apps.agents.model_parameter_agent.utils.resource_runtime import (
+        clear_model_parameter_resource_runtime,
+    )
     from apps.common.configs.config import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
     from apps.connectors.mlflow.tracing import setup_mlflow_tracing
@@ -104,10 +110,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
     )
+    resource_paths = await ensure_model_parameter_resource_runtime(
+        cfg.model_parameter_resource_storage,
+        lut_enabled=cfg.model_parameter_lut_enabled,
+        lut_policy=lut_policy,
+    )
+    logger.info(
+        "Model Parameter resource source resolved | source={} fingerprint={} fallback_active={}",
+        resource_paths.source,
+        resource_paths.resource_fingerprint,
+        resource_paths.fallback_reason is not None,
+    )
     _, lut_catalog = await asyncio.to_thread(
         validate_lut_startup,
         cfg.model_parameter_lut_enabled,
         lut_policy,
+        config_path=resource_paths.manifest_path,
+        lut_root=resource_paths.lut_root,
     )
     logger.info(
         "Model Parameter LUT startup validation completed | enabled={} version={}",
@@ -119,7 +138,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         lambda: _lut_catalog_debug_json(lut_catalog),
     )
 
-    basecase_summary = await asyncio.to_thread(preload_basecase_runtime_cache)
+    basecase_summary = await asyncio.to_thread(
+        preload_basecase_runtime_cache,
+        str(resource_paths.basecase_dir),
+    )
     logger.info(
         "Model Parameter Basecase startup preload completed | parameters={} profiles={} "
         "available_sheets={} records={} warnings={}",
@@ -146,7 +168,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     else:
         logger.error("callback_oauth2_token_url not configured, skipping token pre-fetch")
 
-    yield
+    try:
+        yield
+    finally:
+        clear_model_parameter_resource_runtime()
 
 
 app = FastAPI(

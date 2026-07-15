@@ -59,6 +59,9 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     match_parameter_candidates,
     to_compact_json,
 )
+from apps.agents.model_parameter_agent.utils.resource_runtime import (
+    get_model_parameter_resource_paths,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, langchain_callbacks_context
@@ -312,9 +315,11 @@ def _knowledge_base_from_context(
             ErrorCode.INVALID_REQUEST,
             detail="parameter mapping resources not loaded from DB",
         )
+    resource_paths = get_model_parameter_resource_paths()
     return get_parameter_knowledge_base_from_resources(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
+        basecase_dir_path=str(resource_paths.basecase_dir),
     )
 
 
@@ -511,7 +516,11 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
     )
-    registry = get_parameter_spec_registry()
+    resource_paths = get_model_parameter_resource_paths()
+    registry = get_parameter_spec_registry(
+        resource_paths.manifest_path,
+        lut_root=resource_paths.lut_root,
+    )
     lut_catalog = (
         get_lut_catalog(policy, registry=registry)
         if cfg.model_parameter_lut_enabled
@@ -576,7 +585,11 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         HARD_MAX_PARAMETER_SLOTS,
     )
     policy = state.basecase_index.policy
-    registry = get_parameter_spec_registry()
+    resource_paths = get_model_parameter_resource_paths()
+    registry = get_parameter_spec_registry(
+        resource_paths.manifest_path,
+        lut_root=resource_paths.lut_root,
+    )
     lut_catalog = (
         get_lut_catalog(policy, registry=registry)
         if bool(state.resolved_config.get("model_parameter_lut_enabled"))

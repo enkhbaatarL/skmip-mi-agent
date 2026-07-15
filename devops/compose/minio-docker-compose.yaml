@@ -1,0 +1,22 @@
+name: model_parameter_object_storage
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio-test-access
+      MINIO_ROOT_PASSWORD: minio-test-secret
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - minio-data:/data
+
+volumes:
+  minio-data:

@@ -649,6 +649,7 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
     sys.path.insert(0, str(repo_root))
 
     from tests.manual.model_parameter_agent.evaluate_proposals import (  # noqa: PLC0415
+        _ensure_model_parameter_test_resource_runtime,
         _evaluate_scenario,
         _failure_stage_trace_table_lines,
         _failure_trace_from_exception,
@@ -658,6 +659,8 @@ async def _run(args: argparse.Namespace) -> tuple[Path, str]:
         _selected_adjustments,
         _stage_summary_table_lines,
     )
+
+    await _ensure_model_parameter_test_resource_runtime()
 
     report_dir = repo_root / "tests" / "reports" / "model_parameter_agent"
     report_dir.mkdir(parents=True, exist_ok=True)

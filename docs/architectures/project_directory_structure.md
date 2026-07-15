@@ -285,6 +285,11 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 
 실행 엔트리포인트는 저장소 루트의 `model_param.py`이며,
 `Dockerfile.model_param`이 이미지 안에서 이 파일을 `main.py`로 복사한다.
+기동 시 `utils/resource_bootstrap.py`가
+`resources/config/model_parameter_resources.yaml`을 기준으로 Basecase/LUT source를 확정하고,
+`utils/resource_runtime.py`에 worker별 immutable 경로를 등록한다. Object Storage가 활성화된 환경은
+`apps/connectors/object_storage/`의 exact `HeadObject`/`GetObject`만 사용하며, 원격 실패 시 packaged
+리소스로 폴백한다.
 
 ```text
 POST /model-parameters/scenarios/{scenario_id}/proposals
@@ -295,7 +300,8 @@ POST /model-parameters/scenarios/{scenario_id}/proposals
   - run_propose_parameters_background()
 → flows/propose_parameters/nodes.py
 → utils/basecase.py
-→ utils/lut/ + resources/lut/config/lut_parameters.yaml
+→ utils/lut/ + utils/resource_runtime.py
+→ resources/config/model_parameter_resources.yaml
 → prompts/model_parameter_proposal.py
 → presentation.py
 → apps/connectors/callback/callback_client.py
@@ -308,7 +314,8 @@ POST /model-parameters/scenarios/{scenario_id}/proposals/sync
 → flows/propose_parameters/flow.py
 → flows/propose_parameters/nodes.py
 → utils/basecase.py
-→ utils/lut/ + resources/lut/config/lut_parameters.yaml
+→ utils/lut/ + utils/resource_runtime.py
+→ resources/config/model_parameter_resources.yaml
 → prompts/model_parameter_proposal.py
 → presentation.py
 → persistence/model_parameter_service.py

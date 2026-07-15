@@ -38,14 +38,34 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
     ModelParameterService,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
+from apps.agents.model_parameter_agent.utils.lut import LutLoadPolicy
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base,
     match_parameter_candidates,
 )
+from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
+    ensure_model_parameter_resource_runtime,
+)
+from apps.agents.model_parameter_agent.utils.resource_runtime import (
+    ModelParameterResourcePaths,
+)
+from apps.common.configs.config import get_settings
 
 
 REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
 RAW_GRAPH = build_graph()
+
+
+async def _ensure_model_parameter_test_resource_runtime() -> ModelParameterResourcePaths:
+    cfg = get_settings()
+    return await ensure_model_parameter_resource_runtime(
+        cfg.model_parameter_resource_storage,
+        lut_enabled=cfg.model_parameter_lut_enabled,
+        lut_policy=LutLoadPolicy(
+            start_year=cfg.model_parameter_lut_horizon_start_year,
+            end_year=cfg.model_parameter_lut_horizon_end_year,
+        ),
+    )
 
 
 def _format_duration(seconds: float | None) -> str:
@@ -879,6 +899,7 @@ def _attach_failure_trace(exc: BaseException, trace: dict[str, Any]) -> None:
 async def _evaluate_scenario(
     scenario_id: int,
 ) -> dict[str, Any]:
+    resource_paths = await _ensure_model_parameter_test_resource_runtime()
     failure_trace = _initial_failure_trace(scenario_id)
     failed_stage = "scenario context load"
     try:
@@ -886,7 +907,7 @@ async def _evaluate_scenario(
         failure_trace["context"] = context
 
         failed_stage = "Step1 parameter candidate matching"
-        kb = get_parameter_knowledge_base()
+        kb = get_parameter_knowledge_base(str(resource_paths.basecase_dir))
         candidates, non_inputs, mapping_warnings = match_parameter_candidates(
             kb,
             context,
@@ -1182,6 +1203,7 @@ async def run_evaluation(
     suite: str,
     concurrency: int,
 ) -> tuple[Path, list[dict[str, Any]], list[dict[str, Any]]]:
+    await _ensure_model_parameter_test_resource_runtime()
     targets = TEST_TARGETS_BY_SUITE[suite]
     skipped_event_types = EVENT_TYPES_WITHOUT_CALL_TARGETS if suite == "core" else ()
     started_at = datetime.now()

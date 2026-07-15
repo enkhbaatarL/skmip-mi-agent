@@ -11,6 +11,13 @@ Run 수급모델파라미터 proposal and confirmation tests from `/Users/messia
 
 Use `poetry run` from the repo root. Do not start the API server for these tests.
 
+Before raw-graph execution, the shared test runner initializes Model Parameter resources once from
+`model_parameter_resource_storage` in the active `APP_CONFIG`:
+
+- `enabled: false`: use packaged `resources/basecase` and `resources/lut` without accessing `local_root`.
+- `enabled: true`: reuse a valid `<local_root>/current`; only sync from Object Storage when current is absent or invalid.
+- Keep the selected release fixed for the lifetime of the test process. Do not initialize resources per scenario.
+
 ## Request Mapping
 
 For a single scenario request such as `289 시나리오 테스트해줘` or `scenario_id=289 테스트해줘`, run:
