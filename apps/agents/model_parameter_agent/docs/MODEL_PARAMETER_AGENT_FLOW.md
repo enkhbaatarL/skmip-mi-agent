@@ -287,6 +287,9 @@ parameter별 task는 다음 구조다.
 `proposalParameters[]`를 만든다.
 
 - 실제 Basecase가 있으면 `basecaseValue`에 표시한다.
+- LUT spec에 `metadata_axes`가 있는 parameter의 Basecase value 셀이 비어 있으면 `basecaseValue=null`과
+  LUT value를 사용한다. 이때 `Year`/`Month`/`Period`를 제외한 key 축이 같은 Basecase 행의 비기간
+  metadata를 유지하며, 같은 비기간 축의 Basecase 행 자체가 없을 때만 LUT metadata를 사용한다.
 - LUT-only reference는 값 산정 기준으로 쓰지만 운영 `basecaseValue`는 `null`이다.
 - 테스트용 sync 응답은 exact slot의 LUT default를 `lutValue`로 함께 표시한다. LUT가 없는
   slot은 `lutValue=null`이다.

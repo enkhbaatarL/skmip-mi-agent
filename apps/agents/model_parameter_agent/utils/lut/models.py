@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar
 
+from apps.agents.model_parameter_agent.utils.lut.precision import (
+    BASECASE_VALUE_MAX_DECIMAL_PLACES,
+    NumericPrecisionMode,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -30,6 +34,8 @@ def freeze_mapping(values: Mapping[_K, _V] | None = None) -> Mapping[_K, _V]:  #
 class LutLoadPolicy:
     start_year: int = 2026
     end_year: int = 2030
+    value_max_decimal_places: int = BASECASE_VALUE_MAX_DECIMAL_PLACES
+    value_precision_mode: NumericPrecisionMode = "trunc"
 
     def __post_init__(self) -> None:
         if isinstance(self.start_year, bool) or isinstance(self.end_year, bool):
@@ -46,6 +52,16 @@ class LutLoadPolicy:
             raise domain_error(
                 msg,
             )
+        if (
+            isinstance(self.value_max_decimal_places, bool)
+            or not isinstance(self.value_max_decimal_places, int)
+            or self.value_max_decimal_places < -1
+        ):
+            msg = "model_parameter_basecase_value_max_decimal_places must be an integer of -1 or greater"
+            raise domain_error(msg)
+        if self.value_precision_mode not in {"trunc", "ceil", "round"}:
+            msg = "model_parameter_basecase_value_precision_mode must be trunc, ceil, or round"
+            raise domain_error(msg)
 
     @property
     def years(self) -> tuple[int, ...]:
@@ -72,7 +88,7 @@ class BasecaseReference:
     parameter_name: str
     canonical_key: CanonicalKey
     axes: Mapping[str, CanonicalValue]
-    value: NumericValue
+    value: NumericValue | None
     metadata: Mapping[str, CanonicalValue]
     reference_id: str
 

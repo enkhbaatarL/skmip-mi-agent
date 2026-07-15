@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel
 
 from apps.agents.model_parameter_agent.utils.lut.keys import (
-    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
-    normalize_numeric_value,
+    apply_numeric_precision,
 )
+from apps.agents.model_parameter_agent.utils.lut.precision import (
+    NumericPrecisionMode,
+)
+from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
@@ -23,6 +26,7 @@ PROCESSING_PROPOSAL_STATUSES = ("PROCESSING",)
 CALLBACK_READY_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED", "FAILED")
 CALLBACK_TARGET_STATUSES = {"SUCCEEDED", "FAILED", "SKIPPED"}
 PERSISTED_PARAMETER_VALUE_FIELDS = frozenset({"basecaseValue", "proposedValue"})
+ParameterValuePrecision = Mapping[str, tuple[int, NumericPrecisionMode]]
 
 
 def _json_payload(value: Any) -> Any:
@@ -38,6 +42,7 @@ def _json_payload(value: Any) -> Any:
 def _normalize_persisted_parameter_values(
     value: Any,
     *,
+    field_precision: ParameterValuePrecision,
     path: str = "parameters",
 ) -> Any:
     """Bound stored basecase/proposed values regardless of the caller path."""
@@ -46,27 +51,47 @@ def _normalize_persisted_parameter_values(
         for key, item in value.items():
             field_path = f"{path}.{key}"
             if key in PERSISTED_PARAMETER_VALUE_FIELDS and item is not None:
-                normalized[key] = normalize_numeric_value(
+                max_decimal_places, precision_mode = field_precision[key]
+                normalized[key] = apply_numeric_precision(
                     item,
                     label=field_path,
-                    max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                    max_decimal_places=max_decimal_places,
+                    mode=precision_mode,
                 )
             else:
                 normalized[key] = _normalize_persisted_parameter_values(
                     item,
+                    field_precision=field_precision,
                     path=field_path,
                 )
         return normalized
     if isinstance(value, list):
         return [
-            _normalize_persisted_parameter_values(item, path=f"{path}[{index}]")
+            _normalize_persisted_parameter_values(
+                item,
+                field_precision=field_precision,
+                path=f"{path}[{index}]",
+            )
             for index, item in enumerate(value)
         ]
     return value
 
 
 def _parameter_json_payload(value: Any) -> Any:
-    return _normalize_persisted_parameter_values(_json_payload(value))
+    settings = get_settings()
+    return _normalize_persisted_parameter_values(
+        _json_payload(value),
+        field_precision={
+            "basecaseValue": (
+                settings.model_parameter_basecase_value_max_decimal_places,
+                settings.model_parameter_basecase_value_precision_mode,
+            ),
+            "proposedValue": (
+                settings.model_parameter_proposed_value_max_decimal_places,
+                settings.model_parameter_proposed_value_precision_mode,
+            ),
+        },
+    )
 
 
 def _json_safe(value: Any) -> Any:

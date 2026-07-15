@@ -1,6 +1,6 @@
 ---
 name: mi-source-banib
-description: main merge 이후 외부 GitHub main 기준으로 내부망 반입용 소스 release tag, 직전 tag 대비 release note markdown 및 GitHub Release, git bundle, bundle.zip, manifest를 생성하고, 내부 Git 서버에서 tag 반입, import 태그 브랜치, Pull Request로 develop에 반영하는 절차를 안내한다. "소스 반입파일 만들어줘", "GitHub tag를 내부 Git으로 반입", "mi-agent 소스 반입", "bundle zip 생성", "release note 생성", "GitHub Release 생성", "내부 PR 반입 절차" 류 요청에 사용.
+description: main merge 이후 외부 GitHub main 기준으로 내부망 반입용 소스 release tag, 직전 tag 대비 release note와 GitHub Release, git bundle 및 기본 인자가 고정된 자체 실행형 import script를 하나의 최종 bundle.zip으로 생성하고, 내부 Git 서버에서 tag 반입, import 태그 브랜치, Pull Request로 develop에 반영하는 절차를 안내한다. "소스 반입파일 만들어줘", "GitHub tag를 내부 Git으로 반입", "mi-agent 소스 반입", "bundle zip 생성", "release note 생성", "GitHub Release 생성", "버전별 import script 생성", "내부 PR 반입 절차" 류 요청에 사용.
 ---
 
 # MI 소스 반입 bundle 생성
@@ -23,8 +23,9 @@ Codex가 수행:
 - tag 기준 `git bundle` 생성
 - bundle을 다시 zip으로 압축
 - 직전 release tag와 현재 tag를 비교한 release note를 Codex/Claude가 작성
-- release note markdown 파일 내용을 그대로 사용해 GitHub Release 생성 또는 갱신
-- manifest에 commit, sha256, 파일명, release note 정보 기록
+- release note 입력 파일 내용을 직접 사용해 GitHub Release 생성 또는 갱신
+- 인자 없이 단독 실행 가능한 `import_source_bundle_<tag>.sh` 생성 및 zip 포함
+- `release-artifacts/`에 최종 bundle zip 하나만 유지
 - 생성 파일 경로와 내부 반입 절차 보고
 
 Codex가 수행하지 않음:
@@ -74,8 +75,8 @@ else
 fi
 ```
 
-그 커밋 목록을 Codex/Claude가 분석해 아래 release note 포맷으로 markdown 파일을 만든다.
-스크립트는 release note 내용을 생성하지 않고, `RELEASE_NOTES_SOURCE`로 받은 파일을 산출물과 GitHub Release 본문에 그대로 사용한다.
+그 커밋 목록을 Codex/Claude가 분석해 아래 release note 포맷으로 임시 markdown 파일을 만든다.
+스크립트는 release note 내용을 생성하지 않고, `RELEASE_NOTES_SOURCE`로 받은 파일을 GitHub Release 본문에 직접 사용한다. 최종 산출물에는 release note 파일을 남기지 않는다.
 
 아래 bundled script를 실행한다.
 
@@ -93,15 +94,13 @@ RELEASE_NOTES_SOURCE=/tmp/skmip-mi-agent-v0.0.3.release-notes.md .claude/skills/
 
 ```text
 release-artifacts/
-  skmip-mi-agent-v0.0.3.bundle
-  skmip-mi-agent-v0.0.3.bundle.zip  # bundle + 내부 import sh + release note 포함
-  skmip-mi-agent-v0.0.3.manifest.txt
-  skmip-mi-agent-v0.0.3.release-notes.md
+  skmip-mi-agent-v0.0.3.bundle.zip  # bundle + 자체 실행형 import_source_bundle_v0.0.3.sh
 ```
 
-스크립트는 tag push 후 `RELEASE_NOTES_SOURCE` 파일을 `skmip-mi-agent-<tag>.release-notes.md`로 복사하고, 그 파일 내용을 그대로 GitHub Release 본문으로 사용한다.
+스크립트는 tag push 후 `RELEASE_NOTES_SOURCE` 파일 내용을 그대로 GitHub Release 본문으로 사용한다.
 이미 GitHub Release가 있으면 `gh release edit`으로 갱신하고, 없으면 `gh release create`로 생성한다.
 반입 산출물만 만들고 GitHub Release를 건너뛰어야 하면 `SKIP_GITHUB_RELEASE=1`을 붙여 실행한다.
+최종 zip을 만들기 전에 `release-artifacts/`의 기존 소스 반입 산출물을 정리한다. 다른 이름의 사용자 파일은 삭제하지 않는다.
 
 Release note는 직전 release tag와 현재 tag를 비교해 달라진 commit만 포함하도록 Codex/Claude가 작성한다.
 포맷은 `main-mr`의 MR 메시지 포맷과 동일하게 유지한다.
@@ -172,27 +171,34 @@ Release note는 직전 release tag와 현재 tag를 비교해 달라진 commit�
 - GitHub Release URL
 - bundle zip 경로
 - bundle zip sha256
-- manifest 경로
-- release note 경로
+- zip 내부에 bundle과 버전별 import script만 포함됐는지 여부
 - 현재 작업트리에 미커밋 변경이 있어도 bundle에는 포함되지 않는다는 점
 
 ## B. 내부 - 사용자가 수행할 sh 절차 안내
 
 내부 PC에서는 VSCode 터미널을 **Git Bash**로 열고, 내부 repo clone 폴더에서 실행하도록 안내한다.
-zip 안에 `import_source_bundle.sh`가 함께 들어 있으므로 내부 repo에 최신 skill이 없어도 사용할 수 있다.
+zip 안에는 bundle과 자체 실행형 `import_source_bundle_<tag>.sh`만 들어 있다.
+버전별 실행 스크립트에는 생성 당시 tag, bundle 파일명, `develop`이 기본값으로 고정되며 별도 보조 스크립트 없이 실행된다.
 
 ```bash
 unzip skmip-mi-agent-v0.0.3.bundle.zip
 git remote -v
 git ls-remote origin
 
-bash import_source_bundle.sh v0.0.3 skmip-mi-agent-v0.0.3.bundle develop
+bash import_source_bundle_v0.0.3.sh
+```
+
+필요하면 위치 인자로 기본값을 덮어쓴다. 순서는 `tag`, `bundle-or-bundle-zip`,
+`target-branch`, `import-branch`다.
+
+```bash
+bash import_source_bundle_v0.0.3.sh v0.0.3 skmip-mi-agent-v0.0.3.bundle release import/v0.0.3-custom
 ```
 
 충돌이 나고 이번 반입은 GitHub tag 파일을 우선해야 한다면:
 
 ```bash
-AUTO_RESOLVE_THEIRS=1 bash import_source_bundle.sh v0.0.3 skmip-mi-agent-v0.0.3.bundle develop
+AUTO_RESOLVE_THEIRS=1 bash import_source_bundle_v0.0.3.sh
 ```
 
 주의: 이미 충돌 상태로 멈춘 뒤에 다시 자동 해결을 실행하려면 먼저 `git merge --abort`로 이전 merge를 취소한다.
