@@ -15,6 +15,7 @@ from apps.agents.model_parameter_agent.utils.lut.registry import (
     load_parameter_spec_registry,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.utils.yaml_utils import normalize_yaml_text
 from apps.common.values.error_codes import ErrorCode
 
 
@@ -251,7 +252,9 @@ def load_model_parameter_resource_manifest(
         msg = f"failed to read model parameter resource manifest {path}: {exc}"
         raise _manifest_error(msg) from exc
     try:
-        raw_document = yaml.safe_load(raw_bytes.decode("utf-8"))
+        normalized_text = normalize_yaml_text(raw_bytes.decode("utf-8"))
+        normalized_bytes = normalized_text.encode("utf-8")
+        raw_document = yaml.safe_load(normalized_text)
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         msg = f"invalid model parameter resource manifest {path}: {exc}"
         raise _manifest_error(msg) from exc
@@ -267,7 +270,7 @@ def load_model_parameter_resource_manifest(
         raise _manifest_error(msg)
 
     basecase_files = _basecase_files(raw_document.get("basecase"))
-    registry = load_parameter_spec_registry(path, lut_root=root, yaml_bytes=raw_bytes)
+    registry = load_parameter_spec_registry(path, lut_root=root, yaml_bytes=normalized_bytes)
     lut_files = _lut_files(raw_document.get("lut"), registry=registry)
     return ModelParameterResourceManifest(
         path=path,

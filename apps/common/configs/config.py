@@ -15,22 +15,13 @@ from pydantic_settings import (
 )
 import yaml
 
+from apps.common.utils.yaml_utils import normalize_yaml_text
+
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_FILE = ROOT_DIR / "envs" / "config.yaml"
 CONFIG_FILE_PATH = Path(os.getenv("APP_CONFIG", str(DEFAULT_CONFIG_FILE))).expanduser()
 ENV_PLACEHOLDER_PATTERN = re.compile(r"\${(\w+)}")
-ESCAPED_LINE_BREAK_PATTERN = re.compile(r"\\r\\n|\\n|\\r")
-
-
-def _normalize_yaml_text(yaml_str: str) -> str:
-    """Normalize real line breaks and single-line escaped ConfigMap blobs."""
-    normalized = yaml_str.replace("\r\n", "\n").replace("\r", "\n")
-    if "\n" not in normalized.strip():
-        # A single-line escaped blob means the ConfigMap stored YAML line breaks
-        # as text. Treat every escaped line break as a structural separator.
-        normalized = ESCAPED_LINE_BREAK_PATTERN.sub("\n", normalized)
-    return normalized
 
 
 def _replace_env_placeholders(value: Any) -> Any:  # noqa: ANN401
@@ -55,7 +46,7 @@ class EnvYamlConfigSettingsSource(YamlConfigSettingsSource):
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:
         with file_path.open(encoding=self.yaml_file_encoding) as yaml_file:
-            loaded = yaml.safe_load(_normalize_yaml_text(yaml_file.read()))
+            loaded = yaml.safe_load(normalize_yaml_text(yaml_file.read()))
             loaded = _replace_env_placeholders(loaded)
         return loaded if isinstance(loaded, dict) else {}
 

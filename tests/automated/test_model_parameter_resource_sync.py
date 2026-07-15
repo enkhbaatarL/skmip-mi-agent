@@ -94,6 +94,55 @@ def test_integrated_manifest_declares_expected_resources() -> None:
     }
 
 
+@pytest.mark.parametrize("line_break", ["\r\n", "\r"])
+def test_resource_manifest_with_real_line_breaks_loads(
+    tmp_path: Path,
+    *,
+    line_break: str,
+) -> None:
+    manifest_path = tmp_path / "real-line-breaks.yaml"
+    manifest_text = DEFAULT_RESOURCE_MANIFEST_PATH.read_text(encoding="utf-8")
+    manifest_path.write_bytes(manifest_text.replace("\n", line_break).encode("utf-8"))
+
+    manifest = load_model_parameter_resource_manifest(manifest_path)
+
+    assert set(manifest.basecase_files) == {"demand", "supply", "trade"}
+    assert set(manifest.lut_registry.specs) == {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "LiqUtilAdjustment",
+    }
+
+
+@pytest.mark.parametrize("escaped_line_break", [r"\r\n", r"\n", r"\r"])
+@pytest.mark.parametrize("trailing_newline", [False, True])
+def test_resource_manifest_with_literal_escaped_line_breaks_loads(
+    tmp_path: Path,
+    *,
+    escaped_line_break: str,
+    trailing_newline: bool,
+) -> None:
+    manifest_path = tmp_path / "literal-escaped-line-breaks.yaml"
+    manifest_text = DEFAULT_RESOURCE_MANIFEST_PATH.read_text(encoding="utf-8")
+    escaped_manifest = manifest_text.replace("\n", escaped_line_break)
+    if trailing_newline:
+        escaped_manifest += "\n"
+    manifest_path.write_text(escaped_manifest, encoding="utf-8")
+
+    manifest = load_model_parameter_resource_manifest(manifest_path)
+
+    assert set(manifest.basecase_files) == {"demand", "supply", "trade"}
+    assert set(manifest.lut_registry.specs) == {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "LiqUtilAdjustment",
+    }
+
+
 def test_object_location_changes_only_resource_config_fingerprint(tmp_path: Path) -> None:
     first_path = tmp_path / "first.yaml"
     second_path = tmp_path / "second.yaml"
