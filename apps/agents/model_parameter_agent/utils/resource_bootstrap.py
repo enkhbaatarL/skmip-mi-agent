@@ -157,16 +157,6 @@ def _fallback_config_fingerprint(
 
 def _validate_remote_connection_settings(storage: ModelParameterResourceStorageConfig) -> None:
     parsed = urlsplit(storage.endpoint_url)
-    is_loopback_http = parsed.scheme == "http" and parsed.hostname in {
-        "127.0.0.1",
-        "::1",
-        "localhost",
-    }
-    if parsed.scheme != "https" and not is_loopback_http:
-        msg = "Object Storage endpoint는 HTTPS여야 하며 HTTP는 loopback MinIO에서만 허용됩니다"
-        raise RemoteResourceConfigError(
-            msg,
-        )
     if not parsed.hostname:
         msg = "유효한 Object Storage endpoint_url이 필요합니다"
         raise RemoteResourceConfigError(msg)

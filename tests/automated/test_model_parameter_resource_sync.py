@@ -65,7 +65,7 @@ def _write_manifest_with_object_paths(path: Path, *, prefix: str) -> None:
 def _storage_config(tmp_path: Path, manifest_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         enabled=True,
-        endpoint_url="http://127.0.0.1:9000",
+        endpoint_url="http://mip-minio:9000",
         region_name="us-east-1",
         signature_version="s3v4",
         bucket="model-parameter-test",
