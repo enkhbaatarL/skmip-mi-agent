@@ -6,8 +6,10 @@ from dataclasses import dataclass
 import io
 
 from apps.agents.model_parameter_agent.utils.lut.keys import (
+    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
     canonical_axis_value,
     canonical_key_from_axes,
+    normalize_numeric_value,
     strict_float,
     strict_int,
 )
@@ -16,6 +18,7 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalValue,
     LutLoadPolicy,
     LutRecord,
+    NumericValue,
     domain_error,
     freeze_mapping,
 )
@@ -25,10 +28,11 @@ from apps.agents.model_parameter_agent.utils.lut.registry import (
 )
 
 
-ADAPTER_SCHEMA_VERSION = "model-parameter-lut-adapters-v1"
+ADAPTER_SCHEMA_VERSION = "model-parameter-lut-adapters-v2"
 TEMPERATURE_BASE = 18.0
 DEGREE_DAY_DIVISOR = 30.0
 MTPM_TO_MTPA = 12.0
+LUT_NAMEPLATE_MAX_DECIMAL_PLACES = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +107,7 @@ def _record(
     spec: ParameterLutSpec,
     *,
     axes: Mapping[str, CanonicalValue],
-    value: float,
+    value: NumericValue,
     metadata: Mapping[str, CanonicalValue] | None,
     reference_id: str,
     diagnostics: tuple[str, ...] = (),
@@ -113,7 +117,11 @@ def _record(
         parameter_name=spec.parameter_name,
         canonical_key=canonical_key,
         axes=freeze_mapping(axes),
-        value=strict_float(value, label=f"{spec.parameter_name} LUT value"),
+        value=normalize_numeric_value(
+            value,
+            label=f"{spec.parameter_name} LUT value",
+            max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+        ),
         metadata=freeze_mapping(metadata),
         reference_id=reference_id,
         diagnostics=diagnostics,
@@ -394,7 +402,11 @@ def _liq_util_records(
                 metadata={
                     "Period": period,
                     "Life Cycle Category": life_cycle,
-                    "Nameplate Capacity (MTPA)": capacity_mtpm * MTPM_TO_MTPA,
+                    "Nameplate Capacity (MTPA)": normalize_numeric_value(
+                        capacity_mtpm * MTPM_TO_MTPA,
+                        label=f"{file_spec.relative_path}:{line_number}:nameplate capacity",
+                        max_decimal_places=LUT_NAMEPLATE_MAX_DECIMAL_PLACES,
+                    ),
                 },
                 reference_id=_reference_id(file_spec, line_number),
                 diagnostics=("capacity_transform=mtpm_x_12",),

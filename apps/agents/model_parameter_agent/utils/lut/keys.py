@@ -7,12 +7,14 @@ from typing import Any
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalKey,
     CanonicalValue,
+    NumericValue,
     domain_error,
 )
 
 
 INTEGER_AXES = frozenset({"Year", "Month", "Period"})
 TIME_AXES = ("Year", "Month")
+REFERENCE_VALUE_MAX_DECIMAL_PLACES = 5
 
 
 def canonical_axis_value(axis_name: str, value: Any) -> CanonicalValue:  # noqa: ANN401
@@ -62,6 +64,18 @@ def strict_float(value: Any, *, label: str) -> float:  # noqa: ANN401
         msg = f"{label} must be a finite number: {value!r}"
         raise domain_error(msg)
     return number
+
+
+def normalize_numeric_value(
+    value: Any,  # noqa: ANN401
+    *,
+    label: str,
+    max_decimal_places: int,
+) -> NumericValue:
+    """Return a finite number rounded for stable JSON serialization."""
+    number = strict_float(value, label=label)
+    rounded = round(number, max_decimal_places)
+    return int(rounded) if rounded.is_integer() else rounded
 
 
 def strict_int(value: Any, *, label: str) -> int:  # noqa: ANN401

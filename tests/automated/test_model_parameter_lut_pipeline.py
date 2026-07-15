@@ -502,6 +502,57 @@ def test_step3_keeps_all_valid_slot_key_values_and_drops_duplicate_or_null() -> 
     assert any("slot-3" in warning and "누락" in warning for warning in warnings)
 
 
+def test_step3_normalizes_proposed_values_to_at_most_five_decimal_places() -> None:
+    candidate = _candidate("PMI", "pmi")
+    slots = [
+        _slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month})
+        for month in (1, 2, 3)
+    ]
+    references = [
+        _reference(
+            "pmi",
+            "PMI",
+            {"Country": "Japan", "Year": 2026, "Month": month},
+            actual_basecase_value=None,
+            lut_default_value=50.0,
+        )
+        for month in (1, 2, 3)
+    ]
+    adjustment = LLMValueAdjustment(
+        candidate_key="pmi",
+        rationale_ko="PMI 제안",
+        slot_values=[
+            LLMValueCell(
+                slot_key="slot-1",
+                proposed_value=49.123456789,
+                rationale_ko="5자리 반올림",
+            ),
+            LLMValueCell(
+                slot_key="slot-2",
+                proposed_value=50.0000001,
+                rationale_ko="정수 정규화",
+            ),
+            LLMValueCell(
+                slot_key="slot-3",
+                proposed_value="not-a-number",
+                rationale_ko="잘못된 숫자",
+            ),
+        ],
+    )
+
+    sanitized, warnings = nodes._sanitize_llm_adjustments(
+        [adjustment],
+        [candidate],
+        slots,
+        references,
+    )
+
+    proposed_values = [cell["proposed_value"] for cell in sanitized[0]["value_grid"]]
+    assert proposed_values == [49.12346, 50]
+    assert isinstance(proposed_values[1], int)
+    assert any("유한한 숫자" in warning and "slot-3" in warning for warning in warnings)
+
+
 def test_step3_restores_canonical_effective_reference_axes_from_slot_key() -> None:
     candidate = _candidate("GDP", "gdp")
     authoritative_axes = {"Country": "United States", "Year": 2026}

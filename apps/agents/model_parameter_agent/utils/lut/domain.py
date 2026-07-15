@@ -10,10 +10,11 @@ from apps.agents.model_parameter_agent.utils.basecase import (
 )
 from apps.agents.model_parameter_agent.utils.lut.catalog import LutCatalog
 from apps.agents.model_parameter_agent.utils.lut.keys import (
+    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
     TIME_AXES,
     canonical_axis_value,
     canonical_key_from_axes,
-    strict_float,
+    normalize_numeric_value,
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     BasecaseIndex,
@@ -146,9 +147,10 @@ def build_basecase_index(  # noqa: C901
                 parameter_name=parameter_name,
                 canonical_key=canonical_key,
                 axes=freeze_mapping(axes),
-                value=strict_float(
+                value=normalize_numeric_value(
                     raw_record.get("value"),
                     label=f"basecase value for {candidate_key}:{reference_id}",
+                    max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
                 ),
                 metadata=freeze_mapping(metadata),
                 reference_id=reference_id,
