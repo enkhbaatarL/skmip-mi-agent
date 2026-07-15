@@ -45,6 +45,10 @@ from apps.agents.model_parameter_agent.utils.lut import (
     get_parameter_spec_registry,
     resolve_effective_reference,
 )
+from apps.agents.model_parameter_agent.utils.lut.keys import (
+    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+    normalize_numeric_value,
+)
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CandidateSlotCatalog,
     SlotCatalog,
@@ -2235,6 +2239,8 @@ def _canonical_coordinate_key(coordinates: dict[str, Any]) -> str:
 def _parameter_value_cell_from_slot_value(
     slot_value: LLMValueCell,
     reference: dict[str, Any],
+    *,
+    proposed_value: int | float,
 ) -> ParameterValueCell:
     coordinates = {
         **(reference.get("axes") or {}),
@@ -2252,7 +2258,7 @@ def _parameter_value_cell_from_slot_value(
         coordinates=coordinates,
         basecase_value=basecase_value,
         lut_value=lut_value,
-        proposed_value=slot_value.proposed_value,
+        proposed_value=proposed_value,
         rationale_ko=slot_value.rationale_ko,
         basecase_reference_ids=(
             [str(basecase_reference_id)]
@@ -2350,11 +2356,30 @@ def _sanitize_llm_adjustments(
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)
                 continue
+            try:
+                proposed_value = normalize_numeric_value(
+                    slot_value.proposed_value,
+                    label=(
+                        "Step3 proposedValue "
+                        f"(candidate={adjustment.candidate_key}, slotKey={slot_key})"
+                    ),
+                    max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                )
+            except MIBaseError:
+                warning = (
+                    "Step3 응답의 proposedValue가 유한한 숫자가 아니라 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                    f"value={slot_value.proposed_value!r}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
             returned_slot_keys.add(slot_key)
             value_grid.append(
                 _parameter_value_cell_from_slot_value(
                     slot_value,
                     context["reference"],
+                    proposed_value=proposed_value,
                 ),
             )
 

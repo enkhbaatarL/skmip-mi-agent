@@ -6,6 +6,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from apps.agents.model_parameter_agent.utils.lut.keys import (
+    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+    normalize_numeric_value,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
@@ -13,10 +17,12 @@ from apps.persistence.model_parameter.repository import ModelParameterRepository
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 
+
 CONFIRMABLE_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED")
 PROCESSING_PROPOSAL_STATUSES = ("PROCESSING",)
 CALLBACK_READY_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED", "FAILED")
 CALLBACK_TARGET_STATUSES = {"SUCCEEDED", "FAILED", "SKIPPED"}
+PERSISTED_PARAMETER_VALUE_FIELDS = frozenset({"basecaseValue", "proposedValue"})
 
 
 def _json_payload(value: Any) -> Any:
@@ -27,6 +33,40 @@ def _json_payload(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_payload(item) for item in value]
     return value
+
+
+def _normalize_persisted_parameter_values(
+    value: Any,
+    *,
+    path: str = "parameters",
+) -> Any:
+    """Bound stored basecase/proposed values regardless of the caller path."""
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            field_path = f"{path}.{key}"
+            if key in PERSISTED_PARAMETER_VALUE_FIELDS and item is not None:
+                normalized[key] = normalize_numeric_value(
+                    item,
+                    label=field_path,
+                    max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                )
+            else:
+                normalized[key] = _normalize_persisted_parameter_values(
+                    item,
+                    path=field_path,
+                )
+        return normalized
+    if isinstance(value, list):
+        return [
+            _normalize_persisted_parameter_values(item, path=f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
+def _parameter_json_payload(value: Any) -> Any:
+    return _normalize_persisted_parameter_values(_json_payload(value))
 
 
 def _json_safe(value: Any) -> Any:
@@ -188,7 +228,7 @@ class ModelParameterService:
             field_name="event.mi_event_id",
         )
         request_usr_id = _optional_int(user_id)
-        payload = _json_payload(proposal_parameters)
+        payload = _parameter_json_payload(proposal_parameters)
 
         session = get_sync_session()
         try:
@@ -258,7 +298,7 @@ class ModelParameterService:
     ) -> None:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
-        payload = _json_payload(proposal_parameters)
+        payload = _parameter_json_payload(proposal_parameters)
         session = get_sync_session()
         try:
             repository = ModelParameterRepository(session=session)
@@ -376,7 +416,7 @@ class ModelParameterService:
     ) -> dict[str, Any]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
-        payload = _json_payload(confirmation_parameters)
+        payload = _parameter_json_payload(confirmation_parameters)
         session = get_sync_session()
         try:
             repository = ModelParameterRepository(session=session)

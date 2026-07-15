@@ -343,6 +343,11 @@ Request body:
 내부 flow는 callback payload 생성 전 검증 단계에서 아래 value cell을 제외하거나, 해당 parameter를 최종 응답 대상에서 제외할 수 있다.
 `proposed_value`는 basecase와 같은 단위/스케일/형식의 최종 입력값이며, basecase 대비 변화분/변화율/보정률로 해석하지 않는다.
 
+- Basecase/LUT reference value는 소수점 최대 5자리로 반올림하며, 정수이면 정수로 직렬화한다.
+- LUT의 `Nameplate Capacity (MTPA)` metadata는 소수점 최대 1자리로 반올림하며, 정수이면 정수로 직렬화한다.
+- Step3의 `proposed_value`는 유한한 숫자만 허용하고 소수점 최대 5자리로 반올림하며, 정수이면 정수로 직렬화한다.
+- proposal/confirmation DB 저장 직전에 `basecaseValue`와 `proposedValue`에 같은 최대 5자리 규칙을 다시 적용한다.
+
 - `proposed_value`가 `null`인 cell
 - 동일 parameter/slot에 서로 다른 value가 충돌해 review 대상으로 분류된 parameter
 

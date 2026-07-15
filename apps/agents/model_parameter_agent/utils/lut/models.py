@@ -11,6 +11,7 @@ from apps.common.values.error_codes import ErrorCode
 
 CanonicalValue = str | int | float
 CanonicalKey = tuple[CanonicalValue, ...]
+NumericValue = int | float
 EffectiveSource = Literal["basecase", "lut"]
 
 _K = TypeVar("_K")
@@ -59,7 +60,7 @@ class LutRecord:
     parameter_name: str
     canonical_key: CanonicalKey
     axes: Mapping[str, CanonicalValue]
-    value: float
+    value: NumericValue
     metadata: Mapping[str, CanonicalValue]
     reference_id: str
     diagnostics: tuple[str, ...] = ()
@@ -71,7 +72,7 @@ class BasecaseReference:
     parameter_name: str
     canonical_key: CanonicalKey
     axes: Mapping[str, CanonicalValue]
-    value: float
+    value: NumericValue
     metadata: Mapping[str, CanonicalValue]
     reference_id: str
 
@@ -166,9 +167,9 @@ class EffectiveReference:
     canonical_slot_key: CanonicalKey
     axes: Mapping[str, CanonicalValue]
     metadata: Mapping[str, CanonicalValue]
-    actual_basecase_value: float | None
-    lut_default_value: float | None
-    llm_reference_value: float
+    actual_basecase_value: NumericValue | None
+    lut_default_value: NumericValue | None
+    llm_reference_value: NumericValue
     effective_source: EffectiveSource
     basecase_reference_id: str | None
     lut_reference_id: str | None

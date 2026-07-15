@@ -1147,8 +1147,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         values=[
                             {
                                 "Route": "Suez",
-                                "basecaseValue": 1,
-                                "proposedValue": 2,
+                                "basecaseValue": 1.23456789,
+                                "proposedValue": 2.00000001,
                                 "rationale": "수에즈 운송 차질",
                             },
                         ],
@@ -1169,6 +1169,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert saved_payload[0]["parameterName"] == "ShippingCost"
         assert saved_payload[0]["modelTarget"]["modelFile"] == "Trade"
         assert saved_payload[0]["modelTarget"]["tableName"] == "Table1"
+        assert saved_payload[0]["values"][0]["basecaseValue"] == 1.23457
+        assert saved_payload[0]["values"][0]["proposedValue"] == 2
+        assert isinstance(saved_payload[0]["values"][0]["proposedValue"], int)
         assert (
             repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
                 "request_usr_id"
@@ -1400,7 +1403,17 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             result = ModelParameterService().confirm_proposal_result(
                 model_param_proposal_id=901,
                 user_id=56,
-                confirmation_parameters=[{"parameterName": "PowerMix"}],
+                confirmation_parameters=[
+                    {
+                        "parameterName": "PowerMix",
+                        "values": [
+                            {
+                                "basecaseValue": 0.123456789,
+                                "proposedValue": 0.500000001,
+                            },
+                        ],
+                    },
+                ],
             )
 
         assert result == {
@@ -1410,7 +1423,17 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         repository_cls.return_value.confirm_model_param_proposal.assert_called_once_with(
             model_param_proposal_id=901,
             user_id=56,
-            confirmation_parameters=[{"parameterName": "PowerMix"}],
+            confirmation_parameters=[
+                {
+                    "parameterName": "PowerMix",
+                    "values": [
+                        {
+                            "basecaseValue": 0.12346,
+                            "proposedValue": 0.5,
+                        },
+                    ],
+                },
+            ],
         )
         fake_session.commit.assert_called_once()
         fake_session.rollback.assert_not_called()

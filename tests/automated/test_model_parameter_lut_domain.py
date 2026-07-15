@@ -103,7 +103,7 @@ def test_exact_gdp_temperature_and_liq_transforms(
         {"Country": "United States", "Year": 2026, "Month": 1},
     )
     assert us_january is not None
-    assert us_january.value == pytest.approx(18.0 - 513.0162988115451 / 30.0)
+    assert us_january.value == round(18.0 - 513.0162988115451 / 30.0, 5)
     assert "degree_days_branch=hdd" in us_january.diagnostics
 
     liq_record = catalog.records_for_parameter("LiqUtilAdjustment")[0]
@@ -114,6 +114,20 @@ def test_exact_gdp_temperature_and_liq_transforms(
     }
     assert "Nameplate Capacity" not in liq_record.metadata
     assert "capacity_transform=mtpm_x_12" in liq_record.diagnostics
+
+    qatar_t12 = catalog.lookup(
+        "LiqUtilAdjustment",
+        {
+            "Country": "Qatar",
+            "LNG Plant": "QatarGas LNG",
+            "LNG Plant Train": "QatarGas LNG T12",
+            "Year": 2026,
+            "Month": 7,
+        },
+    )
+    assert qatar_t12 is not None
+    assert qatar_t12.value == 0
+    assert qatar_t12.metadata["Nameplate Capacity (MTPA)"] == 7.8
 
 
 def test_disabled_startup_validates_yaml_without_opening_missing_csv(tmp_path: Path) -> None:
@@ -313,7 +327,58 @@ def test_catalog_version_and_warm_cache_identity_follow_csv_content(tmp_path: Pa
     second = get_lut_catalog(LutLoadPolicy(), registry=registry)
     assert second is not first
     assert second.version != first.version
-    assert second.records[0].value == 20.0
+    assert second.records[0].value == 20
+
+
+def test_basecase_and_lut_values_use_bounded_precision(
+    tmp_path: Path,
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        _tabular_config("values.csv", metadata_axes="[Tag]"),
+    )
+    _write(
+        tmp_path / "values.csv",
+        "Country,Year,Tag,Value\nA,2026,x,1.23456789\nB,2026,x,8.0000001\n",
+    )
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    assert catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == 1.23457
+    integer_lut_value = catalog.lookup("TestParameter", {"Country": "B", "Year": 2026}).value
+    assert integer_lut_value == 8
+    assert isinstance(integer_lut_value, int)
+
+    real_registry, _ = real_domain
+    candidate = {
+        "candidate_key": "gdp",
+        "canonical_parameter_name": "GDP",
+        "basecase_read_mode": "fixed_columns",
+        "basecase_column_roles": "A:Country,B:Year,C:GDP",
+    }
+    index = build_basecase_index(
+        [
+            {
+                "candidate_key": "gdp",
+                "reference_id": "base-decimal",
+                "axes": {"Country": "A", "Year": 2026},
+                "value": 9.87654321,
+            },
+            {
+                "candidate_key": "gdp",
+                "reference_id": "base-integer",
+                "axes": {"Country": "B", "Year": 2026},
+                "value": 8.0000001,
+            },
+        ],
+        [candidate],
+        registry=real_registry,
+    )
+    assert index.lookup("gdp", {"Country": "A", "Year": 2026}).value == 9.87654
+    integer_basecase_value = index.lookup("gdp", {"Country": "B", "Year": 2026}).value
+    assert integer_basecase_value == 8
+    assert isinstance(integer_basecase_value, int)
 
 
 def test_basecase_index_isolates_candidates_and_resolves_all_source_modes(
@@ -627,4 +692,5 @@ LiqUtilAdjustment:
     catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
     assert len(catalog.records) == 1
     assert catalog.records[0].axes["LNG Plant Train"] == "T2"
-    assert catalog.records[0].metadata["Nameplate Capacity (MTPA)"] == 12.0
+    assert catalog.records[0].metadata["Nameplate Capacity (MTPA)"] == 12
+    assert isinstance(catalog.records[0].metadata["Nameplate Capacity (MTPA)"], int)
