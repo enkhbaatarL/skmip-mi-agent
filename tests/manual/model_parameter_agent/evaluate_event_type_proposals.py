@@ -38,6 +38,7 @@ from apps.persistence.scenario_group.models import (
     MiScenarioGroupModel,
 )
 from tests.manual.model_parameter_agent.evaluate_proposals import (
+    _ensure_model_parameter_test_resource_runtime,
     _evaluate_scenario,
     _failure_stage_trace_table_lines,
     _failure_trace_from_exception,
@@ -1956,6 +1957,7 @@ async def run_event_type_evaluation(
     resolve_event_type_l2_ids_from_parameters: bool = False,
     parameter_scenarios: tuple[ParameterScenarioSelection, ...] = (),
 ) -> Path:
+    await _ensure_model_parameter_test_resource_runtime()
     target_event_type_l2_ids_by_parameter = (
         _discover_event_type_l2_ids_for_parameters(target_parameters) if target_parameters else {}
     )

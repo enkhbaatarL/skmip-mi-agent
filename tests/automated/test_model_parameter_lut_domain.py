@@ -143,7 +143,7 @@ def test_exact_gdp_temperature_and_liq_transforms(
 
 def test_disabled_startup_validates_yaml_without_opening_missing_csv(tmp_path: Path) -> None:
     config = _write(
-        tmp_path / "config" / "lut_parameters.yaml",
+        tmp_path / "config" / "test_lut_config.yaml",
         _tabular_config("missing.csv", metadata_axes="[Tag]"),
     )
     clear_lut_runtime_cache()

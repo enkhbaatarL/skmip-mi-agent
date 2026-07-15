@@ -73,7 +73,7 @@ data:
 
     llm_concurrency: 10
     llm_max_retries: 1
-    model_parameter_lut_enabled: false
+    model_parameter_lut_enabled: true
     model_parameter_lut_horizon_start_year: 2026
     model_parameter_lut_horizon_end_year: 2030
     model_parameter_basecase_value_max_decimal_places: 5
@@ -83,5 +83,20 @@ data:
     model_parameter_max_parameter_slots: 100
     model_parameter_max_value_prompt_basecase_records: 100
     model_parameter_max_routing_candidates_per_dimension: 2
+    model_parameter_resource_storage:
+      enabled: true
+      endpoint_url: http://mip-minio:9000
+      region_name: us-east-1
+      signature_version: s3v4
+      bucket: sk-mi-d-osb-ss-skgas
+      access_key_id: ${MODEL_PARAMETER_RESOURCE_STORAGE_ACCESS_KEY_ID}
+      secret_access_key: ${MODEL_PARAMETER_RESOURCE_STORAGE_SECRET_ACCESS_KEY}
+      manifest_path: apps/agents/model_parameter_agent/resources/config/model_parameter_resources.yaml
+      local_root: /tmp/skmip/model-parameter-resources
+      connect_timeout_seconds: 10
+      read_timeout_seconds: 60
+      max_attempts: 3
+      bootstrap_timeout_seconds: 420
+      lock_timeout_seconds: 500
     http_max_concurrency: 20
     log_level: DEBUG

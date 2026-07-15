@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, SecretStr, computed_field, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -64,6 +64,36 @@ class AgentConfig(BaseModel):
     mlflow_experiment_name: str = Field(default="mi_agent_local")
     aip_app_id: str = Field(default="mi_agent")
     mlflow_tracing_enabled: bool = Field(default=False)
+
+
+class ModelParameterResourceStorageConfig(BaseModel):
+    """Model Parameter Agent의 S3-compatible 리소스 접속 설정."""
+
+    enabled: bool = Field(default=False)
+    endpoint_url: str = Field(default="https://kr.object.ncloudstorage.com")
+    region_name: str = Field(default="kr-standard")
+    signature_version: str = Field(default="s3v4")
+    bucket: str = Field(default="")
+    access_key_id: SecretStr = Field(default=SecretStr(""))
+    secret_access_key: SecretStr = Field(default=SecretStr(""))
+    manifest_path: str = Field(
+        default=str(
+            ROOT_DIR
+            / "apps"
+            / "agents"
+            / "model_parameter_agent"
+            / "resources"
+            / "config"
+            / "model_parameter_resources.yaml",
+        ),
+    )
+    local_root: str = Field(default="/tmp/skmip/model-parameter-resources")  # noqa: S108
+    connect_timeout_seconds: float = Field(default=10.0, gt=0)
+    read_timeout_seconds: float = Field(default=60.0, gt=0)
+    max_attempts: int = Field(default=3, ge=1)
+    bootstrap_timeout_seconds: float = Field(default=420.0, gt=0)
+    lock_timeout_seconds: float = Field(default=500.0, gt=0)
+    download_chunk_size_bytes: int = Field(default=1024 * 1024, ge=64 * 1024)
 
 
 class Settings(BaseSettings):
@@ -158,6 +188,10 @@ class Settings(BaseSettings):
     model_parameter_max_parameter_slots: int = Field(default=100, ge=1)
     model_parameter_max_value_prompt_basecase_records: int = Field(default=100, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)
+    model_parameter_resource_storage: ModelParameterResourceStorageConfig = Field(
+        default_factory=ModelParameterResourceStorageConfig,
+    )
+
     @model_validator(mode="after")
     def validate_model_parameter_lut_horizon(self) -> "Settings":
         if self.model_parameter_lut_horizon_start_year > self.model_parameter_lut_horizon_end_year:

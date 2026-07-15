@@ -19,7 +19,7 @@ LayoutName = Literal["row", "year_columns"]
 
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LUT_ROOT = PACKAGE_DIR / "resources" / "lut"
-DEFAULT_LUT_CONFIG_PATH = DEFAULT_LUT_ROOT / "config" / "lut_parameters.yaml"
+DEFAULT_LUT_CONFIG_PATH = PACKAGE_DIR / "resources" / "config" / "model_parameter_resources.yaml"
 
 
 class _LutFileSpecModel(BaseModel):
@@ -240,7 +240,7 @@ def _safe_relative_path(raw_path: str, *, lut_root: Path) -> tuple[str, Path]:
     return pure_path.as_posix(), resolved
 
 
-def load_parameter_spec_registry(
+def load_parameter_spec_registry(  # noqa: C901
     config_path: Path,
     *,
     lut_root: Path,
@@ -260,14 +260,37 @@ def load_parameter_spec_registry(
         msg = "LUT parameter YAML must be a non-empty parameter mapping"
         raise domain_error(msg)
 
+    if {"schema_version", "basecase", "lut"}.issubset(raw_document):
+        raw_lut_document = raw_document.get("lut")
+        if not isinstance(raw_lut_document, dict) or not raw_lut_document:
+            msg = "model parameter resource manifest lut must be a non-empty parameter mapping"
+            raise domain_error(msg)
+    else:
+        # 기존 LUT-only YAML 호출과 테스트를 계속 지원한다.
+        raw_lut_document = raw_document
+
     parsed_models: dict[str, _ParameterLutSpecModel] = {}
-    for raw_parameter_name, raw_spec in raw_document.items():
+    for raw_parameter_name, raw_spec in raw_lut_document.items():
         parameter_name = str(raw_parameter_name or "").strip()
         if not parameter_name or parameter_name != raw_parameter_name:
             msg = f"invalid canonical LUT parameter name: {raw_parameter_name!r}"
             raise domain_error(msg)
+        if not isinstance(raw_spec, dict):
+            msg = f"invalid LUT spec for {parameter_name}: mapping is required"
+            raise domain_error(msg)
+        semantic_spec = dict(raw_spec)
+        raw_files = semantic_spec.get("files")
+        if isinstance(raw_files, dict):
+            semantic_spec["files"] = {
+                role: (
+                    {key: value for key, value in file_spec.items() if key != "object_storage_path"}
+                    if isinstance(file_spec, dict)
+                    else file_spec
+                )
+                for role, file_spec in raw_files.items()
+            }
         try:
-            parsed_models[parameter_name] = _ParameterLutSpecModel.model_validate(raw_spec)
+            parsed_models[parameter_name] = _ParameterLutSpecModel.model_validate(semantic_spec)
         except ValidationError as exc:
             msg = f"invalid LUT spec for {parameter_name}: {exc}"
             raise domain_error(msg) from exc
