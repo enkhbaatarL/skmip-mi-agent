@@ -46,8 +46,7 @@ from apps.agents.model_parameter_agent.utils.lut import (
     resolve_effective_reference,
 )
 from apps.agents.model_parameter_agent.utils.lut.keys import (
-    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
-    normalize_numeric_value,
+    apply_numeric_precision,
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CandidateSlotCatalog,
@@ -506,20 +505,25 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             ErrorCode.INVALID_REQUEST,
             detail="parameter_knowledge_base is required",
         )
-    records, warnings = build_basecase_records(
-        state.parameter_knowledge_base,
-        state.candidate_mappings,
-        state.scenario_context or {},
-    )
     cfg = get_settings()
     policy = LutLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
+        value_max_decimal_places=(
+            cfg.model_parameter_basecase_value_max_decimal_places
+        ),
+        value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     resource_paths = get_model_parameter_resource_paths()
     registry = get_parameter_spec_registry(
         resource_paths.manifest_path,
         lut_root=resource_paths.lut_root,
+    )
+    records, warnings = build_basecase_records(
+        state.parameter_knowledge_base,
+        state.candidate_mappings,
+        state.scenario_context or {},
+        registry=registry,
     )
     lut_catalog = (
         get_lut_catalog(policy, registry=registry)
@@ -531,6 +535,10 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.candidate_mappings,
         policy=policy,
         registry=registry,
+        value_max_decimal_places=(
+            cfg.model_parameter_basecase_value_max_decimal_places
+        ),
+        value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     slot_catalog = build_slot_catalog(basecase_index, lut_catalog)
     counts_by_candidate: dict[str, int] = {}
@@ -559,6 +567,18 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_lut_enabled": cfg.model_parameter_lut_enabled,
             "model_parameter_lut_horizon_start_year": policy.start_year,
             "model_parameter_lut_horizon_end_year": policy.end_year,
+            "model_parameter_basecase_value_max_decimal_places": (
+                cfg.model_parameter_basecase_value_max_decimal_places
+            ),
+            "model_parameter_basecase_value_precision_mode": (
+                cfg.model_parameter_basecase_value_precision_mode
+            ),
+            "model_parameter_proposed_value_max_decimal_places": (
+                cfg.model_parameter_proposed_value_max_decimal_places
+            ),
+            "model_parameter_proposed_value_precision_mode": (
+                cfg.model_parameter_proposed_value_precision_mode
+            ),
             "model_parameter_max_parameter_slots": cfg.model_parameter_max_parameter_slots,
             "model_parameter_max_value_prompt_basecase_records": (
                 cfg.model_parameter_max_value_prompt_basecase_records
@@ -2287,6 +2307,9 @@ def _sanitize_llm_adjustments(
     slots: list[dict[str, Any]],
     reference_records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
+    settings = get_settings()
+    max_decimal_places = settings.model_parameter_proposed_value_max_decimal_places
+    precision_mode = settings.model_parameter_proposed_value_precision_mode
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
     slot_contexts = _slot_reference_contexts(
@@ -2370,13 +2393,14 @@ def _sanitize_llm_adjustments(
                 warnings.append(warning)
                 continue
             try:
-                proposed_value = normalize_numeric_value(
+                proposed_value = apply_numeric_precision(
                     slot_value.proposed_value,
                     label=(
                         "Step3 proposedValue "
                         f"(candidate={adjustment.candidate_key}, slotKey={slot_key})"
                     ),
-                    max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                    max_decimal_places=max_decimal_places,
+                    mode=precision_mode,
                 )
             except MIBaseError:
                 warning = (

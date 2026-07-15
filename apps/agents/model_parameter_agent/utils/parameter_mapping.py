@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import unicodedata
 
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
@@ -15,6 +15,12 @@ from apps.agents.model_parameter_agent.utils.runtime_cache import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+if TYPE_CHECKING:
+    from apps.agents.model_parameter_agent.utils.lut.registry import (
+        ParameterSpecRegistry,
+    )
 
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -39,6 +45,9 @@ BASECASE_AXIS_LABELS = {
 }
 BASECASE_TIME_LABELS = {"year", "month", "period"}
 BASECASE_BAD_VALUES = {"#ref!", "#n/a", "#value!", "#div/0!"}
+PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD = (
+    "_preserve_basecase_axes_without_value"
+)
 BASECASE_SPEC_COLUMNS = {
     "basecase_read_mode",
     "basecase_header_row",
@@ -70,6 +79,7 @@ CANDIDATE_BASECASE_CACHE_FIELDS = (
     "basecase_value_start_col",
     "basecase_value_end_col",
     "basecase_stop_rule",
+    PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD,
 )
 _PARAMETER_KB_CACHE: RuntimeLruCache[ParameterKnowledgeBase] = RuntimeLruCache(
     max_entries=PARAMETER_KNOWLEDGE_BASE_CACHE_MAX_ENTRIES,
@@ -342,6 +352,11 @@ def preload_basecase_runtime_cache(
     record_count = 0
 
     if preload_records:
+        from apps.agents.model_parameter_agent.utils.lut.runtime import (
+            get_parameter_spec_registry,
+        )
+
+        registry = get_parameter_spec_registry()
         _BASECASE_RECORD_CACHE.ensure_capacity(len(candidates))
         workbook_loader = _require_workbook_loader()
         with _WorkbookCache(workbook_loader) as workbook_cache:
@@ -363,6 +378,7 @@ def preload_basecase_runtime_cache(
                         profile=profile,
                         candidate=candidate,
                         scenario_context={},
+                        registry=registry,
                     )
                 except Exception as exc:
                     warnings.append(
@@ -642,6 +658,8 @@ def build_basecase_records(
     kb: ParameterKnowledgeBase,
     candidates: list[dict[str, Any]],
     scenario_context: dict[str, Any],
+    *,
+    registry: ParameterSpecRegistry | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Return simple row/value records from each mapped basecase sheet.
 
@@ -651,6 +669,13 @@ def build_basecase_records(
     basecase value record is retained; if this becomes too large for the LLM
     context, the request should fail instead of silently sampling records.
     """
+
+    if registry is None:
+        from apps.agents.model_parameter_agent.utils.lut.runtime import (
+            get_parameter_spec_registry,
+        )
+
+        registry = get_parameter_spec_registry()
 
     workbook_loader = _require_workbook_loader()
     records: list[dict[str, Any]] = []
@@ -671,6 +696,7 @@ def build_basecase_records(
                     profile=profile,
                     candidate=candidate,
                     scenario_context=scenario_context,
+                    registry=registry,
                 )
             except Exception as exc:
                 warnings.append(
@@ -694,11 +720,13 @@ def _cached_extract_basecase_records(
     profile: BasecaseProfile,
     candidate: dict[str, Any],
     scenario_context: dict[str, Any],
+    registry: ParameterSpecRegistry,
 ) -> list[dict[str, Any]]:
     # Basecase extraction currently depends only on the workbook/profile and
     # candidate basecase mapping fields. If scenario-specific filtering is added,
     # include those fields in this cache key before reusing records across scenarios.
     _ = scenario_context
+    candidate = _candidate_with_basecase_metadata_policy(candidate, registry)
     cache_key = _candidate_basecase_records_cache_key(
         profile=profile,
         candidate=candidate,
@@ -718,6 +746,24 @@ def _cached_extract_basecase_records(
         builder=build,
     )
     return _copy_records_for_candidate(cached_records, candidate)
+
+
+def _candidate_with_basecase_metadata_policy(
+    candidate: dict[str, Any],
+    registry: ParameterSpecRegistry,
+) -> dict[str, Any]:
+    parameter_name = str(
+        candidate.get("canonical_parameter_name")
+        or candidate.get("parameter_name")
+        or "",
+    ).strip()
+    spec = registry.get(parameter_name)
+    return {
+        **candidate,
+        PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD: bool(
+            spec is not None and spec.metadata_axes,
+        ),
+    }
 
 
 def build_llm_prompt_packet(
@@ -1005,23 +1051,15 @@ def _append_matrix_records_for_row(
     if not static_axes:
         return
 
-    for col_idx, descriptor in block.time_descriptors.items():
-        year = descriptor.get("Year")
-        month = descriptor.get("Month")
-        period = descriptor.get("Period")
+    value_years: set[int] = set()
+    axis_only_by_year: dict[int, tuple[int, dict[str, Any]]] = {}
 
-        value = _value_at(values, col_idx)
-        if not _is_record_value(value):
-            continue
-
+    def append_record(col_idx: int, descriptor: dict[str, Any], value: Any) -> None:  # noqa: ANN401
         axes = dict(static_axes)
-        if _is_meaningful_cell(year):
-            axes["Year"] = year
-        if _is_meaningful_cell(month):
-            axes["Month"] = month
-        if _is_meaningful_cell(period):
-            axes["Period"] = period
-
+        for axis_name in ("Year", "Month", "Period"):
+            axis_value = descriptor.get(axis_name)
+            if _is_meaningful_cell(axis_value):
+                axes[axis_name] = axis_value
         records.append({
             "candidate_key": str(candidate.get("candidate_key") or ""),
             "model_file": profile.model_file,
@@ -1038,6 +1076,25 @@ def _append_matrix_records_for_row(
             "source_row": row_idx,
             "source_col": col_idx,
         })
+
+    for col_idx, descriptor in block.time_descriptors.items():
+        value = _value_at(values, col_idx)
+        time_values = _valid_basecase_time_values(descriptor)
+        if not _is_record_value(value):
+            if (
+                _preserves_basecase_axes_without_value(candidate)
+                and not _is_meaningful_cell(value)
+                and time_values is not None
+            ):
+                axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
+            continue
+        if time_values is not None:
+            value_years.add(time_values[0])
+        append_record(col_idx, descriptor, value)
+
+    for year, (col_idx, descriptor) in axis_only_by_year.items():
+        if year not in value_years:
+            append_record(col_idx, descriptor, None)
 
 
 def _extract_fixed_column_records(
@@ -1162,23 +1219,15 @@ def _extract_matrix_time_column_records(
         if not axes:
             continue
 
-        for col_idx, descriptor in time_descriptors.items():
-            year = descriptor.get("Year")
+        value_years: set[int] = set()
+        axis_only_by_year: dict[int, tuple[int, dict[str, Any]]] = {}
 
-            value = _value_at(row_values, col_idx)
-            if not _is_record_value(value):
-                continue
-
+        def append_record(col_idx: int, descriptor: dict[str, Any], value: Any) -> None:  # noqa: ANN401
             record_axes = dict(axes)
-            month = descriptor.get("Month")
-            period = descriptor.get("Period")
-            if _is_meaningful_cell(year):
-                record_axes["Year"] = year
-            if _is_meaningful_cell(month):
-                record_axes["Month"] = month
-            if _is_meaningful_cell(period):
-                record_axes["Period"] = period
-
+            for axis_name in ("Year", "Month", "Period"):
+                axis_value = descriptor.get(axis_name)
+                if _is_meaningful_cell(axis_value):
+                    record_axes[axis_name] = axis_value
             records.append({
                 "candidate_key": str(candidate.get("candidate_key") or ""),
                 "model_file": profile.model_file,
@@ -1195,6 +1244,25 @@ def _extract_matrix_time_column_records(
                 "source_row": row_idx,
                 "source_col": col_idx,
             })
+
+        for col_idx, descriptor in time_descriptors.items():
+            value = _value_at(row_values, col_idx)
+            time_values = _valid_basecase_time_values(descriptor)
+            if not _is_record_value(value):
+                if (
+                    _preserves_basecase_axes_without_value(candidate)
+                    and not _is_meaningful_cell(value)
+                    and time_values is not None
+                ):
+                    axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
+                continue
+            if time_values is not None:
+                value_years.add(time_values[0])
+            append_record(col_idx, descriptor, value)
+
+        for year, (col_idx, descriptor) in axis_only_by_year.items():
+            if year not in value_years:
+                append_record(col_idx, descriptor, None)
 
     return records
 
@@ -1549,6 +1617,21 @@ def _is_record_value(value: Any) -> bool:
     if isinstance(value, str) and value.strip().lower() in BASECASE_BAD_VALUES:
         return False
     return True
+
+
+def _preserves_basecase_axes_without_value(candidate: dict[str, Any]) -> bool:
+    return candidate.get(PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD) is True
+
+
+def _valid_basecase_time_values(
+    descriptor: dict[str, Any],
+) -> tuple[int, int, int] | None:
+    year = _int_or_none(descriptor.get("Year"))
+    month = _int_or_none(descriptor.get("Month"))
+    period = _int_or_none(descriptor.get("Period"))
+    if year is None or month is None or not 1 <= month <= 12 or period is None:
+        return None
+    return year, month, period
 
 
 def _resolve_basecase_dir(path: str | None) -> Path:

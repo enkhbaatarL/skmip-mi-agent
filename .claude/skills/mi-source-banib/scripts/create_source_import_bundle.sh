@@ -11,14 +11,12 @@ Examples:
   RELEASE_NOTES_SOURCE=/tmp/skmip-mi-agent-v0.0.3.release-notes.md .claude/skills/mi-source-banib/scripts/create_source_import_bundle.sh v0.0.3 main
 
 Creates:
-  release-artifacts/<repo>-<tag>.bundle
-  release-artifacts/<repo>-<tag>.bundle.zip  # contains the bundle and internal import sh
-  release-artifacts/<repo>-<tag>.manifest.txt
-  release-artifacts/<repo>-<tag>.release-notes.md
+  release-artifacts/<repo>-<tag>.bundle.zip  # contains only the bundle and self-contained versioned import sh
 
 Environment:
-  RELEASE_NOTES_SOURCE=<file>  Required. Prewritten release notes to copy into artifacts and GitHub Release
+  RELEASE_NOTES_SOURCE=<file>  Required. Prewritten release notes used directly for GitHub Release
   SKIP_GITHUB_RELEASE=1        Create artifacts only; do not create/update GitHub Release
+  TARGET_BRANCH=develop        Default target branch embedded in the versioned import script
 EOF
 }
 
@@ -29,6 +27,7 @@ fi
 
 TAG="${1:-}"
 BASE_BRANCH="${2:-main}"
+TARGET_BRANCH="${TARGET_BRANCH:-develop}"
 REMOTE="${REMOTE:-origin}"
 OUTPUT_DIR="${OUTPUT_DIR:-release-artifacts}"
 RELEASE_NOTES_SOURCE="${RELEASE_NOTES_SOURCE:-}"
@@ -61,11 +60,7 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
 
 REPO_NAME="$(basename "$PROJECT_ROOT")"
-BUNDLE_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.bundle"
-ZIP_FILE="${BUNDLE_FILE}.zip"
-MANIFEST_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.manifest.txt"
-RELEASE_NOTES_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.release-notes.md"
-IMPORT_SCRIPT=".claude/skills/mi-source-banib/scripts/import_source_bundle.sh"
+ZIP_FILE="${OUTPUT_DIR}/${REPO_NAME}-${TAG}.bundle.zip"
 
 echo "[1/9] Fetching ${REMOTE}/${BASE_BRANCH} and checking tag metadata..."
 git fetch "$REMOTE" "$BASE_BRANCH" --prune
@@ -145,54 +140,252 @@ else
   git push "$REMOTE" "refs/tags/${TAG}"
 fi
 
-mkdir -p "$OUTPUT_DIR"
-TARGET_DIR="$(cd "$(dirname "$RELEASE_NOTES_FILE")" && pwd)"
-TARGET_ABS="${TARGET_DIR}/$(basename "$RELEASE_NOTES_FILE")"
-
-if [[ "$RELEASE_NOTES_SOURCE" == "$TARGET_ABS" ]]; then
-  echo "ERROR: RELEASE_NOTES_SOURCE must be a separate input file, not the generated artifact path: $RELEASE_NOTES_FILE" >&2
-  exit 1
-fi
-
-rm -f "$BUNDLE_FILE" "$ZIP_FILE" "$MANIFEST_FILE" "$RELEASE_NOTES_FILE"
-
 PREVIOUS_TAG="$(git tag --merged "$TARGET_COMMIT" --sort=-v:refname | grep -E '^v[0-9]+(\.[0-9]+){1,3}([-+][A-Za-z0-9._-]+)?$' | grep -F -x -v "$TAG" | head -n1 || true)"
-if [[ -n "$PREVIOUS_TAG" ]]; then
-  COMPARE_RANGE="${PREVIOUS_TAG}..${TAG}"
-else
-  COMPARE_RANGE="${TAG}"
-fi
-
-echo "[4/9] Creating release notes: ${RELEASE_NOTES_FILE}"
-cp "$RELEASE_NOTES_SOURCE" "$RELEASE_NOTES_FILE"
 
 GITHUB_RELEASE_URL=""
 if [[ "${SKIP_GITHUB_RELEASE:-0}" == "1" ]]; then
-  echo "[5/9] Skipping GitHub Release because SKIP_GITHUB_RELEASE=1."
+  echo "[4/9] Skipping GitHub Release because SKIP_GITHUB_RELEASE=1."
 else
-  echo "[5/9] Creating/updating GitHub Release from release notes..."
+  echo "[4/9] Creating/updating GitHub Release from release notes..."
   if ! command -v gh >/dev/null 2>&1; then
     echo "ERROR: gh CLI is required to create/update GitHub Release. Set SKIP_GITHUB_RELEASE=1 to create artifacts only." >&2
     exit 1
   fi
 
   if gh release view "$TAG" >/dev/null 2>&1; then
-    gh release edit "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES_FILE"
+    gh release edit "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES_SOURCE"
   else
-    gh release create "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES_FILE"
+    gh release create "$TAG" --title "$TAG" --notes-file "$RELEASE_NOTES_SOURCE"
   fi
   GITHUB_RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url')"
 fi
 
-echo "[6/9] Creating bundle: ${BUNDLE_FILE}"
+echo "[5/9] Removing previous generated artifacts from ${OUTPUT_DIR}..."
+mkdir -p "$OUTPUT_DIR"
+find "$OUTPUT_DIR" -maxdepth 1 -type f \( \
+  -name "${REPO_NAME}-*.bundle" -o \
+  -name "${REPO_NAME}-*.bundle.zip" -o \
+  -name "${REPO_NAME}-*.manifest.txt" -o \
+  -name "${REPO_NAME}-*.release-notes.md" -o \
+  -name 'import_source_bundle_*.sh' \
+\) -delete
+
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mi-source-banib.XXXXXX")"
+cleanup() {
+  rm -rf "$STAGING_DIR"
+}
+trap cleanup EXIT
+
+BUNDLE_FILE="${STAGING_DIR}/${REPO_NAME}-${TAG}.bundle"
+VERSIONED_IMPORT_SCRIPT="${STAGING_DIR}/import_source_bundle_${TAG}.sh"
+
+echo "[6/9] Creating bundle: $(basename "$BUNDLE_FILE")"
 git bundle create "$BUNDLE_FILE" "refs/tags/${TAG}"
 
 echo "[7/9] Verifying bundle..."
 git bundle verify "$BUNDLE_FILE"
 
-echo "[8/9] Zipping bundle: ${ZIP_FILE}"
-zip -j -9 "$ZIP_FILE" "$BUNDLE_FILE" "$IMPORT_SCRIPT" "$RELEASE_NOTES_FILE" >/dev/null
-unzip -l "$ZIP_FILE" >/dev/null
+echo "[8/9] Creating self-contained import script: $(basename "$VERSIONED_IMPORT_SCRIPT")"
+{
+  cat <<'IMPORT_SCRIPT_HEADER'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMPORT_SCRIPT_HEADER
+  printf 'DEFAULT_TAG=%q\n' "$TAG"
+  printf 'DEFAULT_BUNDLE=%q\n' "$(basename "$BUNDLE_FILE")"
+  printf 'DEFAULT_TARGET_BRANCH=%q\n' "$TARGET_BRANCH"
+  cat <<'IMPORT_SCRIPT_BODY'
+
+usage() {
+  cat <<USAGE
+Usage:
+  bash $(basename "$0") [tag] [bundle-or-bundle-zip] [target-branch] [import-branch]
+
+Defaults:
+  tag           ${DEFAULT_TAG}
+  bundle        ${DEFAULT_BUNDLE}
+  target branch ${DEFAULT_TARGET_BRANCH}
+  import branch import/<tag>
+
+Environment:
+  REMOTE=origin
+  AUTO_RESOLVE_THEIRS=1  # resolve all conflicts with GitHub tag side
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+TAG="${1:-$DEFAULT_TAG}"
+INPUT_FILE="${2:-${SCRIPT_DIR}/${DEFAULT_BUNDLE}}"
+TARGET_BRANCH="${3:-$DEFAULT_TARGET_BRANCH}"
+IMPORT_BRANCH="${4:-import/${TAG}}"
+REMOTE="${REMOTE:-origin}"
+AUTO_RESOLVE_THEIRS="${AUTO_RESOLVE_THEIRS:-0}"
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+cd "$PROJECT_ROOT"
+
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  echo "ERROR: a merge is already in progress. Resolve or abort it first." >&2
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "ERROR: tracked files have local changes. Commit or restore them first." >&2
+  git status --short --untracked-files=no
+  exit 1
+fi
+
+resolve_path() {
+  local path="$1"
+  if [[ "$path" = /* || "$path" =~ ^[A-Za-z]:[\\/] ]]; then
+    echo "$path"
+  else
+    echo "$PWD/$path"
+  fi
+}
+
+INPUT_FILE="$(resolve_path "$INPUT_FILE")"
+if [[ ! -f "$INPUT_FILE" ]]; then
+  echo "ERROR: file not found: $INPUT_FILE" >&2
+  exit 1
+fi
+
+TMP_DIR=""
+cleanup() {
+  if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup EXIT
+
+BUNDLE_FILE="$INPUT_FILE"
+if [[ "$INPUT_FILE" == *.zip ]]; then
+  TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t mi-source-import)"
+  unzip -q "$INPUT_FILE" -d "$TMP_DIR"
+  mapfile -t BUNDLE_FILES < <(find "$TMP_DIR" -type f -name "*.bundle" | sort)
+  if [[ "${#BUNDLE_FILES[@]}" -ne 1 ]]; then
+    echo "ERROR: expected exactly one .bundle in zip, found ${#BUNDLE_FILES[@]}." >&2
+    exit 1
+  fi
+  BUNDLE_FILE="${BUNDLE_FILES[0]}"
+fi
+
+echo "[1/6] Verifying bundle..."
+git bundle verify "$BUNDLE_FILE"
+
+echo "[2/6] Fetching tag ${TAG}..."
+BUNDLE_TAG_OBJECT="$(git bundle list-heads "$BUNDLE_FILE" "refs/tags/${TAG}" | awk '$2 == "refs/tags/'"$TAG"'" { print $1 }')"
+if [[ -z "$BUNDLE_TAG_OBJECT" ]]; then
+  echo "ERROR: bundle does not contain refs/tags/${TAG}" >&2
+  exit 1
+fi
+
+if git show-ref --verify --quiet "refs/tags/${TAG}"; then
+  LOCAL_TAG_OBJECT="$(git rev-parse "refs/tags/${TAG}")"
+  if [[ "$LOCAL_TAG_OBJECT" != "$BUNDLE_TAG_OBJECT" ]]; then
+    echo "ERROR: local tag ${TAG} already exists but differs from bundle." >&2
+    exit 1
+  fi
+  echo "Local tag ${TAG} already exists; skipping tag fetch."
+else
+  git fetch "$BUNDLE_FILE" "refs/tags/${TAG}:refs/tags/${TAG}"
+fi
+
+echo "[3/6] Pushing tag ${TAG} to ${REMOTE}..."
+git push "$REMOTE" "refs/tags/${TAG}:refs/tags/${TAG}"
+
+echo "[4/6] Creating import branch ${IMPORT_BRANCH} from ${REMOTE}/${TARGET_BRANCH}..."
+git fetch "$REMOTE"
+if ! git rev-parse --verify "refs/remotes/${REMOTE}/${TARGET_BRANCH}" >/dev/null 2>&1; then
+  echo "ERROR: remote target branch not found: ${REMOTE}/${TARGET_BRANCH}" >&2
+  echo "Create it first, for example:" >&2
+  echo "  git checkout -b ${TARGET_BRANCH} ${REMOTE}/master" >&2
+  echo "  git push ${REMOTE} ${TARGET_BRANCH}" >&2
+  exit 1
+fi
+
+if git show-ref --verify --quiet "refs/heads/${IMPORT_BRANCH}"; then
+  echo "ERROR: local branch already exists: ${IMPORT_BRANCH}" >&2
+  echo "Delete it or pass a different import branch name." >&2
+  exit 1
+fi
+
+git checkout --no-track -b "$IMPORT_BRANCH" "${REMOTE}/${TARGET_BRANCH}"
+
+echo "[5/6] Merging tag ${TAG}..."
+set +e
+git merge --allow-unrelated-histories --no-ff "$TAG" -m "Import GitHub tag ${TAG}"
+MERGE_EXIT=$?
+set -e
+
+if [[ "$MERGE_EXIT" -ne 0 ]]; then
+  mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U)
+  if [[ "${#CONFLICTS[@]}" -eq 0 ]]; then
+    echo "ERROR: merge failed without conflict files. Check git status." >&2
+    exit "$MERGE_EXIT"
+  fi
+
+  if [[ "$AUTO_RESOLVE_THEIRS" != "1" ]]; then
+    echo "Merge conflicts detected."
+    echo "Resolve in VSCode, then run:"
+    echo "  git add <resolved-files>"
+    echo "  git commit"
+    echo "  git push -u ${REMOTE} HEAD:refs/heads/${IMPORT_BRANCH}"
+    echo
+    echo "If GitHub tag files should win for all conflicts:"
+    echo "  git diff --name-only --diff-filter=U | while IFS= read -r path; do git checkout --theirs -- \"\$path\"; git add -- \"\$path\"; done"
+    echo "  git commit"
+    exit 1
+  fi
+
+  echo "Auto-resolving conflicts with GitHub tag side (--theirs)..."
+  for path in "${CONFLICTS[@]}"; do
+    git checkout --theirs -- "$path"
+    git add -- "$path"
+  done
+  git commit --no-edit
+fi
+
+echo "[6/6] Pushing import branch..."
+git push -u "$REMOTE" "HEAD:refs/heads/${IMPORT_BRANCH}"
+
+REMOTE_URL="$(git remote get-url "$REMOTE" || true)"
+COMPARE_URL=""
+if [[ "$REMOTE_URL" =~ ^https?:// ]]; then
+  BASE_URL="${REMOTE_URL%.git}"
+  COMPARE_URL="${BASE_URL}/compare/${TARGET_BRANCH}...${IMPORT_BRANCH}"
+fi
+
+echo
+echo "Done."
+echo "Create PR:"
+echo "  source: ${IMPORT_BRANCH}"
+echo "  target: ${TARGET_BRANCH}"
+echo "  merge : Create merge commit"
+if [[ -n "$COMPARE_URL" ]]; then
+  echo "  url   : ${COMPARE_URL}"
+fi
+
+IMPORT_SCRIPT_BODY
+} > "$VERSIONED_IMPORT_SCRIPT"
+chmod +x "$VERSIONED_IMPORT_SCRIPT"
+
+echo "[9/9] Zipping final artifact: ${ZIP_FILE}"
+zip -j -9 "$ZIP_FILE" "$BUNDLE_FILE" "$VERSIONED_IMPORT_SCRIPT" >/dev/null
+
+ZIP_ENTRY_COUNT="$(unzip -Z1 "$ZIP_FILE" | wc -l | tr -d ' ')"
+if [[ "$ZIP_ENTRY_COUNT" != "2" ]]; then
+  echo "ERROR: expected exactly two files in zip, found ${ZIP_ENTRY_COUNT}." >&2
+  exit 1
+fi
+unzip -Z1 "$ZIP_FILE" | grep -F -x "$(basename "$BUNDLE_FILE")" >/dev/null
+unzip -Z1 "$ZIP_FILE" | grep -F -x "$(basename "$VERSIONED_IMPORT_SCRIPT")" >/dev/null
 
 sha256_file() {
   local file="$1"
@@ -210,30 +403,10 @@ sha256_file() {
 BUNDLE_SHA256="$(sha256_file "$BUNDLE_FILE")"
 ZIP_SHA256="$(sha256_file "$ZIP_FILE")"
 
-cat > "$MANIFEST_FILE" <<EOF
-repo=${REPO_NAME}
-remote=${REMOTE}
-base_branch=${BASE_BRANCH}
-tag=${TAG}
-commit=${TARGET_COMMIT}
-bundle_file=$(basename "$BUNDLE_FILE")
-bundle_sha256=${BUNDLE_SHA256}
-zip_file=$(basename "$ZIP_FILE")
-zip_sha256=${ZIP_SHA256}
-release_notes_file=$(basename "$RELEASE_NOTES_FILE")
-previous_tag=${PREVIOUS_TAG:-}
-compare_range=${COMPARE_RANGE}
-github_release_url=${GITHUB_RELEASE_URL}
-import_script=import_source_bundle.sh
-EOF
-
-echo "[9/9] Done."
+echo "Done."
 echo "Tag commit : ${TARGET_COMMIT}"
 echo "Previous   : ${PREVIOUS_TAG:-none}"
 echo "Release    : ${GITHUB_RELEASE_URL:-skipped}"
-echo "Bundle     : ${BUNDLE_FILE}"
 echo "Bundle SHA : ${BUNDLE_SHA256}"
 echo "Zip        : ${ZIP_FILE}"
 echo "Zip SHA    : ${ZIP_SHA256}"
-echo "Manifest   : ${MANIFEST_FILE}"
-echo "Notes      : ${RELEASE_NOTES_FILE}"

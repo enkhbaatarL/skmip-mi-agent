@@ -306,7 +306,11 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
         raise RuntimeError("No valid model parameter proposal parameters generated")
 
     monkeypatch.setattr(proposal_evaluation, "ModelParameterService", FakeService)
-    monkeypatch.setattr(proposal_evaluation, "get_parameter_knowledge_base", object)
+    monkeypatch.setattr(
+        proposal_evaluation,
+        "get_parameter_knowledge_base",
+        lambda _basecase_dir=None: object(),
+    )
     monkeypatch.setattr(
         proposal_evaluation,
         "match_parameter_candidates",
