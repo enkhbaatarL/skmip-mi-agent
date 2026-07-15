@@ -22,16 +22,12 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalKey,
     CanonicalValue,
     EffectiveReference,
-    LutLoadPolicy,
+    ReferenceLoadPolicy,
     SlotCatalog,
     SlotLeaf,
     SlotPeriod,
     domain_error,
     freeze_mapping,
-)
-from apps.agents.model_parameter_agent.utils.lut.precision import (
-    BASECASE_VALUE_MAX_DECIMAL_PLACES,
-    NumericPrecisionMode,
 )
 from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRegistry
 from apps.agents.model_parameter_agent.utils.lut.runtime import get_parameter_spec_registry
@@ -95,12 +91,10 @@ def build_basecase_index(  # noqa: C901
     basecase_records: Sequence[Mapping[str, Any]],
     candidates: Sequence[Mapping[str, Any]],
     *,
-    policy: LutLoadPolicy | None = None,
+    policy: ReferenceLoadPolicy | None = None,
     registry: ParameterSpecRegistry | None = None,
-    value_max_decimal_places: int = BASECASE_VALUE_MAX_DECIMAL_PLACES,
-    value_precision_mode: NumericPrecisionMode = "trunc",
 ) -> BasecaseIndex:
-    active_policy = policy or LutLoadPolicy()
+    active_policy = policy or ReferenceLoadPolicy()
     active_registry = registry or get_parameter_spec_registry()
     candidate_by_key = {_candidate_key(candidate): candidate for candidate in candidates}
     if len(candidate_by_key) != len(candidates):
@@ -160,8 +154,8 @@ def build_basecase_index(  # noqa: C901
                     apply_numeric_precision(
                         raw_value,
                         label=f"basecase value for {candidate_key}:{reference_id}",
-                        max_decimal_places=value_max_decimal_places,
-                        mode=value_precision_mode,
+                        max_decimal_places=active_policy.value_max_decimal_places,
+                        mode=active_policy.value_precision_mode,
                     )
                     if raw_value is not None
                     else None
@@ -231,8 +225,12 @@ def build_slot_catalog(
     by_candidate: dict[str, CandidateSlotCatalog] = {}
     for candidate_key, parameter_name in basecase_index.candidate_parameters.items():
         key_axes = basecase_index.candidate_key_axes[candidate_key]
+        # Value-less Basecase rows remain indexed for metadata fallback, but they
+        # become selectable only when the exact LUT coordinate supplies a value.
         union_axes: dict[CanonicalKey, Mapping[str, CanonicalValue]] = {
-            record.canonical_key: record.axes for record in basecase_index.records_for_candidate(candidate_key)
+            record.canonical_key: record.axes
+            for record in basecase_index.records_for_candidate(candidate_key)
+            if record.value is not None
         }
         if lut_catalog is not None:
             spec = lut_catalog.registry.get(parameter_name)

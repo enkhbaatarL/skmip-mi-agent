@@ -131,7 +131,6 @@ class LLMValueAdjustment(ApiModel):
 class LLMSlotProposal(ApiModel):
     candidate_key: str
     slot_axes: list[LLMSlotAxis] = Field(default_factory=list)
-    rationale_ko: str
 
     @field_validator("slot_axes", mode="before")
     @classmethod
@@ -143,7 +142,6 @@ class ParameterSlotProposal(ApiModel):
     candidate_key: str
     slot_key: str | None = None
     slot_axes: list[ParameterSlotAxis] = Field(default_factory=list)
-    rationale_ko: str
 
     @field_validator("slot_axes", mode="before")
     @classmethod

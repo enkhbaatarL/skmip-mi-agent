@@ -80,7 +80,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         preload_basecase_runtime_cache,
     )
     from apps.agents.model_parameter_agent.utils.lut import (
-        LutLoadPolicy,
+        ReferenceLoadPolicy,
         validate_lut_startup,
     )
     from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
@@ -106,9 +106,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     )
     logger.info("ORM/DB schema validation completed")
 
-    lut_policy = LutLoadPolicy(
+    lut_policy = ReferenceLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
+        value_max_decimal_places=(
+            cfg.model_parameter_basecase_value_max_decimal_places
+        ),
+        value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     resource_paths = await ensure_model_parameter_resource_runtime(
         cfg.model_parameter_resource_storage,

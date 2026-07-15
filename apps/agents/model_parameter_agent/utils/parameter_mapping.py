@@ -1083,7 +1083,6 @@ def _append_matrix_records_for_row(
         if not _is_record_value(value):
             if (
                 _preserves_basecase_axes_without_value(candidate)
-                and not _is_meaningful_cell(value)
                 and time_values is not None
             ):
                 axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
@@ -1251,7 +1250,6 @@ def _extract_matrix_time_column_records(
             if not _is_record_value(value):
                 if (
                     _preserves_basecase_axes_without_value(candidate)
-                    and not _is_meaningful_cell(value)
                     and time_values is not None
                 ):
                     axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))

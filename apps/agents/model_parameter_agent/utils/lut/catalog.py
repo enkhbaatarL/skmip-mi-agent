@@ -9,8 +9,8 @@ from apps.agents.model_parameter_agent.utils.lut.adapters import FileSnapshot, l
 from apps.agents.model_parameter_agent.utils.lut.keys import canonical_key_from_axes
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalKey,
-    LutLoadPolicy,
     LutRecord,
+    ReferenceLoadPolicy,
     domain_error,
 )
 from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRegistry
@@ -19,7 +19,7 @@ from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRe
 @dataclass(frozen=True, slots=True)
 class LutCatalog:
     version: str
-    policy: LutLoadPolicy
+    policy: ReferenceLoadPolicy
     registry: ParameterSpecRegistry
     records: tuple[LutRecord, ...]
     diagnostics: tuple[str, ...]
@@ -46,7 +46,7 @@ class LutCatalog:
 
 def build_lut_catalog(
     registry: ParameterSpecRegistry,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots_by_path: Mapping[str, FileSnapshot],
     *,
     version: str,
