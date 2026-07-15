@@ -5,13 +5,13 @@ schema_version: 1
 basecase:
   demand:
     path: Demand Model_Input.xlsm
-    object_storage_path: fundamental_model_artifact/in_template/복호화_(Base) Demand Model_Input.xlsm
+    object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Demand Model_Input.xlsm
   supply:
     path: Supply Model_Input.xlsm
-    object_storage_path: fundamental_model_artifact/in_template/복호화_(Base) Supply Model_Input.xlsm
+    object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Supply Model_Input.xlsm
   trade:
     path: Trade Model_Input.xlsm
-    object_storage_path: fundamental_model_artifact/in_template/복호화_(Base) Trade Model_Input.xlsm
+    object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
 lut:
   GDP:

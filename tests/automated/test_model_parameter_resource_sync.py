@@ -85,6 +85,14 @@ def _storage_config(tmp_path: Path, manifest_path: Path) -> SimpleNamespace:
 def test_integrated_manifest_declares_expected_resources() -> None:
     integrated = load_model_parameter_resource_manifest()
     assert set(integrated.basecase_files) == {"demand", "supply", "trade"}
+    assert {
+        role: resource.object_storage_path
+        for role, resource in integrated.basecase_files.items()
+    } == {
+        "demand": "fundamental_model_artifact/input_template/복호화_(Base) Demand Model_Input.xlsm",
+        "supply": "fundamental_model_artifact/input_template/복호화_(Base) Supply Model_Input.xlsm",
+        "trade": "fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm",
+    }
     assert set(integrated.lut_registry.specs) == {
         "GDP",
         "PMI",
