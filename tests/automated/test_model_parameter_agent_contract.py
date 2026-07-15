@@ -366,6 +366,38 @@ def _record_with(
 
 
 class ModelParameterAgentContractTest(unittest.TestCase):
+    def test_db_payload_uses_independent_basecase_and_proposed_precision(self) -> None:
+        from apps.agents.model_parameter_agent.persistence import (
+            model_parameter_service,
+        )
+
+        settings = SimpleNamespace(
+            model_parameter_basecase_value_max_decimal_places=2,
+            model_parameter_basecase_value_precision_mode="trunc",
+            model_parameter_proposed_value_max_decimal_places=3,
+            model_parameter_proposed_value_precision_mode="ceil",
+        )
+        with patch.object(
+            model_parameter_service,
+            "get_settings",
+            return_value=settings,
+        ):
+            payload = model_parameter_service._parameter_json_payload(
+                {
+                    "values": [
+                        {
+                            "basecaseValue": -1.2399,
+                            "proposedValue": -1.2341,
+                        },
+                    ],
+                },
+            )
+
+        assert payload["values"][0] == {
+            "basecaseValue": -1.23,
+            "proposedValue": -1.234,
+        }
+
     def test_parameter_name_normalization_does_not_apply_code_aliases(self) -> None:
         assert normalize_parameter_name("Gas Demand [BCM/Mt]") == "Gas Demand [BCM/Mt]"
         assert normalize_parameter_name(" ShippingCost ") == "ShippingCost"
@@ -1148,8 +1180,14 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                             {
                                 "Route": "Suez",
                                 "basecaseValue": 1.23456789,
-                                "proposedValue": 2.00000001,
+                                "proposedValue": 2.98765999,
                                 "rationale": "수에즈 운송 차질",
+                            },
+                            {
+                                "Route": "Hormuz",
+                                "basecaseValue": -1.23456789,
+                                "proposedValue": -2.98765999,
+                                "rationale": "음수 정밀도 제한",
                             },
                         ],
                     ),
@@ -1169,9 +1207,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert saved_payload[0]["parameterName"] == "ShippingCost"
         assert saved_payload[0]["modelTarget"]["modelFile"] == "Trade"
         assert saved_payload[0]["modelTarget"]["tableName"] == "Table1"
-        assert saved_payload[0]["values"][0]["basecaseValue"] == 1.23457
-        assert saved_payload[0]["values"][0]["proposedValue"] == 2
-        assert isinstance(saved_payload[0]["values"][0]["proposedValue"], int)
+        assert saved_payload[0]["values"][0]["basecaseValue"] == 1.23456
+        assert saved_payload[0]["values"][0]["proposedValue"] == 2.98765
+        assert saved_payload[0]["values"][1]["basecaseValue"] == -1.23456
+        assert saved_payload[0]["values"][1]["proposedValue"] == -2.98765
         assert (
             repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
                 "request_usr_id"
@@ -1409,7 +1448,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         "values": [
                             {
                                 "basecaseValue": 0.123456789,
-                                "proposedValue": 0.500000001,
+                                "proposedValue": 0.500009999,
+                            },
+                            {
+                                "basecaseValue": -0.123456789,
+                                "proposedValue": -0.500009999,
                             },
                         ],
                     },
@@ -1428,8 +1471,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     "parameterName": "PowerMix",
                     "values": [
                         {
-                            "basecaseValue": 0.12346,
+                            "basecaseValue": 0.12345,
                             "proposedValue": 0.5,
+                        },
+                        {
+                            "basecaseValue": -0.12345,
+                            "proposedValue": -0.5,
                         },
                     ],
                 },
@@ -3124,6 +3171,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 model_parameter_max_parameter_slots=100,
                 model_parameter_max_value_prompt_basecase_records=100,
                 model_parameter_max_routing_candidates_per_dimension=2,
+                model_parameter_proposed_value_max_decimal_places=5,
+                model_parameter_proposed_value_precision_mode="trunc",
             ),
         )
         self._settings_patch.start()

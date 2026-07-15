@@ -95,7 +95,12 @@ def _catalog_version(
     digest.update(registry.canonical_yaml)
     digest.update(
         json.dumps(
-            {"start_year": policy.start_year, "end_year": policy.end_year},
+            {
+                "start_year": policy.start_year,
+                "end_year": policy.end_year,
+                "value_max_decimal_places": policy.value_max_decimal_places,
+                "value_precision_mode": policy.value_precision_mode,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8"),
@@ -129,12 +134,14 @@ def get_lut_catalog(
         for relative_path, snapshot in sorted(snapshots.items())
     )
     cache_key = (
-        "lut-catalog-v1",
+        "lut-catalog-v2",
         active_registry.config_path,
         active_registry.lut_root,
         active_registry.schema_hash,
         policy.start_year,
         policy.end_year,
+        policy.value_max_decimal_places,
+        policy.value_precision_mode,
         file_identity,
     )
 

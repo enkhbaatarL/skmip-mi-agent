@@ -343,13 +343,20 @@ Request body:
 내부 flow는 callback payload 생성 전 검증 단계에서 아래 value cell을 제외하거나, 해당 parameter를 최종 응답 대상에서 제외할 수 있다.
 `proposed_value`는 basecase와 같은 단위/스케일/형식의 최종 입력값이며, basecase 대비 변화분/변화율/보정률로 해석하지 않는다.
 
-- Basecase/LUT reference value는 소수점 최대 5자리로 반올림하며, 정수이면 정수로 직렬화한다.
-- LiqUtil은 `Year`/`Month`/`Period`를 제외한 key 축이 같은 Basecase 행이 있으면 value 셀이 비어 있어
-  LUT value를 쓰더라도 Life Cycle과 Nameplate는 Basecase 원본을 유지한다. 같은 비기간 축의 Basecase 행이
-  없는 LUT-only slot의 `Nameplate Capacity (MTPA)`만 소수점 최대 1자리로 반올림하며, 정수이면 정수로
-  직렬화한다.
-- Step3의 `proposed_value`는 유한한 숫자만 허용하고 소수점 최대 5자리로 반올림하며, 정수이면 정수로 직렬화한다.
-- proposal/confirmation DB 저장 직전에 `basecaseValue`와 `proposedValue`에 같은 최대 5자리 규칙을 다시 적용한다.
+- Basecase 및 LUT reference value는 `model_parameter_basecase_value_max_decimal_places`와
+  `model_parameter_basecase_value_precision_mode`를 함께 사용한다.
+- Step3 및 최종 `proposedValue`는 `model_parameter_proposed_value_max_decimal_places`와
+  `model_parameter_proposed_value_precision_mode`를 사용한다.
+- 두 그룹 모두 기본값은 소수점 최대 5자리와 `trunc`이다. mode는 0 방향 버림인 `trunc`, 양의 무한대
+  방향 올림인 `ceil`, 일반 반올림인 `round` 중 하나이며, `round`의 정확한 중간값은 0에서 먼 방향으로
+  처리한다. decimal places가 `-1`이면 해당 그룹의 mode와 자릿수 제한을 적용하지 않는다. 0과 정수는
+  정수로 직렬화한다.
+- LUT spec에 `metadata_axes`가 있으면 `Year`/`Month`/`Period`를 제외한 key 축이 같은 Basecase 행의
+  비기간 metadata를 우선한다. LiqUtil은 LUT value를 쓰더라도 Life Cycle과 Nameplate를 Basecase 원본으로
+  유지하고, 같은 비기간 축의 Basecase 행이 없는 LUT-only slot의 `Nameplate Capacity (MTPA)`만 소수점
+  최대 2자리에서 버림한다.
+- proposal/confirmation DB 저장 직전에 `basecaseValue`와 `proposedValue`에 각 그룹의 정밀도 설정을
+  다시 적용한다. 값이 없으면 `null`을 유지한다.
 
 - `proposed_value`가 `null`인 cell
 - 동일 parameter/slot에 서로 다른 value가 충돌해 review 대상으로 분류된 parameter

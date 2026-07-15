@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import csv
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,12 @@ from apps.agents.model_parameter_agent.utils.lut import (
     get_parameter_spec_registry,
     resolve_effective_reference,
     validate_lut_startup,
+)
+from apps.agents.model_parameter_agent.utils.lut.keys import (
+    apply_numeric_precision,
+    ceil_numeric_value,
+    normalize_numeric_value,
+    truncate_numeric_value,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -103,7 +110,11 @@ def test_exact_gdp_temperature_and_liq_transforms(
         {"Country": "United States", "Year": 2026, "Month": 1},
     )
     assert us_january is not None
-    assert us_january.value == round(18.0 - 513.0162988115451 / 30.0, 5)
+    assert us_january.value == truncate_numeric_value(
+        18.0 - 513.0162988115451 / 30.0,
+        label="US January temperature",
+        max_decimal_places=5,
+    )
     assert "degree_days_branch=hdd" in us_january.diagnostics
 
     liq_record = catalog.records_for_parameter("LiqUtilAdjustment")[0]
@@ -157,6 +168,10 @@ def test_load_policy_rejects_reversed_horizon() -> None:
     with pytest.raises(MIBaseError, match="start_year must be less than or equal") as caught:
         LutLoadPolicy(2030, 2026)
     assert caught.value.error_code is ErrorCode.INVALID_REQUEST
+
+    assert LutLoadPolicy(value_max_decimal_places=-1).value_max_decimal_places == -1
+    with pytest.raises(MIBaseError, match="-1 or greater"):
+        LutLoadPolicy(value_max_decimal_places=-2)
 
 
 @pytest.mark.parametrize(
@@ -345,7 +360,7 @@ def test_basecase_and_lut_values_use_bounded_precision(
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
-    assert catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == 1.23457
+    assert catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == 1.23456
     integer_lut_value = catalog.lookup("TestParameter", {"Country": "B", "Year": 2026}).value
     assert integer_lut_value == 8
     assert isinstance(integer_lut_value, int)
@@ -363,7 +378,7 @@ def test_basecase_and_lut_values_use_bounded_precision(
                 "candidate_key": "gdp",
                 "reference_id": "base-decimal",
                 "axes": {"Country": "A", "Year": 2026},
-                "value": 9.87654321,
+                "value": 9.87654999,
             },
             {
                 "candidate_key": "gdp",
@@ -379,6 +394,126 @@ def test_basecase_and_lut_values_use_bounded_precision(
     integer_basecase_value = index.lookup("gdp", {"Country": "B", "Year": 2026}).value
     assert integer_basecase_value == 8
     assert isinstance(integer_basecase_value, int)
+
+
+def test_numeric_precision_applies_to_negative_values_and_serializes_zero_as_int() -> None:
+    assert truncate_numeric_value(1.234569, label="positive", max_decimal_places=5) == 1.23456
+    assert truncate_numeric_value(-1.234569, label="negative", max_decimal_places=5) == -1.23456
+    assert normalize_numeric_value(-1.234569, label="negative LUT", max_decimal_places=5) == -1.23457
+    assert (
+        apply_numeric_precision(
+            -1.234569,
+            label="configured trunc",
+            max_decimal_places=5,
+            mode="trunc",
+        )
+        == -1.23456
+    )
+    assert (
+        apply_numeric_precision(
+            -1.234569,
+            label="configured round",
+            max_decimal_places=5,
+            mode="round",
+        )
+        == -1.23457
+    )
+    assert ceil_numeric_value(1.234561, label="positive ceil", max_decimal_places=5) == 1.23457
+    assert ceil_numeric_value(-1.234561, label="negative ceil", max_decimal_places=5) == -1.23456
+    assert normalize_numeric_value(1.234565, label="positive half", max_decimal_places=5) == 1.23457
+    assert normalize_numeric_value(-1.234565, label="negative half", max_decimal_places=5) == -1.23457
+    for mode in ("trunc", "ceil", "round"):
+        assert (
+            apply_numeric_precision(
+                -1.23456789,
+                label=f"disabled {mode}",
+                max_decimal_places=-1,
+                mode=mode,
+            )
+            == -1.23456789
+        )
+    assert (
+        truncate_numeric_value(
+            Decimal("1.234569999999999999"),
+            label="decimal",
+            max_decimal_places=5,
+        )
+        == 1.23456
+    )
+    integer_value = truncate_numeric_value(8.0000001, label="integer", max_decimal_places=5)
+    assert integer_value == 8
+    assert isinstance(integer_value, int)
+    zero_value = truncate_numeric_value(0.0, label="zero", max_decimal_places=5)
+    assert zero_value == 0
+    assert isinstance(zero_value, int)
+
+
+def test_lut_policy_applies_configured_precision(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        _tabular_config("values.csv", metadata_axes="[Tag]"),
+    )
+    _write(
+        tmp_path / "values.csv",
+        "Country,Year,Tag,Value\nA,2026,x,-1.23456789\n",
+    )
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+
+    truncate_catalog = get_lut_catalog(
+        LutLoadPolicy(value_max_decimal_places=3, value_precision_mode="trunc"),
+        registry=registry,
+    )
+    assert truncate_catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == -1.234
+
+    round_catalog = get_lut_catalog(
+        LutLoadPolicy(value_max_decimal_places=3, value_precision_mode="round"),
+        registry=registry,
+    )
+    assert round_catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == -1.235
+
+
+def test_metadata_axes_enable_non_time_basecase_metadata_fallback(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        _tabular_config("values.csv", metadata_axes="[Tag]"),
+    )
+    _write(
+        tmp_path / "values.csv",
+        "Country,Year,Tag,Value\nA,2027,lut-tag,1.0\n",
+    )
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    candidate = {
+        "candidate_key": "custom",
+        "canonical_parameter_name": "TestParameter",
+        "basecase_read_mode": "fixed_columns",
+        "basecase_column_roles": "A:Country,B:Year,C:Tag,D:TestParameter",
+    }
+    index = build_basecase_index(
+        [
+            {
+                "candidate_key": "custom",
+                "reference_id": "base-other-year",
+                "axes": {"Country": "A", "Year": 2026, "Tag": "base-tag"},
+                "value": None,
+            },
+        ],
+        [candidate],
+        registry=registry,
+    )
+
+    effective = resolve_effective_reference(
+        "custom",
+        {"Country": "A", "Year": 2027},
+        index,
+        catalog,
+    )
+
+    assert effective is not None
+    assert effective.actual_basecase_value is None
+    assert effective.llm_reference_value == 1
+    assert effective.metadata["Tag"] == "base-tag"
+    assert "basecase_non_time_axes_with_lut_value" in effective.diagnostics
 
 
 def test_basecase_index_isolates_candidates_and_resolves_all_source_modes(
@@ -608,7 +743,7 @@ def test_liq_metadata_uses_basecase_non_time_axes_before_lut_metadata(
     }
     lut_record = catalog.lookup("LiqUtilAdjustment", target_axes)
     assert lut_record is not None
-    assert lut_record.metadata["Nameplate Capacity (MTPA)"] == 6.6
+    assert lut_record.metadata["Nameplate Capacity (MTPA)"] == 6.59
     candidate = {
         "candidate_key": "liq",
         "canonical_parameter_name": "LiqUtilAdjustment",
@@ -653,7 +788,7 @@ def test_liq_metadata_uses_basecase_non_time_axes_before_lut_metadata(
     lut_only = resolve_effective_reference("liq", target_axes, lut_only_index, catalog)
     assert lut_only is not None
     assert lut_only.basecase_reference_id is None
-    assert lut_only.metadata["Nameplate Capacity (MTPA)"] == 6.6
+    assert lut_only.metadata["Nameplate Capacity (MTPA)"] == 6.59
     assert "lut_only" in lut_only.diagnostics
 
 

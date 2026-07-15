@@ -151,6 +151,10 @@ class Settings(BaseSettings):
     model_parameter_lut_enabled: bool = Field(default=False)
     model_parameter_lut_horizon_start_year: int = Field(default=2026)
     model_parameter_lut_horizon_end_year: int = Field(default=2030)
+    model_parameter_basecase_value_max_decimal_places: int = Field(default=5, ge=-1)
+    model_parameter_basecase_value_precision_mode: Literal["trunc", "ceil", "round"] = "trunc"
+    model_parameter_proposed_value_max_decimal_places: int = Field(default=5, ge=-1)
+    model_parameter_proposed_value_precision_mode: Literal["trunc", "ceil", "round"] = "trunc"
     model_parameter_max_parameter_slots: int = Field(default=100, ge=1)
     model_parameter_max_value_prompt_basecase_records: int = Field(default=100, ge=1)
     model_parameter_max_routing_candidates_per_dimension: int = Field(default=2, ge=1)

@@ -10,11 +10,10 @@ from apps.agents.model_parameter_agent.utils.basecase import (
 )
 from apps.agents.model_parameter_agent.utils.lut.catalog import LutCatalog
 from apps.agents.model_parameter_agent.utils.lut.keys import (
-    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
     TIME_AXES,
+    apply_numeric_precision,
     canonical_axis_value,
     canonical_key_from_axes,
-    normalize_numeric_value,
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     BasecaseIndex,
@@ -30,11 +29,14 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     domain_error,
     freeze_mapping,
 )
+from apps.agents.model_parameter_agent.utils.lut.precision import (
+    BASECASE_VALUE_MAX_DECIMAL_PLACES,
+    NumericPrecisionMode,
+)
 from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRegistry
 from apps.agents.model_parameter_agent.utils.lut.runtime import get_parameter_spec_registry
 
 
-BASECASE_NON_TIME_METADATA_PARAMETERS = frozenset({"LiqUtilAdjustment"})
 TEMPORAL_METADATA_AXES = frozenset({"Period"})
 
 
@@ -95,6 +97,8 @@ def build_basecase_index(  # noqa: C901
     *,
     policy: LutLoadPolicy | None = None,
     registry: ParameterSpecRegistry | None = None,
+    value_max_decimal_places: int = BASECASE_VALUE_MAX_DECIMAL_PLACES,
+    value_precision_mode: NumericPrecisionMode = "trunc",
 ) -> BasecaseIndex:
     active_policy = policy or LutLoadPolicy()
     active_registry = registry or get_parameter_spec_registry()
@@ -153,10 +157,11 @@ def build_basecase_index(  # noqa: C901
                 canonical_key=canonical_key,
                 axes=freeze_mapping(axes),
                 value=(
-                    normalize_numeric_value(
+                    apply_numeric_precision(
                         raw_value,
                         label=f"basecase value for {candidate_key}:{reference_id}",
-                        max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                        max_decimal_places=value_max_decimal_places,
+                        mode=value_precision_mode,
                     )
                     if raw_value is not None
                     else None
@@ -294,7 +299,10 @@ def resolve_effective_reference(  # noqa: C901
     canonical_key = canonical_key_from_axes(axes, key_axes)
     basecase = basecase_index.lookup(candidate_key, axes)
     basecase_metadata_source = basecase
-    if basecase_metadata_source is None and parameter_name in BASECASE_NON_TIME_METADATA_PARAMETERS:
+    if (
+        basecase_metadata_source is None
+        and basecase_index.candidate_metadata_axes.get(candidate_key)
+    ):
         basecase_metadata_source = _lookup_basecase_by_non_time_axes(
             candidate_key,
             axes,

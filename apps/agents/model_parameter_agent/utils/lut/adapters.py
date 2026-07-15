@@ -6,12 +6,12 @@ from dataclasses import dataclass
 import io
 
 from apps.agents.model_parameter_agent.utils.lut.keys import (
-    REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+    apply_numeric_precision,
     canonical_axis_value,
     canonical_key_from_axes,
-    normalize_numeric_value,
     strict_float,
     strict_int,
+    truncate_numeric_value,
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalKey,
@@ -32,7 +32,7 @@ ADAPTER_SCHEMA_VERSION = "model-parameter-lut-adapters-v2"
 TEMPERATURE_BASE = 18.0
 DEGREE_DAY_DIVISOR = 30.0
 MTPM_TO_MTPA = 12.0
-LUT_NAMEPLATE_MAX_DECIMAL_PLACES = 1
+LUT_NAMEPLATE_MAX_DECIMAL_PLACES = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +106,7 @@ def _reference_id(file_spec: LutFileSpec, line_number: int) -> str:
 def _record(
     spec: ParameterLutSpec,
     *,
+    policy: LutLoadPolicy,
     axes: Mapping[str, CanonicalValue],
     value: NumericValue,
     metadata: Mapping[str, CanonicalValue] | None,
@@ -117,10 +118,11 @@ def _record(
         parameter_name=spec.parameter_name,
         canonical_key=canonical_key,
         axes=freeze_mapping(axes),
-        value=normalize_numeric_value(
+        value=apply_numeric_precision(
             value,
             label=f"{spec.parameter_name} LUT value",
-            max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+            max_decimal_places=policy.value_max_decimal_places,
+            mode=policy.value_precision_mode,
         ),
         metadata=freeze_mapping(metadata),
         reference_id=reference_id,
@@ -161,6 +163,7 @@ def _tabular_records(
             records.append(
                 _record(
                     spec,
+                    policy=policy,
                     axes=base_axes,
                     value=strict_float(
                         row[value_column],
@@ -184,6 +187,7 @@ def _tabular_records(
             records.append(
                 _record(
                     spec,
+                    policy=policy,
                     axes=axes,
                     value=strict_float(
                         row[value_column],
@@ -254,6 +258,7 @@ def _gdp_growth_records(
             records.append(
                 _record(
                     spec,
+                    policy=policy,
                     axes={"Country": country, "Year": year},
                     value=current / previous - 1.0,
                     metadata=None,
@@ -339,6 +344,7 @@ def _temperature_records(
         records.append(
             _record(
                 spec,
+                policy=policy,
                 axes={"Country": country, "Year": year, "Month": month},
                 value=temperature,
                 metadata=None,
@@ -397,12 +403,13 @@ def _liq_util_records(
         records.append(
             _record(
                 spec,
+                policy=policy,
                 axes=axes,
                 value=utilisation,
                 metadata={
                     "Period": period,
                     "Life Cycle Category": life_cycle,
-                    "Nameplate Capacity (MTPA)": normalize_numeric_value(
+                    "Nameplate Capacity (MTPA)": truncate_numeric_value(
                         capacity_mtpm * MTPM_TO_MTPA,
                         label=f"{file_spec.relative_path}:{line_number}:nameplate capacity",
                         max_decimal_places=LUT_NAMEPLATE_MAX_DECIMAL_PLACES,

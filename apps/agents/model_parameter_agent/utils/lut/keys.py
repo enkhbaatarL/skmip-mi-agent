@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP, Decimal, localcontext
 import math
 from typing import Any
 
@@ -10,11 +11,13 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     NumericValue,
     domain_error,
 )
+from apps.agents.model_parameter_agent.utils.lut.precision import (
+    NumericPrecisionMode,
+)
 
 
 INTEGER_AXES = frozenset({"Year", "Month", "Period"})
 TIME_AXES = ("Year", "Month")
-REFERENCE_VALUE_MAX_DECIMAL_PLACES = 5
 
 
 def canonical_axis_value(axis_name: str, value: Any) -> CanonicalValue:  # noqa: ANN401
@@ -72,10 +75,103 @@ def normalize_numeric_value(
     label: str,
     max_decimal_places: int,
 ) -> NumericValue:
-    """Return a finite number rounded for stable JSON serialization."""
+    """Return a finite number rounded to nearest with halves away from zero."""
+    return _quantize_numeric_value(
+        value,
+        label=label,
+        max_decimal_places=max_decimal_places,
+        rounding=ROUND_HALF_UP,
+    )
+
+
+def truncate_numeric_value(
+    value: Any,  # noqa: ANN401
+    *,
+    label: str,
+    max_decimal_places: int,
+) -> NumericValue:
+    """Return a finite number truncated toward zero for stable JSON serialization."""
+    return _quantize_numeric_value(
+        value,
+        label=label,
+        max_decimal_places=max_decimal_places,
+        rounding=ROUND_DOWN,
+    )
+
+
+def ceil_numeric_value(
+    value: Any,  # noqa: ANN401
+    *,
+    label: str,
+    max_decimal_places: int,
+) -> NumericValue:
+    """Return a finite number rounded toward positive infinity."""
+    return _quantize_numeric_value(
+        value,
+        label=label,
+        max_decimal_places=max_decimal_places,
+        rounding=ROUND_CEILING,
+    )
+
+
+def _quantize_numeric_value(
+    value: Any,  # noqa: ANN401
+    *,
+    label: str,
+    max_decimal_places: int,
+    rounding: str,
+) -> NumericValue:
+    if (
+        isinstance(max_decimal_places, bool)
+        or not isinstance(max_decimal_places, int)
+        or max_decimal_places < -1
+    ):
+        msg = f"{label} max decimal places must be an integer of -1 or greater"
+        raise domain_error(msg)
     number = strict_float(value, label=label)
-    rounded = round(number, max_decimal_places)
-    return int(rounded) if rounded.is_integer() else rounded
+    if max_decimal_places == -1:
+        return int(number) if number.is_integer() else number
+    if number == 0:
+        return 0
+    decimal_value = Decimal(str(value).strip())
+    quantum = Decimal(1).scaleb(-max_decimal_places)
+    with localcontext() as context:
+        context.prec = max(
+            28,
+            len(decimal_value.as_tuple().digits) + abs(decimal_value.adjusted()) + max_decimal_places + 2,
+        )
+        quantized = decimal_value.quantize(quantum, rounding=rounding)
+    quantized_number = float(quantized)
+    return int(quantized_number) if quantized_number.is_integer() else quantized_number
+
+
+def apply_numeric_precision(
+    value: Any,  # noqa: ANN401
+    *,
+    label: str,
+    max_decimal_places: int,
+    mode: NumericPrecisionMode,
+) -> NumericValue:
+    if mode == "round":
+        return normalize_numeric_value(
+            value,
+            label=label,
+            max_decimal_places=max_decimal_places,
+        )
+    if mode == "ceil":
+        return ceil_numeric_value(
+            value,
+            label=label,
+            max_decimal_places=max_decimal_places,
+        )
+    if mode == "trunc":
+        return truncate_numeric_value(
+            value,
+            label=label,
+            max_decimal_places=max_decimal_places,
+        )
+    msg = f"unsupported numeric precision mode: {mode!r}"
+    raise domain_error(msg)
 
 
 def strict_int(value: Any, *, label: str) -> int:  # noqa: ANN401

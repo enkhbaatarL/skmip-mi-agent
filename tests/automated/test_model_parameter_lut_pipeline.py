@@ -14,8 +14,7 @@ import pytest
 
 os.environ.setdefault("METADATA_DB_PORT", "3306")
 
-from apps.agents.model_parameter_agent.flows.propose_parameters import nodes
-from apps.agents.model_parameter_agent.flows.propose_parameters import flow as proposal_flow
+from apps.agents.model_parameter_agent.flows.propose_parameters import flow as proposal_flow, nodes
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import build_graph
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
     ModelParameterProposalState,
@@ -136,6 +135,10 @@ def fixed_pipeline_settings() -> Iterator[SimpleNamespace]:
         model_parameter_lut_enabled=True,
         model_parameter_lut_horizon_start_year=2026,
         model_parameter_lut_horizon_end_year=2030,
+        model_parameter_basecase_value_max_decimal_places=5,
+        model_parameter_basecase_value_precision_mode="trunc",
+        model_parameter_proposed_value_max_decimal_places=5,
+        model_parameter_proposed_value_precision_mode="trunc",
         llm_stream_enabled=False,
         llm_reasoning_effort="default",
     )
@@ -502,7 +505,7 @@ def test_step3_keeps_all_valid_slot_key_values_and_drops_duplicate_or_null() -> 
     assert any("slot-3" in warning and "누락" in warning for warning in warnings)
 
 
-def test_step3_normalizes_proposed_values_to_at_most_five_decimal_places() -> None:
+def test_step3_truncates_proposed_values_to_at_most_five_decimal_places() -> None:
     candidate = _candidate("PMI", "pmi")
     slots = [
         _slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month})
@@ -525,7 +528,7 @@ def test_step3_normalizes_proposed_values_to_at_most_five_decimal_places() -> No
             LLMValueCell(
                 slot_key="slot-1",
                 proposed_value=49.123456789,
-                rationale_ko="5자리 반올림",
+                rationale_ko="5자리 버림",
             ),
             LLMValueCell(
                 slot_key="slot-2",
@@ -548,9 +551,51 @@ def test_step3_normalizes_proposed_values_to_at_most_five_decimal_places() -> No
     )
 
     proposed_values = [cell["proposed_value"] for cell in sanitized[0]["value_grid"]]
-    assert proposed_values == [49.12346, 50]
+    assert proposed_values == [49.12345, 50]
     assert isinstance(proposed_values[1], int)
     assert any("유한한 숫자" in warning and "slot-3" in warning for warning in warnings)
+
+
+def test_step3_uses_proposed_precision_independently(
+    fixed_pipeline_settings: SimpleNamespace,
+) -> None:
+    fixed_pipeline_settings.model_parameter_basecase_value_max_decimal_places = 1
+    fixed_pipeline_settings.model_parameter_basecase_value_precision_mode = "round"
+    fixed_pipeline_settings.model_parameter_proposed_value_max_decimal_places = 3
+    fixed_pipeline_settings.model_parameter_proposed_value_precision_mode = "ceil"
+    candidate = _candidate("GDP", "gdp")
+    axes = {"Country": "Japan", "Year": 2026}
+    slots = [_slot("gdp", axes)]
+    references = [
+        _reference(
+            "gdp",
+            "GDP",
+            axes,
+            actual_basecase_value=1.234567,
+            lut_default_value=1.234567,
+        ),
+    ]
+    adjustment = LLMValueAdjustment(
+        candidate_key="gdp",
+        rationale_ko="독립 proposed 정밀도 설정",
+        slot_values=[
+            LLMValueCell(
+                slot_key="slot-1",
+                proposed_value=1.2341,
+                rationale_ko="3자리 ceil 적용",
+            ),
+        ],
+    )
+
+    sanitized, warnings = nodes._sanitize_llm_adjustments(
+        [adjustment],
+        [candidate],
+        slots,
+        references,
+    )
+
+    assert warnings == []
+    assert sanitized[0]["value_grid"][0]["proposed_value"] == 1.235
 
 
 def test_step3_restores_canonical_effective_reference_axes_from_slot_key() -> None:
