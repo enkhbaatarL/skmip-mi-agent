@@ -344,7 +344,10 @@ Request body:
 `proposed_value`는 basecase와 같은 단위/스케일/형식의 최종 입력값이며, basecase 대비 변화분/변화율/보정률로 해석하지 않는다.
 
 - Basecase/LUT reference value는 소수점 최대 5자리로 반올림하며, 정수이면 정수로 직렬화한다.
-- LUT의 `Nameplate Capacity (MTPA)` metadata는 소수점 최대 1자리로 반올림하며, 정수이면 정수로 직렬화한다.
+- LiqUtil은 `Year`/`Month`/`Period`를 제외한 key 축이 같은 Basecase 행이 있으면 value 셀이 비어 있어
+  LUT value를 쓰더라도 Life Cycle과 Nameplate는 Basecase 원본을 유지한다. 같은 비기간 축의 Basecase 행이
+  없는 LUT-only slot의 `Nameplate Capacity (MTPA)`만 소수점 최대 1자리로 반올림하며, 정수이면 정수로
+  직렬화한다.
 - Step3의 `proposed_value`는 유한한 숫자만 허용하고 소수점 최대 5자리로 반올림하며, 정수이면 정수로 직렬화한다.
 - proposal/confirmation DB 저장 직전에 `basecaseValue`와 `proposedValue`에 같은 최대 5자리 규칙을 다시 적용한다.
 

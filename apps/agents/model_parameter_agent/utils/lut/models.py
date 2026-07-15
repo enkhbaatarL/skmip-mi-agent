@@ -72,7 +72,7 @@ class BasecaseReference:
     parameter_name: str
     canonical_key: CanonicalKey
     axes: Mapping[str, CanonicalValue]
-    value: NumericValue
+    value: NumericValue | None
     metadata: Mapping[str, CanonicalValue]
     reference_id: str
 

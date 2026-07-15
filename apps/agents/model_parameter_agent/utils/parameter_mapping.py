@@ -39,6 +39,7 @@ BASECASE_AXIS_LABELS = {
 }
 BASECASE_TIME_LABELS = {"year", "month", "period"}
 BASECASE_BAD_VALUES = {"#ref!", "#n/a", "#value!", "#div/0!"}
+BASECASE_AXIS_ONLY_PARAMETERS = frozenset({"LiqUtilAdjustment"})
 BASECASE_SPEC_COLUMNS = {
     "basecase_read_mode",
     "basecase_header_row",
@@ -1005,23 +1006,15 @@ def _append_matrix_records_for_row(
     if not static_axes:
         return
 
-    for col_idx, descriptor in block.time_descriptors.items():
-        year = descriptor.get("Year")
-        month = descriptor.get("Month")
-        period = descriptor.get("Period")
+    value_years: set[int] = set()
+    axis_only_by_year: dict[int, tuple[int, dict[str, Any]]] = {}
 
-        value = _value_at(values, col_idx)
-        if not _is_record_value(value):
-            continue
-
+    def append_record(col_idx: int, descriptor: dict[str, Any], value: Any) -> None:  # noqa: ANN401
         axes = dict(static_axes)
-        if _is_meaningful_cell(year):
-            axes["Year"] = year
-        if _is_meaningful_cell(month):
-            axes["Month"] = month
-        if _is_meaningful_cell(period):
-            axes["Period"] = period
-
+        for axis_name in ("Year", "Month", "Period"):
+            axis_value = descriptor.get(axis_name)
+            if _is_meaningful_cell(axis_value):
+                axes[axis_name] = axis_value
         records.append({
             "candidate_key": str(candidate.get("candidate_key") or ""),
             "model_file": profile.model_file,
@@ -1038,6 +1031,25 @@ def _append_matrix_records_for_row(
             "source_row": row_idx,
             "source_col": col_idx,
         })
+
+    for col_idx, descriptor in block.time_descriptors.items():
+        value = _value_at(values, col_idx)
+        time_values = _valid_basecase_time_values(descriptor)
+        if not _is_record_value(value):
+            if (
+                _preserves_basecase_axes_without_value(candidate)
+                and not _is_meaningful_cell(value)
+                and time_values is not None
+            ):
+                axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
+            continue
+        if time_values is not None:
+            value_years.add(time_values[0])
+        append_record(col_idx, descriptor, value)
+
+    for year, (col_idx, descriptor) in axis_only_by_year.items():
+        if year not in value_years:
+            append_record(col_idx, descriptor, None)
 
 
 def _extract_fixed_column_records(
@@ -1162,23 +1174,15 @@ def _extract_matrix_time_column_records(
         if not axes:
             continue
 
-        for col_idx, descriptor in time_descriptors.items():
-            year = descriptor.get("Year")
+        value_years: set[int] = set()
+        axis_only_by_year: dict[int, tuple[int, dict[str, Any]]] = {}
 
-            value = _value_at(row_values, col_idx)
-            if not _is_record_value(value):
-                continue
-
+        def append_record(col_idx: int, descriptor: dict[str, Any], value: Any) -> None:  # noqa: ANN401
             record_axes = dict(axes)
-            month = descriptor.get("Month")
-            period = descriptor.get("Period")
-            if _is_meaningful_cell(year):
-                record_axes["Year"] = year
-            if _is_meaningful_cell(month):
-                record_axes["Month"] = month
-            if _is_meaningful_cell(period):
-                record_axes["Period"] = period
-
+            for axis_name in ("Year", "Month", "Period"):
+                axis_value = descriptor.get(axis_name)
+                if _is_meaningful_cell(axis_value):
+                    record_axes[axis_name] = axis_value
             records.append({
                 "candidate_key": str(candidate.get("candidate_key") or ""),
                 "model_file": profile.model_file,
@@ -1195,6 +1199,25 @@ def _extract_matrix_time_column_records(
                 "source_row": row_idx,
                 "source_col": col_idx,
             })
+
+        for col_idx, descriptor in time_descriptors.items():
+            value = _value_at(row_values, col_idx)
+            time_values = _valid_basecase_time_values(descriptor)
+            if not _is_record_value(value):
+                if (
+                    _preserves_basecase_axes_without_value(candidate)
+                    and not _is_meaningful_cell(value)
+                    and time_values is not None
+                ):
+                    axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
+                continue
+            if time_values is not None:
+                value_years.add(time_values[0])
+            append_record(col_idx, descriptor, value)
+
+        for year, (col_idx, descriptor) in axis_only_by_year.items():
+            if year not in value_years:
+                append_record(col_idx, descriptor, None)
 
     return records
 
@@ -1549,6 +1572,26 @@ def _is_record_value(value: Any) -> bool:
     if isinstance(value, str) and value.strip().lower() in BASECASE_BAD_VALUES:
         return False
     return True
+
+
+def _preserves_basecase_axes_without_value(candidate: dict[str, Any]) -> bool:
+    parameter_name = str(
+        candidate.get("canonical_parameter_name")
+        or candidate.get("parameter_name")
+        or "",
+    ).strip()
+    return parameter_name in BASECASE_AXIS_ONLY_PARAMETERS
+
+
+def _valid_basecase_time_values(
+    descriptor: dict[str, Any],
+) -> tuple[int, int, int] | None:
+    year = _int_or_none(descriptor.get("Year"))
+    month = _int_or_none(descriptor.get("Month"))
+    period = _int_or_none(descriptor.get("Period"))
+    if year is None or month is None or not 1 <= month <= 12 or period is None:
+        return None
+    return year, month, period
 
 
 def _resolve_basecase_dir(path: str | None) -> Path:

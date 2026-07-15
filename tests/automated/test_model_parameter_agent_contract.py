@@ -2112,6 +2112,22 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert first["value_name"] == "LiqUtilAdjustment"
         assert first["value"] == 0.19018404907975456
 
+        arctic_t3_axis_reference = _record_with(
+            records,
+            axes={
+                "Country": "Russia",
+                "LNG Plant": "Arctic LNG 2",
+                "LNG Plant Train": "Arctic LNG 2 T3",
+                "Year": 2026,
+                "Month": 1,
+                "Period": 97,
+            },
+            source_row=110,
+            source_col=34,
+        )
+        assert arctic_t3_axis_reference["value"] is None
+        assert arctic_t3_axis_reference["axes"]["Nameplate Capacity"] == 6.599999
+
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_do_not_read_second_liq_prod_matrix_section(self) -> None:
         kb = _get_db_fixture_kb()

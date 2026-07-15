@@ -708,6 +708,75 @@ def test_liq_metadata_is_restored_from_exact_effective_reference(
     }
 
 
+def test_liq_lut_value_keeps_basecase_metadata_from_matching_non_time_axes(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, catalog = real_domain
+    candidate = _candidate("LiqUtilAdjustment", "liq")
+    target_axes = {
+        "Country": "Russia",
+        "LNG Plant": "Arctic LNG 2",
+        "LNG Plant Train": "Arctic LNG 2 T3",
+        "Year": 2026,
+        "Month": 7,
+    }
+    lut_record = catalog.lookup("LiqUtilAdjustment", target_axes)
+    assert lut_record is not None
+    basecase_index = build_basecase_index(
+        [
+            {
+                "candidate_key": "liq",
+                "reference_id": "base-arctic-t3-other-period",
+                "axes": {
+                    **target_axes,
+                    "Month": 6,
+                    "Period": 102,
+                    "Life Cycle Category": "Under Construction",
+                    "Nameplate Capacity (MTPA)": 6.599999,
+                },
+                "value": None,
+            },
+        ],
+        [candidate],
+        registry=registry,
+    )
+    effective = resolve_effective_reference(
+        "liq",
+        target_axes,
+        basecase_index,
+        catalog,
+    )
+    assert effective is not None
+    reference = nodes._effective_reference_to_state(effective, slot_key="slot-1")
+    adjustment = LLMValueAdjustment(
+        candidate_key="liq",
+        rationale_ko="가동률 조정",
+        slot_values=[
+            LLMValueCell(
+                slot_key="slot-1",
+                proposed_value=0.4,
+                rationale_ko="LUT value 기반 조정",
+            ),
+        ],
+    )
+
+    sanitized, warnings = nodes._sanitize_llm_adjustments(
+        [adjustment],
+        [candidate],
+        [_slot("liq", target_axes)],
+        [reference],
+    )
+
+    assert not warnings
+    cell = sanitized[0]["value_grid"][0]
+    assert cell["basecase_value"] is None
+    assert cell["lut_value"] == lut_record.value
+    assert cell["basecase_reference_ids"] == ["base-arctic-t3-other-period"]
+    assert cell["coordinates"]["Period"] == lut_record.metadata["Period"]
+    assert cell["coordinates"]["Life Cycle Category"] == "Under Construction"
+    assert cell["coordinates"]["Nameplate Capacity (MTPA)"] == 6.599999
+
+
 def test_powermix_keeps_only_explicit_source_cell_without_normalization() -> None:
     candidate = _candidate("PowerMix", "power")
     gas_axes = {"Country": "Japan", "Year": 2026, "Energy Source": "Gas"}

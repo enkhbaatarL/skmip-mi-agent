@@ -595,6 +595,68 @@ def test_liq_metadata_uses_exact_basecase_values_when_override_exists(
     assert effective.lut_default_value == lut_record.value
 
 
+def test_liq_metadata_uses_basecase_non_time_axes_before_lut_metadata(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, catalog = real_domain
+    target_axes = {
+        "Country": "Russia",
+        "LNG Plant": "Arctic LNG 2",
+        "LNG Plant Train": "Arctic LNG 2 T3",
+        "Year": 2026,
+        "Month": 7,
+    }
+    lut_record = catalog.lookup("LiqUtilAdjustment", target_axes)
+    assert lut_record is not None
+    assert lut_record.metadata["Nameplate Capacity (MTPA)"] == 6.6
+    candidate = {
+        "candidate_key": "liq",
+        "canonical_parameter_name": "LiqUtilAdjustment",
+        "basecase_read_mode": "matrix_time_columns",
+        "basecase_column_roles": (
+            "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)"
+        ),
+    }
+    basecase_index = build_basecase_index(
+        [
+            {
+                "candidate_key": "liq",
+                "reference_id": "base-arctic-t3-other-period",
+                "axes": {
+                    **target_axes,
+                    "Month": 6,
+                    "Period": 102,
+                    "Life Cycle Category": "Under Construction",
+                    "Nameplate Capacity (MTPA)": 6.599999,
+                },
+                "value": None,
+            },
+        ],
+        [candidate],
+        registry=registry,
+    )
+
+    effective = resolve_effective_reference("liq", target_axes, basecase_index, catalog)
+
+    assert effective is not None
+    assert effective.actual_basecase_value is None
+    assert effective.lut_default_value == lut_record.value
+    assert effective.llm_reference_value == lut_record.value
+    assert effective.effective_source == "lut"
+    assert effective.basecase_reference_id == "base-arctic-t3-other-period"
+    assert effective.metadata["Period"] == lut_record.metadata["Period"]
+    assert effective.metadata["Life Cycle Category"] == "Under Construction"
+    assert effective.metadata["Nameplate Capacity (MTPA)"] == 6.599999
+    assert "basecase_non_time_axes_with_lut_value" in effective.diagnostics
+
+    lut_only_index = build_basecase_index([], [candidate], registry=registry)
+    lut_only = resolve_effective_reference("liq", target_axes, lut_only_index, catalog)
+    assert lut_only is not None
+    assert lut_only.basecase_reference_id is None
+    assert lut_only.metadata["Nameplate Capacity (MTPA)"] == 6.6
+    assert "lut_only" in lut_only.diagnostics
+
+
 def test_gdp_requires_exact_previous_year_in_source(tmp_path: Path) -> None:
     config = _write(
         tmp_path / "config.yaml",

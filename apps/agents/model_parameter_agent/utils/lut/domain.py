@@ -34,6 +34,10 @@ from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRe
 from apps.agents.model_parameter_agent.utils.lut.runtime import get_parameter_spec_registry
 
 
+BASECASE_NON_TIME_METADATA_PARAMETERS = frozenset({"LiqUtilAdjustment"})
+TEMPORAL_METADATA_AXES = frozenset({"Period"})
+
+
 def _parameter_name(candidate: Mapping[str, Any]) -> str:
     name = str(
         candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
@@ -142,15 +146,20 @@ def build_basecase_index(  # noqa: C901
             if not reference_id:
                 msg = f"basecase reference_id is required: candidate={candidate_key}"
                 raise domain_error(msg)
+            raw_value = raw_record.get("value")
             record = BasecaseReference(
                 candidate_key=candidate_key,
                 parameter_name=parameter_name,
                 canonical_key=canonical_key,
                 axes=freeze_mapping(axes),
-                value=normalize_numeric_value(
-                    raw_record.get("value"),
-                    label=f"basecase value for {candidate_key}:{reference_id}",
-                    max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                value=(
+                    normalize_numeric_value(
+                        raw_value,
+                        label=f"basecase value for {candidate_key}:{reference_id}",
+                        max_decimal_places=REFERENCE_VALUE_MAX_DECIMAL_PLACES,
+                    )
+                    if raw_value is not None
+                    else None
                 ),
                 metadata=freeze_mapping(metadata),
                 reference_id=reference_id,
@@ -182,6 +191,28 @@ def build_basecase_index(  # noqa: C901
 
 def _sort_key(values: tuple[CanonicalValue, ...]) -> tuple[str, ...]:
     return tuple(f"{type(value).__name__}:{value}" for value in values)
+
+
+def _lookup_basecase_by_non_time_axes(
+    candidate_key: str,
+    axes: Mapping[str, Any],
+    basecase_index: BasecaseIndex,
+) -> BasecaseReference | None:
+    key_axes = basecase_index.candidate_key_axes.get(candidate_key) or ()
+    non_time_axes = tuple(axis_name for axis_name in key_axes if axis_name not in TIME_AXES)
+    target_key = canonical_key_from_axes(axes, non_time_axes)
+    for record in basecase_index.records_for_candidate(candidate_key):
+        if canonical_key_from_axes(record.axes, non_time_axes) == target_key:
+            return record
+    return None
+
+
+def _stable_metadata(metadata: Mapping[str, CanonicalValue]) -> dict[str, CanonicalValue]:
+    return {
+        axis_name: axis_value
+        for axis_name, axis_value in metadata.items()
+        if axis_name not in TEMPORAL_METADATA_AXES
+    }
 
 
 def build_slot_catalog(
@@ -262,6 +293,13 @@ def resolve_effective_reference(  # noqa: C901
         raise domain_error(msg)
     canonical_key = canonical_key_from_axes(axes, key_axes)
     basecase = basecase_index.lookup(candidate_key, axes)
+    basecase_metadata_source = basecase
+    if basecase_metadata_source is None and parameter_name in BASECASE_NON_TIME_METADATA_PARAMETERS:
+        basecase_metadata_source = _lookup_basecase_by_non_time_axes(
+            candidate_key,
+            axes,
+            basecase_index,
+        )
     lut_record = None
     lut_version = None
     if lut_catalog is not None:
@@ -275,15 +313,28 @@ def resolve_effective_reference(  # noqa: C901
     if basecase is None and lut_record is None:
         return None
 
-    effective_source = "basecase" if basecase is not None else "lut"
-    selected = basecase or lut_record
-    if selected is None:
+    has_basecase_value = basecase is not None and basecase.value is not None
+    if has_basecase_value:
+        value_source = basecase
+        effective_source = "basecase"
+    elif lut_record is not None:
+        value_source = lut_record
+        effective_source = "lut"
+    else:
         return None
+    coordinate_source = basecase or value_source
+    metadata = dict((basecase or lut_record or value_source).metadata)
+    if basecase_metadata_source is not None and basecase is None:
+        metadata.update(_stable_metadata(basecase_metadata_source.metadata))
     diagnostics: list[str] = []
-    if basecase is not None and lut_record is not None:
+    if has_basecase_value and lut_record is not None:
         diagnostics.append("actual_basecase_overrides_lut_default")
-    elif basecase is not None:
+    elif has_basecase_value:
         diagnostics.append("basecase_only")
+    elif basecase is not None:
+        diagnostics.append("basecase_axes_with_lut_value")
+    elif basecase_metadata_source is not None:
+        diagnostics.append("basecase_non_time_axes_with_lut_value")
     else:
         diagnostics.append("lut_only")
     if lut_record is not None:
@@ -292,13 +343,15 @@ def resolve_effective_reference(  # noqa: C901
         candidate_key=candidate_key,
         parameter_name=parameter_name,
         canonical_slot_key=canonical_key,
-        axes=selected.axes,
-        metadata=basecase.metadata if basecase is not None else selected.metadata,
+        axes=coordinate_source.axes,
+        metadata=freeze_mapping(metadata),
         actual_basecase_value=basecase.value if basecase is not None else None,
         lut_default_value=lut_record.value if lut_record is not None else None,
-        llm_reference_value=basecase.value if basecase is not None else selected.value,
+        llm_reference_value=value_source.value,
         effective_source=effective_source,
-        basecase_reference_id=basecase.reference_id if basecase is not None else None,
+        basecase_reference_id=(
+            basecase_metadata_source.reference_id if basecase_metadata_source is not None else None
+        ),
         lut_reference_id=lut_record.reference_id if lut_record is not None else None,
         lut_version=lut_version,
         diagnostics=tuple(diagnostics),
