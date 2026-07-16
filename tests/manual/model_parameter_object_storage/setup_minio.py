@@ -16,11 +16,11 @@ from apps.agents.model_parameter_agent.utils.resource_manifest import (  # noqa:
     PACKAGE_LUT_ROOT,
     load_model_parameter_resource_manifest,
 )
+from apps.common.configs.config import CONFIG_FILE_PATH, get_settings  # noqa: E402
 
 
 BUCKET = "sk-mi-d-osb-ss-skgas"
 ENDPOINT = "http://127.0.0.1:19000"
-MANIFEST_PATH = Path(__file__).with_name("model_parameter_resources.yaml")
 
 
 def main() -> None:
@@ -39,7 +39,11 @@ def main() -> None:
             if error_code not in {"BucketAlreadyExists", "BucketAlreadyOwnedByYou"}:
                 raise
 
-        manifest = load_model_parameter_resource_manifest(MANIFEST_PATH)
+        settings = get_settings()
+        manifest = load_model_parameter_resource_manifest(
+            settings.model_parameter_resources,
+            source_path=CONFIG_FILE_PATH,
+        )
         for item in manifest.download_plan(default_bucket=BUCKET, lut_enabled=True):
             source_root = PACKAGE_BASECASE_DIR if item.area == "basecase" else PACKAGE_LUT_ROOT
             source_path = source_root / item.relative_path

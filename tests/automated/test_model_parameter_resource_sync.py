@@ -2,9 +2,11 @@ from __future__ import annotations
 
 # ruff: noqa: ASYNC240, S101, S106
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime
 import hashlib
 from io import BytesIO
+import json
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -16,14 +18,17 @@ from pydantic import SecretStr
 import pytest
 import yaml
 
-from apps.agents.model_parameter_agent.utils.lut import LutLoadPolicy
+from apps.agents.model_parameter_agent.utils.lut import (
+    LutLoadPolicy,
+    get_parameter_spec_registry,
+)
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
     ObjectStorageReader,
     ensure_model_parameter_resource_runtime,
     resolve_model_parameter_resources,
 )
 from apps.agents.model_parameter_agent.utils.resource_manifest import (
-    DEFAULT_RESOURCE_MANIFEST_PATH,
+    ModelParameterResourceManifest,
     RemoteResourceConfigError,
     load_model_parameter_resource_manifest,
     resource_config_fingerprint,
@@ -33,17 +38,19 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
     get_model_parameter_resource_paths,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
 from apps.common.values.error_codes import ErrorCode
 from apps.connectors.object_storage import DownloadedObject, ObjectMetadata, S3ObjectStorageClient
+from model_param import _config_debug_json
 
 
 def _manifest_document() -> dict[str, object]:
-    document = yaml.safe_load(DEFAULT_RESOURCE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    document = deepcopy(get_settings().model_parameter_resources)
     assert isinstance(document, dict)
     return document
 
 
-def _write_manifest_with_object_paths(path: Path, *, prefix: str) -> None:
+def _manifest_with_object_paths(*, prefix: str) -> ModelParameterResourceManifest:
     document = _manifest_document()
     basecase = document["basecase"]
     assert isinstance(basecase, dict)
@@ -59,10 +66,13 @@ def _write_manifest_with_object_paths(path: Path, *, prefix: str) -> None:
         for role, raw_file in files.items():
             assert isinstance(raw_file, dict)
             raw_file["object_storage_path"] = f"{prefix}/remote-{parameter_name}-{role}.data"
-    path.write_text(yaml.safe_dump(document, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return load_model_parameter_resource_manifest(
+        document,
+        source_path=CONFIG_FILE_PATH,
+    )
 
 
-def _storage_config(tmp_path: Path, manifest_path: Path) -> SimpleNamespace:
+def _storage_config(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         enabled=True,
         endpoint_url="http://mip-minio:9000",
@@ -71,7 +81,6 @@ def _storage_config(tmp_path: Path, manifest_path: Path) -> SimpleNamespace:
         bucket="model-parameter-test",
         access_key_id=SecretStr("minio-test-access"),
         secret_access_key=SecretStr("minio-test-secret"),
-        manifest_path=str(manifest_path),
         local_root=str(tmp_path / "runtime"),
         connect_timeout_seconds=1,
         read_timeout_seconds=1,
@@ -83,7 +92,10 @@ def _storage_config(tmp_path: Path, manifest_path: Path) -> SimpleNamespace:
 
 
 def test_integrated_manifest_declares_expected_resources() -> None:
-    integrated = load_model_parameter_resource_manifest()
+    integrated = load_model_parameter_resource_manifest(
+        get_settings().model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
     assert set(integrated.basecase_files) == {"demand", "supply", "trade"}
     assert {
         role: resource.object_storage_path
@@ -102,62 +114,42 @@ def test_integrated_manifest_declares_expected_resources() -> None:
     }
 
 
-@pytest.mark.parametrize("line_break", ["\r\n", "\r"])
-def test_resource_manifest_with_real_line_breaks_loads(
-    tmp_path: Path,
-    *,
-    line_break: str,
-) -> None:
-    manifest_path = tmp_path / "real-line-breaks.yaml"
-    manifest_text = DEFAULT_RESOURCE_MANIFEST_PATH.read_text(encoding="utf-8")
-    manifest_path.write_bytes(manifest_text.replace("\n", line_break).encode("utf-8"))
+def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
+    configmap_path = CONFIG_FILE_PATH.parents[1] / "devops" / "k8s" / "configmap.yaml"
+    configmap = yaml.safe_load(configmap_path.read_text(encoding="utf-8"))
+    embedded_config = yaml.safe_load(configmap["data"]["config.yaml"])
 
-    manifest = load_model_parameter_resource_manifest(manifest_path)
-
-    assert set(manifest.basecase_files) == {"demand", "supply", "trade"}
-    assert set(manifest.lut_registry.specs) == {
-        "GDP",
-        "PMI",
-        "PowerMix",
-        "Temperature",
-        "LiqUtilAdjustment",
-    }
+    assert embedded_config["model_parameter_resources"] == get_settings().model_parameter_resources
 
 
-@pytest.mark.parametrize("escaped_line_break", [r"\r\n", r"\n", r"\r"])
-@pytest.mark.parametrize("trailing_newline", [False, True])
-def test_resource_manifest_with_literal_escaped_line_breaks_loads(
-    tmp_path: Path,
-    *,
-    escaped_line_break: str,
-    trailing_newline: bool,
-) -> None:
-    manifest_path = tmp_path / "literal-escaped-line-breaks.yaml"
-    manifest_text = DEFAULT_RESOURCE_MANIFEST_PATH.read_text(encoding="utf-8")
-    escaped_manifest = manifest_text.replace("\n", escaped_line_break)
-    if trailing_newline:
-        escaped_manifest += "\n"
-    manifest_path.write_text(escaped_manifest, encoding="utf-8")
+def test_debug_config_snapshot_includes_all_settings_and_redacts_secrets() -> None:
+    cfg = get_settings()
+    payload = json.loads(_config_debug_json(cfg, source_path=CONFIG_FILE_PATH))
 
-    manifest = load_model_parameter_resource_manifest(manifest_path)
-
-    assert set(manifest.basecase_files) == {"demand", "supply", "trade"}
-    assert set(manifest.lut_registry.specs) == {
-        "GDP",
-        "PMI",
-        "PowerMix",
-        "Temperature",
-        "LiqUtilAdjustment",
-    }
+    assert payload["source_path"] == str(CONFIG_FILE_PATH)
+    assert payload["settings"]["METADATA_DB_HOST"] == cfg.METADATA_DB_HOST
+    assert payload["settings"]["METADATA_DB_PASSWORD"] == "**********"
+    assert payload["settings"]["model_api_key"] == "**********"
+    assert payload["settings"]["callback_oauth2_token_url"] == cfg.callback_oauth2_token_url
+    assert payload["settings"]["model_parameter_resource_storage"]["access_key_id"] == "**********"
+    assert payload["settings"]["model_parameter_resource_storage"]["secret_access_key"] == "**********"
+    assert payload["settings"]["model_parameter_resources"] == cfg.model_parameter_resources
 
 
-def test_object_location_changes_only_resource_config_fingerprint(tmp_path: Path) -> None:
-    first_path = tmp_path / "first.yaml"
-    second_path = tmp_path / "second.yaml"
-    _write_manifest_with_object_paths(first_path, prefix="first")
-    _write_manifest_with_object_paths(second_path, prefix="second")
-    first = load_model_parameter_resource_manifest(first_path)
-    second = load_model_parameter_resource_manifest(second_path)
+def test_resource_config_rejects_operator_managed_schema_version() -> None:
+    document = _manifest_document()
+    document["schema_version"] = 1
+
+    with pytest.raises(MIBaseError, match="unknown fields"):
+        load_model_parameter_resource_manifest(
+            document,
+            source_path=CONFIG_FILE_PATH,
+        )
+
+
+def test_object_location_changes_only_resource_config_fingerprint() -> None:
+    first = _manifest_with_object_paths(prefix="first")
+    second = _manifest_with_object_paths(prefix="second")
     first_fingerprint, first_plan = resource_config_fingerprint(
         first,
         endpoint_url="https://example.invalid",
@@ -179,50 +171,50 @@ def test_object_location_changes_only_resource_config_fingerprint(tmp_path: Path
     assert {item.relative_path for item in first_plan} == {item.relative_path for item in second_plan}
 
 
-def test_missing_object_storage_path_is_remote_fallback_error(tmp_path: Path) -> None:
+def test_missing_object_storage_path_is_remote_fallback_error() -> None:
     document = _manifest_document()
     basecase = document["basecase"]
     assert isinstance(basecase, dict)
     demand = basecase["demand"]
     assert isinstance(demand, dict)
     demand["object_storage_path"] = ""
-    manifest_path = tmp_path / "missing-object-key.yaml"
-    manifest_path.write_text(
-        yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
+    manifest = load_model_parameter_resource_manifest(
+        document,
+        source_path=CONFIG_FILE_PATH,
     )
-    manifest = load_model_parameter_resource_manifest(manifest_path)
     with pytest.raises(RemoteResourceConfigError):
         manifest.download_plan(default_bucket="bucket", lut_enabled=False)
 
 
-def test_manifest_rejects_local_path_traversal(tmp_path: Path) -> None:
+def test_manifest_rejects_local_path_traversal() -> None:
     document = _manifest_document()
     basecase = document["basecase"]
     assert isinstance(basecase, dict)
     demand = basecase["demand"]
     assert isinstance(demand, dict)
     demand["path"] = "../escaped.xlsm"
-    manifest_path = tmp_path / "invalid.yaml"
-    manifest_path.write_text(
-        yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
     with pytest.raises(MIBaseError, match="escapes the resource directory"):
-        load_model_parameter_resource_manifest(manifest_path)
+        load_model_parameter_resource_manifest(
+            document,
+            source_path=CONFIG_FILE_PATH,
+        )
 
 
 def test_storage_disabled_requires_no_network_or_writable_runtime(tmp_path: Path) -> None:
     local_root = tmp_path / "must-not-be-created"
     storage = SimpleNamespace(
         enabled=False,
-        manifest_path=str(DEFAULT_RESOURCE_MANIFEST_PATH),
         local_root=str(local_root),
+    )
+    manifest = load_model_parameter_resource_manifest(
+        get_settings().model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
     )
 
     async def exercise() -> None:
         paths = await resolve_model_parameter_resources(
             storage,
+            manifest=manifest,
             lut_enabled=True,
             lut_policy=LutLoadPolicy(),
             client_factory=lambda _: pytest.fail("network client must not be created"),
@@ -239,20 +231,26 @@ def test_storage_disabled_runtime_uses_packaged_without_local_root(tmp_path: Pat
     local_root = tmp_path / "must-not-be-created"
     storage = SimpleNamespace(
         enabled=False,
-        manifest_path=str(DEFAULT_RESOURCE_MANIFEST_PATH),
         local_root=str(local_root),
+    )
+    manifest = load_model_parameter_resource_manifest(
+        get_settings().model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
     )
     clear_model_parameter_resource_runtime()
 
     async def exercise() -> None:
         paths = await ensure_model_parameter_resource_runtime(
             storage,
+            manifest=manifest,
             lut_enabled=True,
             lut_policy=LutLoadPolicy(),
             client_factory=lambda _: pytest.fail("network client must not be created"),
         )
         assert paths.source == "packaged"
         assert get_model_parameter_resource_paths() == paths
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("config must not be reread")):
+            assert get_parameter_spec_registry() is paths.lut_registry
 
     try:
         asyncio.run(exercise())
@@ -425,18 +423,20 @@ class _FakeObjectStorageClient(ObjectStorageReader):
         self.closed = True
 
 
-def _basecase_objects(manifest_path: Path, *, bucket: str) -> dict[tuple[str, str], bytes]:
-    manifest = load_model_parameter_resource_manifest(manifest_path)
+def _basecase_objects(
+    manifest: ModelParameterResourceManifest,
+    *,
+    bucket: str,
+) -> dict[tuple[str, str], bytes]:
     plan = manifest.download_plan(default_bucket=bucket, lut_enabled=False)
     return {(item.location.bucket, item.location.object_key): f"content-{item.logical_name}".encode() for item in plan}
 
 
 def test_remote_bootstrap_activates_current_and_reuses_it(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "resources.yaml"
-    _write_manifest_with_object_paths(manifest_path, prefix="vendor")
-    storage = _storage_config(tmp_path, manifest_path)
+    manifest = _manifest_with_object_paths(prefix="vendor")
+    storage = _storage_config(tmp_path)
     first_client = _FakeObjectStorageClient(
-        _basecase_objects(manifest_path, bucket=storage.bucket),
+        _basecase_objects(manifest, bucket=storage.bucket),
     )
 
     clear_model_parameter_resource_runtime()
@@ -448,6 +448,7 @@ def test_remote_bootstrap_activates_current_and_reuses_it(tmp_path: Path) -> Non
         ):
             first = await resolve_model_parameter_resources(
                 storage,
+                manifest=manifest,
                 lut_enabled=False,
                 lut_policy=LutLoadPolicy(),
                 client_factory=lambda _: first_client,
@@ -455,6 +456,7 @@ def test_remote_bootstrap_activates_current_and_reuses_it(tmp_path: Path) -> Non
             second_client = _FakeObjectStorageClient({}, fail=True)
             second = await ensure_model_parameter_resource_runtime(
                 storage,
+                manifest=manifest,
                 lut_enabled=False,
                 lut_policy=LutLoadPolicy(),
                 client_factory=lambda _: second_client,
@@ -477,9 +479,8 @@ def test_remote_bootstrap_activates_current_and_reuses_it(tmp_path: Path) -> Non
 
 
 def test_remote_failure_activates_packaged_wrapper(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "resources.yaml"
-    _write_manifest_with_object_paths(manifest_path, prefix="vendor")
-    storage = _storage_config(tmp_path, manifest_path)
+    manifest = _manifest_with_object_paths(prefix="vendor")
+    storage = _storage_config(tmp_path)
     client = _FakeObjectStorageClient({}, fail=True)
 
     async def exercise() -> None:
@@ -489,6 +490,7 @@ def test_remote_failure_activates_packaged_wrapper(tmp_path: Path) -> None:
         ):
             paths = await resolve_model_parameter_resources(
                 storage,
+                manifest=manifest,
                 lut_enabled=False,
                 lut_policy=LutLoadPolicy(),
                 client_factory=lambda _: client,

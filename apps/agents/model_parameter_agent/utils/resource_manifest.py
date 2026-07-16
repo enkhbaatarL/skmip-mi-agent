@@ -15,7 +15,6 @@ from apps.agents.model_parameter_agent.utils.lut.registry import (
     load_parameter_spec_registry,
 )
 from apps.common.exceptions.custom import MIBaseError
-from apps.common.utils.yaml_utils import normalize_yaml_text
 from apps.common.values.error_codes import ErrorCode
 
 
@@ -23,7 +22,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
 PACKAGE_BASECASE_DIR = PACKAGE_RESOURCE_DIR / "basecase"
 PACKAGE_LUT_ROOT = PACKAGE_RESOURCE_DIR / "lut"
-DEFAULT_RESOURCE_MANIFEST_PATH = PACKAGE_RESOURCE_DIR / "config" / "model_parameter_resources.yaml"
+MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 1
 REQUIRED_BASECASE_ROLES = frozenset({"demand", "supply", "trade"})
 
 
@@ -60,11 +59,12 @@ class PlannedResourceDownload:
 
 @dataclass(frozen=True, slots=True)
 class ModelParameterResourceManifest:
-    path: Path
+    source_path: Path
     schema_version: int
     basecase_files: Mapping[str, ManifestResourceFile]
     lut_files: tuple[ManifestResourceFile, ...]
     lut_registry: ParameterSpecRegistry
+    canonical_yaml: bytes
     semantic_schema_hash: str
 
     def selected_files(self, *, lut_enabled: bool) -> tuple[ManifestResourceFile, ...]:
@@ -221,12 +221,11 @@ def _lut_files(
 
 def _semantic_schema_hash(
     *,
-    schema_version: int,
     basecase_files: Mapping[str, ManifestResourceFile],
     registry: ParameterSpecRegistry,
 ) -> str:
     payload = {
-        "schema_version": schema_version,
+        "schema_version": MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
         "basecase": {role: resource_file.relative_path for role, resource_file in sorted(basecase_files.items())},
         "lut_schema_hash": registry.schema_hash,
     }
@@ -240,46 +239,39 @@ def _semantic_schema_hash(
 
 
 def load_model_parameter_resource_manifest(
-    manifest_path: Path | str = DEFAULT_RESOURCE_MANIFEST_PATH,
+    raw_document: Mapping[str, object],
     *,
+    source_path: Path | str,
     lut_root: Path | str = PACKAGE_LUT_ROOT,
 ) -> ModelParameterResourceManifest:
-    path = Path(manifest_path).expanduser().resolve()
+    path = Path(source_path).expanduser().resolve()
     root = Path(lut_root).expanduser().resolve()
-    try:
-        raw_bytes = path.read_bytes()
-    except OSError as exc:
-        msg = f"failed to read model parameter resource manifest {path}: {exc}"
-        raise _manifest_error(msg) from exc
-    try:
-        normalized_text = normalize_yaml_text(raw_bytes.decode("utf-8"))
-        normalized_bytes = normalized_text.encode("utf-8")
-        raw_document = yaml.safe_load(normalized_text)
-    except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        msg = f"invalid model parameter resource manifest {path}: {exc}"
-        raise _manifest_error(msg) from exc
-    if not isinstance(raw_document, dict):
-        msg = "model parameter resource manifest must be a mapping"
+    if not isinstance(raw_document, Mapping):
+        msg = "model_parameter_resources must be a mapping"
         raise _manifest_error(msg)
-    unknown_fields = sorted(set(raw_document) - {"schema_version", "basecase", "lut"})
+    document = dict(raw_document)
+    unknown_fields = sorted(set(document) - {"basecase", "lut"})
     if unknown_fields:
-        msg = f"manifest contains unknown fields: {unknown_fields}"
-        raise _manifest_error(msg)
-    if raw_document.get("schema_version") != 1:
-        msg = "manifest schema_version must be 1"
+        msg = f"model_parameter_resources contains unknown fields: {unknown_fields}"
         raise _manifest_error(msg)
 
-    basecase_files = _basecase_files(raw_document.get("basecase"))
-    registry = load_parameter_spec_registry(path, lut_root=root, yaml_bytes=normalized_bytes)
-    lut_files = _lut_files(raw_document.get("lut"), registry=registry)
+    canonical_yaml = yaml.safe_dump(
+        document,
+        allow_unicode=True,
+        sort_keys=False,
+    ).encode("utf-8")
+
+    basecase_files = _basecase_files(document.get("basecase"))
+    registry = load_parameter_spec_registry(path, lut_root=root, yaml_bytes=canonical_yaml)
+    lut_files = _lut_files(document.get("lut"), registry=registry)
     return ModelParameterResourceManifest(
-        path=path,
-        schema_version=1,
+        source_path=path,
+        schema_version=MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
         basecase_files=basecase_files,
         lut_files=lut_files,
         lut_registry=registry,
+        canonical_yaml=canonical_yaml,
         semantic_schema_hash=_semantic_schema_hash(
-            schema_version=1,
             basecase_files=basecase_files,
             registry=registry,
         ),
@@ -301,7 +293,7 @@ def resource_config_fingerprint(
         "region_name": region_name,
         "signature_version": signature_version,
         "lut_enabled": lut_enabled,
-        "schema_version": manifest.schema_version,
+        "schema_version": MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
         "files": [
             {
                 "bucket": item.location.bucket,

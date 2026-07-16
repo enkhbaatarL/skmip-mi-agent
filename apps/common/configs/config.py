@@ -1,6 +1,7 @@
 """YAML 기반 앱 설정 로더."""
 
 from collections.abc import Mapping
+from functools import lru_cache
 import os
 from pathlib import Path
 import re
@@ -67,17 +68,6 @@ class ModelParameterResourceStorageConfig(BaseModel):
     bucket: str = Field(default="")
     access_key_id: SecretStr = Field(default=SecretStr(""))
     secret_access_key: SecretStr = Field(default=SecretStr(""))
-    manifest_path: str = Field(
-        default=str(
-            ROOT_DIR
-            / "apps"
-            / "agents"
-            / "model_parameter_agent"
-            / "resources"
-            / "config"
-            / "model_parameter_resources.yaml",
-        ),
-    )
     local_root: str = Field(default="/tmp/skmip/model-parameter-resources")  # noqa: S108
     connect_timeout_seconds: float = Field(default=10.0, gt=0)
     read_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -182,6 +172,8 @@ class Settings(BaseSettings):
     model_parameter_resource_storage: ModelParameterResourceStorageConfig = Field(
         default_factory=ModelParameterResourceStorageConfig,
     )
+    # Agent 전용 parser가 업무 스키마를 검증한다. common 설정 계층은 YAML 구조만 보존한다.
+    model_parameter_resources: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_model_parameter_lut_horizon(self) -> "Settings":
@@ -303,7 +295,9 @@ class Settings(BaseSettings):
         }
 
 
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Process 시작 후 동일한 설정 snapshot을 재사용한다."""
     return Settings()
 
 

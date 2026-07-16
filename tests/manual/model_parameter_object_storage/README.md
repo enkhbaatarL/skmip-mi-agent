@@ -21,4 +21,7 @@ docker compose \
 - MinIO Console: `http://127.0.0.1:19001`
 - bucket: `sk-mi-d-osb-ss-skgas`
 - credential은 이 로컬 테스트 전용 고정값이며 운영 환경에서 사용하지 않는다.
-- sample manifest는 운영 매핑과 동일한 bucket-relative `object_storage_path`를 사용한다.
+- `envs/config.yaml`의 `model_parameter_resources`는 운영 매핑과 동일한 bucket-relative
+  `object_storage_path`를 사용한다.
+- 3-worker smoke는 Object Storage client가 한 번만 생성되고 `GetObject`가 최초 worker에서만
+  9회 호출되는지 확인한다.

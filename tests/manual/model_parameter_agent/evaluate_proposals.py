@@ -46,10 +46,13 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
     ensure_model_parameter_resource_runtime,
 )
+from apps.agents.model_parameter_agent.utils.resource_manifest import (
+    load_model_parameter_resource_manifest,
+)
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
     ModelParameterResourcePaths,
 )
-from apps.common.configs.config import get_settings
+from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
 
 
 REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
@@ -58,8 +61,13 @@ RAW_GRAPH = build_graph()
 
 async def _ensure_model_parameter_test_resource_runtime() -> ModelParameterResourcePaths:
     cfg = get_settings()
+    manifest = load_model_parameter_resource_manifest(
+        cfg.model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
     return await ensure_model_parameter_resource_runtime(
         cfg.model_parameter_resource_storage,
+        manifest=manifest,
         lut_enabled=cfg.model_parameter_lut_enabled,
         lut_policy=LutLoadPolicy(
             start_year=cfg.model_parameter_lut_horizon_start_year,

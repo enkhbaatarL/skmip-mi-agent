@@ -341,6 +341,7 @@ def preload_basecase_runtime_cache(
     basecase_dir_path: str | None = None,
     *,
     preload_records: bool = True,
+    registry: ParameterSpecRegistry | None = None,
 ) -> BasecaseRuntimeCacheSummary:
     kb = get_parameter_knowledge_base(basecase_dir_path)
     candidates = _basecase_preload_candidates(kb)
@@ -356,7 +357,7 @@ def preload_basecase_runtime_cache(
             get_parameter_spec_registry,
         )
 
-        registry = get_parameter_spec_registry()
+        active_registry = registry or get_parameter_spec_registry()
         _BASECASE_RECORD_CACHE.ensure_capacity(len(candidates))
         workbook_loader = _require_workbook_loader()
         with _WorkbookCache(workbook_loader) as workbook_cache:
@@ -378,7 +379,7 @@ def preload_basecase_runtime_cache(
                         profile=profile,
                         candidate=candidate,
                         scenario_context={},
-                        registry=registry,
+                        registry=active_registry,
                     )
                 except Exception as exc:
                     warnings.append(

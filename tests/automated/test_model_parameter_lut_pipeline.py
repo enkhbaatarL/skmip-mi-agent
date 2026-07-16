@@ -268,8 +268,7 @@ def test_exact_valid_slots_are_capped_after_invalid_and_duplicate_rejection(
         ],
     )
 
-    with patch.object(nodes, "get_parameter_spec_registry", return_value=registry):
-        result = nodes.filter_basecase_records_by_slots(state)
+    result = nodes.filter_basecase_records_by_slots(state)
 
     assert len(result["parameter_slots"]) == 100
     assert len(result["effective_references"]) == 100
@@ -320,10 +319,7 @@ def test_exact_miss_is_rejected_without_nearest_and_all_reference_modes_resolve(
         ],
     )
 
-    with (
-        patch.object(nodes, "get_parameter_spec_registry", return_value=registry),
-        patch.object(nodes, "get_lut_catalog", return_value=catalog),
-    ):
+    with patch.object(nodes, "get_lut_catalog", return_value=catalog):
         result = nodes.filter_basecase_records_by_slots(state)
 
     assert len(result["parameter_slots"]) == 3

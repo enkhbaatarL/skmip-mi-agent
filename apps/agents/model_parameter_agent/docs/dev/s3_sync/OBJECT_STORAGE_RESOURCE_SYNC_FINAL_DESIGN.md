@@ -21,8 +21,8 @@ LUT CSV를 내려받고, 전체 파일 세트의 다운로드와 검증이 끝�
 - Object Storage에는 현재 사용하는 Basecase/LUT 파일 한 세트만 존재한다고 본다.
 - 원격 리소스의 과거 버전이나 release history는 관리하지 않는다.
 - 실행 중 refresh하지 않으며, 새 원격 파일 반영은 새 pod rollout으로 수행한다.
-- Object Storage 인증·접속 설정과 파일별 위치 설정을 분리한다.
-- 파일별 위치와 리소스 업무 스키마는 `model_parameter_resources.yaml`에서 함께 관리한다.
+- Object Storage 인증·접속 설정과 파일별 위치·업무 스키마는 하나의 `config.yaml` 안에서 영역을 분리한다.
+- 파일별 위치와 리소스 업무 스키마는 최상위 `model_parameter_resources` 영역에서 함께 관리한다.
 - 원격 파일명과 로컬 파일명은 독립적으로 설정한다.
 - bucket listing 없이 설정된 exact `bucket/object_storage_path`만 `HeadObject`/`GetObject`한다.
 - `decision.json`은 사용하지 않는다.
@@ -42,7 +42,7 @@ Basecase는 다음 세 논리 역할을 필수로 한다.
 - `supply`
 - `trade`
 
-LUT는 `model_parameter_resources.yaml`의 `lut` 영역에서 실제로 참조하는 CSV를 대상으로 한다.
+LUT는 `config.yaml`의 `model_parameter_resources.lut` 영역에서 실제로 참조하는 CSV를 대상으로 한다.
 `model_parameter_lut_enabled=false`이면 LUT CSV는 다운로드하지 않고 Basecase만 동기화한다.
 
 ### 3.2 제외 범위
@@ -71,7 +71,6 @@ model_parameter_resource_storage:
   access_key_id: "${NCP_OBJECT_STORAGE_ACCESS_KEY_ID}"
   secret_access_key: "${NCP_OBJECT_STORAGE_SECRET_ACCESS_KEY}"
 
-  manifest_path: "/app/config/model_parameter_resources.yaml"
   local_root: "/tmp/skmip/model-parameter-resources"
 
   connect_timeout_seconds: 10
@@ -87,90 +86,83 @@ model_parameter_resource_storage:
 |---|---|
 | enabled, endpoint, region, signature version, 기본 bucket | ConfigMap |
 | access key ID, secret access key | Secret |
-| manifest path, local root, timeout/retry | ConfigMap |
-| 파일별 Object Storage 경로와 로컬 경로 | `model_parameter_resources.yaml` |
+| local root, timeout/retry | ConfigMap의 `config.yaml` |
+| 파일별 Object Storage 경로와 로컬 경로 | ConfigMap의 `config.yaml:model_parameter_resources` |
 
 `access_key_id`와 `secret_access_key`는 `SecretStr`로 선언한다. 앱 코드는 설정을
 `apps.common.configs.config.get_settings()`로 읽으며 `os.environ`을 직접 참조하지 않는다.
 
-### 4.2 리소스 manifest
+### 4.2 리소스 설정
 
-기존 LUT 전용 `resources/lut/config/lut_parameters.yaml`은 Basecase까지 소유하도록 확장되므로
-다음 파일로 대체한다.
+Pod가 단일 파일만 mount할 수 있으므로 별도 manifest를 두지 않고 `APP_CONFIG`가 가리키는
+`config.yaml`의 최상위 `model_parameter_resources` 영역에 Basecase/LUT 정의를 둔다.
+`get_settings()`는 worker별로 설정 snapshot을 한 번만 읽고 재사용하며, bootstrap은 이 메모리 객체를
+검증한 뒤 활성 LUT registry까지 process runtime에 고정한다.
 
-```text
-apps/agents/model_parameter_agent/resources/config/model_parameter_resources.yaml
-```
+운영자가 입력하는 `schema_version`은 두지 않는다. 리소스 스키마와 release metadata 버전은 코드 내부
+상수로 관리해 semantic hash와 `current` 검증에 사용한다.
 
-기본 manifest는 이미지에 포함한다. 환경별 Object Storage 경로가 다르면 같은 스키마의 파일을 ConfigMap으로
-mount하고 `manifest_path`로 지정한다.
-
-manifest 자체는 Object Storage에서 다운로드하지 않는다. 동기화를 시작하기 전에 앱이 manifest의
-위치를 알아야 하므로, manifest를 동기화 대상에 넣으면 자신의 원격 경로를 자기 안에서 찾아야 하는
-순환 의존성이 생기기 때문이다.
-
-## 5. Manifest 스키마
+## 5. 리소스 설정 스키마
 
 ```yaml
-schema_version: 1
+model_parameter_resources:
+  basecase:
+    demand:
+      path: "Demand Model_Input.xlsm"
+      object_storage_path: "external/basecase/demand-final.xlsm"
 
-basecase:
-  demand:
-    path: "Demand Model_Input.xlsm"
-    object_storage_path: "external/basecase/demand-final.xlsm"
+    supply:
+      path: "Supply Model_Input.xlsm"
+      object_storage_path: "external/basecase/supply-final.xlsm"
 
-  supply:
-    path: "Supply Model_Input.xlsm"
-    object_storage_path: "external/basecase/supply-final.xlsm"
+    trade:
+      path: "Trade Model_Input.xlsm"
+      object_storage_path: "external/basecase/trade-final.xlsm"
 
-  trade:
-    path: "Trade Model_Input.xlsm"
-    object_storage_path: "external/basecase/trade-final.xlsm"
+  lut:
+    GDP:
+      adapter: gdp_growth
+      files:
+        values:
+          path: "Demand_Model_LUT_BCInput_value_based_t2.csv"
+          object_storage_path: "external/lut/gdp/gdp-master.csv"
+          required_columns:
+            - RE Base Case GDP and Population Data_Country
+            - RE Base Case GDP and Population Data_Year
+            - RE Base Case GDP and Population Data_GDP
+      key_axes: [Country, Year]
 
-lut:
-  GDP:
-    adapter: gdp_growth
-    files:
-      values:
-        path: "Demand_Model_LUT_BCInput_value_based_t2.csv"
-        object_storage_path: "external/lut/gdp/gdp-master.csv"
-        required_columns:
-          - RE Base Case GDP and Population Data_Country
-          - RE Base Case GDP and Population Data_Year
-          - RE Base Case GDP and Population Data_GDP
-    key_axes: [Country, Year]
+    PMI:
+      adapter: tabular
+      layout: year_columns
+      files:
+        values:
+          path: "Demand_Model_Input_PMIInput_value_based_t2.csv"
+          object_storage_path: "external/lut/pmi/pmi-input.csv"
+          axis_columns:
+            Country: Base Case PMI Input (do not change)_Country
+            Month: Base Case PMI Input (do not change)_Month
+          year_value_column: Base Case PMI Input (do not change)_{year}.0
+      key_axes: [Country, Year, Month]
 
-  PMI:
-    adapter: tabular
-    layout: year_columns
-    files:
-      values:
-        path: "Demand_Model_Input_PMIInput_value_based_t2.csv"
-        object_storage_path: "external/lut/pmi/pmi-input.csv"
-        axis_columns:
-          Country: Base Case PMI Input (do not change)_Country
-          Month: Base Case PMI Input (do not change)_Month
-        year_value_column: Base Case PMI Input (do not change)_{year}.0
-    key_axes: [Country, Year, Month]
-
-  Temperature:
-    adapter: temperature_degree_days
-    files:
-      hdd:
-        path: "Demand_Model_Input_WeatherInput_value_based_t1.csv"
-        object_storage_path: "external/weather/heating-degree-days.csv"
-        required_columns:
-          - Base Case HDD Input_Country
-          - Base Case HDD Input_Month
-          - Base Case HDD Input_{year}.0
-      cdd:
-        path: "Demand_Model_Input_WeatherInput_value_based_t2.csv"
-        object_storage_path: "external/weather/cooling-degree-days.csv"
-        required_columns:
-          - Base Case CDD Input_Country
-          - Base Case CDD Input_Month
-          - Base Case CDD Input_{year}.0
-    key_axes: [Country, Year, Month]
+    Temperature:
+      adapter: temperature_degree_days
+      files:
+        hdd:
+          path: "Demand_Model_Input_WeatherInput_value_based_t1.csv"
+          object_storage_path: "external/weather/heating-degree-days.csv"
+          required_columns:
+            - Base Case HDD Input_Country
+            - Base Case HDD Input_Month
+            - Base Case HDD Input_{year}.0
+        cdd:
+          path: "Demand_Model_Input_WeatherInput_value_based_t2.csv"
+          object_storage_path: "external/weather/cooling-degree-days.csv"
+          required_columns:
+            - Base Case CDD Input_Country
+            - Base Case CDD Input_Month
+            - Base Case CDD Input_{year}.0
+      key_axes: [Country, Year, Month]
 ```
 
 모든 파일은 앱 설정의 공통 `bucket`을 사용한다. 파일별 bucket override는 지원하지 않는다.
@@ -199,7 +191,7 @@ GetObject(bucket, "vendor/model-input/final_demand_202607_v3")
 Object Storage key의 basename, 확장자, URL 형태를 로컬 파일명 결정에 사용하지 않는다.
 실제 콘텐츠가 유효한 XLSM/CSV인지는 기존 Basecase/LUT semantic validation으로 판단한다.
 
-## 6. Manifest 검증
+## 6. 리소스 설정 검증
 
 ### 6.1 공통 경로 검증
 
@@ -223,9 +215,9 @@ Object Storage key의 basename, 확장자, URL 형태를 로컬 파일명 결정
 - 기존 adapter, layout, column, axis 검증을 유지한다.
 - Object Storage 활성화 시 실제 활성 LUT가 참조하는 모든 파일에 object location이 있어야 한다.
 - LUT가 비활성화되어 있으면 object location이 있더라도 LUT CSV는 다운로드하지 않는다.
-- 기존 최상위 parameter mapping은 새 manifest의 `lut` 영역 아래로 이동한다.
+- 기존 최상위 parameter mapping은 `model_parameter_resources.lut` 영역 아래에 둔다.
 
-manifest YAML syntax 또는 로컬 semantic schema 자체가 잘못되면 packaged 리소스도 안전하게 해석할 수 없으므로
+`config.yaml`의 YAML syntax 또는 로컬 semantic schema 자체가 잘못되면 packaged 리소스도 안전하게 해석할 수 없으므로
 startup을 실패시킨다. 반면 object location 누락·충돌·형식 오류는 원격 설정 오류로 분류하여 packaged
 fallback을 시도한다.
 
@@ -307,7 +299,7 @@ packaged fallback release에는 `source=packaged`와 credential을 제거한 `fa
 - symlink target이 `<local_root>/releases` 아래다.
 - target의 `.complete.json`이 존재하고 파싱 가능하다.
 - schema version, resource config fingerprint, semantic schema hash가 현재 설정과 일치한다.
-- manifest에 선언된 필수 파일이 존재하고 기록된 크기와 일치한다.
+- `model_parameter_resources`에 선언된 필수 파일이 존재하고 기록된 크기와 일치한다.
 - packaged release의 내부 symlink가 정확한 package resource 경로만 가리킨다.
 
 ## 9. Fingerprint
@@ -316,7 +308,7 @@ packaged fallback release에는 `source=packaged`와 credential을 제거한 `fa
 
 LUT와 Basecase의 로컬 업무 계약을 나타낸다.
 
-- schema version
+- 코드 내부 리소스 schema version
 - Basecase role과 local path
 - LUT adapter/layout
 - LUT local path
@@ -334,7 +326,7 @@ Object Storage bucket/object key는 포함하지 않는다.
 - resolved bucket/object key
 - local target path
 - LUT enabled 정책
-- manifest schema version
+- 코드 내부 리소스 schema version
 
 credential, timeout, retry, local root는 포함하지 않는다.
 
@@ -348,7 +340,7 @@ ETag는 multipart upload나 암호화 설정에 따라 콘텐츠 hash가 아닐 
 원격에 release manifest나 version identifier가 없으므로 exact key 세트에 대해 best-effort consistency 검증을
 수행한다.
 
-1. manifest에서 다운로드 계획을 생성한다.
+1. 메모리의 `model_parameter_resources`에서 다운로드 계획을 생성한다.
 2. 모든 대상에 `HeadObject`하여 ETag, ContentLength, LastModified를 수집한다.
 3. 각 object를 staging에 streaming 다운로드하며 SHA-256을 계산한다.
 4. `GetObject` 응답 길이와 최초 metadata를 비교한다.
@@ -364,9 +356,10 @@ rollout과 겹치지 않게 일괄 수행하는 운영 절차를 권장한다.
 
 ```text
 lifespan 시작
-  ├─ settings/logging/MLflow 초기화
+  ├─ config.yaml을 settings snapshot으로 1회 로드
+  ├─ logging/MLflow 초기화
   ├─ DB schema validation
-  ├─ model_parameter_resources.yaml 로드
+  ├─ model_parameter_resources 영역을 메모리에서 파싱
   ├─ Basecase/LUT local semantic schema 검증
   └─ resolve_and_preload_model_parameter_resources()
        ├─ storage.enabled=false
@@ -393,7 +386,7 @@ lifespan 시작
             │    └─ current를 packaged release로 atomic swap
             ├─ process lock 해제
             ├─ current target resolve
-            ├─ worker runtime에 immutable active paths 등록
+            ├─ worker runtime에 immutable active paths/LUT registry 등록
             └─ 선택 경로의 LUT/Basecase preload
   ├─ callback OAuth token prefetch
   └─ yield: 요청 수락
@@ -411,14 +404,15 @@ lifespan 시작
 - worker 비정상 종료 시 OS가 file descriptor와 lock을 해제한다.
 - orphan staging은 다음 lock 소유자가 정리한다.
 
-각 worker는 `current`를 한 번 resolve한 실제 target을 process-local runtime에 등록한다.
+각 worker는 `current`를 한 번 resolve한 실제 target과 활성 LUT registry를 process-local runtime에 등록한다.
 
 ```text
 source = object_storage | packaged
 root = <resolved current target>
 basecase_dir = <root>/basecase
 lut_root = <root>/lut
-manifest_path = <configured model_parameter_resources.yaml>
+resource_config_path = <APP_CONFIG path>
+lut_registry = <validated in-memory registry>
 resource_fingerprint = <remote 성공 시 fingerprint>
 fallback_reason = <packaged 폴백 사유>
 ```
@@ -431,7 +425,7 @@ fallback_reason = <packaged 폴백 사유>
 다음은 packaged fallback 대상이다.
 
 - 원격 필수 설정 누락 또는 미치환 placeholder
-- manifest의 object location 누락·충돌·형식 오류
+- `model_parameter_resources`의 object location 누락·충돌·형식 오류
 - endpoint 연결·timeout·인증·권한 오류
 - bucket/key 없음
 - 필수 객체 누락 또는 빈 객체
@@ -446,7 +440,7 @@ fallback_reason = <packaged 폴백 사유>
 - lock wait timeout
 - `local_root` 생성·쓰기 불가
 - release rename 또는 `current` atomic swap 불가
-- manifest YAML syntax 또는 local semantic schema 자체가 잘못됨
+- `config.yaml` YAML syntax 또는 local semantic schema 자체가 잘못됨
 - packaged 리소스 validation 실패
 
 connector의 botocore/streaming 오류는 credential을 제거한
@@ -467,7 +461,7 @@ connector의 botocore/streaming 오류는 credential을 제거한
 
 - `local_root`에는 pod-local `emptyDir`을 mount하는 것을 기본으로 한다.
 - `readOnlyRootFilesystem` 환경에서도 `local_root`만 writable하게 제공한다.
-- manifest는 이미지 기본 파일 또는 환경별 ConfigMap mount로 제공한다.
+- `config.yaml` 하나를 이미지 기본 파일 또는 환경별 ConfigMap mount로 제공한다.
 - credential은 Secret 환경변수로 주입한다.
 - Object Storage 데이터 갱신은 새 pod rollout으로 반영한다.
 - 같은 pod의 worker respawn이나 container restart는 기존 `current`를 재사용할 수 있다.
@@ -478,6 +472,7 @@ connector의 botocore/streaming 오류는 credential을 제거한
 
 다음 값을 구조화해 기록한다.
 
+- worker 최초 설정 load 시 전체 Settings snapshot(DEBUG, password/secret/token/API key/access key/bearer 마스킹)
 - `model_parameter_resource_source`: `object_storage` 또는 `packaged`
 - `model_parameter_resource_fingerprint`
 - `model_parameter_resource_fallback_active`
@@ -491,21 +486,19 @@ fallback active WARNING을 모두 남겨 장기간 장애가 가려지지 않게
 
 ```text
 apps/common/configs/config.py
-  - ModelParameterResourceStorageConfig 추가
+  - worker별 settings snapshot cache
+  - ModelParameterResourceStorageConfig와 model_parameter_resources 영역
 
 apps/connectors/object_storage/
   - S3-compatible HeadObject/GetObject connector
 
-apps/agents/model_parameter_agent/resources/config/
-  - model_parameter_resources.yaml 추가
-
 apps/agents/model_parameter_agent/utils/
-  - resource_manifest.py: 통합 manifest 파싱과 다운로드 계획
+  - resource_manifest.py: in-memory 리소스 설정 파싱과 다운로드 계획
   - resource_bootstrap.py: lock/staging/release/current/fallback
   - resource_runtime.py: worker별 immutable active paths
 
 apps/agents/model_parameter_agent/utils/lut/registry.py
-  - manifest의 lut 영역 파싱
+  - in-memory model_parameter_resources.lut 영역 파싱
   - object_storage_path 필드와 semantic hash 분리
 
 model_param.py
@@ -515,7 +508,7 @@ apps/agents/model_parameter_agent/flows/propose_parameters/nodes.py
   - resource runtime의 활성 경로를 loader에 명시적으로 전달
 
 envs/config.yaml 및 실제 배포 설정
-  - 연결 설정, Secret, ConfigMap, emptyDir
+  - 연결 설정, 파일별 매핑/업무 스키마, Secret, ConfigMap, emptyDir
 
 tests/manual/model_parameter_object_storage/
   - MinIO Docker Compose와 테스트 데이터 업로드/실행 스크립트
@@ -525,7 +518,7 @@ package ownership이나 endpoint-to-flow mapping이 바뀌는 것은 아니므�
 
 ## 18. 테스트 계획
 
-### 18.1 Manifest와 설정
+### 18.1 리소스 설정
 
 - 기존 LUT 정의를 새 `lut` 영역에서 동일하게 파싱
 - Basecase 세 역할 누락·중복 거부
@@ -571,8 +564,8 @@ devops/compose/
 
 tests/manual/model_parameter_object_storage/
 ├── setup_minio.py
-├── model_parameter_resources.yaml
 ├── run_smoke_test.py
+├── run_multi_worker_smoke.py
 └── README.md
 ```
 
@@ -609,7 +602,7 @@ HTTPS를 강제한다. MinIO 테스트 credential과 데이터는 로컬 전용�
 
 - storage disabled이면 현재 packaged 동작과 결과가 변하지 않고 네트워크 호출이 없다.
 - storage enabled이면 설정된 exact object만 다운로드한다.
-- 원격 파일명과 로컬 파일명이 달라도 manifest의 `path` 이름으로 정상 동작한다.
+- 원격 파일명과 로컬 파일명이 달라도 `model_parameter_resources`의 `path` 이름으로 정상 동작한다.
 - 다운로드와 semantic validation이 끝나기 전에는 새 리소스가 노출되지 않는다.
 - 세 worker가 같은 `current`, source, resolved path를 사용한다.
 - 원격 실패 시 모든 worker가 packaged 리소스로 동작한다.
@@ -623,7 +616,7 @@ HTTPS를 강제한다. MinIO 테스트 credential과 데이터는 로컬 전용�
 ## 20. 잔여 리스크
 
 - 원격 version identifier가 없으므로 기동 전에 이미 만들어진 업무적 혼합 세트는 완전히 증명할 수 없다.
-- manifest의 object key 변경은 ConfigMap 또는 이미지 배포와 함께 반영해야 한다.
+- `model_parameter_resources`의 object key 변경은 ConfigMap과 pod rollout으로 반영해야 한다.
 - packaged fallback이 원격 장애를 가릴 수 있으므로 source/fallback 로그 모니터링이 필요하다.
 - Object Storage 다운로드와 semantic preload만큼 startup 시간이 증가한다.
 - 실제 NCP endpoint, credential, 네트워크 정책은 unit test만으로 완전히 검증할 수 없다.

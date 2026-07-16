@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 import yaml
 
 from apps.agents.model_parameter_agent.utils.lut.models import domain_error
+from apps.common.utils.yaml_utils import normalize_yaml_text
 
 
 AdapterName = Literal["tabular", "gdp_growth", "temperature_degree_days", "liq_util"]
@@ -19,7 +20,7 @@ LayoutName = Literal["row", "year_columns"]
 
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LUT_ROOT = PACKAGE_DIR / "resources" / "lut"
-DEFAULT_LUT_CONFIG_PATH = PACKAGE_DIR / "resources" / "config" / "model_parameter_resources.yaml"
+DEFAULT_LUT_CONFIG_PATH = PACKAGE_DIR.parents[2] / "envs" / "config.yaml"
 
 
 class _LutFileSpecModel(BaseModel):
@@ -252,7 +253,7 @@ def load_parameter_spec_registry(  # noqa: C901
         msg = f"failed to read LUT parameter config {config_path}: {exc}"
         raise domain_error(msg) from exc
     try:
-        raw_document = yaml.safe_load(raw_bytes.decode("utf-8"))
+        raw_document = yaml.safe_load(normalize_yaml_text(raw_bytes.decode("utf-8")))
     except (UnicodeDecodeError, yaml.YAMLError) as exc:
         msg = f"invalid LUT parameter YAML {config_path}: {exc}"
         raise domain_error(msg) from exc
@@ -260,7 +261,13 @@ def load_parameter_spec_registry(  # noqa: C901
         msg = "LUT parameter YAML must be a non-empty parameter mapping"
         raise domain_error(msg)
 
-    if {"schema_version", "basecase", "lut"}.issubset(raw_document):
+    if "model_parameter_resources" in raw_document:
+        raw_document = raw_document.get("model_parameter_resources")
+        if not isinstance(raw_document, dict) or not raw_document:
+            msg = "config model_parameter_resources must be a non-empty mapping"
+            raise domain_error(msg)
+
+    if {"basecase", "lut"}.issubset(raw_document):
         raw_lut_document = raw_document.get("lut")
         if not isinstance(raw_lut_document, dict) or not raw_lut_document:
             msg = "model parameter resource manifest lut must be a non-empty parameter mapping"

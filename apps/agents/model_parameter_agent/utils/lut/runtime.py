@@ -59,10 +59,21 @@ def _read_snapshot(path: Path) -> FileSnapshot:
 
 
 def get_parameter_spec_registry(
-    config_path: Path | str = DEFAULT_LUT_CONFIG_PATH,
+    config_path: Path | str | None = None,
     *,
     lut_root: Path | str | None = None,
 ) -> ParameterSpecRegistry:
+    if config_path is None:
+        # Model Parameter app 기동 후에는 검증된 registry를 process memory에서 재사용한다.
+        from apps.agents.model_parameter_agent.utils.resource_runtime import (
+            get_registered_model_parameter_resource_paths,
+        )
+
+        resource_paths = get_registered_model_parameter_resource_paths()
+        if resource_paths is not None:
+            return resource_paths.lut_registry
+        config_path = DEFAULT_LUT_CONFIG_PATH
+
     config = Path(config_path).expanduser().resolve()
     root = (
         Path(lut_root).expanduser().resolve()
@@ -115,7 +126,7 @@ def get_lut_catalog(
     policy: LutLoadPolicy,
     *,
     registry: ParameterSpecRegistry | None = None,
-    config_path: Path | str = DEFAULT_LUT_CONFIG_PATH,
+    config_path: Path | str | None = None,
     lut_root: Path | str | None = None,
 ) -> LutCatalog:
     active_registry = registry or get_parameter_spec_registry(
@@ -163,13 +174,14 @@ def validate_lut_startup(
     enabled: bool,  # noqa: FBT001
     policy: LutLoadPolicy,
     *,
-    config_path: Path | str = DEFAULT_LUT_CONFIG_PATH,
+    registry: ParameterSpecRegistry | None = None,
+    config_path: Path | str | None = None,
     lut_root: Path | str | None = None,
 ) -> tuple[ParameterSpecRegistry, LutCatalog | None]:
-    registry = get_parameter_spec_registry(config_path, lut_root=lut_root)
+    active_registry = registry or get_parameter_spec_registry(config_path, lut_root=lut_root)
     if not enabled:
-        return registry, None
-    return registry, get_lut_catalog(policy, registry=registry)
+        return active_registry, None
+    return active_registry, get_lut_catalog(policy, registry=active_registry)
 
 
 def clear_lut_runtime_cache() -> None:
