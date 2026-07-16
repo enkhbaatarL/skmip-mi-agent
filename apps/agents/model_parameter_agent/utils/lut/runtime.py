@@ -9,7 +9,7 @@ from apps.agents.model_parameter_agent.utils.lut.adapters import (
     FileSnapshot,
 )
 from apps.agents.model_parameter_agent.utils.lut.catalog import LutCatalog, build_lut_catalog
-from apps.agents.model_parameter_agent.utils.lut.models import LutLoadPolicy, domain_error
+from apps.agents.model_parameter_agent.utils.lut.models import ReferenceLoadPolicy, domain_error
 from apps.agents.model_parameter_agent.utils.lut.registry import (
     DEFAULT_LUT_CONFIG_PATH,
     DEFAULT_LUT_ROOT,
@@ -87,7 +87,7 @@ def get_parameter_spec_registry(
 
 def _catalog_version(
     registry: ParameterSpecRegistry,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots: dict[str, FileSnapshot],
 ) -> str:
     digest = hashlib.sha256()
@@ -112,7 +112,7 @@ def _catalog_version(
 
 
 def get_lut_catalog(
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     *,
     registry: ParameterSpecRegistry | None = None,
     config_path: Path | str = DEFAULT_LUT_CONFIG_PATH,
@@ -161,7 +161,7 @@ def get_lut_catalog(
 
 def validate_lut_startup(
     enabled: bool,  # noqa: FBT001
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     *,
     config_path: Path | str = DEFAULT_LUT_CONFIG_PATH,
     lut_root: Path | str | None = None,

@@ -21,7 +21,7 @@ from apps.agents.model_parameter_agent.utils.basecase import (
     clear_parameter_mapping_runtime_cache,
 )
 from apps.agents.model_parameter_agent.utils.lut import (
-    LutLoadPolicy,
+    ReferenceLoadPolicy,
     clear_lut_runtime_cache,
     validate_lut_startup,
 )
@@ -226,7 +226,7 @@ async def _validate_resource_set(
     basecase_dir: Path,
     lut_root: Path,
     lut_enabled: bool,
-    lut_policy: LutLoadPolicy,
+    lut_policy: ReferenceLoadPolicy,
 ) -> None:
     await asyncio.to_thread(
         _validate_basecase_workbooks,
@@ -490,7 +490,7 @@ async def _build_remote_release(
     plan: tuple[PlannedResourceDownload, ...],
     storage: ModelParameterResourceStorageConfig,
     lut_enabled: bool,
-    lut_policy: LutLoadPolicy,
+    lut_policy: ReferenceLoadPolicy,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader],
 ) -> tuple[Path, dict[str, Any], int, int]:
     _validate_remote_connection_settings(storage)
@@ -570,7 +570,7 @@ async def _build_packaged_release(
     config_fingerprint: str,
     fallback_reason: str,
     lut_enabled: bool,
-    lut_policy: LutLoadPolicy,
+    lut_policy: ReferenceLoadPolicy,
 ) -> tuple[Path, dict[str, Any]]:
     clear_lut_runtime_cache()
     clear_parameter_mapping_runtime_cache()
@@ -609,7 +609,7 @@ async def resolve_model_parameter_resources(
     storage: ModelParameterResourceStorageConfig,
     *,
     lut_enabled: bool,
-    lut_policy: LutLoadPolicy,
+    lut_policy: ReferenceLoadPolicy,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader] = _create_client,
 ) -> ModelParameterResourcePaths:
     """원격 리소스 세트를 원자적으로 선택하고 worker가 고정해 사용할 경로를 반환한다."""
@@ -717,7 +717,7 @@ async def ensure_model_parameter_resource_runtime(
     storage: ModelParameterResourceStorageConfig,
     *,
     lut_enabled: bool,
-    lut_policy: LutLoadPolicy,
+    lut_policy: ReferenceLoadPolicy,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader] = _create_client,
 ) -> ModelParameterResourcePaths:
     """현재 process에서 사용할 리소스 경로를 한 번 결정하고 고정한다."""

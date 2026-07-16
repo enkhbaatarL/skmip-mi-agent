@@ -38,7 +38,7 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
     ModelParameterService,
 )
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
-from apps.agents.model_parameter_agent.utils.lut import LutLoadPolicy
+from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base,
     match_parameter_candidates,
@@ -61,9 +61,13 @@ async def _ensure_model_parameter_test_resource_runtime() -> ModelParameterResou
     return await ensure_model_parameter_resource_runtime(
         cfg.model_parameter_resource_storage,
         lut_enabled=cfg.model_parameter_lut_enabled,
-        lut_policy=LutLoadPolicy(
+        lut_policy=ReferenceLoadPolicy(
             start_year=cfg.model_parameter_lut_horizon_start_year,
             end_year=cfg.model_parameter_lut_horizon_end_year,
+            value_max_decimal_places=(
+                cfg.model_parameter_basecase_value_max_decimal_places
+            ),
+            value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
         ),
     )
 

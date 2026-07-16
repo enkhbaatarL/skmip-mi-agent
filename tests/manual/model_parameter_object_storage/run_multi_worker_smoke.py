@@ -15,7 +15,7 @@ from pydantic import SecretStr
 ROOT_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT_DIR))
 
-from apps.agents.model_parameter_agent.utils.lut import LutLoadPolicy  # noqa: E402
+from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy  # noqa: E402
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (  # noqa: E402
     resolve_model_parameter_resources,
 )
@@ -66,7 +66,7 @@ def _worker(local_root: str, marker_path: str, result_queue: Any) -> None:  # no
         paths = await resolve_model_parameter_resources(
             storage,
             lut_enabled=True,
-            lut_policy=LutLoadPolicy(),
+            lut_policy=ReferenceLoadPolicy(),
             client_factory=lambda config: _client_factory(config, Path(marker_path)),
         )
         result_queue.put((paths.source, str(paths.root), paths.resource_fingerprint))

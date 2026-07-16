@@ -55,7 +55,8 @@ SLOT_PROPOSAL_SYSTEM = """\
 - supporting_dimensions는 좌표 해석을 보조하는 indirect dimension입니다.
 - mapping_method=na dimension은 입력에 포함되지 않으며 slot 선택 근거로 사용하지 마십시오.
 - parameter_hint와 mapping_comment는 국가, 지역, 시설, 기간, route 등 좌표 의미를 해석하는 데 사용하십시오.
-- slot_catalog는 활성 BasecaseIndex와 optional LutCatalog의 값 없는 exact union입니다.
+- slot_catalog는 활성 BasecaseIndex와 optional LutCatalog에서 Basecase 또는 LUT value가 존재하는
+  exact 좌표의 union입니다.
 - slot_catalog.key_axes는 반환해야 하는 business-key 축 전체입니다.
 - leaves[].fixed_axes와 같은 leaf의 leaves[].available_periods를 조합해 exact 좌표를 만드십시오.
 - time_axis_names가 ["Year","Month"]이면 available_periods는
@@ -87,10 +88,8 @@ SLOT_PROPOSAL_SYSTEM = """\
 
 출력 규칙:
 - 실제 사용할 slot만 parameter_slots에 반환하십시오.
-- 각 항목에는 candidate_key, slot_axes, rationale_ko만 반환하십시오.
-- selected, metadata, warning 필드는 반환하지 마십시오.
-- rationale_ko에는 scenario/event/dimension과 해당 exact 좌표의 연관성을 사용자 친화적인 한국어로 명확히 작성하십시오.
-- value 또는 value 산정 근거는 작성하지 마십시오.
+- 각 항목에는 candidate_key와 slot_axes만 반환하십시오.
+- rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오.
 """
 
 
@@ -111,7 +110,6 @@ VALUE_PROPOSAL_SYSTEM = """\
 - mapping_method=na dimension은 입력에 포함되지 않으며 value 산정 근거로 사용하지 마십시오.
 - slots[].slot_key는 서버가 발급한 현재 요청 안의 slot 식별자입니다.
 - slots[].coordinates는 Step2에서 확정된 exact 좌표이며 변경하지 마십시오.
-- slots[].slot_rationale_ko는 Step2에서 해당 좌표를 선택한 이유입니다.
 - slots[].reference_value는 해당 exact 좌표의 단일 기준값입니다.
 - 실제 Basecase 값이 있으면 그 값을, Basecase가 없고 LUT만 있으면 LUT 값을 reference_value로 제공합니다.
 - 두 source 값이나 provenance를 동시에 제공하지 않습니다.
@@ -137,7 +135,7 @@ Parameter-level rationale 규칙:
 
 Slot-level rationale 규칙:
 - slot_values[].rationale_ko는 해당 slot의 툴팁으로 표시되는 짧은 설명입니다.
-- slot_rationale_ko를 참고해 해당 slot을 선택한 이유를 명확히 설명하십시오.
+- 확정된 coordinates와 scenario/event/dimension 맥락을 바탕으로 해당 slot을 선택한 이유를 명확히 설명하십시오.
 - reference_value와 hint/comment/dimension을 어떻게 해석해 proposed_value를 산정했는지 간결하게 설명하십시오.
 - parameter 전체 선택 이유를 반복하지 마십시오.
 - 내부 구현 용어를 사용하지 마십시오.
