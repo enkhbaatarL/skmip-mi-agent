@@ -9,8 +9,9 @@ import sys
 import tempfile
 import types
 from types import SimpleNamespace
+from typing import Any
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi.routing import APIRoute
 
@@ -72,6 +73,7 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
     ParameterValueCell,
     RoutingDecision,
 )
+from apps.agents.model_parameter_agent.utils import parameter_mapping as parameter_mapping_utils
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     DEFAULT_BASECASE_DIR,
@@ -2049,6 +2051,166 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         ]
         assert [record["value"] for record in records] == [1.0, 3.0, 2.0, 4.0]
 
+    def test_auto_matrix_excel_error_preserves_only_metadata_enabled_axes(self) -> None:
+        profile = BasecaseProfile(
+            model_file="Supply",
+            workbook_path="/tmp/Auto Matrix Error.xlsm",
+            sheet_name="LiqUtilAdjustment",
+            sheet_exists=True,
+        )
+        block = parameter_mapping_utils.BasecaseMatrixBlock(
+            header_row=3,
+            start_col=2,
+            time_label_col=1,
+            time_start_col=7,
+            year_row=1,
+            month_row=2,
+            period_row=3,
+            axis_columns={
+                2: "Country",
+                3: "LNG Plant",
+                4: "LNG Plant Train",
+                5: "Life Cycle Category",
+                6: "Nameplate Capacity (MTPA)",
+            },
+            value_name="LiqUtilAdjustment",
+            section="basecase",
+            time_descriptors={
+                7: {"Year": 2026, "Month": 7, "Period": 1},
+            },
+        )
+        values = [
+            None,
+            "Qatar",
+            "QatarGas LNG",
+            "QatarGas LNG T12",
+            "Operating",
+            7.8,
+            "#REF!",
+        ]
+        candidate = {
+            "candidate_key": "liq",
+            "canonical_parameter_name": "LiqUtilAdjustment",
+            parameter_mapping_utils.PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD: True,
+        }
+
+        records: list[dict[str, Any]] = []
+        parameter_mapping_utils._append_matrix_records_for_row(  # noqa: SLF001
+            records=records,
+            values=values,
+            row_idx=4,
+            block=block,
+            candidate=candidate,
+            profile=profile,
+        )
+
+        assert len(records) == 1
+        assert records[0]["value"] is None
+        assert records[0]["axes"]["Nameplate Capacity (MTPA)"] == 7.8
+
+        records_without_metadata: list[dict[str, Any]] = []
+        parameter_mapping_utils._append_matrix_records_for_row(  # noqa: SLF001
+            records=records_without_metadata,
+            values=values,
+            row_idx=4,
+            block=block,
+            candidate={
+                "candidate_key": "other",
+                "canonical_parameter_name": "OtherParameter",
+            },
+            profile=profile,
+        )
+        assert records_without_metadata == []
+
+    def test_explicit_matrix_preserves_metadata_for_all_excel_error_values(self) -> None:
+        error_values = ("#REF!", "#N/A", "#VALUE!", "#DIV/0!")
+
+        class FakeWorksheet:
+            max_row = 7
+            max_column = 7
+
+            def iter_rows(self, **kwargs):  # noqa: ANN003
+                min_row = int(kwargs.get("min_row") or 1)
+                max_row = int(kwargs.get("max_row") or self.max_row)
+                max_col = int(kwargs.get("max_col") or self.max_column)
+                rows = {
+                    1: (None, None, None, None, None, None, 2026),
+                    2: (None, None, None, None, None, None, 7),
+                    3: (None, None, None, None, None, None, 1),
+                    **{
+                        row_idx: (
+                            None,
+                            "Qatar",
+                            "QatarGas LNG",
+                            f"QatarGas LNG T{row_idx - 3}",
+                            "Operating",
+                            7.8,
+                            error_value,
+                        )
+                        for row_idx, error_value in enumerate(error_values, start=4)
+                    },
+                }
+                for row_idx in range(min_row, max_row + 1):
+                    yield rows[row_idx][:max_col]
+
+        class FakeWorkbook:
+            sheetnames = ["LiqUtilAdjustment"]
+
+            def __init__(self) -> None:
+                self.sheet = FakeWorksheet()
+
+            def __getitem__(self, sheet_name: str) -> FakeWorksheet:
+                assert sheet_name == "LiqUtilAdjustment"
+                return self.sheet
+
+            def close(self) -> None:
+                return None
+
+        kb = ParameterKnowledgeBase(
+            mapping_source="test",
+            basecase_dir_path="/tmp",
+            parameter_definitions={},
+            mapping_rules=[],
+            basecase_profiles={
+                "supply::liqutiladjustment": BasecaseProfile(
+                    model_file="Supply",
+                    workbook_path="/tmp/Explicit Matrix Error.xlsm",
+                    sheet_name="LiqUtilAdjustment",
+                    sheet_exists=True,
+                ),
+            },
+        )
+        candidate = {
+            "candidate_key": "liq-error",
+            "model_file": "Supply",
+            "model_sheet": "LiqUtilAdjustment",
+            "parameter_name": "LiqUtilAdjustment",
+            "canonical_parameter_name": "LiqUtilAdjustment",
+            "basecase_read_mode": "matrix_time_columns",
+            "basecase_data_start_row": 4,
+            "basecase_column_roles": (
+                "B:Country,C:LNG Plant,D:LNG Plant Train,"
+                "E:Life Cycle Category,F:Nameplate Capacity (MTPA)"
+            ),
+            "basecase_year_row": 1,
+            "basecase_month_row": 2,
+            "basecase_period_row": 3,
+            "basecase_value_start_col": "G",
+            "basecase_value_end_col": "G",
+        }
+
+        with patch(
+            "apps.agents.model_parameter_agent.utils.parameter_mapping._require_workbook_loader",
+            return_value=lambda *_args, **_kwargs: FakeWorkbook(),
+        ):
+            records, warnings = build_basecase_records(kb, [candidate], {})
+
+        assert warnings == []
+        assert len(records) == len(error_values)
+        assert all(record["value"] is None for record in records)
+        assert all(record["axes"]["Nameplate Capacity (MTPA)"] == 7.8 for record in records)
+        assert {record["source_row"] for record in records} == {4, 5, 6, 7}
+
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_flatten_mapped_matrix_sheet(self) -> None:
         kb = _get_db_fixture_kb()
@@ -3159,6 +3321,93 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         service_cls.return_value.save_proposal_result.assert_not_called()
 
 
+class ModelParameterEntrypointTest(unittest.IsolatedAsyncioTestCase):
+    async def test_lifespan_uses_configured_reference_precision(self) -> None:
+        import model_param as model_param_entrypoint
+        from apps.common.configs.config import get_settings
+
+        cfg = get_settings().model_copy(
+            update={
+                "log_level": "INFO",
+                "callback_oauth2_token_url": "",
+                "model_parameter_lut_horizon_start_year": 2027,
+                "model_parameter_lut_horizon_end_year": 2029,
+                "model_parameter_basecase_value_max_decimal_places": 2,
+                "model_parameter_basecase_value_precision_mode": "round",
+                "model_parameter_lut_enabled": True,
+            },
+        )
+        lut_registry = object()
+        resource_paths = SimpleNamespace(
+            source="packaged",
+            resource_fingerprint=None,
+            fallback_reason=None,
+            resource_config_path=Path("config.yaml"),
+            lut_registry=lut_registry,
+            lut_root=Path("resources/model_parameter_lut"),
+            basecase_dir=Path("resources/basecase"),
+        )
+        basecase_summary = SimpleNamespace(
+            parameter_count=1,
+            profile_count=1,
+            sheet_available_count=1,
+            record_count=1,
+            warning_count=0,
+            warnings=(),
+        )
+        ensure_runtime = AsyncMock(return_value=resource_paths)
+        validate_lut_startup = MagicMock(return_value=(object(), None))
+        preload_basecase = MagicMock(return_value=basecase_summary)
+
+        with (
+            patch(
+                "apps.common.configs.config.get_settings",
+                return_value=cfg,
+            ),
+            patch(
+                "apps.connectors.mlflow.tracing.setup_mlflow_tracing",
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.utils.resource_bootstrap."
+                "ensure_model_parameter_resource_runtime",
+                ensure_runtime,
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.utils.lut.validate_lut_startup",
+                validate_lut_startup,
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.utils.basecase."
+                "preload_basecase_runtime_cache",
+                preload_basecase,
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.utils.resource_runtime."
+                "clear_model_parameter_resource_runtime",
+            ),
+            patch.object(model_param_entrypoint, "setup_logging"),
+            patch.object(model_param_entrypoint, "get_sync_engine"),
+            patch.object(model_param_entrypoint, "validate_schema"),
+        ):
+            async with model_param_entrypoint.lifespan(model_param_entrypoint.app):
+                pass
+
+        policy = ensure_runtime.await_args.kwargs["lut_policy"]
+        self.assertEqual(policy.start_year, 2027)
+        self.assertEqual(policy.end_year, 2029)
+        self.assertEqual(policy.value_max_decimal_places, 2)
+        self.assertEqual(policy.value_precision_mode, "round")
+        validate_lut_startup.assert_called_once_with(
+            True,
+            policy,
+            registry=lut_registry,
+        )
+        preload_basecase.assert_called_once_with(
+            str(resource_paths.basecase_dir),
+            registry=lut_registry,
+        )
+
+
 class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._settings_patch = patch.object(
@@ -3545,7 +3794,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             axis_value=2026,
                         ),
                     ],
-                    rationale_ko="운송 차질이 높아 ShippingCost slot 조정이 필요합니다.",
                 ),
             ],
         )
@@ -3641,11 +3889,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "model_file" not in task
         assert "model_sheet" not in task
         assert "model_table" not in json.dumps(value_payload, ensure_ascii=False)
+        assert "slot_rationale_ko" not in json.dumps(value_payload, ensure_ascii=False)
         assert task["slots"] == [
             {
                 "slot_key": "slot-1",
                 "coordinates": {"Year": 2026},
-                "slot_rationale_ko": "운송 차질이 높아 ShippingCost slot 조정이 필요합니다.",
                 "reference_value": 1.0,
             },
         ]
@@ -3713,7 +3961,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             axis_value="Plant-42",
                         ),
                     ],
-                    rationale_ko="설비 차질 event를 반영했습니다.",
                 ),
             ],
         )
@@ -3765,18 +4012,21 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_slots(state)
 
         assert result["parameter_slots"][0]["candidate_key"] == "c1"
+        assert "rationale_ko" not in result["parameter_slots"][0]
+        assert "rationale_ko" not in LLMSlotProposal.model_json_schema()["properties"]
         assert captured_contents
         assert captured_system_contents
         system_prompt = captured_system_contents[0]
-        assert "값 없는 exact union" in system_prompt
+        assert "Basecase 또는 LUT value가 존재하는" in system_prompt
         assert "value, 변경 방향, 변경 폭, 기준값을 판단하지 않습니다" in system_prompt
         assert "parameter별 최대 100개" in system_prompt
         assert "100개는 hard maximum이며 목표 개수나 권장 개수가 아닙니다" in system_prompt
         assert "연관된 slot이 하나 이상 있으면 해당 parameter에서 최소 1개" in system_prompt
         assert "Cartesian product를 만들지 마십시오" in system_prompt
         assert "axis_name이 Year, Month, Period이면 axis_value를 JSON integer" in system_prompt
-        assert "selected, metadata, warning 필드는 반환하지 마십시오" in system_prompt
-        assert "value 산정 근거는 작성하지 마십시오" in system_prompt
+        assert "각 항목에는 candidate_key와 slot_axes만 반환하십시오" in system_prompt
+        assert "rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오" in system_prompt
+        assert "rationale_ko에는" not in system_prompt
         payload = json.loads(captured_contents[0].split("\n", 1)[1])
         assert "basecase_records" not in payload
         assert "basecase_record_summaries" not in payload
@@ -3936,7 +4186,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     {"axis_name": "Year", "axis_value": 2026},
                     {"axis_name": "Month", "axis_value": 7},
                 ],
-                "rationale_ko": "러시아의 2026년 7월 적용 좌표입니다.",
             },
         ]
         references = [
@@ -3959,7 +4208,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             {
                 "slot_key": "slot-1",
                 "coordinates": {"Country": "Russia", "Year": 2026, "Month": 7},
-                "slot_rationale_ko": "러시아의 2026년 7월 적용 좌표입니다.",
                 "reference_value": 0.45,
             },
         ]
@@ -3983,7 +4231,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                         LLMSlotAxis(axis_name="Year", axis_value="2026"),
                         LLMSlotAxis(axis_name="Month", axis_value="8"),
                     ],
-                    rationale_ko="basecase slot 후보와 폭염 scenario를 함께 검증했습니다.",
                 ),
             ],
         )
@@ -4050,7 +4297,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             axis_value="미정(후보: 2024)",
                         ),
                     ],
-                    rationale_ko="연도 후보를 제안했습니다.",
                 ),
             ],
         )
@@ -4088,7 +4334,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     {"axis_name": "Province Country", "axis_value": "Norway"},
                     {"axis_name": "Year", "axis_value": 2026},
                 ],
-                "rationale_ko": "노르웨이의 2026년 좌표입니다.",
             },
         ]
         references = [

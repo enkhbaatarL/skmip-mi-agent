@@ -11,8 +11,8 @@ import pytest
 
 from apps.agents.model_parameter_agent.utils.lut import (
     LutCatalog,
-    LutLoadPolicy,
     ParameterSpecRegistry,
+    ReferenceLoadPolicy,
     build_basecase_index,
     build_slot_catalog,
     canonical_axes_for_candidate,
@@ -72,7 +72,7 @@ TestParameter:
 @pytest.fixture(scope="module")
 def real_domain() -> tuple[ParameterSpecRegistry, LutCatalog]:
     clear_lut_runtime_cache()
-    policy = LutLoadPolicy()
+    policy = ReferenceLoadPolicy()
     registry, catalog = validate_lut_startup(True, policy)  # noqa: FBT003
     assert catalog is not None
     return registry, catalog
@@ -149,7 +149,7 @@ def test_disabled_startup_validates_yaml_without_opening_missing_csv(tmp_path: P
     clear_lut_runtime_cache()
     registry, catalog = validate_lut_startup(
         False,  # noqa: FBT003
-        LutLoadPolicy(),
+        ReferenceLoadPolicy(),
         config_path=config,
         lut_root=tmp_path,
     )
@@ -158,20 +158,20 @@ def test_disabled_startup_validates_yaml_without_opening_missing_csv(tmp_path: P
     with pytest.raises(MIBaseError, match="not accessible"):
         validate_lut_startup(
             True,  # noqa: FBT003
-            LutLoadPolicy(),
+            ReferenceLoadPolicy(),
             config_path=config,
             lut_root=tmp_path,
         )
 
 
-def test_load_policy_rejects_reversed_horizon() -> None:
+def test_reference_load_policy_rejects_reversed_horizon() -> None:
     with pytest.raises(MIBaseError, match="start_year must be less than or equal") as caught:
-        LutLoadPolicy(2030, 2026)
+        ReferenceLoadPolicy(2030, 2026)
     assert caught.value.error_code is ErrorCode.INVALID_REQUEST
 
-    assert LutLoadPolicy(value_max_decimal_places=-1).value_max_decimal_places == -1
+    assert ReferenceLoadPolicy(value_max_decimal_places=-1).value_max_decimal_places == -1
     with pytest.raises(MIBaseError, match="-1 or greater"):
-        LutLoadPolicy(value_max_decimal_places=-2)
+        ReferenceLoadPolicy(value_max_decimal_places=-2)
 
 
 @pytest.mark.parametrize(
@@ -253,7 +253,7 @@ def test_catalog_rejects_missing_header_nonfinite_and_noninteger(
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     with pytest.raises(MIBaseError, match=expected):
-        get_lut_catalog(LutLoadPolicy(), registry=registry)
+        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
 
 
 def test_tabular_adapter_rejects_month_outside_one_to_twelve(tmp_path: Path) -> None:
@@ -275,7 +275,7 @@ MonthlyParameter:
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     with pytest.raises(MIBaseError, match="Month must be between 1 and 12"):
-        get_lut_catalog(LutLoadPolicy(), registry=registry)
+        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
 
 
 def test_identical_duplicate_dedupes_but_value_or_metadata_conflict_fails(
@@ -289,7 +289,7 @@ def test_identical_duplicate_dedupes_but_value_or_metadata_conflict_fails(
     _write(values, "Country,Year,Tag,Value\nA,2026,x,1\nA,2026,x,1\n")
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
     assert len(catalog.records) == 1
     assert len(catalog.diagnostics) == 1
     assert "deduped identical" in catalog.diagnostics[0]
@@ -298,18 +298,18 @@ def test_identical_duplicate_dedupes_but_value_or_metadata_conflict_fails(
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     with pytest.raises(MIBaseError, match="conflicting duplicate"):
-        get_lut_catalog(LutLoadPolicy(), registry=registry)
+        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
 
     _write(values, "Country,Year,Tag,Value\nA,2026,x,1\nA,2026,y,1\n")
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     with pytest.raises(MIBaseError, match="conflicting duplicate"):
-        get_lut_catalog(LutLoadPolicy(), registry=registry)
+        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
 
 
 def test_catalog_is_deeply_immutable_and_cache_is_thread_safe() -> None:
     clear_lut_runtime_cache()
-    policy = LutLoadPolicy()
+    policy = ReferenceLoadPolicy()
 
     def load() -> LutCatalog:
         return get_lut_catalog(policy)
@@ -322,7 +322,7 @@ def test_catalog_is_deeply_immutable_and_cache_is_thread_safe() -> None:
         catalog.records[0].axes["Country"] = "mutated"  # type: ignore[index]
     with pytest.raises(TypeError):
         catalog.registry.specs["Other"] = catalog.registry.specs["GDP"]  # type: ignore[index]
-    narrower = get_lut_catalog(LutLoadPolicy(2027, 2030))
+    narrower = get_lut_catalog(ReferenceLoadPolicy(2027, 2030))
     assert narrower.version != catalog.version
     assert narrower is not catalog
 
@@ -335,11 +335,11 @@ def test_catalog_version_and_warm_cache_identity_follow_csv_content(tmp_path: Pa
     values = _write(tmp_path / "values.csv", "Country,Year,Tag,Value\nA,2026,x,1\n")
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    first = get_lut_catalog(LutLoadPolicy(), registry=registry)
-    assert get_lut_catalog(LutLoadPolicy(), registry=registry) is first
+    first = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    assert get_lut_catalog(ReferenceLoadPolicy(), registry=registry) is first
 
     _write(values, "Country,Year,Tag,Value\nA,2026,x,20\n")
-    second = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    second = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
     assert second is not first
     assert second.version != first.version
     assert second.records[0].value == 20
@@ -359,7 +359,7 @@ def test_basecase_and_lut_values_use_bounded_precision(
     )
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
     assert catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == 1.23456
     integer_lut_value = catalog.lookup("TestParameter", {"Country": "B", "Year": 2026}).value
     assert integer_lut_value == 8
@@ -394,6 +394,39 @@ def test_basecase_and_lut_values_use_bounded_precision(
     integer_basecase_value = index.lookup("gdp", {"Country": "B", "Year": 2026}).value
     assert integer_basecase_value == 8
     assert isinstance(integer_basecase_value, int)
+
+
+def test_reference_load_policy_applies_configured_precision_to_basecase(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, _ = real_domain
+    policy = ReferenceLoadPolicy(
+        value_max_decimal_places=2,
+        value_precision_mode="round",
+    )
+    candidate = {
+        "candidate_key": "gdp",
+        "canonical_parameter_name": "GDP",
+        "basecase_read_mode": "fixed_columns",
+        "basecase_column_roles": "A:Country,B:Year,C:GDP",
+    }
+
+    index = build_basecase_index(
+        [
+            {
+                "candidate_key": "gdp",
+                "reference_id": "base-policy",
+                "axes": {"Country": "A", "Year": 2026},
+                "value": 1.23678,
+            },
+        ],
+        [candidate],
+        policy=policy,
+        registry=registry,
+    )
+
+    assert index.policy is policy
+    assert index.lookup("gdp", {"Country": "A", "Year": 2026}).value == 1.24
 
 
 def test_numeric_precision_applies_to_negative_values_and_serializes_zero_as_int() -> None:
@@ -448,7 +481,7 @@ def test_numeric_precision_applies_to_negative_values_and_serializes_zero_as_int
     assert isinstance(zero_value, int)
 
 
-def test_lut_policy_applies_configured_precision(tmp_path: Path) -> None:
+def test_reference_load_policy_applies_configured_precision_to_lut(tmp_path: Path) -> None:
     config = _write(
         tmp_path / "config.yaml",
         _tabular_config("values.csv", metadata_axes="[Tag]"),
@@ -460,13 +493,13 @@ def test_lut_policy_applies_configured_precision(tmp_path: Path) -> None:
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
 
     truncate_catalog = get_lut_catalog(
-        LutLoadPolicy(value_max_decimal_places=3, value_precision_mode="trunc"),
+        ReferenceLoadPolicy(value_max_decimal_places=3, value_precision_mode="trunc"),
         registry=registry,
     )
     assert truncate_catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == -1.234
 
     round_catalog = get_lut_catalog(
-        LutLoadPolicy(value_max_decimal_places=3, value_precision_mode="round"),
+        ReferenceLoadPolicy(value_max_decimal_places=3, value_precision_mode="round"),
         registry=registry,
     )
     assert round_catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == -1.235
@@ -482,7 +515,7 @@ def test_metadata_axes_enable_non_time_basecase_metadata_fallback(tmp_path: Path
         "Country,Year,Tag,Value\nA,2027,lut-tag,1.0\n",
     )
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
     candidate = {
         "candidate_key": "custom",
         "canonical_parameter_name": "TestParameter",
@@ -688,6 +721,51 @@ def test_compact_slot_catalog_preserves_leaf_specific_periods_and_exact_membersh
     )
 
 
+def test_slot_catalog_excludes_value_less_basecase_without_exact_lut_but_keeps_metadata(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, catalog = real_domain
+    candidate = {
+        "candidate_key": "liq",
+        "canonical_parameter_name": "LiqUtilAdjustment",
+        "basecase_read_mode": "matrix_time_columns",
+        "basecase_column_roles": (
+            "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)"
+        ),
+    }
+    axes = {
+        "Country": "No Value Country",
+        "LNG Plant": "No Value Plant",
+        "LNG Plant Train": "No Value Train",
+        "Year": 2026,
+        "Month": 7,
+        "Period": 1,
+        "Life Cycle Category": "Operating",
+        "Nameplate Capacity (MTPA)": 6.599999,
+    }
+    index = build_basecase_index(
+        [
+            {
+                "candidate_key": "liq",
+                "reference_id": "base-metadata-only",
+                "axes": axes,
+                "value": None,
+            },
+        ],
+        [candidate],
+        registry=registry,
+    )
+
+    indexed = index.lookup("liq", axes)
+    assert indexed is not None
+    assert indexed.value is None
+    assert indexed.metadata["Nameplate Capacity (MTPA)"] == 6.599999
+    assert catalog.lookup("LiqUtilAdjustment", axes) is None
+    assert not build_slot_catalog(index).contains("liq", axes)
+    assert not build_slot_catalog(index, catalog).contains("liq", axes)
+    assert resolve_effective_reference("liq", axes, index, catalog) is None
+
+
 def test_liq_metadata_uses_exact_basecase_values_when_override_exists(
     real_domain: tuple[ParameterSpecRegistry, LutCatalog],
 ) -> None:
@@ -770,9 +848,11 @@ def test_liq_metadata_uses_basecase_non_time_axes_before_lut_metadata(
         [candidate],
         registry=registry,
     )
+    slot_catalog = build_slot_catalog(basecase_index, catalog)
 
     effective = resolve_effective_reference("liq", target_axes, basecase_index, catalog)
 
+    assert slot_catalog.contains("liq", target_axes)
     assert effective is not None
     assert effective.actual_basecase_value is None
     assert effective.lut_default_value == lut_record.value
@@ -833,7 +913,7 @@ GDP:
     )
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(LutLoadPolicy(2026, 2028), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2028), registry=registry)
     assert len(catalog.records) == 1
     assert any("deduped_identical_lut_source_key" in diagnostic for diagnostic in catalog.diagnostics)
     assert catalog.lookup("GDP", {"Country": "A", "Year": 2026}).value == pytest.approx(0.1)
@@ -886,7 +966,7 @@ LiqUtilAdjustment:
         writer.writerows(rows)
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(LutLoadPolicy(), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
     assert len(catalog.records) == 1
     assert catalog.records[0].axes["LNG Plant Train"] == "T2"
     assert catalog.records[0].metadata["Nameplate Capacity (MTPA)"] == 12

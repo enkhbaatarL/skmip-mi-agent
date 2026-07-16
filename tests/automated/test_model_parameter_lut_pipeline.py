@@ -35,8 +35,8 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
 )
 from apps.agents.model_parameter_agent.utils.lut import (
     LutCatalog,
-    LutLoadPolicy,
     ParameterSpecRegistry,
+    ReferenceLoadPolicy,
     build_basecase_index,
     build_slot_catalog,
     clear_lut_runtime_cache,
@@ -72,7 +72,6 @@ def _slot(candidate_key: str, axes: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "candidate_key": candidate_key,
         "slot_axes": [{"axis_name": axis_name, "axis_value": axis_value} for axis_name, axis_value in axes.items()],
-        "rationale_ko": "scenario와 연관된 exact 좌표",
     }
 
 
@@ -122,7 +121,7 @@ def _all_mapping_keys(value: object) -> set[str]:
 @pytest.fixture(scope="module")
 def real_domain() -> tuple[ParameterSpecRegistry, LutCatalog]:
     clear_lut_runtime_cache()
-    policy = LutLoadPolicy()
+    policy = ReferenceLoadPolicy()
     registry = get_parameter_spec_registry()
     return registry, get_lut_catalog(policy, registry=registry)
 
@@ -217,7 +216,6 @@ def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
                 LLMSlotAxis(axis_name="Country", axis_value=f"Country-{index}"),
                 LLMSlotAxis(axis_name="Year", axis_value=2026),
             ],
-            rationale_ko="scenario와 연관된 좌표",
         )
         for candidate_key in ("gdp", "pmi")
         for index in range(101)
@@ -228,6 +226,7 @@ def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
         for candidate_key in ("gdp", "pmi")
     }
     assert slot_count_by_candidate == {"gdp": 101, "pmi": 101}
+    assert "rationale_ko" not in sanitized[0]
     assert all("selected" not in slot for slot in sanitized)
     assert warnings == []
 
@@ -448,7 +447,7 @@ def test_partial_valid_slot_value_and_explicit_no_change_survive_without_retry()
 
 def test_step3_prompt_requires_one_slot_key_value_for_every_input_slot() -> None:
     assert "slots[].coordinates" in VALUE_PROPOSAL_SYSTEM
-    assert "slots[].slot_rationale_ko" in VALUE_PROPOSAL_SYSTEM
+    assert "slot_rationale_ko" not in VALUE_PROPOSAL_SYSTEM
     assert "slots[].reference_value" in VALUE_PROPOSAL_SYSTEM
     assert "입력된 모든 slot에 대해 값을 반드시 반환" in VALUE_PROPOSAL_SYSTEM
     assert "input slot 1개당 slot_values 항목을 정확히 1개" in VALUE_PROPOSAL_SYSTEM

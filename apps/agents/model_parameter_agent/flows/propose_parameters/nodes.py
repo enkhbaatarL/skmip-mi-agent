@@ -38,7 +38,7 @@ from apps.agents.model_parameter_agent.utils.basecase import (
 from apps.agents.model_parameter_agent.utils.lut import (
     BasecaseIndex,
     EffectiveReference,
-    LutLoadPolicy,
+    ReferenceLoadPolicy,
     build_basecase_index,
     build_slot_catalog,
     get_lut_catalog,
@@ -505,7 +505,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             detail="parameter_knowledge_base is required",
         )
     cfg = get_settings()
-    policy = LutLoadPolicy(
+    policy = ReferenceLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
         value_max_decimal_places=(
@@ -531,10 +531,6 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.candidate_mappings,
         policy=policy,
         registry=registry,
-        value_max_decimal_places=(
-            cfg.model_parameter_basecase_value_max_decimal_places
-        ),
-        value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     slot_catalog = build_slot_catalog(basecase_index, lut_catalog)
     counts_by_candidate: dict[str, int] = {}
@@ -1731,7 +1727,6 @@ def _slot_for_value_task(
     return {
         "slot_key": slot_key,
         "coordinates": dict(reference.get("axes") or _coordinates_for_selected_slot(slot)),
-        "slot_rationale_ko": slot.get("rationale_ko"),
         "reference_value": (
             reference.get("llm_reference_value")
             if "llm_reference_value" in reference
@@ -2174,7 +2169,6 @@ def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
             )
             for axis in slot.slot_axes
         ],
-        rationale_ko=slot.rationale_ko,
     ).model_dump()
 
 

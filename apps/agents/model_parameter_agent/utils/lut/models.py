@@ -31,7 +31,9 @@ def freeze_mapping(values: Mapping[_K, _V] | None = None) -> Mapping[_K, _V]:  #
 
 
 @dataclass(frozen=True, slots=True)
-class LutLoadPolicy:
+class ReferenceLoadPolicy:
+    """Shared horizon and precision rules for Basecase and LUT references."""
+
     start_year: int = 2026
     end_year: int = 2030
     value_max_decimal_places: int = BASECASE_VALUE_MAX_DECIMAL_PLACES
@@ -39,10 +41,10 @@ class LutLoadPolicy:
 
     def __post_init__(self) -> None:
         if isinstance(self.start_year, bool) or isinstance(self.end_year, bool):
-            msg = "LUT horizon year must be an integer"
+            msg = "reference horizon year must be an integer"
             raise domain_error(msg)
         if self.start_year < 2000 or self.end_year < 2000:
-            msg = "LUT horizon year must be 2000 or later"
+            msg = "reference horizon year must be 2000 or later"
             raise domain_error(msg)
         if self.start_year > self.end_year:
             msg = (
@@ -95,7 +97,7 @@ class BasecaseReference:
 
 @dataclass(frozen=True, slots=True)
 class BasecaseIndex:
-    policy: LutLoadPolicy
+    policy: ReferenceLoadPolicy
     records: tuple[BasecaseReference, ...]
     candidate_parameters: Mapping[str, str]
     candidate_key_axes: Mapping[str, tuple[str, ...]]

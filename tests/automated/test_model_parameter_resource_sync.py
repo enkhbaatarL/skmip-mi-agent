@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from apps.agents.model_parameter_agent.utils.lut import (
-    LutLoadPolicy,
+    ReferenceLoadPolicy,
     get_parameter_spec_registry,
 )
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
@@ -216,7 +216,7 @@ def test_storage_disabled_requires_no_network_or_writable_runtime(tmp_path: Path
             storage,
             manifest=manifest,
             lut_enabled=True,
-            lut_policy=LutLoadPolicy(),
+            lut_policy=ReferenceLoadPolicy(),
             client_factory=lambda _: pytest.fail("network client must not be created"),
         )
         assert paths.source == "packaged"
@@ -244,7 +244,7 @@ def test_storage_disabled_runtime_uses_packaged_without_local_root(tmp_path: Pat
             storage,
             manifest=manifest,
             lut_enabled=True,
-            lut_policy=LutLoadPolicy(),
+            lut_policy=ReferenceLoadPolicy(),
             client_factory=lambda _: pytest.fail("network client must not be created"),
         )
         assert paths.source == "packaged"
@@ -450,7 +450,7 @@ def test_remote_bootstrap_activates_current_and_reuses_it(tmp_path: Path) -> Non
                 storage,
                 manifest=manifest,
                 lut_enabled=False,
-                lut_policy=LutLoadPolicy(),
+                lut_policy=ReferenceLoadPolicy(),
                 client_factory=lambda _: first_client,
             )
             second_client = _FakeObjectStorageClient({}, fail=True)
@@ -458,7 +458,7 @@ def test_remote_bootstrap_activates_current_and_reuses_it(tmp_path: Path) -> Non
                 storage,
                 manifest=manifest,
                 lut_enabled=False,
-                lut_policy=LutLoadPolicy(),
+                lut_policy=ReferenceLoadPolicy(),
                 client_factory=lambda _: second_client,
             )
         assert first.source == "object_storage"
@@ -492,7 +492,7 @@ def test_remote_failure_activates_packaged_wrapper(tmp_path: Path) -> None:
                 storage,
                 manifest=manifest,
                 lut_enabled=False,
-                lut_policy=LutLoadPolicy(),
+                lut_policy=ReferenceLoadPolicy(),
                 client_factory=lambda _: client,
             )
         assert paths.source == "packaged"

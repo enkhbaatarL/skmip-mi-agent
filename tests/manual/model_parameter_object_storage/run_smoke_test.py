@@ -12,7 +12,7 @@ from pydantic import SecretStr
 ROOT_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT_DIR))
 
-from apps.agents.model_parameter_agent.utils.lut import LutLoadPolicy  # noqa: E402
+from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy  # noqa: E402
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (  # noqa: E402
     resolve_model_parameter_resources,
 )
@@ -58,19 +58,19 @@ async def main() -> None:
             _storage(root / "success"),
             manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
-            lut_policy=LutLoadPolicy(),
+            lut_policy=ReferenceLoadPolicy(),
         )
         reused = await resolve_model_parameter_resources(
             _storage(root / "success"),
             manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
-            lut_policy=LutLoadPolicy(),
+            lut_policy=ReferenceLoadPolicy(),
         )
         fallback = await resolve_model_parameter_resources(
             _storage(root / "fallback", secret="wrong-secret"),
             manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
-            lut_policy=LutLoadPolicy(),
+            lut_policy=ReferenceLoadPolicy(),
         )
 
         assert active.source == "object_storage"

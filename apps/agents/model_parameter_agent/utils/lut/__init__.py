@@ -10,7 +10,7 @@ from apps.agents.model_parameter_agent.utils.lut.domain import (
 from apps.agents.model_parameter_agent.utils.lut.models import (
     BasecaseIndex,
     EffectiveReference,
-    LutLoadPolicy,
+    ReferenceLoadPolicy,
 )
 from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRegistry
 from apps.agents.model_parameter_agent.utils.lut.runtime import (
@@ -25,8 +25,8 @@ __all__ = [
     "BasecaseIndex",
     "EffectiveReference",
     "LutCatalog",
-    "LutLoadPolicy",
     "ParameterSpecRegistry",
+    "ReferenceLoadPolicy",
     "build_basecase_index",
     "build_slot_catalog",
     "canonical_axes_for_candidate",

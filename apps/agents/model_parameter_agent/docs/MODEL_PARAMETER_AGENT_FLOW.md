@@ -169,16 +169,14 @@ parameter별 task는 다음 구조다.
         {"axis_name": "Country", "axis_value": "Japan"},
         {"axis_name": "Year", "axis_value": 2026},
         {"axis_name": "Month", "axis_value": 7}
-      ],
-      "rationale_ko": "이 시나리오가 일본의 2026년 7월 수요에 영향을 주므로 해당 좌표를 선택했습니다."
+      ]
     }
   ]
 }
 ```
 
 - 반환하는 항목은 모두 실제 사용할 slot이다. `selected` 필드는 없다.
-- `rationale_ko`는 시나리오/이벤트와 좌표의 연관성만 설명한다.
-- value 산정 근거는 작성하지 않는다.
+- Step 2는 `candidate_key`와 `slot_axes`만 반환하고 근거 문장은 생성하지 않는다.
 - catalog에 없는 exact 좌표, 축 누락, 중복, 모호한 값은 서버가 제외하고 로그를 남긴다.
 - 유효 slot이 0개인 parameter는 Step 3 입력 candidate에서 제외한다.
 - 다른 parameter에 유효 slot이 하나라도 있으면 남은 parameter만 Step 3으로 진행한다.
@@ -194,7 +192,6 @@ parameter별 task는 다음 구조다.
 {
   "slot_key": "slot-1",
   "coordinates": {"Country": "Japan", "Year": 2026, "Month": 7},
-  "slot_rationale_ko": "...",
   "reference_value": 50.2
 }
 ```
@@ -225,7 +222,6 @@ parameter별 task는 다음 구조다.
         {
           "slot_key": "slot-1",
           "coordinates": {"Country": "Japan", "Year": 2026, "Month": 7},
-          "slot_rationale_ko": "일본의 7월 수요와 연관된 좌표입니다.",
           "reference_value": 50.2
         }
       ]
@@ -277,8 +273,8 @@ parameter별 task는 다음 구조다.
   - 내부 candidate/slot/reference/LLM 용어 사용 금지
 - Slot-level `slot_values[].rationale_ko`
   - slot tooltip에 표시
-  - Step 2의 slot rationale을 활용
-  - 해당 slot 선택 이유와 reference value를 바탕으로 한 값 산정 근거를 간결하게 설명
+  - 확정된 좌표와 scenario/event/dimension을 바탕으로 해당 slot 선택 이유를 설명
+  - reference value를 바탕으로 한 값 산정 근거를 간결하게 설명
 
 ## 9. 최종 변환
 

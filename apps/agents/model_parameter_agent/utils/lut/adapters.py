@@ -16,9 +16,9 @@ from apps.agents.model_parameter_agent.utils.lut.keys import (
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalKey,
     CanonicalValue,
-    LutLoadPolicy,
     LutRecord,
     NumericValue,
+    ReferenceLoadPolicy,
     domain_error,
     freeze_mapping,
 )
@@ -50,7 +50,7 @@ def _expanded_column(template: str, year: int) -> str:
         raise domain_error(msg) from exc
 
 
-def _required_headers(file_spec: LutFileSpec, policy: LutLoadPolicy) -> set[str]:
+def _required_headers(file_spec: LutFileSpec, policy: ReferenceLoadPolicy) -> set[str]:
     required: set[str] = set()
     for column in file_spec.required_columns:
         if "{year}" in column:
@@ -68,7 +68,7 @@ def _required_headers(file_spec: LutFileSpec, policy: LutLoadPolicy) -> set[str]
 def _read_rows(
     file_spec: LutFileSpec,
     snapshot: FileSnapshot,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
 ) -> list[tuple[int, dict[str, str]]]:
     try:
         text = snapshot.content.decode("utf-8-sig")
@@ -106,7 +106,7 @@ def _reference_id(file_spec: LutFileSpec, line_number: int) -> str:
 def _record(
     spec: ParameterLutSpec,
     *,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     axes: Mapping[str, CanonicalValue],
     value: NumericValue,
     metadata: Mapping[str, CanonicalValue] | None,
@@ -132,7 +132,7 @@ def _record(
 
 def _tabular_records(
     spec: ParameterLutSpec,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots: Mapping[str, FileSnapshot],
 ) -> list[LutRecord]:
     file_spec = spec.files["values"]
@@ -219,7 +219,7 @@ def _put_exact_source_value(
 
 def _gdp_growth_records(
     spec: ParameterLutSpec,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots: Mapping[str, FileSnapshot],
 ) -> list[LutRecord]:
     if spec.key_axes != ("Country", "Year"):
@@ -272,7 +272,7 @@ def _gdp_growth_records(
 def _degree_day_values(
     file_spec: LutFileSpec,
     snapshot: FileSnapshot,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     *,
     prefix: str,
 ) -> tuple[dict[CanonicalKey, float], dict[CanonicalKey, str], set[CanonicalKey]]:
@@ -303,7 +303,7 @@ def _degree_day_values(
 
 def _temperature_records(
     spec: ParameterLutSpec,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots: Mapping[str, FileSnapshot],
 ) -> list[LutRecord]:
     if spec.key_axes != ("Country", "Year", "Month"):
@@ -357,7 +357,7 @@ def _temperature_records(
 
 def _liq_util_records(
     spec: ParameterLutSpec,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots: Mapping[str, FileSnapshot],
 ) -> list[LutRecord]:
     expected_key_axes = ("Country", "LNG Plant", "LNG Plant Train", "Year", "Month")
@@ -423,7 +423,7 @@ def _liq_util_records(
 
 
 Adapter = Callable[
-    [ParameterLutSpec, LutLoadPolicy, Mapping[str, FileSnapshot]],
+    [ParameterLutSpec, ReferenceLoadPolicy, Mapping[str, FileSnapshot]],
     list[LutRecord],
 ]
 
@@ -437,7 +437,7 @@ ADAPTERS: Mapping[str, Adapter] = {
 
 def load_parameter_records(
     spec: ParameterLutSpec,
-    policy: LutLoadPolicy,
+    policy: ReferenceLoadPolicy,
     snapshots: Mapping[str, FileSnapshot],
 ) -> list[LutRecord]:
     adapter = ADAPTERS.get(spec.adapter)
