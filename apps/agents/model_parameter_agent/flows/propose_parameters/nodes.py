@@ -42,7 +42,6 @@ from apps.agents.model_parameter_agent.utils.lut import (
     build_basecase_index,
     build_slot_catalog,
     get_lut_catalog,
-    get_parameter_spec_registry,
     resolve_effective_reference,
 )
 from apps.agents.model_parameter_agent.utils.lut.keys import (
@@ -515,10 +514,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     resource_paths = get_model_parameter_resource_paths()
-    registry = get_parameter_spec_registry(
-        resource_paths.manifest_path,
-        lut_root=resource_paths.lut_root,
-    )
+    registry = resource_paths.lut_registry
     records, warnings = build_basecase_records(
         state.parameter_knowledge_base,
         state.candidate_mappings,
@@ -602,10 +598,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     )
     policy = state.basecase_index.policy
     resource_paths = get_model_parameter_resource_paths()
-    registry = get_parameter_spec_registry(
-        resource_paths.manifest_path,
-        lut_root=resource_paths.lut_root,
-    )
+    registry = resource_paths.lut_registry
     lut_catalog = (
         get_lut_catalog(policy, registry=registry)
         if bool(state.resolved_config.get("model_parameter_lut_enabled"))

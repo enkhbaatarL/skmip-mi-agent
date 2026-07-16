@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -74,6 +75,49 @@ def _basecase_cache_debug_json(summary: Any) -> str:
     )
 
 
+_SENSITIVE_CONFIG_KEY_PARTS = (
+    "access_key",
+    "api_key",
+    "bearer",
+    "credential",
+    "password",
+    "secret",
+)
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    normalized_key = key.casefold()
+    if any(part in normalized_key for part in _SENSITIVE_CONFIG_KEY_PARTS):
+        return True
+    return "token" in normalized_key and not normalized_key.endswith("token_url")
+
+
+def _redact_config_value(value: Any, *, key: str = "") -> Any:
+    if _is_sensitive_config_key(key):
+        return "**********"
+    if isinstance(value, dict):
+        return {
+            str(item_key): _redact_config_value(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config_value(item) for item in value]
+    return value
+
+
+def _config_debug_json(cfg: Any, *, source_path: Path) -> str:
+    payload = {
+        "source_path": str(source_path),
+        "settings": _redact_config_value(cfg.model_dump(mode="json")),
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        default=str,
+        indent=2,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from apps.agents.model_parameter_agent.utils.basecase import (
@@ -86,16 +130,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
         ensure_model_parameter_resource_runtime,
     )
+    from apps.agents.model_parameter_agent.utils.resource_manifest import (
+        load_model_parameter_resource_manifest,
+    )
     from apps.agents.model_parameter_agent.utils.resource_runtime import (
         clear_model_parameter_resource_runtime,
     )
-    from apps.common.configs.config import get_settings
+    from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
     from apps.connectors.mlflow.tracing import setup_mlflow_tracing
 
     cfg = get_settings()
     setup_logging(cfg.log_level)
     logger.info(f"Logging configured from settings | level={cfg.log_level.upper()}")
+    logger.opt(lazy=True).debug(
+        "[model-parameter][config] loaded_once=\n{}",
+        lambda: _config_debug_json(cfg, source_path=CONFIG_FILE_PATH),
+    )
     setup_mlflow_tracing(cfg, agent_name=AGENT_NAME)
 
     logger.info("Validating ORM models against the database schema")
@@ -114,8 +165,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         ),
         value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
+    resource_manifest = load_model_parameter_resource_manifest(
+        cfg.model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
     resource_paths = await ensure_model_parameter_resource_runtime(
         cfg.model_parameter_resource_storage,
+        manifest=resource_manifest,
         lut_enabled=cfg.model_parameter_lut_enabled,
         lut_policy=lut_policy,
     )
@@ -129,8 +185,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         validate_lut_startup,
         cfg.model_parameter_lut_enabled,
         lut_policy,
-        config_path=resource_paths.manifest_path,
-        lut_root=resource_paths.lut_root,
+        registry=resource_paths.lut_registry,
     )
     logger.info(
         "Model Parameter LUT startup validation completed | enabled={} version={}",
@@ -145,6 +200,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     basecase_summary = await asyncio.to_thread(
         preload_basecase_runtime_cache,
         str(resource_paths.basecase_dir),
+        registry=resource_paths.lut_registry,
     )
     logger.info(
         "Model Parameter Basecase startup preload completed | parameters={} profiles={} "

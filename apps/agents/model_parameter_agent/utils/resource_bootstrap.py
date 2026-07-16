@@ -25,13 +25,13 @@ from apps.agents.model_parameter_agent.utils.lut import (
     clear_lut_runtime_cache,
     validate_lut_startup,
 )
+from apps.agents.model_parameter_agent.utils.lut.registry import load_parameter_spec_registry
 from apps.agents.model_parameter_agent.utils.resource_manifest import (
     PACKAGE_BASECASE_DIR,
     PACKAGE_LUT_ROOT,
     ModelParameterResourceManifest,
     PlannedResourceDownload,
     RemoteResourceConfigError,
-    load_model_parameter_resource_manifest,
     resource_config_fingerprint,
 )
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
@@ -138,7 +138,7 @@ def _fallback_config_fingerprint(
     lut_enabled: bool,
 ) -> str:
     digest = hashlib.sha256()
-    digest.update(manifest.path.read_bytes())
+    digest.update(manifest.canonical_yaml)
     digest.update(
         json.dumps(
             {
@@ -233,12 +233,17 @@ async def _validate_resource_set(
         manifest,
         basecase_dir=basecase_dir,
     )
+    registry = await asyncio.to_thread(
+        load_parameter_spec_registry,
+        manifest.source_path,
+        lut_root=lut_root,
+        yaml_bytes=manifest.canonical_yaml,
+    )
     await asyncio.to_thread(
         validate_lut_startup,
         lut_enabled,
         lut_policy,
-        config_path=manifest.path,
-        lut_root=lut_root,
+        registry=registry,
     )
 
 
@@ -407,12 +412,19 @@ def _paths_from_release(
     manifest: ModelParameterResourceManifest,
 ) -> ModelParameterResourcePaths:
     resolved_root = release_root.resolve(strict=True)
+    lut_root = (resolved_root / "lut").resolve(strict=True)
+    registry = load_parameter_spec_registry(
+        manifest.source_path,
+        lut_root=lut_root,
+        yaml_bytes=manifest.canonical_yaml,
+    )
     return ModelParameterResourcePaths(
         source=str(payload["source"]),  # type: ignore[arg-type]
         root=resolved_root,
         basecase_dir=(resolved_root / "basecase").resolve(strict=True),
-        lut_root=(resolved_root / "lut").resolve(strict=True),
-        manifest_path=manifest.path,
+        lut_root=lut_root,
+        resource_config_path=manifest.source_path,
+        lut_registry=registry,
         semantic_schema_hash=manifest.semantic_schema_hash,
         resource_config_fingerprint=str(payload["resource_config_fingerprint"]),
         resource_fingerprint=(str(payload["resource_fingerprint"]) if payload.get("resource_fingerprint") else None),
@@ -608,19 +620,20 @@ async def _build_packaged_release(
 async def resolve_model_parameter_resources(
     storage: ModelParameterResourceStorageConfig,
     *,
+    manifest: ModelParameterResourceManifest,
     lut_enabled: bool,
     lut_policy: ReferenceLoadPolicy,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader] = _create_client,
 ) -> ModelParameterResourcePaths:
     """원격 리소스 세트를 원자적으로 선택하고 worker가 고정해 사용할 경로를 반환한다."""
-    manifest = load_model_parameter_resource_manifest(storage.manifest_path, lut_root=PACKAGE_LUT_ROOT)
     if not storage.enabled:
         return ModelParameterResourcePaths(
             source="packaged",
             root=PACKAGE_BASECASE_DIR.parent,
             basecase_dir=PACKAGE_BASECASE_DIR,
             lut_root=PACKAGE_LUT_ROOT,
-            manifest_path=manifest.path,
+            resource_config_path=manifest.source_path,
+            lut_registry=manifest.lut_registry,
             semantic_schema_hash=manifest.semantic_schema_hash,
         )
 
@@ -716,6 +729,7 @@ async def resolve_model_parameter_resources(
 async def ensure_model_parameter_resource_runtime(
     storage: ModelParameterResourceStorageConfig,
     *,
+    manifest: ModelParameterResourceManifest,
     lut_enabled: bool,
     lut_policy: ReferenceLoadPolicy,
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader] = _create_client,
@@ -727,6 +741,7 @@ async def ensure_model_parameter_resource_runtime(
 
     paths = await resolve_model_parameter_resources(
         storage,
+        manifest=manifest,
         lut_enabled=lut_enabled,
         lut_policy=lut_policy,
         client_factory=client_factory,

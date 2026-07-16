@@ -6,10 +6,7 @@ from multiprocessing import get_context
 from pathlib import Path
 import sys
 import tempfile
-from types import SimpleNamespace
 from typing import Any
-
-from pydantic import SecretStr
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -17,45 +14,101 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy  # noqa: E402
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (  # noqa: E402
+    ObjectStorageReader,
     resolve_model_parameter_resources,
 )
-from apps.connectors.object_storage import S3ObjectStorageClient  # noqa: E402
+from apps.agents.model_parameter_agent.utils.resource_manifest import (  # noqa: E402
+    load_model_parameter_resource_manifest,
+)
+from apps.common.configs.config import (  # noqa: E402
+    CONFIG_FILE_PATH,
+    ModelParameterResourceStorageConfig,
+    get_settings,
+)
+from apps.connectors.object_storage import (  # noqa: E402
+    DownloadedObject,
+    ObjectMetadata,
+    S3ObjectStorageClient,
+)
 
 
-MANIFEST_PATH = Path(__file__).with_name("model_parameter_resources.yaml")
+SETTINGS = get_settings()
+RESOURCE_MANIFEST = load_model_parameter_resource_manifest(
+    SETTINGS.model_parameter_resources,
+    source_path=CONFIG_FILE_PATH,
+)
 
 
-def _storage(local_root: Path) -> SimpleNamespace:
-    return SimpleNamespace(
-        enabled=True,
-        endpoint_url="http://127.0.0.1:19000",
-        region_name="us-east-1",
-        signature_version="s3v4",
-        bucket="sk-mi-d-osb-ss-skgas",
-        access_key_id=SecretStr("minio-test-access"),
-        secret_access_key=SecretStr("minio-test-secret"),
-        manifest_path=str(MANIFEST_PATH),
-        local_root=str(local_root),
-        connect_timeout_seconds=2,
-        read_timeout_seconds=10,
-        max_attempts=1,
-        bootstrap_timeout_seconds=120,
-        lock_timeout_seconds=180,
-        download_chunk_size_bytes=1024 * 1024,
+def _storage(local_root: Path) -> ModelParameterResourceStorageConfig:
+    return SETTINGS.model_parameter_resource_storage.model_copy(
+        update={
+            "local_root": str(local_root),
+            "connect_timeout_seconds": 2,
+            "read_timeout_seconds": 10,
+            "max_attempts": 1,
+            "bootstrap_timeout_seconds": 120,
+            "lock_timeout_seconds": 180,
+        },
     )
 
 
-def _client_factory(storage: SimpleNamespace, marker_path: Path) -> S3ObjectStorageClient:
+class _CountingObjectStorageClient(ObjectStorageReader):
+    def __init__(self, delegate: S3ObjectStorageClient, marker_path: Path) -> None:
+        self._delegate = delegate
+        self._marker_path = marker_path
+
+    async def head_object(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        logical_name: str,
+    ) -> ObjectMetadata:
+        return await self._delegate.head_object(
+            bucket=bucket,
+            object_key=object_key,
+            logical_name=logical_name,
+        )
+
+    async def download_object(
+        self,
+        *,
+        bucket: str,
+        object_key: str,
+        logical_name: str,
+        destination: Path,
+        chunk_size_bytes: int,
+        deadline: float,
+    ) -> DownloadedObject:
+        with self._marker_path.open("a", encoding="utf-8") as marker:
+            marker.write(f"download:{logical_name}\n")
+        return await self._delegate.download_object(
+            bucket=bucket,
+            object_key=object_key,
+            logical_name=logical_name,
+            destination=destination,
+            chunk_size_bytes=chunk_size_bytes,
+            deadline=deadline,
+        )
+
+    async def close(self) -> None:
+        await self._delegate.close()
+
+
+def _client_factory(storage: Any, marker_path: Path) -> ObjectStorageReader:
     with marker_path.open("a", encoding="utf-8") as marker:
-        marker.write("remote-bootstrap\n")
-    return S3ObjectStorageClient(
-        endpoint_url=storage.endpoint_url,
-        region_name=storage.region_name,
-        signature_version=storage.signature_version,
-        access_key_id=storage.access_key_id.get_secret_value(),
-        secret_access_key=storage.secret_access_key.get_secret_value(),
-        connect_timeout_seconds=storage.connect_timeout_seconds,
-        read_timeout_seconds=storage.read_timeout_seconds,
+        marker.write("client-created\n")
+    return _CountingObjectStorageClient(
+        S3ObjectStorageClient(
+            endpoint_url=storage.endpoint_url,
+            region_name=storage.region_name,
+            signature_version=storage.signature_version,
+            access_key_id=storage.access_key_id.get_secret_value(),
+            secret_access_key=storage.secret_access_key.get_secret_value(),
+            connect_timeout_seconds=storage.connect_timeout_seconds,
+            read_timeout_seconds=storage.read_timeout_seconds,
+        ),
+        marker_path,
     )
 
 
@@ -65,6 +118,7 @@ def _worker(local_root: str, marker_path: str, result_queue: Any) -> None:  # no
     async def run() -> None:
         paths = await resolve_model_parameter_resources(
             storage,
+            manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
             lut_policy=ReferenceLoadPolicy(),
             client_factory=lambda config: _client_factory(config, Path(marker_path)),
@@ -97,7 +151,13 @@ def main() -> None:
         assert {result[0] for result in results} == {"object_storage"}
         assert len({result[1] for result in results}) == 1
         assert len({result[2] for result in results}) == 1
-        assert marker_path.read_text(encoding="utf-8").splitlines() == ["remote-bootstrap"]
+        marker_lines = marker_path.read_text(encoding="utf-8").splitlines()
+        assert marker_lines.count("client-created") == 1
+        download_markers = [line.removeprefix("download:") for line in marker_lines if line.startswith("download:")]
+        assert sorted(download_markers) == sorted(
+            resource.logical_name
+            for resource in RESOURCE_MANIFEST.selected_files(lut_enabled=True)
+        )
 
 
 if __name__ == "__main__":

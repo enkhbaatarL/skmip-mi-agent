@@ -3324,22 +3324,26 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 class ModelParameterEntrypointTest(unittest.IsolatedAsyncioTestCase):
     async def test_lifespan_uses_configured_reference_precision(self) -> None:
         import model_param as model_param_entrypoint
+        from apps.common.configs.config import get_settings
 
-        cfg = SimpleNamespace(
-            log_level="INFO",
-            callback_oauth2_token_url="",
-            model_parameter_lut_horizon_start_year=2027,
-            model_parameter_lut_horizon_end_year=2029,
-            model_parameter_basecase_value_max_decimal_places=2,
-            model_parameter_basecase_value_precision_mode="round",
-            model_parameter_resource_storage=object(),
-            model_parameter_lut_enabled=True,
+        cfg = get_settings().model_copy(
+            update={
+                "log_level": "INFO",
+                "callback_oauth2_token_url": "",
+                "model_parameter_lut_horizon_start_year": 2027,
+                "model_parameter_lut_horizon_end_year": 2029,
+                "model_parameter_basecase_value_max_decimal_places": 2,
+                "model_parameter_basecase_value_precision_mode": "round",
+                "model_parameter_lut_enabled": True,
+            },
         )
+        lut_registry = object()
         resource_paths = SimpleNamespace(
             source="packaged",
             resource_fingerprint=None,
             fallback_reason=None,
-            manifest_path=Path("resources/model_parameter_lut.yaml"),
+            resource_config_path=Path("config.yaml"),
+            lut_registry=lut_registry,
             lut_root=Path("resources/model_parameter_lut"),
             basecase_dir=Path("resources/basecase"),
         )
@@ -3396,10 +3400,12 @@ class ModelParameterEntrypointTest(unittest.IsolatedAsyncioTestCase):
         validate_lut_startup.assert_called_once_with(
             True,
             policy,
-            config_path=resource_paths.manifest_path,
-            lut_root=resource_paths.lut_root,
+            registry=lut_registry,
         )
-        preload_basecase.assert_called_once_with(str(resource_paths.basecase_dir))
+        preload_basecase.assert_called_once_with(
+            str(resource_paths.basecase_dir),
+            registry=lut_registry,
+        )
 
 
 class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):

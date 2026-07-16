@@ -14,6 +14,7 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
     clear_model_parameter_resource_runtime,
     register_model_parameter_resource_paths,
 )
+from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +24,10 @@ def packaged_model_parameter_resource_runtime(request: pytest.FixtureRequest) ->
         yield
         return
 
-    manifest = load_model_parameter_resource_manifest()
+    manifest = load_model_parameter_resource_manifest(
+        get_settings().model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
     clear_model_parameter_resource_runtime()
     register_model_parameter_resource_paths(
         ModelParameterResourcePaths(
@@ -31,7 +35,8 @@ def packaged_model_parameter_resource_runtime(request: pytest.FixtureRequest) ->
             root=PACKAGE_BASECASE_DIR.parent,
             basecase_dir=PACKAGE_BASECASE_DIR,
             lut_root=PACKAGE_LUT_ROOT,
-            manifest_path=manifest.path,
+            resource_config_path=manifest.source_path,
+            lut_registry=manifest.lut_registry,
             semantic_schema_hash=manifest.semantic_schema_hash,
         ),
     )

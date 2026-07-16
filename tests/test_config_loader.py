@@ -144,6 +144,41 @@ class ConfigLoaderTest(unittest.TestCase):
 
         self.assertEqual(lines, ["db-host", "1", "60.0", "DEBUG"])
 
+    def test_settings_snapshot_is_reused_after_config_file_removal(self) -> None:
+        lines = self.run_settings_import(
+            BASE_CONFIG,
+            print_lines=[
+                "import os",
+                "from pathlib import Path",
+                "first = cfg",
+                "Path(os.environ['APP_CONFIG']).unlink()",
+                "print(get_settings() is first)",
+                "print(get_settings().METADATA_DB_HOST)",
+            ],
+        )
+
+        self.assertEqual(lines, ["True", "db-host"])
+
+    def test_model_parameter_resources_are_loaded_in_settings_snapshot(self) -> None:
+        config_text = BASE_CONFIG + textwrap.dedent(
+            """
+
+            model_parameter_resources:
+              basecase:
+                demand:
+                  path: Demand Model_Input.xlsm
+              lut: {}
+            """,
+        )
+        lines = self.run_settings_import(
+            config_text,
+            print_lines=[
+                "print(cfg.model_parameter_resources['basecase']['demand']['path'])",
+            ],
+        )
+
+        self.assertEqual(lines, ["Demand Model_Input.xlsm"])
+
     def test_real_crlf_config_loads(self) -> None:
         lines = self.run_settings_import(BASE_CONFIG.replace("\n", "\r\n"))
 

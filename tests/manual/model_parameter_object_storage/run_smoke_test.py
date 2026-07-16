@@ -5,7 +5,6 @@ import asyncio
 from pathlib import Path
 import sys
 import tempfile
-from types import SimpleNamespace
 
 from pydantic import SecretStr
 
@@ -17,28 +16,38 @@ from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy  # n
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (  # noqa: E402
     resolve_model_parameter_resources,
 )
+from apps.agents.model_parameter_agent.utils.resource_manifest import (  # noqa: E402
+    load_model_parameter_resource_manifest,
+)
+from apps.common.configs.config import (  # noqa: E402
+    CONFIG_FILE_PATH,
+    ModelParameterResourceStorageConfig,
+    get_settings,
+)
 
 
-MANIFEST_PATH = Path(__file__).with_name("model_parameter_resources.yaml")
+SETTINGS = get_settings()
+RESOURCE_MANIFEST = load_model_parameter_resource_manifest(
+    SETTINGS.model_parameter_resources,
+    source_path=CONFIG_FILE_PATH,
+)
 
 
-def _storage(local_root: Path, *, secret: str = "minio-test-secret") -> SimpleNamespace:
-    return SimpleNamespace(
-        enabled=True,
-        endpoint_url="http://127.0.0.1:19000",
-        region_name="us-east-1",
-        signature_version="s3v4",
-        bucket="sk-mi-d-osb-ss-skgas",
-        access_key_id=SecretStr("minio-test-access"),
-        secret_access_key=SecretStr(secret),
-        manifest_path=str(MANIFEST_PATH),
-        local_root=str(local_root),
-        connect_timeout_seconds=2,
-        read_timeout_seconds=10,
-        max_attempts=1,
-        bootstrap_timeout_seconds=120,
-        lock_timeout_seconds=10,
-        download_chunk_size_bytes=1024 * 1024,
+def _storage(
+    local_root: Path,
+    *,
+    secret: str = "minio-test-secret",
+) -> ModelParameterResourceStorageConfig:
+    return SETTINGS.model_parameter_resource_storage.model_copy(
+        update={
+            "secret_access_key": SecretStr(secret),
+            "local_root": str(local_root),
+            "connect_timeout_seconds": 2,
+            "read_timeout_seconds": 10,
+            "max_attempts": 1,
+            "bootstrap_timeout_seconds": 120,
+            "lock_timeout_seconds": 10,
+        },
     )
 
 
@@ -47,16 +56,19 @@ async def main() -> None:
         root = Path(tmpdir)
         active = await resolve_model_parameter_resources(
             _storage(root / "success"),
+            manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
             lut_policy=ReferenceLoadPolicy(),
         )
         reused = await resolve_model_parameter_resources(
             _storage(root / "success"),
+            manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
             lut_policy=ReferenceLoadPolicy(),
         )
         fallback = await resolve_model_parameter_resources(
             _storage(root / "fallback", secret="wrong-secret"),
+            manifest=RESOURCE_MANIFEST,
             lut_enabled=True,
             lut_policy=ReferenceLoadPolicy(),
         )

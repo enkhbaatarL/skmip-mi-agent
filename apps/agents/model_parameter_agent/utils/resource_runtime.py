@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 from typing import Literal
 
+from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRegistry
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -15,7 +16,8 @@ class ModelParameterResourcePaths:
     root: Path
     basecase_dir: Path
     lut_root: Path
-    manifest_path: Path
+    resource_config_path: Path
+    lut_registry: ParameterSpecRegistry
     semantic_schema_hash: str
     resource_config_fingerprint: str | None = None
     resource_fingerprint: str | None = None
@@ -41,7 +43,8 @@ def register_model_parameter_resource_paths(paths: ModelParameterResourcePaths) 
         root=paths.root.resolve(strict=True),
         basecase_dir=paths.basecase_dir.resolve(strict=True),
         lut_root=paths.lut_root.resolve(strict=True),
-        manifest_path=paths.manifest_path.resolve(strict=True),
+        resource_config_path=paths.resource_config_path.resolve(strict=True),
+        lut_registry=paths.lut_registry,
         semantic_schema_hash=paths.semantic_schema_hash,
         resource_config_fingerprint=paths.resource_config_fingerprint,
         resource_fingerprint=paths.resource_fingerprint,
