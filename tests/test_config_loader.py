@@ -68,11 +68,7 @@ class ConfigLoaderTest(unittest.TestCase):
             config_path = Path(tmp_dir) / "config.yaml"
             config_path.write_text(config_text, encoding="utf-8")
 
-            env = {
-                key: value
-                for key, value in os.environ.items()
-                if key in PRESERVED_SUBPROCESS_ENV_KEYS
-            }
+            env = {key: value for key, value in os.environ.items() if key in PRESERVED_SUBPROCESS_ENV_KEYS}
             env["APP_CONFIG"] = str(config_path)
             if extra_env:
                 env.update(extra_env)
@@ -158,6 +154,65 @@ class ConfigLoaderTest(unittest.TestCase):
         )
 
         self.assertEqual(lines, ["True", "db-host"])
+
+    def test_automated_collection_does_not_require_app_settings_env(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        env = {key: value for key, value in os.environ.items() if key in PRESERVED_SUBPROCESS_ENV_KEYS}
+        result = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--collect-only",
+                "-q",
+                "tests/automated/test_tracing_context.py",
+            ],
+            cwd=repo_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr + result.stdout
+
+    def test_default_lut_registry_uses_cached_app_config_snapshot(self) -> None:
+        config_text = BASE_CONFIG + textwrap.dedent(
+            """
+
+            model_parameter_resources:
+              basecase: {}
+              lut:
+                TestParameter:
+                  adapter: tabular
+                  layout: row
+                  files:
+                    values:
+                      path: test.csv
+                      axis_columns:
+                        Country: Country
+                        Year: Year
+                      value_column: Value
+                  key_axes: [Country, Year]
+            """,
+        )
+        lines = self.run_settings_import(
+            config_text,
+            print_lines=[
+                "import os",
+                "from pathlib import Path",
+                "from apps.agents.model_parameter_agent.utils.lut import get_parameter_spec_registry",
+                "config_path = Path(os.environ['APP_CONFIG']).resolve()",
+                "config_path.unlink()",
+                "registry = get_parameter_spec_registry()",
+                "print(registry.config_path == config_path)",
+                "print(sorted(registry.specs))",
+                "print(get_parameter_spec_registry() is registry)",
+            ],
+        )
+
+        assert lines == ["True", "['TestParameter']", "True"]
 
     def test_model_parameter_resources_are_loaded_in_settings_snapshot(self) -> None:
         config_text = BASE_CONFIG + textwrap.dedent(

@@ -11,7 +11,6 @@ from apps.agents.model_parameter_agent.utils.lut.adapters import (
 from apps.agents.model_parameter_agent.utils.lut.catalog import LutCatalog, build_lut_catalog
 from apps.agents.model_parameter_agent.utils.lut.models import ReferenceLoadPolicy, domain_error
 from apps.agents.model_parameter_agent.utils.lut.registry import (
-    DEFAULT_LUT_CONFIG_PATH,
     DEFAULT_LUT_ROOT,
     ParameterSpecRegistry,
     load_parameter_spec_registry,
@@ -25,6 +24,33 @@ from apps.agents.model_parameter_agent.utils.runtime_cache import (
 _SNAPSHOT_CACHE: RuntimeLruCache[FileSnapshot] = RuntimeLruCache(max_entries=64)
 _REGISTRY_CACHE: RuntimeLruCache[ParameterSpecRegistry] = RuntimeLruCache(max_entries=16)
 _CATALOG_CACHE: RuntimeLruCache[LutCatalog] = RuntimeLruCache(max_entries=16)
+
+
+def _settings_parameter_spec_registry(
+    *,
+    lut_root: Path | str | None,
+) -> ParameterSpecRegistry:
+    """APP_CONFIG에서 이미 로드한 설정 snapshot으로 기본 registry를 만든다."""
+    from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
+
+    config = CONFIG_FILE_PATH.expanduser().resolve()
+    root = Path(lut_root).expanduser().resolve() if lut_root is not None else DEFAULT_LUT_ROOT.resolve()
+    yaml_bytes = json.dumps(
+        get_settings().model_parameter_resources,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    config_sha256 = hashlib.sha256(yaml_bytes).hexdigest()
+
+    return _REGISTRY_CACHE.get_or_build(
+        ("settings-lut-registry-v1", config, root, config_sha256),
+        builder=lambda: load_parameter_spec_registry(
+            config,
+            lut_root=root,
+            yaml_bytes=yaml_bytes,
+        ),
+    )
 
 
 def _read_snapshot(path: Path) -> FileSnapshot:
@@ -72,23 +98,18 @@ def get_parameter_spec_registry(
         resource_paths = get_registered_model_parameter_resource_paths()
         if resource_paths is not None:
             return resource_paths.lut_registry
-        config_path = DEFAULT_LUT_CONFIG_PATH
+        return _settings_parameter_spec_registry(lut_root=lut_root)
 
     config = Path(config_path).expanduser().resolve()
-    root = (
-        Path(lut_root).expanduser().resolve()
-        if lut_root is not None
-        else (DEFAULT_LUT_ROOT if config == DEFAULT_LUT_CONFIG_PATH.resolve() else config.parent.parent).resolve()
-    )
+    root = Path(lut_root).expanduser().resolve() if lut_root is not None else config.parent.parent.resolve()
     yaml_snapshot = _read_snapshot(config)
 
     def build() -> ParameterSpecRegistry:
-        registry = load_parameter_spec_registry(
+        return load_parameter_spec_registry(
             config,
             lut_root=root,
             yaml_bytes=yaml_snapshot.content,
         )
-        return registry
 
     return _REGISTRY_CACHE.get_or_build(
         ("lut-registry-v1", config, root, yaml_snapshot.sha256),
@@ -140,10 +161,7 @@ def get_lut_catalog(
                 file_spec.relative_path,
                 _read_snapshot(file_spec.resolved_path),
             )
-    file_identity = tuple(
-        (relative_path, snapshot.sha256)
-        for relative_path, snapshot in sorted(snapshots.items())
-    )
+    file_identity = tuple((relative_path, snapshot.sha256) for relative_path, snapshot in sorted(snapshots.items()))
     cache_key = (
         "lut-catalog-v2",
         active_registry.config_path,

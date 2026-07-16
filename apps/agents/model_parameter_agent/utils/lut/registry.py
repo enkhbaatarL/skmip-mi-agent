@@ -20,7 +20,6 @@ LayoutName = Literal["row", "year_columns"]
 
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LUT_ROOT = PACKAGE_DIR / "resources" / "lut"
-DEFAULT_LUT_CONFIG_PATH = PACKAGE_DIR.parents[2] / "envs" / "config.yaml"
 
 
 class _LutFileSpecModel(BaseModel):
