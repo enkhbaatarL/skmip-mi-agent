@@ -210,7 +210,7 @@ class Scenario(BaseModel):
         description="dim_key -> value 의 1:1 매핑.",
     )
     description: str = Field(
-        description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술. 공백과 문장부호를 포함해 300~500자.",
+        description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술. 공백과 문장부호를 포함해 300-400자.",
     )
     derivation_rationale: str = Field(
         description="이 시나리오를 도출한 근거.",
@@ -262,7 +262,7 @@ class Stage5Validation(BaseModel):
 
 class ScenarioGroupMetadata(BaseModel):
     title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
-    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300~400자.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300-400자.")
 
 
 class ScenarioGenerationResult(ApiModel):

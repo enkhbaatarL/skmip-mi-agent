@@ -54,7 +54,7 @@ class Stage3BatchStructuredOutput(BaseModel):
 
 class NarrativeOnly(BaseModel):
     title: str = Field(description="시장 참여자 관점 한 줄 요약. 공백과 문장부호를 포함해 100자 이내.")
-    description: str = Field(description="3~5줄 시나리오 서술. 공백과 문장부호를 포함해 300~500자.")
+    description: str = Field(description="3~5줄 시나리오 서술. 공백과 문장부호를 포함해 300-400자.")
     derivation_rationale: str = Field(description="도출 근거")
     price_direction: PriceDirection
 
@@ -75,7 +75,7 @@ class Stage6StructuredOutput(BaseModel):
 
 class ScenarioGroupMetadataStructuredOutput(BaseModel):
     title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
-    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300~400자.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300-400자.")
 
 
 def _format_dimensions_block(template: Any) -> str:
@@ -231,7 +231,7 @@ def build_stage4_user_prompt(
 ## 산출 규칙
 - narratives 길이 = {target_count}.
 - 각 narrative 의 title 은 한 줄이며, 공백과 문장부호를 포함해 100자 이내.
-- 각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자.
+- 각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300-400자.
 {feedback_block}"""
 
 
@@ -257,7 +257,7 @@ def build_stage4_fixed_user_prompt(
 ## 산출 규칙
 - narratives 길이 = {target_count}.
 - 각 narrative 의 title 은 한 줄이며, 공백과 문장부호를 포함해 100자 이내.
-- 각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자.
+- 각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300-400자.
 """
 
 
@@ -375,7 +375,7 @@ STAGE4_SYSTEM_PROMPT = """\
 
 ## 작성 가이드라인 (반드시 준수)
 - title (1줄): 시장 참여자 관점의 한 줄 요약. 공백과 문장부호를 포함해 100자 이내. 예: '1개월 내 정상화'.
-- description (3~5줄): 각 시나리오의 가정치 조합(주요 Dim 값)을 자연스러운 한국어 문장으로 풀어 서술 + 전개 양상. 공백과 문장부호를 포함해 300~500자. 'A=B' 같은 key=value 표기 금지.
+- description (3~5줄): 각 시나리오의 가정치 조합(주요 Dim 값)을 자연스러운 한국어 문장으로 풀어 서술 + 전개 양상. 공백과 문장부호를 포함해 300-400자. 'A=B' 같은 key=value 표기 금지.
 - derivation_rationale: 이 시나리오가 왜 도출되는지 — 어떤 Dim 조합·맥락 단서로부터 왔는지.
 - price_direction.jkm / ttf / hh: 7단계(strong_bull|bull|mild_bull|neutral|mild_bear|bear|strong_bear) 중 1개.
 - 입력 조합은 항상 dim_key -> value의 flat object(JSON object) 의미로 해석.
@@ -435,7 +435,7 @@ STAGE4_HARD_CONSTRAINTS = """\
 - narratives 길이는 입력 조합 수와 정확히 일치.
 - price_direction.jkm / ttf / hh 는 반드시 7단계 enum 중 정확히 1개.
 - title 은 1줄이며, 공백과 문장부호를 포함해 100자 이내.
-- description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자.
+- description 은 3~5줄이며, 공백과 문장부호를 포함해 300-400자.
 - '결과 동일 조합 통합' 금지 — 출력 길이를 줄이지 마십시오.
 - 입력 조합을 ARRAY 형태로 재해석/치환하지 마십시오(항상 flat object 가정).
 - 입력 조합의 key 집합은 selected dim_key 와 정확히 일치해야 함(누락/여분 금지).
@@ -454,7 +454,7 @@ Base Event와 생성된 시나리오 목록을 입력받아 시나리오 그룹�
 SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS = """\
 [중요한 출력 제약 — Scenario Group Metadata]
 - title 은 공백과 문장부호를 포함해 100자 이내.
-- description 은 공백과 문장부호를 포함해 300~400자.
+- description 은 공백과 문장부호를 포함해 300-400자.
 - description은 기존 detail_analysis를 그대로 복사하지 말고, 시나리오 그룹의 목적과 주요 분기 축을 압축 요약하십시오.
 - description에는 개별 시나리오의 구체적 분기값 나열 대신, 각 시나리오가 의미하는
   고수준 전개 방향(예: 정상화/부분 차질/장기 차질/가격 충격 경로)을 압축해 반영하십시오.
