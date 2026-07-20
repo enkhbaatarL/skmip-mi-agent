@@ -86,7 +86,6 @@ export type EventItem = {
     disabled: boolean;
     reason?: string | null;
   };
-  impacts: Record<"JKM" | "TTF" | "HH", "up" | "down" | "neutral">;
 };
 
 export type EventListResponse = {
@@ -103,7 +102,6 @@ export type EventListResponse = {
     signalReason?: string | null;
     scenarioSuggestYn?: string;
     scenarioSuggestReason?: string | null;
-    marketImpacts?: Record<string, { direction?: string; label?: string; summary?: string }>;
     relatedScenarioGroup?: EventItem["relatedScenarioGroup"];
     scenarioActionState?: EventItem["scenarioActionState"];
     raw?: unknown;

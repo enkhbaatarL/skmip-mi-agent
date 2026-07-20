@@ -40,12 +40,6 @@ class EventTypeInfo(ApiModel):
     label: str = ""
 
 
-class EventMarketImpact(ApiModel):
-    direction: str = "neutral"
-    label: str = "S"
-    summary: str | None = None
-
-
 class EventScenarioActionState(ApiModel):
     type: str
     label: str
@@ -83,7 +77,6 @@ class EventListRow(ApiModel):
     scenario_suggest_yn: str = "N"
     scenario_suggest_reason: str | None = None
     tags: list[str] = Field(default_factory=list)
-    market_impacts: dict[str, EventMarketImpact] = Field(default_factory=dict)
     related_scenario_group: RelatedScenarioGroupSummary | None = None
     scenario_action_state: EventScenarioActionState
     raw: dict[str, Any] = Field(default_factory=dict)

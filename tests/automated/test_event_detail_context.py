@@ -43,9 +43,21 @@ def test_event_repository_builds_context_from_operational_wrapper_shape() -> Non
         mod_dtm=None,
         latest_record_first_created=None,
         oldest_record_first_created=None,
+        new_yn="Y",
+        signal_yn="Y",
+        signal_confidence=None,
+        signal_reason=None,
+        scenario_suggest_yn="N",
+        scenario_suggest_reason=None,
         type_l2=SimpleNamespace(
+            event_type_l2_id=3,
             level_2_code="new_terminal_cod_rampup_change",
-            level_1=SimpleNamespace(level_1_code="supply"),
+            level_2_label="신규 터미널 COD 및 램프업 변화",
+            level_1=SimpleNamespace(
+                event_type_l1_id=1,
+                level_1_code="supply",
+                level_1_label="공급",
+            ),
         ),
     )
 
@@ -54,6 +66,10 @@ def test_event_repository_builds_context_from_operational_wrapper_shape() -> Non
     assert payload["key_bullets"] == ["조건부 최종투자결정을 발표함.", "인허가 취득을 전제로 함."]
     assert payload["tags"] == ["EemsEnergyTerminal", "Gasunie", "Vopak"]
     assert payload["occurred_at"] == ""
+
+    backoffice_payload = repository._event_to_backoffice_dict(event)
+
+    assert "market_impacts" not in backoffice_payload
 
 
 def test_event_detail_schema_preserves_context_fields() -> None:
@@ -72,6 +88,9 @@ def test_event_detail_schema_preserves_context_fields() -> None:
                 "created_at": "2026-06-19T23:00:29",
                 "updated_at": "2026-07-02T13:16:36",
                 "language": "ko",
+                "market_impacts": {
+                    "JKM": {"direction": "neutral", "label": "S"},
+                },
             },
             "scenario_template": {"event_type_l2_id": 3},
             "source": {"type": "agent_db"},
@@ -81,3 +100,4 @@ def test_event_detail_schema_preserves_context_fields() -> None:
     assert output["event"]["keyBullets"] == ["조건부 최종투자결정을 발표함."]
     assert output["event"]["tags"] == ["EemsEnergyTerminal", "Gasunie"]
     assert output["event"]["sourceMiRecordIds"] == [2271, 2281]
+    assert "marketImpacts" not in output["event"]

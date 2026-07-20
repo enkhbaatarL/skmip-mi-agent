@@ -463,14 +463,13 @@ def _build_event_list(group: ScenarioGroupModel | None) -> JsonObject:
                 "category": group.event_type_l2_id,
                 "status": "generated" if group.scenario_group_id is not None else "new",
                 "recommended": False,
-                "marketImpacts": {"JKM": None, "TTF": None, "HH": None},
                 "scenarioAction": {
                     "available": True,
                     "scenarioGroupId": group.scenario_group_id,
                     "stage": group.stage,
                 },
-            }
-        ]
+            },
+        ],
     }
 
 

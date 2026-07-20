@@ -527,7 +527,6 @@ def _event_row_payload(item: JsonObject) -> JsonObject:
         "createdAt": item.get("createdAt") or item.get("created_at") or "",
         "updatedAt": item.get("updatedAt") or item.get("updated_at") or "",
         "language": item.get("language") or "ko",
-        "marketImpacts": item.get("marketImpacts") or item.get("market_impacts") or {},
         "relatedScenarioGroup": item.get("relatedScenarioGroup") or item.get("related_scenario_group"),
         "scenarioActionState": action,
         "raw": item,

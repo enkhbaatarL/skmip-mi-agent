@@ -181,7 +181,6 @@ class EventListRow(ApiModel):
     scenario_suggest_yn: str = "N"
     scenario_suggest_reason: str | None = None
     tags: list[str] = Field(default_factory=list)
-    market_impacts: JsonObject = Field(default_factory=dict)
     related_scenario_group: RelatedScenarioGroupSummary | None = None
     scenario_action_state: EventActionState = Field(default_factory=EventActionState)
     raw: JsonObject = Field(default_factory=dict)

@@ -105,7 +105,7 @@ Backoffice Event List와 Event Detail 화면을 위한 조회 API입니다.
 - `GET /events`
   - Query: `keyword`, `status`(`new`/`updated`), `eventTypeL1Id`, `eventTypeL2Id`, `recommendedOnly`, `dateFrom`, `dateTo`, `sort`, `page`, `pageSize`
   - Response: `rows`, `pagination`, `source`
-  - 각 row는 `miEventId`, title/summary/time/category, Event Type L1/L2, signal/recommended metadata, market impact summary, `relatedScenarioGroup`, `scenarioActionState`를 포함합니다.
+  - 각 row는 `miEventId`, title/summary/time/category, Event Type L1/L2, signal/recommended metadata, `relatedScenarioGroup`, `scenarioActionState`를 포함합니다.
   - `scenarioActionState.type`은 `create`, `continue_generation`, `open_detail`, `disabled` 중 하나입니다.
 - `GET /events/{mi_event_id}`
   - Response: `event`, `scenarioTemplate`, `source`
