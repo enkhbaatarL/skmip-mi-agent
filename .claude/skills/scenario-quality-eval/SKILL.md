@@ -36,7 +36,8 @@ event detail이 없으면 event payload 기반 검사는 임의로 통과시키�
 4. Layer 2 LLM-as-judge 루브릭 평가를 그룹당 최대 2회 실행한다.
 5. 사용자가 validation 자체 평가를 요청했거나 `--mutations`/`--probe`가 지정되면 Layer 2.5 mutation probe를 실행한다.
 6. MLflow tracing이 활성이고 접근 가능하면 Layer 3 trace 진단을 실행한다. 접근 실패나 trace 부재는 infra fail/skip으로 기록하고 품질 fail로 섞지 않는다.
-7. SQLite에 평가 결과를 저장하고 `<batch_id>/quality_report.md`를 생성한다.
+7. SQLite에 평가 결과를 저장하고 `<batch_id>/quality_report.md`를 생성한다. (한국어로)
+8. 평가의 마지막 산출물로 `<batch_id>/violation_plan_background.md`를 생성한다. 개별 rubric 순서가 아니라 정성적 원인, 유사한 수정 방향, 책임 stage 기준으로 violation을 묶어 후속 plan의 배경 문서로 만든다.
 
 ## 실행 명령
 
@@ -265,3 +266,46 @@ Judge prompt에는 `prompt_version` 상수를 두고 SQLite에 기록한다.
 - 관측성 개선 제안: API가 노출하지 않아 skip/취약 판정된 항목.
 
 사용자에게 최종 보고할 때는 report path, SQLite path, 전체 verdict, 주요 FAIL/WARN violation, 실행하지 못한 계층 또는 skip 사유를 짧게 포함한다.
+
+## Plan Background Format
+
+품질 평가가 끝나면 `quality_report.md`와 별도로
+`<batch_id>/violation_plan_background.md`를 항상 생성한다. violation이 없으면 없다는
+결론과 남은 skip/infra risk를 기록한다.
+
+이 문서는 구현 plan 자체가 아니라 사용자가 개선 범위를 선택하고 의견을 남기기 위한
+plan 배경 문서다. 다음 규칙을 따른다.
+
+- JudgeRubric별로 나열하지 말고 정성적으로 동일한 원인끼리 묶는다.
+- `suggested_fix`가 실질적으로 같은 항목을 하나의 수정 패턴으로 묶는다.
+- 각 원인에 P0/P1/P2 우선순위를 부여하고 근거를 짧게 적는다.
+- 주 개선 대상과 연계 대상을 다음 범주에서 명시한다.
+  - 평가로직
+  - create scenarios
+  - validation
+  - create signposts
+  - prompt
+  - 구조/schema
+  - 추가정보
+  - 기타 개선
+- 평가로직, create scenarios, validation, create signposts별 plan 후보를 분리하고
+  완료 기준을 적는다.
+- 각 원인과 주요 plan 후보에 `Accept / Reject / Hold` 또는 `Yes / No / Later` 선택란과
+  추가 의견란을 둔다.
+- 상세 evidence 전체를 반복하지 말고 event ID와 대표 target만 남긴다.
+- stage 원인은 trace에서 확인한 사실과 산출물만 보고 추정한 책임을 구분한다.
+- 가로로 넓은 표를 사용하지 않는다. `##`/`###` heading과 bullet 기반 카드 형식을
+  기본으로 사용한다. 표가 꼭 필요하면 열 수를 최소화한다.
+
+권장 문서 순서는 다음과 같다.
+
+1. 핵심 수치와 결론
+2. P0 정성적 원인 카드
+3. P1/P2 정성적 원인 카드
+4. 유사 suggested fix 묶음
+5. 평가로직/create scenarios/validation/create signposts별 plan 후보
+6. event별 대표 원인과 target 추적 메모
+7. plan 확정 전 결정 사항
+8. evidence·trace·안정성 관련 해석상 주의
+
+사용자에게 최종 보고할 때 `violation_plan_background.md` 경로도 함께 제공한다.
