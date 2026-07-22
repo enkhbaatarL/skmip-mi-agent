@@ -211,8 +211,9 @@ compatibility feedback에 `recommended_value`가 있으면 해당 시나리오�
 권장 값을 우선 적용한 target 조합을 만든다. 이 값은 Stage 3 selected enum 밖이어도
 template enum 안의 값이면 사용할 수 있다.
 
-선택한 각 조합에 대해 LLM이 `title`, `description`, `derivation_rationale`,
-`price_direction.brent/jkm/ttf`를 생성한다. 호출 또는 응답 검증 실패 시 scenario를 저장하지 않는다.
+선택한 각 조합에 대해 LLM이 `title`, `description`, `derivation_rationale`를 생성한다.
+가격 영향 방향은 생성하지 않으며 신규 scenario의 `impact_jkm/ttf/hh` DB 컬럼에는 `NULL`을 저장한다.
+호출 또는 응답 검증 실패 시 scenario를 저장하지 않는다.
 최종 scenario ID는 `S_01`, `S_02` 형식으로 부여된다.
 
 #### Stage 5: Quick Validate (재시도 루프)
@@ -230,7 +231,7 @@ template enum 안의 값이면 사용할 수 있다.
     override 입력이다.
   - compatibility LLM은 재생성이 필요한 incompatible 항목만 반환한다. 모든 조합이 통과하면 `items=[]`로 처리한다.
   - Stage 4는 feedback을 반영해 조합을 재선정하고, 새 조합에 맞춰 `title`, `description`,
-    `derivation_rationale`, `price_direction`을 다시 생성한다.
+    `derivation_rationale`를 다시 생성한다.
 - `REF_QUICK_VALIDATE_MAX_RETRIES` 초과: 남은 feedback이 있어도 Stage 6으로 진행
   - 기본값은 1이다. 즉 quick validate 실패 후 Stage 4 재생성은 최대 1회 수행한다.
 
@@ -301,19 +302,20 @@ flowchart LR
 ### `generate_new_scenario_row_details` 상세
 
 신규 scenario row는 table cell의 dimension 조합은 이미 확정되어 있지만 DB 저장에 필요한
-`narrative`, `probability_score`, `impact_jkm/ttf/hh`가 없다. 이 node는 persistence service가
+`narrative`, `probability_score`가 없다. 이 node는 persistence service가
 LLM pipeline을 직접 호출하지 않도록 저장 전에 generation을 수행한다.
 
 ```mermaid
 flowchart LR
     A[신규 row cells] --> B[dimension_values 변환]
-    B --> C[Stage 4 fixed<br/>Narrative·Price Direction]
+    B --> C[Stage 4 fixed<br/>Narrative]
     C --> D[Stage 6<br/>Likelihood]
     D --> E[new_scenario_row_details]
 ```
 
-- Stage 4 fixed는 조합을 재선정하지 않고, 주어진 dimension 조합에 narrative와 price direction만 생성한다.
+- Stage 4 fixed는 조합을 재선정하지 않고, 주어진 dimension 조합에 narrative만 생성한다.
 - Stage 6 likelihood는 신규 row의 초기 `probability_score`로 변환된다.
+- 신규 row의 `impact_jkm/ttf/hh`는 생성하지 않고 `NULL`로 저장한다.
 - `ScenarioService.sync_from_table*()`는 `new_scenario_row_details`를 받아 DB insert/update만 담당한다.
 
 ### `run_signpost_generation` 상세
@@ -586,7 +588,7 @@ DB의 `scenario_group.dimension_selected`가 아니라 요청 `table.headers[].k
 동일성 비교는 validation request body가 실제로 받을 수 있는 row 필드만 기준으로 한다.
 
 - 비교 대상: row 수, `scenario_id`, `title`, `cells`와 DB의 `dimension_values`
-- 비교 제외: validation request schema가 받지 않는 `narrative`, `metrics`, `baseline_yn`, `impact`, `signposts`
+- 비교 제외: validation request schema가 받지 않는 `narrative`, `metrics`, `baseline_yn`, `signposts`
 
 따라서 GET 응답 table을 validation 요청 형태로 축약해 보내는 경우에도,
 사용자가 수정 가능한 필드가 바뀌지 않았으면 변경 없음으로 보고 LLM review를 건너뛴다.

@@ -547,15 +547,6 @@ class ScenarioGroupService:
                         scenario_update["probability_delta"] = metrics[
                             "probability_delta"
                         ]
-                if "impact" in row and row["impact"] is not None:
-                    impact = row["impact"]
-                    for source, target in (
-                        ("jkm", "impact_jkm"),
-                        ("ttf", "impact_ttf"),
-                        ("hh", "impact_hh"),
-                    ):
-                        if source in impact:
-                            scenario_update[target] = impact[source]
                 scenario_repository.update_from_payload(
                     scenario,
                     scenario_update,

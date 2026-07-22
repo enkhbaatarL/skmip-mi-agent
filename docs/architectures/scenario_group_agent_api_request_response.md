@@ -1,6 +1,6 @@
 # Scenario Group Agent API Request/Response
 
-> 버전: v7
+> 버전: v8
 
 <aside>
 💡
@@ -239,7 +239,6 @@ CallBack Body (`CreateScenariosOut`)
 | `data.table.rows[].narrative` | string | N | 시나리오 내러티브 |
 | `data.table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
 | `data.table.rows[].metrics` | object | N | 확률/실현가능성 등 메트릭 |
-| `data.table.rows[].impact` | object | N | 시장 영향(예: jkm/ttf/hh) |
 | `data.table.rows[].baselineYn` | CHAR(1) | N | Baseline 여부(`"Y" \| "N"`) |
 
 ### 2) 시나리오 검증
@@ -646,3 +645,4 @@ Response (`ConfirmGenerationOut`)
 | v5 | 시나리오 검증 API의 request에 새로 추가된 dimension에 대한 예시 추가<br>시나리오 검증 API의 Callback Body에 table 필드 추가<br>Signpost 생성 API의 request body로 table 전체 수신<br>signpost 생성 callback body의 signpost 필드(`strength`, `keyword_hint`) 추가<br>확정 API의 request body의 signpost 필드(`strength`, `keyword_hint`) 추가<br>callback body를 platform에서 정의한 callback body(v1) 형식으로 업데이트 | 26/06/15 | - |
 | v6 | 시나리오 검증(Validation) request body와 callback body에 `displayOrder`, `title` 추가<br>확률 방향 코드(phase1에서는 `"SUP"`만 있음) | 26/06/16 | - |
 | v7 | Signpost 생성 Callback Body를 Platform Callback API(v2)에 맞게 수정<br>`probabilityDirectionCode` 값을 `"sup"`로 변경<br>`probabilityImpactScore` 추가<br>Callback Body에서 `scenarioGroup.summary`, `scenarioGroup.description`, `signposts[].useYn`, `signposts[].keyword_hints` 제거 | 26/06/18 | - |
+| v8 | 시나리오 가격 영향 방향 생성을 중단하고 신규 `impact_jkm/ttf/hh`를 `NULL`로 저장<br>공통 Scenario table 및 confirmation request/response에서 `impact` 제거 | 26/07/20 | - |

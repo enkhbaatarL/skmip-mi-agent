@@ -145,11 +145,6 @@ def scenario_generation_result_stub(
                     },
                     "description": "scenario description",
                     "derivation_rationale": "scenario rationale",
-                    "price_direction": {
-                        "jkm": "neutral",
-                        "ttf": "neutral",
-                        "hh": "neutral",
-                    },
                 },
             ],
         },
@@ -500,15 +495,9 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert "baseline_yn" not in payload
 
     def test_new_signpost_row_details_are_generated_from_flow_helper_outputs(self) -> None:
-        price_direction = types.SimpleNamespace(
-            jkm="bull",
-            ttf="neutral",
-            hh="mild_bull",
-        )
         generated = types.SimpleNamespace(
             scenario_id="S_01",
             description="generated narrative",
-            price_direction=price_direction,
         )
         stage4 = types.SimpleNamespace(scenarios=[generated])
         stage6 = types.SimpleNamespace(likelihood_prior={"S_01": "medium"})
@@ -540,9 +529,6 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 narrative="generated narrative",
                 probability_weight=Decimal("20"),
                 probability_delta=Decimal("0.0"),
-                impact_jkm="bull",
-                impact_ttf="neutral",
-                impact_hh="mild_bull",
             ),
         ]
 
@@ -561,9 +547,6 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 narrative="generated narrative",
                 probability_weight=Decimal("20"),
                 probability_delta=Decimal("0.0"),
-                impact_jkm="bull",
-                impact_ttf="neutral",
-                impact_hh="mild_bull",
             ),
         )
 
@@ -579,19 +562,47 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             "mod_usr_logn_id": 101,
             "probability_score": Decimal("20"),
             "probability_delta": Decimal("0.0"),
-            "impact_jkm": "bull",
-            "impact_ttf": "neutral",
-            "impact_hh": "mild_bull",
+            "impact_jkm": None,
+            "impact_ttf": None,
+            "impact_hh": None,
         }
+
+    def test_generated_scenarios_persist_null_impacts(self) -> None:
+        session = Mock()
+        repository = Mock()
+        repository.insert_scenario.return_value = 100
+        repository.fetch_models_by_group_id.return_value = []
+        connection_path = "apps.common.configs.database.sync_database.connection"
+        connection_module = types.ModuleType(connection_path)
+        connection_module.get_sync_session = lambda: session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {connection_path: connection_module},
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service.ScenarioRepository",
+                return_value=repository,
+            ),
+        ):
+            saved_ids = ScenarioService().save_generated_scenarios(
+                10,
+                scenario_generation_result_stub(),
+                101,
+            )
+
+        payload = repository.insert_scenario.call_args.args[0]
+        assert saved_ids == [100]
+        assert payload["impact_jkm"] is None
+        assert payload["impact_ttf"] is None
+        assert payload["impact_hh"] is None
 
     def test_create_signposts_node_generates_new_row_details_before_sync(self) -> None:
         detail = NewScenarioGeneratedDetails(
             narrative="generated narrative",
             probability_weight=Decimal("20"),
             probability_delta=Decimal("0.0"),
-            impact_jkm="bull",
-            impact_ttf="neutral",
-            impact_hh="mild_bull",
         )
         state = TestScenarioState(
             scenario_group_id=10,
@@ -652,9 +663,6 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             narrative="generated narrative",
             probability_weight=Decimal("20"),
             probability_delta=Decimal("0.0"),
-            impact_jkm="bull",
-            impact_ttf="neutral",
-            impact_hh="mild_bull",
         )
         state = TestScenarioState(
             scenario_group_id=10,
@@ -1050,7 +1058,19 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             {
                 "userId": 101,
                 "scenarioGroup": CONFIRM_SCENARIO_GROUP,
-                "table": TABLE,
+                "table": {
+                    "headers": TABLE["headers"],
+                    "rows": [
+                        {
+                            **TABLE["rows"][0],
+                            "impact": {
+                                "jkm": "bull",
+                                "ttf": "bear",
+                                "hh": "mild_bull",
+                            },
+                        },
+                    ],
+                },
             },
         )
 
@@ -1095,6 +1115,9 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             status="creating",
             dimension_values={"period": "period_v1"},
             probability_score=50,
+            impact_jkm="bull",
+            impact_ttf="bear",
+            impact_hh="mild_bull",
             display_order=1,
         )
         signpost = MiSignpostModel(
@@ -1167,6 +1190,11 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                         {
                             "scenario_id": 100,
                             "cells": {"period": "단기"},
+                            "impact": {
+                                "jkm": "bear",
+                                "ttf": "bull",
+                                "hh": "neutral",
+                            },
                             "signposts": [
                                 {
                                     "signpost_id": 1000,
@@ -1187,6 +1215,10 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert group_update["description"] == "updated description"
         assert group_update["status"] == "created"
         assert group_update["stage"] == "completed"
+        scenario_update = scenario_repository.update_from_payload.call_args.args[1]
+        assert "impact_jkm" not in scenario_update
+        assert "impact_ttf" not in scenario_update
+        assert "impact_hh" not in scenario_update
 
     def test_validation_rejects_scenario_group_owned_by_other_user(self) -> None:
         with patch(
@@ -1329,8 +1361,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         row = state.request_table.rows[0]
         assert row.metrics is not None
         assert row.metrics.probability_delta == Decimal("0.0")
-        assert row.impact is not None
-        assert row.impact.jkm == "bull"
+        assert "impact" not in row.model_dump()
         assert row.baseline_yn == "Y"
         assert row.signposts[0].signpost_id == 900
 
@@ -1922,6 +1953,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         serialized = result.model_dump(by_alias=True)
         assert serialized["table"]["headers"][0]["label"] == "기간"
         assert serialized["table"]["rows"][0]["cells"]["period"] == "단기"
+        assert "impact" not in serialized["table"]["rows"][0]
 
     def test_query_response_includes_delete_flags_and_counts(self) -> None:
         from apps.agents.scenario_group_agent.presentation import (
@@ -1996,6 +2028,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         serialized = result.model_dump(by_alias=True)
         assert serialized["scenarioGroup"]["delYn"] == "N"
         assert serialized["table"]["rows"][1]["delYn"] == "Y"
+        assert all("impact" not in row for row in serialized["table"]["rows"])
         assert "scenarioId" not in serialized["table"]["rows"][0]["signposts"][0]
         assert serialized["table"]["rows"][1]["signposts"][0]["delYn"] == "Y"
         assert "scenarioId" not in serialized["table"]["rows"][1]["signposts"][0]

@@ -119,9 +119,6 @@ def build_stage2_user_prompt(
     dim_values_block = ", ".join(
         f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()
     ) or "(없음)"
-    price_block = ", ".join(
-        f"{k}={v}" for k, v in (scenario.get("price_direction") or {}).items()
-    ) or "(없음)"
     return f"""\
 ## Base Event 요약
 - title: {base_event_summary.get("title", "")}
@@ -133,7 +130,6 @@ def build_stage2_user_prompt(
 - title: {scenario.get("title", "")}
 - description: {scenario_description}
 - dimension_values: {dim_values_block}
-- price_direction: {price_block}
 
 ## 산출
 - candidates: 3-필터를 모두 통과한 후보만 {min_n}~{max_n}개.
@@ -261,7 +257,6 @@ def build_stage45_user_prompt(
 - title: {scenario.get("title", "")}
 - description: {scenario_description}
 - dimension_values: {dim_values}
-- price_direction: {", ".join(f"{k}={v}" for k, v in (scenario.get("price_direction") or {}).items()) or "(없음)"}
 
 ## 입력 Signpost label ({len(labels)}개) — 이 순서를 유지하여 signposts 출력
 {label_block}
