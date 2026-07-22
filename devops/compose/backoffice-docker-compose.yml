@@ -22,6 +22,8 @@ services:
       MLFLOW_HOST: 0.0.0.0
       MLFLOW_PORT: 5001
       MLFLOW_WORKERS: ${MLFLOW_WORKERS:-1}
+      MLFLOW_MODEL_CATALOG_URI: file:///mlflow/model-catalog
+      MLFLOW_MODEL_CATALOG_CACHE_TTL: "86400"
       MLFLOW_AUTH_CONFIG_PATH: /mlflow/auth/basic_auth.ini
       MLFLOW_AUTH_ADMIN_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:-skmip-mi-agent}
       MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD:-skgas2ndfloor!}
@@ -34,6 +36,45 @@ services:
       - -c
       - |
         pip install --no-cache-dir pymysql 'mlflow[auth]==3.14.0'
+        python - <<'PY'
+        import copy
+        import json
+        from importlib import resources
+        from pathlib import Path
+
+        base_model = "gpt-5.5"
+        custom_model = "skmidev-gpt-5.5-20260424"
+        output_dir = Path("/mlflow/model-catalog")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        bundled_catalog_dir = resources.files("mlflow.utils").joinpath("model_catalog")
+
+        for provider in ("openai", "azure"):
+            source = bundled_catalog_dir.joinpath(f"{provider}.json")
+            with source.open(encoding="utf-8") as file:
+                catalog = json.load(file)
+
+            if base_model not in catalog["models"]:
+                raise RuntimeError(
+                    f"{base_model!r} is missing from MLflow's {provider} catalog"
+                )
+
+            catalog["models"][custom_model] = copy.deepcopy(
+                catalog["models"][base_model]
+            )
+
+            destination = output_dir / f"{provider}.json"
+            temporary = destination.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(destination)
+            print(
+                f"Registered model catalog alias: "
+                f"{provider}/{custom_model} -> {base_model}"
+            )
+        PY
         mkdir -p /mlflow/auth
         python -c "import os, re, pymysql; db=os.getenv('MLFLOW_MYSQL_DB', 'mlflow'); [(_ for _ in ()).throw(ValueError(f'invalid database name: {db}'))] if not re.fullmatch(r'[A-Za-z0-9_]+', db) else None; conn=pymysql.connect(host=os.getenv('METADATA_DB_HOST', 'host.docker.internal'), port=int(os.getenv('METADATA_DB_PORT', '3307')), user=os.getenv('METADATA_DB_USERNAME'), password=os.getenv('METADATA_DB_PASSWORD'), autocommit=True); conn.cursor().execute(f'CREATE DATABASE IF NOT EXISTS {db} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'); conn.close()"
         export MLFLOW_BACKEND_STORE_URI="mysql+pymysql://$${METADATA_DB_USERNAME}:$${METADATA_DB_PASSWORD}@$${METADATA_DB_HOST:-host.docker.internal}:$${METADATA_DB_PORT:-3307}/$${MLFLOW_MYSQL_DB:-mlflow}"
