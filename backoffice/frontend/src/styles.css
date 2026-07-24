@@ -496,39 +496,6 @@ tbody tr.deleted-row {
   font-size: 11px;
 }
 
-.impact {
-  display: inline-grid;
-  grid-template-columns: 18px repeat(3, 18px);
-  gap: 4px;
-  align-items: center;
-}
-
-.impact b {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  height: 18px;
-  border-radius: 4px;
-  background: #f1f5f9;
-  font-size: 11px;
-}
-
-.impact i {
-  height: 6px;
-  border-radius: 4px;
-  background: #cbd5e1;
-}
-
-.impact.up i:first-of-type,
-.impact.up i:nth-of-type(2) {
-  background: #d64545;
-}
-
-.impact.down i:first-of-type,
-.impact.down i:nth-of-type(2) {
-  background: #2f9e44;
-}
-
 .empty-panel {
   padding: 44px;
   border: 1px solid #e7ebf0;

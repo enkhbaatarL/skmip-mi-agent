@@ -103,9 +103,6 @@ async def generate_new_scenario_row_details(
                     ),
                 ),
                 probability_delta=Decimal("0.0"),
-                impact_jkm=scenario.price_direction.jkm,
-                impact_ttf=scenario.price_direction.ttf,
-                impact_hh=scenario.price_direction.hh,
             ),
         )
     return details

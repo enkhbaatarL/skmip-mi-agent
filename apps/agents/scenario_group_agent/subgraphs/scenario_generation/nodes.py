@@ -47,7 +47,6 @@ from apps.agents.scenario_group_agent.prompts.scenario_validation import (
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     LIKELIHOOD_TIERS,
-    PRICE_TIERS,
     C1BaseEvent,
     C2LinkedRecords,
     DimensionValueMap,
@@ -840,14 +839,6 @@ async def stage4_synthesize_scenarios(
             raise ValueError(
                 f"narratives 길이 불일치: {len(out.narratives)} != {len(target)}"
             )
-        for n in out.narratives:
-            for v in (
-                n.price_direction.jkm,
-                n.price_direction.ttf,
-                n.price_direction.hh,
-            ):
-                if v not in PRICE_TIERS:
-                    raise ValueError(f"price_direction 범위 밖 값: {v}")
 
     out = await _ainvoke_with_retry(
         stage_label="Stage 4",
@@ -870,7 +861,6 @@ async def stage4_synthesize_scenarios(
                 dimension_values=combo,
                 description=narr.description,
                 derivation_rationale=narr.derivation_rationale,
-                price_direction=narr.price_direction,
                 compatibility_passed=True,
             )
         )
@@ -915,10 +905,6 @@ async def stage4_synthesize_fixed_scenarios(
             raise ValueError(
                 f"narratives 길이 불일치: {len(out.narratives)} != {len(target)}"
             )
-        for n in out.narratives:
-            for v in (n.price_direction.jkm, n.price_direction.ttf, n.price_direction.hh):
-                if v not in PRICE_TIERS:
-                    raise ValueError(f"price_direction 범위 밖 값: {v}")
 
     out = await _ainvoke_with_retry(
         stage_label="Stage 4 fixed",
@@ -940,7 +926,6 @@ async def stage4_synthesize_fixed_scenarios(
             dimension_values=combo,
             description=narr.description,
             derivation_rationale=narr.derivation_rationale,
-            price_direction=narr.price_direction,
             compatibility_passed=True,
         ))
 
@@ -1091,8 +1076,7 @@ def _build_baseline_contrast_feedback(
         f"{issue_text}\n\n"
         "[Stage4 재생성 지시]\n"
         f"{instruction_text}\n"
-        "- 변경된 dimension 조합에 맞춰 title, description, derivation_rationale, "
-        "price_direction을 모두 다시 작성하십시오."
+        "- 변경된 dimension 조합에 맞춰 title, description, derivation_rationale을 모두 다시 작성하십시오."
     )
 
 
@@ -1120,8 +1104,7 @@ def _stage5_duplicate_feedback(
         + "\n".join(issues)
         + "\n\n[Stage4 재생성 지시]\n"
         + "중복된 시나리오 중 최소 1개의 Dimension 값 조합을 기존 시나리오와 달라지도록 재선정하십시오.\n"
-        + "변경된 dimension 조합에 맞춰 title, description, derivation_rationale, "
-        + "price_direction을 모두 다시 작성하십시오."
+        + "변경된 dimension 조합에 맞춰 title, description, derivation_rationale을 모두 다시 작성하십시오."
     )
 
 
@@ -1309,8 +1292,7 @@ def _stage5_compatibility_feedback(
         f"{issues}\n\n"
         "[Stage4 재생성 지시]\n"
         "위 권장 변경을 반영해 모순되는 Dimension 값 조합을 재선정하십시오.\n"
-        "변경된 dimension 조합에 맞춰 title, description, derivation_rationale, "
-        "price_direction을 모두 다시 작성하십시오."
+        "변경된 dimension 조합에 맞춰 title, description, derivation_rationale을 모두 다시 작성하십시오."
     )
 
 

@@ -7,8 +7,7 @@ export const seedEvents: EventItem[] = [
     eventTime: "2026-07-02 16:55",
     category: "Geopolitical Risk",
     status: "갱신",
-    recommended: true,
-    impacts: { JKM: "up", TTF: "neutral", HH: "neutral" }
+    recommended: true
   },
   {
     miEventId: 18,
@@ -16,8 +15,7 @@ export const seedEvents: EventItem[] = [
     eventTime: "2026-07-01 10:20",
     category: "Supply",
     status: "신규",
-    recommended: true,
-    impacts: { JKM: "up", TTF: "up", HH: "neutral" }
+    recommended: true
   },
   {
     miEventId: 21,
@@ -25,8 +23,7 @@ export const seedEvents: EventItem[] = [
     eventTime: "2026-06-30 08:40",
     category: "Demand",
     status: "갱신",
-    recommended: false,
-    impacts: { JKM: "down", TTF: "neutral", HH: "down" }
+    recommended: false
   }
 ];
 

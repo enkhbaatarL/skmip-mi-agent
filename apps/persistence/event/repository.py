@@ -251,12 +251,7 @@ class EventRepository(BaseSyncSQLRepository):
                 "signal_reason": event.signal_reason,
                 "scenario_suggest_yn": event.scenario_suggest_yn,
                 "scenario_suggest_reason": event.scenario_suggest_reason,
-                "market_impacts": {
-                    "JKM": {"direction": "neutral", "label": "S"},
-                    "TTF": {"direction": "neutral", "label": "S"},
-                    "HH": {"direction": "neutral", "label": "S"},
-                },
-            }
+            },
         )
         return payload
 

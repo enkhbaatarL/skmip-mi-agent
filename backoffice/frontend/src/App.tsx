@@ -611,11 +611,9 @@ function apiEventToItem(row: {
   scenarioSuggestYn?: string;
   signalReason?: string | null;
   scenarioSuggestReason?: string | null;
-  marketImpacts?: Record<string, { direction?: string }>;
   relatedScenarioGroup?: EventItem["relatedScenarioGroup"];
   scenarioActionState?: EventItem["scenarioActionState"];
 }): EventItem {
-  const direction = (market: "JKM" | "TTF" | "HH") => normalizeImpact(row.marketImpacts?.[market]?.direction);
   return {
     miEventId: row.miEventId,
     title: row.title,
@@ -637,18 +635,8 @@ function apiEventToItem(row: {
     signalReason: row.signalReason,
     scenarioSuggestReason: row.scenarioSuggestReason,
     relatedScenarioGroup: row.relatedScenarioGroup,
-    scenarioActionState: row.scenarioActionState,
-    impacts: {
-      JKM: direction("JKM"),
-      TTF: direction("TTF"),
-      HH: direction("HH")
-    }
+    scenarioActionState: row.scenarioActionState
   };
-}
-
-function normalizeImpact(value: string | undefined): "up" | "down" | "neutral" {
-  if (value === "up" || value === "down") return value;
-  return "neutral";
 }
 
 function lifecycleFromAgentStage(status: string, stage: string): RunLifecycle {
@@ -930,9 +918,6 @@ function EventWorkspace({
                   <th>L1</th>
                   <th>L2</th>
                   <th>Event</th>
-                  <th>JKM</th>
-                  <th>TTF</th>
-                  <th>HH</th>
                   <th>Scenario</th>
                 </tr>
               </thead>
@@ -959,11 +944,6 @@ function EventWorkspace({
                       {event.summary ? <span className="event-summary">{event.summary}</span> : null}
                       {String(event.miEventId) === runtime.miEventId ? <span className="selected-note">selected</span> : null}
                     </td>
-                    {(["JKM", "TTF", "HH"] as const).map((market) => (
-                      <td key={market}>
-                        <Impact value={event.impacts[market]} />
-                      </td>
-                    ))}
                     <td>
                       <button
                         className="icon-button"
@@ -1763,16 +1743,5 @@ function Callout({ tone, title, message, action }: { tone: "warning" | "error" |
       </div>
       <span>{action}</span>
     </div>
-  );
-}
-
-function Impact({ value }: { value: "up" | "down" | "neutral" }) {
-  return (
-    <span className={`impact ${value}`}>
-      <b>S</b>
-      <i />
-      <i />
-      <i />
-    </span>
   );
 }

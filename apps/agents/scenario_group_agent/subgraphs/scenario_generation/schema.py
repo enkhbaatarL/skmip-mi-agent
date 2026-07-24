@@ -7,15 +7,6 @@ from pydantic import BaseModel, Field, conlist, model_validator
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 
 
-PRICE_TIERS: Tuple[str, ...] = (
-    "strong_bull",
-    "bull",
-    "mild_bull",
-    "neutral",
-    "mild_bear",
-    "bear",
-    "strong_bear",
-)
 LIKELIHOOD_TIERS: Tuple[str, ...] = (
     "very_low",
     "low",
@@ -24,15 +15,6 @@ LIKELIHOOD_TIERS: Tuple[str, ...] = (
     "very_high",
 )
 
-PriceTier = Literal[
-    "strong_bull",
-    "bull",
-    "mild_bull",
-    "neutral",
-    "mild_bear",
-    "bear",
-    "strong_bear",
-]
 LikelihoodTier = Literal["very_low", "low", "medium", "high", "very_high"]
 DimensionValueMap = Dict[str, str]
 
@@ -197,12 +179,6 @@ class Stage3ValueSelection(BaseModel):
     )
 
 
-class PriceDirection(BaseModel):
-    jkm: PriceTier = Field(description="JKM 방향성 7단계")
-    ttf: PriceTier = Field(description="TTF 방향성 7단계")
-    hh: PriceTier = Field(description="Henry Hub 방향성 7단계")
-
-
 class Scenario(BaseModel):
     scenario_id: str = Field(description="S_01 형태")
     title: str = Field(description="시장 참여자 관점 한 줄 요약. 공백과 문장부호를 포함해 100자 이내.")
@@ -210,12 +186,11 @@ class Scenario(BaseModel):
         description="dim_key -> value 의 1:1 매핑.",
     )
     description: str = Field(
-        description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술. 공백과 문장부호를 포함해 300~500자.",
+        description="3~5줄. 주요 Dim 가정치 조합 + 전개 양상 서술. 공백과 문장부호를 포함해 300-400자.",
     )
     derivation_rationale: str = Field(
         description="이 시나리오를 도출한 근거.",
     )
-    price_direction: PriceDirection = Field(description="JKM/TTF/HH 7단계 방향성.")
     compatibility_passed: bool = Field(
         default=True,
         description="Compat Rule 통과 여부",
@@ -262,7 +237,7 @@ class Stage5Validation(BaseModel):
 
 class ScenarioGroupMetadata(BaseModel):
     title: str = Field(description="시나리오 그룹명. 공백과 문장부호를 포함해 100자 이내.")
-    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300~400자.")
+    description: str = Field(description="시나리오 그룹 설명. 공백과 문장부호를 포함해 300-400자.")
 
 
 class ScenarioGenerationResult(ApiModel):

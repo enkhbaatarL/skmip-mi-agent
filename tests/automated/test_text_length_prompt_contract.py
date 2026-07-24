@@ -20,11 +20,11 @@ def test_scenario_stage4_prompt_and_schema_include_text_length_guidance() -> Non
     source = SCENARIO_GENERATION_PROMPTS.read_text(encoding="utf-8")
 
     assert "title 은 1줄이며, 공백과 문장부호를 포함해 100자 이내" in source
-    assert "description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자" in source
+    assert "description 은 3~5줄이며, 공백과 문장부호를 포함해 300-400자" in source
     assert "각 narrative 의 title 은 한 줄이며, 공백과 문장부호를 포함해 100자 이내" in source
-    assert "각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300~500자" in source
+    assert "각 narrative 의 description 은 3~5줄이며, 공백과 문장부호를 포함해 300-400자" in source
     assert "공백과 문장부호를 포함해 100자 이내." in source
-    assert "공백과 문장부호를 포함해 300~500자." in source
+    assert "공백과 문장부호를 포함해 300-400자." in source
 
 
 def test_scenario_group_metadata_prompt_includes_text_length_guidance() -> None:
@@ -33,5 +33,5 @@ def test_scenario_group_metadata_prompt_includes_text_length_guidance() -> None:
     assert "Scenario Group Metadata Writer" in source
     assert "SCENARIO_GROUP_METADATA_HARD_CONSTRAINTS" in source
     assert "title 은 공백과 문장부호를 포함해 100자 이내." in source
-    assert "description 은 공백과 문장부호를 포함해 300~400자." in source
+    assert "description 은 공백과 문장부호를 포함해 300-400자." in source
     assert "기존 detail_analysis를 그대로 복사하지 말고" in source

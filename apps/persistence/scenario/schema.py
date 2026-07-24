@@ -18,12 +18,8 @@ class ScenarioPayload(ApiModel):
     description: str = ""
     narrative: str | None = None
     dimension_values: dict[str, Any] = Field(default_factory=dict)
-    price_direction: dict[str, Any] = Field(default_factory=dict)
     probability_score: Decimal | None = None
     probability_delta: Decimal | None = Decimal("0.0")
-    impact_jkm: str | None = None
-    impact_ttf: str | None = None
-    impact_hh: str | None = None
     baseline_yn: str | None = "N"
     status: str = ScenarioStatus.CREATING.value
     del_yn: str | None = None
@@ -39,16 +35,8 @@ class ScenarioPayload(ApiModel):
                 "description": model.narrative or "",
                 "narrative": model.narrative,
                 "dimension_values": model.dimension_values or {},
-                "price_direction": {
-                    "jkm": model.impact_jkm,
-                    "ttf": model.impact_ttf,
-                    "hh": model.impact_hh,
-                },
                 "probability_score": model.probability_score,
                 "probability_delta": model.probability_delta,
-                "impact_jkm": model.impact_jkm,
-                "impact_ttf": model.impact_ttf,
-                "impact_hh": model.impact_hh,
                 "baseline_yn": model.baseline_yn,
                 "status": model.status,
                 "del_yn": getattr(model, "del_yn", None),
@@ -62,9 +50,6 @@ class NewScenarioGeneratedDetails(ApiModel):
     narrative: str
     probability_weight: Decimal
     probability_delta: Decimal
-    impact_jkm: str | None
-    impact_ttf: str | None
-    impact_hh: str | None
 
 
 class ScenarioTemplateEnum(BaseModel):

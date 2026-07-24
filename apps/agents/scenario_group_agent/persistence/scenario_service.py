@@ -290,7 +290,6 @@ class ScenarioService:
             repository = ScenarioRepository(session=session)
             saved_ids: list[int] = []
             for index, (scenario, probability_score) in enumerate(zip(scenarios, normalized_scores), start=1):
-                price_direction = scenario.get("price_direction", {}) or {}
                 payload = {
                     "scenario_group_id": scenario_group_id,
                     "title": (scenario.get("title") or "")[:255],
@@ -299,9 +298,9 @@ class ScenarioService:
                     "dimension_values": self._normalize_dimension_values_object(scenario.get("dimension_values") or {}),
                     "probability_score": probability_score,
                     "probability_delta": Decimal("0.0"),
-                    "impact_jkm": price_direction.get("jkm"),
-                    "impact_ttf": price_direction.get("ttf"),
-                    "impact_hh": price_direction.get("hh"),
+                    "impact_jkm": None,
+                    "impact_ttf": None,
+                    "impact_hh": None,
                     "display_order": index,
                     "baseline_yn": "N",
                     "crt_usr_logn_id": user_id,
@@ -563,9 +562,9 @@ class ScenarioService:
             "mod_usr_logn_id": user_id,
             "probability_score": generated_details.probability_weight,
             "probability_delta": generated_details.probability_delta,
-            "impact_jkm": generated_details.impact_jkm,
-            "impact_ttf": generated_details.impact_ttf,
-            "impact_hh": generated_details.impact_hh,
+            "impact_jkm": None,
+            "impact_ttf": None,
+            "impact_hh": None,
         }
 
     def _scenario_requires_update(

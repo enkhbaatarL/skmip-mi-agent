@@ -37,12 +37,6 @@ class ScenarioMetricsState(ApiModel):
         return self
 
 
-class ScenarioImpactState(ApiModel):
-    jkm: str | None = None
-    ttf: str | None = None
-    hh: str | None = None
-
-
 BaselineYn = Literal["Y", "N"]
 
 
@@ -53,7 +47,6 @@ class ScenarioTableRowState(ApiModel):
     narrative: str | None = None
     cells: dict[str, Any] = Field(default_factory=dict)
     metrics: ScenarioMetricsState | None = None
-    impact: ScenarioImpactState | None = None
     baseline_yn: BaselineYn | None = None
     signposts: list[SignpostBasePayload] = Field(default_factory=list)
 

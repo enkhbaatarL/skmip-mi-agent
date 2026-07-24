@@ -15,7 +15,6 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     C1BaseEvent,
     PerDimensionValue,
-    PriceDirection,
     Scenario,
     ScenarioTemplate,
     Stage1ContextPack,
@@ -763,12 +762,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="기간 대안값 누락",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 )
             ],
         )
@@ -791,7 +784,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert "baseline 대비 대안값 누락" in feedback
         assert "period" in feedback
         assert "Stage4 재생성 지시" in feedback
-        assert "title, description, derivation_rationale, price_direction" in feedback
+        assert "title, description, derivation_rationale" in feedback
         assert repairs == []
         invoke.assert_not_called()
 
@@ -851,12 +844,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="baseline narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
                 Scenario(
                     scenario_id="S_02",
@@ -868,12 +855,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="incompatible narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
             ],
         )
@@ -911,7 +892,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert "S_02" in feedback
         assert "incompatible" in feedback
         assert "'100%'을(를) '50%'(으)로 바꾸는 것을 권장합니다." in feedback
-        assert "title, description, derivation_rationale, price_direction" in feedback
+        assert "title, description, derivation_rationale" in feedback
         assert repairs == [
             Stage5RepairInstruction(
                 scenario_ref="S_02",
@@ -979,12 +960,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="incompatible narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
                 Scenario(
                     scenario_id="S_02",
@@ -996,12 +971,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="contrast narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
             ],
         )
@@ -1111,12 +1080,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="incompatible narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
                 Scenario(
                     scenario_id="S_02",
@@ -1128,12 +1091,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="ordinary narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
             ],
         )
@@ -1158,11 +1115,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                             title=f"scenario {index}",
                             description="generated narrative",
                             derivation_rationale="generated rationale",
-                            price_direction=PriceDirection(
-                                jkm="neutral",
-                                ttf="neutral",
-                                hh="neutral",
-                            ),
                         )
                         for index in range(6)
                     ],
@@ -1242,12 +1194,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="incompatible narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
                 Scenario(
                     scenario_id="S_02",
@@ -1259,12 +1205,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="contrast narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
             ],
         )
@@ -1362,12 +1302,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="unresolved dim narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
                 Scenario(
                     scenario_id="S_02",
@@ -1379,12 +1313,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="contrast narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 ),
             ],
         )
@@ -1483,12 +1411,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                     },
                     description="target narrative",
                     derivation_rationale="test",
-                    price_direction=PriceDirection(
-                        brent="neutral",
-                        jkm="neutral",
-                        ttf="neutral",
-                        hh="neutral",
-                    ),
                 )
             ],
         )
@@ -1573,12 +1495,6 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
                 dimension_values=values,
                 description=f"{title} narrative",
                 derivation_rationale="test",
-                price_direction=PriceDirection(
-                    brent="neutral",
-                    jkm="neutral",
-                    ttf="neutral",
-                    hh="neutral",
-                ),
             )
 
         stage4 = Stage4ScenarioSynthesis(
@@ -1620,7 +1536,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         assert feedback is not None
         assert "동일한 Dimension 값 조합" in feedback
         assert "Stage4 재생성 지시" in feedback
-        assert "title, description, derivation_rationale, price_direction" in feedback
+        assert "title, description, derivation_rationale" in feedback
         assert repairs == []
         invoke.assert_not_called()
 

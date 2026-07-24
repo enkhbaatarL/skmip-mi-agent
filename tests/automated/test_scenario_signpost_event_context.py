@@ -27,7 +27,7 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     build_stage45_user_prompt,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import stage1_build_context_pack
-from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import PriceDirection, Scenario
+from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import Scenario
 
 
 class FixedDate(date):
@@ -108,7 +108,6 @@ def test_scenario_and_signpost_prompts_include_compact_event_context(monkeypatch
                 dimension_values={"permit": "approved"},
                 description="설명",
                 derivation_rationale="근거",
-                price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
             )
         ],
     )
@@ -169,7 +168,6 @@ def test_scenario_and_signpost_prompts_include_compact_event_context(monkeypatch
                 dimension_values={"permit": "approved"},
                 description="설명",
                 derivation_rationale="근거",
-                price_direction=PriceDirection(jkm="neutral", ttf="neutral", hh="neutral"),
             ),
         ],
     )
@@ -210,6 +208,29 @@ def test_prompt_includes_current_date_when_occurred_at_is_missing(monkeypatch: p
 
     assert "current_date: 2026-07-14" in prompt
     assert "occurred_at: (없음)" in prompt
+
+
+def test_signpost_prompts_do_not_include_price_direction() -> None:
+    context_pack = stage1_build_context_pack(_event(key_bullets=["짧은 사실"]))
+    context = context_pack.C1_base_event.model_dump()
+
+    stage2_prompt = build_stage2_user_prompt(
+        scenario=_scenario(),
+        base_event_summary=context,
+        scenario_description="시나리오 설명",
+        min_n=3,
+        max_n=6,
+    )
+    stage45_prompt = build_stage45_user_prompt(
+        scenario=_scenario(),
+        base_event_summary=context,
+        scenario_description="시나리오 설명",
+        labels=["인허가 승인 공식 발표"],
+    )
+
+    for prompt in (stage2_prompt, stage45_prompt):
+        assert "price_direction" not in prompt
+        assert "mild_bear" not in prompt
 
 
 def test_signpost_prompt_requires_within_scenario_discriminativeness() -> None:

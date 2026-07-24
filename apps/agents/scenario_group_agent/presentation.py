@@ -10,7 +10,6 @@ from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
     ScenarioHeader,
-    ScenarioImpact,
     ScenarioMetrics,
     ScenarioQueryRow,
     ScenarioQueryTable,
@@ -171,11 +170,6 @@ def _row_common_payload(
         "metrics": ScenarioMetrics(
             probability_score=scenario.get("probability_score"),
             probability_delta=scenario.get("probability_delta"),
-        ),
-        "impact": ScenarioImpact(
-            jkm=scenario.get("impact_jkm"),
-            ttf=scenario.get("impact_ttf"),
-            hh=scenario.get("impact_hh"),
         ),
         "baseline_yn": scenario.get("baseline_yn"),
     }

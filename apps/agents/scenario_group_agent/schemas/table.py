@@ -41,12 +41,6 @@ class ScenarioMetrics(ApiModel):
         return self
 
 
-class ScenarioImpact(ApiModel):
-    jkm: str | None = None
-    ttf: str | None = None
-    hh: str | None = None
-
-
 class ScenarioRow(ApiModel):
     scenario_id: int | None = None
     display_order: int = 0
@@ -54,7 +48,6 @@ class ScenarioRow(ApiModel):
     narrative: str | None = None
     cells: dict[str, Any] = Field(default_factory=dict)
     metrics: ScenarioMetrics | None = None
-    impact: ScenarioImpact | None = None
     baseline_yn: str | None = None
     signposts: list[SignpostBasePayload] = Field(default_factory=list)
 

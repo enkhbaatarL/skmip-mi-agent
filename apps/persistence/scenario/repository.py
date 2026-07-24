@@ -104,9 +104,6 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "dimension_values",
             "probability_score",
             "probability_delta",
-            "impact_jkm",
-            "impact_ttf",
-            "impact_hh",
             "display_order",
             "baseline_yn",
             "status",
@@ -134,11 +131,6 @@ class ScenarioRepository(BaseSyncSQLRepository):
             }
         else:
             dim_dict = {}
-        price_direction = {
-            "jkm": scenario.impact_jkm,
-            "ttf": scenario.impact_ttf,
-            "hh": scenario.impact_hh,
-        }
         payload = {
             "scenario_id": int(scenario.scenario_id),
             "scenario_group_id": int(scenario.scenario_group_id),
@@ -147,12 +139,8 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "narrative": scenario.narrative,
             "status": scenario.status,
             "dimension_values": dim_dict,
-            "price_direction": price_direction,
             "probability_score": scenario.probability_score,
             "probability_delta": scenario.probability_delta,
-            "impact_jkm": scenario.impact_jkm,
-            "impact_ttf": scenario.impact_ttf,
-            "impact_hh": scenario.impact_hh,
             "display_order": scenario.display_order,
             "baseline_yn": scenario.baseline_yn,
         }
