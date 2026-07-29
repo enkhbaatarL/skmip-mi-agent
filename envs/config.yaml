@@ -183,7 +183,7 @@ agents:
     mlflow_tracing_enabled: false
 
 # MLflow
-mlflow_tracking_uri: "http://40.82.137.178:5001"
+mlflow_tracking_uri: "http://40.82.137.178:8005"
 mlflow_tracking_username: "${MLFLOW_TRACKING_USERNAME}"
 mlflow_tracking_password: "${MLFLOW_TRACKING_PASSWORD}"
 mlflow_langchain_run_tracer_inline: false
