@@ -9,6 +9,7 @@ from apps.agents.scenario_group_agent.constants import (
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     GenerationDiagnostics,
     MultiEventCreateScenariosIn,
+    V4MultiEventCreateScenariosIn,
     VersionedCreateScenariosData,
     VersionedCreateScenariosIn,
     VersionedCreateScenariosOut,
@@ -16,6 +17,10 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.flow import (
     prepare_multi_event_scenarios,
     run_multi_event_scenarios_inline,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
+    prepare_v4_multi_event_scenarios,
+    run_v4_multi_event_scenarios_inline,
 )
 from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
     prepare_create_scenarios,
@@ -120,6 +125,44 @@ async def create_v3_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
 ) -> VersionedCreateScenariosOut:
     return await _create_multi_event_scenarios_sync(payload, api_version="v3")
+
+
+@router.post(
+    "/v4/scenario-groups/sync",
+    response_model=VersionedCreateScenariosOut,
+    summary="v4 다중 이벤트 모델 영향 레버 시나리오 생성",
+)
+async def create_v4_scenarios_sync(
+    payload: V4MultiEventCreateScenariosIn,
+) -> VersionedCreateScenariosOut:
+    reset_usage()
+    prepared = prepare_v4_multi_event_scenarios(payload)
+    try:
+        from apps.common.configs.config import get_settings
+
+        agent_config = get_settings().get_agent_config(AGENT_NAME)
+        trace_context = TraceContext(
+            transaction_id=new_transaction_id(),
+            app_identifier=agent_config.aip_app_id,
+            agent_name=AGENT_NAME,
+            api_identifier=f"{API_IDENTIFIER_CREATE_SCENARIOS}_v4",
+            session_id=str(prepared["scenario_group"].scenario_group_id),
+        )
+        with mlflow_trace_context(trace_context):
+            output = await run_v4_multi_event_scenarios_inline(
+                prepared,
+                trace_context=trace_context,
+            )
+        if output.data is not None:
+            output.data.usage = get_accumulated_usage()
+        return output
+    except Exception as exc:
+        logger.error(
+            "[SYNC][v4 create_scenarios] FAILED | group_id={} | error={!r}",
+            prepared["scenario_group"].scenario_group_id,
+            exc,
+        )
+        return VersionedCreateScenariosOut(status="error", message=str(exc))
 
 
 async def _create_multi_event_scenarios_sync(

@@ -5,6 +5,13 @@ from fastapi import APIRouter, BackgroundTasks
 from apps.agents.scenario_group_agent.flows.confirm_generation.flow import (
     run_confirm_generation,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
+    V4MultiEventCreateScenariosIn,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
+    prepare_v4_multi_event_scenarios,
+    run_v4_multi_event_scenarios_background,
+)
 from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
     prepare_create_scenarios,
     run_create_scenarios_background,
@@ -17,6 +24,17 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     prepare_validate_scenarios,
     run_validate_scenarios_background,
 )
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
+    ScenarioGroupService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
+)
+from apps.agents.scenario_group_agent.schemas.api.dimension_mapping import (
+    DimensionMappingApprovalData,
+    DimensionMappingApprovalIn,
+    DimensionMappingApprovalOut,
+)
 from apps.agents.scenario_group_agent.schemas.endpoint import (
     ConfirmGenerationIn,
     ConfirmGenerationOut,
@@ -26,10 +44,76 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
     ScenarioGroupAcceptedOut,
     ValidateScenariosIn,
 )
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
+from apps.common.values.error_codes import ErrorCode
 
 
 router = APIRouter(tags=["scenario-generation"])
+
+
+@router.post(
+    "/v4/scenario-groups",
+    response_model=ScenarioGroupAcceptedOut,
+    summary="v4 다중 이벤트 모델 영향 레버 시나리오 그룹 생성",
+)
+async def create_v4_scenarios(
+    payload: V4MultiEventCreateScenariosIn,
+    background_tasks: BackgroundTasks,
+) -> ScenarioGroupAcceptedOut:
+    prepared = prepare_v4_multi_event_scenarios(payload)
+    group = prepared["scenario_group"]
+    background_tasks.add_task(
+        run_v4_multi_event_scenarios_background,
+        prepared,
+    )
+    return ScenarioGroupAcceptedOut(
+        data=ScenarioGroupAcceptedData(
+            scenario_group_id=group.scenario_group_id,
+            status=group.status,
+            stage=group.stage,
+        ),
+    )
+
+
+@router.post(
+    "/scenario-groups/{scenario_group_id}/dimension-mapping-approvals",
+    response_model=DimensionMappingApprovalOut,
+    summary="자유 dimension value mapping proposal 승인/거절",
+)
+async def approve_dimension_mappings(
+    scenario_group_id: int,
+    payload: DimensionMappingApprovalIn,
+) -> DimensionMappingApprovalOut:
+    group = ScenarioGroupService().load_by_id(scenario_group_id)
+    if group is None:
+        raise MIBaseError(
+            ErrorCode.ENTITY_NOT_FOUND,
+            detail=f"Scenario group not found: {scenario_group_id}",
+        )
+    if group.request_usr_id is not None and group.request_usr_id != payload.user_id:
+        raise MIBaseError(
+            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+            detail=f"이미 사용자 {group.request_usr_id}가 점유하고 있습니다.",
+        )
+    decisions = ScenarioService().decide_mapping_proposals(
+        scenario_group_id,
+        [decision.model_dump() for decision in payload.decisions],
+        payload.user_id,
+    )
+    refreshed = ScenarioGroupService().load_by_id(scenario_group_id)
+    if refreshed is None:
+        raise MIBaseError(
+            ErrorCode.ENTITY_NOT_FOUND,
+            detail=f"Scenario group not found: {scenario_group_id}",
+        )
+    return DimensionMappingApprovalOut(
+        data=DimensionMappingApprovalData(
+            scenario_group_id=scenario_group_id,
+            parameter_mapping_ready=refreshed.parameter_mapping_ready,
+            decisions=decisions,
+        ),
+    )
 
 
 @router.post(
