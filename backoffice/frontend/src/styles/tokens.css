@@ -1,0 +1,25 @@
+:root {
+  --color-brand: #2f55d4;
+  --color-brand-hover: #2446b8;
+  --color-brand-soft: #eaf2ff;
+
+  --color-text: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-muted: #66717f;
+  --color-border: #dde3ea;
+  --color-divider: #e7ebf0;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f7f9fb;
+
+  --color-success: #2f7d3d;
+  --color-warning: #c2410c;
+  --color-warning-bg: #fff7ed;
+  --color-danger: #bd3232;
+  --color-danger-bg: #fff1f1;
+  --color-unknown: #8a5707;
+
+  --font-sans: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --radius: 8px;
+  --shadow-drawer: -16px 0 44px rgb(17 24 39 / 18%);
+}

@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from apps.agents.scenario_group_agent.persistence.scenario_service import (
+    ScenarioService,
+)
 from apps.agents.scenario_group_agent.schemas.endpoint import (
     ScenarioGroupDetailOut,
 )
@@ -17,9 +20,6 @@ from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioTable,
     SignpostBasePayload,
     SignpostQueryPayload,
-)
-from apps.agents.scenario_group_agent.persistence.scenario_service import (
-    ScenarioService,
 )
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
@@ -101,29 +101,45 @@ def build_scenario_group_query_data(
         scenario_group=ScenarioGroupQueryPayload.model_validate(group),
         table=ScenarioQueryTable(headers=headers, rows=rows),
         scenario_count=sum(1 for scenario in scenarios if scenario.get("del_yn") != "Y"),
-        signpost_count=sum(
-            1 for signpost in signposts_list if signpost.get("del_yn") != "Y"
-        ),
-        deleted_scenario_count=sum(
-            1 for scenario in scenarios if scenario.get("del_yn") == "Y"
-        ),
-        deleted_signpost_count=sum(
-            1 for signpost in signposts_list if signpost.get("del_yn") == "Y"
-        ),
+        signpost_count=sum(1 for signpost in signposts_list if signpost.get("del_yn") != "Y"),
+        deleted_scenario_count=sum(1 for scenario in scenarios if scenario.get("del_yn") == "Y"),
+        deleted_signpost_count=sum(1 for signpost in signposts_list if signpost.get("del_yn") == "Y"),
     )
 
 
 def _build_headers(
     group: dict[str, Any],
 ) -> tuple[dict[str, dict[str, Any]], list[str], list[ScenarioHeader]]:
-    template_json = ScenarioService()._load_template_json_from_db(
-        int(group["event_type_l2_id"])
-    )
-    template_by_key = {
-        str(item.get("dim_key")): item
-        for item in template_json
-        if isinstance(item, dict) and item.get("dim_key")
-    }
+    dimension_definitions = group.get("dimension_definitions") or []
+    if dimension_definitions:
+        template_by_key = {
+            str(item.get("dimension_id")): {
+                "dim_key": item.get("dimension_id"),
+                "label": item.get("label"),
+                "description": item.get("description"),
+                "required": item.get("required", False),
+                "display_order": item.get("display_order", 999999),
+                "value_enums": [
+                    value.get("label")
+                    for value in item.get("values") or []
+                    if isinstance(value, dict) and value.get("label")
+                ],
+            }
+            for item in dimension_definitions
+            if isinstance(item, dict) and item.get("dimension_id")
+        }
+    else:
+        event_type_l2_id = group.get("event_type_l2_id")
+        template_json = (
+            ScenarioService()._load_template_json_from_db(
+                int(event_type_l2_id),
+            )
+            if event_type_l2_id is not None
+            else []
+        )
+        template_by_key = {
+            str(item.get("dim_key")): item for item in template_json if isinstance(item, dict) and item.get("dim_key")
+        }
     selected_keys = [str(key) for key in group.get("dimension_selected") or []]
     selected_keys.sort(
         key=lambda key: (
@@ -157,10 +173,7 @@ def _row_common_payload(
     selected_keys: list[str],
 ) -> dict[str, Any]:
     raw_values = scenario.get("dimension_values") or {}
-    cells = {
-        key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key))
-        for key in selected_keys
-    }
+    cells = {key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key)) for key in selected_keys}
     return {
         "scenario_id": int(scenario["scenario_id"]),
         "display_order": int(scenario.get("display_order") or 0),
@@ -172,12 +185,16 @@ def _row_common_payload(
             probability_delta=scenario.get("probability_delta"),
         ),
         "baseline_yn": scenario.get("baseline_yn"),
+        "global_pressure_band": scenario.get("global_pressure_band"),
+        "scenario_role": scenario.get("scenario_role"),
+        "probability_score": scenario.get("probability_score"),
+        "global_pressure_rationale": scenario.get(
+            "global_pressure_rationale",
+        ),
     }
 
 
-def _enum_id_to_label(
-    dimension_key: str, value: Any, template: dict[str, Any] | None
-) -> Any:
+def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] | None) -> Any:
     if value is None or not template:
         return value
     prefix = f"{dimension_key}_v"

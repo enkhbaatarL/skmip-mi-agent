@@ -9,15 +9,18 @@ from apps.persistence.event.models import (
     MiEventTypeL2Model,
 )
 from apps.persistence.model_parameter.models import (
+    MiModelImpactLeverModel,
     MiModelParamDimensionMapModel,
     MiModelParamModel,
     MiModelParamProposalModel,
 )
 from apps.persistence.scenario.models import (
+    MiDimensionValueMappingModel,
     MiScenarioDimensionTemplateModel,
     MiScenarioModel,
 )
 from apps.persistence.scenario_group.models import (
+    MiScenarioGroupEventModel,
     MiScenarioGroupModel,
     MiScenarioSnapModel,
     MiSignpostSnapModel,
@@ -33,7 +36,9 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiEventRecordMapModel.__table__,
     MiScenarioGroupModel.__table__,
     MiScenarioDimensionTemplateModel.__table__,
+    MiScenarioGroupEventModel.__table__,
     MiScenarioModel.__table__,
+    MiDimensionValueMappingModel.__table__,
     MiSignpostModel.__table__,
     MiSnapshotModel.__table__,
     MiScenarioSnapModel.__table__,
@@ -42,6 +47,7 @@ APPLICATION_TABLES: tuple[Table, ...] = (
 
 MODEL_PARAMETER_TABLES: tuple[Table, ...] = (
     MiModelParamModel.__table__,
+    MiModelImpactLeverModel.__table__,
     MiModelParamDimensionMapModel.__table__,
     MiModelParamProposalModel.__table__,
 )

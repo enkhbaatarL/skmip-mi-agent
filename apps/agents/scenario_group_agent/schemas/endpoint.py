@@ -32,6 +32,7 @@ class ScenarioGroupAcceptedOut(BaseModel):
 class CreateScenariosIn(ApiModel):
     mi_event_id: int = Field(description="MI Event ID to generate a scenario group for")
     user_id: int
+    comparison_run_id: str | None = None
 
 
 class EventTypeInfo(ApiModel):
@@ -109,6 +110,7 @@ class ScenarioTemplateDimension(ApiModel):
     key: str
     label: str
     required: bool = False
+    description: str = ""
     display_order: int = 0
     enum_values: list[Any] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -116,6 +118,10 @@ class ScenarioTemplateDimension(ApiModel):
 
 class EventScenarioTemplate(ApiModel):
     event_type_l2_id: int
+    scenario_dimension_template_id: int | None = None
+    event_type_definition: str | None = None
+    lng_price_impact_examples: str | None = None
+    template_checksum: str | None = None
     dimensions: list[ScenarioTemplateDimension] = Field(default_factory=list)
     raw_template_json: list[Any] = Field(default_factory=list)
 
@@ -188,6 +194,8 @@ class ValidateScenariosOut(CallBackBody):
     is_valid: bool | None = None
     scenario_group: ValidateScenariosCallBackScenarioGroup | None = None
     table: ScenarioTable | None = None
+    mapping_proposals: list[dict[str, Any]] = Field(default_factory=list)
+    parameter_mapping_ready: bool | None = None
 
 
 class ValidateScenariosSyncOut(ValidateScenariosOut):

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+import hashlib
+import json
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import ScenarioStatus
 from apps.persistence.scenario.baseline_contrast import (
     apply_single_baseline_by_probability,
@@ -131,7 +135,7 @@ class ScenarioService:
             CommonScenarioTemplateDimension(
                 dimension_id=dimension.dim_key,
                 label_ko=dimension.label,
-                description=dimension.label,
+                description=dimension.description,
                 required=dimension.required,
                 enum=[
                     {
@@ -146,10 +150,28 @@ class ScenarioService:
         ]
 
     def load_pipeline_template(self, event_type_l2_id: int) -> ScenarioPipelineTemplate:
-        template_json = self._load_template_json_from_db(event_type_l2_id)
+        return self.load_pipeline_template_with_metadata(event_type_l2_id)
+
+    def load_legacy_pipeline_template(
+        self,
+        event_type_l2_id: int,
+    ) -> ScenarioPipelineTemplate:
         return self._map_template_json_to_pipeline_template(
-            template_json,
+            self._load_template_json_from_db(event_type_l2_id),
             event_type_l2_id,
+        )
+
+    def load_pipeline_template_with_metadata(
+        self,
+        event_type_l2_id: int,
+    ) -> ScenarioPipelineTemplate:
+        template_record = self._load_template_record_from_db(event_type_l2_id)
+        template = self._map_template_json_to_pipeline_template(
+            template_record["template_json"],
+            event_type_l2_id,
+        )
+        return template.model_copy(
+            update={key: value for key, value in template_record.items() if key != "template_json"},
         )
 
     def load_scenario_template(self, event_type_l2_id: int) -> "CommonScenarioTemplate":
@@ -164,7 +186,7 @@ class ScenarioService:
             ScenarioTemplateDimension(
                 dimension_id=dimension.dim_key,
                 label_ko=dimension.label,
-                description=dimension.label,
+                description=dimension.description,
                 required=dimension.required,
                 enum=[
                     ScenarioTemplateEnum(
@@ -189,7 +211,9 @@ class ScenarioService:
 
         session = get_sync_session()
         try:
-            template_json = ScenarioRepository(session=session)._load_template_json_from_db(event_type_l2_id)
+            template_json = ScenarioRepository(
+                session=session,
+            )._load_template_json_from_db(event_type_l2_id)
         finally:
             session.close()
 
@@ -202,6 +226,50 @@ class ScenarioService:
                 f"(event_type_l2_id={event_type_l2_id})"
             )
         return template_json
+
+    def _load_template_record_from_db(
+        self,
+        event_type_l2_id: int,
+    ) -> dict[str, Any]:
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            model = ScenarioRepository(session=session).fetch_template_model(
+                event_type_l2_id,
+            )
+        finally:
+            session.close()
+
+        if model is None:
+            raise KeyError(f"scenario dimension template 없음: event_type_l2_id={event_type_l2_id}")
+        if not isinstance(model.template_json, list):
+            raise ValueError(
+                "tmm_mi_scenario_dimension_template_m.template_json must be JSON ARRAY "
+                f"(event_type_l2_id={event_type_l2_id})"
+            )
+        canonical = json.dumps(
+            {
+                "event_type_definition": model.event_type_definition or "",
+                "lng_price_impact_examples": (model.lng_price_impact_examples or ""),
+                "dimensions": model.template_json,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return {
+            "scenario_dimension_template_id": int(
+                model.scenario_dimension_template_id,
+            ),
+            "event_type_l2_id": event_type_l2_id,
+            "template_json": model.template_json,
+            "event_type_definition": model.event_type_definition or "",
+            "lng_price_impact_examples": model.lng_price_impact_examples or "",
+            "template_checksum": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        }
 
     def _map_template_json_to_pipeline_template(
         self,
@@ -222,6 +290,66 @@ class ScenarioService:
             compatibility_rules=[],
         )
 
+    def validate_template_for_write(
+        self,
+        template_json: list[dict[str, Any]],
+        *,
+        event_type_l2_id: int,
+    ) -> ScenarioPipelineTemplate:
+        missing_descriptions = [
+            str(item.get("dim_key") or index)
+            for index, item in enumerate(template_json, start=1)
+            if not isinstance(item, dict) or not str(item.get("description") or "").strip()
+        ]
+        if missing_descriptions:
+            raise ValueError(
+                "description is required for new or updated template dimensions: " + ", ".join(missing_descriptions),
+            )
+        return self._map_template_json_to_pipeline_template(
+            template_json,
+            event_type_l2_id,
+        )
+
+    def update_template_domain_knowledge(
+        self,
+        *,
+        event_type_l2_id: int,
+        event_type_definition: str,
+        lng_price_impact_examples: str,
+        template_json: list[dict[str, Any]],
+        user_id: int,
+    ) -> None:
+        self.validate_template_for_write(
+            template_json,
+            event_type_l2_id=event_type_l2_id,
+        )
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioRepository(session=session)
+            template = repository.fetch_template_model(event_type_l2_id)
+            if template is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=(f"Scenario dimension template not found: event_type_l2_id={event_type_l2_id}"),
+                )
+            repository.update_template_domain_knowledge(
+                template,
+                event_type_definition=event_type_definition,
+                lng_price_impact_examples=lng_price_impact_examples,
+                template_json=template_json,
+                user_id=user_id,
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def _map_template_dimension(
         self,
         raw_dimension: dict[str, Any],
@@ -241,6 +369,11 @@ class ScenarioService:
 
         return ScenarioPipelineTemplateDimension(
             label=str(raw_dimension.get("label", "")).strip() or dim_key,
+            description=(
+                str(raw_dimension.get("description", "")).strip()
+                or str(raw_dimension.get("label", "")).strip()
+                or dim_key
+            ),
             dim_key=dim_key,
             required=bool(raw_dimension.get("required", False)),
             value_enums=raw_value_enums,
@@ -263,7 +396,9 @@ class ScenarioService:
         session = get_sync_session()
         try:
             repository = ScenarioRepository(session=session)
-            return [ScenarioPayload.from_model(model) for model in repository.fetch_models_by_group_id(scenario_group_id)]
+            return [
+                ScenarioPayload.from_model(model) for model in repository.fetch_models_by_group_id(scenario_group_id)
+            ]
         finally:
             session.close()
 
@@ -319,6 +454,157 @@ class ScenarioService:
         finally:
             session.close()
 
+    def load_group_dimension_template(
+        self,
+        dimension_definitions: list[dict[str, Any]],
+    ) -> list["CommonScenarioTemplateDimension"]:
+        from apps.persistence.scenario.schema import (
+            ScenarioTemplateDimension as CommonScenarioTemplateDimension,
+            ScenarioTemplateEnum,
+        )
+
+        dimensions: list[CommonScenarioTemplateDimension] = []
+        for definition in dimension_definitions:
+            values = definition.get("values") or []
+            dimensions.append(
+                CommonScenarioTemplateDimension(
+                    dimension_id=str(definition["dimension_id"]),
+                    label_ko=str(definition.get("label") or definition["dimension_id"]),
+                    description=str(
+                        definition.get("description") or definition.get("label") or definition["dimension_id"],
+                    ),
+                    required=bool(definition.get("required", False)),
+                    enum=[
+                        ScenarioTemplateEnum(
+                            id=str(value.get("value_id") or value.get("label")),
+                            label=str(value.get("label") or value.get("value_id")),
+                        )
+                        for value in values
+                        if isinstance(value, dict) and (value.get("value_id") or value.get("label"))
+                    ],
+                ),
+            )
+        return dimensions
+
+    def save_mapping_proposals(
+        self,
+        scenario_group_id: int,
+        proposals: list[dict[str, Any]],
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioRepository(session=session)
+            saved: list[dict[str, Any]] = []
+            for proposal in proposals:
+                model = repository.upsert_mapping_proposal(
+                    scenario_group_id=scenario_group_id,
+                    dimension_value_id=str(proposal["dimension_value_id"]),
+                    dimension_id=str(proposal["dimension_id"]),
+                    display_value=str(proposal["display_value"]),
+                    source_projections=list(
+                        proposal.get("source_projections") or [],
+                    ),
+                    mapping_proposal=dict(
+                        proposal.get("mapping_proposal") or {},
+                    ),
+                    user_id=user_id,
+                )
+                saved.append(self._mapping_model_to_dict(model))
+            repository.deactivate_mappings_except(
+                scenario_group_id,
+                {str(proposal["dimension_value_id"]) for proposal in proposals},
+                user_id,
+            )
+            session.commit()
+            return saved
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def decide_mapping_proposals(
+        self,
+        scenario_group_id: int,
+        decisions: list[dict[str, Any]],
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioRepository(session=session)
+            decided: list[dict[str, Any]] = []
+            for decision in decisions:
+                model = repository.fetch_mapping_by_value_id(
+                    scenario_group_id,
+                    str(decision["dimension_value_id"]),
+                )
+                if model is None:
+                    raise MIBaseError(
+                        ErrorCode.ENTITY_NOT_FOUND,
+                        detail=(f"Mapping proposal not found: {decision['dimension_value_id']}"),
+                    )
+                if model.mapping_version != int(decision["mapping_version"]):
+                    raise MIBaseError(
+                        ErrorCode.INVALID_REQUEST,
+                        detail=(
+                            "Stale mapping version: "
+                            f"{decision['dimension_value_id']} "
+                            f"(expected={model.mapping_version}, "
+                            f"actual={decision['mapping_version']})"
+                        ),
+                    )
+                model.status = "approved" if decision["decision"] == "approve" else "rejected"
+                model.mod_usr_logn_id = user_id
+                decided.append(self._mapping_model_to_dict(model))
+            session.flush()
+            all_mappings = repository.fetch_mappings_by_group_id(
+                scenario_group_id,
+            )
+            ready = all(mapping.status == "approved" for mapping in all_mappings)
+            group = ScenarioGroupRepository(session=session).fetch_by_id(
+                scenario_group_id,
+            )
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+            ScenarioGroupRepository(session=session).update_group(
+                group,
+                {
+                    "parameter_mapping_ready": ready,
+                    "mod_usr_logn_id": user_id,
+                },
+            )
+            session.commit()
+            return decided
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    @staticmethod
+    def _mapping_model_to_dict(model: Any) -> dict[str, Any]:
+        return {
+            "dimension_value_id": model.dimension_value_id,
+            "dimension_id": model.dimension_id,
+            "display_value": model.display_value,
+            "source_projections": model.source_projections or [],
+            "mapping_proposal": model.mapping_proposal or {},
+            "mapping_version": int(model.mapping_version),
+            "status": model.status,
+        }
+
     def update_status(self, scenario_group_id: int, status: ScenarioStatus | str) -> int:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -364,10 +650,11 @@ class ScenarioService:
     def sync_from_table(
         self,
         scenario_group_id: int,
-        event_type_l2_id: int,
+        event_type_l2_id: int | None,
         table_payload: ScenarioSyncTablePayload,
         user_id: int,
         new_row_details: list[NewScenarioGeneratedDetails] | None = None,
+        dimension_definitions: list[dict[str, Any]] | None = None,
     ) -> ScenarioSyncResult:
         return asyncio.run(
             self.sync_from_table_async(
@@ -376,16 +663,18 @@ class ScenarioService:
                 table_payload=table_payload,
                 user_id=user_id,
                 new_row_details=new_row_details,
+                dimension_definitions=dimension_definitions,
             )
         )
 
     async def sync_from_table_async(
         self,
         scenario_group_id: int,
-        event_type_l2_id: int,
+        event_type_l2_id: int | None,
         table_payload: ScenarioSyncTablePayload,
         user_id: int,
         new_row_details: list[NewScenarioGeneratedDetails] | None = None,
+        dimension_definitions: list[dict[str, Any]] | None = None,
     ) -> ScenarioSyncResult:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -396,6 +685,7 @@ class ScenarioService:
             scenario_repository = ScenarioRepository(session=session)
             signpost_repository = SignpostRepository(session=session)
             group_repository = ScenarioGroupRepository(session=session)
+            group = group_repository.fetch_by_id(scenario_group_id)
 
             scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
             scenarios_by_id = {int(scenario.scenario_id): scenario for scenario in scenarios}
@@ -404,7 +694,33 @@ class ScenarioService:
             updated_ids: list[int] = []
             unchanged_existing_ids: list[int] = []
             rows = table_payload.get("rows", []) or []
-            template_by_key = self._load_dimension_template_by_key(event_type_l2_id)
+            if dimension_definitions:
+                template_by_key = {
+                    str(definition["dimension_id"]): {
+                        "dim_key": definition["dimension_id"],
+                        "label": definition.get("label") or definition["dimension_id"],
+                        "description": definition.get("description")
+                        or definition.get("label")
+                        or definition["dimension_id"],
+                        "required": definition.get("required", False),
+                        "value_enums": [
+                            value.get("label") or value.get("value_id")
+                            for value in definition.get("values") or []
+                            if isinstance(value, dict)
+                        ],
+                        "display_order": definition.get(
+                            "display_order",
+                            999999,
+                        ),
+                    }
+                    for definition in dimension_definitions
+                }
+            elif event_type_l2_id is not None:
+                template_by_key = self._load_dimension_template_by_key(
+                    event_type_l2_id,
+                )
+            else:
+                raise ValueError("Scenario group dimension definitions are missing")
             new_rows = [row for row in rows if row.get("scenario_id") is None]
             if new_rows and len(new_row_details or []) != len(new_rows):
                 raise ValueError("Generated scenario details are required for every new scenario row")
@@ -452,13 +768,21 @@ class ScenarioService:
             )
 
             active_scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
-            self._normalize_active_probability_scores(
-                active_scenarios,
-                user_id=user_id,
-            )
+            if group is None or getattr(
+                group,
+                "generation_strategy",
+                None,
+            ) not in {
+                "multi_event_source_dimensions",
+                "multi_event_composite_dimensions",
+                "multi_event_model_lever_dimensions",
+            }:
+                self._normalize_active_probability_scores(
+                    active_scenarios,
+                    user_id=user_id,
+                )
             self._apply_baseline_by_probability(active_scenarios, user_id=user_id)
 
-            group = group_repository.fetch_by_id(scenario_group_id)
             if group is not None:
                 header_keys = [
                     str(header["key"]) for header in table_payload.get("headers", []) or [] if header.get("key")

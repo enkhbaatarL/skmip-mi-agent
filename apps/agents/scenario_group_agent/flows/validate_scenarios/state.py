@@ -20,6 +20,8 @@ class ValidateScenariosState(BaseFlowState):
     validation_result: ScenarioValidationResult | None = None
     is_valid: bool = False
     reason: str = ""
+    mapping_proposals: list[dict[str, object]] = Field(default_factory=list)
+    parameter_mapping_ready: bool = False
 
 
 def validate_scenarios_state_update(**values: object) -> dict[str, object]:

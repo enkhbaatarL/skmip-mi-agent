@@ -88,6 +88,27 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
 - `POST /scenario-groups/sync`
   - 기존 `POST /scenario-groups`의 prepare 및 생성 graph를 동기 실행
   - Response: `CreateScenariosOut`
+- `POST /v1/scenario-groups/sync`
+  - 단일 `miEventId`, 선택 `comparisonRunId`
+  - Response: version/strategy, Event, dimension lineage, 공통 table을 포함한
+    `VersionedCreateScenariosOut`
+- `POST /v2/scenario-groups/sync`
+  - 중복 없는 `miEventIds` 2~5개와 필수 `comparisonRunId`
+  - Event별 원본 Template dimension 5~8개를 선택하고 key를
+    `e{eventId}__{dimKey}`로 namespace한다.
+- `POST /v3/scenario-groups/sync`
+  - v2와 같은 요청 계약
+  - Event 충격과 관련 상호작용을 4~7개 합성 dimension으로 구성한다.
+- `POST /v4/scenario-groups`
+  - 요청: `miEventIds` 2~5개, `targetMarket`(`JKM`/`TTF`/`HH`), `userId`,
+    선택적 `comparisonRunId`
+  - Template 없이 Event 사실과 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
+  - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
+- `POST /v4/scenario-groups/sync`
+  - v4와 같은 요청 계약에 필수 `comparisonRunId`를 추가하고 테스트·비교용으로
+    완료 응답을 동기 반환
+  - `generationDiagnostics`에 Event 영향 사실/상호작용, covered/uncovered
+    dimension, unsupported lever와 전체 coverage 상태를 포함
 - `POST /scenario-groups/{scenarioGroupId}/validation/sync`
   - 기존 validation prepare 및 검증 graph를 동기 실행
   - Response: `ValidateScenariosOut`
@@ -97,6 +118,27 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
 
 graph 실행 중 오류가 발생하면 HTTP 200에 `{"result": "failure", "reason": "..."}` 형태의 callback body를 반환합니다.
 prepare 단계의 입력 오류, 권한 오류, 중복 생성 오류는 기존 exception handler 응답을 따릅니다.
+
+versioned sync endpoint의 생성 오류는
+`{"status":"error","message":"...","data":null}` 형태로 반환한다. v2/v3/v4
+성공 응답은 `apiVersion`, `generationStrategy`, `comparisonRunId`,
+`events`, `dimensionDefinitions`, `table`, `generationDiagnostics`를 포함한다.
+`events`는 요청 Event 순서를 유지하고, 각 `dimensionDefinitions[].sourceRefs`는
+근거 Event의 `eventId`, `eventTypeL2Id`를 포함한다.
+각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
+`probabilityScore`, `globalPressureRationale`는 DB 저장값을 그대로 반환한다.
+
+### 자유 dimension value mapping 승인
+
+- `POST /scenario-groups/{scenarioGroupId}/dimension-mapping-approvals`
+- Request: `userId`, `decisions[]`
+  (`dimensionValueId`, `mappingVersion`, `approve|reject`)
+- LLM을 호출하지 않는다.
+- 현재 proposal과 다른 `mappingVersion`은 stale 요청으로 거부한다.
+- Validation은 저장된 `dimensionDefinitions`에 없는 자유 value를 source
+  dimension에 투영해 pending proposal로 반환한다.
+- 현재 사용 중인 proposal이 모두 승인되면
+  `parameterMappingReady=true`가 된다.
 
 ### 0) Event 목록/상세 조회
 
@@ -110,7 +152,10 @@ Backoffice Event List와 Event Detail 화면을 위한 조회 API입니다.
 - `GET /events/{mi_event_id}`
   - Response: `event`, `scenarioTemplate`, `source`
   - `event` detail에는 `keyBullets`, `tags`, `detailAnalysis`, `sourceMiRecordIds`, `createdAt`, `updatedAt`, `language`를 포함합니다.
-  - `scenarioTemplate`은 event type L2 기준 `tmm_mi_scenario_dimension_template_m.template_json`을 raw JSON과 display용 dimension 목록으로 반환합니다.
+  - `scenarioTemplate`은 event type L2 기준 Template ID/checksum,
+    `eventTypeDefinition`, `lngPriceImpactExamples`, raw JSON과 display용
+    dimension 목록을 반환합니다. legacy dimension의 description이 없으면
+    label을 display fallback으로 사용합니다.
 
 Backoffice Scenario Group List를 위한 목록 API도 제공합니다.
 

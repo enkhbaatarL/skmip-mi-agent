@@ -8,10 +8,14 @@ from apps.agents.scenario_group_agent.routers.scenario_generation_sync import ro
 from apps.agents.scenario_group_agent.routers.scenario_group_management import (
     router as scenario_group_management_router,
 )
+from apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync import (
+    router as versioned_scenario_generation_sync_router,
+)
 
 
 router = APIRouter()
 router.include_router(scenario_generation_router)
 router.include_router(scenario_generation_sync_router)
+router.include_router(versioned_scenario_generation_sync_router)
 router.include_router(scenario_group_management_router)
 router.include_router(events_router)

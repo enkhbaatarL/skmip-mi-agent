@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_, select
 
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 from apps.persistence.model_parameter.models import (
+    MiModelImpactLeverModel,
     MiModelParamDimensionMapModel,
     MiModelParamModel,
     MiModelParamProposalModel,
@@ -27,6 +28,55 @@ def _json_safe(value: Any) -> Any:
 
 
 class ModelParameterRepository(BaseSyncSQLRepository):
+    def fetch_active_impact_levers(self) -> list[dict[str, Any]]:
+        stmt = (
+            select(MiModelImpactLeverModel)
+            .where(
+                MiModelImpactLeverModel.del_yn == "N",
+                MiModelImpactLeverModel.use_yn == "Y",
+            )
+            .order_by(
+                MiModelImpactLeverModel.domain,
+                MiModelImpactLeverModel.lever_code,
+            )
+        )
+        return [
+            {
+                "impact_lever_id": int(lever.impact_lever_id),
+                "lever_code": lever.lever_code,
+                "domain": lever.domain,
+                "label": lever.label,
+                "description": lever.description,
+                "applicability_hint": lever.applicability_hint,
+                "parent_lever_code": lever.parent_lever_code,
+                "parameter_bindings": _json_safe(lever.parameter_bindings or []),
+                "catalog_version": lever.catalog_version,
+            }
+            for lever in self.session.execute(stmt).scalars().all()
+        ]
+
+    def fetch_parameter_definitions_by_names(
+        self,
+        parameter_names: list[str],
+    ) -> list[dict[str, Any]]:
+        normalized = sorted(
+            {str(name).strip() for name in parameter_names if str(name).strip()},
+        )
+        if not normalized:
+            return []
+        stmt = (
+            select(MiModelParamModel)
+            .where(
+                MiModelParamModel.del_yn == "N",
+                MiModelParamModel.parameter_name.in_(normalized),
+            )
+            .order_by(MiModelParamModel.model_param_id)
+        )
+        return [
+            self._parameter_definition_to_dict(row)
+            for row in self.session.execute(stmt).scalars().all()
+        ]
+
     def fetch_parameter_mapping_resources(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         parameter_definitions = self._fetch_model_parameter_definitions()
         mapping_rules = self._fetch_dimension_mapping_rules()
@@ -40,7 +90,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         *,
         scenario_id: int,
         scenario_group_id: int,
-        mi_event_id: int,
+        mi_event_id: int | None,
         request_usr_id: int | None,
         proposal_parameters: list[dict[str, Any]],
     ) -> int:
@@ -65,7 +115,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         *,
         scenario_id: int,
         scenario_group_id: int,
-        mi_event_id: int,
+        mi_event_id: int | None,
         request_usr_id: int | None,
     ) -> int:
         proposal = MiModelParamProposalModel(
@@ -124,7 +174,11 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             {
                 "scenario_id": int(proposal.scenario_id),
                 "scenario_group_id": int(proposal.scenario_group_id),
-                "mi_event_id": int(proposal.mi_event_id),
+                "mi_event_id": (
+                    int(proposal.mi_event_id)
+                    if proposal.mi_event_id is not None
+                    else None
+                ),
                 "status": proposal.status,
                 "proposal_parameters": _json_safe(
                     proposal.confirmation_parameters
@@ -172,7 +226,11 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             "model_param_proposal_id": int(proposal.model_param_proposal_id),
             "scenario_id": int(proposal.scenario_id),
             "scenario_group_id": int(proposal.scenario_group_id),
-            "mi_event_id": int(proposal.mi_event_id),
+            "mi_event_id": (
+                int(proposal.mi_event_id)
+                if proposal.mi_event_id is not None
+                else None
+            ),
             "status": proposal.status,
             "callback_status": proposal.callback_status,
             "proposal_parameters": _json_safe(proposal.proposal_parameters),
@@ -300,6 +358,8 @@ class ModelParameterRepository(BaseSyncSQLRepository):
 
     def _parameter_definition_to_dict(self, parameter: MiModelParamModel) -> dict[str, Any]:
         return {
+            "model_param_id": int(parameter.model_param_id),
+            "use_yn": parameter.use_yn,
             "canonical_parameter_name": parameter.parameter_name,
             "parameter_hint": parameter.parameter_hint,
             "model_file": parameter.model_file,

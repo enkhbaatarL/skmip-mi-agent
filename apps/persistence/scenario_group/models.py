@@ -18,12 +18,8 @@ from apps.persistence.enums import (
 
 BIN = "utf8mb4_bin"
 TABLE_ARGS = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4", "mysql_collate": BIN}
-_SCENARIO_GROUP_STATUS_CHECK_SQL = ", ".join(
-    f"'{status.value}'" for status in ScenarioGroupStatus
-)
-_SCENARIO_GROUP_STAGE_CHECK_SQL = ", ".join(
-    f"'{stage.value}'" for stage in ScenarioGroupStage
-)
+_SCENARIO_GROUP_STATUS_CHECK_SQL = ", ".join(f"'{status.value}'" for status in ScenarioGroupStatus)
+_SCENARIO_GROUP_STAGE_CHECK_SQL = ", ".join(f"'{stage.value}'" for stage in ScenarioGroupStage)
 _SCENARIO_GROUP_STAGE_COMMENT = " / ".join(stage.value for stage in ScenarioGroupStage)
 
 
@@ -69,6 +65,22 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         CheckConstraint("JSON_TYPE(dimension_selected) = 'ARRAY'", name="ck_tmm_mi_scenario_group_m_01"),
         CheckConstraint(f"status IN ({_SCENARIO_GROUP_STATUS_CHECK_SQL})", name="ck_tmm_mi_scenario_group_m_02"),
         CheckConstraint(f"stage IN ({_SCENARIO_GROUP_STAGE_CHECK_SQL})", name="ck_tmm_mi_scenario_group_m_03"),
+        CheckConstraint(
+            "api_version IN ('v1','v2','v3','v4')",
+            name="ck_tmm_mi_scenario_group_m_04",
+        ),
+        CheckConstraint(
+            "generation_strategy IN "
+            "('single_event_template_dimensions',"
+            "'multi_event_source_dimensions',"
+            "'multi_event_composite_dimensions',"
+            "'multi_event_model_lever_dimensions')",
+            name="ck_tmm_mi_scenario_group_m_05",
+        ),
+        CheckConstraint(
+            "target_market IS NULL OR target_market IN ('JKM','TTF','HH')",
+            name="ck_tmm_mi_scenario_group_m_06",
+        ),
         TABLE_ARGS,
     )
 
@@ -78,17 +90,17 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         autoincrement=True,
         comment="시나리오 그룹 ID",
     )
-    mi_event_id: Mapped[int] = mapped_column(
+    mi_event_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),
         ForeignKey("tmm_mi_mievent_m.mi_event_id"),
-        nullable=False,
-        comment="MI 이벤트 ID",
+        nullable=True,
+        comment="단일 이벤트 방식의 대표 MI 이벤트 ID",
     )
-    event_type_l2_id: Mapped[int] = mapped_column(
+    event_type_l2_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),
         ForeignKey("tmm_mi_event_type_l2_m.event_type_l2_id"),
-        nullable=False,
-        comment="이벤트 유형 L2 ID",
+        nullable=True,
+        comment="단일 이벤트 방식의 이벤트 유형 L2 ID",
     )
     request_usr_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),
@@ -112,7 +124,99 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         server_default=sa.text(f"'{ScenarioGroupStage.READY.value}'"),
         comment=f"단계 ({_SCENARIO_GROUP_STAGE_COMMENT})",
     )
+    api_version: Mapped[str] = mapped_column(
+        sa.String(20, collation=BIN),
+        nullable=False,
+        server_default=sa.text("'v1'"),
+    )
+    generation_strategy: Mapped[str] = mapped_column(
+        sa.String(100, collation=BIN),
+        nullable=False,
+        server_default=sa.text("'single_event_template_dimensions'"),
+    )
+    comparison_run_id: Mapped[str | None] = mapped_column(
+        sa.String(255, collation=BIN),
+        nullable=True,
+    )
+    target_market: Mapped[str | None] = mapped_column(
+        sa.String(20, collation=BIN),
+        nullable=True,
+        comment="v4 대표 가격 시장",
+    )
+    impact_catalog_version: Mapped[str | None] = mapped_column(
+        sa.String(255, collation=BIN),
+        nullable=True,
+        comment="v4 모델 영향 레버 카탈로그 버전",
+    )
+    impact_catalog_checksum: Mapped[str | None] = mapped_column(
+        sa.String(64, collation=BIN),
+        nullable=True,
+        comment="v4 모델 영향 레버 카탈로그 checksum",
+    )
+    template_checksum: Mapped[str | None] = mapped_column(
+        sa.String(64, collation=BIN),
+        nullable=True,
+    )
+    parameter_mapping_ready: Mapped[bool] = mapped_column(
+        sa.Boolean,
+        nullable=False,
+        server_default=sa.false(),
+    )
+    dimension_definitions: Mapped[Any] = mapped_column(
+        sa.JSON,
+        nullable=False,
+        server_default=sa.text("(JSON_ARRAY())"),
+    )
+    generation_diagnostics: Mapped[Any] = mapped_column(
+        sa.JSON,
+        nullable=False,
+        server_default=sa.text("(JSON_OBJECT())"),
+    )
 
+
+class MiScenarioGroupEventModel(AuditColumnsMixin, ORMBase):
+    __tablename__ = "tmm_mi_scenario_group_event_m"
+    __table_args__ = (
+        Index("idx_tmm_mi_scenario_group_event_m_01", "scenario_group_id"),
+        Index("idx_tmm_mi_scenario_group_event_m_02", "mi_event_id"),
+        sa.UniqueConstraint(
+            "scenario_group_id",
+            "mi_event_id",
+            name="uk_tmm_mi_scenario_group_event_m_01",
+        ),
+        TABLE_ARGS,
+    )
+
+    scenario_group_event_id: Mapped[int] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        primary_key=True,
+        autoincrement=True,
+    )
+    scenario_group_id: Mapped[int] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        ForeignKey("tmm_mi_scenario_group_m.scenario_group_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mi_event_id: Mapped[int] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        ForeignKey("tmm_mi_mievent_m.mi_event_id"),
+        nullable=False,
+    )
+    event_type_l2_id: Mapped[int] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        ForeignKey("tmm_mi_event_type_l2_m.event_type_l2_id"),
+        nullable=False,
+    )
+    scenario_dimension_template_id: Mapped[int | None] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        ForeignKey("tmm_mi_scenario_dimension_template_m.scenario_dimension_template_id"),
+        nullable=True,
+    )
+    template_checksum: Mapped[str | None] = mapped_column(
+        sa.String(64, collation=BIN),
+        nullable=True,
+    )
+    display_order: Mapped[int] = mapped_column(sa.Integer, nullable=False)
 
 
 class MiSnapshotModel(AuditColumnsMixin, ORMBase):
@@ -159,6 +263,18 @@ class MiScenarioSnapModel(AuditColumnsMixin, ORMBase):
     dimension_values: Mapped[Any] = mapped_column(sa.JSON, nullable=False)
     probability_score: Mapped[Decimal | None] = mapped_column(mysql.DECIMAL(5, 2), nullable=True)
     baseline_yn: Mapped[str] = mapped_column(sa.CHAR(1, collation=BIN), nullable=False, server_default=sa.text("'N'"))
+    global_pressure_band: Mapped[str | None] = mapped_column(
+        sa.String(50, collation=BIN),
+        nullable=True,
+    )
+    scenario_role: Mapped[str | None] = mapped_column(
+        sa.String(50, collation=BIN),
+        nullable=True,
+    )
+    global_pressure_rationale: Mapped[str | None] = mapped_column(
+        sa.Text(collation=BIN),
+        nullable=True,
+    )
 
 
 class MiSignpostSnapModel(AuditColumnsMixin, ORMBase):
@@ -166,7 +282,9 @@ class MiSignpostSnapModel(AuditColumnsMixin, ORMBase):
     __table_args__ = (
         Index("idx_tmm_mi_signpost_snap_m_01", "snapshot_id"),
         Index("idx_tmm_mi_signpost_snap_m_02", "scenario_snap_id"),
-        CheckConstraint("keyword_hints IS NULL OR JSON_TYPE(keyword_hints) = 'ARRAY'", name="ck_tmm_mi_signpost_snap_m_01"),
+        CheckConstraint(
+            "keyword_hints IS NULL OR JSON_TYPE(keyword_hints) = 'ARRAY'", name="ck_tmm_mi_signpost_snap_m_01"
+        ),
         TABLE_ARGS,
     )
 
@@ -188,6 +306,8 @@ class MiSignpostSnapModel(AuditColumnsMixin, ORMBase):
     src_signpost_id: Mapped[int] = mapped_column(mysql.INTEGER(unsigned=True), nullable=False)
     label: Mapped[str] = mapped_column(sa.String(500, collation=BIN), nullable=False)
     probability_direction_code: Mapped[str | None] = mapped_column(sa.String(50, collation=BIN), nullable=True)
-    strength: Mapped[str | None] = mapped_column(sa.String(50, collation=BIN), nullable=True, comment="signpost 강도 (동결, STRONG/MEDIUM/WEAK)")
+    strength: Mapped[str | None] = mapped_column(
+        sa.String(50, collation=BIN), nullable=True, comment="signpost 강도 (동결, STRONG/MEDIUM/WEAK)"
+    )
     probability_impact_score: Mapped[Decimal | None] = mapped_column(mysql.DECIMAL(5, 2), nullable=True)
     keyword_hints: Mapped[Any | None] = mapped_column(sa.JSON, nullable=True, comment="매칭 키워드 힌트 배열 (동결)")

@@ -43,9 +43,17 @@ from apps.persistence.scenario_group.schema import (
 # ---------------------------------------------------------------------------
 
 
-def prepare_create_scenarios(mi_event_id: int, user_id: int) -> dict[str, Any]:
+def prepare_create_scenarios(
+    mi_event_id: int,
+    user_id: int,
+    comparison_run_id: str | None = None,
+) -> dict[str, Any]:
     """Event 로드 → 기존 그룹 확인 → group row INSERT. 반환값으로 200 응답을 구성한다."""
-    state = CreateScenariosState(mi_event_id=mi_event_id, user_id=user_id)
+    state = CreateScenariosState(
+        mi_event_id=mi_event_id,
+        user_id=user_id,
+        comparison_run_id=comparison_run_id,
+    )
     state = state.model_copy(update=load_event(state))
     existing_group_result = check_existing_scenario_group(state)  # 충돌·중복 시 MIBaseError raise
     state = state.model_copy(update=existing_group_result)

@@ -11,6 +11,7 @@ from langgraph.runtime import Runtime
 
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     COMPAT_SYSTEM_PROMPT,
+    MULTI_EVENT_COMPAT_SYSTEM_PROMPT,
     CompatibilityItem,
     CompatibilityStructuredOutput,
     DimensionValueStructuredOutput,
@@ -55,15 +56,11 @@ def build_context(
     template_dims: list[dict[str, Any]],
     requested_headers: list[dict[str, Any]] | None = None,
 ) -> ReviewContext:
-    persisted_by_id = {
-        int(scenario["scenario_id"]): scenario for scenario in persisted_scenarios
-    }
+    persisted_by_id = {int(scenario["scenario_id"]): scenario for scenario in persisted_scenarios}
     scenarios = [
         _normalize_scenario(
             row,
-            persisted_by_id.get(int(row["scenario_id"]))
-            if row.get("scenario_id") is not None
-            else None,
+            persisted_by_id.get(int(row["scenario_id"])) if row.get("scenario_id") is not None else None,
             index,
         )
         for index, row in enumerate(requested_rows)
@@ -73,10 +70,7 @@ def build_context(
         for dimension in template_dims
         if isinstance(dimension, dict) and _template_dim_key(dimension)
     }
-    enum_index = {
-        key: _template_enum_labels(dimension)
-        for key, dimension in dim_index.items()
-    }
+    enum_index = {key: _template_enum_labels(dimension) for key, dimension in dim_index.items()}
     selected_dims = _selected_dims_from_headers(requested_headers)
     if selected_dims is None:
         selected_dims = [str(key) for key in group.get("dimension_selected") or []]
@@ -111,11 +105,7 @@ def _selected_dims_from_headers(
 ) -> list[str] | None:
     if requested_headers is None:
         return None
-    return [
-        str(header["key"])
-        for header in requested_headers
-        if isinstance(header, dict) and header.get("key")
-    ]
+    return [str(header["key"]) for header in requested_headers if isinstance(header, dict) and header.get("key")]
 
 
 def _norm_compare_value(value: Any) -> Any:
@@ -142,9 +132,7 @@ def _norm_cells(cells: Any) -> dict[str, Any]:
     if not isinstance(cells, dict):
         return {}
     return {
-        str(key): _norm_compare_value(value)
-        for key, value in cells.items()
-        if str(key).strip() and value is not None
+        str(key): _norm_compare_value(value) for key, value in cells.items() if str(key).strip() and value is not None
     }
 
 
@@ -181,10 +169,7 @@ def _is_request_unchanged(
         comparisons: list[tuple[Any, Any]] = [
             (row.get("title"), persisted.get("title")),
         ]
-        if any(
-            _norm_compare_value(requested) != _norm_compare_value(stored)
-            for requested, stored in comparisons
-        ):
+        if any(_norm_compare_value(requested) != _norm_compare_value(stored) for requested, stored in comparisons):
             return False
         if _norm_cells(row.get("cells")) != _norm_cells(
             persisted.get("dimension_values"),
@@ -214,10 +199,12 @@ def _normalize_scenario(
         "narrative": row.get("narrative") or persisted.get("narrative") or "",
         "dimension_values": row.get("cells") or {},
         "probability_score": metrics.get(
-            "probability_score", persisted.get("probability_score"),
+            "probability_score",
+            persisted.get("probability_score"),
         ),
         "probability_delta": metrics.get(
-            "probability_delta", persisted.get("probability_delta"),
+            "probability_delta",
+            persisted.get("probability_delta"),
         ),
         "baseline_yn": row.get("baseline_yn") or persisted.get("baseline_yn"),
     }
@@ -275,10 +262,7 @@ def _exact_duplicate_title_pairs(
 
 def _check_exact_title_duplicates(ctx: ReviewContext) -> CheckResult:
     duplicate_pairs = _exact_duplicate_title_pairs(ctx)
-    offenders = [
-        f"{_sid(original)} = {_sid(duplicate)}"
-        for original, duplicate in duplicate_pairs
-    ]
+    offenders = [f"{_sid(original)} = {_sid(duplicate)}" for original, duplicate in duplicate_pairs]
     advice = [
         f"시나리오명 '{_scenario_label(original)}'와(과) "
         f"'{_scenario_label(duplicate)}'가 동일합니다. 분기 기준의 차이가 드러나도록 "
@@ -342,19 +326,12 @@ def _check_baseline_contrast_covered(ctx: ReviewContext) -> CheckResult:
         ctx.selected_dims,
         baseline_index=baseline_index,
     )
-    missing_pairs = [
-        (key, coverage.baseline_values.get(key))
-        for key in coverage.missing_dimensions
-    ]
-    offenders = [
-        f"{key} (baseline='{baseline_value}')"
-        for key, baseline_value in missing_pairs
-    ]
+    missing_pairs = [(key, coverage.baseline_values.get(key)) for key in coverage.missing_dimensions]
+    offenders = [f"{key} (baseline='{baseline_value}')" for key, baseline_value in missing_pairs]
     advice: list[str] = []
     if missing_pairs:
         example = ", ".join(
-            f"{_dim_label(ctx, key)}: baseline '{baseline_value}'와 다른 값"
-            for key, baseline_value in missing_pairs
+            f"{_dim_label(ctx, key)}: baseline '{baseline_value}'와 다른 값" for key, baseline_value in missing_pairs
         )
         advice.append(
             f"baseline 시나리오 '{_scenario_label(baselines[0])}'와(과) 다른 방향의 "
@@ -391,9 +368,7 @@ def _check_value_diversity(ctx: ReviewContext) -> CheckResult:
         "Stage3",
         "각 선택 Dim 값 다양성 ≥2",
         "PASS" if not bad else "WARN",
-        " / ".join(f"{key}={len(values)}값" for key, values in used.items())
-        if not bad
-        else f"단일값 Dim {len(bad)}건",
+        " / ".join(f"{key}={len(values)}값" for key, values in used.items()) if not bad else f"단일값 Dim {len(bad)}건",
         bad,
         advice,
     )
@@ -402,12 +377,7 @@ def _check_value_diversity(ctx: ReviewContext) -> CheckResult:
 def _compat_advice(item: CompatibilityItem, scenario_label: str | None) -> str:
     """모순 1건을 '동시에 가질 수 없습니다 + 권장 변경' 형태의 안내로 변환."""
     prefix = f"시나리오 '{scenario_label}': " if scenario_label else ""
-    has_pair = bool(
-        item.conflict_dim_a
-        and item.conflict_value_a
-        and item.conflict_dim_b
-        and item.conflict_value_b
-    )
+    has_pair = bool(item.conflict_dim_a and item.conflict_value_a and item.conflict_dim_b and item.conflict_value_b)
     if not has_pair:
         # LLM이 충돌 항목을 구조화해 주지 못한 경우 서술형 reason 으로 폴백.
         return f"{prefix}값 조합이 서로 맞지 않습니다 — {item.reason}".rstrip(" —")
@@ -417,10 +387,7 @@ def _compat_advice(item: CompatibilityItem, scenario_label: str | None) -> str:
         f"동시에 가질 수 없습니다."
     )
     if item.recommended_value_b:
-        body += (
-            f" '{item.conflict_value_b}'을(를) "
-            f"'{item.recommended_value_b}'(으)로 바꾸는 것을 권장합니다."
-        )
+        body += f" '{item.conflict_value_b}'을(를) '{item.recommended_value_b}'(으)로 바꾸는 것을 권장합니다."
     return f"{prefix}{body}"
 
 
@@ -454,12 +421,15 @@ def _has_only_unusable_enum_recommendations(
     incompatible: list[CompatibilityItem],
 ) -> bool:
     """모든 모순 판정이 enum 안에서 실행 가능한 권장 변경 없이 나온 경우인지 확인한다."""
+    if ctx.group.get("generation_strategy") in {
+        "multi_event_source_dimensions",
+        "multi_event_composite_dimensions",
+        "multi_event_model_lever_dimensions",
+    }:
+        return False
     if not incompatible:
         return False
-    scenario_by_id = {
-        int(scenario["scenario_id"]): scenario
-        for scenario in ctx.scenarios
-    }
+    scenario_by_id = {int(scenario["scenario_id"]): scenario for scenario in ctx.scenarios}
     for item in incompatible:
         if item.recommended_value_b is None:
             return False
@@ -504,8 +474,7 @@ def _build_similar_title_check(
             raise MIBaseError(
                 ErrorCode.LLM_INVALID_RESPONSE_ERROR,
                 detail=(
-                    "유사 시나리오명 LLM 응답에 알 수 없는 scenario_id가 있습니다: "
-                    f"{scenario_id_a}, {scenario_id_b}"
+                    f"유사 시나리오명 LLM 응답에 알 수 없는 scenario_id가 있습니다: {scenario_id_a}, {scenario_id_b}"
                 ),
             )
         pair_key = _title_pair_key(scenario_id_a, scenario_id_b)
@@ -518,10 +487,7 @@ def _build_similar_title_check(
         if pair_key not in exact_pair_keys:
             similar_pairs.append(pair)
 
-    offenders = [
-        f"{pair.scenario_id_a} = {pair.scenario_id_b}: {pair.reason}"
-        for pair in similar_pairs
-    ]
+    offenders = [f"{pair.scenario_id_a} = {pair.scenario_id_b}: {pair.reason}" for pair in similar_pairs]
     advice = [
         f"시나리오명 '{title_by_id[pair.scenario_id_a]}'와(과) "
         f"'{title_by_id[pair.scenario_id_b]}'가 유사하게 읽힙니다 — {pair.reason} "
@@ -533,9 +499,7 @@ def _build_similar_title_check(
         "Stage4",
         "의미상 유사한 시나리오명 — LLM 판정",
         "WARN" if similar_pairs else "PASS",
-        "의미상 유사한 시나리오명 없음"
-        if not similar_pairs
-        else f"유사한 시나리오명 {len(similar_pairs)}쌍",
+        "의미상 유사한 시나리오명 없음" if not similar_pairs else f"유사한 시나리오명 {len(similar_pairs)}쌍",
         offenders,
         advice,
     )
@@ -571,16 +535,24 @@ async def _check_compatibility(
             rendered_pairs.append(f"{label}='{value}'")
         pairs = ", ".join(rendered_pairs)
         lines.append(
-            f"- {scenario['scenario_id']} [{scenario['title']}]: {pairs}\n"
-            f"  narrative: {scenario['narrative']}",
+            f"- {scenario['scenario_id']} [{scenario['title']}]: {pairs}\n  narrative: {scenario['narrative']}",
         )
+    is_multi_event = ctx.group.get("generation_strategy") in {
+        "multi_event_source_dimensions",
+        "multi_event_composite_dimensions",
+        "multi_event_model_lever_dimensions",
+    }
     enum_lines = _compatibility_enum_lines(ctx)
     user_prompt = "다음 시나리오 조합을 판정하십시오.\n\n"
     if enum_lines:
-        user_prompt += "## Dimension enum\n" + "\n".join(enum_lines) + "\n\n"
+        heading = "## Reference dimension values" if is_multi_event else "## Dimension enum"
+        user_prompt += heading + "\n" + "\n".join(enum_lines) + "\n\n"
     user_prompt += "## Scenarios\n" + "\n".join(lines)
     messages = [
-        {"role": "system", "content": COMPAT_SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": (MULTI_EVENT_COMPAT_SYSTEM_PROMPT if is_multi_event else COMPAT_SYSTEM_PROMPT),
+        },
         {"role": "user", "content": user_prompt},
     ]
     try:
@@ -596,10 +568,7 @@ async def _check_compatibility(
                     f"누락={expected - actual}, 여분={actual - expected}"
                 ),
             )
-        title_by_id = {
-            scenario["scenario_id"]: _scenario_label(scenario)
-            for scenario in ctx.scenarios
-        }
+        title_by_id = {scenario["scenario_id"]: _scenario_label(scenario) for scenario in ctx.scenarios}
         incompatible = [item for item in items if not item.compatible]
         if _has_only_unusable_enum_recommendations(ctx, incompatible):
             compatibility_check = CheckResult(
@@ -611,18 +580,13 @@ async def _check_compatibility(
             )
         else:
             offenders = [f"{item.scenario_id}: {item.reason}" for item in incompatible]
-            advice = [
-                _compat_advice(item, title_by_id.get(item.scenario_id))
-                for item in incompatible
-            ]
+            advice = [_compat_advice(item, title_by_id.get(item.scenario_id)) for item in incompatible]
             compatibility_check = CheckResult(
                 "R03",
                 "Stage4",
                 "Compatibility(조합 모순) — LLM 판정",
                 "PASS" if not incompatible else "WARN",
-                f"{len(items)}건 판정 — 모순 없음"
-                if not incompatible
-                else f"모순 {len(incompatible)}건",
+                f"{len(items)}건 판정 — 모순 없음" if not incompatible else f"모순 {len(incompatible)}건",
                 offenders,
                 advice,
             )
@@ -696,18 +660,11 @@ async def generate_new_dimension_values(
     """
     if not rows or not new_dimensions:
         return {}
-    dim_by_key = {
-        dimension.dimension_id: dimension for dimension in template.dimensions
-    }
-    target_dimensions = [
-        dim_by_key[key] for key in new_dimensions if key in dim_by_key
-    ]
+    dim_by_key = {dimension.dimension_id: dimension for dimension in template.dimensions}
+    target_dimensions = [dim_by_key[key] for key in new_dimensions if key in dim_by_key]
     if not target_dimensions:
         return {}
-    enum_by_key = {
-        dimension.dimension_id: [enum.label for enum in dimension.enum]
-        for dimension in target_dimensions
-    }
+    enum_by_key = {dimension.dimension_id: [enum.label for enum in dimension.enum] for dimension in target_dimensions}
 
     generated: dict[int, dict[str, str]] = {}
     try:
@@ -722,9 +679,7 @@ async def generate_new_dimension_values(
                 raise ValueError(f"scenario_index out of range: {item.scenario_index}")
             allowed = enum_by_key[item.dim_key]
             if item.value not in allowed:
-                raise ValueError(
-                    f"enum 밖 dimension value: dim_key={item.dim_key}, value={item.value}"
-                )
+                raise ValueError(f"enum 밖 dimension value: dim_key={item.dim_key}, value={item.value}")
             row_values = generated.setdefault(item.scenario_index, {})
             if item.dim_key in row_values:
                 raise ValueError(
@@ -760,10 +715,7 @@ def _check_mece(ctx: ReviewContext) -> CheckResult:
     advice: list[str] = []
     for scenario in ctx.scenarios:
         key = tuple(
-            sorted(
-                (dimension, _hashable(value))
-                for dimension, value in scenario["dimension_values"].items()
-            ),
+            sorted((dimension, _hashable(value)) for dimension, value in scenario["dimension_values"].items()),
         )
         original = seen.get(key)
         if original is not None:
@@ -805,7 +757,9 @@ def _check_probability_range(ctx: ReviewContext) -> CheckResult:
             bad.append(f"{_sid(scenario)} score={score}")
         delta = scenario.get("probability_delta")
         if delta is not None and not _in_range(
-            delta, Decimal("-100"), Decimal("100"),
+            delta,
+            Decimal("-100"),
+            Decimal("100"),
         ):
             bad.append(f"{_sid(scenario)} delta={delta}")
     return CheckResult(
@@ -856,8 +810,7 @@ CHECK_DISPLAY: dict[str, dict[str, Any]] = {
         "title": "시나리오 다양성",
         "issue": "baseline 대비 대안값이 빠진 항목",
         "target_word": "해당 항목",
-        "suggestion": "baseline 시나리오와 다른 값을 각 항목에 최소 1개 포함해 "
-        "다양성을 확보하세요.",
+        "suggestion": "baseline 시나리오와 다른 값을 각 항목에 최소 1개 포함해 다양성을 확보하세요.",
     },
     "R02": {
         "title": "값 다양성",
@@ -870,8 +823,7 @@ CHECK_DISPLAY: dict[str, dict[str, Any]] = {
         "issue": "값 조합이 서로 맞지 않는 시나리오",
         "issue_empty": "값 조합 자동 점검을 완료하지 못했습니다 (재시도 필요)",
         "target_word": "해당 시나리오",
-        "suggestion": "맞지 않는 값 조합을 다시 검토하거나, 시나리오 설명으로 조합 의도를 "
-        "보완하세요.",
+        "suggestion": "맞지 않는 값 조합을 다시 검토하거나, 시나리오 설명으로 조합 의도를 보완하세요.",
     },
     "R04": {
         "title": "시나리오 조합 중복",
@@ -891,24 +843,17 @@ CHECK_DISPLAY: dict[str, dict[str, Any]] = {
         "issue": "의미가 유사한 시나리오명",
         "unit": "쌍",
         "target_word": "해당 시나리오",
-        "suggestion": (
-            "각 시나리오의 시간, 강도, 방향 또는 범위 차이가 제목에 드러나도록 수정하세요."
-        ),
+        "suggestion": ("각 시나리오의 시간, 강도, 방향 또는 범위 차이가 제목에 드러나도록 수정하세요."),
     },
 }
 
 # 대상 문자열에 남는 내부 표기를 사람이 읽기 쉬운 표현으로 치환한다.
-_TARGET_TOKEN_REPLACEMENTS = (
-    ("baseline='", "baseline 값 '"),
-)
+_TARGET_TOKEN_REPLACEMENTS = (("baseline='", "baseline 값 '"),)
 
 
 def _dim_label_map(ctx: ReviewContext) -> dict[str, str]:
     """Dimension 키(supply_disruption_pattern 등) → 사람이 읽는 라벨 매핑."""
-    return {
-        key: str(dimension.get("label") or key)
-        for key, dimension in ctx.dim_index.items()
-    }
+    return {key: str(dimension.get("label") or key) for key, dimension in ctx.dim_index.items()}
 
 
 def _humanize_target(text: str, label_map: dict[str, str]) -> str:
@@ -1018,9 +963,7 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
                 ),
             )
     counts = Counter(check.status for check in checks)
-    summary = {
-        status: counts.get(status, 0) for status in ("PASS", "WARN", "FAIL", "INFO")
-    }
+    summary = {status: counts.get(status, 0) for status in ("PASS", "WARN", "FAIL", "INFO")}
     verdict: Literal["PASS", "REVIEW", "BLOCK"]
     if summary["FAIL"]:
         verdict = "BLOCK"
@@ -1029,11 +972,7 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
     else:
         verdict = "PASS"
     notable = [check for check in checks if check.status in {"FAIL", "WARN"}]
-    reason = (
-        _build_reason(notable, _dim_label_map(ctx))
-        if notable
-        else "모든 시나리오 검토 항목을 통과했습니다."
-    )
+    reason = _build_reason(notable, _dim_label_map(ctx)) if notable else "모든 시나리오 검토 항목을 통과했습니다."
     return ReviewReport(
         verdict=verdict,
         is_valid=verdict == "PASS",
@@ -1041,6 +980,7 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
         summary=summary,
         checks=checks,
     )
+
 
 # ==============================================
 # LangGraph Node Classes

@@ -13,7 +13,9 @@ from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 class CreateScenariosState(BaseFlowState):
     mi_event_id: int | None = None
+    comparison_run_id: str | None = None
     event_data: EventPayload | None = None
+    template_data: dict[str, object] | None = None
     scenario_group: ScenarioGroupPayload | None = None
     scenario_result: ScenarioGenerationResult | None = None
     saved_scenario_ids: Annotated[list[int], extend_unique_ints] = Field(default_factory=list)

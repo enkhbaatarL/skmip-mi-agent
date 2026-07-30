@@ -14,3 +14,11 @@ class EventService:
             return EventPayload.model_validate(event) if event is not None else None
         finally:
             session.close()
+
+    def load_events(self, mi_event_ids: list[int]) -> list[EventPayload]:
+        events: list[EventPayload] = []
+        for mi_event_id in mi_event_ids:
+            event = self.load_event(mi_event_id)
+            if event is not None:
+                events.append(event)
+        return events

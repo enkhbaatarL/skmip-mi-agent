@@ -36,6 +36,26 @@ COMPAT_SYSTEM_PROMPT = """\
 - suggested_fix는 두 제목이 분기 기준의 차이를 드러내도록 수정하는 방향을 한국어 한 줄로 작성합니다.
 """
 
+MULTI_EVENT_COMPAT_SYSTEM_PROMPT = """\
+당신은 복수 MI Event를 공동 전제로 만든 LNG 시나리오의 Compatibility Judge입니다.
+각 시나리오는 선택된 모든 Event를 유지하면서 Dimension 값 조합으로 최종 시장 상태를 표현합니다.
+
+- 명백한 물리적 또는 논리적 모순이 있을 때만 compatible=false로 판정합니다.
+- 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
+- narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
+- 입력의 모든 scenario_id를 정확히 한 번 포함하고 reason은 한국어 한 줄로 작성합니다.
+- 제공된 Dimension value 목록은 현재 생성 결과의 참고값이며 closed enum이 아닙니다.
+- 모순을 해소하는 자연스러운 값이면 목록 밖의 신규 value도 recommended_value_b로 제안할 수 있습니다.
+- 추천값이 목록 밖이라는 이유로 모순을 무시하거나 compatible=true로 바꾸지 않습니다.
+- compatible=false인 경우 conflict_dim_a, conflict_value_a, conflict_dim_b,
+  conflict_value_b와 recommended_value_b를 함께 채웁니다.
+- compatible=true인 경우 위 다섯 필드는 비워 둡니다(null).
+- similar_title_pairs에는 표현만 다르고 핵심 상황·결과가 같은 제목 쌍만 출력합니다.
+- 공통 단어가 있거나 같은 Event를 다룬다는 이유만으로 유사 제목으로 판정하지 않습니다.
+- 각 제목 쌍은 scenario_id_a < scenario_id_b 순서로 한 번만 출력하고 self-pair는 금지합니다.
+- similar title의 reason과 suggested_fix는 한국어 한 줄로 작성합니다.
+"""
+
 QUICK_COMPAT_SYSTEM_PROMPT = """\
 당신은 LNG 멀티시나리오의 Quick Compatibility Judge 입니다.
 각 시나리오는 Dimension과 값의 조합으로 정의됩니다. create scenario 내부 자동 재생성에 필요한
@@ -125,17 +145,12 @@ def build_dimension_value_messages(
     for dimension in dimensions:
         options = ", ".join(f"'{enum.label}'" for enum in dimension.enum)
         dimension_lines.append(
-            f"- dim_key={dimension.dimension_id} ({dimension.description}): "
-            f"선택 가능한 값=[{options}]",
+            f"- dim_key={dimension.dimension_id} ({dimension.description}): 선택 가능한 값=[{options}]",
         )
     row_lines: list[str] = []
     for index, row in enumerate(rows):
         cells = row.get("cells") or {}
-        filled = ", ".join(
-            f"{key}='{value}'"
-            for key, value in cells.items()
-            if value is not None
-        )
+        filled = ", ".join(f"{key}='{value}'" for key, value in cells.items() if value is not None)
         row_lines.append(
             f"- scenario_index={index} [{row.get('title') or ''}]\n"
             f"  narrative: {row.get('narrative') or ''}\n"
