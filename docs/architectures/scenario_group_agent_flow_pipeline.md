@@ -118,6 +118,16 @@ Template revision을 함께 준비한다. Prompt의 `Event Context`와
 - 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 내부 `mixed` 1개 이상
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
 
+LLM 표현의 흔들림은 저장 전 결정론적으로 정규화한다. v2 dimension의
+`label`, `description`, `required`는 선택한 Template 정의를 정본으로 사용하고,
+`EventShock.generatedEventValues`는 `sourceDimensionKeys`와 같은 key 집합으로
+맞춘다. v2 EventShock이 dimension ID용 `e{eventId}__` namespace를 source key에도
+붙여 반환하면 Template 조회 전에 원본 `dimKey`로 되돌린다. v3 interaction은
+관계 Event 전체를 추적할 수 있는 기존 dimension을
+우선 사용하며, lineage가 일부 빠졌으면 해당 Event의 source reference와 value
+projection을 보강한다. 입력에 없는 Event나 Template dimension을 새로 만들지는
+않으며, 보강 뒤에도 계약을 만족하지 못하면 저장하지 않는다.
+
 그룹은 대표 Event를 위장해 저장하지 않고 `mi_event_id`,
 `event_type_l2_id`를 `NULL`로 둔다. Event와 사용 Template ID/checksum은
 `tmm_mi_scenario_group_event_m`에 순서대로 저장한다. v1도 사용 Template
@@ -164,6 +174,8 @@ lineage를 저장한다. 모델 파라미터 단계는 `lever_refs`의 실행 �
 기존 Basecase/LUT 파이프라인으로 넘기고, price-only 또는 미지원 binding은
 `non_input_items`로 보존한다. 생성 진단의 `unsupported_lever_details`와
 `non_input_items[].unsupported_reason_code`에는 상세 미지원 사유를 저장한다.
+API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`/`N`으로
+변환한다.
 관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.
 
 기존 DB는 `scripts/sql/05_v4_multi_event_model_lever.sql`을 한 번 적용해

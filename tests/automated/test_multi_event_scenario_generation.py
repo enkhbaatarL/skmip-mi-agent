@@ -336,7 +336,7 @@ def test_v3_allows_independent_single_source_dimension_without_forced_merge() ->
     assert len(finalized.dimension_definitions) == 4
 
 
-def test_v3_non_independent_interaction_requires_a_multi_source_dimension() -> None:
+def test_v3_non_independent_interaction_adds_missing_source_lineage() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     first_dimension = result.dimension_definitions[0]
     single_source = first_dimension.source_refs[:1]
@@ -360,15 +360,19 @@ def test_v3_non_independent_interaction_requires_a_multi_source_dimension() -> N
         },
     )
 
-    with pytest.raises(
-        ValueError,
-        match="non-independent interactions must be represented",
-    ):
-        finalize_generation_result(
-            broken,
-            generation_strategy="multi_event_composite_dimensions",
-            event_ids=EVENT_IDS,
-        )
+    finalized = finalize_generation_result(
+        broken,
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+    )
+
+    repaired = finalized.dimension_definitions[0]
+    assert {source.event_id for source in repaired.source_refs} == set(EVENT_IDS)
+    for value in repaired.values:
+        assert {
+            assignment.event_id
+            for assignment in value.source_assignments
+        } == set(EVENT_IDS)
 
 
 def test_v2_source_refs_must_exist_in_the_event_type_templates() -> None:
@@ -406,7 +410,7 @@ def test_v2_source_refs_must_exist_in_the_event_type_templates() -> None:
         )
 
 
-def test_v2_preserves_source_template_label_and_description() -> None:
+def test_v2_normalizes_source_template_label_description_and_required() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     source_dimensions = {
         101: {
@@ -425,13 +429,112 @@ def test_v2_preserves_source_template_label_and_description() -> None:
         },
     }
 
-    with pytest.raises(ValueError, match="preserve the source template"):
-        finalize_generation_result(
-            result,
-            generation_strategy="multi_event_source_dimensions",
-            event_ids=EVENT_IDS,
-            source_dimensions_by_event=source_dimensions,
-        )
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    dimension = finalized.dimension_definitions[0]
+    assert dimension.label == "원본 폭염 강도"
+    assert dimension.description == "원본 폭염 강도의 의미"
+    assert dimension.required is True
+
+
+def test_v2_normalizes_event_shock_generated_values_to_source_keys() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    first_shock = result.event_shocks[0]
+    first_shock.source_dimension_keys = ["heat", "duration"]
+    first_shock.generated_event_values = {
+        "heat": "강한 폭염",
+        "unused": "제거 대상",
+    }
+    source_dimensions = {
+        101: {
+            "heat": {
+                "required": False,
+                "label": "e101__heat",
+                "description": "e101__heat 설명",
+            },
+            "duration": {
+                "required": False,
+                "label": "e101__duration",
+                "description": "e101__duration 설명",
+            },
+        },
+        202: {
+            "inventory": {
+                "required": False,
+                "label": "e202__inventory",
+                "description": "e202__inventory 설명",
+            },
+            "recovery": {
+                "required": False,
+                "label": "e202__recovery",
+                "description": "e202__recovery 설명",
+            },
+            "competition": {
+                "required": False,
+                "label": "e202__competition",
+                "description": "e202__competition 설명",
+            },
+            "heat": False,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    assert finalized.event_shocks[0].generated_event_values == {
+        "heat": "강한 폭염",
+        "duration": "계절",
+    }
+
+
+def test_v2_normalizes_namespaced_event_shock_source_keys() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    first_shock = result.event_shocks[0]
+    first_shock.source_dimension_keys = [
+        "e101__heat",
+        "e101__duration",
+    ]
+    first_shock.generated_event_values = {
+        "e101__heat": "강한 폭염",
+        "e101__duration": "장기화",
+    }
+    source_dimensions = {
+        101: {
+            "heat": False,
+            "duration": False,
+        },
+        202: {
+            "heat": False,
+            "inventory": True,
+            "recovery": True,
+            "competition": True,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    assert finalized.event_shocks[0].source_dimension_keys == [
+        "heat",
+        "duration",
+    ]
+    assert finalized.event_shocks[0].generated_event_values == {
+        "heat": "강한 폭염",
+        "duration": "장기화",
+    }
 
 
 def test_v2_requires_all_required_dimensions_when_at_most_eight() -> None:
@@ -581,7 +684,7 @@ def test_mixed_scenario_requires_bullish_and_bearish_contributions() -> None:
         )
 
 
-def test_interpretation_conflict_resolution_covers_all_interaction_events() -> None:
+def test_interpretation_conflict_rebinds_resolution_to_cover_all_interaction_events() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     interaction = result.interactions[0].model_copy(
         update={
@@ -589,17 +692,17 @@ def test_interpretation_conflict_resolution_covers_all_interaction_events() -> N
             "resolution_dimension_id": "heat_duration",
         },
     )
-    broken = result.model_copy(update={"interactions": [interaction]})
 
-    with pytest.raises(
-        ValueError,
-        match="resolution dimension must reference every interaction event",
-    ):
-        finalize_generation_result(
-            broken,
-            generation_strategy="multi_event_composite_dimensions",
-            event_ids=EVENT_IDS,
-        )
+    finalized = finalize_generation_result(
+        result.model_copy(update={"interactions": [interaction]}),
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+    )
+
+    assert (
+        finalized.interactions[0].resolution_dimension_id
+        == "demand_inventory_tightness"
+    )
 
 
 def test_interpretation_conflict_with_composite_resolution_is_valid() -> None:

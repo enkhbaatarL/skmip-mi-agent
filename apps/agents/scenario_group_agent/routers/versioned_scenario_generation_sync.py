@@ -19,6 +19,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.flow im
     run_multi_event_scenarios_inline,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
+    V4_GENERATION_STRATEGY,
     prepare_v4_multi_event_scenarios,
     run_v4_multi_event_scenarios_inline,
 )
@@ -145,8 +146,17 @@ async def create_v4_scenarios_sync(
             transaction_id=new_transaction_id(),
             app_identifier=agent_config.aip_app_id,
             agent_name=AGENT_NAME,
-            api_identifier=f"{API_IDENTIFIER_CREATE_SCENARIOS}_v4",
+            api_identifier=API_IDENTIFIER_CREATE_SCENARIOS,
             session_id=str(prepared["scenario_group"].scenario_group_id),
+            tags={
+                "api_version": "v4",
+                "generation_strategy": V4_GENERATION_STRATEGY,
+                **(
+                    {"comparison_run_id": str(prepared["comparison_run_id"])}
+                    if prepared["comparison_run_id"] is not None
+                    else {}
+                ),
+            },
         )
         with mlflow_trace_context(trace_context):
             output = await run_v4_multi_event_scenarios_inline(
@@ -183,10 +193,15 @@ async def _create_multi_event_scenarios_sync(
             transaction_id=new_transaction_id(),
             app_identifier=agent_config.aip_app_id,
             agent_name=AGENT_NAME,
-            api_identifier=f"{API_IDENTIFIER_CREATE_SCENARIOS}_{api_version}",
+            api_identifier=API_IDENTIFIER_CREATE_SCENARIOS,
             session_id=str(
                 prepared["scenario_group"].scenario_group_id,
             ),
+            tags={
+                "api_version": api_version,
+                "comparison_run_id": str(prepared["comparison_run_id"]),
+                "generation_strategy": str(prepared["generation_strategy"]),
+            },
         )
         with mlflow_trace_context(trace_context):
             output = await run_multi_event_scenarios_inline(

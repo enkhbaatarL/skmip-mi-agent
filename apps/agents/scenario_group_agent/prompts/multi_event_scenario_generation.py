@@ -44,6 +44,7 @@ V3_STRATEGY_PROMPT = """\
 - 시간·지역·시설·수급 경로가 실제로 관련된 Event만 증폭, 상쇄, 인과 연결, 지역 결합으로 연결합니다.
 - 상호작용이 없는 Event는 relation=independent로 보존하고 억지로 한 dimension에 합치지 않습니다.
 - 해석 충돌은 실패가 아니라 relation=interpretation_conflict와 resolutionDimensionId로 표현합니다.
+- resolutionDimensionId가 있으면 해당 dimension의 sourceRefs가 interaction의 모든 eventId를 포함해야 합니다.
 - 원본 source를 추적 가능한 4~7개의 직관적인 합성 dimension을 만듭니다.
 - 합성 dimension은 관련된 경우 복수 sourceRefs를 가지며, 독립 Event용 dimension은 단일 sourceRef가 가능합니다.
 """

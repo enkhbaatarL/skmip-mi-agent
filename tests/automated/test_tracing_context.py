@@ -199,6 +199,93 @@ class TracingContextTest(unittest.TestCase):
             },
         )
 
+    def test_mlflow_trace_context_sets_agent_specific_tags(self) -> None:
+        captured: dict[str, object] = {}
+
+        @contextmanager
+        def fake_context(**kwargs: object) -> Iterator[None]:
+            captured.update(kwargs)
+            yield
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = SimpleNamespace(tracing=SimpleNamespace(context=fake_context))
+        try:
+            context = TraceContext(
+                transaction_id="tx-1",
+                app_identifier="scenario-group-agent",
+                api_identifier="create_scenarios",
+                session_id="42",
+                tags={
+                    "api_version": "v3",
+                    "comparison_run_id": "compare-20260730-01",
+                    "generation_strategy": "multi_event_composite_dimensions",
+                },
+            )
+            with patch(
+                "apps.common.configs.config.get_settings",
+                return_value=SimpleNamespace(mlflow_tracing_enabled=True),
+            ), mlflow_trace_context(context):
+                pass
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertEqual(
+            captured["tags"],
+            {
+                "api_version": "v3",
+                "comparison_run_id": "compare-20260730-01",
+                "generation_strategy": "multi_event_composite_dimensions",
+                "app_id": "scenario-group-agent",
+                "session_id": "42",
+                "api_identifier": "create_scenarios",
+            },
+        )
+
+    def test_mlflow_trace_context_common_tags_override_agent_specific_tags(self) -> None:
+        captured: dict[str, object] = {}
+
+        @contextmanager
+        def fake_context(**kwargs: object) -> Iterator[None]:
+            captured.update(kwargs)
+            yield
+
+        previous = sys.modules.get("mlflow")
+        sys.modules["mlflow"] = SimpleNamespace(tracing=SimpleNamespace(context=fake_context))
+        try:
+            context = TraceContext(
+                transaction_id="tx-1",
+                app_identifier="scenario-group-agent",
+                api_identifier="create_scenarios",
+                session_id="42",
+                tags={
+                    "app_id": "overridden-app",
+                    "session_id": "overridden-session",
+                    "api_identifier": "overridden-api",
+                },
+            )
+            with patch(
+                "apps.common.configs.config.get_settings",
+                return_value=SimpleNamespace(mlflow_tracing_enabled=True),
+            ), mlflow_trace_context(context):
+                pass
+        finally:
+            if previous is None:
+                sys.modules.pop("mlflow", None)
+            else:
+                sys.modules["mlflow"] = previous
+
+        self.assertEqual(
+            captured["tags"],
+            {
+                "app_id": "scenario-group-agent",
+                "session_id": "42",
+                "api_identifier": "create_scenarios",
+            },
+        )
+
     def test_mlflow_trace_context_skips_mlflow_when_disabled(self) -> None:
         captured: dict[str, object] = {}
 

@@ -197,6 +197,7 @@ async def run_v4_multi_event_scenarios_inline(
     scenarios = [
         {
             **scenario.model_dump(),
+            "baseline_yn": "Y" if scenario.baseline_yn else "N",
             "global_pressure_band": scenario.target_market_pressure_band,
             "global_pressure_rationale": (scenario.target_market_pressure_rationale),
         }
@@ -248,8 +249,17 @@ async def run_v4_multi_event_scenarios_background(
         transaction_id=new_transaction_id(),
         app_identifier=agent_config.aip_app_id,
         agent_name=AGENT_NAME,
-        api_identifier=f"{API_IDENTIFIER_CREATE_SCENARIOS}_v4",
+        api_identifier=API_IDENTIFIER_CREATE_SCENARIOS,
         session_id=str(group_id),
+        tags={
+            "api_version": "v4",
+            "generation_strategy": V4_GENERATION_STRATEGY,
+            **(
+                {"comparison_run_id": str(prepared["comparison_run_id"])}
+                if prepared["comparison_run_id"] is not None
+                else {}
+            ),
+        },
     )
 
     logger.info("[BG][v4 create_scenarios] START | group_id={}", group_id)

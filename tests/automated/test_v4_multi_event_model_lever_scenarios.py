@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
+    run_v4_multi_event_scenarios_inline,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     EventImpactFact,
@@ -258,6 +264,95 @@ def test_v4_finalizer_assigns_roles_and_parameter_coverage() -> None:
             "parameter_name": "Parameter2",
         },
     ]
+
+
+def test_v4_inline_converts_boolean_baseline_to_database_yn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import (
+        v4_flow,
+    )
+    from apps.persistence.event.schema import EventPayload
+    from apps.persistence.scenario.schema import ScenarioPayload
+    from apps.persistence.scenario_group.schema import ScenarioGroupPayload
+
+    finalized, coverage = finalize_v4_generation_result(
+        _valid_result(),
+        event_ids=[101, 202],
+        impact_levers=_catalog(),
+    )
+    monkeypatch.setattr(
+        v4_flow,
+        "_generate_validated_v4_result",
+        AsyncMock(return_value=(finalized, coverage)),
+    )
+    persist = Mock(
+        return_value=(
+            ScenarioGroupPayload(
+                scenario_group_id=10,
+                dimension_selected=[
+                    dimension.dimension_id
+                    for dimension in finalized.dimension_definitions
+                ],
+                scenario_count=len(finalized.scenarios),
+                api_version="v4",
+                generation_strategy="multi_event_model_lever_dimensions",
+            ),
+            [
+                ScenarioPayload(
+                    scenario_id=index,
+                    scenario_group_id=10,
+                    title=scenario.title,
+                    dimension_values=scenario.dimension_values,
+                    probability_score=scenario.probability_score,
+                    baseline_yn="Y" if scenario.baseline_yn else "N",
+                    global_pressure_band=scenario.target_market_pressure_band,
+                    scenario_role=scenario.scenario_role,
+                    global_pressure_rationale=(
+                        scenario.target_market_pressure_rationale
+                    ),
+                )
+                for index, scenario in enumerate(finalized.scenarios, start=1)
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        v4_flow.ScenarioGroupService,
+        "persist_multi_event_generation",
+        persist,
+    )
+
+    asyncio.run(
+        run_v4_multi_event_scenarios_inline(
+            {
+                "scenario_group": ScenarioGroupPayload(
+                    scenario_group_id=10,
+                    api_version="v4",
+                    generation_strategy="multi_event_model_lever_dimensions",
+                ),
+                "events": [
+                    EventPayload(
+                        mi_event_id=101,
+                        event_type_l2_id=8,
+                        event_title_ko="한파",
+                    ),
+                    EventPayload(
+                        mi_event_id=202,
+                        event_type_l2_id=12,
+                        event_title_ko="액화시설 정비",
+                    ),
+                ],
+                "impact_levers": _catalog(),
+                "target_market": "JKM",
+                "impact_catalog_version": "v1",
+                "comparison_run_id": "compare-1",
+                "user_id": 7,
+            },
+        ),
+    )
+
+    saved = persist.call_args.kwargs["scenarios"]
+    assert [scenario["baseline_yn"] for scenario in saved] == ["N", "Y", "N"]
 
 
 def test_v4_finalizer_rejects_unknown_lever() -> None:

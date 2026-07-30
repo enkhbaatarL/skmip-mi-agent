@@ -108,6 +108,145 @@ class MultiEventGenerationResult(ApiModel):
     excluded_dimensions: list[dict[str, object]] = Field(default_factory=list)
 
 
+def _normalize_event_shock_source_keys(shock: EventShock) -> None:
+    namespace_prefix = f"e{shock.event_id}__"
+    original_values = shock.generated_event_values
+    normalized_keys: list[str] = []
+    normalized_values: dict[str, str] = {}
+
+    for source_key in shock.source_dimension_keys:
+        normalized_key = (
+            source_key.removeprefix(namespace_prefix)
+            if source_key.startswith(namespace_prefix)
+            else source_key
+        )
+        normalized_keys.append(normalized_key)
+        value = str(
+            original_values.get(source_key)
+            or original_values.get(normalized_key)
+            or "",
+        ).strip()
+        if value:
+            normalized_values[normalized_key] = value
+
+    shock.source_dimension_keys = normalized_keys
+    shock.generated_event_values = normalized_values
+
+
+def _normalize_event_shock_values(shock: EventShock) -> None:
+    fallback_by_key_fragment = {
+        "duration": shock.duration,
+        "period": shock.duration,
+        "timing": shock.duration,
+        "intensity": shock.intensity,
+        "magnitude": shock.intensity,
+        "recovery": shock.recovery_or_persistence,
+        "persistence": shock.recovery_or_persistence,
+        "mitigation": shock.mitigation,
+    }
+    normalized: dict[str, str] = {}
+    for source_key in shock.source_dimension_keys:
+        existing = str(shock.generated_event_values.get(source_key) or "").strip()
+        if existing:
+            normalized[source_key] = existing
+            continue
+        normalized[source_key] = next(
+            (
+                value
+                for fragment, value in fallback_by_key_fragment.items()
+                if fragment in source_key.lower() and value.strip()
+            ),
+            (
+                f"Event {shock.event_id} 사실 기반 값: "
+                f"{shock.intensity}, {shock.duration}, "
+                f"{shock.recovery_or_persistence}"
+            ),
+        )
+    shock.generated_event_values = normalized
+
+
+def _ensure_interaction_dimension_coverage(
+    interaction: EventInteraction,
+    dimensions: list[DimensionDefinition],
+) -> None:
+    if interaction.relation == "independent":
+        interaction.resolution_dimension_id = None
+        return
+
+    interaction_events = set(interaction.event_ids)
+    dimension_by_id = {
+        dimension.dimension_id: dimension
+        for dimension in dimensions
+    }
+    current = dimension_by_id.get(interaction.resolution_dimension_id or "")
+    complete_candidates = [
+        dimension
+        for dimension in dimensions
+        if interaction_events
+        <= {source.event_id for source in dimension.source_refs}
+    ]
+    if current in complete_candidates:
+        target = current
+    elif complete_candidates:
+        target = min(
+            complete_candidates,
+            key=lambda dimension: (
+                len(dimension.source_refs),
+                dimension.display_order,
+                dimension.dimension_id,
+            ),
+        )
+    else:
+        target = max(
+            dimensions,
+            key=lambda dimension: (
+                len(
+                    interaction_events
+                    & {source.event_id for source in dimension.source_refs},
+                ),
+                -len(dimension.source_refs),
+                -dimension.display_order,
+                dimension.dimension_id,
+            ),
+        )
+        target_event_ids = {
+            source.event_id
+            for source in target.source_refs
+        }
+        for missing_event_id in sorted(interaction_events - target_event_ids):
+            source_template = next(
+                source
+                for dimension in dimensions
+                for source in dimension.source_refs
+                if source.event_id == missing_event_id
+            )
+            source_ref = source_template.model_copy(
+                update={
+                    "value": None,
+                    "source_type": "derived_interpretation",
+                    "assumption_yn": "N",
+                    "rationale": (
+                        "상호작용 dimension이 해당 Event의 기존 source "
+                        "lineage를 함께 해석한다."
+                    ),
+                },
+            )
+            target.source_refs.append(source_ref)
+            for value in target.values:
+                value.source_assignments.append(
+                    source_ref.model_copy(update={"value": value.label}),
+                )
+        target.source_event_ids = sorted(
+            {
+                source.event_id
+                for source in target.source_refs
+            },
+        )
+
+    if interaction.resolution_dimension_id is not None:
+        interaction.resolution_dimension_id = target.dimension_id
+
+
 def finalize_generation_result(
     result: MultiEventGenerationResult,
     *,
@@ -142,6 +281,7 @@ def finalize_generation_result(
         raise ValueError("eventShocks must contain every input event exactly once")
     if source_dimensions_by_event is not None:
         for shock in result.event_shocks:
+            _normalize_event_shock_source_keys(shock)
             if not shock.source_dimension_keys:
                 raise ValueError(
                     f"EventShock must select a source dimension: {shock.event_id}",
@@ -152,12 +292,7 @@ def finalize_generation_result(
                 raise ValueError(
                     f"EventShock contains duplicate sourceDimensionKeys: {shock.event_id}",
                 )
-            if set(shock.generated_event_values) != set(
-                shock.source_dimension_keys,
-            ):
-                raise ValueError(
-                    f"EventShock generatedEventValues must match sourceDimensionKeys: eventId={shock.event_id}",
-                )
+            _normalize_event_shock_values(shock)
             unknown_keys = set(shock.source_dimension_keys) - set(
                 source_dimensions_by_event.get(shock.event_id, {}),
             )
@@ -233,16 +368,11 @@ def finalize_generation_result(
                     expected_description = str(
                         source_definition.get("description") or expected_label,
                     )
-                    if (
-                        dimension.label != expected_label
-                        or dimension.description != expected_description
-                        or dimension.required != bool(source_definition.get("required", False))
-                    ):
-                        raise ValueError(
-                            "v2 dimensions must preserve the source template "
-                            "label, description and required flag: "
-                            f"{dimension.dimension_id}",
-                        )
+                    dimension.label = expected_label
+                    dimension.description = expected_description
+                    dimension.required = bool(
+                        source_definition.get("required", False),
+                    )
         if not 3 <= len(dimension.values) <= 5:
             raise ValueError(
                 f"multi-event dimensions must define 3 to 5 generated values: {dimension.dimension_id}",
@@ -289,6 +419,11 @@ def finalize_generation_result(
     for interaction in result.interactions:
         if not set(interaction.event_ids) <= known_event_ids:
             raise ValueError("interaction references an unknown event")
+        if generation_strategy == "multi_event_composite_dimensions":
+            _ensure_interaction_dimension_coverage(
+                interaction,
+                dimensions,
+            )
         if interaction.resolution_dimension_id is not None and interaction.resolution_dimension_id not in dimension_ids:
             raise ValueError(
                 "interaction resolutionDimensionId is not a generated dimension",
