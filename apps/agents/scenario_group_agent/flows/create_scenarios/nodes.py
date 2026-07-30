@@ -92,19 +92,16 @@ def create_group_record(state: CreateScenariosState) -> dict[str, object]:
         "mi_event_id": int(state.event_data["mi_event_id"]),
         "event_type_l2_id": int(state.event_data["event_type_l2_id"]),
         "request_usr_id": state.user_id,
-        "title": (state.event_data.get("event_title_ko") or f"Scenario group {state.event_data['mi_event_id']}")[:255],
+        "title": (
+            state.event_data.get("event_title_ko")
+            or f"Scenario group {state.event_data['mi_event_id']}"
+        )[:255],
         "summary": state.event_data.get("one_line_summary"),
-        "description": None,  # initialize
+        "description": None, #initialize
         "dimension_selected": [],
         "scenario_count": 0,
         "status": ScenarioGroupStatus.CREATING.value,
         "stage": ScenarioGroupStage.READY.value,
-        "api_version": "v1",
-        "generation_strategy": "single_event_template_dimensions",
-        "comparison_run_id": state.comparison_run_id,
-        "parameter_mapping_ready": True,
-        "dimension_definitions": [],
-        "generation_diagnostics": {},
         "crt_usr_logn_id": state.user_id,
         "mod_usr_logn_id": state.user_id,
     }
@@ -158,10 +155,7 @@ async def run_scenario_generation(
             error=result.error,
             message=result.error,
         )
-    return create_scenarios_state_update(
-        scenario_result=result.scenario_result,
-        template_data=persistence_template.model_dump(),
-    )
+    return create_scenarios_state_update(scenario_result=result.scenario_result)
 
 
 def save_scenario_group(state: CreateScenariosState) -> dict[str, object]:
@@ -177,7 +171,9 @@ def save_scenario_group(state: CreateScenariosState) -> dict[str, object]:
     scenario_group_metadata = state.scenario_result.get("scenario_group_metadata", {}) or {}
     selected_dimensions = stage2.get("selected_dimensions", []) or []
     dimension_selected = [
-        item.get("dim_key") for item in selected_dimensions if isinstance(item, dict) and item.get("dim_key")
+        item.get("dim_key")
+        for item in selected_dimensions
+        if isinstance(item, dict) and item.get("dim_key")
     ]
     payload = {
         "mi_event_id": int(state.event_data["mi_event_id"]),
@@ -189,7 +185,10 @@ def save_scenario_group(state: CreateScenariosState) -> dict[str, object]:
             or f"Scenario group {state.event_data['mi_event_id']}"
         )[:255],
         "summary": state.event_data.get("one_line_summary"),
-        "description": (scenario_group_metadata.get("description") or state.event_data.get("detail_analysis")),
+        "description": (
+            scenario_group_metadata.get("description")
+            or state.event_data.get("detail_analysis")
+        ),
         "dimension_selected": dimension_selected,
         "scenario_count": len(stage4.get("scenarios", []) or []),
         "status": ScenarioGroupStatus.CREATING.value,
@@ -221,7 +220,9 @@ def save_scenarios(state: CreateScenariosState) -> dict[str, object]:
     scenario_group_metadata = state.scenario_result.get("scenario_group_metadata", {}) or {}
     selected_dimensions = stage2.get("selected_dimensions", []) or []
     dimension_selected = [
-        item.get("dim_key") for item in selected_dimensions if isinstance(item, dict) and item.get("dim_key")
+        item.get("dim_key")
+        for item in selected_dimensions
+        if isinstance(item, dict) and item.get("dim_key")
     ]
 
     scenario_group_service = ScenarioGroupService()
@@ -249,26 +250,6 @@ def save_scenarios(state: CreateScenariosState) -> dict[str, object]:
         description=scenario_group_metadata.get("description"),
         user_id=state.user_id,
     )
-    template_data = state.template_data or {}
-    template_id = template_data.get("scenario_dimension_template_id")
-    template_checksum = str(template_data.get("template_checksum") or "")
-    if template_id is not None and template_checksum:
-        definitions = _build_single_event_dimension_definitions(
-            event_id=int(state.event_data["mi_event_id"]),
-            event_type_l2_id=int(state.event_data["event_type_l2_id"]),
-            template_data=template_data,
-            selected_dimension_keys=dimension_selected,
-        )
-        scenario_group_service.save_single_event_template_usage(
-            scenario_group_id=state.scenario_group_id,
-            event_id=int(state.event_data["mi_event_id"]),
-            event_type_l2_id=int(state.event_data["event_type_l2_id"]),
-            scenario_dimension_template_id=int(template_id),
-            template_checksum=template_checksum,
-            dimension_definitions=definitions,
-            user_id=state.user_id,
-        )
-        group = scenario_group_service.load_by_id(state.scenario_group_id) or group
     scenarios = ScenarioService().load_by_group_id(state.scenario_group_id)
     return create_scenarios_state_update(
         saved_scenario_ids=saved_ids,
@@ -277,57 +258,3 @@ def save_scenarios(state: CreateScenariosState) -> dict[str, object]:
         status="success",
         message=f"Created {len(saved_ids)} scenarios",
     )
-
-
-def _build_single_event_dimension_definitions(
-    *,
-    event_id: int,
-    event_type_l2_id: int,
-    template_data: dict[str, object],
-    selected_dimension_keys: list[str],
-) -> list[dict[str, object]]:
-    definitions: list[dict[str, object]] = []
-    dimension_by_key = {
-        str(dimension.get("dim_key")): dimension
-        for dimension in template_data.get("dimensions", [])  # type: ignore[union-attr]
-        if isinstance(dimension, dict) and dimension.get("dim_key")
-    }
-    for display_order, dimension_key in enumerate(
-        selected_dimension_keys,
-        start=1,
-    ):
-        dimension = dimension_by_key.get(dimension_key) or {}
-        source = {
-            "event_id": event_id,
-            "event_type_l2_id": event_type_l2_id,
-            "dim_key": dimension_key,
-            "value": None,
-            "source_type": "template_domain_knowledge",
-            "assumption_yn": "N",
-            "rationale": "단일 Event Type Template의 원본 dimension을 사용한다.",
-        }
-        definitions.append(
-            {
-                "dimension_id": dimension_key,
-                "label": dimension.get("label") or dimension_key,
-                "description": (dimension.get("description") or dimension.get("label") or dimension_key),
-                "required": bool(dimension.get("required", False)),
-                "display_order": display_order,
-                "source_refs": [source],
-                "values": [
-                    {
-                        "value_id": str(value),
-                        "label": str(value),
-                        "global_pressure_contribution": None,
-                        "source_assignments": [
-                            {
-                                **source,
-                                "value": str(value),
-                            },
-                        ],
-                    }
-                    for value in dimension.get("value_enums") or []
-                ],
-            },
-        )
-    return definitions

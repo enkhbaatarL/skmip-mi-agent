@@ -9,7 +9,6 @@ from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_VALIDATE_SCENARIOS
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
-    create_mapping_proposals,
     generate_dimension_values,
     load_scenario_group,
     load_scenarios,
@@ -76,14 +75,12 @@ def _build_background_graph() -> Runnable:
     builder.add_node("load_scenario_group", load_scenario_group)
     builder.add_node("load_scenarios", load_scenarios)
     builder.add_node("generate_dimension_values", generate_dimension_values)
-    builder.add_node("create_mapping_proposals", create_mapping_proposals)
     builder.add_node("validate_scenarios", run_scenario_review)
     builder.add_node("save_validation_result", save_validation_result)
     builder.set_entry_point("load_scenario_group")
     builder.add_edge("load_scenario_group", "load_scenarios")
     builder.add_edge("load_scenarios", "generate_dimension_values")
-    builder.add_edge("generate_dimension_values", "create_mapping_proposals")
-    builder.add_edge("create_mapping_proposals", "validate_scenarios")
+    builder.add_edge("generate_dimension_values", "validate_scenarios")
     builder.add_edge("validate_scenarios", "save_validation_result")
     builder.set_finish_point("save_validation_result")
     return builder.compile()
@@ -108,8 +105,6 @@ def _bg_to_output(state: dict[str, Any] | ValidateScenariosState) -> ValidateSce
             stage=group.get("stage") or ScenarioGroupStage.SCENARIO_CREATED.value,
         ),
         table=ScenarioTable.model_validate(request_table) if request_table else None,
-        mapping_proposals=data.get("mapping_proposals") or [],
-        parameter_mapping_ready=data.get("parameter_mapping_ready"),
     )
 
 

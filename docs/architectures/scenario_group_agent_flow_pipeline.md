@@ -1,16 +1,11 @@
 # Scenario Group Agent Flow Pipeline
 
-v4 다중 Event 모델 영향 레버 방식의 계획과 구현 이력은
-[`23_multi_event_model_lever_scenario_v4_plan.md`](../../local/plan/23_multi_event_model_lever_scenario_v4_plan.md)를
-참고한다.
-
 ## 문서 목적
 
 `scenario_group_agent`의 네 flow가 API 입력을 LangGraph state로 변환하고,
 노드를 순차 실행한 뒤 API 응답으로 변환하는 구조를 설명한다.
 
 - `flows/create_scenarios/` — 시나리오 그룹 생성
-- `flows/create_multi_event_scenarios/` — v2/v3 Template 기반 및 v4 모델 영향 레버 기반 다중 Event 생성
 - `flows/create_signposts/` — Signpost 생성
 - `flows/validate_scenarios/` — 시나리오 테이블 검증
 - `flows/confirm_generation/` — 생성 확정
@@ -91,83 +86,6 @@ return builder.compile()
 `MIBaseError`를 raise한다.
 
 ## Create Scenarios Flow
-
-### Versioned sync 분기
-
-Create Scenario의 version 구분은 v1~v3에서 sync endpoint에만 적용하고,
-v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공한다.
-
-| Endpoint | 입력 | 생성 전략 |
-|---|---|---|
-| `POST /v1/scenario-groups/sync` | `miEventId` | 단일 Event·원본 Template dimension |
-| `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event별 원본 dimension 5~8개 |
-| `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event 충격·상호작용 기반 합성 dimension 4~7개 |
-| `POST /v4/scenario-groups` | 중복 없는 `miEventIds` 2~5개, `targetMarket` | Event 사실·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
-| `POST /v4/scenario-groups/sync` | v4와 동일 | v4 생성 흐름 동기 실행 |
-
-v2/v3는 `flows/create_multi_event_scenarios/flow.py`에서 Event와 Event Type
-Template revision을 함께 준비한다. Prompt의 `Event Context`와
-`Template Domain Knowledge`를 분리하고 Template의 대표 사례 및
-`value_enums`는 참고 예시로만 전달한다. 생성 결과는 다음 결정론적 검사를
-통과해야 저장된다.
-
-- 입력 Event 전체의 `EventShock` 및 dimension coverage
-- v2의 `e{eventId}__{dimKey}` namespacing과 단일 source lineage
-- v3의 4~7개 합성 dimension, 추적 가능한 source lineage, 독립 Event의 비강제 합성
-- 다섯 pressure band의 생성/제외 partition과 제외 사유
-- 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 내부 `mixed` 1개 이상
-- 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
-
-그룹은 대표 Event를 위장해 저장하지 않고 `mi_event_id`,
-`event_type_l2_id`를 `NULL`로 둔다. Event와 사용 Template ID/checksum은
-`tmm_mi_scenario_group_event_m`에 순서대로 저장한다. v1도 사용 Template
-checksum과 단일 Event lineage를 같은 연결 테이블에 보존한다.
-
-Template Excel 이관은
-`scripts/scenario_generation/import_template_domain_knowledge.py`를 사용한다.
-이 스크립트는 Event Type 정의와 LNG 가격 영향 대표 사례를 Template row에
-저장하고, 명시적 description이 없으면 `항목 - 기준 - 참고` 순으로 초기
-description을 만든다. 운영 저장 전에는 모든 dimension의 description을
-필수 검증한다.
-
-### v4 Event 및 모델 영향 레버 방식
-
-v4는 Event Type을 Template 선택 키로 사용하지 않는다. 선택한 Event는 시나리오가
-위반하면 안 되는 현재 사실, Demand·Supply·Trade·price-only 영향 경로의 근거,
-사용자가 확인할 불확실성의 출처를 제공한다.
-
-`tmm_mi_model_impact_lever_m`은 안정적인 `lever_code`, domain, 적용 기준과 기존
-`tmm_mi_model_param_m` 파라미터 binding을 갖는 작은 카탈로그다. 파일·시트·축과
-Basecase 읽기 정보는 기존 parameter master를 그대로 조회하므로 상세 Excel tree를
-복제하지 않는다. binding이 기존 master에 없으면 요청을 실패시키고, 비활성
-파라미터는 `known_unsupported`로 강등한다. 미지원 상위 상태는 유지하되
-binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
-`INACTIVE_MODEL_PARAMETER`, catalog가 명시적으로 미지원 처리한 binding이면
-`CATALOG_MARKED_UNSUPPORTED`로 사유를 구분한다.
-
-`price_only` 레버는 Basecase Excel에서 유래한 모델 입력명이 아니라, 재고 여건,
-지역 가격 스프레드와 금융시장 위험 프리미엄처럼 목표 시장 가격을 설명하는
-비수급 경로다. 모델 입력 미지원과 혼동하지 않도록 `PRICE_ONLY`로 별도 표시한다.
-
-`v4_flow.py`는 Event와 활성 카탈로그를 준비하고 LLM이 카탈로그 안의 lever만
-참조해 3~6개 dimension과 2~4개 value를 생성하게 한다. 서버는 모든 Event의
-impact fact와 dimension lineage, 카탈로그 밖 lever 금지, 고유 Scenario 조합,
-pressure band partition, floor·ceiling·mixed·baseline을 결정론적으로 검증한다.
-여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 목표 시장
-pressure band와 rationale이다. 또한 전체 dimension 중 적어도 하나는 실행 가능한
-모델 parameter binding을 참조해야 한다. 따라서 가격 설명용 `price_only`나
-`known_unsupported` dimension을 함께 사용하더라도 모델 파라미터 단계에 넘길
-실행 경로가 하나 이상 남는다.
-
-그룹에는 `target_market`, 카탈로그 version/checksum, dimension 정의와 Event
-lineage를 저장한다. 모델 파라미터 단계는 `lever_refs`의 실행 가능한 binding만
-기존 Basecase/LUT 파이프라인으로 넘기고, price-only 또는 미지원 binding은
-`non_input_items`로 보존한다. 생성 진단의 `unsupported_lever_details`와
-`non_input_items[].unsupported_reason_code`에는 상세 미지원 사유를 저장한다.
-관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.
-
-기존 DB는 `scripts/sql/05_v4_multi_event_model_lever.sql`을 한 번 적용해
-그룹 컬럼·nullable 관계·초기 레버 카탈로그를 반영한다.
 
 ### 전체 흐름
 

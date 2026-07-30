@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
-import hashlib
-import json
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from apps.common.exceptions.custom import MIBaseError
@@ -83,44 +81,13 @@ class EventService:
             if event is None:
                 raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Event not found: {mi_event_id}")
 
-            template_model = ScenarioRepository(session=session).fetch_template_model(
-                int(event["event_type_l2_id"]),
-            )
-            template_json = (
-                template_model.template_json
-                if template_model is not None and isinstance(template_model.template_json, list)
-                else []
-            )
-            canonical = json.dumps(
-                {
-                    "event_type_definition": (
-                        template_model.event_type_definition if template_model is not None else ""
-                    )
-                    or "",
-                    "lng_price_impact_examples": (
-                        template_model.lng_price_impact_examples if template_model is not None else ""
-                    )
-                    or "",
-                    "dimensions": template_json,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
+            template_json = ScenarioRepository(session=session)._load_template_json_from_db(
+                int(event["event_type_l2_id"])
             )
             return {
                 "event": self._with_related_group(event, session),
                 "scenario_template": {
                     "event_type_l2_id": int(event["event_type_l2_id"]),
-                    "scenario_dimension_template_id": (
-                        int(template_model.scenario_dimension_template_id) if template_model is not None else None
-                    ),
-                    "event_type_definition": (
-                        template_model.event_type_definition if template_model is not None else None
-                    ),
-                    "lng_price_impact_examples": (
-                        template_model.lng_price_impact_examples if template_model is not None else None
-                    ),
-                    "template_checksum": hashlib.sha256(canonical.encode()).hexdigest(),
                     "dimensions": self._template_dimensions(template_json),
                     "raw_template_json": template_json or [],
                 },
@@ -133,9 +100,7 @@ class EventService:
         group_repository = ScenarioGroupRepository(session=session)
         scenario_repository = ScenarioRepository(session=session)
         signpost_repository = SignpostRepository(session=session)
-        group = group_repository.fetch_by_any_event_id(
-            int(event["mi_event_id"]),
-        )
+        group = group_repository.fetch_by_mi_event_id(int(event["mi_event_id"]))
         related = None
         action_state = {"type": "create", "label": "생성하기", "disabled": False, "reason": None}
         if group is not None:
@@ -189,14 +154,8 @@ class EventService:
                     "key": str(item.get("dim_key") or item.get("key") or ""),
                     "label": str(item.get("label") or item.get("dim_label") or item.get("dim_key") or ""),
                     "required": bool(item.get("required", False)),
-                    "description": (
-                        str(item.get("description") or "").strip()
-                        or str(
-                            item.get("label") or item.get("dim_label") or item.get("dim_key") or "",
-                        )
-                    ),
                     "display_order": int(item.get("display_order") or index),
-                    "enum_values": (item.get("value_enums") or item.get("enum_values") or item.get("values") or []),
+                    "enum_values": item.get("enum_values") or item.get("values") or [],
                     "raw": item,
                 }
             )

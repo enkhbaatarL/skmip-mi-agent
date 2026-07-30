@@ -82,9 +82,7 @@ def _format_dimensions_block(template: Any) -> str:
         value_enums = ", ".join(dimension.value_enums)
         required_mark = "Y" if dimension.required else "N"
         lines.append(
-            f"- {dimension.dim_key} "
-            f"(label={dimension.label}, description={dimension.description}, "
-            f"required={required_mark}): value_enums=[{value_enums}]"
+            f"- {dimension.dim_key} (label={dimension.label}, required={required_mark}): value_enums=[{value_enums}]"
         )
     return "\n".join(lines)
 
@@ -114,21 +112,18 @@ def build_stage2_user_prompt(
     required_dim_ids: list[str],
 ) -> str:
     return f"""\
-## Event Context (authoritative current facts)
+## Base Event
 - event_id: {pack.C1_base_event.event_id}
 - title: {pack.C1_base_event.title}
 - event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
 - summary: {pack.C1_base_event.summary}
 {_format_compact_event_context(pack)}
 
-## Template Domain Knowledge (reference examples, not current facts)
-- event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
-- event_type_definition: {template.event_type_definition or "(없음)"}
-- lng_price_impact_examples: {template.lng_price_impact_examples or "(없음)"}
+## Template (event_type_l1_l2 = {pack.C1_base_event.event_type_l1_l2})
 - template_dimensions_total: {template.resolved_total()}
 - dimensions: 아래 리스트의 dim_key 만 선택 가능.
 {_format_dimensions_block(template)}
-- required=true 인 dim_key: {required_dim_ids if required_dim_ids else "없음"}
+- required=true 인 dim_key: {required_dim_ids if required_dim_ids else '없음'}
 
 ## 산출 규칙
 - 선택 Dim: 3~5개.
@@ -167,7 +162,10 @@ def build_stage3_batch_user_prompt(
 ) -> str:
     dimension_blocks: list[str] = []
     for dim in dimensions:
-        enum_full_block = ", ".join(f"{enum['id']}({enum.get('label', '')})" for enum in dim["enum"])
+        enum_full_block = ", ".join(
+            f"{enum['id']}({enum.get('label', '')})"
+            for enum in dim["enum"]
+        )
         dimension_blocks.append(
             f"- dim_key: {dim['dim_key']}\n"
             f"  label_ko: {dim.get('label_ko', '')}\n"
@@ -284,7 +282,8 @@ def build_scenario_group_metadata_user_prompt(
 
 def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenario]) -> str:
     scenarios_block = "\n".join(
-        f"- {s.scenario_id} | {s.title}\n    dims: {', '.join(f'{k}={v}' for k, v in s.dimension_values.items())}"
+        f"- {s.scenario_id} | {s.title}\n"
+        f"    dims: {', '.join(f'{k}={v}' for k, v in s.dimension_values.items())}"
         for s in scenarios
     )
     return f"""\

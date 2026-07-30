@@ -22,7 +22,6 @@ DimensionValueMap = Dict[str, str]
 class TemplateDimension(BaseModel):
     label: str = Field(description="Dimension 표시명")
     dim_key: str = Field(description="Dimension key")
-    description: str = Field(default="", description="Dimension 의미 설명")
     required: bool = Field(default=False, description="필수 여부")
     value_enums: List[str] = Field(
         default_factory=list,
@@ -42,7 +41,6 @@ class TemplateDimension(BaseModel):
             raise ValueError(f"value_enums contains duplicates: dim_key={dim_key}")
         self.dim_key = dim_key
         self.label = str(self.label).strip() or dim_key
-        self.description = str(self.description).strip() or self.label
         self.value_enums = enums
         return self
 
@@ -60,17 +58,12 @@ class TemplateDimension(BaseModel):
         return {
             "dim_key": self.dim_key,
             "label_ko": self.label,
-            "description": self.description,
+            "description": self.label,
             "enum": self.enum_items(),
         }
 
 
 class ScenarioTemplate(BaseModel):
-    scenario_dimension_template_id: int | None = None
-    event_type_l2_id: int | None = None
-    event_type_definition: str = ""
-    lng_price_impact_examples: str = ""
-    template_checksum: str = ""
     label_ko: str = Field(default="", description="템플릿 라벨")
     template_dimensions_total: int | None = Field(
         default=None,
@@ -144,7 +137,10 @@ class Stage1ContextPack(BaseModel):
 class SelectedDimension(BaseModel):
     dim_key: str = Field(description="템플릿의 dim_key")
     rationale: str = Field(
-        description=("선택 근거. 반드시 '(a)' 또는 '(c)' 또는 '(a)(c)' 코드로 시작하고, 한국어 근거문을 1줄로 부연.")
+        description=(
+            "선택 근거. 반드시 '(a)' 또는 '(c)' 또는 '(a)(c)' 코드로 시작하고, "
+            "한국어 근거문을 1줄로 부연."
+        )
     )
 
 

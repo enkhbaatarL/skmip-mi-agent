@@ -48,7 +48,6 @@ from apps.persistence.scenario.schema import (
     NewScenarioGeneratedDetails,
 )
 
-
 _LIKELIHOOD_WEIGHTS: dict[str, int] = {
     "very_low": 5,
     "low": 10,
@@ -70,10 +69,7 @@ def load_scenario_group(state: CreateSignpostsState) -> dict[str, object]:
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
         )
-    return {
-        "scenario_group": group,
-        "mi_event_id": (int(group.mi_event_id) if group.mi_event_id is not None else None),
-    }
+    return {"scenario_group": group, "mi_event_id": int(group.mi_event_id)}
 
 
 async def generate_new_scenario_row_details(
@@ -125,23 +121,18 @@ async def generate_new_scenario_row_details_node(
     if not new_rows:
         return {}
 
-    event_data = _load_group_event_context(state.scenario_group)
+    event_data = EventService().load_event(int(state.scenario_group.mi_event_id))
     if event_data is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
 
     scenario_service = ScenarioService()
-    if state.scenario_group.event_type_l2_id is not None:
-        dimension_values_list = [
-            scenario_service.cells_to_dimension_values(
-                int(state.scenario_group.event_type_l2_id),
-                row.get("cells") or {},
-            )
-            for row in new_rows
-        ]
-    else:
-        dimension_values_list = [
-            {str(key): value for key, value in (row.get("cells") or {}).items()} for row in new_rows
-        ]
+    dimension_values_list = [
+        scenario_service.cells_to_dimension_values(
+            int(state.scenario_group.event_type_l2_id),
+            row.get("cells") or {},
+        )
+        for row in new_rows
+    ]
     trace_context = runtime.context if runtime is not None else None
     if trace_context is None:
         details = await generate_new_scenario_row_details(event_data, dimension_values_list)
@@ -162,19 +153,14 @@ def sync_scenarios_from_table(state: CreateSignpostsState) -> dict[str, object]:
     if state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
     request_table = state.request_table.model_dump(exclude_unset=True)
-    sync_kwargs: dict[str, Any] = {
-        "scenario_group_id": state.scenario_group_id,
-        "event_type_l2_id": (
-            int(state.scenario_group.event_type_l2_id) if state.scenario_group.event_type_l2_id is not None else None
-        ),
-        "table_payload": request_table,
-        "user_id": state.user_id,
-        "new_row_details": state.new_scenario_row_details,
-    }
-    if state.scenario_group.dimension_definitions:
-        sync_kwargs["dimension_definitions"] = state.scenario_group.dimension_definitions
     try:
-        result = ScenarioService().sync_from_table(**sync_kwargs)
+        result = ScenarioService().sync_from_table(
+            scenario_group_id=state.scenario_group_id,
+            event_type_l2_id=int(state.scenario_group.event_type_l2_id),
+            table_payload=request_table,
+            user_id=state.user_id,
+            new_row_details=state.new_scenario_row_details,
+        )
     except ValueError as exc:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=str(exc)) from exc
     group = ScenarioGroupService().load_by_id(state.scenario_group_id)
@@ -207,17 +193,9 @@ async def run_signpost_generation(
 ) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
-    if state.event_data is not None:
-        event = state.event_data
-    elif state.scenario_group is not None:
-        event = _load_group_event_context(state.scenario_group)
-    elif state.mi_event_id is not None:
-        event = EventService().load_event(state.mi_event_id)
-    else:
-        raise MIBaseError(
-            ErrorCode.INVALID_REQUEST,
-            detail="Scenario group Event context is required",
-        )
+    if state.mi_event_id is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="mi_event_id is required")
+    event = EventService().load_event(state.mi_event_id)
     if event is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
 
@@ -231,11 +209,14 @@ async def run_signpost_generation(
         "tags": c1.get("tags", []),
     }
     existing_scenario_ids = {int(signpost.scenario_id) for signpost in state.signposts}
-    target_ids = {int(scenario_id) for scenario_id in state.signpost_target_scenario_ids}
+    target_ids = {
+        int(scenario_id) for scenario_id in state.signpost_target_scenario_ids
+    }
     scenarios_to_process = [
         scenario.model_dump()
         for scenario in state.scenarios
-        if int(scenario.scenario_id) in target_ids or int(scenario.scenario_id) not in existing_scenario_ids
+        if int(scenario.scenario_id) in target_ids
+        or int(scenario.scenario_id) not in existing_scenario_ids
     ]
     if not scenarios_to_process:
         return create_signposts_state_update(
@@ -250,7 +231,9 @@ async def run_signpost_generation(
 
     from apps.common.configs.config import get_settings
 
-    semaphore = asyncio.Semaphore(get_settings().create_signposts_max_concurrent_scenarios)
+    semaphore = asyncio.Semaphore(
+        get_settings().create_signposts_max_concurrent_scenarios
+    )
 
     async def process_one(scenario: dict[str, Any]) -> list[GeneratedSignpost]:
         async with semaphore:
@@ -259,7 +242,11 @@ async def run_signpost_generation(
                     scenario=scenario,
                     base_event_summary=base_event_summary,
                 ),
-                config=(build_langgraph_config(trace_context) if trace_context is not None else None),
+                config=(
+                    build_langgraph_config(trace_context)
+                    if trace_context is not None
+                    else None
+                ),
                 context=trace_context,
             )
             result = (
@@ -307,38 +294,6 @@ async def run_signpost_generation(
     )
 
 
-def _load_group_event_context(
-    group: object,
-) -> EventPayload | None:
-    mi_event_id = getattr(group, "mi_event_id", None)
-    if mi_event_id is not None:
-        return EventService().load_event(int(mi_event_id))
-    scenario_group_id = int(getattr(group, "scenario_group_id"))
-    event_ids = ScenarioGroupService().load_event_ids(scenario_group_id)
-    events = EventService().load_events(event_ids)
-    if not events:
-        return None
-    return EventPayload(
-        mi_event_id=",".join(str(event.mi_event_id) for event in events),
-        event_type_l2_id=events[0].event_type_l2_id,
-        event_title_ko=" + ".join(event.event_title_ko for event in events if event.event_title_ko),
-        one_line_summary=" | ".join(event.one_line_summary for event in events if event.one_line_summary),
-        detail_analysis="\n\n".join(event.detail_analysis for event in events if event.detail_analysis),
-        key_bullets=[f"[Event {event.mi_event_id}] {bullet}" for event in events for bullet in event.key_bullets][:20],
-        event_type={
-            "level_1_code": "MULTI_EVENT",
-            "level_2_code": "COMPOSITE",
-        },
-        occurred_at=max(
-            (event.occurred_at for event in events if event.occurred_at),
-            default="",
-        ),
-        tags=list(
-            dict.fromkeys(tag for event in events for tag in event.tags),
-        )[:20],
-    )
-
-
 def save_signposts(state: CreateSignpostsState) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
@@ -361,7 +316,11 @@ def save_signposts(state: CreateSignpostsState) -> dict[str, object]:
     ]
     if failed_results:
         failed_ids = [int(result["scenario_id"]) for result in failed_results]
-        success_count = sum(1 for result in signpost_result.scenario_results if result.get("status") == "success")
+        success_count = sum(
+            1
+            for result in signpost_result.scenario_results
+            if result.get("status") == "success"
+        )
         raise MIBaseError(
             ErrorCode.LLM_INVOCATION_ERROR,
             detail=(

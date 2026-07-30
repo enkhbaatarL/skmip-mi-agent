@@ -17,7 +17,6 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
 from apps.persistence.model_parameter.repository import ModelParameterRepository
-from apps.persistence.model_parameter.service import ModelImpactLeverService
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 
@@ -180,65 +179,13 @@ class ModelParameterService:
                 if group is None:
                     context = None
                 else:
-                    is_v4 = (
-                        getattr(group, "generation_strategy", None)
-                        == "multi_event_model_lever_dimensions"
+                    event = event_repository.fetch_event_by_id(int(group.mi_event_id))
+                    event_type = event_repository.fetch_event_type_by_l2_id(
+                        int(group.event_type_l2_id),
                     )
-                    if is_v4:
-                        relations = group_repository.fetch_group_events(
-                            int(group.scenario_group_id),
-                        )
-                        events = [
-                            event_repository.fetch_event_by_id(
-                                int(relation.mi_event_id),
-                            )
-                            for relation in relations
-                        ]
-                        events = [event for event in events if event is not None]
-                        event = {
-                            "event_title_ko": " / ".join(
-                                str(
-                                    item.get("event_title_ko")
-                                    or item.get("event_title")
-                                    or "",
-                                )
-                                for item in events
-                                if isinstance(item, dict)
-                            ),
-                            "one_line_summary": "\n".join(
-                                str(item.get("one_line_summary") or "")
-                                for item in events
-                                if isinstance(item, dict)
-                            ),
-                            "key_bullets": [
-                                bullet
-                                for item in events
-                                if isinstance(item, dict)
-                                for bullet in item.get("key_bullets") or []
-                            ],
-                            "detail_analysis": "\n".join(
-                                str(item.get("detail_analysis") or "")
-                                for item in events
-                                if isinstance(item, dict)
-                            ),
-                        }
-                        event_type = {}
-                        dimension_template = (
-                            getattr(group, "dimension_definitions", None) or []
-                        )
-                    else:
-                        events = []
-                        event = event_repository.fetch_event_by_id(
-                            int(group.mi_event_id),
-                        )
-                        event_type = event_repository.fetch_event_type_by_l2_id(
-                            int(group.event_type_l2_id),
-                        )
-                        dimension_template = (
-                            scenario_repository.fetch_dimension_template(
-                                int(group.event_type_l2_id),
-                            )
-                        )
+                    dimension_template = scenario_repository.fetch_dimension_template(
+                        int(group.event_type_l2_id),
+                    )
                     mapping_rules, parameter_definitions = (
                         model_parameter_repository.fetch_parameter_mapping_resources()
                     )
@@ -246,7 +193,6 @@ class ModelParameterService:
                         "scenario": _scenario_to_context_dict(scenario),
                         "scenario_group": _group_to_context_dict(group),
                         "event": event or {},
-                        "events": events,
                         "event_type": event_type or {},
                         "dimension_template": dimension_template,
                         "parameter_mapping_resources": {
@@ -262,29 +208,6 @@ class ModelParameterService:
                 ErrorCode.ENTITY_NOT_FOUND,
                 detail=f"Scenario context not found: scenario_id={scenario_id}",
             )
-        if (
-            context["scenario_group"].get("generation_strategy")
-            == "multi_event_model_lever_dimensions"
-        ):
-            impact_levers, catalog_version, catalog_checksum = (
-                ModelImpactLeverService().load_active_catalog()
-            )
-            expected_checksum = context["scenario_group"].get(
-                "impact_catalog_checksum",
-            )
-            if expected_checksum and expected_checksum != catalog_checksum:
-                raise MIBaseError(
-                    ErrorCode.INVALID_REQUEST,
-                    detail=(
-                        "Scenario group impact lever catalog revision no longer "
-                        "matches the active catalog; regenerate the scenario group"
-                    ),
-                )
-            context["impact_lever_catalog"] = [
-                lever.model_dump() for lever in impact_levers
-            ]
-            context["impact_catalog_version"] = catalog_version
-            context["impact_catalog_checksum"] = catalog_checksum
         return context
 
     def load_parameter_mapping_resources(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -325,8 +248,9 @@ class ModelParameterService:
             scenario.get("scenario_group_id") or scenario_group.get("scenario_group_id"),
             field_name="scenario_group.scenario_group_id",
         )
-        mi_event_id = _optional_int(
+        mi_event_id = _required_int(
             event.get("mi_event_id") or scenario_group.get("mi_event_id"),
+            field_name="event.mi_event_id",
         )
         request_usr_id = _optional_int(user_id)
         payload = _parameter_json_payload(proposal_parameters)
@@ -367,8 +291,9 @@ class ModelParameterService:
             scenario.get("scenario_group_id") or scenario_group.get("scenario_group_id"),
             field_name="scenario_group.scenario_group_id",
         )
-        mi_event_id = _optional_int(
+        mi_event_id = _required_int(
             event.get("mi_event_id") or scenario_group.get("mi_event_id"),
+            field_name="event.mi_event_id",
         )
         request_usr_id = _optional_int(user_id)
 
@@ -570,8 +495,8 @@ def _scenario_to_context_dict(scenario: Any) -> dict[str, Any]:
 def _group_to_context_dict(group: Any) -> dict[str, Any]:
     return {
         "scenario_group_id": int(group.scenario_group_id),
-        "mi_event_id": _optional_int(group.mi_event_id),
-        "event_type_l2_id": _optional_int(group.event_type_l2_id),
+        "mi_event_id": int(group.mi_event_id),
+        "event_type_l2_id": int(group.event_type_l2_id),
         "request_usr_id": (
             int(group.request_usr_id) if group.request_usr_id is not None else None
         ),
@@ -582,22 +507,6 @@ def _group_to_context_dict(group: Any) -> dict[str, Any]:
         "scenario_count": int(group.scenario_count or 0),
         "status": _json_safe(group.status),
         "stage": _json_safe(group.stage),
-        "api_version": getattr(group, "api_version", None),
-        "generation_strategy": getattr(group, "generation_strategy", None),
-        "target_market": getattr(group, "target_market", None),
-        "impact_catalog_version": getattr(
-            group,
-            "impact_catalog_version",
-            None,
-        ),
-        "impact_catalog_checksum": getattr(
-            group,
-            "impact_catalog_checksum",
-            None,
-        ),
-        "dimension_definitions": _json_safe(
-            getattr(group, "dimension_definitions", None) or [],
-        ),
     }
 
 

@@ -107,8 +107,6 @@ apps/agents/<agent_name>/
 │   └── <agent_util>.py
 ├── schemas/
 │   ├── __init__.py
-│   ├── api/
-│   │   └── dimension_mapping.py # flow-less mapping 승인 API DTO
 │   ├── base.py
 │   ├── endpoint.py             # 기존 통합 FastAPI request/response 및 callback DTO
 │   ├── state.py                # flow 공통 base state와 공통 state DTO
@@ -152,9 +150,6 @@ apps/agents/<agent_name>/
 - `flows/<feature_or_domain>/`
   - API 동작 하나 또는 밀접한 기능 묶음 하나를 기능 단위, 도메인 단위로 나눈 flow 패키지다.
   - 예: `create_scenarios`, `validate_scenarios`, `create_signposts`, `confirm_generation`
-  - versioned 다중 Event 생성은 `create_multi_event_scenarios/`에 두며
-    v2 원본 dimension, v3 합성 dimension, v4 모델 영향 레버 dimension의
-    공통 계약·실행을 소유한다.
 - `flows/<feature_or_domain>/state.py`
   - 해당 flow가 실제로 읽고 쓰는 LangGraph state 필드만 정의한다.
 - `flows/<feature_or_domain>/api_schema.py`
@@ -200,9 +195,7 @@ apps/agents/<agent_name>/
 
 `scenario_group_agent`는 위 기본 구조를 따르는 현재 런타임 Agent다.
 
-- `flows/create_scenarios/`: v1 및 unversioned 단일 Event scenario 생성 flow
-- `flows/create_multi_event_scenarios/`: v2/v3 Template 기반 sync와 v4 모델
-  영향 레버 기반 sync/비동기 다중 Event scenario 생성 flow
+- `flows/create_scenarios/`: scenario 생성 기능 단위 flow
   - `state.py`, `flow.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
   - `state.py`, `flow.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.

@@ -1,1007 +1,617 @@
-# Scenario Comparison Backoffice Test Scenarios
+# Backoffice 화면 기준 테스트 시나리오
 
 ## 1. 목적
 
-이 문서는 [`PRD.md`](./PRD.md)와 [`DESIGN.md`](./DESIGN.md)에 정의된 frontend-only Scenario Comparison Backoffice의 QA 시나리오를 정의한다.
+이 문서는 Backoffice 화면에서 `Event List`부터 Scenario Group confirmation까지 사용자 시나리오를 검증하기 위한 QA 기준이다.
 
 검증 대상:
 
-- Browser에서 Scenario Group Agent API 직접 호출
-- v1 단일 이벤트 create → validation → signpost → confirmation
-- v2/v3/v4 다중 이벤트 create 결과 비교
-- v2/v3 종료 barrier 이후 v4 실행
-- request/response, elapsed time, token usage, raw JSON 증적
-- 결정적 품질 검사
-- timeout, 취소, 부분 실패 및 중복 요청 방지
-- JSON export와 secret 제거
-- CORS, mixed content, 반응형 및 접근성
+- 이벤트 리스트 조회 및 이벤트 선택
+- Scenario Group List 조회 및 기존 Scenario Group 상세 진입
+- 시나리오 생성 요청, accepted 응답, generation callback 반영
+- 생성된 시나리오 분기 기준 확인/수정/추가
+- 검토 요청 및 validation callback 반영
+- Signpost 생성 요청 및 signpost callback 반영
+- Signpost 확률/내용 수정 후 confirmation
+- Scenario Group detail 화면 확인
+- 테스트 종료 시 Scenario Group soft delete 정리
+- 오류, 지연, 빈 데이터, 입력 제한 등 edge case
 
-검증 제외:
+## 2. 공통 사전조건
 
-- callback API
-- callback OAuth2 token
-- SSE/WebSocket
-- Backoffice FastAPI proxy
-- v2/v3/v4 validation, signpost, confirmation
-- frontend에서의 LLM Judge
-- 운영용 Scenario Group 관리 기능
+- Backoffice가 실행 중이어야 한다.
+  - URL: `http://127.0.0.1:9010/`
+- Agent가 실행 중이어야 한다.
+  - URL: `http://127.0.0.1:8000/`
+- Agent callback 설정은 Backoffice를 바라봐야 한다.
+  - `CALLBACK_BASE_URL=http://127.0.0.1:9010`
+  - `CALLBACK_OAUTH2_TOKEN_URL=http://127.0.0.1:9010/api/v1/oauth2/token`
+- Backoffice runtime bar의 `Agent Base URL`은 `http://127.0.0.1:8000`이어야 한다.
+- 테스트 가능한 `miEventId`, `userId`가 준비되어 있어야 한다.
+- Scenario Group soft delete에 필요한 Agent delete authorization 값이 준비되어 있어야 한다.
+- QA Inspector에서 request body, accepted response, callback payload, detail response를 확인할 수 있어야 한다.
 
-## 2. 테스트 흐름 분리
+### 2.1 공통 종료 절차: Scenario Group soft delete
 
-테스트 요청은 반드시 다음 중 하나로 분류한다.
-
-| 흐름 | Event | API 범위 | 비교 |
-| --- | --- | --- | --- |
-| v1 단일 이벤트 | 1건 | unversioned create, validation, signpost, detail, confirmation | 없음 |
-| v2/v3/v4 비교 | 중복 없는 2~5건 | versioned create sync만 실행 | 세 version 비교 |
-
-한 테스트 run에서 두 흐름을 섞지 않는다.
-
-## 3. 공통 사전조건
-
-- 정적 frontend가 실행 중이어야 한다.
-  - 예: Vite `http://127.0.0.1:5173`
-- Scenario Group Agent가 실행 중이어야 한다.
-  - local 권장: `http://127.0.0.1:8001`
-- Agent가 frontend origin을 CORS allowlist에 포함해야 한다.
-- frontend와 Agent의 HTTP/HTTPS scheme이 browser mixed-content 정책에 맞아야 한다.
-- 유효한 `userId`가 준비되어 있어야 한다.
-- sync 실행 timeout은 기본 1,200초로 설정한다.
-- v1용 Event 1건과 비교용 Event 2~5건이 준비되어 있어야 한다.
-- 기존 Scenario Group 정리에 필요한 admin token 또는 delete authorization은 필요할 때만 준비한다.
-- 브라우저 network log와 Evidence Drawer를 함께 확인할 수 있어야 한다.
-
-### 3.1 Agent 실행 조건
-
-v2와 v3의 병렬 호출을 처리할 수 있도록 local Agent는 Gunicorn/UvicornWorker 3개 구성을 권장한다.
-
-```bash
-poetry run dotenv -f envs/.env run --no-override -- \
-  gunicorn main:app \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --workers 3 \
-  --bind 127.0.0.1:8001 \
-  --timeout 1200 \
-  --graceful-timeout 1200
-```
-
-v1 순차 테스트만 수행할 때는 기존 Uvicorn local 실행도 허용한다.
-
-### 3.2 테스트 데이터 원칙
-
-- 비교 테스트마다 고유 `comparisonRunId`를 사용한다.
-- 동일 comparison run에서 Event 순서, userId, targetMarket을 변경하지 않는다.
-- create POST의 중복 실행 여부를 확인할 수 있도록 browser network log를 보존한다.
-- 테스트 중 생성된 모든 `scenarioGroupId`를 기록한다.
-- 기존 group이 있는 Event를 v1에 사용하려면 테스트 시작 전에 명시적으로 soft delete한다.
-- hard delete는 사용하지 않는다.
-
-### 3.3 종료 및 정리
-
-frontend 제품 범위에 별도 Scenario Group 관리 화면은 없다. 테스트 종료 후 데이터 정리는 승인된 manual script 또는 Agent soft-delete API로 수행한다.
-
-정리 절차:
-
-1. 생성된 `scenarioGroupId`, API version, comparisonRunId를 기록한다.
-2. 필요한 결과 JSON을 export한다.
-3. 유효한 권한으로 Agent soft-delete API 또는 기존 정리 도구를 실행한다.
-4. `GET /scenario-groups/{scenarioGroupId}` 또는 목록 조회로 삭제 상태를 확인한다.
-5. 정리 실패 시 group ID와 원인을 테스트 보고서에 남긴다.
-
-timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/API 증적 확인 후 정리한다. 동일 POST를 정리 목적으로 재호출하지 않는다.
-
-## 4. 공통 통과 기준
-
-### 4.1 API 정확성
-
-- frontend가 `/backoffice/api/...`가 아니라 Agent Base URL을 직접 호출한다.
-- v1 request body는 현재 Event, userId, 최신 editable table을 사용한다.
-- comparison의 세 version은 동일 Event 순서, userId, comparisonRunId를 사용한다.
-- v4 request에만 targetMarket이 포함된다.
-- HTTP 200의 `result=failure` 또는 `status=error`를 성공으로 표시하지 않는다.
-- create POST는 사용자 action 한 번당 정확히 한 번 전송된다.
-
-### 4.2 상태 정확성
-
-- transport, HTTP, API body 판정이 구분된다.
-- timeout 또는 응답 수신 전 취소는 `unknown`으로 표시된다.
-- 오류가 발생해도 이전 성공 결과와 입력값이 유지된다.
-- 실행 중 workspace tab을 변경해도 요청과 화면 상태가 유지된다.
-- v2/v3가 terminal 상태가 되기 전 v4가 시작되지 않는다.
-
-### 4.3 증적 정확성
-
-모든 API call에 다음이 표시되어야 한다.
-
-- method와 URL
-- request body
-- 시작/종료 시각
-- elapsed time
-- HTTP status
-- transport/API 판정
-- parsed response
-- raw response 또는 raw text
-- 오류
-- token usage가 존재하면 prompt/completion/total token
-
-### 4.4 UX
-
-- 요청 중 중복 클릭이 방지된다.
-- loading 중 기존 결과를 blank 처리하지 않는다.
-- warning/error/unknown은 원인과 다음 행동을 안내한다.
-- 긴 Scenario table과 JSON을 스크롤, 검색, 복사할 수 있다.
-- 상태는 색상뿐 아니라 icon과 text로 구분된다.
-
-### 4.5 보안
-
-- 인증값은 마스킹된다.
-- browser storage에 token/secret이 없다.
-- export JSON에 Authorization, cookie, token이 없다.
-- frontend build artifact에 secret이 없다.
-
-## 5. v1 정상 동작
-
-### TC-V1-N-001 연결 확인과 단일 Event 선택
-
-목적: frontend가 Agent에 직접 연결하고 Event 한 건을 선택하는지 확인한다.
+Scenario Group을 생성하거나 기존 Scenario Group을 상세 조회한 테스트는 케이스 종료 전에 아래 정리 절차를 수행한다. 단, 삭제 실패/권한 실패를 검증하는 케이스는 기대결과 확인 후 별도 유효한 권한으로 동일 절차를 다시 수행한다.
 
 절차:
 
-1. `v1 단일 이벤트` tab을 연다.
-2. Runtime Settings에 Agent Base URL, userId, timeout을 입력한다.
-3. `연결 확인`을 클릭한다.
-4. Event 목록을 최신순으로 조회한다.
-5. Event 한 건을 선택한다.
-6. Event detail이 표시되는지 확인한다.
+1. 테스트 중 사용한 `scenarioGroupId`를 기록한다.
+2. `Scenario Group List` 탭으로 이동한다.
+3. 목록을 새로고침하고 해당 `scenarioGroupId` 또는 Scenario Group명으로 검색한다.
+4. 행의 상세 action을 클릭해 detail 화면이 열리는지 확인한다.
+5. `Scenario Group List`로 돌아간다.
+6. 해당 행의 삭제 action을 클릭한다.
+7. 삭제 확인 모달에서 Scenario Group ID, Scenario Group명, Base Event 참조가 맞는지 확인한다.
+8. delete authorization 값과 필요한 `userId`를 입력하거나 선택한다.
+9. `삭제`를 클릭한다.
+10. QA Inspector에서 `DELETE /backoffice/api/scenario-groups/{scenarioGroupId}` request/response 또는 error를 확인한다.
+11. `삭제 항목 포함`이 off인 기본 목록에서 해당 row가 사라졌는지 확인한다.
+12. `삭제 항목 포함`을 on으로 바꾸고 해당 row가 `삭제됨` 상태로 조회되는지 확인한다.
 
 기대결과:
 
-- browser가 Agent의 `GET /events`를 직접 호출한다.
-- 연결 상태가 `연결됨`으로 표시된다.
-- 선택 Event의 `miEventId`, 제목, Event Type, 시장 영향이 표시된다.
-- `GET /events/{miEventId}` request/response가 Evidence Drawer에 남는다.
-- Event 한 건만 선택된다.
+- 삭제는 Backoffice soft-delete proxy만 호출하고 Agent hard-delete API는 호출하지 않는다.
+- 삭제 요청 중 중복 클릭이 방지된다.
+- 성공 시 기본 목록에서 row가 제거된다.
+- include-deleted 목록에서는 삭제 상태가 명확히 표시된다.
+- 삭제 결과 raw JSON과 timeline 이벤트가 QA Inspector에 남는다.
 
-### TC-V1-N-002 Create 성공
+## 3. 통과 품질 기준
 
-목적: 단일 Event create sync 응답을 Scenario table로 표시하는지 확인한다.
+### 3.1 기능 품질
+
+- 사용자는 화면 조작만으로 `이벤트 선택 -> 시나리오 생성 -> 검토 요청 -> 검토 완료 -> Signpost 생성 -> confirmation`까지 수행할 수 있어야 한다.
+- long-running API는 즉시 accepted 응답을 보여주고, callback 수신 후 화면이 자동 갱신되어야 한다.
+- callback 또는 SSE가 지연될 때도 화면이 깨지지 않고 manual refresh로 복구 가능해야 한다.
+- validation, signpost, confirmation 요청 body는 화면에서 수정한 최신 값으로 생성되어야 한다.
+- `runId`, `scenarioGroupId`, Agent `status`, Agent `stage`, local lifecycle이 화면에 표시되어야 한다.
+- raw JSON inspector에서 요청/응답/callback/error 증적을 확인할 수 있어야 한다.
+
+### 3.2 데이터 품질
+
+- 선택한 이벤트의 `miEventId`가 생성 요청 body에 정확히 반영되어야 한다.
+- generation callback 이후 시나리오 row 수, 제목, 분기 기준, baseline `BC` 표시가 화면에 반영되어야 한다.
+- 시나리오 추가/삭제/수정 후 validation 요청 body에 변경 내용이 포함되어야 한다.
+- Step 2에서 수정한 scenario group명, 설명, narrative, probability, signpost 값이 confirmation 요청 body에 포함되어야 한다.
+- confirmation 이후 detail 화면의 요약, 가정 및 실현 가능성, 시나리오 상세 탭이 최신 데이터와 일치해야 한다.
+- 테스트 종료 시 soft delete 이후 기본 목록에서 해당 Scenario Group이 보이지 않아야 한다.
+- include-deleted 목록에서는 soft-deleted Scenario Group의 삭제 상태를 확인할 수 있어야 한다.
+
+### 3.3 UX 품질
+
+- 요청 중에는 중복 클릭이 방지되어야 한다.
+- 로딩 중에도 기존 입력값이 사라지지 않아야 한다.
+- warning/error는 원인과 다음 행동을 알 수 있게 표시되어야 한다.
+- 긴 텍스트는 화면을 깨지 않고 줄바꿈, 스크롤, ellipsis, raw view 중 하나로 확인 가능해야 한다.
+- 모바일/좁은 화면에서도 주요 버튼과 입력값이 겹치지 않아야 한다.
+
+### 3.4 실패 기준
+
+아래 중 하나라도 발생하면 해당 케이스는 실패다.
+
+- request body가 화면 입력값과 다르게 전송된다.
+- callback 수신 후 lifecycle이나 화면 데이터가 갱신되지 않는다.
+- validation/signpost/confirmation 중 버튼 중복 클릭으로 중복 요청이 발생한다.
+- 시나리오 추가/수정 값이 다음 단계에서 유실된다.
+- error callback 또는 Agent 오류가 raw inspector에 남지 않는다.
+- confirmation 완료 후 detail 화면으로 이동하지 않거나 필수 탭이 렌더링되지 않는다.
+- 생성된 Scenario Group을 테스트 종료 시 soft delete하지 못했는데 원인과 재시도 경로가 남지 않는다.
+
+## 4. 정상 동작 케이스
+
+### TC-N-001 기본 end-to-end 생성 플로우
+
+목적: 이벤트 1개를 선택해서 시나리오 생성부터 confirmation까지 기본 플로우가 정상 동작하는지 확인한다.
+
+사전조건:
+
+- Backoffice와 Agent가 실행 중이다.
+- runtime bar의 `Agent Base URL`, `miEventId`, `userId`가 유효하다.
 
 절차:
 
-1. TC-V1-N-001을 완료한다.
-2. `Create 실행` 전 request preview를 연다.
-3. `miEventId`와 userId를 확인한다.
-4. `Create 실행`을 한 번 클릭한다.
-5. 실행 중 버튼과 Event/runtime 입력 상태를 확인한다.
-6. 응답 완료 후 Run Header와 Scenario table을 확인한다.
+1. Backoffice 메인 화면을 연다.
+2. `Event List` 탭이 활성화되어 있는지 확인한다.
+3. 이벤트 리스트에서 이벤트 1개를 선택한다.
+4. 선택한 이벤트의 시나리오 생성 액션 버튼을 클릭한다.
+5. Scenario Design Step 1 화면으로 이동하는지 확인한다.
+6. 시나리오 생성 요청 accepted 응답을 확인한다.
+7. `runId`, `scenarioGroupId`, local lifecycle, Agent `status`, Agent `stage`가 표시되는지 확인한다.
+8. generation callback 수신 후 시나리오 생성 결과 테이블을 확인한다.
+9. 생성된 시나리오 row, `BC` badge, 분기 기준 컬럼, 셀 값이 표시되는지 확인한다.
+10. `변경사항 검토` 버튼을 클릭한다.
+11. validation 요청 중 overlay/loading이 표시되고 중복 클릭이 막히는지 확인한다.
+12. validation accepted 응답과 validation callback 결과를 QA Inspector에서 확인한다.
+13. 검토 결과가 성공 또는 진행 가능 상태이면 `검토 완료` 버튼을 클릭한다.
+14. Scenario Design Step 2 화면으로 이동하는지 확인한다.
+15. `Signpost 생성 요청` 버튼을 클릭한다.
+16. signpost accepted 응답과 signpost callback 결과를 확인한다.
+17. 각 시나리오 카드에 주요 Signpost가 표시되는지 확인한다.
+18. `시나리오 그룹 생성` 버튼을 클릭한다.
+19. confirmation 응답을 확인한다.
+20. Scenario Group detail 화면으로 이동하는지 확인한다.
+21. `요약`, `가정 및 실현 가능성`, `가격 전망`, `시나리오 상세` 탭을 순서대로 확인한다.
+22. 공통 종료 절차에 따라 Scenario Group List에서 상세 진입과 soft delete를 수행한다.
 
 기대결과:
 
-- 정확히 한 번 `POST /scenario-groups/sync`가 호출된다.
-- request body는 선택 Event와 userId를 사용한다.
-- 실행 중 Create 중복 클릭과 runtime 변경이 차단된다.
-- `result=success`일 때 success로 판정된다.
-- `scenarioGroupId`, status/stage, Scenario 수가 표시된다.
-- API table header 순서대로 dimension column이 표시된다.
-- baseline, title, narrative, probability가 표시된다.
-- elapsed time과 token usage가 있으면 표시된다.
+- Event List에서 선택한 이벤트 기준으로 생성 요청이 전송된다.
+- Step 1에 generation callback 기반 시나리오 테이블이 표시된다.
+- validation 이후 Step 2로 이동할 수 있다.
+- signpost callback 이후 signpost 목록이 표시된다.
+- confirmation 이후 detail 화면이 표시된다.
+- 테스트 종료 시 생성된 Scenario Group이 soft delete된다.
+- QA Inspector에 create, validation, signpost, confirmation request/response/callback 증적이 남는다.
+- QA Inspector에 detail 조회와 soft delete request/response 증적이 남는다.
 
 확인 증적:
 
-- browser network POST 1건
-- Create request/response
-- Scenario table 화면
+- `request_body`: create, validation, signpost, confirmation
+- `accepted`: create, validation, signpost, confirmation
+- `callback`: generation, validation, signposts
+- detail 화면 스크린샷
+- Scenario Group List 삭제 전/후 화면 스크린샷
+- soft delete request/response raw JSON
 
-### TC-V1-N-003 Scenario 편집 후 Validation 성공
+### TC-N-002 시나리오 추가 후 검토 요청
 
-목적: 화면 편집값이 validation sync request에 반영되는지 확인한다.
-
-절차:
-
-1. Create 성공 후 Scenario 한 건의 title과 dimension cell을 수정한다.
-2. probability를 수정한다.
-3. 신규 row 한 건을 추가하고 필수값을 채운다.
-4. 기존 non-baseline row 한 건을 삭제한다.
-5. validation request preview를 확인한다.
-6. `Validation 실행`을 클릭한다.
-
-기대결과:
-
-- 삭제 row는 request에 없다.
-- 신규 row와 수정 값이 `table.rows`에 포함된다.
-- row/display order가 중복되지 않는다.
-- 기존 API 식별자는 유지된다.
-- `stage=scenario_validated`이면 success로 판정된다.
-- validation 응답의 최신 table이 안전하게 반영된다.
-- 사용자가 편집한 값이 요청 중 유실되지 않는다.
-
-### TC-V1-N-004 Validation invalid 경고 후 계속
-
-목적: invalid validation을 pipeline 실패로 숨기지 않고 warning으로 처리하는지 확인한다.
+목적: generation 결과 확인 후 사용자가 시나리오 row를 추가하고 validation 요청을 보낼 수 있는지 확인한다.
 
 절차:
 
-1. 상호 모순되거나 invalid한 Scenario 조합을 만든다.
-2. Validation을 실행한다.
-3. 결과와 다음 단계 버튼을 확인한다.
-4. warning 확인 control을 선택한다.
-5. Signpost 단계로 이동한다.
+1. TC-N-001의 8번 단계까지 진행해 Step 1 시나리오 생성 결과 테이블을 표시한다.
+2. 테이블 우측 상단 또는 하단의 row 추가 버튼을 클릭한다.
+3. 새 시나리오 row가 추가되는지 확인한다.
+4. 새 row의 시나리오명을 입력한다.
+5. 각 분기 기준 dropdown 값을 선택한다.
+6. 추가된 row에 edited 상태 표시가 나타나는지 확인한다.
+7. `변경사항 검토` 버튼을 클릭한다.
+8. QA Inspector에서 validation request body를 확인한다.
 
 기대결과:
 
-- invalid 결과, stage, `isValid`, reason이 표시된다.
-- 상태가 warning으로 표시된다.
-- 현재 Scenario 입력값이 유지된다.
-- 사용자가 warning을 확인하기 전에는 계속 진행 action이 비활성화된다.
-- 확인 후 Signpost 단계 진행이 가능하다.
-- 결과를 success로 잘못 표시하지 않는다.
-
-### TC-V1-N-005 Signpost 성공
-
-목적: 최신 Scenario table로 signpost sync API를 실행하고 결과를 표시하는지 확인한다.
-
-절차:
-
-1. Validation 단계를 완료하거나 warning 진행을 확인한다.
-2. Signpost request preview를 확인한다.
-3. `Signpost 실행`을 클릭한다.
-4. Scenario별 Signpost를 확인한다.
-
-기대결과:
-
-- `POST /scenario-groups/{scenarioGroupId}/signposts/sync`가 한 번 호출된다.
-- request body에 userId와 최신 table이 포함된다.
-- `result=success`일 때만 success로 판정된다.
-- Scenario별 label, direction, impact, evidence가 표시된다.
-- Signpost 실패 전에는 Confirmation이 활성화되지 않는다.
-
-### TC-V1-N-006 최신 detail 조회 후 Confirmation 성공
-
-목적: 최신 Agent detail로 confirmation body를 만들고 completed를 확인하는지 검증한다.
-
-절차:
-
-1. Signpost 성공 후 Confirmation 단계로 이동한다.
-2. 화면이 `GET /scenario-groups/{scenarioGroupId}`를 호출하는지 확인한다.
-3. Scenario Group명/설명과 최종 table을 검토한다.
-4. confirmation request preview를 확인한다.
-5. `Confirmation 실행`을 한 번 클릭한다.
-
-기대결과:
-
-- confirmation 직전에 최신 detail이 조회된다.
-- request body의 `scenarioGroup`과 `table`이 최신 detail 및 편집값을 사용한다.
-- `POST /scenario-groups/{scenarioGroupId}/confirmation`은 한 번 호출된다.
-- `status=success && data.stage=completed`일 때 완료로 판정된다.
-- final summary가 현재 workspace에 유지된다.
-- 별도 callback이나 detail 관리 화면을 기다리지 않는다.
-
-### TC-V1-N-007 V1 결과 Export
-
-목적: 전체 v1 실행 증적을 secret 없이 내보내는지 확인한다.
-
-절차:
-
-1. v1 workflow를 완료한다.
-2. `결과 Export`를 클릭한다.
-3. 생성된 JSON을 연다.
-
-기대결과:
-
-- runtime snapshot, Event detail, 단계별 request/response가 포함된다.
-- 판정, elapsed time, token usage, warning/error가 포함된다.
-- final Scenario Group detail이 포함된다.
-- token, Authorization, cookie는 포함되지 않는다.
-- UI에 표시된 scenarioGroupId와 export 값이 일치한다.
-
-## 6. v1 오류 및 경계값
-
-### TC-V1-E-001 잘못된 Runtime 입력
-
-입력 조합:
-
-- 빈 Base URL
-- 잘못된 URL
-- 빈 userId
-- 정수가 아닌 userId
-- 0 이하 timeout
-
-기대결과:
-
-- 잘못된 값은 API 호출 전에 차단된다.
-- `NaN`, 빈 문자열이 request body에 들어가지 않는다.
-- 오류 후 입력을 수정할 수 있다.
-
-### TC-V1-E-002 CORS 오류
-
-절차:
-
-1. frontend origin이 허용되지 않은 Agent를 입력한다.
-2. 연결 확인을 실행한다.
-
-기대결과:
-
-- 연결 실패로 표시된다.
-- 일반 HTTP 500으로 오인하지 않는다.
-- CORS allowlist 확인 안내가 표시된다.
-- 원본 Event 선택과 기존 결과는 유지된다.
-
-### TC-V1-E-003 Mixed Content
-
-절차:
-
-1. HTTPS frontend에서 HTTP Agent Base URL을 입력한다.
-2. 연결 확인을 실행한다.
-
-기대결과:
-
-- 요청 전 또는 browser 차단 후 mixed-content 안내가 표시된다.
-- 재시도 loop가 발생하지 않는다.
-
-### TC-V1-E-004 기존 Scenario Group 중복 오류
-
-절차:
-
-1. 기존 group이 있는 Event로 Create를 실행한다.
-2. 중복 오류를 확인한다.
-
-기대결과:
-
-- 실패 body와 기존 group 정보가 가능한 범위에서 표시된다.
-- 자동 soft delete나 자동 create 재시도가 발생하지 않는다.
-- 사용자가 명시적으로 정리 action을 선택할 수 있다.
-- hard delete는 노출하지 않는다.
-
-### TC-V1-E-005 HTTP 200 + Create failure
-
-절차:
-
-1. create sync 응답이 HTTP 200, `result=failure`가 되도록 한다.
-2. 화면을 확인한다.
-
-기대결과:
-
-- Create가 error로 표시된다.
-- failure reason이 표시된다.
-- Validation은 잠긴다.
-- HTTP 성공을 API 성공으로 오인하지 않는다.
-
-### TC-V1-E-006 Create timeout 또는 취소
-
-절차:
-
-1. 짧은 timeout으로 Create를 실행하거나 응답 전에 취소한다.
-2. 상태와 network call 수를 확인한다.
-
-기대결과:
-
-- 상태가 `unknown`으로 표시된다.
-- 서버에서 완료되었을 수 있다는 안내가 표시된다.
-- 같은 request가 자동 재시도되지 않는다.
-- 현재 run의 Create 버튼으로 동일 POST를 다시 보낼 수 없다.
-- DB/API 증적 확인 또는 새 run 시작을 안내한다.
-
-### TC-V1-E-007 Validation transport/API 실패
-
-기대결과:
-
-- Validation이 error로 표시된다.
-- Scenario table 편집값이 유지된다.
-- error raw body가 남는다.
-- Signpost는 잠긴다.
-- 사용자가 값을 수정한 후 명시적으로 Validation을 다시 실행할 수 있다.
-
-### TC-V1-E-008 Validation invalid 재검증
-
-절차:
-
-1. invalid warning을 만든다.
-2. Scenario 값을 수정한다.
-3. request preview 확인 후 Validation을 다시 실행한다.
-
-기대결과:
-
-- 재실행 전 확인 dialog가 표시된다.
-- 수정된 table만 새 request에 포함된다.
-- 이전 validation call record가 보존된다.
-- 새 결과가 현재 판정으로 표시된다.
-
-### TC-V1-E-009 Signpost failure
-
-기대결과:
-
-- HTTP 200의 `result=failure`도 error다.
-- 이전 Create/Validation 결과가 유지된다.
-- Confirmation은 잠긴다.
-- failure reason과 raw body가 표시된다.
-
-### TC-V1-E-010 Confirmation failure
-
-입력:
-
-- HTTP 4xx/5xx
-- HTTP 200 + `status=error`
-- `status=success`지만 `data.stage!=completed`
-
-기대결과:
-
-- 모두 confirmation failure 또는 warning으로 명확히 판정된다.
-- 완료 상태로 잘못 이동하지 않는다.
-- request/response가 보존된다.
-- 수정 후 명시적 재실행만 허용한다.
-
-### TC-V1-E-011 긴 Scenario/JSON
-
-기대결과:
-
-- 긴 title/narrative/signpost가 layout을 깨지 않는다.
-- Scenario table은 가로 스크롤된다.
-- JSON viewer에서 검색, 접기, 복사가 가능하다.
-- 원문을 확인할 수 있다.
-
-### TC-V1-E-012 Browser 새로고침
-
-절차:
-
-1. 완료된 v1 결과를 저장한 상태에서 새로고침한다.
-2. 복구 상태를 확인한다.
-
-기대결과:
-
-- secret은 복구되지 않는다.
-- 저장 정책 범위의 runtime metadata와 최근 결과가 복구된다.
-- 진행 중이던 request는 `unknown`으로 표시된다.
-- 자동 API 재호출이 발생하지 않는다.
-
-## 7. v2/v3/v4 정상 동작
-
-### TC-M-N-001 Event ID 직접 선택과 Manifest 고정
-
-목적: 중복 없는 Event 2~5건으로 immutable comparison 조건을 만드는지 확인한다.
-
-절차:
-
-1. `v2/v3/v4 비교` tab을 연다.
-2. Event ID 2~5개를 순서대로 입력한다.
-3. 각 Event detail 조회 결과를 확인한다.
-4. targetMarket과 선택 사유를 입력한다.
-5. 자동 생성된 comparisonRunId를 확인한다.
-6. Manifest Summary에서 실행 조건을 확인한다.
-7. `비교 실행`을 클릭한다.
-
-기대결과:
-
-- Event ID가 중복 없이 선택 순서대로 고정된다.
-- Event detail snapshot이 manifest에 포함된다.
-- Base URL, userId, comparisonRunId, targetMarket이 고정된다.
-- 실행 시작 후 입력 control이 잠긴다.
-
-### TC-M-N-002 최신순/오래된순 Event 선택
-
-절차:
-
-1. 목록 선택 mode에서 최신순으로 Event 3건을 선택한다.
-2. 선택을 초기화한다.
-3. 오래된순으로 Event 3건을 선택한다.
-
-기대결과:
-
-- `GET /events`의 sort query가 선택과 일치한다.
-- 선택 순서와 Event ID가 Summary에 표시된다.
-- paging 후에도 기존 선택이 유지된다.
-
-### TC-M-N-003 Keyword Event 선택
-
-절차:
-
-1. keyword를 입력하고 최신순 조회한다.
-2. 결과에서 Event 2~5건을 선택한다.
-
-기대결과:
-
-- keyword가 `GET /events` query에 포함된다.
-- 기본 정렬은 최신순이다.
-- 선택 Event detail이 모두 로드된 후 실행 가능하다.
-
-### TC-M-N-004 v2/v3 병렬 후 v4 실행
-
-목적: pipeline의 version barrier를 검증한다.
-
-절차:
-
-1. 유효한 manifest로 비교를 실행한다.
-2. browser network와 version card 시간을 확인한다.
-3. v2 또는 v3 중 더 늦은 요청이 끝나기 전 v4 호출 여부를 확인한다.
-
-기대결과:
-
-- v2와 v3 POST가 병렬로 시작된다.
-- 두 요청 body의 Event, userId, comparisonRunId가 같다.
-- v2/v3가 모두 terminal 상태가 된 뒤 v4가 시작된다.
-- v4 body에 동일 조건과 targetMarket이 포함된다.
-- 각 version POST는 한 번만 호출된다.
+- 추가 row가 validation request body의 `table.rows`에 포함된다.
+- `displayOrder`가 기존 row와 충돌하지 않는다.
+- 빈 필수값이 있으면 사용자가 인지 가능한 warning/error가 표시된다.
+- 요청 중 추가 row 값이 화면에서 사라지지 않는다.
 
 확인 증적:
 
-- 세 call의 startedAt/finishedAt
-- browser network waterfall
-- version별 request body
+- validation request body의 추가 row
+- validation accepted response
+- validation callback 또는 error callback
 
-### TC-M-N-005 세 Version 성공 비교
+### TC-N-003 시나리오 값 수정 후 검토 요청
 
-목적: 세 응답을 Overview에 정확히 표시하는지 확인한다.
-
-기대결과:
-
-- 각 version의 `status=success`와 data가 success로 판정된다.
-- `apiVersion`, `comparisonRunId`, Event lineage가 manifest와 일치한다.
-- group ID/name, dimension 수, Scenario 수가 표시된다.
-- baseline, floor/ceiling/mixed 수가 표시된다.
-- elapsed time과 token usage가 표시된다.
-- 성공 version이 2개 이상이므로 비교 view가 활성화된다.
-
-### TC-M-N-006 Dimension 비교
-
-기대결과:
-
-- v2는 Event별 namespace key와 단일 source lineage를 표시한다.
-- v3는 composite dimension과 source 관계를 표시한다.
-- v4는 lever reference와 supported/unsupported 상태를 표시한다.
-- version별 dimension 수가 v2 5~8, v3 4~7, v4 3~6 기준으로 검사된다.
-- covered/uncovered dimension이 원본 diagnostics와 일치한다.
-
-### TC-M-N-007 Scenario 비교
-
-기대결과:
-
-- version별 실제 Scenario title, narrative, cells가 표시된다.
-- baseline, role, pressure band, rationale, probability가 표시된다.
-- 대응 Scenario가 없으면 빈 상태와 제외 사유가 표시된다.
-- v2/v3 pressure는 `Global LNG pressure`로 표시된다.
-- v4 pressure는 선택한 target market pressure로 표시된다.
-- 서로 다른 pressure 의미를 하나의 공통 가격 예측처럼 표시하지 않는다.
-
-### TC-M-N-008 Diagnostics 비교
-
-기대결과:
-
-- excluded candidates와 reason이 표시된다.
-- excluded dimensions가 표시된다.
-- Event impact facts와 interactions가 표시된다.
-- coverage status가 표시된다.
-- v4 impact catalog version과 unsupported lever details가 표시된다.
-- 원본 diagnostics JSON을 펼쳐볼 수 있다.
-
-### TC-M-N-009 결정적 품질 검사
-
-기대결과:
-
-- Scenario 3~5개를 검사한다.
-- baseline 정확히 1개를 검사한다.
-- floor/ceiling 각각 1개와 mixed 최소 1개를 검사한다.
-- Scenario 조합과 pressure band 중복을 검사한다.
-- probability 합계를 검사한다.
-- dimension 수와 Event lineage coverage를 검사한다.
-- v4 targetMarket 일치를 검사한다.
-- 각 항목에 PASS/WARN/FAIL과 실제 근거가 표시된다.
-- LLM 점수나 우수 version을 임의 생성하지 않는다.
-
-### TC-M-N-010 Comparison Export
-
-기대결과:
-
-- manifest와 selected Event snapshot이 포함된다.
-- targetMarket과 선택 사유가 포함된다.
-- v2/v3/v4 request/response가 포함된다.
-- transport/API 상태, elapsed time, token usage가 포함된다.
-- 결정적 검사 결과가 포함된다.
-- secret이 없다.
-- export의 version별 결과가 화면과 일치한다.
-
-## 8. v2/v3/v4 오류 및 경계값
-
-### TC-M-E-001 Event 개수 부족/초과
-
-입력:
-
-- Event 0건
-- Event 1건
-- Event 6건 이상
-
-기대결과:
-
-- 비교 실행이 비활성화된다.
-- `중복 없는 Event 2~5건` 안내가 표시된다.
-- API call이 발생하지 않는다.
-
-### TC-M-E-002 중복 Event
+목적: generation 결과 확인 후 기존 시나리오 값을 수정하고 validation 요청에 반영되는지 확인한다.
 
 절차:
 
-1. 같은 Event ID를 두 번 입력하거나 선택한다.
+1. TC-N-001의 8번 단계까지 진행한다.
+2. 기존 시나리오 row 하나를 선택한다.
+3. 시나리오명을 수정한다.
+4. `기간`, `공급 차질`, `회복 패턴`, `대체 LNG 공급 가능성` 등 분기 기준 값을 하나 이상 수정한다.
+5. 수정된 row에 edited 상태 표시가 나타나는지 확인한다.
+6. `변경사항 검토` 버튼을 클릭한다.
+7. validation request body에 수정 값이 반영되었는지 확인한다.
+8. validation callback 결과를 확인한다.
 
 기대결과:
 
-- 중복 선택이 즉시 차단된다.
-- manifest와 request body에 중복 ID가 들어가지 않는다.
+- 수정된 title과 cells 값이 validation request body에 반영된다.
+- validation 결과가 warning이면 warning callout에 사유와 수정 방향이 표시된다.
+- validation 결과가 success이면 `검토 완료`가 가능하다.
+- validation callback이 와도 사용자가 수정한 미확정 입력값이 예상치 않게 덮어써지지 않는다.
 
-### TC-M-E-003 Event detail 일부 실패
+확인 증적:
 
-기대결과:
+- 수정 전/후 화면 스크린샷
+- validation request body
+- validation result 표시 영역
 
-- 실패 Event card에 오류가 표시된다.
-- manifest 고정과 비교 실행이 차단된다.
-- 성공한 Event detail은 유지된다.
-- 재조회는 GET에 대해서만 허용된다.
+### TC-N-004 시나리오 추가 및 수정 복합 후 검토 요청
 
-### TC-M-E-004 targetMarket 누락
-
-기대결과:
-
-- v4 실행 전에 JKM/TTF/HH 선택이 필수임을 표시한다.
-- comparison 전체 실행이 차단된다.
-- frontend가 targetMarket을 임의 선택하지 않는다.
-
-### TC-M-E-005 comparisonRunId 공백/길이 초과
-
-기대결과:
-
-- 공백-only와 255자 초과는 validation 오류다.
-- API request가 전송되지 않는다.
-- 기본 고유값 재생성 action을 제공한다.
-
-### TC-M-E-006 v2 실패, v3 성공
+목적: 기존 시나리오 수정과 신규 시나리오 추가를 함께 수행한 뒤 validation 요청이 정상 생성되는지 확인한다.
 
 절차:
 
-1. v2만 API error가 되도록 한다.
-2. 실행 순서와 결과 보존을 확인한다.
+1. Step 1 생성 결과를 표시한다.
+2. 기존 row 1개의 시나리오명과 분기 기준 값을 수정한다.
+3. 새 row 1개를 추가한다.
+4. 새 row의 시나리오명과 전체 분기 기준 값을 입력한다.
+5. 필요하면 기존 row 1개를 삭제한다.
+6. row 순서와 `displayOrder`가 화면에서 자연스럽게 재정렬되는지 확인한다.
+7. `변경사항 검토`를 클릭한다.
+8. validation request body의 headers와 rows를 확인한다.
 
 기대결과:
 
-- v2는 error, v3는 success로 독립 표시된다.
-- v2/v3가 terminal이므로 v4는 실행된다.
-- v3와 v4 결과 비교가 가능하다.
-- v2 raw 오류가 보존된다.
-- 자동 v2 재시도는 없다.
+- 삭제된 row는 validation request body에 포함되지 않는다.
+- 추가 row는 누락 없이 포함된다.
+- 수정 row의 변경 값이 포함된다.
+- baseline row가 삭제되거나 변경된 경우 화면에서 사용자가 인지할 수 있어야 한다.
 
-### TC-M-E-007 v2/v3 모두 실패
+확인 증적:
 
-기대결과:
+- validation request body
+- Step 1 table 화면
+- validation callback 결과
 
-- 두 version error 이후 v4는 한 번 실행된다.
-- v4 성공 여부와 무관하게 성공 version이 2개 미만이면 `비교 판정 불가`다.
-- 개별 version 결과와 raw body는 확인 가능하다.
+### TC-N-005 Signpost 생성 후 확률 수정 및 confirmation
 
-### TC-M-E-008 v2 timeout
+목적: signpost 생성 후 scenario probability 또는 signpost 관련 값을 수정하고 confirmation 요청에 반영되는지 확인한다.
 
 절차:
 
-1. v2가 timeout되도록 한다.
-2. v3와 v4 실행 상태를 확인한다.
+1. TC-N-001의 17번 단계까지 진행해 Step 2에 signpost가 표시되도록 한다.
+2. 시나리오 카드 1개를 선택한다.
+3. `시나리오 가능성` percent 값을 수정한다.
+4. Signpost 편집 동작을 실행한다.
+5. Signpost의 확률/영향 관련 값 또는 표시 가능한 signpost 값을 수정한다.
+6. 수정 값이 카드 또는 상세 표시 영역에 반영되는지 확인한다.
+7. `시나리오 그룹 생성`을 클릭한다.
+8. confirmation request body를 QA Inspector에서 확인한다.
+9. confirmation 응답 후 detail 화면으로 이동한다.
+10. detail의 `가정 및 실현 가능성` 및 `시나리오 상세` 탭에서 수정한 probability/signpost 값이 반영되었는지 확인한다.
 
 기대결과:
 
-- v2는 unknown이다.
-- v2 POST는 재시도되지 않는다.
-- v3 terminal과 v2 unknown 처리 이후 barrier가 종료된다.
-- v4가 한 번 실행된다.
-- 중복 DB 생성 가능성을 경고한다.
+- 수정한 scenario probability가 confirmation request body의 해당 scenario row에 포함된다.
+- 수정한 signpost 값이 confirmation request body에 포함된다.
+- confirmation 중 버튼 중복 클릭이 막힌다.
+- confirmation 완료 후 detail 화면에서 수정 결과를 확인할 수 있다.
 
-### TC-M-E-009 v3 응답 전 v4 금지
+확인 증적:
+
+- 수정 전/후 Step 2 카드 화면
+- confirmation request body
+- detail 탭 화면
+
+### TC-N-006 수동 새로고침으로 detail 동기화
+
+목적: SSE 또는 callback 화면 반영이 지연될 때 manual refresh로 detail을 복구할 수 있는지 확인한다.
 
 절차:
 
-1. v3 응답을 지연시킨다.
-2. v2가 먼저 완료되도록 한다.
+1. create accepted 이후 `scenarioGroupId`가 표시되는 상태까지 진행한다.
+2. callback 화면 반영 전 또는 반영 후 `Refresh` 버튼을 클릭한다.
+3. detail API 응답이 QA Inspector에 기록되는지 확인한다.
+4. 화면의 시나리오 테이블 또는 Step 2 모델이 detail 기반으로 갱신되는지 확인한다.
 
 기대결과:
 
-- v4 card는 `v2/v3 종료 대기`다.
-- v3 terminal 전 v4 network request가 없다.
+- `Refresh` 요청 중 중복 클릭이 막힌다.
+- detail response가 raw JSON으로 남는다.
+- 갱신 가능한 데이터는 화면에 반영된다.
+- refresh 실패 시 기존 화면 데이터는 유지되고 error가 표시된다.
 
-### TC-M-E-010 v4 실패
+### TC-N-007 Scenario Group List 조회, 상세 진입, soft delete
 
-기대결과:
+목적: Scenario Group List에서 기존 Scenario Group을 찾고 상세 화면으로 진입한 뒤 soft delete로 테스트 데이터를 정리할 수 있는지 확인한다.
 
-- v2/v3 성공 결과는 유지된다.
-- v4 오류와 raw body가 표시된다.
-- v2/v3 비교는 가능하다.
-- v4 자동 재시도는 없다.
+사전조건:
 
-### TC-M-E-011 HTTP 200 + `status=error`
-
-각 version에 대해 반복한다.
-
-기대결과:
-
-- HTTP 200이어도 error로 판정된다.
-- message가 version card와 Evidence Drawer에 표시된다.
-- `data=null`을 안전하게 처리한다.
-
-### TC-M-E-012 apiVersion 불일치
-
-기대결과:
-
-- transport/API success와 별도로 integrity FAIL을 표시한다.
-- 다른 version column에 잘못 배치하지 않는다.
-- raw response를 유지한다.
-
-### TC-M-E-013 comparisonRunId 불일치
-
-기대결과:
-
-- integrity FAIL이다.
-- 결과를 정상 비교에 포함하지 않는다.
-- manifest 값과 응답 값을 함께 표시한다.
-
-### TC-M-E-014 Event lineage 불일치
-
-입력:
-
-- Event 누락
-- Event 추가
-- 순서 또는 ID 불일치
-
-기대결과:
-
-- lineage check가 FAIL 또는 명시적 WARN이다.
-- 불일치 Event ID가 표시된다.
-- 원본 response를 변경하지 않는다.
-
-### TC-M-E-015 성공 Version 1개
-
-기대결과:
-
-- 상단 결론은 `비교 판정 불가`다.
-- 성공 version의 Dimensions, Scenarios, Diagnostics는 조회 가능하다.
-- 우수 version을 표시하지 않는다.
-
-### TC-M-E-016 모든 Version 실패/unknown
-
-기대결과:
-
-- 빈 비교 table 대신 version별 실패 원인을 표시한다.
-- manifest와 call records를 export할 수 있다.
-- 자동 새 run 또는 자동 재시도가 없다.
-
-### TC-M-E-017 요청 취소
+- 조회 가능한 `scenarioGroupId`가 존재한다.
+- delete authorization 값이 준비되어 있다.
 
 절차:
 
-1. v2/v3 실행 중 한 요청을 취소한다.
+1. Backoffice 메인 화면을 연다.
+2. `Scenario Group List` 탭으로 이동한다.
+3. 목록이 로드되는지 확인한다.
+4. keyword, status, stage, date range, sort 필터를 하나 이상 변경한다.
+5. 대상 `scenarioGroupId` 또는 Scenario Group명으로 검색한다.
+6. 대상 row의 ID, Scenario Group명, Base Event, status, stage, 시나리오 수, Signpost 수, 업데이트 일시가 표시되는지 확인한다.
+7. row의 상세 action을 클릭한다.
+8. Scenario Group detail 화면으로 이동하고 detail API 응답이 QA Inspector에 기록되는지 확인한다.
+9. `Scenario Group List`로 돌아간다.
+10. 대상 row의 삭제 action을 클릭한다.
+11. 삭제 확인 모달의 대상 정보가 row와 일치하는지 확인한다.
+12. `취소`를 클릭하고 API 호출 없이 모달이 닫히는지 확인한다.
+13. 다시 삭제 action을 클릭한다.
+14. delete authorization 값과 `userId`를 입력하거나 선택한다.
+15. `삭제`를 클릭한다.
+16. 삭제 요청 중 row action과 모달 submit의 중복 클릭이 막히는지 확인한다.
+17. 삭제 성공 후 기본 목록에서 row가 제거되는지 확인한다.
+18. `삭제 항목 포함`을 켜고 row가 `삭제됨` 상태로 표시되는지 확인한다.
 
 기대결과:
 
-- 취소된 version은 unknown이다.
-- 다른 version 요청은 보존된다.
-- barrier는 모든 version이 terminal 처리된 뒤 종료된다.
-- 취소된 POST를 자동 재호출하지 않는다.
+- Scenario Group List가 `GET /backoffice/api/scenario-groups` 기반으로 로드된다.
+- 상세 action은 `GET /backoffice/api/scenario-groups/{scenarioGroupId}`를 호출하고 detail 화면으로 이동한다.
+- 삭제 cancel 시 delete API가 호출되지 않는다.
+- 삭제 confirm 시 `DELETE /backoffice/api/scenario-groups/{scenarioGroupId}`만 호출되고 hard delete는 호출되지 않는다.
+- 삭제 성공/실패 결과가 QA Inspector와 timeline에 남는다.
+- soft-deleted row는 기본 목록에서 제외되고 include-deleted 목록에서 삭제 상태로 확인된다.
 
-### TC-M-E-018 알 수 없는 응답 필드
+확인 증적:
 
-기대결과:
+- Scenario Group List 필터 적용 화면
+- detail 화면 및 detail raw JSON
+- delete cancel 시 API 미호출 증적
+- soft delete request/response raw JSON
+- include-deleted 목록의 `삭제됨` row 화면
 
-- 알려진 비교 UI가 깨지지 않는다.
-- unknown field가 raw JSON에 그대로 남는다.
-- export에도 원본 response가 포함된다.
+## 5. Edge Case
 
-### TC-M-E-019 매우 큰 응답
-
-기대결과:
-
-- version card와 Overview가 먼저 렌더링된다.
-- JSON viewer가 UI thread를 장시간 차단하지 않는다.
-- 긴 Dimensions/Scenarios는 pagination, virtualization 또는 접기를 사용한다.
-- export가 원본 데이터를 누락하지 않는다.
-
-### TC-M-E-020 Browser 새로고침
+### TC-E-001 Event List 빈 결과
 
 절차:
 
-1. 비교 완료 후 새로고침한다.
-2. 비교 실행 중 새로고침하는 경우도 확인한다.
+1. status filter, 추천 항목만 보기, 검색어를 조합해 결과가 없도록 만든다.
+2. Event List 영역을 확인한다.
 
 기대결과:
 
-- 완료 결과는 저장 정책 범위에서 복구된다.
-- 실행 중 version은 unknown으로 복구된다.
-- 동일 POST를 자동 재개하지 않는다.
-- secret은 복구되지 않는다.
+- 빈 상태 메시지가 표시된다.
+- 테이블 헤더나 화면 레이아웃이 깨지지 않는다.
+- runtime bar와 QA Inspector는 계속 사용 가능하다.
 
-## 9. 공통 UI 테스트
-
-### TC-UI-001 Workspace 독립 상태
+### TC-E-002 Agent Base URL 누락 또는 잘못된 URL
 
 절차:
 
-1. v1 결과를 만든다.
-2. comparison 실행을 시작한다.
-3. 두 tab을 왕복한다.
+1. runtime bar의 `Agent Base URL`을 비운다.
+2. create 버튼 상태를 확인한다.
+3. 잘못된 URL을 입력하고 create를 시도한다.
 
 기대결과:
 
-- 각 workspace의 Event, 실행 상태, 결과가 유지된다.
-- tab 전환으로 API가 취소되거나 중복 호출되지 않는다.
+- URL이 비어 있으면 create 버튼이 비활성화된다.
+- 잘못된 URL이면 error callout이 표시된다.
+- raw inspector에 오류 상세가 기록된다.
+- 화면이 초기화되거나 입력값이 유실되지 않는다.
 
-### TC-UI-002 Evidence Drawer
-
-기대결과:
-
-- timeline에서 call을 선택할 수 있다.
-- request, parsed response, raw response를 전환할 수 있다.
-- JSON 검색, 접기, 복사가 동작한다.
-- method, URL, HTTP status, elapsed time이 항상 보인다.
-
-### TC-UI-003 Loading과 이전 결과 보존
-
-기대결과:
-
-- active request에만 spinner 또는 overlay가 표시된다.
-- 이전 성공 결과가 사라지지 않는다.
-- 관련 action만 disabled 된다.
-
-### TC-UI-004 반응형
-
-viewport:
-
-- desktop 1440px
-- tablet 1024px
-- mobile 390px
-
-기대결과:
-
-- version card와 table이 잘리지 않고 스크롤 가능하다.
-- mobile에서 version switcher가 동작한다.
-- Evidence Drawer가 full-screen overlay로 열린다.
-- primary action이 다른 control과 겹치지 않는다.
-
-### TC-UI-005 Keyboard와 Focus
-
-기대결과:
-
-- Runtime Settings, tabs, Event selector, step action, drawer를 keyboard로 조작할 수 있다.
-- focus ring이 보인다.
-- dialog focus가 내부에 유지되고 닫힌 뒤 trigger로 돌아간다.
-
-### TC-UI-006 상태 접근성
-
-기대결과:
-
-- success/warning/error/unknown이 색상만으로 표현되지 않는다.
-- loading과 완료가 live region으로 전달된다.
-- icon-only button에 accessible name이 있다.
-- form 오류가 입력과 연결된다.
-
-## 10. 보안 및 배포 테스트
-
-### TC-SEC-001 Backend 의존성 제거
-
-검사:
-
-- frontend network call
-- build/runtime 설정
-- repository path
-
-기대결과:
-
-- `/backoffice/api/...` 호출이 없다.
-- callback receiver, OAuth mock, SSE endpoint 의존성이 없다.
-- 정적 frontend만으로 실행된다.
-- Backoffice Python runtime이 필요하지 않다.
-
-### TC-SEC-002 Secret 저장 금지
+### TC-E-003 miEventId/userId 누락 또는 숫자가 아닌 값
 
 절차:
 
-1. 인증값이 필요한 환경에서 요청한다.
-2. localStorage, sessionStorage, IndexedDB를 검사한다.
-3. 결과를 export한다.
+1. `miEventId`를 비우거나 숫자가 아닌 값으로 입력한다.
+2. `userId`를 비우거나 숫자가 아닌 값으로 입력한다.
+3. create 버튼과 요청 결과를 확인한다.
 
 기대결과:
 
-- secret이 browser storage에 없다.
-- export에 Authorization/token/cookie가 없다.
-- UI에서 인증값이 마스킹된다.
+- 잘못된 입력은 요청 전에 차단되거나 API 오류가 명확히 표시된다.
+- 잘못된 값이 `NaN` 형태로 request body에 들어가지 않아야 한다.
+- 오류 후 입력 필드는 사용자가 수정 가능한 상태로 유지된다.
 
-### TC-SEC-003 URL과 Scheme
+### TC-E-004 generation callback 실패
+
+절차:
+
+1. generation callback payload가 `result=failure`인 상황을 만든다.
+2. 화면과 QA Inspector를 확인한다.
 
 기대결과:
 
-- trailing slash가 있어도 API path가 이중 slash가 되지 않는다.
-- HTTPS/HTTP mixed-content를 명확히 안내한다.
-- 사용자가 입력한 Base URL 외의 임의 host로 요청하지 않는다.
+- local lifecycle이 failed 또는 실패 상태로 표시된다.
+- failure callback payload가 raw inspector에 남는다.
+- 실패 사유가 화면에 표시된다.
+- manual refresh 또는 재시도 경로가 남아 있다.
 
-## 11. 수동 Pipeline 교차 검증
+### TC-E-005 validation warning 또는 failure
 
-frontend의 API 실행 결과를 기존 manual pipeline과 비교할 때 다음 기준을 사용한다.
+절차:
 
-### 11.1 v1
+1. 상호 모순되는 분기 기준 조합을 입력한다.
+2. `변경사항 검토`를 클릭한다.
+3. validation 결과를 확인한다.
 
-기준 script:
+기대결과:
 
-```bash
-python tests/manual/test_sync_pipeline_api.py \
-  --base-url http://localhost:8001 \
-  --mi-event-id 12345 \
-  --user-id 10001 \
-  --timeout 1200 \
-  --yes
-```
+- warning callout이 표시된다.
+- callout에 대상 조합, 사유, 수정 권장 방향이 표시된다.
+- 정책상 진행 불가한 failure면 `검토 완료`가 disabled 된다.
+- 정책상 진행 가능한 warning이면 사용자가 인지한 뒤 계속 진행할 수 있다.
 
-교차 확인:
+### TC-E-006 scenario row 0개 또는 1개만 남김
 
-- API 순서
-- 각 단계 성공 판정
-- validation invalid warning 처리
-- Scenario Group ID와 final stage
-- elapsed time/token usage
+절차:
 
-frontend와 script를 같은 Event에 연속 실행하면 중복 group이 발생할 수 있으므로 별도 Event를 사용하거나 실행 사이에 soft delete한다.
+1. Step 1에서 row를 삭제해 0개 또는 1개만 남긴다.
+2. `변경사항 검토`를 클릭한다.
 
-### 11.2 v2/v3/v4
+기대결과:
 
-기준 script:
+- 최소 row 수 정책에 맞는 validation 오류 또는 warning이 표시된다.
+- 테이블이 빈 상태여도 화면이 깨지지 않는다.
+- row 추가 버튼으로 복구 가능하다.
 
-```bash
-python tests/manual/test_multi_event_scenario_versions.py prepare \
-  --base-url http://localhost:8001 \
-  --event-ids 101 202 \
-  --target-market JKM \
-  --user-id 10001 \
-  --timeout 1200
-```
+### TC-E-007 baseline scenario 삭제 또는 baseline 중복
 
-이후 동일 manifest로 v2/v3 barrier 후 v4를 실행하고 report를 만든다.
+절차:
 
-교차 확인:
+1. `BC` badge가 있는 row를 삭제한다.
+2. 또는 baseline 성격의 row를 중복 생성한다.
+3. validation 요청을 보낸다.
 
-- manifest Event/userId/comparisonRunId/targetMarket
-- version별 request body
-- 실행 순서
-- Scenario/dimension 실제 값
-- diagnostics
-- elapsed time/token usage
-- 결정적 검사
+기대결과:
 
-manual report의 LLM Judge는 frontend 기능이 아니다. Judge 결과와 frontend 결정적 검사를 같은 판정으로 간주하지 않는다.
+- baseline이 없거나 중복될 때 validation warning/error가 표시된다.
+- request body와 raw inspector에서 baseline 상태를 추적할 수 있다.
+- 화면은 사용자가 수정할 수 있는 상태로 유지된다.
 
-## 12. 회귀 체크리스트
+### TC-E-008 긴 텍스트 입력
 
-### 공통
+절차:
 
-- [ ] 정적 frontend가 backend 없이 렌더링된다.
-- [ ] Agent Base URL 연결 확인이 동작한다.
-- [ ] CORS와 mixed-content 오류가 구분된다.
-- [ ] `/backoffice/api/...` 호출이 없다.
-- [ ] Evidence Drawer에 모든 request/response가 남는다.
-- [ ] token/secret이 storage와 export에 없다.
-- [ ] tab 전환으로 실행이 취소되거나 중복되지 않는다.
+1. scenario group명을 100자 가까이 입력한다.
+2. scenario group 설명을 500자 가까이 입력한다.
+3. scenario narrative를 500자 가까이 입력한다.
+4. signpost label/evidence에 긴 텍스트가 포함된 payload를 확인한다.
 
-### v1
+기대결과:
 
-- [ ] Event 한 건만 선택된다.
-- [ ] Create는 `/scenario-groups/sync`를 한 번 호출한다.
-- [ ] Scenario table을 편집할 수 있다.
-- [ ] Validation body에 최신 table이 포함된다.
-- [ ] invalid validation이 warning으로 표시된다.
-- [ ] Signpost는 `result=success`로 판정된다.
-- [ ] Confirmation 전 최신 detail을 조회한다.
-- [ ] Confirmation은 `status=success`, `data.stage=completed`로 판정된다.
-- [ ] timeout/cancel 뒤 자동 재시도하지 않는다.
-- [ ] v1 bundle export가 동작한다.
+- character counter가 정확히 표시된다.
+- 제한을 초과한 입력은 차단된다.
+- 긴 텍스트 때문에 버튼, 카드, 탭, 테이블이 겹치지 않는다.
+- 카드에서는 truncate되더라도 detail/raw view에서 전체 값을 확인할 수 있다.
 
-### v2/v3/v4
+### TC-E-009 probability 비정상 값
 
-- [ ] Event 2~5건만 선택된다.
-- [ ] comparisonRunId가 고유하고 실행 중 고정된다.
-- [ ] v2/v3는 동일 manifest로 병렬 실행된다.
-- [ ] v2/v3 terminal 이후 v4가 실행된다.
-- [ ] v4에만 targetMarket이 포함된다.
-- [ ] 동일 version POST를 자동 재시도하지 않는다.
-- [ ] 부분 실패 결과가 보존된다.
-- [ ] 성공 version 2개 미만이면 `비교 판정 불가`다.
-- [ ] v2/v3와 v4 pressure 의미가 구분된다.
-- [ ] Dimensions, Scenarios, Diagnostics를 비교할 수 있다.
-- [ ] 결정적 검사 결과가 실제 응답과 일치한다.
-- [ ] comparison bundle export가 동작한다.
+절차:
+
+1. Step 2에서 probability에 음수, 100 초과, 문자, 소수점 과다 값을 입력한다.
+2. confirmation을 시도한다.
+
+기대결과:
+
+- 잘못된 값은 입력 단계에서 제한되거나 confirmation 전 validation/error로 표시된다.
+- request body에 의도하지 않은 `0`, `NaN`, 빈 문자열이 조용히 들어가지 않아야 한다.
+- 오류 후 사용자는 값을 수정하고 재시도할 수 있다.
+
+### TC-E-010 Signpost 없는 상태에서 confirmation
+
+절차:
+
+1. Step 2로 이동한 뒤 signpost 생성 없이 confirmation을 시도한다.
+2. 또는 signpost callback이 실패한 상태에서 confirmation을 시도한다.
+
+기대결과:
+
+- 정책상 signpost 필수이면 confirmation 버튼이 disabled 되거나 오류가 표시된다.
+- signpost optional이면 confirmation body에 빈 signpost 배열이 명확히 포함된다.
+- 사용자는 signpost 생성 재시도를 할 수 있어야 한다.
+
+### TC-E-011 SSE 연결 끊김
+
+절차:
+
+1. run 생성 후 SSE 연결이 끊긴 상황을 만든다.
+2. callback은 Backoffice backend에 정상 수신되도록 한다.
+3. 화면에서 refresh를 수행한다.
+
+기대결과:
+
+- SSE 오류가 timeline/error로 기록된다.
+- run state는 backend 메모리에 유지된다.
+- manual refresh로 최신 detail 또는 callback 기반 상태를 회복할 수 있다.
+
+### TC-E-012 callback이 run 생성보다 먼저 도착
+
+절차:
+
+1. 특정 `scenarioGroupId`에 대한 callback을 Backoffice에 먼저 보낸다.
+2. 이후 같은 `scenarioGroupId`로 run이 accepted 되도록 만든다.
+
+기대결과:
+
+- callback은 orphan callback으로 저장된다.
+- run이 해당 `scenarioGroupId`에 bind되면 orphan callback이 attach된다.
+- lifecycle이 callback 결과 상태로 유지되고 waiting 상태로 되돌아가지 않는다.
+
+### TC-E-013 confirmation 실패
+
+절차:
+
+1. confirmation 요청 중 Agent 오류 또는 4xx/5xx 응답을 만든다.
+2. 화면 상태를 확인한다.
+
+기대결과:
+
+- confirmation 실패 callout이 표시된다.
+- detail 화면으로 잘못 이동하지 않는다.
+- confirmation request body와 Agent error body가 raw inspector에 남는다.
+- 사용자는 수정 후 재시도할 수 있다.
+
+### TC-E-014 브라우저 새로고침 후 run 복구
+
+절차:
+
+1. run 생성 후 `runId`, `scenarioGroupId`가 표시된 상태에서 브라우저를 새로고침한다.
+2. local storage 또는 runtime bar 값이 복구되는지 확인한다.
+3. manual refresh를 수행한다.
+
+기대결과:
+
+- runtime bar의 run context가 가능한 범위에서 유지된다.
+- refresh로 detail 상태를 다시 불러올 수 있다.
+- 복구할 수 없는 경우 사용자에게 필요한 값 입력 안내가 표시된다.
+
+### TC-E-015 Scenario Group soft delete 권한 실패
+
+절차:
+
+1. Scenario Group List에서 삭제 가능한 row를 선택한다.
+2. 삭제 action을 클릭한다.
+3. 삭제 확인 모달에서 잘못된 delete authorization 값을 입력한다.
+4. `삭제`를 클릭한다.
+5. 오류를 확인한 뒤 유효한 delete authorization 값으로 공통 종료 절차를 다시 수행한다.
+
+기대결과:
+
+- 권한 실패 시 row는 목록에서 제거되지 않는다.
+- 모달 또는 화면에 실패 사유가 표시된다.
+- Agent error body가 raw inspector에 남는다.
+- 실패 후 사용자는 유효한 권한으로 재시도할 수 있다.
+- 재시도 성공 후 기본 목록에서 row가 제거되고 include-deleted 목록에서 삭제 상태로 확인된다.
+
+### TC-E-016 Scenario Group List 빈 결과
+
+절차:
+
+1. Scenario Group List에서 존재하지 않는 keyword를 입력한다.
+2. status/stage/date 필터를 조합해 결과가 없도록 만든다.
+3. include-deleted toggle을 on/off로 바꿔 빈 상태를 확인한다.
+
+기대결과:
+
+- 빈 상태 메시지와 필터 초기화 액션이 표시된다.
+- Event List로 이동해 새 Scenario Group 생성을 시작할 수 있다.
+- 목록 빈 상태에서도 runtime bar와 QA Inspector는 계속 사용 가능하다.
+
+### TC-E-017 완전 중복 시나리오명
+
+절차:
+
+1. 서로 다른 두 row의 시나리오명을 `LNG 공급 차질`, ` lng-공급, 차질 `로 입력한다.
+2. `변경사항 검토`를 클릭한다.
+3. validation callback과 `검토 완료` 버튼 상태를 확인한다.
+
+기대결과:
+
+- 공백·문장부호·대소문자를 정규화한 시나리오명이 동일한 것으로 판정된다.
+- callback은 `result=success`, `isValid=false`, `stage=scenario_created`를 반환한다.
+- 실패 안내에 두 시나리오명과 서로 다른 이름으로 수정하라는 방향이 표시된다.
+- `검토 완료`는 disabled 상태를 유지한다.
+
+### TC-E-018 의미상 유사한 시나리오명
+
+절차:
+
+1. 서로 다른 두 row의 시나리오명을 `가격 상승함`, `가격 상승임`으로 입력한다.
+2. `변경사항 검토`를 클릭한다.
+3. validation callback과 수정 권고를 확인한다.
+
+기대결과:
+
+- compatibility LLM이 종결어미만 다르고 의미가 같은 제목 쌍을 반환한다.
+- callback은 `result=success`, `isValid=false`, `stage=scenario_created`를 반환한다.
+- 주의 안내에 두 시나리오명, 유사 판정 사유, 분기 차이를 드러내는 수정 방향이 표시된다.
+- 수정 후 재검증하기 전까지 `검토 완료`는 disabled 상태를 유지한다.
+
+## 6. 회귀 체크리스트
+
+- [ ] Backoffice root URL이 정상 렌더링된다.
+- [ ] OAuth token mock이 `access_token`, `expires_in` snake_case로 응답한다.
+- [ ] Agent startup 시 Backoffice token mock에서 token을 정상 prefetch한다.
+- [ ] Event List에서 이벤트 선택 시 `miEventId`가 runtime bar에 반영된다.
+- [ ] Scenario Group List가 로드되고 필터/검색이 동작한다.
+- [ ] Scenario Group List row에서 detail 화면으로 이동한다.
+- [ ] create accepted 후 `runId`, `scenarioGroupId`가 표시된다.
+- [ ] generation callback 후 Step 1 테이블이 표시된다.
+- [ ] 시나리오 추가 row가 validation request body에 포함된다.
+- [ ] 시나리오 수정 값이 validation request body에 포함된다.
+- [ ] validation warning/success 상태가 화면에 표시된다.
+- [ ] `검토 완료` 후 Step 2로 이동한다.
+- [ ] signpost 생성 후 카드에 signpost가 표시된다.
+- [ ] signpost/probability 수정 값이 confirmation request body에 포함된다.
+- [ ] confirmation 완료 후 detail 화면으로 이동한다.
+- [ ] detail 탭 4개가 모두 렌더링된다.
+- [ ] 테스트 종료 시 Scenario Group List에서 soft delete를 수행한다.
+- [ ] soft delete 후 기본 목록에서 row가 사라지고 include-deleted 목록에서 `삭제됨`으로 표시된다.
+- [ ] raw inspector에 request, accepted, callback, detail, error가 남는다.
+- [ ] 오류 발생 시 기존 화면 입력값이 유실되지 않는다.

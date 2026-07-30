@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,9 +21,6 @@ class ScenarioPayload(ApiModel):
     probability_score: Decimal | None = None
     probability_delta: Decimal | None = Decimal("0.0")
     baseline_yn: str | None = "N"
-    global_pressure_band: str | None = None
-    scenario_role: str | None = None
-    global_pressure_rationale: str | None = None
     status: str = ScenarioStatus.CREATING.value
     del_yn: str | None = None
 
@@ -41,9 +38,6 @@ class ScenarioPayload(ApiModel):
                 "probability_score": model.probability_score,
                 "probability_delta": model.probability_delta,
                 "baseline_yn": model.baseline_yn,
-                "global_pressure_band": model.global_pressure_band,
-                "scenario_role": model.scenario_role,
-                "global_pressure_rationale": model.global_pressure_rationale,
                 "status": model.status,
                 "del_yn": getattr(model, "del_yn", None),
             }
@@ -126,7 +120,6 @@ class ScenarioPipelineTemplateDimension(BaseModel):
         description="Dimension 값 후보 목록",
     )
     display_order: int = Field(default=999999, description="표시 순서")
-    description: str = Field(default="", description="Dimension 의미 설명")
 
     @model_validator(mode="after")
     def _validate_template_dimension(self) -> "ScenarioPipelineTemplateDimension":
@@ -140,7 +133,6 @@ class ScenarioPipelineTemplateDimension(BaseModel):
             raise ValueError(f"value_enums contains duplicates: dim_key={dim_key}")
         self.dim_key = dim_key
         self.label = str(self.label).strip() or dim_key
-        self.description = str(self.description).strip() or self.label
         self.value_enums = enums
         return self
 
@@ -158,17 +150,12 @@ class ScenarioPipelineTemplateDimension(BaseModel):
         return {
             "dim_key": self.dim_key,
             "label_ko": self.label,
-            "description": self.description,
+            "description": self.label,
             "enum": self.enum_items(),
         }
 
 
 class ScenarioPipelineTemplate(BaseModel):
-    scenario_dimension_template_id: int | None = None
-    event_type_l2_id: int | None = None
-    event_type_definition: str = ""
-    lng_price_impact_examples: str = ""
-    template_checksum: str = ""
     label_ko: str = Field(default="", description="템플릿 라벨")
     template_dimensions_total: int | None = Field(
         default=None,
@@ -205,65 +192,3 @@ class ScenarioPipelineTemplate(BaseModel):
 
     def resolved_total(self) -> int:
         return self.template_dimensions_total or len(self.dimensions)
-
-
-SourceType = Literal[
-    "event_fact",
-    "template_domain_knowledge",
-    "scenario_assumption",
-    "derived_interpretation",
-]
-
-
-class SourceLineage(ApiModel):
-    event_id: int
-    event_type_l2_id: int
-    dim_key: str = Field(min_length=1)
-    value: str | None = None
-    source_type: SourceType
-    assumption_yn: Literal["Y", "N"]
-    rationale: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _validate_assumption_contract(self) -> SourceLineage:
-        expected = "Y" if self.source_type == "scenario_assumption" else "N"
-        if self.assumption_yn != expected:
-            raise ValueError(
-                "assumption_yn must be Y only for source_type=scenario_assumption",
-            )
-        return self
-
-
-class DimensionValueDefinition(ApiModel):
-    value_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    global_pressure_contribution: str | None = None
-    source_assignments: list[SourceLineage] = Field(default_factory=list)
-
-
-class DimensionDefinition(ApiModel):
-    dimension_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    required: bool = False
-    display_order: int
-    dimension_type: Literal[
-        "magnitude",
-        "scope",
-        "timing",
-        "recovery",
-        "mitigation",
-        "interaction",
-    ] | None = None
-    value_kind: Literal["categorical", "numeric_range", "temporal"] | None = None
-    unit: str | None = None
-    source_event_ids: list[int] = Field(default_factory=list)
-    lever_refs: list[str] = Field(default_factory=list)
-    model_support_status: Literal[
-        "full",
-        "partial",
-        "none",
-        "price_only",
-    ] | None = None
-    source_refs: list[SourceLineage] = Field(default_factory=list)
-    values: list[DimensionValueDefinition] = Field(default_factory=list)
