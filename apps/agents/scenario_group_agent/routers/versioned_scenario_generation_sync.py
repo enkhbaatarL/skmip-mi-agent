@@ -9,7 +9,7 @@ from apps.agents.scenario_group_agent.constants import (
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     GenerationDiagnostics,
     MultiEventCreateScenariosIn,
-    V4MultiEventCreateScenariosIn,
+    V4MultiEventCreateScenariosSyncIn,
     VersionedCreateScenariosData,
     VersionedCreateScenariosIn,
     VersionedCreateScenariosOut,
@@ -29,6 +29,7 @@ from apps.agents.scenario_group_agent.flows.create_scenarios.flow import (
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
+from apps.agents.scenario_group_agent.schemas.endpoint import CreateScenariosOut
 from apps.common.logging.logger_config import logger
 from apps.common.runtime.usage_context import get_accumulated_usage, reset_usage
 from apps.common.tracing.context import (
@@ -39,6 +40,7 @@ from apps.common.tracing.context import (
 from apps.persistence.scenario.schema import (
     DimensionDefinition,
     DimensionValueDefinition,
+    ScenarioPipelineTemplateDimension,
     SourceLineage,
 )
 
@@ -66,8 +68,7 @@ async def create_v1_scenarios_sync(
             event_data=prepared["event_data"],
             user_id=prepared["user_id"],
         )
-        if output.scenario_group is None or output.table is None:
-            raise ValueError("v1 scenario generation output is incomplete")
+        _ensure_v1_output_complete(output)
         event = prepared["event_data"]
         template = ScenarioService().load_pipeline_template_with_metadata(
             int(event["event_type_l2_id"]),
@@ -133,7 +134,7 @@ async def create_v3_scenarios_sync(
     summary="v4 다중 이벤트 모델 영향 레버 시나리오 생성",
 )
 async def create_v4_scenarios_sync(
-    payload: V4MultiEventCreateScenariosIn,
+    payload: V4MultiEventCreateScenariosSyncIn,
 ) -> VersionedCreateScenariosOut:
     reset_usage()
     prepared = prepare_v4_multi_event_scenarios(payload)
@@ -153,9 +154,6 @@ async def create_v4_scenarios_sync(
                 prepared,
                 trace_context=trace_context,
             )
-        if output.data is not None:
-            output.data.usage = get_accumulated_usage()
-        return output
     except Exception as exc:
         logger.error(
             "[SYNC][v4 create_scenarios] FAILED | group_id={} | error={!r}",
@@ -163,6 +161,10 @@ async def create_v4_scenarios_sync(
             exc,
         )
         return VersionedCreateScenariosOut(status="error", message=str(exc))
+    else:
+        if output.data is not None:
+            output.data.usage = get_accumulated_usage()
+        return output
 
 
 async def _create_multi_event_scenarios_sync(
@@ -193,9 +195,6 @@ async def _create_multi_event_scenarios_sync(
                 prepared,
                 trace_context=trace_context,
             )
-        if output.data is not None:
-            output.data.usage = get_accumulated_usage()
-        return output
     except Exception as exc:
         logger.error(
             "[SYNC][{} create_scenarios] FAILED | group_id={} | error={!r}",
@@ -204,16 +203,26 @@ async def _create_multi_event_scenarios_sync(
             exc,
         )
         return VersionedCreateScenariosOut(status="error", message=str(exc))
+    else:
+        if output.data is not None:
+            output.data.usage = get_accumulated_usage()
+        return output
+
+
+def _ensure_v1_output_complete(output: CreateScenariosOut) -> None:
+    if output.scenario_group is None or output.table is None:
+        message = "v1 scenario generation output is incomplete"
+        raise ValueError(message)
 
 
 def _v1_dimension_definition(
     *,
     event_id: int,
     event_type_l2_id: int,
-    dimension: object,
+    dimension: ScenarioPipelineTemplateDimension,
     display_order: int,
 ) -> DimensionDefinition:
-    dim_key = str(getattr(dimension, "dim_key"))
+    dim_key = dimension.dim_key
     source_ref = SourceLineage(
         event_id=event_id,
         event_type_l2_id=event_type_l2_id,
@@ -224,9 +233,9 @@ def _v1_dimension_definition(
     )
     return DimensionDefinition(
         dimension_id=dim_key,
-        label=str(getattr(dimension, "label")),
-        description=str(getattr(dimension, "description")),
-        required=bool(getattr(dimension, "required")),
+        label=dimension.label,
+        description=dimension.description,
+        required=dimension.required,
         display_order=display_order,
         source_refs=[source_ref],
         values=[
@@ -237,6 +246,6 @@ def _v1_dimension_definition(
                     source_ref.model_copy(update={"value": str(value)}),
                 ],
             )
-            for value in getattr(dimension, "value_enums")
+            for value in dimension.value_enums
         ],
     )

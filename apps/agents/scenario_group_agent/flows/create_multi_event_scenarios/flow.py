@@ -59,7 +59,7 @@ def prepare_multi_event_scenarios(
             detail=f"Events not found: {missing_ids}",
         )
     event_by_id = {int(event.mi_event_id): event for event in events}
-    ordered_events = [event_by_id[event_id] for event_id in sorted(payload.mi_event_ids)]
+    ordered_events = [event_by_id[event_id] for event_id in payload.mi_event_ids]
 
     scenario_service = ScenarioService()
     templates = [

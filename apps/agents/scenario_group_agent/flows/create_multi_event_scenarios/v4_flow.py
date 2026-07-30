@@ -44,6 +44,7 @@ from apps.connectors.callback.callback_client import send_callback
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_parameter.schema import ModelImpactLeverPayload
 from apps.persistence.model_parameter.service import ModelImpactLeverService
+from apps.persistence.scenario.schema import DimensionDefinition, SourceLineage
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
@@ -174,6 +175,10 @@ async def run_v4_multi_event_scenarios_inline(
         catalog_version=catalog_version,
         trace_context=trace_context,
     )
+    dimension_definitions = _with_event_lineage(
+        finalized.dimension_definitions,
+        events,
+    )
     diagnostics = GenerationDiagnostics(
         excluded_candidates=[
             ExcludedCandidate(
@@ -206,7 +211,7 @@ async def run_v4_multi_event_scenarios_inline(
         scenario_group_id=group.scenario_group_id,
         title=finalized.group_title,
         description=finalized.group_description,
-        dimension_definitions=[definition.model_dump() for definition in finalized.dimension_definitions],
+        dimension_definitions=[definition.model_dump() for definition in dimension_definitions],
         generation_diagnostics=diagnostics.model_dump(),
         scenarios=scenarios,
         user_id=int(prepared["user_id"]),
@@ -224,11 +229,50 @@ async def run_v4_multi_event_scenarios_inline(
             impact_catalog_version=catalog_version,
             scenario_group=table_data.scenario_group,
             events=events,
-            dimension_definitions=finalized.dimension_definitions,
+            dimension_definitions=dimension_definitions,
             table=table_data.table,
             generation_diagnostics=diagnostics,
         ),
     )
+
+
+def _with_event_lineage(
+    definitions: list[DimensionDefinition],
+    events: list[EventPayload],
+) -> list[DimensionDefinition]:
+    event_type_l2_by_id = {int(event.mi_event_id): event.event_type_l2_id for event in events}
+    return [
+        definition.model_copy(
+            update={
+                "source_refs": [
+                    SourceLineage(
+                        event_id=event_id,
+                        event_type_l2_id=event_type_l2_by_id[event_id],
+                        dim_key=definition.dimension_id,
+                        source_type="derived_interpretation",
+                        assumption_yn="N",
+                        rationale=(
+                            f"Event {event_id} 사실과 모델 영향 레버를 기반으로 "
+                            f"{definition.dimension_id} dimension을 구성했다."
+                        ),
+                    )
+                    for event_id in definition.source_event_ids
+                ],
+            },
+        )
+        for definition in definitions
+    ]
+
+
+def _require_output_data(
+    output: VersionedCreateScenariosOut,
+) -> VersionedCreateScenariosData:
+    if output.data is None:
+        raise MIBaseError(
+            ErrorCode.UNKNOWN_ERROR,
+            detail="v4 scenario generation output is empty",
+        )
+    return output.data
 
 
 async def run_v4_multi_event_scenarios_background(
@@ -260,17 +304,13 @@ async def run_v4_multi_event_scenarios_background(
                 prepared,
                 trace_context=trace_context,
             )
-        if output.data is None:
-            raise MIBaseError(
-                ErrorCode.UNKNOWN_ERROR,
-                detail="v4 scenario generation output is empty",
-            )
+        output_data = _require_output_data(output)
         await send_callback(
             callback_url,
             CreateScenariosOut(
                 result="success",
-                scenario_group=output.data.scenario_group,
-                table=output.data.table,
+                scenario_group=output_data.scenario_group,
+                table=output_data.table,
             ),
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
