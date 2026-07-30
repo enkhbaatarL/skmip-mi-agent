@@ -49,6 +49,10 @@ class ScenarioRow(ApiModel):
     cells: dict[str, Any] = Field(default_factory=dict)
     metrics: ScenarioMetrics | None = None
     baseline_yn: str | None = None
+    global_pressure_band: str | None = None
+    scenario_role: str | None = None
+    probability_score: Decimal | None = None
+    global_pressure_rationale: str | None = None
     signposts: list[SignpostBasePayload] = Field(default_factory=list)
 
 
