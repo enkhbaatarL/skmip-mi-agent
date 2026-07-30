@@ -20,8 +20,6 @@ GenerationStrategy = Literal[
     "multi_event_composite_dimensions",
     "multi_event_model_lever_dimensions",
 ]
-
-
 class VersionedCreateScenariosIn(ApiModel):
     mi_event_id: int = Field(gt=0)
     user_id: int
@@ -74,6 +72,10 @@ class V4MultiEventCreateScenariosIn(ApiModel):
             if not self.comparison_run_id:
                 raise ValueError("comparisonRunId must not be blank")
         return self
+
+
+class V4MultiEventCreateScenariosSyncIn(V4MultiEventCreateScenariosIn):
+    comparison_run_id: str = Field(min_length=1, max_length=255)
 
 
 class ExcludedCandidate(ApiModel):

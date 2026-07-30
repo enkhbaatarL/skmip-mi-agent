@@ -9,9 +9,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.agents.interpret_agent.api import router as interpret_router
-from apps.agents.model_parameter_agent.api import router as model_parameter_router
+from apps.agents.model_parameter_agent.api import router as model_parameter_router  # noqa: F401
 from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.agents.scenario_group_agent.constants import AGENT_NAME
+from apps.common.configs.config import get_settings
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import validate_schema
 from apps.common.configs.database.sync_database.connection import get_sync_engine
@@ -26,7 +27,6 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    from apps.common.configs.config import get_settings
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
     from apps.connectors.mlflow.tracing import setup_mlflow_tracing
 
@@ -61,7 +61,7 @@ app = FastAPI(
     servers=[{"url": INGRESS_PREFIX}] if INGRESS_PREFIX else None,
 )
 
-origins = ["*"]
+origins = get_settings().cors_allowed_origins
 
 app.add_middleware(
     CORSMiddleware,

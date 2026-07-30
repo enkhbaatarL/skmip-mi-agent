@@ -105,7 +105,8 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - Template 없이 Event 사실과 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
   - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
 - `POST /v4/scenario-groups/sync`
-  - v4와 같은 요청 계약을 사용하며 테스트·비교용으로 완료 응답을 동기 반환
+  - v4와 같은 요청 계약에 필수 `comparisonRunId`를 추가하고 테스트·비교용으로
+    완료 응답을 동기 반환
   - `generationDiagnostics`에 Event 영향 사실/상호작용, covered/uncovered
     dimension, unsupported lever와 전체 coverage 상태를 포함
 - `POST /scenario-groups/{scenarioGroupId}/validation/sync`
@@ -122,6 +123,8 @@ versioned sync endpoint의 생성 오류는
 `{"status":"error","message":"...","data":null}` 형태로 반환한다. v2/v3/v4
 성공 응답은 `apiVersion`, `generationStrategy`, `comparisonRunId`,
 `events`, `dimensionDefinitions`, `table`, `generationDiagnostics`를 포함한다.
+`events`는 요청 Event 순서를 유지하고, 각 `dimensionDefinitions[].sourceRefs`는
+근거 Event의 `eventId`, `eventTypeL2Id`를 포함한다.
 각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
 `probabilityScore`, `globalPressureRationale`는 DB 저장값을 그대로 반환한다.
 
