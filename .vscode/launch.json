@@ -92,43 +92,8 @@
       "name": "[🍄]backoffice: frontend",
       "type": "node-terminal",
       "request": "launch",
-      "command": "npm run dev -- --host 127.0.0.1",
+      "command": "VITE_AGENT_BASE_URL=http://127.0.0.1:8000 npm run dev -- --host 127.0.0.1 --port 5173 --strictPort",
       "cwd": "${workspaceFolder}/backoffice/frontend"
-    },
-    {
-      "name": "[🍄‍🟫]backoffice: backend",
-      "type": "debugpy",
-      "request": "launch",
-      "python": "${command:python.interpreterPath}",
-      "module": "uvicorn",
-      "args": [
-        "backoffice.backend.main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "9010",
-        "--reload"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole",
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "BACKOFFICE_HOST": "127.0.0.1",
-        "BACKOFFICE_PORT": "9010",
-        "DEFAULT_AGENT_BASE_URL": "http://127.0.0.1:8000",
-        "BACKOFFICE_CALLBACK_LOG_PATH": "${workspaceFolder}/local/output/backoffice_callbacks.jsonl"
-      },
-      "justMyCode": false
-    }
-  ],
-  "compounds": [
-    {
-      "name": "[🥗]backoffice: frontend + backend",
-      "configurations": [
-        "[🍄]backoffice: frontend",
-        "[🍄‍🟫]backoffice: backend"
-      ],
-      "stopAll": true
     }
   ]
 }
