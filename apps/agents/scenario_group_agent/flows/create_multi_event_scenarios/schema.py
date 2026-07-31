@@ -165,6 +165,147 @@ def _normalize_event_shock_values(shock: EventShock) -> None:
     shock.generated_event_values = normalized
 
 
+def _normalize_v2_dimension_source_refs(
+    result: MultiEventGenerationResult,
+    *,
+    event_ids: list[int],
+    source_dimensions_by_event: dict[
+        int,
+        dict[str, bool | dict[str, object]],
+    ],
+) -> None:
+    dimensions = result.dimension_definitions
+    reserved_valid_sources = {
+        (source.event_id, source.dim_key)
+        for dimension in dimensions
+        if len(dimension.source_refs) == 1
+        for source in dimension.source_refs
+        if source.dim_key
+        in source_dimensions_by_event.get(source.event_id, {})
+    }
+    shock_keys_by_event = {
+        shock.event_id: set(shock.source_dimension_keys)
+        for shock in result.event_shocks
+    }
+    used_sources: set[tuple[int, str]] = set()
+    dimension_id_renames: dict[str, str] = {}
+
+    for dimension in dimensions:
+        if len(dimension.source_refs) != 1:
+            continue
+        source = dimension.source_refs[0]
+        original_source = (source.event_id, source.dim_key)
+        target_event_id = source.event_id
+        target_dim_key = source.dim_key
+
+        if source.dim_key not in source_dimensions_by_event.get(
+            source.event_id,
+            {},
+        ):
+            exact_event_ids = [
+                event_id
+                for event_id in event_ids
+                if source.dim_key
+                in source_dimensions_by_event.get(event_id, {})
+                and (event_id, source.dim_key)
+                not in reserved_valid_sources
+                and (event_id, source.dim_key) not in used_sources
+            ]
+            if exact_event_ids:
+                target_event_id = exact_event_ids[0]
+            else:
+                available_keys = [
+                    dim_key
+                    for dim_key in source_dimensions_by_event.get(
+                        source.event_id,
+                        {},
+                    )
+                    if (source.event_id, dim_key)
+                    not in reserved_valid_sources
+                    and (source.event_id, dim_key) not in used_sources
+                ]
+                source_tokens = set(source.dim_key.lower().split("_"))
+                ranked_keys = sorted(
+                    available_keys,
+                    key=lambda dim_key: (
+                        dim_key
+                        in shock_keys_by_event.get(source.event_id, set()),
+                        len(source_tokens & set(dim_key.lower().split("_"))),
+                        -len(dim_key),
+                        dim_key,
+                    ),
+                    reverse=True,
+                )
+                if ranked_keys:
+                    best_key = ranked_keys[0]
+                    has_token_evidence = bool(
+                        source_tokens & set(best_key.lower().split("_")),
+                    )
+                    if has_token_evidence:
+                        target_dim_key = best_key
+
+        target_source = (target_event_id, target_dim_key)
+        target_definition = source_dimensions_by_event.get(
+            target_event_id,
+            {},
+        ).get(target_dim_key)
+        if target_definition is None:
+            continue
+        if target_source in used_sources and target_source != original_source:
+            continue
+
+        target_event_type_l2_id = source.event_type_l2_id
+        if (
+            isinstance(target_definition, dict)
+            and target_definition.get("event_type_l2_id") is not None
+        ):
+            target_event_type_l2_id = int(
+                target_definition["event_type_l2_id"],
+            )
+
+        original_dimension_id = dimension.dimension_id
+        target_dimension_id = f"e{target_event_id}__{target_dim_key}"
+        source.event_id = target_event_id
+        source.event_type_l2_id = target_event_type_l2_id
+        source.dim_key = target_dim_key
+        dimension.dimension_id = target_dimension_id
+        dimension.source_event_ids = [target_event_id]
+        if len(dimension.values) > 0:
+            for value in dimension.values:
+                if len(value.source_assignments) != 1:
+                    continue
+                assignment = value.source_assignments[0]
+                assignment.event_id = target_event_id
+                assignment.event_type_l2_id = target_event_type_l2_id
+                assignment.dim_key = target_dim_key
+        if original_dimension_id != target_dimension_id:
+            dimension_id_renames[original_dimension_id] = (
+                target_dimension_id
+            )
+        used_sources.add(target_source)
+
+    for scenario in result.scenarios:
+        normalized_values: dict[str, str] = {}
+        for dimension_id, value in scenario.dimension_values.items():
+            normalized_id = dimension_id_renames.get(
+                dimension_id,
+                dimension_id,
+            )
+            if normalized_id in normalized_values:
+                raise ValueError(
+                    "v2 sourceRef normalization produced duplicate "
+                    f"scenario cells: {normalized_id}",
+                )
+            normalized_values[normalized_id] = value
+        scenario.dimension_values = normalized_values
+
+    for interaction in result.interactions:
+        if interaction.resolution_dimension_id in dimension_id_renames:
+            interaction.resolution_dimension_id = dimension_id_renames[
+                interaction.resolution_dimension_id
+            ]
+
+
 def _ensure_interaction_dimension_coverage(
     interaction: EventInteraction,
     dimensions: list[DimensionDefinition],
@@ -269,10 +410,6 @@ def finalize_generation_result(
             f"{generation_strategy} dimension count is out of range: {len(dimensions)}",
         )
 
-    dimension_ids = [dimension.dimension_id for dimension in dimensions]
-    if len(set(dimension_ids)) != len(dimension_ids):
-        raise ValueError("dimensionDefinitions contains duplicate dimensionId")
-
     known_event_ids = set(event_ids)
     shock_event_ids = [shock.event_id for shock in result.event_shocks]
     if set(shock_event_ids) != known_event_ids or len(shock_event_ids) != len(
@@ -302,6 +439,17 @@ def finalize_generation_result(
                     f"Event Type Template: eventId={shock.event_id}, "
                     f"dimKeys={sorted(unknown_keys)}",
                 )
+        if generation_strategy == "multi_event_source_dimensions":
+            _normalize_v2_dimension_source_refs(
+                result,
+                event_ids=event_ids,
+                source_dimensions_by_event=source_dimensions_by_event,
+            )
+
+    dimension_ids = [dimension.dimension_id for dimension in dimensions]
+    if len(set(dimension_ids)) != len(dimension_ids):
+        raise ValueError("dimensionDefinitions contains duplicate dimensionId")
+
     covered_event_ids: set[int] = set()
     for dimension in dimensions:
         if not dimension.source_refs:

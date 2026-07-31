@@ -181,7 +181,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "api_version",
             "generation_strategy",
             "comparison_run_id",
-            "target_market",
             "impact_catalog_version",
             "impact_catalog_checksum",
             "template_checksum",
@@ -336,6 +335,7 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
                 global_pressure_band=scenario.global_pressure_band,
                 scenario_role=scenario.scenario_role,
                 global_pressure_rationale=scenario.global_pressure_rationale,
+                related_markets=scenario.related_markets or [],
             )
             self.session.add(scenario_snap)
             self.session.flush()

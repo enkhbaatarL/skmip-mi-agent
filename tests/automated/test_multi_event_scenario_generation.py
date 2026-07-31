@@ -537,6 +537,62 @@ def test_v2_normalizes_namespaced_event_shock_source_keys() -> None:
     }
 
 
+def test_v2_reassigns_cross_event_template_source_ref() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    dimension = result.dimension_definitions[0]
+    original_dimension_id = dimension.dimension_id
+    dimension.dimension_id = "e101__cross_event_key"
+    dimension.source_refs[0].dim_key = "cross_event_key"
+    for value in dimension.values:
+        value.source_assignments[0].dim_key = "cross_event_key"
+    for scenario in result.scenarios:
+        scenario.dimension_values["e101__cross_event_key"] = (
+            scenario.dimension_values.pop(original_dimension_id)
+        )
+    source_dimensions = {
+        101: {
+            "heat": False,
+            "duration": False,
+        },
+        202: {
+            "inventory": False,
+            "recovery": False,
+            "competition": False,
+            "cross_event_key": {
+                "required": False,
+                "event_type_l2_id": 12,
+            },
+            "heat": False,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    repaired = finalized.dimension_definitions[0]
+    assert repaired.dimension_id == "e202__cross_event_key"
+    assert repaired.source_event_ids == [202]
+    assert repaired.source_refs[0].event_id == 202
+    assert repaired.source_refs[0].event_type_l2_id == 12
+    assert repaired.source_refs[0].dim_key == "cross_event_key"
+    assert all(
+        assignment.event_id == 202
+        and assignment.event_type_l2_id == 12
+        and assignment.dim_key == "cross_event_key"
+        for value in repaired.values
+        for assignment in value.source_assignments
+    )
+    assert all(
+        "e202__cross_event_key" in scenario.dimension_values
+        and "e101__cross_event_key" not in scenario.dimension_values
+        for scenario in finalized.scenarios
+    )
+
+
 def test_v2_requires_all_required_dimensions_when_at_most_eight() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     source_dimensions = {

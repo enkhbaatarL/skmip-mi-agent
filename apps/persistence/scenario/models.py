@@ -74,6 +74,10 @@ class MiScenarioModel(AuditColumnsMixin, ORMBase):
             "baseline_yn IN ('Y','N')",
             name="ck_tmm_mi_scenario_m_05",
         ),
+        CheckConstraint(
+            "related_markets IS NULL OR JSON_TYPE(related_markets) = 'ARRAY'",
+            name="ck_tmm_mi_scenario_m_06",
+        ),
         TABLE_ARGS,
     )
 
@@ -118,6 +122,11 @@ class MiScenarioModel(AuditColumnsMixin, ORMBase):
         sa.Text(collation=BIN),
         nullable=True,
         comment="글로벌 가격 압력 판단 근거",
+    )
+    related_markets: Mapped[Any | None] = mapped_column(
+        sa.JSON,
+        nullable=True,
+        comment="시나리오별 관련 지역 가격 허브와 근거",
     )
 
 

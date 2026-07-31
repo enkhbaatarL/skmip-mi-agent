@@ -138,6 +138,7 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "global_pressure_band",
             "scenario_role",
             "global_pressure_rationale",
+            "related_markets",
             "status",
             "mod_usr_logn_id",
         ):
@@ -172,6 +173,7 @@ class ScenarioRepository(BaseSyncSQLRepository):
             "global_pressure_band": scenario.global_pressure_band,
             "scenario_role": scenario.scenario_role,
             "global_pressure_rationale": scenario.global_pressure_rationale,
+            "related_markets": scenario.related_markets or [],
         }
         if include_del_yn:
             payload["del_yn"] = scenario.del_yn

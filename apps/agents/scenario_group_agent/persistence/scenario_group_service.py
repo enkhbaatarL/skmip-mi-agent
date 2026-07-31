@@ -397,7 +397,6 @@ class ScenarioGroupService:
         self,
         *,
         events: list[dict[str, Any]],
-        target_market: str,
         impact_catalog_version: str,
         impact_catalog_checksum: str,
         comparison_run_id: str | None,
@@ -422,23 +421,12 @@ class ScenarioGroupService:
                     persisted_event_ids = [
                         int(relation.mi_event_id) for relation in relations
                     ]
-                    comparison_target_market = getattr(
-                        comparison_group,
-                        "target_market",
-                        None,
-                    )
-                    if (
-                        set(persisted_event_ids) != set(event_ids)
-                        or (
-                            comparison_target_market is not None
-                            and comparison_target_market != target_market
-                        )
-                    ):
+                    if set(persisted_event_ids) != set(event_ids):
                         raise MIBaseError(
                             ErrorCode.INVALID_REQUEST,
                             detail=(
                                 "All groups in a comparisonRunId must use the "
-                                "same events and, for v4, target market"
+                                "same events"
                             ),
                         )
                 existing = repository.fetch_by_comparison_run(
@@ -479,7 +467,7 @@ class ScenarioGroupService:
                     "mi_event_id": None,
                     "event_type_l2_id": None,
                     "request_usr_id": user_id,
-                    "title": f"{target_market} multi-event scenario group",
+                    "title": "Global LNG multi-event scenario group",
                     "summary": "복수 MI Event 기반 모델 영향 레버 시나리오",
                     "description": None,
                     "dimension_selected": [],
@@ -489,7 +477,6 @@ class ScenarioGroupService:
                     "api_version": "v4",
                     "generation_strategy": "multi_event_model_lever_dimensions",
                     "comparison_run_id": comparison_run_id,
-                    "target_market": target_market,
                     "impact_catalog_version": impact_catalog_version,
                     "impact_catalog_checksum": impact_catalog_checksum,
                     "template_checksum": None,
@@ -583,6 +570,9 @@ class ScenarioGroupService:
                         "global_pressure_band": scenario["global_pressure_band"],
                         "scenario_role": scenario.get("scenario_role"),
                         "global_pressure_rationale": scenario["global_pressure_rationale"],
+                        "related_markets": list(
+                            scenario.get("related_markets") or [],
+                        ),
                         "crt_usr_logn_id": user_id,
                         "mod_usr_logn_id": user_id,
                     },

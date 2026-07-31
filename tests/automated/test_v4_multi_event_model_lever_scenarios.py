@@ -28,6 +28,7 @@ from apps.persistence.model_parameter.schema import (
 from apps.persistence.scenario.schema import (
     DimensionDefinition,
     DimensionValueDefinition,
+    RelatedMarket,
 )
 
 
@@ -85,15 +86,15 @@ def _dimension(
 
 def _valid_result() -> V4GenerationResult:
     return V4GenerationResult(
-        group_title="JKM 복수 이벤트 시나리오",
-        group_description="이벤트 결합에 따른 JKM 가격 범위",
+        group_title="글로벌 LNG 복수 이벤트 시나리오",
+        group_description="이벤트 결합에 따른 글로벌 LNG 가격 범위",
         event_impact_facts=[
             EventImpactFact(
                 event_id=101,
                 lever_code="weather_demand",
                 domain="demand",
                 change_direction="increase",
-                target_market_direction="bullish",
+                global_pressure_direction="bullish",
                 timing="2027년 동절기",
                 magnitude_evidence="평년 대비 낮은 기온",
                 fact_basis="이벤트의 한파 전망",
@@ -104,7 +105,7 @@ def _valid_result() -> V4GenerationResult:
                 lever_code="liquefaction_availability",
                 domain="supply",
                 change_direction="decrease",
-                target_market_direction="bullish",
+                global_pressure_direction="bullish",
                 timing="2027년 상반기",
                 magnitude_evidence="일부 Train 정비",
                 fact_basis="이벤트의 정비 일정",
@@ -137,8 +138,14 @@ def _valid_result() -> V4GenerationResult:
                     "liquefaction_recovery": "low",
                     "risk_premium": "high",
                 },
-                target_market_pressure_band="strong_bullish",
-                target_market_pressure_rationale="JKM 상승 압력",
+                global_pressure_band="strong_bullish",
+                global_pressure_rationale="글로벌 LNG 상승 압력",
+                related_markets=[
+                    RelatedMarket(
+                        market="JKM",
+                        rationale="아시아향 화물 전환 가능성이 특별히 중요함",
+                    ),
+                ],
                 probability_score=35,
             ),
             V4ScenarioCandidate(
@@ -149,8 +156,8 @@ def _valid_result() -> V4GenerationResult:
                     "liquefaction_recovery": "high",
                     "risk_premium": "low",
                 },
-                target_market_pressure_band="balanced",
-                target_market_pressure_rationale="상승·하락 요인 상쇄",
+                global_pressure_band="balanced",
+                global_pressure_rationale="상승·하락 요인 상쇄",
                 probability_score=50,
                 mixed_factors=["한파 수요 증가", "액화시설 조기 회복"],
             ),
@@ -162,19 +169,19 @@ def _valid_result() -> V4GenerationResult:
                     "liquefaction_recovery": "high",
                     "risk_premium": "low",
                 },
-                target_market_pressure_band="strong_bearish",
-                target_market_pressure_rationale="JKM 하락 압력",
+                global_pressure_band="strong_bearish",
+                global_pressure_rationale="글로벌 LNG 하락 압력",
                 probability_score=15,
             ),
         ],
         excluded_scenarios=[
             V4ExcludedScenarioCandidate(
-                target_market_pressure_band="bullish",
+                global_pressure_band="bullish",
                 reason_code="LOW_DISTINCTIVENESS",
                 reason="상단 시나리오와 독립적인 검토 가치가 낮음",
             ),
             V4ExcludedScenarioCandidate(
-                target_market_pressure_band="bearish",
+                global_pressure_band="bearish",
                 reason_code="LOW_DISTINCTIVENESS",
                 reason="하단 시나리오와 독립적인 검토 가치가 낮음",
             ),
@@ -208,15 +215,16 @@ def _catalog() -> list[ModelImpactLeverPayload]:
 def test_v4_request_requires_two_to_five_unique_events() -> None:
     payload = V4MultiEventCreateScenariosIn(
         mi_event_ids=[101, 202],
-        target_market="JKM",
         user_id=7,
     )
 
     assert payload.mi_event_ids == [101, 202]
+    assert "targetMarket" not in V4MultiEventCreateScenariosIn.model_json_schema(
+        by_alias=True,
+    )["properties"]
     with pytest.raises(ValueError):
         V4MultiEventCreateScenariosIn(
             mi_event_ids=[101, 101],
-            target_market="JKM",
             user_id=7,
         )
 
@@ -228,6 +236,18 @@ def test_v4_sync_and_background_routes_are_registered() -> None:
 
     assert "/v4/scenario-groups" in paths
     assert "/v4/scenario-groups/sync" in paths
+
+
+def test_v4_storage_uses_scenario_related_markets_without_group_target_market() -> None:
+    from apps.persistence.scenario.models import MiScenarioModel
+    from apps.persistence.scenario_group.models import (
+        MiScenarioGroupModel,
+        MiScenarioSnapModel,
+    )
+
+    assert "target_market" not in MiScenarioGroupModel.__table__.columns
+    assert "related_markets" in MiScenarioModel.__table__.columns
+    assert "related_markets" in MiScenarioSnapModel.__table__.columns
 
 
 def test_v4_finalizer_assigns_roles_and_parameter_coverage() -> None:
@@ -290,10 +310,7 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
         return_value=(
             ScenarioGroupPayload(
                 scenario_group_id=10,
-                dimension_selected=[
-                    dimension.dimension_id
-                    for dimension in finalized.dimension_definitions
-                ],
+                dimension_selected=[dimension.dimension_id for dimension in finalized.dimension_definitions],
                 scenario_count=len(finalized.scenarios),
                 api_version="v4",
                 generation_strategy="multi_event_model_lever_dimensions",
@@ -306,11 +323,10 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
                     dimension_values=scenario.dimension_values,
                     probability_score=scenario.probability_score,
                     baseline_yn="Y" if scenario.baseline_yn else "N",
-                    global_pressure_band=scenario.target_market_pressure_band,
+                    global_pressure_band=scenario.global_pressure_band,
                     scenario_role=scenario.scenario_role,
-                    global_pressure_rationale=(
-                        scenario.target_market_pressure_rationale
-                    ),
+                    global_pressure_rationale=scenario.global_pressure_rationale,
+                    related_markets=scenario.related_markets,
                 )
                 for index, scenario in enumerate(finalized.scenarios, start=1)
             ],
@@ -322,7 +338,7 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
         persist,
     )
 
-    asyncio.run(
+    response = asyncio.run(
         run_v4_multi_event_scenarios_inline(
             {
                 "scenario_group": ScenarioGroupPayload(
@@ -343,7 +359,6 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
                     ),
                 ],
                 "impact_levers": _catalog(),
-                "target_market": "JKM",
                 "impact_catalog_version": "v1",
                 "comparison_run_id": "compare-1",
                 "user_id": 7,
@@ -353,6 +368,19 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
 
     saved = persist.call_args.kwargs["scenarios"]
     assert [scenario["baseline_yn"] for scenario in saved] == ["N", "Y", "N"]
+    assert saved[0]["related_markets"] == [
+        {
+            "market": "JKM",
+            "rationale": "아시아향 화물 전환 가능성이 특별히 중요함",
+        },
+    ]
+    assert response.data is not None
+    assert response.data.table.rows[0].related_markets == [
+        RelatedMarket(
+            market="JKM",
+            rationale="아시아향 화물 전환 가능성이 특별히 중요함",
+        ),
+    ]
 
 
 def test_v4_finalizer_rejects_unknown_lever() -> None:
@@ -382,7 +410,7 @@ def test_v4_finalizer_requires_an_executable_dimension() -> None:
         )
 
 
-def test_v4_prompt_uses_event_facts_target_market_and_catalog() -> None:
+def test_v4_prompt_uses_event_facts_global_pressure_and_catalog() -> None:
     prompt = build_model_lever_user_prompt(
         events=[
             {
@@ -391,13 +419,30 @@ def test_v4_prompt_uses_event_facts_target_market_and_catalog() -> None:
                 "one_line_summary": "겨울 수요 증가 가능성",
             },
         ],
-        target_market="JKM",
         impact_levers=[lever.model_dump() for lever in _catalog()],
         catalog_version="v1",
     )
 
     assert "동북아 한파" in prompt
-    assert "JKM" in prompt
+    assert "Target Market" not in prompt
+    assert "globalPressureRationale" in prompt
+    assert "relatedMarkets" in prompt
     assert "weather_demand" in prompt
     assert "적어도 하나의 dimension은 executable" in prompt
     assert "Template Domain Knowledge" not in prompt
+
+
+def test_v4_rejects_duplicate_related_markets() -> None:
+    with pytest.raises(ValueError, match="related markets must be unique"):
+        V4ScenarioCandidate(
+            title="중복 시장",
+            narrative="시장 중복 검증",
+            dimension_values={},
+            global_pressure_band="balanced",
+            global_pressure_rationale="글로벌 압력은 균형",
+            related_markets=[
+                RelatedMarket(market="JKM", rationale="첫 번째 근거"),
+                RelatedMarket(market="JKM", rationale="두 번째 근거"),
+            ],
+            probability_score=50,
+        )

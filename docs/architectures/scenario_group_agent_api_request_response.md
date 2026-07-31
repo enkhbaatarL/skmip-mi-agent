@@ -100,9 +100,10 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - v2와 같은 요청 계약
   - Event 충격과 관련 상호작용을 4~7개 합성 dimension으로 구성한다.
 - `POST /v4/scenario-groups`
-  - 요청: `miEventIds` 2~5개, `targetMarket`(`JKM`/`TTF`/`HH`), `userId`,
-    선택적 `comparisonRunId`
+  - 요청: `miEventIds` 2~5개, `userId`, 선택적 `comparisonRunId`
   - Template 없이 Event 사실과 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
+  - Scenario의 pressure/floor/ceiling은 글로벌 LNG 기준이며, 지역 특이성이
+    명확한 경우에만 row의 `relatedMarkets`에 시장과 근거를 보조정보로 포함
   - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
 - `POST /v4/scenario-groups/sync`
   - v4와 같은 요청 계약에 필수 `comparisonRunId`를 추가하고 테스트·비교용으로
@@ -126,7 +127,9 @@ versioned sync endpoint의 생성 오류는
 `events`는 요청 Event 순서를 유지하고, 각 `dimensionDefinitions[].sourceRefs`는
 근거 Event의 `eventId`, `eventTypeL2Id`를 포함한다.
 각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
-`probabilityScore`, `globalPressureRationale`는 DB 저장값을 그대로 반환한다.
+`probabilityScore`, `globalPressureRationale`, `relatedMarkets`는 DB 저장값을
+그대로 반환한다. `relatedMarkets`는 table header/cell이나 pressure tag가 아니라
+Scenario 상세에서만 표시하는 선택적 보조정보다.
 
 ### 자유 dimension value mapping 승인
 

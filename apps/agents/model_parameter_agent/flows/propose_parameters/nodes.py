@@ -1731,6 +1731,7 @@ def _scenario_brief_for_value_prompt(
             "impact_jkm": impact.get("jkm"),
             "impact_ttf": impact.get("ttf"),
             "impact_hh": impact.get("hh"),
+            "related_markets": scenario.get("related_markets") or [],
         },
     )
     dimension_template_brief = _drop_none_or_empty(

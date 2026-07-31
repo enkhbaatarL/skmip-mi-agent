@@ -25,7 +25,6 @@ class ScenarioGroupPayload(ApiModel):
     api_version: str = "v1"
     generation_strategy: str = "single_event_template_dimensions"
     comparison_run_id: str | None = None
-    target_market: str | None = None
     impact_catalog_version: str | None = None
     impact_catalog_checksum: str | None = None
     template_checksum: str | None = None
@@ -57,7 +56,6 @@ class ScenarioGroupPayload(ApiModel):
                     "comparison_run_id",
                     None,
                 ),
-                "target_market": getattr(model, "target_market", None),
                 "impact_catalog_version": getattr(
                     model,
                     "impact_catalog_version",

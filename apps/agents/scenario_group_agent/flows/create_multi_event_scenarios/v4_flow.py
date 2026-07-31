@@ -73,7 +73,6 @@ def prepare_v4_multi_event_scenarios(
         )
     group = ScenarioGroupService().prepare_v4_multi_event_group(
         events=[event.model_dump() for event in ordered_events],
-        target_market=payload.target_market,
         impact_catalog_version=catalog_version,
         impact_catalog_checksum=catalog_checksum,
         comparison_run_id=payload.comparison_run_id,
@@ -85,7 +84,6 @@ def prepare_v4_multi_event_scenarios(
         "impact_levers": impact_levers,
         "impact_catalog_version": catalog_version,
         "impact_catalog_checksum": catalog_checksum,
-        "target_market": payload.target_market,
         "comparison_run_id": payload.comparison_run_id,
         "user_id": payload.user_id,
     }
@@ -94,7 +92,6 @@ def prepare_v4_multi_event_scenarios(
 async def _invoke_v4_generation(
     *,
     events: list[EventPayload],
-    target_market: str,
     impact_levers: list[ModelImpactLeverPayload],
     catalog_version: str,
     trace_context: TraceContext | None,
@@ -106,7 +103,6 @@ async def _invoke_v4_generation(
     cfg = get_settings()
     user_prompt = build_model_lever_user_prompt(
         events=[event.model_dump() for event in events],
-        target_market=target_market,
         impact_levers=[lever.model_dump() for lever in impact_levers],
         catalog_version=catalog_version,
         validation_feedback=validation_feedback,
@@ -129,7 +125,6 @@ async def _invoke_v4_generation(
 async def _generate_validated_v4_result(
     *,
     events: list[EventPayload],
-    target_market: str,
     impact_levers: list[ModelImpactLeverPayload],
     catalog_version: str,
     trace_context: TraceContext | None,
@@ -138,7 +133,6 @@ async def _generate_validated_v4_result(
     for _attempt in range(3):
         result = await _invoke_v4_generation(
             events=events,
-            target_market=target_market,
             impact_levers=impact_levers,
             catalog_version=catalog_version,
             trace_context=trace_context,
@@ -166,11 +160,9 @@ async def run_v4_multi_event_scenarios_inline(
     group = ScenarioGroupPayload.model_validate(prepared["scenario_group"])
     events = [EventPayload.model_validate(event) for event in prepared["events"]]
     impact_levers = [ModelImpactLeverPayload.model_validate(lever) for lever in prepared["impact_levers"]]
-    target_market = str(prepared["target_market"])
     catalog_version = str(prepared["impact_catalog_version"])
     finalized, coverage = await _generate_validated_v4_result(
         events=events,
-        target_market=target_market,
         impact_levers=impact_levers,
         catalog_version=catalog_version,
         trace_context=trace_context,
@@ -182,14 +174,13 @@ async def run_v4_multi_event_scenarios_inline(
     diagnostics = GenerationDiagnostics(
         excluded_candidates=[
             ExcludedCandidate(
-                global_pressure_band=candidate.target_market_pressure_band,
+                global_pressure_band=candidate.global_pressure_band,
                 reason_code=candidate.reason_code,
                 reason=candidate.reason,
             )
             for candidate in finalized.excluded_scenarios
         ],
         excluded_dimensions=[{"reason": reason} for reason in finalized.excluded_dimensions],
-        target_market=target_market,
         impact_catalog_version=catalog_version,
         covered_dimensions=coverage.covered_dimension_ids,
         uncovered_dimensions=coverage.uncovered_dimension_ids,
@@ -203,8 +194,9 @@ async def run_v4_multi_event_scenarios_inline(
         {
             **scenario.model_dump(),
             "baseline_yn": "Y" if scenario.baseline_yn else "N",
-            "global_pressure_band": scenario.target_market_pressure_band,
-            "global_pressure_rationale": (scenario.target_market_pressure_rationale),
+            "global_pressure_band": scenario.global_pressure_band,
+            "global_pressure_rationale": scenario.global_pressure_rationale,
+            "related_markets": [related_market.model_dump() for related_market in scenario.related_markets],
         }
         for scenario in finalized.scenarios
     ]
@@ -226,7 +218,6 @@ async def run_v4_multi_event_scenarios_inline(
             api_version="v4",
             generation_strategy=V4_GENERATION_STRATEGY,
             comparison_run_id=prepared["comparison_run_id"],
-            target_market=target_market,
             impact_catalog_version=catalog_version,
             scenario_group=table_data.scenario_group,
             events=events,

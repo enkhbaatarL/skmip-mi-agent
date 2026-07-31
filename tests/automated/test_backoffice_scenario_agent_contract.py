@@ -110,7 +110,6 @@ def test_multi_event_prepare_preserves_request_event_order() -> None:
 def test_v4_sync_requires_run_id_and_adds_event_type_lineage() -> None:
     payload = V4MultiEventCreateScenariosSyncIn(
         mi_event_ids=[101, 202],
-        target_market="JKM",
         user_id=7,
         comparison_run_id="compare-1",
     )
@@ -138,6 +137,5 @@ def test_v4_sync_requires_run_id_and_adds_event_type_lineage() -> None:
     with pytest.raises(ValueError, match="comparisonRunId"):
         V4MultiEventCreateScenariosSyncIn(
             mi_event_ids=[101, 202],
-            target_market="JKM",
             user_id=7,
         )

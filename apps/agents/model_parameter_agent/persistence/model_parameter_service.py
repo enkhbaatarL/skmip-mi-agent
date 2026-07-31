@@ -563,6 +563,7 @@ def _scenario_to_context_dict(scenario: Any) -> dict[str, Any]:
             "ttf": scenario.impact_ttf,
             "hh": scenario.impact_hh,
         },
+        "related_markets": getattr(scenario, "related_markets", None) or [],
         "baseline_yn": scenario.baseline_yn,
     }
 
@@ -584,7 +585,6 @@ def _group_to_context_dict(group: Any) -> dict[str, Any]:
         "stage": _json_safe(group.stage),
         "api_version": getattr(group, "api_version", None),
         "generation_strategy": getattr(group, "generation_strategy", None),
-        "target_market": getattr(group, "target_market", None),
         "impact_catalog_version": getattr(
             group,
             "impact_catalog_version",

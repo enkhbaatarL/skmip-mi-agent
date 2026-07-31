@@ -3,11 +3,24 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from apps.persistence.enums import ScenarioStatus
 from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.schema_base import ApiModel
+
+
+class RelatedMarket(ApiModel):
+    market: Literal["JKM", "TTF", "HH"]
+    rationale: str = Field(min_length=1)
+
+    @field_validator("rationale")
+    @classmethod
+    def _normalize_rationale(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("related market rationale must not be blank")
+        return normalized
 
 
 class ScenarioPayload(ApiModel):
@@ -24,6 +37,7 @@ class ScenarioPayload(ApiModel):
     global_pressure_band: str | None = None
     scenario_role: str | None = None
     global_pressure_rationale: str | None = None
+    related_markets: list[RelatedMarket] = Field(default_factory=list)
     status: str = ScenarioStatus.CREATING.value
     del_yn: str | None = None
 
@@ -44,6 +58,7 @@ class ScenarioPayload(ApiModel):
                 "global_pressure_band": model.global_pressure_band,
                 "scenario_role": model.scenario_role,
                 "global_pressure_rationale": model.global_pressure_rationale,
+                "related_markets": getattr(model, "related_markets", None) or [],
                 "status": model.status,
                 "del_yn": getattr(model, "del_yn", None),
             }

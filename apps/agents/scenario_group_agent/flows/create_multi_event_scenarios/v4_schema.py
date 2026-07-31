@@ -15,7 +15,7 @@ from apps.persistence.model_parameter.schema import (
     ModelImpactLeverPayload,
     ModelImpactLeverSupportIssue,
 )
-from apps.persistence.scenario.schema import DimensionDefinition
+from apps.persistence.scenario.schema import DimensionDefinition, RelatedMarket
 
 
 class EventImpactFact(ApiModel):
@@ -23,7 +23,7 @@ class EventImpactFact(ApiModel):
     lever_code: str = Field(min_length=1)
     domain: Literal["demand", "supply", "trade", "price_only"]
     change_direction: Literal["increase", "decrease", "neutral"]
-    target_market_direction: Literal["bullish", "bearish", "neutral"]
+    global_pressure_direction: Literal["bullish", "bearish", "neutral"]
     affected_scope: list[str] = Field(default_factory=list)
     timing: str = Field(min_length=1)
     magnitude_evidence: str = Field(min_length=1)
@@ -53,16 +53,24 @@ class V4ScenarioCandidate(ApiModel):
     title: str = Field(min_length=1)
     narrative: str = Field(min_length=1)
     dimension_values: dict[str, str]
-    target_market_pressure_band: PressureBand
-    target_market_pressure_rationale: str = Field(min_length=1)
+    global_pressure_band: PressureBand
+    global_pressure_rationale: str = Field(min_length=1)
+    related_markets: list[RelatedMarket] = Field(default_factory=list, max_length=3)
     probability_score: float = Field(ge=0, le=100)
     mixed_factors: list[str] = Field(default_factory=list)
     scenario_role: Literal["floor", "ceiling", "mixed"] | None = None
     baseline_yn: bool = False
 
+    @model_validator(mode="after")
+    def validate_unique_related_markets(self) -> V4ScenarioCandidate:
+        markets = [item.market for item in self.related_markets]
+        if len(markets) != len(set(markets)):
+            raise ValueError("related markets must be unique within a scenario")
+        return self
+
 
 class V4ExcludedScenarioCandidate(ApiModel):
-    target_market_pressure_band: PressureBand
+    global_pressure_band: PressureBand
     reason_code: str = Field(min_length=1)
     reason: str = Field(min_length=1)
 
@@ -202,12 +210,12 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
         if combination in combinations:
             raise ValueError("scenario dimension combinations must be unique")
         combinations.add(combination)
-        generated_bands.append(scenario.target_market_pressure_band)
+        generated_bands.append(scenario.global_pressure_band)
 
     if len(set(generated_bands)) != len(generated_bands):
         raise ValueError("generated scenarios must use distinct pressure bands")
 
-    excluded_bands = [scenario.target_market_pressure_band for scenario in result.excluded_scenarios]
+    excluded_bands = [scenario.global_pressure_band for scenario in result.excluded_scenarios]
     if set(generated_bands) & set(excluded_bands):
         raise ValueError("generated and excluded pressure bands must not overlap")
     if set(generated_bands + excluded_bands) != set(PRESSURE_BANDS):
@@ -215,7 +223,7 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
 
     ordered = sorted(
         result.scenarios,
-        key=lambda scenario: PRESSURE_RANK[scenario.target_market_pressure_band],
+        key=lambda scenario: PRESSURE_RANK[scenario.global_pressure_band],
     )
     for scenario in result.scenarios:
         scenario.scenario_role = None
@@ -229,7 +237,7 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
     mixed = min(
         interior,
         key=lambda scenario: (
-            abs(PRESSURE_RANK[scenario.target_market_pressure_band] - 2),
+            abs(PRESSURE_RANK[scenario.global_pressure_band] - 2),
             -scenario.probability_score,
         ),
     )
@@ -240,7 +248,7 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
     baseline = max(result.scenarios, key=lambda scenario: scenario.probability_score)
     baseline.baseline_yn = True
     result.scenarios.sort(
-        key=lambda scenario: PRESSURE_RANK[scenario.target_market_pressure_band],
+        key=lambda scenario: PRESSURE_RANK[scenario.global_pressure_band],
         reverse=True,
     )
 

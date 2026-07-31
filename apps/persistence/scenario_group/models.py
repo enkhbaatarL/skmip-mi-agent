@@ -77,10 +77,6 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
             "'multi_event_model_lever_dimensions')",
             name="ck_tmm_mi_scenario_group_m_05",
         ),
-        CheckConstraint(
-            "target_market IS NULL OR target_market IN ('JKM','TTF','HH')",
-            name="ck_tmm_mi_scenario_group_m_06",
-        ),
         TABLE_ARGS,
     )
 
@@ -137,11 +133,6 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     comparison_run_id: Mapped[str | None] = mapped_column(
         sa.String(255, collation=BIN),
         nullable=True,
-    )
-    target_market: Mapped[str | None] = mapped_column(
-        sa.String(20, collation=BIN),
-        nullable=True,
-        comment="v4 대표 가격 시장",
     )
     impact_catalog_version: Mapped[str | None] = mapped_column(
         sa.String(255, collation=BIN),
@@ -246,6 +237,10 @@ class MiScenarioSnapModel(AuditColumnsMixin, ORMBase):
     __table_args__ = (
         Index("idx_tmm_mi_scenario_snap_m_01", "snapshot_id"),
         CheckConstraint("JSON_TYPE(dimension_values) = 'ARRAY'", name="ck_tmm_mi_scenario_snap_m_01"),
+        CheckConstraint(
+            "related_markets IS NULL OR JSON_TYPE(related_markets) = 'ARRAY'",
+            name="ck_tmm_mi_scenario_snap_m_02",
+        ),
         TABLE_ARGS,
     )
 
@@ -275,6 +270,7 @@ class MiScenarioSnapModel(AuditColumnsMixin, ORMBase):
         sa.Text(collation=BIN),
         nullable=True,
     )
+    related_markets: Mapped[Any | None] = mapped_column(sa.JSON, nullable=True)
 
 
 class MiSignpostSnapModel(AuditColumnsMixin, ORMBase):

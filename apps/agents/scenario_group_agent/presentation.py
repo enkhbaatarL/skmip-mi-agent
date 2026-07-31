@@ -191,6 +191,7 @@ def _row_common_payload(
         "global_pressure_rationale": scenario.get(
             "global_pressure_rationale",
         ),
+        "related_markets": scenario.get("related_markets") or [],
     }
 
 

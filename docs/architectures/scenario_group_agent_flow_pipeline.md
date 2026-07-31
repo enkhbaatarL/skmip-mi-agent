@@ -102,7 +102,7 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 | `POST /v1/scenario-groups/sync` | `miEventId` | 단일 Event·원본 Template dimension |
 | `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event별 원본 dimension 5~8개 |
 | `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event 충격·상호작용 기반 합성 dimension 4~7개 |
-| `POST /v4/scenario-groups` | 중복 없는 `miEventIds` 2~5개, `targetMarket` | Event 사실·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
+| `POST /v4/scenario-groups` | 중복 없는 `miEventIds` 2~5개 | Event 사실·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
 | `POST /v4/scenario-groups/sync` | v4와 동일 | v4 생성 흐름 동기 실행 |
 
 v2/v3는 `flows/create_multi_event_scenarios/flow.py`에서 Event와 Event Type
@@ -122,8 +122,13 @@ LLM 표현의 흔들림은 저장 전 결정론적으로 정규화한다. v2 dim
 `label`, `description`, `required`는 선택한 Template 정의를 정본으로 사용하고,
 `EventShock.generatedEventValues`는 `sourceDimensionKeys`와 같은 key 집합으로
 맞춘다. v2 EventShock이 dimension ID용 `e{eventId}__` namespace를 source key에도
-붙여 반환하면 Template 조회 전에 원본 `dimKey`로 되돌린다. v3 interaction은
-관계 Event 전체를 추적할 수 있는 기존 dimension을
+붙여 반환하면 Template 조회 전에 원본 `dimKey`로 되돌린다. v2 sourceRef가
+다른 입력 Event의 Template key와 정확히 일치하면 해당 Event lineage와
+dimension/scenario key를 함께 재결합한다. 정확한 일치가 없으면 같은 Event의
+미사용 Template key 중 key token 근거가 있는 경우에만 재매핑한다. EventShock
+lineage는 동점 후보 우선순위에만 사용하고, token 근거가 없거나 중복이 생기면
+실패시킨다. v3 interaction은 관계
+Event 전체를 추적할 수 있는 기존 dimension을
 우선 사용하며, lineage가 일부 빠졌으면 해당 Event의 source reference와 value
 projection을 보강한다. 입력에 없는 Event나 Template dimension을 새로 만들지는
 않으며, 보강 뒤에도 계약을 만족하지 못하면 저장하지 않는다.
@@ -156,21 +161,23 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 `CATALOG_MARKED_UNSUPPORTED`로 사유를 구분한다.
 
 `price_only` 레버는 Basecase Excel에서 유래한 모델 입력명이 아니라, 재고 여건,
-지역 가격 스프레드와 금융시장 위험 프리미엄처럼 목표 시장 가격을 설명하는
+지역 가격 스프레드와 금융시장 위험 프리미엄처럼 글로벌 LNG 가격을 설명하는
 비수급 경로다. 모델 입력 미지원과 혼동하지 않도록 `PRICE_ONLY`로 별도 표시한다.
 
 `v4_flow.py`는 Event와 활성 카탈로그를 준비하고 LLM이 카탈로그 안의 lever만
 참조해 3~6개 dimension과 2~4개 value를 생성하게 한다. 서버는 모든 Event의
 impact fact와 dimension lineage, 카탈로그 밖 lever 금지, 고유 Scenario 조합,
 pressure band partition, floor·ceiling·mixed·baseline을 결정론적으로 검증한다.
-여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 목표 시장
-pressure band와 rationale이다. 또한 전체 dimension 중 적어도 하나는 실행 가능한
+여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 글로벌 LNG
+pressure band와 rationale이다. 지역 가격 허브가 특별히 관련된 Scenario만
+`related_markets`에 시장과 근거를 선택적으로 저장하며, 시장별 방향이나
+floor·ceiling을 생성하지 않는다. 또한 전체 dimension 중 적어도 하나는 실행 가능한
 모델 parameter binding을 참조해야 한다. 따라서 가격 설명용 `price_only`나
 `known_unsupported` dimension을 함께 사용하더라도 모델 파라미터 단계에 넘길
 실행 경로가 하나 이상 남는다.
 
-그룹에는 `target_market`, 카탈로그 version/checksum, dimension 정의와 Event
-lineage를 저장한다. 모델 파라미터 단계는 `lever_refs`의 실행 가능한 binding만
+그룹에는 카탈로그 version/checksum, dimension 정의와 Event lineage를 저장한다.
+모델 파라미터 단계는 `lever_refs`의 실행 가능한 binding만
 기존 Basecase/LUT 파이프라인으로 넘기고, price-only 또는 미지원 binding은
 `non_input_items`로 보존한다. 생성 진단의 `unsupported_lever_details`와
 `non_input_items[].unsupported_reason_code`에는 상세 미지원 사유를 저장한다.
@@ -178,8 +185,8 @@ API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`
 변환한다.
 관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.
 
-기존 DB는 `scripts/sql/05_v4_multi_event_model_lever.sql`을 한 번 적용해
-그룹 컬럼·nullable 관계·초기 레버 카탈로그를 반영한다.
+기존 DB의 target market 제거와 관련 시장 JSON 추가는
+`scripts/sql/05_v4_global_related_markets.sql`을 한 번 적용해 반영한다.
 
 ### 전체 흐름
 

@@ -20,6 +20,8 @@ GenerationStrategy = Literal[
     "multi_event_composite_dimensions",
     "multi_event_model_lever_dimensions",
 ]
+
+
 class VersionedCreateScenariosIn(ApiModel):
     mi_event_id: int = Field(gt=0)
     user_id: int
@@ -55,7 +57,6 @@ class MultiEventCreateScenariosIn(ApiModel):
 
 class V4MultiEventCreateScenariosIn(ApiModel):
     mi_event_ids: list[int]
-    target_market: Literal["JKM", "TTF", "HH"]
     user_id: int
     comparison_run_id: str | None = Field(default=None, max_length=255)
 
@@ -102,7 +103,6 @@ class GenerationDiagnostics(ApiModel):
     )
     excluded_candidates: list[ExcludedCandidate] = Field(default_factory=list)
     excluded_dimensions: list[dict[str, object]] = Field(default_factory=list)
-    target_market: Literal["JKM", "TTF", "HH"] | None = None
     impact_catalog_version: str | None = None
     covered_dimensions: list[str] = Field(default_factory=list)
     uncovered_dimensions: list[str] = Field(default_factory=list)
@@ -119,7 +119,6 @@ class VersionedCreateScenariosData(ApiModel):
     api_version: ApiVersion
     generation_strategy: GenerationStrategy
     comparison_run_id: str | None = None
-    target_market: Literal["JKM", "TTF", "HH"] | None = None
     impact_catalog_version: str | None = None
     scenario_group: ScenarioGroupPayload
     events: list[EventPayload] = Field(default_factory=list)
