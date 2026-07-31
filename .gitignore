@@ -119,6 +119,7 @@ local/
 skmip-mi-agent.code-workspace
 .cursor/rules/
 .claude/settings.local.json
+.claude/settings.json
 .claude/CLAUDE.md
 .claude/skills/*/.local
 .claude/skills/*/*.local
