@@ -107,7 +107,7 @@ poetry run dotenv -f envs/.env run --no-override -- \
   gunicorn main:app \
   --worker-class uvicorn.workers.UvicornWorker \
   --workers 3 \
-  --bind 127.0.0.1:8001 \
+  --bind 127.0.0.1:8000 \
   --timeout 1200 \
   --graceful-timeout 1200
 ```
@@ -122,7 +122,7 @@ Docker의 기존 Gunicorn 3-worker 기본 설정은 변경하지 않는다. v1 �
 - 최신 또는 오래된 N개: `--event-count 3 --event-sort latest|oldest`
 - 키워드 기반 N개: `--event-count 5 --keyword 호르무즈 [--event-sort latest|oldest]`
 
-키워드 선택의 기본 정렬은 `latest`로 둔다. 이벤트 상세를 수집하고 동일한 이벤트 목록, `userId`, 고유 `comparisonRunId`를 manifest에 고정한다. 이벤트 상세를 근거로 v4의 `targetMarket`을 JKM/TTF/HH 중 하나로 판단하고 근거를 저장한다. 사용자가 target market을 명시하면 그 값을 우선한다.
+키워드 선택의 기본 정렬은 `latest`로 둔다. 이벤트 상세를 수집하고 동일한 이벤트 목록, `userId`, 고유 `comparisonRunId`를 manifest에 고정한다. v4도 단일 `targetMarket`을 입력받지 않으며 모든 Scenario의 pressure band는 글로벌 LNG 기준이다. 지역 가격 허브 관련성이 명확한 v4 Scenario만 응답 row의 `relatedMarkets`에 시장과 근거를 선택적 보조정보로 포함한다.
 
 예:
 
@@ -180,7 +180,7 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 
 - 이벤트 사실과 Scenario·dimension의 무모순성
 - LNG 가격 예측 요소의 dimension 반영
-- floor/ceiling의 pressure band 및 조합 타당성
+- 글로벌 LNG 기준 floor/ceiling의 pressure band 및 조합 타당성
 - mixed의 필요성과 상승·하락 요인 조합 타당성
 - Scenario 3~5개, baseline 정확히 1개, floor/ceiling 각각 1개, mixed 최소 1개, 조합·band 중복 없음
 - dimension 수 v2 5~8개, v3 4~7개, v4 3~6개와 전체 이벤트 lineage coverage
@@ -195,11 +195,10 @@ LLM Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario별
 
 - `manifest.json`
 - `selected_events.json`
-- `target_market_selection.json`
 - `v2_create_response.json`
 - `v3_create_response.json`
 - `v4_create_response.json`
 - `comparison_judge.json` (`quality-check=true`일 때만)
 - `comparison_report.md`
 
-보고서에 입력 조건과 이벤트 상세, target market 근거, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group/dimension 비교, pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. 품질검사 시 LLM 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다. v2/v3의 global LNG pressure와 v4의 target-market pressure가 의미상 다름을 명시한다.
+보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group/dimension 비교, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 LLM 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다.
