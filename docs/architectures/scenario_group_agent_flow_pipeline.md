@@ -129,10 +129,16 @@ LLM 표현의 흔들림은 저장 전 결정론적으로 정규화한다. v2 dim
 다른 입력 Event의 Template key와 정확히 일치하면 해당 Event lineage와
 dimension/scenario key를 함께 재결합한다. 그 source가 이미 다른 dimension에서
 선택돼 있고 제거 후에도 v2의 5~8개 범위를 만족하면 중복 dimension과 모든
-Scenario cell을 함께 제거한다. 정확한 일치가 없으면 같은 Event의
+Scenario cell을 함께 제거한다. v2 dimension에 복수 source lineage가 섞이면
+Template에 존재하는 첫 lineage 하나와 그 value assignment만 남긴다.
+정확한 일치가 없으면 같은 Event의
 미사용 Template key 중 key token 근거가 있는 경우에만 재매핑한다. EventShock
 lineage는 동점 후보 우선순위에만 사용하고, token 근거가 없거나 중복이 생기면
-실패시킨다. v3 interaction은 관계
+실패시킨다. v2/v3 sourceRef에 LLM의 표시용 `d{number}_` 접두사가 붙으면
+Template의 원본 `dimKey`와 정확히 일치하는 경우에만 접두사를 제거하고,
+source assignment에도 동일하게 적용한다. 내부 pressure band Scenario에
+상승·하락 contribution이 함께 없으면 기존 dimension value 중 두 방향을
+최소 변경으로 조합해 `mixedFactors` 계약을 복원한다. v3 interaction은 관계
 Event 전체를 추적할 수 있는 기존 dimension을
 우선 사용하며, lineage가 일부 빠졌으면 해당 Event의 source reference와 value
 projection을 보강한다. 입력에 없는 Event나 Template dimension을 새로 만들지는

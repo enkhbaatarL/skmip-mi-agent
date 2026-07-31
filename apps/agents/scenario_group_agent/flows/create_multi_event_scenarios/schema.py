@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import Field, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.persistence.scenario.schema import DimensionDefinition
+from apps.persistence.scenario.schema import DimensionDefinition, SourceLineage
 
 
 PressureBand = Literal[
@@ -219,6 +220,57 @@ def _normalize_event_shock_values(shock: EventShock) -> None:
     shock.generated_event_values = normalized
 
 
+def _normalize_dimension_source_key_aliases(
+    result: MultiEventGenerationResult,
+    *,
+    source_dimensions_by_event: dict[
+        int,
+        dict[str, bool | dict[str, object]],
+    ],
+) -> None:
+    def normalize_lineage(lineage: SourceLineage) -> None:
+        source_definitions = source_dimensions_by_event.get(
+            lineage.event_id,
+            {},
+        )
+        if lineage.dim_key in source_definitions:
+            normalized_key = lineage.dim_key
+        else:
+            without_namespace = lineage.dim_key.removeprefix(
+                f"e{lineage.event_id}__",
+            )
+            without_display_prefix = re.sub(
+                r"^d\d+[_-]+",
+                "",
+                without_namespace,
+                count=1,
+            )
+            normalized_key = (
+                without_display_prefix
+                if without_display_prefix in source_definitions
+                else lineage.dim_key
+            )
+
+        source_definition = source_definitions.get(normalized_key)
+        if source_definition is None:
+            return
+        lineage.dim_key = normalized_key
+        if (
+            isinstance(source_definition, dict)
+            and source_definition.get("event_type_l2_id") is not None
+        ):
+            lineage.event_type_l2_id = int(
+                source_definition["event_type_l2_id"],
+            )
+
+    for dimension in result.dimension_definitions:
+        for source in dimension.source_refs:
+            normalize_lineage(source)
+        for value in dimension.values:
+            for assignment in value.source_assignments:
+                normalize_lineage(assignment)
+
+
 def _normalize_v2_dimension_source_refs(
     result: MultiEventGenerationResult,
     *,
@@ -229,6 +281,46 @@ def _normalize_v2_dimension_source_refs(
     ],
 ) -> None:
     dimensions = result.dimension_definitions
+    for dimension in dimensions:
+        if len(dimension.source_refs) <= 1:
+            continue
+        valid_sources = [
+            source
+            for source in dimension.source_refs
+            if source.dim_key
+            in source_dimensions_by_event.get(source.event_id, {})
+        ]
+        selected_source = (
+            valid_sources[0] if valid_sources else dimension.source_refs[0]
+        )
+        selected_key = (
+            selected_source.event_id,
+            selected_source.event_type_l2_id,
+            selected_source.dim_key,
+        )
+        dimension.source_refs = [selected_source]
+        dimension.source_event_ids = [selected_source.event_id]
+        for value in dimension.values:
+            selected_assignments = [
+                assignment
+                for assignment in value.source_assignments
+                if (
+                    assignment.event_id,
+                    assignment.event_type_l2_id,
+                    assignment.dim_key,
+                )
+                == selected_key
+            ]
+            value.source_assignments = (
+                selected_assignments[:1]
+                if selected_assignments
+                else [
+                    selected_source.model_copy(
+                        update={"value": value.label},
+                    ),
+                ]
+            )
+
     reserved_valid_sources = {
         (source.event_id, source.dim_key)
         for dimension in dimensions
@@ -317,7 +409,8 @@ def _normalize_v2_dimension_source_refs(
         ).get(target_dim_key)
         if target_definition is None:
             continue
-        if target_source in used_sources and target_source != original_source:
+        if target_source in used_sources:
+            dimension_ids_to_remove.add(dimension.dimension_id)
             continue
 
         target_event_type_l2_id = source.event_type_l2_id
@@ -381,6 +474,124 @@ def _normalize_v2_dimension_source_refs(
             interaction.resolution_dimension_id = dimension_id_renames[
                 interaction.resolution_dimension_id
             ]
+
+
+def _normalize_mixed_factor_scenarios(
+    scenarios: list[ScenarioCandidate],
+    dimensions: list[DimensionDefinition],
+) -> None:
+    contribution_by_value = {
+        dimension.dimension_id: {
+            value.value_id: value.global_pressure_contribution
+            for value in dimension.values
+        }
+        | {
+            value.label: value.global_pressure_contribution
+            for value in dimension.values
+        }
+        for dimension in dimensions
+    }
+
+    def contributions(scenario: ScenarioCandidate) -> set[str]:
+        return {
+            contribution_by_value.get(dimension_id, {}).get(value, "")
+            for dimension_id, value in scenario.dimension_values.items()
+        }
+
+    required_contributions = {"bullish", "bearish"}
+    for scenario in scenarios:
+        if (
+            scenario.mixed_factors
+            and not required_contributions <= contributions(scenario)
+        ):
+            scenario.mixed_factors = False
+
+    ranked = sorted(
+        range(len(scenarios)),
+        key=lambda index: PRESSURE_RANK[scenarios[index].global_pressure_band],
+    )
+    interior = ranked[1:-1]
+    if any(
+        required_contributions <= contributions(scenarios[index])
+        for index in interior
+    ):
+        for index in interior:
+            if required_contributions <= contributions(scenarios[index]):
+                scenarios[index].mixed_factors = True
+        return
+
+    if not interior:
+        return
+    target_index = min(
+        interior,
+        key=lambda index: (
+            abs(
+                PRESSURE_RANK[scenarios[index].global_pressure_band]
+                - PRESSURE_RANK["balanced"],
+            ),
+            -scenarios[index].probability_score,
+            index,
+        ),
+    )
+    target = scenarios[target_index]
+    other_combinations = {
+        tuple(sorted(scenario.dimension_values.items()))
+        for index, scenario in enumerate(scenarios)
+        if index != target_index
+    }
+    contribution_options: dict[
+        str,
+        dict[str, list[str]],
+    ] = {
+        dimension.dimension_id: {
+            contribution: [
+                value.value_id
+                for value in dimension.values
+                if value.global_pressure_contribution == contribution
+            ]
+            for contribution in required_contributions
+        }
+        for dimension in dimensions
+    }
+    candidates: list[tuple[int, str, str, str, str]] = []
+    for bullish_dimension, options in contribution_options.items():
+        for bearish_dimension, bearish_options in contribution_options.items():
+            if bullish_dimension == bearish_dimension:
+                continue
+            for bullish_value in options["bullish"]:
+                for bearish_value in bearish_options["bearish"]:
+                    change_count = int(
+                        target.dimension_values.get(bullish_dimension)
+                        != bullish_value,
+                    ) + int(
+                        target.dimension_values.get(bearish_dimension)
+                        != bearish_value,
+                    )
+                    candidates.append(
+                        (
+                            change_count,
+                            bullish_dimension,
+                            bullish_value,
+                            bearish_dimension,
+                            bearish_value,
+                        ),
+                    )
+
+    for (
+        _,
+        bullish_dimension,
+        bullish_value,
+        bearish_dimension,
+        bearish_value,
+    ) in sorted(candidates):
+        normalized_values = dict(target.dimension_values)
+        normalized_values[bullish_dimension] = bullish_value
+        normalized_values[bearish_dimension] = bearish_value
+        if tuple(sorted(normalized_values.items())) in other_combinations:
+            continue
+        target.dimension_values = normalized_values
+        target.mixed_factors = True
+        return
 
 
 def _ensure_interaction_dimension_coverage(
@@ -494,6 +705,10 @@ def finalize_generation_result(
     ):
         raise ValueError("eventShocks must contain every input event exactly once")
     if source_dimensions_by_event is not None:
+        _normalize_dimension_source_key_aliases(
+            result,
+            source_dimensions_by_event=source_dimensions_by_event,
+        )
         for shock in result.event_shocks:
             _normalize_event_shock_source_keys(shock)
             _ground_event_shock_source_keys(
@@ -758,6 +973,7 @@ def finalize_generation_result(
         | {value.label: value.global_pressure_contribution for value in dimension.values}
         for dimension in dimensions
     }
+    _normalize_mixed_factor_scenarios(scenarios, dimensions)
     combinations: set[tuple[tuple[str, str], ...]] = set()
     for scenario in scenarios:
         if set(scenario.dimension_values) != expected_keys:

@@ -410,6 +410,126 @@ def test_v2_source_refs_must_exist_in_the_event_type_templates() -> None:
         )
 
 
+def test_v2_collapses_composite_lineage_to_one_valid_source() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    first_dimension = result.dimension_definitions[0]
+    extra_source = result.dimension_definitions[2].source_refs[0]
+    composite_values = [
+        value.model_copy(
+            update={
+                "source_assignments": [
+                    *value.source_assignments,
+                    extra_source.model_copy(update={"value": value.label}),
+                ],
+            },
+        )
+        for value in first_dimension.values
+    ]
+    source_dimensions = {
+        101: {"heat": True, "duration": True},
+        202: {
+            "inventory": True,
+            "recovery": True,
+            "competition": True,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result.model_copy(
+            update={
+                "dimension_definitions": [
+                    first_dimension.model_copy(
+                        update={
+                            "source_refs": [
+                                *first_dimension.source_refs,
+                                extra_source,
+                            ],
+                            "values": composite_values,
+                        },
+                    ),
+                    *result.dimension_definitions[1:],
+                ],
+            },
+        ),
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    collapsed = finalized.dimension_definitions[0]
+    assert len(collapsed.source_refs) == 1
+    assert collapsed.source_refs[0].event_id == 101
+    assert all(
+        len(value.source_assignments) == 1
+        and value.source_assignments[0].event_id == 101
+        for value in collapsed.values
+    )
+
+
+def test_v3_normalizes_display_prefixed_source_keys() -> None:
+    result = _result(strategy="multi_event_composite_dimensions")
+    first_dimension = result.dimension_definitions[0]
+    prefixed_refs = [
+        (
+            source.model_copy(update={"dim_key": "d1_tightness"})
+            if source.event_id == 101
+            else source
+        )
+        for source in first_dimension.source_refs
+    ]
+    prefixed_values = [
+        value.model_copy(
+            update={
+                "source_assignments": [
+                    (
+                        assignment.model_copy(
+                            update={"dim_key": "d1_tightness"},
+                        )
+                        if assignment.event_id == 101
+                        else assignment
+                    )
+                    for assignment in value.source_assignments
+                ],
+            },
+        )
+        for value in first_dimension.values
+    ]
+    source_dimensions = {
+        101: {"tightness": True, "duration": True},
+        202: {
+            "tightness": True,
+            "recovery": True,
+            "competition": True,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result.model_copy(
+            update={
+                "dimension_definitions": [
+                    first_dimension.model_copy(
+                        update={
+                            "source_refs": prefixed_refs,
+                            "values": prefixed_values,
+                        },
+                    ),
+                    *result.dimension_definitions[1:],
+                ],
+            },
+        ),
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    normalized = finalized.dimension_definitions[0]
+    assert normalized.source_refs[0].dim_key == "tightness"
+    assert all(
+        value.source_assignments[0].dim_key == "tightness"
+        for value in normalized.values
+    )
+
+
 def test_v2_normalizes_source_template_label_description_and_required() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     source_dimensions = {
@@ -802,7 +922,7 @@ def test_composite_value_projects_to_every_source_dimension() -> None:
         )
 
 
-def test_mixed_scenario_requires_bullish_and_bearish_contributions() -> None:
+def test_mixed_scenario_repairs_bullish_and_bearish_contributions() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     mixed = next(scenario for scenario in result.scenarios if scenario.mixed_factors)
     balanced_only = mixed.model_copy(
@@ -818,12 +938,19 @@ def test_mixed_scenario_requires_bullish_and_bearish_contributions() -> None:
         },
     )
 
-    with pytest.raises(ValueError, match="requires both bullish and bearish"):
-        finalize_generation_result(
-            broken,
-            generation_strategy="multi_event_composite_dimensions",
-            event_ids=EVENT_IDS,
-        )
+    finalized = finalize_generation_result(
+        broken,
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+    )
+
+    repaired = next(
+        scenario
+        for scenario in finalized.scenarios
+        if scenario.scenario_role == "mixed"
+    )
+    assert repaired.mixed_factors is True
+    assert {"high", "low"} <= set(repaired.dimension_values.values())
 
 
 def test_interpretation_conflict_rebinds_resolution_to_cover_all_interaction_events() -> None:
