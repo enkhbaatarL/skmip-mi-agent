@@ -11,8 +11,7 @@ import {
 } from "../../domain/deterministicChecks";
 import type {
   ApiVersion,
-  EventDetail,
-  TargetMarket
+  EventDetail
 } from "../../domain/apiTypes";
 import { buildComparisonExportBundle } from "../../domain/exportBundle";
 import type { RuntimeSnapshot } from "../../domain/runtime";
@@ -99,12 +98,6 @@ export function ComparisonWorkspace({
   const [comparisonRunId, setComparisonRunId] = useState(
     () => restoredRun?.manifest.comparisonRunId ?? generateComparisonRunId()
   );
-  const [targetMarket, setTargetMarket] = useState<TargetMarket | "">(
-    restoredRun?.manifest.targetMarket ?? ""
-  );
-  const [targetMarketReason, setTargetMarketReason] = useState(
-    restoredRun?.manifest.targetMarketReason ?? ""
-  );
   const [run, setRun] = useState<ComparisonRunState | undefined>(restoredRun);
   const [activeTab, setActiveTab] = useState<ResultTab>("overview");
   const controllers = useRef<Partial<Record<ApiVersion, AbortController>>>({});
@@ -136,7 +129,6 @@ export function ComparisonWorkspace({
     selectedIds.length >= 2 &&
     selectedIds.length <= 5 &&
     new Set(selectedIds).size === selectedIds.length &&
-    Boolean(targetMarket) &&
     !validateComparisonRunId(comparisonRunId);
 
   useEffect(() => {
@@ -158,7 +150,7 @@ export function ComparisonWorkspace({
   );
 
   async function executeComparison() {
-    if (!context || !canExecute || !targetMarket || run) return;
+    if (!context || !canExecute || run) return;
     const runId = createWorkspaceRunId();
     const startedAt = new Date().toISOString();
     const manifest: ComparisonManifest = {
@@ -173,9 +165,7 @@ export function ComparisonWorkspace({
         miEventId: event.miEventId,
         detailStatus: "success",
         event: eventSnapshot(event)
-      })),
-      targetMarket,
-      targetMarketReason
+      }))
     };
     const initialRun: ComparisonRunState = {
       runId,
@@ -357,20 +347,14 @@ export function ComparisonWorkspace({
       />
       <ComparisonSetup
         comparisonRunId={comparisonRunId}
-        targetMarket={targetMarket}
-        targetMarketReason={targetMarketReason}
         locked={inputsLocked}
         onComparisonRunIdChange={setComparisonRunId}
-        onTargetMarketChange={setTargetMarket}
-        onTargetMarketReasonChange={setTargetMarketReason}
         onRegenerate={() => setComparisonRunId(generateComparisonRunId())}
       />
       <ManifestSummary
         runtime={run?.runtime ?? context.runtime}
         selectedEvents={selectedEvents}
         comparisonRunId={comparisonRunId}
-        targetMarket={targetMarket}
-        targetMarketReason={targetMarketReason}
         locked={inputsLocked}
         canExecute={canExecute}
         onExecute={() => void executeComparison()}
@@ -414,7 +398,6 @@ export function ComparisonWorkspace({
                 <OverviewComparison
                   versions={run.versions}
                   checks={run.checks}
-                  manifest={run.manifest}
                   complete={Boolean(run.completedAt)}
                 />
               )}

@@ -13,23 +13,16 @@ describe("ComparisonSetup", () => {
     expect(validateComparisonRunId("a".repeat(256))).toContain("255");
   });
 
-  it("never auto-selects targetMarket", () => {
+  it("does not render target market controls", () => {
     render(
       <ComparisonSetup
         comparisonRunId="multi-event-test"
-        targetMarket=""
-        targetMarketReason=""
         locked={false}
         onComparisonRunIdChange={vi.fn()}
-        onTargetMarketChange={vi.fn()}
-        onTargetMarketReasonChange={vi.fn()}
         onRegenerate={vi.fn()}
       />
     );
-    expect(screen.getAllByRole("radio")).toHaveLength(3);
-    screen.getAllByRole("radio").forEach((radio) => {
-      expect(radio).not.toBeChecked();
-    });
-    expect(screen.getByText(/반드시 선택/)).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByText(/targetMarket/)).not.toBeInTheDocument();
   });
 });

@@ -57,10 +57,6 @@ export function DiagnosticsComparison({
                 {version === "v4" && (
                   <>
                     <div>
-                      <dt>targetMarket</dt>
-                      <dd>{diagnostics.targetMarket ?? "—"}</dd>
-                    </div>
-                    <div>
                       <dt>Impact catalog version</dt>
                       <dd>{diagnostics.impactCatalogVersion ?? "—"}</dd>
                     </div>

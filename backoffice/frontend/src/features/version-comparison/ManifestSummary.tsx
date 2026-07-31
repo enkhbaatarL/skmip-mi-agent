@@ -1,13 +1,11 @@
 import { CheckCircle2, Clipboard, LockKeyhole } from "lucide-react";
-import type { EventDetail, TargetMarket } from "../../domain/apiTypes";
+import type { EventDetail } from "../../domain/apiTypes";
 import type { RuntimeSnapshot } from "../../domain/runtime";
 
 interface ManifestSummaryProps {
   runtime: RuntimeSnapshot;
   selectedEvents: EventDetail[];
   comparisonRunId: string;
-  targetMarket: TargetMarket | "";
-  targetMarketReason: string;
   locked: boolean;
   canExecute: boolean;
   onExecute: () => void;
@@ -17,8 +15,6 @@ export function ManifestSummary({
   runtime,
   selectedEvents,
   comparisonRunId,
-  targetMarket,
-  targetMarketReason,
   locked,
   canExecute,
   onExecute
@@ -52,10 +48,6 @@ export function ManifestSummary({
           <dt>Timeout</dt>
           <dd>{runtime.timeoutMs.toLocaleString()} ms</dd>
         </div>
-        <div>
-          <dt>targetMarket</dt>
-          <dd>{targetMarket || "선택 필요"}</dd>
-        </div>
         <div className="manifest-wide">
           <dt>comparisonRunId</dt>
           <dd className="copy-value">
@@ -70,10 +62,6 @@ export function ManifestSummary({
               <Clipboard aria-hidden="true" size={16} />
             </button>
           </dd>
-        </div>
-        <div className="manifest-wide">
-          <dt>target market 선택 사유</dt>
-          <dd>{targetMarketReason.trim() || "기록 없음"}</dd>
         </div>
       </dl>
 
@@ -101,7 +89,7 @@ export function ManifestSummary({
       <div className="manifest-actions">
         <p>
           {!canExecute && !locked
-            ? "Event 2~5건, targetMarket, 유효한 comparisonRunId가 필요합니다."
+            ? "Event 2~5건과 유효한 comparisonRunId가 필요합니다."
             : "각 version POST는 이 실행에서 정확히 한 번만 전송됩니다."}
         </p>
         <button

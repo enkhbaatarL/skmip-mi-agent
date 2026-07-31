@@ -3,7 +3,6 @@ import type {
   ApiVersion,
   DimensionDefinition,
   GenerationStrategy,
-  TargetMarket,
   VersionedCreateScenariosData,
   VersionedCreateScenariosOut
 } from "../domain/apiTypes";
@@ -22,8 +21,6 @@ export function makeManifest(
     comparisonRunId: "multi-event-test",
     miEventIds: [101, 202],
     selectedEvents: [],
-    targetMarket: "JKM",
-    targetMarketReason: "test",
     ...overrides
   };
 }
@@ -73,7 +70,6 @@ export function makeVersionData(
     comparisonRunId?: string;
     eventIds?: number[];
     dimensionCount?: number;
-    targetMarket?: TargetMarket | null;
     generationStrategy?: GenerationStrategy;
   } = {}
 ): VersionedCreateScenariosData {
@@ -101,12 +97,6 @@ export function makeVersionData(
     generationStrategy:
       options.generationStrategy ?? VERSION_STRATEGIES[version],
     comparisonRunId: options.comparisonRunId ?? "multi-event-test",
-    targetMarket:
-      options.targetMarket === undefined
-        ? version === "v4"
-          ? "JKM"
-          : null
-        : options.targetMarket,
     impactCatalogVersion: version === "v4" ? "catalog-1" : null,
     scenarioGroup: {
       scenarioGroupId: Number(version.slice(1)),
@@ -122,7 +112,6 @@ export function makeVersionData(
       apiVersion: version,
       generationStrategy: VERSION_STRATEGIES[version],
       comparisonRunId: options.comparisonRunId ?? "multi-event-test",
-      targetMarket: version === "v4" ? "JKM" : null,
       impactCatalogVersion: version === "v4" ? "catalog-1" : null,
       impactCatalogChecksum: null,
       templateChecksum: null,
@@ -160,6 +149,7 @@ export function makeVersionData(
           globalPressureBand: "strong_bearish",
           probabilityScore: 25,
           globalPressureRationale: "fixture",
+          relatedMarkets: [],
           signposts: []
         },
         {
@@ -174,6 +164,7 @@ export function makeVersionData(
           globalPressureBand: "bearish",
           probabilityScore: 25,
           globalPressureRationale: "fixture",
+          relatedMarkets: [],
           signposts: []
         },
         {
@@ -188,6 +179,7 @@ export function makeVersionData(
           globalPressureBand: "balanced",
           probabilityScore: 25,
           globalPressureRationale: "fixture",
+          relatedMarkets: [],
           signposts: []
         },
         {
@@ -202,6 +194,10 @@ export function makeVersionData(
           globalPressureBand: "strong_bullish",
           probabilityScore: 25,
           globalPressureRationale: "fixture",
+          relatedMarkets:
+            version === "v4"
+              ? [{ market: "JKM", rationale: "fixture relevance" }]
+              : [],
           signposts: []
         }
       ]
@@ -216,7 +212,6 @@ export function makeVersionData(
       ],
       excludedCandidates: [],
       excludedDimensions: [],
-      targetMarket: version === "v4" ? "JKM" : null,
       impactCatalogVersion: version === "v4" ? "catalog-1" : null,
       coveredDimensions: dimensions.map((item) => item.dimensionId),
       uncoveredDimensions: [],

@@ -12,14 +12,12 @@ import type {
 import { totalTokens } from "../../domain/tokenUsage";
 import {
   VERSION_ORDER,
-  type ComparisonManifest,
   type VersionRunState
 } from "./types";
 
 interface OverviewComparisonProps {
   versions: Record<ApiVersion, VersionRunState>;
   checks: Record<ApiVersion, DeterministicCheckResult[]>;
-  manifest: ComparisonManifest;
   complete?: boolean;
 }
 
@@ -62,7 +60,6 @@ function lineageEvidence(
 export function OverviewComparison({
   versions,
   checks,
-  manifest,
   complete = true
 }: OverviewComparisonProps) {
   const successCount = comparisonSuccessCount(versions);
@@ -126,11 +123,7 @@ export function OverviewComparison({
       render: (version) =>
         cell(version, (data) => (
           <>
-            <strong className="metric-label">
-              {version === "v4"
-                ? `${manifest.targetMarket} pressure`
-                : "Global LNG pressure"}
-            </strong>
+            <strong className="metric-label">Global LNG pressure</strong>
             {pressureDistribution(data)}
           </>
         ))

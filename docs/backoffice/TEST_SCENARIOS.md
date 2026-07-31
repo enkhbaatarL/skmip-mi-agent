@@ -70,7 +70,7 @@ v1 순차 테스트만 수행할 때는 기존 Uvicorn local 실행도 허용한
 ### 3.2 테스트 데이터 원칙
 
 - 비교 테스트마다 고유 `comparisonRunId`를 사용한다.
-- 동일 comparison run에서 Event 순서, userId, targetMarket을 변경하지 않는다.
+- 동일 comparison run에서 Event 순서와 userId를 변경하지 않는다.
 - create POST의 중복 실행 여부를 확인할 수 있도록 browser network log를 보존한다.
 - 테스트 중 생성된 모든 `scenarioGroupId`를 기록한다.
 - 기존 group이 있는 Event를 v1에 사용하려면 테스트 시작 전에 명시적으로 soft delete한다.
@@ -97,7 +97,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - frontend가 `/backoffice/api/...`가 아니라 Agent Base URL을 직접 호출한다.
 - v1 request body는 현재 Event, userId, 최신 editable table을 사용한다.
 - comparison의 세 version은 동일 Event 순서, userId, comparisonRunId를 사용한다.
-- v4 request에만 targetMarket이 포함된다.
+- 세 version request는 동일한 Event, userId, comparisonRunId를 사용한다.
 - HTTP 200의 `result=failure` 또는 `status=error`를 성공으로 표시하지 않는다.
 - create POST는 사용자 action 한 번당 정확히 한 번 전송된다.
 
@@ -464,16 +464,15 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 1. `v2/v3/v4 비교` tab을 연다.
 2. Event ID 2~5개를 순서대로 입력한다.
 3. 각 Event detail 조회 결과를 확인한다.
-4. targetMarket과 선택 사유를 입력한다.
-5. 자동 생성된 comparisonRunId를 확인한다.
-6. Manifest Summary에서 실행 조건을 확인한다.
+4. 자동 생성된 comparisonRunId를 확인한다.
+5. Manifest Summary에서 실행 조건을 확인한다.
 7. `비교 실행`을 클릭한다.
 
 기대결과:
 
 - Event ID가 중복 없이 선택 순서대로 고정된다.
 - Event detail snapshot이 manifest에 포함된다.
-- Base URL, userId, comparisonRunId, targetMarket이 고정된다.
+- Base URL, userId, comparisonRunId가 고정된다.
 - 실행 시작 후 입력 control이 잠긴다.
 
 ### TC-M-N-002 최신순/오래된순 Event 선택
@@ -518,7 +517,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - v2와 v3 POST가 병렬로 시작된다.
 - 두 요청 body의 Event, userId, comparisonRunId가 같다.
 - v2/v3가 모두 terminal 상태가 된 뒤 v4가 시작된다.
-- v4 body에 동일 조건과 targetMarket이 포함된다.
+- v4 body에도 동일한 Event, userId, comparisonRunId만 포함된다.
 - 각 version POST는 한 번만 호출된다.
 
 확인 증적:
@@ -557,9 +556,8 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - version별 실제 Scenario title, narrative, cells가 표시된다.
 - baseline, role, pressure band, rationale, probability가 표시된다.
 - 대응 Scenario가 없으면 빈 상태와 제외 사유가 표시된다.
-- v2/v3 pressure는 `Global LNG pressure`로 표시된다.
-- v4 pressure는 선택한 target market pressure로 표시된다.
-- 서로 다른 pressure 의미를 하나의 공통 가격 예측처럼 표시하지 않는다.
+- 모든 version pressure는 `Global LNG pressure`로 표시된다.
+- v4 관련 시장은 Scenario 상세 보조정보이며 별도 pressure 태그로 표시하지 않는다.
 
 ### TC-M-N-008 Diagnostics 비교
 
@@ -582,7 +580,6 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - Scenario 조합과 pressure band 중복을 검사한다.
 - probability 합계를 검사한다.
 - dimension 수와 Event lineage coverage를 검사한다.
-- v4 targetMarket 일치를 검사한다.
 - 각 항목에 PASS/WARN/FAIL과 실제 근거가 표시된다.
 - LLM 점수나 우수 version을 임의 생성하지 않는다.
 
@@ -591,7 +588,6 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 기대결과:
 
 - manifest와 selected Event snapshot이 포함된다.
-- targetMarket과 선택 사유가 포함된다.
 - v2/v3/v4 request/response가 포함된다.
 - transport/API 상태, elapsed time, token usage가 포함된다.
 - 결정적 검사 결과가 포함된다.
@@ -634,15 +630,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - 성공한 Event detail은 유지된다.
 - 재조회는 GET에 대해서만 허용된다.
 
-### TC-M-E-004 targetMarket 누락
-
-기대결과:
-
-- v4 실행 전에 JKM/TTF/HH 선택이 필수임을 표시한다.
-- comparison 전체 실행이 차단된다.
-- frontend가 targetMarket을 임의 선택하지 않는다.
-
-### TC-M-E-005 comparisonRunId 공백/길이 초과
+### TC-M-E-004 comparisonRunId 공백/길이 초과
 
 기대결과:
 
@@ -956,7 +944,7 @@ python tests/manual/test_multi_event_scenario_versions.py prepare \
 
 교차 확인:
 
-- manifest Event/userId/comparisonRunId/targetMarket
+- manifest Event/userId/comparisonRunId
 - version별 request body
 - 실행 순서
 - Scenario/dimension 실제 값
@@ -997,7 +985,7 @@ manual report의 LLM Judge는 frontend 기능이 아니다. Judge 결과와 fron
 - [ ] comparisonRunId가 고유하고 실행 중 고정된다.
 - [ ] v2/v3는 동일 manifest로 병렬 실행된다.
 - [ ] v2/v3 terminal 이후 v4가 실행된다.
-- [ ] v4에만 targetMarket이 포함된다.
+- [ ] v2/v3/v4 request 조건이 동일하다.
 - [ ] 동일 version POST를 자동 재시도하지 않는다.
 - [ ] 부분 실패 결과가 보존된다.
 - [ ] 성공 version 2개 미만이면 `비교 판정 불가`다.

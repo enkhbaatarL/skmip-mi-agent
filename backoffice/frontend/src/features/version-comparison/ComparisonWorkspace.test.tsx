@@ -83,8 +83,7 @@ describe("ComparisonWorkspace", () => {
           const requestBody = JSON.parse(String(init?.body));
           return response(
             makeResponse(version, {
-              comparisonRunId: requestBody.comparisonRunId,
-              targetMarket: version === "v4" ? requestBody.targetMarket : null
+              comparisonRunId: requestBody.comparisonRunId
             })
           );
         }
@@ -128,7 +127,6 @@ describe("ComparisonWorkspace", () => {
     const runIdInput = screen.getByLabelText("comparisonRunId");
     await user.clear(runIdInput);
     await user.type(runIdInput, "multi-event-ui-test");
-    await user.click(screen.getByRole("radio", { name: "JKM" }));
     await user.click(screen.getByRole("button", { name: "비교 실행" }));
 
     expect(runIdInput).toBeDisabled();

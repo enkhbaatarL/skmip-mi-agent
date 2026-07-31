@@ -17,7 +17,7 @@ Backoffice는 Scenario Group Agent의 sync API를 직접 호출하는 내부 QA�
   - v1은 unversioned create부터 confirmation까지 순차 실행한다.
   - v2/v3/v4는 create sync API 결과만 비교한다.
 - 화면은 결과보다 실행 조건을 먼저 보여준다.
-  - Event, userId, Base URL, comparisonRunId, targetMarket을 항상 확인할 수 있어야 한다.
+  - Event, userId, Base URL, comparisonRunId를 항상 확인할 수 있어야 한다.
 - API 응답을 과도하게 가공하지 않는다.
   - 읽기 쉬운 비교 view와 원본 JSON을 함께 제공한다.
 - 중복 생성보다 안전한 중단을 우선한다.
@@ -425,20 +425,12 @@ POST /scenario-groups/{scenarioGroupId}/confirmation
 - Event 2~5건
 - userId
 - `comparisonRunId`
-- `targetMarket`: JKM/TTF/HH
-- target market 선택 사유
 
 `comparisonRunId`:
 
 - 기본값은 `multi-event-{timestamp}-{random}` 형식이다.
 - 사용자가 수정할 수 있으나 실행 시작 시 lock한다.
 - 공백과 255자 초과를 허용하지 않는다.
-
-target market:
-
-- 화면이 임의로 LLM 판단을 생성하지 않는다.
-- Event의 시장 영향 정보를 참고해 사용자가 직접 선택한다.
-- 선택 사유는 manifest와 export에 포함한다.
 
 ### 7.3 Manifest Summary
 
@@ -449,7 +441,6 @@ target market:
 - Event ID와 순서
 - Event detail 조회 성공 여부
 - comparisonRunId
-- targetMarket과 사유
 - 요청 timeout
 
 `비교 실행`을 누르면 manifest를 고정하고 입력 control을 잠근다.
@@ -519,7 +510,9 @@ v3 ─┘
 
 열은 v2, v3, v4 순서를 고정한다.
 
-v2/v3는 `Global LNG pressure`, v4는 `{targetMarket} pressure` label을 사용한다.
+v2/v3/v4 모두 `Global LNG pressure` label을 사용한다. v4의
+`relatedMarkets`는 기본 표 열이나 pressure 태그가 아니라 Scenario 상세의
+보조정보로만 표시한다.
 
 ### 7.7 Dimensions
 
@@ -592,7 +585,6 @@ Scenario card:
 
 v4:
 
-- targetMarket
 - impact catalog version
 - unsupported levers
 - unsupported lever details
@@ -618,7 +610,6 @@ version card 및 Overview에 PASS/WARN/FAIL을 표시한다.
   - v3 4~7개
   - v4 3~6개
 - 전체 Event coverage
-- v4 targetMarket 일치
 
 이 검사는 의미적 LLM Judge가 아니다. 화면은 점수, 우수 version, 의미적 타당성을 추측하지 않는다.
 
@@ -757,7 +748,7 @@ const v4 = await runVersion("v4", manifest);
 
 - v2/v3 실패도 barrier 완료로 본다.
 - v2/v3 promise가 terminal 처리되기 전 v4를 호출하지 않는다.
-- v4 request에만 targetMarket을 포함한다.
+- v2/v3/v4 request는 동일한 Event, userId, comparisonRunId를 사용한다.
 - version별 결과는 독립적으로 보존한다.
 
 ### 9.4 API Body 판정
@@ -902,7 +893,7 @@ Empty:
 
 - Event 미선택: 선택 방법 안내
 - v1 미실행: `Event를 선택하고 Create를 실행하세요.`
-- comparison 미실행: `Event 2~5건과 target market을 선택하세요.`
+- comparison 미실행: `Event 2~5건을 선택하세요.`
 - 결과 없음: version별 원인 표시
 
 Error:

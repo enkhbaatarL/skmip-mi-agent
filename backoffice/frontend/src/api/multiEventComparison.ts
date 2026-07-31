@@ -3,7 +3,6 @@ import type { ApiCallResult } from "../domain/apiCall";
 import type {
   ApiVersion,
   MultiEventCreateScenariosRequest,
-  V4MultiEventCreateScenariosRequest,
   VersionedCreateScenariosOut
 } from "../domain/apiTypes";
 import {
@@ -70,23 +69,18 @@ function validateManifest(manifest: ComparisonManifest): void {
   if (!comparisonRunId || comparisonRunId.length > 255) {
     throw new Error("comparisonRunId는 공백이 아닌 255자 이하여야 합니다.");
   }
-  if (!["JKM", "TTF", "HH"].includes(manifest.targetMarket)) {
-    throw new Error("targetMarket은 JKM, TTF, HH 중 하나여야 합니다.");
-  }
 }
 
 export function buildVersionRequest(
-  version: ApiVersion,
+  _version: ApiVersion,
   manifest: ComparisonManifest
-): MultiEventCreateScenariosRequest | V4MultiEventCreateScenariosRequest {
+): MultiEventCreateScenariosRequest {
   const common: MultiEventCreateScenariosRequest = {
     miEventIds: [...manifest.miEventIds],
     userId: manifest.userId,
     comparisonRunId: manifest.comparisonRunId
   };
-  return version === "v4"
-    ? { ...common, targetMarket: manifest.targetMarket }
-    : common;
+  return common;
 }
 
 export async function runVersion(

@@ -14,7 +14,7 @@ describe("deterministic comparison checks", () => {
     const data = makeVersionData(version, { dimensionCount });
     const checks = runDeterministicChecks(version, data, makeManifest());
     expect(summarizeChecks(checks)).toEqual({
-      pass: version === "v4" ? 12 : 11,
+      pass: 11,
       warn: 0,
       fail: 0
     });
@@ -44,8 +44,6 @@ describe("deterministic comparison checks", () => {
         value.sourceAssignments = [];
       });
     });
-    data.targetMarket = "TTF";
-
     const checks = runDeterministicChecks("v4", data, makeManifest());
     expect(
       checks.find((item) => item.id === "probability-sum")
@@ -63,10 +61,6 @@ describe("deterministic comparison checks", () => {
     expect(
       checks.find((item) => item.id === "event-lineage-coverage")?.evidence
     ).toContain("누락 [202]");
-    expect(checks.find((item) => item.id === "target-market")).toMatchObject({
-      status: "fail",
-      evidence: "manifest JKM, 응답 TTF"
-    });
     expect(JSON.stringify(checks)).not.toMatch(/semantic|score|best/i);
   });
 

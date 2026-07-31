@@ -318,8 +318,6 @@ v2/v3/v4 비교는 create sync API만 실행한다.
 - 중복 없는 `miEventIds` 2~5개
 - `userId`
 - 고유 `comparisonRunId`
-- `targetMarket`: `JKM`, `TTF`, `HH` 중 하나
-- 선택 사유 메모
 
 `comparisonRunId`는 기본적으로 frontend가 고유값을 생성하며 실행 시작 후 변경할 수 없다.
 
@@ -330,7 +328,6 @@ Event 선택 시 상세를 모두 조회하고 다음 조건을 manifest 형태�
 - Base URL
 - userId
 - comparisonRunId
-- targetMarket과 선택 사유
 - 생성 시각
 
 ### 9.3 API 요청
@@ -367,8 +364,7 @@ POST /v4/scenario-groups/sync
 {
   "miEventIds": [101, 202],
   "userId": 10001,
-  "comparisonRunId": "multi-event-unique-id",
-  "targetMarket": "JKM"
+  "comparisonRunId": "multi-event-unique-id"
 }
 ```
 
@@ -395,9 +391,11 @@ v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생�
 | --- | --- | --- | --- |
 | v2 | Event 2~5건 | Event별 원본 Template dimension을 namespace하여 사용 | 5~8개 |
 | v3 | Event 2~5건 | Event 충격과 상호작용을 합성 dimension으로 구성 | 4~7개 |
-| v4 | Event 2~5건 + target market | Event 사실과 모델 영향 레버 기반 dimension 구성 | 3~6개 |
+| v4 | Event 2~5건 | Event 사실과 모델 영향 레버 기반 dimension 구성 | 3~6개 |
 
-v2/v3의 `globalPressureBand`는 global LNG pressure이고, v4의 pressure는 선택한 target market에 대한 pressure다. 화면에서 이 둘을 같은 의미로 표시하지 않는다.
+모든 version의 `globalPressureBand`는 global LNG pressure다. v4의
+`relatedMarkets`는 Scenario별 관련 시장과 근거를 담는 보조정보이며 시장별
+pressure나 Scenario role로 사용하지 않는다.
 
 ### 9.6 성공 판정
 
@@ -419,7 +417,6 @@ v2/v3의 `globalPressureBand`는 global LNG pressure이고, v4의 pressure는 �
 
 - 선택한 Event 2~5건을 카드 또는 table로 표시
 - Event 제목, 요약, Event Type, 시장 영향 표시
-- targetMarket과 선택 사유 표시
 - comparisonRunId 표시 및 복사
 
 #### 실행 상태 영역
@@ -504,7 +501,6 @@ frontend는 실제 Event와 API 응답만 사용해 다음 결정적 검사를 �
 - probability 합계
 - 버전별 dimension 수 범위
 - 전체 입력 Event lineage coverage
-- v4 targetMarket 일치
 
 검사 결과는 PASS/WARN/FAIL과 근거 필드로 표시한다.
 
@@ -530,7 +526,6 @@ frontend는 실제 Event와 API 응답만 사용해 다음 결정적 검사를 �
 
 - manifest
 - selected Events
-- targetMarket과 선택 사유
 - v2/v3/v4 request/response
 - version별 transport/API 상태
 - elapsed time과 token usage

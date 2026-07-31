@@ -18,12 +18,8 @@ function LockHarness() {
     <>
       <ComparisonSetup
         comparisonRunId={runId}
-        targetMarket="JKM"
-        targetMarketReason="fixture"
         locked={locked}
         onComparisonRunIdChange={setRunId}
-        onTargetMarketChange={() => undefined}
-        onTargetMarketReasonChange={() => undefined}
         onRegenerate={() => setRunId("regenerated")}
       />
       <ManifestSummary
@@ -34,8 +30,6 @@ function LockHarness() {
         }}
         selectedEvents={events}
         comparisonRunId={runId}
-        targetMarket="JKM"
-        targetMarketReason="fixture"
         locked={locked}
         canExecute
         onExecute={() => setLocked(true)}

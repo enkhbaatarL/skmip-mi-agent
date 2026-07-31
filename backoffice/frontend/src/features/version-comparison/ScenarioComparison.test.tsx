@@ -12,6 +12,7 @@ describe("ScenarioComparison alignment", () => {
     const versions = createVersionStates();
     const v2 = makeResponse("v2");
     const v3 = makeResponse("v3");
+    const v4 = makeResponse("v4");
     v3.data!.table.rows.reverse();
     v3.data!.table.rows = v3.data!.table.rows.filter(
       (row) => row.globalPressureBand !== "bearish"
@@ -25,6 +26,7 @@ describe("ScenarioComparison alignment", () => {
     ];
     versions.v2 = { ...versions.v2, status: "success", response: v2 };
     versions.v3 = { ...versions.v3, status: "success", response: v3 };
+    versions.v4 = { ...versions.v4, status: "success", response: v4 };
 
     render(
       <ScenarioComparison versions={versions} manifest={makeManifest()} />
@@ -36,5 +38,7 @@ describe("ScenarioComparison alignment", () => {
     expect(
       scenarioAlignmentKey(v2.data!.table.rows[0])
     ).toBe("pressure:strong_bearish");
+    expect(screen.getByText("Related markets")).toBeInTheDocument();
+    expect(screen.getByText(/fixture relevance/)).toBeInTheDocument();
   });
 });

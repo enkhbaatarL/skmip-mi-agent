@@ -4,8 +4,6 @@ import type {
   EventDetail,
   GenerationStrategy,
   MultiEventCreateScenariosRequest,
-  TargetMarket,
-  V4MultiEventCreateScenariosRequest,
   VersionedCreateScenariosOut
 } from "../../domain/apiTypes";
 import type {
@@ -30,13 +28,9 @@ export interface ComparisonManifest {
   comparisonRunId: string;
   miEventIds: number[];
   selectedEvents: ManifestEventSnapshot[];
-  targetMarket: TargetMarket;
-  targetMarketReason: string;
 }
 
-export type VersionRequest =
-  | MultiEventCreateScenariosRequest
-  | V4MultiEventCreateScenariosRequest;
+export type VersionRequest = MultiEventCreateScenariosRequest;
 
 export interface VersionRunState {
   version: ApiVersion;

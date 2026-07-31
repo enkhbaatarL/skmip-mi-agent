@@ -113,6 +113,11 @@ export interface ScenarioMetrics {
   [key: string]: unknown;
 }
 
+export interface RelatedMarket {
+  market: "JKM" | "TTF" | "HH";
+  rationale: string;
+}
+
 export interface ScenarioTableRow {
   scenarioId: number | null;
   displayOrder: number;
@@ -125,6 +130,7 @@ export interface ScenarioTableRow {
   scenarioRole?: string | null;
   probabilityScore?: number | null;
   globalPressureRationale?: string | null;
+  relatedMarkets?: RelatedMarket[];
   signposts?: SignpostPayload[];
   delYn?: string;
   [key: string]: unknown;
@@ -150,7 +156,6 @@ export interface ScenarioGroupPayload {
   apiVersion?: string;
   generationStrategy?: string;
   comparisonRunId?: string | null;
-  targetMarket?: string | null;
   impactCatalogVersion?: string | null;
   impactCatalogChecksum?: string | null;
   templateChecksum?: string | null;
@@ -235,8 +240,6 @@ export type GenerationStrategy =
   | "multi_event_source_dimensions"
   | "multi_event_composite_dimensions"
   | "multi_event_model_lever_dimensions";
-
-export type TargetMarket = "JKM" | "TTF" | "HH";
 
 export type GlobalPressureBand =
   | "strong_bullish"
@@ -327,7 +330,6 @@ export interface GenerationDiagnostics {
   targetPressureBands: string[];
   excludedCandidates: ExcludedCandidate[];
   excludedDimensions: Array<Record<string, unknown>>;
-  targetMarket: TargetMarket | null;
   impactCatalogVersion: string | null;
   coveredDimensions: string[];
   uncoveredDimensions: string[];
@@ -352,7 +354,6 @@ export interface VersionedCreateScenariosData {
   apiVersion: ApiVersion;
   generationStrategy: GenerationStrategy;
   comparisonRunId: string | null;
-  targetMarket: TargetMarket | null;
   impactCatalogVersion: string | null;
   scenarioGroup: ScenarioGroupPayload;
   events: EventPayload[];
@@ -375,7 +376,5 @@ export interface MultiEventCreateScenariosRequest {
   comparisonRunId: string;
 }
 
-export interface V4MultiEventCreateScenariosRequest
-  extends MultiEventCreateScenariosRequest {
-  targetMarket: TargetMarket;
-}
+export type V4MultiEventCreateScenariosRequest =
+  MultiEventCreateScenariosRequest;

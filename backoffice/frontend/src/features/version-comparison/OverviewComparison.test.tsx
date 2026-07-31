@@ -31,7 +31,6 @@ describe("OverviewComparison", () => {
       <OverviewComparison
         versions={versions}
         checks={checks}
-        manifest={manifest}
       />
     );
 

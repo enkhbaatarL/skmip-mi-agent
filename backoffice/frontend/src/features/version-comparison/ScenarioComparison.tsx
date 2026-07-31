@@ -171,10 +171,7 @@ export function ScenarioComparison({
               key={version}
             >
               <h4>
-                {version} ·{" "}
-                {version === "v4"
-                  ? `${manifest.targetMarket} pressure`
-                  : "Global LNG pressure"}
+                {version} · Global LNG pressure
               </h4>
               {(alignmentKeys.length ? alignmentKeys : ["empty"]).map(
                 (alignmentKey, index) => {
@@ -239,6 +236,18 @@ export function ScenarioComparison({
                         <strong>Pressure rationale</strong>
                         <p>{row.globalPressureRationale || "근거 없음"}</p>
                       </div>
+                      {(row.relatedMarkets?.length ?? 0) > 0 && (
+                        <div>
+                          <strong>Related markets</strong>
+                          <ul className="compact-list">
+                            {row.relatedMarkets?.map((item) => (
+                              <li key={item.market}>
+                                <strong>{item.market}</strong>: {item.rationale}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <div>
                         <strong>Dimension cells</strong>
                         <dl className="scenario-cells">

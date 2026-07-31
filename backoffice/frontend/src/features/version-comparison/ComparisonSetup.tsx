@@ -1,5 +1,4 @@
 import { RefreshCw } from "lucide-react";
-import type { TargetMarket } from "../../domain/apiTypes";
 
 export function generateComparisonRunId(): string {
   const random =
@@ -20,23 +19,15 @@ export function validateComparisonRunId(value: string): string {
 
 interface ComparisonSetupProps {
   comparisonRunId: string;
-  targetMarket: TargetMarket | "";
-  targetMarketReason: string;
   locked: boolean;
   onComparisonRunIdChange: (value: string) => void;
-  onTargetMarketChange: (value: TargetMarket) => void;
-  onTargetMarketReasonChange: (value: string) => void;
   onRegenerate: () => void;
 }
 
 export function ComparisonSetup({
   comparisonRunId,
-  targetMarket,
-  targetMarketReason,
   locked,
   onComparisonRunIdChange,
-  onTargetMarketChange,
-  onTargetMarketReasonChange,
   onRegenerate
 }: ComparisonSetupProps) {
   const runIdError = validateComparisonRunId(comparisonRunId);
@@ -47,7 +38,7 @@ export function ComparisonSetup({
         <div>
           <p className="eyebrow">1. 비교 조건</p>
           <h2 id="comparison-setup-title">비교 실행 조건</h2>
-          <p>target market은 자동 선택되지 않으며 사용자가 직접 고정합니다.</p>
+          <p>모든 version은 동일한 Event와 글로벌 LNG pressure 기준으로 비교합니다.</p>
         </div>
       </div>
 
@@ -81,42 +72,6 @@ export function ComparisonSetup({
           )}
         </div>
 
-        <fieldset className="market-fieldset" disabled={locked}>
-          <legend>
-            targetMarket <span aria-hidden="true">*</span>
-          </legend>
-          <div className="market-options">
-            {(["JKM", "TTF", "HH"] as const).map((market) => (
-              <label key={market}>
-                <input
-                  type="radio"
-                  name="target-market"
-                  value={market}
-                  checked={targetMarket === market}
-                  onChange={() => onTargetMarketChange(market)}
-                />
-                {market}
-              </label>
-            ))}
-          </div>
-          {!targetMarket && (
-            <span className="field-help">
-              비교 실행 전 JKM, TTF, HH 중 하나를 반드시 선택하세요.
-            </span>
-          )}
-        </fieldset>
-
-        <label className="field comparison-reason-field">
-          target market 선택 사유
-          <textarea
-            value={targetMarketReason}
-            disabled={locked}
-            placeholder="Event 영향 정보 등을 근거로 선택 사유를 기록하세요."
-            onChange={(event) =>
-              onTargetMarketReasonChange(event.currentTarget.value)
-            }
-          />
-        </label>
       </div>
     </section>
   );

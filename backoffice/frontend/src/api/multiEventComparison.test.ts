@@ -62,7 +62,7 @@ describe("multi-event comparison orchestration", () => {
       String((request.mock.calls[2][1] as RequestInit).body)
     );
     expect(v2Body).toEqual(v3Body);
-    expect(v4Body).toEqual({ ...v2Body, targetMarket: "JKM" });
+    expect(v4Body).toEqual(v2Body);
 
     pending.v4.resolve(makeApiResult(makeResponse("v4")));
     const results = await execution;

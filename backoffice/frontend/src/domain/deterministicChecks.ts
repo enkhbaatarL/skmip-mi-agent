@@ -1,6 +1,5 @@
 import type {
   ApiVersion,
-  TargetMarket,
   VersionedCreateScenariosData
 } from "./apiTypes";
 
@@ -15,7 +14,6 @@ export interface DeterministicCheckResult {
 
 export interface DeterministicCheckManifest {
   miEventIds: readonly number[];
-  targetMarket: TargetMarket;
 }
 
 export interface ScenarioRoleCounts {
@@ -93,16 +91,6 @@ function unavailableChecks(
   ].map(([id, label]) =>
     check(id, label, "fail", "비교 가능한 응답 데이터가 없습니다.")
   );
-  if (version === "v4") {
-    base.push(
-      check(
-        "target-market",
-        "v4 targetMarket 일치",
-        "fail",
-        "비교 가능한 응답 데이터가 없습니다."
-      )
-    );
-  }
   return base;
 }
 
@@ -306,17 +294,6 @@ export function runDeterministicChecks(
       `manifest [${manifest.miEventIds.join(", ")}], lineage [${[...lineageIds].join(", ")}], 누락 [${missingIds.join(", ")}], 추가 [${extraIds.join(", ")}]`
     )
   );
-
-  if (version === "v4") {
-    results.push(
-      check(
-        "target-market",
-        "v4 targetMarket 일치",
-        data.targetMarket === manifest.targetMarket ? "pass" : "fail",
-        `manifest ${manifest.targetMarket}, 응답 ${data.targetMarket ?? "null"}`
-      )
-    );
-  }
 
   return results;
 }

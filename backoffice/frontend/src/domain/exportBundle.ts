@@ -68,10 +68,6 @@ export function buildComparisonExportBundle(
     },
     manifest,
     selectedEventSnapshots: manifest.selectedEvents,
-    targetMarket: {
-      value: manifest.targetMarket,
-      selectionReason: manifest.targetMarketReason
-    },
     versions: versionEntries,
     calls: comparisonRunState.calls,
     startedAt: comparisonRunState.startedAt,
