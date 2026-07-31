@@ -145,6 +145,90 @@ def test_prepare_validation_accepts_only_two_to_five_unique_events() -> None:
         runner._validate_prepare_args(duplicate)
 
 
+def test_soft_delete_existing_groups_deduplicates_groups_across_events() -> None:
+    calls: list[tuple[str, dict[str, Any], dict[str, str] | None]] = []
+
+    class FakeResponse:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return self.payload
+
+    class FakeClient:
+        async def get(self, _: str, *, params: dict[str, Any]) -> FakeResponse:
+            event_id = int(params["miEventId"])
+            rows = {
+                101: [{"scenarioGroupId": 10}, {"scenarioGroupId": 20}],
+                202: [{"scenarioGroupId": 20}],
+            }[event_id]
+            return FakeResponse({"rows": rows})
+
+        async def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            json: dict[str, Any],
+            headers: dict[str, str] | None,
+        ) -> FakeResponse:
+            assert method == "DELETE"
+            calls.append((url, json, headers))
+            return FakeResponse({"scenarioGroupDeleted": 1, "scenarioDeleted": 3, "signpostDeleted": 0})
+
+    results = asyncio.run(
+        runner._soft_delete_existing_groups(
+            FakeClient(),
+            base_url="http://agent.test",
+            event_ids=[101, 202],
+            user_id=10603,
+            admin_token="admin-token",  # noqa: S106
+        ),
+    )
+
+    assert [item["scenarioGroupId"] for item in results] == [10, 20]
+    assert results[1]["matchedEventIds"] == [101, 202]
+    assert calls == [
+        (
+            "http://agent.test/scenario-groups/10",
+            {"userId": 10603},
+            {"Authorization": "Bearer admin-token"},
+        ),
+        (
+            "http://agent.test/scenario-groups/20",
+            {"userId": 10603},
+            {"Authorization": "Bearer admin-token"},
+        ),
+    ]
+
+
+def test_soft_delete_existing_groups_requires_admin_token_when_groups_exist() -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"rows": [{"scenarioGroupId": 10}]}
+
+    class FakeClient:
+        async def get(self, _: str, *, params: dict[str, Any]) -> FakeResponse:
+            return FakeResponse()
+
+    with pytest.raises(ValueError, match="no admin token"):
+        asyncio.run(
+            runner._soft_delete_existing_groups(
+                FakeClient(),
+                base_url="http://agent.test",
+                event_ids=[101, 202],
+                user_id=10603,
+                admin_token=None,
+            ),
+        )
+
+
 def test_deterministic_checks_cover_structure_roles_lineage_and_pressure_bands() -> None:
     results = run_deterministic_checks("v2", _response("v2"), [101, 202])
 

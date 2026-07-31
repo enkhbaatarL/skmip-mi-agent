@@ -51,6 +51,15 @@ def parse_args() -> argparse.Namespace:
     prepare.add_argument("--comparison-run-id", help="Defaults to a unique generated ID.")
     prepare.add_argument("--batch-id", help="Defaults to timestamp plus a random suffix.")
     prepare.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
+    prepare.add_argument(
+        "--delete-existing",
+        action="store_true",
+        help="Soft delete every active Scenario Group related to the selected Events before version execution.",
+    )
+    prepare.add_argument(
+        "--admin-token",
+        help="Soft delete API Bearer token; defaults to SCENARIO_GROUP_ADMIN_TOKEN.",
+    )
 
     run_version = subparsers.add_parser("run-version", help="Call exactly one versioned sync POST without retry.")
     run_version.add_argument("--manifest", type=Path, required=True)
@@ -106,6 +115,17 @@ async def prepare(args: argparse.Namespace) -> Path:
         event_details = await asyncio.gather(
             *(_fetch_event_detail(client, base_url, event_id) for event_id in event_ids),
         )
+        cleanup_results = (
+            await _soft_delete_existing_groups(
+                client,
+                base_url=base_url,
+                event_ids=event_ids,
+                user_id=target.user_id,
+                admin_token=args.admin_token or os.environ.get("SCENARIO_GROUP_ADMIN_TOKEN"),
+            )
+            if args.delete_existing
+            else []
+        )
 
     available = {_event_id(detail) for detail in event_details}
     if available != set(event_ids):
@@ -117,8 +137,17 @@ async def prepare(args: argparse.Namespace) -> Path:
     artifact_dir = (args.output_root / batch_id).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=False)
     selected_events_path = artifact_dir / "selected_events.json"
+    cleanup_path = artifact_dir / "existing_groups_soft_delete.json"
     manifest_path = artifact_dir / "manifest.json"
     _write_json(selected_events_path, event_details)
+    _write_json(
+        cleanup_path,
+        {
+            "requested": args.delete_existing,
+            "deletedGroupCount": len(cleanup_results),
+            "groups": cleanup_results,
+        },
+    )
     manifest = {
         "schemaVersion": 1,
         "batchId": batch_id,
@@ -128,6 +157,11 @@ async def prepare(args: argparse.Namespace) -> Path:
         "comparisonRunId": comparison_run_id,
         "eventIds": event_ids,
         "events": event_details,
+        "preRunCleanup": {
+            "requested": args.delete_existing,
+            "deletedGroupCount": len(cleanup_results),
+            "groups": cleanup_results,
+        },
         "selection": {
             "mode": "explicit" if args.event_ids else "query",
             "description": selection_description,
@@ -137,6 +171,7 @@ async def prepare(args: argparse.Namespace) -> Path:
         "artifactDir": str(artifact_dir),
         "artifacts": {
             "selectedEvents": str(selected_events_path),
+            "preRunCleanup": str(cleanup_path),
             "v2": str(artifact_dir / "v2_create_response.json"),
             "v3": str(artifact_dir / "v3_create_response.json"),
             "v4": str(artifact_dir / "v4_create_response.json"),
@@ -150,7 +185,7 @@ async def prepare(args: argparse.Namespace) -> Path:
     return manifest_path
 
 
-async def run_version(args: argparse.Namespace) -> int:  # noqa: C901
+async def run_version(args: argparse.Namespace) -> int:
     manifest = _load_manifest(args.manifest)
     version: ApiVersion = args.version
     if version == "v4":
@@ -395,6 +430,82 @@ async def _fetch_event_detail(client: httpx.AsyncClient, base_url: str, event_id
         msg = f"GET /events/{event_id} returned a non-object payload"
         raise TypeError(msg)
     return payload
+
+
+async def _soft_delete_existing_groups(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    event_ids: list[int],
+    user_id: int,
+    admin_token: str | None,
+) -> list[dict[str, Any]]:
+    list_responses = await asyncio.gather(
+        *(
+            client.get(
+                f"{base_url}/scenario-groups",
+                params={
+                    "includeDeleted": False,
+                    "miEventId": event_id,
+                    "sort": "latest",
+                },
+            )
+            for event_id in event_ids
+        ),
+    )
+    matched_event_ids_by_group: dict[int, set[int]] = {}
+    for event_id, response in zip(event_ids, list_responses, strict=True):
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("rows") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            msg = f"GET /scenario-groups response for Event {event_id} does not contain rows[]"
+            raise TypeError(msg)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            group_id = _field(row, "scenarioGroupId", "scenario_group_id")
+            if group_id is not None:
+                matched_event_ids_by_group.setdefault(int(group_id), set()).add(event_id)
+
+    if matched_event_ids_by_group and not admin_token:
+        msg = (
+            "Active Scenario Groups exist for the selected Events, but no admin token was provided. "
+            "Use --admin-token or SCENARIO_GROUP_ADMIN_TOKEN."
+        )
+        raise ValueError(msg)
+
+    headers = {"Authorization": f"Bearer {admin_token}"} if admin_token else None
+    results: list[dict[str, Any]] = []
+    for group_id, matched_event_ids in sorted(matched_event_ids_by_group.items()):
+        response = await client.request(
+            "DELETE",
+            f"{base_url}/scenario-groups/{group_id}",
+            json={"userId": user_id},
+            headers=headers,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            msg = f"DELETE /scenario-groups/{group_id} returned a non-object payload"
+            raise TypeError(msg)
+        deleted_count = _field(payload, "scenarioGroupDeleted", "scenario_group_deleted")
+        if int(deleted_count or 0) != 1:
+            msg = f"Scenario Group {group_id} was not soft deleted: {payload}"
+            raise ValueError(msg)
+        results.append(
+            {
+                "scenarioGroupId": group_id,
+                "matchedEventIds": sorted(matched_event_ids),
+                "response": payload,
+            },
+        )
+        LOGGER.info(
+            "Soft deleted existing Scenario Group %s for Events %s",
+            group_id,
+            sorted(matched_event_ids),
+        )
+    return results
 
 
 def _validate_prepare_args(args: argparse.Namespace) -> None:
