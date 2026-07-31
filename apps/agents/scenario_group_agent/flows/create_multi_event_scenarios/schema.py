@@ -133,6 +133,60 @@ def _normalize_event_shock_source_keys(shock: EventShock) -> None:
     shock.generated_event_values = normalized_values
 
 
+def _ground_event_shock_source_keys(
+    shock: EventShock,
+    *,
+    dimensions: list[DimensionDefinition],
+    source_dimensions_by_event: dict[
+        int,
+        dict[str, bool | dict[str, object]],
+    ],
+) -> None:
+    source_definitions = source_dimensions_by_event.get(
+        shock.event_id,
+        {},
+    )
+    valid_keys = [
+        source_key
+        for source_key in shock.source_dimension_keys
+        if source_key in source_definitions
+    ]
+    dimension_grounded_keys = [
+        source.dim_key
+        for dimension in dimensions
+        for source in dimension.source_refs
+        if source.event_id == shock.event_id
+        and source.dim_key in source_definitions
+    ]
+    grounded_keys = list(
+        dict.fromkeys([*valid_keys, *dimension_grounded_keys]),
+    )
+    if not grounded_keys:
+        required_keys = [
+            dim_key
+            for dim_key, definition in source_definitions.items()
+            if (
+                bool(definition.get("required", False))
+                if isinstance(definition, dict)
+                else bool(definition)
+            )
+        ]
+        fallback_keys = required_keys or list(source_definitions)
+        grounded_keys = fallback_keys[:1]
+
+    original_values = shock.generated_event_values
+    shock.source_dimension_keys = grounded_keys
+    shock.generated_event_values = {
+        dim_key: value
+        for dim_key in grounded_keys
+        if (
+            value := str(
+                original_values.get(dim_key) or "",
+            ).strip()
+        )
+    }
+
+
 def _normalize_event_shock_values(shock: EventShock) -> None:
     fallback_by_key_fragment = {
         "duration": shock.duration,
@@ -189,6 +243,7 @@ def _normalize_v2_dimension_source_refs(
     }
     used_sources: set[tuple[int, str]] = set()
     dimension_id_renames: dict[str, str] = {}
+    dimension_ids_to_remove: set[str] = set()
 
     for dimension in dimensions:
         if len(dimension.source_refs) != 1:
@@ -202,17 +257,28 @@ def _normalize_v2_dimension_source_refs(
             source.event_id,
             {},
         ):
-            exact_event_ids = [
-                event_id
+            exact_sources = [
+                (event_id, source.dim_key)
                 for event_id in event_ids
                 if source.dim_key
                 in source_dimensions_by_event.get(event_id, {})
-                and (event_id, source.dim_key)
+            ]
+            exact_event_ids = [
+                event_id
+                for event_id, dim_key in exact_sources
+                if (event_id, dim_key)
                 not in reserved_valid_sources
-                and (event_id, source.dim_key) not in used_sources
+                and (event_id, dim_key) not in used_sources
             ]
             if exact_event_ids:
                 target_event_id = exact_event_ids[0]
+            elif exact_sources and all(
+                source_key in reserved_valid_sources
+                or source_key in used_sources
+                for source_key in exact_sources
+            ):
+                dimension_ids_to_remove.add(dimension.dimension_id)
+                continue
             else:
                 available_keys = [
                     dim_key
@@ -284,9 +350,18 @@ def _normalize_v2_dimension_source_refs(
             )
         used_sources.add(target_source)
 
+    if dimension_ids_to_remove:
+        result.dimension_definitions = [
+            dimension
+            for dimension in dimensions
+            if dimension.dimension_id not in dimension_ids_to_remove
+        ]
+
     for scenario in result.scenarios:
         normalized_values: dict[str, str] = {}
         for dimension_id, value in scenario.dimension_values.items():
+            if dimension_id in dimension_ids_to_remove:
+                continue
             normalized_id = dimension_id_renames.get(
                 dimension_id,
                 dimension_id,
@@ -300,6 +375,8 @@ def _normalize_v2_dimension_source_refs(
         scenario.dimension_values = normalized_values
 
     for interaction in result.interactions:
+        if interaction.resolution_dimension_id in dimension_ids_to_remove:
+            interaction.resolution_dimension_id = None
         if interaction.resolution_dimension_id in dimension_id_renames:
             interaction.resolution_dimension_id = dimension_id_renames[
                 interaction.resolution_dimension_id
@@ -419,6 +496,11 @@ def finalize_generation_result(
     if source_dimensions_by_event is not None:
         for shock in result.event_shocks:
             _normalize_event_shock_source_keys(shock)
+            _ground_event_shock_source_keys(
+                shock,
+                dimensions=dimensions,
+                source_dimensions_by_event=source_dimensions_by_event,
+            )
             if not shock.source_dimension_keys:
                 raise ValueError(
                     f"EventShock must select a source dimension: {shock.event_id}",
@@ -445,6 +527,13 @@ def finalize_generation_result(
                 event_ids=event_ids,
                 source_dimensions_by_event=source_dimensions_by_event,
             )
+            dimensions = result.dimension_definitions
+            if len(dimensions) not in expected_dimension_range:
+                raise ValueError(
+                    f"{generation_strategy} dimension count is out of "
+                    f"range after sourceRef normalization: "
+                    f"{len(dimensions)}",
+                )
 
     dimension_ids = [dimension.dimension_id for dimension in dimensions]
     if len(set(dimension_ids)) != len(dimension_ids):
