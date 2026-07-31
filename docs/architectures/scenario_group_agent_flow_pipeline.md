@@ -121,10 +121,15 @@ Template revision을 함께 준비한다. Prompt의 `Event Context`와
 LLM 표현의 흔들림은 저장 전 결정론적으로 정규화한다. v2 dimension의
 `label`, `description`, `required`는 선택한 Template 정의를 정본으로 사용하고,
 `EventShock.generatedEventValues`는 `sourceDimensionKeys`와 같은 key 집합으로
-맞춘다. v2 EventShock이 dimension ID용 `e{eventId}__` namespace를 source key에도
-붙여 반환하면 Template 조회 전에 원본 `dimKey`로 되돌린다. v2 sourceRef가
+맞춘다. EventShock의 source key가 Template에 없으면 해당 Event를 참조하는
+생성 dimension의 유효한 sourceRef로 다시 grounding하고, sourceRef도 없으면
+필수 Template key 하나를 사용한다. v2 EventShock이 dimension ID용
+`e{eventId}__` namespace를 source key에도 붙여 반환하면 Template 조회 전에
+원본 `dimKey`로 되돌린다. v2 sourceRef가
 다른 입력 Event의 Template key와 정확히 일치하면 해당 Event lineage와
-dimension/scenario key를 함께 재결합한다. 정확한 일치가 없으면 같은 Event의
+dimension/scenario key를 함께 재결합한다. 그 source가 이미 다른 dimension에서
+선택돼 있고 제거 후에도 v2의 5~8개 범위를 만족하면 중복 dimension과 모든
+Scenario cell을 함께 제거한다. 정확한 일치가 없으면 같은 Event의
 미사용 Template key 중 key token 근거가 있는 경우에만 재매핑한다. EventShock
 lineage는 동점 후보 우선순위에만 사용하고, token 근거가 없거나 중복이 생기면
 실패시킨다. v3 interaction은 관계

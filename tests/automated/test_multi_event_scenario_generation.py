@@ -537,6 +537,45 @@ def test_v2_normalizes_namespaced_event_shock_source_keys() -> None:
     }
 
 
+def test_v3_grounds_unknown_event_shock_keys_to_dimension_sources() -> None:
+    result = _result(strategy="multi_event_composite_dimensions")
+    first_shock = result.event_shocks[0]
+    first_shock.source_dimension_keys = [
+        "sanction_enforcement_scope",
+        "timing_persistence",
+    ]
+    first_shock.generated_event_values = {
+        "sanction_enforcement_scope": "광범위한 제재",
+        "timing_persistence": "장기화",
+    }
+    source_dimensions = {
+        101: {
+            "tightness": False,
+            "duration": True,
+        },
+        202: {
+            "tightness": False,
+            "recovery": False,
+            "competition": False,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    assert finalized.event_shocks[0].source_dimension_keys == [
+        "tightness",
+        "duration",
+    ]
+    assert set(
+        finalized.event_shocks[0].generated_event_values,
+    ) == {"tightness", "duration"}
+
+
 def test_v2_reassigns_cross_event_template_source_ref() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     dimension = result.dimension_definitions[0]
@@ -589,6 +628,53 @@ def test_v2_reassigns_cross_event_template_source_ref() -> None:
     assert all(
         "e202__cross_event_key" in scenario.dimension_values
         and "e101__cross_event_key" not in scenario.dimension_values
+        for scenario in finalized.scenarios
+    )
+
+
+def test_v2_drops_cross_event_source_ref_already_selected() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    duplicate = _dimension(
+        dimension_id="e101__inventory",
+        event_id=101,
+        dim_key="inventory",
+        display_order=6,
+    )
+    duplicate_dimension = type(
+        result.dimension_definitions[0],
+    ).model_validate(duplicate)
+    result.dimension_definitions.append(duplicate_dimension)
+    for scenario in result.scenarios:
+        scenario.dimension_values["e101__inventory"] = (
+            "Event 사실 기반 균형"
+        )
+    source_dimensions = {
+        101: {
+            "heat": False,
+            "duration": False,
+        },
+        202: {
+            "heat": False,
+            "inventory": False,
+            "recovery": False,
+            "competition": False,
+        },
+    }
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+        source_dimensions_by_event=source_dimensions,
+    )
+
+    assert len(finalized.dimension_definitions) == 5
+    assert all(
+        dimension.dimension_id != "e101__inventory"
+        for dimension in finalized.dimension_definitions
+    )
+    assert all(
+        "e101__inventory" not in scenario.dimension_values
         for scenario in finalized.scenarios
     )
 
