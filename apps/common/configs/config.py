@@ -197,6 +197,7 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "default"
+    llm_structured_output_strict: bool = Field(default=False)
 
     # Model parameter proposal
     model_parameter_lut_enabled: bool = Field(default=False)

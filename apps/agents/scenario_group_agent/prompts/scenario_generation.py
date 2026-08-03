@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, conlist, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, WithJsonSchema, conlist, model_validator
 
 from apps.agents.scenario_group_agent.prompts.event_context import (
     format_compact_event_context,
@@ -65,10 +65,48 @@ class Stage4StructuredOutput(BaseModel):
     )
 
 
+def _likelihood_prior_from_wire(value: Any) -> Any:  # noqa: ANN401
+    if not isinstance(value, list):
+        return value
+
+    result: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return value
+        scenario_id = str(item.get("scenarioId", "")).strip()
+        if not scenario_id or scenario_id in result:
+            raise ValueError("likelihoodPrior entries require unique non-blank scenarioId values")
+        result[scenario_id] = item.get("likelihood")
+    return result
+
+
+LikelihoodPriorMap = Annotated[
+    dict[str, LikelihoodTier],
+    BeforeValidator(_likelihood_prior_from_wire),
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "scenarioId": {"type": "string"},
+                    "likelihood": {
+                        "type": "string",
+                        "enum": ["very_low", "low", "medium", "high", "very_high"],
+                    },
+                },
+                "required": ["scenarioId", "likelihood"],
+                "additionalProperties": False,
+            },
+        },
+    ),
+]
+
+
 class Stage6StructuredOutput(BaseModel):
     mutually_exclusive: bool = Field(description="시나리오 조합이 서로 중복되지 않는지 여부")
     rationale: str = Field(default="", description="조합 유일성 판정 근거 1~2줄")
-    likelihood_prior: dict[str, LikelihoodTier] = Field(
+    likelihood_prior: LikelihoodPriorMap = Field(
         description="scenario_id -> 5단계 Prior",
     )
 
@@ -270,7 +308,8 @@ def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenari
 
 ## 산출
 - mutually_exclusive (bool) + rationale (1~2줄).
-- likelihood_prior: 모든 scenario_id 에 대해 5단계 중 1개.
+- likelihood_prior: 모든 scenario_id 에 대해
+  [{{"scenarioId": "S_01", "likelihood": "medium"}}] 배열 형식으로 5단계 중 1개.
 """
 
 
@@ -414,7 +453,8 @@ STAGE6_SYSTEM_PROMPT = """\
    - 모든 시나리오의 dimension_values 조합이 서로 유일하면 True.
    - 동일한 dimension_values 조합을 가진 시나리오 쌍이 있을 때만 False.
    - narrative(서술 톤·결과 가격 방향)가 비슷하다는 이유로 False 를 반환하지 마십시오.
-2. likelihood_prior: 각 시나리오마다 발생 가능성을 5단계 카테고리로 부여.
+2. likelihood_prior: [{"scenarioId": "S_01", "likelihood": "medium"}] 배열 형식으로
+   각 시나리오마다 발생 가능성을 5단계 카테고리로 부여.
    very_low, low, medium, high, very_high 중 정확히 1개.
 
 ## 절대 금지
@@ -430,7 +470,7 @@ STAGE6_SYSTEM_PROMPT = """\
 
 STAGE6_HARD_CONSTRAINTS = """\
 [중요한 출력 제약 — Stage 6]
-- likelihood_prior 키 집합은 입력된 scenario_id 와 정확히 일치 (누락·여분 금지).
+- likelihood_prior 의 scenarioId 집합은 입력된 scenario_id 와 정확히 일치 (누락·여분 금지).
 - 값은 {very_low|low|medium|high|very_high} 중 정확히 1개.
 - 수치 출력 금지. Coverage·Sum 검사 금지.
 """

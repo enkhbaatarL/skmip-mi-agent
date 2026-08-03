@@ -174,6 +174,17 @@ def test_v2_prompt_requires_selection_evidence_and_complete_candidate_partition(
     assert "required=true도 관련성 근거를 충족할 때만" in prompt
 
 
+def test_v3_prompt_requires_empty_v2_only_excluded_dimensions() -> None:
+    prompt = build_multi_event_user_prompt(
+        api_version="v3",
+        events=[_raw_event(202, title="첫 Event"), _raw_event(101, title="둘째 Event")],
+        templates=[{}, {}],
+    )
+
+    assert "excludedDimensions" in prompt
+    assert "빈 배열" in prompt
+
+
 def test_v4_prompt_matches_dimension_first_hybrid_contract() -> None:
     prompt = build_model_lever_user_prompt(
         events=[_raw_event(202, title="첫 Event"), _raw_event(101, title="둘째 Event")],

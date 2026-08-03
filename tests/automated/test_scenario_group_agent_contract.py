@@ -48,6 +48,9 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
 from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
+from apps.agents.scenario_group_agent.prompts.scenario_generation import (
+    Stage6StructuredOutput,
+)
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
@@ -155,6 +158,24 @@ def scenario_generation_result_stub(
 
 
 class ScenarioGroupAgentContractTest(unittest.TestCase):
+    def test_stage6_strict_wire_schema_normalizes_likelihood_prior_to_dict(self) -> None:
+        wire_schema = Stage6StructuredOutput.model_json_schema()["properties"]["likelihood_prior"]
+        assert wire_schema["type"] == "array"
+        assert wire_schema["items"]["additionalProperties"] is False
+
+        result = Stage6StructuredOutput.model_validate(
+            {
+                "mutually_exclusive": True,
+                "rationale": "모든 조합이 다르다.",
+                "likelihood_prior": [
+                    {"scenarioId": "S_01", "likelihood": "medium"},
+                    {"scenarioId": "S_02", "likelihood": "low"},
+                ],
+            },
+        )
+
+        assert result.likelihood_prior == {"S_01": "medium", "S_02": "low"}
+
     def test_create_scenarios_graph_registers_generation_subgraph(self) -> None:
         graph = build_create_scenarios_background_graph().get_graph()
 

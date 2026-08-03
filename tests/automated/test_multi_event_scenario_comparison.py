@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 import pytest
@@ -143,6 +144,43 @@ def test_prepare_validation_accepts_only_two_to_five_unique_events() -> None:
     )
     with pytest.raises(ValueError, match="duplicates"):
         runner._validate_prepare_args(duplicate)
+
+
+def test_prepare_defaults_to_delete_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_multi_event_scenario_versions.py",
+            "prepare",
+            "--event-ids",
+            "101",
+            "202",
+        ],
+    )
+
+    args = runner.parse_args()
+
+    assert args.delete_existing is True
+
+
+def test_prepare_allows_disabling_delete_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_multi_event_scenario_versions.py",
+            "prepare",
+            "--event-ids",
+            "101",
+            "202",
+            "--no-delete-existing",
+        ],
+    )
+
+    args = runner.parse_args()
+
+    assert args.delete_existing is False
 
 
 def test_soft_delete_existing_groups_deduplicates_groups_across_events() -> None:

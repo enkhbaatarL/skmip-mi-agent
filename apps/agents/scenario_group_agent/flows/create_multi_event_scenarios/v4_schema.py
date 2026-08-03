@@ -8,6 +8,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     PRESSURE_BANDS,
     PRESSURE_RANK,
     PressureBand,
+    ScenarioDimensionValues,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.persistence.model_parameter.schema import (
@@ -65,7 +66,7 @@ class EventInteraction(ApiModel):
 class V4ScenarioCandidate(ApiModel):
     title: str = Field(min_length=1)
     narrative: str = Field(min_length=1)
-    dimension_values: dict[str, str]
+    dimension_values: ScenarioDimensionValues
     global_pressure_band: PressureBand
     global_pressure_rationale: str = Field(min_length=1)
     related_markets: list[RelatedMarket] = Field(default_factory=list, max_length=3)
@@ -127,6 +128,22 @@ class V4GenerationResult(ApiModel):
     )
     excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
     excluded_dimensions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_generation_defaults(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        aliases = (
+            ("interactions", "interactions"),
+            ("excludedScenarios", "excluded_scenarios"),
+            ("excludedDimensions", "excluded_dimensions"),
+        )
+        for alias, field_name in aliases:
+            if alias not in normalized and field_name not in normalized:
+                normalized[alias] = []
+        return normalized
 
 
 class ParameterCoverage(ApiModel):

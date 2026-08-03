@@ -53,8 +53,12 @@ def parse_args() -> argparse.Namespace:
     prepare.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     prepare.add_argument(
         "--delete-existing",
-        action="store_true",
-        help="Soft delete every active Scenario Group related to the selected Events before version execution.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Soft delete every active Scenario Group related to the selected Events before version execution "
+            "(default: enabled; use --no-delete-existing to preserve them)."
+        ),
     )
     prepare.add_argument(
         "--admin-token",

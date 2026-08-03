@@ -11,6 +11,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     MultiEventGenerationResult,
     finalize_generation_result,
+    multi_event_generation_schema,
 )
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
@@ -44,7 +45,7 @@ def prepare_multi_event_scenarios(
     payload: MultiEventCreateScenariosIn,
     *,
     api_version: str,
-) -> dict[str, Any]:
+) -> MultiEventGenerationResult:
     if api_version not in GENERATION_STRATEGIES:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
@@ -94,7 +95,7 @@ async def _invoke_multi_event_generation(
     templates: list[ScenarioPipelineTemplate],
     trace_context: TraceContext | None = None,
     validation_feedback: str | None = None,
-) -> MultiEventGenerationResult:
+) -> dict[str, Any]:
     from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
@@ -105,8 +106,9 @@ async def _invoke_multi_event_generation(
         templates=[template.model_dump() for template in templates],
         validation_feedback=validation_feedback,
     )
+    generation_schema = multi_event_generation_schema(api_version)
     response = await invoke_llm_structured_output(
-        output_schema=MultiEventGenerationResult,
+        output_schema=generation_schema,
         messages=[
             {"role": "system", "content": MULTI_EVENT_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -117,7 +119,7 @@ async def _invoke_multi_event_generation(
         stream=cfg.llm_stream_enabled,
         reasoning_effort=cfg.llm_reasoning_effort,
     )
-    return MultiEventGenerationResult.model_validate(response.result)
+    return response.result
 
 
 async def run_multi_event_scenarios_inline(
@@ -181,16 +183,16 @@ async def _generate_validated_result(
     templates: list[ScenarioPipelineTemplate],
     trace_context: TraceContext | None,
 ) -> MultiEventGenerationResult:
-    last_error: ValueError | None = None
+    last_error: ValueError | MIBaseError | None = None
     for _attempt in range(3):
-        result = await _invoke_multi_event_generation(
-            api_version=api_version,
-            events=events,
-            templates=templates,
-            trace_context=trace_context,
-            validation_feedback=(str(last_error) if last_error is not None else None),
-        )
         try:
+            result = await _invoke_multi_event_generation(
+                api_version=api_version,
+                events=events,
+                templates=templates,
+                trace_context=trace_context,
+                validation_feedback=(str(last_error) if last_error is not None else None),
+            )
             return finalize_generation_result(
                 result,
                 generation_strategy=generation_strategy,
@@ -217,6 +219,10 @@ async def _generate_validated_result(
                     )
                 },
             )
+        except MIBaseError as exc:
+            if exc.error_code is not ErrorCode.LLM_INVALID_RESPONSE_ERROR:
+                raise
+            last_error = exc
         except ValueError as exc:
             last_error = exc
     raise MIBaseError(

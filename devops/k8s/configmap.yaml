@@ -35,6 +35,7 @@ data:
     llm_timeout_sec: 310
     llm_stream_enabled: true
     llm_reasoning_effort: default
+    llm_structured_output_strict: false
     http_verify: true
     http2: true
     http_max_connection: 100

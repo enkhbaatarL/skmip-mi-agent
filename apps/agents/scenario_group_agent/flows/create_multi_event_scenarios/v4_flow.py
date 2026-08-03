@@ -119,7 +119,7 @@ async def _invoke_v4_generation(
         stream=cfg.llm_stream_enabled,
         reasoning_effort=cfg.llm_reasoning_effort,
     )
-    return V4GenerationResult.model_validate(response.result)
+    return response.result
 
 
 async def _generate_validated_v4_result(
@@ -129,21 +129,25 @@ async def _generate_validated_v4_result(
     catalog_version: str,
     trace_context: TraceContext | None,
 ) -> tuple[V4GenerationResult, ParameterCoverage]:
-    last_error: ValueError | None = None
+    last_error: ValueError | MIBaseError | None = None
     for _attempt in range(3):
-        result = await _invoke_v4_generation(
-            events=events,
-            impact_levers=impact_levers,
-            catalog_version=catalog_version,
-            trace_context=trace_context,
-            validation_feedback=str(last_error) if last_error is not None else None,
-        )
         try:
+            result = await _invoke_v4_generation(
+                events=events,
+                impact_levers=impact_levers,
+                catalog_version=catalog_version,
+                trace_context=trace_context,
+                validation_feedback=str(last_error) if last_error is not None else None,
+            )
             return finalize_v4_generation_result(
                 result,
                 event_ids=[int(event.mi_event_id) for event in events],
                 impact_levers=impact_levers,
             )
+        except MIBaseError as exc:
+            if exc.error_code is not ErrorCode.LLM_INVALID_RESPONSE_ERROR:
+                raise
+            last_error = exc
         except ValueError as exc:
             last_error = exc
     raise MIBaseError(

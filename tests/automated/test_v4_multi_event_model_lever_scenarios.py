@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
+from openai import pydantic_function_tool
 import pytest
 
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import (
+    v4_flow as v4_flow_module,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
 )
@@ -22,6 +27,8 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     build_model_lever_user_prompt,
 )
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.model_parameter.schema import (
     ModelImpactLeverParameterBinding,
     ModelImpactLeverPayload,
@@ -356,6 +363,35 @@ def test_v4_finalizer_assigns_roles_and_parameter_coverage() -> None:
     ]
 
 
+def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
+    invalid_response = MIBaseError(
+        ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+        detail="groupTitle must not be blank",
+    )
+    invoke = AsyncMock(side_effect=[invalid_response, _valid_result()])
+
+    with patch.object(
+        v4_flow_module,
+        "_invoke_v4_generation",
+        new=invoke,
+    ):
+        result, _coverage = asyncio.run(
+            v4_flow_module._generate_validated_v4_result(
+                events=[
+                    SimpleNamespace(mi_event_id=101),
+                    SimpleNamespace(mi_event_id=202),
+                ],
+                impact_levers=_catalog(),
+                catalog_version="v1",
+                trace_context=None,
+            ),
+        )
+
+    assert result.group_title
+    assert invoke.await_count == 2
+    assert "groupTitle" in invoke.await_args_list[1].kwargs["validation_feedback"]
+
+
 def test_v4_inline_converts_boolean_baseline_to_database_yn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -667,3 +703,40 @@ def test_v4_rejects_duplicate_related_markets() -> None:
             ],
             probability_score=50,
         )
+
+
+def test_v4_generation_schema_is_openai_strict_compatible() -> None:
+    parameters = pydantic_function_tool(V4GenerationResult)["function"]["parameters"]
+    invalid_objects: list[str] = []
+
+    def inspect_schema(value: object, path: str = "$") -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                properties = value.get("properties", {})
+                if value.get("additionalProperties") is not False:
+                    invalid_objects.append(f"{path}: additionalProperties")
+                if set(value.get("required", [])) != set(properties):
+                    invalid_objects.append(f"{path}: required")
+            for key, child in value.items():
+                inspect_schema(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                inspect_schema(child, f"{path}[{index}]")
+
+    inspect_schema(parameters)
+
+    assert invalid_objects == []
+    assert parameters["$defs"]["V4ScenarioCandidate"]["properties"]["dimensionValues"]["type"] == "array"
+
+
+def test_v4_schema_converts_strict_wire_dimension_values_to_domain_map() -> None:
+    payload = _valid_result().model_dump(by_alias=True)
+    scenario = payload["scenarios"][0]
+    scenario["dimensionValues"] = [
+        {"dimensionId": key, "valueId": value}
+        for key, value in scenario["dimensionValues"].items()
+    ]
+
+    parsed = V4GenerationResult.model_validate(payload)
+
+    assert parsed.scenarios[0].dimension_values

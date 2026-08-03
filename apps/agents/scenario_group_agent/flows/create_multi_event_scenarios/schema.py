@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from itertools import combinations
+from copy import deepcopy
 import re
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, WithJsonSchema, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.persistence.scenario.schema import DimensionDefinition, SourceLineage
@@ -39,6 +39,171 @@ SelectionCriterion = Literal[
     "both",
     "none",
 ]
+
+
+def _wire_entries_to_dict(
+    value: Any,
+    *,
+    key_field: str,
+    value_field: str,
+) -> Any:
+    if not isinstance(value, list):
+        return value
+
+    result: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return value
+        raw_key = item.get(key_field)
+        if raw_key is None:
+            return value
+        key = str(raw_key).strip()
+        if not key or key in result:
+            raise ValueError(f"{key_field} entries must have unique non-blank keys")
+        result[key] = item.get(value_field)
+    return result
+
+
+def _generated_event_values_from_wire(value: Any) -> Any:
+    return _wire_entries_to_dict(
+        value,
+        key_field="dimKey",
+        value_field="value",
+    )
+
+
+def _template_value_examples_from_wire(value: Any) -> Any:
+    return _wire_entries_to_dict(
+        value,
+        key_field="dimKey",
+        value_field="valueExamples",
+    )
+
+
+def _scenario_dimension_values_from_wire(value: Any) -> Any:
+    return _wire_entries_to_dict(
+        value,
+        key_field="dimensionId",
+        value_field="valueId",
+    )
+
+
+GeneratedEventValues = Annotated[
+    dict[str, str],
+    BeforeValidator(_generated_event_values_from_wire),
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimKey": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+                "required": ["dimKey", "value"],
+                "additionalProperties": False,
+            },
+        },
+        mode="validation",
+    ),
+]
+TemplateValueExamplesConsulted = Annotated[
+    dict[str, list[str]],
+    BeforeValidator(_template_value_examples_from_wire),
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimKey": {"type": "string"},
+                    "valueExamples": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["dimKey", "valueExamples"],
+                "additionalProperties": False,
+            },
+        },
+        mode="validation",
+    ),
+]
+ScenarioDimensionValues = Annotated[
+    dict[str, str],
+    BeforeValidator(_scenario_dimension_values_from_wire),
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimensionId": {"type": "string"},
+                    "valueId": {"type": "string"},
+                },
+                "required": ["dimensionId", "valueId"],
+                "additionalProperties": False,
+            },
+        },
+        mode="validation",
+    ),
+]
+
+
+def _normalize_event_shock_examples(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = deepcopy(value)
+    raw_event_id = normalized.get("eventId", normalized.get("event_id"))
+    namespace_prefix = f"e{raw_event_id}__" if raw_event_id is not None else ""
+    raw_sources = normalized.get(
+        "sourceDimensions",
+        normalized.get("source_dimensions", []),
+    )
+    if not isinstance(raw_sources, list):
+        return normalized
+
+    source_key_by_normalized_key: dict[str, str] = {}
+    for raw_source in raw_sources:
+        if not isinstance(raw_source, dict):
+            continue
+        raw_dim_key = raw_source.get("dimKey", raw_source.get("dim_key"))
+        if raw_dim_key is None:
+            continue
+        dim_key = str(raw_dim_key).strip()
+        if not dim_key:
+            continue
+        normalized_key = (
+            dim_key.removeprefix(namespace_prefix)
+            if namespace_prefix and dim_key.startswith(namespace_prefix)
+            else dim_key
+        )
+        source_key_by_normalized_key[normalized_key] = dim_key
+
+    examples_field = (
+        "templateValueExamplesConsulted"
+        if "templateValueExamplesConsulted" in normalized
+        else "template_value_examples_consulted"
+    )
+    raw_examples = _template_value_examples_from_wire(
+        normalized.get(examples_field, {}),
+    )
+    if not isinstance(raw_examples, dict):
+        return normalized
+
+    filtered_examples: dict[str, Any] = {}
+    for raw_key, examples in raw_examples.items():
+        example_key = str(raw_key).strip()
+        normalized_key = (
+            example_key.removeprefix(namespace_prefix)
+            if namespace_prefix and example_key.startswith(namespace_prefix)
+            else example_key
+        )
+        source_key = source_key_by_normalized_key.get(normalized_key)
+        if source_key is not None:
+            filtered_examples[source_key] = examples
+    normalized[examples_field] = filtered_examples
+    return normalized
 
 
 class EventShockImpactPath(ApiModel):
@@ -96,10 +261,10 @@ class EventShock(ApiModel):
     recovery_or_persistence: str
     mitigation: str
     source_dimension_keys: list[str]
-    generated_event_values: dict[str, str]
+    generated_event_values: GeneratedEventValues
     impact_paths: list[EventShockImpactPath]
     source_dimensions: list[EventShockSourceDimension]
-    template_value_examples_consulted: dict[str, list[str]]
+    template_value_examples_consulted: TemplateValueExamplesConsulted
 
     @model_validator(mode="after")
     def _validate_structured_shock(self) -> EventShock:
@@ -161,8 +326,8 @@ class EventInteraction(ApiModel):
     def _validate_interaction(self) -> EventInteraction:
         if len(self.event_ids) != len(set(self.event_ids)):
             raise ValueError("interaction eventIds must not contain duplicates")
-        if len(self.event_ids) != 2:
-            raise ValueError("interaction must reference exactly two distinct events")
+        if len(self.event_ids) < 2:
+            raise ValueError("interaction must reference at least two distinct events")
         if self.relation == "interpretation_conflict" and not self.resolution_dimension_id:
             raise ValueError(
                 "interpretation conflicts require a resolution_dimension_id",
@@ -173,7 +338,7 @@ class EventInteraction(ApiModel):
 class ScenarioCandidate(ApiModel):
     title: str = Field(min_length=1)
     narrative: str = Field(min_length=1)
-    dimension_values: dict[str, str]
+    dimension_values: ScenarioDimensionValues
     global_pressure_band: PressureBand
     probability_score: int = Field(ge=0, le=100)
     global_pressure_rationale: str = Field(min_length=1)
@@ -206,6 +371,68 @@ class MultiEventGenerationResult(ApiModel):
     excluded_dimensions: list[ExcludedDimensionDecision] = Field(
         default_factory=list,
     )
+
+
+class V2MultiEventGenerationResult(MultiEventGenerationResult):
+    """LLM response-format contract for v2 generation."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_v2_input(cls, value: Any) -> Any:
+        return _with_multi_event_defaults(value)
+
+
+class V3MultiEventGenerationResult(MultiEventGenerationResult):
+    """LLM response-format contract for v3 generation."""
+
+    excluded_dimensions: list[ExcludedDimensionDecision] = Field(
+        default_factory=list,
+        max_length=0,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_v3_input(cls, value: Any) -> Any:
+        normalized = _with_multi_event_defaults(value)
+        if not isinstance(normalized, dict):
+            return normalized
+        if "excludedDimensions" in normalized:
+            normalized["excludedDimensions"] = []
+        if "excluded_dimensions" in normalized:
+            normalized["excluded_dimensions"] = []
+        return normalized
+
+
+def _with_multi_event_defaults(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = deepcopy(value)
+    aliases = (
+        ("interactions", "interactions"),
+        ("excludedCandidates", "excluded_candidates"),
+        ("excludedDimensions", "excluded_dimensions"),
+    )
+    for alias, field_name in aliases:
+        if alias not in normalized and field_name not in normalized:
+            normalized[alias] = []
+    shocks_field = "eventShocks" if "eventShocks" in normalized else "event_shocks"
+    raw_shocks = normalized.get(shocks_field)
+    if isinstance(raw_shocks, list):
+        normalized[shocks_field] = [
+            _normalize_event_shock_examples(shock)
+            for shock in raw_shocks
+        ]
+    return normalized
+
+
+def multi_event_generation_schema(
+    api_version: str,
+) -> type[MultiEventGenerationResult]:
+    if api_version == "v2":
+        return V2MultiEventGenerationResult
+    if api_version == "v3":
+        return V3MultiEventGenerationResult
+    raise ValueError(f"Unsupported multi-event API version: {api_version}")
 
 
 def _normalize_event_shock_source_keys(shock: EventShock) -> None:
@@ -914,23 +1141,6 @@ def _validate_v2_selection_partition(
         )
 
 
-def _validate_exact_pairwise_interactions(
-    interactions: list[EventInteraction],
-    *,
-    event_ids: list[int],
-) -> None:
-    expected_pairs = {tuple(sorted(pair)) for pair in combinations(event_ids, 2)}
-    actual_pairs = [tuple(sorted(interaction.event_ids)) for interaction in interactions]
-    if len(actual_pairs) != len(set(actual_pairs)):
-        raise ValueError("v3 interactions must not contain duplicate Event pairs")
-    if set(actual_pairs) != expected_pairs:
-        missing = sorted(expected_pairs - set(actual_pairs))
-        unknown = sorted(set(actual_pairs) - expected_pairs)
-        raise ValueError(
-            f"v3 interactions must cover every input Event pair exactly once: missing={missing}, unknown={unknown}",
-        )
-
-
 def _validate_pressure_aggregate_order(
     scenarios: list[ScenarioCandidate],
     *,
@@ -1192,11 +1402,6 @@ def finalize_generation_result(
     if generation_strategy == "multi_event_composite_dimensions" and covered_event_ids != known_event_ids:
         missing = sorted(known_event_ids - covered_event_ids)
         raise ValueError(f"events without a selected dimension: {missing}")
-    if generation_strategy == "multi_event_composite_dimensions":
-        _validate_exact_pairwise_interactions(
-            result.interactions,
-            event_ids=event_ids,
-        )
     for interaction in result.interactions:
         if not set(interaction.event_ids) <= known_event_ids:
             raise ValueError("interaction references an unknown event")

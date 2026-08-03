@@ -30,6 +30,7 @@ llm_max_retries: 1
 llm_concurrency: 10
 llm_stream_enabled: true
 llm_reasoning_effort: default
+llm_structured_output_strict: true
 
 # HTTP client
 http_timeout: 60

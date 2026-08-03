@@ -1,25 +1,33 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 # ruff: noqa: S101
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openai import pydantic_function_tool
 from openpyxl import Workbook
 from pydantic import ValidationError
 import pytest
 
 from apps.agents.scenario_group_agent.api import router as agent_router
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import (
+    flow as multi_event_flow,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     MultiEventCreateScenariosIn,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
+    EventInteraction,
     ExcludedDimensionDecision,
     MultiEventGenerationResult,
+    V2MultiEventGenerationResult,
+    V3MultiEventGenerationResult,
     finalize_generation_result as _finalize_generation_result,
 )
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
@@ -457,6 +465,162 @@ def test_event_shock_template_examples_must_reference_a_source_dimension() -> No
         MultiEventGenerationResult.model_validate(payload)
 
 
+def test_v2_schema_filters_template_examples_to_source_dimensions_before_validation() -> None:
+    payload = _result(
+        strategy="multi_event_source_dimensions",
+    ).model_dump(by_alias=True)
+    shock = payload["eventShocks"][0]
+    source_key = shock["sourceDimensions"][0]["dimKey"]
+    shock["templateValueExamplesConsulted"] = [
+        {"dimKey": source_key, "valueExamples": ["낮음", "높음"]},
+        {"dimKey": "unreferenced_dimension", "valueExamples": ["참고 예시"]},
+    ]
+
+    parsed = V2MultiEventGenerationResult.model_validate(payload)
+
+    assert parsed.event_shocks[0].template_value_examples_consulted == {
+        source_key: ["낮음", "높음"],
+    }
+
+
+def test_v3_schema_discards_v2_only_excluded_dimensions_before_validation() -> None:
+    payload = _result(
+        strategy="multi_event_composite_dimensions",
+    ).model_dump(by_alias=True)
+    payload["excludedDimensions"] = [
+        {
+            "eventId": 202,
+            "eventTypeL2Id": 12,
+            "scenarioDimensionTemplateId": 121,
+            "templateChecksum": "checksum-12",
+            "dimKey": "inventory",
+            "selectionCriterion": "none",
+            "required": False,
+            "reasonCode": "LOWER_PRIORITY",
+            "reason": "합성 dimension에서 별도 축으로 사용하지 않는다.",
+        },
+    ]
+
+    parsed = V3MultiEventGenerationResult.model_validate(payload)
+
+    assert parsed.excluded_dimensions == []
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [V2MultiEventGenerationResult, V3MultiEventGenerationResult],
+)
+def test_multi_event_generation_schema_is_openai_strict_compatible(
+    schema: type[MultiEventGenerationResult],
+) -> None:
+    parameters = pydantic_function_tool(schema)["function"]["parameters"]
+    invalid_objects: list[str] = []
+
+    def inspect_schema(value: object, path: str = "$") -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                properties = value.get("properties", {})
+                if value.get("additionalProperties") is not False:
+                    invalid_objects.append(f"{path}: additionalProperties")
+                if set(value.get("required", [])) != set(properties):
+                    invalid_objects.append(f"{path}: required")
+            for key, child in value.items():
+                inspect_schema(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                inspect_schema(child, f"{path}[{index}]")
+
+    inspect_schema(parameters)
+
+    assert invalid_objects == []
+    definitions = parameters["$defs"]
+    assert definitions["EventShock"]["properties"]["generatedEventValues"]["type"] == "array"
+    assert definitions["EventShock"]["properties"]["templateValueExamplesConsulted"]["type"] == "array"
+    assert definitions["ScenarioCandidate"]["properties"]["dimensionValues"]["type"] == "array"
+
+
+def test_v2_schema_converts_strict_wire_assignments_to_domain_maps() -> None:
+    payload = _result(
+        strategy="multi_event_source_dimensions",
+    ).model_dump(by_alias=True)
+    shock = payload["eventShocks"][0]
+    shock["generatedEventValues"] = [
+        {"dimKey": key, "value": value}
+        for key, value in shock["generatedEventValues"].items()
+    ]
+    scenario = payload["scenarios"][0]
+    scenario["dimensionValues"] = [
+        {"dimensionId": key, "valueId": value}
+        for key, value in scenario["dimensionValues"].items()
+    ]
+
+    parsed = V2MultiEventGenerationResult.model_validate(payload)
+
+    assert parsed.event_shocks[0].generated_event_values
+    assert parsed.scenarios[0].dimension_values
+
+
+def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
+    valid_payload = _result(
+        strategy="multi_event_composite_dimensions",
+    ).model_dump(by_alias=True)
+    events = [
+        SimpleNamespace(mi_event_id=101, event_type_l2_id=8),
+        SimpleNamespace(mi_event_id=202, event_type_l2_id=12),
+    ]
+    templates = [
+        SimpleNamespace(
+            event_type_l2_id=8,
+            scenario_dimension_template_id=81,
+            template_checksum="checksum-8",
+            dimensions=[],
+        ),
+        SimpleNamespace(
+            event_type_l2_id=12,
+            scenario_dimension_template_id=121,
+            template_checksum="checksum-12",
+            dimensions=[],
+        ),
+    ]
+    invalid_response = MIBaseError(
+        multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+        detail="scenarioGroupTitle must not be blank",
+    )
+    invoke = AsyncMock(
+        side_effect=[
+            invalid_response,
+            V3MultiEventGenerationResult.model_validate(valid_payload),
+        ],
+    )
+
+    with (
+        patch.object(
+            multi_event_flow,
+            "_invoke_multi_event_generation",
+            new=invoke,
+        ),
+        patch.object(
+            multi_event_flow,
+            "finalize_generation_result",
+            side_effect=lambda result, **_kwargs: result,
+        ),
+    ):
+        result = asyncio.run(
+            multi_event_flow._generate_validated_result(
+                api_version="v3",
+                generation_strategy="multi_event_composite_dimensions",
+                events=events,
+                templates=templates,
+                trace_context=None,
+            ),
+        )
+
+    assert result.scenario_group_title
+    assert invoke.await_count == 2
+    retry_feedback = invoke.await_args_list[1].kwargs["validation_feedback"]
+    assert "scenarioGroupTitle" in retry_feedback
+
+
 @pytest.mark.parametrize(
     "strategy",
     [
@@ -567,7 +731,7 @@ def test_v3_allows_independent_single_source_dimension_without_forced_merge() ->
     assert len(finalized.dimension_definitions) == 4
 
 
-def test_v3_requires_exact_pairwise_interaction_coverage() -> None:
+def test_v3_does_not_require_exhaustive_pairwise_interactions() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     third_event_id = 303
     result.event_shocks.append(
@@ -593,15 +757,16 @@ def test_v3_requires_exact_pairwise_interaction_coverage() -> None:
     for scenario in result.scenarios:
         scenario.dimension_values[third_dimension.dimension_id] = "Event 사실 기반 균형"
 
-    with pytest.raises(ValueError, match="every input Event pair exactly once"):
-        finalize_generation_result(
-            result,
-            generation_strategy="multi_event_composite_dimensions",
-            event_ids=[*EVENT_IDS, third_event_id],
-        )
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=[*EVENT_IDS, third_event_id],
+    )
+
+    assert [interaction.event_ids for interaction in finalized.interactions] == [EVENT_IDS]
 
 
-def test_v3_accepts_exact_pairwise_interactions() -> None:
+def test_v3_accepts_one_interaction_with_more_than_two_events() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     third_event_id = 303
     result.event_shocks.append(
@@ -627,19 +792,14 @@ def test_v3_accepts_exact_pairwise_interactions() -> None:
     for scenario in result.scenarios:
         scenario.dimension_values[third_dimension.dimension_id] = "Event 사실 기반 균형"
     result.interactions = [
-        interaction.model_copy(
-            update={"relation": "independent"},
-        )
-        for interaction in result.interactions
-    ] + [
-        type(result.interactions[0]).model_validate(
+        EventInteraction.model_validate(
             {
-                "eventIds": pair,
-                "relation": "independent",
-                "rationale": "두 Event는 직접 상호작용하지 않는다.",
+                "eventIds": [*EVENT_IDS, third_event_id],
+                "relation": "regional_coupling",
+                "rationale": "세 Event가 지역 구매 경쟁으로 함께 연결된다.",
+                "resolutionDimensionId": "demand_inventory_tightness",
             },
-        )
-        for pair in ([101, third_event_id], [202, third_event_id])
+        ),
     ]
 
     finalized = finalize_generation_result(
@@ -648,11 +808,27 @@ def test_v3_accepts_exact_pairwise_interactions() -> None:
         event_ids=[*EVENT_IDS, third_event_id],
     )
 
-    assert {tuple(sorted(interaction.event_ids)) for interaction in finalized.interactions} == {
-        (101, 202),
-        (101, 303),
-        (202, 303),
-    }
+    assert finalized.interactions[0].event_ids == [101, 202, 303]
+    resolution_dimension = next(
+        dimension
+        for dimension in finalized.dimension_definitions
+        if dimension.dimension_id == "demand_inventory_tightness"
+    )
+    assert {source.event_id for source in resolution_dimension.source_refs} == {101, 202, 303}
+
+
+@pytest.mark.parametrize("event_ids", [[], [101], [101, 101]])
+def test_v3_interaction_requires_at_least_two_distinct_events(
+    event_ids: list[int],
+) -> None:
+    with pytest.raises(ValidationError):
+        EventInteraction.model_validate(
+            {
+                "eventIds": event_ids,
+                "relation": "independent",
+                "rationale": "Event 관계를 기록한다.",
+            },
+        )
 
 
 def test_v3_non_independent_interaction_adds_missing_source_lineage() -> None:
@@ -1606,6 +1782,8 @@ def test_prompt_separates_event_facts_from_template_domain_knowledge() -> None:
     assert "## Template Domain Knowledge (reference examples" in prompt
     assert prompt.index("현재 사실") < prompt.index("과거 대표 사례")
     assert "valueEnumExamples" in prompt
+    assert "eventIds를 정확히 2개로 제한하지 않습니다" in prompt
+    assert "모든 Event pair를 기계적으로 만들지" in prompt
 
 
 def test_legacy_template_description_falls_back_but_new_write_requires_it() -> None:

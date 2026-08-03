@@ -324,6 +324,7 @@ class ConfigLoaderTest(unittest.TestCase):
             print_lines=[
                 "print(cfg.llm_stream_enabled)",
                 "print(cfg.llm_reasoning_effort)",
+                "print(cfg.llm_structured_output_strict)",
                 "print(cfg.model_parameter_lut_enabled)",
                 "print(cfg.model_parameter_lut_horizon_start_year)",
                 "print(cfg.model_parameter_lut_horizon_end_year)",
@@ -334,8 +335,17 @@ class ConfigLoaderTest(unittest.TestCase):
 
         self.assertEqual(  # noqa: PT009
             lines,
-            ["False", "default", "False", "2026", "2030", "100", "100"],
+            ["False", "default", "False", "False", "2026", "2030", "100", "100"],
         )
+
+    def test_llm_structured_output_strict_environment_overrides_yaml(self) -> None:
+        lines = self.run_settings_import(
+            f"{BASE_CONFIG}\nllm_structured_output_strict: false",
+            extra_env={"LLM_STRUCTURED_OUTPUT_STRICT": "true"},
+            print_lines=["print(cfg.llm_structured_output_strict)"],
+        )
+
+        self.assertEqual(lines, ["True"])  # noqa: PT009
 
     def test_llm_reasoning_effort_accepts_supported_values(self) -> None:
         for value in ("none", "minimal", "low", "medium", "high", "xhigh"):

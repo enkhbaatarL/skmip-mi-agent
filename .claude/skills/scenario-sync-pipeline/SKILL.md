@@ -124,7 +124,7 @@ Docker의 기존 Gunicorn 3-worker 기본 설정은 변경하지 않는다. v1 �
 
 키워드 선택의 기본 정렬은 `latest`로 둔다. 이벤트 상세를 수집하고 동일한 이벤트 목록, `userId`, 고유 `comparisonRunId`를 manifest에 고정한다. v4도 단일 `targetMarket`을 입력받지 않으며 모든 Scenario의 pressure band는 글로벌 LNG 기준이다. 지역 가격 허브 관련성이 명확한 v4 Scenario만 응답 row의 `relatedMarkets`에 시장과 근거를 선택적 보조정보로 포함한다.
 
-선택된 이벤트에 연결된 기존 활성 Scenario Group이 있으면 버전 실행 전에 `prepare --delete-existing`으로 모두 soft delete한다. 이때 `--admin-token` 또는 `SCENARIO_GROUP_ADMIN_TOKEN`이 필요하다. 실행기는 이벤트별 `GET /scenario-groups?includeDeleted=false&miEventId=...` 결과에서 그룹 ID를 중복 제거하고, 각 그룹을 `DELETE /scenario-groups/{scenarioGroupId}`로 한 번씩 삭제한다. 삭제는 v2/v3/v4 실행 전에 한 번만 수행하며, v2나 v3가 이번 비교에서 새로 만든 그룹을 뒤 버전 실행 전에 삭제하지 않는다. 삭제 결과는 manifest의 `preRunCleanup`과 `existing_groups_soft_delete.json`에 기록한다.
+선택된 이벤트에 연결된 기존 활성 Scenario Group은 버전 실행 전에 기본적으로 모두 soft delete한다. 기존 그룹을 보존해야 하는 예외적인 실행에만 `prepare --no-delete-existing`을 사용한다. 활성 그룹이 있으면 `--admin-token` 또는 `SCENARIO_GROUP_ADMIN_TOKEN`이 필요하다. 실행기는 이벤트별 `GET /scenario-groups?includeDeleted=false&miEventId=...` 결과에서 그룹 ID를 중복 제거하고, 각 그룹을 `DELETE /scenario-groups/{scenarioGroupId}`로 한 번씩 삭제한다. 삭제는 v2/v3/v4 실행 전에 한 번만 수행하며, v2나 v3가 이번 비교에서 새로 만든 그룹을 뒤 버전 실행 전에 삭제하지 않는다. 삭제 결과는 manifest의 `preRunCleanup`과 `existing_groups_soft_delete.json`에 기록한다.
 
 예:
 
@@ -134,7 +134,6 @@ python tests/manual/test_multi_event_scenario_versions.py prepare \
   --event-count 5 \
   --keyword 호르무즈 \
   --event-sort latest \
-  --delete-existing \
   --admin-token "$SCENARIO_GROUP_ADMIN_TOKEN" \
   --user-id 10603 \
   --timeout 1200

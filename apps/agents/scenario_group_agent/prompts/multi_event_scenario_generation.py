@@ -35,8 +35,10 @@ MULTI_EVENT_SYSTEM_PROMPT = """\
 - EventShock에는 affectedRegions, affectedCountries, affectedFacilities를 모두 출력하고,
   각 Supply/Demand/Trade impactPath에는 affectedScope를 출력합니다. 알려진 항목은 생략하지
   말고, Event 사실에 없는 범위는 빈 배열로 둡니다.
-- EventShock.templateValueExamplesConsulted는 참고한 sourceDimension별로 입력 Template의
-  valueEnumExamples에서 실제 참고한 값을 기록하고, 전체 EventShock에서 하나 이상 남깁니다.
+- EventShock.generatedEventValues는 {dimKey, value} 객체 배열로 출력합니다.
+- EventShock.templateValueExamplesConsulted는 {dimKey, valueExamples} 객체 배열이며,
+  참고한 sourceDimension별로 입력 Template의 valueEnumExamples에서 실제 참고한 값을 기록하고,
+  전체 EventShock에서 하나 이상 남깁니다.
 """
 
 
@@ -68,8 +70,12 @@ V3_STRATEGY_PROMPT = """\
 - 상호작용이 없는 Event는 relation=independent로 보존하고 억지로 한 dimension에 합치지 않습니다.
 - 해석 충돌은 실패가 아니라 relation=interpretation_conflict와 resolutionDimensionId로 표현합니다.
 - resolutionDimensionId가 있으면 해당 dimension의 sourceRefs가 interaction의 모든 eventId를 포함해야 합니다.
+- interaction 하나는 실제로 같은 관계에 참여하는 서로 다른 Event를 2개 이상 포함할 수 있으며,
+  eventIds를 정확히 2개로 제한하지 않습니다.
+- 모든 Event pair를 기계적으로 만들지 말고 실제 상호작용 단위로 묶습니다.
 - 원본 source를 추적 가능한 3~6개의 직관적인 합성 dimension을 만듭니다.
 - 합성 dimension은 관련된 경우 복수 sourceRefs를 가지며, 독립 Event용 dimension은 단일 sourceRef가 가능합니다.
+- excludedDimensions는 v2 원본 Template dimension 선택 전용 필드이므로 빈 배열로 출력합니다.
 """
 
 
@@ -133,7 +139,8 @@ def build_multi_event_user_prompt(
         "bullish, balanced, bearish 중 하나로 지정하십시오.\n"
         "- 각 value의 sourceAssignments는 해당 dimension의 모든 sourceRefs를 정확히 한 번씩 투영하십시오.\n"
         "- dimensionDefinitions.values에는 최종 Scenario에서 실제 사용하는 value를 모두 정의하십시오.\n"
-        "- 각 Scenario의 dimensionValues key는 dimensionDefinitions의 dimensionId 전체와 정확히 일치해야 합니다.\n"
+        "- 각 Scenario의 dimensionValues는 {dimensionId, valueId} 객체 배열이며, dimensionId 집합은 "
+        "dimensionDefinitions의 dimensionId 전체와 정확히 일치해야 합니다.\n"
         "- mixedFactors=true인 Scenario는 bullish와 bearish contribution을 모두 포함해야 합니다.\n"
         f"{v2_output_contract}"
         f"{feedback}"
