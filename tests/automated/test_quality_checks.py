@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -13,6 +14,13 @@ if str(MANUAL_DIR) not in sys.path:
 
 from quality_eval.artifacts import RunArtifacts, load_batch
 from quality_eval.golden import find_incidental_matches, load_golden_cases
+from quality_eval.judge import (
+    PROMPT_VERSION,
+    SCENARIO_JUDGE_IDS,
+    SIGNPOST_JUDGE_IDS,
+    build_agent_judge_input,
+    load_agent_judge_output,
+)
 from quality_eval.layer1_checks import CheckResult, run_layer1_checks
 from quality_eval.report import render_quality_report
 from quality_eval.runtime_config import DEFAULT_USER_ID, load_runtime_target
@@ -403,6 +411,61 @@ def test_quality_store_creates_all_evaluation_tables_and_records_golden(tmp_path
         assert connection.execute("SELECT COUNT(*) FROM quality_check_results").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM validation_probe_results").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM golden_case_results").fetchone()[0] == 1
+
+
+def test_agent_judge_input_and_output_round_trip_without_model_api(tmp_path: Path) -> None:
+    request = build_agent_judge_input(
+        batch_id="batch",
+        runs=[_run()],
+        stability_runs=1,
+        deterministic_checks={1: [{"checkId": "R-01", "status": "PASS"}]},
+    )
+
+    assert request["judgeRuntime"].endswith("Do not call an LLM API.")
+    assert request["targets"][0]["miEventId"] == 1
+    assert request["requiredJudgeIds"]["scenarioSet"] == list(SCENARIO_JUDGE_IDS)
+
+    def result(judge_ids: tuple[str, ...]) -> dict[str, Any]:
+        return {
+            "items": [
+                {"judge_id": judge_id, "score": 5, "verdict": "PASS", "violations": []}
+                for judge_id in judge_ids
+            ],
+            "model": "skill-runtime-model",
+            "prompt_version": PROMPT_VERSION,
+        }
+
+    output_path = tmp_path / "quality_judge.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "batch_id": "batch",
+                "evaluations": [
+                    {
+                        "mi_event_id": 1,
+                        "passes": [
+                            {
+                                "scenario_set": result(SCENARIO_JUDGE_IDS),
+                                "signposts": result(SIGNPOST_JUDGE_IDS),
+                            },
+                        ],
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    results, agreements = load_agent_judge_output(
+        output_path,
+        batch_id="batch",
+        expected_event_ids=[1],
+        stability_runs=1,
+    )
+
+    assert [item.judge_id for item in results[1][0].items] == list(SCENARIO_JUDGE_IDS)
+    assert agreements == []
 
 
 def test_runtime_target_uses_aliases_defaults_and_cli_precedence(tmp_path: Path) -> None:

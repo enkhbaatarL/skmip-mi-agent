@@ -215,10 +215,7 @@ def create_mapping_proposals(
 ) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group is None:
         return {}
-    if (
-        state.scenario_group.generation_strategy
-        == "multi_event_model_lever_dimensions"
-    ):
+    if state.scenario_group.generation_strategy == "multi_event_model_lever_dimensions":
         return validate_scenarios_state_update(parameter_mapping_ready=True)
     definitions = state.scenario_group.dimension_definitions
     if not definitions:
@@ -230,16 +227,35 @@ def create_mapping_proposals(
         if isinstance(definition, dict) and definition.get("dimension_id")
     }
     request_table = state.request_table.model_dump() if state.request_table else {}
+    uses_compact_v2_sources = state.scenario_group.generation_strategy == "multi_event_source_dimensions"
+    uses_compact_v3_sources = state.scenario_group.generation_strategy == "multi_event_composite_dimensions"
     all_source_refs: list[dict[str, Any]] = []
-    seen_source_refs: set[tuple[int, str]] = set()
+    seen_source_refs: set[tuple[object, ...]] = set()
     for definition in definition_by_id.values():
-        for source in definition.get("source_refs") or []:
+        raw_sources = (
+            [definition.get("source_ref")]
+            if uses_compact_v2_sources and isinstance(definition.get("source_ref"), dict)
+            else definition.get("source_refs") or []
+        )
+        for source in raw_sources:
             if not isinstance(source, dict):
                 continue
-            source_key = (
-                int(source.get("event_id") or 0),
-                str(source.get("dim_key") or ""),
-            )
+            if uses_compact_v2_sources:
+                source_key = (
+                    int(source.get("event_id") or 0),
+                    int(source.get("scenario_dimension_template_id") or 0),
+                    str(source.get("dim_key") or ""),
+                )
+            elif uses_compact_v3_sources:
+                source_key = (
+                    int(source.get("scenario_dimension_template_id") or 0),
+                    str(source.get("dim_key") or ""),
+                )
+            else:
+                source_key = (
+                    int(source.get("event_id") or 0),
+                    str(source.get("dim_key") or ""),
+                )
             if source_key in seen_source_refs:
                 continue
             seen_source_refs.add(source_key)
@@ -290,18 +306,26 @@ def create_mapping_proposals(
             (f"{state.scenario_group_id}:{dimension_id}:{display_value}").encode("utf-8"),
         ).hexdigest()[:24]
         source_projections = []
-        for source in definition.get("source_refs") or []:
+        raw_sources = (
+            [definition.get("source_ref")]
+            if uses_compact_v2_sources and isinstance(definition.get("source_ref"), dict)
+            else definition.get("source_refs") or []
+        )
+        for source in raw_sources:
             if not isinstance(source, dict):
                 continue
-            source_projections.append(
-                {
-                    **source,
-                    "value": display_value,
-                    "source_type": "derived_interpretation",
-                    "assumption_yn": "N",
-                    "rationale": ("사용자 자유 입력 value를 기존 source dimension에 투영한 검토안이다."),
-                },
-            )
+            if uses_compact_v2_sources:
+                source_projections.append({**source, "value": display_value})
+            else:
+                source_projections.append(
+                    {
+                        **source,
+                        "value": display_value,
+                        "source_type": "derived_interpretation",
+                        "assumption_yn": "N",
+                        "rationale": ("사용자 자유 입력 value를 기존 source dimension에 투영한 검토안이다."),
+                    },
+                )
         proposals.append(
             {
                 "dimension_value_id": f"dv_{digest}",
@@ -311,7 +335,30 @@ def create_mapping_proposals(
                 "mapping_proposal": {
                     "status": "pending",
                     "dimensionLabel": definition.get("label") or dimension_id,
-                    "candidateSourceDimensions": [source.get("dim_key") for source in source_projections],
+                    "candidateSourceDimensions": (
+                        [
+                            {
+                                "eventId": source.get("event_id"),
+                                "scenarioDimensionTemplateId": source.get(
+                                    "scenario_dimension_template_id",
+                                ),
+                                "dimKey": source.get("dim_key"),
+                            }
+                            for source in source_projections
+                        ]
+                        if uses_compact_v2_sources
+                        else [
+                            {
+                                "scenarioDimensionTemplateId": source.get(
+                                    "scenario_dimension_template_id",
+                                ),
+                                "dimKey": source.get("dim_key"),
+                            }
+                            for source in source_projections
+                        ]
+                        if uses_compact_v3_sources
+                        else [source.get("dim_key") for source in source_projections]
+                    ),
                 },
             },
         )

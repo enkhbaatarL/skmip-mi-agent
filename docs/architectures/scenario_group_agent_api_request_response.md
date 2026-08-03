@@ -96,6 +96,8 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - 중복 없는 `miEventIds` 2~5개와 필수 `comparisonRunId`
   - Event별 원본 Template dimension 3~6개를 선택하고 key를
     `e{eventId}__{dimKey}`로 namespace한다.
+  - v2 전용 compact response schema를 사용하며 v3/v4 상세 diagnostics와 lineage 필드를
+    공유하지 않는다.
 - `POST /v3/scenario-groups/sync`
   - v2와 같은 요청 계약
   - Event 충격과 관련 상호작용을 3~6개 합성 dimension으로 구성한다.
@@ -125,9 +127,16 @@ versioned sync endpoint의 생성 오류는
 `{"status":"error","message":"...","data":null}` 형태로 반환한다. v2/v3/v4
 성공 응답은 `apiVersion`, `generationStrategy`, `comparisonRunId`,
 `events`, `dimensionDefinitions`, `table`, `generationDiagnostics`를 포함한다.
-`events`는 요청 Event 순서를 유지한다. v2/v3의 각
-`dimensionDefinitions[].sourceRefs`는 근거 Event의 `eventId`, `eventTypeL2Id`,
-`scenarioDimensionTemplateId`, `templateChecksum`을 포함한다. v4의 각 dimension은
+`events`는 요청 Event 순서를 유지한다. v2의 각
+`dimensionDefinitions[].sourceRef`는 `eventId`, `scenarioDimensionTemplateId`,
+`dimKey`만 포함한다. label·description·required는 서버가 입력 Template에서 복원한다.
+v2 value에는 `valueId`, `label`, `globalPressureContribution`만 포함하며
+`sourceAssignments`는 없다. v2 diagnostics는 compact EventShock,
+`unselectedDimensionRefs`, `unrepresentedPressureBands`를 포함한다. v3는 Event별
+`{eventId, shockSummary}`와 compact dimension을 반환한다. v3 dimension은
+`rationale`, `sourceEventIds`, `(scenarioDimensionTemplateId, dimKey)` 형태의
+`sourceRefs`를 가지며 value에는 `valueId`, `label`, `globalPressureContribution`만
+포함한다. v4의 각 dimension은
 `sourceFactIds`와 `impactLeverRefs`를 포함하며 lever reference의 ID/code 쌍은
 저장 당시 활성 catalog와 일치한다. dimension이 없는 Event는
 `generationDiagnostics.eventDimensionCoverage[].noDimensionReason`으로 구분한다.
@@ -145,6 +154,11 @@ Scenario 상세에서만 표시하는 선택적 보조정보다.
 - 현재 proposal과 다른 `mappingVersion`은 stale 요청으로 거부한다.
 - Validation은 저장된 `dimensionDefinitions`에 없는 자유 value를 source
   dimension에 투영해 pending proposal로 반환한다.
+- v2 mapping proposal의 source 식별자는
+  `(eventId, scenarioDimensionTemplateId, dimKey)`다.
+- v3 mapping proposal의 source 식별자는
+  `(scenarioDimensionTemplateId, dimKey)`이며 Event 연결은 `sourceEventIds`가 담당한다.
+- v2 compact source와 v4 fact/lever mapping은 각 버전의 독립 계약을 유지한다.
 - 현재 사용 중인 proposal이 모두 승인되면
   `parameterMappingReady=true`가 된다.
 

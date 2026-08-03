@@ -15,8 +15,8 @@ _PRESSURE_ORDER = {
     "strong_bullish": 4,
 }
 _DIMENSION_RANGES: dict[ApiVersion, tuple[int, int]] = {
-    "v2": (5, 8),
-    "v3": (4, 7),
+    "v2": (3, 6),
+    "v3": (3, 6),
     "v4": (3, 6),
 }
 
@@ -153,6 +153,11 @@ def _event_lineage(  # noqa: C901
                 value = source.get("eventId") or source.get("event_id")
                 if value is not None:
                     covered.add(int(value))
+        compact_source = dimension.get("sourceRef") or dimension.get("source_ref")
+        if isinstance(compact_source, dict):
+            value = compact_source.get("eventId") or compact_source.get("event_id")
+            if value is not None:
+                covered.add(int(value))
         for value_definition in dimension.get("values", []):
             if not isinstance(value_definition, dict):
                 continue
@@ -201,15 +206,16 @@ def _pressure_band_coverage(data: dict[str, Any], rows: list[dict[str, Any]]) ->
         for item in diagnostics.get("excludedCandidates", [])
         if isinstance(item, dict) and _field(item, "globalPressureBand", "global_pressure_band")
     }
+    unrepresented = {str(band) for band in diagnostics.get("unrepresentedPressureBands", []) if band}
     declared = set(diagnostics.get("targetPressureBands", []))
-    missing = sorted(expected - generated - excluded)
+    missing = sorted(expected - generated - excluded - unrepresented)
     offenders = [f"unexplained band: {band}" for band in missing]
     if declared != expected:
         offenders.append(f"targetPressureBands={sorted(declared)}")
     return _check(
         "M-08",
         not offenders,
-        "Generated and explicitly excluded candidates together explain all five target pressure bands.",
+        "Generated and explicitly excluded or unrepresented bands explain all five target pressure bands.",
         offenders,
     )
 

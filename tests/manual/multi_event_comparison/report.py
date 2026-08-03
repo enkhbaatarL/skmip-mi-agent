@@ -178,7 +178,7 @@ def render_report(  # noqa: C901
                 "",
                 "## 품질 비교",
                 "",
-                "- 사용자가 품질검사를 제외하여 결정적 검사, LLM 점수, 버전 순위는 생성하지 않았습니다.",
+                "- 사용자가 품질검사를 제외하여 결정적 검사, Agent Judge 점수, 버전 순위는 생성하지 않았습니다.",
             ],
         )
     lines.extend(
@@ -188,21 +188,21 @@ def render_report(  # noqa: C901
             "",
             "- 모든 버전의 pressure band는 글로벌 LNG 가격 압력을 기준으로 비교합니다.",
             "- v4 relatedMarkets는 방향·강도 태그가 아닌 Scenario별 보조 관련성 정보입니다.",
-            "- 이 보고서의 LLM 평가는 제공된 Event/API 증적만 사용하며 외부 사실의 진위를 검증하지 않습니다.",
+            "- 이 보고서의 Agent Judge 평가는 제공된 Event/API 증적만 사용하며 외부 사실의 진위를 검증하지 않습니다.",
         ],
     )
     return "\n".join(lines) + "\n"
 
 
 def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) -> list[str]:
-    lines = ["", "## LLM 품질 비교", ""]
+    lines = ["", "## Agent Judge 품질 비교", ""]
     if judge is None:
-        reason = f" Judge 오류: `{_cell(judge_error)}`" if judge_error else ""
+        reason = f" Agent Judge 오류: `{_cell(judge_error)}`" if judge_error else ""
         return [
             *lines,
             (f"- 성공 버전이 2개 미만이거나 Judge가 실행되지 않아 비교 결론은 **판정 불가**입니다.{reason}"),
         ]
-    lines.extend(["| Version | 기준 | 점수 | 결과 | LLM 근거 |", "| --- | --- | --- | --- | --- |"])
+    lines.extend(["| Version | 기준 | 점수 | 결과 | Agent Judge 근거 |", "| --- | --- | --- | --- | --- |"])
     for version in judge.versions:
         for criterion in version.criteria:
             lines.append(  # noqa: PERF401
@@ -216,7 +216,7 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
             f"- **우수 버전:** {', '.join(judge.best_versions)}",
             f"- **선정 이유:** {judge.conclusion}",
             "",
-            "### Scenario별 LLM 판단",
+            "### Scenario별 Agent Judge 판단",
             "",
             "| Version | Scenario | Band | 결과 | 판단 근거 |",
             "| --- | --- | --- | --- | --- |",
@@ -264,6 +264,11 @@ def _dimension_event_ids(dimension: dict[str, Any]) -> list[int]:
             event_id = _field(source, "eventId", "event_id")
             if event_id is not None:
                 event_ids.add(int(event_id))
+    compact_source = dimension.get("sourceRef") or dimension.get("source_ref")
+    if isinstance(compact_source, dict):
+        event_id = _field(compact_source, "eventId", "event_id")
+        if event_id is not None:
+            event_ids.add(int(event_id))
     for value in dimension.get("values", []):
         if not isinstance(value, dict):
             continue
@@ -276,10 +281,13 @@ def _dimension_event_ids(dimension: dict[str, Any]) -> list[int]:
 
 
 def _execution_mode(manifest: dict[str, Any]) -> str:
+    declared_mode = manifest.get("executionMode")
+    if declared_mode:
+        return str(declared_mode)
     orchestration_path = manifest.get("artifacts", {}).get("orchestration")
     if orchestration_path and Path(orchestration_path).is_file():
         return "async fallback (v2‖v3 → v4)"
-    return "subagent staged (v2‖v3 → v4)"
+    return "manual staged (v2 → v3 → v4)"
 
 
 def _field(payload: dict[str, Any], *names: str) -> Any:  # noqa: ANN401

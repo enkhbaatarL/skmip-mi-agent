@@ -125,6 +125,47 @@ def _manifest(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+def _agent_judgment() -> dict[str, Any]:
+    versions: list[dict[str, Any]] = []
+    scores = {"v2": 3, "v3": 4, "v4": 5}
+    for version, score in scores.items():
+        response = _response(version)
+        versions.append(
+            {
+                "apiVersion": version,
+                "criteria": [
+                    {
+                        "criterion": criterion,
+                        "score": score,
+                        "verdict": "PASS" if score >= 4 else "WARN",
+                        "evidence": [f"versions.{version}.data.table"],
+                        "rationale": f"{version} rationale",
+                    }
+                    for criterion in (
+                        "event_consistency",
+                        "lng_dimension_quality",
+                        "floor_ceiling_quality",
+                        "mixed_quality",
+                    )
+                ],
+                "scenarioJudgments": [
+                    {
+                        "scenarioId": str(row["scenarioId"]),
+                        "title": row["title"],
+                        "globalPressureBand": row["globalPressureBand"],
+                        "verdict": "PASS",
+                        "evidence": [f"scenarioId={row['scenarioId']}"],
+                        "rationale": "coherent",
+                    }
+                    for row in response["data"]["table"]["rows"]
+                ],
+                "strengths": ["grounded"],
+                "weaknesses": [],
+            },
+        )
+    return {"versions": versions, "bestVersions": ["v4"], "conclusion": "v4가 가장 우수하다."}
+
+
 def test_prepare_validation_accepts_only_two_to_five_unique_events() -> None:
     valid = argparse.Namespace(
         event_ids=[101, 202],
@@ -272,6 +313,18 @@ def test_deterministic_checks_cover_structure_roles_lineage_and_pressure_bands()
 
     assert {result.check_id for result in results} == {f"M-{index:02d}" for index in range(1, 9)}
     assert {result.status for result in results} == {"PASS"}
+
+
+def test_v2_pressure_coverage_accepts_server_derived_unrepresented_bands() -> None:
+    response = _response("v2")
+    response["data"]["generationDiagnostics"] = {
+        "targetPressureBands": PRESSURE_BANDS,
+        "unrepresentedPressureBands": ["bullish", "bearish"],
+    }
+
+    results = {result.check_id: result for result in run_deterministic_checks("v2", response, [101, 202])}
+
+    assert results["M-08"].status == "PASS"
 
 
 def test_deterministic_checks_reject_wrong_extrema_and_missing_lineage() -> None:
@@ -425,10 +478,7 @@ def test_timeout_is_recorded_as_unknown_and_cannot_be_retried(
         asyncio.run(runner.run_version(args))
 
 
-def test_judge_failure_still_writes_factual_report(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_agent_judge_still_writes_factual_report_and_input(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -442,20 +492,45 @@ def test_judge_failure_still_writes_factual_report(
         }
         Path(manifest["artifacts"][version]).write_text(json.dumps(artifact), encoding="utf-8")
 
-    async def fail_judge(_: dict[str, Any]) -> None:
-        msg = "judge unavailable"
-        raise RuntimeError(msg)
-
-    monkeypatch.setattr(runner, "judge_comparison", fail_judge)
+    Path(manifest["artifacts"]["judge"]).write_text("{}", encoding="utf-8")
     args = argparse.Namespace(manifest=manifest_path, quality_check=True)
 
     report_path = asyncio.run(runner.report(args))
 
     report = report_path.read_text(encoding="utf-8")
     assert "판정 불가" in report
-    assert "judge unavailable" in report
+    assert "agent judge result validation failure" in report
+    judge_input = json.loads((tmp_path / "comparison_judge_input.json").read_text(encoding="utf-8"))
+    assert judge_input["judgeRuntime"].endswith("Do not call an LLM API.")
+    assert set(judge_input["evidence"]["versions"]) == {"v2", "v3", "v4"}
     judge_artifact = json.loads(Path(manifest["artifacts"]["judge"]).read_text(encoding="utf-8"))
-    assert judge_artifact["status"] == "error"
+    assert judge_artifact == {}
+
+
+def test_valid_agent_judge_is_loaded_without_an_api_call(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    for version in ("v2", "v3", "v4"):
+        Path(manifest["artifacts"][version]).write_text(
+            json.dumps(
+                {
+                    "transportStatus": "success",
+                    "outcome": "success",
+                    "httpStatus": 200,
+                    "elapsedMs": 10,
+                    "response": _response(version),
+                },
+            ),
+            encoding="utf-8",
+        )
+    Path(manifest["artifacts"]["judge"]).write_text(json.dumps(_agent_judgment()), encoding="utf-8")
+
+    report_path = asyncio.run(runner.report(argparse.Namespace(manifest=manifest_path, quality_check=True)))
+
+    report = report_path.read_text(encoding="utf-8")
+    assert "**우수 버전:** v4" in report
+    assert "agent judge pending" not in report
 
 
 def test_fallback_orchestration_runs_v2_v3_together_before_v4(

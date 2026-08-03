@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 # ruff: noqa: S101
@@ -24,9 +25,8 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     EventInteraction,
-    ExcludedDimensionDecision,
-    MultiEventGenerationResult,
     V2MultiEventGenerationResult,
+    V3DimensionDefinition,
     V3MultiEventGenerationResult,
     finalize_generation_result as _finalize_generation_result,
 )
@@ -43,6 +43,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
 from apps.agents.scenario_group_agent.flows.validate_scenarios.state import (
     ValidateScenariosState,
 )
+from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
@@ -66,7 +67,12 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.scenario.schema import SourceLineage
+from apps.persistence.model_parameter.service import ModelImpactLeverService
+from apps.persistence.scenario.schema import (
+    ScenarioPayload,
+    ScenarioPipelineTemplate,
+    SourceLineage,
+)
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 from scripts.scenario_generation.import_template_domain_knowledge import (
     load_template_updates,
@@ -103,65 +109,28 @@ def _revisioned_sources(
 
 
 def finalize_generation_result(*args: object, **kwargs: object) -> object:
+    strategy = kwargs.get("generation_strategy")
+    result = args[0] if args else kwargs.get("result")
     source_dimensions = kwargs.get("source_dimensions_by_event")
+    if (
+        strategy == "multi_event_source_dimensions"
+        and isinstance(result, V2MultiEventGenerationResult)
+        and not isinstance(source_dimensions, dict)
+    ):
+        source_dimensions = {
+            event_id: {
+                selected.source_ref.dim_key: False
+                for selected in result.selected_dimensions
+                if selected.source_ref.event_id == event_id
+            }
+            for event_id in EVENT_IDS
+        }
+        kwargs["source_dimensions_by_event"] = source_dimensions
     if isinstance(source_dimensions, dict):
         revisioned = _revisioned_sources(
             source_dimensions,
         )
         kwargs["source_dimensions_by_event"] = revisioned
-        strategy = kwargs.get("generation_strategy")
-        result = args[0] if args else kwargs.get("result")
-        if strategy == "multi_event_source_dimensions" and isinstance(result, MultiEventGenerationResult):
-            selected_sources: set[tuple[int, str]] = set()
-            for dimension in result.dimension_definitions:
-                for source in dimension.source_refs:
-                    if source.dim_key in revisioned.get(source.event_id, {}):
-                        selected_sources.add((source.event_id, source.dim_key))
-                        continue
-                    exact_matches = [
-                        (event_id, source.dim_key)
-                        for event_id, definitions in revisioned.items()
-                        if source.dim_key in definitions
-                    ]
-                    if len(exact_matches) == 1:
-                        selected_sources.add(exact_matches[0])
-            existing_exclusions = {
-                (decision.event_id, decision.dim_key): decision
-                for decision in result.excluded_dimensions
-                if isinstance(decision, ExcludedDimensionDecision)
-            }
-            exclusions = list(existing_exclusions.values())
-            for event_id, definitions in revisioned.items():
-                for dim_key, definition in definitions.items():
-                    source_key = (event_id, dim_key)
-                    if source_key in selected_sources or source_key in existing_exclusions:
-                        continue
-                    exclusions.append(
-                        ExcludedDimensionDecision(
-                            event_id=event_id,
-                            event_type_l2_id=int(
-                                definition["event_type_l2_id"],
-                            ),
-                            scenario_dimension_template_id=int(
-                                definition["scenario_dimension_template_id"],
-                            ),
-                            template_checksum=str(
-                                definition["template_checksum"],
-                            ),
-                            dim_key=dim_key,
-                            selection_criterion="none",
-                            required=bool(definition.get("required", False)),
-                            reason_code="NOT_RELEVANT",
-                            reason="Event 사실과 LNG 영향 경로 관련성이 없다.",
-                        ),
-                    )
-            result = result.model_copy(
-                update={"excluded_dimensions": exclusions},
-            )
-            if args:
-                args = (result, *args[1:])
-            else:
-                kwargs["result"] = result
     return _finalize_generation_result(*args, **kwargs)
 
 
@@ -187,38 +156,69 @@ def _dimension(
     display_order: int,
     source_event_ids: list[int] | None = None,
 ) -> dict[str, object]:
-    source_event_ids = source_event_ids or [event_id]
-    refs = [_source(source_id, dim_key) for source_id in source_event_ids]
-    values = []
-    for value_id, label, contribution in (
-        ("low", "Event별 완화", "bearish"),
-        ("mid", "Event 사실 기반 균형", "balanced"),
-        ("high", "Event별 심화", "bullish"),
-    ):
-        values.append(
+    del display_order, source_event_ids
+    return {
+        "dimensionId": dimension_id,
+        "sourceRef": {
+            "eventId": event_id,
+            "scenarioDimensionTemplateId": 81 if event_id == 101 else 121,
+            "dimKey": dim_key,
+        },
+        "selectionCriterion": "both",
+        "selectionRationale": "Event 사실과 LNG 영향 경로에 모두 연결된다.",
+        "values": [
             {
                 "valueId": value_id,
                 "label": label,
                 "globalPressureContribution": contribution,
-                "sourceAssignments": [_source(source_id, dim_key, label) for source_id in source_event_ids],
-            },
-        )
+            }
+            for value_id, label, contribution in (
+                ("low", "Event별 완화", "bearish"),
+                ("mid", "Event 사실 기반 균형", "balanced"),
+                ("high", "Event별 심화", "bullish"),
+            )
+        ],
+    }
+
+
+def _compact_dimension(
+    *,
+    dimension_id: str,
+    source_event_ids: list[int],
+    source_refs: list[tuple[int, str]],
+) -> dict[str, object]:
     return {
         "dimensionId": dimension_id,
         "label": dimension_id,
         "description": f"{dimension_id} 설명",
-        "displayOrder": display_order,
-        "selectionCriterion": "both",
-        "selectionRationale": "(a)(c) Event 사실과 LNG 영향 경로에 모두 연결된다.",
-        "sourceRefs": refs,
-        "values": values,
+        "rationale": "관련 Event 사실이 LNG 가격의 상승 또는 하락 압력을 바꿀 수 있다.",
+        "sourceEventIds": source_event_ids,
+        "sourceRefs": [
+            {
+                "scenarioDimensionTemplateId": template_id,
+                "dimKey": dim_key,
+            }
+            for template_id, dim_key in source_refs
+        ],
+        "values": [
+            {
+                "valueId": value_id,
+                "label": label,
+                "globalPressureContribution": contribution,
+            }
+            for value_id, label, contribution in (
+                ("low", "Event별 완화", "bearish"),
+                ("mid", "Event 사실 기반 균형", "balanced"),
+                ("high", "Event별 심화", "bullish"),
+            )
+        ],
     }
 
 
 def _result(
     *,
     strategy: str,
-) -> MultiEventGenerationResult:
+) -> V2MultiEventGenerationResult | V3MultiEventGenerationResult:
     if strategy == "multi_event_source_dimensions":
         dimensions = [
             _dimension(
@@ -254,142 +254,100 @@ def _result(
         ]
     else:
         dimensions = [
-            _dimension(
+            _compact_dimension(
                 dimension_id="demand_inventory_tightness",
-                event_id=101,
-                dim_key="tightness",
-                display_order=1,
                 source_event_ids=[101, 202],
+                source_refs=[(81, "tightness"), (121, "tightness")],
             ),
-            _dimension(
+            _compact_dimension(
                 dimension_id="heat_duration",
-                event_id=101,
-                dim_key="duration",
-                display_order=2,
+                source_event_ids=[101],
+                source_refs=[(81, "duration")],
             ),
-            _dimension(
+            _compact_dimension(
                 dimension_id="inventory_recovery",
-                event_id=202,
-                dim_key="recovery",
-                display_order=3,
+                source_event_ids=[202],
+                source_refs=[(121, "recovery")],
             ),
-            _dimension(
+            _compact_dimension(
                 dimension_id="regional_competition",
-                event_id=202,
-                dim_key="competition",
-                display_order=4,
+                source_event_ids=[202],
+                source_refs=[(121, "competition")],
             ),
         ]
     dimension_ids = [str(dimension["dimensionId"]) for dimension in dimensions]
-    return MultiEventGenerationResult.model_validate(
-        {
-            "scenarioGroupTitle": "복수 Event 시나리오",
-            "scenarioGroupDescription": "두 Event를 공동 전제로 비교한다.",
-            "eventShocks": [
-                {
-                    "eventId": event_id,
-                    "supplyDirection": "neutral",
-                    "demandDirection": "increase",
-                    "tradeDirection": "neutral",
-                    "affectedRegions": ["아시아"],
-                    "affectedCountries": [],
-                    "affectedFacilities": [],
-                    "duration": "계절",
-                    "intensity": "중간",
-                    "recoveryOrPersistence": "점진",
-                    "mitigation": "대체 조달",
-                    "sourceDimensionKeys": ["heat"],
-                    "generatedEventValues": {"heat": "현재 Event에 맞춘 신규 값"},
-                    "impactPaths": [
-                        {
-                            "domain": "supply",
-                            "direction": "neutral",
-                            "rationale": "공급 직접 영향은 제한적이다.",
-                            "affectedScope": [],
-                        },
-                        {
-                            "domain": "demand",
-                            "direction": "increase",
-                            "rationale": "수요 증가 경로가 있다.",
-                            "affectedScope": ["동북아 LNG 수요"],
-                        },
-                        {
-                            "domain": "trade",
-                            "direction": "neutral",
-                            "rationale": "무역 직접 영향은 제한적이다.",
-                            "affectedScope": [],
-                        },
-                    ],
-                    "sourceDimensions": [
-                        {
-                            "eventId": event_id,
-                            "scenarioDimensionTemplateId": (81 if event_id == 101 else 121),
-                            "templateChecksum": ("checksum-8" if event_id == 101 else "checksum-12"),
-                            "dimKey": "heat",
-                        },
-                    ],
-                    "templateValueExamplesConsulted": {"heat": ["낮음", "높음"]},
-                }
-                for event_id in EVENT_IDS
-            ],
-            "interactions": (
-                [
+    result_schema = (
+        V2MultiEventGenerationResult if strategy == "multi_event_source_dimensions" else V3MultiEventGenerationResult
+    )
+    payload: dict[str, object] = {
+        "scenarioGroupTitle": "복수 Event 시나리오",
+        "scenarioGroupDescription": "두 Event를 공동 전제로 비교한다.",
+        "eventShocks": [
+            {
+                "eventId": event_id,
+                "shockSummary": "확인된 수급 충격이 글로벌 LNG 가격 압력을 변화시킬 수 있다.",
+            }
+            for event_id in EVENT_IDS
+        ],
+        "scenarios": [
+            {
+                "title": "상단",
+                "narrative": "공동 전제의 상승 압력이 심화된다.",
+                "dimensionValues": {key: "high" for key in dimension_ids},
+                "globalPressureBand": "strong_bullish",
+                "probabilityScore": 20,
+                "globalPressureRationale": "공급·수요 압력이 가격을 높인다.",
+            },
+            {
+                "title": "혼합",
+                "narrative": "상승과 완화 요인이 함께 작용한다.",
+                "dimensionValues": {
+                    key: "high" if index == 0 else ("low" if index == 1 else "mid")
+                    for index, key in enumerate(dimension_ids)
+                },
+                "globalPressureBand": "balanced",
+                "probabilityScore": 60,
+                "globalPressureRationale": "상승과 하락 요인이 상쇄된다.",
+                **({"mixedFactors": True} if strategy == "multi_event_composite_dimensions" else {}),
+            },
+            {
+                "title": "하단",
+                "narrative": "완화와 대체 공급이 가격 압력을 낮춘다.",
+                "dimensionValues": {key: "low" for key in dimension_ids},
+                "globalPressureBand": "strong_bearish",
+                "probabilityScore": 20,
+                "globalPressureRationale": "완화 경로가 우세하다.",
+            },
+        ],
+    }
+    if strategy == "multi_event_source_dimensions":
+        payload["selectedDimensions"] = dimensions
+    else:
+        payload.update(
+            {
+                "interactions": [
                     {
                         "eventIds": EVENT_IDS,
                         "relation": "regional_coupling",
                         "rationale": "수요와 재고가 지역 구매 경쟁으로 연결된다.",
                     },
-                ]
-                if strategy == "multi_event_composite_dimensions"
-                else []
-            ),
-            "dimensionDefinitions": dimensions,
-            "scenarios": [
-                {
-                    "title": "상단",
-                    "narrative": "공동 전제의 상승 압력이 심화된다.",
-                    "dimensionValues": {key: "Event별 심화" for key in dimension_ids},
-                    "globalPressureBand": "strong_bullish",
-                    "probabilityScore": 20,
-                    "globalPressureRationale": "공급·수요 압력이 가격을 높인다.",
-                },
-                {
-                    "title": "혼합",
-                    "narrative": "상승과 완화 요인이 함께 작용한다.",
-                    "dimensionValues": {
-                        key: (
-                            "Event별 심화" if index == 0 else ("Event별 완화" if index == 1 else "Event 사실 기반 균형")
-                        )
-                        for index, key in enumerate(dimension_ids)
+                ],
+                "dimensionDefinitions": dimensions,
+                "excludedCandidates": [
+                    {
+                        "globalPressureBand": "bullish",
+                        "reasonCode": "NOT_INDEPENDENT",
+                        "reason": "상단 후보와 독립적인 검토 가치가 부족하다.",
                     },
-                    "globalPressureBand": "balanced",
-                    "probabilityScore": 60,
-                    "globalPressureRationale": "상승과 하락 요인이 상쇄된다.",
-                    "mixedFactors": True,
-                },
-                {
-                    "title": "하단",
-                    "narrative": "완화와 대체 공급이 가격 압력을 낮춘다.",
-                    "dimensionValues": {key: "Event별 완화" for key in dimension_ids},
-                    "globalPressureBand": "strong_bearish",
-                    "probabilityScore": 20,
-                    "globalPressureRationale": "완화 경로가 우세하다.",
-                },
-            ],
-            "excludedCandidates": [
-                {
-                    "globalPressureBand": "bullish",
-                    "reasonCode": "NOT_INDEPENDENT",
-                    "reason": "상단 후보와 독립적인 검토 가치가 부족하다.",
-                },
-                {
-                    "globalPressureBand": "bearish",
-                    "reasonCode": "LOW_PROBABILITY",
-                    "reason": "Event 사실을 유지한 현실적 조합의 가능성이 낮다.",
-                },
-            ],
-        },
-    )
+                    {
+                        "globalPressureBand": "bearish",
+                        "reasonCode": "LOW_PROBABILITY",
+                        "reason": "Event 사실을 유지한 현실적 조합의 가능성이 낮다.",
+                    },
+                ],
+            },
+        )
+    return result_schema.model_validate(payload)
 
 
 def test_multi_event_request_requires_two_to_five_unique_events() -> None:
@@ -413,74 +371,118 @@ def test_multi_event_request_requires_two_to_five_unique_events() -> None:
             )
 
 
-def test_event_shock_requires_exact_typed_impact_paths() -> None:
-    payload = _result(
-        strategy="multi_event_composite_dimensions",
-    ).model_dump()
-    payload["event_shocks"][0]["impact_paths"] = payload["event_shocks"][0]["impact_paths"][:2]
-
-    with pytest.raises(
-        ValidationError,
-        match="supply, demand and trade exactly once",
-    ):
-        MultiEventGenerationResult.model_validate(payload)
-
-
-def test_event_shock_separates_template_examples_from_generated_values() -> None:
-    shock = _result(
-        strategy="multi_event_composite_dimensions",
-    ).event_shocks[0]
-
-    assert shock.source_dimensions[0].event_id == shock.event_id
-    assert shock.generated_event_values == {"heat": "현재 Event에 맞춘 신규 값"}
-    assert shock.template_value_examples_consulted == {"heat": ["낮음", "높음"]}
-    assert shock.impact_paths[1].affected_scope == ["동북아 LNG 수요"]
-
-
-def test_event_shock_rejects_cross_event_source_dimension() -> None:
-    payload = _result(
-        strategy="multi_event_composite_dimensions",
-    ).model_dump()
-    payload["event_shocks"][0]["source_dimensions"][0]["event_id"] = 999
-
-    with pytest.raises(
-        ValidationError,
-        match="sourceDimensions eventId must match EventShock eventId",
-    ):
-        MultiEventGenerationResult.model_validate(payload)
-
-
-def test_event_shock_template_examples_must_reference_a_source_dimension() -> None:
-    payload = _result(
-        strategy="multi_event_composite_dimensions",
-    ).model_dump()
-    payload["event_shocks"][0]["template_value_examples_consulted"] = {
-        "unknown": ["참고 예시"],
-    }
-
-    with pytest.raises(
-        ValidationError,
-        match="templateValueExamplesConsulted must reference sourceDimensions",
-    ):
-        MultiEventGenerationResult.model_validate(payload)
-
-
-def test_v2_schema_filters_template_examples_to_source_dimensions_before_validation() -> None:
-    payload = _result(
-        strategy="multi_event_source_dimensions",
-    ).model_dump(by_alias=True)
-    shock = payload["eventShocks"][0]
-    source_key = shock["sourceDimensions"][0]["dimKey"]
-    shock["templateValueExamplesConsulted"] = [
-        {"dimKey": source_key, "valueExamples": ["낮음", "높음"]},
-        {"dimKey": "unreferenced_dimension", "valueExamples": ["참고 예시"]},
+@pytest.mark.parametrize(
+    ("api_version", "generation_strategy"),
+    [
+        ("v2", "multi_event_source_dimensions"),
+        ("v3", "multi_event_composite_dimensions"),
+    ],
+)
+def test_v2_v3_prepare_does_not_load_model_impact_levers(
+    api_version: str,
+    generation_strategy: str,
+) -> None:
+    payload = MultiEventCreateScenariosIn(
+        mi_event_ids=EVENT_IDS,
+        user_id=7,
+        comparison_run_id=f"compare-{api_version}-isolation",
+    )
+    events = [
+        EventPayload(mi_event_id=101, event_type_l2_id=8),
+        EventPayload(mi_event_id=202, event_type_l2_id=12),
     ]
+    templates = [
+        SimpleNamespace(
+            model_dump=Mock(
+                return_value={
+                    "scenario_dimension_template_id": template_id,
+                    "template_checksum": checksum,
+                },
+            ),
+        )
+        for template_id, checksum in ((81, "checksum-8"), (121, "checksum-12"))
+    ]
+    prepared_group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version=api_version,
+        generation_strategy=generation_strategy,
+    )
 
-    parsed = V2MultiEventGenerationResult.model_validate(payload)
+    with (
+        patch.object(EventService, "load_events", return_value=events),
+        patch.object(
+            ScenarioService,
+            "load_pipeline_template_with_metadata",
+            side_effect=templates,
+        ),
+        patch.object(
+            ScenarioGroupService,
+            "prepare_multi_event_group",
+            return_value=prepared_group,
+        ),
+        patch.object(
+            ModelImpactLeverService,
+            "load_active_catalog",
+            side_effect=AssertionError(f"{api_version} must not load the Lever catalog"),
+        ),
+    ):
+        prepared = multi_event_flow.prepare_multi_event_scenarios(
+            payload,
+            api_version=api_version,
+        )
 
-    assert parsed.event_shocks[0].template_value_examples_consulted == {
-        source_key: ["낮음", "높음"],
+    assert prepared["api_version"] == api_version
+    assert prepared["templates"] == templates
+
+
+def test_v2_schema_exposes_only_compact_event_and_dimension_fields() -> None:
+    payload = _result(strategy="multi_event_source_dimensions").model_dump(by_alias=True)
+
+    assert set(payload["eventShocks"][0]) == {"eventId", "shockSummary"}
+    assert set(payload["selectedDimensions"][0]) == {
+        "dimensionId",
+        "sourceRef",
+        "selectionCriterion",
+        "selectionRationale",
+        "values",
     }
+    assert set(payload["selectedDimensions"][0]["sourceRef"]) == {
+        "eventId",
+        "scenarioDimensionTemplateId",
+        "dimKey",
+    }
+    assert set(payload["selectedDimensions"][0]["values"][0]) == {
+        "valueId",
+        "label",
+        "globalPressureContribution",
+    }
+
+
+def test_v2_llm_schema_stays_smaller_than_v3_composite_schema() -> None:
+    v2_size = len(
+        json.dumps(
+            multi_event_flow.multi_event_generation_schema("v2").model_json_schema(),
+            ensure_ascii=False,
+        ),
+    )
+    v3_size = len(
+        json.dumps(
+            multi_event_flow.multi_event_generation_schema("v3").model_json_schema(),
+            ensure_ascii=False,
+        ),
+    )
+
+    assert v2_size < 5_000
+    assert v2_size < v3_size
+
+
+def test_v2_schema_rejects_removed_detailed_lineage_fields() -> None:
+    payload = _result(strategy="multi_event_source_dimensions").model_dump(by_alias=True)
+    payload["eventShocks"][0]["impactPaths"] = []
+    payload["selectedDimensions"][0]["values"][0]["sourceAssignments"] = []
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        V2MultiEventGenerationResult.model_validate(payload)
 
 
 def test_v3_schema_discards_v2_only_excluded_dimensions_before_validation() -> None:
@@ -511,7 +513,7 @@ def test_v3_schema_discards_v2_only_excluded_dimensions_before_validation() -> N
     [V2MultiEventGenerationResult, V3MultiEventGenerationResult],
 )
 def test_multi_event_generation_schema_is_openai_strict_compatible(
-    schema: type[MultiEventGenerationResult],
+    schema: type[V2MultiEventGenerationResult] | type[V3MultiEventGenerationResult],
 ) -> None:
     parameters = pydantic_function_tool(schema)["function"]["parameters"]
     invalid_objects: list[str] = []
@@ -534,29 +536,54 @@ def test_multi_event_generation_schema_is_openai_strict_compatible(
 
     assert invalid_objects == []
     definitions = parameters["$defs"]
-    assert definitions["EventShock"]["properties"]["generatedEventValues"]["type"] == "array"
-    assert definitions["EventShock"]["properties"]["templateValueExamplesConsulted"]["type"] == "array"
-    assert definitions["ScenarioCandidate"]["properties"]["dimensionValues"]["type"] == "array"
+    if schema is V2MultiEventGenerationResult:
+        assert set(definitions["V2EventShock"]["properties"]) == {"eventId", "shockSummary"}
+        assert set(definitions["V2SelectedDimension"]["properties"]) == {
+            "dimensionId",
+            "sourceRef",
+            "selectionCriterion",
+            "selectionRationale",
+            "values",
+        }
+        scenario_definition = definitions["V2ScenarioCandidate"]
+    else:
+        assert set(definitions["V3EventShock"]["properties"]) == {
+            "eventId",
+            "shockSummary",
+        }
+        assert set(definitions["V3DimensionDefinition"]["properties"]) == {
+            "dimensionId",
+            "label",
+            "description",
+            "rationale",
+            "sourceEventIds",
+            "sourceRefs",
+            "values",
+        }
+        assert set(definitions["V3SourceReference"]["properties"]) == {
+            "scenarioDimensionTemplateId",
+            "dimKey",
+        }
+        assert set(definitions["V3DimensionValueDefinition"]["properties"]) == {
+            "valueId",
+            "label",
+            "globalPressureContribution",
+        }
+        scenario_definition = definitions["ScenarioCandidate"]
+    assert scenario_definition["properties"]["dimensionValues"]["type"] == "array"
 
 
-def test_v2_schema_converts_strict_wire_assignments_to_domain_maps() -> None:
+def test_v2_schema_converts_strict_wire_scenario_cells_to_domain_map() -> None:
     payload = _result(
         strategy="multi_event_source_dimensions",
     ).model_dump(by_alias=True)
-    shock = payload["eventShocks"][0]
-    shock["generatedEventValues"] = [
-        {"dimKey": key, "value": value}
-        for key, value in shock["generatedEventValues"].items()
-    ]
     scenario = payload["scenarios"][0]
     scenario["dimensionValues"] = [
-        {"dimensionId": key, "valueId": value}
-        for key, value in scenario["dimensionValues"].items()
+        {"dimensionId": key, "valueId": value} for key, value in scenario["dimensionValues"].items()
     ]
 
     parsed = V2MultiEventGenerationResult.model_validate(payload)
 
-    assert parsed.event_shocks[0].generated_event_values
     assert parsed.scenarios[0].dimension_values
 
 
@@ -621,6 +648,50 @@ def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
     assert "scenarioGroupTitle" in retry_feedback
 
 
+def test_v2_semantic_validation_stops_after_two_attempts() -> None:
+    events = [
+        SimpleNamespace(mi_event_id=101, event_type_l2_id=8),
+        SimpleNamespace(mi_event_id=202, event_type_l2_id=12),
+    ]
+    templates = [
+        SimpleNamespace(
+            event_type_l2_id=event_type_l2_id,
+            scenario_dimension_template_id=template_id,
+            template_checksum=checksum,
+            dimensions=[],
+        )
+        for event_type_l2_id, template_id, checksum in (
+            (8, 81, "checksum-8"),
+            (12, 121, "checksum-12"),
+        )
+    ]
+    invoke = AsyncMock(
+        side_effect=MIBaseError(
+            multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+            detail="selectedDimensions is invalid",
+        ),
+    )
+
+    with patch.object(
+        multi_event_flow,
+        "_invoke_multi_event_generation",
+        new=invoke,
+    ):
+        with pytest.raises(MIBaseError, match="after 2 attempts"):
+            asyncio.run(
+                multi_event_flow._generate_validated_result(
+                    api_version="v2",
+                    generation_strategy="multi_event_source_dimensions",
+                    events=events,
+                    templates=templates,
+                    trace_context=None,
+                ),
+            )
+
+    assert invoke.await_count == 2
+    assert "selectedDimensions" in invoke.await_args_list[1].kwargs["validation_feedback"]
+
+
 @pytest.mark.parametrize(
     "strategy",
     [
@@ -650,11 +721,11 @@ def test_v2_requires_namespaced_source_dimensions() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     broken = result.model_copy(
         update={
-            "dimension_definitions": [
-                result.dimension_definitions[0].model_copy(
+            "selected_dimensions": [
+                result.selected_dimensions[0].model_copy(
                     update={"dimension_id": "heat"},
                 ),
-                *result.dimension_definitions[1:],
+                *result.selected_dimensions[1:],
             ],
         },
     )
@@ -671,13 +742,7 @@ def test_v2_keeps_unrepresented_event_in_context_without_forcing_dimension_cover
     unrepresented_event_id = 303
     result.event_shocks.append(
         result.event_shocks[0].model_copy(
-            update={
-                "event_id": unrepresented_event_id,
-                "source_dimensions": [
-                    source.model_copy(update={"event_id": unrepresented_event_id})
-                    for source in result.event_shocks[0].source_dimensions
-                ],
-            },
+            update={"event_id": unrepresented_event_id},
         ),
     )
 
@@ -688,9 +753,7 @@ def test_v2_keeps_unrepresented_event_in_context_without_forcing_dimension_cover
     )
 
     assert {shock.event_id for shock in finalized.event_shocks} == {*EVENT_IDS, unrepresented_event_id}
-    assert all(
-        unrepresented_event_id not in dimension.source_event_ids for dimension in finalized.dimension_definitions
-    )
+    assert all(unrepresented_event_id != dimension.source_ref.event_id for dimension in finalized.dimension_definitions)
 
 
 @pytest.mark.parametrize(
@@ -706,9 +769,13 @@ def test_multi_event_dimension_count_must_be_between_three_and_six(
     dimension_count: int,
 ) -> None:
     result = _result(strategy=strategy)
+    field_name = "selected_dimensions" if strategy == "multi_event_source_dimensions" else "dimension_definitions"
+    dimensions = (
+        result.selected_dimensions if strategy == "multi_event_source_dimensions" else result.dimension_definitions
+    )
     broken = result.model_copy(
         update={
-            "dimension_definitions": [result.dimension_definitions[0] for _ in range(dimension_count)],
+            field_name: [dimensions[0] for _ in range(dimension_count)],
         },
     )
 
@@ -736,21 +803,14 @@ def test_v3_does_not_require_exhaustive_pairwise_interactions() -> None:
     third_event_id = 303
     result.event_shocks.append(
         result.event_shocks[1].model_copy(
-            update={
-                "event_id": third_event_id,
-                "source_dimensions": [
-                    source.model_copy(update={"event_id": third_event_id})
-                    for source in result.event_shocks[1].source_dimensions
-                ],
-            },
+            update={"event_id": third_event_id},
         ),
     )
-    third_dimension = type(result.dimension_definitions[0]).model_validate(
-        _dimension(
+    third_dimension = V3DimensionDefinition.model_validate(
+        _compact_dimension(
             dimension_id="third_event_path",
-            event_id=third_event_id,
-            dim_key="third_path",
-            display_order=5,
+            source_event_ids=[third_event_id],
+            source_refs=[(3031, "third_path")],
         ),
     )
     result.dimension_definitions.append(third_dimension)
@@ -771,21 +831,14 @@ def test_v3_accepts_one_interaction_with_more_than_two_events() -> None:
     third_event_id = 303
     result.event_shocks.append(
         result.event_shocks[1].model_copy(
-            update={
-                "event_id": third_event_id,
-                "source_dimensions": [
-                    source.model_copy(update={"event_id": third_event_id})
-                    for source in result.event_shocks[1].source_dimensions
-                ],
-            },
+            update={"event_id": third_event_id},
         ),
     )
-    third_dimension = type(result.dimension_definitions[0]).model_validate(
-        _dimension(
+    third_dimension = V3DimensionDefinition.model_validate(
+        _compact_dimension(
             dimension_id="third_event_path",
-            event_id=third_event_id,
-            dim_key="third_path",
-            display_order=5,
+            source_event_ids=[third_event_id],
+            source_refs=[(3031, "third_path")],
         ),
     )
     result.dimension_definitions.append(third_dimension)
@@ -801,6 +854,7 @@ def test_v3_accepts_one_interaction_with_more_than_two_events() -> None:
             },
         ),
     ]
+    result.dimension_definitions[0].source_event_ids.append(third_event_id)
 
     finalized = finalize_generation_result(
         result,
@@ -814,7 +868,7 @@ def test_v3_accepts_one_interaction_with_more_than_two_events() -> None:
         for dimension in finalized.dimension_definitions
         if dimension.dimension_id == "demand_inventory_tightness"
     )
-    assert {source.event_id for source in resolution_dimension.source_refs} == {101, 202, 303}
+    assert set(resolution_dimension.source_event_ids) == {101, 202, 303}
 
 
 @pytest.mark.parametrize("event_ids", [[], [101], [101, 101]])
@@ -831,20 +885,11 @@ def test_v3_interaction_requires_at_least_two_distinct_events(
         )
 
 
-def test_v3_non_independent_interaction_adds_missing_source_lineage() -> None:
+def test_v3_non_independent_interaction_rejects_missing_source_event_ids() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     first_dimension = result.dimension_definitions[0]
-    single_source = first_dimension.source_refs[:1]
     broken_dimension = first_dimension.model_copy(
-        update={
-            "source_refs": single_source,
-            "values": [
-                value.model_copy(
-                    update={"source_assignments": value.source_assignments[:1]},
-                )
-                for value in first_dimension.values
-            ],
-        },
+        update={"source_event_ids": [101]},
     )
     broken = result.model_copy(
         update={
@@ -855,16 +900,12 @@ def test_v3_non_independent_interaction_adds_missing_source_lineage() -> None:
         },
     )
 
-    finalized = finalize_generation_result(
-        broken,
-        generation_strategy="multi_event_composite_dimensions",
-        event_ids=EVENT_IDS,
-    )
-
-    repaired = finalized.dimension_definitions[0]
-    assert {source.event_id for source in repaired.source_refs} == set(EVENT_IDS)
-    for value in repaired.values:
-        assert {assignment.event_id for assignment in value.source_assignments} == set(EVENT_IDS)
+    with pytest.raises(ValueError, match="sourceEventIds"):
+        finalize_generation_result(
+            broken,
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
 def test_v2_source_refs_must_exist_in_the_event_type_templates() -> None:
@@ -878,17 +919,17 @@ def test_v2_source_refs_must_exist_in_the_event_type_templates() -> None:
             "competition": True,
         },
     }
-    first_dimension = result.dimension_definitions[0]
-    unknown_ref = first_dimension.source_refs[0].model_copy(
+    first_dimension = result.selected_dimensions[0]
+    unknown_ref = first_dimension.source_ref.model_copy(
         update={"dim_key": "not_in_template"},
     )
     broken = result.model_copy(
         update={
-            "dimension_definitions": [
+            "selected_dimensions": [
                 first_dimension.model_copy(
-                    update={"source_refs": [unknown_ref]},
+                    update={"source_ref": unknown_ref},
                 ),
-                *result.dimension_definitions[1:],
+                *result.selected_dimensions[1:],
             ],
         },
     )
@@ -902,83 +943,32 @@ def test_v2_source_refs_must_exist_in_the_event_type_templates() -> None:
         )
 
 
-def test_v2_collapses_composite_lineage_to_one_valid_source() -> None:
+def test_v2_rejects_duplicate_compact_source_ref() -> None:
     result = _result(strategy="multi_event_source_dimensions")
-    first_dimension = result.dimension_definitions[0]
-    extra_source = result.dimension_definitions[2].source_refs[0]
-    composite_values = [
-        value.model_copy(
-            update={
-                "source_assignments": [
-                    *value.source_assignments,
-                    extra_source.model_copy(update={"value": value.label}),
-                ],
-            },
+    first = result.selected_dimensions[0]
+    duplicate = result.selected_dimensions[1].model_copy(
+        update={"dimension_id": first.dimension_id, "source_ref": first.source_ref},
+    )
+    broken = result.model_copy(update={"selected_dimensions": [first, duplicate, *result.selected_dimensions[2:]]})
+
+    with pytest.raises(ValueError, match="duplicate sourceRef"):
+        finalize_generation_result(
+            broken,
+            generation_strategy="multi_event_source_dimensions",
+            event_ids=EVENT_IDS,
         )
-        for value in first_dimension.values
-    ]
-    source_dimensions = {
-        101: {"heat": True, "duration": True},
-        202: {
-            "inventory": True,
-            "recovery": True,
-            "competition": True,
-        },
-    }
-
-    finalized = finalize_generation_result(
-        result.model_copy(
-            update={
-                "dimension_definitions": [
-                    first_dimension.model_copy(
-                        update={
-                            "source_refs": [
-                                *first_dimension.source_refs,
-                                extra_source,
-                            ],
-                            "values": composite_values,
-                        },
-                    ),
-                    *result.dimension_definitions[1:],
-                ],
-            },
-        ),
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    collapsed = finalized.dimension_definitions[0]
-    assert len(collapsed.source_refs) == 1
-    assert collapsed.source_refs[0].event_id == 101
-    assert all(
-        len(value.source_assignments) == 1 and value.source_assignments[0].event_id == 101 for value in collapsed.values
-    )
 
 
-def test_v3_normalizes_display_prefixed_source_keys() -> None:
+def test_v3_rejects_display_prefixed_source_keys() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     first_dimension = result.dimension_definitions[0]
     prefixed_refs = [
-        (source.model_copy(update={"dim_key": "d1_tightness"}) if source.event_id == 101 else source)
-        for source in first_dimension.source_refs
-    ]
-    prefixed_values = [
-        value.model_copy(
-            update={
-                "source_assignments": [
-                    (
-                        assignment.model_copy(
-                            update={"dim_key": "d1_tightness"},
-                        )
-                        if assignment.event_id == 101
-                        else assignment
-                    )
-                    for assignment in value.source_assignments
-                ],
-            },
+        (
+            source.model_copy(update={"dim_key": "d1_tightness"})
+            if source.scenario_dimension_template_id == 81
+            else source
         )
-        for value in first_dimension.values
+        for source in first_dimension.source_refs
     ]
     source_dimensions = {
         101: {"tightness": True, "duration": True},
@@ -989,34 +979,28 @@ def test_v3_normalizes_display_prefixed_source_keys() -> None:
         },
     }
 
-    finalized = finalize_generation_result(
-        result.model_copy(
-            update={
-                "dimension_definitions": [
-                    first_dimension.model_copy(
-                        update={
-                            "source_refs": prefixed_refs,
-                            "values": prefixed_values,
-                        },
-                    ),
-                    *result.dimension_definitions[1:],
-                ],
-            },
-        ),
-        generation_strategy="multi_event_composite_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    normalized = finalized.dimension_definitions[0]
-    assert normalized.source_refs[0].dim_key == "tightness"
-    assert all(value.source_assignments[0].dim_key == "tightness" for value in normalized.values)
+    with pytest.raises(ValueError, match="not present in the input Template"):
+        finalize_generation_result(
+            result.model_copy(
+                update={
+                    "dimension_definitions": [
+                        first_dimension.model_copy(
+                            update={"source_refs": prefixed_refs},
+                        ),
+                        *result.dimension_definitions[1:],
+                    ],
+                },
+            ),
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+            source_dimensions_by_event=source_dimensions,
+        )
 
 
-def test_v3_rejects_source_lineage_from_a_different_template_revision() -> None:
+def test_v3_rejects_source_ref_from_a_different_template_id() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     first_dimension = result.dimension_definitions[0]
-    first_dimension.source_refs[0].template_checksum = "stale-checksum"
+    first_dimension.source_refs[0].scenario_dimension_template_id = 999
     source_dimensions = _revisioned_sources(
         {
             101: {
@@ -1033,7 +1017,7 @@ def test_v3_rejects_source_lineage_from_a_different_template_revision() -> None:
         },
     )
 
-    with pytest.raises(ValueError, match="Template revision does not match"):
+    with pytest.raises(ValueError, match="not present in the input Template"):
         _finalize_generation_result(
             result,
             generation_strategy="multi_event_composite_dimensions",
@@ -1042,11 +1026,9 @@ def test_v3_rejects_source_lineage_from_a_different_template_revision() -> None:
         )
 
 
-def test_v2_rejects_source_lineage_from_a_different_template_revision() -> None:
+def test_v2_rejects_source_ref_from_a_different_template_id() -> None:
     result = _result(strategy="multi_event_source_dimensions")
-    result.dimension_definitions[0].source_refs[0].template_checksum = (
-        "stale-checksum"
-    )
+    result.selected_dimensions[0].source_ref.scenario_dimension_template_id = 999
     source_dimensions = _revisioned_sources(
         {
             101: {"heat": False, "duration": False},
@@ -1058,7 +1040,7 @@ def test_v2_rejects_source_lineage_from_a_different_template_revision() -> None:
         },
     )
 
-    with pytest.raises(ValueError, match="Template revision does not match"):
+    with pytest.raises(ValueError, match="Template ID does not match"):
         _finalize_generation_result(
             result,
             generation_strategy="multi_event_source_dimensions",
@@ -1067,38 +1049,14 @@ def test_v2_rejects_source_lineage_from_a_different_template_revision() -> None:
         )
 
 
-def test_v3_normalizes_template_example_keys_with_source_keys() -> None:
-    result = _result(strategy="multi_event_composite_dimensions")
-    shock = result.event_shocks[0]
-    shock.source_dimension_keys = ["e101__heat"]
-    shock.generated_event_values = {"e101__heat": "강한 폭염"}
-    shock.source_dimensions[0].dim_key = "e101__heat"
-    shock.template_value_examples_consulted = {
-        "e101__heat": ["낮음", "높음"],
-    }
-    source_dimensions = _revisioned_sources(
-        {
-            101: {"heat": False, "tightness": False, "duration": False},
-            202: {
-                "heat": False,
-                "tightness": False,
-                "recovery": False,
-                "competition": False,
-            },
-        },
-    )
+def test_v3_event_shock_rejects_removed_detailed_fields() -> None:
+    payload = _result(
+        strategy="multi_event_composite_dimensions",
+    ).model_dump(by_alias=True)
+    payload["eventShocks"][0]["sourceDimensions"] = []
 
-    finalized = _finalize_generation_result(
-        result,
-        generation_strategy="multi_event_composite_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    assert finalized.event_shocks[0].template_value_examples_consulted == {
-        "heat": ["낮음", "높음"],
-    }
-    MultiEventGenerationResult.model_validate(finalized.model_dump())
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        V3MultiEventGenerationResult.model_validate(payload)
 
 
 def test_v2_normalizes_source_template_label_description_and_required() -> None:
@@ -1133,421 +1091,132 @@ def test_v2_normalizes_source_template_label_description_and_required() -> None:
     assert dimension.required is True
 
 
-def test_v2_normalizes_event_shock_generated_values_to_source_keys() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    first_shock = result.event_shocks[0]
-    first_shock.source_dimension_keys = ["heat", "duration"]
-    first_shock.generated_event_values = {
-        "heat": "강한 폭염",
-        "unused": "제거 대상",
-    }
-    source_dimensions = {
-        101: {
-            "heat": {
-                "required": False,
-                "label": "e101__heat",
-                "description": "e101__heat 설명",
-            },
-            "duration": {
-                "required": False,
-                "label": "e101__duration",
-                "description": "e101__duration 설명",
-            },
-        },
-        202: {
-            "inventory": {
-                "required": False,
-                "label": "e202__inventory",
-                "description": "e202__inventory 설명",
-            },
-            "recovery": {
-                "required": False,
-                "label": "e202__recovery",
-                "description": "e202__recovery 설명",
-            },
-            "competition": {
-                "required": False,
-                "label": "e202__competition",
-                "description": "e202__competition 설명",
-            },
-            "heat": False,
-        },
-    }
+def test_v3_event_shock_rejects_blank_summary() -> None:
+    payload = _result(
+        strategy="multi_event_composite_dimensions",
+    ).model_dump(by_alias=True)
+    payload["eventShocks"][0]["shockSummary"] = "   "
 
-    finalized = finalize_generation_result(
-        result,
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    assert finalized.event_shocks[0].generated_event_values == {
-        "heat": "강한 폭염",
-        "duration": "계절",
-    }
+    with pytest.raises(ValidationError, match="shockSummary must not be blank"):
+        V3MultiEventGenerationResult.model_validate(payload)
 
 
-def test_v2_normalizes_namespaced_event_shock_source_keys() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    first_shock = result.event_shocks[0]
-    first_shock.source_dimension_keys = [
-        "e101__heat",
-        "e101__duration",
-    ]
-    first_shock.generated_event_values = {
-        "e101__heat": "강한 폭염",
-        "e101__duration": "장기화",
-    }
-    source_dimensions = {
-        101: {
-            "heat": False,
-            "duration": False,
-        },
-        202: {
-            "heat": False,
-            "inventory": True,
-            "recovery": True,
-            "competition": True,
-        },
-    }
-
-    finalized = finalize_generation_result(
-        result,
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    assert finalized.event_shocks[0].source_dimension_keys == [
-        "heat",
-        "duration",
-    ]
-    assert finalized.event_shocks[0].generated_event_values == {
-        "heat": "강한 폭염",
-        "duration": "장기화",
-    }
-
-
-def test_v3_grounds_unknown_event_shock_keys_to_dimension_sources() -> None:
+@pytest.mark.parametrize("shock_indexes", [[0], [0, 0, 1]])
+def test_v3_requires_each_event_shock_exactly_once(
+    shock_indexes: list[int],
+) -> None:
     result = _result(strategy="multi_event_composite_dimensions")
-    first_shock = result.event_shocks[0]
-    first_shock.source_dimension_keys = [
-        "sanction_enforcement_scope",
-        "timing_persistence",
-    ]
-    first_shock.generated_event_values = {
-        "sanction_enforcement_scope": "광범위한 제재",
-        "timing_persistence": "장기화",
-    }
-    source_dimensions = {
-        101: {
-            "tightness": False,
-            "duration": True,
+    broken = result.model_copy(
+        update={
+            "event_shocks": [result.event_shocks[index] for index in shock_indexes],
         },
-        202: {
-            "tightness": False,
-            "recovery": False,
-            "competition": False,
-        },
-    }
-
-    finalized = finalize_generation_result(
-        result,
-        generation_strategy="multi_event_composite_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
     )
 
-    assert finalized.event_shocks[0].source_dimension_keys == [
-        "tightness",
-        "duration",
-    ]
-    assert set(
-        finalized.event_shocks[0].generated_event_values,
-    ) == {"tightness", "duration"}
+    with pytest.raises(ValueError, match="every input event exactly once"):
+        finalize_generation_result(
+            broken,
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
-def test_v2_reassigns_cross_event_template_source_ref() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    dimension = result.dimension_definitions[0]
-    original_dimension_id = dimension.dimension_id
-    dimension.dimension_id = "e101__cross_event_key"
-    dimension.source_refs[0].dim_key = "cross_event_key"
-    for value in dimension.values:
-        value.source_assignments[0].dim_key = "cross_event_key"
-    for scenario in result.scenarios:
-        scenario.dimension_values["e101__cross_event_key"] = scenario.dimension_values.pop(original_dimension_id)
-    source_dimensions = {
-        101: {
-            "heat": False,
-            "duration": False,
+def test_v3_rejects_duplicate_source_ref() -> None:
+    result = _result(strategy="multi_event_composite_dimensions")
+    first_dimension = result.dimension_definitions[0]
+    broken = result.model_copy(
+        update={
+            "dimension_definitions": [
+                first_dimension.model_copy(
+                    update={
+                        "source_refs": [
+                            first_dimension.source_refs[0],
+                            first_dimension.source_refs[0],
+                        ],
+                    },
+                ),
+                *result.dimension_definitions[1:],
+            ],
         },
-        202: {
-            "inventory": False,
-            "recovery": False,
-            "competition": False,
-            "cross_event_key": {
-                "required": False,
-                "event_type_l2_id": 12,
-            },
-            "heat": False,
+    )
+
+    with pytest.raises(ValueError, match="duplicate sourceRefs"):
+        finalize_generation_result(
+            broken,
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
+
+
+def test_v3_rejects_duplicate_source_event_id() -> None:
+    result = _result(strategy="multi_event_composite_dimensions")
+    first_dimension = result.dimension_definitions[0]
+    broken = result.model_copy(
+        update={
+            "dimension_definitions": [
+                first_dimension.model_copy(
+                    update={"source_event_ids": [101, 101, 202]},
+                ),
+                *result.dimension_definitions[1:],
+            ],
         },
-    }
-
-    finalized = finalize_generation_result(
-        result,
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
     )
 
-    repaired = finalized.dimension_definitions[0]
-    assert repaired.dimension_id == "e202__cross_event_key"
-    assert repaired.source_event_ids == [202]
-    assert repaired.source_refs[0].event_id == 202
-    assert repaired.source_refs[0].event_type_l2_id == 12
-    assert repaired.source_refs[0].dim_key == "cross_event_key"
-    assert all(
-        assignment.event_id == 202 and assignment.event_type_l2_id == 12 and assignment.dim_key == "cross_event_key"
-        for value in repaired.values
-        for assignment in value.source_assignments
-    )
-    assert all(
-        "e202__cross_event_key" in scenario.dimension_values
-        and "e101__cross_event_key" not in scenario.dimension_values
-        for scenario in finalized.scenarios
-    )
+    with pytest.raises(ValueError, match="duplicate sourceEventIds"):
+        finalize_generation_result(
+            broken,
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
-def test_v2_drops_cross_event_source_ref_already_selected() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    duplicate = _dimension(
-        dimension_id="e101__inventory",
-        event_id=101,
-        dim_key="inventory",
-        display_order=6,
-    )
-    duplicate_dimension = type(
-        result.dimension_definitions[0],
-    ).model_validate(duplicate)
-    result.dimension_definitions.append(duplicate_dimension)
-    for scenario in result.scenarios:
-        scenario.dimension_values["e101__inventory"] = "Event 사실 기반 균형"
-    source_dimensions = {
-        101: {
-            "heat": False,
-            "duration": False,
-        },
-        202: {
-            "heat": False,
-            "inventory": False,
-            "recovery": False,
-            "competition": False,
-        },
-    }
-
-    finalized = finalize_generation_result(
-        result,
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    assert len(finalized.dimension_definitions) == 5
-    assert all(dimension.dimension_id != "e101__inventory" for dimension in finalized.dimension_definitions)
-    assert all("e101__inventory" not in scenario.dimension_values for scenario in finalized.scenarios)
-
-
-def test_v2_relevance_is_checked_before_required() -> None:
+def test_v2_derives_unselected_dimension_refs_from_template_complement() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     source_dimensions = {
         101: {
             "heat": True,
             "duration": True,
-            "missing_required": True,
+            "unselected": True,
         },
         202: {
-            "heat": False,
             "inventory": True,
             "recovery": True,
             "competition": True,
+            "unselected": False,
         },
     }
 
     finalized = finalize_generation_result(
         result,
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=EVENT_IDS,
-        source_dimensions_by_event=source_dimensions,
-    )
-
-    omitted = next(decision for decision in finalized.excluded_dimensions if decision.dim_key == "missing_required")
-    assert omitted.required is True
-    assert omitted.selection_criterion == "none"
-    assert omitted.reason_code == "NOT_RELEVANT"
-
-
-def test_v2_requires_full_selected_and_excluded_dimension_partition() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    source_dimensions = _revisioned_sources(
-        {
-            101: {
-                "heat": False,
-                "duration": False,
-                "unselected": False,
-            },
-            202: {
-                "inventory": False,
-                "recovery": False,
-                "competition": False,
-            },
-        },
-    )
-
-    with pytest.raises(ValueError, match="partition every Template candidate"):
-        _finalize_generation_result(
-            result,
-            generation_strategy="multi_event_source_dimensions",
-            event_ids=EVENT_IDS,
-            source_dimensions_by_event=source_dimensions,
-        )
-
-
-def test_v2_selected_dimension_requires_structured_relevance() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    result.dimension_definitions[0].selection_criterion = "none"
-    source_dimensions = {
-        101: {"heat": False, "duration": False},
-        202: {
-            "inventory": False,
-            "recovery": False,
-            "competition": False,
-        },
-    }
-
-    with pytest.raises(ValueError, match="relevant selectionCriterion"):
-        finalize_generation_result(
-            result,
-            generation_strategy="multi_event_source_dimensions",
-            event_ids=EVENT_IDS,
-            source_dimensions_by_event=source_dimensions,
-        )
-
-
-def test_v2_selection_rationale_prefix_must_match_criterion() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    result.dimension_definitions[0].selection_rationale = (
-        "템플릿에 있어서 선택했다."
-    )
-    source_dimensions = {
-        101: {"heat": False, "duration": False},
-        202: {
-            "inventory": False,
-            "recovery": False,
-            "competition": False,
-        },
-    }
-
-    with pytest.raises(ValueError, match="prefix must match"):
-        finalize_generation_result(
-            result,
-            generation_strategy="multi_event_source_dimensions",
-            event_ids=EVENT_IDS,
-            source_dimensions_by_event=source_dimensions,
-        )
-
-
-def test_v2_requires_relevant_required_dimensions_when_at_most_six() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    source_dimensions = {
-        101: {
-            "heat": True,
-            "duration": True,
-            "missing_required": True,
-        },
-        202: {
-            "heat": False,
-            "inventory": True,
-            "recovery": True,
-            "competition": True,
-        },
-    }
-    result.excluded_dimensions = [
-        ExcludedDimensionDecision(
-            event_id=101,
-            event_type_l2_id=8,
-            scenario_dimension_template_id=81,
-            template_checksum="checksum-8",
-            dim_key="missing_required",
-            selection_criterion="direct_event_fact",
-            required=True,
-            reason_code="LOWER_PRIORITY",
-            reason="Event 사실 관련성은 있으나 선택 후보보다 우선순위가 낮다.",
-        ),
-    ]
-
-    with pytest.raises(ValueError, match="every relevant required"):
-        finalize_generation_result(
-            result,
-            generation_strategy="multi_event_source_dimensions",
-            event_ids=EVENT_IDS,
-            source_dimensions_by_event=source_dimensions,
-        )
-
-
-def test_v2_documents_required_dimension_exclusions_when_more_than_six() -> None:
-    result = _result(strategy="multi_event_source_dimensions")
-    source_dimensions = {
-        101: {
-            "heat": True,
-            "duration": True,
-            "omitted_a": True,
-            "omitted_b": True,
-        },
-        202: {
-            "heat": False,
-            "inventory": True,
-            "recovery": True,
-            "competition": True,
-            "omitted_c": True,
-            "omitted_d": True,
-        },
-    }
-    excluded_dimensions = [
-        ExcludedDimensionDecision(
-            event_id=event_id,
-            event_type_l2_id=8 if event_id == 101 else 12,
-            scenario_dimension_template_id=81 if event_id == 101 else 121,
-            template_checksum=("checksum-8" if event_id == 101 else "checksum-12"),
-            dim_key=dim_key,
-            selection_criterion="lng_impact_path",
-            required=True,
-            reason_code="DIMENSION_LIMIT",
-            reason="LNG 가격 영향 관련성이 있으나 6개 제한으로 제외한다.",
-        )
-        for event_id, dim_key in (
-            (101, "omitted_a"),
-            (101, "omitted_b"),
-            (202, "omitted_c"),
-            (202, "omitted_d"),
-        )
-    ]
-    documented = result.model_copy(
-        update={"excluded_dimensions": excluded_dimensions},
-    )
-
-    finalized = finalize_generation_result(
-        documented,
         generation_strategy="multi_event_source_dimensions",
         event_ids=EVENT_IDS,
         source_dimensions_by_event=source_dimensions,
     )
 
     assert {
-        (decision.event_id, decision.dim_key)
-        for decision in finalized.excluded_dimensions
-        if decision.selection_criterion != "none"
-    } == {(decision.event_id, decision.dim_key) for decision in excluded_dimensions}
+        (source.event_id, source.scenario_dimension_template_id, source.dim_key)
+        for source in finalized.unselected_dimension_refs
+    } == {(101, 81, "unselected"), (202, 121, "unselected")}
+
+
+def test_v2_does_not_repair_cross_event_source_ref() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    selected = result.selected_dimensions[0]
+    broken_source = selected.source_ref.model_copy(update={"event_id": 202})
+    broken = result.model_copy(
+        update={
+            "selected_dimensions": [
+                selected.model_copy(update={"source_ref": broken_source}),
+                *result.selected_dimensions[1:],
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="Template ID does not match"):
+        finalize_generation_result(
+            broken,
+            generation_strategy="multi_event_source_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
 def test_multi_event_dimension_requires_three_to_five_values() -> None:
@@ -1572,35 +1241,14 @@ def test_multi_event_dimension_requires_three_to_five_values() -> None:
         )
 
 
-def test_composite_value_projects_to_every_source_dimension() -> None:
-    result = _result(strategy="multi_event_composite_dimensions")
-    first_dimension = result.dimension_definitions[0]
-    first_value = first_dimension.values[0]
-    broken_value = first_value.model_copy(
-        update={"source_assignments": first_value.source_assignments[:1]},
-    )
-    broken = result.model_copy(
-        update={
-            "dimension_definitions": [
-                first_dimension.model_copy(
-                    update={
-                        "values": [
-                            broken_value,
-                            *first_dimension.values[1:],
-                        ],
-                    },
-                ),
-                *result.dimension_definitions[1:],
-            ],
-        },
-    )
+def test_v3_value_rejects_source_assignments() -> None:
+    payload = _result(
+        strategy="multi_event_composite_dimensions",
+    ).model_dump(by_alias=True)
+    payload["dimensionDefinitions"][0]["values"][0]["sourceAssignments"] = []
 
-    with pytest.raises(ValueError, match="project to every sourceRef"):
-        finalize_generation_result(
-            broken,
-            generation_strategy="multi_event_composite_dimensions",
-            event_ids=EVENT_IDS,
-        )
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        V3MultiEventGenerationResult.model_validate(payload)
 
 
 def test_mixed_scenario_rejects_missing_bullish_and_bearish_contributions() -> None:
@@ -1627,7 +1275,7 @@ def test_mixed_scenario_rejects_missing_bullish_and_bearish_contributions() -> N
         )
 
 
-def test_interpretation_conflict_rebinds_resolution_to_cover_all_interaction_events() -> None:
+def test_interpretation_conflict_rejects_incomplete_resolution_source_events() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     interaction = result.interactions[0].model_copy(
         update={
@@ -1636,13 +1284,12 @@ def test_interpretation_conflict_rebinds_resolution_to_cover_all_interaction_eve
         },
     )
 
-    finalized = finalize_generation_result(
-        result.model_copy(update={"interactions": [interaction]}),
-        generation_strategy="multi_event_composite_dimensions",
-        event_ids=EVENT_IDS,
-    )
-
-    assert finalized.interactions[0].resolution_dimension_id == "demand_inventory_tightness"
+    with pytest.raises(ValueError, match="must reference every interaction event"):
+        finalize_generation_result(
+            result.model_copy(update={"interactions": [interaction]}),
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
 def test_interpretation_conflict_with_composite_resolution_is_valid() -> None:
@@ -1956,6 +1603,246 @@ def test_multi_event_rows_round_trip_pressure_role_and_rationale() -> None:
     assert row.global_pressure_rationale == "상승 근거"
 
 
+def test_v3_compact_definitions_round_trip_through_persistence_and_sync_response() -> None:
+    finalized = finalize_generation_result(
+        _result(strategy="multi_event_composite_dimensions"),
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+    )
+    compact_definitions = [definition.model_dump() for definition in finalized.dimension_definitions]
+    saved_group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        request_usr_id=7,
+        api_version="v3",
+        generation_strategy="multi_event_composite_dimensions",
+        comparison_run_id="compare-compact",
+        dimension_selected=[definition.dimension_id for definition in finalized.dimension_definitions],
+        dimension_definitions=compact_definitions,
+    )
+    saved_scenarios = [
+        ScenarioPayload(
+            scenario_id=index,
+            scenario_group_id=10,
+            title=scenario.title,
+            narrative=scenario.narrative,
+            dimension_values=scenario.dimension_values,
+            probability_score=scenario.probability_score,
+            baseline_yn=scenario.baseline_yn,
+            global_pressure_band=scenario.global_pressure_band,
+            scenario_role=scenario.scenario_role,
+            global_pressure_rationale=scenario.global_pressure_rationale,
+        )
+        for index, scenario in enumerate(finalized.scenarios, start=100)
+    ]
+    template_dimensions = [
+        {
+            "label": f"dimension-{index}",
+            "dim_key": f"dimension_{index}",
+            "value_enums": ["낮음", "높음"],
+            "display_order": index,
+        }
+        for index in range(1, 4)
+    ]
+    templates = [
+        ScenarioPipelineTemplate(
+            scenario_dimension_template_id=template_id,
+            event_type_l2_id=event_type_id,
+            template_checksum=checksum,
+            dimensions=template_dimensions,
+        )
+        for template_id, event_type_id, checksum in (
+            (81, 8, "checksum-8"),
+            (121, 12, "checksum-12"),
+        )
+    ]
+    prepared = {
+        "scenario_group": saved_group,
+        "events": [
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        "templates": templates,
+        "api_version": "v3",
+        "generation_strategy": "multi_event_composite_dimensions",
+        "comparison_run_id": "compare-compact",
+        "user_id": 7,
+    }
+
+    with (
+        patch.object(
+            multi_event_flow,
+            "_generate_validated_result",
+            new=AsyncMock(return_value=finalized),
+        ),
+        patch.object(
+            ScenarioGroupService,
+            "persist_multi_event_generation",
+            return_value=(saved_group, saved_scenarios),
+        ) as persist,
+    ):
+        output = asyncio.run(
+            multi_event_flow.run_multi_event_scenarios_inline(prepared),
+        )
+
+    assert persist.call_args.kwargs["dimension_definitions"] == compact_definitions
+    serialized = output.model_dump(by_alias=True)
+    response_definitions = serialized["data"]["dimensionDefinitions"]
+    assert response_definitions == [
+        definition.model_dump(by_alias=True) for definition in finalized.dimension_definitions
+    ]
+    assert "displayOrder" not in response_definitions[0]
+    assert "sourceAssignments" not in response_definitions[0]["values"][0]
+
+
+def test_v2_compact_contract_round_trips_through_persistence_and_sync_response() -> None:
+    finalized = finalize_generation_result(
+        _result(strategy="multi_event_source_dimensions"),
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=EVENT_IDS,
+    )
+    compact_definitions = [definition.model_dump() for definition in finalized.dimension_definitions]
+    saved_group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        request_usr_id=7,
+        api_version="v2",
+        generation_strategy="multi_event_source_dimensions",
+        comparison_run_id="compare-v2-compact",
+        dimension_selected=[definition.dimension_id for definition in finalized.dimension_definitions],
+        dimension_definitions=compact_definitions,
+    )
+    saved_scenarios = [
+        ScenarioPayload(
+            scenario_id=index,
+            scenario_group_id=10,
+            title=scenario.title,
+            narrative=scenario.narrative,
+            dimension_values=scenario.dimension_values,
+            probability_score=scenario.probability_score,
+            baseline_yn=scenario.baseline_yn,
+            global_pressure_band=scenario.global_pressure_band,
+            scenario_role=scenario.scenario_role,
+            global_pressure_rationale=scenario.global_pressure_rationale,
+        )
+        for index, scenario in enumerate(finalized.scenarios, start=100)
+    ]
+    prepared = {
+        "scenario_group": saved_group,
+        "events": [
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        "templates": [
+            ScenarioPipelineTemplate(
+                scenario_dimension_template_id=template_id,
+                event_type_l2_id=event_type_id,
+                template_checksum=checksum,
+                dimensions=[
+                    {
+                        "label": f"dimension-{index}",
+                        "dim_key": f"dimension_{index}",
+                        "value_enums": ["낮음", "높음"],
+                        "display_order": index,
+                    }
+                    for index in range(1, 4)
+                ],
+            )
+            for template_id, event_type_id, checksum in (
+                (81, 8, "checksum-8"),
+                (121, 12, "checksum-12"),
+            )
+        ],
+        "api_version": "v2",
+        "generation_strategy": "multi_event_source_dimensions",
+        "comparison_run_id": "compare-v2-compact",
+        "user_id": 7,
+    }
+
+    with (
+        patch.object(
+            multi_event_flow,
+            "_generate_validated_result",
+            new=AsyncMock(return_value=finalized),
+        ),
+        patch.object(
+            ScenarioGroupService,
+            "persist_multi_event_generation",
+            return_value=(saved_group, saved_scenarios),
+        ) as persist,
+    ):
+        output = asyncio.run(
+            multi_event_flow.run_multi_event_scenarios_inline(prepared),
+        )
+
+    assert persist.call_args.kwargs["dimension_definitions"] == compact_definitions
+    assert set(persist.call_args.kwargs["generation_diagnostics"]) == {
+        "target_pressure_bands",
+        "event_shocks",
+        "unselected_dimension_refs",
+        "unrepresented_pressure_bands",
+    }
+    serialized = output.model_dump(by_alias=True)
+    response_definitions = serialized["data"]["dimensionDefinitions"]
+    assert response_definitions == [
+        definition.model_dump(by_alias=True) for definition in finalized.dimension_definitions
+    ]
+    assert set(response_definitions[0]) == {
+        "dimensionId",
+        "label",
+        "description",
+        "required",
+        "selectionCriterion",
+        "selectionRationale",
+        "sourceRef",
+        "values",
+    }
+    assert "sourceAssignments" not in response_definitions[0]["values"][0]
+    assert set(serialized["data"]["generationDiagnostics"]) == {
+        "targetPressureBands",
+        "eventShocks",
+        "unselectedDimensionRefs",
+        "unrepresentedPressureBands",
+    }
+
+
+def test_v3_compact_dimension_array_order_controls_table_headers() -> None:
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version="v3",
+        generation_strategy="multi_event_composite_dimensions",
+        dimension_selected=["zeta", "alpha"],
+        dimension_definitions=[
+            {
+                "dimension_id": dimension_id,
+                "label": label,
+                "description": "설명",
+                "rationale": "Event 사실과 LNG 가격 영향 근거",
+                "source_event_ids": [101],
+                "source_refs": [
+                    {
+                        "scenario_dimension_template_id": 81,
+                        "dim_key": dimension_id,
+                    },
+                ],
+                "values": [],
+            }
+            for dimension_id, label in (("zeta", "첫 번째"), ("alpha", "두 번째"))
+        ],
+    )
+
+    result = build_scenario_group_table_data(
+        group.model_dump(),
+        [
+            {
+                "scenario_id": 100,
+                "title": "배열 순서",
+                "dimension_values": {"zeta": "값 1", "alpha": "값 2"},
+            },
+        ],
+    )
+
+    assert [header.key for header in result.table.headers] == ["zeta", "alpha"]
+
+
 def test_validation_creates_pending_mapping_for_free_value() -> None:
     group = ScenarioGroupPayload(
         scenario_group_id=10,
@@ -1968,8 +1855,13 @@ def test_validation_creates_pending_mapping_for_free_value() -> None:
                 "dimension_id": "tightness",
                 "label": "수급 긴축",
                 "description": "설명",
-                "display_order": 1,
-                "source_refs": [_source(101, "heat")],
+                "source_event_ids": [101],
+                "source_refs": [
+                    {
+                        "scenario_dimension_template_id": 81,
+                        "dim_key": "heat",
+                    },
+                ],
                 "values": [{"value_id": "known", "label": "기존 값"}],
             },
         ],
@@ -2017,7 +1909,89 @@ def test_validation_creates_pending_mapping_for_free_value() -> None:
     proposal = save.call_args.args[1][0]
     assert proposal["display_value"] == "사용자 자유 값"
     assert proposal["source_projections"][0]["source_type"] == "derived_interpretation"
+    assert proposal["source_projections"][0]["scenario_dimension_template_id"] == 81
+    assert proposal["mapping_proposal"]["candidateSourceDimensions"] == [
+        {"scenarioDimensionTemplateId": 81, "dimKey": "heat"},
+    ]
     set_ready.assert_called_once_with(10, ready=False, user_id=7)
+
+
+def test_v2_validation_uses_compact_source_ref_identity_for_mapping() -> None:
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        request_usr_id=7,
+        api_version="v2",
+        generation_strategy="multi_event_source_dimensions",
+        dimension_selected=["e101__heat"],
+        dimension_definitions=[
+            {
+                "dimension_id": "e101__heat",
+                "label": "수급 긴축",
+                "description": "설명",
+                "source_ref": {
+                    "event_id": 101,
+                    "scenario_dimension_template_id": 81,
+                    "dim_key": "heat",
+                },
+                "values": [{"value_id": "known", "label": "기존 값"}],
+            },
+        ],
+    )
+    state = ValidateScenariosState(
+        scenario_group_id=10,
+        user_id=7,
+        scenario_group=group,
+        request_table={
+            "headers": [
+                {"key": "e101__heat", "label": "수급 긴축", "display_order": 1},
+            ],
+            "rows": [
+                {
+                    "scenario_id": 100,
+                    "cells": {"e101__heat": "사용자 자유 값"},
+                },
+            ],
+        },
+    )
+    saved = [
+        {
+            "dimension_value_id": "dv_test",
+            "dimension_id": "e101__heat",
+            "display_value": "사용자 자유 값",
+            "mapping_version": 1,
+            "status": "pending",
+        },
+    ]
+    with (
+        patch.object(
+            ScenarioService,
+            "save_mapping_proposals",
+            return_value=saved,
+        ) as save,
+        patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes."
+            "ScenarioGroupService.set_parameter_mapping_ready",
+        ),
+    ):
+        update = create_mapping_proposals(state)
+
+    assert update["mapping_proposals"] == saved
+    proposal = save.call_args.args[1][0]
+    assert proposal["source_projections"] == [
+        {
+            "event_id": 101,
+            "scenario_dimension_template_id": 81,
+            "dim_key": "heat",
+            "value": "사용자 자유 값",
+        },
+    ]
+    assert proposal["mapping_proposal"]["candidateSourceDimensions"] == [
+        {
+            "eventId": 101,
+            "scenarioDimensionTemplateId": 81,
+            "dimKey": "heat",
+        },
+    ]
 
 
 def test_validation_keeps_parameter_mapping_ready_for_approved_free_value() -> None:
@@ -2032,8 +2006,13 @@ def test_validation_keeps_parameter_mapping_ready_for_approved_free_value() -> N
                 "dimension_id": "tightness",
                 "label": "수급 긴축",
                 "description": "설명",
-                "display_order": 1,
-                "source_refs": [_source(101, "heat")],
+                "source_event_ids": [101],
+                "source_refs": [
+                    {
+                        "scenario_dimension_template_id": 81,
+                        "dim_key": "heat",
+                    },
+                ],
                 "values": [{"value_id": "known", "label": "기존 값"}],
             },
         ],

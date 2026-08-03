@@ -118,14 +118,14 @@ def _build_headers(
                 "label": item.get("label"),
                 "description": item.get("description"),
                 "required": item.get("required", False),
-                "display_order": item.get("display_order", 999999),
+                "display_order": item.get("display_order", index),
                 "value_enums": [
                     value.get("label")
                     for value in item.get("values") or []
                     if isinstance(value, dict) and value.get("label")
                 ],
             }
-            for item in dimension_definitions
+            for index, item in enumerate(dimension_definitions, start=1)
             if isinstance(item, dict) and item.get("dimension_id")
         }
     else:

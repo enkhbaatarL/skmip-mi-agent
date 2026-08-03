@@ -125,58 +125,50 @@ Template revision을 함께 준비한다. Prompt의 `Event Context`와
 생성 결과는 다음 결정론적 검사를
 통과해야 저장된다.
 
-- 입력 Event 전체의 `EventShock`; 국가·시설·수급 경로·생성값과 원본 Template
-ID/checksum lineage를 보존
-- v2의 `e{eventId}__{dimKey}` namespacing과 단일 source lineage
-- v3의 3~6개 합성 dimension, Template revision까지 추적 가능한 source lineage,
-  실제 관계에 참여하는 Event 2개 이상의 interaction 집합과 합성 dimension coverage
-- 다섯 pressure band의 생성/제외 partition과 제외 사유
+- v2는 입력 Event마다 정확히 하나의 `{eventId, shockSummary}`를 생성하고 원본
+  Template dimension 3~6개를 단일 compact sourceRef로 선택
+- v3는 입력 Event마다 정확히 하나의 `{eventId, shockSummary}`를 생성
+- v2의 `e{eventId}__{dimKey}` namespacing과
+  `(eventId, scenarioDimensionTemplateId, dimKey)` source identity
+- v3의 3~6개 합성 dimension, `(scenarioDimensionTemplateId, dimKey)` compact source,
+  `sourceEventIds` 기반 Event/interaction coverage
 - 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 내부 `mixed` 1개 이상
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
 
-LLM 표현의 흔들림은 저장 전 결정론적으로 정규화한다. v2 dimension의
-`label`, `description`, `required`는 선택한 Template 정의를 정본으로 사용하고,
-`EventShock.generatedEventValues`는 `sourceDimensionKeys`와 같은 key 집합으로
-맞춘다. EventShock의 source key가 Template에 없으면 해당 Event를 참조하는
-생성 dimension의 유효한 sourceRef로 다시 grounding하고, sourceRef도 없으면
-필수 Template key 하나를 사용한다. v2 EventShock이 dimension ID용
-`e{eventId}__` namespace를 source key에도 붙여 반환하면 Template 조회 전에
-원본 `dimKey`로 되돌린다. v2 sourceRef가
-다른 입력 Event의 Template key와 정확히 일치하면 해당 Event lineage와
-dimension/scenario key를 함께 재결합한다. 그 source가 이미 다른 dimension에서
-선택돼 있고 제거 후에도 v2의 3~6개 범위를 만족하면 중복 dimension과 모든
-Scenario cell을 함께 제거한다. v2 dimension에 복수 source lineage가 섞이면
-Template에 존재하는 첫 lineage 하나와 그 value assignment만 남긴다.
-정확한 일치가 없으면 같은 Event의
-미사용 Template key 중 key token 근거가 있는 경우에만 재매핑한다. EventShock
-lineage는 동점 후보 우선순위에만 사용하고, token 근거가 없거나 중복이 생기면
-실패시킨다. v2/v3 sourceRef에 LLM의 표시용 `d{number}_` 접두사가 붙으면
-Template의 원본 `dimKey`와 정확히 일치하는 경우에만 접두사를 제거하고,
-source assignment에도 동일하게 적용한다. 내부 pressure band Scenario에
-상승·하락 contribution이 함께 없거나 contribution 합계와 pressure 순서가
-어긋나면 의미 필드를 부분 변경하지 않고 전체 결과 재생성을 요청한다. v3 interaction은 관계
-Event 전체를 추적할 수 있는 기존 dimension을
-우선 사용하며, lineage가 일부 빠졌으면 해당 Event의 source reference와 value
-projection을 보강한다. 입력에 없는 Event나 Template dimension을 새로 만들지는
-않으며, 보강 뒤에도 계약을 만족하지 못하면 저장하지 않는다.
+v2 LLM schema에는 EventShock의 상세 impact path/generated value, Template checksum,
+source type/assumption/rationale, `sourceAssignments`, typed 제외 후보를 포함하지 않는다.
+서버는 선택 sourceRef의 정확한 Template 존재 여부와 중복만 검증하고
+`label`, `description`, `required`를 Template에서 hydration한다. 미선택 Template ref와
+미생성 pressure band는 입력/출력 배열의 차집합으로 계산한다. source key 접두사 제거,
+다른 Event로 sourceRef 이동, dimension/value 보충, Template example 대조와 value별 source
+projection은 실행하지 않는다. semantic validation 실패 시 compact 전체 결과를 최대 2회
+생성한다.
+
+v3는 source key 접두사 제거, EventShock generated value 보충, Template example 대조,
+value별 source projection 보강을 실행하지 않는다. compact `sourceRefs`가 입력 Template에
+존재하는지와 중복 여부만 확인하며, Event coverage와 interaction resolution은
+`sourceEventIds`로 검증한다. 누락된 lineage를 서버가 보강하지 않고 전체 결과 재생성을
+요청한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
 
 공통 LLM connector는 `llm_structured_output_strict` 전역 설정이 활성화되면 OpenAI SDK의
 Pydantic strict parsing helper를 사용한다. 호출부가 strict 여부를 개별 전달하지 않으므로
 같은 Agent 프로세스의 structured-output 호출에는 동일한 정책이 적용된다. 배포별 환경변수
 `LLM_STRUCTURED_OUTPUT_STRICT`가 `config.yaml` 값을 덮어쓸 수 있다. 각 버전은 LLM request와
-최초 parsing에 같은 Pydantic schema를 사용한다. 동적 key를 갖던 `generatedEventValues`,
-`templateValueExamplesConsulted`, `dimensionValues`와 v1 Stage 6의 `likelihoodPrior`는 strict
-JSON Schema가 허용하는 key/value 객체 배열로 요청하고, Pydantic `mode="before"` validator에서
-기존 내부 dict 표현으로 복원한다. v2는
-`templateValueExamplesConsulted`를 실제 `sourceDimensions` lineage에 포함된 key로 제한하고,
-v3는 v2 전용 `excludedDimensions`를 빈 배열로 정규화한다. 최초 Pydantic 검증 실패는 connector가
-`LLM_INVALID_RESPONSE_ERROR`로 구분하며, 이후 semantic validation 실패와 함께 같은 최대 3회
-feedback 재생성 루프에 포함한다.
+최초 parsing에 같은 Pydantic schema를 사용한다. v2·v3 모두 상세 EventShock과 value source
+assignment를 schema에서 제거했으며, Scenario `dimensionValues`는 strict JSON Schema가
+허용하는 key/value 객체 배열로 요청한 뒤 내부 dict 표현으로 복원한다. 최초 Pydantic 검증
+실패는 connector가 `LLM_INVALID_RESPONSE_ERROR`로 구분한다. v2는 connector 1회 재시도와
+semantic 최대 2회, v3는 connector 2회 재시도와 semantic 최대 3회 상한을 독립적으로 사용한다.
 
 그룹은 대표 Event를 위장해 저장하지 않고 `mi_event_id`,
 `event_type_l2_id`를 `NULL`로 둔다. Event와 사용 Template ID/checksum은
 `tmm_mi_scenario_group_event_m`에 순서대로 저장한다. v1도 사용 Template
 checksum과 단일 Event lineage를 같은 연결 테이블에 보존한다.
+
+v1~v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
+`ModelImpactLeverService`, fact–lever 검증과 `impactLeverRefs`는 v4 경로에만 존재한다.
+최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
+adapter를 추가하지 않는다.
 
 Template Excel 이관은
 `scripts/scenario_generation/import_template_domain_knowledge.py`를 사용한다.

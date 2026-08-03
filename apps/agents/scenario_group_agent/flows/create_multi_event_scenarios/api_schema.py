@@ -8,6 +8,12 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     EventInteraction,
     EventShock,
     ExcludedDimensionDecision,
+    PressureBand,
+    V2DimensionDefinition,
+    V2EventShock,
+    V2SourceReference,
+    V3DimensionDefinition,
+    V3EventShock,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     EventDimensionCoverage,
@@ -124,13 +130,48 @@ class GenerationDiagnostics(ApiModel):
     )
     coverage_status: Literal["full", "partial", "none"] | None = None
     event_impact_facts: list[EventImpactFact] = Field(default_factory=list)
-    event_shocks: list[EventShock] = Field(default_factory=list)
+    event_shocks: list[V3EventShock | EventShock] = Field(default_factory=list)
     event_interactions: list[EventInteraction | V4EventInteraction] = Field(
         default_factory=list,
     )
     event_dimension_coverage: list[EventDimensionCoverage] = Field(
         default_factory=list,
     )
+
+
+class V2GenerationDiagnostics(ApiModel):
+    """Compact diagnostics computed by the v2 server finalizer."""
+
+    target_pressure_bands: list[PressureBand] = Field(
+        default_factory=lambda: [
+            "strong_bullish",
+            "bullish",
+            "balanced",
+            "bearish",
+            "strong_bearish",
+        ],
+    )
+    event_shocks: list[V2EventShock]
+    unselected_dimension_refs: list[V2SourceReference] = Field(default_factory=list)
+    unrepresented_pressure_bands: list[PressureBand] = Field(default_factory=list)
+
+
+class V2CreateScenariosData(ApiModel):
+    api_version: Literal["v2"] = "v2"
+    generation_strategy: Literal["multi_event_source_dimensions"] = "multi_event_source_dimensions"
+    comparison_run_id: str
+    scenario_group: ScenarioGroupPayload
+    events: list[EventPayload] = Field(default_factory=list)
+    dimension_definitions: list[V2DimensionDefinition] = Field(default_factory=list)
+    table: ScenarioTable
+    generation_diagnostics: V2GenerationDiagnostics
+    usage: LLMUsageModel | None = None
+
+
+class V2CreateScenariosOut(ApiModel):
+    status: Literal["success", "error"] = "success"
+    message: str = "성공"
+    data: V2CreateScenariosData | None = None
 
 
 class VersionedCreateScenariosData(ApiModel):
@@ -140,7 +181,9 @@ class VersionedCreateScenariosData(ApiModel):
     impact_catalog_version: str | None = None
     scenario_group: ScenarioGroupPayload
     events: list[EventPayload] = Field(default_factory=list)
-    dimension_definitions: list[DimensionDefinition] = Field(default_factory=list)
+    dimension_definitions: list[V3DimensionDefinition | DimensionDefinition] = Field(
+        default_factory=list,
+    )
     table: ScenarioTable
     generation_diagnostics: GenerationDiagnostics = Field(
         default_factory=GenerationDiagnostics,
