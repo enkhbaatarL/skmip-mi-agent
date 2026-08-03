@@ -4,6 +4,16 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
+    EventInteraction,
+    EventShock,
+    ExcludedDimensionDecision,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
+    EventDimensionCoverage,
+    EventImpactFact,
+    EventInteraction as V4EventInteraction,
+)
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.values.llm_usage import LLMUsageModel
@@ -102,7 +112,9 @@ class GenerationDiagnostics(ApiModel):
         ],
     )
     excluded_candidates: list[ExcludedCandidate] = Field(default_factory=list)
-    excluded_dimensions: list[dict[str, object]] = Field(default_factory=list)
+    excluded_dimensions: list[ExcludedDimensionDecision | dict[str, object]] = Field(
+        default_factory=list,
+    )
     impact_catalog_version: str | None = None
     covered_dimensions: list[str] = Field(default_factory=list)
     uncovered_dimensions: list[str] = Field(default_factory=list)
@@ -111,8 +123,14 @@ class GenerationDiagnostics(ApiModel):
         default_factory=list,
     )
     coverage_status: Literal["full", "partial", "none"] | None = None
-    event_impact_facts: list[dict[str, object]] = Field(default_factory=list)
-    event_interactions: list[dict[str, object]] = Field(default_factory=list)
+    event_impact_facts: list[EventImpactFact] = Field(default_factory=list)
+    event_shocks: list[EventShock] = Field(default_factory=list)
+    event_interactions: list[EventInteraction | V4EventInteraction] = Field(
+        default_factory=list,
+    )
+    event_dimension_coverage: list[EventDimensionCoverage] = Field(
+        default_factory=list,
+    )
 
 
 class VersionedCreateScenariosData(ApiModel):

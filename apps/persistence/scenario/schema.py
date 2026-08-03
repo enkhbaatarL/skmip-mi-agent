@@ -229,10 +229,19 @@ SourceType = Literal[
     "derived_interpretation",
 ]
 
+SelectionCriterion = Literal[
+    "direct_event_fact",
+    "lng_impact_path",
+    "both",
+    "none",
+]
+
 
 class SourceLineage(ApiModel):
     event_id: int
     event_type_l2_id: int
+    scenario_dimension_template_id: int | None = None
+    template_checksum: str | None = None
     dim_key: str = Field(min_length=1)
     value: str | None = None
     source_type: SourceType
@@ -256,6 +265,27 @@ class DimensionValueDefinition(ApiModel):
     source_assignments: list[SourceLineage] = Field(default_factory=list)
 
 
+class ImpactLeverReference(ApiModel):
+    # LLM output selects a stable lever code. The v4 finalizer hydrates the
+    # catalog PK and rejects unresolved references before persistence.
+    impact_lever_id: int | None = Field(default=None, gt=0)
+    lever_code: str = Field(min_length=1)
+    source_fact_ids: list[str] = Field(default_factory=list)
+    mapping_rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_source_fact_ids(self) -> ImpactLeverReference:
+        normalized = [fact_id.strip() for fact_id in self.source_fact_ids]
+        if any(not fact_id for fact_id in normalized):
+            raise ValueError("impact lever sourceFactIds must not contain blanks")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("impact lever sourceFactIds must be unique")
+        self.source_fact_ids = normalized
+        self.lever_code = self.lever_code.strip()
+        self.mapping_rationale = self.mapping_rationale.strip()
+        return self
+
+
 class DimensionDefinition(ApiModel):
     dimension_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
@@ -272,8 +302,12 @@ class DimensionDefinition(ApiModel):
     ] | None = None
     value_kind: Literal["categorical", "numeric_range", "temporal"] | None = None
     unit: str | None = None
+    selection_criterion: SelectionCriterion | None = None
+    selection_rationale: str | None = None
     source_event_ids: list[int] = Field(default_factory=list)
+    source_fact_ids: list[str] = Field(default_factory=list)
     lever_refs: list[str] = Field(default_factory=list)
+    impact_lever_refs: list[ImpactLeverReference] = Field(default_factory=list)
     model_support_status: Literal[
         "full",
         "partial",

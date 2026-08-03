@@ -7,10 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from apps.agents.scenario_group_agent.prompts import (
-    scenario_generation as scenario_prompts,
-    signpost_generation as signpost_prompts,
-)
+from apps.agents.scenario_group_agent.prompts import event_context as event_context_prompts
 from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     build_scenario_group_metadata_user_prompt,
     build_stage2_user_prompt as build_scenario_stage2_user_prompt,
@@ -82,8 +79,7 @@ def test_context_does_not_fall_back_to_detail_when_bullets_are_insufficient() ->
 
 
 def test_scenario_and_signpost_prompts_include_compact_event_context(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(scenario_prompts, "date", FixedDate)
-    monkeypatch.setattr(signpost_prompts, "date", FixedDate)
+    monkeypatch.setattr(event_context_prompts, "date", FixedDate)
     pack = stage1_build_context_pack(
         _event(
             key_bullets=[
@@ -186,7 +182,7 @@ def test_scenario_and_signpost_prompts_include_compact_event_context(monkeypatch
         assert "current_date: 2026-07-14" in prompt
         assert "2026-06-01T06:00:00" in prompt
         assert "최근 N일/개월, 계절 및 과거·현재·미래 판단은 current_date를 기준" in prompt
-        assert "occurred_at은 Base Event 발생 시점" in prompt
+        assert "occurred_at은 Event 발생 시점" in prompt
         assert "최종투자결정은 인허가 취득을 전제로 한다." in prompt
         assert "EemsEnergyTerminal, Gasunie, Vopak" in prompt
         assert "driver:" not in prompt
@@ -194,7 +190,7 @@ def test_scenario_and_signpost_prompts_include_compact_event_context(monkeypatch
 
 
 def test_prompt_includes_current_date_when_occurred_at_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(signpost_prompts, "date", FixedDate)
+    monkeypatch.setattr(event_context_prompts, "date", FixedDate)
     context = stage1_build_context_pack(_event(key_bullets=["짧은 사실"])).C1_base_event.model_dump()
     context["occurred_at"] = ""
 

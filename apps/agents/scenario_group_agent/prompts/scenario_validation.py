@@ -17,6 +17,9 @@ COMPAT_SYSTEM_PROMPT = """\
 - 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
 - narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
 - 입력의 모든 scenario_id를 정확히 한 번 포함하고 reason은 한국어 한 줄로 작성합니다.
+- 각 Scenario와 각 Shared Event 조합을 event_coverage에 정확히 한 번 포함합니다.
+- Event가 Scenario의 공동 전제로 유지되고 서술·Dimension 값과 모순되지 않으면 grounded=true입니다.
+- Event가 누락되거나 사실과 충돌하면 grounded=false로 두고 reason에 근거를 작성합니다.
 - recommended_value_b는 반드시 입력에 제공된 해당 Dimension의 enum 중 하나여야 합니다.
 - enum 안에서 모순을 해소하는 대체값이 있을 때만 compatible=false로 판정합니다.
 - 논리적으로 더 자연스러운 값이 enum 밖에만 있고, enum 안의 값으로는 명확히 해소할 수 없다면
@@ -44,6 +47,10 @@ MULTI_EVENT_COMPAT_SYSTEM_PROMPT = """\
 - 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
 - narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
 - 입력의 모든 scenario_id를 정확히 한 번 포함하고 reason은 한국어 한 줄로 작성합니다.
+- 입력의 모든 Scenario와 Shared Event 조합을 event_coverage에 정확히 한 번 포함합니다.
+- 각 event_coverage 항목은 scenario_id, event_id, grounded, reason을 채웁니다.
+- Event가 Scenario의 공동 전제로 유지되고 서술·Dimension 값과 모순되지 않으면 grounded=true,
+  누락되거나 사실과 충돌하면 grounded=false로 두고 reason에 근거를 작성합니다.
 - 제공된 Dimension value 목록은 현재 생성 결과의 참고값이며 closed enum이 아닙니다.
 - 모순을 해소하는 자연스러운 값이면 목록 밖의 신규 value도 recommended_value_b로 제안할 수 있습니다.
 - 추천값이 목록 밖이라는 이유로 모순을 무시하거나 compatible=true로 바꾸지 않습니다.
@@ -107,9 +114,17 @@ class SimilarTitlePair(BaseModel):
     suggested_fix: str
 
 
+class EventCoverageItem(BaseModel):
+    scenario_id: int
+    event_id: int
+    grounded: bool
+    reason: str
+
+
 class CompatibilityStructuredOutput(BaseModel):
     items: list[CompatibilityItem] = Field(default_factory=list)
     similar_title_pairs: list[SimilarTitlePair] = Field(default_factory=list)
+    event_coverage: list[EventCoverageItem] = Field(default_factory=list)
 
 
 class QuickCompatibilityItem(BaseModel):

@@ -139,7 +139,12 @@ async def run_multi_event_scenarios_inline(
     )
     diagnostics = GenerationDiagnostics(
         excluded_candidates=[candidate.model_dump() for candidate in finalized.excluded_candidates],
-        excluded_dimensions=finalized.excluded_dimensions,
+        excluded_dimensions=[
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in finalized.excluded_dimensions
+        ],
+        event_shocks=finalized.event_shocks,
+        event_interactions=finalized.interactions,
     )
     saved_group, saved_scenarios = ScenarioGroupService().persist_multi_event_generation(
         scenario_group_id=group.scenario_group_id,
@@ -199,6 +204,9 @@ async def _generate_validated_result(
                             "event_type_l2_id": int(
                                 template.event_type_l2_id or event.event_type_l2_id,
                             ),
+                            "scenario_dimension_template_id": template.scenario_dimension_template_id,
+                            "template_checksum": template.template_checksum,
+                            "value_enums": list(dimension.value_enums),
                         }
                         for dimension in template.dimensions
                     }

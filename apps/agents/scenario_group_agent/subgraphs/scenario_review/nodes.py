@@ -55,6 +55,9 @@ def build_context(
     persisted_scenarios: list[dict[str, Any]],
     template_dims: list[dict[str, Any]],
     requested_headers: list[dict[str, Any]] | None = None,
+    *,
+    events: list[dict[str, Any]] | None = None,
+    generation_diagnostics: dict[str, Any] | None = None,
 ) -> ReviewContext:
     persisted_by_id = {int(scenario["scenario_id"]): scenario for scenario in persisted_scenarios}
     scenarios = [
@@ -77,6 +80,8 @@ def build_context(
     apply_single_baseline_by_probability(scenarios)
     return ReviewContext(
         group=group,
+        events=events or [],
+        generation_diagnostics=generation_diagnostics or {},
         scenarios=scenarios,
         template_dims=template_dims,
         selected_dims=selected_dims,
@@ -544,6 +549,31 @@ async def _check_compatibility(
     }
     enum_lines = _compatibility_enum_lines(ctx)
     user_prompt = "다음 시나리오 조합을 판정하십시오.\n\n"
+    if is_multi_event and ctx.events:
+        event_lines = []
+        for event in ctx.events:
+            facts = [str(item)[:280] for item in (event.get("key_bullets") or [])[:5]]
+            event_lines.append(
+                "- event_id={}: {} | summary={} | key_facts={}".format(
+                    event.get("mi_event_id"),
+                    event.get("event_title_ko") or "",
+                    event.get("one_line_summary") or "",
+                    facts,
+                ),
+            )
+        user_prompt += "## Shared Event facts\n" + "\n".join(event_lines) + "\n\n"
+        grounding = {
+            key: ctx.generation_diagnostics.get(key)
+            for key in (
+                "event_shocks",
+                "event_impact_facts",
+                "event_interactions",
+                "event_dimension_coverage",
+            )
+            if ctx.generation_diagnostics.get(key)
+        }
+        if grounding:
+            user_prompt += f"## Generation grounding\n{grounding}\n\n"
     if enum_lines:
         heading = "## Reference dimension values" if is_multi_event else "## Dimension enum"
         user_prompt += heading + "\n" + "\n".join(enum_lines) + "\n\n"
@@ -568,6 +598,23 @@ async def _check_compatibility(
                     f"누락={expected - actual}, 여분={actual - expected}"
                 ),
             )
+        event_coverage = result.result.event_coverage
+        if is_multi_event and ctx.events:
+            expected_coverage = {
+                (scenario["scenario_id"], int(event["mi_event_id"]))
+                for scenario in ctx.scenarios
+                for event in ctx.events
+            }
+            actual_coverage = {(item.scenario_id, item.event_id) for item in event_coverage}
+            if len(event_coverage) != len(actual_coverage) or actual_coverage != expected_coverage:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail=(
+                        "Compatibility LLM Event coverage 집합 불일치: "
+                        f"누락={expected_coverage - actual_coverage}, "
+                        f"여분={actual_coverage - expected_coverage}"
+                    ),
+                )
         title_by_id = {scenario["scenario_id"]: _scenario_label(scenario) for scenario in ctx.scenarios}
         incompatible = [item for item in items if not item.compatible]
         if _has_only_unusable_enum_recommendations(ctx, incompatible):
@@ -597,7 +644,27 @@ async def _check_compatibility(
             expected,
             title_by_id,
         )
-        return [compatibility_check, similar_title_check]
+        checks = [compatibility_check, similar_title_check]
+        if is_multi_event and ctx.events:
+            ungrounded = [item for item in event_coverage if not item.grounded]
+            checks.append(
+                CheckResult(
+                    "R07",
+                    "Stage4",
+                    "공동 Event 사실 coverage — LLM 판정",
+                    "WARN" if ungrounded else "PASS",
+                    (
+                        "모든 Scenario가 공동 Event 사실을 유지함"
+                        if not ungrounded
+                        else f"Event 사실 누락·모순 {len(ungrounded)}건"
+                    ),
+                    [
+                        f"scenario={item.scenario_id}, event={item.event_id}: {item.reason}"
+                        for item in ungrounded
+                    ],
+                ),
+            )
+        return checks
     except MIBaseError:
         raise
     except Exception as exc:
@@ -921,7 +988,12 @@ def _build_reason(notable: list[CheckResult], label_map: dict[str, str]) -> str:
 
 
 async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = None) -> ReviewReport:
-    if ctx.unchanged:
+    is_multi_event = ctx.group.get("generation_strategy") in {
+        "multi_event_source_dimensions",
+        "multi_event_composite_dimensions",
+        "multi_event_model_lever_dimensions",
+    }
+    if ctx.unchanged and not is_multi_event:
         # 요청 본문이 DB(create scenario 결과)와 동일 → 사용자가 수정한 것이
         # 없으므로 불필요한 warning 없이 그대로 통과 처리한다.
         return ReviewReport(
@@ -1003,6 +1075,8 @@ class RunReviewNode(BaseNode):
             "report": await run_review(
                 build_context(
                     group=state.group,
+                    events=state.events,
+                    generation_diagnostics=state.generation_diagnostics,
                     requested_rows=state.requested_rows,
                     persisted_scenarios=state.persisted_scenarios,
                     template_dims=state.template_dims,

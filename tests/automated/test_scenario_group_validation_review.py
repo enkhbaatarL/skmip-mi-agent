@@ -7,6 +7,16 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from apps.agents.scenario_group_agent.prompts.scenario_generation import (
+    NarrativeOnly,
+    Stage4StructuredOutput,
+)
+from apps.agents.scenario_group_agent.prompts.scenario_validation import (
+    EventCoverageItem,
+    QuickCompatibilityItem,
+    QuickCompatibilityStructuredOutput,
+    SimilarTitlePair,
+)
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation import nodes
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes import (
     stage4_synthesize_scenarios,
@@ -23,16 +33,6 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema impor
     Stage5RepairInstruction,
     TemplateDimension,
 )
-from apps.agents.scenario_group_agent.prompts.scenario_generation import (
-    NarrativeOnly,
-    Stage4StructuredOutput,
-)
-from apps.agents.scenario_group_agent.prompts.scenario_validation import (
-    QuickCompatibilityItem,
-    QuickCompatibilityStructuredOutput,
-    SimilarTitlePair,
-)
-from apps.common.exceptions.custom import MIBaseError
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.state import (
     ScenarioGenerationState,
 )
@@ -42,6 +42,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
     build_context,
     run_review,
 )
+from apps.common.exceptions.custom import MIBaseError
 
 
 TEMPLATE = [
@@ -119,16 +120,97 @@ ROWS = [
 def _llm_result(
     *items: CompatibilityItem,
     similar_title_pairs: list[SimilarTitlePair] | None = None,
+    event_coverage: list[EventCoverageItem] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         result=CompatibilityOutput(
             items=list(items),
             similar_title_pairs=similar_title_pairs or [],
+            event_coverage=event_coverage or [],
         ),
     )
 
 
 class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
+    async def test_multi_event_review_requires_and_reports_cartesian_event_coverage(
+        self,
+    ) -> None:
+        context = build_context(
+            {
+                **GROUP,
+                "generation_strategy": "multi_event_composite_dimensions",
+            },
+            ROWS,
+            PERSISTED_SCENARIOS,
+            TEMPLATE,
+            events=[
+                {"mi_event_id": 20, "event_title_ko": "Event A"},
+                {"mi_event_id": 21, "event_title_ko": "Event B"},
+            ],
+        )
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+            event_coverage=[
+                EventCoverageItem(
+                    scenario_id=scenario_id,
+                    event_id=event_id,
+                    grounded=True,
+                    reason="공동 사실 유지",
+                )
+                for scenario_id in (100, 101)
+                for event_id in (20, 21)
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=compatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "PASS"
+        assert any(check.check_id == "R07" for check in report.checks)
+
+    async def test_multi_event_review_rejects_incomplete_event_coverage(self) -> None:
+        context = build_context(
+            {
+                **GROUP,
+                "generation_strategy": "multi_event_composite_dimensions",
+            },
+            ROWS,
+            PERSISTED_SCENARIOS,
+            TEMPLATE,
+            events=[
+                {"mi_event_id": 20, "event_title_ko": "Event A"},
+                {"mi_event_id": 21, "event_title_ko": "Event B"},
+            ],
+        )
+        incomplete = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+            event_coverage=[
+                EventCoverageItem(
+                    scenario_id=100,
+                    event_id=20,
+                    grounded=True,
+                    reason="공동 사실 유지",
+                ),
+            ],
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
+            "_invoke_compatibility",
+            new=AsyncMock(return_value=incomplete),
+        ):
+            with self.assertRaisesRegex(
+                MIBaseError,
+                "Event coverage 집합 불일치",
+            ):
+                await run_review(context)
+
     async def test_all_checks_pass(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
         compatible = _llm_result(

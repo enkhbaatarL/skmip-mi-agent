@@ -189,6 +189,7 @@ async def run_v4_multi_event_scenarios_inline(
         coverage_status=coverage.coverage_status,
         event_impact_facts=[fact.model_dump() for fact in finalized.event_impact_facts],
         event_interactions=[interaction.model_dump() for interaction in finalized.interactions],
+        event_dimension_coverage=finalized.event_dimension_coverage,
     )
     scenarios = [
         {

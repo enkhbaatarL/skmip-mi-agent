@@ -108,12 +108,16 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 v2/v3는 `flows/create_multi_event_scenarios/flow.py`에서 Event와 Event Type
 Template revision을 함께 준비한다. Prompt의 `Event Context`와
 `Template Domain Knowledge`를 분리하고 Template의 대표 사례 및
-`value_enums`는 참고 예시로만 전달한다. 생성 결과는 다음 결정론적 검사를
+`value_enums`는 참고 예시로만 전달한다. Event Context는 공통 compact formatter를
+사용해 요청 순서의 ID·제목·요약·발생시각·제한된 핵심 사실/태그만 전달한다.
+생성 결과는 다음 결정론적 검사를
 통과해야 저장된다.
 
-- 입력 Event 전체의 `EventShock`; v3는 합성 dimension lineage coverage도 검증
+- 입력 Event 전체의 `EventShock`; 국가·시설·수급 경로·생성값과 원본 Template
+  ID/checksum lineage를 보존
 - v2의 `e{eventId}__{dimKey}` namespacing과 단일 source lineage
-- v3의 3~6개 합성 dimension, 추적 가능한 source lineage, 독립 Event의 비강제 합성
+- v3의 3~6개 합성 dimension, Template revision까지 추적 가능한 source lineage,
+  모든 Event pair의 interaction 또는 `independent` 판정
 - 다섯 pressure band의 생성/제외 partition과 제외 사유
 - 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 내부 `mixed` 1개 이상
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
@@ -137,8 +141,8 @@ lineage는 동점 후보 우선순위에만 사용하고, token 근거가 없거
 실패시킨다. v2/v3 sourceRef에 LLM의 표시용 `d{number}_` 접두사가 붙으면
 Template의 원본 `dimKey`와 정확히 일치하는 경우에만 접두사를 제거하고,
 source assignment에도 동일하게 적용한다. 내부 pressure band Scenario에
-상승·하락 contribution이 함께 없으면 기존 dimension value 중 두 방향을
-최소 변경으로 조합해 `mixedFactors` 계약을 복원한다. v3 interaction은 관계
+상승·하락 contribution이 함께 없거나 contribution 합계와 pressure 순서가
+어긋나면 의미 필드를 부분 변경하지 않고 전체 결과 재생성을 요청한다. v3 interaction은 관계
 Event 전체를 추적할 수 있는 기존 dimension을
 우선 사용하며, lineage가 일부 빠졌으면 해당 Event의 source reference와 value
 projection을 보강한다. 입력에 없는 Event나 Template dimension을 새로 만들지는
@@ -176,8 +180,13 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 비수급 경로다. 모델 입력 미지원과 혼동하지 않도록 `PRICE_ONLY`로 별도 표시한다.
 
 `v4_flow.py`는 Event와 활성 카탈로그를 준비하고 LLM이 카탈로그 안의 lever만
-참조해 3~6개 dimension과 2~4개 value를 생성하게 한다. 서버는 모든 Event의
-impact fact와 dimension lineage, 카탈로그 밖 lever 금지, 고유 Scenario 조합,
+참조해 3~6개 dimension과 2~4개 value를 생성하게 한다. Scenario delta의 정본은
+`dimensionDefinitions[].impactLeverRefs[]`이며, 각 reference에는 catalog의
+`impactLeverId`/`leverCode`, 근거 `sourceFactIds`, `mappingRationale`을 저장한다.
+dimension에 쓰이지 않은 모든 공통 사실은 비어 있지 않은
+`commonImpactLeverRefs`를 가져야 하고, dimension에 쓰인 사실에는 이를 허용하지 않는다.
+서버는 모든 Event의 impact fact와 dimension lineage, 카탈로그 ID/code/domain,
+고유 Scenario 조합,
 pressure band partition, floor·ceiling·mixed·baseline을 결정론적으로 검증한다.
 여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 글로벌 LNG
 pressure band와 rationale이다. 지역 가격 허브가 특별히 관련된 Scenario만
@@ -185,19 +194,29 @@ pressure band와 rationale이다. 지역 가격 허브가 특별히 관련된 Sc
 floor·ceiling을 생성하지 않는다. 또한 전체 dimension 중 적어도 하나는 실행 가능한
 모델 parameter binding을 참조해야 한다. 따라서 가격 설명용 `price_only`나
 `known_unsupported` dimension을 함께 사용하더라도 모델 파라미터 단계에 넘길
-실행 경로가 하나 이상 남는다.
+실행 경로가 하나 이상 남는다. 실행 가능한 dimension이 하나도 없으면 semantic
+validation 실패로 처리해 최대 3회 생성한다. 지원 상태는 dimension 선택 우선순위로
+사용하지 않으며 `price_only`나 미지원 경로도 중요한 불확실성이면 선택할 수 있다.
+
+Event마다 dimension을 강제하지 않는다. `eventDimensionCoverage`에는 계산된
+`dimensionIds`를 저장하고, 빈 경우
+`NO_EXECUTABLE_UNCERTAINTY`, `PRICE_ONLY_OR_UNSUPPORTED`,
+`COMMON_FACT_NO_SCENARIO_DELTA` 중 하나의 `noDimensionReason`과 근거를 남긴다.
 
 그룹에는 카탈로그 version/checksum, dimension 정의와 Event lineage를 저장한다.
-모델 파라미터 단계는 `lever_refs`의 실행 가능한 binding만
-기존 Basecase/LUT 파이프라인으로 넘기고, price-only 또는 미지원 binding은
-`non_input_items`로 보존한다. 생성 진단의 `unsupported_lever_details`와
-`non_input_items[].unsupported_reason_code`에는 상세 미지원 사유를 저장한다.
+모델 파라미터 단계는 dimension의 `impactLeverRefs`를 우선 사용하고, dimension이
+없는 공통 사실만 `commonImpactLeverRefs`에서 읽는다. 실행 가능한 binding은 기존
+Basecase/LUT 파이프라인으로 넘기고 모든 매핑 결과는
+`parameterMappingEvidence`로 응답·DB에 보존한다. 각 evidence는 출처 종류,
+Event/fact/dimension, impact lever ID/code, 처리 역할, 대상 파라미터와 rationale을
+포함한다. price-only 또는 미지원 binding은 각각 `PRICE_ONLY_CONTEXT`,
+`UNSUPPORTED_CONTEXT` 역할과 상세 사유 코드를 가진다.
 API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`/`N`으로
 변환한다.
 관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.
 
-기존 DB의 target market 제거와 관련 시장 JSON 추가는
-`scripts/sql/05_v4_global_related_markets.sql`을 한 번 적용해 반영한다.
+DB 계약의 정본은 `skmip-mi-agent-mgmt`의 기존 Alembic 0022 revision이며,
+Scenario 관련 컬럼과 proposal의 `parameter_mapping_evidence` JSON 컬럼을 함께 반영한다.
 
 ### 전체 흐름
 

@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from apps.agents.scenario_group_agent.prompts.event_context import (
+    format_compact_event_context,
+)
+
 
 MULTI_EVENT_SYSTEM_PROMPT = """\
 당신은 복수의 MI Event를 공동 전제로 LNG 시장 시나리오를 설계하는 전문가입니다.
@@ -23,18 +27,37 @@ MULTI_EVENT_SYSTEM_PROMPT = """\
 - 최종 Scenario는 3~5개이며 dimension 조합이 모두 달라야 합니다.
 - 가격 상승·하락 요인이 함께 작용하는 내부 구간 후보 하나 이상은 mixedFactors=true입니다.
 - probabilityScore는 후보 간 상대적 발생 가능성 점수이며 0~100 정수입니다.
-- 모든 lineage에 eventId, eventTypeL2Id, dimKey, sourceType, assumptionYn, rationale을 채웁니다.
+- 모든 lineage에 eventId, eventTypeL2Id, scenarioDimensionTemplateId, templateChecksum,
+  dimKey, sourceType, assumptionYn, rationale을 채웁니다. Template revision 값은 입력의 해당
+  Event/Template 값을 그대로 사용합니다.
+- EventShock.sourceDimensions도 eventId, scenarioDimensionTemplateId, templateChecksum,
+  dimKey로 원본 Template revision을 정확히 가리켜야 합니다.
+- EventShock에는 affectedRegions, affectedCountries, affectedFacilities를 모두 출력하고,
+  각 Supply/Demand/Trade impactPath에는 affectedScope를 출력합니다. 알려진 항목은 생략하지
+  말고, Event 사실에 없는 범위는 빈 배열로 둡니다.
+- EventShock.templateValueExamplesConsulted는 참고한 sourceDimension별로 입력 Template의
+  valueEnumExamples에서 실제 참고한 값을 기록하고, 전체 EventShock에서 하나 이상 남깁니다.
 """
 
 
 V2_STRATEGY_PROMPT = """\
 전략 v2 — 다중 Event의 원본 Template Dimension:
-- 모든 Template dimension 후보에서 LNG 가격 영향 관련성이 높은 3~6개를 선택합니다.
+- 모든 Template dimension 후보에서 다음 근거 중 하나를 충족하는 3~6개만 선택합니다.
+  - direct_event_fact: Event 제목·요약·핵심 사실에 직접 언급되거나 명백히 암시됨.
+  - lng_impact_path: 가격·수급·물동량 Impact 경로에 강하게 연결됨.
+  - both: 위 두 근거를 모두 충족함.
 - 원본 dimension의 label, description, required 값을 그대로 보존하고 이름이나 의미를 합성하지 않습니다.
 - dimensionId는 반드시 e{eventId}__{dimKey} 형식입니다.
 - 각 dimension의 sourceRefs는 해당 원본 source 하나만 포함합니다.
+- 각 dimensionDefinitions 항목에 selectionCriterion과 구체적인 한국어 selectionRationale을 채웁니다.
+  selectionRationale은 direct_event_fact이면 `(a)`, lng_impact_path이면 `(c)`, both이면
+  `(a)(c)`로 시작해 채택 근거를 명시합니다.
+- selectionCriterion=none 또는 Event Type Template에 존재한다는 이유만으로 dimension을 선택하지 않습니다.
 - Event별 dimension을 강제하지 않으며, 관련 dimension이 없는 Event는 공동 사실 문맥에만 유지합니다.
-- required 후보가 6개를 넘으면 관련성 기준으로 제외하고 excludedDimensions에 근거를 남깁니다.
+- required=true도 관련성 근거를 충족할 때만 우선하며, 6개 한도를 넘으면 관련성과 LNG 가격 영향
+  중요도로 우선순위를 정합니다.
+- 모든 Template dimension 후보는 선택된 dimensionDefinitions의 단일 sourceRef 또는 excludedDimensions 중
+  정확히 한 곳에만 포함되어야 하며 누락·중복은 금지합니다.
 """
 
 
@@ -58,25 +81,22 @@ def build_multi_event_user_prompt(
     validation_feedback: str | None = None,
 ) -> str:
     strategy = V2_STRATEGY_PROMPT if api_version == "v2" else V3_STRATEGY_PROMPT
-    event_context = [
-        {
-            "eventId": event.get("mi_event_id"),
-            "eventTypeL2Id": event.get("event_type_l2_id"),
-            "eventType": event.get("event_type") or {},
-            "title": event.get("event_title_ko"),
-            "summary": event.get("one_line_summary"),
-            "occurredAt": event.get("occurred_at"),
-            "keyFacts": event.get("key_bullets") or [],
-            "detailAnalysis": event.get("detail_analysis"),
-            "tags": event.get("tags") or [],
-        }
-        for event in events
-    ]
+    event_context = format_compact_event_context(events)
+    v2_output_contract = (
+        "- v2의 excludedDimensions 각 항목에는 eventId, eventTypeL2Id, scenarioDimensionTemplateId, "
+        "templateChecksum, dimKey, selectionCriterion, required, reasonCode, reason을 모두 채우십시오.\n"
+        "- 제외 selectionCriterion/reasonCode 조합은 다음만 허용합니다: "
+        "none+NOT_RELEVANT, direct_event_fact|lng_impact_path|both + LOWER_PRIORITY|DIMENSION_LIMIT.\n"
+        "- selected source와 excludedDimensions를 합쳐 입력 Template의 모든 (eventId, dimKey) 후보를 "
+        "정확히 한 번씩 partition하십시오.\n"
+        if api_version == "v2"
+        else ""
+    )
     template_knowledge = [
         {
             "eventId": event.get("mi_event_id"),
             "eventTypeL2Id": event.get("event_type_l2_id"),
-            "templateId": template.get("scenario_dimension_template_id"),
+            "scenarioDimensionTemplateId": template.get("scenario_dimension_template_id"),
             "templateChecksum": template.get("template_checksum"),
             "eventTypeDefinition": template.get("event_type_definition"),
             "lngPriceImpactExamples": template.get("lng_price_impact_examples"),
@@ -104,7 +124,7 @@ def build_multi_event_user_prompt(
     return (
         f"## Generation Strategy\n{strategy}\n\n"
         "## Event Context (authoritative current facts)\n"
-        f"{json.dumps(event_context, ensure_ascii=False, indent=2)}\n\n"
+        f"{event_context}\n\n"
         "## Template Domain Knowledge (reference examples, not current facts or closed enums)\n"
         f"{json.dumps(template_knowledge, ensure_ascii=False, indent=2)}\n\n"
         "## Output\n"
@@ -115,5 +135,6 @@ def build_multi_event_user_prompt(
         "- dimensionDefinitions.values에는 최종 Scenario에서 실제 사용하는 value를 모두 정의하십시오.\n"
         "- 각 Scenario의 dimensionValues key는 dimensionDefinitions의 dimensionId 전체와 정확히 일치해야 합니다.\n"
         "- mixedFactors=true인 Scenario는 bullish와 bearish contribution을 모두 포함해야 합니다.\n"
+        f"{v2_output_contract}"
         f"{feedback}"
     )

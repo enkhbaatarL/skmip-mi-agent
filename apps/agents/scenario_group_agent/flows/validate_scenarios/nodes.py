@@ -9,6 +9,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.state import (
     ValidateScenariosState,
     validate_scenarios_state_update,
 )
+from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
@@ -75,7 +76,16 @@ def load_scenarios(state: ValidateScenariosState) -> dict[str, object]:
             )
         except (KeyError, TypeError, ValueError):
             dimension_template = []
-    return {"scenarios": scenarios, "dimension_template": dimension_template}
+    event_ids = ScenarioGroupService().load_event_ids(state.scenario_group_id)
+    if not event_ids and state.scenario_group.mi_event_id is not None:
+        event_ids = [int(state.scenario_group.mi_event_id)]
+    events = EventService().load_events(event_ids)
+    return validate_scenarios_state_update(
+        scenarios=scenarios,
+        dimension_template=dimension_template,
+        events=events,
+        generation_diagnostics=state.scenario_group.generation_diagnostics,
+    )
 
 
 async def generate_dimension_values(
@@ -333,6 +343,8 @@ async def run_scenario_review(
     subgraph_state = ScenarioReviewState(
         scenario_group_id=state.scenario_group_id,
         group=state.scenario_group.model_dump() if state.scenario_group is not None else {},
+        events=[_model_or_dict_dump(event) for event in state.events],
+        generation_diagnostics=state.generation_diagnostics,
         requested_rows=request_table.get("rows", []),
         requested_headers=request_table.get("headers", []),
         persisted_scenarios=[_model_or_dict_dump(scenario) for scenario in state.scenarios],

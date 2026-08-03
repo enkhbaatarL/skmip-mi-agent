@@ -109,7 +109,8 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - v4와 같은 요청 계약에 필수 `comparisonRunId`를 추가하고 테스트·비교용으로
     완료 응답을 동기 반환
   - `generationDiagnostics`에 Event 영향 사실/상호작용, covered/uncovered
-    dimension, unsupported lever와 전체 coverage 상태를 포함
+    dimension, unsupported lever, Event별 dimension coverage와 전체 coverage
+    상태를 포함
 - `POST /scenario-groups/{scenarioGroupId}/validation/sync`
   - 기존 validation prepare 및 검증 graph를 동기 실행
   - Response: `ValidateScenariosOut`
@@ -124,8 +125,12 @@ versioned sync endpoint의 생성 오류는
 `{"status":"error","message":"...","data":null}` 형태로 반환한다. v2/v3/v4
 성공 응답은 `apiVersion`, `generationStrategy`, `comparisonRunId`,
 `events`, `dimensionDefinitions`, `table`, `generationDiagnostics`를 포함한다.
-`events`는 요청 Event 순서를 유지하고, 각 `dimensionDefinitions[].sourceRefs`는
-근거 Event의 `eventId`, `eventTypeL2Id`를 포함한다.
+`events`는 요청 Event 순서를 유지한다. v2/v3의 각
+`dimensionDefinitions[].sourceRefs`는 근거 Event의 `eventId`, `eventTypeL2Id`,
+`scenarioDimensionTemplateId`, `templateChecksum`을 포함한다. v4의 각 dimension은
+`sourceFactIds`와 `impactLeverRefs`를 포함하며 lever reference의 ID/code 쌍은
+저장 당시 활성 catalog와 일치한다. dimension이 없는 Event는
+`generationDiagnostics.eventDimensionCoverage[].noDimensionReason`으로 구분한다.
 각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
 `probabilityScore`, `globalPressureRationale`, `relatedMarkets`는 DB 저장값을
 그대로 반환한다. `relatedMarkets`는 table header/cell이나 pressure tag가 아니라
