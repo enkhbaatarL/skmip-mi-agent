@@ -96,7 +96,7 @@ python tests/manual/test_sync_pipeline_api.py \
 - 사용자가 이미 포함/제외를 명시했으면 다시 묻지 않는다.
 - 입력 도구가 자동 기본값 처리를 지원하면 `true`를 기본값으로 설정한다.
 
-`true`이면 결정적 검사와 LLM Judge를 실행하고 버전별 점수·판정·우수 버전을 보고한다. `false`이면 실제 API 결과와 Scenario 비교 보고서만 만들고 Judge, 품질 점수, 버전 순위, 우수 버전 판정을 생략한다.
+`true`이면 결정적 검사와 Agent Judge를 실행하고 버전별 점수·판정·우수 버전을 보고한다. Agent Judge는 이 skill을 실행 중인 Codex 또는 Claude 모델이 직접 수행한다. 별도 LLM API, 앱 LLM connector, `codex exec`, `claude` CLI를 호출하지 않는다. `false`이면 실제 API 결과와 Scenario 비교 보고서만 만들고 Judge, 품질 점수, 버전 순위, 우수 버전 판정을 생략한다.
 
 ### 로컬 서버
 
@@ -169,14 +169,35 @@ python tests/manual/test_multi_event_scenario_versions.py orchestrate \
 
 동일 version POST를 자동 재시도하지 않는다. DB에 `(comparisonRunId, apiVersion)` unique 제약이 없으므로 timeout 뒤 재호출하면 중복 Scenario Group이 생길 수 있다. timeout은 결과 불명으로 기록하고 API/DB 증적 확인이 필요하다고 보고한다. 한 version이 실패해도 나머지 version의 결과를 보존한다.
 
-### 보고서 생성
+### Agent Judge와 보고서 생성
 
-품질검사 선택을 그대로 전달한다.
+품질검사 선택이 `true`이면 먼저 결정적 검사와 Agent Judge 입력을 생성한다.
+
+```bash
+python tests/manual/test_multi_event_scenario_versions.py report \
+  --manifest <manifest.json> \
+  --quality-check true \
+  --prepare-judge-only
+```
+
+명령이 출력한 `comparison_judge_input.json`을 직접 읽고 그 안의 `constraints`, `criteria`, `outputSchema`, `evidence`만 근거로 평가한다. 현재 skill을 실행 중인 모델이 모든 성공 version과 Scenario를 직접 판정하고, `outputSchema`에 맞는 JSON을 manifest의 `artifacts.judge` 경로인 `comparison_judge.json`에 작성한다. 의미 판정을 Python 규칙으로 대체하거나 별도 모델에 위임하지 않는다.
+
+Judge JSON을 작성한 뒤 같은 보고 명령을 다시 실행해 schema, version·criterion·Scenario 집합, 평균 최고 version을 검증하고 최종 Markdown을 만든다.
 
 ```bash
 python tests/manual/test_multi_event_scenario_versions.py report \
   --manifest <manifest.json> \
   --quality-check true
+```
+
+검증에 실패하면 `comparison_judge.json`을 근거 없이 부분 수정하지 말고 오류와 입력 schema를 대조해 전체 판정을 바로잡은 뒤 다시 실행한다.
+
+품질검사 선택이 `false`이면 Agent Judge 준비 단계 없이 한 번만 실행한다.
+
+```bash
+python tests/manual/test_multi_event_scenario_versions.py report \
+  --manifest <manifest.json> \
+  --quality-check false
 ```
 
 `true`일 때 실제 이벤트와 API 응답만 근거로 다음을 검사한다.
@@ -186,9 +207,9 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 - 글로벌 LNG 기준 floor/ceiling의 pressure band 및 조합 타당성
 - mixed의 필요성과 상승·하락 요인 조합 타당성
 - Scenario 3~5개, baseline 정확히 1개, floor/ceiling 각각 1개, mixed 최소 1개, 조합·band 중복 없음
-- dimension 수 v2 5~8개, v3 4~7개, v4 3~6개와 전체 이벤트 lineage coverage
+- dimension 수 v2/v3/v4 각각 3~6개와 전체 이벤트 lineage coverage
 
-LLM Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario별 실제 title, narrative, cells, role, probability와 API rationale를 근거로 판단한다. 기준 단순 평균 최고 version을 우수 버전으로 정하고 동점은 공동 우수로 표시한다. 성공 version이 2개 미만이면 비교 결론을 `판정 불가`로 표시한다.
+Agent Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario별 실제 title, narrative, cells, role, probability와 API rationale를 근거로 판단한다. 기준 단순 평균 최고 version을 우수 버전으로 정하고 동점은 공동 우수로 표시한다. 성공 version이 2개 미만이면 비교 결론을 `판정 불가`로 표시한다.
 
 `false`일 때도 이벤트와 실행 결과, Scenario Group, dimension, Scenario 실제 값, API rationale를 version별로 비교한다.
 
@@ -202,7 +223,8 @@ LLM Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario별
 - `v2_create_response.json`
 - `v3_create_response.json`
 - `v4_create_response.json`
+- `comparison_judge_input.json` (`quality-check=true`일 때)
 - `comparison_judge.json` (`quality-check=true`일 때만)
 - `comparison_report.md`
 
-보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group/dimension 비교, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 LLM 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다.
+보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group/dimension 비교, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 Agent Judge 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다.

@@ -4,7 +4,7 @@ from copy import deepcopy
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BeforeValidator, Field, WithJsonSchema, model_validator
+from pydantic import BeforeValidator, ConfigDict, Field, WithJsonSchema, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.persistence.scenario.schema import DimensionDefinition, SourceLineage
@@ -38,6 +38,11 @@ SelectionCriterion = Literal[
     "lng_impact_path",
     "both",
     "none",
+]
+V2SelectionCriterion = Literal[
+    "direct_event_fact",
+    "lng_impact_path",
+    "both",
 ]
 
 
@@ -373,17 +378,169 @@ class MultiEventGenerationResult(ApiModel):
     )
 
 
-class V2MultiEventGenerationResult(MultiEventGenerationResult):
-    """LLM response-format contract for v2 generation."""
+class V2EventShock(ApiModel):
+    """Compact v2 Event grounding without repeated source lineage."""
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_v2_input(cls, value: Any) -> Any:
-        return _with_multi_event_defaults(value)
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    shock_summary: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def _normalize_summary(self) -> V2EventShock:
+        self.shock_summary = self.shock_summary.strip()
+        if not self.shock_summary:
+            raise ValueError("shockSummary must not be blank")
+        return self
+
+
+class V2SourceReference(ApiModel):
+    """A source dimension is unique by Event, Template revision owner and key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    scenario_dimension_template_id: int = Field(gt=0)
+    dim_key: str = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def _normalize_dim_key(self) -> V2SourceReference:
+        self.dim_key = self.dim_key.strip()
+        if not self.dim_key:
+            raise ValueError("dimKey must not be blank")
+        return self
+
+
+class V2DimensionValueDefinition(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value_id: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=120)
+    global_pressure_contribution: Literal["bullish", "balanced", "bearish"]
+
+
+class V2SelectedDimension(ApiModel):
+    """Minimal dimension selection emitted by the LLM."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension_id: str = Field(min_length=1, max_length=255)
+    source_ref: V2SourceReference
+    selection_criterion: V2SelectionCriterion
+    selection_rationale: str = Field(min_length=1, max_length=400)
+    values: list[V2DimensionValueDefinition] = Field(min_length=3, max_length=4)
+
+
+class V2ScenarioCandidate(ApiModel):
+    """Compact v2 Scenario; roles and mixed state are derived by the server."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+    narrative: str = Field(min_length=1, max_length=800)
+    dimension_values: ScenarioDimensionValues
+    global_pressure_band: PressureBand
+    probability_score: int = Field(ge=0, le=100)
+    global_pressure_rationale: str = Field(min_length=1, max_length=500)
+
+
+class V2MultiEventGenerationResult(ApiModel):
+    """Compact LLM response-format contract for v2 generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_group_title: str = Field(min_length=1, max_length=120)
+    scenario_group_description: str = Field(min_length=1, max_length=600)
+    event_shocks: list[V2EventShock]
+    selected_dimensions: list[V2SelectedDimension] = Field(min_length=3, max_length=6)
+    scenarios: list[V2ScenarioCandidate] = Field(min_length=3, max_length=5)
+
+
+class V2DimensionDefinition(ApiModel):
+    """Compact persisted/API v2 dimension hydrated from its source Template."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension_id: str = Field(min_length=1, max_length=255)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    required: bool = False
+    selection_criterion: V2SelectionCriterion
+    selection_rationale: str = Field(min_length=1, max_length=400)
+    source_ref: V2SourceReference
+    values: list[V2DimensionValueDefinition] = Field(min_length=3, max_length=4)
+
+
+class V2FinalizedGenerationResult(ApiModel):
+    """Server-finalized v2 payload used for persistence and API presentation."""
+
+    scenario_group_title: str
+    scenario_group_description: str
+    event_shocks: list[V2EventShock]
+    dimension_definitions: list[V2DimensionDefinition]
+    scenarios: list[ScenarioCandidate]
+    unselected_dimension_refs: list[V2SourceReference]
+    unrepresented_pressure_bands: list[PressureBand]
+
+
+class V3EventShock(ApiModel):
+    """Compact v3 Event shock; Event facts stay in natural-language form."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    shock_summary: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_summary(self) -> V3EventShock:
+        self.shock_summary = self.shock_summary.strip()
+        if not self.shock_summary:
+            raise ValueError("shockSummary must not be blank")
+        return self
+
+
+class V3SourceReference(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_dimension_template_id: int = Field(gt=0)
+    dim_key: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_dim_key(self) -> V3SourceReference:
+        self.dim_key = self.dim_key.strip()
+        if not self.dim_key:
+            raise ValueError("dimKey must not be blank")
+        return self
+
+
+class V3DimensionValueDefinition(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    global_pressure_contribution: Literal["bullish", "balanced", "bearish"]
+
+
+class V3DimensionDefinition(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dimension_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    source_event_ids: list[int] = Field(min_length=1)
+    source_refs: list[V3SourceReference] = Field(min_length=1)
+    values: list[V3DimensionValueDefinition] = Field(min_length=3, max_length=5)
 
 
 class V3MultiEventGenerationResult(MultiEventGenerationResult):
-    """LLM response-format contract for v3 generation."""
+    """Compact LLM response-format contract for v3 generation."""
+
+    event_shocks: list[V3EventShock]
+    dimension_definitions: list[V3DimensionDefinition] = Field(
+        min_length=3,
+        max_length=6,
+    )
 
     excluded_dimensions: list[ExcludedDimensionDecision] = Field(
         default_factory=list,
@@ -393,7 +550,15 @@ class V3MultiEventGenerationResult(MultiEventGenerationResult):
     @model_validator(mode="before")
     @classmethod
     def _normalize_v3_input(cls, value: Any) -> Any:
-        normalized = _with_multi_event_defaults(value)
+        if not isinstance(value, dict):
+            return value
+        normalized = deepcopy(value)
+        for alias, field_name in (
+            ("interactions", "interactions"),
+            ("excludedCandidates", "excluded_candidates"),
+        ):
+            if alias not in normalized and field_name not in normalized:
+                normalized[alias] = []
         if not isinstance(normalized, dict):
             return normalized
         if "excludedDimensions" in normalized:
@@ -418,16 +583,13 @@ def _with_multi_event_defaults(value: Any) -> Any:
     shocks_field = "eventShocks" if "eventShocks" in normalized else "event_shocks"
     raw_shocks = normalized.get(shocks_field)
     if isinstance(raw_shocks, list):
-        normalized[shocks_field] = [
-            _normalize_event_shock_examples(shock)
-            for shock in raw_shocks
-        ]
+        normalized[shocks_field] = [_normalize_event_shock_examples(shock) for shock in raw_shocks]
     return normalized
 
 
 def multi_event_generation_schema(
     api_version: str,
-) -> type[MultiEventGenerationResult]:
+) -> type[V2MultiEventGenerationResult] | type[V3MultiEventGenerationResult]:
     if api_version == "v2":
         return V2MultiEventGenerationResult
     if api_version == "v3":
@@ -457,11 +619,7 @@ def _normalize_event_shock_source_keys(shock: EventShock) -> None:
             shock.template_value_examples_consulted.get(normalized_key, []),
         )
         normalized_examples[normalized_key] = list(
-            dict.fromkeys(
-                str(example).strip()
-                for example in examples
-                if str(example).strip()
-            ),
+            dict.fromkeys(str(example).strip() for example in examples if str(example).strip()),
         )
 
     shock.source_dimension_keys = normalized_keys
@@ -624,11 +782,7 @@ def _validate_event_shock_template_examples(
     for dim_key, examples in shock.template_value_examples_consulted.items():
         definition = source_dimensions_by_event.get(shock.event_id, {}).get(dim_key)
         allowed_examples = (
-            {
-                str(value).strip()
-                for value in definition.get("value_enums", [])
-                if str(value).strip()
-            }
+            {str(value).strip() for value in definition.get("value_enums", []) if str(value).strip()}
             if isinstance(definition, dict)
             else set()
         )
@@ -762,17 +916,11 @@ def _normalize_v2_dimension_source_refs(
             )
             for value in dimension.values:
                 for assignment in value.source_assignments:
-                    if (
-                        assignment.event_id == source.event_id
-                        and assignment.dim_key == source.dim_key
-                    ):
+                    if assignment.event_id == source.event_id and assignment.dim_key == source.dim_key:
                         _hydrate_or_validate_source_revision(
                             assignment,
                             source_definition=original_definition,
-                            context=(
-                                f"dimension value {dimension.dimension_id}="
-                                f"{value.value_id}"
-                            ),
+                            context=(f"dimension value {dimension.dimension_id}={value.value_id}"),
                         )
         target_event_id = source.event_id
         target_dim_key = source.dim_key
@@ -851,9 +999,7 @@ def _normalize_v2_dimension_source_refs(
                     target_definition["scenario_dimension_template_id"],
                 )
             target_template_checksum = str(
-                target_definition.get("template_checksum")
-                or target_template_checksum
-                or "",
+                target_definition.get("template_checksum") or target_template_checksum or "",
             )
 
         original_dimension_id = dimension.dimension_id
@@ -1010,15 +1156,10 @@ def _hydrate_or_validate_source_revision(
             f"{context} source Template revision metadata is unavailable",
         )
     if (
-        source.scenario_dimension_template_id is not None
-        and source.scenario_dimension_template_id != int(template_id)
-    ) or (
-        source.template_checksum is not None
-        and source.template_checksum != template_checksum
-    ):
+        source.scenario_dimension_template_id is not None and source.scenario_dimension_template_id != int(template_id)
+    ) or (source.template_checksum is not None and source.template_checksum != template_checksum):
         raise ValueError(
-            f"{context} source Template revision does not match: "
-            f"eventId={source.event_id}, dimKey={source.dim_key}",
+            f"{context} source Template revision does not match: eventId={source.event_id}, dimKey={source.dim_key}",
         )
     source.scenario_dimension_template_id = int(template_id)
     source.template_checksum = template_checksum
@@ -1184,18 +1325,373 @@ def _validate_pressure_aggregate_order(
             )
 
 
+def _finalize_scenario_candidates(
+    *,
+    scenarios: list[ScenarioCandidate],
+    excluded_candidates: list[ExcludedGenerationCandidate],
+    dimensions: list[DimensionDefinition] | list[V2DimensionDefinition] | list[V3DimensionDefinition],
+    require_pressure_partition: bool = True,
+) -> list[ScenarioCandidate]:
+    sorted_scenarios = sorted(
+        scenarios,
+        key=lambda scenario: PRESSURE_RANK[scenario.global_pressure_band],
+        reverse=True,
+    )
+    if not 3 <= len(sorted_scenarios) <= 5:
+        raise ValueError("final scenario count must be between 3 and 5")
+    pressure_bands = [scenario.global_pressure_band for scenario in sorted_scenarios]
+    if len(set(pressure_bands)) != len(pressure_bands):
+        raise ValueError("final scenarios must have unique globalPressureBand values")
+    excluded_bands = [candidate.global_pressure_band for candidate in excluded_candidates]
+    if set(pressure_bands) & set(excluded_bands):
+        raise ValueError("a pressure band cannot be both generated and excluded")
+    if require_pressure_partition and set(pressure_bands) | set(excluded_bands) != set(PRESSURE_BANDS):
+        raise ValueError(
+            "generated and excluded candidates must account for all target pressure bands",
+        )
+
+    dimension_ids = [dimension.dimension_id for dimension in dimensions]
+    expected_keys = set(dimension_ids)
+    allowed_values = {
+        dimension.dimension_id: {value.value_id for value in dimension.values}
+        | {value.label for value in dimension.values}
+        for dimension in dimensions
+    }
+    contribution_by_value = {
+        dimension.dimension_id: {value.value_id: value.global_pressure_contribution for value in dimension.values}
+        | {value.label: value.global_pressure_contribution for value in dimension.values}
+        for dimension in dimensions
+    }
+    seen_combinations: set[tuple[tuple[str, str], ...]] = set()
+    for scenario in sorted_scenarios:
+        if set(scenario.dimension_values) != expected_keys:
+            raise ValueError(
+                f"scenario cells must match all dimension definitions: {scenario.title}",
+            )
+        for dimension_id, value in scenario.dimension_values.items():
+            if value not in allowed_values[dimension_id]:
+                raise ValueError(
+                    f"scenario value is missing from dimensionDefinitions.values: {dimension_id}={value}",
+                )
+        combination = tuple(sorted(scenario.dimension_values.items()))
+        if combination in seen_combinations:
+            raise ValueError("scenario dimension combinations must be unique")
+        seen_combinations.add(combination)
+        contributions = {
+            contribution_by_value[dimension_id][value] for dimension_id, value in scenario.dimension_values.items()
+        }
+        if scenario.mixed_factors and not {"bullish", "bearish"} <= contributions:
+            raise ValueError(
+                f"mixedFactors=true requires both bullish and bearish dimension contributions: {scenario.title}",
+            )
+
+    _validate_pressure_aggregate_order(
+        sorted_scenarios,
+        contribution_by_value=contribution_by_value,
+    )
+
+    ranked = sorted(
+        range(len(sorted_scenarios)),
+        key=lambda index: PRESSURE_RANK[sorted_scenarios[index].global_pressure_band],
+    )
+    if len(ranked) < 3:
+        raise ValueError("floor, ceiling and mixed roles require three scenarios")
+    floor_index = ranked[0]
+    ceiling_index = ranked[-1]
+    interior = [index for index in ranked[1:-1] if sorted_scenarios[index].mixed_factors]
+    if not interior:
+        raise ValueError("at least one interior scenario must combine bullish and bearish factors")
+    mixed_index = min(
+        interior,
+        key=lambda index: abs(
+            PRESSURE_RANK[sorted_scenarios[index].global_pressure_band] - PRESSURE_RANK["balanced"],
+        ),
+    )
+    baseline_index = max(
+        range(len(sorted_scenarios)),
+        key=lambda index: (sorted_scenarios[index].probability_score, -index),
+    )
+
+    finalized: list[ScenarioCandidate] = []
+    for index, scenario in enumerate(sorted_scenarios):
+        if index == floor_index:
+            role = "floor"
+        elif index == ceiling_index:
+            role = "ceiling"
+        elif index == mixed_index:
+            role = "mixed"
+        else:
+            role = None
+        finalized.append(
+            scenario.model_copy(
+                update={
+                    "scenario_role": role,
+                    "baseline_yn": "Y" if index == baseline_index else "N",
+                },
+            ),
+        )
+    return finalized
+
+
+def finalize_v2_generation_result(
+    result: V2MultiEventGenerationResult,
+    *,
+    event_ids: list[int],
+    source_dimensions_by_event: dict[int, dict[str, bool | dict[str, object]]] | None,
+) -> V2FinalizedGenerationResult:
+    """Hydrate and validate compact v2 without detailed lineage repair."""
+    if source_dimensions_by_event is None:
+        raise ValueError("v2 generation requires input Template dimensions")
+
+    known_event_ids = set(event_ids)
+    shock_event_ids = [shock.event_id for shock in result.event_shocks]
+    if set(shock_event_ids) != known_event_ids or len(shock_event_ids) != len(known_event_ids):
+        raise ValueError("eventShocks must contain every input event exactly once")
+    if not 3 <= len(result.selected_dimensions) <= 6:
+        raise ValueError(
+            f"multi_event_source_dimensions dimension count is out of range: {len(result.selected_dimensions)}",
+        )
+
+    selected_source_keys: set[tuple[int, int, str]] = set()
+    dimension_ids: set[str] = set()
+    dimensions: list[V2DimensionDefinition] = []
+    for selected in result.selected_dimensions:
+        source = selected.source_ref
+        if source.event_id not in known_event_ids:
+            raise ValueError(f"v2 dimension references an unknown event: {selected.dimension_id}")
+        raw_definition = source_dimensions_by_event.get(source.event_id, {}).get(source.dim_key)
+        if not isinstance(raw_definition, dict):
+            raise ValueError(
+                "v2 sourceRef is not present in the input Template: "
+                f"eventId={source.event_id}, dimKey={source.dim_key}",
+            )
+        expected_template_id = raw_definition.get("scenario_dimension_template_id")
+        if expected_template_id is None or source.scenario_dimension_template_id != int(expected_template_id):
+            raise ValueError(
+                f"v2 sourceRef Template ID does not match: eventId={source.event_id}, dimKey={source.dim_key}",
+            )
+        expected_dimension_id = f"e{source.event_id}__{source.dim_key}"
+        if selected.dimension_id != expected_dimension_id:
+            raise ValueError(f"v2 dimensionId must be namespaced as {expected_dimension_id}")
+
+        source_key = (
+            source.event_id,
+            source.scenario_dimension_template_id,
+            source.dim_key,
+        )
+        if source_key in selected_source_keys:
+            raise ValueError(f"v2 selectedDimensions contains duplicate sourceRef: {source_key}")
+        if selected.dimension_id in dimension_ids:
+            raise ValueError(f"v2 selectedDimensions contains duplicate dimensionId: {selected.dimension_id}")
+        selected_source_keys.add(source_key)
+        dimension_ids.add(selected.dimension_id)
+
+        value_ids = [value.value_id for value in selected.values]
+        if len(value_ids) != len(set(value_ids)):
+            raise ValueError(f"v2 dimension contains duplicate valueId: {selected.dimension_id}")
+        dimensions.append(
+            V2DimensionDefinition(
+                dimension_id=selected.dimension_id,
+                label=str(raw_definition.get("label") or source.dim_key),
+                description=str(raw_definition.get("description") or raw_definition.get("label") or source.dim_key),
+                required=bool(raw_definition.get("required", False)),
+                selection_criterion=selected.selection_criterion,
+                selection_rationale=selected.selection_rationale,
+                source_ref=source,
+                values=selected.values,
+            ),
+        )
+
+    scenario_candidates: list[ScenarioCandidate] = []
+    contributions = {
+        dimension.dimension_id: {value.value_id: value.global_pressure_contribution for value in dimension.values}
+        for dimension in dimensions
+    }
+    for scenario in result.scenarios:
+        scenario_contributions = {
+            contributions.get(dimension_id, {}).get(value_id)
+            for dimension_id, value_id in scenario.dimension_values.items()
+        }
+        scenario_candidates.append(
+            ScenarioCandidate(
+                title=scenario.title,
+                narrative=scenario.narrative,
+                dimension_values=scenario.dimension_values,
+                global_pressure_band=scenario.global_pressure_band,
+                probability_score=scenario.probability_score,
+                global_pressure_rationale=scenario.global_pressure_rationale,
+                mixed_factors={"bullish", "bearish"} <= scenario_contributions,
+            ),
+        )
+
+    finalized_scenarios = _finalize_scenario_candidates(
+        scenarios=scenario_candidates,
+        excluded_candidates=[],
+        dimensions=dimensions,
+        require_pressure_partition=False,
+    )
+    represented_bands = {scenario.global_pressure_band for scenario in finalized_scenarios}
+    unrepresented_bands = [band for band in PRESSURE_BANDS if band not in represented_bands]
+
+    unselected_refs: list[V2SourceReference] = []
+    for event_id in event_ids:
+        for dim_key, raw_definition in source_dimensions_by_event.get(event_id, {}).items():
+            if not isinstance(raw_definition, dict):
+                continue
+            template_id = raw_definition.get("scenario_dimension_template_id")
+            if template_id is None:
+                continue
+            source_key = (event_id, int(template_id), dim_key)
+            if source_key not in selected_source_keys:
+                unselected_refs.append(
+                    V2SourceReference(
+                        event_id=event_id,
+                        scenario_dimension_template_id=int(template_id),
+                        dim_key=dim_key,
+                    ),
+                )
+
+    return V2FinalizedGenerationResult(
+        scenario_group_title=result.scenario_group_title,
+        scenario_group_description=result.scenario_group_description,
+        event_shocks=result.event_shocks,
+        dimension_definitions=dimensions,
+        scenarios=finalized_scenarios,
+        unselected_dimension_refs=unselected_refs,
+        unrepresented_pressure_bands=unrepresented_bands,
+    )
+
+
+def finalize_v3_generation_result(
+    result: V3MultiEventGenerationResult,
+    *,
+    event_ids: list[int],
+    source_dimensions_by_event: dict[int, dict[str, bool | dict[str, object]]] | None = None,
+) -> V3MultiEventGenerationResult:
+    """Validate v3 without applying v2 lineage normalization or projection repair."""
+    known_event_ids = set(event_ids)
+    shock_event_ids = [shock.event_id for shock in result.event_shocks]
+    if set(shock_event_ids) != known_event_ids or len(shock_event_ids) != len(known_event_ids):
+        raise ValueError("eventShocks must contain every input event exactly once")
+
+    dimensions = result.dimension_definitions
+    if not 3 <= len(dimensions) <= 6:
+        raise ValueError(
+            f"multi_event_composite_dimensions dimension count is out of range: {len(dimensions)}",
+        )
+    dimension_ids = [dimension.dimension_id for dimension in dimensions]
+    if len(dimension_ids) != len(set(dimension_ids)):
+        raise ValueError("dimensionDefinitions contains duplicate dimensionId")
+
+    valid_template_refs: set[tuple[int, str]] | None = None
+    if source_dimensions_by_event is not None:
+        valid_template_refs = set()
+        for definitions in source_dimensions_by_event.values():
+            for dim_key, raw_definition in definitions.items():
+                if not isinstance(raw_definition, dict):
+                    continue
+                template_id = raw_definition.get("scenario_dimension_template_id")
+                if template_id is not None:
+                    valid_template_refs.add((int(template_id), dim_key))
+
+    covered_event_ids: set[int] = set()
+    for dimension in dimensions:
+        normalized_event_ids = [int(event_id) for event_id in dimension.source_event_ids]
+        if len(normalized_event_ids) != len(set(normalized_event_ids)):
+            raise ValueError(
+                f"dimension contains duplicate sourceEventIds: {dimension.dimension_id}",
+            )
+        if not set(normalized_event_ids) <= known_event_ids:
+            raise ValueError(
+                f"dimension references an unknown event: {dimension.dimension_id}",
+            )
+        dimension.source_event_ids = normalized_event_ids
+        covered_event_ids.update(normalized_event_ids)
+
+        source_keys = [(source.scenario_dimension_template_id, source.dim_key) for source in dimension.source_refs]
+        if len(source_keys) != len(set(source_keys)):
+            raise ValueError(
+                f"dimension contains duplicate sourceRefs: {dimension.dimension_id}",
+            )
+        if valid_template_refs is not None:
+            unknown_refs = set(source_keys) - valid_template_refs
+            if unknown_refs:
+                raise ValueError(
+                    "dimension sourceRef is not present in the input Template: "
+                    f"dimensionId={dimension.dimension_id}, sourceRefs={sorted(unknown_refs)}",
+                )
+
+        if not 3 <= len(dimension.values) <= 5:
+            raise ValueError(
+                f"multi-event dimensions must define 3 to 5 generated values: {dimension.dimension_id}",
+            )
+        value_ids = [value.value_id for value in dimension.values]
+        if len(value_ids) != len(set(value_ids)):
+            raise ValueError(
+                f"dimension contains duplicate valueId: {dimension.dimension_id}",
+            )
+
+    if covered_event_ids != known_event_ids:
+        missing = sorted(known_event_ids - covered_event_ids)
+        raise ValueError(f"events without a selected dimension: {missing}")
+
+    dimension_by_id = {dimension.dimension_id: dimension for dimension in dimensions}
+    for interaction in result.interactions:
+        interaction_event_ids = set(interaction.event_ids)
+        if not interaction_event_ids <= known_event_ids:
+            raise ValueError("interaction references an unknown event")
+        if interaction.resolution_dimension_id is not None:
+            resolution_dimension = dimension_by_id.get(interaction.resolution_dimension_id)
+            if resolution_dimension is None:
+                raise ValueError(
+                    "interaction resolutionDimensionId is not a generated dimension",
+                )
+            if not interaction_event_ids <= set(resolution_dimension.source_event_ids):
+                raise ValueError(
+                    "an interaction resolution dimension must reference every interaction event",
+                )
+        if interaction.relation != "independent" and not any(
+            interaction_event_ids <= set(dimension.source_event_ids) for dimension in dimensions
+        ):
+            raise ValueError(
+                "non-independent interactions must be represented by sourceEventIds on one dimension",
+            )
+
+    finalized_scenarios = _finalize_scenario_candidates(
+        scenarios=result.scenarios,
+        excluded_candidates=result.excluded_candidates,
+        dimensions=dimensions,
+    )
+    return V3MultiEventGenerationResult.model_validate(
+        result.model_copy(update={"scenarios": finalized_scenarios}).model_dump(),
+    )
+
+
 def finalize_generation_result(
-    result: MultiEventGenerationResult,
+    result: V2MultiEventGenerationResult | MultiEventGenerationResult | V3MultiEventGenerationResult,
     *,
     generation_strategy: str,
     event_ids: list[int],
     source_dimensions_by_event: (dict[int, dict[str, bool | dict[str, object]]] | None) = None,
-) -> MultiEventGenerationResult:
+) -> V2FinalizedGenerationResult | MultiEventGenerationResult | V3MultiEventGenerationResult:
     """Validate the LLM result and deterministically assign roles/baseline."""
-    if generation_strategy not in {
-        "multi_event_source_dimensions",
-        "multi_event_composite_dimensions",
-    }:
+    if generation_strategy == "multi_event_source_dimensions":
+        if not isinstance(result, V2MultiEventGenerationResult):
+            raise ValueError("v2 generation requires V2MultiEventGenerationResult")
+        return finalize_v2_generation_result(
+            result,
+            event_ids=event_ids,
+            source_dimensions_by_event=source_dimensions_by_event,
+        )
+    if generation_strategy == "multi_event_composite_dimensions":
+        if not isinstance(result, V3MultiEventGenerationResult):
+            raise ValueError("v3 generation requires V3MultiEventGenerationResult")
+        return finalize_v3_generation_result(
+            result,
+            event_ids=event_ids,
+            source_dimensions_by_event=source_dimensions_by_event,
+        )
+    if generation_strategy != "multi_event_source_dimensions":
         raise ValueError(
             f"unsupported multi-event generation strategy: {generation_strategy}",
         )
@@ -1438,108 +1934,11 @@ def finalize_generation_result(
             source_dimensions_by_event=source_dimensions_by_event,
         )
 
-    scenarios = sorted(
-        result.scenarios,
-        key=lambda scenario: PRESSURE_RANK[scenario.global_pressure_band],
-        reverse=True,
+    finalized = _finalize_scenario_candidates(
+        scenarios=result.scenarios,
+        excluded_candidates=result.excluded_candidates,
+        dimensions=dimensions,
     )
-    if not 3 <= len(scenarios) <= 5:
-        raise ValueError("final scenario count must be between 3 and 5")
-    pressure_bands = [scenario.global_pressure_band for scenario in scenarios]
-    if len(set(pressure_bands)) != len(pressure_bands):
-        raise ValueError("final scenarios must have unique globalPressureBand values")
-    excluded_bands = [candidate.global_pressure_band for candidate in result.excluded_candidates]
-    if set(pressure_bands) & set(excluded_bands):
-        raise ValueError("a pressure band cannot be both generated and excluded")
-    if set(pressure_bands) | set(excluded_bands) != set(PRESSURE_BANDS):
-        raise ValueError(
-            "generated and excluded candidates must account for all target pressure bands",
-        )
-
-    expected_keys = set(dimension_ids)
-    allowed_values = {
-        dimension.dimension_id: {value.value_id for value in dimension.values}
-        | {value.label for value in dimension.values}
-        for dimension in dimensions
-    }
-    contribution_by_value = {
-        dimension.dimension_id: {value.value_id: value.global_pressure_contribution for value in dimension.values}
-        | {value.label: value.global_pressure_contribution for value in dimension.values}
-        for dimension in dimensions
-    }
-    seen_combinations: set[tuple[tuple[str, str], ...]] = set()
-    for scenario in scenarios:
-        if set(scenario.dimension_values) != expected_keys:
-            raise ValueError(
-                f"scenario cells must match all dimension definitions: {scenario.title}",
-            )
-        for dimension_id, value in scenario.dimension_values.items():
-            if value not in allowed_values[dimension_id]:
-                raise ValueError(
-                    f"scenario value is missing from dimensionDefinitions.values: {dimension_id}={value}",
-                )
-        combination = tuple(sorted(scenario.dimension_values.items()))
-        if combination in seen_combinations:
-            raise ValueError("scenario dimension combinations must be unique")
-        seen_combinations.add(combination)
-        contributions = {
-            contribution_by_value[dimension_id][value] for dimension_id, value in scenario.dimension_values.items()
-        }
-        if (
-            scenario.mixed_factors
-            and not {
-                "bullish",
-                "bearish",
-            }
-            <= contributions
-        ):
-            raise ValueError(
-                f"mixedFactors=true requires both bullish and bearish dimension contributions: {scenario.title}",
-            )
-
-    _validate_pressure_aggregate_order(
-        scenarios,
-        contribution_by_value=contribution_by_value,
-    )
-
-    ranked = sorted(
-        range(len(scenarios)),
-        key=lambda index: PRESSURE_RANK[scenarios[index].global_pressure_band],
-    )
-    if len(ranked) < 3:
-        raise ValueError("floor, ceiling and mixed roles require three scenarios")
-    floor_index = ranked[0]
-    ceiling_index = ranked[-1]
-    interior = [index for index in ranked[1:-1] if scenarios[index].mixed_factors]
-    if not interior:
-        raise ValueError("at least one interior scenario must combine bullish and bearish factors")
-    mixed_index = min(
-        interior,
-        key=lambda index: abs(PRESSURE_RANK[scenarios[index].global_pressure_band] - PRESSURE_RANK["balanced"]),
-    )
-    baseline_index = max(
-        range(len(scenarios)),
-        key=lambda index: (scenarios[index].probability_score, -index),
-    )
-
-    finalized: list[ScenarioCandidate] = []
-    for index, scenario in enumerate(scenarios):
-        if index == floor_index:
-            role = "floor"
-        elif index == ceiling_index:
-            role = "ceiling"
-        elif index == mixed_index:
-            role = "mixed"
-        else:
-            role = None
-        finalized.append(
-            scenario.model_copy(
-                update={
-                    "scenario_role": role,
-                    "baseline_yn": "Y" if index == baseline_index else "N",
-                },
-            ),
-        )
     return MultiEventGenerationResult.model_validate(
         result.model_copy(update={"scenarios": finalized}).model_dump(),
     )

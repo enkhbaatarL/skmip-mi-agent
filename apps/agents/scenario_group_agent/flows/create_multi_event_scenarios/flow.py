@@ -5,11 +5,17 @@ from typing import Any
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     GenerationDiagnostics,
     MultiEventCreateScenariosIn,
+    V2CreateScenariosData,
+    V2CreateScenariosOut,
+    V2GenerationDiagnostics,
     VersionedCreateScenariosData,
     VersionedCreateScenariosOut,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     MultiEventGenerationResult,
+    V2FinalizedGenerationResult,
+    V2MultiEventGenerationResult,
+    V3MultiEventGenerationResult,
     finalize_generation_result,
     multi_event_generation_schema,
 )
@@ -24,8 +30,8 @@ from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
-    MULTI_EVENT_SYSTEM_PROMPT,
     build_multi_event_user_prompt,
+    multi_event_system_prompt,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
@@ -45,7 +51,7 @@ def prepare_multi_event_scenarios(
     payload: MultiEventCreateScenariosIn,
     *,
     api_version: str,
-) -> MultiEventGenerationResult:
+) -> dict[str, Any]:
     if api_version not in GENERATION_STRATEGIES:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
@@ -95,7 +101,7 @@ async def _invoke_multi_event_generation(
     templates: list[ScenarioPipelineTemplate],
     trace_context: TraceContext | None = None,
     validation_feedback: str | None = None,
-) -> dict[str, Any]:
+) -> V2MultiEventGenerationResult | V3MultiEventGenerationResult:
     from apps.common.configs.config import get_settings
     from apps.connectors.llm.llm_client import invoke_llm_structured_output
 
@@ -110,11 +116,14 @@ async def _invoke_multi_event_generation(
     response = await invoke_llm_structured_output(
         output_schema=generation_schema,
         messages=[
-            {"role": "system", "content": MULTI_EVENT_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": multi_event_system_prompt(api_version),
+            },
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.0,
-        max_retries=2,
+        max_retries=1 if api_version == "v2" else 2,
         trace_context=trace_context,
         stream=cfg.llm_stream_enabled,
         reasoning_effort=cfg.llm_reasoning_effort,
@@ -126,7 +135,7 @@ async def run_multi_event_scenarios_inline(
     prepared: dict[str, Any],
     *,
     trace_context: TraceContext | None = None,
-) -> VersionedCreateScenariosOut:
+) -> V2CreateScenariosOut | VersionedCreateScenariosOut:
     group = ScenarioGroupPayload.model_validate(prepared["scenario_group"])
     events = [EventPayload.model_validate(event) for event in prepared["events"]]
     templates = [ScenarioPipelineTemplate.model_validate(template) for template in prepared["templates"]]
@@ -139,15 +148,21 @@ async def run_multi_event_scenarios_inline(
         templates=templates,
         trace_context=trace_context,
     )
-    diagnostics = GenerationDiagnostics(
-        excluded_candidates=[candidate.model_dump() for candidate in finalized.excluded_candidates],
-        excluded_dimensions=[
-            item.model_dump() if hasattr(item, "model_dump") else item
-            for item in finalized.excluded_dimensions
-        ],
-        event_shocks=finalized.event_shocks,
-        event_interactions=finalized.interactions,
-    )
+    if isinstance(finalized, V2FinalizedGenerationResult):
+        diagnostics: V2GenerationDiagnostics | GenerationDiagnostics = V2GenerationDiagnostics(
+            event_shocks=finalized.event_shocks,
+            unselected_dimension_refs=finalized.unselected_dimension_refs,
+            unrepresented_pressure_bands=finalized.unrepresented_pressure_bands,
+        )
+    else:
+        diagnostics = GenerationDiagnostics(
+            excluded_candidates=[candidate.model_dump() for candidate in finalized.excluded_candidates],
+            excluded_dimensions=[
+                item.model_dump() if hasattr(item, "model_dump") else item for item in finalized.excluded_dimensions
+            ],
+            event_shocks=finalized.event_shocks,
+            event_interactions=finalized.interactions,
+        )
     saved_group, saved_scenarios = ScenarioGroupService().persist_multi_event_generation(
         scenario_group_id=group.scenario_group_id,
         title=finalized.scenario_group_title,
@@ -161,6 +176,17 @@ async def run_multi_event_scenarios_inline(
         saved_group.model_dump(),
         [scenario.model_dump() for scenario in saved_scenarios],
     )
+    if isinstance(finalized, V2FinalizedGenerationResult):
+        return V2CreateScenariosOut(
+            data=V2CreateScenariosData(
+                comparison_run_id=str(prepared["comparison_run_id"]),
+                scenario_group=table_data.scenario_group,
+                events=events,
+                dimension_definitions=finalized.dimension_definitions,
+                table=table_data.table,
+                generation_diagnostics=diagnostics,
+            ),
+        )
     return VersionedCreateScenariosOut(
         data=VersionedCreateScenariosData(
             api_version=api_version,
@@ -182,16 +208,17 @@ async def _generate_validated_result(
     events: list[EventPayload],
     templates: list[ScenarioPipelineTemplate],
     trace_context: TraceContext | None,
-) -> MultiEventGenerationResult:
+) -> V2FinalizedGenerationResult | MultiEventGenerationResult | V3MultiEventGenerationResult:
     last_error: ValueError | MIBaseError | None = None
-    for _attempt in range(3):
+    max_attempts = 2 if api_version == "v2" else 3
+    for _attempt in range(max_attempts):
         try:
             result = await _invoke_multi_event_generation(
                 api_version=api_version,
                 events=events,
                 templates=templates,
                 trace_context=trace_context,
-                validation_feedback=(str(last_error) if last_error is not None else None),
+                validation_feedback=(str(last_error)[:300] if last_error is not None else None),
             )
             return finalize_generation_result(
                 result,
@@ -227,5 +254,7 @@ async def _generate_validated_result(
             last_error = exc
     raise MIBaseError(
         ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-        detail=(f"Multi-event generation result failed semantic validation after 3 attempts: {last_error}"),
+        detail=(
+            f"Multi-event generation result failed semantic validation after {max_attempts} attempts: {last_error}"
+        ),
     ) from last_error

@@ -9,6 +9,7 @@ from apps.agents.scenario_group_agent.constants import (
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     GenerationDiagnostics,
     MultiEventCreateScenariosIn,
+    V2CreateScenariosOut,
     V4MultiEventCreateScenariosSyncIn,
     VersionedCreateScenariosData,
     VersionedCreateScenariosIn,
@@ -109,13 +110,16 @@ async def create_v1_scenarios_sync(
 
 @router.post(
     "/v2/scenario-groups/sync",
-    response_model=VersionedCreateScenariosOut,
+    response_model=V2CreateScenariosOut,
     summary="v2 다중 이벤트 원본 dimension 시나리오 생성",
 )
 async def create_v2_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
-) -> VersionedCreateScenariosOut:
-    return await _create_multi_event_scenarios_sync(payload, api_version="v2")
+) -> V2CreateScenariosOut:
+    output = await _create_multi_event_scenarios_sync(payload, api_version="v2")
+    if isinstance(output, V2CreateScenariosOut):
+        return output
+    return V2CreateScenariosOut(status=output.status, message=output.message)
 
 
 @router.post(
@@ -181,7 +185,7 @@ async def _create_multi_event_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
     *,
     api_version: str,
-) -> VersionedCreateScenariosOut:
+) -> V2CreateScenariosOut | VersionedCreateScenariosOut:
     reset_usage()
     prepared = prepare_multi_event_scenarios(
         payload,
@@ -217,6 +221,8 @@ async def _create_multi_event_scenarios_sync(
             prepared["scenario_group"].scenario_group_id,
             exc,
         )
+        if api_version == "v2":
+            return V2CreateScenariosOut(status="error", message=str(exc))
         return VersionedCreateScenariosOut(status="error", message=str(exc))
     else:
         if output.data is not None:

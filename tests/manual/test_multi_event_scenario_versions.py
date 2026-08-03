@@ -20,7 +20,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.manual.multi_event_comparison.llm import judge_comparison  # noqa: E402
+from tests.manual.multi_event_comparison.llm import (  # noqa: E402
+    build_agent_judge_input,
+    load_agent_judgment,
+    write_agent_judge_input,
+)
 from tests.manual.multi_event_comparison.models import (  # noqa: E402
     ApiVersion,
     ComparisonJudgment,
@@ -80,6 +84,21 @@ def parse_args() -> argparse.Namespace:
     report = subparsers.add_parser("report", help="Compare completed version artifacts and write Markdown.")
     report.add_argument("--manifest", type=Path, required=True)
     report.add_argument("--quality-check", type=_parse_bool, default=True, metavar="true|false")
+    report.add_argument(
+        "--judge-input",
+        type=Path,
+        help="agent judge request path; defaults beside comparison_judge.json",
+    )
+    report.add_argument(
+        "--judge-result",
+        type=Path,
+        help="agent-produced result path; defaults to manifest artifacts.judge",
+    )
+    report.add_argument(
+        "--prepare-judge-only",
+        action="store_true",
+        help="write the agent judge request and exit before rendering the final report",
+    )
     return parser.parse_args()
 
 
@@ -180,6 +199,7 @@ async def prepare(args: argparse.Namespace) -> Path:
             "v3": str(artifact_dir / "v3_create_response.json"),
             "v4": str(artifact_dir / "v4_create_response.json"),
             "orchestration": str(artifact_dir / "orchestration.json"),
+            "judgeInput": str(artifact_dir / "comparison_judge_input.json"),
             "judge": str(artifact_dir / "comparison_judge.json"),
             "report": str(artifact_dir / "comparison_report.md"),
         },
@@ -354,17 +374,28 @@ async def report(args: argparse.Namespace) -> Path:
                 for version, version_checks in checks.items()
             },
         }
-        try:
-            judge = await judge_comparison(evidence)
-            _validate_judge(judge, successful_responses)
-        except Exception as exc:  # LLM/network boundary; factual report must survive.
-            judge_error = f"{type(exc).__name__}: {exc}"
-            _write_json(
-                Path(manifest["artifacts"]["judge"]),
-                {"status": "error", "error": judge_error},
-            )
+        default_judge_path = Path(manifest["artifacts"]["judge"])
+        judge_input_path = getattr(args, "judge_input", None) or Path(
+            manifest["artifacts"].get("judgeInput", default_judge_path.with_name("comparison_judge_input.json")),
+        )
+        judge_result_path = getattr(args, "judge_result", None) or default_judge_path
+        write_agent_judge_input(judge_input_path, build_agent_judge_input(evidence))
+        LOGGER.info("Agent judge input written: %s", judge_input_path)
+        LOGGER.info("Agent judge result expected: %s", judge_result_path)
+        if getattr(args, "prepare_judge_only", False):
+            return judge_input_path
+        if judge_result_path.is_file():
+            try:
+                judge = load_agent_judgment(judge_result_path)
+                _validate_judge(judge, successful_responses)
+            except (OSError, ValueError) as exc:
+                judge_error = f"agent judge result validation failure: {exc}"
+                judge = None
         else:
-            _write_json(Path(manifest["artifacts"]["judge"]), judge.model_dump(mode="json", by_alias=True))
+            judge_error = (
+                "agent judge pending: skill runtime model must evaluate "
+                f"{judge_input_path} and write {judge_result_path}"
+            )
 
     markdown = render_report(
         manifest,

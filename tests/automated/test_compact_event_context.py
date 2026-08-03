@@ -18,6 +18,7 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
 )
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
     build_multi_event_user_prompt,
+    multi_event_system_prompt,
 )
 from apps.agents.scenario_group_agent.prompts.scenario_generation import (
     build_stage2_user_prompt as build_scenario_stage2_user_prompt,
@@ -138,9 +139,13 @@ def test_v1_signpost_v2_v3_and_v4_prompts_use_shared_context(
         event_section = _event_section(
             prompt,
             next_heading=(
-                "## Template Domain Knowledge"
-                if "## Template Domain Knowledge" in prompt
-                else "## Model Impact Lever Catalog"
+                "## Compact Template Candidates"
+                if "## Compact Template Candidates" in prompt
+                else (
+                    "## Template Domain Knowledge"
+                    if "## Template Domain Knowledge" in prompt
+                    else "## Model Impact Lever Catalog"
+                )
             ),
         )
         assert event_section.index("[Event 202]") < event_section.index("[Event 101]")
@@ -149,8 +154,8 @@ def test_v1_signpost_v2_v3_and_v4_prompts_use_shared_context(
         assert "{" not in event_section
 
 
-def test_v2_prompt_requires_selection_evidence_and_complete_candidate_partition() -> None:
-    prompt = build_multi_event_user_prompt(
+def test_v2_prompt_uses_compact_selection_contract_without_detailed_lineage() -> None:
+    combined = multi_event_system_prompt("v2") + build_multi_event_user_prompt(
         api_version="v2",
         events=[_raw_event(202, title="첫 Event"), _raw_event(101, title="둘째 Event")],
         templates=[{}, {}],
@@ -160,18 +165,22 @@ def test_v2_prompt_requires_selection_evidence_and_complete_candidate_partition(
         "direct_event_fact",
         "lng_impact_path",
         "both",
+        "selectedDimensions",
+        "sourceRef",
         "selectionRationale",
         "scenarioDimensionTemplateId",
-        "templateChecksum",
-        "NOT_RELEVANT",
-        "LOWER_PRIORITY",
-        "DIMENSION_LIMIT",
-        "정확히 한 번씩 partition",
+        "bullish=+1",
+        "합계가 감소하지 않아야",
     ):
-        assert expected in prompt
+        assert expected in combined
 
-    assert "none+NOT_RELEVANT" in prompt
-    assert "required=true도 관련성 근거를 충족할 때만" in prompt
+    for removed in (
+        "templateChecksum",
+        "sourceAssignments",
+        "excludedDimensions 각 항목",
+        "impactLeverRefs",
+    ):
+        assert removed not in combined
 
 
 def test_v3_prompt_requires_empty_v2_only_excluded_dimensions() -> None:
@@ -183,6 +192,25 @@ def test_v3_prompt_requires_empty_v2_only_excluded_dimensions() -> None:
 
     assert "excludedDimensions" in prompt
     assert "빈 배열" in prompt
+
+
+def test_v3_prompt_uses_compact_event_and_dimension_lineage_contract() -> None:
+    combined = multi_event_system_prompt("v3") + build_multi_event_user_prompt(
+        api_version="v3",
+        events=[_raw_event(202, title="첫 Event"), _raw_event(101, title="둘째 Event")],
+        templates=[{}, {}],
+    )
+
+    for expected in (
+        "shockSummary",
+        "sourceEventIds",
+        "scenarioDimensionTemplateId",
+        "globalPressureContribution",
+        "관련 Event 사실과 예상 글로벌 LNG 가격 영향 방향",
+    ):
+        assert expected in combined
+    assert "v3 value에는 sourceAssignments를 출력하지 마십시오" in combined
+    assert "Template checksum" in combined
 
 
 def test_v4_prompt_matches_dimension_first_hybrid_contract() -> None:
