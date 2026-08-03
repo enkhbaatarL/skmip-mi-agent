@@ -29,12 +29,12 @@ MULTI_EVENT_SYSTEM_PROMPT = """\
 
 V2_STRATEGY_PROMPT = """\
 전략 v2 — 다중 Event의 원본 Template Dimension:
-- 모든 Template dimension 후보에서 LNG 가격 영향 관련성이 높은 5~8개를 선택합니다.
-- Event마다 하나 이상의 dimension을 선택합니다.
+- 모든 Template dimension 후보에서 LNG 가격 영향 관련성이 높은 3~6개를 선택합니다.
 - 원본 dimension의 label, description, required 값을 그대로 보존하고 이름이나 의미를 합성하지 않습니다.
 - dimensionId는 반드시 e{eventId}__{dimKey} 형식입니다.
 - 각 dimension의 sourceRefs는 해당 원본 source 하나만 포함합니다.
-- required 후보가 8개를 넘으면 관련성 기준으로 제외하고 excludedDimensions에 근거를 남깁니다.
+- Event별 dimension을 강제하지 않으며, 관련 dimension이 없는 Event는 공동 사실 문맥에만 유지합니다.
+- required 후보가 6개를 넘으면 관련성 기준으로 제외하고 excludedDimensions에 근거를 남깁니다.
 """
 
 
@@ -45,7 +45,7 @@ V3_STRATEGY_PROMPT = """\
 - 상호작용이 없는 Event는 relation=independent로 보존하고 억지로 한 dimension에 합치지 않습니다.
 - 해석 충돌은 실패가 아니라 relation=interpretation_conflict와 resolutionDimensionId로 표현합니다.
 - resolutionDimensionId가 있으면 해당 dimension의 sourceRefs가 interaction의 모든 eventId를 포함해야 합니다.
-- 원본 source를 추적 가능한 4~7개의 직관적인 합성 dimension을 만듭니다.
+- 원본 source를 추적 가능한 3~6개의 직관적인 합성 dimension을 만듭니다.
 - 합성 dimension은 관련된 경우 복수 sourceRefs를 가지며, 독립 Event용 dimension은 단일 sourceRef가 가능합니다.
 """
 

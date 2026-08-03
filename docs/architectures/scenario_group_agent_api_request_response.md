@@ -94,11 +94,11 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
     `VersionedCreateScenariosOut`
 - `POST /v2/scenario-groups/sync`
   - 중복 없는 `miEventIds` 2~5개와 필수 `comparisonRunId`
-  - Event별 원본 Template dimension 5~8개를 선택하고 key를
+  - Event별 원본 Template dimension 3~6개를 선택하고 key를
     `e{eventId}__{dimKey}`로 namespace한다.
 - `POST /v3/scenario-groups/sync`
   - v2와 같은 요청 계약
-  - Event 충격과 관련 상호작용을 4~7개 합성 dimension으로 구성한다.
+  - Event 충격과 관련 상호작용을 3~6개 합성 dimension으로 구성한다.
 - `POST /v4/scenario-groups`
   - 요청: `miEventIds` 2~5개, `userId`, 선택적 `comparisonRunId`
   - Template 없이 Event 사실과 모델 영향 레버 카탈로그로 3~6개 dimension을 생성

@@ -546,8 +546,9 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - v2는 Event별 namespace key와 단일 source lineage를 표시한다.
 - v3는 composite dimension과 source 관계를 표시한다.
 - v4는 lever reference와 supported/unsupported 상태를 표시한다.
-- version별 dimension 수가 v2 5~8, v3 4~7, v4 3~6 기준으로 검사된다.
-- covered/uncovered dimension이 원본 diagnostics와 일치한다.
+- version별 dimension 수가 v2·v3·v4 모두 3~6개 기준으로 검사된다.
+- v2는 dimension에 직접 표현되지 않은 Event도 공동 문맥에 유지한다.
+- v3·v4의 covered/uncovered dimension이 원본 diagnostics와 일치한다.
 
 ### TC-M-N-007 Scenario 비교
 

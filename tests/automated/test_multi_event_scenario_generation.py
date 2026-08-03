@@ -305,7 +305,7 @@ def test_finalization_assigns_roles_and_single_highest_probability_baseline(
     assert baselines[0].global_pressure_band == "balanced"
 
 
-def test_v2_requires_namespaced_source_dimensions_and_event_coverage() -> None:
+def test_v2_requires_namespaced_source_dimensions() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     broken = result.model_copy(
         update={
@@ -321,6 +321,54 @@ def test_v2_requires_namespaced_source_dimensions_and_event_coverage() -> None:
         finalize_generation_result(
             broken,
             generation_strategy="multi_event_source_dimensions",
+            event_ids=EVENT_IDS,
+        )
+
+
+def test_v2_keeps_unrepresented_event_in_context_without_forcing_dimension_coverage() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    unrepresented_event_id = 303
+    result.event_shocks.append(
+        result.event_shocks[0].model_copy(
+            update={"event_id": unrepresented_event_id},
+        ),
+    )
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy="multi_event_source_dimensions",
+        event_ids=[*EVENT_IDS, unrepresented_event_id],
+    )
+
+    assert {shock.event_id for shock in finalized.event_shocks} == {*EVENT_IDS, unrepresented_event_id}
+    assert all(
+        unrepresented_event_id not in dimension.source_event_ids for dimension in finalized.dimension_definitions
+    )
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        "multi_event_source_dimensions",
+        "multi_event_composite_dimensions",
+    ],
+)
+@pytest.mark.parametrize("dimension_count", [2, 7])
+def test_multi_event_dimension_count_must_be_between_three_and_six(
+    strategy: str,
+    dimension_count: int,
+) -> None:
+    result = _result(strategy=strategy)
+    broken = result.model_copy(
+        update={
+            "dimension_definitions": [result.dimension_definitions[0] for _ in range(dimension_count)],
+        },
+    )
+
+    with pytest.raises(ValueError, match="dimension count is out of range"):
+        finalize_generation_result(
+            broken,
+            generation_strategy=strategy,
             event_ids=EVENT_IDS,
         )
 
@@ -799,7 +847,7 @@ def test_v2_drops_cross_event_source_ref_already_selected() -> None:
     )
 
 
-def test_v2_requires_all_required_dimensions_when_at_most_eight() -> None:
+def test_v2_requires_all_required_dimensions_when_at_most_six() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     source_dimensions = {
         101: {
@@ -824,7 +872,7 @@ def test_v2_requires_all_required_dimensions_when_at_most_eight() -> None:
         )
 
 
-def test_v2_documents_required_dimension_exclusions_when_more_than_eight() -> None:
+def test_v2_documents_required_dimension_exclusions_when_more_than_six() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     source_dimensions = {
         101: {

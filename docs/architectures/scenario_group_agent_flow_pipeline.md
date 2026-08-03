@@ -100,8 +100,8 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 | Endpoint | 입력 | 생성 전략 |
 |---|---|---|
 | `POST /v1/scenario-groups/sync` | `miEventId` | 단일 Event·원본 Template dimension |
-| `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event별 원본 dimension 5~8개 |
-| `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event 충격·상호작용 기반 합성 dimension 4~7개 |
+| `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event별 원본 dimension 3~6개 |
+| `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개 |
 | `POST /v4/scenario-groups` | 중복 없는 `miEventIds` 2~5개 | Event 사실·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
 | `POST /v4/scenario-groups/sync` | v4와 동일 | v4 생성 흐름 동기 실행 |
 
@@ -111,9 +111,9 @@ Template revision을 함께 준비한다. Prompt의 `Event Context`와
 `value_enums`는 참고 예시로만 전달한다. 생성 결과는 다음 결정론적 검사를
 통과해야 저장된다.
 
-- 입력 Event 전체의 `EventShock` 및 dimension coverage
+- 입력 Event 전체의 `EventShock`; v3는 합성 dimension lineage coverage도 검증
 - v2의 `e{eventId}__{dimKey}` namespacing과 단일 source lineage
-- v3의 4~7개 합성 dimension, 추적 가능한 source lineage, 독립 Event의 비강제 합성
+- v3의 3~6개 합성 dimension, 추적 가능한 source lineage, 독립 Event의 비강제 합성
 - 다섯 pressure band의 생성/제외 partition과 제외 사유
 - 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 내부 `mixed` 1개 이상
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
@@ -128,7 +128,7 @@ LLM 표현의 흔들림은 저장 전 결정론적으로 정규화한다. v2 dim
 원본 `dimKey`로 되돌린다. v2 sourceRef가
 다른 입력 Event의 Template key와 정확히 일치하면 해당 Event lineage와
 dimension/scenario key를 함께 재결합한다. 그 source가 이미 다른 dimension에서
-선택돼 있고 제거 후에도 v2의 5~8개 범위를 만족하면 중복 dimension과 모든
+선택돼 있고 제거 후에도 v2의 3~6개 범위를 만족하면 중복 dimension과 모든
 Scenario cell을 함께 제거한다. v2 dimension에 복수 source lineage가 섞이면
 Template에 존재하는 첫 lineage 하나와 그 value assignment만 남긴다.
 정확한 일치가 없으면 같은 Event의

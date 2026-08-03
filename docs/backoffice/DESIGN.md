@@ -606,10 +606,11 @@ version card 및 Overview에 PASS/WARN/FAIL을 표시한다.
 - pressure band 중복 없음
 - probability 합계
 - dimension 수
-  - v2 5~8개
-  - v3 4~7개
+  - v2 3~6개
+  - v3 3~6개
   - v4 3~6개
-- 전체 Event coverage
+- v2는 전체 Event를 공동 문맥에 유지하되 dimension coverage를 강제하지 않음
+- v3·v4는 전체 Event의 dimension lineage coverage 확인
 
 이 검사는 의미적 LLM Judge가 아니다. 화면은 점수, 우수 version, 의미적 타당성을 추측하지 않는다.
 

@@ -389,8 +389,8 @@ v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생�
 
 | Version | 입력 | 생성 전략 | 기대 dimension |
 | --- | --- | --- | --- |
-| v2 | Event 2~5건 | Event별 원본 Template dimension을 namespace하여 사용 | 5~8개 |
-| v3 | Event 2~5건 | Event 충격과 상호작용을 합성 dimension으로 구성 | 4~7개 |
+| v2 | Event 2~5건 | Event별 원본 Template dimension을 namespace하여 사용 | 3~6개 |
+| v3 | Event 2~5건 | Event 충격과 상호작용을 합성 dimension으로 구성 | 3~6개 |
 | v4 | Event 2~5건 | Event 사실과 모델 영향 레버 기반 dimension 구성 | 3~6개 |
 
 모든 version의 `globalPressureBand`는 global LNG pressure다. v4의

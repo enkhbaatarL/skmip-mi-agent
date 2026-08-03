@@ -692,7 +692,7 @@ def finalize_generation_result(
             f"unsupported multi-event generation strategy: {generation_strategy}",
         )
     dimensions = result.dimension_definitions
-    expected_dimension_range = range(5, 9) if generation_strategy == "multi_event_source_dimensions" else range(4, 8)
+    expected_dimension_range = range(3, 7)
     if len(dimensions) not in expected_dimension_range:
         raise ValueError(
             f"{generation_strategy} dimension count is out of range: {len(dimensions)}",
@@ -865,7 +865,7 @@ def finalize_generation_result(
                 raise ValueError(
                     "v2 dimension values must have exactly one sourceAssignment",
                 )
-    if covered_event_ids != known_event_ids:
+    if generation_strategy == "multi_event_composite_dimensions" and covered_event_ids != known_event_ids:
         missing = sorted(known_event_ids - covered_event_ids)
         raise ValueError(f"events without a selected dimension: {missing}")
     for interaction in result.interactions:
@@ -924,12 +924,12 @@ def finalize_generation_result(
             if (bool(definition.get("required", False)) if isinstance(definition, dict) else definition)
         }
         omitted_required = required_sources - selected_sources
-        if len(required_sources) <= 8 and omitted_required:
+        if len(required_sources) <= 6 and omitted_required:
             raise ValueError(
                 "v2 must select every required source dimension when the "
-                f"required count is at most 8: {sorted(omitted_required)}",
+                f"required count is at most 6: {sorted(omitted_required)}",
             )
-        if len(required_sources) > 8:
+        if len(required_sources) > 6:
             documented_exclusions = {
                 (
                     int(item.get("event_id") or item.get("eventId") or 0),
