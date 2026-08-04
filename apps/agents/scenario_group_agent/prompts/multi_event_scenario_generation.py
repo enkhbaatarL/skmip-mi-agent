@@ -203,3 +203,124 @@ def build_multi_event_user_prompt(
         "- mixedFactors=true인 Scenario는 bullish와 bearish contribution을 모두 포함해야 합니다.\n"
         f"{feedback}"
     )
+
+
+def build_event_analysis_user_prompt(
+    *,
+    api_version: str,
+    event: dict[str, Any],
+    template: dict[str, Any],
+    validation_feedback: str | None = None,
+) -> str:
+    """Build the small, single-Event prompt used by the fan-out stage."""
+    event_context = format_compact_event_context([event])
+    if api_version == "v2":
+        template_context = _compact_v2_template_knowledge([event], [template])[0]
+    elif api_version == "v3":
+        template_context = _v3_template_knowledge([event], [template])[0]
+    else:
+        raise ValueError(f"Unsupported multi-event API version: {api_version}")
+    feedback = (
+        "\n## Previous validation failure\n"
+        f"- {validation_feedback[:300]}\n"
+        "- 이 Event의 분석 결과만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    return (
+        "## Event Context\n"
+        f"{event_context}\n\n"
+        "## Template Context (reference only)\n"
+        f"{json.dumps(template_context, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Output\n"
+        "- eventShock 한 개만 출력하십시오.\n"
+        "- eventId는 입력 Event ID와 같아야 합니다.\n"
+        "- shockSummary는 Event의 공급·수요·거래 영향과 예상 글로벌 LNG 가격 방향을 한국어 한 문장으로 요약하십시오.\n"
+        f"{feedback}"
+    )
+
+
+def build_dimension_design_user_prompt(
+    *,
+    api_version: str,
+    events: list[dict[str, Any]],
+    templates: list[dict[str, Any]],
+    event_shocks: list[dict[str, Any]],
+    validation_feedback: str | None = None,
+) -> str:
+    """Build the cross-Event dimension stage prompt without Scenario output."""
+    feedback = (
+        "\n## Previous dimension validation failure\n"
+        f"- {validation_feedback[:300]}\n"
+        "- Event 분석은 유지하고 dimension 설계만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    if api_version == "v2":
+        template_knowledge = _compact_v2_template_knowledge(events, templates)
+        output_contract = (
+            "- selectedDimensions 3~6개만 출력하십시오.\n"
+            "- 각 dimension은 입력 Template의 단일 sourceRef를 사용하고 "
+            "dimensionId는 e{eventId}__{dimKey} 형식이어야 합니다.\n"
+            "- 각 dimension에 상호 구분되는 value 3~4개와 globalPressureContribution을 작성하십시오.\n"
+        )
+        strategy = V2_SYSTEM_PROMPT
+    elif api_version == "v3":
+        template_knowledge = _v3_template_knowledge(events, templates)
+        output_contract = (
+            "- interactions와 dimensionDefinitions 3~6개만 출력하십시오.\n"
+            "- 모든 입력 Event가 하나 이상의 dimension.sourceEventIds에 포함되어야 합니다.\n"
+            "- 각 dimension은 입력 Template에 존재하는 sourceRefs와 value 3~5개를 포함해야 합니다.\n"
+        )
+        strategy = V3_STRATEGY_PROMPT + V3_SYSTEM_CONTRACT
+    else:
+        raise ValueError(f"Unsupported multi-event API version: {api_version}")
+    return (
+        f"## Strategy\n{strategy}\n\n"
+        "## Validated Event Shocks\n"
+        f"{json.dumps(event_shocks, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Template Candidates\n"
+        f"{json.dumps(template_knowledge, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Output\n"
+        f"{output_contract}"
+        "- Scenario, 그룹 제목과 그룹 설명은 아직 출력하지 마십시오.\n"
+        f"{feedback}"
+    )
+
+
+def build_scenario_synthesis_user_prompt(
+    *,
+    api_version: str,
+    event_shocks: list[dict[str, Any]],
+    dimension_definitions: list[dict[str, Any]],
+    interactions: list[dict[str, Any]],
+    validation_feedback: str | None = None,
+) -> str:
+    """Build the final small prompt from validated dimensions only."""
+    feedback = (
+        "\n## Previous Scenario validation failure\n"
+        f"- {validation_feedback[:300]}\n"
+        "- Event 분석과 dimension 정의는 유지하고 Scenario만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    pressure_partition = (
+        "- v3는 생성하지 않은 pressure band를 excludedCandidates에 이유와 함께 기록하십시오.\n"
+        if api_version == "v3"
+        else "- v2는 생성할 3~5개 pressure band만 중복 없이 선택하십시오.\n"
+    )
+    return (
+        "## Validated Event Shocks\n"
+        f"{json.dumps(event_shocks, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Validated Dimensions\n"
+        f"{json.dumps(dimension_definitions, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Validated Interactions\n"
+        f"{json.dumps(interactions, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Output\n"
+        "- scenarioGroupTitle, scenarioGroupDescription과 Scenario 3~5개를 한국어로 작성하십시오.\n"
+        "- 각 Scenario는 모든 dimensionId를 정확히 한 번 사용하고 서로 다른 조합이어야 합니다.\n"
+        "- globalPressureBand는 중복 없이 사용하며 probabilityScore와 globalPressureRationale을 작성하십시오.\n"
+        "- 내부 pressure band 중 하나 이상은 bullish와 bearish value를 함께 사용하십시오.\n"
+        f"{pressure_partition}"
+        f"{feedback}"
+    )

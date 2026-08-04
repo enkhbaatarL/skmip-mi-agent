@@ -1,50 +1,60 @@
 from __future__ import annotations
 
+from functools import lru_cache
 import time
 from typing import Any
+
+from langchain_core.runnables import Runnable
+from langgraph.graph import END, START, StateGraph
 
 from apps.agents.scenario_group_agent.constants import (
     AGENT_NAME,
     API_IDENTIFIER_CREATE_SCENARIOS,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
-    ExcludedCandidate,
-    GenerationDiagnostics,
     V4MultiEventCreateScenariosIn,
     VersionedCreateScenariosData,
     VersionedCreateScenariosOut,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
+    V4MultiEventGenerationState,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_nodes import (
+    DesignModelLeverDimensionsNode,
+    ExtractEventFactsNode,
+    SynthesizeV4ScenariosNode,
+    _with_event_lineage as _with_event_lineage,
+    dispatch_v4_event_analyses,
+    fail_v4_generation,
+    finalize_v4_scenarios,
+    persist_v4_generation,
+    route_after_v4_dimensions,
+    route_after_v4_event_analyses,
+    route_after_v4_scenarios,
+    validate_v4_dimensions,
+    validate_v4_event_analyses,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
-    ParameterCoverage,
     V4GenerationResult,
-    finalize_v4_generation_result,
 )
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
-from apps.agents.scenario_group_agent.presentation import (
-    build_scenario_group_table_data,
-)
-from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
-    MODEL_LEVER_SYSTEM_PROMPT,
-    build_model_lever_user_prompt,
-)
+from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.endpoint import CreateScenariosOut
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import (
     TraceContext,
+    build_langgraph_config,
     mlflow_trace_context,
     new_transaction_id,
 )
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
-from apps.persistence.event.schema import EventPayload
-from apps.persistence.model_parameter.schema import ModelImpactLeverPayload
 from apps.persistence.model_parameter.service import ModelImpactLeverService
-from apps.persistence.scenario.schema import DimensionDefinition, SourceLineage
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
@@ -89,71 +99,32 @@ def prepare_v4_multi_event_scenarios(
     }
 
 
-async def _invoke_v4_generation(
-    *,
-    events: list[EventPayload],
-    impact_levers: list[ModelImpactLeverPayload],
-    catalog_version: str,
-    trace_context: TraceContext | None,
-    validation_feedback: str | None = None,
-) -> V4GenerationResult:
-    from apps.common.configs.config import get_settings
-    from apps.connectors.llm.llm_client import invoke_llm_structured_output
+def _build_graph() -> Runnable:
+    builder = StateGraph(V4MultiEventGenerationState, context_schema=TraceContext)
+    builder.add_node("extract_event_facts", ExtractEventFactsNode())
+    builder.add_node("validate_event_facts", validate_v4_event_analyses)
+    builder.add_node("design_model_lever_dimensions", DesignModelLeverDimensionsNode())
+    builder.add_node("validate_model_lever_dimensions", validate_v4_dimensions)
+    builder.add_node("synthesize_v4_scenarios", SynthesizeV4ScenariosNode())
+    builder.add_node("finalize_v4_scenarios", finalize_v4_scenarios)
+    builder.add_node("persist_generation", persist_v4_generation)
+    builder.add_node("fail_generation", fail_v4_generation)
 
-    cfg = get_settings()
-    user_prompt = build_model_lever_user_prompt(
-        events=[event.model_dump() for event in events],
-        impact_levers=[lever.model_dump() for lever in impact_levers],
-        catalog_version=catalog_version,
-        validation_feedback=validation_feedback,
-    )
-    response = await invoke_llm_structured_output(
-        output_schema=V4GenerationResult,
-        messages=[
-            {"role": "system", "content": MODEL_LEVER_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.0,
-        max_retries=2,
-        trace_context=trace_context,
-        stream=cfg.llm_stream_enabled,
-        reasoning_effort=cfg.llm_reasoning_effort,
-    )
-    return response.result
+    builder.add_conditional_edges(START, dispatch_v4_event_analyses, ["extract_event_facts"])
+    builder.add_edge("extract_event_facts", "validate_event_facts")
+    builder.add_conditional_edges("validate_event_facts", route_after_v4_event_analyses)
+    builder.add_edge("design_model_lever_dimensions", "validate_model_lever_dimensions")
+    builder.add_conditional_edges("validate_model_lever_dimensions", route_after_v4_dimensions)
+    builder.add_edge("synthesize_v4_scenarios", "finalize_v4_scenarios")
+    builder.add_conditional_edges("finalize_v4_scenarios", route_after_v4_scenarios)
+    builder.add_edge("persist_generation", END)
+    builder.add_edge("fail_generation", END)
+    return builder.compile()
 
 
-async def _generate_validated_v4_result(
-    *,
-    events: list[EventPayload],
-    impact_levers: list[ModelImpactLeverPayload],
-    catalog_version: str,
-    trace_context: TraceContext | None,
-) -> tuple[V4GenerationResult, ParameterCoverage]:
-    last_error: ValueError | MIBaseError | None = None
-    for _attempt in range(3):
-        try:
-            result = await _invoke_v4_generation(
-                events=events,
-                impact_levers=impact_levers,
-                catalog_version=catalog_version,
-                trace_context=trace_context,
-                validation_feedback=str(last_error) if last_error is not None else None,
-            )
-            return finalize_v4_generation_result(
-                result,
-                event_ids=[int(event.mi_event_id) for event in events],
-                impact_levers=impact_levers,
-            )
-        except MIBaseError as exc:
-            if exc.error_code is not ErrorCode.LLM_INVALID_RESPONSE_ERROR:
-                raise
-            last_error = exc
-        except ValueError as exc:
-            last_error = exc
-    raise MIBaseError(
-        ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-        detail=(f"v4 multi-event generation result failed semantic validation after 3 attempts: {last_error}"),
-    ) from last_error
+@lru_cache(maxsize=1)
+def get_compiled_graph() -> Runnable:
+    return _build_graph()
 
 
 async def run_v4_multi_event_scenarios_inline(
@@ -161,104 +132,36 @@ async def run_v4_multi_event_scenarios_inline(
     *,
     trace_context: TraceContext | None = None,
 ) -> VersionedCreateScenariosOut:
-    group = ScenarioGroupPayload.model_validate(prepared["scenario_group"])
-    events = [EventPayload.model_validate(event) for event in prepared["events"]]
-    impact_levers = [ModelImpactLeverPayload.model_validate(lever) for lever in prepared["impact_levers"]]
-    catalog_version = str(prepared["impact_catalog_version"])
-    finalized, coverage = await _generate_validated_v4_result(
-        events=events,
-        impact_levers=impact_levers,
-        catalog_version=catalog_version,
-        trace_context=trace_context,
+    state = V4MultiEventGenerationState.model_validate(prepared)
+    final_state_raw = await get_compiled_graph().ainvoke(
+        state,
+        config=build_langgraph_config(trace_context) if trace_context is not None else None,
+        context=trace_context,
     )
-    dimension_definitions = _with_event_lineage(
-        finalized.dimension_definitions,
-        events,
-    )
-    diagnostics = GenerationDiagnostics(
-        excluded_candidates=[
-            ExcludedCandidate(
-                global_pressure_band=candidate.global_pressure_band,
-                reason_code=candidate.reason_code,
-                reason=candidate.reason,
-            )
-            for candidate in finalized.excluded_scenarios
-        ],
-        excluded_dimensions=[{"reason": reason} for reason in finalized.excluded_dimensions],
-        impact_catalog_version=catalog_version,
-        covered_dimensions=coverage.covered_dimension_ids,
-        uncovered_dimensions=coverage.uncovered_dimension_ids,
-        unsupported_levers=coverage.unsupported_lever_codes,
-        unsupported_lever_details=coverage.unsupported_lever_details,
-        coverage_status=coverage.coverage_status,
-        event_impact_facts=[fact.model_dump() for fact in finalized.event_impact_facts],
-        event_interactions=[interaction.model_dump() for interaction in finalized.interactions],
-        event_dimension_coverage=finalized.event_dimension_coverage,
-    )
-    scenarios = [
-        {
-            **scenario.model_dump(),
-            "baseline_yn": "Y" if scenario.baseline_yn else "N",
-            "global_pressure_band": scenario.global_pressure_band,
-            "global_pressure_rationale": scenario.global_pressure_rationale,
-            "related_markets": [related_market.model_dump() for related_market in scenario.related_markets],
-        }
-        for scenario in finalized.scenarios
-    ]
-    saved_group, saved_scenarios = ScenarioGroupService().persist_multi_event_generation(
-        scenario_group_id=group.scenario_group_id,
-        title=finalized.group_title,
-        description=finalized.group_description,
-        dimension_definitions=[definition.model_dump() for definition in dimension_definitions],
-        generation_diagnostics=diagnostics.model_dump(),
-        scenarios=scenarios,
-        user_id=int(prepared["user_id"]),
-    )
+    final_state = V4MultiEventGenerationState.model_validate(final_state_raw)
+    if final_state.finalized_result is None or final_state.saved_group is None or not final_state.saved_scenarios:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="v4 multi-event graph output is incomplete")
+    diagnostics = final_state.generation_diagnostics
+    if diagnostics is None:
+        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="v4 generation diagnostics are missing")
+    finalized: V4GenerationResult = final_state.finalized_result
     table_data = build_scenario_group_table_data(
-        saved_group.model_dump(),
-        [scenario.model_dump() for scenario in saved_scenarios],
+        final_state.saved_group.model_dump(),
+        [scenario.model_dump() for scenario in final_state.saved_scenarios],
     )
     return VersionedCreateScenariosOut(
         data=VersionedCreateScenariosData(
             api_version="v4",
             generation_strategy=V4_GENERATION_STRATEGY,
-            comparison_run_id=prepared["comparison_run_id"],
-            impact_catalog_version=catalog_version,
+            comparison_run_id=final_state.comparison_run_id,
+            impact_catalog_version=final_state.impact_catalog_version,
             scenario_group=table_data.scenario_group,
-            events=events,
-            dimension_definitions=dimension_definitions,
+            events=final_state.events,
+            dimension_definitions=finalized.dimension_definitions,
             table=table_data.table,
             generation_diagnostics=diagnostics,
         ),
     )
-
-
-def _with_event_lineage(
-    definitions: list[DimensionDefinition],
-    events: list[EventPayload],
-) -> list[DimensionDefinition]:
-    event_type_l2_by_id = {int(event.mi_event_id): event.event_type_l2_id for event in events}
-    return [
-        definition.model_copy(
-            update={
-                "source_refs": [
-                    SourceLineage(
-                        event_id=event_id,
-                        event_type_l2_id=event_type_l2_by_id[event_id],
-                        dim_key=definition.dimension_id,
-                        source_type="derived_interpretation",
-                        assumption_yn="N",
-                        rationale=(
-                            f"Event {event_id} 사실과 모델 영향 레버를 기반으로 "
-                            f"{definition.dimension_id} dimension을 구성했다."
-                        ),
-                    )
-                    for event_id in definition.source_event_ids
-                ],
-            },
-        )
-        for definition in definitions
-    ]
 
 
 def _require_output_data(
@@ -347,6 +250,7 @@ async def run_v4_multi_event_scenarios_background(
 
 __all__ = [
     "V4_GENERATION_STRATEGY",
+    "get_compiled_graph",
     "prepare_v4_multi_event_scenarios",
     "run_v4_multi_event_scenarios_background",
     "run_v4_multi_event_scenarios_inline",

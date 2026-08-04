@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     PRESSURE_BANDS,
@@ -144,6 +144,46 @@ class V4GenerationResult(ApiModel):
             if alias not in normalized and field_name not in normalized:
                 normalized[alias] = []
         return normalized
+
+
+class V4EventAnalysisResult(ApiModel):
+    """Per-Event fact extraction response before lever selection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_impact_facts: list[EventImpactFact] = Field(min_length=1)
+
+
+class V4CommonFactLeverMapping(ApiModel):
+    """Lever mapping for a fact that is intentionally not used by a dimension."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: str = Field(min_length=1)
+    common_impact_lever_refs: list[ImpactLeverReference] = Field(min_length=1)
+
+
+class V4DimensionDesignResult(ApiModel):
+    """v4 dimension-only response based on validated Event facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interactions: list[EventInteraction] = Field(default_factory=list)
+    dimension_definitions: list[DimensionDefinition] = Field(min_length=3, max_length=6)
+    event_dimension_coverage: list[EventDimensionCoverage] = Field(min_length=2, max_length=5)
+    common_fact_lever_mappings: list[V4CommonFactLeverMapping] = Field(default_factory=list)
+    excluded_dimensions: list[str] = Field(default_factory=list)
+
+
+class V4ScenarioSynthesisResult(ApiModel):
+    """v4 Scenario-only response based on validated fact/lever dimensions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    group_title: str = Field(min_length=1)
+    group_description: str = Field(min_length=1)
+    scenarios: list[V4ScenarioCandidate] = Field(min_length=3, max_length=5)
+    excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
 
 
 class ParameterCoverage(ApiModel):
@@ -521,6 +561,85 @@ def build_parameter_coverage(
     )
 
 
+def finalize_v4_dimension_design(
+    design: V4DimensionDesignResult,
+    *,
+    event_impact_facts: list[EventImpactFact],
+    event_ids: list[int],
+    impact_levers: list[ModelImpactLeverPayload],
+) -> tuple[V4DimensionDesignResult, list[EventImpactFact]]:
+    """Hydrate and validate the v4 fact/lever dimension stage before Scenario generation."""
+    catalog_by_code = {lever.lever_code: lever for lever in impact_levers}
+    if not catalog_by_code:
+        raise ValueError("active model impact lever catalog is empty")
+
+    facts = [fact.model_copy(deep=True, update={"common_impact_lever_refs": []}) for fact in event_impact_facts]
+    fact_ids = {fact.fact_id for fact in facts}
+    dimension_fact_ids = {
+        fact_id for dimension in design.dimension_definitions for fact_id in dimension.source_fact_ids
+    }
+    mappings_by_fact: dict[str, V4CommonFactLeverMapping] = {}
+    for mapping in design.common_fact_lever_mappings:
+        if mapping.fact_id not in fact_ids:
+            raise ValueError(f"common fact lever mapping references an unknown fact: {mapping.fact_id}")
+        if mapping.fact_id in mappings_by_fact:
+            raise ValueError(f"common fact lever mapping is duplicated: {mapping.fact_id}")
+        if mapping.fact_id in dimension_fact_ids:
+            raise ValueError(f"dimension fact cannot have a common lever mapping: {mapping.fact_id}")
+        mappings_by_fact[mapping.fact_id] = mapping
+
+    unused_fact_ids = fact_ids - dimension_fact_ids
+    if set(mappings_by_fact) != unused_fact_ids:
+        raise ValueError(
+            "commonFactLeverMappings must cover every dimension-free fact exactly: "
+            f"missing={sorted(unused_fact_ids - set(mappings_by_fact))}, "
+            f"unknown={sorted(set(mappings_by_fact) - unused_fact_ids)}"
+        )
+    for fact in facts:
+        mapping = mappings_by_fact.get(fact.fact_id)
+        if mapping is not None:
+            fact.common_impact_lever_refs = mapping.common_impact_lever_refs
+
+    partial = V4GenerationResult.model_construct(
+        group_title="pending",
+        group_description="pending",
+        event_impact_facts=facts,
+        interactions=design.interactions,
+        dimension_definitions=design.dimension_definitions,
+        scenarios=[],
+        event_dimension_coverage=design.event_dimension_coverage,
+        excluded_scenarios=[],
+        excluded_dimensions=design.excluded_dimensions,
+    )
+    source_facts_by_id = _validate_event_grounding(partial, event_ids)
+    dimension_source_fact_ids = _validate_dimensions(
+        partial,
+        event_ids,
+        catalog_by_code,
+        source_facts_by_id,
+    )
+    _validate_common_impact_lever_refs(
+        partial,
+        catalog_by_code=catalog_by_code,
+        source_facts_by_id=source_facts_by_id,
+        dimension_source_fact_ids=dimension_source_fact_ids,
+    )
+    _validate_event_dimension_coverage(
+        partial,
+        event_ids=event_ids,
+        source_facts_by_id=source_facts_by_id,
+    )
+    return (
+        design.model_copy(
+            update={
+                "dimension_definitions": partial.dimension_definitions,
+                "event_dimension_coverage": partial.event_dimension_coverage,
+            }
+        ),
+        partial.event_impact_facts,
+    )
+
+
 def finalize_v4_generation_result(
     result: V4GenerationResult,
     *,
@@ -559,8 +678,13 @@ __all__ = [
     "EventInteraction",
     "ParameterCoverage",
     "V4ExcludedScenarioCandidate",
+    "V4CommonFactLeverMapping",
+    "V4DimensionDesignResult",
+    "V4EventAnalysisResult",
     "V4GenerationResult",
+    "V4ScenarioSynthesisResult",
     "V4ScenarioCandidate",
     "build_parameter_coverage",
     "finalize_v4_generation_result",
+    "finalize_v4_dimension_design",
 ]

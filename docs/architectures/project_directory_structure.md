@@ -203,7 +203,11 @@ apps/agents/<agent_name>/
 - `flows/create_scenarios/`: v1 및 unversioned 단일 Event scenario 생성 flow
 - `flows/create_multi_event_scenarios/`: v2/v3 Template 기반 sync와 v4 모델
   영향 레버 기반 sync/비동기 다중 Event scenario 생성 flow
-  - `state.py`, `flow.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
+  - `state.py`가 v2/v3/v4 graph state를, `flow.py`가 v2/v3 graph를,
+    `v4_flow.py`가 v4 graph를 소유한다. LLM 호출 node는 `nodes.py`와
+    `v4_nodes.py`에 두고 sync 및 background 실행이 같은 compiled graph를 사용한다.
+  - Event/Template/impact catalog 조회와 빈 Scenario Group 준비는 graph 진입 전에
+    service로 일괄 수행한다. graph 안에서는 LLM 단계와 최종 일괄 저장만 node로 표현한다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
   - `state.py`, `flow.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow

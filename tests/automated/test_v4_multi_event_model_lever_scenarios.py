@@ -9,9 +9,13 @@ import pytest
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import (
     v4_flow as v4_flow_module,
+    v4_nodes,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
+    V4MultiEventGenerationState,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
     run_v4_multi_event_scenarios_inline,
@@ -19,9 +23,13 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     EventDimensionCoverage,
     EventImpactFact,
+    V4CommonFactLeverMapping,
+    V4DimensionDesignResult,
+    V4EventAnalysisResult,
     V4ExcludedScenarioCandidate,
     V4GenerationResult,
     V4ScenarioCandidate,
+    V4ScenarioSynthesisResult,
     finalize_v4_generation_result,
 )
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
@@ -364,32 +372,129 @@ def test_v4_finalizer_assigns_roles_and_parameter_coverage() -> None:
 
 
 def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
+    aggregate = _valid_result()
+    dimension_draft = V4DimensionDesignResult(
+        interactions=aggregate.interactions,
+        dimension_definitions=aggregate.dimension_definitions,
+        event_dimension_coverage=aggregate.event_dimension_coverage,
+    )
+    valid_draft = V4ScenarioSynthesisResult(
+        group_title=aggregate.group_title,
+        group_description=aggregate.group_description,
+        scenarios=aggregate.scenarios,
+        excluded_scenarios=aggregate.excluded_scenarios,
+    )
     invalid_response = MIBaseError(
         ErrorCode.LLM_INVALID_RESPONSE_ERROR,
         detail="groupTitle must not be blank",
     )
-    invoke = AsyncMock(side_effect=[invalid_response, _valid_result()])
+    invoke = AsyncMock(side_effect=[invalid_response, valid_draft])
+    state = V4MultiEventGenerationState(
+        event_impact_facts=aggregate.event_impact_facts,
+        dimension_draft=dimension_draft,
+    )
 
-    with patch.object(
-        v4_flow_module,
-        "_invoke_v4_generation",
-        new=invoke,
+    with (
+        patch.object(v4_nodes, "invoke_stage_structured_output", new=invoke),
+        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
     ):
-        result, _coverage = asyncio.run(
-            v4_flow_module._generate_validated_v4_result(
-                events=[
-                    SimpleNamespace(mi_event_id=101),
-                    SimpleNamespace(mi_event_id=202),
-                ],
-                impact_levers=_catalog(),
-                catalog_version="v1",
-                trace_context=None,
-            ),
-        )
+        first = asyncio.run(v4_nodes.SynthesizeV4ScenariosNode().run(state))
+        state = state.model_copy(update=first)
+        assert v4_nodes.route_after_v4_scenarios(state) == "synthesize_v4_scenarios"
+        second = asyncio.run(v4_nodes.SynthesizeV4ScenariosNode().run(state))
 
-    assert result.group_title
+    assert second["scenario_draft"] == valid_draft
     assert invoke.await_count == 2
-    assert "groupTitle" in invoke.await_args_list[1].kwargs["validation_feedback"]
+    assert "groupTitle" in invoke.await_args_list[1].kwargs["user_prompt"]
+
+
+def test_v4_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> None:
+    from apps.persistence.event.schema import EventPayload
+    from apps.persistence.scenario_group.schema import ScenarioGroupPayload
+
+    aggregate = _valid_result()
+    facts_by_event = {
+        event_id: [
+            fact.model_copy(update={"common_impact_lever_refs": []})
+            for fact in aggregate.event_impact_facts
+            if fact.event_id == event_id
+        ]
+        for event_id in (101, 202)
+    }
+    common_fact = next(fact for fact in aggregate.event_impact_facts if fact.event_id == 202)
+    dimension_draft = V4DimensionDesignResult(
+        interactions=aggregate.interactions,
+        dimension_definitions=aggregate.dimension_definitions,
+        event_dimension_coverage=aggregate.event_dimension_coverage,
+        common_fact_lever_mappings=[
+            V4CommonFactLeverMapping(
+                fact_id=common_fact.fact_id,
+                common_impact_lever_refs=common_fact.common_impact_lever_refs,
+            ),
+        ],
+    )
+    scenario_draft = V4ScenarioSynthesisResult(
+        group_title=aggregate.group_title,
+        group_description=aggregate.group_description,
+        scenarios=aggregate.scenarios,
+        excluded_scenarios=aggregate.excluded_scenarios,
+    )
+    event_attempts = {101: 0, 202: 0}
+    calls: list[str] = []
+
+    async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
+        calls.append(output_schema.__name__)
+        if output_schema is V4EventAnalysisResult:
+            event_id = 101 if "101" in user_prompt else 202
+            event_attempts[event_id] += 1
+            if event_id == 202 and event_attempts[event_id] == 1:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail="eventImpactFacts validation failed",
+                )
+            return V4EventAnalysisResult(event_impact_facts=facts_by_event[event_id])
+        if output_schema is V4DimensionDesignResult:
+            return dimension_draft.model_copy(deep=True)
+        return scenario_draft.model_copy(deep=True)
+
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version="v4",
+        generation_strategy="multi_event_model_lever_dimensions",
+    )
+    state = V4MultiEventGenerationState(
+        scenario_group=group,
+        events=[
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        impact_levers=_catalog(),
+        impact_catalog_version="v1",
+        impact_catalog_checksum="checksum-v1",
+        comparison_run_id="compare-v4-graph",
+        user_id=7,
+    )
+
+    v4_flow_module.get_compiled_graph.cache_clear()
+    with (
+        patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
+        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
+        patch.object(
+            v4_nodes.ScenarioGroupService,
+            "persist_multi_event_generation",
+            return_value=(group, []),
+        ) as persist,
+    ):
+        final_state = asyncio.run(v4_flow_module.get_compiled_graph().ainvoke(state))
+    v4_flow_module.get_compiled_graph.cache_clear()
+
+    assert event_attempts == {101: 1, 202: 2}
+    assert calls.count("V4EventAnalysisResult") == 3
+    assert calls.count("V4DimensionDesignResult") == 1
+    assert calls.count("V4ScenarioSynthesisResult") == 1
+    assert final_state["dimension_attempt"] == 1
+    assert final_state["scenario_attempt"] == 1
+    persist.assert_called_once()
 
 
 def test_v4_inline_converts_boolean_baseline_to_database_yn(
@@ -406,11 +511,6 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
         _valid_result(),
         event_ids=[101, 202],
         impact_levers=_catalog(),
-    )
-    monkeypatch.setattr(
-        v4_flow,
-        "_generate_validated_v4_result",
-        AsyncMock(return_value=(finalized, coverage)),
     )
     persist = Mock(
         return_value=(
@@ -443,6 +543,21 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
         "persist_multi_event_generation",
         persist,
     )
+
+    async def run_graph(
+        state: V4MultiEventGenerationState,
+        **_kwargs: object,
+    ) -> V4MultiEventGenerationState:
+        graph_state = state.model_copy(
+            update={
+                "finalized_result": finalized,
+                "parameter_coverage": coverage,
+            },
+        )
+        return graph_state.model_copy(update=v4_nodes.persist_v4_generation(graph_state))
+
+    graph = SimpleNamespace(ainvoke=AsyncMock(side_effect=run_graph))
+    monkeypatch.setattr(v4_flow, "get_compiled_graph", Mock(return_value=graph))
 
     response = asyncio.run(
         run_v4_multi_event_scenarios_inline(

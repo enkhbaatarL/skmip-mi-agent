@@ -139,4 +139,118 @@ def build_model_lever_user_prompt(
     )
 
 
-__all__ = ["MODEL_LEVER_SYSTEM_PROMPT", "build_model_lever_user_prompt"]
+def build_v4_event_analysis_user_prompt(
+    *,
+    event: dict[str, Any],
+    validation_feedback: str | None = None,
+) -> str:
+    """Extract facts for one Event before exposing the impact lever catalog."""
+    feedback = (
+        f"\n## 이전 Event fact 검증 실패\n- {validation_feedback[:300]}\n- 이 Event의 fact만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    return (
+        "## Event Context\n"
+        f"{format_compact_event_context([event])}\n\n"
+        "## 출력\n"
+        "- eventImpactFacts에 이 Event의 수요·공급·거래·price_only 사실을 1개 이상 추출하십시오.\n"
+        "- 각 factId는 e{eventId}_ 접두사를 사용해 전체 실행에서 고유하게 만드십시오.\n"
+        "- 아직 lever를 선택하지 말고 commonImpactLeverRefs는 빈 배열로 두십시오.\n"
+        "- 모든 fact의 eventId는 입력 Event ID와 같아야 합니다.\n"
+        f"{feedback}"
+    )
+
+
+def _compact_impact_catalog(impact_levers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "impactLeverId": lever.get("impact_lever_id"),
+            "leverCode": lever.get("lever_code"),
+            "domain": lever.get("domain"),
+            "label": lever.get("label"),
+            "description": lever.get("description"),
+            "applicabilityHint": lever.get("applicability_hint"),
+            "parameterBindings": [
+                {
+                    "parameterName": binding.get("parameter_name"),
+                    "supportStatus": binding.get("support_status"),
+                    "unsupportedReasonCode": binding.get("unsupported_reason_code"),
+                }
+                for binding in lever.get("parameter_bindings") or []
+            ],
+        }
+        for lever in impact_levers
+    ]
+
+
+def build_v4_dimension_design_user_prompt(
+    *,
+    event_impact_facts: list[dict[str, Any]],
+    impact_levers: list[dict[str, Any]],
+    catalog_version: str,
+    validation_feedback: str | None = None,
+) -> str:
+    """Map validated facts to catalog levers and dimensions without Scenario output."""
+    fact_domains = {str(fact.get("domain")) for fact in event_impact_facts}
+    relevant_levers = [lever for lever in impact_levers if str(lever.get("domain")) in fact_domains]
+    feedback = (
+        f"\n## 이전 dimension 검증 실패\n- {validation_feedback[:300]}\n"
+        "- fact는 유지하고 dimension 매핑만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    return (
+        f"## Impact Catalog Version\n{catalog_version}\n\n"
+        "## Validated Event Impact Facts\n"
+        f"{json.dumps(event_impact_facts, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Relevant Model Impact Lever Catalog\n"
+        f"{json.dumps(_compact_impact_catalog(relevant_levers), ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## 출력\n"
+        "- interactions, dimensionDefinitions 3~6개, eventDimensionCoverage, commonFactLeverMappings를 작성하십시오.\n"
+        "- dimension의 sourceFactIds와 impactLeverRefs는 정확히 대응하고 fact domain과 lever domain이 같아야 합니다.\n"
+        "- dimension에 사용하지 않은 모든 fact만 commonFactLeverMappings에 정확히 한 번 포함하십시오.\n"
+        "- 적어도 하나의 dimension은 executable parameter binding을 가진 lever를 참조해야 합니다.\n"
+        "- Scenario와 그룹 메타데이터는 아직 출력하지 마십시오.\n"
+        f"{feedback}"
+    )
+
+
+def build_v4_scenario_synthesis_user_prompt(
+    *,
+    event_impact_facts: list[dict[str, Any]],
+    interactions: list[dict[str, Any]],
+    dimension_definitions: list[dict[str, Any]],
+    validation_feedback: str | None = None,
+) -> str:
+    """Generate v4 Scenarios from already validated fact/lever dimensions."""
+    feedback = (
+        f"\n## 이전 Scenario 검증 실패\n- {validation_feedback[:300]}\n"
+        "- fact와 dimension은 유지하고 Scenario만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    return (
+        "## Validated Event Impact Facts\n"
+        f"{json.dumps(event_impact_facts, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Validated Interactions\n"
+        f"{json.dumps(interactions, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Validated Dimensions\n"
+        f"{json.dumps(dimension_definitions, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## 출력\n"
+        "- groupTitle, groupDescription, scenarios 3~5개와 excludedScenarios를 작성하십시오.\n"
+        "- 생성 및 제외 결과를 합쳐 다섯 globalPressureBand를 정확히 한 번씩 다루십시오.\n"
+        "- Scenario는 모든 dimension을 정확히 한 번 사용하며 조합이 서로 달라야 합니다.\n"
+        "- 내부 Scenario 하나 이상은 mixedFactors에 상승·하락 요인을 함께 설명하십시오.\n"
+        "- relatedMarkets는 지역 특이성이 명확할 때만 포함하십시오.\n"
+        f"{feedback}"
+    )
+
+
+__all__ = [
+    "MODEL_LEVER_SYSTEM_PROMPT",
+    "build_model_lever_user_prompt",
+    "build_v4_dimension_design_user_prompt",
+    "build_v4_event_analysis_user_prompt",
+    "build_v4_scenario_synthesis_user_prompt",
+]

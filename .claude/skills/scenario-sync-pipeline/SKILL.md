@@ -13,6 +13,30 @@ description: MI Scenario Group Agent API 파이프라인을 실행하고 증적�
 - 사용자가 `v2/v3/v4 비교`, 둘 이상의 version 비교, `multi-event`, 멀티 이벤트, 멀티 시나리오를 요청하면 **Multi-Event 버전 비교**를 실행한다.
 - version이나 multi-event 의도가 불분명하면 어떤 흐름인지 확인한다.
 
+## 관리자 토큰 로딩
+
+기존 Scenario Group을 soft delete하는 실행에서는 다음 우선순위로
+`SCENARIO_GROUP_ADMIN_TOKEN`을 사용한다.
+
+1. 명령행 `--admin-token`으로 전달된 환경변수 참조
+2. 현재 프로세스의 `SCENARIO_GROUP_ADMIN_TOKEN`
+3. 프로젝트 `envs/.env`의 `SCENARIO_GROUP_ADMIN_TOKEN`
+
+`envs/.env`를 사용할 때는 값을 출력하지 말고 프로세스 환경에 로드한 뒤 실행기가
+환경변수를 읽게 한다. 토큰 존재 여부만 `set`/`unset`으로 확인하고, 파일 내용이나
+토큰 값을 로그·명령 결과·보고서에 노출하지 않는다. 예:
+
+```bash
+set -a
+source envs/.env
+set +a
+python tests/manual/test_multi_event_scenario_versions.py prepare ...
+```
+
+soft delete가 필요한데 세 위치에서 토큰을 찾지 못하면 실행을 중단하고 사용자에게
+알린다. 이 경우 `--no-delete-existing`으로 임의 전환하지 않는다. 사용자가 기존 그룹
+보존을 명시적으로 요청한 경우에만 `--no-delete-existing`을 사용한다.
+
 ## v1 기존 파이프라인
 
 `tests/manual/test_sync_pipeline_api.py`를 사용한다. unversioned create API부터 validation, signpost, confirmation까지 기존 순서로 실행한다. v2/v3/v4 비교 실행기를 사용하지 않는다.

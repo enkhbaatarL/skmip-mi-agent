@@ -19,16 +19,26 @@ import pytest
 from apps.agents.scenario_group_agent.api import router as agent_router
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import (
     flow as multi_event_flow,
+    nodes as multi_event_nodes,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     MultiEventCreateScenariosIn,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     EventInteraction,
+    V2DimensionDesignResult,
+    V2EventAnalysisResult,
     V2MultiEventGenerationResult,
+    V2ScenarioSynthesisResult,
     V3DimensionDefinition,
+    V3DimensionDesignResult,
+    V3EventAnalysisResult,
     V3MultiEventGenerationResult,
+    V3ScenarioSynthesisResult,
     finalize_generation_result as _finalize_generation_result,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
+    MultiEventGenerationState,
 )
 from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     _load_group_event_context,
@@ -66,6 +76,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
     build_context,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_parameter.service import ModelImpactLeverService
 from apps.persistence.scenario.schema import (
@@ -588,108 +599,272 @@ def test_v2_schema_converts_strict_wire_scenario_cells_to_domain_map() -> None:
 
 
 def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
-    valid_payload = _result(
-        strategy="multi_event_composite_dimensions",
-    ).model_dump(by_alias=True)
-    events = [
-        SimpleNamespace(mi_event_id=101, event_type_l2_id=8),
-        SimpleNamespace(mi_event_id=202, event_type_l2_id=12),
-    ]
-    templates = [
-        SimpleNamespace(
-            event_type_l2_id=8,
-            scenario_dimension_template_id=81,
-            template_checksum="checksum-8",
-            dimensions=[],
-        ),
-        SimpleNamespace(
-            event_type_l2_id=12,
-            scenario_dimension_template_id=121,
-            template_checksum="checksum-12",
-            dimensions=[],
-        ),
-    ]
+    aggregate = _result(strategy="multi_event_composite_dimensions")
+    valid_draft = V3DimensionDesignResult(
+        interactions=aggregate.interactions,
+        dimension_definitions=aggregate.dimension_definitions,
+    )
     invalid_response = MIBaseError(
         multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-        detail="scenarioGroupTitle must not be blank",
+        detail="dimensionDefinitions is invalid",
     )
-    invoke = AsyncMock(
-        side_effect=[
-            invalid_response,
-            V3MultiEventGenerationResult.model_validate(valid_payload),
-        ],
+    invoke = AsyncMock(side_effect=[invalid_response, valid_draft])
+    state = MultiEventGenerationState(
+        api_version="v3",
+        generation_strategy="multi_event_composite_dimensions",
     )
 
     with (
         patch.object(
-            multi_event_flow,
-            "_invoke_multi_event_generation",
+            multi_event_nodes,
+            "invoke_stage_structured_output",
             new=invoke,
         ),
         patch.object(
-            multi_event_flow,
-            "finalize_generation_result",
-            side_effect=lambda result, **_kwargs: result,
+            multi_event_nodes,
+            "_backoff",
+            new=AsyncMock(),
         ),
     ):
-        result = asyncio.run(
-            multi_event_flow._generate_validated_result(
-                api_version="v3",
-                generation_strategy="multi_event_composite_dimensions",
-                events=events,
-                templates=templates,
-                trace_context=None,
-            ),
-        )
+        first = asyncio.run(multi_event_nodes.GenerateDimensionsNode().run(state))
+        state = state.model_copy(update=first)
+        assert multi_event_nodes.route_after_dimensions(state) == "generate_dimensions"
+        second = asyncio.run(multi_event_nodes.GenerateDimensionsNode().run(state))
 
-    assert result.scenario_group_title
+    assert second["dimension_draft"] == valid_draft
     assert invoke.await_count == 2
-    retry_feedback = invoke.await_args_list[1].kwargs["validation_feedback"]
-    assert "scenarioGroupTitle" in retry_feedback
+    retry_prompt = invoke.await_args_list[1].kwargs["user_prompt"]
+    assert "dimensionDefinitions" in retry_prompt
 
 
-def test_v2_semantic_validation_stops_after_two_attempts() -> None:
-    events = [
-        SimpleNamespace(mi_event_id=101, event_type_l2_id=8),
-        SimpleNamespace(mi_event_id=202, event_type_l2_id=12),
-    ]
-    templates = [
-        SimpleNamespace(
-            event_type_l2_id=event_type_l2_id,
-            scenario_dimension_template_id=template_id,
-            template_checksum=checksum,
-            dimensions=[],
-        )
-        for event_type_l2_id, template_id, checksum in (
-            (8, 81, "checksum-8"),
-            (12, 121, "checksum-12"),
-        )
-    ]
+def test_v2_semantic_validation_stops_after_three_graph_attempts() -> None:
     invoke = AsyncMock(
         side_effect=MIBaseError(
             multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
             detail="selectedDimensions is invalid",
         ),
     )
+    state = MultiEventGenerationState(
+        api_version="v2",
+        generation_strategy="multi_event_source_dimensions",
+    )
 
-    with patch.object(
-        multi_event_flow,
-        "_invoke_multi_event_generation",
-        new=invoke,
+    with (
+        patch.object(multi_event_nodes, "invoke_stage_structured_output", new=invoke),
+        patch.object(multi_event_nodes, "_backoff", new=AsyncMock()),
     ):
-        with pytest.raises(MIBaseError, match="after 2 attempts"):
-            asyncio.run(
-                multi_event_flow._generate_validated_result(
-                    api_version="v2",
-                    generation_strategy="multi_event_source_dimensions",
-                    events=events,
-                    templates=templates,
-                    trace_context=None,
-                ),
-            )
+        for attempt in range(1, 4):
+            update = asyncio.run(multi_event_nodes.GenerateDimensionsNode().run(state))
+            state = state.model_copy(update=update)
+            expected_route = "generate_dimensions" if attempt < 3 else "fail_generation"
+            assert multi_event_nodes.route_after_dimensions(state) == expected_route
 
-    assert invoke.await_count == 2
-    assert "selectedDimensions" in invoke.await_args_list[1].kwargs["validation_feedback"]
+    assert invoke.await_count == 3
+    assert "selectedDimensions" in invoke.await_args_list[1].kwargs["user_prompt"]
+
+
+def test_v3_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> None:
+    aggregate = _result(strategy="multi_event_composite_dimensions")
+    event_shock_by_id = {shock.event_id: shock for shock in aggregate.event_shocks}
+    event_attempts = {101: 0, 202: 0}
+    calls: list[str] = []
+
+    async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
+        calls.append(output_schema.__name__)
+        if output_schema is V3EventAnalysisResult:
+            event_id = 101 if "101" in user_prompt else 202
+            event_attempts[event_id] += 1
+            if event_id == 202 and event_attempts[event_id] == 1:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail="eventShock validation failed",
+                )
+            return V3EventAnalysisResult(event_shock=event_shock_by_id[event_id])
+        if output_schema is V3DimensionDesignResult:
+            return V3DimensionDesignResult(
+                interactions=aggregate.interactions,
+                dimension_definitions=aggregate.dimension_definitions,
+            )
+        return V3ScenarioSynthesisResult(
+            scenario_group_title=aggregate.scenario_group_title,
+            scenario_group_description=aggregate.scenario_group_description,
+            scenarios=aggregate.scenarios,
+            excluded_candidates=aggregate.excluded_candidates,
+        )
+
+    template_dimensions = {
+        81: ["tightness", "duration", "intensity"],
+        121: ["tightness", "recovery", "competition"],
+    }
+    state = MultiEventGenerationState(
+        scenario_group=ScenarioGroupPayload(
+            scenario_group_id=10,
+            api_version="v3",
+            generation_strategy="multi_event_composite_dimensions",
+        ),
+        events=[
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        templates=[
+            ScenarioPipelineTemplate(
+                scenario_dimension_template_id=template_id,
+                event_type_l2_id=event_type_id,
+                template_checksum=f"checksum-{event_type_id}",
+                dimensions=[
+                    {
+                        "dim_key": dim_key,
+                        "label": dim_key,
+                        "description": f"{dim_key} 설명",
+                        "value_enums": ["낮음", "중간", "높음"],
+                    }
+                    for dim_key in template_dimensions[template_id]
+                ],
+            )
+            for template_id, event_type_id in ((81, 8), (121, 12))
+        ],
+        api_version="v3",
+        generation_strategy="multi_event_composite_dimensions",
+        comparison_run_id="compare-graph",
+        user_id=7,
+    )
+
+    multi_event_flow.get_compiled_graph.cache_clear()
+    with (
+        patch.object(multi_event_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
+        patch.object(multi_event_nodes, "_backoff", new=AsyncMock()),
+        patch.object(
+            ScenarioGroupService,
+            "persist_multi_event_generation",
+            return_value=(state.scenario_group, []),
+        ) as persist,
+    ):
+        final_state = asyncio.run(multi_event_flow.get_compiled_graph().ainvoke(state))
+    multi_event_flow.get_compiled_graph.cache_clear()
+
+    assert event_attempts == {101: 1, 202: 2}
+    assert calls.count("V3EventAnalysisResult") == 3
+    assert calls.count("V3DimensionDesignResult") == 1
+    assert calls.count("V3ScenarioSynthesisResult") == 1
+    assert final_state["dimension_attempt"] == 1
+    assert final_state["scenario_attempt"] == 1
+    persist.assert_called_once()
+
+
+def test_v2_langgraph_uses_one_event_call_per_event_plus_two_stage_calls() -> None:
+    aggregate = _result(strategy="multi_event_source_dimensions")
+    event_shock_by_id = {shock.event_id: shock for shock in aggregate.event_shocks}
+    calls: list[str] = []
+
+    async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
+        calls.append(output_schema.__name__)
+        if output_schema is V2EventAnalysisResult:
+            event_id = 101 if "101" in user_prompt else 202
+            return V2EventAnalysisResult(event_shock=event_shock_by_id[event_id])
+        if output_schema is V2DimensionDesignResult:
+            return V2DimensionDesignResult(selected_dimensions=aggregate.selected_dimensions)
+        return V2ScenarioSynthesisResult(
+            scenario_group_title=aggregate.scenario_group_title,
+            scenario_group_description=aggregate.scenario_group_description,
+            scenarios=aggregate.scenarios,
+        )
+
+    template_dimensions = {
+        81: ["heat", "duration", "intensity"],
+        121: ["inventory", "recovery", "competition"],
+    }
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version="v2",
+        generation_strategy="multi_event_source_dimensions",
+    )
+    state = MultiEventGenerationState(
+        scenario_group=group,
+        events=[
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        templates=[
+            ScenarioPipelineTemplate(
+                scenario_dimension_template_id=template_id,
+                event_type_l2_id=event_type_id,
+                template_checksum=f"checksum-{event_type_id}",
+                dimensions=[
+                    {
+                        "dim_key": dim_key,
+                        "label": dim_key,
+                        "description": f"{dim_key} 설명",
+                        "value_enums": ["낮음", "중간", "높음"],
+                    }
+                    for dim_key in template_dimensions[template_id]
+                ],
+            )
+            for template_id, event_type_id in ((81, 8), (121, 12))
+        ],
+        api_version="v2",
+        generation_strategy="multi_event_source_dimensions",
+        comparison_run_id="compare-v2-graph",
+        user_id=7,
+    )
+
+    multi_event_flow.get_compiled_graph.cache_clear()
+    with (
+        patch.object(multi_event_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
+        patch.object(multi_event_nodes, "_backoff", new=AsyncMock()),
+        patch.object(
+            ScenarioGroupService,
+            "persist_multi_event_generation",
+            return_value=(group, []),
+        ) as persist,
+    ):
+        final_state = asyncio.run(multi_event_flow.get_compiled_graph().ainvoke(state))
+    multi_event_flow.get_compiled_graph.cache_clear()
+
+    assert calls.count("V2EventAnalysisResult") == 2
+    assert calls.count("V2DimensionDesignResult") == 1
+    assert calls.count("V2ScenarioSynthesisResult") == 1
+    assert final_state["dimension_attempt"] == 1
+    assert final_state["scenario_attempt"] == 1
+    persist.assert_called_once()
+
+
+def test_multi_event_graph_disables_connector_level_retry() -> None:
+    result = V3EventAnalysisResult(
+        event_shock={
+            "eventId": 101,
+            "shockSummary": "현재 Event의 LNG 가격 영향 방향을 요약한다.",
+        },
+    )
+    invoke = AsyncMock(return_value=SimpleNamespace(result=result))
+    settings = SimpleNamespace(
+        llm_stream_enabled=True,
+        llm_reasoning_effort="medium",
+    )
+    config_module = ModuleType("apps.common.configs.config")
+    config_module.get_settings = Mock(return_value=settings)
+    llm_module = ModuleType("apps.connectors.llm.llm_client")
+    llm_module.invoke_llm_structured_output = invoke
+
+    with patch.dict(
+        sys.modules,
+        {
+            "apps.common.configs.config": config_module,
+            "apps.connectors.llm.llm_client": llm_module,
+        },
+    ):
+        actual = asyncio.run(
+            multi_event_nodes.invoke_stage_structured_output(
+                output_schema=V3EventAnalysisResult,
+                system_prompt="system",
+                user_prompt="user",
+                trace_context=None,
+            ),
+        )
+
+    assert actual == result
+    assert invoke.await_args.kwargs["max_retries"] == 0
+    assert invoke.await_args.kwargs["stream"] is True
+    assert invoke.await_args.kwargs["reasoning_effort"] == "medium"
 
 
 @pytest.mark.parametrize(
@@ -1668,11 +1843,17 @@ def test_v3_compact_definitions_round_trip_through_persistence_and_sync_response
         "user_id": 7,
     }
 
+    async def run_graph(state: MultiEventGenerationState, **_kwargs: object) -> MultiEventGenerationState:
+        graph_state = state.model_copy(update={"finalized_result": finalized})
+        return graph_state.model_copy(update=multi_event_nodes.persist_generation(graph_state))
+
+    graph = SimpleNamespace(ainvoke=AsyncMock(side_effect=run_graph))
+
     with (
         patch.object(
             multi_event_flow,
-            "_generate_validated_result",
-            new=AsyncMock(return_value=finalized),
+            "get_compiled_graph",
+            return_value=graph,
         ),
         patch.object(
             ScenarioGroupService,
@@ -1757,11 +1938,17 @@ def test_v2_compact_contract_round_trips_through_persistence_and_sync_response()
         "user_id": 7,
     }
 
+    async def run_graph(state: MultiEventGenerationState, **_kwargs: object) -> MultiEventGenerationState:
+        graph_state = state.model_copy(update={"finalized_result": finalized})
+        return graph_state.model_copy(update=multi_event_nodes.persist_generation(graph_state))
+
+    graph = SimpleNamespace(ainvoke=AsyncMock(side_effect=run_graph))
+
     with (
         patch.object(
             multi_event_flow,
-            "_generate_validated_result",
-            new=AsyncMock(return_value=finalized),
+            "get_compiled_graph",
+            return_value=graph,
         ),
         patch.object(
             ScenarioGroupService,

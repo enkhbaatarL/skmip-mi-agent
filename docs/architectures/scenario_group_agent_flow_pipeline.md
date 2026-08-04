@@ -118,7 +118,7 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 
 
 v2/v3는 `flows/create_multi_event_scenarios/flow.py`에서 Event와 Event Type
-Template revision을 함께 준비한다. Prompt의 `Event Context`와
+Template revision을 함께 준비한 뒤 cached LangGraph에 입력한다. Prompt의 `Event Context`와
 `Template Domain Knowledge`를 분리하고 Template의 대표 사례 및
 `value_enums`는 참고 예시로만 전달한다. Event Context는 공통 compact formatter를
 사용해 요청 순서의 ID·제목·요약·발생시각·제한된 핵심 사실/태그만 전달한다.
@@ -141,14 +141,27 @@ source type/assumption/rationale, `sourceAssignments`, typed 제외 후보를 �
 `label`, `description`, `required`를 Template에서 hydration한다. 미선택 Template ref와
 미생성 pressure band는 입력/출력 배열의 차집합으로 계산한다. source key 접두사 제거,
 다른 Event로 sourceRef 이동, dimension/value 보충, Template example 대조와 value별 source
-projection은 실행하지 않는다. semantic validation 실패 시 compact 전체 결과를 최대 2회
-생성한다.
+projection은 실행하지 않는다.
 
 v3는 source key 접두사 제거, EventShock generated value 보충, Template example 대조,
 value별 source projection 보강을 실행하지 않는다. compact `sourceRefs`가 입력 Template에
 존재하는지와 중복 여부만 확인하며, Event coverage와 interaction resolution은
 `sourceEventIds`로 검증한다. 누락된 lineage를 서버가 보강하지 않고 전체 결과 재생성을
 요청한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
+
+다중 Event 생성 graph는 다음 LLM 단위로 구성한다.
+
+1. `analyze_event`: Event별 compact EventShock을 `Send` fan-out으로 병렬 생성한다.
+2. `generate_dimensions`: 검증된 모든 EventShock과 Template을 사용해 dimension만 설계한다.
+3. `generate_scenarios`: 검증된 dimension으로 그룹 메타데이터와 Scenario만 합성한다.
+4. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
+
+Event fan-out 중 일부가 실패하면 성공 결과는 state reducer에 유지하고 실패 Event만 다시
+`analyze_event`로 보낸다. dimension 또는 Scenario 검증 실패도 해당 LLM node만 재실행하며
+앞 단계 결과는 재생성하지 않는다. 각 LLM 단계는 최초 호출을 포함해 최대 3회 시도하고,
+재시도 전 1초·2초 backoff를 적용한다. structured/schema 검증 오류와 408, 429, 500,
+502, 503, 504, 529, timeout/connection 오류만 재시도한다. 그 밖의 오류는 즉시
+`fail_generation`으로 보낸다.
 
 공통 LLM connector는 `llm_structured_output_strict` 전역 설정이 활성화되면 OpenAI SDK의
 Pydantic strict parsing helper를 사용한다. 호출부가 strict 여부를 개별 전달하지 않으므로
@@ -157,8 +170,9 @@ Pydantic strict parsing helper를 사용한다. 호출부가 strict 여부를 �
 최초 parsing에 같은 Pydantic schema를 사용한다. v2·v3 모두 상세 EventShock과 value source
 assignment를 schema에서 제거했으며, Scenario `dimensionValues`는 strict JSON Schema가
 허용하는 key/value 객체 배열로 요청한 뒤 내부 dict 표현으로 복원한다. 최초 Pydantic 검증
-실패는 connector가 `LLM_INVALID_RESPONSE_ERROR`로 구분한다. v2는 connector 1회 재시도와
-semantic 최대 2회, v3는 connector 2회 재시도와 semantic 최대 3회 상한을 독립적으로 사용한다.
+실패는 connector가 `LLM_INVALID_RESPONSE_ERROR`로 구분한다. 다중 Event graph의 node가
+retry와 feedback을 명시적으로 추적할 수 있도록 connector 내부 `max_retries`는 0으로
+고정한다. 각 graph node와 fallback 경로는 LangGraph/MLflow step으로 관측된다.
 
 그룹은 대표 Event를 위장해 저장하지 않고 `mi_event_id`,
 `event_type_l2_id`를 `NULL`로 둔다. Event와 사용 Template ID/checksum은
@@ -196,8 +210,12 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 지역 가격 스프레드와 금융시장 위험 프리미엄처럼 글로벌 LNG 가격을 설명하는
 비수급 경로다. 모델 입력 미지원과 혼동하지 않도록 `PRICE_ONLY`로 별도 표시한다.
 
-`v4_flow.py`는 Event와 활성 카탈로그를 준비하고 LLM이 카탈로그 안의 lever만
-참조해 3~~6개 dimension과 2~~4개 value를 생성하게 한다. Scenario delta의 정본은
+`v4_flow.py`는 Event와 활성 카탈로그를 준비한 뒤 v4 LangGraph에 입력한다. v4도
+Event별 fact 추출 fan-out, fact–lever dimension 설계, Scenario 합성의 세 LLM 단계와
+최종 일괄 저장 node로 나뉜다. fact 추출 단계에는 catalog를 전달하지 않으며, dimension
+단계에는 fact domain과 관련된 compact catalog만 전달한다. 실패 Event 또는 실패한 후속
+단계만 최대 3회 재시도하는 정책은 v2/v3와 같다. LLM은 카탈로그 안의 lever만
+참조해 3~~6개 dimension과 2~~4개 value를 생성한다. Scenario delta의 정본은
 `dimensionDefinitions[].impactLeverRefs[]`이며, 각 reference에는 catalog의
 `impactLeverId`/`leverCode`, 근거 `sourceFactIds`, `mappingRationale`을 저장한다.
 dimension에 쓰이지 않은 모든 공통 사실은 비어 있지 않은
@@ -212,7 +230,7 @@ floor·ceiling을 생성하지 않는다. 또한 전체 dimension 중 적어도 
 모델 parameter binding을 참조해야 한다. 따라서 가격 설명용 `price_only`나
 `known_unsupported` dimension을 함께 사용하더라도 모델 파라미터 단계에 넘길
 실행 경로가 하나 이상 남는다. 실행 가능한 dimension이 하나도 없으면 semantic
-validation 실패로 처리해 최대 3회 생성한다. 지원 상태는 dimension 선택 우선순위로
+validation 실패로 처리해 dimension 단계만 최대 3회 시도한다. 지원 상태는 dimension 선택 우선순위로
 사용하지 않으며 `price_only`나 미지원 경로도 중요한 불확실성이면 선택할 수 있다.
 
 Event마다 dimension을 강제하지 않는다. `eventDimensionCoverage`에는 계산된

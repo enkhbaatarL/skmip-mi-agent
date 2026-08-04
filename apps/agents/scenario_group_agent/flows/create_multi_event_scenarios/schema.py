@@ -456,6 +456,32 @@ class V2MultiEventGenerationResult(ApiModel):
     scenarios: list[V2ScenarioCandidate] = Field(min_length=3, max_length=5)
 
 
+class V2EventAnalysisResult(ApiModel):
+    """Per-Event v2 LLM response used by the LangGraph fan-out stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_shock: V2EventShock
+
+
+class V2DimensionDesignResult(ApiModel):
+    """v2 dimension-only response; Scenario narratives are generated later."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selected_dimensions: list[V2SelectedDimension] = Field(min_length=3, max_length=6)
+
+
+class V2ScenarioSynthesisResult(ApiModel):
+    """v2 Scenario-only response based on validated dimensions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_group_title: str = Field(min_length=1, max_length=120)
+    scenario_group_description: str = Field(min_length=1, max_length=600)
+    scenarios: list[V2ScenarioCandidate] = Field(min_length=3, max_length=5)
+
+
 class V2DimensionDefinition(ApiModel):
     """Compact persisted/API v2 dimension hydrated from its source Template."""
 
@@ -566,6 +592,34 @@ class V3MultiEventGenerationResult(MultiEventGenerationResult):
         if "excluded_dimensions" in normalized:
             normalized["excluded_dimensions"] = []
         return normalized
+
+
+class V3EventAnalysisResult(ApiModel):
+    """Per-Event v3 LLM response used by the LangGraph fan-out stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_shock: V3EventShock
+
+
+class V3DimensionDesignResult(ApiModel):
+    """v3 interaction and composite-dimension design response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interactions: list[EventInteraction] = Field(default_factory=list)
+    dimension_definitions: list[V3DimensionDefinition] = Field(min_length=3, max_length=6)
+
+
+class V3ScenarioSynthesisResult(ApiModel):
+    """v3 Scenario-only response based on validated composite dimensions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_group_title: str = Field(min_length=1, max_length=120)
+    scenario_group_description: str = Field(min_length=1, max_length=600)
+    scenarios: list[ScenarioCandidate] = Field(min_length=3, max_length=5)
+    excluded_candidates: list[ExcludedGenerationCandidate] = Field(default_factory=list, max_length=2)
 
 
 def _with_multi_event_defaults(value: Any) -> Any:
