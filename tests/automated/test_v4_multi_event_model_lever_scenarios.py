@@ -371,6 +371,20 @@ def test_v4_finalizer_assigns_roles_and_parameter_coverage() -> None:
     ]
 
 
+def test_v4_finalizer_allows_scenarios_without_mixed_role() -> None:
+    draft = _valid_result()
+    for scenario in draft.scenarios:
+        scenario.mixed_factors = []
+
+    result, _coverage = finalize_v4_generation_result(
+        draft,
+        event_ids=[101, 202],
+        impact_levers=_catalog(),
+    )
+
+    assert [scenario.scenario_role for scenario in result.scenarios] == ["ceiling", None, "floor"]
+
+
 def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
     aggregate = _valid_result()
     dimension_draft = V4DimensionDesignResult(

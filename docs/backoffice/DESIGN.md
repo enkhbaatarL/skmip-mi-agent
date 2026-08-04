@@ -601,7 +601,7 @@ version card 및 Overview에 PASS/WARN/FAIL을 표시한다.
 - Scenario 3~5개
 - baseline 정확히 1개
 - floor/ceiling 각각 1개
-- mixed 최소 1개
+- mixed는 실제 상승·하락 상쇄 조합이 있을 때만 선택적으로 지정
 - Scenario 조합 중복 없음
 - pressure band 중복 없음
 - probability 합계

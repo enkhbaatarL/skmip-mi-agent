@@ -102,8 +102,6 @@ def _roles_and_extrema(rows: list[dict[str, Any]]) -> QualityCheck:
     offenders.extend(
         f"{role} count={len(by_role.get(role, []))}" for role in ("floor", "ceiling") if len(by_role.get(role, [])) != 1
     )
-    if not by_role.get("mixed"):
-        offenders.append("mixed count=0")
     if (
         ranked_rows
         and len(by_role.get("floor", [])) == 1
@@ -124,7 +122,7 @@ def _roles_and_extrema(rows: list[dict[str, Any]]) -> QualityCheck:
     return _check(
         "M-04",
         not offenders,
-        "Exactly one floor/ceiling, at least one non-extreme mixed, and role/band extrema alignment.",
+        "Exactly one floor/ceiling, optional mixed roles on non-extreme bands, and role/band extrema alignment.",
         offenders,
     )
 

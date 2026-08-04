@@ -45,9 +45,9 @@ executable인 parameterBinding을 가진 lever를 참조해야 합니다.
 
 Scenario는 strong_bullish, bullish, balanced, bearish, strong_bearish 중 서로 다른 구간을
 사용합니다. 생성하지 않은 구간은 excludedScenarios에 이유를 남겨, 생성 및 제외 결과를 합쳐
-다섯 구간을 정확히 한 번씩 다룹니다. 최저 구간은 floor, 최고 구간은 ceiling이 되며, 내부 구간
-중 하나는 상승·하락 요인이 함께 있는 mixed Scenario여야 합니다. probabilityScore는 선택된
-Event가 모두 발생한다는 전제하에서 Scenario 전개의 상대적 개연성입니다.
+다섯 구간을 정확히 한 번씩 다룹니다. 최저 구간은 floor, 최고 구간은 ceiling이 됩니다. 상승·하락
+요인이 실제로 함께 있는 내부 구간만 mixed Scenario로 표시하며 mixed는 선택 사항입니다.
+probabilityScore는 선택된 Event가 모두 발생한다는 전제하에서 Scenario 전개의 상대적 개연성입니다.
 
 relatedMarkets는 글로벌 압력과 별개의 가격 방향 또는 Scenario role이 아닙니다. 해당 Scenario의
 dimension 조합이 JKM, TTF, HH 중 특정 지역 가격 허브와 특별히 관련될 때만 market과 한국어
@@ -241,7 +241,8 @@ def build_v4_scenario_synthesis_user_prompt(
         "- groupTitle, groupDescription, scenarios 3~5개와 excludedScenarios를 작성하십시오.\n"
         "- 생성 및 제외 결과를 합쳐 다섯 globalPressureBand를 정확히 한 번씩 다루십시오.\n"
         "- Scenario는 모든 dimension을 정확히 한 번 사용하며 조합이 서로 달라야 합니다.\n"
-        "- 내부 Scenario 하나 이상은 mixedFactors에 상승·하락 요인을 함께 설명하십시오.\n"
+        "- 상승·하락 요인이 실제로 함께 있는 내부 Scenario만 mixedFactors에 두 요인을 설명하십시오.\n"
+        "- mixed Scenario는 선택 사항이며 없다는 이유로 억지로 만들지 마십시오.\n"
         "- relatedMarkets는 지역 특이성이 명확할 때만 포함하십시오.\n"
         f"{feedback}"
     )

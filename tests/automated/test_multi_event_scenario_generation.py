@@ -30,9 +30,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V2EventAnalysisResult,
     V2MultiEventGenerationResult,
     V2ScenarioSynthesisResult,
+    V3AnalysisDesignResult,
     V3DimensionDefinition,
     V3DimensionDesignResult,
-    V3EventAnalysisResult,
     V3MultiEventGenerationResult,
     V3ScenarioSynthesisResult,
     finalize_generation_result as _finalize_generation_result,
@@ -76,7 +76,6 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
     build_context,
 )
 from apps.common.exceptions.custom import MIBaseError
-from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_parameter.service import ModelImpactLeverService
 from apps.persistence.scenario.schema import (
@@ -600,7 +599,8 @@ def test_v2_schema_converts_strict_wire_scenario_cells_to_domain_map() -> None:
 
 def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
     aggregate = _result(strategy="multi_event_composite_dimensions")
-    valid_draft = V3DimensionDesignResult(
+    valid_analysis = V3AnalysisDesignResult(
+        event_shocks=aggregate.event_shocks,
         interactions=aggregate.interactions,
         dimension_definitions=aggregate.dimension_definitions,
     )
@@ -608,7 +608,7 @@ def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
         multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
         detail="dimensionDefinitions is invalid",
     )
-    invoke = AsyncMock(side_effect=[invalid_response, valid_draft])
+    invoke = AsyncMock(side_effect=[invalid_response, valid_analysis])
     state = MultiEventGenerationState(
         api_version="v3",
         generation_strategy="multi_event_composite_dimensions",
@@ -626,12 +626,16 @@ def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
             new=AsyncMock(),
         ),
     ):
-        first = asyncio.run(multi_event_nodes.GenerateDimensionsNode().run(state))
+        first = asyncio.run(multi_event_nodes.AnalyzeV3EventsNode().run(state))
         state = state.model_copy(update=first)
-        assert multi_event_nodes.route_after_dimensions(state) == "generate_dimensions"
-        second = asyncio.run(multi_event_nodes.GenerateDimensionsNode().run(state))
+        assert multi_event_nodes.route_after_dimensions(state) == "analyze_v3_events"
+        second = asyncio.run(multi_event_nodes.AnalyzeV3EventsNode().run(state))
 
-    assert second["dimension_draft"] == valid_draft
+    assert second["dimension_draft"] == V3DimensionDesignResult(
+        interactions=aggregate.interactions,
+        dimension_definitions=aggregate.dimension_definitions,
+    )
+    assert second["event_shocks"] == aggregate.event_shocks
     assert invoke.await_count == 2
     retry_prompt = invoke.await_args_list[1].kwargs["user_prompt"]
     assert "dimensionDefinitions" in retry_prompt
@@ -663,25 +667,15 @@ def test_v2_semantic_validation_stops_after_three_graph_attempts() -> None:
     assert "selectedDimensions" in invoke.await_args_list[1].kwargs["user_prompt"]
 
 
-def test_v3_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> None:
+def test_v3_langgraph_uses_analysis_design_and_scenario_calls() -> None:
     aggregate = _result(strategy="multi_event_composite_dimensions")
-    event_shock_by_id = {shock.event_id: shock for shock in aggregate.event_shocks}
-    event_attempts = {101: 0, 202: 0}
     calls: list[str] = []
 
     async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
         calls.append(output_schema.__name__)
-        if output_schema is V3EventAnalysisResult:
-            event_id = 101 if "101" in user_prompt else 202
-            event_attempts[event_id] += 1
-            if event_id == 202 and event_attempts[event_id] == 1:
-                raise MIBaseError(
-                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-                    detail="eventShock validation failed",
-                )
-            return V3EventAnalysisResult(event_shock=event_shock_by_id[event_id])
-        if output_schema is V3DimensionDesignResult:
-            return V3DimensionDesignResult(
+        if output_schema is V3AnalysisDesignResult:
+            return V3AnalysisDesignResult(
+                event_shocks=aggregate.event_shocks,
                 interactions=aggregate.interactions,
                 dimension_definitions=aggregate.dimension_definitions,
             )
@@ -742,10 +736,9 @@ def test_v3_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> N
         final_state = asyncio.run(multi_event_flow.get_compiled_graph().ainvoke(state))
     multi_event_flow.get_compiled_graph.cache_clear()
 
-    assert event_attempts == {101: 1, 202: 2}
-    assert calls.count("V3EventAnalysisResult") == 3
-    assert calls.count("V3DimensionDesignResult") == 1
+    assert calls.count("V3AnalysisDesignResult") == 1
     assert calls.count("V3ScenarioSynthesisResult") == 1
+    assert len(calls) == 2
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
@@ -829,7 +822,7 @@ def test_v2_langgraph_uses_one_event_call_per_event_plus_two_stage_calls() -> No
 
 
 def test_multi_event_graph_disables_connector_level_retry() -> None:
-    result = V3EventAnalysisResult(
+    result = V2EventAnalysisResult(
         event_shock={
             "eventId": 101,
             "shockSummary": "현재 Event의 LNG 가격 영향 방향을 요약한다.",
@@ -854,7 +847,7 @@ def test_multi_event_graph_disables_connector_level_retry() -> None:
     ):
         actual = asyncio.run(
             multi_event_nodes.invoke_stage_structured_output(
-                output_schema=V3EventAnalysisResult,
+                output_schema=V2EventAnalysisResult,
                 system_prompt="system",
                 user_prompt="user",
                 trace_context=None,
@@ -890,6 +883,26 @@ def test_finalization_assigns_roles_and_single_highest_probability_baseline(
     baselines = [scenario for scenario in finalized.scenarios if scenario.baseline_yn == "Y"]
     assert len(baselines) == 1
     assert baselines[0].global_pressure_band == "balanced"
+
+
+def test_finalization_allows_scenarios_without_mixed_role() -> None:
+    result = _result(strategy="multi_event_composite_dimensions")
+    without_mixed = result.model_copy(
+        update={
+            "scenarios": [scenario.model_copy(update={"mixed_factors": False}) for scenario in result.scenarios],
+        },
+    )
+
+    finalized = finalize_generation_result(
+        without_mixed,
+        generation_strategy="multi_event_composite_dimensions",
+        event_ids=EVENT_IDS,
+    )
+
+    roles = [scenario.scenario_role for scenario in finalized.scenarios]
+    assert roles.count("floor") == 1
+    assert roles.count("ceiling") == 1
+    assert "mixed" not in roles
 
 
 def test_v2_requires_namespaced_source_dimensions() -> None:

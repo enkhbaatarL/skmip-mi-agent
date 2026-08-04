@@ -44,7 +44,8 @@ COMMON_V3_SYSTEM_PROMPT = """\
   reasonCode와 구체적인 한국어 reason을 남깁니다.
 - 생성 후보와 제외 후보를 합쳐 다섯 목표 구간을 정확히 한 번씩 다룹니다.
 - 최종 Scenario는 3~5개이며 dimension 조합이 모두 달라야 합니다.
-- 가격 상승·하락 요인이 함께 작용하는 내부 구간 후보 하나 이상은 mixedFactors=true입니다.
+- 가격 상승·하락 요인이 실제로 함께 작용하는 내부 후보만 mixedFactors=true로 표시합니다.
+  mixed Scenario는 선택 사항이며 floor와 ceiling만 필수 role입니다.
 - probabilityScore는 후보 간 상대적 발생 가능성 점수이며 0~100 정수입니다.
 """
 
@@ -74,6 +75,34 @@ V3_STRATEGY_PROMPT = """\
 - 모든 Event가 sourceEventIds로 하나 이상의 dimension에 연결되도록 3~6개의 직관적인 합성 dimension을 만듭니다.
 - sourceRefs는 합성 근거가 된 입력 Template의 ID와 dimKey 조합만 중복 없이 기록합니다.
 - excludedDimensions는 v2 전용 필드이므로 빈 배열로 출력합니다.
+"""
+
+
+V3_ANALYSIS_SYSTEM_PROMPT = (
+    """\
+당신은 복수의 MI Event를 함께 분석해 LNG 가격 시나리오의 합성 Dimension을 설계하는 전문가입니다.
+
+- Event Context는 현재 사건의 권위 있는 사실이며 Template은 해석을 돕는 참고 지식입니다.
+- Event별 핵심 충격과 예상 글로벌 LNG 가격 방향을 eventShock 한 문장으로 요약합니다.
+- 실제로 관련된 Event만 증폭, 상쇄, 인과 연결, 지역 결합 또는 해석 충돌로 연결합니다.
+- 모든 Event를 적어도 하나의 합성 Dimension에 연결하고 직관적이며 중복이 적은 Dimension 3~6개를 만듭니다.
+- 이 단계에서는 Scenario, 그룹 메타데이터와 제외 pressure band를 생성하지 않습니다.
+"""
+    + V3_SYSTEM_CONTRACT
+)
+
+
+V3_SCENARIO_SYSTEM_PROMPT = """\
+당신은 검증된 Event Shock, Event Interaction과 합성 Dimension을 사용해 LNG 가격 Scenario를 설계하는 전문가입니다.
+
+- 입력은 검증 완료된 정본이므로 Event Shock, Interaction과 Dimension을 변경하거나 새로 만들지 않습니다.
+- Cartesian product 대신 서로 다른 대표 Scenario 3~5개를 직접 설계합니다.
+- 생성·제외 후보를 합쳐 strong_bullish, bullish, balanced, bearish, strong_bearish를 정확히 한 번씩 다룹니다.
+- 생성 Scenario 중 최저 pressure band는 floor, 최고 pressure band는 ceiling이 됩니다.
+- 상승·하락 요인이 실제로 함께 작용하는 내부 Scenario가 있을 때만 mixedFactors=true로 표시합니다.
+  mixed Scenario는 선택 사항입니다.
+- Event 사실을 취소해야만 만들 수 있는 pressure band는 생성하지 말고 제외 이유를 기록합니다.
+- probabilityScore는 후보 간 상대적 발생 가능성 점수이며 0~100 정수입니다.
 """
 
 
@@ -214,16 +243,11 @@ def build_event_analysis_user_prompt(
 ) -> str:
     """Build the small, single-Event prompt used by the fan-out stage."""
     event_context = format_compact_event_context([event])
-    if api_version == "v2":
-        template_context = _compact_v2_template_knowledge([event], [template])[0]
-    elif api_version == "v3":
-        template_context = _v3_template_knowledge([event], [template])[0]
-    else:
+    if api_version != "v2":
         raise ValueError(f"Unsupported multi-event API version: {api_version}")
+    template_context = _compact_v2_template_knowledge([event], [template])[0]
     feedback = (
-        "\n## Previous validation failure\n"
-        f"- {validation_feedback[:300]}\n"
-        "- 이 Event의 분석 결과만 수정하십시오.\n"
+        f"\n## Previous validation failure\n- {validation_feedback[:300]}\n- 이 Event의 분석 결과만 수정하십시오.\n"
         if validation_feedback
         else ""
     )
@@ -256,27 +280,17 @@ def build_dimension_design_user_prompt(
         if validation_feedback
         else ""
     )
-    if api_version == "v2":
-        template_knowledge = _compact_v2_template_knowledge(events, templates)
-        output_contract = (
-            "- selectedDimensions 3~6개만 출력하십시오.\n"
-            "- 각 dimension은 입력 Template의 단일 sourceRef를 사용하고 "
-            "dimensionId는 e{eventId}__{dimKey} 형식이어야 합니다.\n"
-            "- 각 dimension에 상호 구분되는 value 3~4개와 globalPressureContribution을 작성하십시오.\n"
-        )
-        strategy = V2_SYSTEM_PROMPT
-    elif api_version == "v3":
-        template_knowledge = _v3_template_knowledge(events, templates)
-        output_contract = (
-            "- interactions와 dimensionDefinitions 3~6개만 출력하십시오.\n"
-            "- 모든 입력 Event가 하나 이상의 dimension.sourceEventIds에 포함되어야 합니다.\n"
-            "- 각 dimension은 입력 Template에 존재하는 sourceRefs와 value 3~5개를 포함해야 합니다.\n"
-        )
-        strategy = V3_STRATEGY_PROMPT + V3_SYSTEM_CONTRACT
-    else:
+    if api_version != "v2":
         raise ValueError(f"Unsupported multi-event API version: {api_version}")
+    template_knowledge = _compact_v2_template_knowledge(events, templates)
+    output_contract = (
+        "- selectedDimensions 3~6개만 출력하십시오.\n"
+        "- 각 dimension은 입력 Template의 단일 sourceRef를 사용하고 "
+        "dimensionId는 e{eventId}__{dimKey} 형식이어야 합니다.\n"
+        "- 각 dimension에 상호 구분되는 value 3~4개와 globalPressureContribution을 작성하십시오.\n"
+    )
     return (
-        f"## Strategy\n{strategy}\n\n"
+        f"## Strategy\n{V2_SYSTEM_PROMPT}\n\n"
         "## Validated Event Shocks\n"
         f"{json.dumps(event_shocks, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "## Template Candidates\n"
@@ -284,6 +298,36 @@ def build_dimension_design_user_prompt(
         "## Output\n"
         f"{output_contract}"
         "- Scenario, 그룹 제목과 그룹 설명은 아직 출력하지 마십시오.\n"
+        f"{feedback}"
+    )
+
+
+def build_v3_analysis_design_user_prompt(
+    *,
+    events: list[dict[str, Any]],
+    templates: list[dict[str, Any]],
+    validation_feedback: str | None = None,
+) -> str:
+    """Build the single v3 cross-Event analysis and dimension-design prompt."""
+    feedback = (
+        "\n## Previous analysis validation failure\n"
+        f"- {validation_feedback[:300]}\n"
+        "- Event Shock, Interaction과 Dimension 설계만 수정하십시오.\n"
+        if validation_feedback
+        else ""
+    )
+    return (
+        f"## Strategy\n{V3_STRATEGY_PROMPT}\n\n"
+        "## Event Context (authoritative current facts)\n"
+        f"{format_compact_event_context(events)}\n\n"
+        "## Template Domain Knowledge (reference only)\n"
+        f"{json.dumps(_v3_template_knowledge(events, templates), ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "## Output\n"
+        "- 입력 Event마다 eventShock을 정확히 하나씩 출력하십시오.\n"
+        "- interactions와 dimensionDefinitions 3~6개를 출력하십시오.\n"
+        "- 모든 입력 Event가 하나 이상의 dimension.sourceEventIds에 포함되어야 합니다.\n"
+        "- 각 dimension은 입력 Template에 존재하는 sourceRefs와 value 3~5개를 포함해야 합니다.\n"
+        "- Scenario, 그룹 제목·설명과 제외 pressure band는 출력하지 마십시오.\n"
         f"{feedback}"
     )
 
@@ -320,7 +364,8 @@ def build_scenario_synthesis_user_prompt(
         "- scenarioGroupTitle, scenarioGroupDescription과 Scenario 3~5개를 한국어로 작성하십시오.\n"
         "- 각 Scenario는 모든 dimensionId를 정확히 한 번 사용하고 서로 다른 조합이어야 합니다.\n"
         "- globalPressureBand는 중복 없이 사용하며 probabilityScore와 globalPressureRationale을 작성하십시오.\n"
-        "- 내부 pressure band 중 하나 이상은 bullish와 bearish value를 함께 사용하십시오.\n"
+        "- bullish와 bearish value가 실제로 함께 있는 내부 Scenario만 mixedFactors=true로 표시하십시오.\n"
+        "- mixed Scenario는 선택 사항이며 없다는 이유로 억지로 만들지 마십시오.\n"
         f"{pressure_partition}"
         f"{feedback}"
     )

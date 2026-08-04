@@ -468,19 +468,16 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
     ordered[0].scenario_role = "floor"
     ordered[-1].scenario_role = "ceiling"
 
-    interior = ordered[1:-1]
-    if not interior:
-        raise ValueError("at least one mixed scenario is required")
-    mixed = min(
-        interior,
-        key=lambda scenario: (
-            abs(PRESSURE_RANK[scenario.global_pressure_band] - 2),
-            -scenario.probability_score,
-        ),
-    )
-    mixed.scenario_role = "mixed"
-    if not mixed.mixed_factors:
-        raise ValueError("mixed scenario must explain its offsetting factors")
+    mixed_candidates = [scenario for scenario in ordered[1:-1] if scenario.mixed_factors]
+    if mixed_candidates:
+        mixed = min(
+            mixed_candidates,
+            key=lambda scenario: (
+                abs(PRESSURE_RANK[scenario.global_pressure_band] - 2),
+                -scenario.probability_score,
+            ),
+        )
+        mixed.scenario_role = "mixed"
 
     baseline = max(result.scenarios, key=lambda scenario: scenario.probability_score)
     baseline.baseline_yn = True

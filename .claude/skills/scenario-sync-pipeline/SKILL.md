@@ -230,7 +230,7 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 - LNG 가격 예측 요소의 dimension 반영
 - 글로벌 LNG 기준 floor/ceiling의 pressure band 및 조합 타당성
 - mixed의 필요성과 상승·하락 요인 조합 타당성
-- Scenario 3~5개, baseline 정확히 1개, floor/ceiling 각각 1개, mixed 최소 1개, 조합·band 중복 없음
+- Scenario 3~5개, baseline 정확히 1개, floor/ceiling 각각 1개, mixed 선택, 조합·band 중복 없음
 - dimension 수 v2/v3/v4 각각 3~6개와 전체 이벤트 lineage coverage
 
 Agent Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario별 실제 title, narrative, cells, role, probability와 API rationale를 근거로 판단한다. 기준 단순 평균 최고 version을 우수 버전으로 정하고 동점은 공동 우수로 표시한다. 성공 version이 2개 미만이면 비교 결론을 `판정 불가`로 표시한다.

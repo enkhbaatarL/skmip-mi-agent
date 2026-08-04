@@ -315,6 +315,15 @@ def test_deterministic_checks_cover_structure_roles_lineage_and_pressure_bands()
     assert {result.status for result in results} == {"PASS"}
 
 
+def test_deterministic_checks_allow_missing_optional_mixed_role() -> None:
+    response = _response("v3")
+    response["data"]["table"]["rows"][1]["scenarioRole"] = None
+
+    results = {result.check_id: result for result in run_deterministic_checks("v3", response, [101, 202])}
+
+    assert results["M-04"].status == "PASS"
+
+
 def test_v2_pressure_coverage_accepts_server_derived_unrepresented_bands() -> None:
     response = _response("v2")
     response["data"]["generationDiagnostics"] = {

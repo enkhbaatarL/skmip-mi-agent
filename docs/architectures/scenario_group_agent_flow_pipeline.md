@@ -132,7 +132,7 @@ Template revision을 함께 준비한 뒤 cached LangGraph에 입력한다. Prom
   `(eventId, scenarioDimensionTemplateId, dimKey)` source identity
 - v3의 3~6개 합성 dimension, `(scenarioDimensionTemplateId, dimKey)` compact source,
   `sourceEventIds` 기반 Event/interaction coverage
-- 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 내부 `mixed` 1개 이상
+- 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 실제 상쇄 조합이 있을 때만 선택적 `mixed`
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
 
 v2 LLM schema에는 EventShock의 상세 impact path/generated value, Template checksum,
@@ -149,16 +149,24 @@ value별 source projection 보강을 실행하지 않는다. compact `sourceRefs
 `sourceEventIds`로 검증한다. 누락된 lineage를 서버가 보강하지 않고 전체 결과 재생성을
 요청한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
 
-다중 Event 생성 graph는 다음 LLM 단위로 구성한다.
+v2 다중 Event 생성 graph는 다음 LLM 단위로 구성한다.
 
 1. `analyze_event`: Event별 compact EventShock을 `Send` fan-out으로 병렬 생성한다.
 2. `generate_dimensions`: 검증된 모든 EventShock과 Template을 사용해 dimension만 설계한다.
 3. `generate_scenarios`: 검증된 dimension으로 그룹 메타데이터와 Scenario만 합성한다.
 4. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
 
-Event fan-out 중 일부가 실패하면 성공 결과는 state reducer에 유지하고 실패 Event만 다시
-`analyze_event`로 보낸다. dimension 또는 Scenario 검증 실패도 해당 LLM node만 재실행하며
-앞 단계 결과는 재생성하지 않는다. 각 LLM 단계는 최초 호출을 포함해 최대 3회 시도하고,
+v3는 반복 prompt 비용을 줄이기 위해 두 LLM 단계로 구성한다.
+
+1. `analyze_v3_events`: 모든 Event와 Template을 한 번에 분석해 EventShock, Event interaction,
+   합성 dimension을 함께 생성한다.
+2. `generate_scenarios`: 결정론적으로 검증된 Shock, interaction, dimension만 사용해 그룹
+   메타데이터와 Scenario를 합성한다.
+3. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
+
+v2 Event fan-out 중 일부가 실패하면 성공 결과는 state reducer에 유지하고 실패 Event만 다시
+`analyze_event`로 보낸다. v3 분석·dimension 또는 Scenario 검증 실패는 해당 LLM node만 재실행하며
+검증을 통과한 앞 단계 결과는 재생성하지 않는다. 각 LLM 단계는 최초 호출을 포함해 최대 3회 시도하고,
 재시도 전 1초·2초 backoff를 적용한다. structured/schema 검증 오류와 408, 429, 500,
 502, 503, 504, 529, timeout/connection 오류만 재시도한다. 그 밖의 오류는 즉시
 `fail_generation`으로 보낸다.

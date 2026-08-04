@@ -577,7 +577,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - Scenario 3~5개를 검사한다.
 - baseline 정확히 1개를 검사한다.
-- floor/ceiling 각각 1개와 mixed 최소 1개를 검사한다.
+- floor/ceiling 각각 1개를 검사하고, mixed가 있으면 비극단 band의 실제 상쇄 조합인지 검사한다.
 - Scenario 조합과 pressure band 중복을 검사한다.
 - probability 합계를 검사한다.
 - dimension 수와 Event lineage coverage를 검사한다.

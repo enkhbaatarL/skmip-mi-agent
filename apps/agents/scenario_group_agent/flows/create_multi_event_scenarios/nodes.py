@@ -20,9 +20,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V2FinalizedGenerationResult,
     V2MultiEventGenerationResult,
     V2ScenarioSynthesisResult,
+    V3AnalysisDesignResult,
     V3DimensionDefinition,
     V3DimensionDesignResult,
-    V3EventAnalysisResult,
     V3MultiEventGenerationResult,
     V3ScenarioSynthesisResult,
     finalize_generation_result,
@@ -34,9 +34,12 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state i
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
+    V3_ANALYSIS_SYSTEM_PROMPT,
+    V3_SCENARIO_SYSTEM_PROMPT,
     build_dimension_design_user_prompt,
     build_event_analysis_user_prompt,
     build_scenario_synthesis_user_prompt,
+    build_v3_analysis_design_user_prompt,
     multi_event_system_prompt,
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
@@ -73,8 +76,7 @@ def classify_llm_error(exc: BaseException) -> tuple[str, str, bool]:
 
     combined = " ".join(f"{item.__class__.__name__}: {item}".lower() for item in chain)
     has_validation_failure = any(isinstance(item, ValueError) for item in chain) or any(
-        marker in combined
-        for marker in ("validation error", "structured output", "invalid response")
+        marker in combined for marker in ("validation error", "structured output", "invalid response")
     )
     if has_validation_failure:
         return detail, ErrorCode.LLM_INVALID_RESPONSE_ERROR.name, True
@@ -158,6 +160,12 @@ def dispatch_event_analyses(state: MultiEventGenerationState) -> list[Send]:
     ]
 
 
+def dispatch_initial_analysis(state: MultiEventGenerationState) -> str | list[Send]:
+    if state.api_version == "v3":
+        return "analyze_v3_events"
+    return dispatch_event_analyses(state)
+
+
 def _latest_event_outcomes(
     outcomes: Iterable[EventAnalysisOutcome],
 ) -> dict[int, EventAnalysisOutcome]:
@@ -180,13 +188,11 @@ class AnalyzeEventNode(BaseNode):
         if task is None:
             raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="event analysis task is required")
         await _backoff(task.attempt)
-        schema = V2EventAnalysisResult if task.api_version == "v2" else V3EventAnalysisResult
         try:
             result = await invoke_stage_structured_output(
-                output_schema=schema,
+                output_schema=V2EventAnalysisResult,
                 system_prompt=(
-                    multi_event_system_prompt(task.api_version)
-                    + "\n현재 단계에서는 입력 Event 하나의 eventShock만 생성하십시오."
+                    multi_event_system_prompt("v2") + "\n현재 단계에서는 입력 Event 하나의 eventShock만 생성하십시오."
                 ),
                 user_prompt=build_event_analysis_user_prompt(
                     api_version=task.api_version,
@@ -216,6 +222,52 @@ class AnalyzeEventNode(BaseNode):
                 retryable=retryable,
             )
         return {"event_analysis_outcomes": [outcome]}
+
+
+class AnalyzeV3EventsNode(BaseNode):
+    async def run(
+        self,
+        state: MultiEventGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
+        attempt = state.dimension_attempt + 1
+        await _backoff(attempt)
+        try:
+            result = await invoke_stage_structured_output(
+                output_schema=V3AnalysisDesignResult,
+                system_prompt=V3_ANALYSIS_SYSTEM_PROMPT,
+                user_prompt=build_v3_analysis_design_user_prompt(
+                    events=[event.model_dump() for event in state.events],
+                    templates=[template.model_dump() for template in state.templates],
+                    validation_feedback=state.dimension_error,
+                ),
+                trace_context=runtime.context if runtime is not None else None,
+            )
+            return {
+                "event_shocks": result.event_shocks,
+                "dimension_attempt": attempt,
+                "dimension_draft": V3DimensionDesignResult(
+                    interactions=result.interactions,
+                    dimension_definitions=result.dimension_definitions,
+                ),
+                "dimension_definitions": [],
+                "interactions": [],
+                "dimension_error": None,
+                "dimension_error_code": None,
+                "dimension_retryable": False,
+            }
+        except Exception as exc:
+            detail, error_code, retryable = classify_llm_error(exc)
+            return {
+                "event_shocks": [],
+                "dimension_attempt": attempt,
+                "dimension_draft": None,
+                "dimension_definitions": [],
+                "interactions": [],
+                "dimension_error": detail,
+                "dimension_error_code": error_code,
+                "dimension_retryable": retryable,
+            }
 
 
 def validate_event_analyses(state: MultiEventGenerationState) -> dict[str, Any]:
@@ -261,8 +313,7 @@ def route_after_event_analyses(state: MultiEventGenerationState) -> str | list[S
         return "fail_generation"
     event_by_id = {int(event.mi_event_id): event for event in state.events}
     template_by_event_id = {
-        int(event.mi_event_id): template
-        for event, template in zip(state.events, state.templates, strict=True)
+        int(event.mi_event_id): template for event, template in zip(state.events, state.templates, strict=True)
     }
     return [
         Send(
@@ -289,12 +340,11 @@ class GenerateDimensionsNode(BaseNode):
     ) -> dict[str, Any]:
         attempt = state.dimension_attempt + 1
         await _backoff(attempt)
-        schema = V2DimensionDesignResult if state.api_version == "v2" else V3DimensionDesignResult
         try:
             draft = await invoke_stage_structured_output(
-                output_schema=schema,
+                output_schema=V2DimensionDesignResult,
                 system_prompt=(
-                    multi_event_system_prompt(state.api_version)
+                    multi_event_system_prompt("v2")
                     + "\n현재 단계에서는 검증된 EventShock을 사용해 dimension만 설계하십시오."
                 ),
                 user_prompt=build_dimension_design_user_prompt(
@@ -436,6 +486,43 @@ def _validate_v3_dimensions(
     return draft.dimension_definitions
 
 
+def validate_v3_analysis_design(state: MultiEventGenerationState) -> dict[str, Any]:
+    if state.dimension_draft is None:
+        return {}
+    try:
+        if not isinstance(state.dimension_draft, V3DimensionDesignResult):
+            raise ValueError("v3 analysis stage returned the wrong schema")
+        expected_event_ids = [int(event.mi_event_id) for event in state.events]
+        actual_event_ids = [int(shock.event_id) for shock in state.event_shocks]
+        if len(actual_event_ids) != len(set(actual_event_ids)):
+            raise ValueError("eventShocks contains duplicate eventId")
+        if set(actual_event_ids) != set(expected_event_ids):
+            raise ValueError(
+                "eventShocks must cover every input Event exactly once: "
+                f"expected={expected_event_ids}, actual={actual_event_ids}"
+            )
+        shock_by_event_id = {int(shock.event_id): shock for shock in state.event_shocks}
+        dimensions = _validate_v3_dimensions(state, state.dimension_draft)
+        return {
+            "event_shocks": [shock_by_event_id[event_id] for event_id in expected_event_ids],
+            "dimension_definitions": dimensions,
+            "interactions": state.dimension_draft.interactions,
+            "dimension_error": None,
+            "dimension_error_code": None,
+            "dimension_retryable": False,
+        }
+    except Exception as exc:
+        detail, error_code, retryable = classify_llm_error(exc)
+        return {
+            "event_shocks": [],
+            "dimension_definitions": [],
+            "interactions": [],
+            "dimension_error": detail,
+            "dimension_error_code": error_code,
+            "dimension_retryable": retryable,
+        }
+
+
 def validate_dimensions(state: MultiEventGenerationState) -> dict[str, Any]:
     if state.dimension_draft is None:
         return {}
@@ -474,7 +561,7 @@ def route_after_dimensions(state: MultiEventGenerationState) -> str:
     if state.dimension_definitions and state.dimension_error is None:
         return "generate_scenarios"
     if state.dimension_retryable and state.dimension_attempt < MAX_STAGE_ATTEMPTS:
-        return "generate_dimensions"
+        return "analyze_v3_events" if state.api_version == "v3" else "generate_dimensions"
     return "fail_generation"
 
 
@@ -491,7 +578,9 @@ class GenerateScenariosNode(BaseNode):
             draft = await invoke_stage_structured_output(
                 output_schema=schema,
                 system_prompt=(
-                    multi_event_system_prompt(state.api_version)
+                    V3_SCENARIO_SYSTEM_PROMPT
+                    if state.api_version == "v3"
+                    else multi_event_system_prompt(state.api_version)
                     + "\n현재 단계에서는 검증된 dimension을 변경하지 말고 Scenario와 그룹 메타데이터만 생성하십시오."
                 ),
                 user_prompt=build_scenario_synthesis_user_prompt(
@@ -624,13 +713,9 @@ def fail_generation(state: MultiEventGenerationState) -> dict[str, Any]:
         detail = state.terminal_error
         error_code = error_code_from_name(state.terminal_error_code)
     elif state.dimension_error:
-        detail = (
-            f"stage=dimension_design, attempts={state.dimension_attempt}, error={state.dimension_error}"
-        )
+        detail = f"stage=dimension_design, attempts={state.dimension_attempt}, error={state.dimension_error}"
         error_code = error_code_from_name(state.dimension_error_code)
     else:
-        detail = (
-            f"stage=scenario_synthesis, attempts={state.scenario_attempt}, error={state.scenario_error}"
-        )
+        detail = f"stage=scenario_synthesis, attempts={state.scenario_attempt}, error={state.scenario_error}"
         error_code = error_code_from_name(state.scenario_error_code)
     raise MIBaseError(error_code, detail=detail)

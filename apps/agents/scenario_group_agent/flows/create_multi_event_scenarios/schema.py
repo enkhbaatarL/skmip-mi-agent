@@ -594,12 +594,14 @@ class V3MultiEventGenerationResult(MultiEventGenerationResult):
         return normalized
 
 
-class V3EventAnalysisResult(ApiModel):
-    """Per-Event v3 LLM response used by the LangGraph fan-out stage."""
+class V3AnalysisDesignResult(ApiModel):
+    """v3 cross-Event analysis and composite-dimension response."""
 
     model_config = ConfigDict(extra="forbid")
 
-    event_shock: V3EventShock
+    event_shocks: list[V3EventShock] = Field(min_length=2, max_length=5)
+    interactions: list[EventInteraction] = Field(default_factory=list)
+    dimension_definitions: list[V3DimensionDefinition] = Field(min_length=3, max_length=6)
 
 
 class V3DimensionDesignResult(ApiModel):
@@ -1448,18 +1450,20 @@ def _finalize_scenario_candidates(
         range(len(sorted_scenarios)),
         key=lambda index: PRESSURE_RANK[sorted_scenarios[index].global_pressure_band],
     )
-    if len(ranked) < 3:
-        raise ValueError("floor, ceiling and mixed roles require three scenarios")
+    if len(ranked) < 2:
+        raise ValueError("floor and ceiling roles require at least two scenarios")
     floor_index = ranked[0]
     ceiling_index = ranked[-1]
     interior = [index for index in ranked[1:-1] if sorted_scenarios[index].mixed_factors]
-    if not interior:
-        raise ValueError("at least one interior scenario must combine bullish and bearish factors")
-    mixed_index = min(
-        interior,
-        key=lambda index: abs(
-            PRESSURE_RANK[sorted_scenarios[index].global_pressure_band] - PRESSURE_RANK["balanced"],
-        ),
+    mixed_index = (
+        min(
+            interior,
+            key=lambda index: abs(
+                PRESSURE_RANK[sorted_scenarios[index].global_pressure_band] - PRESSURE_RANK["balanced"],
+            ),
+        )
+        if interior
+        else None
     )
     baseline_index = max(
         range(len(sorted_scenarios)),
@@ -1472,7 +1476,7 @@ def _finalize_scenario_candidates(
             role = "floor"
         elif index == ceiling_index:
             role = "ceiling"
-        elif index == mixed_index:
+        elif mixed_index is not None and index == mixed_index:
             role = "mixed"
         else:
             role = None
