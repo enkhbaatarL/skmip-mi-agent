@@ -1,6 +1,6 @@
 ---
 name: scenario-sync-pipeline
-description: MI Scenario Group Agent API 파이프라인을 실행하고 증적과 보고서를 생성한다. 사용자가 v1·기존·단일 이벤트 create→validation→signpost→confirmation 테스트, eventTypeL2Id별 또는 최근 이벤트 sync 테스트, v2/v3/v4 비교, multi-event·멀티 이벤트·멀티 시나리오 테스트, 이벤트 ID·최신/오래된 순·키워드 기반 이벤트 선택, 버전별 Scenario 품질 비교를 요청할 때 사용한다.
+description: MI Scenario Group Agent API 파이프라인을 실행하고 증적과 보고서를 생성한다. 사용자가 v1·기존·단일 이벤트 create→validation→signpost→confirmation 테스트, eventTypeL2Id별 또는 최근 이벤트 sync 테스트, v2/v3/v4 비교, multi-event·멀티 이벤트·멀티 시나리오 테스트, 이벤트 ID·최신/오래된 순·키워드 기반 이벤트 선택, 버전별 Scenario 품질 비교, comparison_report.md 생성·형식 수정을 요청할 때 사용한다.
 ---
 
 # Scenario Sync Pipeline
@@ -206,7 +206,7 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 
 명령이 출력한 `comparison_judge_input.json`을 직접 읽고 그 안의 `constraints`, `criteria`, `outputSchema`, `evidence`만 근거로 평가한다. 현재 skill을 실행 중인 모델이 모든 성공 version과 Scenario를 직접 판정하고, `outputSchema`에 맞는 JSON을 manifest의 `artifacts.judge` 경로인 `comparison_judge.json`에 작성한다. 의미 판정을 Python 규칙으로 대체하거나 별도 모델에 위임하지 않는다.
 
-Judge JSON을 작성한 뒤 같은 보고 명령을 다시 실행해 schema, version·criterion·Scenario 집합, 평균 최고 version을 검증하고 최종 Markdown을 만든다.
+Judge JSON을 작성한 뒤 같은 보고 명령을 다시 실행해 schema, version·criterion·Scenario 집합, 평균 최고 version을 검증하고 최종 Markdown을 만든다. (markdown 파일은 markdown 문법에 충실)
 
 ```bash
 python tests/manual/test_multi_event_scenario_versions.py report \
@@ -237,6 +237,49 @@ Agent Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario�
 
 `false`일 때도 이벤트와 실행 결과, Scenario Group, dimension, Scenario 실제 값, API rationale를 version별로 비교한다.
 
+### `comparison_report.md` 고정 형식
+
+보고서 생성기는 `tests/manual/multi_event_comparison/report.py`, 회귀 테스트는
+`tests/automated/test_multi_event_scenario_comparison.py`를 사용한다. 성공한 각
+version의 Scenario 비교에는 다음을 반드시 포함한다.
+
+- Scenario Group의 제목, 요약, 설명을 구분해 표시한다.
+- 기존 `Dimension | 설명 | Event lineage | Values` 표 다음에 `시나리오별 Dimension Value` 표를 만든다.
+- `시나리오별 Dimension Value` 열 순서는 반드시 `Scenario ID · 레이블 | scenario_role | pressure_band | <Dimension labels...>`로 유지한다.
+- `scenario_role`은 row의 `scenarioRole` 또는 `scenario_role` 값을 사용한다. `pressure_band`는 `globalPressureBand` 또는 `global_pressure_band` 값을 사용한다. 필드가 없거나 값이 `null`이면 `-`로 표시한다.
+- Scenario 표의 dimension 헤더와 cell 값에는 내부 `dimensionId`/`valueId` 대신 `dimensionDefinitions[].label`과 `values[].label`을 사용한다. 같은 dimension label이 중복되면 `Event <lineage>`를 붙여 구분한다.
+- 각 Scenario 아래에 `Dimension | Dimension 선택 근거 | 선택 Value | Value 선택 근거` 표를 만든다. Scenario의 narrative와 `globalPressureRationale`도 조합/가격 판단 근거로 함께 표시한다.
+- version별 실제 응답 필드 차이를 보존한다. Dimension 근거는 `selectionRationale`, `rationale`, `sourceRefs[].rationale` 순으로 사용하고, Value 근거는 선택된 value의 `sourceAssignments[].rationale`, `globalPressureContribution` 순으로 사용한다. 응답에 근거가 없으면 없다고 명시하며 추정하거나 새 근거를 만들지 않는다.
+- pressure band별 기존 `Cells` 열도 같은 label 변환을 적용해 내부 ID가 사용자용 비교 값으로 노출되지 않게 한다.
+
+결정적 품질검사에 FAIL이 있으면 검사 표 바로 아래에 `FAIL 항목 상세 설명`을
+추가한다. FAIL마다 다음 네 항목을 반드시 포함한다.
+
+- 검사 목적: M-01~M-08이 무엇을 검사하는지 사용자 언어로 설명한다.
+- 확인된 실제 문제: `detail`과 `offenders`를 풀어 쓰고 원문만 반복하지 않는다.
+- 영향: Scenario 비교나 운영 해석에 어떤 문제가 생기는지 설명한다.
+- 수정 방향: 수정할 payload/lineage/role/rationale 방향을 구체적으로 안내한다.
+
+M-06 FAIL의 offender가 Event ID이면 해당 Event가 어떤 Dimension의
+`sourceEventIds`, `sourceRefs`, `sourceAssignments`에도 연결되지 않아 그 Event의
+driver가 Scenario cell 조합에 직접 반영되지 않았다는 의미를 명시한다.
+
+보고서 형식을 수정한 뒤 다음을 검증한다.
+
+```bash
+./.venv/bin/pytest tests/automated/test_multi_event_scenario_comparison.py -q
+./.venv/bin/ruff check \
+  tests/manual/multi_event_comparison/report.py \
+  tests/automated/test_multi_event_scenario_comparison.py
+./.venv/bin/ruff format --check \
+  tests/manual/multi_event_comparison/report.py \
+  tests/automated/test_multi_event_scenario_comparison.py
+```
+
+기존 batch 보고서만 갱신할 때는 `run-version`을 다시 호출하지 않는다. 기존
+`manifest.json`, API response artifact, Judge JSON을 재사용해 `report`만 실행하고,
+생성된 Markdown에서 고정 열과 FAIL 상세 설명을 직접 확인한다.
+
 ### 결과물
 
 `local/output/multi_event_scenario_comparison/<batch_id>/`에서 다음을 확인한다.
@@ -251,4 +294,4 @@ Agent Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario�
 - `comparison_judge.json` (`quality-check=true`일 때만)
 - `comparison_report.md`
 
-보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group/dimension 비교, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 Agent Judge 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다.
+보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group 제목·요약·설명, dimension 비교, label 기반 Scenario×dimension value 표, Scenario별 dimension/value 선택 근거, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 Agent Judge 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다.

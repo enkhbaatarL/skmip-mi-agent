@@ -24,17 +24,32 @@ PRESSURE_BANDS = [
 ]
 
 
-def _dimension(index: int) -> dict[str, Any]:
-    return {
+def _dimension(index: int, version: str) -> dict[str, Any]:
+    dimension = {
         "dimensionId": f"d{index}",
         "label": f"Dimension {index}",
         "description": "LNG price driver",
         "sourceEventIds": [101, 202],
         "values": [
-            {"valueId": "high", "label": "High"},
-            {"valueId": "low", "label": "Low"},
+            {
+                "valueId": "high",
+                "label": "High",
+                "globalPressureContribution": "bullish contribution",
+                "sourceAssignments": [{"rationale": "Event fact supports High."}] if version == "v2" else [],
+            },
+            {
+                "valueId": "low",
+                "label": "Low",
+                "globalPressureContribution": "bearish contribution",
+                "sourceAssignments": [{"rationale": "Event fact supports Low."}] if version == "v2" else [],
+            },
         ],
     }
+    if version == "v3":
+        dimension["rationale"] = "v3 dimension rationale"
+    else:
+        dimension["selectionRationale"] = f"{version} dimension selection rationale"
+    return dimension
 
 
 def _response(version: str = "v2") -> dict[str, Any]:
@@ -84,10 +99,12 @@ def _response(version: str = "v2") -> dict[str, Any]:
             "scenarioGroup": {
                 "scenarioGroupId": {"v2": 20, "v3": 30, "v4": 40}[version],
                 "title": f"{version} group",
+                "summary": f"{version} group summary",
+                "description": f"{version} group description",
                 "scenarioCount": 3,
             },
             "events": [{"miEventId": 101}, {"miEventId": 202}],
-            "dimensionDefinitions": [_dimension(index) for index in range(dimension_count)],
+            "dimensionDefinitions": [_dimension(index, version) for index in range(dimension_count)],
             "table": {
                 "headers": [{"key": "d0", "label": "D0"}, {"key": "d1", "label": "D1"}],
                 "rows": rows,
@@ -350,6 +367,31 @@ def test_deterministic_checks_reject_wrong_extrema_and_missing_lineage() -> None
     assert results["M-06"].offenders == ["202"]
 
 
+def test_report_explains_failed_deterministic_check_in_plain_language(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    response = _response("v2")
+    for dimension in response["data"]["dimensionDefinitions"]:
+        dimension["sourceEventIds"] = [101]
+    artifacts = {
+        "v2": {
+            "transportStatus": "success",
+            "httpStatus": 200,
+            "elapsedMs": 123,
+            "response": response,
+        },
+    }
+    checks = {"v2": run_deterministic_checks("v2", response, [101, 202])}
+
+    report = render_report(manifest, artifacts, checks, None, quality_check=True)
+
+    assert "### FAIL 항목 상세 설명" in report
+    assert "#### v2 · M-06 — 전체 Event의 Dimension lineage 포함 여부" in report
+    assert "선택된 모든 Event가 적어도 하나의 Dimension 또는 Value source에 연결됐는지" in report
+    assert "Event `202`이 어떤 Dimension lineage에도 포함되지 않았습니다" in report
+    assert "multi-event 시나리오가 입력 전체를 대표하지 못합니다" in report
+    assert "sourceEventIds/sourceRefs/sourceAssignments" in report
+
+
 def test_report_without_quality_keeps_actual_values_and_omits_ranking(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     artifacts = {
@@ -367,8 +409,41 @@ def test_report_without_quality_keeps_actual_values_and_omits_ranking(tmp_path: 
 
     assert "Ceiling" in report
     assert "Tight supply raises price pressure." in report
+    assert "#### Scenario Group 설명" in report
+    assert "v2 group description" in report
+    assert "#### 시나리오별 Dimension Value" in report
+    assert "| Scenario ID · 레이블 | scenario_role | pressure_band | Dimension 0 | Dimension 1 |" in report
+    assert "| 1 · Ceiling | ceiling | strong_bullish | High | High |" in report
+    assert "| 2 · Mixed | mixed | balanced | High | Low |" in report
+    assert "| 3 · Floor | floor | strong_bearish | Low | Low |" in report
+    assert "#### 시나리오별 Dimension/Value 선택 근거" in report
+    assert "v2 dimension selection rationale" in report
+    assert "Event fact supports High." in report
+    assert "Dimension 0 = High; Dimension 1 = High" in report
+    assert '"d0": "high"' not in report
     assert "품질검사를 제외" in report
     assert "우수 버전:" not in report
+
+
+def test_report_uses_each_versions_available_dimension_and_value_rationale(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    artifacts = {
+        version: {
+            "transportStatus": "success",
+            "httpStatus": 200,
+            "elapsedMs": 123,
+            "response": _response(version),
+        }
+        for version in ("v2", "v3", "v4")
+    }
+
+    report = render_report(manifest, artifacts, {}, None, quality_check=False)
+
+    assert "v2 dimension selection rationale" in report
+    assert "v3 dimension rationale" in report
+    assert "v4 dimension selection rationale" in report
+    assert "Event fact supports High." in report
+    assert "가격 압력 기여: bullish contribution" in report
 
 
 def test_version_claim_is_exclusive(tmp_path: Path) -> None:

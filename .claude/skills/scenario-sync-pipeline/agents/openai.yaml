@@ -1,4 +1,4 @@
 interface:
   display_name: "Scenario Sync Pipeline"
-  short_description: "Run v1 sync or compare multi-event v2/v3/v4."
-  default_prompt: "Use $scenario-sync-pipeline to run the requested v1 sync or multi-event v2/v3/v4 comparison and report the evidence."
+  short_description: "Run scenario sync comparisons and format reports."
+  default_prompt: "Use $scenario-sync-pipeline to run or update a scenario comparison and produce the required evidence-rich report format."
