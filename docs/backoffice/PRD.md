@@ -21,6 +21,8 @@ Scenario Comparison Backoffice는 Scenario Group Agent의 sync API를 브라우�
 - 동일한 입력 조건으로 v2/v3/v4의 다중 이벤트 시나리오 생성 결과를 비교한다.
 - 요청 body, 원본 응답, 수행 시간, token usage, 성공/실패 판정을 보존한다.
 - 버전별 생성 전략과 결과 차이를 domain reviewer가 이해할 수 있게 시각화한다.
+- 내부 Dimension/Value ID를 사용자용 label과 실제 생성 근거로 변환해 Scenario 구성을 설명한다.
+- 성공한 v2/v3/v4 결과를 의미 품질 기준으로 평가하고 우수 version과 선정 이유를 제시한다.
 - callback 설정이나 별도 Backoffice 서버 없이 정적 frontend만으로 실행한다.
 - 테스트 결과를 JSON으로 내보내 재현과 후속 분석에 사용할 수 있게 한다.
 
@@ -32,7 +34,7 @@ Scenario Comparison Backoffice는 Scenario Group Agent의 sync API를 브라우�
 - v2/v3/v4 비교에서 validation, signpost, confirmation을 실행하지 않는다.
 - v1 흐름과 v2/v3/v4 비교 흐름을 하나의 실행으로 섞지 않는다.
 - 운영자용 Scenario Group 관리, 권한 관리, 사용자 관리 화면을 만들지 않는다.
-- 브라우저에서 LLM API key를 보관하거나 LLM Judge를 직접 실행하지 않는다.
+- 브라우저에서 LLM API key를 보관하거나 외부 LLM API를 직접 호출하지 않는다. 의미 품질 평가는 Scenario Group Agent API가 수행한다.
 - 본 제품을 운영 사용자용 관리 콘솔로 사용하지 않는다.
 
 ## 4. 사용자
@@ -65,7 +67,8 @@ Scenario Group Agent
   ├─ GET /events
   ├─ GET /events/{miEventId}
   ├─ v1 sync workflow APIs
-  └─ /v2, /v3, /v4 scenario-groups/sync
+  ├─ /v2, /v3, /v4 scenario-groups/sync
+  └─ POST /scenario-group-comparisons/judge/sync
 ```
 
 - frontend는 사용자가 입력한 `Agent Base URL`로 직접 요청한다.
@@ -304,7 +307,7 @@ Scenario table에는 최소 다음을 표시한다.
 
 ### 9.1 범위
 
-v2/v3/v4 비교는 create sync API만 실행한다.
+v2/v3/v4 Scenario lifecycle은 create sync API까지만 실행한다. create가 끝난 뒤 사용자가 요청하면 별도의 읽기 전용 의미 품질 평가 API를 실행할 수 있다.
 
 - validation 실행 안 함
 - signpost 실행 안 함
@@ -368,6 +371,26 @@ POST /v4/scenario-groups/sync
 }
 ```
 
+의미 품질 평가:
+
+```http
+POST /scenario-group-comparisons/judge/sync
+```
+
+```json
+{
+  "comparisonRunId": "multi-event-unique-id",
+  "userId": 10001,
+  "versions": [
+    { "apiVersion": "v2", "scenarioGroupId": 345 },
+    { "apiVersion": "v3", "scenarioGroupId": 346 },
+    { "apiVersion": "v4", "scenarioGroupId": 347 }
+  ]
+}
+```
+
+품질 평가는 create 완료 후 사용자가 명시적으로 실행한다. 성공 version이 2개 이상일 때만 요청하며, 실패한 version은 요청에서 제외한다. 서버는 group 소유자, `apiVersion`, `comparisonRunId`, Event lineage를 다시 검증한다.
+
 ### 9.4 실행 순서와 재시도 정책
 
 1. 입력 manifest를 고정한다.
@@ -375,6 +398,7 @@ POST /v4/scenario-groups/sync
 3. v2와 v3가 모두 성공, 실패 또는 불명 상태로 종료될 때까지 기다린다.
 4. v4를 실행한다.
 5. 완료된 응답을 비교 화면에 반영한다.
+6. 사용자가 원하면 `품질 평가 실행`으로 성공 version 2~3개를 평가한다.
 
 v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생성되면 같은 `comparisonRunId`의 lineage 검증과 충돌할 수 있다.
 
@@ -384,6 +408,7 @@ v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생�
 - timeout은 실패가 아니라 `결과 불명`으로 표시한다.
 - timeout 후 재호출 버튼은 비활성화하고 새 comparison 실행 생성을 안내한다.
 - 한 버전이 실패해도 나머지 결과는 보존하고 가능한 비교를 계속한다.
+- 품질 평가는 Scenario Group을 생성하거나 수정하지 않으므로 실패 후 평가 요청만 명시적으로 재실행할 수 있다.
 
 ### 9.5 버전 의미
 
@@ -450,14 +475,28 @@ pressure나 Scenario role로 사용하지 않는다.
 - elapsed time
 - token usage
 
+#### Scenario Group 설명
+
+각 version별로 다음을 구분해 표시한다.
+
+- 생성 전략
+- Scenario Group 제목
+- Scenario Group 요약
+- Scenario Group 설명
+- Dimension 수와 Scenario 수
+
 #### Dimension 비교
 
-- version별 dimension key, label, value 목록
+- version별 사용자용 dimension label, 설명, value label 목록
 - source Event와 source dimension lineage
+- Dimension 선택 근거
+- Value별 global pressure contribution과 실제 제공된 선택 근거
 - v2 namespace
 - v3 composite source 관계
-- v4 lever reference, supported/unsupported 상태
+- v4 Event grounding, lever reference, supported/unsupported 상태
 - covered/uncovered dimension
+
+내부 `dimensionId`와 `valueId`는 사용자용 비교값으로 직접 노출하지 않는다. 동일 label이 중복되면 Event lineage를 붙여 구분한다. version 응답에 근거가 없으면 추정하지 않고 `제공된 근거 없음`으로 표시한다.
 
 #### Scenario 비교
 
@@ -468,7 +507,8 @@ pressure band 또는 Scenario role을 기준으로 version별 Scenario를 나란
 - baseline
 - title
 - narrative
-- dimension cells
+- 사용자용 Dimension/Value 조합
+- Dimension 선택 근거와 선택 Value 근거
 - role
 - pressure band
 - pressure rationale
@@ -476,6 +516,8 @@ pressure band 또는 Scenario role을 기준으로 version별 Scenario를 나란
 - source Event coverage
 
 특정 version에 대응 Scenario가 없으면 빈 상태와 제외 사유를 표시한다.
+
+기본 비교 화면은 사람이 읽기 쉬운 presentation view를 사용한다. API request/response 원본은 별도 Raw 탭과 Evidence Drawer에 의미 변환 없이 보존하며, 인증정보 등 secret만 기존 정책대로 redaction한다.
 
 #### Generation Diagnostics
 
@@ -490,21 +532,36 @@ pressure band 또는 Scenario role을 기준으로 version별 Scenario를 나란
 
 ### 9.8 결정적 품질 검사
 
-frontend는 실제 Event와 API 응답만 사용해 다음 결정적 검사를 제공한다.
+frontend는 실제 Event와 API 응답만 사용해 `comparison_report.md`의 의미와 맞춘 M-01~M-08 결정적 검사를 제공한다.
 
-- Event 사실과 Scenario/dimension의 명백한 식별자·lineage 불일치
-- Scenario 3~5개
-- baseline 정확히 1개
-- floor와 ceiling 각각 1개
-- mixed는 실제 상승·하락 상쇄 조합이 있을 때만 선택적으로 지정
-- Scenario 조합과 pressure band 중복 없음
-- probability 합계
-- 버전별 dimension 수 범위
-- 전체 입력 Event lineage coverage
+- M-01: Scenario 3~5개
+- M-02: baseline 정확히 1개
+- M-03: Scenario 조합과 pressure band가 존재하고 중복되지 않음
+- M-04: floor와 ceiling 각각 1개, role과 극단 band 정합성, optional mixed 정합성
+- M-05: v2/v3/v4 Dimension 각각 3~6개
+- M-06: 전체 입력 Event lineage coverage
+- M-07: 모든 Scenario의 global pressure rationale 존재
+- M-08: 생성 또는 명시적 제외 사유로 target pressure band 전체 설명
+
+`mixed`는 optional이며 없다는 이유로 실패나 감점을 주지 않는다. mixed가 있으면 비극단 pressure band에서 상승·하락 contribution이 실제로 함께 선택됐고 상쇄 근거가 제공됐는지 검사한다. 의미 판단이 필요한 경우 결정적 검사는 추측하지 않고 WARN으로 표시한다.
 
 검사 결과는 PASS/WARN/FAIL과 근거 필드로 표시한다.
 
-이 검사는 `scenario-sync-pipeline`의 LLM Judge를 대체하지 않는다. 의미적 타당성 평가와 우수 version 선정이 필요하면 별도의 수동 pipeline 실행 결과를 사용한다. frontend MVP는 LLM 점수나 우수 version을 임의로 생성하지 않는다.
+결정적 검사는 의미적 타당성을 추측하거나 우수 version을 선정하지 않는다. 의미 평가는 다음 Agent 품질 평가 결과와 별도로 표시한다.
+
+### 9.9 의미 품질 평가와 우수 version
+
+사용자가 `품질 평가 실행`을 누르면 Scenario Group Agent가 선택 Event와 저장된 Scenario Group 증적만 사용해 다음을 평가한다.
+
+- Event 사실 정합성
+- LNG Dimension 품질
+- floor/ceiling 품질
+- mixed/상쇄 조합 품질
+- 모든 Scenario별 품질
+
+각 적용 가능 기준은 1~5점과 PASS/WARN/FAIL, 근거, 판단 이유를 가진다. `mixed`가 없는 version의 `mixed_quality`는 `N/A`, `score=null`이며 평균 계산에서 제외한다. mixed가 있으면 실제 상·하방 Value 조합과 상쇄 rationale이 있어야 한다.
+
+서버는 적용 가능한 기준의 단순 평균을 계산하고 최고 version을 `bestVersions`로 반환한다. 동점은 공동 우수로 표시한다. 성공 version이 2개 미만이면 평가 버튼을 비활성화하고 `판정 불가`를 표시한다. 평가 실패는 create 결과를 변경하지 않으며 평가만 다시 실행할 수 있다.
 
 ## 10. 결과 저장과 내보내기
 
@@ -530,6 +587,7 @@ frontend는 실제 Event와 API 응답만 사용해 다음 결정적 검사를 �
 - version별 transport/API 상태
 - elapsed time과 token usage
 - 결정적 검사 결과
+- 의미 품질 평가 request/response, 기준별 판정, 평균 점수, `bestVersions`
 
 내보낸 파일에는 인증 token이나 secret을 포함하지 않는다.
 
@@ -582,6 +640,7 @@ backoffice/frontend/src/
     agentClient.ts
     v1Pipeline.ts
     multiEventComparison.ts
+    comparisonQualityJudge.ts
   features/
     runtime/
     event-selector/
@@ -592,6 +651,7 @@ backoffice/frontend/src/
     apiTypes.ts
     judgments.ts
     deterministicChecks.ts
+    comparisonPresentation.ts
     exportBundle.ts
 ```
 
@@ -631,6 +691,10 @@ backoffice/frontend/src/
 - timeout은 unknown으로 표시되고 자동 재시도되지 않는다.
 - 한 version이 실패해도 다른 결과를 확인하고 export할 수 있다.
 - dimension, Scenario, pressure, lineage, diagnostics, latency, token usage를 비교할 수 있다.
+- Scenario Group 제목·요약·설명과 Dimension/Value 선택 근거를 사용자용 label로 확인할 수 있다.
+- Raw 원본은 사용자용 비교 화면과 분리되어 보존된다.
+- 성공 version이 2개 이상이면 사용자가 의미 품질 평가를 실행하고 우수 version과 선정 이유를 확인할 수 있다.
+- mixed 미생성은 감점하지 않고, mixed가 있을 때만 실제 상쇄 조합과 근거를 평가한다.
 - 성공 version이 2개 미만이면 비교 결론이 `판정 불가`로 표시된다.
 
 ### 14.4 보안과 실행 환경
@@ -652,13 +716,15 @@ backoffice/frontend/src/
   - v2/v3 완료 barrier 뒤 v4를 실행한다.
 - 브라우저 저장소의 결과가 커짐
   - 최근 실행 수와 저장 용량을 제한하고 JSON export 후 삭제 기능을 제공한다.
-- 결정적 검사만으로 의미적 품질을 판단하기 어려움
-  - 의미 평가가 필요한 경우 `tests/manual/test_multi_event_scenario_versions.py` 보고서를 별도로 생성한다.
+- 의미 품질 평가가 추가 시간과 token을 사용함
+  - create 완료 후 자동 실행하지 않고 사용자가 명시적으로 실행한다.
+- 품질 평가 실패 또는 timeout
+  - create 결과를 유지하고 평가 상태만 error/unknown으로 표시하며 명시적 재평가를 허용한다.
 
 ## 16. 향후 확장
 
-- 수동 pipeline의 `comparison_report.md`와 `comparison_judge.json` import
+- 수동 pipeline의 `comparison_report.md`와 Agent 평가 결과 교차 검증
 - 과거 comparison bundle 불러오기 및 재비교
 - 여러 comparison 결과의 latency/token 추세
 - screenshot 또는 PDF 비교 보고서 export
-- Agent가 제공하는 경우 server-side comparison report API 연동
+- 과거 품질 평가 결과의 추세와 version별 개선 추적

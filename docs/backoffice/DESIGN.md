@@ -15,11 +15,12 @@ Backoffice는 Scenario Group Agent의 sync API를 직접 호출하는 내부 QA�
 
 - 두 workflow를 섞지 않는다.
   - v1은 unversioned create부터 confirmation까지 순차 실행한다.
-  - v2/v3/v4는 create sync API 결과만 비교한다.
+  - v2/v3/v4는 create sync API 결과를 비교하고, 사용자가 요청한 경우에만 별도 의미 품질 평가를 실행한다.
 - 화면은 결과보다 실행 조건을 먼저 보여준다.
   - Event, userId, Base URL, comparisonRunId를 항상 확인할 수 있어야 한다.
-- API 응답을 과도하게 가공하지 않는다.
-  - 읽기 쉬운 비교 view와 원본 JSON을 함께 제공한다.
+- 기본 화면은 API 응답을 사용자용 presentation view로 변환한다.
+  - 내부 Dimension/Value ID 대신 label, 설명, lineage, 실제 근거를 표시한다.
+  - 원본 request/response는 secret redaction 외 의미 변환 없이 Raw 탭과 Evidence Drawer에 별도 증적으로 보존한다.
 - 중복 생성보다 안전한 중단을 우선한다.
   - create POST는 자동 재시도하지 않는다.
   - timeout과 취소는 `unknown`으로 보존한다.
@@ -416,6 +417,7 @@ POST /scenario-groups/{scenarioGroupId}/confirmation
 1. 비교 조건
 2. 실행
 3. 비교 결과
+4. 선택적 품질 평가
 ```
 
 ### 7.2 비교 조건
@@ -488,6 +490,8 @@ v3 ─┘
 
 성공 version이 2개 미만이면 상단에 `비교 판정 불가` callout을 표시하되 성공한 결과의 개별 view는 제공한다.
 
+`Raw`는 기본 해석 화면이 아니다. Group, Dimension, Scenario 탭이 사용자용 label과 근거를 제공하고, Raw는 원본 확인·복사·디버깅이 필요할 때만 사용한다.
+
 ### 7.6 Overview
 
 버전별 비교 table:
@@ -507,12 +511,15 @@ v3 ─┘
 - elapsed time
 - token usage
 - 결정적 검사 결과
+- 의미 품질 평가 상태
 
 열은 v2, v3, v4 순서를 고정한다.
 
 v2/v3/v4 모두 `Global LNG pressure` label을 사용한다. v4의
 `relatedMarkets`는 기본 표 열이나 pressure 태그가 아니라 Scenario 상세의
 보조정보로만 표시한다.
+
+Overview 상단에는 version별 Scenario Group 제목·요약·설명을 분리해 보여준다. ID와 count만으로 그룹 의미를 대신하지 않는다.
 
 ### 7.7 Dimensions
 
@@ -523,13 +530,14 @@ v2/v3/v4 모두 `Global LNG pressure` label을 사용한다. v4의
 
 dimension row:
 
-- key
 - label
 - description
 - values
 - source Event
 - source dimension
 - lineage type
+- Dimension 선택 근거
+- Value별 label, global pressure contribution, 선택/가정 근거
 - lever references
 - supported/unsupported
 - covered/uncovered
@@ -538,7 +546,9 @@ version별 차이:
 
 - v2: `e{eventId}__{dimKey}` namespace를 강조한다.
 - v3: composite dimension과 다중 source 관계를 표시한다.
-- v4: model lever, parameter binding, unsupported reason을 표시한다.
+- v4: Event grounding, model lever, parameter binding, unsupported reason을 표시한다.
+
+`dimensionId`와 `valueId`는 adapter의 lookup key로만 사용하고 기본 UI에는 사용자용 label을 표시한다. 같은 label이 둘 이상이면 `Event <lineage>`를 붙인다. 실제 응답에 근거가 없으면 `제공된 근거 없음`으로 표시하며 UI가 새 근거를 만들지 않는다.
 
 ### 7.8 Scenarios
 
@@ -563,11 +573,14 @@ Scenario card:
 - role
 - title
 - narrative
-- dimension cells
+- label 기반 Dimension/Value 조합
+- Dimension 선택 근거
+- 선택 Value의 실제 근거
 - pressure band
 - pressure rationale
 - probability
 - Event coverage
+- 의미 품질 평가가 완료된 경우 Scenario별 verdict와 판단 근거
 
 대응 Scenario가 없으면 `생성되지 않음`과 excluded reason을 표시한다.
 
@@ -595,24 +608,47 @@ v4:
 
 version card 및 Overview에 PASS/WARN/FAIL을 표시한다.
 
-검사항목:
+검사항목은 M-01~M-08로 고정한다.
 
-- Event lineage 일치
-- Scenario 3~5개
-- baseline 정확히 1개
-- floor/ceiling 각각 1개
-- mixed는 실제 상승·하락 상쇄 조합이 있을 때만 선택적으로 지정
-- Scenario 조합 중복 없음
-- pressure band 중복 없음
-- probability 합계
-- dimension 수
-  - v2 3~6개
-  - v3 3~6개
-  - v4 3~6개
-- v2는 전체 Event를 공동 문맥에 유지하되 dimension coverage를 강제하지 않음
-- v3·v4는 전체 Event의 dimension lineage coverage 확인
+- M-01: Scenario 3~5개
+- M-02: baseline 정확히 1개
+- M-03: Scenario 조합과 pressure band 존재·고유성
+- M-04: floor/ceiling 각각 1개, role과 극단 band 정합성, optional mixed 정합성
+- M-05: v2/v3/v4 Dimension 각각 3~6개
+- M-06: 전체 입력 Event lineage coverage
+- M-07: Scenario별 global pressure rationale 존재
+- M-08: 생성·제외 결과가 target pressure band 전체를 설명
 
-이 검사는 의미적 LLM Judge가 아니다. 화면은 점수, 우수 version, 의미적 타당성을 추측하지 않는다.
+mixed가 없으면 M-04에서 실패시키지 않는다. mixed가 있으면 비극단 band인지, 선택 Value에 상승·하락 contribution이 함께 존재하는지, `globalPressureRationale`이 상쇄 관계를 설명하는지 확인한다. contribution 의미가 응답만으로 확정되지 않으면 추측하지 않고 WARN으로 표시한다.
+
+결정적 검사는 의미적 LLM 평가가 아니며 우수 version을 직접 선정하지 않는다.
+
+### 7.11 의미 품질 평가
+
+create 결과가 모두 terminal 상태이고 성공 version이 2개 이상이면 Overview에 품질 평가 panel을 표시한다.
+
+미실행 상태:
+
+- 평가 대상 version
+- Event/API 증적만 사용한다는 안내
+- 추가 LLM 호출로 시간과 token이 사용된다는 안내
+- `품질 평가 실행` button
+
+실행 후:
+
+- 단독 또는 공동 우수 version badge
+- version별 적용 가능 기준 평균
+- Event 정합성, LNG Dimension, floor/ceiling, mixed 품질의 score/verdict/rationale/evidence
+- version별 strengths/weaknesses
+- 종합 결론
+- Scenario card에 연결되는 Scenario별 판단
+
+mixed 품질은 다음처럼 표시한다.
+
+- mixed 없음: `N/A`, score 없음, 평균 제외
+- mixed 있음: 실제 상승·하락 Value 조합과 상쇄 근거를 1~5점으로 평가
+
+품질 평가는 create와 자동 연결하지 않는다. 사용자가 버튼을 눌렀을 때만 `POST /scenario-group-comparisons/judge/sync`를 호출한다. 실패·timeout은 create 결과를 유지한 채 judge 상태만 error/unknown으로 표시하고 `품질 평가 다시 실행`을 제공한다.
 
 ## 8. Frontend 상태 설계
 
@@ -673,8 +709,17 @@ interface ComparisonRunState {
   runtime: RuntimeSnapshot;
   manifest: ComparisonManifest;
   versions: Record<"v2" | "v3" | "v4", VersionRunState>;
-  checks: DeterministicCheckResult[];
+  checks: Record<"v2" | "v3" | "v4", DeterministicCheckResult[]>;
+  qualityJudge: QualityJudgeState;
   calls: ApiCallRecord[];
+}
+
+interface QualityJudgeState {
+  status: "idle" | "ready" | "running" | "success" | "error" | "unknown";
+  request?: ComparisonJudgeRequest;
+  response?: ComparisonJudgeResponse;
+  call?: ApiCallRecord;
+  error?: string;
 }
 ```
 
@@ -692,6 +737,7 @@ browser storage:
 - Base URL, userId, timeout
 - 최근 실행 metadata
 - 크기 제한 내의 결과
+- 품질 평가 상태와 결과
 
 export:
 
@@ -700,6 +746,7 @@ export:
 - 판정
 - 시간/token
 - 결정적 검사
+- 의미 품질 평가 request/response와 우수 version
 
 인증 header와 secret은 storage/export 전에 제거한다.
 
@@ -752,6 +799,24 @@ const v4 = await runVersion("v4", manifest);
 - v2/v3/v4 request는 동일한 Event, userId, comparisonRunId를 사용한다.
 - version별 결과는 독립적으로 보존한다.
 
+품질 평가는 별도 사용자 action이다.
+
+```ts
+const successfulGroups = successfulVersions(run).map(({ version, groupId }) => ({
+  apiVersion: version,
+  scenarioGroupId: groupId,
+}));
+
+if (successfulGroups.length >= 2) {
+  await runQualityJudge(manifest.comparisonRunId, runtime.userId, successfulGroups);
+}
+```
+
+- 성공 version 2~3개만 요청한다.
+- create 실패 version은 제외하되 실패 사유는 기존 version card에 유지한다.
+- judge 호출은 create POST guard와 분리한다.
+- judge는 읽기 전용이므로 실패 후 사용자 확인으로 재호출할 수 있다.
+
 ### 9.4 API Body 판정
 
 v1:
@@ -767,6 +832,14 @@ comparison:
 - `data.apiVersion` 일치
 - `data.comparisonRunId` 일치
 - Event lineage 일치
+
+quality judge:
+
+- HTTP 2xx와 `status=success`
+- 요청 version과 응답 version 집합 일치
+- 각 version의 필수 평가 기준과 Scenario 판단 집합 일치
+- `mixed_quality=N/A`이면 `score=null`
+- 평균과 `bestVersions`가 서버 계산 결과와 일치
 
 ## 10. 컴포넌트 구조
 
@@ -790,6 +863,7 @@ App
 │  ├─ ManifestSummary
 │  ├─ VersionRunBoard
 │  ├─ OverviewComparison
+│  ├─ QualityJudgePanel
 │  ├─ DimensionComparison
 │  ├─ ScenarioComparison
 │  └─ DiagnosticsComparison
@@ -804,10 +878,12 @@ backoffice/frontend/src/
     agentClient.ts
     v1Pipeline.ts
     multiEventComparison.ts
+    comparisonQualityJudge.ts
   domain/
     apiTypes.ts
     judgments.ts
     deterministicChecks.ts
+    comparisonPresentation.ts
     exportBundle.ts
   features/
     runtime/
@@ -969,6 +1045,10 @@ Unknown:
 - 동일 version의 create POST가 자동 재시도되지 않는다.
 - timeout/cancel은 unknown으로 표현한다.
 - 모든 API call을 Evidence Drawer에서 확인할 수 있다.
-- comparison 결과에서 v2/v3 global pressure와 v4 target-market pressure가 구분된다.
-- 결정적 검사와 JSON export가 동작한다.
+- 모든 version의 pressure가 `Global LNG pressure`로 일관되며 v4 `relatedMarkets`는 보조정보로만 표시된다.
+- 비교 화면은 사용자용 Dimension/Value label과 실제 생성 근거를 제공하고 Raw 원본을 별도 보존한다.
+- 결정적 검사 M-01~M-08과 optional mixed 규칙이 동작한다.
+- 성공 version 2개 이상에서 사용자가 의미 품질 평가를 실행하고 우수 version과 근거를 확인할 수 있다.
+- mixed가 없는 version은 N/A로 표시되고 평균에서 제외된다.
+- 품질 평가 결과를 포함한 JSON export가 동작한다.
 - secret이 storage와 export에 남지 않는다.

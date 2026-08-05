@@ -2,7 +2,7 @@
 
 ## 1. 목적
 
-이 문서는 [`PRD.md`](./PRD.md)와 [`DESIGN.md`](./DESIGN.md)에 정의된 frontend-only Scenario Comparison Backoffice의 QA 시나리오를 정의한다.
+이 문서는 [`PRD.md`](./PRD.md)와 [`DESIGN.md`](./DESIGN.md)에 정의된 정적 frontend와 Scenario Group Agent 기반 Scenario Comparison Backoffice의 QA 시나리오를 정의한다.
 
 검증 대상:
 
@@ -12,6 +12,8 @@
 - v2/v3 종료 barrier 이후 v4 실행
 - request/response, elapsed time, token usage, raw JSON 증적
 - 결정적 품질 검사
+- 사용자 요청 기반 의미 품질 평가와 우수 version 선정
+- 사용자용 label·생성 근거 view와 Raw 증적 분리
 - timeout, 취소, 부분 실패 및 중복 요청 방지
 - JSON export와 secret 제거
 - CORS, mixed content, 반응형 및 접근성
@@ -23,7 +25,7 @@
 - SSE/WebSocket
 - Backoffice FastAPI proxy
 - v2/v3/v4 validation, signpost, confirmation
-- frontend에서의 LLM Judge
+- 브라우저에서 외부 LLM API 또는 LLM API key 직접 사용
 - 운영용 Scenario Group 관리 기능
 
 ## 2. 테스트 흐름 분리
@@ -33,7 +35,7 @@
 | 흐름 | Event | API 범위 | 비교 |
 | --- | --- | --- | --- |
 | v1 단일 이벤트 | 1건 | unversioned create, validation, signpost, detail, confirmation | 없음 |
-| v2/v3/v4 비교 | 중복 없는 2~5건 | versioned create sync만 실행 | 세 version 비교 |
+| v2/v3/v4 비교 | 중복 없는 2~5건 | versioned create sync, 사용자 요청 시 Agent 품질 평가 | 성공 version 비교 |
 
 한 테스트 run에서 두 흐름을 섞지 않는다.
 
@@ -534,7 +536,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - 각 version의 `status=success`와 data가 success로 판정된다.
 - `apiVersion`, `comparisonRunId`, Event lineage가 manifest와 일치한다.
-- group ID/name, dimension 수, Scenario 수가 표시된다.
+- group ID, 제목, 요약, 설명, dimension 수, Scenario 수가 표시된다.
 - baseline, floor/ceiling/mixed 수가 표시된다.
 - elapsed time과 token usage가 표시된다.
 - 성공 version이 2개 이상이므로 비교 view가 활성화된다.
@@ -545,7 +547,11 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - v2는 Event별 namespace key와 단일 source lineage를 표시한다.
 - v3는 composite dimension과 source 관계를 표시한다.
-- v4는 lever reference와 supported/unsupported 상태를 표시한다.
+- v4는 Event grounding, lever reference와 supported/unsupported 상태를 표시한다.
+- 기본 화면에는 내부 `dimensionId`/`valueId` 대신 Dimension/Value label이 표시된다.
+- 중복 Dimension label에는 Event lineage가 붙는다.
+- Dimension 선택 근거와 Value별 가격 기여·선택/가정 근거가 표시된다.
+- 응답에 근거가 없으면 `제공된 근거 없음`으로 표시하며 새 근거를 추정하지 않는다.
 - version별 dimension 수가 v2·v3·v4 모두 3~6개 기준으로 검사된다.
 - v2는 dimension에 직접 표현되지 않은 Event도 공동 문맥에 유지한다.
 - v3·v4의 covered/uncovered dimension이 원본 diagnostics와 일치한다.
@@ -556,6 +562,9 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - version별 실제 Scenario title, narrative, cells가 표시된다.
 - baseline, role, pressure band, rationale, probability가 표시된다.
+- Scenario cells가 사용자용 Dimension/Value label로 표시된다.
+- 각 선택 Value에 Dimension 선택 근거와 Value 선택 근거가 연결된다.
+- `globalPressureRationale`이 Scenario 조합과 가격 판단 근거로 표시된다.
 - 대응 Scenario가 없으면 빈 상태와 제외 사유가 표시된다.
 - 모든 version pressure는 `Global LNG pressure`로 표시된다.
 - v4 관련 시장은 Scenario 상세 보조정보이며 별도 pressure 태그로 표시하지 않는다.
@@ -577,14 +586,55 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - Scenario 3~5개를 검사한다.
 - baseline 정확히 1개를 검사한다.
-- floor/ceiling 각각 1개를 검사하고, mixed가 있으면 비극단 band의 실제 상쇄 조합인지 검사한다.
-- Scenario 조합과 pressure band 중복을 검사한다.
-- probability 합계를 검사한다.
-- dimension 수와 Event lineage coverage를 검사한다.
+- M-01~M-08 ID와 검사 목적을 표시한다.
+- floor/ceiling 각각 1개를 검사한다.
+- mixed가 없어도 M-04를 실패시키지 않는다.
+- mixed가 있으면 비극단 band, 실제 bullish·bearish contribution 공존, 상쇄 rationale을 검사한다.
+- Scenario 조합과 pressure band 중복, dimension 3~6개, Event lineage, pressure rationale, target band 설명을 검사한다.
 - 각 항목에 PASS/WARN/FAIL과 실제 근거가 표시된다.
-- LLM 점수나 우수 version을 임의 생성하지 않는다.
+- 결정적 검사 자체는 LLM 점수나 우수 version을 임의 생성하지 않는다.
 
-### TC-M-N-010 Comparison Export
+### TC-M-N-010 의미 품질 평가와 우수 Version
+
+절차:
+
+1. v2/v3/v4가 모두 성공한 comparison을 완료한다.
+2. 자동 LLM 호출이 발생하지 않았는지 확인한다.
+3. `품질 평가 실행`을 클릭한다.
+
+기대결과:
+
+- `POST /scenario-group-comparisons/judge/sync`가 한 번 호출된다.
+- 요청에는 동일 `comparisonRunId`, userId와 성공한 version/group ID가 포함된다.
+- Event 정합성, LNG Dimension, floor/ceiling, mixed 품질이 version별로 표시된다.
+- 적용 가능한 기준은 score 1~5와 PASS/WARN/FAIL, 근거, 판단 이유를 가진다.
+- 각 Scenario의 verdict와 근거가 해당 Scenario card에 표시된다.
+- 적용 가능한 기준의 평균 최고 version이 우수 version으로 표시된다.
+- 평균 동점이면 모든 동점 version이 공동 우수로 표시된다.
+- 평가 call의 elapsed time과 token usage가 Evidence Drawer에 남는다.
+
+### TC-M-N-011 Optional Mixed 품질 평가
+
+입력 A:
+
+- mixed Scenario가 없는 성공 version
+
+기대결과 A:
+
+- mixed가 없다는 이유로 결정적 검사에서 실패하거나 의미 품질 점수가 감점되지 않는다.
+- `mixed_quality`는 `N/A`, `score=null`로 표시되고 평균에서 제외된다.
+
+입력 B:
+
+- mixed role이 있고 bullish와 bearish contribution을 함께 선택한 Scenario
+
+기대결과 B:
+
+- 비극단 pressure band인지 확인한다.
+- 실제 상·하방 Value 조합과 `globalPressureRationale`의 상쇄 설명을 근거로 평가한다.
+- mixed label만 있고 상쇄 조합이나 근거가 없으면 WARN 또는 FAIL이다.
+
+### TC-M-N-012 Comparison Export
 
 기대결과:
 
@@ -592,8 +642,18 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - v2/v3/v4 request/response가 포함된다.
 - transport/API 상태, elapsed time, token usage가 포함된다.
 - 결정적 검사 결과가 포함된다.
+- 품질 평가 request/response, 기준별 판정, 평균과 `bestVersions`, token usage가 포함된다.
 - secret이 없다.
 - export의 version별 결과가 화면과 일치한다.
+
+### TC-M-N-013 사용자용 View와 Raw 증적 분리
+
+기대결과:
+
+- Overview, Dimensions, Scenarios에는 사용자용 label과 설명·근거가 우선 표시된다.
+- 내부 ID만으로 구성된 표를 사용자가 해석하도록 요구하지 않는다.
+- Raw 탭과 Evidence Drawer에는 create 및 judge 원본 request/response가 secret redaction 외 의미 변환 없이 남는다.
+- 사용자용 변환에 실패한 필드가 있어도 Raw 원본과 export가 유실되지 않는다.
 
 ## 8. v2/v3/v4 오류 및 경계값
 
@@ -651,6 +711,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - v2는 error, v3는 success로 독립 표시된다.
 - v2/v3가 terminal이므로 v4는 실행된다.
 - v3와 v4 결과 비교가 가능하다.
+- v3와 v4가 모두 성공하면 두 version만으로 품질 평가를 실행할 수 있다.
 - v2 raw 오류가 보존된다.
 - 자동 v2 재시도는 없다.
 
@@ -745,6 +806,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - 상단 결론은 `비교 판정 불가`다.
 - 성공 version의 Dimensions, Scenarios, Diagnostics는 조회 가능하다.
 - 우수 version을 표시하지 않는다.
+- 품질 평가 버튼이 비활성화되고 Agent judge API를 호출하지 않는다.
 
 ### TC-M-E-016 모든 Version 실패/unknown
 
@@ -797,6 +859,53 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - 실행 중 version은 unknown으로 복구된다.
 - 동일 POST를 자동 재개하지 않는다.
 - secret은 복구되지 않는다.
+
+### TC-M-E-021 품질 평가 요청 무결성 오류
+
+입력:
+
+- 다른 comparisonRunId의 Scenario Group
+- 요청 apiVersion과 저장된 apiVersion 불일치
+- 다른 userId가 소유한 Scenario Group
+- Event lineage가 다른 Scenario Group
+
+기대결과:
+
+- Agent가 품질 평가를 거부한다.
+- 오류 원인과 judge raw response가 표시된다.
+- 기존 create 결과와 결정적 검사 결과는 유지된다.
+- 우수 version을 표시하지 않는다.
+
+### TC-M-E-022 품질 평가 실패와 재실행
+
+절차:
+
+1. judge 요청을 LLM 오류 또는 timeout으로 실패시킨다.
+2. create 결과가 유지되는지 확인한다.
+3. `품질 평가 다시 실행`을 클릭한다.
+
+기대결과:
+
+- 실패 또는 timeout은 judge 상태에만 error/unknown으로 기록된다.
+- v2/v3/v4 create POST는 다시 호출되지 않는다.
+- 사용자의 명시적 action으로 judge 요청만 다시 호출된다.
+- 각 judge 시도의 request/response와 token usage가 별도 call record로 남는다.
+
+### TC-M-E-023 잘못된 품질 평가 응답
+
+입력:
+
+- 요청 version 누락 또는 추가
+- 필수 criterion 누락 또는 중복
+- Scenario 판단 누락 또는 다른 Scenario ID
+- `mixed_quality=N/A`인데 score가 존재하는 응답
+- 평균 최고 version과 `bestVersions` 불일치
+
+기대결과:
+
+- 정상 품질 평가 결과로 수용하지 않는다.
+- schema/integrity 오류를 표시하고 우수 version을 노출하지 않는다.
+- 원본 judge response는 Raw와 export에 보존된다.
 
 ## 9. 공통 UI 테스트
 
@@ -936,7 +1045,6 @@ frontend와 script를 같은 Event에 연속 실행하면 중복 group이 발생
 python tests/manual/test_multi_event_scenario_versions.py prepare \
   --base-url http://localhost:8001 \
   --event-ids 101 202 \
-  --target-market JKM \
   --user-id 10001 \
   --timeout 1200
 ```
@@ -952,8 +1060,10 @@ python tests/manual/test_multi_event_scenario_versions.py prepare \
 - diagnostics
 - elapsed time/token usage
 - 결정적 검사
+- 사용자용 Dimension/Value label과 선택 근거
+- 의미 품질 기준, Scenario 판단, 평균과 우수 version
 
-manual report의 LLM Judge는 frontend 기능이 아니다. Judge 결과와 frontend 결정적 검사를 같은 판정으로 간주하지 않는다.
+manual report의 Agent Judge와 Backoffice Agent 평가 API는 동일한 Event/API 증적과 평가 기준을 사용해야 한다. 다만 결정적 검사와 의미 품질 평가는 서로 다른 판정이며 같은 결과로 간주하지 않는다. mixed가 없는 version은 Backoffice 계약에 따라 `N/A`로 처리하고 평균에서 제외한다.
 
 ## 12. 회귀 체크리스트
 
@@ -990,7 +1100,12 @@ manual report의 LLM Judge는 frontend 기능이 아니다. Judge 결과와 fron
 - [ ] 동일 version POST를 자동 재시도하지 않는다.
 - [ ] 부분 실패 결과가 보존된다.
 - [ ] 성공 version 2개 미만이면 `비교 판정 불가`다.
-- [ ] v2/v3와 v4 pressure 의미가 구분된다.
+- [ ] 모든 version pressure가 `Global LNG pressure`로 일관되고 v4 `relatedMarkets`는 보조정보로만 표시된다.
 - [ ] Dimensions, Scenarios, Diagnostics를 비교할 수 있다.
-- [ ] 결정적 검사 결과가 실제 응답과 일치한다.
+- [ ] Scenario Group 제목·요약·설명과 Dimension/Value 선택 근거를 사용자용 label로 볼 수 있다.
+- [ ] Raw 원본은 사용자용 view와 분리되어 보존된다.
+- [ ] 결정적 검사 M-01~M-08 결과가 실제 응답과 일치한다.
+- [ ] mixed 미생성은 실패/감점하지 않고 mixed가 있을 때만 실제 조합과 근거를 평가한다.
+- [ ] 성공 version 2개 이상이면 사용자 action으로 의미 품질 평가를 실행할 수 있다.
+- [ ] 평균 최고 version과 공동 우수 version이 정확히 표시된다.
 - [ ] comparison bundle export가 동작한다.
