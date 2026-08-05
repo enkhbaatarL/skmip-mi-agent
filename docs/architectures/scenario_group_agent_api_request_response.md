@@ -103,16 +103,15 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - Event 충격과 관련 상호작용을 3~6개 합성 dimension으로 구성한다.
 - `POST /v4/scenario-groups`
   - 요청: `miEventIds` 2~5개, `userId`, 선택적 `comparisonRunId`
-  - Template 없이 Event 사실과 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
+  - Template 없이 Event 근거와 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
   - Scenario의 pressure/floor/ceiling은 글로벌 LNG 기준이며, 지역 특이성이
     명확한 경우에만 row의 `relatedMarkets`에 시장과 근거를 보조정보로 포함
   - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
 - `POST /v4/scenario-groups/sync`
   - v4와 같은 요청 계약에 필수 `comparisonRunId`를 추가하고 테스트·비교용으로
     완료 응답을 동기 반환
-  - `generationDiagnostics`에 Event 영향 사실/상호작용, covered/uncovered
-    dimension, unsupported lever, Event별 dimension coverage와 전체 coverage
-    상태를 포함
+  - `generationDiagnostics`에 Event 상호작용, covered/uncovered dimension,
+    unsupported lever와 전체 parameter coverage 상태를 포함
 - `POST /scenario-groups/{scenarioGroupId}/validation/sync`
   - 기존 validation prepare 및 검증 graph를 동기 실행
   - Response: `ValidateScenariosOut`
@@ -136,10 +135,12 @@ v2 value에는 `valueId`, `label`, `globalPressureContribution`만 포함하며
 `{eventId, shockSummary}`와 compact dimension을 반환한다. v3 dimension은
 `rationale`, `sourceEventIds`, `(scenarioDimensionTemplateId, dimKey)` 형태의
 `sourceRefs`를 가지며 value에는 `valueId`, `label`, `globalPressureContribution`만
-포함한다. v4의 각 dimension은
-`sourceFactIds`와 `impactLeverRefs`를 포함하며 lever reference의 ID/code 쌍은
-저장 당시 활성 catalog와 일치한다. dimension이 없는 Event는
-`generationDiagnostics.eventDimensionCoverage[].noDimensionReason`으로 구분한다.
+포함한다. v4의 각 dimension은 `eventGroundings`, `leverMappings`, `values`를 포함한다.
+`eventGroundings`는 `eventId`, `observedBasis`, `uncertainty`를, `leverMappings`는
+활성 catalog와 일치하는 `impactLeverId`/`leverCode`와 `mappingRationale`을 가진다.
+value는 `globalPressureContribution`과 `assumptionRationale`을 함께 제공한다.
+v4 응답에는 별도 `eventImpactFacts`, `sourceFactIds`, `impactLeverRefs`,
+`eventDimensionCoverage`, `sourceRefs`를 포함하지 않는다.
 각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
 `probabilityScore`, `globalPressureRationale`, `relatedMarkets`는 DB 저장값을
 그대로 반환한다. `relatedMarkets`는 table header/cell이나 pressure tag가 아니라
@@ -158,7 +159,7 @@ Scenario 상세에서만 표시하는 선택적 보조정보다.
   `(eventId, scenarioDimensionTemplateId, dimKey)`다.
 - v3 mapping proposal의 source 식별자는
   `(scenarioDimensionTemplateId, dimKey)`이며 Event 연결은 `sourceEventIds`가 담당한다.
-- v2 compact source와 v4 fact/lever mapping은 각 버전의 독립 계약을 유지한다.
+- v2 compact source와 v4 dimension grounding/lever mapping은 각 버전의 독립 계약을 유지한다.
 - 현재 사용 중인 proposal이 모두 승인되면
   `parameterMappingReady=true`가 된다.
 

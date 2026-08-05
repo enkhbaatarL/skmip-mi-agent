@@ -415,7 +415,24 @@ def _match_v4_lever_candidates(
             )
             continue
         source_label = str(dimension.get("label") or dimension_id)
-        for lever_code in dimension.get("lever_refs") or []:
+        lever_mappings = dimension.get("lever_mappings") or []
+        mapping_by_code = {
+            str(mapping.get("lever_code")): mapping
+            for mapping in lever_mappings
+            if isinstance(mapping, dict) and mapping.get("lever_code")
+        }
+        lever_codes = [
+            mapping.get("lever_code")
+            for mapping in lever_mappings
+            if isinstance(mapping, dict) and mapping.get("lever_code")
+        ] or list(dimension.get("lever_refs") or [])
+        grounding_event_ids = [
+            grounding.get("event_id")
+            for grounding in dimension.get("event_groundings") or []
+            if isinstance(grounding, dict) and grounding.get("event_id") is not None
+        ]
+        for lever_code in lever_codes:
+            lever_mapping = mapping_by_code.get(str(lever_code)) or {}
             lever = catalog_by_code.get(str(lever_code))
             if lever is None:
                 non_inputs.append(
@@ -526,7 +543,7 @@ def _match_v4_lever_candidates(
                         "source_dimension_label": source_label,
                         "source_dimension_value": source_value,
                         "source_event_ids": dimension.get("source_event_ids")
-                        or [],
+                        or grounding_event_ids,
                         "lever_code": lever_code,
                         "mapping_method": "direct",
                         "model_file": parameter.model_file,
@@ -536,7 +553,8 @@ def _match_v4_lever_candidates(
                         "canonical_parameter_name": canonical,
                         "parameter_hint": parameter.parameter_hint,
                         "semantic_axes": parameter.semantic_axes,
-                        "mapping_comment": binding.get("applicability"),
+                        "mapping_comment": lever_mapping.get("mapping_rationale")
+                        or binding.get("applicability"),
                         "basecase_read_mode": parameter.basecase_read_mode,
                         "basecase_header_row": parameter.basecase_header_row,
                         "basecase_data_start_row": (

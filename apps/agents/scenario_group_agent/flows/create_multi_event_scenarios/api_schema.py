@@ -16,9 +16,8 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V3EventShock,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
-    EventDimensionCoverage,
-    EventImpactFact,
     EventInteraction as V4EventInteraction,
+    V4DimensionDefinition,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
@@ -129,12 +128,8 @@ class GenerationDiagnostics(ApiModel):
         default_factory=list,
     )
     coverage_status: Literal["full", "partial", "none"] | None = None
-    event_impact_facts: list[EventImpactFact] = Field(default_factory=list)
     event_shocks: list[V3EventShock | EventShock] = Field(default_factory=list)
-    event_interactions: list[EventInteraction | V4EventInteraction] = Field(
-        default_factory=list,
-    )
-    event_dimension_coverage: list[EventDimensionCoverage] = Field(
+    event_interactions: list[V4EventInteraction | EventInteraction] = Field(
         default_factory=list,
     )
 
@@ -181,7 +176,7 @@ class VersionedCreateScenariosData(ApiModel):
     impact_catalog_version: str | None = None
     scenario_group: ScenarioGroupPayload
     events: list[EventPayload] = Field(default_factory=list)
-    dimension_definitions: list[V3DimensionDefinition | DimensionDefinition] = Field(
+    dimension_definitions: list[V4DimensionDefinition | V3DimensionDefinition | DimensionDefinition] = Field(
         default_factory=list,
     )
     table: ScenarioTable

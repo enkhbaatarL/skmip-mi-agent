@@ -144,6 +144,11 @@ def _event_lineage(  # noqa: C901
 ) -> QualityCheck:
     covered: set[int] = set()
     for dimension in dimensions:
+        for grounding in dimension.get("eventGroundings", []) or dimension.get("event_groundings", []):
+            if isinstance(grounding, dict):
+                value = grounding.get("eventId") or grounding.get("event_id")
+                if value is not None:
+                    covered.add(int(value))
         for value in dimension.get("sourceEventIds", []) or dimension.get("source_event_ids", []):
             covered.add(int(value))
         for source in dimension.get("sourceRefs", []) or dimension.get("source_refs", []):

@@ -24,7 +24,6 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V3ScenarioSynthesisResult,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
-    EventImpactFact,
     ParameterCoverage,
     V4DimensionDesignResult,
     V4GenerationResult,
@@ -40,7 +39,7 @@ GenerationStage = Literal["event_analysis", "dimension_design", "scenario_synthe
 
 
 class EventAnalysisTask(BaseModel):
-    api_version: Literal["v2", "v3"]
+    api_version: Literal["v2"]
     event: EventPayload
     template: ScenarioPipelineTemplate
     attempt: int = Field(default=1, ge=1, le=3)
@@ -50,7 +49,7 @@ class EventAnalysisTask(BaseModel):
 class EventAnalysisOutcome(BaseModel):
     event_id: int
     attempt: int
-    event_shock: V2EventShock | V3EventShock | None = None
+    event_shock: V2EventShock | None = None
     error: str | None = None
     error_code: str | None = None
     retryable: bool = False
@@ -83,9 +82,9 @@ class MultiEventGenerationState(BaseModel):
     scenario_error_code: str | None = None
     scenario_retryable: bool = False
 
-    finalized_result: (
-        V2FinalizedGenerationResult | MultiEventGenerationResult | V3MultiEventGenerationResult | None
-    ) = None
+    finalized_result: V2FinalizedGenerationResult | MultiEventGenerationResult | V3MultiEventGenerationResult | None = (
+        None
+    )
     generation_diagnostics: V2GenerationDiagnostics | GenerationDiagnostics | None = None
     saved_group: ScenarioGroupPayload | None = None
     saved_scenarios: list[ScenarioPayload] = Field(default_factory=list)
@@ -93,21 +92,6 @@ class MultiEventGenerationState(BaseModel):
     failed_stage: GenerationStage | None = None
     terminal_error: str | None = None
     terminal_error_code: str | None = None
-
-
-class V4EventAnalysisTask(BaseModel):
-    event: EventPayload
-    attempt: int = Field(default=1, ge=1, le=3)
-    validation_feedback: str | None = None
-
-
-class V4EventAnalysisOutcome(BaseModel):
-    event_id: int
-    attempt: int
-    event_impact_facts: list[EventImpactFact] = Field(default_factory=list)
-    error: str | None = None
-    error_code: str | None = None
-    retryable: bool = False
 
 
 class V4MultiEventGenerationState(BaseModel):
@@ -118,10 +102,6 @@ class V4MultiEventGenerationState(BaseModel):
     impact_catalog_checksum: str = ""
     comparison_run_id: str | None = None
     user_id: int | None = None
-
-    event_task: V4EventAnalysisTask | None = None
-    event_analysis_outcomes: Annotated[list[V4EventAnalysisOutcome], operator.add] = Field(default_factory=list)
-    event_impact_facts: list[EventImpactFact] = Field(default_factory=list)
 
     dimension_attempt: int = 0
     dimension_draft: V4DimensionDesignResult | None = None

@@ -238,23 +238,20 @@ def test_v4_prompt_matches_dimension_first_hybrid_contract() -> None:
     combined = MODEL_LEVER_SYSTEM_PROMPT + prompt
 
     for expected in (
-        "factId",
-        "sourceFactIds",
-        "impactLeverRefs",
+        "eventGroundings",
+        "observedBasis",
+        "uncertainty",
+        "leverMappings",
         "impactLeverId",
         "leverCode",
         "mappingRationale",
-        "commonImpactLeverRefs",
-        "eventDimensionCoverage",
-        "noDimensionReason",
-        "모든 Event가\ndimension을 가질 필요는 없습니다",
-        "모델 지원 상태는 dimension 선택의\n우선순위가 아닙니다",
-        "적어도 하나의 dimension은 executable",
+        "assumptionRationale",
+        "모든 Event가 반드시 별도 dimension을 가질 필요는 없습니다",
+        "모델 지원 상태는 dimension 선택의",
     ):
         assert expected in combined
 
-    assert '"impactLeverId": 17' in prompt
-    assert "eventImpactFacts에는 일반 leverCode를 출력하지 마십시오" in prompt
-    assert "commonImpactLeverRefs는 어떤 dimension의 sourceFactIds에도 쓰이지 않은 사실에만" in prompt
-    assert "dimensionIds가 있으면 noDimensionReason은 null" in prompt
-    assert "선택한 Event는 적어도 하나의\ndimension에 연결되어야" not in combined
+    assert '"impactLeverId":17' in prompt
+    assert "sourceFactIds, sourceEventIds, sourceRefs" in prompt
+    assert "commonFactLeverMappings, eventDimensionCoverage를 만들지 마십시오" in prompt
+    assert "parameterBindings" not in prompt

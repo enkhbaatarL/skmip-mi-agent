@@ -113,7 +113,7 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 | `POST /v1/scenario-groups/sync` | `miEventId`             | 단일 Event·원본 Template dimension              |
 | `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event별 원본 dimension 3~6개                    |
 | `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개          |
-| `POST /v4/scenario-groups`      | 중복 없는 `miEventIds` 2~5개 | Event 사실·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
+| `POST /v4/scenario-groups`      | 중복 없는 `miEventIds` 2~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
 | `POST /v4/scenario-groups/sync` | v4와 동일                  | v4 생성 흐름 동기 실행                              |
 
 
@@ -188,7 +188,7 @@ retry와 feedback을 명시적으로 추적할 수 있도록 connector 내부 `m
 checksum과 단일 Event lineage를 같은 연결 테이블에 보존한다.
 
 v1~v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
-`ModelImpactLeverService`, fact–lever 검증과 `impactLeverRefs`는 v4 경로에만 존재한다.
+`ModelImpactLeverService`와 `leverMappings` 검증은 v4 경로에만 존재한다.
 최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
 adapter를 추가하지 않는다.
 
@@ -218,40 +218,42 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 지역 가격 스프레드와 금융시장 위험 프리미엄처럼 글로벌 LNG 가격을 설명하는
 비수급 경로다. 모델 입력 미지원과 혼동하지 않도록 `PRICE_ONLY`로 별도 표시한다.
 
-`v4_flow.py`는 Event와 활성 카탈로그를 준비한 뒤 v4 LangGraph에 입력한다. v4도
-Event별 fact 추출 fan-out, fact–lever dimension 설계, Scenario 합성의 세 LLM 단계와
-최종 일괄 저장 node로 나뉜다. fact 추출 단계에는 catalog를 전달하지 않으며, dimension
-단계에는 fact domain과 관련된 compact catalog만 전달한다. 실패 Event 또는 실패한 후속
-단계만 최대 3회 재시도하는 정책은 v2/v3와 같다. LLM은 카탈로그 안의 lever만
-참조해 3~~6개 dimension과 2~~4개 value를 생성한다. Scenario delta의 정본은
-`dimensionDefinitions[].impactLeverRefs[]`이며, 각 reference에는 catalog의
-`impactLeverId`/`leverCode`, 근거 `sourceFactIds`, `mappingRationale`을 저장한다.
-dimension에 쓰이지 않은 모든 공통 사실은 비어 있지 않은
-`commonImpactLeverRefs`를 가져야 하고, dimension에 쓰인 사실에는 이를 허용하지 않는다.
-서버는 모든 Event의 impact fact와 dimension lineage, 카탈로그 ID/code/domain,
-고유 Scenario 조합,
-pressure band partition, floor·ceiling·mixed·baseline을 결정론적으로 검증한다.
+`v4_flow.py`는 Event와 활성 카탈로그를 준비한 뒤 v4 LangGraph에 입력한다. v4는
+두 LLM 단계와 최종 일괄 저장 node로 구성한다.
+
+1. `design_model_lever_dimensions`: 모든 compact Event와 최소 카탈로그를 한 번에 읽고
+   Event 근거, 잔여 불확실성, lever 매핑, value 가정을 포함한 3~~6개 dimension을 생성한다.
+2. `synthesize_v4_scenarios`: 검증된 interaction과 compact dimension만 사용해 Scenario를 합성한다.
+   원본 Event나 별도 fact graph를 다시 전달하지 않는다.
+3. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
+
+각 LLM 단계는 최대 3회 재시도하며 검증을 통과한 앞 단계 결과는 재사용한다. Scenario delta와
+근거 추적의 정본은 `dimensionDefinitions[]`다. 각 dimension은 다음을 저장한다.
+
+- `eventGroundings[]`: `eventId`, 확인된 사실을 압축한 `observedBasis`, 분기 대상인 `uncertainty`
+- `leverMappings[]`: catalog의 `impactLeverId`/`leverCode`와 `mappingRationale`
+- `values[]`: `valueId`, `label`, `globalPressureContribution`, `assumptionRationale`
+
+LLM은 `impactLeverId`를 생략할 수 있고 서버가 활성 catalog의 `leverCode`로 hydrate한다.
+별도의 `EventImpactFact`, `sourceFactIds`, `commonFactLeverMappings`,
+`eventDimensionCoverage`, `sourceRefs`, 중복 `leverRefs`/`impactLeverRefs`는 생성하거나 저장하지 않는다.
+서버는 grounding의 Event 존재 여부, 카탈로그 ID/code, dimension/value ID 고유성,
+고유 Scenario 조합, pressure band partition, floor·ceiling·baseline과 선택적으로 생성된 mixed를
+결정론적으로 검증한다. 모든 Event를 별도 dimension에 강제로 연결하거나 fact와 lever domain의
+일대일 coverage를 강제하지 않는다.
 여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 글로벌 LNG
 pressure band와 rationale이다. 지역 가격 허브가 특별히 관련된 Scenario만
 `related_markets`에 시장과 근거를 선택적으로 저장하며, 시장별 방향이나
-floor·ceiling을 생성하지 않는다. 또한 전체 dimension 중 적어도 하나는 실행 가능한
-모델 parameter binding을 참조해야 한다. 따라서 가격 설명용 `price_only`나
-`known_unsupported` dimension을 함께 사용하더라도 모델 파라미터 단계에 넘길
-실행 경로가 하나 이상 남는다. 실행 가능한 dimension이 하나도 없으면 semantic
-validation 실패로 처리해 dimension 단계만 최대 3회 시도한다. 지원 상태는 dimension 선택 우선순위로
-사용하지 않으며 `price_only`나 미지원 경로도 중요한 불확실성이면 선택할 수 있다.
+floor·ceiling을 생성하지 않는다. 지원 상태는 dimension 선택 우선순위나 생성 성공의
+필수 조건으로 사용하지 않는다. `price_only`나 미지원 경로도 중요한 불확실성이면 선택할 수 있고,
+서버는 실행 가능한 binding coverage를 진단 정보로만 계산한다.
 
-Event마다 dimension을 강제하지 않는다. `eventDimensionCoverage`에는 계산된
-`dimensionIds`를 저장하고, 빈 경우
-`NO_EXECUTABLE_UNCERTAINTY`, `PRICE_ONLY_OR_UNSUPPORTED`,
-`COMMON_FACT_NO_SCENARIO_DELTA` 중 하나의 `noDimensionReason`과 근거를 남긴다.
-
-그룹에는 카탈로그 version/checksum, dimension 정의와 Event lineage를 저장한다.
-모델 파라미터 단계는 dimension의 `impactLeverRefs`를 우선 사용하고, dimension이
-없는 공통 사실만 `commonImpactLeverRefs`에서 읽는다. 실행 가능한 binding은 기존
+그룹에는 카탈로그 version/checksum과 compact dimension 정의를 저장한다.
+모델 파라미터 단계는 dimension의 `leverMappings[].leverCode`를 읽어 활성 catalog와 연결한다.
+기존 저장 데이터 호환을 위해 `leverRefs`는 fallback으로만 읽는다. 실행 가능한 binding은 기존
 Basecase/LUT 파이프라인으로 넘기고 모든 매핑 결과는
 `parameterMappingEvidence`로 응답·DB에 보존한다. 각 evidence는 출처 종류,
-Event/fact/dimension, impact lever ID/code, 처리 역할, 대상 파라미터와 rationale을
+Event/dimension, impact lever ID/code, 처리 역할, 대상 파라미터와 rationale을
 포함한다. price-only 또는 미지원 binding은 각각 `PRICE_ONLY_CONTEXT`,
 `UNSUPPORTED_CONTEXT` 역할과 상세 사유 코드를 가진다.
 API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`/`N`으로

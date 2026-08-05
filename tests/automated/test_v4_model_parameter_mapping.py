@@ -54,8 +54,19 @@ def test_v4_mapping_uses_executable_bindings_and_preserves_unsupported_items() -
                 {
                     "dimension_id": "cold_wave_intensity",
                     "label": "한파 강도",
-                    "source_event_ids": [101],
-                    "lever_refs": ["weather_demand"],
+                    "event_groundings": [
+                        {
+                            "event_id": 101,
+                            "observed_basis": "동북아 한파 전망",
+                            "uncertainty": "한파 강도",
+                        },
+                    ],
+                    "lever_mappings": [
+                        {
+                            "lever_code": "weather_demand",
+                            "mapping_rationale": "한파 강도를 기상 수요 레버에 연결한다.",
+                        },
+                    ],
                 },
                 {
                     "dimension_id": "contract_flexibility",
@@ -106,6 +117,7 @@ def test_v4_mapping_uses_executable_bindings_and_preserves_unsupported_items() -
     assert candidates[0]["canonical_parameter_name"] == "Temperature"
     assert candidates[0]["mapping_method"] == "direct"
     assert candidates[0]["source_event_ids"] == [101]
+    assert candidates[0]["mapping_comment"] == "한파 강도를 기상 수요 레버에 연결한다."
     assert non_inputs == [
         {
             "source_dimension_id": "contract_flexibility",

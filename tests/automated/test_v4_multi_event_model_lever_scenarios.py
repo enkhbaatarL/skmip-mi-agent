@@ -21,19 +21,20 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow
     run_v4_multi_event_scenarios_inline,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
-    EventDimensionCoverage,
-    EventImpactFact,
-    V4CommonFactLeverMapping,
+    V4DimensionDefinition,
     V4DimensionDesignResult,
-    V4EventAnalysisResult,
+    V4DimensionValueDefinition,
+    V4EventGrounding,
     V4ExcludedScenarioCandidate,
     V4GenerationResult,
+    V4LeverMapping,
     V4ScenarioCandidate,
     V4ScenarioSynthesisResult,
     finalize_v4_generation_result,
 )
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     build_model_lever_user_prompt,
+    build_v4_scenario_synthesis_user_prompt,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -41,12 +42,7 @@ from apps.persistence.model_parameter.schema import (
     ModelImpactLeverParameterBinding,
     ModelImpactLeverPayload,
 )
-from apps.persistence.scenario.schema import (
-    DimensionDefinition,
-    DimensionValueDefinition,
-    ImpactLeverReference,
-    RelatedMarket,
-)
+from apps.persistence.scenario.schema import RelatedMarket
 
 
 def _lever(
@@ -81,32 +77,43 @@ def _lever(
 def _dimension(
     *,
     dimension_id: str,
-    fact_ids: list[str],
+    event_id: int,
     lever_code: str,
     impact_lever_id: int | None = None,
-) -> DimensionDefinition:
-    return DimensionDefinition(
+) -> V4DimensionDefinition:
+    return V4DimensionDefinition(
         dimension_id=dimension_id,
         label=dimension_id,
         description=f"{dimension_id} description",
-        required=True,
-        display_order=1,
         dimension_type="magnitude",
         value_kind="categorical",
-        source_event_ids=[999],
-        source_fact_ids=fact_ids,
-        lever_refs=["legacy_value_is_replaced"],
-        impact_lever_refs=[
-            ImpactLeverReference(
+        event_groundings=[
+            V4EventGrounding(
+                event_id=event_id,
+                observed_basis=f"Event {event_id}에서 확인된 시장 사실",
+                uncertainty=f"{dimension_id}의 강도와 지속 기간",
+            ),
+        ],
+        lever_mappings=[
+            V4LeverMapping(
                 impact_lever_id=impact_lever_id,
                 lever_code=lever_code,
-                source_fact_ids=fact_ids,
                 mapping_rationale="dimension 불확실성을 이 영향 레버로 연결한다.",
             ),
         ],
         values=[
-            DimensionValueDefinition(value_id="low", label="낮음"),
-            DimensionValueDefinition(value_id="high", label="높음"),
+            V4DimensionValueDefinition(
+                value_id="low",
+                label="낮음",
+                global_pressure_contribution="글로벌 LNG 가격 하방 기여",
+                assumption_rationale="영향 강도가 제한적이라고 가정한다.",
+            ),
+            V4DimensionValueDefinition(
+                value_id="high",
+                label="높음",
+                global_pressure_contribution="글로벌 LNG 가격 상방 기여",
+                assumption_rationale="영향 강도가 확대된다고 가정한다.",
+            ),
         ],
     )
 
@@ -115,73 +122,27 @@ def _valid_result() -> V4GenerationResult:
     return V4GenerationResult(
         group_title="글로벌 LNG 복수 이벤트 시나리오",
         group_description="이벤트 결합에 따른 글로벌 LNG 가격 범위",
-        event_impact_facts=[
-            EventImpactFact(
-                fact_id="event_101_weather",
-                event_id=101,
-                domain="demand",
-                change_direction="increase",
-                global_pressure_direction="bullish",
-                timing="2027년 동절기",
-                magnitude_evidence="평년 대비 낮은 기온",
-                fact_basis="이벤트의 한파 전망",
-                confidence=0.8,
-            ),
-            EventImpactFact(
-                fact_id="event_101_liquefaction",
-                event_id=101,
-                domain="supply",
-                change_direction="decrease",
-                global_pressure_direction="bullish",
-                timing="2027년 상반기",
-                magnitude_evidence="일부 Train 정비",
-                fact_basis="이벤트의 정비 일정",
-                confidence=0.7,
-            ),
-            EventImpactFact(
-                fact_id="event_101_sentiment",
-                event_id=101,
-                domain="price_only",
-                change_direction="increase",
-                global_pressure_direction="bullish",
-                timing="2027년 상반기",
-                magnitude_evidence="위험 프리미엄 확대",
-                fact_basis="시장 심리 Event 근거",
-                confidence=0.6,
-            ),
-            EventImpactFact(
-                fact_id="event_202_fixed_outage",
-                event_id=202,
-                domain="supply",
-                change_direction="decrease",
-                global_pressure_direction="bullish",
-                timing="현재",
-                magnitude_evidence="확정 가동 중단",
-                fact_basis="Event에서 확인된 공통 영향",
-                confidence=0.9,
-                common_impact_lever_refs=[
-                    ImpactLeverReference(
-                        lever_code="liquefaction_availability",
-                        source_fact_ids=["event_202_fixed_outage"],
-                        mapping_rationale="잔여 불확실성 없이 모든 Scenario에 공통 적용한다.",
-                    ),
-                ],
-            ),
+        interactions=[
+            {
+                "event_ids": [101, 202],
+                "relation": "amplification",
+                "rationale": "수요 증가와 공급 제약이 가격 압력을 증폭한다.",
+            },
         ],
         dimension_definitions=[
             _dimension(
                 dimension_id="cold_wave_intensity",
-                fact_ids=["event_101_weather"],
+                event_id=101,
                 lever_code="weather_demand",
             ),
             _dimension(
                 dimension_id="liquefaction_recovery",
-                fact_ids=["event_101_liquefaction"],
+                event_id=202,
                 lever_code="liquefaction_availability",
             ),
             _dimension(
                 dimension_id="risk_premium",
-                fact_ids=["event_101_sentiment"],
+                event_id=202,
                 lever_code="financial_market_sentiment",
             ),
         ],
@@ -242,30 +203,12 @@ def _valid_result() -> V4GenerationResult:
                 reason="하단 시나리오와 독립적인 검토 가치가 낮음",
             ),
         ],
-        event_dimension_coverage=[
-            EventDimensionCoverage(
-                event_id=101,
-                dimension_ids=[],
-                rationale="Event 101의 잔여 불확실성이 세 dimension으로 분기된다.",
-            ),
-            EventDimensionCoverage(
-                event_id=202,
-                dimension_ids=[],
-                no_dimension_reason="COMMON_FACT_NO_SCENARIO_DELTA",
-                rationale="Event 202의 영향은 확정되어 공통 영향으로만 유지한다.",
-            ),
-        ],
     )
 
 
 def _catalog() -> list[ModelImpactLeverPayload]:
     return [
-        _lever(
-            lever_id=1,
-            code="weather_demand",
-            domain="demand",
-            support_status="executable",
-        ),
+        _lever(lever_id=1, code="weather_demand", domain="demand", support_status="executable"),
         _lever(
             lever_id=2,
             code="liquefaction_availability",
@@ -278,30 +221,17 @@ def _catalog() -> list[ModelImpactLeverPayload]:
             domain="price_only",
             support_status=None,
         ),
-        _lever(
-            lever_id=4,
-            code="direct_gas_demand",
-            domain="demand",
-            support_status=None,
-        ),
+        _lever(lever_id=4, code="direct_gas_demand", domain="demand", support_status=None),
     ]
 
 
 def test_v4_request_requires_two_to_five_unique_events() -> None:
-    payload = V4MultiEventCreateScenariosIn(
-        mi_event_ids=[101, 202],
-        user_id=7,
-    )
+    payload = V4MultiEventCreateScenariosIn(mi_event_ids=[101, 202], user_id=7)
 
     assert payload.mi_event_ids == [101, 202]
-    assert "targetMarket" not in V4MultiEventCreateScenariosIn.model_json_schema(
-        by_alias=True,
-    )["properties"]
+    assert "targetMarket" not in V4MultiEventCreateScenariosIn.model_json_schema(by_alias=True)["properties"]
     with pytest.raises(ValueError):
-        V4MultiEventCreateScenariosIn(
-            mi_event_ids=[101, 101],
-            user_id=7,
-        )
+        V4MultiEventCreateScenariosIn(mi_event_ids=[101, 101], user_id=7)
 
 
 def test_v4_sync_and_background_routes_are_registered() -> None:
@@ -315,60 +245,30 @@ def test_v4_sync_and_background_routes_are_registered() -> None:
 
 def test_v4_storage_uses_scenario_related_markets_without_group_target_market() -> None:
     from apps.persistence.scenario.models import MiScenarioModel
-    from apps.persistence.scenario_group.models import (
-        MiScenarioGroupModel,
-        MiScenarioSnapModel,
-    )
+    from apps.persistence.scenario_group.models import MiScenarioGroupModel, MiScenarioSnapModel
 
     assert "target_market" not in MiScenarioGroupModel.__table__.columns
     assert "related_markets" in MiScenarioModel.__table__.columns
     assert "related_markets" in MiScenarioSnapModel.__table__.columns
 
 
-def test_v4_finalizer_assigns_roles_and_parameter_coverage() -> None:
+def test_v4_finalizer_hydrates_levers_assigns_roles_and_computes_coverage() -> None:
     result, coverage = finalize_v4_generation_result(
         _valid_result(),
         event_ids=[101, 202],
         impact_levers=_catalog(),
     )
 
-    assert [scenario.scenario_role for scenario in result.scenarios] == [
-        "ceiling",
-        "mixed",
-        "floor",
-    ]
+    assert [scenario.scenario_role for scenario in result.scenarios] == ["ceiling", "mixed", "floor"]
     assert result.scenarios[1].baseline_yn is True
     assert result.dimension_definitions[0].model_support_status == "full"
     assert result.dimension_definitions[1].model_support_status == "none"
     assert result.dimension_definitions[2].model_support_status == "price_only"
-    assert result.dimension_definitions[0].source_event_ids == [101]
-    assert result.dimension_definitions[0].lever_refs == ["weather_demand"]
-    assert result.dimension_definitions[0].impact_lever_refs[0].impact_lever_id == 1
-    assert result.event_impact_facts[-1].common_impact_lever_refs[0].impact_lever_id == 2
-    assert result.event_dimension_coverage[0].dimension_ids == [
-        "cold_wave_intensity",
-        "liquefaction_recovery",
-        "risk_premium",
-    ]
-    assert result.event_dimension_coverage[1].dimension_ids == []
+    assert result.dimension_definitions[0].event_groundings[0].event_id == 101
+    assert result.dimension_definitions[0].lever_mappings[0].impact_lever_id == 1
     assert coverage.coverage_status == "partial"
     assert coverage.covered_dimension_ids == ["cold_wave_intensity"]
-    assert coverage.uncovered_dimension_ids == [
-        "liquefaction_recovery",
-        "risk_premium",
-    ]
-    assert [detail.model_dump() for detail in coverage.unsupported_lever_details] == [
-        {
-            "lever_code": "financial_market_sentiment",
-            "reason_code": "PRICE_ONLY",
-            "parameter_name": None,
-        },
-        {
-            "lever_code": "liquefaction_availability",
-            "reason_code": "INACTIVE_MODEL_PARAMETER",
-            "parameter_name": "Parameter2",
-        },
-    ]
+    assert coverage.uncovered_dimension_ids == ["liquefaction_recovery", "risk_premium"]
 
 
 def test_v4_finalizer_allows_scenarios_without_mixed_role() -> None:
@@ -390,7 +290,6 @@ def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
     dimension_draft = V4DimensionDesignResult(
         interactions=aggregate.interactions,
         dimension_definitions=aggregate.dimension_definitions,
-        event_dimension_coverage=aggregate.event_dimension_coverage,
     )
     valid_draft = V4ScenarioSynthesisResult(
         group_title=aggregate.group_title,
@@ -403,10 +302,7 @@ def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
         detail="groupTitle must not be blank",
     )
     invoke = AsyncMock(side_effect=[invalid_response, valid_draft])
-    state = V4MultiEventGenerationState(
-        event_impact_facts=aggregate.event_impact_facts,
-        dimension_draft=dimension_draft,
-    )
+    state = V4MultiEventGenerationState(dimension_draft=dimension_draft)
 
     with (
         patch.object(v4_nodes, "invoke_stage_structured_output", new=invoke),
@@ -422,30 +318,14 @@ def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
     assert "groupTitle" in invoke.await_args_list[1].kwargs["user_prompt"]
 
 
-def test_v4_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> None:
+def test_v4_langgraph_uses_two_llm_stages_and_retries_only_dimension_stage() -> None:
     from apps.persistence.event.schema import EventPayload
     from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
     aggregate = _valid_result()
-    facts_by_event = {
-        event_id: [
-            fact.model_copy(update={"common_impact_lever_refs": []})
-            for fact in aggregate.event_impact_facts
-            if fact.event_id == event_id
-        ]
-        for event_id in (101, 202)
-    }
-    common_fact = next(fact for fact in aggregate.event_impact_facts if fact.event_id == 202)
     dimension_draft = V4DimensionDesignResult(
         interactions=aggregate.interactions,
         dimension_definitions=aggregate.dimension_definitions,
-        event_dimension_coverage=aggregate.event_dimension_coverage,
-        common_fact_lever_mappings=[
-            V4CommonFactLeverMapping(
-                fact_id=common_fact.fact_id,
-                common_impact_lever_refs=common_fact.common_impact_lever_refs,
-            ),
-        ],
     )
     scenario_draft = V4ScenarioSynthesisResult(
         group_title=aggregate.group_title,
@@ -453,21 +333,19 @@ def test_v4_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> N
         scenarios=aggregate.scenarios,
         excluded_scenarios=aggregate.excluded_scenarios,
     )
-    event_attempts = {101: 0, 202: 0}
     calls: list[str] = []
+    dimension_attempts = 0
 
-    async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
+    async def invoke_stage(*, output_schema: type[object], **_kwargs: object) -> object:
+        nonlocal dimension_attempts
         calls.append(output_schema.__name__)
-        if output_schema is V4EventAnalysisResult:
-            event_id = 101 if "101" in user_prompt else 202
-            event_attempts[event_id] += 1
-            if event_id == 202 and event_attempts[event_id] == 1:
+        if output_schema is V4DimensionDesignResult:
+            dimension_attempts += 1
+            if dimension_attempts == 1:
                 raise MIBaseError(
                     ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-                    detail="eventImpactFacts validation failed",
+                    detail="dimensionDefinitions validation failed",
                 )
-            return V4EventAnalysisResult(event_impact_facts=facts_by_event[event_id])
-        if output_schema is V4DimensionDesignResult:
             return dimension_draft.model_copy(deep=True)
         return scenario_draft.model_copy(deep=True)
 
@@ -502,21 +380,16 @@ def test_v4_langgraph_retries_only_failed_event_and_uses_n_plus_two_calls() -> N
         final_state = asyncio.run(v4_flow_module.get_compiled_graph().ainvoke(state))
     v4_flow_module.get_compiled_graph.cache_clear()
 
-    assert event_attempts == {101: 1, 202: 2}
-    assert calls.count("V4EventAnalysisResult") == 3
-    assert calls.count("V4DimensionDesignResult") == 1
-    assert calls.count("V4ScenarioSynthesisResult") == 1
-    assert final_state["dimension_attempt"] == 1
+    assert calls == ["V4DimensionDesignResult", "V4DimensionDesignResult", "V4ScenarioSynthesisResult"]
+    assert final_state["dimension_attempt"] == 2
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
 
 
-def test_v4_inline_converts_boolean_baseline_to_database_yn(
+def test_v4_inline_persists_compact_dimension_grounding_and_database_baseline_yn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import (
-        v4_flow,
-    )
+    from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import v4_flow
     from apps.persistence.event.schema import EventPayload
     from apps.persistence.scenario.schema import ScenarioPayload
     from apps.persistence.scenario_group.schema import ScenarioGroupPayload
@@ -552,21 +425,14 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
             ],
         ),
     )
-    monkeypatch.setattr(
-        v4_flow.ScenarioGroupService,
-        "persist_multi_event_generation",
-        persist,
-    )
+    monkeypatch.setattr(v4_flow.ScenarioGroupService, "persist_multi_event_generation", persist)
 
     async def run_graph(
         state: V4MultiEventGenerationState,
         **_kwargs: object,
     ) -> V4MultiEventGenerationState:
         graph_state = state.model_copy(
-            update={
-                "finalized_result": finalized,
-                "parameter_coverage": coverage,
-            },
+            update={"finalized_result": finalized, "parameter_coverage": coverage},
         )
         return graph_state.model_copy(update=v4_nodes.persist_v4_generation(graph_state))
 
@@ -582,16 +448,8 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
                     generation_strategy="multi_event_model_lever_dimensions",
                 ),
                 "events": [
-                    EventPayload(
-                        mi_event_id=101,
-                        event_type_l2_id=8,
-                        event_title_ko="한파",
-                    ),
-                    EventPayload(
-                        mi_event_id=202,
-                        event_type_l2_id=12,
-                        event_title_ko="액화시설 정비",
-                    ),
+                    EventPayload(mi_event_id=101, event_type_l2_id=8, event_title_ko="한파"),
+                    EventPayload(mi_event_id=202, event_type_l2_id=12, event_title_ko="액화시설 정비"),
                 ],
                 "impact_levers": _catalog(),
                 "impact_catalog_version": "v1",
@@ -602,201 +460,79 @@ def test_v4_inline_converts_boolean_baseline_to_database_yn(
     )
 
     saved = persist.call_args.kwargs["scenarios"]
+    saved_dimensions = persist.call_args.kwargs["dimension_definitions"]
     saved_diagnostics = persist.call_args.kwargs["generation_diagnostics"]
     assert [scenario["baseline_yn"] for scenario in saved] == ["N", "Y", "N"]
-    assert saved[0]["related_markets"] == [
-        {
-            "market": "JKM",
-            "rationale": "아시아향 화물 전환 가능성이 특별히 중요함",
-        },
-    ]
+    assert saved_dimensions[0]["event_groundings"][0]["event_id"] == 101
+    assert saved_dimensions[0]["lever_mappings"][0]["impact_lever_id"] == 1
+    assert "source_fact_ids" not in saved_dimensions[0]
+    assert "impact_lever_refs" not in saved_dimensions[0]
+    assert "source_refs" not in saved_dimensions[0]
+    assert "event_impact_facts" not in saved_diagnostics
+    assert "event_dimension_coverage" not in saved_diagnostics
     assert response.data is not None
-    assert saved_diagnostics["event_dimension_coverage"][1] == {
-        "event_id": 202,
-        "dimension_ids": [],
-        "no_dimension_reason": "COMMON_FACT_NO_SCENARIO_DELTA",
-        "rationale": "Event 202의 영향은 확정되어 공통 영향으로만 유지한다.",
-    }
-    assert response.data.generation_diagnostics.event_dimension_coverage[0].dimension_ids == [
-        "cold_wave_intensity",
-        "liquefaction_recovery",
-        "risk_premium",
-    ]
+    assert response.data.dimension_definitions[0].event_groundings[0].observed_basis
     assert response.data.table.rows[0].related_markets == [
-        RelatedMarket(
-            market="JKM",
-            rationale="아시아향 화물 전환 가능성이 특별히 중요함",
-        ),
+        RelatedMarket(market="JKM", rationale="아시아향 화물 전환 가능성이 특별히 중요함"),
     ]
 
 
 def test_v4_finalizer_rejects_unknown_lever() -> None:
     result = _valid_result()
-    result.dimension_definitions[0].impact_lever_refs[0].lever_code = "invented_parameter"
+    result.dimension_definitions[0].lever_mappings[0].lever_code = "invented_parameter"
 
     with pytest.raises(ValueError, match="unknown lever"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
+        finalize_v4_generation_result(result, event_ids=[101, 202], impact_levers=_catalog())
 
 
-def test_v4_finalizer_requires_an_executable_dimension() -> None:
+def test_v4_finalizer_allows_dimensions_without_executable_binding() -> None:
     result = _valid_result()
-    result.dimension_definitions[0].impact_lever_refs[0] = ImpactLeverReference(
+    result.dimension_definitions[0].lever_mappings[0] = V4LeverMapping(
         lever_code="direct_gas_demand",
-        source_fact_ids=["event_101_weather"],
-        mapping_rationale="실행 binding이 없는 demand 레버로 매핑한다.",
+        mapping_rationale="현재 직접 binding이 없어도 중요한 수요 불확실성이다.",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="at least one dimension must reference an executable",
-    ):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
+    _finalized, coverage = finalize_v4_generation_result(
+        result,
+        event_ids=[101, 202],
+        impact_levers=_catalog(),
+    )
 
-
-def test_v4_finalizer_rejects_duplicate_fact_ids() -> None:
-    result = _valid_result()
-    result.event_impact_facts[1].fact_id = result.event_impact_facts[0].fact_id
-
-    with pytest.raises(ValueError, match="fact ids must be unique"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
-
-
-def test_v4_finalizer_rejects_unknown_dimension_source_fact() -> None:
-    result = _valid_result()
-    dimension = result.dimension_definitions[0]
-    dimension.source_fact_ids = ["missing_fact"]
-    dimension.impact_lever_refs[0].source_fact_ids = ["missing_fact"]
-
-    with pytest.raises(ValueError, match="references unknown facts"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
-
-
-def test_v4_finalizer_requires_impact_levers_to_cover_all_dimension_facts() -> None:
-    result = _valid_result()
-    dimension = result.dimension_definitions[0]
-    dimension.source_fact_ids = [
-        "event_101_weather",
-        "event_101_liquefaction",
-    ]
-
-    with pytest.raises(ValueError, match="must cover source facts exactly"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
+    assert coverage.coverage_status == "none"
 
 
 def test_v4_finalizer_rejects_impact_lever_id_code_mismatch() -> None:
     result = _valid_result()
-    result.dimension_definitions[0].impact_lever_refs[0].impact_lever_id = 2
+    result.dimension_definitions[0].lever_mappings[0].impact_lever_id = 2
 
     with pytest.raises(ValueError, match="id/code mismatch"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
+        finalize_v4_generation_result(result, event_ids=[101, 202], impact_levers=_catalog())
 
 
-def test_v4_finalizer_rejects_fact_and_lever_domain_mismatch() -> None:
+def test_v4_finalizer_rejects_unknown_grounding_event() -> None:
     result = _valid_result()
-    result.dimension_definitions[0].impact_lever_refs[0].lever_code = "liquefaction_availability"
+    result.dimension_definitions[0].event_groundings[0].event_id = 999
 
-    with pytest.raises(ValueError, match="domain must match source facts"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
+    with pytest.raises(ValueError, match="references unknown events"):
+        finalize_v4_generation_result(result, event_ids=[101, 202], impact_levers=_catalog())
 
 
-def test_v4_finalizer_rejects_common_mapping_for_dimension_fact() -> None:
-    result = _valid_result()
-    result.event_impact_facts[0].common_impact_lever_refs = [
-        ImpactLeverReference(
-            lever_code="weather_demand",
-            source_fact_ids=["event_101_weather"],
-            mapping_rationale="dimension에서도 사용된 사실을 공통 매핑하려는 잘못된 결과",
-        ),
-    ]
+def test_v4_dimension_allows_multiple_groundings_per_event_but_rejects_duplicate_lever_codes() -> None:
+    dimension = _dimension(dimension_id="duplicate", event_id=101, lever_code="weather_demand")
+    payload = dimension.model_dump()
+    payload["event_groundings"].append(payload["event_groundings"][0])
 
-    with pytest.raises(ValueError, match="referenced by a dimension"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
+    parsed = V4DimensionDefinition.model_validate(payload)
+
+    assert [grounding.event_id for grounding in parsed.event_groundings] == [101, 101]
+
+    payload = dimension.model_dump()
+    payload["lever_mappings"].append(payload["lever_mappings"][0])
+    with pytest.raises(ValueError, match="unique leverCodes"):
+        V4DimensionDefinition.model_validate(payload)
 
 
-def test_v4_finalizer_requires_common_mapping_for_dimension_free_fact() -> None:
-    result = _valid_result()
-    result.event_impact_facts[-1].common_impact_lever_refs = []
-
-    with pytest.raises(
-        ValueError,
-        match="dimension-free fact .* must define common impact levers",
-    ):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
-
-
-def test_v4_finalizer_requires_reason_for_event_without_dimensions() -> None:
-    result = _valid_result()
-    result.event_dimension_coverage[1].no_dimension_reason = None
-
-    with pytest.raises(ValueError, match="requires noDimensionReason"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
-
-
-def test_v4_event_dimension_coverage_rejects_unknown_reason_code() -> None:
-    with pytest.raises(ValueError, match="noDimensionReason"):
-        EventDimensionCoverage.model_validate(
-            {
-                "eventId": 202,
-                "dimensionIds": [],
-                "noDimensionReason": "NO_RESIDUAL_UNCERTAINTY",
-                "rationale": "지원하지 않는 과거 reason code",
-            },
-        )
-
-
-def test_v4_finalizer_rejects_no_dimension_reason_for_covered_event() -> None:
-    result = _valid_result()
-    result.event_dimension_coverage[0].no_dimension_reason = "COMMON_FACT_NO_SCENARIO_DELTA"
-
-    with pytest.raises(ValueError, match="must not define noDimensionReason"):
-        finalize_v4_generation_result(
-            result,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
-        )
-
-
-def test_v4_prompt_uses_event_facts_global_pressure_and_catalog() -> None:
+def test_v4_prompt_uses_compact_dimension_grounding_contract() -> None:
     prompt = build_model_lever_user_prompt(
         events=[
             {
@@ -810,12 +546,33 @@ def test_v4_prompt_uses_event_facts_global_pressure_and_catalog() -> None:
     )
 
     assert "동북아 한파" in prompt
-    assert "Target Market" not in prompt
-    assert "globalPressureRationale" in prompt
-    assert "relatedMarkets" in prompt
+    assert "eventGroundings" in prompt
+    assert "observedBasis" in prompt
+    assert "uncertainty" in prompt
+    assert "leverMappings" in prompt
+    assert "assumptionRationale" in prompt
     assert "weather_demand" in prompt
-    assert "적어도 하나의 dimension은 executable" in prompt
+    assert "sourceFactIds" in prompt
+    assert "만들지 마십시오" in prompt
+    assert "parameterBindings" not in prompt
+    assert "applicabilityHint" not in prompt
     assert "Template Domain Knowledge" not in prompt
+
+
+def test_v4_scenario_prompt_does_not_repeat_raw_events_or_fact_graph() -> None:
+    result = _valid_result()
+    prompt = build_v4_scenario_synthesis_user_prompt(
+        interactions=[interaction.model_dump() for interaction in result.interactions],
+        dimension_definitions=[definition.model_dump() for definition in result.dimension_definitions],
+    )
+
+    assert "Validated Dimensions" in prompt
+    assert "eventGroundings" in prompt
+    assert "leverMappings" in prompt
+    assert "Event Context" not in prompt
+    assert "Event Impact Facts" not in prompt
+    assert "impactLeverId" not in prompt
+    assert "modelSupportStatus" not in prompt
 
 
 def test_v4_rejects_duplicate_related_markets() -> None:
@@ -862,8 +619,7 @@ def test_v4_schema_converts_strict_wire_dimension_values_to_domain_map() -> None
     payload = _valid_result().model_dump(by_alias=True)
     scenario = payload["scenarios"][0]
     scenario["dimensionValues"] = [
-        {"dimensionId": key, "valueId": value}
-        for key, value in scenario["dimensionValues"].items()
+        {"dimensionId": key, "valueId": value} for key, value in scenario["dimensionValues"].items()
     ]
 
     parsed = V4GenerationResult.model_validate(payload)

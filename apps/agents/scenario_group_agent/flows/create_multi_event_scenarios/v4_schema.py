@@ -15,33 +15,95 @@ from apps.persistence.model_parameter.schema import (
     ModelImpactLeverPayload,
     ModelImpactLeverSupportIssue,
 )
-from apps.persistence.scenario.schema import (
-    DimensionDefinition,
-    ImpactLeverReference,
-    RelatedMarket,
-)
+from apps.persistence.scenario.schema import RelatedMarket
 
 
-class EventImpactFact(ApiModel):
-    fact_id: str = Field(min_length=1)
+class V4EventGrounding(ApiModel):
+    """Compact Event evidence and residual uncertainty owned by one dimension."""
+
+    model_config = ConfigDict(extra="forbid")
+
     event_id: int = Field(gt=0)
-    domain: Literal["demand", "supply", "trade", "price_only"]
-    change_direction: Literal["increase", "decrease", "neutral"]
-    global_pressure_direction: Literal["bullish", "bearish", "neutral"]
-    affected_scope: list[str] = Field(default_factory=list)
-    timing: str = Field(min_length=1)
-    magnitude_evidence: str = Field(min_length=1)
-    fact_basis: str = Field(min_length=1)
-    confidence: float = Field(ge=0, le=1)
-    common_impact_lever_refs: list[ImpactLeverReference] = Field(
-        default_factory=list,
-    )
+    observed_basis: str = Field(min_length=1)
+    uncertainty: str = Field(min_length=1)
 
     @model_validator(mode="after")
-    def normalize_fact_id(self) -> EventImpactFact:
-        self.fact_id = self.fact_id.strip()
-        if not self.fact_id:
-            raise ValueError("factId must not be blank")
+    def normalize_text(self) -> V4EventGrounding:
+        self.observed_basis = self.observed_basis.strip()
+        self.uncertainty = self.uncertainty.strip()
+        if not self.observed_basis or not self.uncertainty:
+            raise ValueError("event grounding text must not be blank")
+        return self
+
+
+class V4LeverMapping(ApiModel):
+    """Stable model-impact lever reference with only the mapping explanation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    impact_lever_id: int | None = Field(default=None, gt=0)
+    lever_code: str = Field(min_length=1)
+    mapping_rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def normalize_mapping(self) -> V4LeverMapping:
+        self.lever_code = self.lever_code.strip()
+        self.mapping_rationale = self.mapping_rationale.strip()
+        if not self.lever_code or not self.mapping_rationale:
+            raise ValueError("lever mapping fields must not be blank")
+        return self
+
+
+class V4DimensionValueDefinition(ApiModel):
+    """Scenario branch value and the assumption that makes the branch distinct."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    global_pressure_contribution: str = Field(min_length=1)
+    assumption_rationale: str = Field(min_length=1)
+
+
+class V4DimensionDefinition(ApiModel):
+    """v4 grounding, lever mapping, and scenario branch definition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    dimension_type: Literal[
+        "magnitude",
+        "scope",
+        "timing",
+        "recovery",
+        "mitigation",
+        "interaction",
+    ]
+    value_kind: Literal["categorical", "numeric_range", "temporal"]
+    unit: str | None = None
+    event_groundings: list[V4EventGrounding] = Field(min_length=1)
+    lever_mappings: list[V4LeverMapping] = Field(min_length=1)
+    model_support_status: (
+        Literal[
+            "full",
+            "partial",
+            "none",
+            "price_only",
+        ]
+        | None
+    ) = None
+    values: list[V4DimensionValueDefinition] = Field(min_length=2, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_compact_references(self) -> V4DimensionDefinition:
+        lever_codes = [mapping.lever_code for mapping in self.lever_mappings]
+        if len(lever_codes) != len(set(lever_codes)):
+            raise ValueError("dimension leverMappings must contain unique leverCodes")
+        value_ids = [value.value_id for value in self.values]
+        if len(value_ids) != len(set(value_ids)):
+            raise ValueError("dimension values must contain unique valueIds")
         return self
 
 
@@ -89,43 +151,12 @@ class V4ExcludedScenarioCandidate(ApiModel):
     reason: str = Field(min_length=1)
 
 
-class EventDimensionCoverage(ApiModel):
-    event_id: int = Field(gt=0)
-    dimension_ids: list[str] = Field(default_factory=list)
-    no_dimension_reason: Literal[
-        "NO_EXECUTABLE_UNCERTAINTY",
-        "PRICE_ONLY_OR_UNSUPPORTED",
-        "COMMON_FACT_NO_SCENARIO_DELTA",
-    ] | None = None
-    rationale: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def normalize_coverage(self) -> EventDimensionCoverage:
-        self.dimension_ids = [dimension_id.strip() for dimension_id in self.dimension_ids]
-        if any(not dimension_id for dimension_id in self.dimension_ids):
-            raise ValueError("event dimension coverage must not contain blank dimensionIds")
-        if len(self.dimension_ids) != len(set(self.dimension_ids)):
-            raise ValueError("event dimension coverage dimensionIds must be unique")
-        self.rationale = self.rationale.strip()
-        if not self.rationale:
-            raise ValueError("event dimension coverage rationale must not be blank")
-        return self
-
-
 class V4GenerationResult(ApiModel):
     group_title: str = Field(min_length=1)
     group_description: str = Field(min_length=1)
-    event_impact_facts: list[EventImpactFact] = Field(min_length=1)
     interactions: list[EventInteraction] = Field(default_factory=list)
-    dimension_definitions: list[DimensionDefinition] = Field(
-        min_length=3,
-        max_length=6,
-    )
+    dimension_definitions: list[V4DimensionDefinition] = Field(min_length=3, max_length=6)
     scenarios: list[V4ScenarioCandidate] = Field(min_length=3, max_length=5)
-    event_dimension_coverage: list[EventDimensionCoverage] = Field(
-        min_length=2,
-        max_length=5,
-    )
     excluded_scenarios: list[V4ExcludedScenarioCandidate] = Field(default_factory=list)
     excluded_dimensions: list[str] = Field(default_factory=list)
 
@@ -146,37 +177,18 @@ class V4GenerationResult(ApiModel):
         return normalized
 
 
-class V4EventAnalysisResult(ApiModel):
-    """Per-Event fact extraction response before lever selection."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    event_impact_facts: list[EventImpactFact] = Field(min_length=1)
-
-
-class V4CommonFactLeverMapping(ApiModel):
-    """Lever mapping for a fact that is intentionally not used by a dimension."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    fact_id: str = Field(min_length=1)
-    common_impact_lever_refs: list[ImpactLeverReference] = Field(min_length=1)
-
-
 class V4DimensionDesignResult(ApiModel):
-    """v4 dimension-only response based on validated Event facts."""
+    """Dimension grounding and lever design created directly from selected Events."""
 
     model_config = ConfigDict(extra="forbid")
 
     interactions: list[EventInteraction] = Field(default_factory=list)
-    dimension_definitions: list[DimensionDefinition] = Field(min_length=3, max_length=6)
-    event_dimension_coverage: list[EventDimensionCoverage] = Field(min_length=2, max_length=5)
-    common_fact_lever_mappings: list[V4CommonFactLeverMapping] = Field(default_factory=list)
+    dimension_definitions: list[V4DimensionDefinition] = Field(min_length=3, max_length=6)
     excluded_dimensions: list[str] = Field(default_factory=list)
 
 
 class V4ScenarioSynthesisResult(ApiModel):
-    """v4 Scenario-only response based on validated fact/lever dimensions."""
+    """v4 Scenario-only response based on validated compact dimensions."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -217,217 +229,49 @@ def _lever_support_status(
     return "none"
 
 
-def _hydrate_impact_lever_reference(
-    reference: ImpactLeverReference,
+def _validate_interactions(interactions: list[EventInteraction], event_ids: list[int]) -> None:
+    event_id_set = set(event_ids)
+    for interaction in interactions:
+        if not set(interaction.event_ids).issubset(event_id_set):
+            raise ValueError("interaction references an unknown event")
+
+
+def _hydrate_dimensions(
+    definitions: list[V4DimensionDefinition],
     *,
-    catalog_by_code: dict[str, ModelImpactLeverPayload],
-    source_facts_by_id: dict[str, EventImpactFact],
-    allowed_source_fact_ids: set[str],
-    owner_description: str,
-) -> None:
-    lever = catalog_by_code.get(reference.lever_code)
-    if lever is None:
-        raise ValueError(
-            f"{owner_description} references unknown lever: {reference.lever_code}",
-        )
-    if reference.impact_lever_id is not None and reference.impact_lever_id != lever.impact_lever_id:
-        raise ValueError(
-            f"{owner_description} impact lever id/code mismatch: "
-            f"impact_lever_id={reference.impact_lever_id}, lever_code={reference.lever_code}",
-        )
-    if not reference.source_fact_ids:
-        raise ValueError(f"{owner_description} impact lever must reference source facts")
-    referenced_fact_ids = set(reference.source_fact_ids)
-    unknown_fact_ids = referenced_fact_ids - set(source_facts_by_id)
-    if unknown_fact_ids:
-        raise ValueError(
-            f"{owner_description} impact lever references unknown facts: {sorted(unknown_fact_ids)}",
-        )
-    if not referenced_fact_ids.issubset(allowed_source_fact_ids):
-        raise ValueError(
-            f"{owner_description} impact lever references facts outside its owner: "
-            f"{sorted(referenced_fact_ids - allowed_source_fact_ids)}",
-        )
-    mismatched_domains = sorted(
-        fact_id
-        for fact_id in referenced_fact_ids
-        if source_facts_by_id[fact_id].domain != lever.domain
-    )
-    if mismatched_domains:
-        raise ValueError(
-            f"{owner_description} lever {reference.lever_code} domain must match source facts: "
-            f"{mismatched_domains}",
-        )
-    reference.impact_lever_id = lever.impact_lever_id
-
-
-def _validate_dimensions(
-    result: V4GenerationResult,
     event_ids: list[int],
     catalog_by_code: dict[str, ModelImpactLeverPayload],
-    source_facts_by_id: dict[str, EventImpactFact],
-) -> set[str]:
-    dimension_ids = [dimension.dimension_id for dimension in result.dimension_definitions]
+) -> None:
+    dimension_ids = [dimension.dimension_id for dimension in definitions]
     if len(dimension_ids) != len(set(dimension_ids)):
         raise ValueError("dimension ids must be unique")
 
-    dimension_source_fact_ids: set[str] = set()
     event_id_set = set(event_ids)
-    for display_order, dimension in enumerate(result.dimension_definitions, start=1):
-        if not dimension.source_fact_ids:
-            raise ValueError(f"dimension {dimension.dimension_id} must reference source facts")
-        if len(dimension.source_fact_ids) != len(set(dimension.source_fact_ids)):
-            raise ValueError(f"dimension {dimension.dimension_id} source fact ids must be unique")
-        unknown_fact_ids = set(dimension.source_fact_ids) - set(source_facts_by_id)
-        if unknown_fact_ids:
+    for dimension in definitions:
+        grounding_event_ids = {grounding.event_id for grounding in dimension.event_groundings}
+        unknown_event_ids = grounding_event_ids - event_id_set
+        if unknown_event_ids:
             raise ValueError(
-                f"dimension {dimension.dimension_id} references unknown facts: {sorted(unknown_fact_ids)}",
+                f"dimension {dimension.dimension_id} references unknown events: {sorted(unknown_event_ids)}",
             )
-        if not dimension.impact_lever_refs:
-            raise ValueError(f"dimension {dimension.dimension_id} must reference impact levers")
-        lever_codes = [reference.lever_code for reference in dimension.impact_lever_refs]
-        if len(lever_codes) != len(set(lever_codes)):
-            raise ValueError(f"dimension {dimension.dimension_id} impact levers must be unique")
-        mapped_source_fact_ids: set[str] = set()
-        for reference in dimension.impact_lever_refs:
-            _hydrate_impact_lever_reference(
-                reference,
-                catalog_by_code=catalog_by_code,
-                source_facts_by_id=source_facts_by_id,
-                allowed_source_fact_ids=set(dimension.source_fact_ids),
-                owner_description=f"dimension {dimension.dimension_id}",
-            )
-            mapped_source_fact_ids.update(reference.source_fact_ids)
-        if mapped_source_fact_ids != set(dimension.source_fact_ids):
-            raise ValueError(
-                f"dimension {dimension.dimension_id} impact lever refs must cover "
-                "source facts exactly: "
-                f"missing={sorted(set(dimension.source_fact_ids) - mapped_source_fact_ids)}",
-            )
-        if len(dimension.values) < 2 or len(dimension.values) > 4:
-            raise ValueError(f"dimension {dimension.dimension_id} must have 2-4 values")
-        if len({value.value_id for value in dimension.values}) != len(dimension.values):
-            raise ValueError(f"dimension {dimension.dimension_id} value ids must be unique")
+
+        for mapping in dimension.lever_mappings:
+            lever = catalog_by_code.get(mapping.lever_code)
+            if lever is None:
+                raise ValueError(
+                    f"dimension {dimension.dimension_id} references unknown lever: {mapping.lever_code}",
+                )
+            if mapping.impact_lever_id is not None and mapping.impact_lever_id != lever.impact_lever_id:
+                raise ValueError(
+                    f"dimension {dimension.dimension_id} impact lever id/code mismatch: "
+                    f"impact_lever_id={mapping.impact_lever_id}, lever_code={mapping.lever_code}",
+                )
+            mapping.impact_lever_id = lever.impact_lever_id
 
         dimension.model_support_status = _lever_support_status(
-            lever_codes,
+            [mapping.lever_code for mapping in dimension.lever_mappings],
             catalog_by_code,
         )
-        dimension.required = True
-        dimension.display_order = display_order
-        dimension.source_event_ids = list(
-            dict.fromkeys(
-                source_facts_by_id[fact_id].event_id
-                for fact_id in dimension.source_fact_ids
-            ),
-        )
-        if not set(dimension.source_event_ids).issubset(event_id_set):
-            raise ValueError(f"dimension {dimension.dimension_id} references an unknown event")
-        dimension.lever_refs = lever_codes
-        dimension_source_fact_ids.update(dimension.source_fact_ids)
-
-    if not any(
-        dimension.model_support_status in {"full", "partial"}
-        for dimension in result.dimension_definitions
-    ):
-        raise ValueError(
-            "at least one dimension must reference an executable model parameter binding",
-        )
-    return dimension_source_fact_ids
-
-
-def _validate_event_grounding(
-    result: V4GenerationResult,
-    event_ids: list[int],
-) -> dict[str, EventImpactFact]:
-    fact_event_ids = {fact.event_id for fact in result.event_impact_facts}
-    if fact_event_ids != set(event_ids):
-        raise ValueError("event impact facts must cover every selected event")
-
-    fact_ids = [fact.fact_id for fact in result.event_impact_facts]
-    if len(fact_ids) != len(set(fact_ids)):
-        raise ValueError("event impact fact ids must be unique")
-    source_facts_by_id = {fact.fact_id: fact for fact in result.event_impact_facts}
-
-    event_id_set = set(event_ids)
-    for interaction in result.interactions:
-        if not set(interaction.event_ids).issubset(event_id_set):
-            raise ValueError("interaction references an unknown event")
-    return source_facts_by_id
-
-
-def _validate_common_impact_lever_refs(
-    result: V4GenerationResult,
-    *,
-    catalog_by_code: dict[str, ModelImpactLeverPayload],
-    source_facts_by_id: dict[str, EventImpactFact],
-    dimension_source_fact_ids: set[str],
-) -> None:
-    for fact in result.event_impact_facts:
-        if (
-            fact.fact_id not in dimension_source_fact_ids
-            and not fact.common_impact_lever_refs
-        ):
-            raise ValueError(
-                f"dimension-free fact {fact.fact_id} must define common impact levers",
-            )
-        if fact.common_impact_lever_refs and fact.fact_id in dimension_source_fact_ids:
-            raise ValueError(
-                f"fact {fact.fact_id} cannot define common impact levers because it is referenced by a dimension",
-            )
-        lever_codes = [reference.lever_code for reference in fact.common_impact_lever_refs]
-        if len(lever_codes) != len(set(lever_codes)):
-            raise ValueError(f"fact {fact.fact_id} common impact levers must be unique")
-        for reference in fact.common_impact_lever_refs:
-            if fact.fact_id not in reference.source_fact_ids:
-                raise ValueError(
-                    f"fact {fact.fact_id} common impact lever must include its owner fact id",
-                )
-            if set(reference.source_fact_ids) & dimension_source_fact_ids:
-                raise ValueError(
-                    f"fact {fact.fact_id} common impact lever may only reference dimension-free facts",
-                )
-            _hydrate_impact_lever_reference(
-                reference,
-                catalog_by_code=catalog_by_code,
-                source_facts_by_id=source_facts_by_id,
-                allowed_source_fact_ids=set(source_facts_by_id) - dimension_source_fact_ids,
-                owner_description=f"fact {fact.fact_id}",
-            )
-
-
-def _validate_event_dimension_coverage(
-    result: V4GenerationResult,
-    *,
-    event_ids: list[int],
-    source_facts_by_id: dict[str, EventImpactFact],
-) -> None:
-    coverage_event_ids = [coverage.event_id for coverage in result.event_dimension_coverage]
-    if len(coverage_event_ids) != len(set(coverage_event_ids)):
-        raise ValueError("event dimension coverage event ids must be unique")
-    if set(coverage_event_ids) != set(event_ids):
-        raise ValueError("event dimension coverage must cover every selected event")
-
-    computed_by_event: dict[int, list[str]] = {event_id: [] for event_id in event_ids}
-    for dimension in result.dimension_definitions:
-        dimension_event_ids = {
-            source_facts_by_id[fact_id].event_id
-            for fact_id in dimension.source_fact_ids
-        }
-        for event_id in event_ids:
-            if event_id in dimension_event_ids:
-                computed_by_event[event_id].append(dimension.dimension_id)
-
-    for coverage in result.event_dimension_coverage:
-        coverage.dimension_ids = computed_by_event[coverage.event_id]
-        if coverage.dimension_ids and coverage.no_dimension_reason is not None:
-            raise ValueError(
-                f"event {coverage.event_id} with dimensions must not define noDimensionReason",
-            )
-        if not coverage.dimension_ids and coverage.no_dimension_reason is None:
-            raise ValueError(
-                f"event {coverage.event_id} without dimensions requires noDimensionReason",
-            )
 
 
 def _validate_scenarios(result: V4GenerationResult) -> None:
@@ -532,16 +376,14 @@ def build_parameter_coverage(
             uncovered.append(dimension.dimension_id)
 
     referenced_lever_codes = {
-        lever_code for dimension in result.dimension_definitions for lever_code in dimension.lever_refs
+        mapping.lever_code for dimension in result.dimension_definitions for mapping in dimension.lever_mappings
     }
     unsupported_details = [
         issue
         for lever_code in sorted(referenced_lever_codes)
         for issue in _lever_support_issues(catalog_by_code[lever_code])
     ]
-    unsupported_lever_codes = sorted(
-        {detail.lever_code for detail in unsupported_details},
-    )
+    unsupported_lever_codes = sorted({detail.lever_code for detail in unsupported_details})
 
     if covered and not uncovered:
         status: Literal["full", "partial", "none"] = "full"
@@ -561,80 +403,21 @@ def build_parameter_coverage(
 def finalize_v4_dimension_design(
     design: V4DimensionDesignResult,
     *,
-    event_impact_facts: list[EventImpactFact],
     event_ids: list[int],
     impact_levers: list[ModelImpactLeverPayload],
-) -> tuple[V4DimensionDesignResult, list[EventImpactFact]]:
-    """Hydrate and validate the v4 fact/lever dimension stage before Scenario generation."""
+) -> V4DimensionDesignResult:
+    """Hydrate and validate compact v4 dimensions before Scenario generation."""
     catalog_by_code = {lever.lever_code: lever for lever in impact_levers}
     if not catalog_by_code:
         raise ValueError("active model impact lever catalog is empty")
 
-    facts = [fact.model_copy(deep=True, update={"common_impact_lever_refs": []}) for fact in event_impact_facts]
-    fact_ids = {fact.fact_id for fact in facts}
-    dimension_fact_ids = {
-        fact_id for dimension in design.dimension_definitions for fact_id in dimension.source_fact_ids
-    }
-    mappings_by_fact: dict[str, V4CommonFactLeverMapping] = {}
-    for mapping in design.common_fact_lever_mappings:
-        if mapping.fact_id not in fact_ids:
-            raise ValueError(f"common fact lever mapping references an unknown fact: {mapping.fact_id}")
-        if mapping.fact_id in mappings_by_fact:
-            raise ValueError(f"common fact lever mapping is duplicated: {mapping.fact_id}")
-        if mapping.fact_id in dimension_fact_ids:
-            raise ValueError(f"dimension fact cannot have a common lever mapping: {mapping.fact_id}")
-        mappings_by_fact[mapping.fact_id] = mapping
-
-    unused_fact_ids = fact_ids - dimension_fact_ids
-    if set(mappings_by_fact) != unused_fact_ids:
-        raise ValueError(
-            "commonFactLeverMappings must cover every dimension-free fact exactly: "
-            f"missing={sorted(unused_fact_ids - set(mappings_by_fact))}, "
-            f"unknown={sorted(set(mappings_by_fact) - unused_fact_ids)}"
-        )
-    for fact in facts:
-        mapping = mappings_by_fact.get(fact.fact_id)
-        if mapping is not None:
-            fact.common_impact_lever_refs = mapping.common_impact_lever_refs
-
-    partial = V4GenerationResult.model_construct(
-        group_title="pending",
-        group_description="pending",
-        event_impact_facts=facts,
-        interactions=design.interactions,
-        dimension_definitions=design.dimension_definitions,
-        scenarios=[],
-        event_dimension_coverage=design.event_dimension_coverage,
-        excluded_scenarios=[],
-        excluded_dimensions=design.excluded_dimensions,
-    )
-    source_facts_by_id = _validate_event_grounding(partial, event_ids)
-    dimension_source_fact_ids = _validate_dimensions(
-        partial,
-        event_ids,
-        catalog_by_code,
-        source_facts_by_id,
-    )
-    _validate_common_impact_lever_refs(
-        partial,
-        catalog_by_code=catalog_by_code,
-        source_facts_by_id=source_facts_by_id,
-        dimension_source_fact_ids=dimension_source_fact_ids,
-    )
-    _validate_event_dimension_coverage(
-        partial,
+    _validate_interactions(design.interactions, event_ids)
+    _hydrate_dimensions(
+        design.dimension_definitions,
         event_ids=event_ids,
-        source_facts_by_id=source_facts_by_id,
+        catalog_by_code=catalog_by_code,
     )
-    return (
-        design.model_copy(
-            update={
-                "dimension_definitions": partial.dimension_definitions,
-                "event_dimension_coverage": partial.event_dimension_coverage,
-            }
-        ),
-        partial.event_impact_facts,
-    )
+    return design
 
 
 def finalize_v4_generation_result(
@@ -647,41 +430,29 @@ def finalize_v4_generation_result(
     if not catalog_by_code:
         raise ValueError("active model impact lever catalog is empty")
 
-    source_facts_by_id = _validate_event_grounding(result, event_ids)
-    dimension_source_fact_ids = _validate_dimensions(
-        result,
-        event_ids,
-        catalog_by_code,
-        source_facts_by_id,
-    )
-    _validate_common_impact_lever_refs(
-        result,
-        catalog_by_code=catalog_by_code,
-        source_facts_by_id=source_facts_by_id,
-        dimension_source_fact_ids=dimension_source_fact_ids,
-    )
-    _validate_event_dimension_coverage(
-        result,
+    _validate_interactions(result.interactions, event_ids)
+    _hydrate_dimensions(
+        result.dimension_definitions,
         event_ids=event_ids,
-        source_facts_by_id=source_facts_by_id,
+        catalog_by_code=catalog_by_code,
     )
     _validate_scenarios(result)
     return result, build_parameter_coverage(result, catalog_by_code)
 
 
 __all__ = [
-    "EventImpactFact",
-    "EventDimensionCoverage",
     "EventInteraction",
     "ParameterCoverage",
-    "V4ExcludedScenarioCandidate",
-    "V4CommonFactLeverMapping",
+    "V4DimensionDefinition",
     "V4DimensionDesignResult",
-    "V4EventAnalysisResult",
+    "V4DimensionValueDefinition",
+    "V4EventGrounding",
+    "V4ExcludedScenarioCandidate",
     "V4GenerationResult",
-    "V4ScenarioSynthesisResult",
+    "V4LeverMapping",
     "V4ScenarioCandidate",
+    "V4ScenarioSynthesisResult",
     "build_parameter_coverage",
-    "finalize_v4_generation_result",
     "finalize_v4_dimension_design",
+    "finalize_v4_generation_result",
 ]
