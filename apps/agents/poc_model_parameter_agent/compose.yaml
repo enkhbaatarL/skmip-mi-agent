@@ -1,0 +1,242 @@
+name: ${COMPOSE_PROJECT_NAME:-poc-model-parameter}
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: docker/backend.Dockerfile
+  args:
+    HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+    HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
+    NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-}
+  extra_hosts:
+    - "http.docker.internal=host-gateway"
+
+x-backend-environment: &backend-environment
+  AGENT_MODE: ${AGENT_MODE:-mock}
+  DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://poc_agent:poc_agent@mysql:3306/poc_model_parameter?charset=utf8mb4}
+  API_CORS_ORIGINS: ${API_CORS_ORIGINS:-["http://localhost:5173"]}
+  MAX_SCENARIO_PAYLOAD_BYTES: ${MAX_SCENARIO_PAYLOAD_BYTES:-1048576}
+  WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-5}
+  WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
+  WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-3}
+  WORKER_RETRY_MAX_SECONDS: ${WORKER_RETRY_MAX_SECONDS:-30}
+
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-poc_model_parameter}
+      MYSQL_USER: ${MYSQL_USER:-poc_agent}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-poc_agent}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-poc_root}
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --transaction-isolation=READ-COMMITTED
+    ports:
+      - "${MYSQL_PORT:-13307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --silent -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    stop_grace_period: 30s
+    networks:
+      - app
+
+  migrate:
+    build: *backend-build
+    environment: *backend-environment
+    command:
+      - sh
+      - -ec
+      - |
+        alembic -c alembic.ini upgrade head
+        python -m app.seed
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - app
+
+  api:
+    build: *backend-build
+    restart: unless-stopped
+    environment: *backend-environment
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    stop_grace_period: 20s
+    networks:
+      - app
+
+  worker:
+    build: *backend-build
+    restart: unless-stopped
+    environment: *backend-environment
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+    networks:
+      - app
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      extra_hosts:
+        - "http.docker.internal=host-gateway"
+      args:
+        VITE_API_BASE_URL: ""
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/web-health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    stop_grace_period: 10s
+    networks:
+      - app
+
+  mysql-test:
+    profiles: ["test"]
+    image: ${TEST_MYSQL_IMAGE:-${MYSQL_IMAGE:-mysql:8.4}}
+    environment:
+      MYSQL_DATABASE: ${TEST_MYSQL_DATABASE:-poc_model_parameter_test}
+      MYSQL_USER: ${TEST_MYSQL_USER:-poc_test}
+      MYSQL_PASSWORD: ${TEST_MYSQL_PASSWORD:-poc_test}
+      MYSQL_ROOT_PASSWORD: ${TEST_MYSQL_ROOT_PASSWORD:-poc_test_root}
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --transaction-isolation=READ-COMMITTED
+    ports:
+      - "${TEST_MYSQL_PORT:-3308}:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --silent -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - app
+
+  migrate-test:
+    profiles: ["test"]
+    build: *backend-build
+    environment:
+      <<: *backend-environment
+      AGENT_MODE: test
+      DATABASE_URL: mysql+pymysql://${TEST_MYSQL_USER:-poc_test}:${TEST_MYSQL_PASSWORD:-poc_test}@mysql-test:3306/${TEST_MYSQL_DATABASE:-poc_model_parameter_test}?charset=utf8mb4
+    command:
+      - sh
+      - -ec
+      - |
+        alembic -c alembic.ini upgrade head
+        python -m app.seed
+    depends_on:
+      mysql-test:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - app
+
+  backend-test:
+    profiles: ["test"]
+    build: *backend-build
+    environment:
+      <<: *backend-environment
+      AGENT_MODE: test
+      RUN_MYSQL_INTEGRATION: "1"
+      DATABASE_URL: mysql+pymysql://${TEST_MYSQL_USER:-poc_test}:${TEST_MYSQL_PASSWORD:-poc_test}@mysql-test:3306/${TEST_MYSQL_DATABASE:-poc_model_parameter_test}?charset=utf8mb4
+    command: ["pytest", "-q", "backend/tests"]
+    depends_on:
+      mysql-test:
+        condition: service_healthy
+      migrate-test:
+        condition: service_completed_successfully
+    networks:
+      - app
+
+  frontend-test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      target: test
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-}
+      extra_hosts:
+        - "http.docker.internal=host-gateway"
+    command: ["npm", "test", "--", "--run"]
+
+  e2e:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: docker/e2e.Dockerfile
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
+        NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-}
+      extra_hosts:
+        - "http.docker.internal=host-gateway"
+    environment:
+      E2E_BASE_URL: http://web
+      E2E_API_URL: http://api:8000
+      CI: "true"
+    command: ["npm", "test"]
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./e2e/artifacts:/e2e/artifacts
+    networks:
+      - app
+
+volumes:
+  mysql_data:
+
+networks:
+  app:
+    driver: bridge
