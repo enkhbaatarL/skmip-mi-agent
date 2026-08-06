@@ -456,14 +456,6 @@ class V2MultiEventGenerationResult(ApiModel):
     scenarios: list[V2ScenarioCandidate] = Field(min_length=3, max_length=5)
 
 
-class V2EventAnalysisResult(ApiModel):
-    """Per-Event v2 LLM response used by the LangGraph fan-out stage."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    event_shock: V2EventShock
-
-
 class V2DimensionDesignResult(ApiModel):
     """v2 dimension-only response; Scenario narratives are generated later."""
 
@@ -507,6 +499,74 @@ class V2FinalizedGenerationResult(ApiModel):
     scenarios: list[ScenarioCandidate]
     unselected_dimension_refs: list[V2SourceReference]
     unrepresented_pressure_bands: list[PressureBand]
+
+
+_V2_OBSERVED_STATE_MARKERS = (
+    "정비 시작",
+    "정비가 시작",
+    "착수",
+    "개시",
+    "진행 중",
+    "재개",
+    "완료",
+    "started",
+    "began",
+    "underway",
+    "resumed",
+    "completed",
+)
+_V2_FACT_REVERSAL_MARKERS = (
+    "정비 취소",
+    "정비가 취소",
+    "착수 취소",
+    "시작 전",
+    "시작하지 않",
+    "미착수",
+    "발생하지 않",
+    "가동하지 않",
+    "cancelled",
+    "canceled",
+    "not started",
+    "did not start",
+    "never began",
+    "never occurred",
+)
+
+
+def _contains_marker(text: str, markers: tuple[str, ...]) -> bool:
+    normalized = text.casefold()
+    return any(marker.casefold() in normalized for marker in markers)
+
+
+def validate_v2_fact_consistency(
+    event_shocks: list[V2EventShock],
+    selected_dimensions: list[V2SelectedDimension],
+    scenarios: list[V2ScenarioCandidate] | None = None,
+) -> None:
+    guarded_event_ids = {
+        shock.event_id for shock in event_shocks if _contains_marker(shock.shock_summary, _V2_OBSERVED_STATE_MARKERS)
+    }
+    if not guarded_event_ids:
+        return
+
+    for dimension in selected_dimensions:
+        if dimension.source_ref.event_id not in guarded_event_ids:
+            continue
+        dimension_text = " ".join(
+            [dimension.selection_rationale, *[value.label for value in dimension.values]],
+        )
+        if _contains_marker(dimension_text, _V2_FACT_REVERSAL_MARKERS):
+            raise ValueError(
+                "v2 fact reversal: a dimension value negates an observed Event state: "
+                f"eventId={dimension.source_ref.event_id}, dimensionId={dimension.dimension_id}",
+            )
+
+    for scenario in scenarios or []:
+        scenario_text = " ".join([scenario.title, scenario.narrative, scenario.global_pressure_rationale])
+        if _contains_marker(scenario_text, _V2_FACT_REVERSAL_MARKERS):
+            raise ValueError(
+                f"v2 fact reversal: Scenario negates an observed Event state: {scenario.title}",
+            )
 
 
 class V3EventShock(ApiModel):
@@ -1387,6 +1447,7 @@ def _finalize_scenario_candidates(
     excluded_candidates: list[ExcludedGenerationCandidate],
     dimensions: list[DimensionDefinition] | list[V2DimensionDefinition] | list[V3DimensionDefinition],
     require_pressure_partition: bool = True,
+    require_mixed: bool = False,
 ) -> list[ScenarioCandidate]:
     sorted_scenarios = sorted(
         scenarios,
@@ -1455,6 +1516,8 @@ def _finalize_scenario_candidates(
     floor_index = ranked[0]
     ceiling_index = ranked[-1]
     interior = [index for index in ranked[1:-1] if sorted_scenarios[index].mixed_factors]
+    if require_mixed and len(interior) != 1:
+        raise ValueError("v3 requires exactly one non-extreme mixed Scenario with bullish and bearish contributions")
     mixed_index = (
         min(
             interior,
@@ -1505,6 +1568,7 @@ def finalize_v2_generation_result(
     shock_event_ids = [shock.event_id for shock in result.event_shocks]
     if set(shock_event_ids) != known_event_ids or len(shock_event_ids) != len(known_event_ids):
         raise ValueError("eventShocks must contain every input event exactly once")
+    validate_v2_fact_consistency(result.event_shocks, result.selected_dimensions, result.scenarios)
     if not 3 <= len(result.selected_dimensions) <= 6:
         raise ValueError(
             f"multi_event_source_dimensions dimension count is out of range: {len(result.selected_dimensions)}",
@@ -1559,6 +1623,10 @@ def finalize_v2_generation_result(
                 values=selected.values,
             ),
         )
+
+    covered_event_ids = {dimension.source_ref.event_id for dimension in dimensions}
+    if covered_event_ids != known_event_ids:
+        raise ValueError(f"events without a selected dimension: {sorted(known_event_ids - covered_event_ids)}")
 
     scenario_candidates: list[ScenarioCandidate] = []
     contributions = {
@@ -1714,11 +1782,22 @@ def finalize_v3_generation_result(
             raise ValueError(
                 "non-independent interactions must be represented by sourceEventIds on one dimension",
             )
+        if interaction.relation == "independent":
+            missing_independent = sorted(
+                event_id
+                for event_id in interaction_event_ids
+                if not any(set(dimension.source_event_ids) == {event_id} for dimension in dimensions)
+            )
+            if missing_independent:
+                raise ValueError(
+                    f"independent interaction events require separate single-source dimensions: {missing_independent}",
+                )
 
     finalized_scenarios = _finalize_scenario_candidates(
         scenarios=result.scenarios,
         excluded_candidates=result.excluded_candidates,
         dimensions=dimensions,
+        require_mixed=True,
     )
     return V3MultiEventGenerationResult.model_validate(
         result.model_copy(update={"scenarios": finalized_scenarios}).model_dump(),

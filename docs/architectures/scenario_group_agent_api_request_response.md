@@ -130,7 +130,8 @@ versioned sync endpoint의 생성 오류는
 `dimensionDefinitions[].sourceRef`는 `eventId`, `scenarioDimensionTemplateId`,
 `dimKey`만 포함한다. label·description·required는 서버가 입력 Template에서 복원한다.
 v2 value에는 `valueId`, `label`, `globalPressureContribution`만 포함하며
-`sourceAssignments`는 없다. v2 diagnostics는 compact EventShock,
+`sourceAssignments`는 없다. v2 diagnostics는 입력 Event 제목·요약·핵심 사실에서
+LLM 없이 구성한 compact EventShock,
 `unselectedDimensionRefs`, `unrepresentedPressureBands`를 포함한다. v3는 Event별
 `{eventId, shockSummary}`와 compact dimension을 반환한다. v3 dimension은
 `rationale`, `sourceEventIds`, `(scenarioDimensionTemplateId, dimKey)` 형태의
@@ -143,7 +144,9 @@ v4 응답에는 별도 `eventImpactFacts`, `sourceFactIds`, `impactLeverRefs`,
 `eventDimensionCoverage`, `sourceRefs`를 포함하지 않는다.
 각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
 `probabilityScore`, `globalPressureRationale`, `relatedMarkets`는 DB 저장값을
-그대로 반환한다. `relatedMarkets`는 table header/cell이나 pressure tag가 아니라
+그대로 반환한다. `baselineYn=Y`는 floor·ceiling·mixed를 포함한 전체 Scenario 중
+최고 `probabilityScore` 하나에 서버가 지정한다. `relatedMarkets`는 table header/cell이나
+pressure tag가 아니라
 Scenario 상세에서만 표시하는 선택적 보조정보다.
 
 ### 자유 dimension value mapping 승인

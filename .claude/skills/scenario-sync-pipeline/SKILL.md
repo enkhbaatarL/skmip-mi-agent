@@ -233,7 +233,17 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 - Scenario 3~5개, baseline 정확히 1개, floor/ceiling 각각 1개, mixed 선택, 조합·band 중복 없음
 - dimension 수 v2/v3/v4 각각 3~6개와 전체 이벤트 lineage coverage
 
-Agent Judge는 각 기준을 1~5점과 PASS/WARN/FAIL로 평가한다. Scenario별 실제 title, narrative, cells, role, probability와 API rationale를 근거로 판단한다. 기준 단순 평균 최고 version을 우수 버전으로 정하고 동점은 공동 우수로 표시한다. 성공 version이 2개 미만이면 비교 결론을 `판정 불가`로 표시한다.
+Agent Judge는 먼저 각 기준을 1~5점과 PASS/WARN/FAIL로 절대평가한다. 이 점수는 version별 품질 조건 충족 여부를 확인하는 용도이며 최종 상대평가 승자를 자동 결정하지 않는다. Scenario별 실제 title, narrative, cells, role, probability와 API rationale를 근거로 판단한다. 기준 단순 평균 최고 version은 `절대 점수 최고 버전`으로 별도 표시한다.
+
+성공한 모든 version 쌍을 직접 비교한다. v2/v3/v4가 모두 성공하면 `v2 vs v3`, `v2 vs v4`, `v3 vs v4`를 각각 한 번 평가한다. 각 pair에서 다음 기준별 승자 또는 동률, 실제 evidence, 반론, 최종 rationale를 작성한다.
+
+- Event grounding과 사실·가정 구분
+- Dimension 및 Value의 독립성·유용성
+- Scenario 인과 논리와 설명 가능성
+- Baseline 및 제외 Scenario의 타당성
+- 사용자가 결과만 읽고 납득할 수 있는 명료성
+
+각 version의 실제 잘한 점과 아쉬운 점을 함께 작성한다. 최종 결론은 `품질 우선 추천`과 `비용·속도 포함 실용 추천`을 분리하고, 선택 조건과 tradeoff를 명시한다. 품질 우선 추천은 pairwise evidence를 우선하며 latency/token은 품질 차이가 없을 때만 보조 판단으로 사용한다. 실용 추천은 Agent Judge 입력의 실제 elapsedMs와 totalTokens를 함께 사용한다. 성공 version이 2개 미만이면 비교 결론을 `판정 불가`로 표시한다.
 
 `false`일 때도 이벤트와 실행 결과, Scenario Group, dimension, Scenario 실제 값, API rationale를 version별로 비교한다.
 
@@ -294,4 +304,4 @@ driver가 Scenario cell 조합에 직접 반영되지 않았다는 의미를 명
 - `comparison_judge.json` (`quality-check=true`일 때만)
 - `comparison_report.md`
 
-보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group 제목·요약·설명, dimension 비교, label 기반 Scenario×dimension value 표, Scenario별 dimension/value 선택 근거, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 Agent Judge 근거·점수·위반 사항·우수 version과 선정 이유도 포함한다.
+보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group 제목·요약·설명, dimension 비교, label 기반 Scenario×dimension value 표, Scenario별 dimension/value 선택 근거, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 절대 점수, version별 잘한 점·아쉬운 점, 모든 version pair의 직접 비교와 반론, 품질 우선 추천, 비용·속도 포함 실용 추천을 포함한다.

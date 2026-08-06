@@ -17,7 +17,10 @@ V2_SYSTEM_PROMPT = """\
   경로에 연결되는 lng_impact_path, 또는 둘 다인 both에 해당하는 3~6개만 선택합니다.
 - dimension을 합성하거나 이름을 바꾸지 말고 dimensionId를 e{eventId}__{dimKey}로 작성합니다.
 - 각 선택은 입력에 존재하는 단일 sourceRef만 사용합니다.
-- Event별 dimension을 강제하지 않지만 모든 Event를 eventId와 한 문장 shockSummary로 정확히 한 번 요약합니다.
+- 모든 Event를 최소 하나의 선택 dimension sourceRef.eventId로 연결합니다.
+- Event Context에서 이미 발생·시작·완료된 사실은 모든 value와 Scenario에서 유지합니다.
+  이미 시작된 정비를 취소·미착수로 되돌리는 등 관측 사실을 역전하지 마십시오.
+- value는 아직 결정되지 않은 기간, 규모, 회복 속도와 파급 범위만 변화시킵니다.
 - 각 dimension에 3~4개의 자연스러운 value를 만들고 bullish, balanced, bearish 기여 방향을 지정합니다.
 - Cartesian product를 만들지 말고 3~5개의 서로 다른 Scenario 조합을 직접 설계합니다.
 - globalPressureBand는 strong_bullish, bullish, balanced, bearish, strong_bearish 중 중복 없이 사용합니다.
@@ -44,8 +47,8 @@ COMMON_V3_SYSTEM_PROMPT = """\
   reasonCode와 구체적인 한국어 reason을 남깁니다.
 - 생성 후보와 제외 후보를 합쳐 다섯 목표 구간을 정확히 한 번씩 다룹니다.
 - 최종 Scenario는 3~5개이며 dimension 조합이 모두 달라야 합니다.
-- 가격 상승·하락 요인이 실제로 함께 작용하는 내부 후보만 mixedFactors=true로 표시합니다.
-  mixed Scenario는 선택 사항이며 floor와 ceiling만 필수 role입니다.
+- 가격 상승·하락 요인이 실제로 함께 작용하는 내부 후보 정확히 하나를 mixedFactors=true로 표시합니다.
+  mixed Scenario는 floor와 ceiling이 아닌 non-extreme 후보여야 합니다.
 - probabilityScore는 후보 간 상대적 발생 가능성 점수이며 0~100 정수입니다.
 """
 
@@ -73,6 +76,10 @@ V3_STRATEGY_PROMPT = """\
 - eventIds를 정확히 2개로 제한하지 않습니다.
 - 모든 Event pair를 기계적으로 만들지 말고 실제 상호작용 단위로 묶습니다.
 - 모든 Event가 sourceEventIds로 하나 이상의 dimension에 연결되도록 3~6개의 직관적인 합성 dimension을 만듭니다.
+- 공급, 저장·주입, 수요, 지역 spread·차익거래처럼 인과 경로와 시장 변수가 다른 driver는
+  단순 압축을 위해 하나의 포괄적인 위험 dimension으로 합치지 말고 독립 dimension으로 보존합니다.
+- relation=independent인 Event는 각 Event를 단독 sourceEventIds로 갖는 dimension을 최소 하나씩 만듭니다.
+- 개별 지역 Event를 더 넓은 권역 충격으로 확장하려면 다른 Event와의 연결 근거를 rationale에 명시합니다.
 - sourceRefs는 합성 근거가 된 입력 Template의 ID와 dimKey 조합만 중복 없이 기록합니다.
 - excludedDimensions는 v2 전용 필드이므로 빈 배열로 출력합니다.
 """
@@ -99,10 +106,10 @@ V3_SCENARIO_SYSTEM_PROMPT = """\
 - Cartesian product 대신 서로 다른 대표 Scenario 3~5개를 직접 설계합니다.
 - 생성·제외 후보를 합쳐 strong_bullish, bullish, balanced, bearish, strong_bearish를 정확히 한 번씩 다룹니다.
 - 생성 Scenario 중 최저 pressure band는 floor, 최고 pressure band는 ceiling이 됩니다.
-- 상승·하락 요인이 실제로 함께 작용하는 내부 Scenario가 있을 때만 mixedFactors=true로 표시합니다.
-  mixed Scenario는 선택 사항입니다.
+- 상승·하락 요인이 실제로 함께 작용하는 내부 Scenario 정확히 하나를 mixedFactors=true로 표시합니다.
+  mixed Scenario는 floor와 ceiling이 아닌 non-extreme 후보여야 합니다.
 - Event 사실을 취소해야만 만들 수 있는 pressure band는 생성하지 말고 제외 이유를 기록합니다.
-- probabilityScore는 후보 간 상대적 발생 가능성 점수이며 0~100 정수입니다.
+- probabilityScore는 Event 관측 사실에 가깝고 추가 가정이 적을수록 높게 부여하는 0~100 상대 점수입니다.
 """
 
 
@@ -234,36 +241,6 @@ def build_multi_event_user_prompt(
     )
 
 
-def build_event_analysis_user_prompt(
-    *,
-    api_version: str,
-    event: dict[str, Any],
-    template: dict[str, Any],
-    validation_feedback: str | None = None,
-) -> str:
-    """Build the small, single-Event prompt used by the fan-out stage."""
-    event_context = format_compact_event_context([event])
-    if api_version != "v2":
-        raise ValueError(f"Unsupported multi-event API version: {api_version}")
-    template_context = _compact_v2_template_knowledge([event], [template])[0]
-    feedback = (
-        f"\n## Previous validation failure\n- {validation_feedback[:300]}\n- 이 Event의 분석 결과만 수정하십시오.\n"
-        if validation_feedback
-        else ""
-    )
-    return (
-        "## Event Context\n"
-        f"{event_context}\n\n"
-        "## Template Context (reference only)\n"
-        f"{json.dumps(template_context, ensure_ascii=False, separators=(',', ':'))}\n\n"
-        "## Output\n"
-        "- eventShock 한 개만 출력하십시오.\n"
-        "- eventId는 입력 Event ID와 같아야 합니다.\n"
-        "- shockSummary는 Event의 공급·수요·거래 영향과 예상 글로벌 LNG 가격 방향을 한국어 한 문장으로 요약하십시오.\n"
-        f"{feedback}"
-    )
-
-
 def build_dimension_design_user_prompt(
     *,
     api_version: str,
@@ -291,12 +268,17 @@ def build_dimension_design_user_prompt(
     )
     return (
         f"## Strategy\n{V2_SYSTEM_PROMPT}\n\n"
-        "## Validated Event Shocks\n"
+        "## Event Context (authoritative current facts)\n"
+        f"{format_compact_event_context(events)}\n\n"
+        "## Deterministic Event Grounding\n"
         f"{json.dumps(event_shocks, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "## Template Candidates\n"
         f"{json.dumps(template_knowledge, ensure_ascii=False, separators=(',', ':'))}\n\n"
         "## Output\n"
         f"{output_contract}"
+        "- 모든 입력 Event를 최소 하나의 selectedDimensions.sourceRef.eventId로 연결하십시오.\n"
+        "- 이미 발생·시작·완료된 사실을 취소·미발생 상태로 되돌리는 value를 만들지 마십시오.\n"
+        "- 관측 사실은 고정하고 아직 결정되지 않은 기간·규모·회복·파급 범위만 분기하십시오.\n"
         "- Scenario, 그룹 제목과 그룹 설명은 아직 출력하지 마십시오.\n"
         f"{feedback}"
     )
@@ -353,6 +335,12 @@ def build_scenario_synthesis_user_prompt(
         if api_version == "v3"
         else "- v2는 생성할 3~5개 pressure band만 중복 없이 선택하십시오.\n"
     )
+    mixed_contract = (
+        "- bullish와 bearish value가 실제로 함께 있는 non-extreme Scenario 정확히 하나를 "
+        "mixedFactors=true로 표시하십시오.\n"
+        if api_version == "v3"
+        else "- v2 Scenario는 관측 사실을 유지하면서 상승·하락 value가 함께 있는 내부 조합을 포함하십시오.\n"
+    )
     return (
         "## Validated Event Shocks\n"
         f"{json.dumps(event_shocks, ensure_ascii=False, separators=(',', ':'))}\n\n"
@@ -364,8 +352,8 @@ def build_scenario_synthesis_user_prompt(
         "- scenarioGroupTitle, scenarioGroupDescription과 Scenario 3~5개를 한국어로 작성하십시오.\n"
         "- 각 Scenario는 모든 dimensionId를 정확히 한 번 사용하고 서로 다른 조합이어야 합니다.\n"
         "- globalPressureBand는 중복 없이 사용하며 probabilityScore와 globalPressureRationale을 작성하십시오.\n"
-        "- bullish와 bearish value가 실제로 함께 있는 내부 Scenario만 mixedFactors=true로 표시하십시오.\n"
-        "- mixed Scenario는 선택 사항이며 없다는 이유로 억지로 만들지 마십시오.\n"
+        f"{mixed_contract}"
+        "- probabilityScore는 관측 사실에 가깝고 추가 가정이 적을수록 높게 부여하십시오.\n"
         f"{pressure_partition}"
         f"{feedback}"
     )

@@ -14,7 +14,6 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
     VersionedCreateScenariosOut,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.nodes import (
-    AnalyzeEventNode,
     AnalyzeV3EventsNode,
     GenerateDimensionsNode,
     GenerateScenariosNode,
@@ -22,11 +21,10 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.nodes i
     fail_generation,
     finalize_scenarios,
     persist_generation,
+    prepare_v2_event_grounding,
     route_after_dimensions,
-    route_after_event_analyses,
     route_after_scenarios,
     validate_dimensions,
-    validate_event_analyses,
     validate_v3_analysis_design,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
@@ -106,9 +104,8 @@ def prepare_multi_event_scenarios(
 
 def _build_graph() -> Runnable:
     builder = StateGraph(MultiEventGenerationState, context_schema=TraceContext)
-    builder.add_node("analyze_event", AnalyzeEventNode())
+    builder.add_node("prepare_v2_event_grounding", prepare_v2_event_grounding)
     builder.add_node("analyze_v3_events", AnalyzeV3EventsNode())
-    builder.add_node("validate_event_analyses", validate_event_analyses)
     builder.add_node("validate_v3_analysis_design", validate_v3_analysis_design)
     builder.add_node("generate_dimensions", GenerateDimensionsNode())
     builder.add_node("validate_dimensions", validate_dimensions)
@@ -117,10 +114,9 @@ def _build_graph() -> Runnable:
     builder.add_node("persist_generation", persist_generation)
     builder.add_node("fail_generation", fail_generation)
 
-    builder.add_conditional_edges(START, dispatch_initial_analysis, ["analyze_event", "analyze_v3_events"])
-    builder.add_edge("analyze_event", "validate_event_analyses")
+    builder.add_conditional_edges(START, dispatch_initial_analysis, ["prepare_v2_event_grounding", "analyze_v3_events"])
+    builder.add_edge("prepare_v2_event_grounding", "generate_dimensions")
     builder.add_edge("analyze_v3_events", "validate_v3_analysis_design")
-    builder.add_conditional_edges("validate_event_analyses", route_after_event_analyses)
     builder.add_conditional_edges("validate_v3_analysis_design", route_after_dimensions)
     builder.add_edge("generate_dimensions", "validate_dimensions")
     builder.add_conditional_edges("validate_dimensions", route_after_dimensions)

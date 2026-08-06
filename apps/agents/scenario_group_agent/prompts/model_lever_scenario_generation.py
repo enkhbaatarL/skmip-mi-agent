@@ -23,12 +23,16 @@ Dimension은 근거 추적의 정본입니다.
    dimension으로 설계합니다. 확정 사실 자체나 가격 변별력이 없는 정보는 dimension으로
    만들지 않습니다.
 2. 각 dimension의 eventGroundings에 근거 Event의 observedBasis와 아직 결정되지 않은
-   uncertainty를 짧게 기록합니다. 별도의 EventImpactFact나 sourceFactId를 만들지 않습니다.
+   uncertainty를 짧게 기록합니다. observedBasis에는 확인된 사실만, uncertainty에는 아직
+   결정되지 않은 변수만 기록하고 가정이나 Scenario 결과를 섞지 않습니다.
+   별도의 EventImpactFact나 sourceFactId를 만들지 않습니다.
 3. Event 간 증폭, 상쇄, 인과 연결, 지역 결합 또는 독립 관계는 interactions에 기록합니다.
 4. leverMappings에는 Catalog의 leverCode와 mappingRationale만 생성합니다. impactLeverId는
    생략할 수 있으며 서버가 Catalog 기준으로 확정합니다.
 5. 각 dimension에 2~4개의 상호 배타적 value를 만들고, value마다 글로벌 가격 압력 기여와
-   분기를 성립시키는 assumptionRationale을 기록합니다.
+   분기를 성립시키는 assumptionRationale을 기록합니다. assumptionRationale은 어떤
+   observedBasis를 출발점으로 어떤 추가 가정을 적용했고 가격 압력이 어떻게 달라지는지 설명합니다.
+   globalPressureContribution은 bullish, balanced, bearish 중 하나만 사용합니다.
 6. Cartesian product 대신 글로벌 LNG 가격 압력이 서로 다른 3~5개의 대표 Scenario를
    직접 설계합니다.
 
@@ -42,6 +46,8 @@ Scenario는 strong_bullish, bullish, balanced, bearish, strong_bearish 중 서�
 다섯 구간을 정확히 한 번씩 다룹니다. 최저 구간은 floor, 최고 구간은 ceiling이 됩니다. 상승·하락
 요인이 실제로 함께 있는 내부 구간만 mixed Scenario로 표시하며 mixed는 선택 사항입니다.
 probabilityScore는 선택된 Event가 모두 발생한다는 전제하에서 Scenario 전개의 상대적 개연성입니다.
+관측 사실에 가깝고 추가 가정이 적은 전개일수록 높은 점수를 부여합니다. floor, ceiling, mixed를
+포함한 전체 Scenario 중 최고 probabilityScore가 서버에서 baseline으로 지정됩니다.
 
 relatedMarkets는 글로벌 압력과 별개의 가격 방향 또는 Scenario role이 아닙니다. 해당 Scenario의
 dimension 조합이 JKM, TTF, HH 중 특정 지역 가격 허브와 특별히 관련될 때만 market과 한국어
@@ -105,9 +111,10 @@ def build_v4_dimension_design_user_prompt(
         "- dimensionId는 영문 snake_case로 작성하십시오.\n"
         "- dimensionType과 valueKind를 지정하십시오.\n"
         "- 각 dimension은 eventGroundings와 leverMappings를 하나 이상 포함하십시오.\n"
-        "- eventGroundings는 eventId, 짧은 observedBasis, Scenario를 나누는 uncertainty만 포함하십시오.\n"
+        "- eventGroundings의 observedBasis에는 확인된 사실만, uncertainty에는 아직 결정되지 않은 변수만 작성하십시오.\n"
         "- leverMappings는 leverCode와 mappingRationale을 포함하고 impactLeverId는 생략할 수 있습니다.\n"
-        "- 각 value는 valueId, label, globalPressureContribution, assumptionRationale을 포함하십시오.\n"
+        "- 각 value의 globalPressureContribution은 bullish, balanced, bearish 중 하나만 사용하십시오.\n"
+        "- 각 value의 assumptionRationale은 observedBasis, 추가 가정, 가격 압력 변화의 연결을 설명하십시오.\n"
         "- sourceFactIds, sourceEventIds, sourceRefs, leverRefs, impactLeverRefs, "
         "commonFactLeverMappings, eventDimensionCoverage를 만들지 마십시오.\n"
         "- 모델 지원 상태만으로 dimension의 선택 우선순위를 정하지 마십시오.\n"
@@ -177,6 +184,8 @@ def build_v4_scenario_synthesis_user_prompt(
         "- globalPressureRationale은 선택한 value의 가격 기여와 lever 경로를 연결하십시오.\n"
         "- 상승·하락 요인이 실제로 함께 있는 내부 Scenario만 mixedFactors에 두 요인을 설명하십시오.\n"
         "- mixed Scenario는 선택 사항이며 없다는 이유로 억지로 만들지 마십시오.\n"
+        "- probabilityScore는 관측 사실에 가깝고 추가 가정이 적은 Scenario일수록 높게 부여하십시오.\n"
+        "- floor, ceiling, mixed를 포함한 전체 Scenario가 baseline 후보입니다.\n"
         "- relatedMarkets는 지역 특이성이 명확할 때만 포함하십시오.\n"
         f"{feedback}"
     )

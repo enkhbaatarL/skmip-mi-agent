@@ -278,20 +278,43 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
     dimension_by_id = {dimension.dimension_id: dimension for dimension in result.dimension_definitions}
     combinations: set[tuple[tuple[str, str], ...]] = set()
     generated_bands: list[PressureBand] = []
+    contribution_by_scenario: dict[int, list[int]] = {}
+
+    def contribution_score(raw: str) -> int:
+        normalized = raw.casefold()
+        has_bullish = any(marker in normalized for marker in ("bullish", "상방", "상승"))
+        has_bearish = any(marker in normalized for marker in ("bearish", "하방", "하락"))
+        if has_bullish and has_bearish:
+            raise ValueError(f"ambiguous v4 globalPressureContribution: {raw}")
+        if has_bullish:
+            return 1
+        if has_bearish:
+            return -1
+        if any(marker in normalized for marker in ("balanced", "중립", "균형", "보합")):
+            return 0
+        raise ValueError(f"unrecognized v4 globalPressureContribution: {raw}")
 
     for scenario in result.scenarios:
         if set(scenario.dimension_values) != set(dimension_by_id):
             raise ValueError("every scenario must provide every dimension value")
+        scenario_contributions: list[int] = []
         for dimension_id, selected_value in scenario.dimension_values.items():
             dimension = dimension_by_id[dimension_id]
             allowed_values = {candidate for value in dimension.values for candidate in (value.value_id, value.label)}
             if selected_value not in allowed_values:
                 raise ValueError(f"invalid value {selected_value!r} for dimension {dimension_id}")
+            selected_definition = next(
+                value for value in dimension.values if selected_value in {value.value_id, value.label}
+            )
+            scenario_contributions.append(contribution_score(selected_definition.global_pressure_contribution))
         combination = tuple(sorted(scenario.dimension_values.items()))
         if combination in combinations:
             raise ValueError("scenario dimension combinations must be unique")
         combinations.add(combination)
         generated_bands.append(scenario.global_pressure_band)
+        contribution_by_scenario[id(scenario)] = scenario_contributions
+        if scenario.mixed_factors and not ({-1, 1} <= set(scenario_contributions)):
+            raise ValueError(f"mixedFactors requires bullish and bearish dimension contributions: {scenario.title}")
 
     if len(set(generated_bands)) != len(generated_bands):
         raise ValueError("generated scenarios must use distinct pressure bands")
@@ -306,13 +329,23 @@ def _validate_scenarios(result: V4GenerationResult) -> None:
         result.scenarios,
         key=lambda scenario: PRESSURE_RANK[scenario.global_pressure_band],
     )
+    pressure_scores = [sum(contribution_by_scenario[id(scenario)]) for scenario in ordered]
+    if ordered[0].global_pressure_band == "strong_bearish" and pressure_scores[0] >= 0:
+        raise ValueError("strong_bearish Scenario requires a negative aggregate pressure score")
+    if ordered[-1].global_pressure_band == "strong_bullish" and pressure_scores[-1] <= 0:
+        raise ValueError("strong_bullish Scenario requires a positive aggregate pressure score")
+    if any(lower > higher for lower, higher in zip(pressure_scores, pressure_scores[1:], strict=False)):
+        raise ValueError("v4 Scenario pressure bands contradict aggregate dimension contributions")
+
     for scenario in result.scenarios:
         scenario.scenario_role = None
         scenario.baseline_yn = False
     ordered[0].scenario_role = "floor"
     ordered[-1].scenario_role = "ceiling"
 
-    mixed_candidates = [scenario for scenario in ordered[1:-1] if scenario.mixed_factors]
+    mixed_candidates = [
+        scenario for scenario in ordered[1:-1] if {-1, 1} <= set(contribution_by_scenario[id(scenario)])
+    ]
     if mixed_candidates:
         mixed = min(
             mixed_candidates,

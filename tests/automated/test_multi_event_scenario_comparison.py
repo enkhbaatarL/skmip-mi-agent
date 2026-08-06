@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from tests.manual import test_multi_event_scenario_versions as runner
+from tests.manual.multi_event_comparison.llm import build_agent_judge_input
 from tests.manual.multi_event_comparison.quality import run_deterministic_checks
 from tests.manual.multi_event_comparison.report import render_report
 
@@ -180,7 +181,51 @@ def _agent_judgment() -> dict[str, Any]:
                 "weaknesses": [],
             },
         )
-    return {"versions": versions, "bestVersions": ["v4"], "conclusion": "v4가 가장 우수하다."}
+    pairwise_criteria = (
+        "event_grounding",
+        "dimension_and_value_quality",
+        "scenario_logic_and_explainability",
+        "baseline_and_exclusion_quality",
+        "user_comprehensibility",
+    )
+    pairwise_comparisons = []
+    for left, right, winner in (("v2", "v3", "v3"), ("v2", "v4", "v4"), ("v3", "v4", "v4")):
+        pairwise_comparisons.append(
+            {
+                "leftVersion": left,
+                "rightVersion": right,
+                "criteria": [
+                    {
+                        "criterion": criterion,
+                        "winner": winner,
+                        "evidence": [f"{left} and {right} evidence"],
+                        "counterargument": f"{left}에도 장점이 있다.",
+                        "rationale": f"{winner}가 {criterion}에서 우세하다.",
+                    }
+                    for criterion in pairwise_criteria
+                ],
+                "overallWinner": winner,
+                "summary": f"{winner}가 직접 비교에서 우세하다.",
+            },
+        )
+    return {
+        "versions": versions,
+        "pairwiseComparisons": pairwise_comparisons,
+        "bestVersions": ["v4"],
+        "qualityRecommendation": {
+            "versions": ["v4"],
+            "rationale": "근거와 설명 가능성이 가장 좋다.",
+            "tradeoffs": ["토큰이 더 필요하다."],
+            "selectionCondition": "품질을 우선할 때",
+        },
+        "practicalRecommendation": {
+            "versions": ["v2"],
+            "rationale": "충분한 품질을 낮은 비용으로 제공한다.",
+            "tradeoffs": ["Dimension 독립성은 v4보다 낮다."],
+            "selectionCondition": "비용과 속도도 중요할 때",
+        },
+        "conclusion": "품질은 v4, 실용 선택은 v2다.",
+    }
 
 
 def test_prepare_validation_accepts_only_two_to_five_unique_events() -> None:
@@ -339,6 +384,36 @@ def test_deterministic_checks_allow_missing_optional_mixed_role() -> None:
     results = {result.check_id: result for result in run_deterministic_checks("v3", response, [101, 202])}
 
     assert results["M-04"].status == "PASS"
+
+
+def test_agent_judge_rubric_does_not_require_optional_bands_or_mixed() -> None:
+    judge_input = build_agent_judge_input({"versions": {}})
+
+    floor_criterion = judge_input["criteria"]["floor_ceiling_quality"]
+    mixed_criterion = judge_input["criteria"]["mixed_quality"]
+    constraints = " ".join(judge_input["constraints"])
+
+    assert "존재 자체를 요구하지 말고" in floor_criterion
+    assert "mixed는 optional" in mixed_criterion
+    assert "Do not penalize a missing pressure band" in constraints
+    assert "Do not penalize the absence of an optional mixed scenario" in constraints
+
+
+def test_agent_judge_requires_direct_pairwise_comparison_and_separate_recommendations() -> None:
+    judge_input = build_agent_judge_input({"versions": {}, "performance": {}})
+
+    assert set(judge_input["pairwiseCriteria"]) == {
+        "event_grounding",
+        "dimension_and_value_quality",
+        "scenario_logic_and_explainability",
+        "baseline_and_exclusion_quality",
+        "user_comprehensibility",
+    }
+    constraints = " ".join(judge_input["constraints"])
+    assert "absolute criteria scores as eligibility" in constraints
+    assert "every unordered successful-version pair" in constraints
+    assert "qualityRecommendation" in constraints
+    assert "practicalRecommendation" in constraints
 
 
 def test_v2_pressure_coverage_accepts_server_derived_unrepresented_bands() -> None:
@@ -587,6 +662,11 @@ def test_invalid_agent_judge_still_writes_factual_report_and_input(tmp_path: Pat
     judge_input = json.loads((tmp_path / "comparison_judge_input.json").read_text(encoding="utf-8"))
     assert judge_input["judgeRuntime"].endswith("Do not call an LLM API.")
     assert set(judge_input["evidence"]["versions"]) == {"v2", "v3", "v4"}
+    assert judge_input["evidence"]["performance"] == {
+        "v2": {"elapsedMs": 10, "totalTokens": 100},
+        "v3": {"elapsedMs": 10, "totalTokens": 100},
+        "v4": {"elapsedMs": 10, "totalTokens": 100},
+    }
     judge_artifact = json.loads(Path(manifest["artifacts"]["judge"]).read_text(encoding="utf-8"))
     assert judge_artifact == {}
 
@@ -613,7 +693,12 @@ def test_valid_agent_judge_is_loaded_without_an_api_call(tmp_path: Path) -> None
     report_path = asyncio.run(runner.report(argparse.Namespace(manifest=manifest_path, quality_check=True)))
 
     report = report_path.read_text(encoding="utf-8")
-    assert "**우수 버전:** v4" in report
+    assert "**절대 점수 최고 버전:** v4" in report
+    assert "### 버전별 잘한 점과 아쉬운 점" in report
+    assert "### Pairwise 직접 상대평가" in report
+    assert "#### v2 vs v3 — 종합 승자: v3" in report
+    assert "#### 품질 우선 — v4" in report
+    assert "#### 비용·속도 포함 실용 선택 — v2" in report
     assert "agent judge pending" not in report
 
 

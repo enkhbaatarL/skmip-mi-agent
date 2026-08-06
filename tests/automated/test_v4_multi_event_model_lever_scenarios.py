@@ -271,7 +271,7 @@ def test_v4_finalizer_hydrates_levers_assigns_roles_and_computes_coverage() -> N
     assert coverage.uncovered_dimension_ids == ["liquefaction_recovery", "risk_premium"]
 
 
-def test_v4_finalizer_allows_scenarios_without_mixed_role() -> None:
+def test_v4_finalizer_derives_mixed_role_from_actual_contributions() -> None:
     draft = _valid_result()
     for scenario in draft.scenarios:
         scenario.mixed_factors = []
@@ -282,7 +282,49 @@ def test_v4_finalizer_allows_scenarios_without_mixed_role() -> None:
         impact_levers=_catalog(),
     )
 
-    assert [scenario.scenario_role for scenario in result.scenarios] == ["ceiling", None, "floor"]
+    assert [scenario.scenario_role for scenario in result.scenarios] == ["ceiling", "mixed", "floor"]
+
+
+def test_v4_finalizer_rejects_mixed_factors_without_two_pressure_directions() -> None:
+    draft = _valid_result()
+    mixed = draft.scenarios[1]
+    mixed.dimension_values = {dimension.dimension_id: "high" for dimension in draft.dimension_definitions}
+
+    with pytest.raises(ValueError, match="mixedFactors requires bullish and bearish"):
+        finalize_v4_generation_result(
+            draft,
+            event_ids=[101, 202],
+            impact_levers=_catalog(),
+        )
+
+
+def test_v4_finalizer_rejects_pressure_band_contribution_contradiction() -> None:
+    draft = _valid_result()
+    floor = draft.scenarios[-1]
+    floor.dimension_values = {dimension.dimension_id: "high" for dimension in draft.dimension_definitions}
+
+    with pytest.raises(ValueError, match="strong_bearish Scenario requires a negative"):
+        finalize_v4_generation_result(
+            draft,
+            event_ids=[101, 202],
+            impact_levers=_catalog(),
+        )
+
+
+def test_v4_baseline_can_be_floor_or_ceiling_when_it_has_highest_probability() -> None:
+    draft = _valid_result()
+    draft.scenarios[0].probability_score = 90
+    draft.scenarios[1].probability_score = 5
+
+    result, _coverage = finalize_v4_generation_result(
+        draft,
+        event_ids=[101, 202],
+        impact_levers=_catalog(),
+    )
+
+    baseline = next(scenario for scenario in result.scenarios if scenario.baseline_yn)
+    assert baseline.scenario_role == "ceiling"
+    assert baseline.probability_score == 90
 
 
 def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
@@ -551,6 +593,8 @@ def test_v4_prompt_uses_compact_dimension_grounding_contract() -> None:
     assert "uncertainty" in prompt
     assert "leverMappings" in prompt
     assert "assumptionRationale" in prompt
+    assert "bullish, balanced, bearish" in prompt
+    assert "추가 가정" in prompt
     assert "weather_demand" in prompt
     assert "sourceFactIds" in prompt
     assert "만들지 마십시오" in prompt

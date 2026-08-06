@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
 from typing import Any
 
 from langgraph.runtime import Runtime
-from langgraph.types import Send
 from pydantic import BaseModel
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
@@ -16,7 +14,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     EventInteraction,
     V2DimensionDefinition,
     V2DimensionDesignResult,
-    V2EventAnalysisResult,
+    V2EventShock,
     V2FinalizedGenerationResult,
     V2MultiEventGenerationResult,
     V2ScenarioSynthesisResult,
@@ -26,18 +24,14 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V3MultiEventGenerationResult,
     V3ScenarioSynthesisResult,
     finalize_generation_result,
+    validate_v2_fact_consistency,
 )
-from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
-    EventAnalysisOutcome,
-    EventAnalysisTask,
-    MultiEventGenerationState,
-)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import MultiEventGenerationState
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
     V3_ANALYSIS_SYSTEM_PROMPT,
     V3_SCENARIO_SYSTEM_PROMPT,
     build_dimension_design_user_prompt,
-    build_event_analysis_user_prompt,
     build_scenario_synthesis_user_prompt,
     build_v3_analysis_design_user_prompt,
     multi_event_system_prompt,
@@ -46,6 +40,7 @@ from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.schema import ScenarioPipelineTemplate
 
 
@@ -144,84 +139,33 @@ def source_dimensions_by_event(state: MultiEventGenerationState) -> dict[int, di
     }
 
 
-def dispatch_event_analyses(state: MultiEventGenerationState) -> list[Send]:
-    return [
-        Send(
-            "analyze_event",
-            {
-                "event_task": EventAnalysisTask(
-                    api_version=state.api_version,
-                    event=event,
-                    template=template,
-                ),
-            },
-        )
-        for event, template in zip(state.events, state.templates, strict=True)
-    ]
-
-
-def dispatch_initial_analysis(state: MultiEventGenerationState) -> str | list[Send]:
+def dispatch_initial_analysis(state: MultiEventGenerationState) -> str:
     if state.api_version == "v3":
         return "analyze_v3_events"
-    return dispatch_event_analyses(state)
+    return "prepare_v2_event_grounding"
 
 
-def _latest_event_outcomes(
-    outcomes: Iterable[EventAnalysisOutcome],
-) -> dict[int, EventAnalysisOutcome]:
-    latest: dict[int, EventAnalysisOutcome] = {}
-    for outcome in outcomes:
-        current = latest.get(outcome.event_id)
-        if current is None or outcome.attempt >= current.attempt:
-            latest[outcome.event_id] = outcome
-    return latest
+def _v2_shock_summary(event: EventPayload) -> str:
+    """Build a bounded fact-preserving v2 grounding without an LLM call."""
+    parts = [
+        str(event.event_title_ko or "").strip(),
+        str(event.one_line_summary or "").strip(),
+        *[str(item).strip() for item in event.key_bullets[:3]],
+    ]
+    summary = " | ".join(dict.fromkeys(part for part in parts if part))
+    if not summary:
+        summary = f"Event {event.mi_event_id}의 입력 사실을 기준으로 시나리오를 설계한다."
+    return summary[:300]
 
 
-class AnalyzeEventNode(BaseNode):
-    async def run(
-        self,
-        state: MultiEventGenerationState | dict[str, Any],
-        runtime: Runtime[TraceContext] | None = None,
-    ) -> dict[str, Any]:
-        state = MultiEventGenerationState.model_validate(state)
-        task = state.event_task
-        if task is None:
-            raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="event analysis task is required")
-        await _backoff(task.attempt)
-        try:
-            result = await invoke_stage_structured_output(
-                output_schema=V2EventAnalysisResult,
-                system_prompt=(
-                    multi_event_system_prompt("v2") + "\n현재 단계에서는 입력 Event 하나의 eventShock만 생성하십시오."
-                ),
-                user_prompt=build_event_analysis_user_prompt(
-                    api_version=task.api_version,
-                    event=task.event.model_dump(),
-                    template=task.template.model_dump(),
-                    validation_feedback=task.validation_feedback,
-                ),
-                trace_context=runtime.context if runtime is not None else None,
-            )
-            shock = result.event_shock
-            if int(shock.event_id) != int(task.event.mi_event_id):
-                raise ValueError(
-                    f"eventShock eventId must match input Event: {shock.event_id} != {task.event.mi_event_id}"
-                )
-            outcome = EventAnalysisOutcome(
-                event_id=int(task.event.mi_event_id),
-                attempt=task.attempt,
-                event_shock=shock,
-            )
-        except Exception as exc:
-            detail, error_code, retryable = classify_llm_error(exc)
-            outcome = EventAnalysisOutcome(
-                event_id=int(task.event.mi_event_id),
-                attempt=task.attempt,
-                error=detail,
-                error_code=error_code,
-                retryable=retryable,
-            )
-        return {"event_analysis_outcomes": [outcome]}
+def prepare_v2_event_grounding(state: MultiEventGenerationState) -> dict[str, Any]:
+    """Preserve input order and facts while removing the per-Event analysis LLM."""
+    return {
+        "event_shocks": [
+            V2EventShock(event_id=int(event.mi_event_id), shock_summary=_v2_shock_summary(event))
+            for event in state.events
+        ],
+    }
 
 
 class AnalyzeV3EventsNode(BaseNode):
@@ -268,68 +212,6 @@ class AnalyzeV3EventsNode(BaseNode):
                 "dimension_error_code": error_code,
                 "dimension_retryable": retryable,
             }
-
-
-def validate_event_analyses(state: MultiEventGenerationState) -> dict[str, Any]:
-    latest = _latest_event_outcomes(state.event_analysis_outcomes)
-    missing = [int(event.mi_event_id) for event in state.events if int(event.mi_event_id) not in latest]
-    if missing:
-        return {
-            "failed_stage": "event_analysis",
-            "terminal_error": f"Event analysis results are missing: {missing}",
-            "terminal_error_code": ErrorCode.LLM_INVALID_RESPONSE_ERROR.name,
-        }
-    failures = [latest[int(event.mi_event_id)] for event in state.events if latest[int(event.mi_event_id)].error]
-    if failures:
-        terminal = next(
-            (failure for failure in failures if not failure.retryable or failure.attempt >= MAX_STAGE_ATTEMPTS),
-            None,
-        )
-        return {
-            "failed_stage": "event_analysis",
-            "terminal_error": (
-                f"eventId={terminal.event_id}, attempts={terminal.attempt}, error={terminal.error}"
-                if terminal is not None
-                else None
-            ),
-            "terminal_error_code": terminal.error_code if terminal is not None else None,
-        }
-    return {
-        "event_shocks": [latest[int(event.mi_event_id)].event_shock for event in state.events],
-        "failed_stage": None,
-        "terminal_error": None,
-        "terminal_error_code": None,
-    }
-
-
-def route_after_event_analyses(state: MultiEventGenerationState) -> str | list[Send]:
-    latest = _latest_event_outcomes(state.event_analysis_outcomes)
-    if any(int(event.mi_event_id) not in latest for event in state.events):
-        return "fail_generation"
-    failures = [latest[int(event.mi_event_id)] for event in state.events if latest[int(event.mi_event_id)].error]
-    if not failures:
-        return "generate_dimensions"
-    if any(not failure.retryable or failure.attempt >= MAX_STAGE_ATTEMPTS for failure in failures):
-        return "fail_generation"
-    event_by_id = {int(event.mi_event_id): event for event in state.events}
-    template_by_event_id = {
-        int(event.mi_event_id): template for event, template in zip(state.events, state.templates, strict=True)
-    }
-    return [
-        Send(
-            "analyze_event",
-            {
-                "event_task": EventAnalysisTask(
-                    api_version=state.api_version,
-                    event=event_by_id[failure.event_id],
-                    template=template_by_event_id[failure.event_id],
-                    attempt=failure.attempt + 1,
-                    validation_feedback=failure.error,
-                ),
-            },
-        )
-        for failure in failures
-    ]
 
 
 class GenerateDimensionsNode(BaseNode):
@@ -382,6 +264,10 @@ def _validate_v2_dimensions(
     state: MultiEventGenerationState,
     draft: V2DimensionDesignResult,
 ) -> list[V2DimensionDefinition]:
+    validate_v2_fact_consistency(
+        [shock for shock in state.event_shocks if isinstance(shock, V2EventShock)],
+        draft.selected_dimensions,
+    )
     definitions = source_dimensions_by_event(state)
     known_event_ids = {int(event.mi_event_id) for event in state.events}
     seen_sources: set[tuple[int, int, str]] = set()
@@ -424,6 +310,9 @@ def _validate_v2_dimensions(
                 values=selected.values,
             )
         )
+    covered_event_ids = {dimension.source_ref.event_id for dimension in hydrated}
+    if covered_event_ids != known_event_ids:
+        raise ValueError(f"events without a selected dimension: {sorted(known_event_ids - covered_event_ids)}")
     return hydrated
 
 
@@ -483,6 +372,16 @@ def _validate_v3_dimensions(
             event_ids <= set(dimension.source_event_ids) for dimension in draft.dimension_definitions
         ):
             raise ValueError("non-independent interaction must be represented by one dimension")
+        if interaction.relation == "independent":
+            missing_independent = sorted(
+                event_id
+                for event_id in event_ids
+                if not any(set(dimension.source_event_ids) == {event_id} for dimension in draft.dimension_definitions)
+            )
+            if missing_independent:
+                raise ValueError(
+                    f"independent interaction events require separate single-source dimensions: {missing_independent}"
+                )
     return draft.dimension_definitions
 
 

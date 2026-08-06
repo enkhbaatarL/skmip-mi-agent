@@ -373,6 +373,17 @@ async def report(args: argparse.Namespace) -> Path:
                 version: [item.model_dump(mode="json") for item in version_checks]
                 for version, version_checks in checks.items()
             },
+            "performance": {
+                version: {
+                    "elapsedMs": artifacts[version].get("elapsedMs"),
+                    "totalTokens": _field(
+                        successful_responses[version]["data"].get("usage", {}),
+                        "totalTokens",
+                        "total_tokens",
+                    ),
+                }
+                for version in successful_responses
+            },
         }
         default_judge_path = Path(manifest["artifacts"]["judge"])
         judge_input_path = getattr(args, "judge_input", None) or Path(
@@ -637,7 +648,7 @@ def _validate_version_response(
         raise ValueError(msg)
 
 
-def _validate_judge(
+def _validate_judge(  # noqa: C901
     judge: ComparisonJudgment,
     responses: dict[str, dict[str, Any]],
 ) -> None:
@@ -675,6 +686,49 @@ def _validate_judge(
     if set(judge.best_versions) != expected_best:
         msg = f"Judge bestVersions mismatch: expected={sorted(expected_best)}, actual={judge.best_versions}"
         raise ValueError(msg)
+
+    required_pairwise_criteria = {
+        "event_grounding",
+        "dimension_and_value_quality",
+        "scenario_logic_and_explainability",
+        "baseline_and_exclusion_quality",
+        "user_comprehensibility",
+    }
+    expected_pairs = {
+        frozenset((left, right))
+        for index, left in enumerate(sorted(expected_versions))
+        for right in sorted(expected_versions)[index + 1 :]
+    }
+    actual_pairs: list[frozenset[str]] = []
+    for comparison in judge.pairwise_comparisons:
+        pair = frozenset((comparison.left_version, comparison.right_version))
+        if len(pair) != 2 or not pair.issubset(expected_versions):
+            msg = f"Judge pairwise version mismatch: left={comparison.left_version}, right={comparison.right_version}"
+            raise ValueError(msg)
+        actual_pairs.append(pair)
+        actual_criteria = [item.criterion for item in comparison.criteria]
+        if set(actual_criteria) != required_pairwise_criteria or len(actual_criteria) != 5:
+            msg = f"Judge pairwise criteria mismatch for {sorted(pair)}: {actual_criteria}"
+            raise ValueError(msg)
+        allowed_winners = {*pair, "tie"}
+        invalid_winners = [item.winner for item in comparison.criteria if item.winner not in allowed_winners]
+        if comparison.overall_winner not in allowed_winners:
+            invalid_winners.append(comparison.overall_winner)
+        if invalid_winners:
+            msg = f"Judge pairwise winner mismatch for {sorted(pair)}: {invalid_winners}"
+            raise ValueError(msg)
+    if set(actual_pairs) != expected_pairs or len(actual_pairs) != len(set(actual_pairs)):
+        msg = f"Judge pairwise set mismatch: expected={expected_pairs}, actual={actual_pairs}"
+        raise ValueError(msg)
+
+    for label, recommendation in (
+        ("qualityRecommendation", judge.quality_recommendation),
+        ("practicalRecommendation", judge.practical_recommendation),
+    ):
+        versions = recommendation.versions
+        if not set(versions).issubset(expected_versions) or len(versions) != len(set(versions)):
+            msg = f"Judge {label} version mismatch: expected subset of {sorted(expected_versions)}, actual={versions}"
+            raise ValueError(msg)
 
 
 def _event_id(detail: dict[str, Any]) -> int:

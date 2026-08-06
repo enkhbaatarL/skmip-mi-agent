@@ -309,14 +309,26 @@ def _deterministic_failure_observation(check: QualityCheck) -> str:
 
 
 def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) -> list[str]:
-    lines = ["", "## Agent Judge 품질 비교", ""]
+    lines = ["", "## Agent Judge 품질 평가", ""]
     if judge is None:
         reason = f" Agent Judge 오류: `{_cell(judge_error)}`" if judge_error else ""
         return [
             *lines,
             (f"- 성공 버전이 2개 미만이거나 Judge가 실행되지 않아 비교 결론은 **판정 불가**입니다.{reason}"),
         ]
-    lines.extend(["| Version | 기준 | 점수 | 결과 | Agent Judge 근거 |", "| --- | --- | --- | --- | --- |"])
+    lines.extend(
+        [
+            "### 절대 적합성 점수",
+            "",
+            (
+                "이 점수는 각 버전이 품질 조건을 얼마나 충족하는지 보여주며, "
+                "상대평가의 최종 승자를 자동 결정하지 않습니다."
+            ),
+            "",
+            "| Version | 기준 | 점수 | 결과 | Agent Judge 근거 |",
+            "| --- | --- | --- | --- | --- |",
+        ],
+    )
     for version in judge.versions:
         for criterion in version.criteria:
             lines.append(  # noqa: PERF401
@@ -327,8 +339,71 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
     lines.extend(
         [
             "",
-            f"- **우수 버전:** {', '.join(judge.best_versions)}",
-            f"- **선정 이유:** {judge.conclusion}",
+            f"- **절대 점수 최고 버전:** {', '.join(judge.best_versions)}",
+            "",
+            "### 버전별 잘한 점과 아쉬운 점",
+            "",
+        ],
+    )
+    for version in judge.versions:
+        strengths = version.strengths or ["명시된 강점 없음"]
+        weaknesses = version.weaknesses or ["명시된 약점 없음"]
+        lines.extend(
+            [
+                f"#### {version.api_version}",
+                "",
+                "**잘한 점**",
+                "",
+                *(f"- {_cell(item)}" for item in strengths),
+                "",
+                "**아쉬운 점**",
+                "",
+                *(f"- {_cell(item)}" for item in weaknesses),
+                "",
+            ],
+        )
+
+    lines.extend(["### Pairwise 직접 상대평가", ""])
+    for comparison in judge.pairwise_comparisons:
+        lines.extend(
+            [
+                (
+                    f"#### {comparison.left_version} vs {comparison.right_version} — "
+                    f"종합 승자: {_winner_label(comparison.overall_winner)}"
+                ),
+                "",
+                f"- **종합 판단:** {_cell(comparison.summary)}",
+                "",
+                "| 비교 기준 | 승자 | 판단 | 반론 |",
+                "| --- | --- | --- | --- |",
+            ],
+        )
+        for criterion in comparison.criteria:
+            evidence = "; ".join(criterion.evidence)
+            lines.append(
+                f"| {criterion.criterion} | {_winner_label(criterion.winner)} | "
+                f"{_cell(criterion.rationale)} (evidence: {_cell(evidence)}) | "
+                f"{_cell(criterion.counterargument)} |",
+            )
+        lines.append("")
+
+    lines.extend(
+        [
+            "### 최종 추천",
+            "",
+            f"#### 품질 우선 — {', '.join(judge.quality_recommendation.versions)}",
+            "",
+            f"- **추천 근거:** {_cell(judge.quality_recommendation.rationale)}",
+            f"- **선택 조건:** {_cell(judge.quality_recommendation.selection_condition)}",
+            *(f"- **트레이드오프:** {_cell(tradeoff)}" for tradeoff in judge.quality_recommendation.tradeoffs),
+            "",
+            f"#### 비용·속도 포함 실용 선택 — {', '.join(judge.practical_recommendation.versions)}",
+            "",
+            f"- **추천 근거:** {_cell(judge.practical_recommendation.rationale)}",
+            f"- **선택 조건:** {_cell(judge.practical_recommendation.selection_condition)}",
+            *(f"- **트레이드오프:** {_cell(tradeoff)}" for tradeoff in judge.practical_recommendation.tradeoffs),
+            "",
+            f"- **종합 결론:** {_cell(judge.conclusion)}",
             "",
             "### Scenario별 Agent Judge 판단",
             "",
@@ -344,6 +419,10 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
                 f"(evidence: {_cell('; '.join(scenario.evidence))}) |",
             )
     return lines
+
+
+def _winner_label(winner: str) -> str:
+    return "동률" if winner == "tie" else winner
 
 
 def _all_bands(successful: dict[str, dict[str, Any]]) -> list[str]:

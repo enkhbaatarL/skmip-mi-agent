@@ -12,7 +12,7 @@ from tests.manual.multi_event_comparison.models import ComparisonJudgment
 # performs no model call; the Codex or Claude instance executing the skill
 # writes a schema-conformant judgment.
 
-PROMPT_VERSION = "v2-agent-runtime"
+PROMPT_VERSION = "v4-agent-runtime-relative"
 
 CRITERIA = {
     "event_consistency": "Supplied events와 모순이 없고 인과 근거가 있는지 평가한다.",
@@ -20,9 +20,35 @@ CRITERIA = {
         "LNG 가격 관련 공급·수요·무역·시점·회복·완화·상호작용 driver가 유용한 dimension으로 반영됐는지 평가한다."
     ),
     "floor_ceiling_quality": (
-        "floor와 ceiling이 단순 label이 아니라 실제 cells와 pressure rationale의 일관된 극단값인지 평가한다."
+        "floor와 ceiling이 단순 label이 아니라 실제 cells와 pressure rationale의 일관된 feasible 극단값인지 평가한다. "
+        "strong_bearish/strong_bullish band의 존재 자체를 요구하지 말고, 제외된 band가 있으면 excludedCandidates의 "
+        "reason과 Event 사실을 함께 검토해 제외 타당성을 평가한다."
     ),
-    "mixed_quality": "상반된 driver 조합이 필요한 경우에만 mixed가 존재하고 offset·interaction이 타당한지 평가한다.",
+    "mixed_quality": (
+        "mixed는 optional이다. mixed의 존재나 부재 자체로 가감점하지 않는다. 생성됐다면 실제 bullish/bearish driver와 "
+        "offset·interaction 근거가 타당한지 평가하고, 생성되지 않았다면 누락이 scenario spectrum에 실질적인 공백을 "
+        "만드는 경우에만 감점한다."
+    ),
+}
+
+PAIRWISE_CRITERIA = {
+    "event_grounding": (
+        "어느 버전이 Event의 관측 사실·수치·지역·lineage를 더 정확히 보존하고 사실과 가정을 더 잘 구분하는지 비교한다."
+    ),
+    "dimension_and_value_quality": (
+        "어느 버전의 dimension과 value가 LNG 공급·수요·저장·무역·회복 driver를 "
+        "중복 없이 더 유용한 분기로 표현하는지 비교한다."
+    ),
+    "scenario_logic_and_explainability": (
+        "어느 버전의 관측 사실 → 추가 가정 → 선택 value → 가격 압력 연결이 더 탄탄하고 "
+        "Scenario 간 차이가 더 명확한지 비교한다."
+    ),
+    "baseline_and_exclusion_quality": (
+        "어느 버전의 baseline과 floor/ceiling 및 제외 Scenario 근거가 더 개연성 있고 Event 사실과 양립하는지 비교한다."
+    ),
+    "user_comprehensibility": (
+        "도메인 사용자가 결과만 읽었을 때 어느 버전의 선택과 결론을 더 쉽게 추적하고 납득할 수 있는지 비교한다."
+    ),
 }
 
 
@@ -38,9 +64,40 @@ def build_agent_judge_input(evidence: dict[str, Any]) -> dict[str, Any]:
             "Return each required criterion exactly once per version and score it from 1 to 5.",
             "Assess every scenario row exactly once while preserving scenario ID, title, and global pressure band.",
             "Use precise payload paths or actual values as evidence.",
-            "Set bestVersions to every version tied for the highest simple average criterion score.",
+            (
+                "Do not penalize a missing pressure band when excludedCandidates gives an Event-grounded reason "
+                "that makes the omitted band less plausible than the generated floor or ceiling."
+            ),
+            (
+                "Do not penalize the absence of an optional mixed scenario by itself; judge the grounding only "
+                "when mixed exists, and penalize absence only for a material spectrum gap demonstrated by the "
+                "supplied evidence."
+            ),
+            (
+                "Treat absolute criteria scores as eligibility and condition checks, not as the sole relative "
+                "winner decision."
+            ),
+            (
+                "Return every unordered successful-version pair exactly once and compare every required pairwise "
+                "criterion exactly once."
+            ),
+            (
+                "A pairwise winner must be one of that pair or tie. Consider evidence and a concrete counterargument "
+                "before deciding."
+            ),
+            "Populate strengths and weaknesses from the actual output; do not infer quality from the API version name.",
+            "Set bestVersions to every version tied for the highest simple average absolute criterion score.",
+            (
+                "Choose qualityRecommendation from direct pairwise evidence, prioritizing grounding and user "
+                "acceptance over latency/token cost."
+            ),
+            (
+                "Choose practicalRecommendation using both relative quality and supplied performance evidence, "
+                "and state when it should be selected."
+            ),
         ],
         "criteria": CRITERIA,
+        "pairwiseCriteria": PAIRWISE_CRITERIA,
         "outputSchema": ComparisonJudgment.model_json_schema(by_alias=True),
         "evidence": evidence,
     }

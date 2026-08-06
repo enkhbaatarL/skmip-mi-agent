@@ -9,6 +9,7 @@ from pydantic.alias_generators import to_camel
 
 ApiVersion = Literal["v2", "v3", "v4"]
 QualityStatus = Literal["PASS", "WARN", "FAIL"]
+PairwiseWinner = Literal["v2", "v3", "v4", "tie"]
 
 
 class ComparisonModel(BaseModel):
@@ -52,9 +53,41 @@ class VersionJudgment(ComparisonModel):
     weaknesses: list[str] = Field(default_factory=list)
 
 
+class PairwiseCriterionJudgment(ComparisonModel):
+    criterion: Literal[
+        "event_grounding",
+        "dimension_and_value_quality",
+        "scenario_logic_and_explainability",
+        "baseline_and_exclusion_quality",
+        "user_comprehensibility",
+    ]
+    winner: PairwiseWinner
+    evidence: list[str] = Field(min_length=1)
+    counterargument: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+
+
+class PairwiseJudgment(ComparisonModel):
+    left_version: ApiVersion
+    right_version: ApiVersion
+    criteria: list[PairwiseCriterionJudgment]
+    overall_winner: PairwiseWinner
+    summary: str = Field(min_length=1)
+
+
+class VersionRecommendation(ComparisonModel):
+    versions: list[ApiVersion] = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    tradeoffs: list[str] = Field(default_factory=list)
+    selection_condition: str = Field(min_length=1)
+
+
 class ComparisonJudgment(ComparisonModel):
     versions: list[VersionJudgment]
+    pairwise_comparisons: list[PairwiseJudgment]
     best_versions: list[ApiVersion] = Field(min_length=1)
+    quality_recommendation: VersionRecommendation
+    practical_recommendation: VersionRecommendation
     conclusion: str = Field(min_length=1)
 
 

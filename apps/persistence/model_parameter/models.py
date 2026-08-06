@@ -251,10 +251,6 @@ class MiModelImpactLeverModel(AuditColumnsMixin, ORMBase):
     __table_args__ = (
         UniqueConstraint("lever_code", name="uk_tmm_mi_model_impact_lever_m_01"),
         Index("idx_tmm_mi_model_impact_lever_m_01", "domain", "lever_code"),
-        CheckConstraint(
-            "domain IN ('demand','supply','trade','price_only')",
-            name="ck_tmm_mi_model_impact_lever_m_01",
-        ),
         CheckConstraint("use_yn IN ('Y','N')", name="ck_tmm_mi_model_impact_lever_m_02"),
         CheckConstraint("del_yn IN ('Y','N')", name="ck_tmm_mi_model_impact_lever_m_03"),
         CheckConstraint(

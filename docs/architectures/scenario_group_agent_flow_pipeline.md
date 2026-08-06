@@ -125,14 +125,15 @@ Template revision을 함께 준비한 뒤 cached LangGraph에 입력한다. Prom
 생성 결과는 다음 결정론적 검사를
 통과해야 저장된다.
 
-- v2는 입력 Event마다 정확히 하나의 `{eventId, shockSummary}`를 생성하고 원본
-  Template dimension 3~6개를 단일 compact sourceRef로 선택
+- v2는 입력 Event에서 `{eventId, shockSummary}`를 결정론적으로 구성하고 원본
+  Template dimension 3~6개를 단일 compact sourceRef로 선택하며 모든 Event를 최소 한 번 연결
 - v3는 입력 Event마다 정확히 하나의 `{eventId, shockSummary}`를 생성
 - v2의 `e{eventId}__{dimKey}` namespacing과
   `(eventId, scenarioDimensionTemplateId, dimKey)` source identity
 - v3의 3~6개 합성 dimension, `(scenarioDimensionTemplateId, dimKey)` compact source,
   `sourceEventIds` 기반 Event/interaction coverage
-- 최종 3~5개 고유 조합, `floor`/`ceiling` 각 1개, 실제 상쇄 조합이 있을 때만 선택적 `mixed`
+- 최종 3~5개 고유 조합과 `floor`/`ceiling` 각 1개. v3는 bullish·bearish value를 함께 쓰는
+  non-extreme `mixed`를 정확히 1개 생성하고 v4는 실제 contribution 조합으로 선택적 `mixed`를 판정
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
 
 v2 LLM schema에는 EventShock의 상세 impact path/generated value, Template checksum,
@@ -149,10 +150,12 @@ value별 source projection 보강을 실행하지 않는다. compact `sourceRefs
 `sourceEventIds`로 검증한다. 누락된 lineage를 서버가 보강하지 않고 전체 결과 재생성을
 요청한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
 
-v2 다중 Event 생성 graph는 다음 LLM 단위로 구성한다.
+v2 다중 Event 생성 graph는 다음 단계로 구성하며 정상 경로의 LLM 호출은 2회다.
 
-1. `analyze_event`: Event별 compact EventShock을 `Send` fan-out으로 병렬 생성한다.
-2. `generate_dimensions`: 검증된 모든 EventShock과 Template을 사용해 dimension만 설계한다.
+1. `prepare_v2_event_grounding`: 입력 Event 제목·요약·핵심 사실로 compact EventShock을
+   결정론적으로 구성한다. LLM을 호출하지 않는다.
+2. `generate_dimensions`: 권위 있는 Event Context, EventShock과 Template을 사용해 dimension만 설계한다.
+   모든 Event lineage와 이미 발생·시작·완료된 사실을 유지해야 한다.
 3. `generate_scenarios`: 검증된 dimension으로 그룹 메타데이터와 Scenario만 합성한다.
 4. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
 
@@ -164,8 +167,7 @@ v3는 반복 prompt 비용을 줄이기 위해 두 LLM 단계로 구성한다.
    메타데이터와 Scenario를 합성한다.
 3. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
 
-v2 Event fan-out 중 일부가 실패하면 성공 결과는 state reducer에 유지하고 실패 Event만 다시
-`analyze_event`로 보낸다. v3 분석·dimension 또는 Scenario 검증 실패는 해당 LLM node만 재실행하며
+v2 dimension 또는 Scenario 검증 실패와 v3 분석·dimension 또는 Scenario 검증 실패는 해당 LLM node만 재실행하며
 검증을 통과한 앞 단계 결과는 재생성하지 않는다. 각 LLM 단계는 최초 호출을 포함해 최대 3회 시도하고,
 재시도 전 1초·2초 backoff를 적용한다. structured/schema 검증 오류와 408, 429, 500,
 502, 503, 504, 529, timeout/connection 오류만 재시도한다. 그 밖의 오류는 즉시
@@ -238,8 +240,10 @@ LLM은 `impactLeverId`를 생략할 수 있고 서버가 활성 catalog의 `leve
 별도의 `EventImpactFact`, `sourceFactIds`, `commonFactLeverMappings`,
 `eventDimensionCoverage`, `sourceRefs`, 중복 `leverRefs`/`impactLeverRefs`는 생성하거나 저장하지 않는다.
 서버는 grounding의 Event 존재 여부, 카탈로그 ID/code, dimension/value ID 고유성,
-고유 Scenario 조합, pressure band partition, floor·ceiling·baseline과 선택적으로 생성된 mixed를
-결정론적으로 검증한다. 모든 Event를 별도 dimension에 강제로 연결하거나 fact와 lever domain의
+고유 Scenario 조합, pressure band partition, contribution 합계와 pressure band의 방향,
+floor·ceiling 및 실제 bullish·bearish contribution이 함께 있는 선택적 mixed를 결정론적으로 검증한다.
+floor·ceiling·mixed를 포함한 전체 Scenario 중 최고 `probabilityScore` 하나를 baseline으로 지정한다.
+모든 Event를 별도 dimension에 강제로 연결하거나 fact와 lever domain의
 일대일 coverage를 강제하지 않는다.
 여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 글로벌 LNG
 pressure band와 rationale이다. 지역 가격 허브가 특별히 관련된 Scenario만

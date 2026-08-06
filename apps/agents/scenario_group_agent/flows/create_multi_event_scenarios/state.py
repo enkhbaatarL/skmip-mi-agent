@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import operator
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -35,24 +34,7 @@ from apps.persistence.scenario.schema import ScenarioPayload, ScenarioPipelineTe
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
-GenerationStage = Literal["event_analysis", "dimension_design", "scenario_synthesis", "persistence"]
-
-
-class EventAnalysisTask(BaseModel):
-    api_version: Literal["v2"]
-    event: EventPayload
-    template: ScenarioPipelineTemplate
-    attempt: int = Field(default=1, ge=1, le=3)
-    validation_feedback: str | None = None
-
-
-class EventAnalysisOutcome(BaseModel):
-    event_id: int
-    attempt: int
-    event_shock: V2EventShock | None = None
-    error: str | None = None
-    error_code: str | None = None
-    retryable: bool = False
+GenerationStage = Literal["dimension_design", "scenario_synthesis", "persistence"]
 
 
 class MultiEventGenerationState(BaseModel):
@@ -64,8 +46,6 @@ class MultiEventGenerationState(BaseModel):
     comparison_run_id: str | None = None
     user_id: int | None = None
 
-    event_task: EventAnalysisTask | None = None
-    event_analysis_outcomes: Annotated[list[EventAnalysisOutcome], operator.add] = Field(default_factory=list)
     event_shocks: list[V2EventShock | V3EventShock] = Field(default_factory=list)
 
     dimension_attempt: int = 0

@@ -27,7 +27,6 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     EventInteraction,
     V2DimensionDesignResult,
-    V2EventAnalysisResult,
     V2MultiEventGenerationResult,
     V2ScenarioSynthesisResult,
     V3AnalysisDesignResult,
@@ -64,7 +63,10 @@ from apps.agents.scenario_group_agent.presentation import (
     build_scenario_group_table_data,
 )
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
+    build_dimension_design_user_prompt,
     build_multi_event_user_prompt,
+    build_scenario_synthesis_user_prompt,
+    build_v3_analysis_design_user_prompt,
 )
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     MULTI_EVENT_COMPAT_SYSTEM_PROMPT,
@@ -744,16 +746,12 @@ def test_v3_langgraph_uses_analysis_design_and_scenario_calls() -> None:
     persist.assert_called_once()
 
 
-def test_v2_langgraph_uses_one_event_call_per_event_plus_two_stage_calls() -> None:
+def test_v2_langgraph_uses_deterministic_event_grounding_and_two_stage_calls() -> None:
     aggregate = _result(strategy="multi_event_source_dimensions")
-    event_shock_by_id = {shock.event_id: shock for shock in aggregate.event_shocks}
     calls: list[str] = []
 
     async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
         calls.append(output_schema.__name__)
-        if output_schema is V2EventAnalysisResult:
-            event_id = 101 if "101" in user_prompt else 202
-            return V2EventAnalysisResult(event_shock=event_shock_by_id[event_id])
         if output_schema is V2DimensionDesignResult:
             return V2DimensionDesignResult(selected_dimensions=aggregate.selected_dimensions)
         return V2ScenarioSynthesisResult(
@@ -774,8 +772,18 @@ def test_v2_langgraph_uses_one_event_call_per_event_plus_two_stage_calls() -> No
     state = MultiEventGenerationState(
         scenario_group=group,
         events=[
-            EventPayload(mi_event_id=101, event_type_l2_id=8),
-            EventPayload(mi_event_id=202, event_type_l2_id=12),
+            EventPayload(
+                mi_event_id=101,
+                event_type_l2_id=8,
+                event_title_ko="한파 시작",
+                one_line_summary="한파에 따른 수요 증가가 관측된다.",
+            ),
+            EventPayload(
+                mi_event_id=202,
+                event_type_l2_id=12,
+                event_title_ko="정비 시작",
+                one_line_summary="액화시설 정비가 시작됐다.",
+            ),
         ],
         templates=[
             ScenarioPipelineTemplate(
@@ -813,20 +821,19 @@ def test_v2_langgraph_uses_one_event_call_per_event_plus_two_stage_calls() -> No
         final_state = asyncio.run(multi_event_flow.get_compiled_graph().ainvoke(state))
     multi_event_flow.get_compiled_graph.cache_clear()
 
-    assert calls.count("V2EventAnalysisResult") == 2
     assert calls.count("V2DimensionDesignResult") == 1
     assert calls.count("V2ScenarioSynthesisResult") == 1
+    assert len(calls) == 2
+    assert [shock.event_id for shock in final_state["event_shocks"]] == EVENT_IDS
+    assert "정비가 시작" in final_state["event_shocks"][1].shock_summary
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
 
 
 def test_multi_event_graph_disables_connector_level_retry() -> None:
-    result = V2EventAnalysisResult(
-        event_shock={
-            "eventId": 101,
-            "shockSummary": "현재 Event의 LNG 가격 영향 방향을 요약한다.",
-        },
+    result = V2DimensionDesignResult(
+        selected_dimensions=_result(strategy="multi_event_source_dimensions").selected_dimensions,
     )
     invoke = AsyncMock(return_value=SimpleNamespace(result=result))
     settings = SimpleNamespace(
@@ -847,7 +854,7 @@ def test_multi_event_graph_disables_connector_level_retry() -> None:
     ):
         actual = asyncio.run(
             multi_event_nodes.invoke_stage_structured_output(
-                output_schema=V2EventAnalysisResult,
+                output_schema=V2DimensionDesignResult,
                 system_prompt="system",
                 user_prompt="user",
                 trace_context=None,
@@ -885,7 +892,27 @@ def test_finalization_assigns_roles_and_single_highest_probability_baseline(
     assert baselines[0].global_pressure_band == "balanced"
 
 
-def test_finalization_allows_scenarios_without_mixed_role() -> None:
+@pytest.mark.parametrize(
+    "strategy",
+    ["multi_event_source_dimensions", "multi_event_composite_dimensions"],
+)
+def test_floor_or_ceiling_can_be_baseline_when_it_has_highest_probability(strategy: str) -> None:
+    result = _result(strategy=strategy)
+    result.scenarios[0].probability_score = 95
+    result.scenarios[1].probability_score = 4
+
+    finalized = finalize_generation_result(
+        result,
+        generation_strategy=strategy,
+        event_ids=EVENT_IDS,
+    )
+
+    baseline = next(scenario for scenario in finalized.scenarios if scenario.baseline_yn == "Y")
+    assert baseline.scenario_role == "ceiling"
+    assert baseline.probability_score == 95
+
+
+def test_v3_finalization_requires_exactly_one_mixed_role() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
     without_mixed = result.model_copy(
         update={
@@ -893,16 +920,12 @@ def test_finalization_allows_scenarios_without_mixed_role() -> None:
         },
     )
 
-    finalized = finalize_generation_result(
-        without_mixed,
-        generation_strategy="multi_event_composite_dimensions",
-        event_ids=EVENT_IDS,
-    )
-
-    roles = [scenario.scenario_role for scenario in finalized.scenarios]
-    assert roles.count("floor") == 1
-    assert roles.count("ceiling") == 1
-    assert "mixed" not in roles
+    with pytest.raises(ValueError, match="exactly one non-extreme mixed"):
+        finalize_generation_result(
+            without_mixed,
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
 def test_v2_requires_namespaced_source_dimensions() -> None:
@@ -925,7 +948,7 @@ def test_v2_requires_namespaced_source_dimensions() -> None:
         )
 
 
-def test_v2_keeps_unrepresented_event_in_context_without_forcing_dimension_coverage() -> None:
+def test_v2_rejects_an_event_without_selected_dimension_coverage() -> None:
     result = _result(strategy="multi_event_source_dimensions")
     unrepresented_event_id = 303
     result.event_shocks.append(
@@ -934,14 +957,85 @@ def test_v2_keeps_unrepresented_event_in_context_without_forcing_dimension_cover
         ),
     )
 
-    finalized = finalize_generation_result(
-        result,
-        generation_strategy="multi_event_source_dimensions",
-        event_ids=[*EVENT_IDS, unrepresented_event_id],
+    with pytest.raises(ValueError, match="events without a selected dimension"):
+        finalize_generation_result(
+            result,
+            generation_strategy="multi_event_source_dimensions",
+            event_ids=[*EVENT_IDS, unrepresented_event_id],
+        )
+
+
+def test_v2_rejects_value_that_reverses_an_observed_started_state() -> None:
+    result = _result(strategy="multi_event_source_dimensions")
+    result.event_shocks[0].shock_summary = "액화시설 정비가 시작되어 현재 진행 중이다."
+    result.selected_dimensions[0].values[0].label = "정비 취소 및 미착수"
+
+    with pytest.raises(ValueError, match="v2 fact reversal"):
+        finalize_generation_result(
+            result,
+            generation_strategy="multi_event_source_dimensions",
+            event_ids=EVENT_IDS,
+        )
+
+
+def test_v2_dimension_prompt_preserves_authoritative_facts_without_event_analysis_llm() -> None:
+    prompt = build_dimension_design_user_prompt(
+        api_version="v2",
+        events=[
+            {
+                "mi_event_id": 101,
+                "event_title_ko": "정비 시작",
+                "one_line_summary": "액화시설 정비가 이미 시작됐다.",
+                "key_bullets": ["현장 작업이 진행 중이다."],
+            },
+        ],
+        templates=[
+            {
+                "scenario_dimension_template_id": 81,
+                "dimensions": [
+                    {
+                        "dim_key": "duration",
+                        "label": "정비 기간",
+                        "description": "정비 지속 기간",
+                        "value_enums": ["단기", "장기"],
+                    },
+                ],
+            },
+        ],
+        event_shocks=[{"event_id": 101, "shock_summary": "정비가 이미 시작됐다."}],
     )
 
-    assert {shock.event_id for shock in finalized.event_shocks} == {*EVENT_IDS, unrepresented_event_id}
-    assert all(unrepresented_event_id != dimension.source_ref.event_id for dimension in finalized.dimension_definitions)
+    assert "Event Context (authoritative current facts)" in prompt
+    assert "모든 입력 Event" in prompt
+    assert "취소·미발생 상태로 되돌리는 value" in prompt
+
+
+def test_v3_prompts_require_independent_drivers_and_one_explicit_mixed_scenario() -> None:
+    analysis_prompt = build_v3_analysis_design_user_prompt(events=[], templates=[])
+    scenario_prompt = build_scenario_synthesis_user_prompt(
+        api_version="v3",
+        event_shocks=[],
+        dimension_definitions=[],
+        interactions=[],
+    )
+
+    assert "저장·주입" in analysis_prompt
+    assert "독립 dimension" in analysis_prompt
+    assert "정확히 하나" in scenario_prompt
+    assert "mixedFactors=true" in scenario_prompt
+
+
+def test_v3_independent_interaction_requires_separate_single_source_dimensions() -> None:
+    result = _result(strategy="multi_event_composite_dimensions")
+    result.interactions[0].relation = "independent"
+    result.dimension_definitions[1].source_event_ids = EVENT_IDS
+
+    with pytest.raises(ValueError, match="separate single-source dimensions"):
+        finalize_generation_result(
+            result,
+            generation_strategy="multi_event_composite_dimensions",
+            event_ids=EVENT_IDS,
+        )
 
 
 @pytest.mark.parametrize(
