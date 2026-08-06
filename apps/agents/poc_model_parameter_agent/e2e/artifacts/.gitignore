@@ -1,6 +1,0 @@
-*
-!.gitignore
-!screenshots/
-screenshots/*
-!screenshots/.gitkeep
-!screenshots/*.png

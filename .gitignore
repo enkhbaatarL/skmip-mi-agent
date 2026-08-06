@@ -76,9 +76,6 @@ temp/
 uploads/
 downloads/
 artifacts/
-!apps/agents/poc_model_parameter_agent/e2e/artifacts/
-!apps/agents/poc_model_parameter_agent/e2e/artifacts/screenshots/
-!apps/agents/poc_model_parameter_agent/e2e/artifacts/screenshots/*.png
 cache/
 backoffice/frontend/dist/
 backoffice/frontend/node_modules/
