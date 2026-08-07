@@ -1,0 +1,613 @@
+{
+  "canonical_version": "model-impact-lever-canonical-v3",
+  "catalog_version": "v3",
+  "audit_user": "model-impact-lever-canonical-v3",
+  "generated_from_snapshot": "scripts/model_parameter/snapshots/external_dev_impact_lever_before_v3_20260807.json",
+  "snapshot_sha256": "702f6da5e7af160e0395078bf772ab423d55e0fbe834404b7498bc8ccb57ebc8",
+  "impact_lever_count": 16,
+  "expected_counts": {
+    "impact_levers": 16,
+    "binding_occurrences": 14,
+    "raw_executable_binding_occurrences": 14,
+    "effective_executable_binding_occurrences": 9,
+    "effective_known_unsupported_binding_occurrences": 5
+  },
+  "active_parameter_names": [
+    "GDP",
+    "HurricaneIntensity",
+    "LiqProdAdjustment",
+    "LiqUtilAdjustment",
+    "PMI",
+    "PipelineAdjustment",
+    "Population",
+    "PowerMix",
+    "SupplyDisruption",
+    "Temperature"
+  ],
+  "impact_levers": [
+    {
+      "impact_lever_id": 1,
+      "lever_code": "weather_demand",
+      "domain": "demand",
+      "label": "기상 기반 수요",
+      "description": "평년 대비 기온 변동으로 난방·냉방 및 가스발전용 LNG 수요가 변하는 영향",
+      "applicability_hint": "겨울 한파·따뜻한 겨울 또는 여름 폭염의 기간, Temperature·HDD·CDD 기반 강도, 진입 재고, 타 에너지원 흡수 가능성, Peak 시점·패턴이 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "Temperature",
+          "role": "primary",
+          "applicability": "국가·연·월별 평균 기온(°C) 최종 절대값 조정",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "HDD",
+          "role": "alternative",
+          "applicability": "국가·연·월별 난방도일 조정 경로",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "CDD",
+          "role": "alternative",
+          "applicability": "국가·연·월별 냉방도일 조정 경로",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 2,
+      "lever_code": "power_generation_mix",
+      "domain": "demand",
+      "label": "발전 믹스",
+      "description": "가스·원자력·재생에너지·석탄 발전의 가동률, 설비용량 또는 발전 비중 변화에 따른 LNG 발전 수요 변화",
+      "applicability_hint": "발전원별 영향 기간, Capacity 변화 규모, 단발·구조적 변동, 타 에너지원 흡수 가능성, 발생·회복 패턴을 분기할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "PowerMix",
+          "role": "primary",
+          "applicability": "국가·연·에너지원별 발전 비중 최종값 조정",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 3,
+      "lever_code": "economic_activity",
+      "domain": "demand",
+      "label": "경제 활동",
+      "description": "GDP·PMI 등 국가별 경기 변동에 따른 산업·발전 부문의 LNG 수요 변화",
+      "applicability_hint": "대상 국가의 경기 확장·둔화 방향과 기간, 경기 강도, LNG 수요 영향 규모가 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "GDP",
+          "role": "primary",
+          "applicability": "국가·연도별 실질 GDP 성장률 최종값 조정",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "applicability": "국가·연·월별 산업 경기 PMI 절대지수 조정",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 4,
+      "lever_code": "direct_gas_demand",
+      "domain": "demand",
+      "label": "직접 가스 수요",
+      "description": "산업·도시가스·수송 부문의 직접 LNG·가스 소비 변화",
+      "applicability_hint": "21개 Event Type 중 직접 대응 유형은 없으며, 경제 활동이나 발전 믹스로 설명되지 않는 수요 정책·절감·연료 전환의 기간, 영향 강도, 구조성이 핵심일 때 제한적으로 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 5,
+      "lever_code": "upstream_production",
+      "domain": "supply",
+      "label": "Upstream 생산",
+      "description": "기존 가스전의 생산량·가동률 증감과 차질 후 회복에 따른 LNG 공급 변화",
+      "applicability_hint": "기간, Nameplate 대비 Utilization 변화 폭, 급격·점진 발생, 급격·점진·영구 회복, 대체 가스 공급 가능성을 분기할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "SupplyDisruption",
+          "role": "primary",
+          "applicability": "국가·연·월별 upstream 가스 공급량(Bcm) 최종값 조정",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 6,
+      "lever_code": "liquefaction_availability",
+      "domain": "supply",
+      "label": "액화시설 가용성",
+      "description": "기존 LNG 액화·수출 터미널의 가동률·생산량 변동과 신규 수출 터미널의 COD·Ramp-up 일정 변화",
+      "applicability_hint": "기존 플랜트·Train의 기간, Utilization 변화량, 발생·회복 패턴, 대체 LNG 공급 가능성 또는 신규 설비의 COD, Ramp-up 완료 시점·패턴·도달 가동률이 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "primary",
+          "applicability": "기존 액화 Plant Train의 단기·부분 차질 또는 회복을 월별 가동률 최종값으로 조정",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqProdAdjustment",
+          "role": "alternative",
+          "applicability": "대폭·영구 생산 손실 또는 신규 Train ramp-up을 월별 생산량 최종값으로 직접 조정",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 7,
+      "lever_code": "regasification_capacity",
+      "domain": "supply",
+      "label": "재기화 수용력",
+      "description": "수입 터미널의 재기화 처리 가능 물량과 신규 수입 터미널의 COD·Ramp-up 일정 변화",
+      "applicability_hint": "신규 수입 터미널의 COD·Ramp-up 완료 시점과 도달 가동률 또는 자연재해로 인한 수입 시설의 차질 강도·회복 패턴이 수요 흡수력을 제한할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "RegasAdjustment",
+          "role": "primary",
+          "applicability": "재기화 플랜트·연·월별 처리용량 최종값 조정 경로",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 8,
+      "lever_code": "natural_disaster_disruption",
+      "domain": "supply",
+      "label": "미국 GoM 허리케인 차질",
+      "description": "미국 Gulf of Mexico 허리케인이 승인된 액화 또는 upstream 시설에 일으키는 월별 물리적 공급 차질",
+      "applicability_hint": "미국 Gulf of Mexico 허리케인으로 강도 1~4, 적용 Year/Month, 승인된 영향 시설을 식별할 수 있을 때만 사용한다. 태풍·지진 등 기타 자연재해는 영향 시설에 따라 upstream 생산, 액화시설, 재기화 또는 파이프라인 레버를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "HurricaneIntensity",
+          "role": "primary",
+          "applicability": "미국 Gulf of Mexico 허리케인의 강도 1~4와 적용 Year/Month를, 승인된 액화 또는 upstream 영향 시설에 한해 조정",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 9,
+      "lever_code": "pipeline_capacity",
+      "domain": "supply",
+      "label": "파이프라인 수송력",
+      "description": "PNG 파이프라인 송출 가동률·수송용량의 단발적·구조적 변화와 타 파이프라인 노선 대체",
+      "applicability_hint": "기간, 대상 Pipeline과 From/To, 송출용량 대비 변화 폭, 단발·구조적 여부, 발생·회복 패턴 또는 타 파이프라인 대체를 분기할 때 사용한다. LNG 전환만 설명된 경우 액화시설 가용성 레버를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "PipelineAdjustment",
+          "role": "primary",
+          "applicability": "Pipeline·From/To·연·월별 송출용량(Bcm/y) 최종값 또는 타 파이프라인 대체를 조정; LNG 전환만인 경우 액화시설 가용성 경로를 사용",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 10,
+      "lever_code": "shipping_cost",
+      "domain": "trade",
+      "label": "해상 운송비",
+      "description": "선복 수급, 항로 차질, 연료비, 계절성, 지정학·제재로 인한 LNG·원유 선박 운임과 부대 운송비 변화",
+      "applicability_hint": "해상 운임의 기간, 변동 폭, 급격·점진 진행, 단발·구조적 여부를 분기하거나 항로·지정학·제재 충격의 운송비 효과를 정량 반영할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "ShippingCost",
+          "role": "primary",
+          "applicability": "영향 범위·연도별 해상 운송비 절대값 조정 경로",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 11,
+      "lever_code": "route_disruption",
+      "domain": "trade",
+      "label": "항로 제약",
+      "description": "운하·해협·항만의 혼잡·봉쇄·운항 차질·우회로 발생하는 LNG 화물 흐름의 지연과 왜곡",
+      "applicability_hint": "기간, 화물 흐름 차질 강도, 우회·재라우팅 가능성, 운송 지연 규모 또는 지정학·제재에 따른 운송 차질 강도가 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "ShippingCost",
+          "role": "primary",
+          "applicability": "항로 우회·지연에 따른 영향 범위·연도별 운송비 효과 조정 경로",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 12,
+      "lever_code": "contract_volume",
+      "domain": "trade",
+      "label": "계약 물량",
+      "description": "대규모 장기계약의 분쟁·취소·재협상과 거래 제한으로 현물시장에 유입되거나 이탈하는 계약 물량 변화",
+      "applicability_hint": "거래 규모와 시장 영향 지속성 또는 지정학·제재 시 일부·전체 계약 취소 여부가 지역별 가용 화물을 바꿀 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 13,
+      "lever_code": "trade_restriction",
+      "domain": "trade",
+      "label": "거래 제한",
+      "description": "지정학적 갈등, 정부 제재, 관세, 수출입·목적지 제한 및 정책·규제로 인한 LNG 거래 가능 물량 변화",
+      "applicability_hint": "적용 기간, 시행 단계, 운송·공급 차질 강도와 회복 패턴, 대체 공급·PowerMix 대응, 계약 취소 범위가 지역 간 화물 흐름을 제한할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 14,
+      "lever_code": "inventory_condition",
+      "domain": "price_only",
+      "label": "재고 여건",
+      "description": "평년 대비 LNG·PNG 재고 수준, 주입·인출 여력과 비축 정책 변화가 현물 구매 압력 및 가격 민감도에 미치는 영향",
+      "applicability_hint": "평년 대비 5단계 재고 수준, 지속·회복 기간, 비축 정책, Spot 구매 영향 또는 한파·폭염 진입 재고와 Injection 패턴을 가격 조건으로 반영할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 15,
+      "lever_code": "regional_price_spread",
+      "domain": "price_only",
+      "label": "지역 가격 스프레드",
+      "description": "JKM·TTF·Henry Hub 등 가격 인덱스 간 Spread의 비정상적·구조적 변화와 그에 따른 차익거래 유인 변화",
+      "applicability_hint": "기간, 대상 Spread의 확대·축소 방향, 변동 폭, 단발·구조적 여부가 화물 유인과 지역별 가격을 차별화할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 16,
+      "lever_code": "financial_market_sentiment",
+      "domain": "price_only",
+      "label": "금융시장 심리",
+      "description": "헷지 포지션 재편, 환율·금리 변동과 위험 프리미엄이 시장 유동성, 수입국 구매력 및 단기 LNG 가격에 미치는 간접 영향",
+      "applicability_hint": "거래·헷징의 규모·지속성 또는 금리·통화의 변동 폭·지속성이 실물 수급모델 입력으로 직접 연결되지 않지만 가격 범위와 구매 여건을 바꿀 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v3",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-05T08:30:11.604892",
+      "mod_usr_logn_id": "model-impact-lever-canonical-v3",
+      "mod_dtm": null,
+      "del_yn": "N"
+    }
+  ],
+  "model_parameter_review": [
+    {
+      "model_param_id": 1,
+      "parameter_name": "CDD",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "catalog_capability",
+      "lever_codes": [
+        "weather_demand"
+      ],
+      "reason": "master는 비활성이지만 weather catalog capability를 보존하며 런타임에서 INACTIVE로 강등한다."
+    },
+    {
+      "model_param_id": 2,
+      "parameter_name": "Coal Futures Price",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "2026년 이후 futures strip과 활성 mapping이 없어 binding하지 않는다."
+    },
+    {
+      "model_param_id": 3,
+      "parameter_name": "Gas Futures Price",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "2026년 이후 futures strip과 활성 mapping이 없어 binding하지 않는다."
+    },
+    {
+      "model_param_id": 4,
+      "parameter_name": "GDP",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "economic_activity"
+      ],
+      "reason": "활성 master와 승인된 경제 강도 direct mapping이 있다."
+    },
+    {
+      "model_param_id": 5,
+      "parameter_name": "HDD",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "catalog_capability",
+      "lever_codes": [
+        "weather_demand"
+      ],
+      "reason": "master는 비활성이지만 weather catalog capability를 보존하며 런타임에서 INACTIVE로 강등한다."
+    },
+    {
+      "model_param_id": 6,
+      "parameter_name": "PMI",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "economic_activity"
+      ],
+      "reason": "활성 master와 승인된 경제 강도 direct mapping이 있다."
+    },
+    {
+      "model_param_id": 7,
+      "parameter_name": "PowerMix",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "power_generation_mix"
+      ],
+      "reason": "활성 master와 발전 믹스 direct/routing mapping 및 LUT가 있다."
+    },
+    {
+      "model_param_id": 8,
+      "parameter_name": "Temperature",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "weather_demand"
+      ],
+      "reason": "활성 master와 한파·폭염 direct mapping 및 LUT가 있다."
+    },
+    {
+      "model_param_id": 9,
+      "parameter_name": "User-Adjusted Gas Demand",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "비활성 master이며 승인된 활성 mapping과 LUT가 없다."
+    },
+    {
+      "model_param_id": 10,
+      "parameter_name": "ElectrificationRate",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "유효 Basecase·LUT·승인 mapping이 없어 binding하지 않는다."
+    },
+    {
+      "model_param_id": 11,
+      "parameter_name": "Population",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "행 추가 금지 범위에서 안전한 전용 인구 레버가 없고 economic_activity에 넣으면 일반 경기에도 항상 후보화된다."
+    },
+    {
+      "model_param_id": 12,
+      "parameter_name": "HurricaneIntensity",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "natural_disaster_disruption"
+      ],
+      "reason": "활성 master이며 미국 GoM 허리케인 조건부 routing과 승인 LUT가 있다."
+    },
+    {
+      "model_param_id": 13,
+      "parameter_name": "LiqProdAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "liquefaction_availability"
+      ],
+      "reason": "활성 master이며 대폭·영구 생산량 또는 ramp-up 조정 mapping과 LUT가 있다."
+    },
+    {
+      "model_param_id": 14,
+      "parameter_name": "LiqUtilAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "liquefaction_availability"
+      ],
+      "reason": "활성 master이며 단기·부분 가동률 조정 mapping과 LUT가 있다."
+    },
+    {
+      "model_param_id": 15,
+      "parameter_name": "PipelineAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "pipeline_capacity"
+      ],
+      "reason": "활성 master와 pipeline capacity direct mapping 및 LUT가 있어 v3에 추가한다."
+    },
+    {
+      "model_param_id": 16,
+      "parameter_name": "RegasAdjustment",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "catalog_capability",
+      "lever_codes": [
+        "regasification_capacity"
+      ],
+      "reason": "master는 비활성이지만 regas catalog capability를 보존하며 런타임에서 INACTIVE로 강등한다."
+    },
+    {
+      "model_param_id": 17,
+      "parameter_name": "SupplyDisruption",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "upstream_production"
+      ],
+      "reason": "활성 master이며 국가·연·월 upstream 공급량 mapping과 LUT가 있다."
+    },
+    {
+      "model_param_id": 18,
+      "parameter_name": "PNG Contract Volume",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "비활성 Trade master이며 승인된 활성 mapping과 LUT가 없다."
+    },
+    {
+      "model_param_id": 19,
+      "parameter_name": "RemainingUnrestrictedAmount",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "비활성 Trade master이며 승인된 활성 mapping과 LUT가 없다."
+    },
+    {
+      "model_param_id": 20,
+      "parameter_name": "ShippingCost",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "catalog_capability",
+      "lever_codes": [
+        "shipping_cost",
+        "route_disruption"
+      ],
+      "reason": "master는 비활성이지만 shipping catalog capability를 보존하며 런타임에서 INACTIVE로 강등한다."
+    },
+    {
+      "model_param_id": 21,
+      "parameter_name": "VolumeCancelled",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "비활성 Trade master이며 승인된 활성 mapping과 LUT가 없다."
+    }
+  ]
+}
