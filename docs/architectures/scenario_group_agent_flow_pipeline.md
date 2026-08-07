@@ -161,7 +161,11 @@ v3 합성 단계는 전체 원본 Template을 다시 받지 않고 검증된 Sho
 신규 Event 특화 value를 설명하는 의미적 anchor로 사용한다. 공개 value의
 `description`과 `derivationRationale`은 과거 저장 데이터 읽기를 위해 nullable이지만,
 새 생성 결과에서는 non-blank여야 한다. Event coverage와 interaction resolution은 투영된
-`sourceEventIds`로 검증한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
+`sourceEventIds`로 검증한다. 새 value의 화면용 label은 10~40자의 비교 가능한 상태명으로 생성한다.
+검증된 Shock·`observedBasis`·Template enum에 현재 판단에 유효한 수치·범위·기간이 있으면 핵심 anchor를
+최대 2개까지 label에 포함하고, 근거가 없으면 수치를 만들지 않고 구체적인 시장·운영 상태를 사용한다.
+이 label 정책은 prompt 계약이며 서버가 label 문자열을 별도로 파싱하거나 강제 검증하지 않는다.
+v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
 
 v2 다중 Event 생성 graph는 다음 단계로 구성하며 정상 경로의 LLM 호출은 2회다.
 
@@ -244,10 +248,17 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 1. `analyze_event_impacts`: Event별로 독립된 자연어 중심 structured-output 호출을 동시에 실행한다.
    입력은 원본 DTO JSON 대신 Event 설명, 핵심 사실 후보 문장, 사용 가능한 Lever 목록을 Markdown으로
    보여준다. LLM은 LNG 시장에 중요한 Fact 문장을 후보에서 그대로 최대 2개 선택하고, 각 영향의
-   전달 경로·JKM 방향·영향 기간과 열린 질문을 한국어 문장으로 설명한다. 별도 `price` 필드는
-   생성하지 않는다. `factStatus`와 `confidence`, Fact/Path ID는
+   전달 경로·JKM 방향·영향 기간을 설명한다. 수치·기간·목표일과 실행 단위로 고정한
+   `analysisAsOf`를 함께 해석한 판단 근거는 별도 ID나 source ref 없는 자연어 `decisionBasis`
+   문장으로 Event당 최대 3개 보존한다. 각 문장은 그 자체로 어느 Event의 어떤 사실을 사용했는지
+   식별 가능하게 작성한다. `48시간 사전 요청` 같은 반복 운영 조건과 `30일 내 복구 목표`,
+   `60일 협상 기간` 같은 목표·유효 기간을 구분하고, 시작점을 확인할 수 있을 때만 현재 기한 경과나
+   잔여 기간을 해석한다. 중요한 수치·일정은 상위 Fact 두 문장에 선택되지 않아도 Fact 후보를 근거로
+   `decisionBasis`에 남길 수 있다. 별도 `price` 필드는 생성하지 않는다. `factStatus`와 `confidence`, Fact/Path ID는
    생성하지 않으며 서버가 선택 문장을 원본 후보와 대조한 뒤 ID와 lineage를 부여한다. Event당
-   Impact Path는 최대 2개, ordered Lever step은 Path당 최대 2개, 열린 질문은 최대 2개다. 각 Event는
+   Impact Path는 최대 2개, ordered Lever step은 Path당 최대 2개, 열린 질문은 최대 2개다. 열린 질문은
+   분석 기준일에 아직 결과가 열려 있고 JKM pressure를 구분하는 변수를 우선하며, 이미 지난 목표는
+   미래 가능성으로 되돌리지 않고 현재 남은 제약과 앞으로의 해소 시점으로 전환한다. 각 Event는
    자기 호출만 최대 3회 재시도하므로 한 Event 실패가 성공한 다른 Event의 재생성을 유발하지 않는다.
 2. `validate_event_impacts`: 병렬 결과를 요청 Event 순서로 병합한 뒤 모든 Event coverage와
    Fact→Path→Lever lineage를 검증하고
@@ -263,8 +274,10 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    어떤 선택 축으로 모델링할지 Dimension 3~6개와 Value 2~4개로 답하게 한다. LLM은 질문·축·선택지와
    선택 결과를 자연어 및 짧은 상태 표현으로 생성하며 Dimension/Value ID와 source lineage는 서버가
    부여한다. 화면용 Dimension label은 질문과 분리하고, Value label은 비교 가능한 시장·운영 상태를
-   10~25자로 표현한다. 입력 근거에 없는 숫자 경계는 만들지 않는다. Dimension은 새 Lever를 선택하지
-   않고 source uncertainty의 affected Lever를 상속한다.
+   10~25자로 표현한다. `decisionBasis`에 현재 판단에 유효한 수치·기간·잔여일이 있으면 질문과 Value에
+   반영하고, Value의 `assumptionRationale`에 어떤 Event 사실과 현재 시점 판단을 사용했는지 자연어로
+   설명한다. Anchor ref는 추가하지 않으며 새로운 숫자 경계는 제공된 판단 근거가 실제 기준을 줄 때만
+   만든다. Dimension은 새 Lever를 선택하지 않고 source uncertainty의 affected Lever를 상속한다.
 5. `validate_model_lever_dimensions`: Dimension의 source Event/Path/uncertainty와
    `primaryImpactLeverId`, Value별 Lever state ID 및 model support status를 hydrate한다.
 6. `synthesize_v4_scenarios`: 공통 영향, 검증된 Interaction, Dimension 선택지를 읽기 쉬운
@@ -289,8 +302,9 @@ v4 Dimension은 다음 정본을 저장한다.
 - `primaryLeverCode`, 서버가 hydrate한 `primaryImpactLeverId`, `modelSupportStatus`
 - `values[]`: `valueId`, `label`, `leverStates[]`, `pressureContribution`, `assumptionRationale`
 
-기존 `eventGroundings`와 `leverMappings`는 새 v4 생성 계약에서 제거한다. Event Fact,
-Impact Path, Path/Interaction uncertainty, Interaction, validation warning과 Scenario pressure
+기존 `eventGroundings`와 `leverMappings`는 새 v4 생성 계약에서 제거한다. 실행 기준일인
+`analysisAsOf`, 자연어 `decisionBasis`, Event Fact, Impact Path, Path/Interaction uncertainty,
+Interaction, validation warning과 Scenario pressure
 breakdown은 기존 `generation_diagnostics` JSON에 저장하며 v4 sync 응답에도 반환한다.
 신규 DB 테이블이나 컬럼은 추가하지 않는다.
 

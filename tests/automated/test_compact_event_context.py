@@ -230,6 +230,7 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
             },
         ],
         catalog_version="catalog-v1",
+        analysis_as_of="2026-08-07",
     )
     combined = MODEL_LEVER_SYSTEM_PROMPT + prompt
 
@@ -239,11 +240,13 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
         "impacts.analysis",
         "leverStates",
         "openQuestions",
+        "decisionBasis",
         "후보 문장을 글자까지 그대로 복사",
     ):
         assert expected in combined
 
     assert "impactLeverId" not in prompt
+    assert "분석 기준일: 2026-08-07" in prompt
     assert "### demand" in prompt
     assert "- weather_demand: 한파·폭염의 강도와 지속 기간이 수요를 바꿀 때 선택" in prompt
     assert "기온 변화에 따른 LNG 수요" not in prompt

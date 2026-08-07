@@ -266,15 +266,22 @@ class V4ReadableEventAnalysisDraft(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_facts: list[str] = Field(default_factory=list, max_length=2)
+    decision_basis: list[str] = Field(default_factory=list, max_length=3)
     impacts: list[V4ReadableEventImpact] = Field(default_factory=list, max_length=2)
-    open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list, max_length=1)
+    open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list, max_length=2)
     excluded_because: str | None = Field(default=None, max_length=160)
 
     @model_validator(mode="after")
     def validate_event_decision(self) -> V4ReadableEventAnalysisDraft:
+        normalized_basis = [item.strip() for item in self.decision_basis]
+        if any(not item for item in normalized_basis):
+            raise ValueError("decisionBasis must not contain blank statements")
+        if len(normalized_basis) != len(set(normalized_basis)):
+            raise ValueError("decisionBasis must contain unique statements")
+        self.decision_basis = normalized_basis
         if not self.event_facts:
-            if self.impacts or self.open_questions or not self.excluded_because:
-                raise ValueError("Event without selected facts requires excludedBecause and no impacts")
+            if self.decision_basis or self.impacts or self.open_questions or not self.excluded_because:
+                raise ValueError("Event without selected facts requires excludedBecause and no analysis")
         elif self.impacts:
             if self.excluded_because:
                 raise ValueError("Event with impacts cannot define excludedBecause")
@@ -313,6 +320,7 @@ class V4EventImpactAnalysisDraft(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_facts: list[V4EventFact] = Field(default_factory=list)
+    decision_basis: list[str] = Field(default_factory=list)
     event_exclusions: list[V4EventAnalysisExclusion] = Field(default_factory=list)
     impact_paths: list[V4EventImpactPathDraft] = Field(default_factory=list)
     path_uncertainties: list[V4PathUncertainty] = Field(default_factory=list)
@@ -324,6 +332,7 @@ class V4EventImpactAnalysisResult(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     event_facts: list[V4EventFact] = Field(default_factory=list)
+    decision_basis: list[str] = Field(default_factory=list)
     event_exclusions: list[V4EventAnalysisExclusion] = Field(default_factory=list)
     impact_paths: list[V4EventImpactPath] = Field(default_factory=list)
     path_uncertainties: list[V4PathUncertainty] = Field(default_factory=list)
@@ -687,6 +696,7 @@ def expand_v4_readable_event_analysis(
         )
     return V4EventImpactAnalysisDraft(
         event_facts=facts,
+        decision_basis=readable.decision_basis,
         event_exclusions=exclusions,
         impact_paths=paths,
         path_uncertainties=uncertainties,
@@ -697,6 +707,7 @@ def v4_analysis_result_to_draft(result: V4EventImpactAnalysisResult) -> V4EventI
     """Remove server-hydrated IDs so the stable validator can re-check a merged analysis."""
     return V4EventImpactAnalysisDraft(
         event_facts=result.event_facts,
+        decision_basis=result.decision_basis,
         event_exclusions=result.event_exclusions,
         impact_paths=[
             V4EventImpactPathDraft(
@@ -1101,6 +1112,7 @@ def finalize_v4_event_impact_analysis(
 
     return V4EventImpactAnalysisResult(
         event_facts=draft.event_facts,
+        decision_basis=draft.decision_basis,
         event_exclusions=draft.event_exclusions,
         impact_paths=hydrated_paths,
         path_uncertainties=draft.path_uncertainties,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 from apps.agents.scenario_group_agent.prompts.event_context import CompactEventContext
@@ -16,7 +15,8 @@ V4_EVENT_IMPACT_SYSTEM_PROMPT = (
     + """
 Event 한 건에서 LNG 시장에 필요한 핵심 사실 문장을 최대 2개 선택하고, 그 사실이 LNG 수급과
 JKM 가격에 전달되는 영향 문장을 최대 2개 작성하십시오. 영향 문장에는 JKM 방향과 기간을 포함하십시오.
-Fact 후보 문장은 그대로 복사하고,
+Fact 후보 문장은 그대로 복사하십시오. 중요한 수치·기간과 분석 기준일을 함께 해석한 판단 근거는
+자연어 decisionBasis 문장으로 최대 3개 작성하고, 결과를 바꿀 열린 질문은 최대 2개만 선택하십시오.
 Interaction, Dimension, Scenario는 만들지 마십시오."""
 )
 
@@ -97,6 +97,7 @@ def build_model_lever_user_prompt(
     events: list[dict[str, Any]],
     impact_levers: list[dict[str, Any]],
     catalog_version: str,
+    analysis_as_of: str,
     validation_feedback: str | None = None,
 ) -> str:
     """Compatibility wrapper for the first v4 analysis prompt."""
@@ -104,6 +105,7 @@ def build_model_lever_user_prompt(
         events=events,
         impact_levers=impact_levers,
         catalog_version=catalog_version,
+        analysis_as_of=analysis_as_of,
         validation_feedback=validation_feedback,
     )
 
@@ -113,6 +115,7 @@ def build_v4_event_impact_analysis_user_prompt(
     events: list[dict[str, Any]],
     impact_levers: list[dict[str, Any]],
     catalog_version: str,
+    analysis_as_of: str,
     validation_feedback: str | None = None,
 ) -> str:
     if len(events) != 1:
@@ -134,7 +137,7 @@ def build_v4_event_impact_analysis_user_prompt(
         f"- 제목: {compact.title[:120]}\n"
         f"- 요약: {compact.summary[:240]}\n"
         f"- 발생시각: {compact.occurred_at or '미제공'}\n"
-        f"- 분석일: {date.today():%Y-%m-%d}\n\n"  # noqa: DTZ011
+        f"- 분석 기준일: {analysis_as_of}\n\n"
         "## 핵심 사실 후보\n"
         f"{fact_lines}\n\n"
         f"## 사용할 수 있는 Lever · catalog {catalog_version}\n"
@@ -145,6 +148,16 @@ def build_v4_event_impact_analysis_user_prompt(
         "3. 사실을 인정한 뒤에도 결과를 바꿀 열린 질문은 무엇입니까?\n\n"
         "## 출력 규칙\n"
         "- eventFacts에는 위 후보 문장을 글자까지 그대로 복사합니다. 새 사실을 작성하지 않습니다.\n"
+        "- decisionBasis에는 시나리오를 구분하는 중요한 수치·비율·가격·용량·기간·목표일과 분석 기준일을\n"
+        "  함께 해석한 완결된 한국어 판단 근거를 최대 3개 작성합니다. 문장만 읽어도 어느 Event의 어떤\n"
+        "  사실을 근거로 했는지 알 수 있게 쓰고, 별도 ID나 Fact 참조 필드는 만들지 않습니다.\n"
+        "  eventFacts의 두 문장에 선택되지 않았더라도 위 후보에 있는 중요한 수치·일정은\n"
+        "  decisionBasis에 보존할 수 있습니다.\n"
+        "  48시간 사전 요청처럼 반복되는 운영 조건은 남은 기간으로 계산하지 않습니다. 30일 내 복구 목표나\n"
+        "  60일 협상 기간처럼 시작점이 있는 기간은 원문에서 시작점을 확인한 경우에만 분석 기준일 현재\n"
+        "  기한 경과·잔여 기간을 설명합니다. Event 발생시각을 근거 없이 기간 시작점으로 간주하지 않습니다.\n"
+        "  시작점을 확정할 수 없으면 잔여일을 만들지 말고 현재 잔여 기간을 확정할 수 없다고 작성합니다.\n"
+        "  과거 관측 수치는 현재 수치처럼 쓰지 말고 관측 시점과 현재 지속 여부의 불확실성을 구분합니다.\n"
         "- impacts.analysis는 사실 → Lever → LNG 수급·거래 → JKM을 잇는 완결된 한국어 문장입니다.\n"
         "  JKM의 상승·하락·혼조 방향과 단기·중기·장기 중 영향 기간을 반드시 문장 안에 포함합니다.\n"
         "- leverStates는 `lever|role|direction|scope|timing` 형식입니다.\n"
@@ -152,9 +165,12 @@ def build_v4_event_impact_analysis_user_prompt(
         "  direction은 increase, decrease, disrupt, recover, unchanged 중 하나입니다.\n"
         "- balance는 `domain|direction` 또는 `none` 형식입니다.\n"
         "  domain은 demand, supply, trade이고 direction은 increase, decrease, mixed, unchanged 중 하나입니다.\n"
-        "  선택한 Lever가 모두 price_only domain이면 balance는 반드시 none입니다. 별도의 price 필드는 만들지 않습니다.\n"
-        "- openQuestions는 결과를 가장 크게 바꿀 핵심 질문 최대 1개만 작성하며, Impact 번호를 1부터 참조합니다.\n"
+        "  선택한 Lever가 모두 price_only domain이면 balance는 반드시 none입니다.\n"
+        "  별도의 price 필드는 만들지 않습니다.\n"
+        "- openQuestions는 결과를 가장 크게 바꿀 서로 다른 핵심 질문 최대 2개를 작성하며,\n"
+        "  Impact 번호를 1부터 참조합니다.\n"
         "  이미 확인된 사실을 다시 질문하지 않습니다.\n"
+        "  분석 기준일에 이미 지난 목표는 미래 선택지처럼 묻지 말고, 현재 남은 제약과 앞으로의 해소 시점을 묻습니다.\n"
         "  lever는 반드시 해당 Impact의 leverStates에 실제로 쓴 Lever code 중 하나를 글자까지 그대로 복사합니다.\n"
         "  질문에 필요한 Lever가 해당 Impact에 없으면 다른 Lever로 바꾸지 말고 그 질문을 생략합니다.\n"
         "- 사용할 사실이 없거나 중요한 영향이 없을 때만 excludedBecause를 작성합니다.\n"
@@ -250,10 +266,16 @@ def _render_uncertainty_cards(impact_analysis: dict[str, Any]) -> str:
     return "\n\n".join(cards) or "- Dimension으로 만들 수 있는 열린 질문이 없습니다."
 
 
+def _render_decision_basis(impact_analysis: dict[str, Any]) -> str:
+    basis = [str(item).strip() for item in impact_analysis.get("decision_basis") or [] if str(item).strip()]
+    return "\n".join(f"- {item}" for item in basis) or "- 없음"
+
+
 def build_v4_dimension_design_user_prompt(
     *,
     impact_analysis: dict[str, Any],
     validation_warnings: list[dict[str, Any]],
+    analysis_as_of: str,
     validation_feedback: str | None = None,
 ) -> str:
     feedback = _feedback(
@@ -264,6 +286,9 @@ def build_v4_dimension_design_user_prompt(
     return (
         "## 목적\n"
         "검증된 열린 질문을 사용자가 비교할 수 있는 Scenario 판단 축과 선택지로 바꿉니다.\n\n"
+        f"## 분석 기준일\n- {analysis_as_of}\n\n"
+        "## 숫자·시점 판단 근거\n"
+        f"{_render_decision_basis(impact_analysis)}\n\n"
         "## Dimension 후보가 되는 열린 질문\n"
         f"{_render_uncertainty_cards(impact_analysis)}\n\n"
         "## 검증 참고사항\n"
@@ -280,11 +305,13 @@ def build_v4_dimension_design_user_prompt(
         "- 각 Dimension에는 같은 판단 축·단위를 사용하는 선택지 2~4개를 만듭니다.\n"
         "- Choice label은 10~25자로 하나의 비교 가능한 시장·운영 상태만 표현합니다.\n"
         "  낮음·중간·높음, 단기·중기·장기, 거의 없음·일부 감소·큰 감소처럼 강도만 쓰지 않습니다.\n"
-        "- 입력 근거에 숫자나 일정 기준이 없으면 임의의 기간·비율 경계를 만들지 말고 categorical format과\n"
-        "  운영 상태를 사용합니다. 입력에 명시된 숫자 또는 일정은 그대로 사용할 수 있습니다.\n"
+        "- 숫자·시점 판단 근거에 현재 판단에 유효한 수치·기간·잔여일이 있으면 question과 Choice에 반영합니다.\n"
+        "  과거 목표일은 미래 가능성처럼 되돌리지 말고 현재 상태의 전제로 사용합니다. 새로운 수치 경계는\n"
+        "  제공된 판단 근거가 실제 기준을 줄 때만 만들며, 근거가 없으면 비교 가능한 운영 상태로 표현합니다.\n"
         "- states는 `lever|direction|level|scope|timeWindow` 형식입니다.\n"
         "  direction은 increase, decrease, disrupt, recover, unchanged 중 하나이며 나머지는 짧은 자연어입니다.\n"
-        "- why는 해당 답이 공통 영향 대비 JKM 압력을 바꾸는 이유를 설명합니다.\n"
+        "- why는 해당 답이 공통 영향 대비 JKM 압력을 바꾸는 이유와 어떤 Event 사실·현재 시점 판단을\n"
+        "  바탕으로 만들었는지 문장 자체에서 알 수 있게 자연어로 설명합니다. 별도 Anchor 참조 ID는 작성하지 않습니다.\n"
         "- 사용하지 않은 질문은 notUsed에 자연어 이유를 남깁니다.\n"
         f"{feedback}"
     )

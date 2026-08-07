@@ -152,8 +152,10 @@ class GenerationDiagnostics(ApiModel):
         default_factory=list,
     )
     coverage_status: Literal["full", "partial", "none"] | None = None
+    analysis_as_of: str | None = None
     event_shocks: list[V3EventShock | EventShock] = Field(default_factory=list)
     event_facts: list[V4EventFact] = Field(default_factory=list)
+    decision_basis: list[str] = Field(default_factory=list)
     event_exclusions: list[V4EventAnalysisExclusion] = Field(default_factory=list)
     impact_paths: list[V4EventImpactPath] = Field(default_factory=list)
     path_uncertainties: list[V4PathUncertainty] = Field(default_factory=list)

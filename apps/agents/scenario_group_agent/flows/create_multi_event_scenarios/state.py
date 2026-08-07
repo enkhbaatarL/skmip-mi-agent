@@ -103,6 +103,7 @@ class V4MultiEventGenerationState(BaseModel):
     impact_catalog_checksum: str = ""
     comparison_run_id: str | None = None
     user_id: int | None = None
+    analysis_as_of: str = ""
 
     analysis_attempt: int = 0
     analysis_draft: V4EventImpactAnalysisDraft | V4EventImpactAnalysisResult | None = None

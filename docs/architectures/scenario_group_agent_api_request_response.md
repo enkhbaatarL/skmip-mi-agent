@@ -138,6 +138,8 @@ LLM 없이 구성한 compact EventShock,
 `sourceRefs`를 가지며 value에는 `valueId`, `label`, `pressureContribution`,
 `description`, `derivationRationale`을 포함한다. 신규 두 value 필드는 과거 저장 데이터와의
 호환을 위해 nullable이지만 새 v3 생성 결과에서는 빈 문자열을 허용하지 않는다.
+v2/v3/v4 `table.rows[].cells`는 저장된 `valueId`가 `dimensionDefinitions[].values[]`와 일치하면
+내부 ID 대신 해당 value의 사용자용 `label`을 표시한다. 과거 순번형 value ID도 같은 label 변환을 유지한다.
 v3 `generationDiagnostics.templateDimensionSelections`는 Event별 Template 후보의
 `relevanceType`, `observedBasis`, `selectionRationale`, 서버가 hydrate한 label·description·required,
 enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dimension에서 사용되지 않은 후보는
@@ -149,7 +151,8 @@ v4의 각 dimension은 `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertain
 `pressureContribution`, `assumptionRationale`을 제공한다. 기존 `eventGroundings`와
 `leverMappings`는 새 v4 생성 응답에서 제거한다.
 
-v4 `generationDiagnostics`는 `eventFacts`, `eventExclusions`, `impactPaths`,
+v4 `generationDiagnostics`는 실행 전체에서 고정한 `analysisAsOf`, 수치·기간·현재 시점 해석을
+별도 Anchor ID나 source ref 없이 자연어로 보존한 `decisionBasis`, `eventFacts`, `eventExclusions`, `impactPaths`,
 `pathUncertainties`, Path ID를 참조하는 `eventInteractions`, `interactionUncertainties`,
 `validationWarnings`, `scenarioPressureBreakdowns`를 포함한다. 이 진단은 기존 Scenario Group
 JSON 컬럼에 동일하게 저장하므로 DB migration은 없다. 운영 비동기 완료 callback은 기존

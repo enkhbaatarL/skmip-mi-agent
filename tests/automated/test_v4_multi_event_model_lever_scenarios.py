@@ -105,6 +105,10 @@ def _catalog() -> list[ModelImpactLeverPayload]:
 def _analysis_draft() -> V4EventImpactAnalysisDraft:
     return V4EventImpactAnalysisDraft.model_validate(
         {
+            "decisionBasis": [
+                "분석 기준일 2026-08-07 현재 동북아 한파 전망의 실제 강도와 지속 기간은 아직 확정되지 않았다.",
+                "미국 Gulf LNG 액화시설 중단은 확인됐지만 재가동 목표일은 제공되지 않았다.",
+            ],
             "eventFacts": [
                 {
                     "factId": "fact_101_1",
@@ -568,6 +572,9 @@ def _readable_event_draft(event_id: int) -> V4ReadableEventAnalysisDraft:
         return V4ReadableEventAnalysisDraft.model_validate(
             {
                 "eventFacts": [fact],
+                "decisionBasis": [
+                    "분석 기준일 2026-08-07 현재 한파 전망은 미래 사실이며 실제 수요 규모는 아직 확정되지 않았다."
+                ],
                 "impacts": [
                     {
                         "evidence": [fact],
@@ -592,6 +599,7 @@ def _readable_event_draft(event_id: int) -> V4ReadableEventAnalysisDraft:
     return V4ReadableEventAnalysisDraft.model_validate(
         {
             "eventFacts": [fact],
+            "decisionBasis": ["분석 기준일 2026-08-07 현재 가동 중단은 확인됐지만 재가동 목표일은 제공되지 않았다."],
             "impacts": [
                 {
                     "evidence": [fact],
@@ -629,6 +637,24 @@ def test_v4_readable_event_fact_must_match_a_source_sentence() -> None:
             observed_at="2026-08-05",
             fact_candidates={"f1": "동북아 한파 지속 전망"},
         )
+
+
+def test_v4_readable_event_preserves_natural_language_decision_basis() -> None:
+    readable = _readable_event_draft(101)
+
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+    )
+    result = finalize_v4_event_impact_analysis(
+        draft,
+        event_ids=[101],
+        impact_levers=_catalog(),
+    )
+
+    assert result.decision_basis == readable.decision_basis
 
 
 def test_v4_readable_event_balance_uses_structured_output_literals() -> None:
@@ -693,9 +719,17 @@ def test_v4_readable_question_reports_allowed_impact_levers() -> None:
         )
 
 
-def test_v4_readable_event_limits_open_question_to_one() -> None:
+def test_v4_readable_event_allows_two_open_questions_and_rejects_three() -> None:
     payload = _readable_event_draft(101).model_dump(by_alias=True)
-    payload["openQuestions"].append(dict(payload["openQuestions"][0]))
+    second = dict(payload["openQuestions"][0])
+    second["question"] = "한파의 현재 전망은 언제까지 유효한가?"
+    second["axis"] = "duration"
+    payload["openQuestions"].append(second)
+
+    parsed = V4ReadableEventAnalysisDraft.model_validate(payload)
+
+    assert len(parsed.open_questions) == 2
+    payload["openQuestions"].append(dict(second))
 
     with pytest.raises(ValueError, match="openQuestions"):
         V4ReadableEventAnalysisDraft.model_validate(payload)
@@ -975,6 +1009,37 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     persist.assert_called_once()
 
 
+def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version="v4",
+        generation_strategy="multi_event_model_lever_dimensions",
+    )
+    events = [
+        EventPayload(mi_event_id=101, event_type_l2_id=8),
+        EventPayload(mi_event_id=202, event_type_l2_id=12),
+    ]
+    payload = V4MultiEventCreateScenariosIn(miEventIds=[202, 101], userId=7)
+    with (
+        patch.object(v4_flow_module, "_analysis_as_of", return_value="2026-08-07"),
+        patch.object(v4_flow_module.EventService, "load_events", return_value=events),
+        patch.object(
+            v4_flow_module.ModelImpactLeverService,
+            "load_active_catalog",
+            return_value=(_catalog(), "v1", "checksum-v1"),
+        ),
+        patch.object(
+            v4_flow_module.ScenarioGroupService,
+            "prepare_v4_multi_event_group",
+            return_value=group,
+        ),
+    ):
+        prepared = v4_flow_module.prepare_v4_multi_event_scenarios(payload)
+
+    assert prepared["analysis_as_of"] == "2026-08-07"
+    assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
+
+
 def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
     async def never_returns(**_kwargs: object) -> object:
         await asyncio.sleep(1)
@@ -994,6 +1059,7 @@ def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
                 ),
                 impact_levers=_catalog(),
                 catalog_version="v1",
+                analysis_as_of="2026-08-07",
                 trace_context=None,
             ),
         )
@@ -1048,6 +1114,7 @@ def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
         impact_catalog_version="v1",
         impact_catalog_checksum="checksum-v1",
         user_id=7,
+        analysis_as_of="2026-08-07",
         analysis_draft=finalized.impact_analysis,
         dimension_draft=V4DimensionDesignResult(
             dimension_definitions=finalized.dimension_definitions,
@@ -1069,6 +1136,8 @@ def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
     assert "lever_mappings" not in saved_dimensions[0]
     assert saved_dimensions[0]["source_impact_path_ids"] == ["path_101_demand"]
     assert saved_diagnostics["event_facts"][0]["fact_id"] == "fact_101_1"
+    assert saved_diagnostics["analysis_as_of"] == "2026-08-07"
+    assert saved_diagnostics["decision_basis"] == finalized.impact_analysis.decision_basis
     assert saved_diagnostics["impact_paths"][0]["lever_steps"][0]["impact_lever_id"] == 1
     assert saved_diagnostics["event_interactions"][0]["impact_path_ids"]
     assert saved_diagnostics["scenario_pressure_breakdowns"]
@@ -1080,10 +1149,12 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
         events=[{"mi_event_id": 101, "event_title_ko": "동북아 한파"}],
         impact_levers=[lever.model_dump() for lever in _catalog()],
         catalog_version="v1",
+        analysis_as_of="2026-08-07",
     )
     dimension = build_v4_dimension_design_user_prompt(
         impact_analysis=_analysis().model_dump(),
         validation_warnings=[],
+        analysis_as_of="2026-08-07",
     )
     scenario = build_v4_scenario_synthesis_user_prompt(
         impact_analysis=_analysis().model_dump(),
@@ -1095,6 +1166,10 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     )
     assert "## 핵심 사실 후보" in first
     assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
+    assert "decisionBasis" in first
+    assert "핵심 질문 최대 2개" in first
+    assert "48시간 사전 요청처럼 반복되는 운영 조건" in first
+    assert "분석 기준일: 2026-08-07" in first
     assert "JKM의 상승·하락·혼조 방향" in first
     assert "별도의 price 필드는 만들지 않습니다" in first
     assert "factStatus" not in first
@@ -1104,10 +1179,13 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "[P1]" in interaction
     assert "JKM의 순방향·영향 기간" in interaction
     assert "## Dimension 후보가 되는 열린 질문" in dimension
+    assert "## 숫자·시점 판단 근거" in dimension
+    assert "분석 기준일 2026-08-07 현재 동북아 한파 전망" in dimension
     assert "[U1]" in dimension
     assert "label은 화면 표에 표시할 10~40자의 이름" in dimension
     assert "Choice label은 10~25자" in dimension
-    assert "임의의 기간·비율 경계를 만들지 말고" in dimension
+    assert "새로운 수치 경계" in dimension
+    assert "별도 Anchor 참조 ID는 작성하지 않습니다" in dimension
     assert "sourceImpactPathIds" not in dimension
     assert "## Dimension 질문과 선택지" in scenario
     assert "[D1.V1]" in scenario

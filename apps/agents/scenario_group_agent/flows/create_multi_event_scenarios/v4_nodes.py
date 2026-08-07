@@ -75,6 +75,7 @@ async def _analyze_event_with_retries(
     event: EventPayload,
     impact_levers: list[ModelImpactLeverPayload],
     catalog_version: str,
+    analysis_as_of: str,
     trace_context: TraceContext | None,
 ) -> _EventAnalysisOutcome:
     event_id = int(event.mi_event_id)
@@ -93,6 +94,7 @@ async def _analyze_event_with_retries(
                             events=[event_payload],
                             impact_levers=[lever.model_dump() for lever in impact_levers],
                             catalog_version=catalog_version,
+                            analysis_as_of=analysis_as_of,
                             validation_feedback=feedback,
                         ),
                         trace_context=trace_context,
@@ -146,6 +148,7 @@ class AnalyzeEventImpactsNode(BaseNode):
                     event=event,
                     impact_levers=state.impact_levers,
                     catalog_version=state.impact_catalog_version,
+                    analysis_as_of=state.analysis_as_of,
                     trace_context=trace_context,
                 )
                 for event in state.events
@@ -165,6 +168,7 @@ class AnalyzeEventImpactsNode(BaseNode):
         local_drafts = [v4_analysis_result_to_draft(outcome.result) for outcome in outcomes if outcome.result]
         merged = V4EventImpactAnalysisDraft(
             event_facts=[fact for draft in local_drafts for fact in draft.event_facts],
+            decision_basis=[item for draft in local_drafts for item in draft.decision_basis],
             event_exclusions=[item for draft in local_drafts for item in draft.event_exclusions],
             impact_paths=[path for draft in local_drafts for path in draft.impact_paths],
             path_uncertainties=[item for draft in local_drafts for item in draft.path_uncertainties],
@@ -316,6 +320,7 @@ class DesignModelLeverDimensionsNode(BaseNode):
                 user_prompt=build_v4_dimension_design_user_prompt(
                     impact_analysis=state.analysis_draft.model_dump(),
                     validation_warnings=[warning.model_dump() for warning in state.analysis_draft.validation_warnings],
+                    analysis_as_of=state.analysis_as_of,
                     validation_feedback=state.dimension_error,
                 ),
                 trace_context=runtime.context if runtime is not None else None,
@@ -501,7 +506,9 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
         unsupported_levers=coverage.unsupported_lever_codes,
         unsupported_lever_details=coverage.unsupported_lever_details,
         coverage_status=coverage.coverage_status,
+        analysis_as_of=state.analysis_as_of,
         event_facts=analysis.event_facts,
+        decision_basis=analysis.decision_basis,
         event_exclusions=analysis.event_exclusions,
         impact_paths=analysis.impact_paths,
         path_uncertainties=analysis.path_uncertainties,

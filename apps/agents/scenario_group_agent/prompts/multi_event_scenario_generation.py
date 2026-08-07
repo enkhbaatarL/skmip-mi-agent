@@ -108,6 +108,13 @@ V3_DIMENSION_SYSTEM_PROMPT = """\
 - sourceMappings마다 해당 근거가 합성 축에 기여하는 방식을 compositionRationale로 설명합니다.
 - 모든 Event를 적어도 하나의 합성 Dimension에 연결하고 직관적이며 중복이 적은 Dimension 3~6개를 만듭니다.
 - 각 value는 구체적인 상태 description과 Template enum 의미의 결합·확장을 설명하는 derivationRationale을 가집니다.
+- value label은 화면 표에서 먼저 비교하는 10~40자의 짧은 상태명입니다. 전체 인과 설명보다
+  value를 구분하는 핵심 수치·범위·기간 또는 시장·운영 상태를 우선합니다.
+- 검증된 Event Shock, observedBasis, Template enum에 현재 판단에 유효한 수치·범위·기간이 있으면
+  label에 핵심 anchor를 최대 2개 포함합니다. 수치는 필수가 아니며 입력 근거에 없는
+  수치·기간·비율·임계값을 만들지 않습니다.
+- 수치 근거가 없으면 회복 단계, 운송 상태, 대체 가능성처럼 비교 가능한 상태를 씁니다.
+  낮음·중간·높음이나 단기·장기 같은 강도·기간 표현만 단독으로 label에 쓰지 않습니다.
 - Template enum은 폐쇄형 허용값이 아니라 의미적 anchor입니다. Event에 특화된 신규 label을 만들 수 있습니다.
 - enum이 있는 sourceMapping은 dimension 전체에서 최소 한 번 templateValueAnchor로 사용합니다.
 - enum 후보가 하나라도 있는 dimension의 각 value는 최소 하나의 유효 templateValueAnchor를 가집니다.
@@ -364,6 +371,10 @@ def build_v3_dimension_design_user_prompt(
         "- dimensionDefinitions 3~6개만 출력하십시오.\n"
         "- sourceMappings와 values.templateValueAnchors는 입력 후보만 참조하십시오.\n"
         "- 각 dimension에 서로 구분되는 value 3~5개를 작성하십시오.\n"
+        "- value label은 10~40자로 작성합니다. 근거가 있으면 핵심 수치·범위·기간을 최대 2개 포함하고, "
+        "근거가 없으면 수치를 만들지 말고 구체적인 시장·운영 상태를 씁니다.\n"
+        "- 좋은 label 예: '3~5GW 감발·대체 흡수 25%', '3개월 감발·단계적 수요 전이', "
+        "'통항 정상화·보험료 부담 잔존'. 근거 없는 '약 3GW', '흡수율 50%'는 금지합니다.\n"
         "- 모든 입력 Event를 하나 이상의 sourceMappings.eventId로 연결하십시오.\n"
         "- 검증된 interaction의 coverage와 resolutionDimensionId를 충족하십시오.\n"
         "- Scenario와 그룹 제목·설명은 아직 출력하지 마십시오.\n"

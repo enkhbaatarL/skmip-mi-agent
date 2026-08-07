@@ -62,6 +62,14 @@ from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 
 
+def _analysis_as_of() -> str:
+    # Keep the analysis date aligned with the application's configured timezone.
+    # The local import avoids loading settings while this module is imported by tests.
+    from apps.common.utils.time_utils import today
+
+    return today()
+
+
 def prepare_v4_multi_event_scenarios(
     payload: V4MultiEventCreateScenariosIn,
 ) -> dict[str, Any]:
@@ -97,6 +105,7 @@ def prepare_v4_multi_event_scenarios(
         "impact_catalog_checksum": catalog_checksum,
         "comparison_run_id": payload.comparison_run_id,
         "user_id": payload.user_id,
+        "analysis_as_of": _analysis_as_of(),
     }
 
 

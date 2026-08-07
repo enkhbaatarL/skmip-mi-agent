@@ -126,6 +126,7 @@ def _build_headers(
                     for value in item.get("values") or []
                     if isinstance(value, dict) and value.get("label")
                 ],
+                "value_labels_by_id": _value_labels_by_id(item.get("values")),
             }
             for index, item in enumerate(dimension_definitions, start=1)
             if isinstance(item, dict) and item.get("dimension_id")
@@ -208,8 +209,11 @@ def _pressure_target(group: dict[str, Any]) -> str | None:
 def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] | None) -> Any:
     if value is None or not template:
         return value
-    prefix = f"{dimension_key}_v"
     value_text = str(value)
+    label_by_id = template.get("value_labels_by_id") or {}
+    if value_text in label_by_id:
+        return label_by_id[value_text]
+    prefix = f"{dimension_key}_v"
     if not value_text.startswith(prefix):
         return value
     try:
@@ -218,6 +222,20 @@ def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] |
         return value
     value_enums = template.get("value_enums") or []
     return value_enums[index] if 0 <= index < len(value_enums) else value
+
+
+def _value_labels_by_id(values: Any) -> dict[str, str]:
+    if not isinstance(values, list):
+        return {}
+    labels: dict[str, str] = {}
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        value_id = value.get("value_id", value.get("valueId"))
+        label = value.get("label")
+        if value_id is not None and label:
+            labels[str(value_id)] = str(label)
+    return labels
 
 
 def _display_order(template: dict[str, Any] | None) -> int:

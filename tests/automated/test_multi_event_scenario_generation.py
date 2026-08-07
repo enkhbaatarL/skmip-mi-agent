@@ -1400,10 +1400,55 @@ def test_v3_prompts_require_independent_drivers_and_one_explicit_mixed_scenario(
     assert "Event별 templateDimensionSelections를 1~4개" in analysis_prompt
     assert "Hydrated Template Dimension Candidates" in dimension_prompt
     assert "sourceMappings" in dimension_prompt
+    assert "value label은 10~40자" in dimension_prompt
+    assert "핵심 수치·범위·기간을 최대 2개" in dimension_prompt
+    assert "근거가 없으면 수치를 만들지 말고" in dimension_prompt
+    assert "통항 정상화·보험료 부담 잔존" in dimension_prompt
     assert "정확히 하나" in scenario_prompt
     assert "mixedFactors=true" in scenario_prompt
     assert "상태가 구체적으로 전개된다" in scenario_prompt
     assert "원본 Template enum 의미" in scenario_prompt
+
+
+def test_v3_dimension_prompt_preserves_grounded_quantitative_label_inputs() -> None:
+    dimension_prompt = build_v3_dimension_design_user_prompt(
+        event_shocks=[
+            {
+                "event_id": 1342,
+                "shock_summary": "유럽 원전 출력 조정이 가스발전 대체수요를 키울 수 있다.",
+            },
+        ],
+        interactions=[],
+        template_dimension_selections=[
+            {
+                "event_id": 1342,
+                "scenario_dimension_template_id": 5,
+                "dim_key": "capacity_change_scale",
+                "observed_basis": "인접국까지 포함하면 원전 감발 규모가 확대될 수 있다.",
+                "selection_rationale": "감발 규모가 유럽 LNG 흡수력을 구분한다.",
+                "label": "Capacity 변화 규모",
+                "description": "원전 설비용량 변화 규모.",
+                "required": True,
+                "value_enums": ["1 GW 미만", "1~3 GW", "3~5 GW"],
+            },
+            {
+                "event_id": 1342,
+                "scenario_dimension_template_id": 5,
+                "dim_key": "alt_energy_absorption",
+                "observed_basis": "다른 에너지원의 흡수 여력이 LNG 수요 전이를 좌우한다.",
+                "selection_rationale": "대체 흡수율이 가스발전 전환 규모를 구분한다.",
+                "label": "타 에너지원 흡수 가능성",
+                "description": "원전 감소분을 다른 에너지원이 흡수하는 비율.",
+                "required": True,
+                "value_enums": ["100%", "50%", "25%"],
+            },
+        ],
+    )
+
+    assert "3~5 GW" in dimension_prompt
+    assert "25%" in dimension_prompt
+    assert "3~5GW 감발·대체 흡수 25%" in dimension_prompt
+    assert "입력 후보만 참조" in dimension_prompt
 
 
 def test_v3_independent_interaction_requires_separate_single_source_dimensions() -> None:
@@ -2519,6 +2564,48 @@ def test_v3_compact_dimension_array_order_controls_table_headers() -> None:
     )
 
     assert [header.key for header in result.table.headers] == ["zeta", "alpha"]
+
+
+def test_v3_table_resolves_free_value_id_to_user_label() -> None:
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version="v3",
+        generation_strategy="multi_event_composite_dimensions",
+        dimension_selected=["europe_gas_pull"],
+        dimension_definitions=[
+            {
+                "dimension_id": "europe_gas_pull",
+                "label": "유럽 가스 대체수요",
+                "description": "설명",
+                "source_event_ids": [1342],
+                "source_refs": [
+                    {
+                        "scenario_dimension_template_id": 5,
+                        "dim_key": "capacity_change_scale",
+                    },
+                ],
+                "values": [
+                    {
+                        "value_id": "eu_nuke_v3",
+                        "label": "3~5GW 감발·흡수 25%",
+                    },
+                ],
+            },
+        ],
+    )
+
+    result = build_scenario_group_table_data(
+        group.model_dump(),
+        [
+            {
+                "scenario_id": 100,
+                "title": "유럽 LNG 수요 확대",
+                "dimension_values": {"europe_gas_pull": "eu_nuke_v3"},
+            },
+        ],
+    )
+
+    assert result.table.rows[0].cells == {"europe_gas_pull": "3~5GW 감발·흡수 25%"}
 
 
 def test_validation_creates_pending_mapping_for_free_value() -> None:
