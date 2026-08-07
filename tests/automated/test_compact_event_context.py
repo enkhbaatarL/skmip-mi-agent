@@ -91,7 +91,7 @@ def test_shared_compact_context_limits_fields_lengths_and_preserves_order(
         assert forbidden not in rendered
 
 
-def test_v1_signpost_v2_v3_and_v4_prompts_use_shared_context(
+def test_v1_signpost_v2_and_v3_prompts_use_shared_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(event_context_prompts, "date", FixedDate)
@@ -120,11 +120,6 @@ def test_v1_signpost_v2_v3_and_v4_prompts_use_shared_context(
             api_version="v3",
             events=[first, second],
             templates=[{}, {}],
-        ),
-        build_model_lever_user_prompt(
-            events=[first, second],
-            impact_levers=[],
-            catalog_version="catalog-v1",
         ),
     ]
 
@@ -205,17 +200,17 @@ def test_v3_prompt_uses_compact_event_and_dimension_lineage_contract() -> None:
         "shockSummary",
         "sourceEventIds",
         "scenarioDimensionTemplateId",
-        "globalPressureContribution",
-        "관련 Event 사실과 예상 글로벌 LNG 가격 영향 방향",
+        "pressureContribution",
+        "관련 Event 사실과 예상 JKM 가격 영향 방향",
     ):
         assert expected in combined
     assert "v3 value에는 sourceAssignments를 출력하지 마십시오" in combined
     assert "Template checksum" in combined
 
 
-def test_v4_prompt_matches_dimension_first_hybrid_contract() -> None:
+def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
     prompt = build_model_lever_user_prompt(
-        events=[_raw_event(202, title="첫 Event"), _raw_event(101, title="둘째 Event")],
+        events=[_raw_event(202, title="첫 Event")],
         impact_levers=[
             {
                 "impact_lever_id": 17,
@@ -223,6 +218,7 @@ def test_v4_prompt_matches_dimension_first_hybrid_contract() -> None:
                 "domain": "demand",
                 "label": "기상 수요",
                 "description": "기온 변화에 따른 LNG 수요",
+                "applicability_hint": "한파·폭염의 강도와 지속 기간이 수요를 바꿀 때 선택",
                 "parameter_bindings": [
                     {
                         "parameter_name": "demand_weather",
@@ -238,20 +234,23 @@ def test_v4_prompt_matches_dimension_first_hybrid_contract() -> None:
     combined = MODEL_LEVER_SYSTEM_PROMPT + prompt
 
     for expected in (
-        "eventGroundings",
-        "observedBasis",
-        "uncertainty",
-        "leverMappings",
-        "impactLeverId",
-        "leverCode",
-        "mappingRationale",
-        "assumptionRationale",
-        "모든 Event가 반드시 별도 dimension을 가질 필요는 없습니다",
-        "모델 지원 상태는 dimension 선택의",
+        "## 핵심 사실 후보",
+        "eventFacts",
+        "impacts.analysis",
+        "leverStates",
+        "openQuestions",
+        "후보 문장을 글자까지 그대로 복사",
     ):
         assert expected in combined
 
-    assert '"impactLeverId":17' in prompt
-    assert "sourceFactIds, sourceEventIds, sourceRefs" in prompt
-    assert "commonFactLeverMappings, eventDimensionCoverage를 만들지 마십시오" in prompt
+    assert "impactLeverId" not in prompt
+    assert "### demand" in prompt
+    assert "- weather_demand: 한파·폭염의 강도와 지속 기간이 수요를 바꿀 때 선택" in prompt
+    assert "기온 변화에 따른 LNG 수요" not in prompt
+    assert "factStatus" not in prompt
+    assert "confidence" not in prompt
+    assert "selectionHint" not in prompt
+    assert '"label":"기상 수요"' not in prompt
     assert "parameterBindings" not in prompt
+    assert "둘째 Event" not in prompt
+    assert "detailAnalysis" not in prompt

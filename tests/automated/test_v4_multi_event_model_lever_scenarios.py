@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 from openai import pydantic_function_tool
 import pytest
@@ -17,32 +16,41 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
     V4MultiEventGenerationState,
 )
-from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
-    run_v4_multi_event_scenarios_inline,
-)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     V4DimensionDefinition,
+    V4DimensionDesignDraft,
     V4DimensionDesignResult,
-    V4DimensionValueDefinition,
-    V4EventGrounding,
-    V4ExcludedScenarioCandidate,
+    V4EventImpactAnalysisDraft,
+    V4EventImpactAnalysisResult,
     V4GenerationResult,
-    V4LeverMapping,
-    V4ScenarioCandidate,
+    V4ReadableDimensionDesignDraft,
+    V4ReadableEventAnalysisDraft,
+    V4ReadableInteractionAnalysisDraft,
+    V4ReadableScenarioSynthesisDraft,
     V4ScenarioSynthesisResult,
+    expand_v4_readable_dimension_design,
+    expand_v4_readable_event_analysis,
+    finalize_v4_dimension_design,
+    finalize_v4_event_impact_analysis,
     finalize_v4_generation_result,
+    merge_v4_readable_interactions,
 )
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     build_model_lever_user_prompt,
+    build_v4_dimension_design_user_prompt,
+    build_v4_event_fact_candidates,
+    build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.event.schema import EventPayload
 from apps.persistence.model_parameter.schema import (
     ModelImpactLeverParameterBinding,
     ModelImpactLeverPayload,
 )
 from apps.persistence.scenario.schema import RelatedMarket
+from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
 def _lever(
@@ -69,140 +77,9 @@ def _lever(
         domain=domain,
         label=code,
         description=f"{code} description",
+        applicability_hint=f"{code}의 강도·기간·범위가 달라질 때 선택한다.",
         parameter_bindings=bindings,
         catalog_version="v1",
-    )
-
-
-def _dimension(
-    *,
-    dimension_id: str,
-    event_id: int,
-    lever_code: str,
-    impact_lever_id: int | None = None,
-) -> V4DimensionDefinition:
-    return V4DimensionDefinition(
-        dimension_id=dimension_id,
-        label=dimension_id,
-        description=f"{dimension_id} description",
-        dimension_type="magnitude",
-        value_kind="categorical",
-        event_groundings=[
-            V4EventGrounding(
-                event_id=event_id,
-                observed_basis=f"Event {event_id}에서 확인된 시장 사실",
-                uncertainty=f"{dimension_id}의 강도와 지속 기간",
-            ),
-        ],
-        lever_mappings=[
-            V4LeverMapping(
-                impact_lever_id=impact_lever_id,
-                lever_code=lever_code,
-                mapping_rationale="dimension 불확실성을 이 영향 레버로 연결한다.",
-            ),
-        ],
-        values=[
-            V4DimensionValueDefinition(
-                value_id="low",
-                label="낮음",
-                global_pressure_contribution="글로벌 LNG 가격 하방 기여",
-                assumption_rationale="영향 강도가 제한적이라고 가정한다.",
-            ),
-            V4DimensionValueDefinition(
-                value_id="high",
-                label="높음",
-                global_pressure_contribution="글로벌 LNG 가격 상방 기여",
-                assumption_rationale="영향 강도가 확대된다고 가정한다.",
-            ),
-        ],
-    )
-
-
-def _valid_result() -> V4GenerationResult:
-    return V4GenerationResult(
-        group_title="글로벌 LNG 복수 이벤트 시나리오",
-        group_description="이벤트 결합에 따른 글로벌 LNG 가격 범위",
-        interactions=[
-            {
-                "event_ids": [101, 202],
-                "relation": "amplification",
-                "rationale": "수요 증가와 공급 제약이 가격 압력을 증폭한다.",
-            },
-        ],
-        dimension_definitions=[
-            _dimension(
-                dimension_id="cold_wave_intensity",
-                event_id=101,
-                lever_code="weather_demand",
-            ),
-            _dimension(
-                dimension_id="liquefaction_recovery",
-                event_id=202,
-                lever_code="liquefaction_availability",
-            ),
-            _dimension(
-                dimension_id="risk_premium",
-                event_id=202,
-                lever_code="financial_market_sentiment",
-            ),
-        ],
-        scenarios=[
-            V4ScenarioCandidate(
-                title="상단",
-                narrative="수요 증가와 공급 회복 지연",
-                dimension_values={
-                    "cold_wave_intensity": "high",
-                    "liquefaction_recovery": "low",
-                    "risk_premium": "high",
-                },
-                global_pressure_band="strong_bullish",
-                global_pressure_rationale="글로벌 LNG 상승 압력",
-                related_markets=[
-                    RelatedMarket(
-                        market="JKM",
-                        rationale="아시아향 화물 전환 가능성이 특별히 중요함",
-                    ),
-                ],
-                probability_score=35,
-            ),
-            V4ScenarioCandidate(
-                title="혼합",
-                narrative="수요 증가는 있으나 공급은 빠르게 회복",
-                dimension_values={
-                    "cold_wave_intensity": "high",
-                    "liquefaction_recovery": "high",
-                    "risk_premium": "low",
-                },
-                global_pressure_band="balanced",
-                global_pressure_rationale="상승·하락 요인 상쇄",
-                probability_score=50,
-                mixed_factors=["한파 수요 증가", "액화시설 조기 회복"],
-            ),
-            V4ScenarioCandidate(
-                title="하단",
-                narrative="한파가 약하고 공급이 빠르게 회복",
-                dimension_values={
-                    "cold_wave_intensity": "low",
-                    "liquefaction_recovery": "high",
-                    "risk_premium": "low",
-                },
-                global_pressure_band="strong_bearish",
-                global_pressure_rationale="글로벌 LNG 하락 압력",
-                probability_score=15,
-            ),
-        ],
-        excluded_scenarios=[
-            V4ExcludedScenarioCandidate(
-                global_pressure_band="bullish",
-                reason_code="LOW_DISTINCTIVENESS",
-                reason="상단 시나리오와 독립적인 검토 가치가 낮음",
-            ),
-            V4ExcludedScenarioCandidate(
-                global_pressure_band="bearish",
-                reason_code="LOW_DISTINCTIVENESS",
-                reason="하단 시나리오와 독립적인 검토 가치가 낮음",
-            ),
-        ],
     )
 
 
@@ -225,11 +102,352 @@ def _catalog() -> list[ModelImpactLeverPayload]:
     ]
 
 
+def _analysis_draft() -> V4EventImpactAnalysisDraft:
+    return V4EventImpactAnalysisDraft.model_validate(
+        {
+            "eventFacts": [
+                {
+                    "factId": "fact_101_1",
+                    "eventId": 101,
+                    "observedBasis": "기상기관이 동북아 한파 지속 전망을 발표했다.",
+                    "factStatus": "forecast",
+                    "observedAt": "2026-08-05",
+                    "confidence": "medium",
+                    "noMaterialImpactReason": None,
+                },
+                {
+                    "factId": "fact_202_1",
+                    "eventId": 202,
+                    "observedBasis": "미국 Gulf LNG 액화시설의 가동 중단이 확인됐다.",
+                    "factStatus": "observed",
+                    "observedAt": "2026-08-05",
+                    "confidence": "high",
+                    "noMaterialImpactReason": None,
+                },
+            ],
+            "eventExclusions": [],
+            "impactPaths": [
+                {
+                    "impactPathId": "path_101_demand",
+                    "eventId": 101,
+                    "sourceFactIds": ["fact_101_1"],
+                    "mechanism": "한파가 동북아 난방·발전용 LNG 수요를 늘린다.",
+                    "leverSteps": [
+                        {
+                            "leverCode": "weather_demand",
+                            "pathRole": "primary",
+                            "stateDirection": "increase",
+                            "scope": "동북아",
+                            "timing": "단기",
+                        },
+                    ],
+                    "balanceEffect": {
+                        "domain": "demand",
+                        "direction": "increase",
+                        "rationale": "동북아의 추가 현물 LNG 수요가 발생한다.",
+                    },
+                    "priceEffect": {
+                        "targetMarket": "JKM",
+                        "direction": "bullish",
+                        "timeHorizon": "short_term",
+                        "rationale": "아시아 현물 화물 경쟁을 강화한다.",
+                    },
+                    "materiality": "high",
+                },
+                {
+                    "impactPathId": "path_202_supply",
+                    "eventId": 202,
+                    "sourceFactIds": ["fact_202_1"],
+                    "mechanism": "액화시설 중단이 수출 가능한 LNG 물량을 줄인다.",
+                    "leverSteps": [
+                        {
+                            "leverCode": "liquefaction_availability",
+                            "pathRole": "primary",
+                            "stateDirection": "decrease",
+                            "scope": "US Gulf",
+                            "timing": "즉시",
+                        },
+                        {
+                            "leverCode": "financial_market_sentiment",
+                            "pathRole": "transmission",
+                            "stateDirection": "increase",
+                            "scope": "글로벌 LNG 시장",
+                            "timing": "단기",
+                        },
+                    ],
+                    "balanceEffect": {
+                        "domain": "supply",
+                        "direction": "decrease",
+                        "rationale": "미국발 LNG 공급 가용성이 감소한다.",
+                    },
+                    "priceEffect": {
+                        "targetMarket": "JKM",
+                        "direction": "bullish",
+                        "timeHorizon": "short_term",
+                        "rationale": "대체 화물을 구하려는 아시아 구매자 경쟁이 강화된다.",
+                    },
+                    "materiality": "high",
+                },
+            ],
+            "pathUncertainties": [
+                {
+                    "uncertaintyId": "u_weather_magnitude",
+                    "impactPathIds": ["path_101_demand"],
+                    "axisType": "magnitude",
+                    "subject": "한파에 따른 추가 LNG 수요 규모",
+                    "affectedLeverCode": "weather_demand",
+                    "reason": "한파 전망은 발표됐지만 실제 강도는 확정되지 않았다.",
+                    "materiality": "high",
+                    "semanticKey": "weather_demand:magnitude:northeast_asia",
+                },
+                {
+                    "uncertaintyId": "u_liq_recovery",
+                    "impactPathIds": ["path_202_supply"],
+                    "axisType": "recovery",
+                    "subject": "액화시설 재가동 시점",
+                    "affectedLeverCode": "liquefaction_availability",
+                    "reason": "가동 중단은 확인됐지만 재가동 일정은 확정되지 않았다.",
+                    "materiality": "high",
+                    "semanticKey": "liquefaction_availability:recovery:us_gulf",
+                },
+                {
+                    "uncertaintyId": "u_risk_magnitude",
+                    "impactPathIds": ["path_202_supply"],
+                    "axisType": "magnitude",
+                    "subject": "공급 차질 위험 프리미엄",
+                    "affectedLeverCode": "financial_market_sentiment",
+                    "reason": "시장 위험 프리미엄의 확대 폭은 확정되지 않았다.",
+                    "materiality": "medium",
+                    "semanticKey": "financial_market_sentiment:magnitude:global",
+                },
+            ],
+            "interactions": [
+                {
+                    "interactionId": "interaction_1",
+                    "eventIds": [101, 202],
+                    "impactPathIds": ["path_101_demand", "path_202_supply"],
+                    "relation": "amplification",
+                    "mechanism": "동북아 추가 수요와 미국 공급 감소가 겹쳐 현물 경쟁을 강화한다.",
+                    "priceEffect": "bullish",
+                },
+            ],
+            "interactionUncertainties": [
+                {
+                    "uncertaintyId": "u_overlap_duration",
+                    "interactionId": "interaction_1",
+                    "impactPathIds": ["path_101_demand", "path_202_supply"],
+                    "axisType": "duration",
+                    "subject": "수요·공급 충격의 중첩 기간",
+                    "affectedLeverCode": "liquefaction_availability",
+                    "reason": "두 충격이 동시에 유지되는 기간은 확정되지 않았다.",
+                    "materiality": "medium",
+                    "semanticKey": "interaction_1:duration:overlap",
+                },
+            ],
+        },
+    )
+
+
+def _analysis() -> V4EventImpactAnalysisResult:
+    return finalize_v4_event_impact_analysis(
+        _analysis_draft(),
+        event_ids=[101, 202],
+        impact_levers=_catalog(),
+    )
+
+
+def _dimension_draft() -> V4DimensionDesignDraft:
+    def value(
+        value_id: str,
+        label: str,
+        lever_code: str,
+        direction: str,
+        level: str,
+        contribution: str,
+    ) -> dict[str, object]:
+        return {
+            "valueId": value_id,
+            "label": label,
+            "leverStates": [
+                {
+                    "leverCode": lever_code,
+                    "direction": direction,
+                    "level": level,
+                    "scope": "관련 시장 범위",
+                    "timeWindow": "단기",
+                },
+            ],
+            "pressureContribution": contribution,
+            "assumptionRationale": f"{label} 상태가 공통 영향 대비 JKM 압력 차이를 만든다.",
+        }
+
+    return V4DimensionDesignDraft.model_validate(
+        {
+            "dimensionDefinitions": [
+                {
+                    "dimensionId": "cold_wave_intensity",
+                    "label": "한파 수요 강도",
+                    "description": "동북아 한파가 만드는 추가 LNG 수요 규모",
+                    "sourceImpactPathIds": ["path_101_demand"],
+                    "sourceUncertaintyIds": ["u_weather_magnitude"],
+                    "primaryLeverCode": "weather_demand",
+                    "dimensionType": "magnitude",
+                    "valueKind": "categorical",
+                    "unit": None,
+                    "values": [
+                        value("low", "제한적 증가", "weather_demand", "unchanged", "limited", "bearish"),
+                        value("high", "큰 폭 증가", "weather_demand", "increase", "high", "bullish"),
+                    ],
+                },
+                {
+                    "dimensionId": "liquefaction_recovery",
+                    "label": "액화시설 회복",
+                    "description": "미국 Gulf 액화시설 재가동 속도",
+                    "sourceImpactPathIds": ["path_202_supply"],
+                    "sourceUncertaintyIds": ["u_liq_recovery"],
+                    "primaryLeverCode": "liquefaction_availability",
+                    "dimensionType": "recovery",
+                    "valueKind": "temporal",
+                    "unit": "주",
+                    "values": [
+                        value(
+                            "fast",
+                            "2주 내 회복",
+                            "liquefaction_availability",
+                            "recover",
+                            "high_availability",
+                            "bearish",
+                        ),
+                        value(
+                            "delayed",
+                            "6주 이상 지연",
+                            "liquefaction_availability",
+                            "disrupt",
+                            "low_availability",
+                            "bullish",
+                        ),
+                    ],
+                },
+                {
+                    "dimensionId": "risk_premium",
+                    "label": "위험 프리미엄",
+                    "description": "공급 차질에 대한 시장 위험 프리미엄 확대 폭",
+                    "sourceImpactPathIds": ["path_202_supply"],
+                    "sourceUncertaintyIds": ["u_risk_magnitude"],
+                    "primaryLeverCode": "financial_market_sentiment",
+                    "dimensionType": "magnitude",
+                    "valueKind": "categorical",
+                    "unit": None,
+                    "values": [
+                        value(
+                            "low",
+                            "빠른 안정",
+                            "financial_market_sentiment",
+                            "decrease",
+                            "low_premium",
+                            "bearish",
+                        ),
+                        value(
+                            "high",
+                            "프리미엄 확대",
+                            "financial_market_sentiment",
+                            "increase",
+                            "high_premium",
+                            "bullish",
+                        ),
+                    ],
+                },
+            ],
+            "excludedDimensions": [],
+        },
+    )
+
+
+def _dimensions() -> V4DimensionDesignResult:
+    return finalize_v4_dimension_design(
+        _dimension_draft(),
+        impact_analysis=_analysis(),
+        impact_levers=_catalog(),
+    )
+
+
+def _synthesis() -> V4ScenarioSynthesisResult:
+    common_paths = ["path_101_demand", "path_202_supply"]
+
+    def scenario(
+        title: str,
+        values: dict[str, str],
+        band: str,
+        score: float,
+        mixed: list[str] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "title": title,
+            "narrative": f"{title} 전개",
+            "dimensionValues": values,
+            "commonImpactPathIds": common_paths,
+            "appliedInteractionIds": ["interaction_1"],
+            "pressureBand": band,
+            "pressureBreakdown": {
+                "commonImpact": "한파 수요 증가와 미국 공급 감소를 공통으로 반영한다.",
+                "valueDelta": "선택된 Value의 레버 상태가 공통 영향 대비 압력을 조정한다.",
+                "interactionEffect": "수요·공급 충격 중첩이 현물 경쟁을 증폭한다.",
+            },
+            "relatedMarkets": (
+                [{"market": "TTF", "rationale": "유럽과 아시아의 유연 화물 경쟁도 강화될 수 있다."}]
+                if band == "strong_bullish"
+                else []
+            ),
+            "probabilityScore": score,
+            "mixedFactors": mixed or [],
+            "explanation": f"{title}의 JKM 압력 근거를 자연어로 설명한다.",
+        }
+
+    return V4ScenarioSynthesisResult.model_validate(
+        {
+            "groupTitle": "JKM 복수 Event 시나리오",
+            "groupDescription": "공통 영향 경로와 잔여 불확실성을 결합한 JKM 시나리오",
+            "scenarios": [
+                scenario(
+                    "상단",
+                    {"cold_wave_intensity": "high", "liquefaction_recovery": "delayed", "risk_premium": "high"},
+                    "strong_bullish",
+                    35,
+                ),
+                scenario(
+                    "혼합",
+                    {"cold_wave_intensity": "high", "liquefaction_recovery": "fast", "risk_premium": "low"},
+                    "balanced",
+                    50,
+                    ["한파 수요 증가", "액화시설 조기 회복"],
+                ),
+                scenario(
+                    "하단",
+                    {"cold_wave_intensity": "low", "liquefaction_recovery": "fast", "risk_premium": "low"},
+                    "strong_bearish",
+                    15,
+                ),
+            ],
+            "excludedScenarios": [
+                {"pressureBand": "bullish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "상단과 유사"},
+                {"pressureBand": "bearish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "하단과 유사"},
+            ],
+        },
+    )
+
+
+def _finalized() -> tuple[V4GenerationResult, object]:
+    return finalize_v4_generation_result(
+        _synthesis(),
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+
 def test_v4_request_requires_two_to_five_unique_events() -> None:
     payload = V4MultiEventCreateScenariosIn(mi_event_ids=[101, 202], user_id=7)
-
     assert payload.mi_event_ids == [101, 202]
-    assert "targetMarket" not in V4MultiEventCreateScenariosIn.model_json_schema(by_alias=True)["properties"]
     with pytest.raises(ValueError):
         V4MultiEventCreateScenariosIn(mi_event_ids=[101, 101], user_id=7)
 
@@ -238,158 +456,480 @@ def test_v4_sync_and_background_routes_are_registered() -> None:
     from apps.agents.scenario_group_agent.api import router
 
     paths = {route.path for route in router.routes if "POST" in getattr(route, "methods", set())}
-
     assert "/v4/scenario-groups" in paths
     assert "/v4/scenario-groups/sync" in paths
 
 
-def test_v4_storage_uses_scenario_related_markets_without_group_target_market() -> None:
-    from apps.persistence.scenario.models import MiScenarioModel
-    from apps.persistence.scenario_group.models import MiScenarioGroupModel, MiScenarioSnapModel
+def test_v4_event_impact_analysis_hydrates_ordered_lever_steps_and_lineage() -> None:
+    result = _analysis()
+    assert [step.impact_lever_id for step in result.impact_paths[1].lever_steps] == [2, 3]
+    assert result.interactions[0].impact_path_ids == ["path_101_demand", "path_202_supply"]
+    assert result.validation_warnings == []
+    assert "fact_status" not in result.event_facts[0].model_dump()
+    assert "confidence" not in result.event_facts[0].model_dump()
+    assert "no_material_impact_reason" not in result.event_facts[0].model_dump()
+    assert "price_effect" not in result.impact_paths[0].model_dump()
+    assert "price_effect" not in result.interactions[0].model_dump()
 
-    assert "target_market" not in MiScenarioGroupModel.__table__.columns
-    assert "related_markets" in MiScenarioModel.__table__.columns
-    assert "related_markets" in MiScenarioSnapModel.__table__.columns
+
+def test_v4_event_impact_analysis_rejects_unknown_fact_and_lever() -> None:
+    draft = _analysis_draft()
+    draft.impact_paths[0].source_fact_ids = ["missing"]
+    with pytest.raises(ValueError, match="unknown facts"):
+        finalize_v4_event_impact_analysis(draft, event_ids=[101, 202], impact_levers=_catalog())
+
+    draft = _analysis_draft()
+    draft.impact_paths[0].lever_steps[0].lever_code = "invented"
+    with pytest.raises(ValueError, match="unknown lever"):
+        finalize_v4_event_impact_analysis(draft, event_ids=[101, 202], impact_levers=_catalog())
 
 
-def test_v4_finalizer_hydrates_levers_assigns_roles_and_computes_coverage() -> None:
-    result, coverage = finalize_v4_generation_result(
-        _valid_result(),
-        event_ids=[101, 202],
+def test_v4_event_impact_analysis_requires_complete_event_coverage() -> None:
+    draft = _analysis_draft()
+    draft.event_facts = [fact for fact in draft.event_facts if fact.event_id != 202]
+    draft.impact_paths = [path for path in draft.impact_paths if path.event_id != 202]
+    draft.path_uncertainties = [
+        item for item in draft.path_uncertainties if "path_202_supply" not in item.impact_path_ids
+    ]
+    draft.interactions = []
+    draft.interaction_uncertainties = []
+    with pytest.raises(ValueError, match="does not cover Events"):
+        finalize_v4_event_impact_analysis(draft, event_ids=[101, 202], impact_levers=_catalog())
+
+
+def test_v4_legacy_price_effect_is_ignored_without_affecting_analysis() -> None:
+    result = finalize_v4_event_impact_analysis(_analysis_draft(), event_ids=[101, 202], impact_levers=_catalog())
+
+    assert result.validation_warnings == []
+    assert all("price_effect" not in path.model_dump() for path in result.impact_paths)
+    assert all("price_effect" not in interaction.model_dump() for interaction in result.interactions)
+
+
+def test_v4_dimension_contract_derives_event_and_lever_ids_without_legacy_fields() -> None:
+    result = _dimensions()
+    definition = result.dimension_definitions[0]
+    schema_fields = V4DimensionDefinition.model_json_schema(by_alias=True)["properties"]
+    assert definition.source_event_ids == [101]
+    assert definition.primary_impact_lever_id == 1
+    assert definition.values[0].lever_states[0].impact_lever_id == 1
+    assert "eventGroundings" not in schema_fields
+    assert "leverMappings" not in schema_fields
+
+
+def test_v4_dimension_rejects_lever_outside_source_paths() -> None:
+    draft = _dimension_draft()
+    draft.dimension_definitions[0].values[0].lever_states[0].lever_code = "direct_gas_demand"
+    with pytest.raises(ValueError, match="omits the primary Lever|outside its source paths"):
+        finalize_v4_dimension_design(draft, impact_analysis=_analysis(), impact_levers=_catalog())
+
+
+def test_v4_dimension_records_explained_counter_directional_value_warning() -> None:
+    draft = _dimension_draft()
+    value = draft.dimension_definitions[0].values[1]
+    value.lever_states[0].direction = "decrease"
+    value.assumption_rationale = "대체 연료 전환이 동시에 제한되어 수요 감소에도 JKM 압력이 상승하는 예외를 가정한다."
+
+    result = finalize_v4_dimension_design(
+        draft,
+        impact_analysis=_analysis(),
         impact_levers=_catalog(),
     )
 
-    assert [scenario.scenario_role for scenario in result.scenarios] == ["ceiling", "mixed", "floor"]
-    assert result.scenarios[1].baseline_yn is True
-    assert result.dimension_definitions[0].model_support_status == "full"
-    assert result.dimension_definitions[1].model_support_status == "none"
-    assert result.dimension_definitions[2].model_support_status == "price_only"
-    assert result.dimension_definitions[0].event_groundings[0].event_id == 101
-    assert result.dimension_definitions[0].lever_mappings[0].impact_lever_id == 1
+    assert [warning.code for warning in result.validation_warnings] == [
+        "COUNTER_DIRECTIONAL_VALUE_PRESSURE",
+    ]
+
+
+def test_v4_finalizer_assigns_roles_builds_pressure_rationale_and_coverage() -> None:
+    finalized, coverage = _finalized()
+    assert [scenario.scenario_role for scenario in finalized.scenarios] == ["ceiling", "mixed", "floor"]
+    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
+    assert finalized.scenarios[0].pressure_rationale == "상단의 JKM 압력 근거를 자연어로 설명한다."
     assert coverage.coverage_status == "partial"
     assert coverage.covered_dimension_ids == ["cold_wave_intensity"]
     assert coverage.uncovered_dimension_ids == ["liquefaction_recovery", "risk_premium"]
 
 
-def test_v4_finalizer_derives_mixed_role_from_actual_contributions() -> None:
-    draft = _valid_result()
-    for scenario in draft.scenarios:
-        scenario.mixed_factors = []
-
-    result, _coverage = finalize_v4_generation_result(
-        draft,
-        event_ids=[101, 202],
-        impact_levers=_catalog(),
-    )
-
-    assert [scenario.scenario_role for scenario in result.scenarios] == ["ceiling", "mixed", "floor"]
-
-
-def test_v4_finalizer_rejects_mixed_factors_without_two_pressure_directions() -> None:
-    draft = _valid_result()
-    mixed = draft.scenarios[1]
-    mixed.dimension_values = {dimension.dimension_id: "high" for dimension in draft.dimension_definitions}
-
-    with pytest.raises(ValueError, match="mixedFactors requires bullish and bearish"):
+def test_v4_scenario_rejects_missing_common_path() -> None:
+    synthesis = _synthesis()
+    synthesis.scenarios[0].common_impact_path_ids = ["path_101_demand"]
+    with pytest.raises(ValueError, match="all common Impact Paths"):
         finalize_v4_generation_result(
-            draft,
-            event_ids=[101, 202],
+            synthesis,
+            impact_analysis=_analysis(),
+            dimension_design=_dimensions(),
             impact_levers=_catalog(),
         )
 
 
-def test_v4_finalizer_rejects_pressure_band_contribution_contradiction() -> None:
-    draft = _valid_result()
-    floor = draft.scenarios[-1]
-    floor.dimension_values = {dimension.dimension_id: "high" for dimension in draft.dimension_definitions}
+def _readable_event_draft(event_id: int) -> V4ReadableEventAnalysisDraft:
+    if event_id == 101:
+        fact = "동북아 한파 지속 전망"
+        return V4ReadableEventAnalysisDraft.model_validate(
+            {
+                "eventFacts": [fact],
+                "impacts": [
+                    {
+                        "evidence": [fact],
+                        "analysis": "한파 전망이 동북아 LNG 수요를 늘려 JKM에 단기 상승 압력을 준다.",
+                        "leverStates": ["weather_demand|primary|increase|동북아|단기"],
+                        "balance": "demand|increase",
+                        "importance": "high",
+                    },
+                ],
+                "openQuestions": [
+                    {
+                        "impact": 1,
+                        "question": "한파에 따른 추가 LNG 수요 규모는 얼마인가?",
+                        "axis": "magnitude",
+                        "lever": "weather_demand",
+                    },
+                ],
+                "excludedBecause": None,
+            },
+        )
+    fact = "미국 LNG 액화시설 가동 중단"
+    return V4ReadableEventAnalysisDraft.model_validate(
+        {
+            "eventFacts": [fact],
+            "impacts": [
+                {
+                    "evidence": [fact],
+                    "analysis": "액화시설 중단이 미국발 LNG 공급을 줄이고 위험 프리미엄을 높여 JKM에 상승 압력을 준다.",
+                    "leverStates": [
+                        "liquefaction_availability|primary|decrease|US Gulf|즉시",
+                        "financial_market_sentiment|transmission|increase|글로벌|단기",
+                    ],
+                    "balance": "supply|decrease",
+                    "importance": "high",
+                },
+            ],
+            "openQuestions": [
+                {
+                    "impact": 1,
+                    "question": "액화시설은 언제 재가동되는가?",
+                    "axis": "recovery",
+                    "lever": "liquefaction_availability",
+                },
+            ],
+            "excludedBecause": None,
+        },
+    )
 
-    with pytest.raises(ValueError, match="strong_bearish Scenario requires a negative"):
-        finalize_v4_generation_result(
-            draft,
-            event_ids=[101, 202],
-            impact_levers=_catalog(),
+
+def test_v4_readable_event_fact_must_match_a_source_sentence() -> None:
+    readable = _readable_event_draft(101)
+    readable.event_facts = ["모델이 새로 지어낸 사실"]
+    readable.impacts[0].evidence = readable.event_facts
+
+    with pytest.raises(ValueError, match="outside the provided candidates"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates={"f1": "동북아 한파 지속 전망"},
         )
 
 
-def test_v4_baseline_can_be_floor_or_ceiling_when_it_has_highest_probability() -> None:
-    draft = _valid_result()
-    draft.scenarios[0].probability_score = 90
-    draft.scenarios[1].probability_score = 5
+def test_v4_readable_event_balance_uses_structured_output_literals() -> None:
+    payload = _readable_event_draft(101).model_dump(by_alias=True)
+    payload["impacts"][0]["balance"] = "supply|disrupt"
 
-    result, _coverage = finalize_v4_generation_result(
+    with pytest.raises(ValueError, match="balance"):
+        V4ReadableEventAnalysisDraft.model_validate(payload)
+
+
+def test_v4_price_only_path_discards_non_physical_balance_hint() -> None:
+    fact = "유럽 LNG 현물가격이 상승했다."
+    readable = V4ReadableEventAnalysisDraft.model_validate(
+        {
+            "eventFacts": [fact],
+            "impacts": [
+                {
+                    "evidence": [fact],
+                    "analysis": "유럽 가격 상승이 지역 가격 신호를 강화해 JKM에 단기 상승 압력을 준다.",
+                    "leverStates": ["financial_market_sentiment|primary|increase|유럽|단기"],
+                    "balance": "trade|decrease",
+                    "importance": "medium",
+                },
+            ],
+            "openQuestions": [
+                {
+                    "impact": 1,
+                    "question": "유럽 가격 강세는 언제까지 지속되는가?",
+                    "axis": "duration",
+                    "lever": "financial_market_sentiment",
+                },
+            ],
+            "excludedBecause": None,
+        },
+    )
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=303,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": fact},
+    )
+
+    result = finalize_v4_event_impact_analysis(
         draft,
-        event_ids=[101, 202],
+        event_ids=[303],
         impact_levers=_catalog(),
     )
 
-    baseline = next(scenario for scenario in result.scenarios if scenario.baseline_yn)
-    assert baseline.scenario_role == "ceiling"
-    assert baseline.probability_score == 90
+    assert result.impact_paths[0].balance_effect is None
 
 
-def test_v4_schema_validation_failure_enters_feedback_retry_loop() -> None:
-    aggregate = _valid_result()
-    dimension_draft = V4DimensionDesignResult(
-        interactions=aggregate.interactions,
-        dimension_definitions=aggregate.dimension_definitions,
+def test_v4_readable_question_reports_allowed_impact_levers() -> None:
+    readable = _readable_event_draft(101)
+    readable.open_questions[0].lever = "liquefaction_availability"
+
+    with pytest.raises(ValueError, match=r"Impact 1 Lever codes: \['weather_demand'\]"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates={"f1": "동북아 한파 지속 전망"},
+        )
+
+
+def test_v4_readable_event_limits_open_question_to_one() -> None:
+    payload = _readable_event_draft(101).model_dump(by_alias=True)
+    payload["openQuestions"].append(dict(payload["openQuestions"][0]))
+
+    with pytest.raises(ValueError, match="openQuestions"):
+        V4ReadableEventAnalysisDraft.model_validate(payload)
+
+
+def test_v4_readable_event_fact_requires_character_exact_match() -> None:
+    readable = _readable_event_draft(101)
+    readable.event_facts = ["동북아  한파 지속 전망"]
+    readable.impacts[0].evidence = readable.event_facts
+
+    with pytest.raises(ValueError, match="outside the provided candidates"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates={"f1": "동북아 한파 지속 전망"},
+        )
+
+
+def test_v4_fact_ids_follow_selected_array_order_and_preserve_modality() -> None:
+    readable = _readable_event_draft(101)
+    forecast = "기상기관은 다음 주 한파가 이어질 것으로 전망했다."
+    announced = "정부는 LNG 비축 확대 계획을 발표했다."
+    readable.event_facts = [forecast, announced]
+    readable.impacts[0].evidence = [forecast, announced]
+
+    result = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": announced, "f2": forecast},
     )
-    valid_draft = V4ScenarioSynthesisResult(
-        group_title=aggregate.group_title,
-        group_description=aggregate.group_description,
-        scenarios=aggregate.scenarios,
-        excluded_scenarios=aggregate.excluded_scenarios,
+
+    assert [fact.fact_id for fact in result.event_facts] == ["e101_f1", "e101_f2"]
+    assert [fact.observed_basis for fact in result.event_facts] == [forecast, announced]
+    assert result.impact_paths[0].source_fact_ids == ["e101_f1", "e101_f2"]
+
+
+def test_v4_fact_candidates_do_not_truncate_the_source_sentence() -> None:
+    fact = "장기 전망 " + ("상승 가능성을 검토했으며 " * 20) + "아직 확정하지 않았다고 발표했다."
+
+    candidates = build_v4_event_fact_candidates({"mi_event_id": 101, "key_bullets": [fact]})
+
+    assert candidates == {"f1": fact}
+
+
+def _readable_interaction_draft() -> V4ReadableInteractionAnalysisDraft:
+    return V4ReadableInteractionAnalysisDraft.model_validate(
+        {
+            "interactions": [
+                {
+                    "paths": ["P1", "P2"],
+                    "analysis": "동북아 수요 증가와 미국 공급 감소가 동시에 단기 JKM 상승 압력을 강화한다.",
+                    "relation": "amplification",
+                },
+            ],
+            "openQuestions": [
+                {
+                    "interaction": 1,
+                    "question": "두 충격이 실제로 겹치는 기간은 얼마인가?",
+                    "axis": "duration",
+                    "lever": "financial_market_sentiment",
+                },
+            ],
+        },
     )
-    invalid_response = MIBaseError(
-        ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-        detail="groupTitle must not be blank",
+
+
+def test_v4_readable_interaction_question_reports_allowed_path_levers() -> None:
+    readable = _readable_interaction_draft()
+    readable.open_questions[0].lever = "direct_gas_demand"
+
+    with pytest.raises(ValueError, match=r"Interaction 1 Path Lever codes"):
+        merge_v4_readable_interactions(_analysis(), readable)
+
+
+def test_v4_readable_interaction_limits_open_question_to_one() -> None:
+    payload = _readable_interaction_draft().model_dump(by_alias=True)
+    payload["openQuestions"].append(dict(payload["openQuestions"][0]))
+
+    with pytest.raises(ValueError, match="openQuestions"):
+        V4ReadableInteractionAnalysisDraft.model_validate(payload)
+
+
+def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
+    def dimension(
+        source: str,
+        label: str,
+        question: str,
+        lever: str,
+        axis: str,
+        low_label: str,
+        high_label: str,
+        low_state: str,
+        high_state: str,
+    ) -> dict[str, object]:
+        return {
+            "from": [source],
+            "label": label,
+            "question": question,
+            "lever": lever,
+            "axis": axis,
+            "format": "temporal" if axis == "recovery" else "categorical",
+            "unit": "주" if axis == "recovery" else None,
+            "choices": [
+                {
+                    "label": low_label,
+                    "states": [low_state],
+                    "pressure": "bearish",
+                    "why": "공통 영향 대비 JKM 상승 압력을 완화하는 상태다.",
+                },
+                {
+                    "label": high_label,
+                    "states": [high_state],
+                    "pressure": "bullish",
+                    "why": "공통 영향 대비 JKM 상승 압력을 강화하는 상태다.",
+                },
+            ],
+        }
+
+    return V4ReadableDimensionDesignDraft.model_validate(
+        {
+            "dimensions": [
+                dimension(
+                    "U1",
+                    "동북아 한파와 추가 LNG 수요",
+                    "한파에 따른 추가 LNG 수요 규모는 얼마인가?",
+                    "weather_demand",
+                    "magnitude",
+                    "한파 수요가 기존 공급에 흡수",
+                    "추가 LNG 조달 수요가 확대",
+                    "weather_demand|unchanged|limited|동북아|단기",
+                    "weather_demand|increase|high|동북아|단기",
+                ),
+                dimension(
+                    "U2",
+                    "미국 액화시설 재가동과 공급 회복",
+                    "액화시설은 언제 재가동되는가?",
+                    "liquefaction_availability",
+                    "recovery",
+                    "액화시설 정상 가동이 빠르게 회복",
+                    "액화시설 차질과 공급 손실 지속",
+                    "liquefaction_availability|recover|high_availability|US Gulf|2주",
+                    "liquefaction_availability|disrupt|low_availability|US Gulf|6주 이상",
+                ),
+                dimension(
+                    "U3",
+                    "공급 차질과 글로벌 위험 프리미엄",
+                    "공급 차질 위험 프리미엄은 얼마나 확대되는가?",
+                    "financial_market_sentiment",
+                    "magnitude",
+                    "공급 우려 완화로 프리미엄 축소",
+                    "공급 차질 우려와 프리미엄 확대",
+                    "financial_market_sentiment|decrease|low_premium|글로벌|단기",
+                    "financial_market_sentiment|increase|high_premium|글로벌|단기",
+                ),
+            ],
+            "notUsed": [],
+        },
     )
-    invoke = AsyncMock(side_effect=[invalid_response, valid_draft])
-    state = V4MultiEventGenerationState(dimension_draft=dimension_draft)
-
-    with (
-        patch.object(v4_nodes, "invoke_stage_structured_output", new=invoke),
-        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
-    ):
-        first = asyncio.run(v4_nodes.SynthesizeV4ScenariosNode().run(state))
-        state = state.model_copy(update=first)
-        assert v4_nodes.route_after_v4_scenarios(state) == "synthesize_v4_scenarios"
-        second = asyncio.run(v4_nodes.SynthesizeV4ScenariosNode().run(state))
-
-    assert second["scenario_draft"] == valid_draft
-    assert invoke.await_count == 2
-    assert "groupTitle" in invoke.await_args_list[1].kwargs["user_prompt"]
 
 
-def test_v4_langgraph_uses_two_llm_stages_and_retries_only_dimension_stage() -> None:
-    from apps.persistence.event.schema import EventPayload
-    from apps.persistence.scenario_group.schema import ScenarioGroupPayload
+def _readable_scenario_draft() -> V4ReadableScenarioSynthesisDraft:
+    def scenario(title: str, choices: list[str], pressure: str, probability: int) -> dict[str, object]:
+        return {
+            "title": title,
+            "narrative": (
+                f"{title}에서는 검증된 공통 영향 위에 Scenario를 구분하는 핵심 조건과 선택된 분기가 함께 전개된다. "
+                "선택된 영향 경로와 Event Interaction의 결합이 다른 효과를 상쇄하거나 강화해 최종 JKM 압력을 결정한다."
+            ),
+            "choices": choices,
+            "interactions": ["I1"],
+            "pressure": pressure,
+            "explanation": "한파 수요와 공급 감소에 선택한 분기와 상호작용을 더해 JKM 압력을 설명한다.",
+            "probability": probability,
+            "relatedMarkets": (
+                ["TTF|유럽과 아시아의 화물 경쟁도 영향을 받는다."] if pressure == "strong_bullish" else []
+            ),
+        }
 
-    aggregate = _valid_result()
-    dimension_draft = V4DimensionDesignResult(
-        interactions=aggregate.interactions,
-        dimension_definitions=aggregate.dimension_definitions,
+    return V4ReadableScenarioSynthesisDraft.model_validate(
+        {
+            "title": "JKM 복수 Event 시나리오",
+            "description": "공통 영향과 열린 질문의 답을 결합한 JKM 시나리오",
+            "scenarios": [
+                scenario(
+                    "한파 수요와 액화시설 차질이 결합되는 상방 천장",
+                    ["D1.V2", "D2.V2", "D3.V2"],
+                    "strong_bullish",
+                    35,
+                ),
+                scenario(
+                    "수요 증가와 공급 회복이 상쇄되는 기준 경로",
+                    ["D1.V2", "D2.V1", "D3.V1"],
+                    "balanced",
+                    50,
+                ),
+                scenario(
+                    "수요 완화와 공급 정상화가 겹치는 하방 바닥",
+                    ["D1.V1", "D2.V1", "D3.V1"],
+                    "strong_bearish",
+                    15,
+                ),
+            ],
+            "excluded": [
+                {"pressureBand": "bullish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "상단과 유사"},
+                {"pressureBand": "bearish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "하단과 유사"},
+            ],
+        },
     )
-    scenario_draft = V4ScenarioSynthesisResult(
-        group_title=aggregate.group_title,
-        group_description=aggregate.group_description,
-        scenarios=aggregate.scenarios,
-        excluded_scenarios=aggregate.excluded_scenarios,
-    )
+
+
+def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> None:
     calls: list[str] = []
-    dimension_attempts = 0
+    attempts_by_event = {101: 0, 202: 0}
 
-    async def invoke_stage(*, output_schema: type[object], **_kwargs: object) -> object:
-        nonlocal dimension_attempts
+    async def invoke_stage(
+        *,
+        output_schema: type[object],
+        user_prompt: str,
+        **_kwargs: object,
+    ) -> object:
         calls.append(output_schema.__name__)
-        if output_schema is V4DimensionDesignResult:
-            dimension_attempts += 1
-            if dimension_attempts == 1:
-                raise MIBaseError(
-                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-                    detail="dimensionDefinitions validation failed",
-                )
-            return dimension_draft.model_copy(deep=True)
-        return scenario_draft.model_copy(deep=True)
+        if output_schema is V4ReadableEventAnalysisDraft:
+            event_id = 101 if "- ID: 101" in user_prompt else 202
+            attempts_by_event[event_id] += 1
+            if event_id == 101 and attempts_by_event[event_id] == 1:
+                raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail="analysis validation failed")
+            return _readable_event_draft(event_id)
+        if output_schema is V4ReadableInteractionAnalysisDraft:
+            return _readable_interaction_draft()
+        if output_schema is V4ReadableDimensionDesignDraft:
+            return _readable_dimension_draft()
+        return _readable_scenario_draft()
 
     group = ScenarioGroupPayload(
         scenario_group_id=10,
@@ -399,8 +939,8 @@ def test_v4_langgraph_uses_two_llm_stages_and_retries_only_dimension_stage() -> 
     state = V4MultiEventGenerationState(
         scenario_group=group,
         events=[
-            EventPayload(mi_event_id=101, event_type_l2_id=8),
-            EventPayload(mi_event_id=202, event_type_l2_id=12),
+            EventPayload(mi_event_id=101, event_type_l2_id=8, key_bullets=["동북아 한파 지속 전망"]),
+            EventPayload(mi_event_id=202, event_type_l2_id=12, key_bullets=["미국 LNG 액화시설 가동 중단"]),
         ],
         impact_levers=_catalog(),
         impact_catalog_version="v1",
@@ -408,7 +948,6 @@ def test_v4_langgraph_uses_two_llm_stages_and_retries_only_dimension_stage() -> 
         comparison_run_id="compare-v4-graph",
         user_id=7,
     )
-
     v4_flow_module.get_compiled_graph.cache_clear()
     with (
         patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
@@ -422,221 +961,189 @@ def test_v4_langgraph_uses_two_llm_stages_and_retries_only_dimension_stage() -> 
         final_state = asyncio.run(v4_flow_module.get_compiled_graph().ainvoke(state))
     v4_flow_module.get_compiled_graph.cache_clear()
 
-    assert calls == ["V4DimensionDesignResult", "V4DimensionDesignResult", "V4ScenarioSynthesisResult"]
-    assert final_state["dimension_attempt"] == 2
+    assert calls.count("V4ReadableEventAnalysisDraft") == 3
+    assert calls[-3:] == [
+        "V4ReadableInteractionAnalysisDraft",
+        "V4ReadableDimensionDesignDraft",
+        "V4ReadableScenarioSynthesisDraft",
+    ]
+    assert attempts_by_event == {101: 2, 202: 1}
+    assert final_state["analysis_attempt"] == 2
+    assert final_state["interaction_attempt"] == 1
+    assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
 
 
-def test_v4_inline_persists_compact_dimension_grounding_and_database_baseline_yn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import v4_flow
-    from apps.persistence.event.schema import EventPayload
-    from apps.persistence.scenario.schema import ScenarioPayload
-    from apps.persistence.scenario_group.schema import ScenarioGroupPayload
+def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
+    async def never_returns(**_kwargs: object) -> object:
+        await asyncio.sleep(1)
+        return _readable_event_draft(101)
 
-    finalized, coverage = finalize_v4_generation_result(
-        _valid_result(),
-        event_ids=[101, 202],
-        impact_levers=_catalog(),
-    )
-    persist = Mock(
-        return_value=(
-            ScenarioGroupPayload(
-                scenario_group_id=10,
-                dimension_selected=[dimension.dimension_id for dimension in finalized.dimension_definitions],
-                scenario_count=len(finalized.scenarios),
-                api_version="v4",
-                generation_strategy="multi_event_model_lever_dimensions",
-            ),
-            [
-                ScenarioPayload(
-                    scenario_id=index,
-                    scenario_group_id=10,
-                    title=scenario.title,
-                    dimension_values=scenario.dimension_values,
-                    probability_score=scenario.probability_score,
-                    baseline_yn="Y" if scenario.baseline_yn else "N",
-                    global_pressure_band=scenario.global_pressure_band,
-                    scenario_role=scenario.scenario_role,
-                    global_pressure_rationale=scenario.global_pressure_rationale,
-                    related_markets=scenario.related_markets,
-                )
-                for index, scenario in enumerate(finalized.scenarios, start=1)
-            ],
-        ),
-    )
-    monkeypatch.setattr(v4_flow.ScenarioGroupService, "persist_multi_event_generation", persist)
-
-    async def run_graph(
-        state: V4MultiEventGenerationState,
-        **_kwargs: object,
-    ) -> V4MultiEventGenerationState:
-        graph_state = state.model_copy(
-            update={"finalized_result": finalized, "parameter_coverage": coverage},
-        )
-        return graph_state.model_copy(update=v4_nodes.persist_v4_generation(graph_state))
-
-    graph = SimpleNamespace(ainvoke=AsyncMock(side_effect=run_graph))
-    monkeypatch.setattr(v4_flow, "get_compiled_graph", Mock(return_value=graph))
-
-    response = asyncio.run(
-        run_v4_multi_event_scenarios_inline(
-            {
-                "scenario_group": ScenarioGroupPayload(
-                    scenario_group_id=10,
-                    api_version="v4",
-                    generation_strategy="multi_event_model_lever_dimensions",
+    with (
+        patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=never_returns),
+        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
+        patch.object(v4_nodes, "V4_EVENT_LLM_TIMEOUT_SECONDS", 0.001),
+    ):
+        outcome = asyncio.run(
+            v4_nodes._analyze_event_with_retries(
+                event=EventPayload(
+                    mi_event_id=101,
+                    event_type_l2_id=8,
+                    key_bullets=["동북아 한파 지속 전망"],
                 ),
-                "events": [
-                    EventPayload(mi_event_id=101, event_type_l2_id=8, event_title_ko="한파"),
-                    EventPayload(mi_event_id=202, event_type_l2_id=12, event_title_ko="액화시설 정비"),
-                ],
-                "impact_levers": _catalog(),
-                "impact_catalog_version": "v1",
-                "comparison_run_id": "compare-1",
-                "user_id": 7,
-            },
-        ),
-    )
+                impact_levers=_catalog(),
+                catalog_version="v1",
+                trace_context=None,
+            ),
+        )
 
-    saved = persist.call_args.kwargs["scenarios"]
+    assert outcome.attempts == 3
+    assert outcome.result is None
+    assert outcome.error == "Event 101 impact analysis exceeded 0.001s"
+
+
+def test_v4_event_analysis_calls_are_concurrent() -> None:
+    active_calls = 0
+    max_active_calls = 0
+
+    async def invoke_stage(*, user_prompt: str, **_kwargs: object) -> object:
+        nonlocal active_calls, max_active_calls
+        event_id = 101 if "- ID: 101" in user_prompt else 202
+        active_calls += 1
+        max_active_calls = max(max_active_calls, active_calls)
+        await asyncio.sleep(0)
+        active_calls -= 1
+        return _readable_event_draft(event_id)
+
+    state = V4MultiEventGenerationState(
+        events=[
+            EventPayload(mi_event_id=101, event_type_l2_id=8, key_bullets=["동북아 한파 지속 전망"]),
+            EventPayload(mi_event_id=202, event_type_l2_id=12, key_bullets=["미국 LNG 액화시설 가동 중단"]),
+        ],
+        impact_levers=_catalog(),
+        impact_catalog_version="v1",
+    )
+    with (
+        patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
+        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
+    ):
+        result = asyncio.run(v4_nodes.AnalyzeEventImpactsNode().run(state))
+
+    assert max_active_calls == 2
+    assert isinstance(result["analysis_draft"], V4EventImpactAnalysisDraft)
+
+
+def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
+    finalized, coverage = _finalized()
+    group = ScenarioGroupPayload(
+        scenario_group_id=10,
+        api_version="v4",
+        generation_strategy="multi_event_model_lever_dimensions",
+    )
+    state = V4MultiEventGenerationState(
+        scenario_group=group,
+        events=[EventPayload(mi_event_id=101, event_type_l2_id=8), EventPayload(mi_event_id=202, event_type_l2_id=12)],
+        impact_levers=_catalog(),
+        impact_catalog_version="v1",
+        impact_catalog_checksum="checksum-v1",
+        user_id=7,
+        analysis_draft=finalized.impact_analysis,
+        dimension_draft=V4DimensionDesignResult(
+            dimension_definitions=finalized.dimension_definitions,
+            excluded_dimensions=finalized.excluded_dimensions,
+        ),
+        finalized_result=finalized,
+        parameter_coverage=coverage,
+    )
+    with patch.object(
+        v4_nodes.ScenarioGroupService,
+        "persist_multi_event_generation",
+        return_value=(group, []),
+    ) as persist:
+        result = v4_nodes.persist_v4_generation(state)
+
     saved_dimensions = persist.call_args.kwargs["dimension_definitions"]
     saved_diagnostics = persist.call_args.kwargs["generation_diagnostics"]
-    assert [scenario["baseline_yn"] for scenario in saved] == ["N", "Y", "N"]
-    assert saved_dimensions[0]["event_groundings"][0]["event_id"] == 101
-    assert saved_dimensions[0]["lever_mappings"][0]["impact_lever_id"] == 1
-    assert "source_fact_ids" not in saved_dimensions[0]
-    assert "impact_lever_refs" not in saved_dimensions[0]
-    assert "source_refs" not in saved_dimensions[0]
-    assert "event_impact_facts" not in saved_diagnostics
-    assert "event_dimension_coverage" not in saved_diagnostics
-    assert response.data is not None
-    assert response.data.dimension_definitions[0].event_groundings[0].observed_basis
-    assert response.data.table.rows[0].related_markets == [
-        RelatedMarket(market="JKM", rationale="아시아향 화물 전환 가능성이 특별히 중요함"),
-    ]
+    assert "event_groundings" not in saved_dimensions[0]
+    assert "lever_mappings" not in saved_dimensions[0]
+    assert saved_dimensions[0]["source_impact_path_ids"] == ["path_101_demand"]
+    assert saved_diagnostics["event_facts"][0]["fact_id"] == "fact_101_1"
+    assert saved_diagnostics["impact_paths"][0]["lever_steps"][0]["impact_lever_id"] == 1
+    assert saved_diagnostics["event_interactions"][0]["impact_path_ids"]
+    assert saved_diagnostics["scenario_pressure_breakdowns"]
+    assert result["generation_diagnostics"].impact_paths
 
 
-def test_v4_finalizer_rejects_unknown_lever() -> None:
-    result = _valid_result()
-    result.dimension_definitions[0].lever_mappings[0].lever_code = "invented_parameter"
-
-    with pytest.raises(ValueError, match="unknown lever"):
-        finalize_v4_generation_result(result, event_ids=[101, 202], impact_levers=_catalog())
-
-
-def test_v4_finalizer_allows_dimensions_without_executable_binding() -> None:
-    result = _valid_result()
-    result.dimension_definitions[0].lever_mappings[0] = V4LeverMapping(
-        lever_code="direct_gas_demand",
-        mapping_rationale="현재 직접 binding이 없어도 중요한 수요 불확실성이다.",
-    )
-
-    _finalized, coverage = finalize_v4_generation_result(
-        result,
-        event_ids=[101, 202],
-        impact_levers=_catalog(),
-    )
-
-    assert coverage.coverage_status == "none"
-
-
-def test_v4_finalizer_rejects_impact_lever_id_code_mismatch() -> None:
-    result = _valid_result()
-    result.dimension_definitions[0].lever_mappings[0].impact_lever_id = 2
-
-    with pytest.raises(ValueError, match="id/code mismatch"):
-        finalize_v4_generation_result(result, event_ids=[101, 202], impact_levers=_catalog())
-
-
-def test_v4_finalizer_rejects_unknown_grounding_event() -> None:
-    result = _valid_result()
-    result.dimension_definitions[0].event_groundings[0].event_id = 999
-
-    with pytest.raises(ValueError, match="references unknown events"):
-        finalize_v4_generation_result(result, event_ids=[101, 202], impact_levers=_catalog())
-
-
-def test_v4_dimension_allows_multiple_groundings_per_event_but_rejects_duplicate_lever_codes() -> None:
-    dimension = _dimension(dimension_id="duplicate", event_id=101, lever_code="weather_demand")
-    payload = dimension.model_dump()
-    payload["event_groundings"].append(payload["event_groundings"][0])
-
-    parsed = V4DimensionDefinition.model_validate(payload)
-
-    assert [grounding.event_id for grounding in parsed.event_groundings] == [101, 101]
-
-    payload = dimension.model_dump()
-    payload["lever_mappings"].append(payload["lever_mappings"][0])
-    with pytest.raises(ValueError, match="unique leverCodes"):
-        V4DimensionDefinition.model_validate(payload)
-
-
-def test_v4_prompt_uses_compact_dimension_grounding_contract() -> None:
-    prompt = build_model_lever_user_prompt(
-        events=[
-            {
-                "mi_event_id": 101,
-                "event_title_ko": "동북아 한파",
-                "one_line_summary": "겨울 수요 증가 가능성",
-            },
-        ],
+def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
+    first = build_model_lever_user_prompt(
+        events=[{"mi_event_id": 101, "event_title_ko": "동북아 한파"}],
         impact_levers=[lever.model_dump() for lever in _catalog()],
         catalog_version="v1",
     )
-
-    assert "동북아 한파" in prompt
-    assert "eventGroundings" in prompt
-    assert "observedBasis" in prompt
-    assert "uncertainty" in prompt
-    assert "leverMappings" in prompt
-    assert "assumptionRationale" in prompt
-    assert "bullish, balanced, bearish" in prompt
-    assert "추가 가정" in prompt
-    assert "weather_demand" in prompt
-    assert "sourceFactIds" in prompt
-    assert "만들지 마십시오" in prompt
-    assert "parameterBindings" not in prompt
-    assert "applicabilityHint" not in prompt
-    assert "Template Domain Knowledge" not in prompt
-
-
-def test_v4_scenario_prompt_does_not_repeat_raw_events_or_fact_graph() -> None:
-    result = _valid_result()
-    prompt = build_v4_scenario_synthesis_user_prompt(
-        interactions=[interaction.model_dump() for interaction in result.interactions],
-        dimension_definitions=[definition.model_dump() for definition in result.dimension_definitions],
+    dimension = build_v4_dimension_design_user_prompt(
+        impact_analysis=_analysis().model_dump(),
+        validation_warnings=[],
     )
+    scenario = build_v4_scenario_synthesis_user_prompt(
+        impact_analysis=_analysis().model_dump(),
+        dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
+        validation_warnings=[],
+    )
+    interaction = build_v4_interaction_analysis_user_prompt(
+        impact_paths=[path.model_dump() for path in _analysis().impact_paths],
+    )
+    assert "## 핵심 사실 후보" in first
+    assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
+    assert "JKM의 상승·하락·혼조 방향" in first
+    assert "별도의 price 필드는 만들지 않습니다" in first
+    assert "factStatus" not in first
+    assert "selectionHint" not in first
+    assert "parameterBindings" not in first
+    assert "## 검증된 영향 경로" in interaction
+    assert "[P1]" in interaction
+    assert "JKM의 순방향·영향 기간" in interaction
+    assert "## Dimension 후보가 되는 열린 질문" in dimension
+    assert "[U1]" in dimension
+    assert "label은 화면 표에 표시할 10~40자의 이름" in dimension
+    assert "Choice label은 10~25자" in dimension
+    assert "임의의 기간·비율 경계를 만들지 말고" in dimension
+    assert "sourceImpactPathIds" not in dimension
+    assert "## Dimension 질문과 선택지" in scenario
+    assert "[D1.V1]" in scenario
+    assert "미리 정한 유형에 맞추지 말고" in scenario
+    assert "pressure 단계만 한 칸씩 바꾼" in scenario
+    assert "narrative는 80~300자의 한국어 두 문장" in scenario
+    assert "상반된 효과가 있으면 우세·상쇄" in scenario
+    assert "내부 참조 ID를 노출하지 말고" in scenario
+    assert "ID는 choices와 interactions 필드에서만 사용" in scenario
+    assert "commonImpactPathIds" not in scenario
 
-    assert "Validated Dimensions" in prompt
-    assert "eventGroundings" in prompt
-    assert "leverMappings" in prompt
-    assert "Event Context" not in prompt
-    assert "Event Impact Facts" not in prompt
-    assert "impactLeverId" not in prompt
-    assert "modelSupportStatus" not in prompt
+
+def test_v4_readable_copy_contract_matches_table_density() -> None:
+    readable = _readable_dimension_draft()
+    expanded = expand_v4_readable_dimension_design(readable, impact_analysis=_analysis())
+
+    assert expanded.dimension_definitions[0].label == "동북아 한파와 추가 LNG 수요"
+    assert expanded.dimension_definitions[0].description == "한파에 따른 추가 LNG 수요 규모는 얼마인가?"
+    assert all(10 <= len(choice.label) <= 25 for dimension in readable.dimensions for choice in dimension.choices)
+
+    invalid_choice = readable.model_dump(by_alias=True)
+    invalid_choice["dimensions"][0]["choices"][0]["label"] = "낮음"
+    with pytest.raises(ValueError, match="label"):
+        V4ReadableDimensionDesignDraft.model_validate(invalid_choice)
+
+    synthesis = _readable_scenario_draft()
+    assert all(20 <= len(scenario.title) <= 40 for scenario in synthesis.scenarios)
+    assert all(80 <= len(scenario.narrative) <= 300 for scenario in synthesis.scenarios)
+
+    invalid_scenario = synthesis.model_dump(by_alias=True)
+    invalid_scenario["scenarios"][0]["title"] = "전면 강세"
+    with pytest.raises(ValueError, match="title"):
+        V4ReadableScenarioSynthesisDraft.model_validate(invalid_scenario)
 
 
-def test_v4_rejects_duplicate_related_markets() -> None:
-    with pytest.raises(ValueError, match="related markets must be unique"):
-        V4ScenarioCandidate(
-            title="중복 시장",
-            narrative="시장 중복 검증",
-            dimension_values={},
-            global_pressure_band="balanced",
-            global_pressure_rationale="글로벌 압력은 균형",
-            related_markets=[
-                RelatedMarket(market="JKM", rationale="첫 번째 근거"),
-                RelatedMarket(market="JKM", rationale="두 번째 근거"),
-            ],
-            probability_score=50,
-        )
-
-
-def test_v4_generation_schema_is_openai_strict_compatible() -> None:
-    parameters = pydantic_function_tool(V4GenerationResult)["function"]["parameters"]
+def test_v4_structured_output_schemas_are_openai_strict_compatible() -> None:
     invalid_objects: list[str] = []
 
     def inspect_schema(value: object, path: str = "$") -> None:
@@ -653,19 +1160,24 @@ def test_v4_generation_schema_is_openai_strict_compatible() -> None:
             for index, child in enumerate(value):
                 inspect_schema(child, f"{path}[{index}]")
 
-    inspect_schema(parameters)
-
+    schemas = {
+        model.__name__: pydantic_function_tool(model)["function"]["parameters"]
+        for model in (
+            V4ReadableEventAnalysisDraft,
+            V4ReadableInteractionAnalysisDraft,
+            V4ReadableDimensionDesignDraft,
+            V4ReadableScenarioSynthesisDraft,
+        )
+    }
+    for name, parameters in schemas.items():
+        inspect_schema(parameters, name)
     assert invalid_objects == []
-    assert parameters["$defs"]["V4ScenarioCandidate"]["properties"]["dimensionValues"]["type"] == "array"
+    assert "price" not in schemas["V4ReadableEventAnalysisDraft"]["$defs"]["V4ReadableEventImpact"]["properties"]
+    assert "price" not in schemas["V4ReadableInteractionAnalysisDraft"]["$defs"]["V4ReadableInteraction"]["properties"]
+    assert len(str(schemas["V4ReadableEventAnalysisDraft"])) < len(str(V4EventImpactAnalysisDraft.model_json_schema()))
+    assert "dimensionValues" not in str(schemas["V4ReadableScenarioSynthesisDraft"])
 
 
-def test_v4_schema_converts_strict_wire_dimension_values_to_domain_map() -> None:
-    payload = _valid_result().model_dump(by_alias=True)
-    scenario = payload["scenarios"][0]
-    scenario["dimensionValues"] = [
-        {"dimensionId": key, "valueId": value} for key, value in scenario["dimensionValues"].items()
-    ]
-
-    parsed = V4GenerationResult.model_validate(payload)
-
-    assert parsed.scenarios[0].dimension_values
+def test_related_markets_excludes_primary_jkm_market() -> None:
+    with pytest.raises(ValueError, match="TTF|HH"):
+        RelatedMarket(market="JKM", rationale="JKM은 pressure breakdown에서 설명한다.")

@@ -33,13 +33,14 @@ def build_scenario_group_table_data(
 ) -> ScenarioGroupTableData:
     template_by_key, selected_keys, headers = _build_headers(group)
     signposts_by_scenario_id = _group_signposts(signposts)
+    pressure_target = _pressure_target(group)
 
     rows: list[ScenarioRow] = []
     for scenario in scenarios:
         scenario_id = int(scenario["scenario_id"])
         rows.append(
             ScenarioRow(
-                **_row_common_payload(scenario, template_by_key, selected_keys),
+                **_row_common_payload(scenario, template_by_key, selected_keys, pressure_target),
                 signposts=[
                     SignpostBasePayload(
                         signpost_id=int(signpost["signpost_id"]),
@@ -70,13 +71,14 @@ def build_scenario_group_query_data(
 ) -> ScenarioGroupDetailOut:
     template_by_key, selected_keys, headers = _build_headers(group)
     signposts_by_scenario_id = _group_signposts(signposts)
+    pressure_target = _pressure_target(group)
 
     rows: list[ScenarioQueryRow] = []
     for scenario in scenarios:
         scenario_id = int(scenario["scenario_id"])
         rows.append(
             ScenarioQueryRow(
-                **_row_common_payload(scenario, template_by_key, selected_keys),
+                **_row_common_payload(scenario, template_by_key, selected_keys, pressure_target),
                 del_yn=scenario.get("del_yn") or "N",
                 signposts=[
                     SignpostQueryPayload(
@@ -171,6 +173,7 @@ def _row_common_payload(
     scenario: dict[str, Any],
     template_by_key: dict[str, dict[str, Any]],
     selected_keys: list[str],
+    pressure_target: str | None,
 ) -> dict[str, Any]:
     raw_values = scenario.get("dimension_values") or {}
     cells = {key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key)) for key in selected_keys}
@@ -185,14 +188,21 @@ def _row_common_payload(
             probability_delta=scenario.get("probability_delta"),
         ),
         "baseline_yn": scenario.get("baseline_yn"),
-        "global_pressure_band": scenario.get("global_pressure_band"),
+        "pressure_target": pressure_target,
+        "pressure_band": scenario.get("global_pressure_band"),
         "scenario_role": scenario.get("scenario_role"),
         "probability_score": scenario.get("probability_score"),
-        "global_pressure_rationale": scenario.get(
-            "global_pressure_rationale",
-        ),
-        "related_markets": scenario.get("related_markets") or [],
+        "pressure_rationale": scenario.get("global_pressure_rationale"),
+        "related_markets": [
+            item
+            for item in (scenario.get("related_markets") or [])
+            if isinstance(item, dict) and item.get("market") in {"TTF", "HH"}
+        ],
     }
+
+
+def _pressure_target(group: dict[str, Any]) -> str | None:
+    return "JKM" if group.get("api_version") in {"v2", "v3", "v4"} else None
 
 
 def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] | None) -> Any:

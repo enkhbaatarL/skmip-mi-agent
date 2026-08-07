@@ -17,6 +17,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.nodes i
     AnalyzeV3EventsNode,
     GenerateDimensionsNode,
     GenerateScenariosNode,
+    SynthesizeV3DimensionsNode,
     dispatch_initial_analysis,
     fail_generation,
     finalize_scenarios,
@@ -24,6 +25,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.nodes i
     prepare_v2_event_grounding,
     route_after_dimensions,
     route_after_scenarios,
+    route_after_v3_analysis,
     validate_dimensions,
     validate_v3_analysis_design,
 )
@@ -107,6 +109,7 @@ def _build_graph() -> Runnable:
     builder.add_node("prepare_v2_event_grounding", prepare_v2_event_grounding)
     builder.add_node("analyze_v3_events", AnalyzeV3EventsNode())
     builder.add_node("validate_v3_analysis_design", validate_v3_analysis_design)
+    builder.add_node("synthesize_v3_dimensions", SynthesizeV3DimensionsNode())
     builder.add_node("generate_dimensions", GenerateDimensionsNode())
     builder.add_node("validate_dimensions", validate_dimensions)
     builder.add_node("generate_scenarios", GenerateScenariosNode())
@@ -117,7 +120,8 @@ def _build_graph() -> Runnable:
     builder.add_conditional_edges(START, dispatch_initial_analysis, ["prepare_v2_event_grounding", "analyze_v3_events"])
     builder.add_edge("prepare_v2_event_grounding", "generate_dimensions")
     builder.add_edge("analyze_v3_events", "validate_v3_analysis_design")
-    builder.add_conditional_edges("validate_v3_analysis_design", route_after_dimensions)
+    builder.add_conditional_edges("validate_v3_analysis_design", route_after_v3_analysis)
+    builder.add_edge("synthesize_v3_dimensions", "validate_dimensions")
     builder.add_edge("generate_dimensions", "validate_dimensions")
     builder.add_conditional_edges("validate_dimensions", route_after_dimensions)
     builder.add_edge("generate_scenarios", "finalize_scenarios")

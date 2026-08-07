@@ -39,7 +39,7 @@ class CriterionJudgment(ComparisonModel):
 class ScenarioJudgment(ComparisonModel):
     scenario_id: str
     title: str
-    global_pressure_band: str
+    pressure_band: str
     verdict: QualityStatus
     evidence: list[str] = Field(min_length=1)
     rationale: str = Field(min_length=1)

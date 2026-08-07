@@ -35,13 +35,13 @@ def _dimension(index: int, version: str) -> dict[str, Any]:
             {
                 "valueId": "high",
                 "label": "High",
-                "globalPressureContribution": "bullish contribution",
+                "pressureContribution": "bullish contribution",
                 "sourceAssignments": [{"rationale": "Event fact supports High."}] if version == "v2" else [],
             },
             {
                 "valueId": "low",
                 "label": "Low",
-                "globalPressureContribution": "bearish contribution",
+                "pressureContribution": "bearish contribution",
                 "sourceAssignments": [{"rationale": "Event fact supports Low."}] if version == "v2" else [],
             },
         ],
@@ -60,33 +60,36 @@ def _response(version: str = "v2") -> dict[str, Any]:
             "title": "Ceiling",
             "narrative": "Supply and demand tighten together.",
             "cells": {"d0": "high", "d1": "high"},
-            "globalPressureBand": "strong_bullish",
+            "pressureBand": "strong_bullish",
+            "pressureTarget": "JKM",
             "scenarioRole": "ceiling",
             "baselineYn": "N",
             "probabilityScore": 20,
-            "globalPressureRationale": "Tight supply raises price pressure.",
+            "pressureRationale": "Tight supply raises price pressure.",
         },
         {
             "scenarioId": 2,
             "title": "Mixed",
             "narrative": "Supply tightness is offset by mitigation.",
             "cells": {"d0": "high", "d1": "low"},
-            "globalPressureBand": "balanced",
+            "pressureBand": "balanced",
+            "pressureTarget": "JKM",
             "scenarioRole": "mixed",
             "baselineYn": "Y",
             "probabilityScore": 60,
-            "globalPressureRationale": "Opposing drivers are balanced.",
+            "pressureRationale": "Opposing drivers are balanced.",
         },
         {
             "scenarioId": 3,
             "title": "Floor",
             "narrative": "Supply recovers while demand softens.",
             "cells": {"d0": "low", "d1": "low"},
-            "globalPressureBand": "strong_bearish",
+            "pressureBand": "strong_bearish",
+            "pressureTarget": "JKM",
             "scenarioRole": "floor",
             "baselineYn": "N",
             "probabilityScore": 20,
-            "globalPressureRationale": "Recovery lowers price pressure.",
+            "pressureRationale": "Recovery lowers price pressure.",
         },
     ]
     dimension_count = {"v2": 5, "v3": 4, "v4": 3}[version]
@@ -113,8 +116,8 @@ def _response(version: str = "v2") -> dict[str, Any]:
             "generationDiagnostics": {
                 "targetPressureBands": PRESSURE_BANDS,
                 "excludedCandidates": [
-                    {"globalPressureBand": "bullish", "reasonCode": "LOW_PROBABILITY", "reason": "x"},
-                    {"globalPressureBand": "bearish", "reasonCode": "LOW_PROBABILITY", "reason": "y"},
+                    {"pressureBand": "bullish", "reasonCode": "LOW_PROBABILITY", "reason": "x"},
+                    {"pressureBand": "bearish", "reasonCode": "LOW_PROBABILITY", "reason": "y"},
                 ],
             },
             "usage": {"totalTokens": 100},
@@ -131,7 +134,19 @@ def _manifest(tmp_path: Path) -> dict[str, Any]:
         "comparisonRunId": "compare-1",
         "eventIds": [101, 202],
         "events": [
-            {"event": {"miEventId": 101, "title": "Event A", "oneLineSummary": "A"}},
+            {
+                "event": {
+                    "miEventId": 101,
+                    "title": "Event A",
+                    "oneLineSummary": "A",
+                    "occurredAt": "2026-01-01T00:00:00",
+                    "eventTypeL1": {"label": "Supply"},
+                    "eventTypeL2": {"label": "Production"},
+                    "tags": ["LNG", "supply"],
+                    "keyBullets": ["Observed Event A fact."],
+                    "detailAnalysis": "Event A detailed analysis.",
+                },
+            },
             {"event": {"miEventId": 202, "title": "Event B", "oneLineSummary": "B"}},
         ],
         "selection": {"description": "명시 Event IDs: [101, 202]"},
@@ -170,7 +185,7 @@ def _agent_judgment() -> dict[str, Any]:
                     {
                         "scenarioId": str(row["scenarioId"]),
                         "title": row["title"],
-                        "globalPressureBand": row["globalPressureBand"],
+                        "pressureBand": row["pressureBand"],
                         "verdict": "PASS",
                         "evidence": [f"scenarioId={row['scenarioId']}"],
                         "rationale": "coherent",
@@ -284,6 +299,88 @@ def test_prepare_allows_disabling_delete_existing(monkeypatch: pytest.MonkeyPatc
     args = runner.parse_args()
 
     assert args.delete_existing is False
+
+
+def test_prepare_accepts_v4_only_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_multi_event_scenario_versions.py",
+            "prepare",
+            "--event-ids",
+            "101",
+            "202",
+            "--v4-only",
+        ],
+    )
+
+    args = runner.parse_args()
+
+    assert args.v4_only is True
+
+
+def test_prepare_v4_only_writes_scoped_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Target:
+        base_url = "http://agent.test"
+        user_id = 10603
+
+    class FakeResponse:
+        def __init__(self, event_id: int) -> None:
+            self.event_id = event_id
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {"event": {"miEventId": self.event_id, "title": f"Event {self.event_id}"}}
+
+    class FakeClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def get(self, url: str) -> FakeResponse:
+            return FakeResponse(int(url.rsplit("/", maxsplit=1)[1]))
+
+    monkeypatch.setattr(runner, "load_runtime_target", lambda **_: Target())
+    monkeypatch.setattr(runner.httpx, "AsyncClient", FakeClient)
+    args = argparse.Namespace(
+        agent=None,
+        base_url="http://agent.test",
+        user_id=10603,
+        test_info=None,
+        timeout=120,
+        event_ids=[101, 202],
+        event_count=None,
+        event_sort="latest",
+        keyword=None,
+        event_page_size=100,
+        comparison_run_id=None,
+        batch_id="v4-only-test",
+        output_root=tmp_path,
+        v4_only=True,
+        delete_existing=False,
+        admin_token=None,
+    )
+
+    manifest_path = asyncio.run(runner.prepare(args))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["versions"] == ["v4"]
+    assert manifest["executionMode"] == "v4-only"
+    assert manifest["comparisonRunId"] == "v4-only-v4-only-test"
+    assert "v4" in manifest["artifacts"]
+    assert "v2" not in manifest["artifacts"]
+    assert "v3" not in manifest["artifacts"]
 
 
 def test_soft_delete_existing_groups_deduplicates_groups_across_events() -> None:
@@ -484,6 +581,13 @@ def test_report_without_quality_keeps_actual_values_and_omits_ranking(tmp_path: 
 
     assert "Ceiling" in report
     assert "Tight supply raises price pressure." in report
+    assert "비교 범위: **v2/v3/v4 create API**" in report
+    assert "사전 Scenario Group 정리: 미실행" in report
+    assert "### 입력 Event 상세" in report
+    assert "#### 101 · Event A" in report
+    assert "Event Type: Supply / Production" in report
+    assert "Observed Event A fact." in report
+    assert "Event A detailed analysis." in report
     assert "#### Scenario Group 설명" in report
     assert "v2 group description" in report
     assert "#### 시나리오별 Dimension Value" in report
@@ -521,6 +625,36 @@ def test_report_uses_each_versions_available_dimension_and_value_rationale(tmp_p
     assert "가격 압력 기여: bullish contribution" in report
 
 
+def test_report_resolves_v4_label_based_cells(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    response = _response("v4")
+    dimensions = response["data"]["dimensionDefinitions"]
+    rows = response["data"]["table"]["rows"]
+    for row in rows:
+        for dimension in dimensions:
+            dimension_id = dimension["dimensionId"]
+            selected_id = row["cells"].get(dimension_id)
+            selected = next(
+                (value for value in dimension["values"] if value["valueId"] == selected_id),
+                None,
+            )
+            if selected is not None:
+                row["cells"][dimension_id] = selected["label"]
+    artifacts = {
+        "v4": {
+            "transportStatus": "success",
+            "httpStatus": 200,
+            "elapsedMs": 123,
+            "response": response,
+        },
+    }
+
+    report = render_report(manifest, artifacts, {}, None, quality_check=False)
+
+    assert "미정의 Value" not in report
+    assert "| 1 · Ceiling | ceiling | strong_bullish | High | High |" in report
+
+
 def test_version_claim_is_exclusive(tmp_path: Path) -> None:
     claim_path = tmp_path / "v2.running.lock"
 
@@ -530,15 +664,15 @@ def test_version_claim_is_exclusive(tmp_path: Path) -> None:
         runner._claim_version(claim_path, "v2")
 
 
-def test_run_version_sends_v4_global_request_once_and_persists_evidence(
+def test_run_version_sends_v4_only_request_without_v2_v3_barrier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = _manifest(tmp_path)
+    manifest["versions"] = ["v4"]
+    manifest["executionMode"] = "v4-only"
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    for version in ("v2", "v3"):
-        (tmp_path / f"{version}_create_response.json").write_text("{}", encoding="utf-8")
     calls: list[tuple[str, dict[str, Any]]] = []
 
     class FakeResponse:
@@ -585,6 +719,18 @@ def test_run_version_sends_v4_global_request_once_and_persists_evidence(
     assert not (tmp_path / "v4_create_response.running.lock").exists()
 
 
+def test_v4_only_manifest_rejects_v2_execution(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    manifest["versions"] = ["v4"]
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside this manifest's execution scope"):
+        asyncio.run(
+            runner.run_version(argparse.Namespace(manifest=manifest_path, version="v2", timeout=1200)),
+        )
+
+
 def test_v4_requires_v2_v3_artifact_barrier(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     manifest_path = tmp_path / "manifest.json"
@@ -593,6 +739,40 @@ def test_v4_requires_v2_v3_artifact_barrier(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="completed v2/v3 artifacts"):
         asyncio.run(runner.run_version(args))
+
+
+def test_v4_only_report_contains_only_v4_and_skips_relative_judge(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    manifest["versions"] = ["v4"]
+    manifest["executionMode"] = "v4-only"
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    Path(manifest["artifacts"]["v4"]).write_text(
+        json.dumps(
+            {
+                "transportStatus": "success",
+                "outcome": "success",
+                "httpStatus": 200,
+                "elapsedMs": 10,
+                "response": _response("v4"),
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    report_path = asyncio.run(
+        runner.report(argparse.Namespace(manifest=manifest_path, quality_check=True)),
+    )
+
+    report = report_path.read_text(encoding="utf-8")
+    assert "# V4 Multi-Event Scenario API Run" in report
+    assert "실행 범위: **v4 create API only**" in report
+    assert "실행 방식: **v4-only**" in report
+    assert "| v4 | Y | 200 | 40 | 10 | 100 |" in report
+    assert "| v2 |" not in report
+    assert "| v3 |" not in report
+    assert "v4-only 실행은 상대 비교 대상이 없으므로" in report
+    assert not (tmp_path / "comparison_judge_input.json").exists()
 
 
 def test_success_response_must_match_manifest_contract(tmp_path: Path) -> None:
@@ -694,11 +874,21 @@ def test_valid_agent_judge_is_loaded_without_an_api_call(tmp_path: Path) -> None
 
     report = report_path.read_text(encoding="utf-8")
     assert "**절대 점수 최고 버전:** v4" in report
+    assert "### 버전별 절대 점수 단순 평균" in report
+    assert "| v4 | event_consistency 5/5; lng_dimension_quality 5/5;" in report
+    assert "| 5.00/5 | Y |" in report
     assert "### 버전별 잘한 점과 아쉬운 점" in report
     assert "### Pairwise 직접 상대평가" in report
     assert "#### v2 vs v3 — 종합 승자: v3" in report
+    assert "| 비교 기준 | 승자 | 실제 evidence | 반론 | 최종 rationale |" in report
     assert "#### 품질 우선 — v4" in report
     assert "#### 비용·속도 포함 실용 선택 — v2" in report
+    scenario_judge = report.split("### Scenario별 Agent Judge 판단", maxsplit=1)[1]
+    assert "Role / Baseline / Probability" in scenario_judge
+    assert "Supply and demand tighten together." in scenario_judge
+    assert "Dimension 0 = High; Dimension 1 = High; Dimension 2 = -" in scenario_judge
+    assert "Tight supply raises price pressure." in scenario_judge
+    assert "ceiling / N / 20" in scenario_judge
     assert "agent judge pending" not in report
 
 

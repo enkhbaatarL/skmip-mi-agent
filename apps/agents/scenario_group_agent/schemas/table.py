@@ -1,10 +1,11 @@
 """
 화면에 보여지는 Table을 구성하는 schema (DB Table 아님)
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -53,10 +54,11 @@ class ScenarioRow(ApiModel):
     cells: dict[str, Any] = Field(default_factory=dict)
     metrics: ScenarioMetrics | None = None
     baseline_yn: str | None = None
-    global_pressure_band: str | None = None
+    pressure_target: Literal["JKM"] | None = None
+    pressure_band: str | None = None
     scenario_role: str | None = None
     probability_score: Decimal | None = None
-    global_pressure_rationale: str | None = None
+    pressure_rationale: str | None = None
     related_markets: list[RelatedMarket] = Field(default_factory=list)
     signposts: list[SignpostBasePayload] = Field(default_factory=list)
 

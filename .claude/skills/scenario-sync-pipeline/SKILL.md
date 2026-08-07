@@ -1,15 +1,16 @@
 ---
 name: scenario-sync-pipeline
-description: MI Scenario Group Agent API 파이프라인을 실행하고 증적과 보고서를 생성한다. 사용자가 v1·기존·단일 이벤트 create→validation→signpost→confirmation 테스트, eventTypeL2Id별 또는 최근 이벤트 sync 테스트, v2/v3/v4 비교, multi-event·멀티 이벤트·멀티 시나리오 테스트, 이벤트 ID·최신/오래된 순·키워드 기반 이벤트 선택, 버전별 Scenario 품질 비교, comparison_report.md 생성·형식 수정을 요청할 때 사용한다.
+description: MI Scenario Group Agent API 파이프라인을 실행하고 증적과 보고서를 생성한다. 사용자가 v1·기존·단일 이벤트 create→validation→signpost→confirmation 테스트, eventTypeL2Id별 또는 최근 이벤트 sync 테스트, v4 단독 실행, v2/v3/v4 비교, multi-event·멀티 이벤트·멀티 시나리오 테스트, 이벤트 ID·최신/오래된 순·키워드 기반 이벤트 선택, 버전별 Scenario 품질 비교, comparison_report.md 생성·형식 수정을 요청할 때 사용한다.
 ---
 
 # Scenario Sync Pipeline
 
-요청을 먼저 `v1 기존 파이프라인`과 `Multi-Event 버전 비교` 중 하나로 분류한다. 두 흐름을 섞지 않는다.
+요청을 먼저 `v1 기존 파이프라인`, `Multi-Event v4 단독 실행`, `Multi-Event 버전 비교` 중 하나로 분류한다. 세 흐름을 섞지 않는다.
 
 ## 요청 라우팅
 
 - 사용자가 `v1`, 기존 API, 단일 이벤트, 최근 이벤트 sync, event type별 테스트를 요청하면 **v1 기존 파이프라인**을 실행한다.
+- 사용자가 `v4 only`, `v4 단독`, `v4만 실행`을 요청하면 **Multi-Event v4 단독 실행**을 실행한다.
 - 사용자가 `v2/v3/v4 비교`, 둘 이상의 version 비교, `multi-event`, 멀티 이벤트, 멀티 시나리오를 요청하면 **Multi-Event 버전 비교**를 실행한다.
 - version이나 multi-event 의도가 불분명하면 어떤 흐름인지 확인한다.
 
@@ -106,6 +107,45 @@ python tests/manual/test_sync_pipeline_api.py \
 - 지표: `local/output/sync_pipeline_api_test/sync_pipeline_metrics.sqlite3`
 
 최종 보고에 성공 건수, 실패 이벤트와 단계·원인, soft delete/retry 수, 느린 API, SQLite와 Markdown 경로를 포함한다.
+
+## Multi-Event v4 단독 실행
+
+`tests/manual/test_multi_event_scenario_versions.py`를 `prepare --v4-only`,
+`run-version --version v4`, `report` 순서로 실행한다. create API만 실행하고 validation,
+signpost, confirmation은 실행하지 않는다. v2/v3를 먼저 실행하지 않으며 별도 subagent도
+필요하지 않다.
+
+중복 없는 Event 2~5개 선택, 관리자 토큰 로딩, 기존 활성 Scenario Group soft delete,
+timeout 및 동일 POST 재시도 금지 정책은 Multi-Event 버전 비교와 동일하다. 기존 그룹을
+보존하려면 명시적으로 `--no-delete-existing`을 사용한다.
+
+```bash
+python tests/manual/test_multi_event_scenario_versions.py prepare \
+  --v4-only \
+  --agent mi-vm \
+  --event-ids 101 202 \
+  --admin-token "$SCENARIO_GROUP_ADMIN_TOKEN" \
+  --user-id 10603 \
+  --timeout 1200
+
+python tests/manual/test_multi_event_scenario_versions.py run-version \
+  --manifest <manifest.json> \
+  --version v4 \
+  --timeout 1200
+
+python tests/manual/test_multi_event_scenario_versions.py report \
+  --manifest <manifest.json> \
+  --quality-check true
+```
+
+`--v4-only` manifest는 `versions=["v4"]`, `executionMode="v4-only"`를 고정한다.
+이 manifest에서는 v2/v3 실행을 거부하고 v4의 v2/v3 artifact barrier를 적용하지 않는다.
+나중에 v2/v3/v4 비교가 필요하면 같은 manifest나 `comparisonRunId`를 재사용하지 말고 새
+`prepare` batch를 만든다.
+
+`--quality-check true`는 v4 결정적 품질검사를 실행하지만 비교 대상이 없으므로 Agent Judge
+순위, 우수 version, 품질·실용 추천은 만들지 않는다. `false`이면 API 결과와 실제 Scenario
+보고서만 생성한다.
 
 ## Multi-Event v2/v3/v4 비교
 
@@ -303,5 +343,7 @@ driver가 Scenario cell 조합에 직접 반영되지 않았다는 의미를 명
 - `comparison_judge_input.json` (`quality-check=true`일 때)
 - `comparison_judge.json` (`quality-check=true`일 때만)
 - `comparison_report.md`
+
+v4-only batch에는 v2/v3 response artifact와 Agent Judge artifact가 생성되지 않는다.
 
 보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group 제목·요약·설명, dimension 비교, label 기반 Scenario×dimension value 표, Scenario별 dimension/value 선택 근거, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 절대 점수, version별 잘한 점·아쉬운 점, 모든 version pair의 직접 비교와 반론, 품질 우선 추천, 비용·속도 포함 실용 추천을 포함한다.

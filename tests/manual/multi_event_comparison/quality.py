@@ -72,7 +72,7 @@ def _unique_cells_and_bands(rows: list[dict[str, Any]]) -> QualityCheck:
             offenders.append(f"{_row_id(row)}: empty cells")
         else:
             combinations.append(tuple(sorted((str(key), repr(value)) for key, value in cells.items())))
-        band = str(_field(row, "globalPressureBand", "global_pressure_band") or "")
+        band = str(_field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band") or "")
         if not band:
             offenders.append(f"{_row_id(row)}: missing pressure band")
         else:
@@ -96,7 +96,7 @@ def _roles_and_extrema(rows: list[dict[str, Any]]) -> QualityCheck:
     for row in rows:
         role = str(_field(row, "scenarioRole", "scenario_role") or "").lower()
         by_role.setdefault(role, []).append(row)
-        band = str(_field(row, "globalPressureBand", "global_pressure_band") or "")
+        band = str(_field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band") or "")
         if band in _PRESSURE_ORDER:
             ranked_rows.append((_PRESSURE_ORDER[band], row))
     offenders.extend(
@@ -115,7 +115,7 @@ def _roles_and_extrema(rows: list[dict[str, Any]]) -> QualityCheck:
     ):
         offenders.append("ceiling is not the highest generated pressure band")
     for row in by_role.get("mixed", []):
-        band = str(_field(row, "globalPressureBand", "global_pressure_band") or "")
+        band = str(_field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band") or "")
         rank = _PRESSURE_ORDER.get(band)
         if rank is not None and rank in {0, 4}:
             offenders.append(f"{_row_id(row)}: mixed uses extreme band {band}")
@@ -183,15 +183,34 @@ def _event_lineage(  # noqa: C901
 
 
 def _required_rationales(rows: list[dict[str, Any]]) -> QualityCheck:
-    offenders = [
-        _row_id(row)
-        for row in rows
-        if not str(_field(row, "globalPressureRationale", "global_pressure_rationale") or "").strip()
-    ]
+    offenders: list[str] = []
+    for row in rows:
+        rationale = str(
+            _field(
+                row,
+                "pressureRationale",
+                "pressure_rationale",
+                "globalPressureRationale",
+                "global_pressure_rationale",
+            )
+            or "",
+        ).strip()
+        target = _field(row, "pressureTarget", "pressure_target")
+        is_legacy_row = any(
+            name in row
+            for name in (
+                "globalPressureBand",
+                "global_pressure_band",
+                "globalPressureRationale",
+                "global_pressure_rationale",
+            )
+        )
+        if not rationale or (not is_legacy_row and target != "JKM"):
+            offenders.append(_row_id(row))
     return _check(
         "M-07",
         not offenders,
-        "Every Scenario must expose a non-empty global pressure rationale.",
+        "Every current Scenario must target JKM and expose a non-empty JKM pressure rationale; legacy rows are supported.",
         offenders,
     )
 
@@ -199,15 +218,16 @@ def _required_rationales(rows: list[dict[str, Any]]) -> QualityCheck:
 def _pressure_band_coverage(data: dict[str, Any], rows: list[dict[str, Any]]) -> QualityCheck:
     expected = set(_PRESSURE_ORDER)
     generated = {
-        str(_field(row, "globalPressureBand", "global_pressure_band"))
+        str(_field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band"))
         for row in rows
-        if _field(row, "globalPressureBand", "global_pressure_band")
+        if _field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band")
     }
     diagnostics = data.get("generationDiagnostics") if isinstance(data.get("generationDiagnostics"), dict) else {}
     excluded = {
-        str(_field(item, "globalPressureBand", "global_pressure_band"))
+        str(_field(item, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band"))
         for item in diagnostics.get("excludedCandidates", [])
-        if isinstance(item, dict) and _field(item, "globalPressureBand", "global_pressure_band")
+        if isinstance(item, dict)
+        and _field(item, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band")
     }
     unrepresented = {str(band) for band in diagnostics.get("unrepresentedPressureBands", []) if band}
     declared = set(diagnostics.get("targetPressureBands", []))

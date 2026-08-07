@@ -17,8 +17,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.flow im
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     V4DimensionDefinition,
     V4DimensionValueDefinition,
-    V4EventGrounding,
-    V4LeverMapping,
+    V4LeverState,
 )
 from apps.common.configs.config import Settings
 from apps.persistence.event.schema import EventPayload
@@ -109,7 +108,7 @@ def test_multi_event_prepare_preserves_request_event_order() -> None:
     assert [event["mi_event_id"] for event in prepare_group.call_args.kwargs["events"]] == [202, 101]
 
 
-def test_v4_sync_requires_run_id_and_keeps_compact_event_grounding() -> None:
+def test_v4_sync_requires_run_id_and_keeps_impact_path_lineage() -> None:
     payload = V4MultiEventCreateScenariosSyncIn(
         mi_event_ids=[101, 202],
         user_id=7,
@@ -119,37 +118,55 @@ def test_v4_sync_requires_run_id_and_keeps_compact_event_grounding() -> None:
         dimension_id="supply_pressure",
         label="공급 압력",
         description="선택 Event의 공급 영향을 결합한다.",
+        source_event_ids=[101, 202],
+        source_impact_path_ids=["path_101", "path_202"],
+        source_uncertainty_ids=["u_101", "u_202"],
+        primary_lever_code="liquefaction_availability",
+        primary_impact_lever_id=6,
         dimension_type="magnitude",
         value_kind="categorical",
-        event_groundings=[
-            V4EventGrounding(event_id=101, observed_basis="수요 증가", uncertainty="지속 기간"),
-            V4EventGrounding(event_id=202, observed_basis="공급 감소", uncertainty="회복 속도"),
-        ],
-        lever_mappings=[
-            V4LeverMapping(
-                lever_code="liquefaction_availability",
-                mapping_rationale="공급 가용성 경로",
-            ),
-        ],
+        model_support_status="partial",
         values=[
             V4DimensionValueDefinition(
                 value_id="low",
                 label="낮음",
-                global_pressure_contribution="하방",
+                lever_states=[
+                    V4LeverState(
+                        impact_lever_id=6,
+                        lever_code="liquefaction_availability",
+                        direction="recover",
+                        level="high_availability",
+                        scope="US Gulf",
+                        time_window="2주",
+                    ),
+                ],
+                pressure_contribution="bearish",
                 assumption_rationale="빠른 회복",
             ),
             V4DimensionValueDefinition(
                 value_id="high",
                 label="높음",
-                global_pressure_contribution="상방",
+                lever_states=[
+                    V4LeverState(
+                        impact_lever_id=6,
+                        lever_code="liquefaction_availability",
+                        direction="disrupt",
+                        level="low_availability",
+                        scope="US Gulf",
+                        time_window="6주 이상",
+                    ),
+                ],
+                pressure_contribution="bullish",
                 assumption_rationale="회복 지연",
             ),
         ],
     )
 
     assert payload.comparison_run_id == "compare-1"
-    assert [grounding.event_id for grounding in definition.event_groundings] == [101, 202]
-    assert "source_refs" not in definition.model_dump()
+    assert definition.source_event_ids == [101, 202]
+    assert definition.source_impact_path_ids == ["path_101", "path_202"]
+    assert "event_groundings" not in definition.model_dump()
+    assert "lever_mappings" not in definition.model_dump()
     with pytest.raises(ValueError, match="comparisonRunId"):
         V4MultiEventCreateScenariosSyncIn(
             mi_event_ids=[101, 202],

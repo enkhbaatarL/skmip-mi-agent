@@ -344,16 +344,16 @@ class ScenarioCandidate(ApiModel):
     title: str = Field(min_length=1)
     narrative: str = Field(min_length=1)
     dimension_values: ScenarioDimensionValues
-    global_pressure_band: PressureBand
+    pressure_band: PressureBand
     probability_score: int = Field(ge=0, le=100)
-    global_pressure_rationale: str = Field(min_length=1)
+    pressure_rationale: str = Field(min_length=1)
     mixed_factors: bool = False
     scenario_role: Literal["floor", "ceiling", "mixed"] | None = None
     baseline_yn: Literal["Y", "N"] = "N"
 
 
 class ExcludedGenerationCandidate(ApiModel):
-    global_pressure_band: PressureBand
+    pressure_band: PressureBand
     reason_code: Literal[
         "LOW_PROBABILITY",
         "FACT_INCONSISTENCY",
@@ -416,7 +416,7 @@ class V2DimensionValueDefinition(ApiModel):
 
     value_id: str = Field(min_length=1, max_length=120)
     label: str = Field(min_length=1, max_length=120)
-    global_pressure_contribution: Literal["bullish", "balanced", "bearish"]
+    pressure_contribution: Literal["bullish", "balanced", "bearish"]
 
 
 class V2SelectedDimension(ApiModel):
@@ -439,9 +439,9 @@ class V2ScenarioCandidate(ApiModel):
     title: str = Field(min_length=1, max_length=120)
     narrative: str = Field(min_length=1, max_length=800)
     dimension_values: ScenarioDimensionValues
-    global_pressure_band: PressureBand
+    pressure_band: PressureBand
     probability_score: int = Field(ge=0, le=100)
-    global_pressure_rationale: str = Field(min_length=1, max_length=500)
+    pressure_rationale: str = Field(min_length=1, max_length=500)
 
 
 class V2MultiEventGenerationResult(ApiModel):
@@ -562,7 +562,7 @@ def validate_v2_fact_consistency(
             )
 
     for scenario in scenarios or []:
-        scenario_text = " ".join([scenario.title, scenario.narrative, scenario.global_pressure_rationale])
+        scenario_text = " ".join([scenario.title, scenario.narrative, scenario.pressure_rationale])
         if _contains_marker(scenario_text, _V2_FACT_REVERSAL_MARKERS):
             raise ValueError(
                 f"v2 fact reversal: Scenario negates an observed Event state: {scenario.title}",
@@ -599,12 +599,133 @@ class V3SourceReference(ApiModel):
         return self
 
 
+class V3TemplateDimensionSelectionDraft(ApiModel):
+    """LLM-selected Event/Template pair before server-side hydration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    scenario_dimension_template_id: int = Field(gt=0)
+    dim_key: str = Field(min_length=1)
+    relevance_type: Literal[
+        "direct_event_fact",
+        "lng_impact_path",
+        "interaction_driver",
+    ]
+    observed_basis: str = Field(min_length=1)
+    selection_rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_text(self) -> V3TemplateDimensionSelectionDraft:
+        self.dim_key = self.dim_key.strip()
+        self.observed_basis = self.observed_basis.strip()
+        self.selection_rationale = self.selection_rationale.strip()
+        if not self.dim_key or not self.observed_basis or not self.selection_rationale:
+            raise ValueError("Template dimension selection text fields must not be blank")
+        return self
+
+
+class V3TemplateDimensionSelection(V3TemplateDimensionSelectionDraft):
+    """Validated selection hydrated from the Event-owned source Template."""
+
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    required: bool
+    value_enums: list[str]
+
+
+class V3DimensionSourceMapping(ApiModel):
+    """Internal Event/Template lineage emitted by the v3 dimension LLM stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    scenario_dimension_template_id: int = Field(gt=0)
+    dim_key: str = Field(min_length=1)
+    composition_rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_mapping(self) -> V3DimensionSourceMapping:
+        self.dim_key = self.dim_key.strip()
+        self.composition_rationale = self.composition_rationale.strip()
+        if not self.dim_key or not self.composition_rationale:
+            raise ValueError("sourceMapping text fields must not be blank")
+        return self
+
+
+class V3TemplateValueAnchor(ApiModel):
+    """Template enum meaning used to derive a generated composite value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(gt=0)
+    scenario_dimension_template_id: int = Field(gt=0)
+    dim_key: str = Field(min_length=1)
+    template_value: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _normalize_anchor(self) -> V3TemplateValueAnchor:
+        self.dim_key = self.dim_key.strip()
+        self.template_value = self.template_value.strip()
+        if not self.dim_key or not self.template_value:
+            raise ValueError("templateValueAnchor text fields must not be blank")
+        return self
+
+
+class V3DimensionValueDraft(ApiModel):
+    """Internal v3 value with derivation evidence used during validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    derivation_rationale: str = Field(min_length=1)
+    pressure_contribution: Literal["bullish", "balanced", "bearish"]
+    template_value_anchors: list[V3TemplateValueAnchor]
+
+    @model_validator(mode="after")
+    def _normalize_value(self) -> V3DimensionValueDraft:
+        self.value_id = self.value_id.strip()
+        self.label = self.label.strip()
+        self.description = self.description.strip()
+        self.derivation_rationale = self.derivation_rationale.strip()
+        if not self.value_id or not self.label or not self.description or not self.derivation_rationale:
+            raise ValueError("v3 dimension value text fields must not be blank")
+        return self
+
+
+class V3CompositeDimensionDraft(ApiModel):
+    """Internal composite dimension before compact public lineage is projected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimension_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    source_mappings: list[V3DimensionSourceMapping] = Field(min_length=1)
+    values: list[V3DimensionValueDraft] = Field(min_length=3, max_length=5)
+
+    @model_validator(mode="after")
+    def _normalize_dimension(self) -> V3CompositeDimensionDraft:
+        self.dimension_id = self.dimension_id.strip()
+        self.label = self.label.strip()
+        self.description = self.description.strip()
+        self.rationale = self.rationale.strip()
+        if not self.dimension_id or not self.label or not self.description or not self.rationale:
+            raise ValueError("v3 composite dimension text fields must not be blank")
+        return self
+
+
 class V3DimensionValueDefinition(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     value_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
-    global_pressure_contribution: Literal["bullish", "balanced", "bearish"]
+    pressure_contribution: Literal["bullish", "balanced", "bearish"]
+    description: str | None = None
+    derivation_rationale: str | None = None
 
 
 class V3DimensionDefinition(ApiModel):
@@ -655,22 +776,21 @@ class V3MultiEventGenerationResult(MultiEventGenerationResult):
 
 
 class V3AnalysisDesignResult(ApiModel):
-    """v3 cross-Event analysis and composite-dimension response."""
+    """v3 Event/Template analysis response before server-side hydration."""
 
     model_config = ConfigDict(extra="forbid")
 
     event_shocks: list[V3EventShock] = Field(min_length=2, max_length=5)
-    interactions: list[EventInteraction] = Field(default_factory=list)
-    dimension_definitions: list[V3DimensionDefinition] = Field(min_length=3, max_length=6)
+    interactions: list[EventInteraction]
+    template_dimension_selections: list[V3TemplateDimensionSelectionDraft] = Field(min_length=2, max_length=20)
 
 
 class V3DimensionDesignResult(ApiModel):
-    """v3 interaction and composite-dimension design response."""
+    """v3 composite-dimension draft with internal source/enum evidence."""
 
     model_config = ConfigDict(extra="forbid")
 
-    interactions: list[EventInteraction] = Field(default_factory=list)
-    dimension_definitions: list[V3DimensionDefinition] = Field(min_length=3, max_length=6)
+    dimension_definitions: list[V3CompositeDimensionDraft] = Field(min_length=3, max_length=6)
 
 
 class V3ScenarioSynthesisResult(ApiModel):
@@ -1419,11 +1539,11 @@ def _validate_pressure_aggregate_order(
         for scenario in scenarios
     ]
     for scenario, score in scored:
-        if scenario.global_pressure_band == "strong_bullish" and score <= 0:
+        if scenario.pressure_band == "strong_bullish" and score <= 0:
             raise ValueError(
                 "strong_bullish Scenario requires a positive aggregate pressure score",
             )
-        if scenario.global_pressure_band == "strong_bearish" and score >= 0:
+        if scenario.pressure_band == "strong_bearish" and score >= 0:
             raise ValueError(
                 "strong_bearish Scenario requires a negative aggregate pressure score",
             )
@@ -1436,8 +1556,8 @@ def _validate_pressure_aggregate_order(
             raise ValueError(
                 "Scenario aggregate pressure contributions must be "
                 "nondecreasing from strong_bearish to strong_bullish: "
-                f"{higher.global_pressure_band}={higher_score}, "
-                f"{lower.global_pressure_band}={lower_score}",
+                f"{higher.pressure_band}={higher_score}, "
+                f"{lower.pressure_band}={lower_score}",
             )
 
 
@@ -1451,15 +1571,15 @@ def _finalize_scenario_candidates(
 ) -> list[ScenarioCandidate]:
     sorted_scenarios = sorted(
         scenarios,
-        key=lambda scenario: PRESSURE_RANK[scenario.global_pressure_band],
+        key=lambda scenario: PRESSURE_RANK[scenario.pressure_band],
         reverse=True,
     )
     if not 3 <= len(sorted_scenarios) <= 5:
         raise ValueError("final scenario count must be between 3 and 5")
-    pressure_bands = [scenario.global_pressure_band for scenario in sorted_scenarios]
+    pressure_bands = [scenario.pressure_band for scenario in sorted_scenarios]
     if len(set(pressure_bands)) != len(pressure_bands):
-        raise ValueError("final scenarios must have unique globalPressureBand values")
-    excluded_bands = [candidate.global_pressure_band for candidate in excluded_candidates]
+        raise ValueError("final scenarios must have unique pressureBand values")
+    excluded_bands = [candidate.pressure_band for candidate in excluded_candidates]
     if set(pressure_bands) & set(excluded_bands):
         raise ValueError("a pressure band cannot be both generated and excluded")
     if require_pressure_partition and set(pressure_bands) | set(excluded_bands) != set(PRESSURE_BANDS):
@@ -1475,8 +1595,8 @@ def _finalize_scenario_candidates(
         for dimension in dimensions
     }
     contribution_by_value = {
-        dimension.dimension_id: {value.value_id: value.global_pressure_contribution for value in dimension.values}
-        | {value.label: value.global_pressure_contribution for value in dimension.values}
+        dimension.dimension_id: {value.value_id: value.pressure_contribution for value in dimension.values}
+        | {value.label: value.pressure_contribution for value in dimension.values}
         for dimension in dimensions
     }
     seen_combinations: set[tuple[tuple[str, str], ...]] = set()
@@ -1509,7 +1629,7 @@ def _finalize_scenario_candidates(
 
     ranked = sorted(
         range(len(sorted_scenarios)),
-        key=lambda index: PRESSURE_RANK[sorted_scenarios[index].global_pressure_band],
+        key=lambda index: PRESSURE_RANK[sorted_scenarios[index].pressure_band],
     )
     if len(ranked) < 2:
         raise ValueError("floor and ceiling roles require at least two scenarios")
@@ -1522,7 +1642,7 @@ def _finalize_scenario_candidates(
         min(
             interior,
             key=lambda index: abs(
-                PRESSURE_RANK[sorted_scenarios[index].global_pressure_band] - PRESSURE_RANK["balanced"],
+                PRESSURE_RANK[sorted_scenarios[index].pressure_band] - PRESSURE_RANK["balanced"],
             ),
         )
         if interior
@@ -1630,7 +1750,7 @@ def finalize_v2_generation_result(
 
     scenario_candidates: list[ScenarioCandidate] = []
     contributions = {
-        dimension.dimension_id: {value.value_id: value.global_pressure_contribution for value in dimension.values}
+        dimension.dimension_id: {value.value_id: value.pressure_contribution for value in dimension.values}
         for dimension in dimensions
     }
     for scenario in result.scenarios:
@@ -1643,9 +1763,9 @@ def finalize_v2_generation_result(
                 title=scenario.title,
                 narrative=scenario.narrative,
                 dimension_values=scenario.dimension_values,
-                global_pressure_band=scenario.global_pressure_band,
+                pressure_band=scenario.pressure_band,
                 probability_score=scenario.probability_score,
-                global_pressure_rationale=scenario.global_pressure_rationale,
+                pressure_rationale=scenario.pressure_rationale,
                 mixed_factors={"bullish", "bearish"} <= scenario_contributions,
             ),
         )
@@ -1656,7 +1776,7 @@ def finalize_v2_generation_result(
         dimensions=dimensions,
         require_pressure_partition=False,
     )
-    represented_bands = {scenario.global_pressure_band for scenario in finalized_scenarios}
+    represented_bands = {scenario.pressure_band for scenario in finalized_scenarios}
     unrepresented_bands = [band for band in PRESSURE_BANDS if band not in represented_bands]
 
     unselected_refs: list[V2SourceReference] = []
@@ -1985,15 +2105,13 @@ def finalize_generation_result(
                 f"multi-event dimensions must define 3 to 5 generated values: {dimension.dimension_id}",
             )
         for value in dimension.values:
-            if value.global_pressure_contribution not in {
+            if value.pressure_contribution not in {
                 "bullish",
                 "balanced",
                 "bearish",
             }:
                 raise ValueError(
-                    "dimension values require a valid "
-                    "globalPressureContribution: "
-                    f"{dimension.dimension_id}={value.value_id}",
+                    f"dimension values require a valid pressureContribution: {dimension.dimension_id}={value.value_id}",
                 )
             if not value.source_assignments:
                 raise ValueError(

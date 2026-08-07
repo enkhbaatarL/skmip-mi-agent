@@ -30,10 +30,15 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     V2MultiEventGenerationResult,
     V2ScenarioSynthesisResult,
     V3AnalysisDesignResult,
+    V3CompositeDimensionDraft,
     V3DimensionDefinition,
     V3DimensionDesignResult,
+    V3DimensionSourceMapping,
+    V3DimensionValueDraft,
     V3MultiEventGenerationResult,
     V3ScenarioSynthesisResult,
+    V3TemplateDimensionSelectionDraft,
+    V3TemplateValueAnchor,
     finalize_generation_result as _finalize_generation_result,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
@@ -67,6 +72,7 @@ from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation im
     build_multi_event_user_prompt,
     build_scenario_synthesis_user_prompt,
     build_v3_analysis_design_user_prompt,
+    build_v3_dimension_design_user_prompt,
 )
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
     MULTI_EVENT_COMPAT_SYSTEM_PROMPT,
@@ -182,7 +188,7 @@ def _dimension(
             {
                 "valueId": value_id,
                 "label": label,
-                "globalPressureContribution": contribution,
+                "pressureContribution": contribution,
             }
             for value_id, label, contribution in (
                 ("low", "Event별 완화", "bearish"),
@@ -216,7 +222,9 @@ def _compact_dimension(
             {
                 "valueId": value_id,
                 "label": label,
-                "globalPressureContribution": contribution,
+                "pressureContribution": contribution,
+                "description": f"{label} 상태가 구체적으로 전개된다.",
+                "derivationRationale": "원본 Template enum 의미를 Event 맥락에 맞게 결합했다.",
             }
             for value_id, label, contribution in (
                 ("low", "Event별 완화", "bearish"),
@@ -297,7 +305,7 @@ def _result(
         "eventShocks": [
             {
                 "eventId": event_id,
-                "shockSummary": "확인된 수급 충격이 글로벌 LNG 가격 압력을 변화시킬 수 있다.",
+                "shockSummary": "확인된 수급 충격이 JKM 가격 압력을 변화시킬 수 있다.",
             }
             for event_id in EVENT_IDS
         ],
@@ -306,9 +314,9 @@ def _result(
                 "title": "상단",
                 "narrative": "공동 전제의 상승 압력이 심화된다.",
                 "dimensionValues": {key: "high" for key in dimension_ids},
-                "globalPressureBand": "strong_bullish",
+                "pressureBand": "strong_bullish",
                 "probabilityScore": 20,
-                "globalPressureRationale": "공급·수요 압력이 가격을 높인다.",
+                "pressureRationale": "공급·수요 압력이 가격을 높인다.",
             },
             {
                 "title": "혼합",
@@ -317,18 +325,18 @@ def _result(
                     key: "high" if index == 0 else ("low" if index == 1 else "mid")
                     for index, key in enumerate(dimension_ids)
                 },
-                "globalPressureBand": "balanced",
+                "pressureBand": "balanced",
                 "probabilityScore": 60,
-                "globalPressureRationale": "상승과 하락 요인이 상쇄된다.",
+                "pressureRationale": "상승과 하락 요인이 상쇄된다.",
                 **({"mixedFactors": True} if strategy == "multi_event_composite_dimensions" else {}),
             },
             {
                 "title": "하단",
                 "narrative": "완화와 대체 공급이 가격 압력을 낮춘다.",
                 "dimensionValues": {key: "low" for key in dimension_ids},
-                "globalPressureBand": "strong_bearish",
+                "pressureBand": "strong_bearish",
                 "probabilityScore": 20,
-                "globalPressureRationale": "완화 경로가 우세하다.",
+                "pressureRationale": "완화 경로가 우세하다.",
             },
         ],
     }
@@ -347,12 +355,12 @@ def _result(
                 "dimensionDefinitions": dimensions,
                 "excludedCandidates": [
                     {
-                        "globalPressureBand": "bullish",
+                        "pressureBand": "bullish",
                         "reasonCode": "NOT_INDEPENDENT",
                         "reason": "상단 후보와 독립적인 검토 가치가 부족하다.",
                     },
                     {
-                        "globalPressureBand": "bearish",
+                        "pressureBand": "bearish",
                         "reasonCode": "LOW_PROBABILITY",
                         "reason": "Event 사실을 유지한 현실적 조합의 가능성이 낮다.",
                     },
@@ -360,6 +368,122 @@ def _result(
             },
         )
     return result_schema.model_validate(payload)
+
+
+def _v3_analysis_result() -> V3AnalysisDesignResult:
+    aggregate = _result(strategy="multi_event_composite_dimensions")
+    selections = [
+        (101, 81, "tightness"),
+        (101, 81, "duration"),
+        (101, 81, "intensity"),
+        (202, 121, "tightness"),
+        (202, 121, "recovery"),
+        (202, 121, "competition"),
+    ]
+    return V3AnalysisDesignResult(
+        event_shocks=aggregate.event_shocks,
+        interactions=aggregate.interactions,
+        template_dimension_selections=[
+            V3TemplateDimensionSelectionDraft(
+                event_id=event_id,
+                scenario_dimension_template_id=template_id,
+                dim_key=dim_key,
+                relevance_type="direct_event_fact",
+                observed_basis=f"Event {event_id}에서 {dim_key} 관련 사실이 관측됐다.",
+                selection_rationale="현재 Event 사실과 LNG 가격 영향 경로에 직접 연결된다.",
+            )
+            for event_id, template_id, dim_key in selections
+        ],
+    )
+
+
+def _v3_dimension_design_result() -> V3DimensionDesignResult:
+    aggregate = _result(strategy="multi_event_composite_dimensions")
+    event_for_ref = {(81, "tightness"): 101, (121, "tightness"): 202}
+    enum_by_value = {"low": "낮음", "mid": "중간", "high": "높음"}
+    dimensions: list[V3CompositeDimensionDraft] = []
+    for public_dimension in aggregate.dimension_definitions:
+        mappings = [
+            V3DimensionSourceMapping(
+                event_id=event_for_ref.get(
+                    (source.scenario_dimension_template_id, source.dim_key),
+                    public_dimension.source_event_ids[0],
+                ),
+                scenario_dimension_template_id=source.scenario_dimension_template_id,
+                dim_key=source.dim_key,
+                composition_rationale="선택 후보가 합성 축의 상태를 구체화한다.",
+            )
+            for source in public_dimension.source_refs
+        ]
+        dimensions.append(
+            V3CompositeDimensionDraft(
+                dimension_id=public_dimension.dimension_id,
+                label=public_dimension.label,
+                description=public_dimension.description,
+                rationale=public_dimension.rationale,
+                source_mappings=mappings,
+                values=[
+                    V3DimensionValueDraft(
+                        value_id=value.value_id,
+                        label=value.label,
+                        description=value.description or "구체적 상태 설명",
+                        derivation_rationale=value.derivation_rationale or "enum 의미 결합 근거",
+                        pressure_contribution=value.pressure_contribution,
+                        template_value_anchors=[
+                            V3TemplateValueAnchor(
+                                event_id=mapping.event_id,
+                                scenario_dimension_template_id=mapping.scenario_dimension_template_id,
+                                dim_key=mapping.dim_key,
+                                template_value=enum_by_value[value.value_id],
+                            )
+                            for mapping in mappings
+                        ],
+                    )
+                    for value in public_dimension.values
+                ],
+            ),
+        )
+    return V3DimensionDesignResult(dimension_definitions=dimensions)
+
+
+def _v3_generation_state() -> MultiEventGenerationState:
+    template_dimensions = {
+        81: ["tightness", "duration", "intensity"],
+        121: ["tightness", "recovery", "competition"],
+    }
+    return MultiEventGenerationState(
+        scenario_group=ScenarioGroupPayload(
+            scenario_group_id=10,
+            api_version="v3",
+            generation_strategy="multi_event_composite_dimensions",
+        ),
+        events=[
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        templates=[
+            ScenarioPipelineTemplate(
+                scenario_dimension_template_id=template_id,
+                event_type_l2_id=event_type_id,
+                template_checksum=f"checksum-{event_type_id}",
+                dimensions=[
+                    {
+                        "dim_key": dim_key,
+                        "label": f"{dim_key} 원본 라벨",
+                        "description": f"{dim_key} 원본 설명",
+                        "required": index == 0,
+                        "value_enums": ["낮음", "중간", "높음"],
+                    }
+                    for index, dim_key in enumerate(template_dimensions[template_id])
+                ],
+            )
+            for template_id, event_type_id in ((81, 8), (121, 12))
+        ],
+        api_version="v3",
+        generation_strategy="multi_event_composite_dimensions",
+        comparison_run_id="compare-v3",
+        user_id=7,
+    )
 
 
 def test_multi_event_request_requires_two_to_five_unique_events() -> None:
@@ -466,7 +590,7 @@ def test_v2_schema_exposes_only_compact_event_and_dimension_fields() -> None:
     assert set(payload["selectedDimensions"][0]["values"][0]) == {
         "valueId",
         "label",
-        "globalPressureContribution",
+        "pressureContribution",
     }
 
 
@@ -579,7 +703,9 @@ def test_multi_event_generation_schema_is_openai_strict_compatible(
         assert set(definitions["V3DimensionValueDefinition"]["properties"]) == {
             "valueId",
             "label",
-            "globalPressureContribution",
+            "pressureContribution",
+            "description",
+            "derivationRationale",
         }
         scenario_definition = definitions["ScenarioCandidate"]
     assert scenario_definition["properties"]["dimensionValues"]["type"] == "array"
@@ -600,12 +726,7 @@ def test_v2_schema_converts_strict_wire_scenario_cells_to_domain_map() -> None:
 
 
 def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
-    aggregate = _result(strategy="multi_event_composite_dimensions")
-    valid_analysis = V3AnalysisDesignResult(
-        event_shocks=aggregate.event_shocks,
-        interactions=aggregate.interactions,
-        dimension_definitions=aggregate.dimension_definitions,
-    )
+    valid_analysis = _v3_analysis_result()
     invalid_response = MIBaseError(
         multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
         detail="dimensionDefinitions is invalid",
@@ -630,14 +751,10 @@ def test_initial_schema_validation_failure_enters_feedback_retry_loop() -> None:
     ):
         first = asyncio.run(multi_event_nodes.AnalyzeV3EventsNode().run(state))
         state = state.model_copy(update=first)
-        assert multi_event_nodes.route_after_dimensions(state) == "analyze_v3_events"
+        assert multi_event_nodes.route_after_v3_analysis(state) == "analyze_v3_events"
         second = asyncio.run(multi_event_nodes.AnalyzeV3EventsNode().run(state))
 
-    assert second["dimension_draft"] == V3DimensionDesignResult(
-        interactions=aggregate.interactions,
-        dimension_definitions=aggregate.dimension_definitions,
-    )
-    assert second["event_shocks"] == aggregate.event_shocks
+    assert second["analysis_draft"] == valid_analysis
     assert invoke.await_count == 2
     retry_prompt = invoke.await_args_list[1].kwargs["user_prompt"]
     assert "dimensionDefinitions" in retry_prompt
@@ -669,18 +786,18 @@ def test_v2_semantic_validation_stops_after_three_graph_attempts() -> None:
     assert "selectedDimensions" in invoke.await_args_list[1].kwargs["user_prompt"]
 
 
-def test_v3_langgraph_uses_analysis_design_and_scenario_calls() -> None:
+def test_v3_langgraph_uses_three_independent_llm_stages() -> None:
     aggregate = _result(strategy="multi_event_composite_dimensions")
+    analysis = _v3_analysis_result()
+    dimension_design = _v3_dimension_design_result()
     calls: list[str] = []
 
     async def invoke_stage(*, output_schema: type[object], user_prompt: str, **_kwargs: object) -> object:
         calls.append(output_schema.__name__)
         if output_schema is V3AnalysisDesignResult:
-            return V3AnalysisDesignResult(
-                event_shocks=aggregate.event_shocks,
-                interactions=aggregate.interactions,
-                dimension_definitions=aggregate.dimension_definitions,
-            )
+            return analysis
+        if output_schema is V3DimensionDesignResult:
+            return dimension_design
         return V3ScenarioSynthesisResult(
             scenario_group_title=aggregate.scenario_group_title,
             scenario_group_description=aggregate.scenario_group_description,
@@ -739,11 +856,263 @@ def test_v3_langgraph_uses_analysis_design_and_scenario_calls() -> None:
     multi_event_flow.get_compiled_graph.cache_clear()
 
     assert calls.count("V3AnalysisDesignResult") == 1
+    assert calls.count("V3DimensionDesignResult") == 1
     assert calls.count("V3ScenarioSynthesisResult") == 1
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert final_state["analysis_attempt"] == 1
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
+    diagnostics = final_state["generation_diagnostics"]
+    assert len(diagnostics.template_dimension_selections) == 6
+    unused = next(
+        selection for selection in diagnostics.template_dimension_selections if selection.dim_key == "intensity"
+    )
+    assert unused.label == "intensity"
+    assert unused.value_enum_examples == ["낮음", "중간", "높음"]
+    assert unused.used_in_dimension_ids == []
+    persisted_diagnostics = persist.call_args.kwargs["generation_diagnostics"]
+    assert "template_dimension_selections" in persisted_diagnostics
     persist.assert_called_once()
+
+
+@pytest.mark.parametrize("schema", [V3AnalysisDesignResult, V3DimensionDesignResult, V3ScenarioSynthesisResult])
+def test_each_v3_llm_stage_schema_is_openai_strict_compatible(schema: type[object]) -> None:
+    parameters = pydantic_function_tool(schema)["function"]["parameters"]
+    invalid_objects: list[str] = []
+
+    def inspect_schema(value: object, path: str = "$") -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                properties = value.get("properties", {})
+                if value.get("additionalProperties") is not False:
+                    invalid_objects.append(f"{path}: additionalProperties")
+                if set(value.get("required", [])) != set(properties):
+                    invalid_objects.append(f"{path}: required")
+            for key, child in value.items():
+                inspect_schema(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                inspect_schema(child, f"{path}[{index}]")
+
+    inspect_schema(parameters)
+
+    assert invalid_objects == []
+
+
+def test_v3_analysis_hydrates_only_event_owned_template_candidates() -> None:
+    state = _v3_generation_state().model_copy(update={"analysis_draft": _v3_analysis_result()})
+
+    update = multi_event_nodes.validate_v3_analysis_design(state)
+
+    selections = update["template_dimension_selections"]
+    first = selections[0]
+    assert first.label == "tightness 원본 라벨"
+    assert first.description == "tightness 원본 설명"
+    assert first.required is True
+    assert first.value_enums == ["낮음", "중간", "높음"]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda items: setattr(items[0], "event_id", 202), "does not belong"),
+        (lambda items: setattr(items[0], "scenario_dimension_template_id", 999), "does not belong"),
+        (lambda items: items.append(items[0]), "duplicate"),
+        (
+            lambda items: items.__setitem__(slice(None), [item for item in items if item.event_id != 202]),
+            "without a Template dimension selection",
+        ),
+    ],
+)
+def test_v3_analysis_rejects_invalid_template_candidate_sets(
+    mutate: object,
+    message: str,
+) -> None:
+    analysis = _v3_analysis_result().model_copy(deep=True)
+    mutate(analysis.template_dimension_selections)  # type: ignore[operator]
+    state = _v3_generation_state().model_copy(update={"analysis_draft": analysis})
+
+    update = multi_event_nodes.validate_v3_analysis_design(state)
+
+    assert message in update["analysis_error"]
+    assert update["template_dimension_selections"] == []
+
+
+def test_v3_analysis_rejects_more_than_four_candidates_per_event() -> None:
+    state = _v3_generation_state()
+    template = state.templates[0]
+    state.templates[0] = template.model_copy(
+        update={
+            "dimensions": [
+                *template.dimensions,
+                template.dimensions[0].model_copy(update={"dim_key": "fifth_candidate"}),
+                template.dimensions[0].model_copy(update={"dim_key": "sixth_candidate"}),
+            ],
+            "template_dimensions_total": 5,
+        },
+    )
+    analysis = _v3_analysis_result().model_copy(deep=True)
+    for dim_key in ("fifth_candidate", "sixth_candidate"):
+        analysis.template_dimension_selections.append(
+            analysis.template_dimension_selections[0].model_copy(update={"dim_key": dim_key}),
+        )
+    state.analysis_draft = analysis
+
+    update = multi_event_nodes.validate_v3_analysis_design(state)
+
+    assert "more than four" in update["analysis_error"]
+
+
+def _validated_v3_analysis_state() -> MultiEventGenerationState:
+    state = _v3_generation_state().model_copy(update={"analysis_draft": _v3_analysis_result()})
+    return state.model_copy(update=multi_event_nodes.validate_v3_analysis_design(state))
+
+
+def test_v3_dimension_mapping_projects_to_compact_lineage_in_mapping_order() -> None:
+    state = _validated_v3_analysis_state().model_copy(update={"dimension_draft": _v3_dimension_design_result()})
+
+    update = multi_event_nodes.validate_dimensions(state)
+
+    first = update["dimension_definitions"][0]
+    assert first.source_event_ids == [101, 202]
+    assert [(source.scenario_dimension_template_id, source.dim_key) for source in first.source_refs] == [
+        (81, "tightness"),
+        (121, "tightness"),
+    ]
+    assert first.values[0].description
+    assert first.values[0].derivation_rationale
+
+
+def test_v3_dimension_rejects_mapping_not_selected_during_analysis() -> None:
+    state = _validated_v3_analysis_state()
+    draft = _v3_dimension_design_result().model_copy(deep=True)
+    draft.dimension_definitions[0].source_mappings[0].dim_key = "intensity_not_selected"
+    state.dimension_draft = draft
+
+    update = multi_event_nodes.validate_dimensions(state)
+
+    assert "not present in validated Template selections" in update["dimension_error"]
+
+
+def test_v3_dimension_rejects_unknown_template_enum_anchor() -> None:
+    state = _validated_v3_analysis_state()
+    draft = _v3_dimension_design_result().model_copy(deep=True)
+    draft.dimension_definitions[0].values[0].template_value_anchors[0].template_value = "원본에 없음"
+    state.dimension_draft = draft
+
+    update = multi_event_nodes.validate_dimensions(state)
+
+    assert "does not match the source Template enum" in update["dimension_error"]
+
+
+def test_v3_dimension_requires_every_enum_source_and_every_value_to_be_anchored() -> None:
+    state = _validated_v3_analysis_state()
+    missing_source = _v3_dimension_design_result().model_copy(deep=True)
+    first = missing_source.dimension_definitions[0]
+    for value in first.values:
+        value.template_value_anchors = value.template_value_anchors[:1]
+    state.dimension_draft = missing_source
+
+    source_update = multi_event_nodes.validate_dimensions(state)
+
+    assert "enum-bearing sourceMappings" in source_update["dimension_error"]
+
+    missing_value = _v3_dimension_design_result().model_copy(deep=True)
+    missing_value.dimension_definitions[0].values[0].template_value_anchors = []
+    state.dimension_draft = missing_value
+
+    value_update = multi_event_nodes.validate_dimensions(state)
+
+    assert "each value requires a valid templateValueAnchor" in value_update["dimension_error"]
+
+
+def test_v3_dimension_allows_event_specific_values_without_template_enums() -> None:
+    state = _validated_v3_analysis_state()
+    state.template_dimension_selections = [
+        selection.model_copy(update={"value_enums": []}) for selection in state.template_dimension_selections
+    ]
+    draft = _v3_dimension_design_result().model_copy(deep=True)
+    for dimension in draft.dimension_definitions:
+        for value in dimension.values:
+            value.label = f"Event 특화 {value.label}"
+            value.template_value_anchors = []
+    state.dimension_draft = draft
+
+    update = multi_event_nodes.validate_dimensions(state)
+
+    assert update["dimension_error"] is None
+    assert update["dimension_definitions"][0].values[0].label.startswith("Event 특화")
+
+
+def test_pipeline_template_allows_dimensions_without_enum_anchors() -> None:
+    template = ScenarioPipelineTemplate(
+        scenario_dimension_template_id=81,
+        event_type_l2_id=8,
+        dimensions=[
+            {"dim_key": f"dimension_{index}", "label": f"Dimension {index}", "value_enums": []} for index in range(3)
+        ],
+    )
+
+    assert all(dimension.value_enums == [] for dimension in template.dimensions)
+
+
+def test_v3_public_value_schema_reads_legacy_nullable_details() -> None:
+    payload = _result(strategy="multi_event_composite_dimensions").model_dump(by_alias=True)
+    for dimension in payload["dimensionDefinitions"]:
+        for value in dimension["values"]:
+            value.pop("description")
+            value.pop("derivationRationale")
+
+    parsed = V3MultiEventGenerationResult.model_validate(payload)
+
+    assert parsed.dimension_definitions[0].values[0].description is None
+    assert parsed.dimension_definitions[0].values[0].derivation_rationale is None
+
+
+def test_v3_dimension_retry_reuses_validated_analysis() -> None:
+    aggregate = _result(strategy="multi_event_composite_dimensions")
+    stage_calls: list[str] = []
+    dimension_calls = 0
+
+    async def invoke_stage(*, output_schema: type[object], **_kwargs: object) -> object:
+        nonlocal dimension_calls
+        stage_calls.append(output_schema.__name__)
+        if output_schema is V3AnalysisDesignResult:
+            return _v3_analysis_result()
+        if output_schema is V3DimensionDesignResult:
+            dimension_calls += 1
+            if dimension_calls == 1:
+                raise MIBaseError(
+                    multi_event_flow.ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail="sourceMappings is invalid",
+                )
+            return _v3_dimension_design_result()
+        return V3ScenarioSynthesisResult(
+            scenario_group_title=aggregate.scenario_group_title,
+            scenario_group_description=aggregate.scenario_group_description,
+            scenarios=aggregate.scenarios,
+            excluded_candidates=aggregate.excluded_candidates,
+        )
+
+    state = _v3_generation_state()
+    multi_event_flow.get_compiled_graph.cache_clear()
+    with (
+        patch.object(multi_event_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
+        patch.object(multi_event_nodes, "_backoff", new=AsyncMock()),
+        patch.object(
+            ScenarioGroupService,
+            "persist_multi_event_generation",
+            return_value=(state.scenario_group, []),
+        ),
+    ):
+        final_state = asyncio.run(multi_event_flow.get_compiled_graph().ainvoke(state))
+    multi_event_flow.get_compiled_graph.cache_clear()
+
+    assert stage_calls.count("V3AnalysisDesignResult") == 1
+    assert stage_calls.count("V3DimensionDesignResult") == 2
+    assert stage_calls.count("V3ScenarioSynthesisResult") == 1
+    assert final_state["analysis_attempt"] == 1
+    assert final_state["dimension_attempt"] == 2
 
 
 def test_v2_langgraph_uses_deterministic_event_grounding_and_two_stage_calls() -> None:
@@ -889,7 +1258,7 @@ def test_finalization_assigns_roles_and_single_highest_probability_baseline(
     assert roles.count("mixed") == 1
     baselines = [scenario for scenario in finalized.scenarios if scenario.baseline_yn == "Y"]
     assert len(baselines) == 1
-    assert baselines[0].global_pressure_band == "balanced"
+    assert baselines[0].pressure_band == "balanced"
 
 
 @pytest.mark.parametrize(
@@ -1011,18 +1380,30 @@ def test_v2_dimension_prompt_preserves_authoritative_facts_without_event_analysi
 
 
 def test_v3_prompts_require_independent_drivers_and_one_explicit_mixed_scenario() -> None:
+    dimension_definitions = [
+        dimension.model_dump()
+        for dimension in _result(strategy="multi_event_composite_dimensions").dimension_definitions
+    ]
     analysis_prompt = build_v3_analysis_design_user_prompt(events=[], templates=[])
+    dimension_prompt = build_v3_dimension_design_user_prompt(
+        event_shocks=[],
+        interactions=[],
+        template_dimension_selections=[],
+    )
     scenario_prompt = build_scenario_synthesis_user_prompt(
         api_version="v3",
         event_shocks=[],
-        dimension_definitions=[],
+        dimension_definitions=dimension_definitions,
         interactions=[],
     )
 
-    assert "저장·주입" in analysis_prompt
-    assert "독립 dimension" in analysis_prompt
+    assert "Event별 templateDimensionSelections를 1~4개" in analysis_prompt
+    assert "Hydrated Template Dimension Candidates" in dimension_prompt
+    assert "sourceMappings" in dimension_prompt
     assert "정확히 하나" in scenario_prompt
     assert "mixedFactors=true" in scenario_prompt
+    assert "상태가 구체적으로 전개된다" in scenario_prompt
+    assert "원본 Template enum 의미" in scenario_prompt
 
 
 def test_v3_independent_interaction_requires_separate_single_source_dimensions() -> None:
@@ -1599,7 +1980,7 @@ def test_final_scenarios_are_sorted_by_global_pressure() -> None:
         event_ids=EVENT_IDS,
     )
 
-    assert [scenario.global_pressure_band for scenario in finalized.scenarios] == [
+    assert [scenario.pressure_band for scenario in finalized.scenarios] == [
         "strong_bullish",
         "balanced",
         "strong_bearish",
@@ -1608,9 +1989,7 @@ def test_final_scenarios_are_sorted_by_global_pressure() -> None:
 
 def test_pressure_aggregate_rejects_band_direction_contradiction() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
-    strong_bullish = next(
-        scenario for scenario in result.scenarios if scenario.global_pressure_band == "strong_bullish"
-    )
+    strong_bullish = next(scenario for scenario in result.scenarios if scenario.pressure_band == "strong_bullish")
     strong_bullish.dimension_values = {
         dimension.dimension_id: ("Event별 완화" if index == 0 else "Event 사실 기반 균형")
         for index, dimension in enumerate(result.dimension_definitions)
@@ -1626,9 +2005,7 @@ def test_pressure_aggregate_rejects_band_direction_contradiction() -> None:
 
 def test_pressure_aggregate_order_allows_ties() -> None:
     result = _result(strategy="multi_event_composite_dimensions")
-    strong_bullish = next(
-        scenario for scenario in result.scenarios if scenario.global_pressure_band == "strong_bullish"
-    )
+    strong_bullish = next(scenario for scenario in result.scenarios if scenario.pressure_band == "strong_bullish")
     mixed = next(scenario for scenario in result.scenarios if scenario.mixed_factors)
     strong_bullish.dimension_values = {
         dimension.dimension_id: ("Event별 심화" if index == 0 else "Event 사실 기반 균형")
@@ -1647,7 +2024,7 @@ def test_pressure_aggregate_order_allows_ties() -> None:
         event_ids=EVENT_IDS,
     )
 
-    assert finalized.scenarios[0].global_pressure_band == "strong_bullish"
+    assert finalized.scenarios[0].pressure_band == "strong_bullish"
 
 
 def test_lineage_only_marks_scenario_assumptions_as_assumptions() -> None:
@@ -1879,10 +2256,17 @@ def test_multi_event_rows_round_trip_pressure_role_and_rationale() -> None:
         ],
     )
     row = result.table.rows[0]
-    assert row.global_pressure_band == "strong_bullish"
+    assert row.pressure_target == "JKM"
+    assert row.pressure_band == "strong_bullish"
     assert row.scenario_role == "ceiling"
     assert row.probability_score == 30
-    assert row.global_pressure_rationale == "상승 근거"
+    assert row.pressure_rationale == "상승 근거"
+    serialized = row.model_dump(by_alias=True)
+    assert serialized["pressureTarget"] == "JKM"
+    assert serialized["pressureBand"] == "strong_bullish"
+    assert serialized["pressureRationale"] == "상승 근거"
+    assert "globalPressureBand" not in serialized
+    assert "globalPressureRationale" not in serialized
 
 
 def test_v3_compact_definitions_round_trip_through_persistence_and_sync_response() -> None:
@@ -1910,9 +2294,9 @@ def test_v3_compact_definitions_round_trip_through_persistence_and_sync_response
             dimension_values=scenario.dimension_values,
             probability_score=scenario.probability_score,
             baseline_yn=scenario.baseline_yn,
-            global_pressure_band=scenario.global_pressure_band,
+            global_pressure_band=scenario.pressure_band,
             scenario_role=scenario.scenario_role,
-            global_pressure_rationale=scenario.global_pressure_rationale,
+            global_pressure_rationale=scenario.pressure_rationale,
         )
         for index, scenario in enumerate(finalized.scenarios, start=100)
     ]
@@ -2007,9 +2391,9 @@ def test_v2_compact_contract_round_trips_through_persistence_and_sync_response()
             dimension_values=scenario.dimension_values,
             probability_score=scenario.probability_score,
             baseline_yn=scenario.baseline_yn,
-            global_pressure_band=scenario.global_pressure_band,
+            global_pressure_band=scenario.pressure_band,
             scenario_role=scenario.scenario_role,
-            global_pressure_rationale=scenario.global_pressure_rationale,
+            global_pressure_rationale=scenario.pressure_rationale,
         )
         for index, scenario in enumerate(finalized.scenarios, start=100)
     ]

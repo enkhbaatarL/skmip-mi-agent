@@ -418,43 +418,28 @@ class ScenarioGroupService:
                     relations = repository.fetch_group_events(
                         int(comparison_group.scenario_group_id),
                     )
-                    persisted_event_ids = [
-                        int(relation.mi_event_id) for relation in relations
-                    ]
+                    persisted_event_ids = [int(relation.mi_event_id) for relation in relations]
                     if set(persisted_event_ids) != set(event_ids):
                         raise MIBaseError(
                             ErrorCode.INVALID_REQUEST,
-                            detail=(
-                                "All groups in a comparisonRunId must use the "
-                                "same events"
-                            ),
+                            detail=("All groups in a comparisonRunId must use the same events"),
                         )
                 existing = repository.fetch_by_comparison_run(
                     comparison_run_id,
                     "v4",
                 )
                 if existing is not None:
-                    if (
-                        getattr(existing, "impact_catalog_checksum", None)
-                        != impact_catalog_checksum
-                    ):
+                    if getattr(existing, "impact_catalog_checksum", None) != impact_catalog_checksum:
                         raise MIBaseError(
                             ErrorCode.INVALID_REQUEST,
-                            detail=(
-                                "comparisonRunId must use the same impact "
-                                "catalog revision"
-                            ),
+                            detail=("comparisonRunId must use the same impact catalog revision"),
                         )
                     if existing.request_usr_id != user_id:
                         raise MIBaseError(
                             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
                             detail=f"시나리오 작성자: {existing.request_usr_id}",
                         )
-                    existing_stage = (
-                        existing.stage.value
-                        if hasattr(existing.stage, "value")
-                        else str(existing.stage)
-                    )
+                    existing_stage = existing.stage.value if hasattr(existing.stage, "value") else str(existing.stage)
                     if existing_stage != ScenarioGroupStage.READY.value:
                         raise MIBaseError(
                             ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
@@ -567,9 +552,9 @@ class ScenarioGroupService:
                         "impact_hh": None,
                         "display_order": display_order,
                         "baseline_yn": scenario["baseline_yn"],
-                        "global_pressure_band": scenario["global_pressure_band"],
+                        "global_pressure_band": scenario["pressure_band"],
                         "scenario_role": scenario.get("scenario_role"),
-                        "global_pressure_rationale": scenario["global_pressure_rationale"],
+                        "global_pressure_rationale": scenario["pressure_rationale"],
                         "related_markets": list(
                             scenario.get("related_markets") or [],
                         ),

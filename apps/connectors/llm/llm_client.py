@@ -330,8 +330,7 @@ async def _request_strict_structured_output_stream[T: BaseModel](
         if retries_remaining <= 0:
             raise
         logger.warning(
-            "Strict structured output stream failed; retrying the complete request "
-            "| retries_remaining={} error={!r}",
+            "Strict structured output stream failed; retrying the complete request | retries_remaining={} error={!r}",
             retries_remaining,
             exc,
         )

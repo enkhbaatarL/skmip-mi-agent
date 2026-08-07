@@ -418,9 +418,9 @@ v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생�
 | v3 | Event 2~5건 | Event 충격과 상호작용을 합성 dimension으로 구성 | 3~6개 |
 | v4 | Event 2~5건 | Event 사실과 모델 영향 레버 기반 dimension 구성 | 3~6개 |
 
-모든 version의 `globalPressureBand`는 global LNG pressure다. v4의
-`relatedMarkets`는 Scenario별 관련 시장과 근거를 담는 보조정보이며 시장별
-pressure나 Scenario role로 사용하지 않는다.
+v2/v3/v4의 `pressureTarget`은 항상 `JKM`이며 `pressureBand`와 `pressureRationale`도
+JKM 가격 압력 기준이다. v4의 `relatedMarkets`는 TTF/HH 관련 시장과 근거를 담는
+보조정보이며 시장별 pressure나 Scenario role로 사용하지 않는다.
 
 ### 9.6 성공 판정
 

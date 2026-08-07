@@ -36,15 +36,17 @@ from tests.manual.quality_eval.runtime_config import AGENT_ALIASES, load_runtime
 
 OUTPUT_ROOT = Path("local/output/multi_event_scenario_comparison")
 LOGGER = logging.getLogger("multi_event_scenario_versions")
+ALL_VERSIONS: tuple[ApiVersion, ...] = ("v2", "v3", "v4")
+V4_ONLY_VERSIONS: tuple[ApiVersion, ...] = ("v4",)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Prepare, run, and report a v2/v3/v4 multi-event Scenario API comparison.",
+        description="Prepare, run, and report a v2/v3/v4 comparison or standalone v4 multi-event Scenario API run.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    prepare = subparsers.add_parser("prepare", help="Select 2..5 Events and write the immutable comparison manifest.")
+    prepare = subparsers.add_parser("prepare", help="Select 2..5 Events and write the immutable run manifest.")
     _add_target_arguments(prepare)
     selection = prepare.add_mutually_exclusive_group(required=True)
     selection.add_argument("--event-ids", type=int, nargs="+", help="Explicit, unique Event IDs (2..5).")
@@ -55,6 +57,11 @@ def parse_args() -> argparse.Namespace:
     prepare.add_argument("--comparison-run-id", help="Defaults to a unique generated ID.")
     prepare.add_argument("--batch-id", help="Defaults to timestamp plus a random suffix.")
     prepare.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
+    prepare.add_argument(
+        "--v4-only",
+        action="store_true",
+        help="Prepare a standalone v4 run that does not require or allow v2/v3 execution.",
+    )
     prepare.add_argument(
         "--delete-existing",
         action=argparse.BooleanOptionalAction,
@@ -81,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     orchestrate.add_argument("--manifest", type=Path, required=True)
     orchestrate.add_argument("--timeout", type=float, default=1200)
 
-    report = subparsers.add_parser("report", help="Compare completed version artifacts and write Markdown.")
+    report = subparsers.add_parser("report", help="Render completed version artifacts as Markdown.")
     report.add_argument("--manifest", type=Path, required=True)
     report.add_argument("--quality-check", type=_parse_bool, default=True, metavar="true|false")
     report.add_argument(
@@ -156,7 +163,9 @@ async def prepare(args: argparse.Namespace) -> Path:
         raise ValueError(msg)
 
     batch_id = args.batch_id or f"{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-    comparison_run_id = args.comparison_run_id or f"multi-event-{batch_id}"
+    versions = V4_ONLY_VERSIONS if args.v4_only else ALL_VERSIONS
+    comparison_run_prefix = "v4-only" if args.v4_only else "multi-event"
+    comparison_run_id = args.comparison_run_id or f"{comparison_run_prefix}-{batch_id}"
     artifact_dir = (args.output_root / batch_id).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=False)
     selected_events_path = artifact_dir / "selected_events.json"
@@ -178,6 +187,7 @@ async def prepare(args: argparse.Namespace) -> Path:
         "baseUrl": base_url,
         "userId": target.user_id,
         "comparisonRunId": comparison_run_id,
+        "versions": list(versions),
         "eventIds": event_ids,
         "events": event_details,
         "preRunCleanup": {
@@ -195,14 +205,13 @@ async def prepare(args: argparse.Namespace) -> Path:
         "artifacts": {
             "selectedEvents": str(selected_events_path),
             "preRunCleanup": str(cleanup_path),
-            "v2": str(artifact_dir / "v2_create_response.json"),
-            "v3": str(artifact_dir / "v3_create_response.json"),
-            "v4": str(artifact_dir / "v4_create_response.json"),
+            **{version: str(artifact_dir / f"{version}_create_response.json") for version in versions},
             "orchestration": str(artifact_dir / "orchestration.json"),
             "judgeInput": str(artifact_dir / "comparison_judge_input.json"),
             "judge": str(artifact_dir / "comparison_judge.json"),
             "report": str(artifact_dir / "comparison_report.md"),
         },
+        **({"executionMode": "v4-only"} if args.v4_only else {}),
     }
     _write_json(manifest_path, manifest)
     LOGGER.info("Prepared manifest: %s", manifest_path)
@@ -212,8 +221,7 @@ async def prepare(args: argparse.Namespace) -> Path:
 async def run_version(args: argparse.Namespace) -> int:
     manifest = _load_manifest(args.manifest)
     version: ApiVersion = args.version
-    if version == "v4":
-        _require_v2_v3_barrier(manifest)
+    _validate_version_scope(manifest, version)
     artifact_path = Path(manifest["artifacts"][version])
     if artifact_path.exists():  # noqa: ASYNC240
         msg = (
@@ -288,6 +296,9 @@ async def run_version(args: argparse.Namespace) -> int:
 
 async def orchestrate(args: argparse.Namespace) -> int:
     manifest = _load_manifest(args.manifest)
+    if _manifest_versions(manifest) != ALL_VERSIONS:
+        msg = "orchestrate is only available for the v2/v3/v4 comparison scope; run v4 directly for v4-only"
+        raise ValueError(msg)
     manifest_path = args.manifest.resolve()
     started_at = _now()
     phase_one = await asyncio.gather(
@@ -332,8 +343,9 @@ async def orchestrate(args: argparse.Namespace) -> int:
 
 async def report(args: argparse.Namespace) -> Path:
     manifest = _load_manifest(args.manifest)
+    versions = _manifest_versions(manifest)
     artifacts: dict[str, dict[str, Any]] = {}
-    for version in ("v2", "v3", "v4"):
+    for version in versions:
         path = Path(manifest["artifacts"][version])
         artifacts[version] = (
             _read_json(path)
@@ -347,7 +359,7 @@ async def report(args: argparse.Namespace) -> Path:
     checks: dict[str, list[Any]] = {}
     successful_responses: dict[str, dict[str, Any]] = {}
     if args.quality_check:
-        for version in ("v2", "v3", "v4"):
+        for version in versions:
             artifact = artifacts[version]
             response = artifact.get("response")
             if (
@@ -597,11 +609,33 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if manifest["schemaVersion"] != 1:
         msg = f"Unsupported manifest schemaVersion={manifest['schemaVersion']}"
         raise ValueError(msg)
+    _manifest_versions(manifest)
     event_ids = manifest["eventIds"]
     if not isinstance(event_ids, list) or not 2 <= len(event_ids) <= 5 or len(set(event_ids)) != len(event_ids):
         msg = "Manifest eventIds must contain 2..5 unique IDs"
         raise ValueError(msg)
     return manifest
+
+
+def _manifest_versions(manifest: dict[str, Any]) -> tuple[ApiVersion, ...]:
+    versions = manifest.get("versions")
+    if versions is None:
+        return ALL_VERSIONS
+    if versions == list(ALL_VERSIONS):
+        return ALL_VERSIONS
+    if versions == list(V4_ONLY_VERSIONS):
+        return V4_ONLY_VERSIONS
+    msg = f"Manifest versions must be {list(ALL_VERSIONS)} or {list(V4_ONLY_VERSIONS)}: {versions}"
+    raise ValueError(msg)
+
+
+def _validate_version_scope(manifest: dict[str, Any], version: ApiVersion) -> None:
+    versions = _manifest_versions(manifest)
+    if version not in versions:
+        msg = f"{version} is outside this manifest's execution scope: {list(versions)}"
+        raise ValueError(msg)
+    if version == "v4" and versions != V4_ONLY_VERSIONS:
+        _require_v2_v3_barrier(manifest)
 
 
 def _normalize_response_for_judge(response: dict[str, Any]) -> dict[str, Any]:

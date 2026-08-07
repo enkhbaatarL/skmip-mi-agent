@@ -104,7 +104,7 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
 - `POST /v4/scenario-groups`
   - 요청: `miEventIds` 2~5개, `userId`, 선택적 `comparisonRunId`
   - Template 없이 Event 근거와 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
-  - Scenario의 pressure/floor/ceiling은 글로벌 LNG 기준이며, 지역 특이성이
+  - Scenario의 pressure/floor/ceiling은 JKM 기준이며, TTF/HH 특이성이
     명확한 경우에만 row의 `relatedMarkets`에 시장과 근거를 보조정보로 포함
   - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
 - `POST /v4/scenario-groups/sync`
@@ -129,25 +129,45 @@ versioned sync endpoint의 생성 오류는
 `events`는 요청 Event 순서를 유지한다. v2의 각
 `dimensionDefinitions[].sourceRef`는 `eventId`, `scenarioDimensionTemplateId`,
 `dimKey`만 포함한다. label·description·required는 서버가 입력 Template에서 복원한다.
-v2 value에는 `valueId`, `label`, `globalPressureContribution`만 포함하며
+v2 value에는 `valueId`, `label`, `pressureContribution`만 포함하며
 `sourceAssignments`는 없다. v2 diagnostics는 입력 Event 제목·요약·핵심 사실에서
 LLM 없이 구성한 compact EventShock,
 `unselectedDimensionRefs`, `unrepresentedPressureBands`를 포함한다. v3는 Event별
 `{eventId, shockSummary}`와 compact dimension을 반환한다. v3 dimension은
 `rationale`, `sourceEventIds`, `(scenarioDimensionTemplateId, dimKey)` 형태의
-`sourceRefs`를 가지며 value에는 `valueId`, `label`, `globalPressureContribution`만
-포함한다. v4의 각 dimension은 `eventGroundings`, `leverMappings`, `values`를 포함한다.
-`eventGroundings`는 `eventId`, `observedBasis`, `uncertainty`를, `leverMappings`는
-활성 catalog와 일치하는 `impactLeverId`/`leverCode`와 `mappingRationale`을 가진다.
-value는 `globalPressureContribution`과 `assumptionRationale`을 함께 제공한다.
-v4 응답에는 별도 `eventImpactFacts`, `sourceFactIds`, `impactLeverRefs`,
-`eventDimensionCoverage`, `sourceRefs`를 포함하지 않는다.
-각 row의 `globalPressureBand`, `scenarioRole`, `baselineYn`,
-`probabilityScore`, `globalPressureRationale`, `relatedMarkets`는 DB 저장값을
-그대로 반환한다. `baselineYn=Y`는 floor·ceiling·mixed를 포함한 전체 Scenario 중
+`sourceRefs`를 가지며 value에는 `valueId`, `label`, `pressureContribution`,
+`description`, `derivationRationale`을 포함한다. 신규 두 value 필드는 과거 저장 데이터와의
+호환을 위해 nullable이지만 새 v3 생성 결과에서는 빈 문자열을 허용하지 않는다.
+v3 `generationDiagnostics.templateDimensionSelections`는 Event별 Template 후보의
+`relevanceType`, `observedBasis`, `selectionRationale`, 서버가 hydrate한 label·description·required,
+enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dimension에서 사용되지 않은 후보는
+`usedInDimensionIds=[]`로 남는다. 이 진단은 기존 Scenario Group JSON 컬럼에 저장하므로 DB migration은 없다.
+v4의 각 dimension은 `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`,
+`primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`, `values`를 포함한다.
+화면용 `label`은 열린 질문인 `description`과 분리되며 핵심 대상과 변화 축을 간결하게 표시한다.
+각 value는 구체적인 방향·수준·범위·기간과 Catalog ID를 가진 `leverStates`,
+`pressureContribution`, `assumptionRationale`을 제공한다. 기존 `eventGroundings`와
+`leverMappings`는 새 v4 생성 응답에서 제거한다.
+
+v4 `generationDiagnostics`는 `eventFacts`, `eventExclusions`, `impactPaths`,
+`pathUncertainties`, Path ID를 참조하는 `eventInteractions`, `interactionUncertainties`,
+`validationWarnings`, `scenarioPressureBreakdowns`를 포함한다. 이 진단은 기존 Scenario Group
+JSON 컬럼에 동일하게 저장하므로 DB migration은 없다. 운영 비동기 완료 callback은 기존
+`scenarioGroup + table` 계약을 유지하며 전체 분석 graph는 v4 sync 응답과 DB 조회에서 확인한다.
+`eventFacts`의 사실 본문은 `observedBasis` 문장이다. 새 v4 생성 결과는 서버가 부여한 `factId`,
+`eventId`, 원문 발생시각인 `observedAt`만 함께 제공한다. 영향 제외 이유는 `eventExclusions`에만
+저장한다. LLM의 주관적 분류인 `factStatus`와 `confidence`, 과거 `noMaterialImpactReason`은
+저장 JSON에 남아 있어도 읽을 때 무시하며 새 응답에는 다시 노출하지 않는다. Impact Path와
+Event Interaction도 별도 `priceEffect`를 제공하지 않고 JKM 방향·기간을 자연어 `mechanism`에
+보존한다. 최종 계산용 Dimension Value `pressureContribution`과 Scenario `pressureBand`는
+폐쇄형 Enum 계약을 유지한다.
+v2/v3/v4 각 row는 `pressureTarget="JKM"`, `pressureBand`, `pressureRationale`을 반환한다.
+DB의 기존 `global_pressure_band`/`global_pressure_rationale` 컬럼은 migration 없이 persistence
+adapter에서만 사용하며 public API에는 노출하지 않는다. `scenarioRole`, `baselineYn`,
+`probabilityScore`, v4의 `relatedMarkets`도 함께 반환한다. `baselineYn=Y`는
+floor·ceiling·mixed를 포함한 전체 Scenario 중
 최고 `probabilityScore` 하나에 서버가 지정한다. `relatedMarkets`는 table header/cell이나
-pressure tag가 아니라
-Scenario 상세에서만 표시하는 선택적 보조정보다.
+pressure tag가 아니라 Scenario 상세에서만 표시하는 선택적 보조정보이며 TTF/HH만 허용한다.
 
 ### 자유 dimension value mapping 승인
 

@@ -55,10 +55,10 @@ _DETERMINISTIC_CHECK_GUIDANCE: dict[str, tuple[str, str, str, str]] = {
         ),
     ),
     "M-07": (
-        "Scenario별 글로벌 가격 판단 근거",
-        "모든 Scenario에 globalPressureRationale이 비어 있지 않은지 검사합니다.",
+        "Scenario별 JKM 가격 판단 근거",
+        "현재 Scenario의 pressureTarget이 JKM이고 pressureRationale이 비어 있지 않은지 검사합니다.",
         "cells 조합이 해당 pressure band로 이어지는 인과관계를 사용자가 확인할 수 없습니다.",
-        "각 Scenario에 선택된 driver 조합이 글로벌 LNG 가격 압력으로 이어지는 근거를 작성합니다.",
+        "각 Scenario에 선택된 driver 조합이 JKM 가격 압력으로 이어지는 근거를 작성합니다.",
     ),
     "M-08": (
         "5개 pressure band 설명 범위",
@@ -78,8 +78,14 @@ def render_report(  # noqa: C901
     quality_check: bool,
     judge_error: str | None = None,
 ) -> str:
+    versions = _report_versions(manifest)
+    v4_only = versions == ("v4",)
     lines = [
-        f"# Multi-Event Scenario API Comparison — {manifest['batchId']}",
+        (
+            f"# V4 Multi-Event Scenario API Run — {manifest['batchId']}"
+            if v4_only
+            else f"# Multi-Event Scenario API Comparison — {manifest['batchId']}"
+        ),
         "",
         "## 실행 조건",
         "",
@@ -89,6 +95,12 @@ def render_report(  # noqa: C901
         f"- Event 선택: {manifest['selection']['description']}",
         f"- 품질검사: **{'실행' if quality_check else '미실행'}**",
         f"- 실행 방식: **{_execution_mode(manifest)}**",
+        (
+            "- 실행 범위: **v4 create API only** (validation·signpost·confirmation 미실행)"
+            if v4_only
+            else "- 비교 범위: **v2/v3/v4 create API** (validation·signpost·confirmation 미실행)"
+        ),
+        f"- 사전 Scenario Group 정리: {_pre_run_cleanup_summary(manifest)}",
         "",
         "### 선택 이벤트",
         "",
@@ -105,6 +117,7 @@ def render_report(  # noqa: C901
         lines.append(
             f"| {_field(event, 'miEventId', 'mi_event_id')} | {_cell(event.get('title'))} | {_cell(summary)} |",
         )
+    lines.extend(_event_detail_sections(manifest["events"]))
     lines.extend(
         [
             "",
@@ -115,7 +128,7 @@ def render_report(  # noqa: C901
         ],
     )
     successful: dict[str, dict[str, Any]] = {}
-    for version in ("v2", "v3", "v4"):
+    for version in versions:
         artifact = artifacts.get(version, {})
         response = artifact.get("response") if isinstance(artifact.get("response"), dict) else {}
         data = response.get("data") if isinstance(response.get("data"), dict) else {}
@@ -139,7 +152,7 @@ def render_report(  # noqa: C901
             label = "결과 불명" if artifact.get("outcome") == "unknown" else "실패"
             lines.append(f"\n- **{version} {label}:** {_cell(reason)}")
 
-    lines.extend(["", "## Scenario Group 및 Dimension 비교", ""])
+    lines.extend(["", "## Scenario Group 및 Dimension 결과" if v4_only else "## Scenario Group 및 Dimension 비교", ""])
     for version, data in successful.items():
         group = data.get("scenarioGroup") if isinstance(data.get("scenarioGroup"), dict) else {}
         diagnostics = data.get("generationDiagnostics")
@@ -186,7 +199,7 @@ def render_report(  # noqa: C901
             ],
         )
 
-    lines.extend(["", "## Scenario 실제 값 비교", ""])
+    lines.extend(["", "## Scenario 실제 값" if v4_only else "## Scenario 실제 값 비교", ""])
     bands = _all_bands(successful)
     for band in bands:
         lines.extend(
@@ -203,13 +216,22 @@ def render_report(  # noqa: C901
             if row is None:
                 lines.append(f"| {version} | - | - | - | 해당 band 없음 |")
                 continue
+            pressure_rationale = _cell(
+                _field(
+                    row,
+                    "pressureRationale",
+                    "pressure_rationale",
+                    "globalPressureRationale",
+                    "global_pressure_rationale",
+                ),
+            )
             lines.append(
                 f"| {version} | **{_cell(row.get('title'))}** — {_cell(row.get('narrative'))} | "
                 f"{_field(row, 'scenarioRole', 'scenario_role')} / "
                 f"{_field(row, 'baselineYn', 'baseline_yn')} / "
                 f"{_field(row, 'probabilityScore', 'probability_score')} | "
                 f"{_cell(_scenario_cell_summary(data, row))} | "
-                f"{_cell(_field(row, 'globalPressureRationale', 'global_pressure_rationale'))} |",
+                f"{pressure_rationale} |",
             )
             related_markets = _field(row, "relatedMarkets", "related_markets")
             for item in related_markets if isinstance(related_markets, list) else []:
@@ -239,7 +261,9 @@ def render_report(  # noqa: C901
                     detail += f" offenders={check.offenders}"
                 lines.append(f"| {version} | {check.check_id} | {check.status} | {_cell(detail)} |")
         lines.extend(_deterministic_failure_section(checks))
-        lines.extend(_judge_section(judge, judge_error))
+        lines.extend(
+            _standalone_judge_section() if v4_only else _judge_section(judge, judge_error, successful),
+        )
     else:
         lines.extend(
             [
@@ -254,8 +278,9 @@ def render_report(  # noqa: C901
             "",
             "## 해석상 주의",
             "",
-            "- 모든 버전의 pressure band는 글로벌 LNG 가격 압력을 기준으로 비교합니다.",
-            "- v4 relatedMarkets는 방향·강도 태그가 아닌 Scenario별 보조 관련성 정보입니다.",
+            "- 현재 버전의 pressureTarget은 JKM이며 pressure band도 JKM 가격 압력을 기준으로 비교합니다.",
+            "- 과거 globalPressure* 결과도 비교 입력으로 읽지만 새 결과는 pressureTarget/Band/Rationale을 사용합니다.",
+            "- v4 relatedMarkets는 JKM이 아닌 TTF/HH 보조 관련성 정보입니다.",
             "- 이 보고서의 Agent Judge 평가는 제공된 Event/API 증적만 사용하며 외부 사실의 진위를 검증하지 않습니다.",
         ],
     )
@@ -297,6 +322,36 @@ def _deterministic_failure_section(checks: dict[str, list[QualityCheck]]) -> lis
     return lines
 
 
+def _event_detail_sections(details: list[dict[str, Any]]) -> list[str]:
+    lines = ["", "### 입력 Event 상세", ""]
+    for detail in details:
+        event = detail.get("event") if isinstance(detail.get("event"), dict) else detail
+        event_id = _field(event, "miEventId", "mi_event_id")
+        title = event.get("title") or "제목 없음"
+        event_type_l1 = event.get("eventTypeL1") if isinstance(event.get("eventTypeL1"), dict) else {}
+        event_type_l2 = event.get("eventTypeL2") if isinstance(event.get("eventTypeL2"), dict) else {}
+        occurred_at = _field(event, "occurredAt", "occurred_at", "eventTime", "event_time") or "-"
+        tags = event.get("tags") if isinstance(event.get("tags"), list) else []
+        bullets = event.get("keyBullets") if isinstance(event.get("keyBullets"), list) else []
+        analysis = _field(event, "detailAnalysis", "detail_analysis")
+        lines.extend(
+            [
+                f"#### {event_id} · {_cell(title)}",
+                "",
+                f"- Event Type: {_cell(event_type_l1.get('label'))} / {_cell(event_type_l2.get('label'))}",
+                f"- 발생시각: {_cell(occurred_at)}",
+                f"- 한 줄 요약: {_cell(_field(event, 'oneLineSummary', 'one_line_summary'))}",
+                f"- 태그: {_cell(', '.join(map(str, tags)) or '-')}",
+            ],
+        )
+        if bullets:
+            lines.extend(["", "**핵심 사실**", "", *(f"- {_cell(item)}" for item in bullets)])
+        if analysis:
+            lines.extend(["", "**상세 분석**", "", str(analysis).strip()])
+        lines.append("")
+    return lines
+
+
 def _deterministic_failure_observation(check: QualityCheck) -> str:
     if check.check_id == "M-06" and check.offenders:
         missing = ", ".join(f"Event `{event_id}`" for event_id in check.offenders)
@@ -308,7 +363,11 @@ def _deterministic_failure_observation(check: QualityCheck) -> str:
     return f"{check.detail}{offenders}"
 
 
-def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) -> list[str]:
+def _judge_section(
+    judge: ComparisonJudgment | None,
+    judge_error: str | None,
+    successful: dict[str, dict[str, Any]],
+) -> list[str]:
     lines = ["", "## Agent Judge 품질 평가", ""]
     if judge is None:
         reason = f" Agent Judge 오류: `{_cell(judge_error)}`" if judge_error else ""
@@ -324,6 +383,10 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
                 "이 점수는 각 버전이 품질 조건을 얼마나 충족하는지 보여주며, "
                 "상대평가의 최종 승자를 자동 결정하지 않습니다."
             ),
+            (
+                "Agent Judge는 각 Scenario의 실제 title, narrative, label 기반 cells, role, baseline, probability와 "
+                "API pressureRationale을 함께 확인해 판정합니다."
+            ),
             "",
             "| Version | 기준 | 점수 | 결과 | Agent Judge 근거 |",
             "| --- | --- | --- | --- | --- |",
@@ -336,6 +399,22 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
                 f"{criterion.verdict} | {_cell(criterion.rationale)} "
                 f"(evidence: {_cell('; '.join(criterion.evidence))}) |",
             )
+    lines.extend(
+        [
+            "",
+            "### 버전별 절대 점수 단순 평균",
+            "",
+            "| Version | 기준별 점수 | 단순 평균 | 절대 점수 최고 여부 |",
+            "| --- | --- | --- | --- |",
+        ],
+    )
+    for version in judge.versions:
+        score_summary = "; ".join(f"{criterion.criterion} {criterion.score}/5" for criterion in version.criteria)
+        average = sum(criterion.score for criterion in version.criteria) / len(version.criteria)
+        lines.append(
+            f"| {version.api_version} | {_cell(score_summary)} | {average:.2f}/5 | "
+            f"{'Y' if version.api_version in judge.best_versions else 'N'} |",
+        )
     lines.extend(
         [
             "",
@@ -374,16 +453,15 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
                 "",
                 f"- **종합 판단:** {_cell(comparison.summary)}",
                 "",
-                "| 비교 기준 | 승자 | 판단 | 반론 |",
-                "| --- | --- | --- | --- |",
+                "| 비교 기준 | 승자 | 실제 evidence | 반론 | 최종 rationale |",
+                "| --- | --- | --- | --- | --- |",
             ],
         )
         for criterion in comparison.criteria:
             evidence = "; ".join(criterion.evidence)
             lines.append(
-                f"| {criterion.criterion} | {_winner_label(criterion.winner)} | "
-                f"{_cell(criterion.rationale)} (evidence: {_cell(evidence)}) | "
-                f"{_cell(criterion.counterargument)} |",
+                f"| {criterion.criterion} | {_winner_label(criterion.winner)} | {_cell(evidence)} | "
+                f"{_cell(criterion.counterargument)} | {_cell(criterion.rationale)} |",
             )
         lines.append("")
 
@@ -407,18 +485,59 @@ def _judge_section(judge: ComparisonJudgment | None, judge_error: str | None) ->
             "",
             "### Scenario별 Agent Judge 판단",
             "",
-            "| Version | Scenario | Band | 결과 | 판단 근거 |",
-            "| --- | --- | --- | --- | --- |",
+            (
+                "아래 표는 Agent Judge 판정과 실제 API 입력 증적을 같은 행에 연결합니다. "
+                "Cells는 내부 ID 대신 Dimension·Value label로 표시합니다."
+            ),
+            "",
+            (
+                "| Version | Scenario | Role / Baseline / Probability | Band | 실제 narrative | "
+                "label 기반 cells | API 가격 판단 근거 | Judge 결과 / 판단 근거 |"
+            ),
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ],
     )
     for version in judge.versions:
+        data = successful.get(version.api_version, {})
         for scenario in version.scenario_judgments:
-            lines.append(  # noqa: PERF401
+            row = _row_by_scenario_id(data, scenario.scenario_id)
+            pressure_rationale = _cell(
+                _field(
+                    row,
+                    "pressureRationale",
+                    "pressure_rationale",
+                    "globalPressureRationale",
+                    "global_pressure_rationale",
+                ),
+            )
+            lines.append(
                 f"| {version.api_version} | {scenario.scenario_id} · {_cell(scenario.title)} | "
-                f"{scenario.global_pressure_band} | {scenario.verdict} | {_cell(scenario.rationale)} "
+                f"{_cell(_field(row, 'scenarioRole', 'scenario_role'))} / "
+                f"{_cell(_field(row, 'baselineYn', 'baseline_yn'))} / "
+                f"{_cell(_field(row, 'probabilityScore', 'probability_score'))} | "
+                f"{scenario.pressure_band} | {_cell(row.get('narrative'))} | "
+                f"{_cell(_scenario_cell_summary(data, row))} | "
+                f"{pressure_rationale} | "
+                f"{scenario.verdict} — {_cell(scenario.rationale)} "
                 f"(evidence: {_cell('; '.join(scenario.evidence))}) |",
             )
     return lines
+
+
+def _standalone_judge_section() -> list[str]:
+    return [
+        "",
+        "## Agent Judge 품질 평가",
+        "",
+        "- v4-only 실행은 상대 비교 대상이 없으므로 Agent Judge 순위·추천 평가는 실행하지 않습니다.",
+    ]
+
+
+def _row_by_scenario_id(data: dict[str, Any], scenario_id: str) -> dict[str, Any]:
+    return next(
+        (row for row in _rows(data) if str(_field(row, "scenarioId", "scenario_id")) == str(scenario_id)),
+        {},
+    )
 
 
 def _winner_label(winner: str) -> str:
@@ -428,17 +547,21 @@ def _winner_label(winner: str) -> str:
 def _all_bands(successful: dict[str, dict[str, Any]]) -> list[str]:
     order = ["strong_bearish", "bearish", "balanced", "bullish", "strong_bullish"]
     found = {
-        str(_field(row, "globalPressureBand", "global_pressure_band"))
+        str(_field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band"))
         for data in successful.values()
         for row in _rows(data)
-        if _field(row, "globalPressureBand", "global_pressure_band")
+        if _field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band")
     }
     return [band for band in order if band in found] + sorted(found - set(order))
 
 
 def _row_for_band(data: dict[str, Any], band: str) -> dict[str, Any] | None:
     return next(
-        (row for row in _rows(data) if _field(row, "globalPressureBand", "global_pressure_band") == band),
+        (
+            row
+            for row in _rows(data)
+            if _field(row, "pressureBand", "pressure_band", "globalPressureBand", "global_pressure_band") == band
+        ),
         None,
     )
 
@@ -471,21 +594,27 @@ def _scenario_dimension_sections(
         lines.append(
             f"| {_cell(_scenario_label(row))} | "
             f"{_cell(_field(row, 'scenarioRole', 'scenario_role'))} | "
-            f"{_cell(_field(row, 'globalPressureBand', 'global_pressure_band'))} | "
+            f"{_cell(_field(row, 'pressureBand', 'pressure_band', 'globalPressureBand', 'global_pressure_band'))} | "
             f"{' | '.join(_cell(value) for value in selected)} |",
         )
 
     lines.extend(["", "#### 시나리오별 Dimension/Value 선택 근거", ""])
     for row in _rows(data):
+        pressure_rationale = _cell(
+            _field(
+                row,
+                "pressureRationale",
+                "pressure_rationale",
+                "globalPressureRationale",
+                "global_pressure_rationale",
+            ),
+        )
         lines.extend(
             [
                 f"##### {_cell(_scenario_label(row))}",
                 "",
                 f"- 시나리오 설명: {_cell(row.get('narrative'))}",
-                (
-                    "- 시나리오 조합/가격 판단 근거: "
-                    f"{_cell(_field(row, 'globalPressureRationale', 'global_pressure_rationale'))}"
-                ),
+                (f"- 시나리오 조합/가격 판단 근거: {pressure_rationale}"),
                 "",
                 "| Dimension | Dimension 선택 근거 | 선택 Value | Value 선택 근거 |",
                 "| --- | --- | --- | --- |",
@@ -525,7 +654,11 @@ def _selected_value(row: dict[str, Any], dimension: dict[str, Any]) -> dict[str,
     dimension_id = _field(dimension, "dimensionId", "dimension_id")
     raw_value = cells.get(dimension_id)
     for value in dimension.get("values", []):
-        if isinstance(value, dict) and raw_value == _field(value, "valueId", "value_id"):
+        if not isinstance(value, dict):
+            continue
+        value_id = _field(value, "valueId", "value_id")
+        value_label = value.get("label")
+        if raw_value in {value_id, value_label}:
             return value
     return None
 
@@ -577,7 +710,13 @@ def _value_rationale(value: dict[str, Any] | None) -> str:
     assumption = _field(value, "assumptionRationale", "assumption_rationale")
     if assumption:
         return str(assumption)
-    contribution = _field(value, "globalPressureContribution", "global_pressure_contribution")
+    contribution = _field(
+        value,
+        "pressureContribution",
+        "pressure_contribution",
+        "globalPressureContribution",
+        "global_pressure_contribution",
+    )
     if contribution:
         return f"가격 압력 기여: {contribution}"
     return "API 응답에 Value 선택 근거 없음"
@@ -638,6 +777,23 @@ def _execution_mode(manifest: dict[str, Any]) -> str:
     if orchestration_path and Path(orchestration_path).is_file():
         return "async fallback (v2‖v3 → v4)"
     return "manual staged (v2 → v3 → v4)"
+
+
+def _report_versions(manifest: dict[str, Any]) -> tuple[str, ...]:
+    versions = manifest.get("versions")
+    if versions == ["v4"]:
+        return ("v4",)
+    return ("v2", "v3", "v4")
+
+
+def _pre_run_cleanup_summary(manifest: dict[str, Any]) -> str:
+    cleanup = manifest.get("preRunCleanup")
+    if not isinstance(cleanup, dict) or not cleanup.get("requested"):
+        return "미실행"
+    groups = cleanup.get("groups") if isinstance(cleanup.get("groups"), list) else []
+    group_ids = [str(group.get("scenarioGroupId")) for group in groups if isinstance(group, dict)]
+    count = cleanup.get("deletedGroupCount", len(group_ids))
+    return f"활성 그룹 soft delete {count}건 (Scenario Group IDs: {', '.join(group_ids) or '-'})"
 
 
 def _field(payload: dict[str, Any], *names: str) -> Any:  # noqa: ANN401

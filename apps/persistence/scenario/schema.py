@@ -11,7 +11,7 @@ from apps.persistence.schema_base import ApiModel
 
 
 class RelatedMarket(ApiModel):
-    market: Literal["JKM", "TTF", "HH"]
+    market: Literal["TTF", "HH"]
     rationale: str = Field(min_length=1)
 
     @field_validator("rationale")
@@ -58,7 +58,11 @@ class ScenarioPayload(ApiModel):
                 "global_pressure_band": model.global_pressure_band,
                 "scenario_role": model.scenario_role,
                 "global_pressure_rationale": model.global_pressure_rationale,
-                "related_markets": getattr(model, "related_markets", None) or [],
+                "related_markets": [
+                    item
+                    for item in (getattr(model, "related_markets", None) or [])
+                    if isinstance(item, dict) and item.get("market") in {"TTF", "HH"}
+                ],
                 "status": model.status,
                 "del_yn": getattr(model, "del_yn", None),
             }
@@ -149,8 +153,8 @@ class ScenarioPipelineTemplateDimension(BaseModel):
         if not dim_key:
             raise ValueError("dim_key is required.")
         enums = [str(value).strip() for value in self.value_enums if str(value).strip()]
-        if len(enums) < 2:
-            raise ValueError(f"value_enums must include at least two values: dim_key={dim_key}")
+        if len(enums) == 1:
+            raise ValueError(f"value_enums must be empty or include at least two values: dim_key={dim_key}")
         if len(set(enums)) != len(enums):
             raise ValueError(f"value_enums contains duplicates: dim_key={dim_key}")
         self.dim_key = dim_key
@@ -261,7 +265,7 @@ class SourceLineage(ApiModel):
 class DimensionValueDefinition(ApiModel):
     value_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
-    global_pressure_contribution: str | None = None
+    pressure_contribution: str | None = None
     source_assignments: list[SourceLineage] = Field(default_factory=list)
 
 
@@ -292,14 +296,17 @@ class DimensionDefinition(ApiModel):
     description: str = Field(min_length=1)
     required: bool = False
     display_order: int
-    dimension_type: Literal[
-        "magnitude",
-        "scope",
-        "timing",
-        "recovery",
-        "mitigation",
-        "interaction",
-    ] | None = None
+    dimension_type: (
+        Literal[
+            "magnitude",
+            "scope",
+            "timing",
+            "recovery",
+            "mitigation",
+            "interaction",
+        ]
+        | None
+    ) = None
     value_kind: Literal["categorical", "numeric_range", "temporal"] | None = None
     unit: str | None = None
     selection_criterion: SelectionCriterion | None = None
@@ -308,11 +315,14 @@ class DimensionDefinition(ApiModel):
     source_fact_ids: list[str] = Field(default_factory=list)
     lever_refs: list[str] = Field(default_factory=list)
     impact_lever_refs: list[ImpactLeverReference] = Field(default_factory=list)
-    model_support_status: Literal[
-        "full",
-        "partial",
-        "none",
-        "price_only",
-    ] | None = None
+    model_support_status: (
+        Literal[
+            "full",
+            "partial",
+            "none",
+            "price_only",
+        ]
+        | None
+    ) = None
     source_refs: list[SourceLineage] = Field(default_factory=list)
     values: list[DimensionValueDefinition] = Field(default_factory=list)

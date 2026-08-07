@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 from typing import Any
 
 from langgraph.runtime import Runtime
@@ -19,22 +21,282 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state i
     V4MultiEventGenerationState,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
+    V4DimensionDesignDraft,
     V4DimensionDesignResult,
-    V4GenerationResult,
-    V4ScenarioSynthesisResult,
+    V4EventImpactAnalysisDraft,
+    V4EventImpactAnalysisResult,
+    V4ReadableDimensionDesignDraft,
+    V4ReadableEventAnalysisDraft,
+    V4ReadableInteractionAnalysisDraft,
+    V4ReadableScenarioSynthesisDraft,
+    expand_v4_readable_dimension_design,
+    expand_v4_readable_event_analysis,
+    expand_v4_readable_scenario_synthesis,
     finalize_v4_dimension_design,
+    finalize_v4_event_impact_analysis,
     finalize_v4_generation_result,
+    merge_v4_readable_interactions,
+    v4_analysis_result_to_draft,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
-    MODEL_LEVER_SYSTEM_PROMPT,
+    V4_DIMENSION_SYSTEM_PROMPT,
+    V4_EVENT_IMPACT_SYSTEM_PROMPT,
+    V4_INTERACTION_SYSTEM_PROMPT,
+    V4_SCENARIO_SYSTEM_PROMPT,
     build_v4_dimension_design_user_prompt,
+    build_v4_event_fact_candidates,
+    build_v4_event_impact_analysis_user_prompt,
+    build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.event.schema import EventPayload
+from apps.persistence.model_parameter.schema import ModelImpactLeverPayload
+
+
+V4_EVENT_LLM_TIMEOUT_SECONDS = 180.0
+
+
+@dataclass(frozen=True, slots=True)
+class _EventAnalysisOutcome:
+    event_id: int
+    attempts: int
+    result: V4EventImpactAnalysisResult | None = None
+    error: str | None = None
+    error_code: str | None = None
+
+
+async def _analyze_event_with_retries(
+    *,
+    event: EventPayload,
+    impact_levers: list[ModelImpactLeverPayload],
+    catalog_version: str,
+    trace_context: TraceContext | None,
+) -> _EventAnalysisOutcome:
+    event_id = int(event.mi_event_id)
+    event_payload = event.model_dump()
+    fact_candidates = build_v4_event_fact_candidates(event_payload)
+    feedback: str | None = None
+    for attempt in range(1, MAX_STAGE_ATTEMPTS + 1):
+        await _backoff(attempt)
+        try:
+            try:
+                async with asyncio.timeout(V4_EVENT_LLM_TIMEOUT_SECONDS):
+                    readable: V4ReadableEventAnalysisDraft = await invoke_stage_structured_output(
+                        output_schema=V4ReadableEventAnalysisDraft,
+                        system_prompt=V4_EVENT_IMPACT_SYSTEM_PROMPT,
+                        user_prompt=build_v4_event_impact_analysis_user_prompt(
+                            events=[event_payload],
+                            impact_levers=[lever.model_dump() for lever in impact_levers],
+                            catalog_version=catalog_version,
+                            validation_feedback=feedback,
+                        ),
+                        trace_context=trace_context,
+                        stage=f"event_impact_analysis:{event_id}",
+                        reasoning_effort_override="low",
+                    )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"Event {event_id} impact analysis exceeded {V4_EVENT_LLM_TIMEOUT_SECONDS:g}s",
+                ) from exc
+            draft = expand_v4_readable_event_analysis(
+                readable,
+                event_id=event_id,
+                observed_at=event.occurred_at,
+                fact_candidates=fact_candidates,
+            )
+            result = finalize_v4_event_impact_analysis(
+                draft,
+                event_ids=[event_id],
+                impact_levers=impact_levers,
+            )
+            return _EventAnalysisOutcome(event_id=event_id, attempts=attempt, result=result)
+        except Exception as exc:
+            detail, error_code, retryable = classify_llm_error(exc)
+            feedback = detail
+            if not retryable or attempt >= MAX_STAGE_ATTEMPTS:
+                return _EventAnalysisOutcome(
+                    event_id=event_id,
+                    attempts=attempt,
+                    error=detail,
+                    error_code=error_code,
+                )
+    return _EventAnalysisOutcome(
+        event_id=event_id,
+        attempts=MAX_STAGE_ATTEMPTS,
+        error="Event analysis retry state exhausted",
+        error_code=ErrorCode.LLM_INVOCATION_ERROR.name,
+    )
+
+
+class AnalyzeEventImpactsNode(BaseNode):
+    async def run(
+        self,
+        state: V4MultiEventGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
+        trace_context = runtime.context if runtime is not None else None
+        outcomes = await asyncio.gather(
+            *[
+                _analyze_event_with_retries(
+                    event=event,
+                    impact_levers=state.impact_levers,
+                    catalog_version=state.impact_catalog_version,
+                    trace_context=trace_context,
+                )
+                for event in state.events
+            ],
+        )
+        attempts = max((outcome.attempts for outcome in outcomes), default=0)
+        failures = [outcome for outcome in outcomes if outcome.result is None]
+        if failures:
+            detail = "; ".join(f"Event {item.event_id}: {item.error}" for item in failures)[:600]
+            return {
+                "analysis_attempt": attempts,
+                "analysis_draft": None,
+                "analysis_error": detail,
+                "analysis_error_code": failures[0].error_code,
+                "analysis_retryable": False,
+            }
+        local_drafts = [v4_analysis_result_to_draft(outcome.result) for outcome in outcomes if outcome.result]
+        merged = V4EventImpactAnalysisDraft(
+            event_facts=[fact for draft in local_drafts for fact in draft.event_facts],
+            event_exclusions=[item for draft in local_drafts for item in draft.event_exclusions],
+            impact_paths=[path for draft in local_drafts for path in draft.impact_paths],
+            path_uncertainties=[item for draft in local_drafts for item in draft.path_uncertainties],
+        )
+        return {
+            "analysis_attempt": attempts,
+            "analysis_draft": merged,
+            "analysis_error": None,
+            "analysis_error_code": None,
+            "analysis_retryable": False,
+        }
+
+
+def validate_v4_event_impacts(state: V4MultiEventGenerationState) -> dict[str, Any]:
+    if not isinstance(state.analysis_draft, V4EventImpactAnalysisDraft):
+        return {}
+    try:
+        finalized = finalize_v4_event_impact_analysis(
+            state.analysis_draft,
+            event_ids=[int(event.mi_event_id) for event in state.events],
+            impact_levers=state.impact_levers,
+        )
+        return {
+            "analysis_draft": finalized,
+            "analysis_error": None,
+            "analysis_error_code": None,
+            "analysis_retryable": False,
+        }
+    except Exception as exc:
+        detail, error_code, retryable = classify_llm_error(exc)
+        return {
+            "analysis_error": detail,
+            "analysis_error_code": error_code,
+            "analysis_retryable": retryable,
+        }
+
+
+def route_after_v4_event_impacts(state: V4MultiEventGenerationState) -> str:
+    if isinstance(state.analysis_draft, V4EventImpactAnalysisResult) and state.analysis_error is None:
+        return "analyze_event_interactions"
+    if state.analysis_retryable and state.analysis_attempt < MAX_STAGE_ATTEMPTS:
+        return "analyze_event_impacts"
+    return "fail_generation"
+
+
+class AnalyzeEventInteractionsNode(BaseNode):
+    async def run(
+        self,
+        state: V4MultiEventGenerationState,
+        runtime: Runtime[TraceContext] | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(state.analysis_draft, V4EventImpactAnalysisResult):
+            raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="validated v4 Impact Paths are required")
+        path_event_ids = {path.event_id for path in state.analysis_draft.impact_paths}
+        if len(path_event_ids) < 2:
+            return {
+                "interaction_attempt": 0,
+                "interaction_draft": V4ReadableInteractionAnalysisDraft(),
+                "interaction_error": None,
+                "interaction_error_code": None,
+                "interaction_retryable": False,
+            }
+        attempt = state.interaction_attempt + 1
+        await _backoff(attempt)
+        try:
+            draft: V4ReadableInteractionAnalysisDraft = await invoke_stage_structured_output(
+                output_schema=V4ReadableInteractionAnalysisDraft,
+                system_prompt=V4_INTERACTION_SYSTEM_PROMPT,
+                user_prompt=build_v4_interaction_analysis_user_prompt(
+                    impact_paths=[path.model_dump() for path in state.analysis_draft.impact_paths],
+                    validation_feedback=state.interaction_error,
+                ),
+                trace_context=runtime.context if runtime is not None else None,
+                stage="event_interaction_analysis",
+                reasoning_effort_override="low",
+            )
+            return {
+                "interaction_attempt": attempt,
+                "interaction_draft": draft,
+                "interaction_error": None,
+                "interaction_error_code": None,
+                "interaction_retryable": False,
+            }
+        except Exception as exc:
+            detail, error_code, retryable = classify_llm_error(exc)
+            return {
+                "interaction_attempt": attempt,
+                "interaction_draft": None,
+                "interaction_error": detail,
+                "interaction_error_code": error_code,
+                "interaction_retryable": retryable,
+            }
+
+
+def validate_v4_event_interactions(state: V4MultiEventGenerationState) -> dict[str, Any]:
+    if not isinstance(state.analysis_draft, V4EventImpactAnalysisResult):
+        return {}
+    if not isinstance(state.interaction_draft, V4ReadableInteractionAnalysisDraft):
+        return {}
+    try:
+        merged = merge_v4_readable_interactions(state.analysis_draft, state.interaction_draft)
+        finalized = finalize_v4_event_impact_analysis(
+            merged,
+            event_ids=[int(event.mi_event_id) for event in state.events],
+            impact_levers=state.impact_levers,
+        )
+        return {
+            "analysis_draft": finalized,
+            "interaction_draft": None,
+            "interaction_error": None,
+            "interaction_error_code": None,
+            "interaction_retryable": False,
+        }
+    except Exception as exc:
+        detail, error_code, retryable = classify_llm_error(exc)
+        return {
+            "interaction_error": detail,
+            "interaction_error_code": error_code,
+            "interaction_retryable": retryable,
+        }
+
+
+def route_after_v4_event_interactions(state: V4MultiEventGenerationState) -> str:
+    if (
+        isinstance(state.analysis_draft, V4EventImpactAnalysisResult)
+        and state.interaction_draft is None
+        and state.interaction_error is None
+    ):
+        return "design_model_lever_dimensions"
+    if state.interaction_retryable and state.interaction_attempt < MAX_STAGE_ATTEMPTS:
+        return "analyze_event_interactions"
+    return "fail_generation"
 
 
 class DesignModelLeverDimensionsNode(BaseNode):
@@ -43,24 +305,23 @@ class DesignModelLeverDimensionsNode(BaseNode):
         state: V4MultiEventGenerationState,
         runtime: Runtime[TraceContext] | None = None,
     ) -> dict[str, Any]:
+        if not isinstance(state.analysis_draft, V4EventImpactAnalysisResult):
+            raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="v4 Event impact analysis is required")
         attempt = state.dimension_attempt + 1
         await _backoff(attempt)
         try:
-            draft: V4DimensionDesignResult = await invoke_stage_structured_output(
-                output_schema=V4DimensionDesignResult,
-                system_prompt=(
-                    MODEL_LEVER_SYSTEM_PROMPT
-                    + "\n현재 단계에서는 모든 Event를 함께 분석해 근거와 불확실성을 dimension에 직접 저장하고 "
-                    "Scenario는 생성하지 마십시오."
-                ),
+            readable: V4ReadableDimensionDesignDraft = await invoke_stage_structured_output(
+                output_schema=V4ReadableDimensionDesignDraft,
+                system_prompt=V4_DIMENSION_SYSTEM_PROMPT,
                 user_prompt=build_v4_dimension_design_user_prompt(
-                    events=[event.model_dump() for event in state.events],
-                    impact_levers=[lever.model_dump() for lever in state.impact_levers],
-                    catalog_version=state.impact_catalog_version,
+                    impact_analysis=state.analysis_draft.model_dump(),
+                    validation_warnings=[warning.model_dump() for warning in state.analysis_draft.validation_warnings],
                     validation_feedback=state.dimension_error,
                 ),
                 trace_context=runtime.context if runtime is not None else None,
+                stage="dimension_design",
             )
+            draft = expand_v4_readable_dimension_design(readable, impact_analysis=state.analysis_draft)
             return {
                 "dimension_attempt": attempt,
                 "dimension_draft": draft,
@@ -80,12 +341,18 @@ class DesignModelLeverDimensionsNode(BaseNode):
 
 
 def validate_v4_dimensions(state: V4MultiEventGenerationState) -> dict[str, Any]:
-    if state.dimension_draft is None:
+    if not isinstance(state.dimension_draft, V4DimensionDesignDraft):
         return {}
+    if not isinstance(state.analysis_draft, V4EventImpactAnalysisResult):
+        return {
+            "dimension_error": "validated v4 Event impact analysis is required",
+            "dimension_error_code": ErrorCode.INVALID_REQUEST.name,
+            "dimension_retryable": False,
+        }
     try:
         finalized_design = finalize_v4_dimension_design(
             state.dimension_draft,
-            event_ids=[int(event.mi_event_id) for event in state.events],
+            impact_analysis=state.analysis_draft,
             impact_levers=state.impact_levers,
         )
         return {
@@ -104,7 +371,7 @@ def validate_v4_dimensions(state: V4MultiEventGenerationState) -> dict[str, Any]
 
 
 def route_after_v4_dimensions(state: V4MultiEventGenerationState) -> str:
-    if state.dimension_draft is not None and state.dimension_error is None:
+    if isinstance(state.dimension_draft, V4DimensionDesignResult) and state.dimension_error is None:
         return "synthesize_v4_scenarios"
     if state.dimension_retryable and state.dimension_attempt < MAX_STAGE_ATTEMPTS:
         return "design_model_lever_dimensions"
@@ -117,25 +384,35 @@ class SynthesizeV4ScenariosNode(BaseNode):
         state: V4MultiEventGenerationState,
         runtime: Runtime[TraceContext] | None = None,
     ) -> dict[str, Any]:
-        if state.dimension_draft is None:
+        if not isinstance(state.analysis_draft, V4EventImpactAnalysisResult):
+            raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="v4 Event impact analysis is required")
+        if not isinstance(state.dimension_draft, V4DimensionDesignResult):
             raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="v4 dimension design is required")
         attempt = state.scenario_attempt + 1
         await _backoff(attempt)
         try:
-            draft: V4ScenarioSynthesisResult = await invoke_stage_structured_output(
-                output_schema=V4ScenarioSynthesisResult,
-                system_prompt=(
-                    MODEL_LEVER_SYSTEM_PROMPT + "\n현재 단계에서는 검증된 dimension을 변경하지 말고 "
-                    "Scenario와 그룹 메타데이터만 생성하십시오."
-                ),
+            warnings = [
+                *state.analysis_draft.validation_warnings,
+                *state.dimension_draft.validation_warnings,
+            ]
+            readable: V4ReadableScenarioSynthesisDraft = await invoke_stage_structured_output(
+                output_schema=V4ReadableScenarioSynthesisDraft,
+                system_prompt=V4_SCENARIO_SYSTEM_PROMPT,
                 user_prompt=build_v4_scenario_synthesis_user_prompt(
-                    interactions=[interaction.model_dump() for interaction in state.dimension_draft.interactions],
+                    impact_analysis=state.analysis_draft.model_dump(),
                     dimension_definitions=[
                         definition.model_dump() for definition in state.dimension_draft.dimension_definitions
                     ],
+                    validation_warnings=[warning.model_dump() for warning in warnings],
                     validation_feedback=state.scenario_error,
                 ),
                 trace_context=runtime.context if runtime is not None else None,
+                stage="scenario_synthesis",
+            )
+            draft = expand_v4_readable_scenario_synthesis(
+                readable,
+                impact_analysis=state.analysis_draft,
+                dimension_design=state.dimension_draft,
             )
             return {
                 "scenario_attempt": attempt,
@@ -158,21 +435,17 @@ class SynthesizeV4ScenariosNode(BaseNode):
 
 
 def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
-    if state.scenario_draft is None or state.dimension_draft is None:
+    if (
+        state.scenario_draft is None
+        or not isinstance(state.analysis_draft, V4EventImpactAnalysisResult)
+        or not isinstance(state.dimension_draft, V4DimensionDesignResult)
+    ):
         return {}
     try:
-        result = V4GenerationResult(
-            group_title=state.scenario_draft.group_title,
-            group_description=state.scenario_draft.group_description,
-            interactions=state.dimension_draft.interactions,
-            dimension_definitions=state.dimension_draft.dimension_definitions,
-            scenarios=state.scenario_draft.scenarios,
-            excluded_scenarios=state.scenario_draft.excluded_scenarios,
-            excluded_dimensions=state.dimension_draft.excluded_dimensions,
-        )
         finalized, coverage = finalize_v4_generation_result(
-            result,
-            event_ids=[int(event.mi_event_id) for event in state.events],
+            state.scenario_draft,
+            impact_analysis=state.analysis_draft,
+            dimension_design=state.dimension_draft,
             impact_levers=state.impact_levers,
         )
         return {
@@ -210,11 +483,12 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
     ):
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="v4 persistence input is incomplete")
     finalized = state.finalized_result
+    analysis = finalized.impact_analysis
     coverage = state.parameter_coverage
     diagnostics = GenerationDiagnostics(
         excluded_candidates=[
             ExcludedCandidate(
-                global_pressure_band=candidate.global_pressure_band,
+                pressure_band=candidate.pressure_band,
                 reason_code=candidate.reason_code,
                 reason=candidate.reason,
             )
@@ -227,14 +501,30 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
         unsupported_levers=coverage.unsupported_lever_codes,
         unsupported_lever_details=coverage.unsupported_lever_details,
         coverage_status=coverage.coverage_status,
-        event_interactions=[interaction.model_dump() for interaction in finalized.interactions],
+        event_facts=analysis.event_facts,
+        event_exclusions=analysis.event_exclusions,
+        impact_paths=analysis.impact_paths,
+        path_uncertainties=analysis.path_uncertainties,
+        event_interactions=analysis.interactions,
+        interaction_uncertainties=analysis.interaction_uncertainties,
+        validation_warnings=finalized.validation_warnings,
+        scenario_pressure_breakdowns=[
+            {
+                "title": scenario.title,
+                "dimension_values": scenario.dimension_values,
+                "common_impact_path_ids": scenario.common_impact_path_ids,
+                "applied_interaction_ids": scenario.applied_interaction_ids,
+                "pressure_breakdown": scenario.pressure_breakdown.model_dump(),
+            }
+            for scenario in finalized.scenarios
+        ],
     )
     scenarios = [
         {
             **scenario.model_dump(),
             "baseline_yn": "Y" if scenario.baseline_yn else "N",
-            "global_pressure_band": scenario.global_pressure_band,
-            "global_pressure_rationale": scenario.global_pressure_rationale,
+            "pressure_band": scenario.pressure_band,
+            "pressure_rationale": scenario.pressure_rationale,
             "related_markets": [related_market.model_dump() for related_market in scenario.related_markets],
         }
         for scenario in finalized.scenarios
@@ -256,7 +546,15 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
 
 
 def fail_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
-    if state.dimension_error:
+    if state.analysis_error:
+        detail = f"stage=event_impact_analysis, attempts={state.analysis_attempt}, error={state.analysis_error}"
+        error_code = error_code_from_name(state.analysis_error_code)
+    elif state.interaction_error:
+        detail = (
+            f"stage=event_interaction_analysis, attempts={state.interaction_attempt}, error={state.interaction_error}"
+        )
+        error_code = error_code_from_name(state.interaction_error_code)
+    elif state.dimension_error:
         detail = f"stage=dimension_design, attempts={state.dimension_attempt}, error={state.dimension_error}"
         error_code = error_code_from_name(state.dimension_error_code)
     else:

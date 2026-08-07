@@ -127,11 +127,16 @@ Template revision을 함께 준비한 뒤 cached LangGraph에 입력한다. Prom
 
 - v2는 입력 Event에서 `{eventId, shockSummary}`를 결정론적으로 구성하고 원본
   Template dimension 3~6개를 단일 compact sourceRef로 선택하며 모든 Event를 최소 한 번 연결
-- v3는 입력 Event마다 정확히 하나의 `{eventId, shockSummary}`를 생성
+- v3는 입력 Event마다 정확히 하나의 `{eventId, shockSummary}`와 Event 소유 Template
+  dimension 후보 1~4개를 생성
 - v2의 `e{eventId}__{dimKey}` namespacing과
   `(eventId, scenarioDimensionTemplateId, dimKey)` source identity
-- v3의 3~6개 합성 dimension, `(scenarioDimensionTemplateId, dimKey)` compact source,
-  `sourceEventIds` 기반 Event/interaction coverage
+- v3 합성 단계의 `(eventId, scenarioDimensionTemplateId, dimKey)` source mapping이
+  검증된 후보에 존재하는지 확인한 뒤, 3~6개 합성 dimension의
+  `(scenarioDimensionTemplateId, dimKey)` compact `sourceRefs`와 `sourceEventIds`를
+  입력 순서대로 결정론적으로 투영
+- v3 value의 Template enum anchor 정확성, enum 보유 source mapping의 최소 1회 사용,
+  value별 `description`/`derivationRationale` 및 필요한 anchor 존재 여부
 - 최종 3~5개 고유 조합과 `floor`/`ceiling` 각 1개. v3는 bullish·bearish value를 함께 쓰는
   non-extreme `mixed`를 정확히 1개 생성하고 v4는 실제 contribution 조합으로 선택적 `mixed`를 판정
 - 가장 높은 `probabilityScore` 하나만 `baselineYn=Y`
@@ -144,11 +149,19 @@ source type/assumption/rationale, `sourceAssignments`, typed 제외 후보를 �
 다른 Event로 sourceRef 이동, dimension/value 보충, Template example 대조와 value별 source
 projection은 실행하지 않는다.
 
-v3는 source key 접두사 제거, EventShock generated value 보충, Template example 대조,
-value별 source projection 보강을 실행하지 않는다. compact `sourceRefs`가 입력 Template에
-존재하는지와 중복 여부만 확인하며, Event coverage와 interaction resolution은
-`sourceEventIds`로 검증한다. 누락된 lineage를 서버가 보강하지 않고 전체 결과 재생성을
-요청한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
+v3 분석 단계는 Event별 Template 후보의
+`(eventId, scenarioDimensionTemplateId, dimKey)`가 해당 Event의 `event_type_l2_id`로
+조회한 Template에 실제 속하는지 검증한다. 다른 Event 소유 후보, 알 수 없는 후보,
+중복 후보, Event coverage 누락과 Event당 4개 초과를 거절한다. LLM은 후보의
+label·description·required·enum을 복사하지 않으며 서버가 원본 Template에서 hydrate한다.
+
+v3 합성 단계는 전체 원본 Template을 다시 받지 않고 검증된 Shock, interaction과 hydrated
+후보만 받는다. 내부 `sourceMappings`와 `templateValueAnchors`를 검증한 뒤
+`sourceEventIds`와 compact `sourceRefs`를 투영한다. Template enum은 폐쇄형 값 목록이 아니라
+신규 Event 특화 value를 설명하는 의미적 anchor로 사용한다. 공개 value의
+`description`과 `derivationRationale`은 과거 저장 데이터 읽기를 위해 nullable이지만,
+새 생성 결과에서는 non-blank여야 한다. Event coverage와 interaction resolution은 투영된
+`sourceEventIds`로 검증한다. v3 dimension 표시 순서는 저장된 `dimensionDefinitions` 배열 순서다.
 
 v2 다중 Event 생성 graph는 다음 단계로 구성하며 정상 경로의 LLM 호출은 2회다.
 
@@ -159,15 +172,17 @@ v2 다중 Event 생성 graph는 다음 단계로 구성하며 정상 경로의 L
 3. `generate_scenarios`: 검증된 dimension으로 그룹 메타데이터와 Scenario만 합성한다.
 4. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
 
-v3는 반복 prompt 비용을 줄이기 위해 두 LLM 단계로 구성한다.
+v3는 검증 경계를 분리한 세 LLM 단계로 구성한다.
 
 1. `analyze_v3_events`: 모든 Event와 Template을 한 번에 분석해 EventShock, Event interaction,
-   합성 dimension을 함께 생성한다.
-2. `generate_scenarios`: 결정론적으로 검증된 Shock, interaction, dimension만 사용해 그룹
+   Event별 관련 Template dimension 후보 1~4개를 선택한다.
+2. `synthesize_v3_dimensions`: 검증·hydrate된 후보만 사용해 내부 Event–Template source mapping,
+   enum anchor, 상세 value를 가진 합성 dimension을 생성한다. 전체 Template은 다시 전달하지 않는다.
+3. `generate_scenarios`: 결정론적으로 검증된 Shock, interaction, dimension과 value의 상세 상태를 사용해 그룹
    메타데이터와 Scenario를 합성한다.
-3. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
+4. `persist_generation`: 완성된 결과와 Template 선택 진단을 service 호출 한 번으로 일괄 저장한다.
 
-v2 dimension 또는 Scenario 검증 실패와 v3 분석·dimension 또는 Scenario 검증 실패는 해당 LLM node만 재실행하며
+v2 dimension 또는 Scenario 검증 실패와 v3 Event/Template 분석·dimension 또는 Scenario 검증 실패는 해당 LLM node만 재실행하며
 검증을 통과한 앞 단계 결과는 재생성하지 않는다. 각 LLM 단계는 최초 호출을 포함해 최대 3회 시도하고,
 재시도 전 1초·2초 backoff를 적용한다. structured/schema 검증 오류와 408, 429, 500,
 502, 503, 504, 529, timeout/connection 오류만 재시도한다. 그 밖의 오류는 즉시
@@ -175,10 +190,12 @@ v2 dimension 또는 Scenario 검증 실패와 v3 분석·dimension 또는 Scenar
 
 공통 LLM connector는 `llm_structured_output_strict` 전역 설정이 활성화되면 OpenAI SDK의
 Pydantic strict parsing helper를 사용한다. 호출부가 strict 여부를 개별 전달하지 않으므로
-같은 Agent 프로세스의 structured-output 호출에는 동일한 정책이 적용된다. 배포별 환경변수
+같은 Agent 프로세스의 structured-output 호출에는 동일한 정책이 적용된다. v3 trace stage는
+`event_template_analysis`, `dimension_design`, `scenario_synthesis`로 구분한다. 배포별 환경변수
 `LLM_STRUCTURED_OUTPUT_STRICT`가 `config.yaml` 값을 덮어쓸 수 있다. 각 버전은 LLM request와
-최초 parsing에 같은 Pydantic schema를 사용한다. v2·v3 모두 상세 EventShock과 value source
-assignment를 schema에서 제거했으며, Scenario `dimensionValues`는 strict JSON Schema가
+최초 parsing에 같은 Pydantic schema를 사용한다. v2는 상세 EventShock과 value source
+assignment를 schema에서 제거했고, v3는 단계별 분석·합성·Scenario 전용 schema를 사용한다.
+Scenario `dimensionValues`는 strict JSON Schema가
 허용하는 key/value 객체 배열로 요청한 뒤 내부 dict 표현으로 복원한다. 최초 Pydantic 검증
 실패는 connector가 `LLM_INVALID_RESPONSE_ERROR`로 구분한다. 다중 Event graph의 node가
 retry와 feedback을 명시적으로 추적할 수 있도록 connector 내부 `max_retries`는 0으로
@@ -190,7 +207,7 @@ retry와 feedback을 명시적으로 추적할 수 있도록 connector 내부 `m
 checksum과 단일 Event lineage를 같은 연결 테이블에 보존한다.
 
 v1~v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
-`ModelImpactLeverService`와 `leverMappings` 검증은 v4 경로에만 존재한다.
+`ModelImpactLeverService`와 Impact Path·Lever lineage 검증은 v4 경로에만 존재한다.
 최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
 adapter를 추가하지 않는다.
 
@@ -207,7 +224,7 @@ v4는 Event Type을 Template 선택 키로 사용하지 않는다. 선택한 Eve
 위반하면 안 되는 현재 사실, Demand·Supply·Trade·price-only 영향 경로의 근거,
 사용자가 확인할 불확실성의 출처를 제공한다.
 
-`tmm_mi_model_impact_lever_m`은 안정적인 `lever_code`, domain, 적용 기준과 기존
+`tmm_mi_model_impact_lever_m`은 안정적인 `lever_code`, domain, 설명, 선택 기준과 기존
 `tmm_mi_model_param_m` 파라미터 binding을 갖는 작은 카탈로그다. 파일·시트·축과
 Basecase 읽기 정보는 기존 parameter master를 그대로 조회하므로 상세 Excel tree를
 복제하지 않는다. binding이 기존 master에 없으면 요청을 실패시키고, 비활성
@@ -217,49 +234,83 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 `CATALOG_MARKED_UNSUPPORTED`로 사유를 구분한다.
 
 `price_only` 레버는 Basecase Excel에서 유래한 모델 입력명이 아니라, 재고 여건,
-지역 가격 스프레드와 금융시장 위험 프리미엄처럼 글로벌 LNG 가격을 설명하는
+지역 가격 스프레드와 금융시장 위험 프리미엄처럼 JKM 가격을 설명하는
 비수급 경로다. 모델 입력 미지원과 혼동하지 않도록 `PRICE_ONLY`로 별도 표시한다.
 
 `v4_flow.py`는 Event와 활성 카탈로그를 준비한 뒤 v4 LangGraph에 입력한다. v4는
-두 LLM 단계와 최종 일괄 저장 node로 구성한다.
+네 개의 논리적 LLM 단계와 단계별 서버 검증, 최종 일괄 저장 node로 구성한다.
+첫 단계는 Event 수만큼의 작은 호출을 병렬 실행하므로 전체 순차 단계 수는 늘지 않는다.
 
-1. `design_model_lever_dimensions`: 모든 compact Event와 최소 카탈로그를 한 번에 읽고
-   Event 근거, 잔여 불확실성, lever 매핑, value 가정을 포함한 3~~6개 dimension을 생성한다.
-2. `synthesize_v4_scenarios`: 검증된 interaction과 compact dimension만 사용해 Scenario를 합성한다.
-   원본 Event나 별도 fact graph를 다시 전달하지 않는다.
-3. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
+1. `analyze_event_impacts`: Event별로 독립된 자연어 중심 structured-output 호출을 동시에 실행한다.
+   입력은 원본 DTO JSON 대신 Event 설명, 핵심 사실 후보 문장, 사용 가능한 Lever 목록을 Markdown으로
+   보여준다. LLM은 LNG 시장에 중요한 Fact 문장을 후보에서 그대로 최대 2개 선택하고, 각 영향의
+   전달 경로·JKM 방향·영향 기간과 열린 질문을 한국어 문장으로 설명한다. 별도 `price` 필드는
+   생성하지 않는다. `factStatus`와 `confidence`, Fact/Path ID는
+   생성하지 않으며 서버가 선택 문장을 원본 후보와 대조한 뒤 ID와 lineage를 부여한다. Event당
+   Impact Path는 최대 2개, ordered Lever step은 Path당 최대 2개, 열린 질문은 최대 2개다. 각 Event는
+   자기 호출만 최대 3회 재시도하므로 한 Event 실패가 성공한 다른 Event의 재생성을 유발하지 않는다.
+2. `validate_event_impacts`: 병렬 결과를 요청 Event 순서로 병합한 뒤 모든 Event coverage와
+   Fact→Path→Lever lineage를 검증하고
+   `leverCode`로 `impactLeverId`를 hydrate한다. price-only Path는 `balanceEffect`를 생략하며,
+   그 외 Path는 Catalog domain과 일치하는 balance effect를 가져야 한다.
+3. `analyze_event_interactions` / `validate_event_interactions`: 검증된 Path를 `[P1]`, `[P2]` 형태의
+   읽기 쉬운 카드로 전달한다. LLM은 함께 발생했을 때 달라지는 점을 한국어 문장으로 설명하고
+   관련 Path 별칭만 선택한다. 결합 효과의 JKM 순방향과 기간도 `analysis` 문장에 포함하며 별도
+   `price` 필드는 만들지 않는다. 중요한 cross-Event Interaction과 열린 질문을 각각 최대 3개만
+   생성하며, 관계가 없으면 빈 배열을 허용한다. Interaction ID, Event ID, canonical Path ID와
+   semantic key는 서버가 Path lineage에서 hydrate한다.
+4. `design_model_lever_dimensions`: 검증된 열린 질문을 `[U1]`, `[U2]` 카드로 전달하고, 각 질문을
+   어떤 선택 축으로 모델링할지 Dimension 3~6개와 Value 2~4개로 답하게 한다. LLM은 질문·축·선택지와
+   선택 결과를 자연어 및 짧은 상태 표현으로 생성하며 Dimension/Value ID와 source lineage는 서버가
+   부여한다. 화면용 Dimension label은 질문과 분리하고, Value label은 비교 가능한 시장·운영 상태를
+   10~25자로 표현한다. 입력 근거에 없는 숫자 경계는 만들지 않는다. Dimension은 새 Lever를 선택하지
+   않고 source uncertainty의 affected Lever를 상속한다.
+5. `validate_model_lever_dimensions`: Dimension의 source Event/Path/uncertainty와
+   `primaryImpactLeverId`, Value별 Lever state ID 및 model support status를 hydrate한다.
+6. `synthesize_v4_scenarios`: 공통 영향, 검증된 Interaction, Dimension 선택지를 읽기 쉬운
+   의사결정표로 전달한다. LLM은 `D1.V1` 같은 선택지 별칭을 골라 Scenario 3~5개의 제목·서사·JKM
+   압력 설명을 자연스러운 한국어 문장으로 생성한다. 미리 정한 공급·수요·운송 유형에 맞추지 않고
+   입력 Dimension과 Interaction에서 Scenario별 구분 요인을 선택한다. 제목은 핵심 조건이나 메커니즘을
+   20~40자로 표현하고, narrative는 주요 조건과 최종 전달 경로를 80~300자의 두 문장으로 설명한다.
+   서버는 이 설명을 파싱하지 않고 보존하며,
+   공통 Path analysis·선택 Value의 why·적용 Interaction analysis로 pressure breakdown을 구성한다.
+   Scenario ID와 canonical Dimension/Value/Interaction ID도 서버가 hydrate한다.
+7. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
 
-각 LLM 단계는 최대 3회 재시도하며 검증을 통과한 앞 단계 결과는 재사용한다. Scenario delta와
-근거 추적의 정본은 `dimensionDefinitions[]`다. 각 dimension은 다음을 저장한다.
+각 LLM 단계는 최대 3회 재시도하며 검증을 통과한 앞 단계 결과는 재사용한다. ID·lineage·Enum,
+Fact 부정과 같이 설명으로 성립할 수 없는 모순은 해당 단계를 재생성한다. Event/Interaction의
+JKM 방향·기간은 자연어 analysis에 보존하고 기계 검증하지 않는다. 최종 계산에 사용하는
+Dimension Choice pressure와 Scenario pressure만 폐쇄형 Enum으로 검증한다. 별도 review LLM은
+추가하지 않으며 공통 LLM connector와 MLflow trace 기록 방식은 변경하지 않는다.
 
-- `eventGroundings[]`: `eventId`, 확인된 사실을 압축한 `observedBasis`, 분기 대상인 `uncertainty`
-- `leverMappings[]`: catalog의 `impactLeverId`/`leverCode`와 `mappingRationale`
-- `values[]`: `valueId`, `label`, `globalPressureContribution`, `assumptionRationale`
+v4 Dimension은 다음 정본을 저장한다.
 
-LLM은 `impactLeverId`를 생략할 수 있고 서버가 활성 catalog의 `leverCode`로 hydrate한다.
-별도의 `EventImpactFact`, `sourceFactIds`, `commonFactLeverMappings`,
-`eventDimensionCoverage`, `sourceRefs`, 중복 `leverRefs`/`impactLeverRefs`는 생성하거나 저장하지 않는다.
-서버는 grounding의 Event 존재 여부, 카탈로그 ID/code, dimension/value ID 고유성,
-고유 Scenario 조합, pressure band partition, contribution 합계와 pressure band의 방향,
-floor·ceiling 및 실제 bullish·bearish contribution이 함께 있는 선택적 mixed를 결정론적으로 검증한다.
-floor·ceiling·mixed를 포함한 전체 Scenario 중 최고 `probabilityScore` 하나를 baseline으로 지정한다.
-모든 Event를 별도 dimension에 강제로 연결하거나 fact와 lever domain의
-일대일 coverage를 강제하지 않는다.
-여기서 가격 결과는 절대 가격 예측값이 아니라 모든 Scenario에 필수인 글로벌 LNG
-pressure band와 rationale이다. 지역 가격 허브가 특별히 관련된 Scenario만
-`related_markets`에 시장과 근거를 선택적으로 저장하며, 시장별 방향이나
+- `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`
+- `primaryLeverCode`, 서버가 hydrate한 `primaryImpactLeverId`, `modelSupportStatus`
+- `values[]`: `valueId`, `label`, `leverStates[]`, `pressureContribution`, `assumptionRationale`
+
+기존 `eventGroundings`와 `leverMappings`는 새 v4 생성 계약에서 제거한다. Event Fact,
+Impact Path, Path/Interaction uncertainty, Interaction, validation warning과 Scenario pressure
+breakdown은 기존 `generation_diagnostics` JSON에 저장하며 v4 sync 응답에도 반환한다.
+신규 DB 테이블이나 컬럼은 추가하지 않는다.
+
+서버는 모든 Event의 Fact 또는 명시적 제외 사유, Fact/Path/uncertainty/interaction ID 고유성,
+서로 다른 Event Path를 참조하는 Interaction, Dimension/Value lineage, 고유 Scenario 조합,
+pressure band partition과 contribution 순서를 검증한다. floor·ceiling 및 실제 bullish·bearish
+contribution이 함께 있는 선택적 mixed를 지정하고 전체 Scenario 중 최고 `probabilityScore`
+하나를 baseline으로 지정한다.
+여기서 가격 결과는 절대 가격 예측값이 아니라 모든 v2/v3/v4 Scenario에 필수인 JKM
+pressure band와 rationale이다. 응답의 `pressureTarget`은 LLM이 아닌 서버가 `JKM`으로 고정한다.
+TTF 또는 HH가 특별히 관련된 v4 Scenario만 `related_markets`에 시장과 근거를 선택적으로
+저장하며 JKM 자체의 근거는 `pressureRationale`에 둔다. 시장별 방향이나
 floor·ceiling을 생성하지 않는다. 지원 상태는 dimension 선택 우선순위나 생성 성공의
 필수 조건으로 사용하지 않는다. `price_only`나 미지원 경로도 중요한 불확실성이면 선택할 수 있고,
 서버는 실행 가능한 binding coverage를 진단 정보로만 계산한다.
 
-그룹에는 카탈로그 version/checksum과 compact dimension 정의를 저장한다.
-모델 파라미터 단계는 dimension의 `leverMappings[].leverCode`를 읽어 활성 catalog와 연결한다.
-기존 저장 데이터 호환을 위해 `leverRefs`는 fallback으로만 읽는다. 실행 가능한 binding은 기존
-Basecase/LUT 파이프라인으로 넘기고 모든 매핑 결과는
-`parameterMappingEvidence`로 응답·DB에 보존한다. 각 evidence는 출처 종류,
-Event/dimension, impact lever ID/code, 처리 역할, 대상 파라미터와 rationale을
-포함한다. price-only 또는 미지원 binding은 각각 `PRICE_ONLY_CONTEXT`,
-`UNSUPPORTED_CONTEXT` 역할과 상세 사유 코드를 가진다.
+그룹에는 카탈로그 version/checksum, 새 Dimension 정의와 전체 분석 진단을 저장한다.
+현재 Model Parameter Agent는 기존 v4의 `leverMappings`를 소비하므로 새 v4 그룹의
+`values[].leverStates[]` 연계는 후속 구현 범위다. 이번 변경에서는 해당 소비부와 기존 저장
+데이터를 변환하지 않는다.
 API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`/`N`으로
 변환한다.
 관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.

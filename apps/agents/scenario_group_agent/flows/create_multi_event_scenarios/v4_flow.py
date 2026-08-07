@@ -20,14 +20,20 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state i
     V4MultiEventGenerationState,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_nodes import (
+    AnalyzeEventImpactsNode,
+    AnalyzeEventInteractionsNode,
     DesignModelLeverDimensionsNode,
     SynthesizeV4ScenariosNode,
     fail_v4_generation,
     finalize_v4_scenarios,
     persist_v4_generation,
     route_after_v4_dimensions,
+    route_after_v4_event_impacts,
+    route_after_v4_event_interactions,
     route_after_v4_scenarios,
     validate_v4_dimensions,
+    validate_v4_event_impacts,
+    validate_v4_event_interactions,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     V4GenerationResult,
@@ -96,6 +102,10 @@ def prepare_v4_multi_event_scenarios(
 
 def _build_graph() -> Runnable:
     builder = StateGraph(V4MultiEventGenerationState, context_schema=TraceContext)
+    builder.add_node("analyze_event_impacts", AnalyzeEventImpactsNode())
+    builder.add_node("validate_event_impacts", validate_v4_event_impacts)
+    builder.add_node("analyze_event_interactions", AnalyzeEventInteractionsNode())
+    builder.add_node("validate_event_interactions", validate_v4_event_interactions)
     builder.add_node("design_model_lever_dimensions", DesignModelLeverDimensionsNode())
     builder.add_node("validate_model_lever_dimensions", validate_v4_dimensions)
     builder.add_node("synthesize_v4_scenarios", SynthesizeV4ScenariosNode())
@@ -103,7 +113,11 @@ def _build_graph() -> Runnable:
     builder.add_node("persist_generation", persist_v4_generation)
     builder.add_node("fail_generation", fail_v4_generation)
 
-    builder.add_edge(START, "design_model_lever_dimensions")
+    builder.add_edge(START, "analyze_event_impacts")
+    builder.add_edge("analyze_event_impacts", "validate_event_impacts")
+    builder.add_conditional_edges("validate_event_impacts", route_after_v4_event_impacts)
+    builder.add_edge("analyze_event_interactions", "validate_event_interactions")
+    builder.add_conditional_edges("validate_event_interactions", route_after_v4_event_interactions)
     builder.add_edge("design_model_lever_dimensions", "validate_model_lever_dimensions")
     builder.add_conditional_edges("validate_model_lever_dimensions", route_after_v4_dimensions)
     builder.add_edge("synthesize_v4_scenarios", "finalize_v4_scenarios")
