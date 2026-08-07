@@ -11,6 +11,8 @@
 
 경로의 두 ID는 실제 숫자로 바꿉니다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있습니다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 됩니다.
 
+master 활성 범위가 canonical 10개로 확장되어도 이 문서의 endpoint, request body, proposal/confirmation payload schema는 바뀌지 않는다. 실제 응답의 `proposalParameters`에는 해당 scenario의 활성 direct/routing mapping과 exact LUT/Basecase slot을 통과한 항목만 나타난다.
+
 ## 1. 동기 제안 API
 
 ```http

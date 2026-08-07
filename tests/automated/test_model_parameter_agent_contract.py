@@ -75,6 +75,13 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
 )
 from apps.agents.model_parameter_agent.utils import parameter_mapping as parameter_mapping_utils
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
+from apps.agents.model_parameter_agent.utils.lut import (
+    ReferenceLoadPolicy,
+    build_basecase_index,
+    build_slot_catalog,
+    get_lut_catalog,
+    get_parameter_spec_registry,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     DEFAULT_BASECASE_DIR,
     DEFAULT_INPUT_DIR,
@@ -226,10 +233,7 @@ TEST_PARAMETER_ROWS: list[dict[str, object]] = [
         basecase_read_mode="matrix_time_columns",
         basecase_header_row=10,
         basecase_data_start_row=11,
-        basecase_column_roles=(
-            "B:Country,C:LNG Plant,D:LNG Plant Train,"
-            "E:Life Cycle Category,F:Nameplate Capacity"
-        ),
+        basecase_column_roles=("B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity"),
         basecase_year_row=7,
         basecase_month_row=8,
         basecase_period_row=9,
@@ -244,10 +248,7 @@ TEST_PARAMETER_ROWS: list[dict[str, object]] = [
         basecase_read_mode="matrix_time_columns",
         basecase_header_row=10,
         basecase_data_start_row=11,
-        basecase_column_roles=(
-            "B:Country,C:LNG Plant,D:LNG Plant Train,"
-            "E:Life Cycle Category,F:Nameplate Capacity"
-        ),
+        basecase_column_roles=("B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity"),
         basecase_year_row=7,
         basecase_month_row=8,
         basecase_period_row=9,
@@ -273,8 +274,7 @@ TEST_PARAMETER_ROWS: list[dict[str, object]] = [
         basecase_header_row=10,
         basecase_data_start_row=11,
         basecase_column_roles=(
-            "B:Continent,C:Region,D:Country,E:Regasification plant,"
-            "F:Life Cycle Category,G:Nameplate capacity"
+            "B:Continent,C:Region,D:Country,E:Regasification plant,F:Life Cycle Category,G:Nameplate capacity"
         ),
         basecase_year_row=9,
         basecase_month_row=10,
@@ -321,8 +321,22 @@ TEST_MAPPING_ROWS: list[dict[str, object]] = [
     _mapping_row(7, "period", "기간", "indirect", None, "하절기 월 슬롯"),
     _mapping_row(7, "heatwave_intensity", "폭염 강도", "direct", "CDD", "평년 대비 +℃ -> CDD 변환 입력"),
     _mapping_row(7, "heatwave_intensity", "폭염 강도", "direct", "Temperature", "기온 직접 입력"),
-    _mapping_row(10, "lng_demand_impact_intensity", "LNG 수요 영향 강도", "direct", "Coal Futures Price", "가격기반 석탄-가스 스위칭"),
-    _mapping_row(10, "lng_demand_impact_intensity", "LNG 수요 영향 강도", "direct", "Gas Futures Price", "가격기반 석탄-가스 스위칭"),
+    _mapping_row(
+        10,
+        "lng_demand_impact_intensity",
+        "LNG 수요 영향 강도",
+        "direct",
+        "Coal Futures Price",
+        "가격기반 석탄-가스 스위칭",
+    ),
+    _mapping_row(
+        10,
+        "lng_demand_impact_intensity",
+        "LNG 수요 영향 강도",
+        "direct",
+        "Gas Futures Price",
+        "가격기반 석탄-가스 스위칭",
+    ),
     _mapping_row(10, "lng_demand_impact_intensity", "LNG 수요 영향 강도", "direct", "PowerMix", "구조적 비중 변화"),
     _mapping_row(10, "alt_energy_absorption", "타 에너지원 흡수 가능성", "direct", "PowerMix", "원전·재생E 등 흡수"),
     _mapping_row(11, "period", "기간", "indirect", None, "시간축"),
@@ -330,13 +344,26 @@ TEST_MAPPING_ROWS: list[dict[str, object]] = [
     _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "LiqUtilAdjustment", "수출 시설 피해 시"),
     _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "LiqProdAdjustment", "수출 시설 피해 시"),
     _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "RegasAdjustment", "수입 시설 피해 시"),
-    _mapping_row(11, "affected_facility_type", "영향 시설 유형", "routing", "HurricaneIntensity", "미국 액화시설 허리케인"),
+    _mapping_row(
+        11, "affected_facility_type", "영향 시설 유형", "routing", "HurricaneIntensity", "미국 액화시설 허리케인"
+    ),
     _mapping_row(11, "supply_disruption_intensity", "공급 차질 강도", "direct", None, "시설 가동률 감소율로 변환"),
     _mapping_row(17, "period", "기간", "indirect", None, "시간축"),
     _mapping_row(17, "transport_disruption", "운송 차질", "direct", "ShippingCost", "용선료·보험료 상승"),
-    _mapping_row(17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "LiqUtilAdjustment", "액화시설 가동률 감소"),
-    _mapping_row(17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "LiqProdAdjustment", "생산량 직접 감소"),
-    _mapping_row(17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "SupplyDisruption", "upstream 생산 차질 동반 시"),
+    _mapping_row(
+        17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "LiqUtilAdjustment", "액화시설 가동률 감소"
+    ),
+    _mapping_row(
+        17, "supply_disruption_intensity", "공급 차질 - 강도", "direct", "LiqProdAdjustment", "생산량 직접 감소"
+    ),
+    _mapping_row(
+        17,
+        "supply_disruption_intensity",
+        "공급 차질 - 강도",
+        "direct",
+        "SupplyDisruption",
+        "upstream 생산 차질 동반 시",
+    ),
 ]
 
 
@@ -610,9 +637,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         with self.assertRaises(MIBaseError) as state_error:
             _route_after_candidate_validation(state)
-        assert "No model parameter mapping candidates found" in (
-            state_error.exception.error_message
-        )
+        assert "No model parameter mapping candidates found" in (state_error.exception.error_message)
 
         with self.assertRaises(MIBaseError) as dict_error:
             _route_after_candidate_validation(
@@ -651,8 +676,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         route = next(
             route
             for route in model_parameter_router.routes
-            if isinstance(route, APIRoute)
-            and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
+            if isinstance(route, APIRoute) and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
         )
 
         assert route.body_field is not None
@@ -664,8 +688,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         route = next(
             route
             for route in model_parameter_router.routes
-            if isinstance(route, APIRoute)
-            and route.path == "/model-parameters/scenarios/{scenario_id}/proposals/sync"
+            if isinstance(route, APIRoute) and route.path == "/model-parameters/scenarios/{scenario_id}/proposals/sync"
         )
 
         assert route.body_field is not None
@@ -773,11 +796,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     "운송 차질은 ShippingCost에 직접 반영",
                 ),
             ],
-            parameter_rows=[
-                row
-                for row in TEST_PARAMETER_ROWS
-                if row["canonical_parameter_name"] == "ShippingCost"
-            ],
+            parameter_rows=[row for row in TEST_PARAMETER_ROWS if row["canonical_parameter_name"] == "ShippingCost"],
         )
 
         candidates, non_inputs, warnings = match_parameter_candidates(
@@ -827,9 +846,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         ),
                     ],
                     "parameter_definitions": [
-                        row
-                        for row in TEST_PARAMETER_ROWS
-                        if row["canonical_parameter_name"] == "ShippingCost"
+                        row for row in TEST_PARAMETER_ROWS if row["canonical_parameter_name"] == "ShippingCost"
                     ],
                 },
             },
@@ -847,11 +864,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     "운송 차질은 ShippingCost에 직접 반영",
                 ),
             ],
-            parameter_rows=[
-                row
-                for row in TEST_PARAMETER_ROWS
-                if row["canonical_parameter_name"] == "ShippingCost"
-            ],
+            parameter_rows=[row for row in TEST_PARAMETER_ROWS if row["canonical_parameter_name"] == "ShippingCost"],
         )
 
         candidates, non_inputs, warnings = match_parameter_candidates(
@@ -897,9 +910,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                         ),
                     ],
                     "parameter_definitions": [
-                        row
-                        for row in TEST_PARAMETER_ROWS
-                        if row["canonical_parameter_name"] == "ShippingCost"
+                        row for row in TEST_PARAMETER_ROWS if row["canonical_parameter_name"] == "ShippingCost"
                     ],
                 },
             },
@@ -940,9 +951,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1028,9 +1037,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1046,9 +1053,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 [{"parameter_name": "ShippingCost"}],
             )
 
-            mapping_rules, parameter_definitions = (
-                ModelParameterService().load_parameter_mapping_resources()
-            )
+            mapping_rules, parameter_definitions = ModelParameterService().load_parameter_mapping_resources()
 
         assert mapping_rules == [{"dimension_key": "period"}]
         assert parameter_definitions == [{"parameter_name": "ShippingCost"}]
@@ -1103,8 +1108,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             patch(
-                "apps.agents.model_parameter_agent.flows.propose_parameters.nodes."
-                "ModelParameterService",
+                "apps.agents.model_parameter_agent.flows.propose_parameters.nodes.ModelParameterService",
             ) as service_cls,
         ):
             state = ModelParameterProposalState(
@@ -1142,9 +1146,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1201,11 +1203,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         fake_session.rollback.assert_not_called()
         fake_session.close.assert_called_once_with()
         repository_cls.return_value.create_model_param_proposal.assert_called_once()
-        saved_payload = (
-            repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
-                "proposal_parameters"
-            ]
-        )
+        saved_payload = repository_cls.return_value.create_model_param_proposal.call_args.kwargs["proposal_parameters"]
         assert saved_payload[0]["parameterName"] == "ShippingCost"
         assert saved_payload[0]["modelTarget"]["modelFile"] == "Trade"
         assert saved_payload[0]["modelTarget"]["tableName"] == "Table1"
@@ -1213,12 +1211,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert saved_payload[0]["values"][0]["proposedValue"] == 2.98765
         assert saved_payload[0]["values"][1]["basecaseValue"] == -1.23456
         assert saved_payload[0]["values"][1]["proposedValue"] == -2.98765
-        assert (
-            repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
-                "request_usr_id"
-            ]
-            == 40
-        )
+        assert repository_cls.return_value.create_model_param_proposal.call_args.kwargs["request_usr_id"] == 40
 
     def test_model_parameter_service_does_not_fallback_to_scenario_group_request_user(
         self,
@@ -1237,9 +1230,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1266,12 +1257,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             )
 
         assert result == 902
-        assert (
-            repository_cls.return_value.create_model_param_proposal.call_args.kwargs[
-                "request_usr_id"
-            ]
-            is None
-        )
+        assert repository_cls.return_value.create_model_param_proposal.call_args.kwargs["request_usr_id"] is None
 
     def test_model_parameter_repository_sets_proposal_user_audit_fields(self) -> None:
         from apps.persistence.model_parameter.repository import ModelParameterRepository
@@ -1374,9 +1360,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1423,9 +1407,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1504,9 +1486,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1545,9 +1525,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1582,9 +1560,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1619,9 +1595,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1652,9 +1626,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1689,9 +1661,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1726,9 +1696,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             patch.dict(
                 sys.modules,
                 {
-                    "apps.common.configs.database.sync_database.connection": (
-                        fake_connection_module
-                    ),
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
                 },
             ),
             patch(
@@ -1754,9 +1722,13 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         fake_session.rollback.assert_called_once()
 
     def test_model_parameter_persistence_write_scope_is_proposal_only(self) -> None:
-        source = Path(
-            "apps/persistence/model_parameter/repository.py",
-        ).read_text().lower()
+        source = (
+            Path(
+                "apps/persistence/model_parameter/repository.py",
+            )
+            .read_text()
+            .lower()
+        )
 
         forbidden_tokens = [
             ".commit(",
@@ -1771,11 +1743,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_knowledge_base_profiles_resolve_mapped_basecase_sheet(self) -> None:
         kb = _get_db_fixture_kb()
-        existing_profiles = [
-            profile
-            for profile in kb.basecase_profiles.values()
-            if profile.sheet_exists
-        ]
+        existing_profiles = [profile for profile in kb.basecase_profiles.values() if profile.sheet_exists]
 
         assert existing_profiles
         assert kb.basecase_profiles["trade::shippingcostinput"].row_count > 18000
@@ -1818,8 +1786,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert all(candidate["event_type_l2_id"] == 17 for candidate in candidates)
         assert any(item["mapping_method"] == "indirect" for item in non_inputs)
         assert any(
-            kb.profile_for(candidate.get("model_file"), candidate.get("model_sheet"))
-            for candidate in candidates
+            kb.profile_for(candidate.get("model_file"), candidate.get("model_sheet")) for candidate in candidates
         )
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
@@ -1870,10 +1837,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         assert not warnings
         assert non_inputs == []
-        assert {
-            candidate["canonical_parameter_name"]
-            for candidate in candidates
-        } == {
+        assert {candidate["canonical_parameter_name"] for candidate in candidates} == {
             "SupplyDisruption",
             "LiqUtilAdjustment",
             "LiqProdAdjustment",
@@ -1902,11 +1866,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "active unrelated row",
             ),
         ]
-        parameter_rows = [
-            row
-            for row in TEST_PARAMETER_ROWS
-            if row["canonical_parameter_name"] == "ShippingCost"
-        ]
+        parameter_rows = [row for row in TEST_PARAMETER_ROWS if row["canonical_parameter_name"] == "ShippingCost"]
         with tempfile.TemporaryDirectory() as temp_dir:
             kb = get_parameter_knowledge_base_from_resources(
                 mapping_rows=mapping_rows,
@@ -2189,8 +2149,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             "basecase_read_mode": "matrix_time_columns",
             "basecase_data_start_row": 4,
             "basecase_column_roles": (
-                "B:Country,C:LNG Plant,D:LNG Plant Train,"
-                "E:Life Cycle Category,F:Nameplate Capacity (MTPA)"
+                "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)"
             ),
             "basecase_year_row": 1,
             "basecase_month_row": 2,
@@ -2277,13 +2236,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
         assert not warnings
         liq_candidate = next(
-            candidate
-            for candidate in candidates
-            if candidate["canonical_parameter_name"] == "LiqUtilAdjustment"
+            candidate for candidate in candidates if candidate["canonical_parameter_name"] == "LiqUtilAdjustment"
         )
         assert liq_candidate["basecase_column_roles"] == (
-            "B:Country,C:LNG Plant,D:LNG Plant Train,"
-            "E:Life Cycle Category,F:Nameplate Capacity"
+            "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity"
         )
         assert liq_candidate["basecase_value_start_col"] == "G"
         assert liq_candidate["basecase_value_end_col"] == "DA"
@@ -2358,13 +2314,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
         assert not warnings
         liq_candidate = next(
-            candidate
-            for candidate in candidates
-            if candidate["canonical_parameter_name"] == "LiqProdAdjustment"
+            candidate for candidate in candidates if candidate["canonical_parameter_name"] == "LiqProdAdjustment"
         )
         assert liq_candidate["basecase_column_roles"] == (
-            "B:Country,C:LNG Plant,D:LNG Plant Train,"
-            "E:Life Cycle Category,F:Nameplate Capacity"
+            "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity"
         )
         assert liq_candidate["basecase_value_start_col"] == "G"
         assert liq_candidate["basecase_value_end_col"] == "DA"
@@ -2375,8 +2328,79 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             context,
         )
 
+        assert not record_warnings
+        assert records
+        assert all(record["value"] is None for record in records)
+        assert min(record["source_row"] for record in records) == 11
+        assert max(record["source_row"] for record in records) == 358
+
+    @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
+    def test_pipeline_incomplete_workbook_axes_fall_back_to_exact_lut(self) -> None:
+        parameter_rows = [
+            _parameter_row(
+                "PipelineAdjustment",
+                model_file="Supply",
+                model_sheet="PipelineAdjustment",
+                semantic_axes="파이프라인 용량 - 노선·출발국·도착국·연·월",
+                basecase_read_mode="fixed_columns",
+                basecase_header_row=7,
+                basecase_data_start_row=13,
+                basecase_column_roles=("B:Year,C:Month,D:Pipeline name,H:PipelineAdjustment"),
+            ),
+        ]
+        mapping_rows = [
+            _mapping_row(
+                4,
+                "pipeline_capacity",
+                "파이프라인 용량",
+                "direct",
+                "PipelineAdjustment",
+                "파이프라인 용량 직접 조정",
+            ),
+        ]
+        kb = get_parameter_knowledge_base_from_resources(
+            mapping_rows=mapping_rows,
+            parameter_rows=parameter_rows,
+            basecase_dir_path=str(_default_basecase_dir()),
+        )
+        context = {
+            "scenario": {
+                "scenario_id": 100,
+                "dimension_values": {"pipeline_capacity": "감소"},
+            },
+            "scenario_group": {"event_type_l2_id": 4},
+            "dimension_template": [
+                {"dim_key": "pipeline_capacity", "label": "파이프라인 용량"},
+            ],
+        }
+        candidates, _, candidate_warnings = match_parameter_candidates(kb, context)
+        assert not candidate_warnings
+        registry = get_parameter_spec_registry()
+        records, record_warnings = build_basecase_records(
+            kb,
+            candidates,
+            context,
+            registry=registry,
+        )
+
         assert records == []
-        assert any("basecase record를 추출하지 못했습니다" in warning for warning in record_warnings)
+        assert any(
+            "missing_key_axes=['Pipeline Name', 'From Country', 'To Country']" in warning for warning in record_warnings
+        )
+        policy = ReferenceLoadPolicy(2026, 2030)
+        basecase_index = build_basecase_index(
+            records,
+            candidates,
+            policy=policy,
+            registry=registry,
+        )
+        slot_catalog = build_slot_catalog(
+            basecase_index,
+            get_lut_catalog(policy, registry=registry),
+        )
+        assert len(slot_catalog.candidates) == 1
+        assert len(slot_catalog.candidates[0].leaves) == 6
+        assert sum(len(leaf.available_periods) for leaf in slot_catalog.candidates[0].leaves) == 360
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_basecase_records_use_regas_first_matrix_section_only(self) -> None:
@@ -2399,13 +2423,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
         assert not warnings
         regas_candidate = next(
-            candidate
-            for candidate in candidates
-            if candidate["canonical_parameter_name"] == "RegasAdjustment"
+            candidate for candidate in candidates if candidate["canonical_parameter_name"] == "RegasAdjustment"
         )
         assert regas_candidate["basecase_column_roles"] == (
-            "B:Continent,C:Region,D:Country,E:Regasification plant,"
-            "F:Life Cycle Category,G:Nameplate capacity"
+            "B:Continent,C:Region,D:Country,E:Regasification plant,F:Life Cycle Category,G:Nameplate capacity"
         )
         assert regas_candidate["basecase_year_row"] == 9
         assert regas_candidate["basecase_month_row"] == 10
@@ -2468,9 +2489,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
         assert not warnings
         temperature_candidate = next(
-            candidate
-            for candidate in candidates
-            if candidate["canonical_parameter_name"] == "Temperature"
+            candidate for candidate in candidates if candidate["canonical_parameter_name"] == "Temperature"
         )
 
         records, record_warnings = build_basecase_records(
@@ -2513,9 +2532,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
         assert not warnings
         powermix_candidate = next(
-            candidate
-            for candidate in candidates
-            if candidate["canonical_parameter_name"] == "PowerMix"
+            candidate for candidate in candidates if candidate["canonical_parameter_name"] == "PowerMix"
         )
         assert powermix_candidate["basecase_data_start_row"] == 12
 
@@ -2586,11 +2603,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 context,
             )
             assert not warnings
-            candidate = next(
-                item
-                for item in candidates
-                if item["canonical_parameter_name"] == parameter_name
-            )
+            candidate = next(item for item in candidates if item["canonical_parameter_name"] == parameter_name)
             assert candidate["basecase_column_roles"] == (
                 f"B:Year,C:Month,D:Country,E:DegreeDayType,G:{parameter_name}"
             )
@@ -2607,36 +2620,25 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
     def test_fixed_column_spec_is_defined_once_per_parameter(self) -> None:
         temperature_dimension_rows = [
-            row
-            for row in TEST_MAPPING_ROWS
-            if row["canonical_parameter_name"] == "Temperature"
+            row for row in TEST_MAPPING_ROWS if row["canonical_parameter_name"] == "Temperature"
         ]
         temperature_parameter_rows = [
-            row
-            for row in TEST_PARAMETER_ROWS
-            if row["canonical_parameter_name"] == "Temperature"
+            row for row in TEST_PARAMETER_ROWS if row["canonical_parameter_name"] == "Temperature"
         ]
 
         assert all("basecase_column_roles" not in row for row in temperature_dimension_rows)
         assert len(temperature_dimension_rows) == 2
         assert len(temperature_parameter_rows) == 1
-        assert (
-            temperature_parameter_rows[0]["basecase_column_roles"]
-            == "K:Year,L:Month,M:Country,O:Temperature"
-        )
+        assert temperature_parameter_rows[0]["basecase_column_roles"] == "K:Year,L:Month,M:Country,O:Temperature"
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
     def test_coal_and_gas_futures_are_split_parameters(self) -> None:
         dimension_canonicals = [
             row["canonical_parameter_name"]
             for row in TEST_MAPPING_ROWS
-            if row["event_type_l2_id"] == 10
-            and row["dimension_key"] == "lng_demand_impact_intensity"
+            if row["event_type_l2_id"] == 10 and row["dimension_key"] == "lng_demand_impact_intensity"
         ]
-        parameter_canonicals = {
-            row["canonical_parameter_name"]
-            for row in TEST_PARAMETER_ROWS
-        }
+        parameter_canonicals = {row["canonical_parameter_name"] for row in TEST_PARAMETER_ROWS}
 
         assert "Coal/Gas Futures Price" not in dimension_canonicals
         assert {"Coal Futures Price", "Gas Futures Price"} <= set(dimension_canonicals)
@@ -2660,10 +2662,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         assert not warnings
         assert non_inputs == []
-        assert {
-            candidate["canonical_parameter_name"]
-            for candidate in candidates
-        } >= {"Coal Futures Price", "Gas Futures Price"}
+        assert {candidate["canonical_parameter_name"] for candidate in candidates} >= {
+            "Coal Futures Price",
+            "Gas Futures Price",
+        }
 
     def test_to_output_returns_key_content_only(self) -> None:
         with patch(
@@ -2773,12 +2775,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "parameterAdjustments" not in dumped
         assert "nonInputItems" not in dumped
         service_cls.return_value.save_proposal_result.assert_called_once()
-        assert (
-            service_cls.return_value.save_proposal_result.call_args.kwargs[
-                "user_id"
-            ]
-            == 101
-        )
+        assert service_cls.return_value.save_proposal_result.call_args.kwargs["user_id"] == 101
         assert "validationWarnings" not in dumped
         assert "scenarioContext" not in dumped
         assert "candidateMappings" not in dumped
@@ -2809,9 +2806,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                             "model_sheet": "PowerMixAdjustment",
                             "model_table": "Table2",
                             "basecase_read_mode": "fixed_columns",
-                            "basecase_column_roles": (
-                                "B:Year,C:Country,F:Scenario Metric"
-                            ),
+                            "basecase_column_roles": ("B:Year,C:Country,F:Scenario Metric"),
                         },
                     ],
                     "parameter_adjustments": [
@@ -2839,9 +2834,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             )
 
-        proposal_parameter = output.model_dump(by_alias=True)["data"][
-            "proposalParameters"
-        ][0]
+        proposal_parameter = output.model_dump(by_alias=True)["data"]["proposalParameters"][0]
         assert proposal_parameter["parameterName"] == "PowerMix"
         assert proposal_parameter["modelTarget"]["valueFieldNames"] == [
             "Scenario Metric",
@@ -2866,9 +2859,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             )
 
-        assert "No model parameter mapping candidates found" in (
-            error.exception.error_message
-        )
+        assert "No model parameter mapping candidates found" in (error.exception.error_message)
 
     def test_prepare_callback_rejects_empty_mapping_before_processing_row(self) -> None:
         scenario_context = {
@@ -2910,9 +2901,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             with self.assertRaises(MIBaseError) as error:
                 prepare_propose_parameters_callback(100)
 
-        assert "No model parameter mapping candidates found" in (
-            error.exception.error_message
-        )
+        assert "No model parameter mapping candidates found" in (error.exception.error_message)
         service_cls.return_value.create_processing_proposal.assert_not_called()
 
     def test_prepare_callback_creates_processing_row_when_mapping_exists(self) -> None:
@@ -3135,20 +3124,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "rationale": "Europe 2026 row 대체 공급 반영",
             },
         ]
-        stored_parameters = (
-            service_cls.return_value.save_proposal_result.call_args.kwargs[
-                "proposal_parameters"
-            ]
-        )
-        stored_payload = [
-            parameter.model_dump(mode="json", by_alias=True)
-            for parameter in stored_parameters
-        ]
-        assert all(
-            "lutValue" not in value
-            for parameter in stored_payload
-            for value in parameter["values"]
-        )
+        stored_parameters = service_cls.return_value.save_proposal_result.call_args.kwargs["proposal_parameters"]
+        stored_payload = [parameter.model_dump(mode="json", by_alias=True) for parameter in stored_parameters]
+        assert all("lutValue" not in value for parameter in stored_payload for value in parameter["values"])
 
     def test_event_type_is_not_forcibly_suppressed(self) -> None:
         with patch(
@@ -3315,9 +3293,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     },
                 )
 
-        assert "No valid model parameter proposal parameters generated" in (
-            error.exception.error_message
-        )
+        assert "No valid model parameter proposal parameters generated" in (error.exception.error_message)
         service_cls.return_value.save_proposal_result.assert_not_called()
 
 
@@ -3368,8 +3344,7 @@ class ModelParameterEntrypointTest(unittest.IsolatedAsyncioTestCase):
                 "apps.connectors.mlflow.tracing.setup_mlflow_tracing",
             ),
             patch(
-                "apps.agents.model_parameter_agent.utils.resource_bootstrap."
-                "ensure_model_parameter_resource_runtime",
+                "apps.agents.model_parameter_agent.utils.resource_bootstrap.ensure_model_parameter_resource_runtime",
                 ensure_runtime,
             ),
             patch(
@@ -3377,13 +3352,11 @@ class ModelParameterEntrypointTest(unittest.IsolatedAsyncioTestCase):
                 validate_lut_startup,
             ),
             patch(
-                "apps.agents.model_parameter_agent.utils.basecase."
-                "preload_basecase_runtime_cache",
+                "apps.agents.model_parameter_agent.utils.basecase.preload_basecase_runtime_cache",
                 preload_basecase,
             ),
             patch(
-                "apps.agents.model_parameter_agent.utils.resource_runtime."
-                "clear_model_parameter_resource_runtime",
+                "apps.agents.model_parameter_agent.utils.resource_runtime.clear_model_parameter_resource_runtime",
             ),
             patch.object(model_param_entrypoint, "setup_logging"),
             patch.object(model_param_entrypoint, "get_sync_engine"),
@@ -3469,67 +3442,89 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             3,
         )
 
-    async def test_candidate_validation_bypasses_llm_for_direct_and_single_route(self) -> None:
+    async def test_single_population_route_can_be_excluded_by_candidate_validation(self) -> None:
         direct_candidate = {
             "candidate_key": "direct",
             "mapping_method": "direct",
-            "source_dimension_id": "affected_facility_type",
-            "source_dimension_label": "피해 시설 유형",
-            "source_dimension_value": "수입 시설",
+            "source_dimension_id": "economic_intensity",
+            "source_dimension_label": "경제 영향 강도",
+            "source_dimension_value": "보통",
             "model_file": "Demand",
-            "model_sheet": "PowerMixAdjustment",
+            "model_sheet": "GDP",
             "model_table": "Table1",
-            "parameter_name": "PowerMix",
-            "canonical_parameter_name": "PowerMix",
-            "parameter_hint": "발전 믹스 조정 입력값입니다.",
+            "parameter_name": "GDP",
+            "canonical_parameter_name": "GDP",
+            "parameter_hint": "GDP 성장률 입력값입니다.",
             "semantic_axes": "Country, Year",
         }
         routing_candidate = {
             "candidate_key": "routing",
             "mapping_method": "routing",
-            "source_dimension_id": "affected_facility_type",
-            "source_dimension_label": "피해 시설 유형",
-            "source_dimension_value": "수입 시설",
-            "mapping_comment": "수입 시설 피해 시",
-            "model_file": "Supply",
-            "model_sheet": "RegasAdjustment",
+            "event_type_l2_id": 21,
+            "dimension_key": "economic_intensity",
+            "source_dimension_id": "economic_intensity",
+            "source_dimension_label": "경제 영향 강도",
+            "source_dimension_value": "보통",
+            "mapping_comment": ("이벤트에 인구·이민·인구전망 변화가 명시된 경우만 선택"),
+            "model_file": "Demand",
+            "model_sheet": "GDP",
             "model_table": "Table2",
-            "parameter_name": "RegasAdjustment",
-            "canonical_parameter_name": "RegasAdjustment",
-            "parameter_hint": "재기화 차질 조정 입력값입니다.",
+            "parameter_name": "Population",
+            "canonical_parameter_name": "Population",
+            "parameter_hint": "국가별 인구 전망 입력값입니다.",
         }
+        candidate_response = LLMCandidateValidationResponse(
+            routing_decisions=[
+                RoutingDecision(
+                    dimension_key="economic_intensity",
+                    selected_candidate_keys=[],
+                ),
+            ],
+        )
+        captured_messages: list[list[dict[str, str]]] = []
+
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
-            raise AssertionError("direct와 단일 routing 후보는 LLM을 호출하지 않아야 합니다")
+            assert kwargs["output_schema"] is LLMCandidateValidationResponse
+            captured_messages.append(kwargs["messages"])
+            return SimpleNamespace(result=candidate_response, usage=None)
 
         state = ModelParameterProposalState(
             scenario_id=100,
             scenario_context={
+                "event": {
+                    "event_title": "독일 제조업 둔화",
+                    "event_summary": "주문 감소로 경기 하방 압력이 확대됐다.",
+                },
                 "scenario": {
                     "scenario_id": 100,
-                    "dimension_values": {"affected_facility_type": "수입 시설"},
+                    "scenario_title": "독일 경기 부진 지속",
+                    "dimension_values": {"economic_intensity": "보통"},
                 },
             },
             candidate_mappings=[direct_candidate, routing_candidate],
         )
-        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
-        fake_module.invoke_llm_structured_output = fake_invoke
         with (
-            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
             patch.object(proposal_nodes, "_debug_stage_payload") as debug_stage,
         ):
             result = await validate_parameter_candidates(state)
 
-        assert [candidate["candidate_key"] for candidate in result["candidate_mappings"]] == [
-            "direct",
-            "routing",
-        ]
+        assert [candidate["candidate_key"] for candidate in result["candidate_mappings"]] == ["direct"]
         assert result["validation_warnings"] == []
+        assert len(captured_messages) == 1
+        system_prompt = captured_messages[0][0]["content"]
+        assert "0개부터 최대 2개" in system_prompt
+        assert "명시적으로 확인할 수 없으면" in system_prompt
+        payload = json.loads(captured_messages[0][1]["content"].split("\n", 1)[1])
+        assert len(payload["routing_tasks"]) == 1
+        assert payload["routing_tasks"][0]["dimension_key"] == "economic_intensity"
+        assert [candidate["candidate_key"] for candidate in payload["routing_tasks"][0]["candidates"]] == ["routing"]
         debug_stage.assert_called_once_with(
             "step1.5.result",
             100,
             {
-                "selection_method": "skip_llm",
-                "selected_parameters": ["PowerMix", "RegasAdjustment"],
+                "selection_method": "llm",
+                "selected_parameters": ["GDP"],
             },
         )
 
@@ -3552,6 +3547,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "canonical_parameter_name": "ShippingCost",
             },
         ]
+
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
             raise AssertionError("direct 후보는 LLM을 호출하지 않아야 합니다")
 
@@ -3599,6 +3595,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "canonical_parameter_name": "SupplyDisruption",
             },
         ]
+
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
             raise AssertionError("direct 후보는 LLM을 호출하지 않아야 합니다")
 
@@ -3697,16 +3694,59 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         system_prompt = captured_messages[0][0]["content"]
-        assert "각 task에서 최소 1개, 최대 3개" in system_prompt
-        assert "서버에서 이미 처리" in system_prompt
+        assert "각 task에서 0개부터 최대 3개" in system_prompt
+        assert "direct parameter는 서버에서 이미 처리" in system_prompt
         payload = json.loads(captured_messages[0][1]["content"].split("\n", 1)[1])
         assert len(payload["routing_tasks"]) == 1
         assert payload["routing_tasks"][0]["dimension_key"] == "affected_facility_type"
-        assert [
-            candidate["mapping_comment"]
-            for candidate in payload["routing_tasks"][0]["candidates"]
-        ] == ["수입 시설이면 발전 믹스 검토", "수입 시설이면 운송비 검토"]
+        assert [candidate["mapping_comment"] for candidate in payload["routing_tasks"][0]["candidates"]] == [
+            "수입 시설이면 발전 믹스 검토",
+            "수입 시설이면 운송비 검토",
+        ]
         assert "model_file" not in json.dumps(payload, ensure_ascii=False)
+
+    async def test_routing_decision_limit_is_enforced_per_unique_dimension(self) -> None:
+        candidates = [{"candidate_key": f"c{index}"} for index in range(1, 5)]
+        routing_tasks = [
+            {
+                "dimension_key": "affected_facility_type",
+                "candidates": candidates,
+            },
+        ]
+
+        selected, warnings = proposal_nodes._sanitize_routing_decisions(
+            [
+                RoutingDecision(
+                    dimension_key="affected_facility_type",
+                    selected_candidate_keys=["c1", "c2", "c3", "c4"],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=2,
+        )
+
+        assert [candidate["candidate_key"] for candidate in selected] == ["c1", "c2"]
+        assert len(warnings) == 2
+        assert all("선택 상한을 초과" in warning for warning in warnings)
+
+        selected, warnings = proposal_nodes._sanitize_routing_decisions(
+            [
+                RoutingDecision(
+                    dimension_key="affected_facility_type",
+                    selected_candidate_keys=["c1"],
+                ),
+                RoutingDecision(
+                    dimension_key="affected_facility_type",
+                    selected_candidate_keys=["c2", "c3"],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=2,
+        )
+
+        assert [candidate["candidate_key"] for candidate in selected] == ["c1"]
+        assert len(warnings) == 1
+        assert "중복 dimension task" in warnings[0]
 
     async def test_routing_decision_is_not_overridden_by_server_comment_logic(self) -> None:
         supply_candidate = {
@@ -4548,9 +4588,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             parameter_definitions=parameter_definitions,
         )
 
-        assert parsed.data.confirmation_parameters[0].model_target.model_sheet == (
-            "PowerMixAdjustment"
-        )
+        assert parsed.data.confirmation_parameters[0].model_target.model_sheet == ("PowerMixAdjustment")
 
     def test_confirmation_validation_accepts_db_value_column_role(self) -> None:
         payload = {
@@ -4645,9 +4683,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 parameter_definitions=parameter_definitions,
             )
 
-        assert "modelTarget.modelSheet must be 'PowerMixAdjustment'" in (
-            error.exception.error_message
-        )
+        assert "modelTarget.modelSheet must be 'PowerMixAdjustment'" in (error.exception.error_message)
         assert "valueFieldNames has invalid fields" in error.exception.error_message
         assert "slotAxesFieldNames has invalid fields" in error.exception.error_message
 
@@ -4693,8 +4729,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         route = next(
             route
             for route in model_parameter_router.routes
-            if isinstance(route, APIRoute)
-            and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
+            if isinstance(route, APIRoute) and route.path == "/model-parameters/scenarios/{scenario_id}/proposals"
         )
 
         assert [param.alias for param in route.dependant.path_params] == [

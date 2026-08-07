@@ -7,7 +7,7 @@ description: Run and document MI 수급모델파라미터 proposal and post-prop
 
 ## Overview
 
-Run 수급모델파라미터 proposal and confirmation tests from `/Users/messiah/skg-mi/skmip-mi-agent` and write markdown reports under `tests/reports/model_parameter_agent/`.
+Run 수급모델파라미터 proposal and confirmation tests from the repository root and write markdown reports under `tests/reports/model_parameter_agent/`.
 
 Use `poetry run` from the repo root. Do not start the API server for these tests.
 
@@ -31,13 +31,13 @@ If the user provides a scenario title instead of an id, resolve the `scenario_id
 For `모든 이벤트타입에 해당하는 시나리오그룹 1개씩 테스트해줘`, run one scenario group per event type and two scenarios per group:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --all-event-types --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --all-event-types --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1
 ```
 
 For `폭염/한파 이벤트타입에 해당하는 시나리오 테스트해줘`, include event_type_l2_id `6` (겨울 한파) and `7` (여름 폭염). Treat the typo `폭엄` as `폭염`. By default, test all existing groups/scenarios for these two event types:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --event-type-l2-ids 6 7 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --event-type-l2-ids 6 7 --concurrency 4 --retries 1
 ```
 
 If the user explicitly says `1개씩`, `샘플`, or asks for a quick check, add `--groups-per-event 1 --scenarios-per-group 2`.
@@ -45,7 +45,7 @@ If the user explicitly says `1개씩`, `샘플`, or asks for a quick check, add 
 If the user specifies one or more target parameters such as `GDP`, `PMI`, `PowerMix`, `Temperature`, or `LiqUtilAdjustment`, use parameter mode. The script resolves event types where the parameter is a current DB `direct` or `routing` mapping candidate, then writes the report body in `parameter -> event_type -> scenario` order:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1
 ```
 
 If the user asks for exactly one scenario group and multiple scenarios **per target parameter**, resolve one current DB group per parameter first and pass the selected scenario IDs explicitly. Separate multiple IDs with commas. All IDs for one parameter must belong to the same group, and do not reuse a scenario ID across parameters:
@@ -54,7 +54,7 @@ If the user asks for exactly one scenario group and multiple scenarios **per tar
 poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py \
   --target-parameters GDP PMI PowerMix Temperature LiqUtilAdjustment \
   --parameter-scenarios GDP=1132,1133 PMI=1131,1136 PowerMix=867,868 Temperature=1043,1046 LiqUtilAdjustment=1031,1032 \
-  --concurrency 4 --retries 1 --max-candidates 30
+  --concurrency 4 --retries 1
 ```
 
 The IDs above are syntax examples only. Always select them from the current DB mapping and scenario state; do not reuse historical IDs blindly.
@@ -62,7 +62,7 @@ The IDs above are syntax examples only. Always select them from the current DB m
 If the user specifies both target parameters and explicit event types, keep the explicit event type scope while still rendering the report in `parameter -> event_type -> scenario` order:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP PMI --event-type-l2-ids 1 2 4 --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP PMI --event-type-l2-ids 1 2 4 --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1
 ```
 
 ## Required Confirmation Workflow

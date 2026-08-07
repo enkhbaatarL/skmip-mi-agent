@@ -289,7 +289,17 @@ POST /scenario-groups/{scenario_group_id}/confirmation
 `APP_CONFIG`의 `model_parameter_resources` 영역을 기준으로 Basecase/LUT source를 확정하고,
 `utils/resource_runtime.py`에 worker별 immutable 경로를 등록한다. Object Storage가 활성화된 환경은
 `apps/connectors/object_storage/`의 exact `HeadObject`/`GetObject`만 사용하며, 원격 실패 시 packaged
-리소스로 폴백한다.
+리소스로 폴백한다. manifest의 `lut`은 `enabled`로 catalog 생성 여부를 구분하고, `references`는 독립
+parameter record를 만들지 않는 보조 CSV를 소유한다. 현재 canonical master는 21행·활성 10개이며
+dimension mapping은 129행이다. 정확한 DB matrix는 `scripts/model_parameter/model-parameter-canonical-v1.json`,
+사람이 읽는 명세는 `resources/Model_Parameter_Base_Case_Mapping.md`, 업무용 현재 표는
+`resources/mapping/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx`가 소유한다.
+`resources/mapping/archive/`의 이전 Excel은 역사·검토 자료이며 실행 기준이 아니다.
+
+제안 Flow는 전체 LUT record를 서버 cache/index에 유지한다. Step2 prompt에는 동일 기간을 공유하는 leaf를
+`period_groups`로 묶고 Country→Plant→Train 고정축을 `fixed_axis_hierarchy`로 중첩하며, Step3에는 exact
+검증된 slot의 단일 effective reference만 전달한다. 파라미터별 slot 상한과 별도로 요청 전체 slot,
+Step2·Step3 compact JSON byte 상한을 node에서 LLM 호출 전에 검사한다.
 
 ```text
 POST /model-parameters/scenarios/{scenario_id}/proposals

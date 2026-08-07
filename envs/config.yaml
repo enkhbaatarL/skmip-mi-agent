@@ -56,6 +56,9 @@ model_parameter_proposed_value_precision_mode: trunc
 model_parameter_max_parameter_slots: 100
 model_parameter_max_value_prompt_basecase_records: 100
 model_parameter_max_routing_candidates_per_dimension: 2
+model_parameter_max_total_selected_slots: 300
+model_parameter_max_step2_prompt_bytes: 262144
+model_parameter_max_step3_prompt_bytes: 262144
 model_parameter_resource_storage:
   enabled: true
   endpoint_url: http://127.0.0.1:19000
@@ -84,7 +87,38 @@ model_parameter_resources:
       object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
   lut:
+    Coal Futures Price:
+      enabled: false
+      adapter: futures_price
+      files:
+        values:
+          path: Demand_Model_LUT_BCInput_value_based_t8.csv
+          object_storage_path: fundamental_model_artifact/LUT/demand/Demand_Model_LUT_BCInput_value_based_t8.csv
+          required_columns:
+            - Futures pricing_Date
+            - Futures pricing_Newcastle Coal
+            - Futures pricing_Rotterdam Coal
+            - Futures pricing_JKM
+            - Futures pricing_TTF
+      key_axes: [Month-Year, Region]
+
+    Gas Futures Price:
+      enabled: false
+      adapter: futures_price
+      files:
+        values:
+          path: Demand_Model_LUT_BCInput_value_based_t8.csv
+          object_storage_path: fundamental_model_artifact/LUT/demand/Demand_Model_LUT_BCInput_value_based_t8.csv
+          required_columns:
+            - Futures pricing_Date
+            - Futures pricing_Newcastle Coal
+            - Futures pricing_Rotterdam Coal
+            - Futures pricing_JKM
+            - Futures pricing_TTF
+      key_axes: [Month-Year, Region]
+
     GDP:
+      enabled: true
       adapter: gdp_growth
       files:
         values:
@@ -97,19 +131,29 @@ model_parameter_resources:
       key_axes: [Country, Year]
 
     PMI:
-      adapter: tabular
-      layout: year_columns
+      enabled: true
+      adapter: pmi_reference
       files:
+        references:
+          path: Demand_Model_Input_PMIInput_value_based_t1.csv
+          object_storage_path: fundamental_model_artifact/LUT/demand/Demand_Model_Input_PMIInput_value_based_t1.csv
+          required_columns:
+            - Selection of PMI Reference Country_Demand Location_Continent
+            - Selection of PMI Reference Country_Demand Location_Region
+            - Selection of PMI Reference Country_Demand Location_Country
+            - Selection of PMI Reference Country_Reference Country_Country
+            - Selection of PMI Reference Country_Base Case Reference Country_Country
         values:
           path: Demand_Model_Input_PMIInput_value_based_t2.csv
           object_storage_path: fundamental_model_artifact/LUT/demand/Demand_Model_Input_PMIInput_value_based_t2.csv
-          axis_columns:
-            Country: Base Case PMI Input (do not change)_Country
-            Month: Base Case PMI Input (do not change)_Month
-          year_value_column: Base Case PMI Input (do not change)_{year}.0
+          required_columns:
+            - Base Case PMI Input (do not change)_Country
+            - Base Case PMI Input (do not change)_Month
+            - Base Case PMI Input (do not change)_{year}.0
       key_axes: [Country, Year, Month]
 
     PowerMix:
+      enabled: true
       adapter: tabular
       layout: row
       files:
@@ -124,6 +168,7 @@ model_parameter_resources:
       key_axes: [Country, Year, Energy Source]
 
     Temperature:
+      enabled: true
       adapter: temperature_degree_days
       files:
         hdd:
@@ -142,7 +187,66 @@ model_parameter_resources:
             - Base Case CDD Input_{year}.0
       key_axes: [Country, Year, Month]
 
+    Population:
+      enabled: true
+      adapter: population
+      files:
+        values:
+          path: Demand_Model_LUT_BCInput_value_based_t2.csv
+          object_storage_path: fundamental_model_artifact/LUT/demand/Demand_Model_LUT_BCInput_value_based_t2.csv
+          required_columns:
+            - RE Base Case GDP and Population Data_Country
+            - RE Base Case GDP and Population Data_Year
+            - RE Base Case GDP and Population Data_Population (thousands)
+      key_axes: [Country, Year]
+
+    HurricaneIntensity:
+      enabled: true
+      adapter: hurricane_intensity
+      files:
+        intensity:
+          path: BCHurricanes_Impacct_upstreamAssets.csv
+          object_storage_path: fundamental_model_artifact/LUT/supply/supply_bc/BCHurricanes_Impacct_upstreamAssets.csv
+          required_columns:
+            - Intensity
+            - Pre-hurricane upstream production shut-in duration (No. of weeks in a month)
+            - Pre-hurricane upstream production shut-in volume (% of total monthly volume)
+            - During and post-hurricane upstream production shut-in duration (No. of weeks in a month)
+            - During and post-hurricane upstream production shut-in volume (% of total monthly volume)
+            - Net impact (Monthly upstream production decrease by %)
+        plants:
+          path: BCHurricanes_GoM.csv
+          object_storage_path: fundamental_model_artifact/LUT/supply/supply_bc/BCHurricanes_GoM.csv
+          required_columns:
+            - Liquefaction plants impacted by a hurricane in GoM
+            - Impacted by hurricane?
+      key_axes: [Year, Month]
+
+    LiqProdAdjustment:
+      enabled: true
+      adapter: liq_prod
+      files:
+        values:
+          path: BCLiquefaction.csv
+          object_storage_path: fundamental_model_artifact/LUT/supply/supply_bc/BCLiquefaction.csv
+          required_columns:
+            - Country
+            - Plant Name
+            - Plant Train
+            - Year
+            - Month
+            - Period
+            - Infra Life Cycle
+            - LNG train capacity (Million tonnes LNG per month)
+            - LNG plant utilisation %
+      key_axes: [Country, LNG Plant, LNG Plant Train, Year, Month]
+      metadata_axes:
+        - Period
+        - Life Cycle Category
+        - Nameplate Capacity (MTPA)
+
     LiqUtilAdjustment:
+      enabled: true
       adapter: liq_util
       files:
         values:
@@ -163,6 +267,56 @@ model_parameter_resources:
         - Period
         - Life Cycle Category
         - Nameplate Capacity (MTPA)
+
+    PipelineAdjustment:
+      enabled: true
+      adapter: pipeline
+      files:
+        values:
+          path: BCPipeline.csv
+          object_storage_path: fundamental_model_artifact/LUT/supply/supply_bc/BCPipeline.csv
+          required_columns:
+            - Year
+            - Major pipeline
+            - From country
+            - To country
+            - Pipeline capacity (Bcm)
+      key_axes: [Pipeline Name, From Country, To Country, Year, Month]
+
+    SupplyDisruption:
+      enabled: true
+      adapter: supply_disruption
+      files:
+        production:
+          path: BCProduction.csv
+          object_storage_path: fundamental_model_artifact/LUT/supply/supply_bc/BCProduction.csv
+          required_columns:
+            - Year
+            - Country
+            - Province/Basin
+            - Life Cycle Category
+            - Oil and gas detail
+            - Base case supply (Bcm)
+        seasonality:
+          path: SeasonalityLogic.csv
+          object_storage_path: fundamental_model_artifact/LUT/supply/supply_bc/SeasonalityLogic.csv
+          required_columns:
+            - Year
+            - Month
+            - Period
+            - Province
+            - PNG/LNG
+            - Seasonality
+      key_axes: [Country, Year, Month]
+
+  references:
+    demand_general_country_list:
+      path: Demand_Model_LUT_General_value_based_t6.csv
+      object_storage_path: fundamental_model_artifact/LUT/demand/Demand_Model_LUT_General_value_based_t6.csv
+      required_columns:
+        - Full Country List_Continent
+        - Full Country List_Region
+        - Full Country List_Country
 # Agent profiles
 agents:
   scenario_group_agent:

@@ -374,9 +374,438 @@ def _fetch_proposal_db_row(model_param_proposal_id: int | None) -> dict[str, Any
             "error_message": proposal.error_message,
             "proposal_parameters": proposal.proposal_parameters or [],
             "confirmation_parameters": proposal.confirmation_parameters,
+            "mod_usr_logn_id": proposal.mod_usr_logn_id,
+            "mod_dtm": proposal.mod_dtm,
         }
     finally:
         session.close()
+
+
+_ROLLBACK_SNAPSHOT_FIELDS = (
+    "status",
+    "proposal_parameters",
+    "confirmation_parameters",
+    "confirmed_dtm",
+    "mod_usr_logn_id",
+    "mod_dtm",
+)
+
+
+def _rollback_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: row.get(field) for field in _ROLLBACK_SNAPSHOT_FIELDS}
+
+
+def _confirmation_request_payload(
+    *,
+    proposal_row: dict[str, Any],
+    confirmation_parameters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model_param_proposal_id": int(proposal_row["model_param_proposal_id"]),
+        "data": {"confirmationParameters": confirmation_parameters},
+    }
+    if proposal_row.get("request_usr_id") is not None:
+        payload["userId"] = int(proposal_row["request_usr_id"])
+    return payload
+
+
+async def _invoke_confirmation(payload: dict[str, Any]) -> dict[str, Any]:
+    from apps.agents.model_parameter_agent.flows.confirm_parameters.flow import (
+        run_confirm_parameters,
+    )
+
+    response = await run_confirm_parameters(payload)
+    return response.model_dump(by_alias=True, exclude_none=False)
+
+
+def _confirmation_failure(
+    *,
+    elapsed_seconds: float,
+    message: str,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "FAIL",
+        "elapsed_seconds": elapsed_seconds,
+        "message": message,
+    }
+    if before is not None:
+        result["before"] = before
+    if after is not None:
+        result["after"] = after
+    return result
+
+
+async def _run_confirmation_workflow(
+    proposal_row: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from apps.common.exceptions.custom import MIBaseError
+    from apps.common.values.error_codes import ErrorCode
+
+    workflow_started = time.perf_counter()
+    proposal_id = proposal_row.get("model_param_proposal_id")
+    proposal_parameters = proposal_row.get("proposal_parameters")
+    result: dict[str, Any] = {
+        "status": "FAIL",
+        "model_param_proposal_id": proposal_id,
+        "invalid_payload": {"status": "NOT_RUN"},
+        "valid_confirmation": {"status": "NOT_RUN"},
+        "reconfirmation": {"status": "NOT_RUN"},
+        "invalid_status": {
+            "status": "N/A",
+            "message": "run-level safe invalid-status row check not completed yet",
+        },
+    }
+    if (
+        proposal_id is None
+        or proposal_row.get("status") != "PROPOSED"
+        or not isinstance(proposal_parameters, list)
+        or not proposal_parameters
+    ):
+        result["message"] = (
+            "confirmation precondition failed: a PROPOSED row with non-empty "
+            "proposal_parameters is required"
+        )
+        result["elapsed_seconds"] = time.perf_counter() - workflow_started
+        return result, proposal_row
+
+    empty_before = _rollback_snapshot(proposal_row)
+    empty_started = time.perf_counter()
+    empty_error: Exception | None = None
+    try:
+        await _invoke_confirmation(
+            _confirmation_request_payload(
+                proposal_row=proposal_row,
+                confirmation_parameters=[],
+            ),
+        )
+    except Exception as exc:
+        empty_error = exc
+    empty_elapsed = time.perf_counter() - empty_started
+    after_empty = _fetch_proposal_db_row(int(proposal_id))
+    empty_rollback_ok = _rollback_snapshot(after_empty) == empty_before
+    if (
+        isinstance(empty_error, MIBaseError)
+        and empty_error.error_code is ErrorCode.INVALID_REQUEST
+        and empty_rollback_ok
+    ):
+        result["invalid_payload"] = {
+            "status": "PASS",
+            "elapsed_seconds": empty_elapsed,
+            "error_code": empty_error.error_code.name,
+            "rollback_verified": True,
+        }
+    else:
+        result["invalid_payload"] = _confirmation_failure(
+            elapsed_seconds=empty_elapsed,
+            message=(
+                "empty confirmation must raise INVALID_REQUEST without changing the row; "
+                f"error={empty_error!r}, rollback_verified={empty_rollback_ok}"
+            ),
+            before=empty_before,
+            after=_rollback_snapshot(after_empty),
+        )
+
+    valid_started = time.perf_counter()
+    valid_response: dict[str, Any] | None = None
+    valid_error: Exception | None = None
+    try:
+        valid_response = await _invoke_confirmation(
+            _confirmation_request_payload(
+                proposal_row=proposal_row,
+                confirmation_parameters=proposal_parameters,
+            ),
+        )
+    except Exception as exc:
+        valid_error = exc
+    valid_elapsed = time.perf_counter() - valid_started
+    after_valid = _fetch_proposal_db_row(int(proposal_id))
+    valid_data = (valid_response or {}).get("data") or {}
+    valid_checks = {
+        "call_succeeded": valid_error is None,
+        "response_success": (valid_response or {}).get("status") == "success",
+        "response_id_matches": valid_data.get("modelParamProposalId") == proposal_id,
+        "response_status_confirmed": valid_data.get("status") == "CONFIRMED",
+        "db_status_confirmed": after_valid.get("status") == "CONFIRMED",
+        "confirmation_payload_matches": (
+            after_valid.get("confirmation_parameters") == proposal_parameters
+        ),
+        "confirmed_dtm_populated": after_valid.get("confirmed_dtm") is not None,
+        "proposal_payload_unchanged": (
+            after_valid.get("proposal_parameters") == proposal_parameters
+        ),
+    }
+    request_usr_id = proposal_row.get("request_usr_id")
+    if request_usr_id is not None:
+        valid_checks["modifier_matches_request_user"] = (
+            str(after_valid.get("mod_usr_logn_id")) == str(request_usr_id)
+        )
+    if all(valid_checks.values()):
+        result["valid_confirmation"] = {
+            "status": "PASS",
+            "elapsed_seconds": valid_elapsed,
+            "checks": valid_checks,
+        }
+    else:
+        result["valid_confirmation"] = _confirmation_failure(
+            elapsed_seconds=valid_elapsed,
+            message=f"valid confirmation contract failed: error={valid_error!r}, checks={valid_checks}",
+            before=_rollback_snapshot(proposal_row),
+            after=_rollback_snapshot(after_valid),
+        )
+
+    if result["valid_confirmation"]["status"] == "PASS":
+        first_confirmed_dtm = after_valid.get("confirmed_dtm")
+        reconfirm_started = time.perf_counter()
+        reconfirm_response: dict[str, Any] | None = None
+        reconfirm_error: Exception | None = None
+        try:
+            reconfirm_response = await _invoke_confirmation(
+                _confirmation_request_payload(
+                    proposal_row=proposal_row,
+                    confirmation_parameters=proposal_parameters,
+                ),
+            )
+        except Exception as exc:
+            reconfirm_error = exc
+        reconfirm_elapsed = time.perf_counter() - reconfirm_started
+        after_reconfirm = _fetch_proposal_db_row(int(proposal_id))
+        reconfirm_data = (reconfirm_response or {}).get("data") or {}
+        refreshed_dtm = after_reconfirm.get("confirmed_dtm")
+        reconfirm_checks = {
+            "call_succeeded": reconfirm_error is None,
+            "response_success": (reconfirm_response or {}).get("status") == "success",
+            "response_id_matches": reconfirm_data.get("modelParamProposalId") == proposal_id,
+            "response_status_confirmed": reconfirm_data.get("status") == "CONFIRMED",
+            "db_status_confirmed": after_reconfirm.get("status") == "CONFIRMED",
+            "confirmation_payload_matches": (
+                after_reconfirm.get("confirmation_parameters") == proposal_parameters
+            ),
+            "proposal_payload_unchanged": (
+                after_reconfirm.get("proposal_parameters") == proposal_parameters
+            ),
+            "confirmed_dtm_refreshed": (
+                first_confirmed_dtm is not None
+                and refreshed_dtm is not None
+                and refreshed_dtm > first_confirmed_dtm
+            ),
+        }
+        if all(reconfirm_checks.values()):
+            result["reconfirmation"] = {
+                "status": "PASS",
+                "elapsed_seconds": reconfirm_elapsed,
+                "checks": reconfirm_checks,
+            }
+        else:
+            result["reconfirmation"] = _confirmation_failure(
+                elapsed_seconds=reconfirm_elapsed,
+                message=(
+                    "reconfirmation contract failed: "
+                    f"error={reconfirm_error!r}, checks={reconfirm_checks}"
+                ),
+                before=_rollback_snapshot(after_valid),
+                after=_rollback_snapshot(after_reconfirm),
+            )
+    else:
+        after_reconfirm = after_valid
+        result["reconfirmation"] = {
+            "status": "N/A",
+            "message": "valid confirmation failed",
+        }
+
+    required_subcases = (
+        result["invalid_payload"]["status"],
+        result["valid_confirmation"]["status"],
+        result["reconfirmation"]["status"],
+    )
+    result["status"] = "PASS" if required_subcases == ("PASS", "PASS", "PASS") else "FAIL"
+    result["elapsed_seconds"] = time.perf_counter() - workflow_started
+    return result, after_reconfirm
+
+
+def _find_safe_failed_proposal_id(excluded_ids: set[int]) -> int | None:
+    from apps.common.configs.database.sync_database.connection import get_sync_session
+
+    session = get_sync_session()
+    try:
+        stmt = (
+            select(MiModelParamProposalModel.model_param_proposal_id)
+            .where(
+                MiModelParamProposalModel.status == "FAILED",
+                MiModelParamProposalModel.del_yn == "N",
+            )
+            .order_by(MiModelParamProposalModel.model_param_proposal_id.desc())
+            .limit(20)
+        )
+        proposal_ids = [int(value) for value in session.execute(stmt).scalars().all()]
+        return next((value for value in proposal_ids if value not in excluded_ids), None)
+    finally:
+        session.close()
+
+
+async def _run_invalid_status_confirmation(
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from apps.common.exceptions.custom import MIBaseError
+    from apps.common.values.error_codes import ErrorCode
+
+    source_record = next(
+        (
+            record
+            for record in records
+            if (record.get("confirmation") or {}).get("status") == "PASS"
+        ),
+        None,
+    )
+    if source_record is None:
+        return {
+            "status": "N/A",
+            "message": "no successful valid confirmation payload is available",
+        }
+    source_row = source_record.get("proposal_db_row") or {}
+    confirmation_parameters = source_row.get("proposal_parameters")
+    if not isinstance(confirmation_parameters, list) or not confirmation_parameters:
+        return {
+            "status": "N/A",
+            "message": "no non-empty successful proposal payload is available",
+        }
+
+    created_ids = {
+        int(proposal_id)
+        for record in records
+        if (proposal_id := (record.get("proposal_db_row") or {}).get("model_param_proposal_id"))
+        is not None
+    }
+    failed_proposal_id = _find_safe_failed_proposal_id(created_ids)
+    if failed_proposal_id is None:
+        return {
+            "status": "N/A",
+            "message": "no existing non-deleted FAILED proposal row is safely available",
+        }
+
+    failed_row = _fetch_proposal_db_row(failed_proposal_id)
+    before = _rollback_snapshot(failed_row)
+    request_row = {
+        **failed_row,
+        "request_usr_id": source_row.get("request_usr_id"),
+    }
+    started = time.perf_counter()
+    error: Exception | None = None
+    try:
+        await _invoke_confirmation(
+            _confirmation_request_payload(
+                proposal_row=request_row,
+                confirmation_parameters=confirmation_parameters,
+            ),
+        )
+    except Exception as exc:
+        error = exc
+    elapsed_seconds = time.perf_counter() - started
+    after_row = _fetch_proposal_db_row(failed_proposal_id)
+    rollback_ok = _rollback_snapshot(after_row) == before
+    status_rejection_verified = (
+        isinstance(error, MIBaseError)
+        and "must be PROPOSED or CONFIRMED before confirmation" in error.error_message
+        and "status=FAILED" in error.error_message
+    )
+    if (
+        isinstance(error, MIBaseError)
+        and error.error_code is ErrorCode.INVALID_REQUEST
+        and rollback_ok
+        and status_rejection_verified
+    ):
+        return {
+            "status": "PASS",
+            "model_param_proposal_id": failed_proposal_id,
+            "tested_status": "FAILED",
+            "elapsed_seconds": elapsed_seconds,
+            "error_code": error.error_code.name,
+            "rollback_verified": True,
+            "status_rejection_verified": True,
+        }
+    return _confirmation_failure(
+        elapsed_seconds=elapsed_seconds,
+        message=(
+            "FAILED proposal confirmation must raise INVALID_REQUEST without changing the row; "
+            f"proposal_id={failed_proposal_id}, error={error!r}, rollback_verified={rollback_ok}, "
+            f"status_rejection_verified={status_rejection_verified}"
+        ),
+        before=before,
+        after=_rollback_snapshot(after_row),
+    )
+
+
+async def _confirm_scenario_result(result: dict[str, Any]) -> None:
+    proposal_id = _proposal_id(result.get("final_response") or {})
+    result["proposal_db_row"] = {
+        "model_param_proposal_id": proposal_id,
+        "fetch_status": "NOT_READ",
+    }
+    confirmation_started = time.perf_counter()
+    try:
+        result["proposal_db_row"] = _fetch_proposal_db_row(proposal_id)
+        confirmation, confirmed_row = await _run_confirmation_workflow(
+            result["proposal_db_row"],
+        )
+        result["confirmation"] = confirmation
+        result["proposal_db_row"] = confirmed_row
+    except Exception as confirmation_error:
+        result["confirmation"] = {
+            "status": "FAIL",
+            "model_param_proposal_id": proposal_id,
+            "elapsed_seconds": time.perf_counter() - confirmation_started,
+            "message": (
+                "confirmation evidence workflow raised unexpectedly: "
+                f"{confirmation_error!r}"
+            ),
+            "invalid_payload": {"status": "NOT_RUN"},
+            "valid_confirmation": {"status": "NOT_RUN"},
+            "reconfirmation": {"status": "NOT_RUN"},
+            "invalid_status": {"status": "N/A"},
+        }
+        try:
+            result["proposal_db_row"] = _fetch_proposal_db_row(proposal_id)
+        except Exception as readback_error:
+            result["confirmation"]["message"] += (
+                "; final DB read-back also failed: "
+                f"{readback_error!r}"
+            )
+
+
+def _attach_invalid_status_confirmation(
+    records: list[dict[str, Any]],
+    invalid_status_confirmation: dict[str, Any],
+) -> None:
+    confirmation_owner = next(
+        (
+            record
+            for record in records
+            if (record.get("confirmation") or {}).get("status") == "PASS"
+        ),
+        None,
+    )
+    if confirmation_owner is None:
+        for record in records:
+            if record.get("confirmation"):
+                record["confirmation"]["invalid_status"] = invalid_status_confirmation
+        return
+    confirmation_owner["confirmation"]["invalid_status"] = invalid_status_confirmation
+    owner_proposal_id = (confirmation_owner.get("proposal_db_row") or {}).get(
+        "model_param_proposal_id",
+    )
+    for record in records:
+        if record is confirmation_owner or not record.get("confirmation"):
+            continue
+        record["confirmation"]["invalid_status"] = {
+            "status": "N/A",
+            "message": (
+                "run-level invalid-status check was executed once using evidence owner "
+                f"model_param_proposal_id={owner_proposal_id}"
+            ),
+        }
+    if invalid_status_confirmation.get("status") == "FAIL":
+        confirmation_owner["confirmation"]["status"] = "FAIL"
 
 
 def _proposal_parameters_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1089,6 +1518,51 @@ def _lut_summary_line(records: list[dict[str, Any]]) -> str:
     return f"- LUT: {enabled_label}, version={version_label}"
 
 
+def _confirmation_failure_summary(record: dict[str, Any]) -> str | None:
+    confirmation = record.get("confirmation") or {}
+    if confirmation.get("status") != "FAIL":
+        return None
+    failed_subcases = [
+        name
+        for name in (
+            "invalid_payload",
+            "valid_confirmation",
+            "reconfirmation",
+            "invalid_status",
+        )
+        if (confirmation.get(name) or {}).get("status") == "FAIL"
+    ]
+    return (
+        "FAIL · proposal 성공, confirmation/DB read-back 실패"
+        f" ({', '.join(failed_subcases) or 'precondition'})"
+    )
+
+
+def _completed_scenario_result_summary(
+    record: dict[str, Any],
+    confirmation: dict[str, Any],
+) -> str:
+    timing_note = _timing_special_note(
+        elapsed_seconds=record.get("elapsed_seconds"),
+        attempts=int(record.get("attempt") or 1),
+    )
+    timing_judgement = timing_note.split(" · ", 1)[0]
+    if timing_judgement == "FAIL":
+        return f"FAIL · proposal 성공, {timing_note.split(' · ', 1)[1]}"
+    if not _proposal_parameters_from_record(record):
+        return "REVIEW · proposal 성공, 제안 파라미터 없음"
+    if str(record.get("routing_status") or "").upper() == "REVIEW":
+        return "REVIEW · proposal 성공, routing 결과 확인 필요"
+    if timing_judgement == "REVIEW":
+        return (
+            "REVIEW · proposal/confirmation 성공, "
+            f"{timing_note.split(' · ', 1)[1]}"
+        )
+    if confirmation.get("status") != "PASS":
+        return "REVIEW · proposal 성공, confirmation 미완료"
+    return "PASS · proposal/confirmation 및 DB read-back 완료"
+
+
 def _scenario_result_summary(
     *,
     record: dict[str, Any] | None = None,
@@ -1106,21 +1580,109 @@ def _scenario_result_summary(
         return "FAIL · 매핑 후보 검증 실패"
     if record.get("selected_ok") is False:
         return "FAIL · 파라미터 선정 검증 실패"
+    confirmation = record.get("confirmation") or {}
+    confirmation_failure = _confirmation_failure_summary(record)
+    if confirmation_failure is not None:
+        return confirmation_failure
+    return _completed_scenario_result_summary(record, confirmation)
 
-    timing_note = _timing_special_note(
-        elapsed_seconds=record.get("elapsed_seconds"),
-        attempts=int(record.get("attempt") or 1),
+
+def _confirmation_ok(record: dict[str, Any]) -> bool:
+    confirmation = record.get("confirmation") or {}
+    if confirmation.get("status") != "PASS":
+        return False
+    invalid_status = confirmation.get("invalid_status") or {}
+    return invalid_status.get("status") in {"PASS", "N/A"}
+
+
+def _confirmation_failure_count(records: list[dict[str, Any]]) -> int:
+    return sum(not _confirmation_ok(record) for record in records)
+
+
+def _confirmation_aggregate_summary(
+    records: list[dict[str, Any]],
+    invalid_status_confirmation: dict[str, Any] | None = None,
+) -> str:
+    counts = {"PASS": 0, "FAIL": 0, "N/A": 0}
+    for record in records:
+        status = str((record.get("confirmation") or {}).get("status") or "N/A")
+        counts[status if status in counts else "FAIL"] += 1
+    invalid_status = invalid_status_confirmation or {}
+    invalid_status_label = str(invalid_status.get("status") or "N/A")
+    return (
+        f"proposal별 PASS {counts['PASS']}건, FAIL {counts['FAIL']}건, "
+        f"N/A {counts['N/A']}건; invalid-status {invalid_status_label}"
     )
-    timing_judgement = timing_note.split(" · ", 1)[0]
-    if timing_judgement == "FAIL":
-        return f"FAIL · proposal 성공, {timing_note.split(' · ', 1)[1]}"
-    if not _proposal_parameters_from_record(record):
-        return "REVIEW · proposal 성공, 제안 파라미터 없음"
-    if str(record.get("routing_status") or "").upper() == "REVIEW":
-        return "REVIEW · proposal 성공, routing 결과 확인 필요"
-    if timing_judgement == "REVIEW":
-        return f"REVIEW · proposal 성공, {timing_note.split(' · ', 1)[1]}"
-    return "PASS · proposal 생성 및 검증 완료"
+
+
+def _confirmation_summary_lines(
+    record: dict[str, Any],
+    *,
+    heading: str,
+) -> list[str]:
+    confirmation = record.get("confirmation") or {}
+    lines = [
+        heading,
+        "",
+        f"- 종합: {confirmation.get('status') or 'N/A'}",
+        (
+            f"- 확인 총 소요시간: {_format_duration(confirmation.get('elapsed_seconds'))} "
+            f"({_format_seconds(confirmation.get('elapsed_seconds'))})"
+        ),
+        "",
+        "| Subcase | 결과 | 소요시간 | Evidence |",
+        "|---|---|---:|---|",
+    ]
+    if confirmation.get("message"):
+        lines.insert(4, f"- message: {_md_cell(confirmation['message'], max_chars=800)}")
+    labels = (
+        ("invalid_payload", "빈 confirmation 실패/rollback"),
+        ("valid_confirmation", "정상 confirmation/DB read-back"),
+        ("reconfirmation", "CONFIRMED reconfirmation"),
+        ("invalid_status", "invalid proposal status/rollback"),
+    )
+    failure_evidence: list[dict[str, Any]] = []
+    for key, label in labels:
+        subcase = confirmation.get(key) or {}
+        status = str(subcase.get("status") or "N/A")
+        evidence_parts: list[str] = []
+        if subcase.get("error_code"):
+            evidence_parts.append(f"error={subcase['error_code']}")
+        if subcase.get("rollback_verified") is not None:
+            evidence_parts.append(f"rollback={subcase['rollback_verified']}")
+        if subcase.get("tested_status"):
+            evidence_parts.append(f"tested_status={subcase['tested_status']}")
+        if subcase.get("status_rejection_verified") is not None:
+            evidence_parts.append(
+                f"status_rejection={subcase['status_rejection_verified']}",
+            )
+        if subcase.get("message"):
+            evidence_parts.append(str(subcase["message"]))
+        if subcase.get("checks"):
+            passed = sum(bool(value) for value in subcase["checks"].values())
+            evidence_parts.append(f"checks={passed}/{len(subcase['checks'])}")
+        lines.append(
+            "| {label} | {status} | {elapsed} | {evidence} |".format(
+                label=label,
+                status=status,
+                elapsed=_format_seconds(subcase.get("elapsed_seconds")),
+                evidence=_md_cell("; ".join(evidence_parts) or "-", max_chars=500),
+            ),
+        )
+        if status in {"FAIL", "REVIEW"}:
+            failure_evidence.append({"subcase": key, **subcase})
+    if failure_evidence:
+        lines.extend(
+            [
+                "",
+                "실패/검토 DB before-after evidence:",
+                "",
+                "```json",
+                _json_pretty(failure_evidence),
+                "```",
+            ],
+        )
+    return lines
 
 
 def _scenario_result_table_lines(
@@ -1389,6 +1951,7 @@ def _group_status(target: EventTypeTarget, records: list[dict[str, Any]], errors
         and len(group_records) == len(target.scenario_ids)
         and all(record["mapping_ok"] for record in group_records)
         and all(record["selected_ok"] for record in group_records)
+        and all(_confirmation_ok(record) for record in group_records)
         and target_parameter_ok
         and value_diff_ok
     )
@@ -1497,6 +2060,11 @@ def _render_parameter_ordered_result_lines(
             if len(group_records) > 1 and has_expected and has_selected:
                 value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
             group_ok = _group_status(target, records, errors)
+            confirmation_status = (
+                "PASS"
+                if group_records and all(_confirmation_ok(record) for record in group_records)
+                else "FAIL"
+            )
             group_context = _group_context(group_records, group_errors)
 
             lines.extend(
@@ -1539,6 +2107,7 @@ def _render_parameter_ordered_result_lines(
                     f"- 매핑 후보 검증: {'PASS' if all(record['mapping_ok'] for record in group_records) and not group_errors else 'FAIL'}",
                     f"- LLM selected 검증: {'PASS' if all(record['selected_ok'] for record in group_records) and not group_errors else 'FAIL'}",
                     f"- 라우팅 선택 검증: {', '.join(sorted({record['routing_status'] for record in group_records})) if group_records else 'N/A'}",
+                    f"- Confirmation/DB read-back: {confirmation_status}",
                     f"- scenario별 value 차이: {value_diff_status}",
                     f"- 그룹 종합: {'PASS' if group_ok else 'FAIL'}",
                     f"- 실패 scenario_ids: {[error['scenario_id'] for error in group_errors]}",
@@ -1638,6 +2207,11 @@ def _render_parameter_ordered_result_lines(
                         _json_pretty(record.get("proposal_db_row") or {}),
                         "```",
                         "",
+                        *_confirmation_summary_lines(
+                            record,
+                            heading="###### Confirmation Summary",
+                        ),
+                        "",
                     ],
                 )
                 lines.extend(_llm_call_table_lines(record.get("llm_calls") or []))
@@ -1657,6 +2231,7 @@ def _render_report(
     retries: int,
     target_parameters: tuple[str, ...] = (),
     target_event_type_l2_ids_by_parameter: dict[str, tuple[int, ...]] | None = None,
+    invalid_status_confirmation: dict[str, Any] | None = None,
 ) -> str:
     event_group_ids: dict[int, set[int]] = defaultdict(set)
     event_scenario_count: dict[int, int] = defaultdict(int)
@@ -1693,6 +2268,23 @@ def _render_report(
         f"- 대상 수집 방식: {target_collection_method}",
         "- 호출 방식: 내부 raw graph 실행 후 `to_output()`으로 final response 생성",
         _lut_summary_line(records),
+        "",
+        "## 종합 평가",
+        "",
+        f"- 실행 오류: proposal {len(errors)}건, confirmation {_confirmation_failure_count(records)}건",
+        f"- Confirmation: {_confirmation_aggregate_summary(records, invalid_status_confirmation)}",
+        "",
+        "## 추천 개선안",
+        "",
+        (
+            "- confirmation: 실패 증적 없음 · 개선 필요 없음"
+            if not _confirmation_failure_count(records)
+            and (invalid_status_confirmation or {}).get("status") != "FAIL"
+            else (
+                "- confirmation: FAIL subcase의 DB before/after evidence를 기준으로 "
+                "validation 또는 transaction 경계를 우선 점검 (P0)"
+            )
+        ),
         "",
         "## 소요시간 특이사항 요약",
         "",
@@ -1763,6 +2355,11 @@ def _render_report(
         if len(group_records) > 1 and has_expected and has_selected:
             value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
         group_ok = _group_status(target, records, errors)
+        confirmation_status = (
+            "PASS"
+            if group_records and all(_confirmation_ok(record) for record in group_records)
+            else "FAIL"
+        )
         group_context = _group_context(group_records, group_errors)
         lines.extend(
             [
@@ -1804,6 +2401,7 @@ def _render_report(
                 f"- 매핑 후보 검증: {'PASS' if all(record['mapping_ok'] for record in group_records) and not group_errors else 'FAIL'}",
                 f"- LLM selected 검증: {'PASS' if all(record['selected_ok'] for record in group_records) and not group_errors else 'FAIL'}",
                 f"- 라우팅 선택 검증: {', '.join(sorted({record['routing_status'] for record in group_records})) if group_records else 'N/A'}",
+                f"- Confirmation/DB read-back: {confirmation_status}",
                 f"- scenario별 value 차이: {value_diff_status}",
                 f"- 그룹 종합: {'PASS' if group_ok else 'FAIL'}",
                 f"- 실패 scenario_ids: {[error['scenario_id'] for error in group_errors]}",
@@ -1884,6 +2482,11 @@ def _render_report(
                     _json_pretty(record.get("proposal_db_row") or {}),
                     "```",
                     "",
+                    *_confirmation_summary_lines(
+                        record,
+                        heading="##### Confirmation Summary",
+                    ),
+                    "",
                 ],
             )
             lines.extend(_llm_call_table_lines(record.get("llm_calls") or []))
@@ -1915,11 +2518,19 @@ def _render_report(
         if parameter_scenario_scope
         else "GROUP_STATUS_BY_SCENARIO_GROUP"
     )
+    invalid_status_preview = _json_preview(
+        invalid_status_confirmation or {"status": "N/A"},
+        max_chars=1200,
+    )
     lines.extend(
         [
             "## 최종 요약",
             "",
-            f"- ERROR_COUNT: {len(errors)}",
+            f"- ERROR_COUNT: {len(errors) + _confirmation_failure_count(records)}",
+            f"- PROPOSAL_ERROR_COUNT: {len(errors)}",
+            f"- CONFIRMATION_FAIL_COUNT: {_confirmation_failure_count(records)}",
+            f"- CONFIRMATION_STATUS: {_confirmation_aggregate_summary(records, invalid_status_confirmation)}",
+            f"- INVALID_STATUS_CONFIRMATION: `{invalid_status_preview}`",
             f"- PLANNED_SCENARIO_EXECUTIONS: {planned_execution_count}",
             f"- COMPLETED_SCENARIO_EXECUTIONS: {len(records) + len(errors)}",
             f"- PARAMETER_SCENARIOS: `{json.dumps(parameter_scenario_scope, ensure_ascii=False, sort_keys=True)}`",
@@ -1997,6 +2608,10 @@ async def run_event_type_evaluation(
         )
     records: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    invalid_status_confirmation: dict[str, Any] = {
+        "status": "N/A",
+        "message": "run-level safe invalid-status row check not completed yet",
+    }
     semaphore = asyncio.Semaphore(max(1, concurrency))
 
     def write_report(finished_at: datetime | None = None) -> None:
@@ -2012,6 +2627,7 @@ async def run_event_type_evaluation(
                 retries=retries,
                 target_parameters=target_parameters,
                 target_event_type_l2_ids_by_parameter=target_event_type_l2_ids_by_parameter,
+                invalid_status_confirmation=invalid_status_confirmation,
             ),
             encoding="utf-8",
         )
@@ -2032,9 +2648,7 @@ async def run_event_type_evaluation(
                     result["started_at"] = scenario_started_at.isoformat(timespec="seconds")
                     result["finished_at"] = datetime.now().isoformat(timespec="seconds")
                     result["elapsed_seconds"] = elapsed_seconds
-                    result["proposal_db_row"] = _fetch_proposal_db_row(
-                        _proposal_id(result.get("final_response") or {}),
-                    )
+                    await _confirm_scenario_result(result)
                     records.append(result)
                     print(
                         "OK",
@@ -2045,6 +2659,8 @@ async def run_event_type_evaluation(
                         attempt + 1,
                         "elapsed=",
                         _format_duration(elapsed_seconds),
+                        "confirmation=",
+                        result["confirmation"]["status"],
                     )
                     break
                 except Exception as exc:  # noqa: BLE001
@@ -2145,9 +2761,17 @@ async def run_event_type_evaluation(
             for scenario_id in target.scenario_ids
         ),
     )
+    invalid_status_confirmation = await _run_invalid_status_confirmation(records)
+    _attach_invalid_status_confirmation(records, invalid_status_confirmation)
     write_report(finished_at=datetime.now())
     print("REPORT", report_path)
-    print("ERROR_COUNT", len(errors))
+    print("ERROR_COUNT", len(errors) + _confirmation_failure_count(records))
+    print("PROPOSAL_ERROR_COUNT", len(errors))
+    print("CONFIRMATION_FAIL_COUNT", _confirmation_failure_count(records))
+    print(
+        "INVALID_STATUS_CONFIRMATION",
+        json.dumps(invalid_status_confirmation, ensure_ascii=False, default=str),
+    )
     print("SCENARIO_EXECUTION_COUNT", len(records) + len(errors))
     if parameter_scenarios:
         print(

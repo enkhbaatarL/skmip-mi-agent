@@ -69,6 +69,8 @@ from apps.common.values.error_codes import ErrorCode
 
 TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
 HARD_MAX_PARAMETER_SLOTS = 100
+DEFAULT_MAX_TOTAL_SELECTED_SLOTS = 300
+DEFAULT_MAX_PROMPT_BYTES = 262_144
 
 
 def _debug_stage_payload(
@@ -105,15 +107,8 @@ def _scenario_event_debug_summary(
         },
         "event": {
             "mi_event_id": event.get("mi_event_id") or scenario_group.get("mi_event_id"),
-            "event_type_l2_id": (
-                event.get("event_type_l2_id")
-                or scenario_group.get("event_type_l2_id")
-            ),
-            "title": (
-                event.get("event_title")
-                or event.get("event_title_ko")
-                or event.get("title")
-            ),
+            "event_type_l2_id": (event.get("event_type_l2_id") or scenario_group.get("event_type_l2_id")),
+            "title": (event.get("event_title") or event.get("event_title_ko") or event.get("title")),
         },
     }
 
@@ -124,9 +119,7 @@ def _parameter_names(
     names: list[str] = []
     for candidate in candidates:
         name = str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         ).strip()
         if name and name not in names:
             names.append(name)
@@ -140,9 +133,7 @@ def _parameter_selection_summary(
     seen: set[tuple[str, str]] = set()
     for candidate in candidates:
         parameter_name = str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         ).strip()
         raw_mapping_method = str(candidate.get("mapping_method") or "").lower()
         mapping_method = "route" if raw_mapping_method == "routing" else raw_mapping_method
@@ -165,9 +156,7 @@ def _slot_debug_summary(
 ) -> list[dict[str, Any]]:
     parameter_by_candidate = {
         str(candidate.get("candidate_key") or ""): str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         )
         for candidate in candidates
     }
@@ -220,43 +209,168 @@ def _available_periods_for_prompt(
             months = months_by_year.setdefault(year, [])
             if month not in months:
                 months.append(month)
-        return [
-            {"Year": year, "Months": sorted(months)}
-            for year, months in sorted(months_by_year.items())
-        ]
+        return [{"Year": year, "Months": sorted(months)} for year, months in sorted(months_by_year.items())]
     return periods
+
+
+def _fixed_axis_hierarchy_for_prompt(
+    candidate: CandidateSlotCatalog,
+    period_group_ids_by_leaf: list[str],
+) -> list[dict[str, Any]]:
+    if not candidate.non_time_axes:
+        return [{"period_group_id": period_group_ids_by_leaf[0]}] if period_group_ids_by_leaf else []
+
+    hierarchy: dict[tuple[str, str], dict[str, Any]] = {}
+    for leaf, period_group_id in zip(
+        candidate.leaves,
+        period_group_ids_by_leaf,
+        strict=True,
+    ):
+        level = hierarchy
+        terminal: dict[str, Any] | None = None
+        for axis_name in candidate.non_time_axes:
+            axis_value = leaf.axes[axis_name]
+            value_key = (type(axis_value).__name__, to_compact_json(axis_value))
+            terminal = level.setdefault(
+                value_key,
+                {
+                    "axis_value": axis_value,
+                    "children": {},
+                },
+            )
+            level = terminal["children"]
+        if terminal is not None:
+            terminal["period_group_id"] = period_group_id
+
+    def serialize_level(
+        nodes_by_value: dict[tuple[str, str], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for value_key in sorted(nodes_by_value):
+            node = nodes_by_value[value_key]
+            item: dict[str, Any] = {"axis_value": node["axis_value"]}
+            children = serialize_level(node["children"])
+            if children:
+                item["children"] = children
+            else:
+                item["period_group_id"] = node["period_group_id"]
+            serialized.append(item)
+        return serialized
+
+    return serialize_level(hierarchy)
 
 
 def _candidate_slot_catalog_for_prompt(
     candidate: CandidateSlotCatalog,
 ) -> dict[str, Any]:
-    leaves: list[dict[str, Any]] = []
+    period_groups: list[dict[str, Any]] = []
+    period_group_id_by_payload: dict[str, str] = {}
+    period_group_ids_by_leaf: list[str] = []
     for leaf in candidate.leaves:
         periods = [dict(period.values) for period in leaf.available_periods]
-        leaves.append(
-            {
-                "fixed_axes": dict(leaf.axes),
-                "available_periods": _available_periods_for_prompt(
-                    candidate,
-                    periods,
-                ),
-            },
-        )
+        prompt_periods = _available_periods_for_prompt(candidate, periods)
+        period_payload_key = to_compact_json(prompt_periods)
+        period_group_id = period_group_id_by_payload.get(period_payload_key)
+        if period_group_id is None:
+            period_group_id = f"period-group-{len(period_groups) + 1}"
+            period_group_id_by_payload[period_payload_key] = period_group_id
+            period_groups.append(
+                {
+                    "period_group_id": period_group_id,
+                    "available_periods": prompt_periods,
+                },
+            )
+        period_group_ids_by_leaf.append(period_group_id)
+
     return {
         "candidate_key": candidate.candidate_key,
         "parameter_name": candidate.parameter_name,
         "key_axes": list(candidate.key_axes),
         "fixed_axis_names": list(candidate.non_time_axes),
         "time_axis_names": list(candidate.time_axes),
-        "leaves": leaves,
+        "period_groups": period_groups,
+        "fixed_axis_hierarchy": _fixed_axis_hierarchy_for_prompt(
+            candidate,
+            period_group_ids_by_leaf,
+        ),
     }
 
 
 def _slot_catalog_for_prompt(slot_catalog: SlotCatalog) -> list[dict[str, Any]]:
-    return [
-        _candidate_slot_catalog_for_prompt(candidate)
-        for candidate in slot_catalog.candidates
-    ]
+    return [_candidate_slot_catalog_for_prompt(candidate) for candidate in slot_catalog.candidates]
+
+
+def _configured_positive_int(
+    settings: object,
+    field_name: str,
+    default: int,
+) -> int:
+    raw_value = getattr(settings, field_name, default)
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < 1:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=f"{field_name} must be a positive integer: value={raw_value!r}",
+        )
+    return raw_value
+
+
+def _prompt_parameter_bytes(
+    packet: dict[str, Any],
+    *,
+    task_field: str,
+) -> dict[str, int]:
+    bytes_by_parameter: dict[str, int] = {}
+    for task in packet.get(task_field) or []:
+        parameter = task.get("parameter") or {}
+        parameter_name = str(
+            parameter.get("parameter_name") or parameter.get("candidate_key") or "unknown",
+        )
+        task_bytes = len(to_compact_json(task).encode("utf-8"))
+        bytes_by_parameter[parameter_name] = bytes_by_parameter.get(parameter_name, 0) + task_bytes
+    return {parameter_name: bytes_by_parameter[parameter_name] for parameter_name in sorted(bytes_by_parameter)}
+
+
+def _guard_prompt_bytes(
+    packet: dict[str, Any],
+    *,
+    step: str,
+    task_field: str,
+    limit: int,
+) -> tuple[str, int, dict[str, int]]:
+    compact_json = to_compact_json(packet)
+    actual_bytes = len(compact_json.encode("utf-8"))
+    parameter_bytes = _prompt_parameter_bytes(packet, task_field=task_field)
+    if actual_bytes > limit:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                f"{step} compact prompt exceeds configured byte limit: "
+                f"actual_bytes={actual_bytes}, limit_bytes={limit}, "
+                f"parameter_bytes={to_compact_json(parameter_bytes)}"
+            ),
+        )
+    return compact_json, actual_bytes, parameter_bytes
+
+
+def _guard_total_selected_slots(
+    slots: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    *,
+    stage: str,
+    limit: int,
+) -> None:
+    selected_slots = _selected_parameter_slots(slots)
+    if len(selected_slots) <= limit:
+        return
+    raise MIBaseError(
+        ErrorCode.INVALID_REQUEST,
+        detail=(
+            f"{stage} selected slots exceed the request total limit before Step3: "
+            f"actual_slots={len(selected_slots)}, limit_slots={limit}, "
+            "parameter_slots="
+            f"{to_compact_json(_slot_counts_by_parameter(selected_slots, candidates))}"
+        ),
+    )
 
 
 def _effective_reference_to_state(
@@ -400,6 +514,7 @@ async def validate_parameter_candidates(
     llm_call: dict[str, Any] | None = None
 
     if routing_tasks:
+        max_routing_candidates_per_dimension = get_settings().model_parameter_max_routing_candidates_per_dimension
         packet = _build_candidate_validation_prompt_packet(
             state.scenario_context or {},
             routing_tasks,
@@ -408,16 +523,13 @@ async def validate_parameter_candidates(
             {
                 "role": "system",
                 "content": CANDIDATE_VALIDATION_SYSTEM.format(
-                    max_routing_candidates_per_dimension=(
-                        get_settings().model_parameter_max_routing_candidates_per_dimension
-                    ),
+                    max_routing_candidates_per_dimension=max_routing_candidates_per_dimension,
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    "아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n"
-                    f"{to_compact_json(packet)}"
+                    f"아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n{to_compact_json(packet)}"
                 ),
             },
         ]
@@ -451,6 +563,7 @@ async def validate_parameter_candidates(
         selected_routing_candidates, validation_warnings = _sanitize_routing_decisions(
             llm_payload.routing_decisions,
             routing_tasks,
+            max_candidates_per_dimension=max_routing_candidates_per_dimension,
         )
 
     selected_candidate_keys = {
@@ -508,9 +621,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
     policy = ReferenceLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
-        value_max_decimal_places=(
-            cfg.model_parameter_basecase_value_max_decimal_places
-        ),
+        value_max_decimal_places=(cfg.model_parameter_basecase_value_max_decimal_places),
         value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     resource_paths = get_model_parameter_resource_paths()
@@ -521,11 +632,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.scenario_context or {},
         registry=registry,
     )
-    lut_catalog = (
-        get_lut_catalog(policy, registry=registry)
-        if cfg.model_parameter_lut_enabled
-        else None
-    )
+    lut_catalog = get_lut_catalog(policy, registry=registry) if cfg.model_parameter_lut_enabled else None
     basecase_index = build_basecase_index(
         records,
         state.candidate_mappings,
@@ -562,18 +669,29 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_basecase_value_max_decimal_places": (
                 cfg.model_parameter_basecase_value_max_decimal_places
             ),
-            "model_parameter_basecase_value_precision_mode": (
-                cfg.model_parameter_basecase_value_precision_mode
-            ),
+            "model_parameter_basecase_value_precision_mode": (cfg.model_parameter_basecase_value_precision_mode),
             "model_parameter_proposed_value_max_decimal_places": (
                 cfg.model_parameter_proposed_value_max_decimal_places
             ),
-            "model_parameter_proposed_value_precision_mode": (
-                cfg.model_parameter_proposed_value_precision_mode
-            ),
+            "model_parameter_proposed_value_precision_mode": (cfg.model_parameter_proposed_value_precision_mode),
             "model_parameter_max_parameter_slots": cfg.model_parameter_max_parameter_slots,
             "model_parameter_max_value_prompt_basecase_records": (
                 cfg.model_parameter_max_value_prompt_basecase_records
+            ),
+            "model_parameter_max_total_selected_slots": _configured_positive_int(
+                cfg,
+                "model_parameter_max_total_selected_slots",
+                DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+            ),
+            "model_parameter_max_step2_prompt_bytes": _configured_positive_int(
+                cfg,
+                "model_parameter_max_step2_prompt_bytes",
+                DEFAULT_MAX_PROMPT_BYTES,
+            ),
+            "model_parameter_max_step3_prompt_bytes": _configured_positive_int(
+                cfg,
+                "model_parameter_max_step3_prompt_bytes",
+                DEFAULT_MAX_PROMPT_BYTES,
             ),
             "llm_stream_enabled": cfg.llm_stream_enabled,
             "llm_reasoning_effort": cfg.llm_reasoning_effort,
@@ -680,9 +798,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
 
         candidate_count = counts_by_candidate.get(candidate_key, 0) + 1
         if candidate_count > step3_slot_limit:
-            truncated_slot_counts[candidate_key] = (
-                truncated_slot_counts.get(candidate_key, 0) + 1
-            )
+            truncated_slot_counts[candidate_key] = truncated_slot_counts.get(candidate_key, 0) + 1
             continue
         counts_by_candidate[candidate_key] = candidate_count
         canonical_axes = dict(reference.axes)
@@ -708,6 +824,18 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         )
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
+
+    total_slot_limit = _configured_positive_int(
+        cfg,
+        "model_parameter_max_total_selected_slots",
+        DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+    )
+    _guard_total_selected_slots(
+        valid_slots,
+        state.candidate_mappings,
+        stage="Step2 exact",
+        limit=total_slot_limit,
+    )
 
     valid_candidate_keys = set(counts_by_candidate)
     slot_candidate_mappings = [
@@ -747,8 +875,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
 def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
     if not state.candidate_mappings:
         reason = (
-            "Step1/Step1.5 candidate 결과가 없어 Step2 slot proposal 및 "
-            "Step3 value proposal LLM 호출을 생략했습니다."
+            "Step1/Step1.5 candidate 결과가 없어 Step2 slot proposal 및 Step3 value proposal LLM 호출을 생략했습니다."
         )
     else:
         reason = "Step2 selected slot이 없어 Step3 value proposal LLM 호출을 생략했습니다."
@@ -778,10 +905,7 @@ async def propose_parameter_values(
         candidate
         for candidate in state.candidate_mappings
         if str(candidate.get("candidate_key") or "")
-        in {
-            str(slot.get("candidate_key") or "")
-            for slot in _selected_parameter_slots(state.parameter_slots)
-        }
+        in {str(slot.get("candidate_key") or "") for slot in _selected_parameter_slots(state.parameter_slots)}
     ]
     if not value_candidates:
         output = {
@@ -797,6 +921,18 @@ async def propose_parameter_values(
     if not selected_slots:
         return finalize_empty_parameter_values(state)
 
+    cfg = get_settings()
+    _guard_total_selected_slots(
+        selected_slots,
+        value_candidates,
+        stage="Step3 input",
+        limit=_configured_positive_int(
+            cfg,
+            "model_parameter_max_total_selected_slots",
+            DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+        ),
+    )
+
     value_references = state.effective_references
     packet = _build_value_proposal_prompt_packet(
         state.scenario_context or {},
@@ -805,14 +941,29 @@ async def propose_parameter_values(
         value_references,
         state.non_input_items,
     )
+    packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
+        packet,
+        step="Step3",
+        task_field="parameter_value_tasks",
+        limit=_configured_positive_int(
+            cfg,
+            "model_parameter_max_step3_prompt_bytes",
+            DEFAULT_MAX_PROMPT_BYTES,
+        ),
+    )
+    logger.info(
+        "[model-parameter] built compact value prompt | scenario_id={} "
+        "candidate_count={} prompt_bytes={} parameter_bytes={}",
+        state.scenario_id,
+        len(packet["parameter_value_tasks"]),
+        prompt_bytes,
+        parameter_bytes,
+    )
     messages = [
         {"role": "system", "content": VALUE_PROPOSAL_SYSTEM},
         {
             "role": "user",
-            "content": (
-                "아래 JSON만 근거로 Step3 수급모델 parameter slot 값을 제안하십시오.\n"
-                f"{to_compact_json(packet)}"
-            ),
+            "content": (f"아래 JSON만 근거로 Step3 수급모델 parameter slot 값을 제안하십시오.\n{packet_json}"),
         },
     ]
 
@@ -899,24 +1050,33 @@ async def propose_parameter_slots(
         slot_catalog,
         state.non_input_items,
     )
+    cfg = get_settings()
+    packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
+        packet,
+        step="Step2",
+        task_field="parameter_slot_tasks",
+        limit=_configured_positive_int(
+            cfg,
+            "model_parameter_max_step2_prompt_bytes",
+            DEFAULT_MAX_PROMPT_BYTES,
+        ),
+    )
     logger.info(
         "[model-parameter] built compact slot catalog prompt | scenario_id={} "
-        "candidate_count={} leaf_count={}",
+        "candidate_count={} period_group_count={} prompt_bytes={} parameter_bytes={}",
         state.scenario_id,
         len(packet["parameter_slot_tasks"]),
         sum(
-            len((task.get("slot_catalog") or {}).get("leaves") or [])
-            for task in packet["parameter_slot_tasks"]
+            len((task.get("slot_catalog") or {}).get("period_groups") or []) for task in packet["parameter_slot_tasks"]
         ),
+        prompt_bytes,
+        parameter_bytes,
     )
     messages = [
         {"role": "system", "content": SLOT_PROPOSAL_SYSTEM},
         {
             "role": "user",
-            "content": (
-                "아래 JSON만 근거로 Step2 수급모델 parameter slot 축을 제안하십시오.\n"
-                f"{to_compact_json(packet)}"
-            ),
+            "content": (f"아래 JSON만 근거로 Step2 수급모델 parameter slot 축을 제안하십시오.\n{packet_json}"),
         },
     ]
 
@@ -1017,7 +1177,7 @@ def _slot_counts_by_parameter(
 ) -> dict[str, int]:
     parameter_by_candidate = {
         str(candidate.get("candidate_key") or ""): str(
-            candidate.get("parameter_name") or "unknown",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "unknown",
         )
         for candidate in candidates
     }
@@ -1122,9 +1282,7 @@ def _allowed_slot_axes_field_names(candidate: dict[str, Any]) -> list[str]:
         return axis_names
 
     value_field_name = str(
-        candidate.get("canonical_parameter_name")
-        or candidate.get("parameter_name")
-        or "",
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
     )
     value_field_key = _field_key(value_field_name)
     axis_names: list[str] = []
@@ -1142,31 +1300,20 @@ def _allowed_slot_axes_field_names(candidate: dict[str, Any]) -> list[str]:
 def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "candidate_key": candidate.get("candidate_key"),
-        "dimension_key": (
-            candidate.get("dimension_key")
-            or candidate.get("source_dimension_id")
-        ),
+        "dimension_key": (candidate.get("dimension_key") or candidate.get("source_dimension_id")),
         "source_dimension_id": candidate.get("source_dimension_id"),
         "source_dimension_label": candidate.get("source_dimension_label"),
         "source_dimension_value": candidate.get("source_dimension_value"),
         "mapping_method": candidate.get("mapping_method"),
         "mapping_comment": candidate.get("mapping_comment"),
     }
-    return {
-        key: value
-        for key, value in payload.items()
-        if value is not None
-    }
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 def _source_dimensions_for_prompt(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     raw = candidate.get("source_dimensions")
     if isinstance(raw, list) and raw:
-        return [
-            item
-            for item in raw
-            if isinstance(item, dict)
-        ]
+        return [item for item in raw if isinstance(item, dict)]
     return [_source_dimension_for_prompt(candidate)]
 
 
@@ -1226,9 +1373,7 @@ def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
         str(candidate.get("model_file") or ""),
         str(candidate.get("model_sheet") or ""),
         str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         ),
     )
 
@@ -1243,8 +1388,7 @@ def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
     ]
     parts.append(
         _field_key(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name"),
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name"),
         ),
     )
     return "|".join(parts)
@@ -1261,10 +1405,9 @@ def _merge_candidates_by_parameter(
     for group_candidates in groups.values():
         if len(group_candidates) == 1:
             candidate = dict(group_candidates[0])
-            candidate["merged_candidate_keys"] = (
-                candidate.get("merged_candidate_keys")
-                or [candidate.get("candidate_key")]
-            )
+            candidate["merged_candidate_keys"] = candidate.get("merged_candidate_keys") or [
+                candidate.get("candidate_key")
+            ]
             candidate["source_dimensions"] = _source_dimensions_for_prompt(candidate)
             merged_candidates.append(candidate)
             continue
@@ -1275,21 +1418,14 @@ def _merge_candidates_by_parameter(
         mapping_methods: list[str] = []
         mapping_comments: list[str] = []
         for candidate in group_candidates:
-            for candidate_key in (
-                candidate.get("merged_candidate_keys")
-                or [candidate.get("candidate_key")]
-            ):
+            for candidate_key in candidate.get("merged_candidate_keys") or [candidate.get("candidate_key")]:
                 _append_unique_text(merged_candidate_keys, candidate_key)
             for source_dimension in _source_dimensions_for_prompt(candidate):
                 _append_unique_source_dimension(source_dimensions, source_dimension)
             _append_unique_text(mapping_methods, candidate.get("mapping_method"))
             _append_unique_text(mapping_comments, candidate.get("mapping_comment"))
 
-        merged_method = (
-            mapping_methods[0]
-            if len(mapping_methods) == 1
-            else "merged"
-        )
+        merged_method = mapping_methods[0] if len(mapping_methods) == 1 else "merged"
         base.update(
             {
                 "candidate_key": _parameter_candidate_key(base),
@@ -1312,10 +1448,7 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
     return _drop_none_or_empty(
         {
             "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": (
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-            ),
+            "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
             "mapping_comment": candidate.get("mapping_comment"),
@@ -1337,16 +1470,10 @@ def _partition_candidate_validation_work(
 
     routing_tasks: list[dict[str, Any]] = []
     for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
-        if len(group_candidates) == 1:
-            deterministic.extend(group_candidates)
-            continue
         first = group_candidates[0]
         routing_tasks.append(
             {
-                "dimension_key": (
-                    first.get("dimension_key")
-                    or first.get("source_dimension_id")
-                ),
+                "dimension_key": (first.get("dimension_key") or first.get("source_dimension_id")),
                 "dimension_label": first.get("source_dimension_label"),
                 "dimension_value": first.get("source_dimension_value"),
                 "candidates": group_candidates,
@@ -1361,10 +1488,7 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
             "dimension_key": task.get("dimension_key"),
             "dimension_label": task.get("dimension_label"),
             "dimension_value": task.get("dimension_value"),
-            "candidates": [
-                _routing_candidate_prompt_payload(candidate)
-                for candidate in task.get("candidates") or []
-            ],
+            "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in task.get("candidates") or []],
         },
     )
 
@@ -1374,19 +1498,14 @@ def _build_candidate_validation_prompt_packet(
     routing_tasks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     allowed_dimension_keys = {
-        str(task.get("dimension_key") or "")
-        for task in routing_tasks
-        if str(task.get("dimension_key") or "")
+        str(task.get("dimension_key") or "") for task in routing_tasks if str(task.get("dimension_key") or "")
     }
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
             allowed_dimension_keys=allowed_dimension_keys,
         ),
-        "routing_tasks": [
-            _routing_task_for_prompt(task)
-            for task in routing_tasks
-        ],
+        "routing_tasks": [_routing_task_for_prompt(task) for task in routing_tasks],
     }
 
 
@@ -1397,6 +1516,11 @@ def _build_slot_proposal_prompt_packet(
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     cfg = get_settings()
+    max_total_selected_slots = _configured_positive_int(
+        cfg,
+        "model_parameter_max_total_selected_slots",
+        DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+    )
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
@@ -1411,7 +1535,10 @@ def _build_slot_proposal_prompt_packet(
                 cfg.model_parameter_max_parameter_slots,
                 HARD_MAX_PARAMETER_SLOTS,
             ),
-            "applicationScope": "independent_per_parameter_task",
+            "maxTotalSelectedSlots": max_total_selected_slots,
+            "applicationScope": (
+                "maxParameterSlots applies per parameter task; maxTotalSelectedSlots applies to the whole request"
+            ),
             "priority": [
                 "scenario/event/dimension과 직접 관련되고 task slot_catalog에 exact 존재하는 slot",
                 "LUT-only를 포함하되 active source에 실제 존재하는 slot",
@@ -1441,11 +1568,7 @@ def _filter_dimension_values(
 ) -> Any:
     if allowed_dimension_keys is None or not isinstance(dimension_values, dict):
         return dimension_values
-    return {
-        key: value
-        for key, value in dimension_values.items()
-        if str(key) in allowed_dimension_keys
-    }
+    return {key: value for key, value in dimension_values.items() if str(key) in allowed_dimension_keys}
 
 
 def _filter_dimension_selected(
@@ -1456,11 +1579,7 @@ def _filter_dimension_selected(
         return dimension_selected
 
     if isinstance(dimension_selected, str):
-        return [
-            item
-            for item in re.findall(r"[A-Za-z0-9_]+", dimension_selected)
-            if item in allowed_dimension_keys
-        ]
+        return [item for item in re.findall(r"[A-Za-z0-9_]+", dimension_selected) if item in allowed_dimension_keys]
 
     if not isinstance(dimension_selected, list):
         return dimension_selected
@@ -1598,20 +1717,13 @@ def _selected_dimensions_for_value_prompt(
 
 
 def _drop_none_or_empty(value: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: item
-        for key, item in value.items()
-        if item is not None and item != "" and item != [] and item != {}
-    }
+    return {key: item for key, item in value.items() if item is not None and item != "" and item != [] and item != {}}
 
 
 def _source_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
-            "dimension_key": (
-                item.get("dimension_key")
-                or item.get("source_dimension_id")
-            ),
+            "dimension_key": (item.get("dimension_key") or item.get("source_dimension_id")),
             "dimension_label": item.get("source_dimension_label"),
             "dimension_value": item.get("source_dimension_value"),
             "mapping_method": item.get("mapping_method"),
@@ -1728,9 +1840,7 @@ def _slot_for_value_task(
         "slot_key": slot_key,
         "coordinates": dict(reference.get("axes") or _coordinates_for_selected_slot(slot)),
         "reference_value": (
-            reference.get("llm_reference_value")
-            if "llm_reference_value" in reference
-            else reference.get("value")
+            reference.get("llm_reference_value") if "llm_reference_value" in reference else reference.get("value")
         ),
     }
 
@@ -1752,16 +1862,11 @@ def _parameter_prompt_payload(
     return _drop_none_or_empty(
         {
             "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": (
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-            ),
+            "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
             "allowed_slot_axes_field_names": (
-                allowed_slot_axes
-                if allowed_slot_axes is not None
-                else _allowed_slot_axes_field_names(candidate)
+                allowed_slot_axes if allowed_slot_axes is not None else _allowed_slot_axes_field_names(candidate)
             ),
         },
     )
@@ -1778,9 +1883,7 @@ def _build_parameter_slot_tasks(
     )
     catalog_by_key = {
         str(candidate_catalog.get("candidate_key") or ""): {
-            key: value
-            for key, value in candidate_catalog.items()
-            if key != "candidate_key"
+            key: value for key, value in candidate_catalog.items() if key != "candidate_key"
         }
         for candidate_catalog in slot_catalog
     }
@@ -1791,14 +1894,12 @@ def _build_parameter_slot_tasks(
         candidate_catalog = catalog_by_key.get(
             candidate_key,
             {
-                "parameter_name": (
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                ),
+                "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
                 "key_axes": _allowed_slot_axes_field_names(candidate),
                 "fixed_axis_names": [],
                 "time_axis_names": [],
-                "leaves": [],
+                "period_groups": [],
+                "fixed_axis_hierarchy": [],
             },
         )
         task = {
@@ -2028,30 +2129,20 @@ def _build_basecase_slot_options(records: list[dict[str, Any]]) -> list[dict[str
                 values.setdefault(_normalize_axis_value(display_value), display_value)
 
     for candidate_key, option in options.items():
-        non_time_axes = [
-            axis_name
-            for axis_name in option["axis_names"]
-            if not _is_time_slot_axis(axis_name)
-        ]
+        non_time_axes = [axis_name for axis_name in option["axis_names"] if not _is_time_slot_axis(axis_name)]
         option["slot_hierarchy_axes"] = non_time_axes
         root = hierarchy_roots_by_candidate.setdefault(candidate_key, {})
         for record in records:
             if str(record.get("candidate_key") or "") != candidate_key:
                 continue
             axes = record.get("axes") or {}
-            path = [
-                axes.get(axis_name)
-                for axis_name in non_time_axes
-            ]
+            path = [axes.get(axis_name) for axis_name in non_time_axes]
             if path and all(value not in (None, "") for value in path):
                 _add_hierarchy_path(root, path)
         option["slot_hierarchy"] = _hierarchy_for_prompt(root)
         axis_values = axis_values_by_candidate.get(candidate_key) or {}
         option["axis_values"] = {
-            axis_name: [
-                value
-                for _, value in sorted(values.items(), key=lambda item: str(item[1]))
-            ]
+            axis_name: [value for _, value in sorted(values.items(), key=lambda item: str(item[1]))]
             for axis_name, values in axis_values.items()
         }
     return list(options.values())
@@ -2075,11 +2166,10 @@ def _routing_groups_by_dimension(
 def _sanitize_routing_decisions(
     decisions: list[RoutingDecision],
     routing_tasks: list[dict[str, Any]],
+    *,
+    max_candidates_per_dimension: int,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    task_by_dimension = {
-        str(task.get("dimension_key") or ""): task
-        for task in routing_tasks
-    }
+    task_by_dimension = {str(task.get("dimension_key") or ""): task for task in routing_tasks}
     selected_keys: set[str] = set()
     returned_dimensions: set[str] = set()
     warnings: list[str] = []
@@ -2088,29 +2178,44 @@ def _sanitize_routing_decisions(
         dimension_key = str(decision.dimension_key or "")
         task = task_by_dimension.get(dimension_key)
         if task is None:
+            warning = f"LLM이 알 수 없는 dimension_key를 routing_decisions에 반환해 제외했습니다: {dimension_key}"
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
+            continue
+        if dimension_key in returned_dimensions:
             warning = (
-                "LLM이 알 수 없는 dimension_key를 routing_decisions에 반환해 제외했습니다: "
-                f"{dimension_key}"
+                "LLM routing_decisions에 중복 dimension task가 있어 후속 응답을 제외했습니다: "
+                f"dimension={dimension_key}"
             )
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
         returned_dimensions.add(dimension_key)
-        allowed_keys = {
-            str(candidate.get("candidate_key") or "")
-            for candidate in task.get("candidates") or []
-        }
+        allowed_keys = {str(candidate.get("candidate_key") or "") for candidate in task.get("candidates") or []}
+        selected_dimension_keys: set[str] = set()
         for raw_candidate_key in decision.selected_candidate_keys:
             candidate_key = str(raw_candidate_key or "")
-            if candidate_key in allowed_keys:
-                selected_keys.add(candidate_key)
+            if candidate_key not in allowed_keys:
+                warning = (
+                    "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
+                    f"dimension={dimension_key}, candidate={candidate_key}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
                 continue
-            warning = (
-                "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
-                f"dimension={dimension_key}, candidate={candidate_key}"
-            )
-            logger.warning("[model-parameter] {}", warning)
-            warnings.append(warning)
+            if candidate_key in selected_dimension_keys:
+                continue
+            if len(selected_dimension_keys) >= max_candidates_per_dimension:
+                warning = (
+                    "LLM routing_decisions가 dimension별 선택 상한을 초과해 후속 후보를 제외했습니다: "
+                    f"dimension={dimension_key}, limit={max_candidates_per_dimension}, "
+                    f"candidate={candidate_key}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
+            selected_dimension_keys.add(candidate_key)
+            selected_keys.add(candidate_key)
 
     missing_dimensions = sorted(set(task_by_dimension) - returned_dimensions)
     if missing_dimensions:
@@ -2139,10 +2244,7 @@ def _sanitize_llm_slots(
     warnings: list[str] = []
     for slot in slots:
         if slot.candidate_key not in candidate_by_key:
-            warning = (
-                "LLM이 알 수 없는 candidate_key를 반환해 slot을 제외했습니다: "
-                f"{slot.candidate_key}"
-            )
+            warning = f"LLM이 알 수 없는 candidate_key를 반환해 slot을 제외했습니다: {slot.candidate_key}"
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
@@ -2280,11 +2382,7 @@ def _parameter_value_cell_from_slot_value(
         lut_value=lut_value,
         proposed_value=proposed_value,
         rationale_ko=slot_value.rationale_ko,
-        basecase_reference_ids=(
-            [str(basecase_reference_id)]
-            if basecase_reference_id is not None
-            else []
-        ),
+        basecase_reference_ids=([str(basecase_reference_id)] if basecase_reference_id is not None else []),
     )
 
 
@@ -2317,8 +2415,7 @@ def _sanitize_llm_adjustments(
     }
     for duplicate_candidate_key in sorted(duplicate_candidate_keys):
         warning = (
-            "LLM Step3 응답에 동일 candidate_key의 adjustment가 중복되어 "
-            f"모두 제외했습니다: {duplicate_candidate_key}"
+            f"LLM Step3 응답에 동일 candidate_key의 adjustment가 중복되어 모두 제외했습니다: {duplicate_candidate_key}"
         )
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
@@ -2329,10 +2426,7 @@ def _sanitize_llm_adjustments(
             continue
         candidate = candidate_by_key.get(adjustment.candidate_key)
         if candidate is None:
-            warning = (
-                "LLM이 알 수 없는 candidate_key를 반환해 제외했습니다: "
-                f"{adjustment.candidate_key}"
-            )
+            warning = f"LLM이 알 수 없는 candidate_key를 반환해 제외했습니다: {adjustment.candidate_key}"
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
@@ -2382,10 +2476,7 @@ def _sanitize_llm_adjustments(
             try:
                 proposed_value = apply_numeric_precision(
                     slot_value.proposed_value,
-                    label=(
-                        "Step3 proposedValue "
-                        f"(candidate={adjustment.candidate_key}, slotKey={slot_key})"
-                    ),
+                    label=(f"Step3 proposedValue (candidate={adjustment.candidate_key}, slotKey={slot_key})"),
                     max_decimal_places=max_decimal_places,
                     mode=precision_mode,
                 )
@@ -2418,28 +2509,25 @@ def _sanitize_llm_adjustments(
             warnings.append(warning)
 
         if not value_grid:
-            warning = (
-                "Step3 응답에 유효한 slot 값이 없어 parameter를 제외했습니다: "
-                f"{adjustment.candidate_key}"
-            )
+            warning = f"Step3 응답에 유효한 slot 값이 없어 parameter를 제외했습니다: {adjustment.candidate_key}"
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
 
-        sanitized.append(ParameterAdjustment(
-            candidate_key=adjustment.candidate_key,
-            model_file=str(candidate.get("model_file") or ""),
-            model_sheet=str(candidate.get("model_sheet") or ""),
-            parameter_name=str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
-            ),
-            selected=True,
-            slot_axes=slot_axes,
-            value_grid=value_grid,
-            parameter_selection_rationale_ko=adjustment.rationale_ko,
-        ).model_dump())
+        sanitized.append(
+            ParameterAdjustment(
+                candidate_key=adjustment.candidate_key,
+                model_file=str(candidate.get("model_file") or ""),
+                model_sheet=str(candidate.get("model_sheet") or ""),
+                parameter_name=str(
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                ),
+                selected=True,
+                slot_axes=slot_axes,
+                value_grid=value_grid,
+                parameter_selection_rationale_ko=adjustment.rationale_ko,
+            ).model_dump()
+        )
 
     missing_candidate_keys = sorted(
         set(candidate_by_key) - processed_candidate_keys - duplicate_candidate_keys,
@@ -2505,10 +2593,7 @@ def _nearest_current_or_future_month(months: list[int]) -> tuple[int, int] | Non
     if not months:
         return None
     current_year, current_month = _current_year_month()
-    candidates = [
-        (current_year if month >= current_month else current_year + 1, month)
-        for month in months
-    ]
+    candidates = [(current_year if month >= current_month else current_year + 1, month) for month in months]
     return min(candidates)
 
 
@@ -2558,17 +2643,13 @@ def _period_start_year_month(
         return (*event_explicit, "event에 명시된 연월")
 
     scenario_month = (
-        _nearest_current_or_future_month(_month_only_candidates(scenario_text))
-        if scenario_explicit is None
-        else None
+        _nearest_current_or_future_month(_month_only_candidates(scenario_text)) if scenario_explicit is None else None
     )
     if scenario_month is not None:
         return (*scenario_month, "scenario에 명시된 월-only를 현재 이후 연월로 변환")
 
     event_month = (
-        _nearest_current_or_future_month(_month_only_candidates(event_text))
-        if event_explicit is None
-        else None
+        _nearest_current_or_future_month(_month_only_candidates(event_text)) if event_explicit is None else None
     )
     if event_month is not None:
         return (*event_month, "event에 명시된 월-only를 현재 이후 연월로 변환")
@@ -2587,9 +2668,7 @@ def _unselected_adjustments_for_missing_slots(
             model_file=str(candidate.get("model_file") or ""),
             model_sheet=str(candidate.get("model_sheet") or ""),
             parameter_name=str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
+                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
             ),
             selected=False,
             slot_axes=[],

@@ -45,9 +45,7 @@ BASECASE_AXIS_LABELS = {
 }
 BASECASE_TIME_LABELS = {"year", "month", "period"}
 BASECASE_BAD_VALUES = {"#ref!", "#n/a", "#value!", "#div/0!"}
-PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD = (
-    "_preserve_basecase_axes_without_value"
-)
+PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD = "_preserve_basecase_axes_without_value"
 BASECASE_SPEC_COLUMNS = {
     "basecase_read_mode",
     "basecase_header_row",
@@ -273,10 +271,7 @@ def _candidate_basecase_records_cache_key(
         file_signature(Path(profile.workbook_path)),
         profile.sheet_name,
         stable_digest(
-            {
-                field_name: candidate.get(field_name)
-                for field_name in CANDIDATE_BASECASE_CACHE_FIELDS
-            },
+            {field_name: candidate.get(field_name) for field_name in CANDIDATE_BASECASE_CACHE_FIELDS},
         ),
     )
 
@@ -295,9 +290,7 @@ def _copy_records_for_candidate(
 ) -> list[dict[str, Any]]:
     candidate_key = str(candidate.get("candidate_key") or "")
     parameter_name = str(
-        candidate.get("canonical_parameter_name")
-        or candidate.get("parameter_name")
-        or "",
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
     )
     copied_records: list[dict[str, Any]] = []
     for record in records:
@@ -345,11 +338,7 @@ def preload_basecase_runtime_cache(
 ) -> BasecaseRuntimeCacheSummary:
     kb = get_parameter_knowledge_base(basecase_dir_path)
     candidates = _basecase_preload_candidates(kb)
-    warnings = [
-        warning
-        for profile in kb.basecase_profiles.values()
-        for warning in profile.warnings
-    ]
+    warnings = [warning for profile in kb.basecase_profiles.values() for warning in profile.warnings]
     record_count = 0
 
     if preload_records:
@@ -369,8 +358,7 @@ def preload_basecase_runtime_cache(
                 candidate_key = str(candidate.get("candidate_key") or "")
                 if profile is None or not profile.sheet_exists:
                     warnings.append(
-                        "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
-                        f"candidate_key={candidate_key}",
+                        f"매핑된 basecase workbook/sheet를 찾지 못했습니다: candidate_key={candidate_key}",
                     )
                     continue
                 try:
@@ -395,11 +383,7 @@ def preload_basecase_runtime_cache(
                     continue
                 record_count += len(candidate_records)
 
-    sheet_available_count = sum(
-        1
-        for profile in kb.basecase_profiles.values()
-        if profile.sheet_exists
-    )
+    sheet_available_count = sum(1 for profile in kb.basecase_profiles.values() if profile.sheet_exists)
     return BasecaseRuntimeCacheSummary(
         parameter_count=len(kb.parameter_definitions),
         profile_count=len(kb.basecase_profiles),
@@ -416,32 +400,36 @@ def _basecase_preload_candidates(kb: ParameterKnowledgeBase) -> list[dict[str, A
         canonical = normalize_parameter_name(
             definition.canonical_parameter_name or definition.parameter_name,
         )
-        candidates.append({
-            "candidate_key": "|".join([
-                "startup",
-                _normalize_for_key(canonical),
-                _normalize_for_key(definition.model_file),
-                _normalize_for_key(definition.model_sheet),
-            ]),
-            "model_file": definition.model_file,
-            "model_sheet": definition.model_sheet,
-            "model_table": definition.model_table,
-            "parameter_name": definition.parameter_name,
-            "canonical_parameter_name": canonical,
-            "parameter_hint": definition.parameter_hint,
-            "semantic_axes": definition.semantic_axes,
-            "basecase_read_mode": definition.basecase_read_mode,
-            "basecase_header_row": definition.basecase_header_row,
-            "basecase_data_start_row": definition.basecase_data_start_row,
-            "basecase_column_roles": definition.basecase_column_roles,
-            "basecase_row_filter": definition.basecase_row_filter,
-            "basecase_year_row": definition.basecase_year_row,
-            "basecase_month_row": definition.basecase_month_row,
-            "basecase_period_row": definition.basecase_period_row,
-            "basecase_value_start_col": definition.basecase_value_start_col,
-            "basecase_value_end_col": definition.basecase_value_end_col,
-            "basecase_stop_rule": definition.basecase_stop_rule,
-        })
+        candidates.append(
+            {
+                "candidate_key": "|".join(
+                    [
+                        "startup",
+                        _normalize_for_key(canonical),
+                        _normalize_for_key(definition.model_file),
+                        _normalize_for_key(definition.model_sheet),
+                    ]
+                ),
+                "model_file": definition.model_file,
+                "model_sheet": definition.model_sheet,
+                "model_table": definition.model_table,
+                "parameter_name": definition.parameter_name,
+                "canonical_parameter_name": canonical,
+                "parameter_hint": definition.parameter_hint,
+                "semantic_axes": definition.semantic_axes,
+                "basecase_read_mode": definition.basecase_read_mode,
+                "basecase_header_row": definition.basecase_header_row,
+                "basecase_data_start_row": definition.basecase_data_start_row,
+                "basecase_column_roles": definition.basecase_column_roles,
+                "basecase_row_filter": definition.basecase_row_filter,
+                "basecase_year_row": definition.basecase_year_row,
+                "basecase_month_row": definition.basecase_month_row,
+                "basecase_period_row": definition.basecase_period_row,
+                "basecase_value_start_col": definition.basecase_value_start_col,
+                "basecase_value_end_col": definition.basecase_value_end_col,
+                "basecase_stop_rule": definition.basecase_stop_rule,
+            }
+        )
     return candidates
 
 
@@ -540,10 +528,7 @@ def match_parameter_candidates(
         return [], [], warnings
 
     scenario_dimension_keys = set(dimension_values)
-    unsupported_dimension_values = (
-        raw_dimension_values is not None
-        and not isinstance(raw_dimension_values, dict)
-    )
+    unsupported_dimension_values = raw_dimension_values is not None and not isinstance(raw_dimension_values, dict)
     if not scenario_dimension_keys and unsupported_dimension_values:
         warnings.append(
             "scenario.dimension_values가 JSON object가 아니어서 DB dimension-parameter 매핑을 수행하지 않았습니다.",
@@ -554,9 +539,9 @@ def match_parameter_candidates(
         return [], [], warnings
 
     event_rules = [
-        rule for rule in kb.mapping_rules
-        if rule.event_type_l2_id == event_type_l2_id
-        and rule.dimension_key in scenario_dimension_keys
+        rule
+        for rule in kb.mapping_rules
+        if rule.event_type_l2_id == event_type_l2_id and rule.dimension_key in scenario_dimension_keys
     ]
 
     mapped_dimension_keys = {rule.dimension_key for rule in event_rules}
@@ -578,12 +563,7 @@ def match_parameter_candidates(
 
         canonical = normalize_parameter_name(rule.canonical_parameter_name)
         definition = kb.definition_for(canonical)
-        has_model_target = bool(
-            definition
-            and definition.model_file
-            and definition.model_sheet
-            and canonical
-        )
+        has_model_target = bool(definition and definition.model_file and definition.model_sheet and canonical)
         if rule.mapping_method not in {"direct", "routing"} or not has_model_target:
             reason = rule.comment or "수급모델 input parameter 직접 대상이 아닙니다."
             if rule.mapping_method in {"direct", "routing"} and not has_model_target:
@@ -592,61 +572,67 @@ def match_parameter_candidates(
                     f"{canonical or '-'} target 정보가 없어 후보에서 제외했습니다. "
                     f"{reason}"
                 )
-            non_inputs.append({
-                "source_dimension_id": source_key,
-                "source_dimension_label": source_label or rule.dimension_label,
-                "source_dimension_value": source_value,
-                "mapping_method": rule.mapping_method,
-                "reason": reason,
-            })
+            non_inputs.append(
+                {
+                    "source_dimension_id": source_key,
+                    "source_dimension_label": source_label or rule.dimension_label,
+                    "source_dimension_value": source_value,
+                    "mapping_method": rule.mapping_method,
+                    "reason": reason,
+                }
+            )
             continue
 
         model_file = definition.model_file
         model_sheet = definition.model_sheet
         model_table = definition.model_table
-        candidate_key = "|".join([
-            str(rule.event_type_l2_id),
-            _normalize_for_key(rule.dimension_key),
-            _normalize_for_key(canonical),
-            _normalize_for_key(model_file or ""),
-            _normalize_for_key(model_sheet or ""),
-        ])
+        candidate_key = "|".join(
+            [
+                str(rule.event_type_l2_id),
+                _normalize_for_key(rule.dimension_key),
+                _normalize_for_key(canonical),
+                _normalize_for_key(model_file or ""),
+                _normalize_for_key(model_sheet or ""),
+            ]
+        )
         if candidate_key in seen:
             continue
         seen.add(candidate_key)
 
         profile = kb.profile_for(model_file, model_sheet)
-        candidates.append({
-            "candidate_key": candidate_key,
-            "event_type_l2_id": rule.event_type_l2_id,
-            "level_2_code": _clean_text(event_type.get("level_2_code")),
-            "event_label": _clean_text(event_type.get("level_2_label")),
-            "source_dimension_id": source_key,
-            "dimension_key": rule.dimension_key,
-            "source_dimension_label": source_label or rule.dimension_label,
-            "source_dimension_value": source_value,
-            "mapping_method": rule.mapping_method,
-            "model_file": model_file,
-            "model_sheet": model_sheet,
-            "model_table": model_table,
-            "parameter_name": definition.parameter_name,
-            "canonical_parameter_name": canonical,
-            "parameter_hint": definition.parameter_hint,
-            "semantic_axes": definition.semantic_axes,
-            "mapping_comment": rule.comment,
-            "basecase_read_mode": definition.basecase_read_mode,
-            "basecase_header_row": definition.basecase_header_row,
-            "basecase_data_start_row": definition.basecase_data_start_row,
-            "basecase_column_roles": definition.basecase_column_roles,
-            "basecase_row_filter": definition.basecase_row_filter,
-            "basecase_year_row": definition.basecase_year_row,
-            "basecase_month_row": definition.basecase_month_row,
-            "basecase_period_row": definition.basecase_period_row,
-            "basecase_value_start_col": definition.basecase_value_start_col,
-            "basecase_value_end_col": definition.basecase_value_end_col,
-            "basecase_stop_rule": definition.basecase_stop_rule,
-            "basecase_available": bool(profile and profile.sheet_exists),
-        })
+        candidates.append(
+            {
+                "candidate_key": candidate_key,
+                "event_type_l2_id": rule.event_type_l2_id,
+                "level_2_code": _clean_text(event_type.get("level_2_code")),
+                "event_label": _clean_text(event_type.get("level_2_label")),
+                "source_dimension_id": source_key,
+                "dimension_key": rule.dimension_key,
+                "source_dimension_label": source_label or rule.dimension_label,
+                "source_dimension_value": source_value,
+                "mapping_method": rule.mapping_method,
+                "model_file": model_file,
+                "model_sheet": model_sheet,
+                "model_table": model_table,
+                "parameter_name": definition.parameter_name,
+                "canonical_parameter_name": canonical,
+                "parameter_hint": definition.parameter_hint,
+                "semantic_axes": definition.semantic_axes,
+                "mapping_comment": rule.comment,
+                "basecase_read_mode": definition.basecase_read_mode,
+                "basecase_header_row": definition.basecase_header_row,
+                "basecase_data_start_row": definition.basecase_data_start_row,
+                "basecase_column_roles": definition.basecase_column_roles,
+                "basecase_row_filter": definition.basecase_row_filter,
+                "basecase_year_row": definition.basecase_year_row,
+                "basecase_month_row": definition.basecase_month_row,
+                "basecase_period_row": definition.basecase_period_row,
+                "basecase_value_start_col": definition.basecase_value_start_col,
+                "basecase_value_end_col": definition.basecase_value_end_col,
+                "basecase_stop_rule": definition.basecase_stop_rule,
+                "basecase_available": bool(profile and profile.sheet_exists),
+            }
+        )
 
     if not candidates:
         warnings.append(
@@ -687,8 +673,7 @@ def build_basecase_records(
             candidate_key = str(candidate.get("candidate_key") or "")
             if profile is None or not profile.sheet_exists:
                 warnings.append(
-                    "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
-                    f"candidate_key={candidate_key}",
+                    f"매핑된 basecase workbook/sheet를 찾지 못했습니다: candidate_key={candidate_key}",
                 )
                 continue
             try:
@@ -701,18 +686,56 @@ def build_basecase_records(
                 )
             except Exception as exc:
                 warnings.append(
-                    "basecase record 추출 중 오류가 발생했습니다: "
-                    f"candidate_key={candidate_key}, error={exc}",
+                    f"basecase record 추출 중 오류가 발생했습니다: candidate_key={candidate_key}, error={exc}",
                 )
                 continue
+            candidate_records, missing_key_axes = _filter_incomplete_registered_records(
+                candidate_records,
+                candidate=candidate,
+                registry=registry,
+            )
+            if missing_key_axes:
+                warnings.append(
+                    "등록된 LUT exact key와 호환되지 않는 basecase record를 제외했습니다: "
+                    f"candidate_key={candidate_key}, missing_key_axes={list(missing_key_axes)}; "
+                    "검증된 LUT reference만 사용합니다.",
+                )
             if not candidate_records:
                 warnings.append(
-                    "basecase record를 추출하지 못했습니다: "
-                    f"candidate_key={candidate_key}, sheet={profile.sheet_name}",
+                    f"basecase record를 추출하지 못했습니다: candidate_key={candidate_key}, sheet={profile.sheet_name}",
                 )
                 continue
             records.extend(candidate_records)
     return records, warnings
+
+
+def _filter_incomplete_registered_records(
+    records: list[dict[str, Any]],
+    *,
+    candidate: dict[str, Any],
+    registry: ParameterSpecRegistry,
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    """Exclude workbook rows that cannot form the registered exact business key."""
+    parameter_name = str(
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+    ).strip()
+    spec = registry.get(parameter_name)
+    if spec is None:
+        return records, ()
+
+    compatible: list[dict[str, Any]] = []
+    missing_axes: set[str] = set()
+    for record in records:
+        raw_axes = record.get("axes")
+        if not isinstance(raw_axes, dict):
+            missing_axes.update(spec.key_axes)
+            continue
+        missing = tuple(axis_name for axis_name in spec.key_axes if axis_name not in raw_axes)
+        if missing:
+            missing_axes.update(missing)
+            continue
+        compatible.append(record)
+    return compatible, tuple(axis_name for axis_name in spec.key_axes if axis_name in missing_axes)
 
 
 def _cached_extract_basecase_records(
@@ -754,9 +777,7 @@ def _candidate_with_basecase_metadata_policy(
     registry: ParameterSpecRegistry,
 ) -> dict[str, Any]:
     parameter_name = str(
-        candidate.get("canonical_parameter_name")
-        or candidate.get("parameter_name")
-        or "",
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
     ).strip()
     spec = registry.get(parameter_name)
     return {
@@ -841,7 +862,8 @@ def _mapping_rules_from_rows(
                 canonical_parameter_name=canonical,
                 mapping_method=_normalize_mapping_method(
                     row_map.get("mapping_method"),
-                ) or "unknown",
+                )
+                or "unknown",
                 comment=_none_if_dash(row_map.get("comment")),
             ),
         )
@@ -896,7 +918,7 @@ def _parameter_definitions_from_rows(
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail=f"{source_name} active parameter rows not found",
-    )
+        )
     return definitions
 
 
@@ -1061,31 +1083,28 @@ def _append_matrix_records_for_row(
             axis_value = descriptor.get(axis_name)
             if _is_meaningful_cell(axis_value):
                 axes[axis_name] = axis_value
-        records.append({
-            "candidate_key": str(candidate.get("candidate_key") or ""),
-            "model_file": profile.model_file,
-            "sheet_name": profile.sheet_name,
-            "parameter_name": str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
-            ),
-            "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
-            "axes": axes,
-            "value_name": block.value_name,
-            "value": value,
-            "source_row": row_idx,
-            "source_col": col_idx,
-        })
+        records.append(
+            {
+                "candidate_key": str(candidate.get("candidate_key") or ""),
+                "model_file": profile.model_file,
+                "sheet_name": profile.sheet_name,
+                "parameter_name": str(
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                ),
+                "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
+                "axes": axes,
+                "value_name": block.value_name,
+                "value": value,
+                "source_row": row_idx,
+                "source_col": col_idx,
+            }
+        )
 
     for col_idx, descriptor in block.time_descriptors.items():
         value = _value_at(values, col_idx)
         time_values = _valid_basecase_time_values(descriptor)
         if not _is_record_value(value):
-            if (
-                _preserves_basecase_axes_without_value(candidate)
-                and time_values is not None
-            ):
+            if _preserves_basecase_axes_without_value(candidate) and time_values is not None:
                 axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
             continue
         if time_values is not None:
@@ -1107,11 +1126,7 @@ def _extract_fixed_column_records(
 ) -> list[dict[str, Any]]:
     _ = scenario_context
     records: list[dict[str, Any]] = []
-    axis_columns = {
-        col_idx: role
-        for col_idx, role in spec.column_roles.items()
-        if col_idx != spec.value_col
-    }
+    axis_columns = {col_idx: role for col_idx, role in spec.column_roles.items() if col_idx != spec.value_col}
     read_columns = set(spec.column_roles) | set(spec.row_filter)
     max_col = max(read_columns, default=0)
     row_iter_kwargs: dict[str, Any] = {
@@ -1126,10 +1141,7 @@ def _extract_fixed_column_records(
 
     for row_idx, row in enumerate(ws.iter_rows(**row_iter_kwargs), start=spec.data_start_row):
         row_values = [_cell_to_json(value) for value in row]
-        values = {
-            col_idx: _value_at(row_values, col_idx)
-            for col_idx in read_columns
-        }
+        values = {col_idx: _value_at(row_values, col_idx) for col_idx in read_columns}
         if _fixed_columns_should_stop(values, axis_columns, spec.stop_rule):
             break
         if not _row_matches_filter(values, spec.row_filter):
@@ -1147,22 +1159,22 @@ def _extract_fixed_column_records(
         if not axes:
             continue
 
-        records.append({
-            "candidate_key": str(candidate.get("candidate_key") or ""),
-            "model_file": profile.model_file,
-            "sheet_name": profile.sheet_name,
-            "parameter_name": str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
-            ),
-            "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{spec.value_col}",
-            "axes": axes,
-            "value_name": spec.value_name,
-            "value": value,
-            "source_row": row_idx,
-            "source_col": spec.value_col,
-        })
+        records.append(
+            {
+                "candidate_key": str(candidate.get("candidate_key") or ""),
+                "model_file": profile.model_file,
+                "sheet_name": profile.sheet_name,
+                "parameter_name": str(
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                ),
+                "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{spec.value_col}",
+                "axes": axes,
+                "value_name": spec.value_name,
+                "value": value,
+                "source_row": row_idx,
+                "source_col": spec.value_col,
+            }
+        )
 
     return records
 
@@ -1204,10 +1216,7 @@ def _extract_matrix_time_column_records(
 
     for row_idx, row in enumerate(ws.iter_rows(**row_iter_kwargs), start=spec.data_start_row):
         row_values = [_cell_to_json(value) for value in row]
-        axis_values = {
-            col_idx: _value_at(row_values, col_idx)
-            for col_idx in spec.axis_columns
-        }
+        axis_values = {col_idx: _value_at(row_values, col_idx) for col_idx in spec.axis_columns}
         if _fixed_columns_should_stop(axis_values, spec.axis_columns, spec.stop_rule):
             break
 
@@ -1228,31 +1237,28 @@ def _extract_matrix_time_column_records(
                 axis_value = descriptor.get(axis_name)
                 if _is_meaningful_cell(axis_value):
                     record_axes[axis_name] = axis_value
-            records.append({
-                "candidate_key": str(candidate.get("candidate_key") or ""),
-                "model_file": profile.model_file,
-                "sheet_name": profile.sheet_name,
-                "parameter_name": str(
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                    or "",
-                ),
-                "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
-                "axes": record_axes,
-                "value_name": spec.value_name,
-                "value": value,
-                "source_row": row_idx,
-                "source_col": col_idx,
-            })
+            records.append(
+                {
+                    "candidate_key": str(candidate.get("candidate_key") or ""),
+                    "model_file": profile.model_file,
+                    "sheet_name": profile.sheet_name,
+                    "parameter_name": str(
+                        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                    ),
+                    "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
+                    "axes": record_axes,
+                    "value_name": spec.value_name,
+                    "value": value,
+                    "source_row": row_idx,
+                    "source_col": col_idx,
+                }
+            )
 
         for col_idx, descriptor in time_descriptors.items():
             value = _value_at(row_values, col_idx)
             time_values = _valid_basecase_time_values(descriptor)
             if not _is_record_value(value):
-                if (
-                    _preserves_basecase_axes_without_value(candidate)
-                    and time_values is not None
-                ):
+                if _preserves_basecase_axes_without_value(candidate) and time_values is not None:
                     axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
                 continue
             if time_values is not None:
@@ -1308,9 +1314,7 @@ def basecase_value_field_name_from_candidate(candidate: dict[str, Any]) -> str:
         if spec is not None:
             return spec.value_name
     return _clean_text(
-        candidate.get("parameter_name")
-        or candidate.get("canonical_parameter_name")
-        or "",
+        candidate.get("parameter_name") or candidate.get("canonical_parameter_name") or "",
     )
 
 
@@ -1319,11 +1323,7 @@ def basecase_slot_axis_names_from_candidate(candidate: dict[str, Any]) -> list[s
     if read_mode == "fixed_columns":
         spec = _fixed_column_spec_from_candidate(candidate)
         if spec is not None:
-            return [
-                role
-                for col_idx, role in spec.column_roles.items()
-                if col_idx != spec.value_col
-            ]
+            return [role for col_idx, role in spec.column_roles.items() if col_idx != spec.value_col]
 
     axes: list[str] = []
     if read_mode == "matrix_time_columns":
@@ -1395,11 +1395,7 @@ def _build_matrix_time_descriptors(
     month_row: int | None,
     period_row: int | None,
 ) -> dict[int, dict[str, Any]]:
-    row_indexes = {
-        row_idx
-        for row_idx in (year_row, month_row, period_row)
-        if row_idx is not None
-    }
+    row_indexes = {row_idx for row_idx in (year_row, month_row, period_row) if row_idx is not None}
     if not row_indexes:
         return {}
 
@@ -1503,8 +1499,7 @@ def _detect_basecase_matrix_blocks(
             candidate_label_cols = [
                 col_idx
                 for col_idx in time_label_columns
-                if start_col < col_idx < next_start
-                and time_label_columns[col_idx].get("year") is not None
+                if start_col < col_idx < next_start and time_label_columns[col_idx].get("year") is not None
             ]
             if not candidate_label_cols:
                 continue
@@ -1800,10 +1795,7 @@ def _none_if_dash(value: Any) -> str | None:
 
 
 def _model_table_from_row(row_map: dict[str, Any]) -> str | None:
-    return (
-        _none_if_dash(row_map.get("model_table"))
-        or _none_if_dash(row_map.get("table_name"))
-    )
+    return _none_if_dash(row_map.get("model_table")) or _none_if_dash(row_map.get("table_name"))
 
 
 def _normalize_unicode(value: str) -> str:

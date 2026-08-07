@@ -1,0 +1,5 @@
+Intensity,Pre-hurricane upstream production shut-in duration (No. of weeks in a month),Pre-hurricane upstream production shut-in volume (% of total monthly volume),During and post-hurricane upstream production shut-in duration (No. of weeks in a month),During and post-hurricane upstream production shut-in volume (% of total monthly volume),Net impact (Monthly upstream production decrease by %)
+1,0 weeks,0,0 weeks,0,0
+2,0 weeks,0,1 week,0.2,0.05
+3,1 week,0.5,2 weeks,0.5,0.375
+4,1 week,0.9,3 weeks,0.9,0.9

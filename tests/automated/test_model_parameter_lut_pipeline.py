@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 import json
 import os
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -25,6 +27,7 @@ from apps.agents.model_parameter_agent.presentation import (
     _to_response_data,
 )
 from apps.agents.model_parameter_agent.prompts.model_parameter_proposal import (
+    SLOT_PROPOSAL_SYSTEM,
     VALUE_PROPOSAL_SYSTEM,
 )
 from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
@@ -44,6 +47,10 @@ from apps.agents.model_parameter_agent.utils.lut import (
     get_parameter_spec_registry,
     resolve_effective_reference,
 )
+from apps.agents.model_parameter_agent.utils.parameter_mapping import to_compact_json
+from apps.common.configs.config import Settings
+from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 def _candidate(parameter_name: str, candidate_key: str) -> dict[str, Any]:
@@ -118,6 +125,49 @@ def _all_mapping_keys(value: object) -> set[str]:
     return set()
 
 
+def _expand_compressed_slot_coordinates(
+    candidate_catalog: Mapping[str, Any],
+) -> list[tuple[tuple[str, Any], ...]]:
+    key_axes = tuple(candidate_catalog["key_axes"])
+    fixed_axis_names = tuple(candidate_catalog["fixed_axis_names"])
+    time_axis_names = tuple(candidate_catalog["time_axis_names"])
+    periods_by_group: dict[str, list[dict[str, int]]] = {}
+    for period_group in candidate_catalog["period_groups"]:
+        expanded_periods: list[dict[str, int]] = []
+        for period in period_group["available_periods"]:
+            if time_axis_names == ("Year", "Month"):
+                expanded_periods.extend(
+                    {"Year": int(period["Year"]), "Month": int(month)} for month in period["Months"]
+                )
+            else:
+                expanded_periods.append(
+                    {axis_name: int(period[axis_name]) for axis_name in time_axis_names},
+                )
+        periods_by_group[period_group["period_group_id"]] = expanded_periods
+
+    coordinates: list[tuple[tuple[str, Any], ...]] = []
+
+    def visit_hierarchy(
+        hierarchy: list[dict[str, Any]],
+        depth: int,
+        fixed_axes: dict[str, Any],
+    ) -> None:
+        for node in hierarchy:
+            next_fixed_axes = dict(fixed_axes)
+            if fixed_axis_names:
+                next_fixed_axes[fixed_axis_names[depth]] = node["axis_value"]
+            children = node.get("children")
+            if children:
+                visit_hierarchy(children, depth + 1, next_fixed_axes)
+                continue
+            for period_axes in periods_by_group[node["period_group_id"]]:
+                axes = {**next_fixed_axes, **period_axes}
+                coordinates.append(tuple((axis_name, axes[axis_name]) for axis_name in key_axes))
+
+    visit_hierarchy(candidate_catalog["fixed_axis_hierarchy"], 0, {})
+    return coordinates
+
+
 @pytest.fixture(scope="module")
 def real_domain() -> tuple[ParameterSpecRegistry, LutCatalog]:
     clear_lut_runtime_cache()
@@ -131,6 +181,9 @@ def fixed_pipeline_settings() -> Iterator[SimpleNamespace]:
     settings = SimpleNamespace(
         model_parameter_max_parameter_slots=100,
         model_parameter_max_value_prompt_basecase_records=100,
+        model_parameter_max_total_selected_slots=300,
+        model_parameter_max_step2_prompt_bytes=262_144,
+        model_parameter_max_step3_prompt_bytes=262_144,
         model_parameter_lut_enabled=True,
         model_parameter_lut_horizon_start_year=2026,
         model_parameter_lut_horizon_end_year=2030,
@@ -143,6 +196,20 @@ def fixed_pipeline_settings() -> Iterator[SimpleNamespace]:
     )
     with patch.object(nodes, "get_settings", return_value=settings):
         yield settings
+
+
+def test_prompt_and_request_limit_settings_have_safe_defaults() -> None:
+    assert Settings.model_fields["model_parameter_max_total_selected_slots"].default == 300
+    assert Settings.model_fields["model_parameter_max_step2_prompt_bytes"].default == 262_144
+    assert Settings.model_fields["model_parameter_max_step3_prompt_bytes"].default == 262_144
+
+
+def test_step2_prompt_explains_period_group_hierarchy_contract() -> None:
+    assert "fixed_axis_names" in SLOT_PROPOSAL_SYSTEM
+    assert "fixed_axis_hierarchy" in SLOT_PROPOSAL_SYSTEM
+    assert "period_groups[].available_periods" in SLOT_PROPOSAL_SYSTEM
+    assert "maxTotalSelectedSlots" in SLOT_PROPOSAL_SYSTEM
+    assert "leaves[]" not in SLOT_PROPOSAL_SYSTEM
 
 
 def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
@@ -193,6 +260,7 @@ def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
         }
         for task in packet["parameter_slot_tasks"]
     )
+    assert packet["slot_selection_limits"]["maxTotalSelectedSlots"] == 300
     compact_keys = _all_mapping_keys(prompt_catalog)
     assert {
         "actual_basecase_value",
@@ -202,10 +270,17 @@ def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
         "value",
     }.isdisjoint(compact_keys)
     gdp_catalog = next(item for item in prompt_catalog if item["candidate_key"] == "gdp")
-    assert gdp_catalog["leaves"] == [
+    assert "leaves" not in gdp_catalog
+    assert gdp_catalog["period_groups"] == [
         {
-            "fixed_axes": {"Country": "Japan"},
+            "period_group_id": "period-group-1",
             "available_periods": [{"Year": 2026}, {"Year": 2027}],
+        },
+    ]
+    assert gdp_catalog["fixed_axis_hierarchy"] == [
+        {
+            "axis_value": "Japan",
+            "period_group_id": "period-group-1",
         },
     ]
 
@@ -231,6 +306,293 @@ def test_compact_slot_catalog_payload_and_parameter_caps_are_independent(
     assert warnings == []
 
 
+def test_real_liq_util_period_groups_and_hierarchy_reduce_step2_bytes() -> None:
+    registry = get_parameter_spec_registry()
+    liq_registry = replace(
+        registry,
+        specs=MappingProxyType(
+            {"LiqUtilAdjustment": registry.specs["LiqUtilAdjustment"]},
+        ),
+        references=MappingProxyType({}),
+        canonical_yaml=b"liq-util-only",
+        schema_hash="liq-util-only",
+    )
+    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=liq_registry)
+    candidate = _candidate("LiqUtilAdjustment", "liq")
+    basecase_index = build_basecase_index([], [candidate], registry=liq_registry)
+    candidate_catalog = build_slot_catalog(
+        basecase_index,
+        catalog,
+    ).for_candidate("liq")
+    assert candidate_catalog is not None
+
+    old_catalog = {
+        "candidate_key": candidate_catalog.candidate_key,
+        "parameter_name": candidate_catalog.parameter_name,
+        "key_axes": list(candidate_catalog.key_axes),
+        "fixed_axis_names": list(candidate_catalog.non_time_axes),
+        "time_axis_names": list(candidate_catalog.time_axes),
+        "leaves": [
+            {
+                "fixed_axes": dict(leaf.axes),
+                "available_periods": nodes._available_periods_for_prompt(
+                    candidate_catalog,
+                    [dict(period.values) for period in leaf.available_periods],
+                ),
+            }
+            for leaf in candidate_catalog.leaves
+        ],
+    }
+    compressed_catalog = nodes._candidate_slot_catalog_for_prompt(candidate_catalog)
+    old_bytes = len(to_compact_json(old_catalog).encode("utf-8"))
+    compressed_bytes = len(to_compact_json(compressed_catalog).encode("utf-8"))
+
+    assert old_bytes > 120_000
+    assert compressed_bytes < old_bytes * 0.25
+    assert "leaves" not in compressed_catalog
+    assert compressed_catalog["fixed_axis_names"] == [
+        "Country",
+        "LNG Plant",
+        "LNG Plant Train",
+    ]
+    assert len(compressed_catalog["period_groups"]) < len(candidate_catalog.leaves)
+    assert compressed_catalog["fixed_axis_hierarchy"]
+
+
+def test_compressed_step2_catalog_round_trips_all_active_exact_slots(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, catalog = real_domain
+    active_parameter_names = {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
+        "LiqUtilAdjustment",
+        "PipelineAdjustment",
+        "SupplyDisruption",
+    }
+    assert set(registry.enabled_specs) == active_parameter_names
+
+    candidates = [
+        {
+            "candidate_key": f"active-{index}",
+            "canonical_parameter_name": parameter_name,
+            "parameter_name": parameter_name,
+        }
+        for index, parameter_name in enumerate(sorted(active_parameter_names), start=1)
+    ]
+    slot_catalog = build_slot_catalog(
+        build_basecase_index([], candidates, registry=registry),
+        catalog,
+    )
+
+    counts_by_parameter: dict[str, int] = {}
+    period_group_counts: dict[str, int] = {}
+    for original_candidate in slot_catalog.candidates:
+        compressed_candidate = nodes._candidate_slot_catalog_for_prompt(
+            original_candidate,
+        )
+        original_coordinates = {
+            tuple((axis_name, {**leaf.axes, **period.values}[axis_name]) for axis_name in original_candidate.key_axes)
+            for leaf in original_candidate.leaves
+            for period in leaf.available_periods
+        }
+        expanded_coordinates = _expand_compressed_slot_coordinates(
+            compressed_candidate,
+        )
+
+        assert set(expanded_coordinates) == original_coordinates
+        assert len(expanded_coordinates) == sum(len(leaf.available_periods) for leaf in original_candidate.leaves)
+        counts_by_parameter[original_candidate.parameter_name] = len(expanded_coordinates)
+        period_group_counts[original_candidate.parameter_name] = len(
+            compressed_candidate["period_groups"],
+        )
+
+    assert set(counts_by_parameter) == active_parameter_names
+    assert counts_by_parameter["LiqProdAdjustment"] == 19_366
+    assert counts_by_parameter["LiqUtilAdjustment"] == 19_366
+    assert period_group_counts["LiqProdAdjustment"] > 1
+    assert period_group_counts["LiqUtilAdjustment"] > 1
+
+
+def test_step2_prompt_byte_guard_rejects_before_llm_call(
+    fixed_pipeline_settings: SimpleNamespace,
+) -> None:
+    registry = get_parameter_spec_registry()
+    candidate = _candidate("GDP", "gdp")
+    basecase_index = build_basecase_index(
+        [
+            {
+                "candidate_key": "gdp",
+                "reference_id": "gdp-japan-2026",
+                "axes": {"Country": "Japan", "Year": 2026},
+                "value": 0.02,
+            },
+        ],
+        [candidate],
+        registry=registry,
+    )
+    fixed_pipeline_settings.model_parameter_max_step2_prompt_bytes = 1
+    state = ModelParameterProposalState(
+        scenario_id=1,
+        scenario_context={"scenario": {"scenario_id": 1}},
+        candidate_mappings=[candidate],
+        slot_catalog=nodes._slot_catalog_for_prompt(
+            build_slot_catalog(basecase_index),
+        ),
+    )
+    invoke = AsyncMock()
+
+    with (
+        patch.object(nodes, "_invoke_structured", invoke),
+        pytest.raises(MIBaseError) as caught,
+    ):
+        asyncio.run(nodes.propose_parameter_slots(state))
+
+    invoke.assert_not_awaited()
+    assert caught.value.error_code is ErrorCode.INVALID_REQUEST
+    assert "Step2 compact prompt" in str(caught.value)
+    assert "actual_bytes=" in str(caught.value)
+    assert "limit_bytes=1" in str(caught.value)
+    assert 'parameter_bytes={"GDP":' in str(caught.value)
+
+
+def test_step3_prompt_byte_guard_rejects_before_llm_call(
+    fixed_pipeline_settings: SimpleNamespace,
+) -> None:
+    candidate = _candidate("GDP", "gdp")
+    axes = {"Country": "Japan", "Year": 2026}
+    fixed_pipeline_settings.model_parameter_max_step3_prompt_bytes = 1
+    state = ModelParameterProposalState(
+        scenario_id=1,
+        scenario_context={"scenario": {"scenario_id": 1}},
+        candidate_mappings=[candidate],
+        slot_candidate_mappings=[candidate],
+        parameter_slots=[_slot("gdp", axes)],
+        effective_references=[
+            _reference(
+                "gdp",
+                "GDP",
+                axes,
+                actual_basecase_value=0.02,
+                lut_default_value=0.03,
+            ),
+        ],
+    )
+    invoke = AsyncMock()
+
+    with (
+        patch.object(nodes, "_invoke_structured", invoke),
+        pytest.raises(MIBaseError) as caught,
+    ):
+        asyncio.run(nodes.propose_parameter_values(state))
+
+    invoke.assert_not_awaited()
+    assert caught.value.error_code is ErrorCode.INVALID_REQUEST
+    assert "Step3 compact prompt" in str(caught.value)
+    assert "actual_bytes=" in str(caught.value)
+    assert "limit_bytes=1" in str(caught.value)
+    assert 'parameter_bytes={"GDP":' in str(caught.value)
+
+
+def test_total_exact_slot_limit_rejects_before_step3(
+    fixed_pipeline_settings: SimpleNamespace,
+) -> None:
+    registry = get_parameter_spec_registry()
+    candidates = [_candidate("GDP", "gdp"), _candidate("PMI", "pmi")]
+    records = [
+        {
+            "candidate_key": "gdp",
+            "reference_id": "gdp-japan-2026",
+            "axes": {"Country": "Japan", "Year": 2026},
+            "value": 0.02,
+        },
+        {
+            "candidate_key": "gdp",
+            "reference_id": "gdp-korea-2026",
+            "axes": {"Country": "South Korea", "Year": 2026},
+            "value": 0.03,
+        },
+        {
+            "candidate_key": "pmi",
+            "reference_id": "pmi-japan-2026-1",
+            "axes": {"Country": "Japan", "Year": 2026, "Month": 1},
+            "value": 50.0,
+        },
+        {
+            "candidate_key": "pmi",
+            "reference_id": "pmi-korea-2026-1",
+            "axes": {"Country": "South Korea", "Year": 2026, "Month": 1},
+            "value": 51.0,
+        },
+    ]
+    basecase_index = build_basecase_index(records, candidates, registry=registry)
+    fixed_pipeline_settings.model_parameter_max_total_selected_slots = 3
+    state = ModelParameterProposalState(
+        scenario_id=1,
+        candidate_mappings=candidates,
+        basecase_index=basecase_index,
+        resolved_config={"model_parameter_lut_enabled": False},
+        parameter_slots=[_slot(str(record["candidate_key"]), record["axes"]) for record in records],
+    )
+
+    with pytest.raises(MIBaseError) as caught:
+        nodes.filter_basecase_records_by_slots(state)
+
+    assert caught.value.error_code is ErrorCode.INVALID_REQUEST
+    assert "actual_slots=4" in str(caught.value)
+    assert "limit_slots=3" in str(caught.value)
+    assert 'parameter_slots={"GDP":2,"PMI":2}' in str(caught.value)
+
+
+def test_step3_total_slot_guard_rejects_before_llm_call(
+    fixed_pipeline_settings: SimpleNamespace,
+) -> None:
+    candidates = [_candidate("GDP", "gdp"), _candidate("PMI", "pmi")]
+    slot_specs = [
+        ("gdp", "GDP", {"Country": "Japan", "Year": 2026}, 0.02),
+        ("gdp", "GDP", {"Country": "South Korea", "Year": 2026}, 0.03),
+        ("pmi", "PMI", {"Country": "Japan", "Year": 2026, "Month": 1}, 50.0),
+        ("pmi", "PMI", {"Country": "South Korea", "Year": 2026, "Month": 1}, 51.0),
+    ]
+    fixed_pipeline_settings.model_parameter_max_total_selected_slots = 3
+    state = ModelParameterProposalState(
+        scenario_id=1,
+        scenario_context={"scenario": {"scenario_id": 1}},
+        candidate_mappings=candidates,
+        slot_candidate_mappings=candidates,
+        parameter_slots=[_slot(candidate_key, axes) for candidate_key, _, axes, _ in slot_specs],
+        effective_references=[
+            _reference(
+                candidate_key,
+                parameter_name,
+                axes,
+                actual_basecase_value=value,
+                lut_default_value=None,
+            )
+            for candidate_key, parameter_name, axes, value in slot_specs
+        ],
+    )
+    invoke = AsyncMock()
+
+    with (
+        patch.object(nodes, "_invoke_structured", invoke),
+        pytest.raises(MIBaseError) as caught,
+    ):
+        asyncio.run(nodes.propose_parameter_values(state))
+
+    invoke.assert_not_awaited()
+    assert caught.value.error_code is ErrorCode.INVALID_REQUEST
+    assert "Step3 input selected slots" in str(caught.value)
+    assert "actual_slots=4" in str(caught.value)
+    assert "limit_slots=3" in str(caught.value)
+    assert 'parameter_slots={"GDP":2,"PMI":2}' in str(caught.value)
+
+
 def test_exact_valid_slots_are_capped_after_invalid_and_duplicate_rejection(
     real_domain: tuple[ParameterSpecRegistry, LutCatalog],
 ) -> None:
@@ -250,10 +612,7 @@ def test_exact_valid_slots_are_capped_after_invalid_and_duplicate_rejection(
         [candidate],
         registry=registry,
     )
-    valid_slots = [
-        _slot("gdp", record["axes"])
-        for record in basecase_records
-    ]
+    valid_slots = [_slot("gdp", record["axes"]) for record in basecase_records]
     state = ModelParameterProposalState(
         scenario_id=1,
         candidate_mappings=[candidate],
@@ -275,10 +634,7 @@ def test_exact_valid_slots_are_capped_after_invalid_and_duplicate_rejection(
     assert result["parameter_slots"][-1]["slot_key"] == "slot-100"
     assert any("Exact Miss" in warning for warning in result["validation_warnings"])
     assert any("중복 반환" in warning for warning in result["validation_warnings"])
-    assert any(
-        "limit=100, excluded=1" in warning
-        for warning in result["validation_warnings"]
-    )
+    assert any("limit=100, excluded=1" in warning for warning in result["validation_warnings"])
 
 
 def test_exact_miss_is_rejected_without_nearest_and_all_reference_modes_resolve(
@@ -459,10 +815,7 @@ def test_step3_prompt_requires_one_slot_key_value_for_every_input_slot() -> None
 
 def test_step3_keeps_all_valid_slot_key_values_and_drops_duplicate_or_null() -> None:
     candidate = _candidate("PMI", "pmi")
-    slots = [
-        _slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month})
-        for month in (1, 2, 3)
-    ]
+    slots = [_slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month}) for month in (1, 2, 3)]
     references = [
         _reference(
             "pmi",
@@ -502,10 +855,7 @@ def test_step3_keeps_all_valid_slot_key_values_and_drops_duplicate_or_null() -> 
 
 def test_step3_truncates_proposed_values_to_at_most_five_decimal_places() -> None:
     candidate = _candidate("PMI", "pmi")
-    slots = [
-        _slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month})
-        for month in (1, 2, 3)
-    ]
+    slots = [_slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month}) for month in (1, 2, 3)]
     references = [
         _reference(
             "pmi",
@@ -1057,10 +1407,7 @@ def test_final_storage_debug_log_uses_exact_operational_payload() -> None:
     assert pretty_payload.startswith("[\n")
     assert "\n  {" in pretty_payload
     logged_payload = json.loads(pretty_payload)
-    assert logged_payload == [
-        parameter.model_dump(mode="json", by_alias=True)
-        for parameter in operational
-    ]
+    assert logged_payload == [parameter.model_dump(mode="json", by_alias=True) for parameter in operational]
     assert "lutValue" not in logged_payload[0]["values"][0]
 
 

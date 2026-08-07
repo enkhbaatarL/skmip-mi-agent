@@ -51,7 +51,7 @@
 
 1. 활성 `direct` mapping의 파라미터는 Step1.5 비교 없이 후보로 통과한다.
 2. `routing` 후보가 하나뿐이어도 항상 Step1.5를 호출한다.
-3. 같은 dimension에 `routing` 후보가 2개 이상일 때 Step1.5를 호출하며, `indirect`는 보조정보로 유지하고 `na`는 prompt에서 제외한다.
+3. Step1.5는 각 routing task에서 반드시 최소 1개의 후보를 선택해야 한다.
 4. Basecase 값이 없는 파라미터는 활성 mapping이 있어도 후보 결정 단계에서 제외한다.
 5. 시나리오 서술상 더 적합해 보여도 LLM은 활성 mapping에 없는 파라미터를 새 후보로 추가할 수 없다.
 
@@ -101,20 +101,20 @@ scenario `595`에서는 다음 값이 확인됐다.
 
 Basecase/LUT slot이 많아도 전체 원본을 prompt와 응답에서 반복하지 않는 방식을 Step2부터 Step3 결과 저장까지 순서대로 설명하시오. 다음 용어를 모두 포함한다.
 
-`compact catalog`, `candidate_key`, `slot_axes`, `exact 검증`, `slot_key`, `reference_value`, `서버 재조합`
+`period_groups`, `fixed_axis_hierarchy`, `candidate_key`, `slot_axes`, `exact 검증`, `slot_key`, `reference_value`, `서버 재조합`
 
-추가로 `maxParameterSlots=100`이 입력 catalog를 앞의 100개로 자른다는 의미인지도 설명하시오.
+추가로 `maxParameterSlots=100`이 입력 catalog를 앞의 100개로 자른다는 의미인지, 요청 전체 slot·Step2/Step3 byte 상한을 어디에서 검사하는지도 설명하시오.
 
-### 문제 10. `LiqProdAdjustment` 추가 계획 설명
+### 문제 10. Canonical 신규 활성 파라미터 설명
 
-현재 `LiqProdAdjustment`를 바로 활성화하면 안 되는 이유와 올바른 추가 절차를 설명하시오. 답에는 다음 내용을 포함한다.
+현재 활성 10개 중 새로 활성화된 `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `PipelineAdjustment`, `SupplyDisruption`의 LUT와 mapping 핵심 규칙을 설명하시오. 답에는 다음 내용을 포함한다.
 
-- 현재 Basecase와 LUT 상태
-- 기존 `liq_util` 대신 `liq_prod` adapter가 필요한 이유와 계산식
-- 이용률 `0.95`의 해석
-- `parameter_hint`와 mapping comment 보강
-- `direct` mapping 유지 시 LiqUtil과의 관계
-- 구현·검증·DB 활성화 순서
+- Population routing 제한
+- Hurricane의 무허리케인 기준값
+- LiqProd 계산식과 LiqUtil 동시 후보 관계
+- Pipeline의 월 확장
+- SupplyDisruption seasonality 처리
+- DB·config·문서 정합성 검증
 
 ---
 
@@ -155,9 +155,9 @@ mapping 테이블은 후보 연결과 prompt 판단 기준을 관리한다. Base
 
 ### 정답 4
 
-**1번, 3번, 5번**
+**1번, 2번, 5번**
 
-활성 `direct`와 단일 `routing`은 서버가 후보로 확정하고, 같은 dimension의 `routing` 후보가 2개 이상일 때만 Step1.5가 비교한다. Basecase/LUT는 후보가 확정된 뒤 slot과 기준값을 제공하므로 Basecase 부재가 후보 제외 조건은 아니다. LLM은 활성 mapping 밖의 파라미터를 새 후보로 만들 수 없다.
+활성 `direct`는 서버가 후보로 확정하지만, `routing`은 후보가 하나뿐이어도 Step1.5가 `mapping_comment`의 명시적 조건을 검증한다. 조건을 충족하는 후보가 없으면 0개를 선택할 수 있다. `indirect`는 보조정보로 유지하고 `na`는 prompt에서 제외한다. Basecase/LUT는 후보가 확정된 뒤 slot과 기준값을 제공하므로 Basecase 부재가 후보 제외 조건은 아니다. LLM은 활성 mapping 밖의 파라미터를 새 후보로 만들 수 없다.
 
 관련 내용: [후보 결정 규칙](04_MODEL_PARAMETER_AGENT_FLOW.md#31-시나리오-문맥-조회와-파라미터-후보-결정)
 
@@ -208,13 +208,14 @@ Step2는 값을 계산하지 않고 exact slot만 선택한다. 서버가 선택
 
 ### 모범답안 9
 
-1. 서버는 Step2에서 같은 고정축의 기간을 leaf로 묶은 `compact catalog`를 보내고 값·출처·원본 행은 제외한다.
+1. 서버는 Step2에서 동일 기간 목록을 `period_groups`로 한 번만 적고 Country→Plant→Train 고정축을 `fixed_axis_hierarchy`로 중첩한다. 값·출처·원본 행은 제외한다.
 2. LLM은 `candidate_key + slot_axes`만 반환한다.
 3. 서버가 catalog의 exact 좌표인지 검증한 뒤 유효한 좌표에 `slot_key`를 발급한다.
 4. Step3에는 선택된 slot의 `slot_key`, 좌표와 단일 `reference_value`만 보낸다.
 5. LLM은 `candidate_key + slot_key + proposed_value + rationale` 중심으로 응답한다.
 6. 서버는 key로 보관 중인 파라미터·모델 대상·좌표·기준값을 찾아 최종 결과를 재조합한다.
 7. `maxParameterSlots=100`은 LLM이 파라미터별로 반환할 slot 수의 상한이며 입력 catalog를 100개로 자른다는 뜻이 아니다.
+8. 요청 전체 선택 slot과 Step2·Step3 compact JSON byte 상한은 LLM 호출 전에 검사하며, 초과 시 parameter별 크기를 포함해 실패한다.
 
 **채점 기준:** Step2 압축·최소 응답, exact 검증과 `slot_key`, Step3 최소 응답·재조합, 100개 상한의 의미를 모두 설명하면 1점.
 
@@ -222,16 +223,14 @@ Step2는 값을 계산하지 않고 exact slot만 선택한다. 서버가 선택
 
 ### 모범답안 10
 
-1. 현재 LiqProd master는 비활성이고 DB mapping, `liq_prod` adapter와 runtime config가 없다. 값이 있는 Basecase record도 0건이다. 따라서 현재는 LiqProd 기준값을 만들 수 없으며, adapter와 config를 추가한 이후에는 `BCLiquefaction.csv`에서 계산한 LUT가 값 기준이 된다.
-2. 기존 LiqUtil과 같은 `BCLiquefaction.csv`를 공유할 수 있지만, `liq_util`은 이용률을 값으로 만들기 때문에 생산량 단위에는 맞지 않는다.
-3. 전용 adapter는 `월 생산능력 × 이용률`로 `Mt LNG/month` 값을 만들어야 한다. 이용률 `0.95`는 이미 95%를 뜻하므로 다시 100으로 나누지 않는다.
-4. `parameter_hint`에는 최종 월 생산량의 의미·단위·범위와 LiqUtil과의 차이를 넣고, mapping comment에는 event별 적용·산정 또는 routing 기준을 승인된 문구로 보강한다. 다만 현재 서버가 hint의 `0 이상`이나 월 생산능력 이하 범위를 강제로 검증하는 것은 아니다.
-5. 승인·구현 후 event 2·3·17·18은 Notion 기준의 `direct`를 유지한다. 이 중 기존 LiqUtil direct와 겹치는 event 2·17·18에서는 LiqUtil과 LiqProd가 함께 후보가 될 수 있다. 수급모델의 LiqProd 계산 우선순위가 Agent의 LiqUtil 후보를 제거하지는 않는다. Event 11만 `routing`을 유지한다.
-6. adapter 구현·단위 테스트 → `config.yaml`과 Object Storage startup 검증 → 비운영 proposal·confirmation 검증 → master와 승인된 mapping 활성화 순서로 진행한다.
+1. Population은 event 21 `economic_intensity` routing이지만 인구·이민·인구전망 변화가 명시될 때만 선택하고 일반 경기는 GDP·PMI를 우선한다.
+2. HurricaneIntensity는 강도표와 GoM 영향 시설을 검증하고 모든 2026~2030 Year/Month의 무허리케인 기준값 `0`을 만든다.
+3. LiqProd는 `BCLiquefaction.csv`의 월 생산능력 × 이용률로 Mt LNG/month 값을 만든다. `0.95`는 이미 95%이므로 다시 100으로 나누지 않는다. Event 2·17·18에서는 기존 LiqUtil direct와 함께 후보가 될 수 있다.
+4. PipelineAdjustment는 연간 Bcm capacity를 동일 값의 12개월 slot으로 확장한다.
+5. SupplyDisruption은 연간 production에 원본 seasonality 계수를 곱해 Country/Year/Month로 합산하며 계수를 재정규화하지 않는다.
+6. canonical JSON·DB read-back, 129 mapping의 FK/method/template key, local/Kubernetes manifest 동등성, 활성 LUT startup과 proposal/confirmation을 함께 검증한다.
 
-실제 계산 예시는 `0.375 × 0.9994350333... = 0.37478 Mt LNG/month`이다.
-
-**채점 기준:** 현재 미지원 상태, 계산식·비율 해석, hint/comment, direct 동시 후보, 검증 후 활성화를 모두 설명하면 1점.
+**채점 기준:** 신규 5개의 LUT 공식·mapping 제한과 통합 정합성 검증을 모두 설명하면 1점.
 
 관련 내용: [`LiqProdAdjustment` 추가 가이드](06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)
 

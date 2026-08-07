@@ -27,9 +27,9 @@
 flowchart TD
     A[제안 요청: scenario_id] --> B[시나리오·그룹·이벤트·dimension 조회]
     B --> C[DB mapping으로 파라미터 후보 결정]
-    C --> D{같은 dimension에<br/>routing 후보가 2개 이상인가?}
-    D -- 예 --> E[Step1.5<br/>routing 후보 선택]
-    D -- 아니오 --> F[서버 규칙으로 후보 확정]
+    C --> D{routing 후보가<br/>하나라도 있는가?}
+    D -- 예 --> E[Step1.5<br/>routing 조건 검증·후보 선택]
+    D -- 아니오 --> F[direct 후보 확정]
     E --> G[같은 파라미터 후보 병합]
     F --> G
     G --> H[Basecase·LUT exact slot catalog 생성]
@@ -47,7 +47,7 @@ flowchart TD
 |---|---|---|---|
 | 문맥 조회 | 서버 | `scenario_id` | scenario, group, event, dimension 정보 |
 | 후보 결정 | 서버 | event type L2, dimension mapping | direct/routing 후보와 indirect 보조정보 |
-| Step1.5 | LLM, 조건부 | 복수 routing 후보와 관련 시나리오 문맥 | 허용된 `candidate_key` 선택 |
+| Step1.5 | LLM, 조건부 | 단일·복수 routing 후보와 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
 | reference 준비 | 서버 | 확정 후보, Basecase, LUT | 값이 존재하는 exact slot catalog |
 | Step2 | LLM | 시나리오 문맥, 파라미터별 slot catalog | `candidate_key + slot_axes` |
 | 기준값 결정 | 서버 | Step2 좌표 | `slot_key + coordinates + reference_value` |
@@ -66,20 +66,20 @@ Basecase/LUT 파일 자체를 읽는 기준은 [Basecase·LUT 문서](./05_MODEL
 | mapping 방식 | 서버 처리 |
 |---|---|
 | `direct` | 연결된 활성 파라미터를 바로 후보로 확정 |
-| `routing` 1개 | 비교 대상이 없으므로 해당 후보를 서버가 바로 확정 |
-| 같은 dimension의 `routing` 2개 이상 | Step1.5 LLM 판단 대상으로 전달 |
+| `routing` 1개 이상 | 후보 개수와 관계없이 Step1.5 LLM 조건 검증 대상으로 전달 |
 | `indirect` | 파라미터 후보로 만들지 않고 Step2·Step3의 보조 dimension으로 유지 |
 | `na` | 파라미터·slot·값 판단 prompt에서 제외 |
 
 이 단계에서는 Basecase 값이나 LUT 값으로 파라미터 필요성을 판단하지 않는다. 활성 mapping에 없는 파라미터도 새로 만들지 않는다.
 
-### 3.2 Step1.5: 복수 routing 후보 선택
+### 3.2 Step1.5: routing 조건 검증·후보 선택
 
-Step1.5는 **같은 dimension에 routing 후보가 2개 이상일 때만** 호출한다. system prompt `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
+Step1.5는 **routing 후보가 하나라도 있으면** 호출한다. 단일 후보도 `mapping_comment`의 조건이 scenario/event에 명시적으로 드러난 경우에만 통과시키기 위함이다. system prompt `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
 
 - scenario, event, 현재 dimension 값을 비교해 허용 후보 중 적합한 파라미터만 선택한다.
 - `parameter_hint`로 후보의 의미와 적용 제약을 이해한다.
-- `mapping_comment`로 현재 dimension과 후보가 연결되는 조건을 판단한다.
+- `mapping_comment`를 필수 조건으로 판단하고, 명시적 근거가 없으면 해당 후보를 제외한다.
+- dimension task별로 0개부터 설정된 최대 개수까지 선택할 수 있다.
 - 후보 밖의 파라미터나 key를 만들지 않고 Basecase 존재 여부를 선택 근거로 쓰지 않는다.
 
 실제 user message prefix는 다음과 같다.
@@ -130,7 +130,7 @@ Step1.5는 **같은 dimension에 routing 후보가 2개 이상일 때만** 호�
 }
 ```
 
-system prompt는 dimension별 선택 개수를 설정된 범위 안으로 제한하도록 요구한다. 응답 후 서버는 입력 task에 없던 dimension·candidate key와 누락된 routing task를 검사한다. Step1.5 이후 같은 모델 파라미터가 여러 dimension에서 중복 선택됐으면 하나의 후속 task로 병합한다.
+system prompt는 dimension별 선택 개수를 0개부터 설정된 최대치 사이로 제한한다. 조건을 충족하는 후보가 없으면 `selected_candidate_keys=[]`를 반환한다. 응답 후 서버는 입력 task에 없던 dimension·candidate key, 누락·중복된 routing task, dimension별 선택 상한 초과를 검사하고 위반 후보를 제외한다. Step1.5 이후 같은 모델 파라미터가 여러 dimension에서 중복 선택됐으면 하나의 후속 task로 병합한다.
 
 ### 3.3 Basecase·LUT reference와 slot catalog 준비
 
@@ -151,7 +151,7 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 - 이전 단계에서 확정된 파라미터의 필요성을 다시 판단하지 않는다.
 - scenario/event/dimension과 관련된 exact slot만 선택한다.
 - `parameter_hint`와 `mapping_comment`는 국가·시설·기간·route 같은 좌표 의미를 해석하는 데 쓴다.
-- catalog에 없는 값, nearest 좌표, 서로 다른 leaf를 섞은 좌표를 만들지 않는다.
+- catalog에 없는 값, nearest 좌표, 서로 다른 hierarchy branch를 섞은 좌표를 만들지 않는다.
 - 관련성이 약한 slot로 최대 개수를 채우지 않는다.
 
 실제 user message prefix는 다음과 같다.
@@ -303,11 +303,11 @@ Value 산정의 `REVIEW`는 실행 실패가 아니다. 8개 값의 형식·방�
 | `period` | indirect | 3개월 기간을 해석하는 보조정보 |
 | `demand_impact` | na | prompt에서 제외 |
 
-이 사례에는 복수 routing 후보가 없어 `routing_tasks=0`이었다. 따라서 Step1.5 prompt와 LLM 호출은 없었고 `PMI`, `GDP`가 바로 Step2로 넘어갔다.
+이 실행 시점의 DB mapping에는 Population routing이 없어 `routing_tasks=0`이었다. 따라서 Step1.5 prompt와 LLM 호출은 없었고 `PMI`, `GDP`가 바로 Step2로 넘어갔다. 현재 canonical mapping에서는 `economic_intensity` 차원의 Population 단일 routing도 Step1.5에서 검증하며, 인구·이민·인구전망 변화가 명시된 경우에만 선택한다.
 
 ### 4.2 실제 Step2 입력과 선택 결과
 
-실제 catalog에는 PMI 국가 leaf 84개, GDP 국가 leaf 163개가 있었다. 아래는 실제 Step2 입력에서 2026년과 대표 leaf만 남긴 발췌다. 전체 prompt에는 모든 활성 국가·기간과 관련 scenario/event 설명, hint/comment가 포함됐다.
+당시 서버 catalog에는 PMI 국가 leaf 84개, GDP 국가 leaf 163개가 있었다. 아래는 현재 period group/hierarchy 계약으로 표현한 2026년 대표 branch 발췌다. 전체 prompt에는 모든 활성 국가·기간과 관련 scenario/event 설명, hint/comment가 포함된다.
 
 §4의 prompt JSON은 읽기 쉽도록 들여썼다. 실제 LLM user message에서는 같은 내용을 공백과 줄바꿈이 없는 compact JSON 한 줄로 보냈다.
 
@@ -334,13 +334,16 @@ Value 산정의 `REVIEW`는 실행 실패가 아니다. 8개 값의 형식·방�
       },
       "slot_catalog": {
         "key_axes": ["Country", "Year", "Month"],
-        "leaves": [
-          {
-            "fixed_axes": {"Country": "China"},
-            "available_periods": [
-              {"Year": 2026, "Months": [1,2,3,4,5,6,7,8,9,10,11,12]}
-            ]
-          }
+        "fixed_axis_names": ["Country"],
+        "time_axis_names": ["Year", "Month"],
+        "period_groups": [{
+          "period_group_id": "period-group-1",
+          "available_periods": [
+            {"Year": 2026, "Months": [1,2,3,4,5,6,7,8,9,10,11,12]}
+          ]
+        }],
+        "fixed_axis_hierarchy": [
+          {"axis_value": "China", "period_group_id": "period-group-1"}
         ]
       }
     },
@@ -351,11 +354,14 @@ Value 산정의 `REVIEW`는 실행 실패가 아니다. 8개 값의 형식·방�
       },
       "slot_catalog": {
         "key_axes": ["Country", "Year"],
-        "leaves": [
-          {
-            "fixed_axes": {"Country": "China"},
-            "available_periods": [{"Year": 2026}]
-          }
+        "fixed_axis_names": ["Country"],
+        "time_axis_names": ["Year"],
+        "period_groups": [{
+          "period_group_id": "period-group-1",
+          "available_periods": [{"Year": 2026}]
+        }],
+        "fixed_axis_hierarchy": [
+          {"axis_value": "China", "period_group_id": "period-group-1"}
         ]
       }
     }
@@ -480,7 +486,7 @@ LLM은 8개 입력 slot 모두에 값과 근거를 반환했고 서버 검증을
 
 | 구간 | 실제 적용 방식 |
 |---|---|
-| Step1.5 | 복수 routing 후보가 있을 때만 호출하고 direct·단일 routing은 서버가 처리 |
+| Step1.5 | routing 후보가 하나라도 있으면 호출하고, 단일 후보도 명시적 mapping 조건을 검증 |
 | 관련 문맥 | 각 단계와 현재 후보에 필요한 dimension만 남기고 `na`, 무관 dimension, 상태·감사 컬럼 제외 |
 | 후보 task | 같은 파라미터의 여러 mapping을 한 task로 병합 |
 | Step2 입력 | Basecase/LUT 원본 행·값·출처·metadata를 제외하고 compact 좌표 catalog만 전달 |
@@ -488,6 +494,7 @@ LLM은 8개 입력 slot 모두에 값과 근거를 반환했고 서버 검증을
 | Step3 입력 | Step2 exact 검증을 통과한 slot만 `slot_key + coordinates + reference_value`로 전달 |
 | Step3 응답 | 좌표·기준값·출처를 다시 받지 않고 `slot_key + proposed_value + rationale`만 수신 |
 | JSON 표현 | prompt JSON을 들여쓰기와 불필요한 공백이 없는 한 줄로 직렬화 |
+| 크기 보호 | 요청 전체 slot 수와 Step2·Step3 compact JSON byte 상한을 넘으면 LLM 호출 전에 parameter별 크기를 포함해 실패 |
 
 ### 5.2 실제 DB 활용 컬럼과 prompt 위치
 
@@ -565,13 +572,14 @@ prompt에 넣지 않는 대표 정보는 scenario의 상태·확률·baseline �
 
 ### 5.3 compact slot catalog
 
-Step2는 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합 전체를 보낸다. 각 좌표를 행처럼 반복하지 않고 다음 규칙으로 묶는다.
+Step2는 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합을 보내되, 전체 record는 서버 cache/index에만 유지한다. 각 좌표를 행처럼 반복하지 않고 다음 규칙으로 압축한다.
 
 1. `key_axes`를 `Year`·`Month`와 Country·시설 같은 고정축으로 나눈다.
-2. 고정축 조합이 같은 좌표를 leaf 하나로 묶어 `fixed_axes`에 한 번만 적는다.
-3. 해당 leaf에 실제로 존재하는 시간만 `available_periods`에 넣는다.
-4. `Year + Month`이면 같은 연도의 월을 `Months` 배열 하나로 묶는다.
-5. 값, 원본 행, reference ID, source, metadata는 Step2 catalog에서 제외한다.
+2. 동일한 기간 목록을 공유하는 leaf는 `period_groups` 하나를 참조한다. 반복되는 2026~2030 연·월 목록은 group별 한 번만 직렬화한다.
+3. Country→Plant→Train 같은 고정축은 `fixed_axis_hierarchy`에 level 순서대로 중첩해 상위 값을 한 번만 적는다.
+4. hierarchy terminal의 `period_group_id`와 해당 group의 `available_periods`를 결합해야만 exact 좌표가 된다.
+5. `Year + Month`이면 같은 연도의 월을 `Months` 배열 하나로 묶는다.
+6. 값, 원본 행, reference ID, source, metadata는 Step2 catalog에서 제외한다.
 
 scenario 595의 실제 PMI catalog에서 China 2026년 월별 좌표는 다음처럼 들어갔다.
 
@@ -581,24 +589,29 @@ scenario 595의 실제 PMI catalog에서 China 2026년 월별 좌표는 다음�
   "key_axes": ["Country", "Year", "Month"],
   "fixed_axis_names": ["Country"],
   "time_axis_names": ["Year", "Month"],
-  "leaves": [
+  "period_groups": [
     {
-      "fixed_axes": {"Country": "China"},
+      "period_group_id": "period-group-1",
       "available_periods": [
         {"Year": 2026, "Months": [1,2,3,4,5,6,7,8,9,10,11,12]}
       ]
     }
+  ],
+  "fixed_axis_hierarchy": [
+    {"axis_value": "China", "period_group_id": "period-group-1"}
   ]
 }
 ```
 
-서로 다른 leaf의 축과 기간을 섞어 새 좌표를 만들 수 없다. `maxParameterSlots`는 입력 catalog를 자르는 값이 아니라 LLM이 파라미터별로 반환할 slot 수의 상한이다.
+서로 다른 hierarchy branch의 축과 period group을 섞어 새 좌표를 만들 수 없다. `maxParameterSlots`는 입력 catalog를 자르는 값이 아니라 LLM이 파라미터별로 반환할 slot 수의 상한이다. 요청 전체 선택 slot은 `model_parameter_max_total_selected_slots`, prompt는 `model_parameter_max_step2_prompt_bytes`와 `model_parameter_max_step3_prompt_bytes`로 별도 제한한다.
+
+LiqUtil 단독의 과거 평면 Step2 catalog는 약 129KB·약 40K input token 규모였다. LiqProd와 함께 원본 record를 평면 전송하지 않도록 period group/hierarchy를 적용하며, 실제 실행 리포트에는 provider가 보고한 input/output/total token과 prompt byte를 기록한다.
 
 ### 5.4 dimension 필터와 key 기반 재조합
 
 | 단계 | prompt에 남기는 dimension |
 |---|---|
-| Step1.5 | 복수 routing 판단에 필요한 dimension |
+| Step1.5 | 단일·복수 routing 조건 검증에 필요한 dimension |
 | Step2·Step3 | 후보를 만든 direct·routing dimension과 값 산정에 필요한 indirect dimension |
 | 모든 단계 | `na`와 현재 후보에 무관한 dimension은 제외 |
 

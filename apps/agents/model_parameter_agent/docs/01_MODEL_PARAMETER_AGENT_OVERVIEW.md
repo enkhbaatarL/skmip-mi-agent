@@ -9,7 +9,9 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 - 현재 기준값을 바탕으로 제안값과 근거를 만든다.
 - 사용자가 검토·수정한 최종값을 확정 상태로 저장한다.
 
-현재 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`다.
+현재 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption`의 10개다. Coal/Gas Futures는 2026년 이후 값이 없어 보류하고, ElectrificationRate는 승인된 Basecase·LUT·mapping이 없어 보류한다.
+
+기계 판정 기준은 [canonical JSON](../../../../scripts/model_parameter/model-parameter-canonical-v1.json), 사람이 읽는 설명은 [canonical mapping 문서](../resources/Model_Parameter_Base_Case_Mapping.md), 업무용 표는 [canonical mapping Excel](../resources/mapping/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx)이다. 이전 Excel은 `resources/mapping/archive/`의 역사·검토 자료이며 현재 실행 기준이 아니다.
 
 ## 2. 다섯 가이드와 이해도 퀴즈 요약
 
@@ -40,7 +42,7 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 ```text
 시나리오 조회
 → DB mapping으로 파라미터 후보 결정
-→ Step1.5 복수 routing 후보 선택(필요한 경우만)
+→ Step1.5 routing 조건 검증·후보 선택(routing이 있는 경우)
 → Basecase/LUT slot catalog 생성
 → Step2 적용 slot 선택
 → Basecase 우선 기준값 결정
@@ -58,7 +60,7 @@ scenario `595`를 이용한 실제 prompt 입력·출력과 제안 결과도 Flo
 | 구분      | 활용 내용                                                               |
 | --------- | ----------------------------------------------------------------------- |
 | Basecase  | Demand·Supply·Trade 모델 Excel에 현재 입력된 기준값                     |
-| LUT       | GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment의 기본 참고값 CSV    |
+| LUT       | 활성 10개 파라미터의 기본 참고값 CSV와 계산 adapter                    |
 | 선택 기준 | 같은 exact slot에 Basecase 값이 있으면 우선 사용하고, 없으면 LUT 사용   |
 | 파일 준비 | 애플리케이션 시작 시 S3 호환 Object Storage 또는 packaged 파일에서 준비 |
 
@@ -66,9 +68,9 @@ Basecase와 LUT는 파라미터 후보를 새로 결정하지 않는다. DB mapp
 
 ### 2.5 파라미터 추가 가이드
 
-[파라미터 추가 가이드](06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)는 현재 미사용인 `LiqProdAdjustment`를 예로 들어 Parameter master, parameter hint, Notion 기준 dimension mapping과 comment, 전용 LUT adapter, `config.yaml`을 준비하고 검증하는 순서를 설명한다.
+[파라미터 추가 가이드](06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)는 canonical 10개를 기준으로 master, 승인된 dimension mapping, LUT adapter·manifest와 prompt 크기 보호를 함께 변경하고 검증하는 순서를 설명한다.
 
-이 파라미터는 현재 값이 있는 Basecase record와 DB mapping이 없으며, 기존 LiqUtil과 같은 `BCLiquefaction.csv`를 사용한다. 다만 월 생산량은 `월 생산능력 × 이용률`로 계산해야 하므로 `liq_prod` adapter 추가와 hint/comment 보강이 선행되어야 한다. Notion의 direct는 유지하므로 같은 dimension의 LiqUtil과 LiqProd가 함께 후보가 될 수 있다.
+`LiqProdAdjustment`는 이제 활성 상태이며 `BCLiquefaction.csv`의 월 생산능력 × 이용률로 LUT 값을 만든다. 같은 event·dimension의 기존 `LiqUtilAdjustment` direct mapping과 함께 후보가 될 수 있고, 단기·부분 가동률은 LiqUtil, 대폭·영구 생산량 override는 LiqProd라는 hint/comment로 의미를 구분한다.
 
 ### 2.6 핵심 이해도 퀴즈
 
@@ -99,7 +101,7 @@ skmip-mi-agent/
 │   │   ├── resources/
 │   │   │   ├── basecase/                  # packaged Basecase
 │   │   │   ├── lut/                       # packaged LUT
-│   │   │   └── mapping/                   # 업무 mapping 원본
+│   │   │   └── mapping/                   # canonical Excel과 이전본 archive
 │   │   └── docs/                          # 현재 설명 문서
 │   ├── connectors/object_storage/         # S3 호환 Object Storage 연결
 │   └── persistence/model_parameter/       # 공용 ORM·repository·DTO
