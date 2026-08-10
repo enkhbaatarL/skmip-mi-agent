@@ -24,7 +24,6 @@ class ScenarioGroupPayload(ApiModel):
     stage: str = ScenarioGroupStage.READY.value
     api_version: str = "v1"
     generation_strategy: str = "single_event_template_dimensions"
-    comparison_run_id: str | None = None
     impact_catalog_version: str | None = None
     impact_catalog_checksum: str | None = None
     template_checksum: str | None = None
@@ -50,11 +49,6 @@ class ScenarioGroupPayload(ApiModel):
                 "api_version": getattr(model, "api_version", None) or "v1",
                 "generation_strategy": (
                     getattr(model, "generation_strategy", None) or "single_event_template_dimensions"
-                ),
-                "comparison_run_id": getattr(
-                    model,
-                    "comparison_run_id",
-                    None,
                 ),
                 "impact_catalog_version": getattr(
                     model,

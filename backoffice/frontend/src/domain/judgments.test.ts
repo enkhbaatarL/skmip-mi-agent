@@ -97,7 +97,7 @@ describe("v1 body judgments", () => {
 });
 
 describe("comparison version judgment", () => {
-  it("requires matching apiVersion, comparisonRunId, and ordered lineage", () => {
+  it("requires matching apiVersion and ordered lineage", () => {
     const manifest = makeManifest();
     expect(
       judgeComparisonVersion("v2", manifest, makeApiResult(makeResponse("v2")))
@@ -110,18 +110,6 @@ describe("comparison version judgment", () => {
     );
     expect(wrongVersion.judgment).toBe("error");
     expect(wrongVersion.integrityIssues[0]).toContain("API_VERSION_MISMATCH");
-
-    const wrongRun = judgeComparisonVersion(
-      "v2",
-      manifest,
-      makeApiResult(
-        makeResponse("v2", { comparisonRunId: "different-run" })
-      )
-    );
-    expect(wrongRun.judgment).toBe("error");
-    expect(wrongRun.integrityIssues[0]).toContain(
-      "COMPARISON_RUN_ID_MISMATCH"
-    );
 
     const wrongLineage = judgeComparisonVersion(
       "v2",

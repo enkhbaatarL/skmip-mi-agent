@@ -99,7 +99,6 @@ def _response(version: str = "v2") -> dict[str, Any]:
         "data": {
             "apiVersion": version,
             "generationStrategy": f"{version}-strategy",
-            "comparisonRunId": "compare-1",
             "scenarioGroup": {
                 "scenarioGroupId": {"v2": 20, "v3": 30, "v4": 40}[version],
                 "title": f"{version} group",
@@ -131,7 +130,7 @@ def _manifest(tmp_path: Path) -> dict[str, Any]:
         "batchId": "batch-1",
         "baseUrl": "http://agent.test",
         "userId": 10603,
-        "comparisonRunId": "compare-1",
+        "runId": "run-1",
         "eventIds": [101, 202],
         "events": [
             {
@@ -243,13 +242,12 @@ def _agent_judgment() -> dict[str, Any]:
     }
 
 
-def test_prepare_validation_accepts_only_two_to_five_unique_events() -> None:
+def test_prepare_validation_accepts_only_one_to_five_unique_events() -> None:
     valid = argparse.Namespace(
-        event_ids=[101, 202],
+        event_ids=[101],
         keyword=None,
         event_count=None,
         event_page_size=100,
-        comparison_run_id=None,
     )
     runner._validate_prepare_args(valid)
 
@@ -258,7 +256,6 @@ def test_prepare_validation_accepts_only_two_to_five_unique_events() -> None:
         keyword=None,
         event_count=None,
         event_page_size=100,
-        comparison_run_id=None,
     )
     with pytest.raises(ValueError, match="duplicates"):
         runner._validate_prepare_args(duplicate)
@@ -364,7 +361,6 @@ def test_prepare_v4_only_writes_scoped_manifest(
         event_sort="latest",
         keyword=None,
         event_page_size=100,
-        comparison_run_id=None,
         batch_id="v4-only-test",
         output_root=tmp_path,
         v4_only=True,
@@ -377,7 +373,7 @@ def test_prepare_v4_only_writes_scoped_manifest(
 
     assert manifest["versions"] == ["v4"]
     assert manifest["executionMode"] == "v4-only"
-    assert manifest["comparisonRunId"] == "v4-only-v4-only-test"
+    assert manifest["runId"] == "v4-only-v4-only-test"
     assert "v4" in manifest["artifacts"]
     assert "v2" not in manifest["artifacts"]
     assert "v3" not in manifest["artifacts"]
@@ -494,6 +490,20 @@ def test_agent_judge_rubric_does_not_require_optional_bands_or_mixed() -> None:
     assert "mixed는 optional" in mixed_criterion
     assert "Do not penalize a missing pressure band" in constraints
     assert "Do not penalize the absence of an optional mixed scenario" in constraints
+
+
+def test_agent_judge_treats_parameter_coverage_as_non_scoring_warning() -> None:
+    judge_input = build_agent_judge_input({"versions": {}})
+
+    dimension_criterion = judge_input["criteria"]["lng_dimension_quality"]
+    constraints = " ".join(judge_input["constraints"])
+
+    assert "coverage 자체는 dimension 품질 점수에 반영하지 않는다" in dimension_criterion
+    assert "coverageStatus=partial|none" in constraints
+    assert "non-scoring capability warnings" in constraints
+    assert "Do not lower criterion scores or verdicts" in constraints
+    assert "Do not interpret parameterMappingReady=true as full parameter coverage" in constraints
+    assert "Preserve the limitation in weaknesses or recommendation tradeoffs" in constraints
 
 
 def test_agent_judge_requires_direct_pairwise_comparison_and_separate_recommendations() -> None:
@@ -709,7 +719,6 @@ def test_run_version_sends_v4_only_request_without_v2_v3_barrier(
             {
                 "miEventIds": [101, 202],
                 "userId": 10603,
-                "comparisonRunId": "compare-1",
             },
         ),
     ]
@@ -731,14 +740,9 @@ def test_v4_only_manifest_rejects_v2_execution(tmp_path: Path) -> None:
         )
 
 
-def test_v4_requires_v2_v3_artifact_barrier(tmp_path: Path) -> None:
+def test_v4_has_no_v2_v3_artifact_barrier(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    args = argparse.Namespace(manifest=manifest_path, version="v4", timeout=1200)
-
-    with pytest.raises(ValueError, match="completed v2/v3 artifacts"):
-        asyncio.run(runner.run_version(args))
+    runner._validate_version_scope(manifest, "v4")
 
 
 def test_v4_only_report_contains_only_v4_and_skips_relative_judge(tmp_path: Path) -> None:
@@ -775,12 +779,12 @@ def test_v4_only_report_contains_only_v4_and_skips_relative_judge(tmp_path: Path
     assert not (tmp_path / "comparison_judge_input.json").exists()
 
 
-def test_success_response_must_match_manifest_contract(tmp_path: Path) -> None:
+def test_success_response_must_match_manifest_event_order(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     response = _response("v2")
-    response["data"]["comparisonRunId"] = "wrong-run"
+    response["data"]["events"] = [{"miEventId": 202}, {"miEventId": 101}]
 
-    with pytest.raises(ValueError, match="comparisonRunId mismatch"):
+    with pytest.raises(ValueError, match="Event order mismatch"):
         runner._validate_version_response(response, manifest, "v2")
 
 
@@ -892,37 +896,32 @@ def test_valid_agent_judge_is_loaded_without_an_api_call(tmp_path: Path) -> None
     assert "agent judge pending" not in report
 
 
-def test_fallback_orchestration_runs_v2_v3_together_before_v4(
+def test_orchestration_runs_sequentially_and_continues_after_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = _manifest(tmp_path)
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    started: set[str] = set()
-    finished: set[str] = set()
-    phase_one_ready = asyncio.Event()
+    execution_order: list[str] = []
 
     async def fake_run_version(args: argparse.Namespace) -> int:
         version = str(args.version)
-        if version in {"v2", "v3"}:
-            started.add(version)
-            if started == {"v2", "v3"}:
-                phase_one_ready.set()
-            await phase_one_ready.wait()
-            Path(manifest["artifacts"][version]).write_text("{}", encoding="utf-8")
-            finished.add(version)
-            return 0
-        assert finished == {"v2", "v3"}
-        Path(manifest["artifacts"]["v4"]).write_text("{}", encoding="utf-8")
-        finished.add("v4")
+        execution_order.append(version)
+        if version == "v2":
+            return 1
+        if version == "v3":
+            msg = "v3 failed before request"
+            raise ValueError(msg)
         return 0
 
     monkeypatch.setattr(runner, "run_version", fake_run_version)
     args = argparse.Namespace(manifest=manifest_path, timeout=1200)
 
-    assert asyncio.run(runner.orchestrate(args)) == 0
-    assert finished == {"v2", "v3", "v4"}
+    assert asyncio.run(runner.orchestrate(args)) == 1
+    assert execution_order == ["v2", "v3", "v4"]
     orchestration_path = tmp_path / "orchestration.json"
     orchestration = json.loads(orchestration_path.read_text(encoding="utf-8"))
-    assert orchestration["mode"] == "async_fallback"
+    assert orchestration["mode"] == "sequential"
+    assert [step["version"] for step in orchestration["steps"]] == ["v2", "v3", "v4"]
+    assert orchestration["steps"][1]["error"] == "ValueError: v3 failed before request"

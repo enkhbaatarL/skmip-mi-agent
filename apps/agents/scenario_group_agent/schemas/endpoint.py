@@ -32,7 +32,6 @@ class ScenarioGroupAcceptedOut(BaseModel):
 class CreateScenariosIn(ApiModel):
     mi_event_id: int = Field(description="MI Event ID to generate a scenario group for")
     user_id: int
-    comparison_run_id: str | None = None
 
 
 class EventTypeInfo(ApiModel):

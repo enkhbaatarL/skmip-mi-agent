@@ -46,58 +46,40 @@ GenerationStrategy = Literal[
 class VersionedCreateScenariosIn(ApiModel):
     mi_event_id: int = Field(gt=0)
     user_id: int
-    comparison_run_id: str | None = Field(default=None, max_length=255)
-
-    @model_validator(mode="after")
-    def _normalize_comparison_run_id(self) -> VersionedCreateScenariosIn:
-        if self.comparison_run_id is not None:
-            self.comparison_run_id = self.comparison_run_id.strip()
-            if not self.comparison_run_id:
-                raise ValueError("comparisonRunId must not be blank")
-        return self
 
 
 class MultiEventCreateScenariosIn(ApiModel):
-    mi_event_ids: list[int]
+    mi_event_ids: list[int] = Field(min_length=1, max_length=5)
     user_id: int
-    comparison_run_id: str = Field(min_length=1, max_length=255)
 
     @model_validator(mode="after")
     def _validate_event_ids(self) -> MultiEventCreateScenariosIn:
-        if not 2 <= len(self.mi_event_ids) <= 5:
-            raise ValueError("miEventIds must contain 2 to 5 events")
         if len(set(self.mi_event_ids)) != len(self.mi_event_ids):
-            raise ValueError("miEventIds must not contain duplicates")
+            msg = "miEventIds must not contain duplicates"
+            raise ValueError(msg)
         if any(event_id <= 0 for event_id in self.mi_event_ids):
-            raise ValueError("miEventIds must contain positive IDs")
-        self.comparison_run_id = self.comparison_run_id.strip()
-        if not self.comparison_run_id:
-            raise ValueError("comparisonRunId is required")
+            msg = "miEventIds must contain positive IDs"
+            raise ValueError(msg)
         return self
 
 
 class V4MultiEventCreateScenariosIn(ApiModel):
-    mi_event_ids: list[int]
+    mi_event_ids: list[int] = Field(min_length=1, max_length=5)
     user_id: int
-    comparison_run_id: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
     def _validate_v4_request(self) -> V4MultiEventCreateScenariosIn:
-        if not 2 <= len(self.mi_event_ids) <= 5:
-            raise ValueError("miEventIds must contain 2 to 5 events")
         if len(set(self.mi_event_ids)) != len(self.mi_event_ids):
-            raise ValueError("miEventIds must not contain duplicates")
+            msg = "miEventIds must not contain duplicates"
+            raise ValueError(msg)
         if any(event_id <= 0 for event_id in self.mi_event_ids):
-            raise ValueError("miEventIds must contain positive IDs")
-        if self.comparison_run_id is not None:
-            self.comparison_run_id = self.comparison_run_id.strip()
-            if not self.comparison_run_id:
-                raise ValueError("comparisonRunId must not be blank")
+            msg = "miEventIds must contain positive IDs"
+            raise ValueError(msg)
         return self
 
 
 class V4MultiEventCreateScenariosSyncIn(V4MultiEventCreateScenariosIn):
-    comparison_run_id: str = Field(min_length=1, max_length=255)
+    pass
 
 
 class ExcludedCandidate(ApiModel):
@@ -191,7 +173,6 @@ class V2GenerationDiagnostics(ApiModel):
 class V2CreateScenariosData(ApiModel):
     api_version: Literal["v2"] = "v2"
     generation_strategy: Literal["multi_event_source_dimensions"] = "multi_event_source_dimensions"
-    comparison_run_id: str
     scenario_group: ScenarioGroupPayload
     events: list[EventPayload] = Field(default_factory=list)
     dimension_definitions: list[V2DimensionDefinition] = Field(default_factory=list)
@@ -209,7 +190,6 @@ class V2CreateScenariosOut(ApiModel):
 class VersionedCreateScenariosData(ApiModel):
     api_version: ApiVersion
     generation_strategy: GenerationStrategy
-    comparison_run_id: str | None = None
     impact_catalog_version: str | None = None
     scenario_group: ScenarioGroupPayload
     events: list[EventPayload] = Field(default_factory=list)

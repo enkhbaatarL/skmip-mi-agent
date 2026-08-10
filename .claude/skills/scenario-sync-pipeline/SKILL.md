@@ -115,7 +115,7 @@ python tests/manual/test_sync_pipeline_api.py \
 signpost, confirmation은 실행하지 않는다. v2/v3를 먼저 실행하지 않으며 별도 subagent도
 필요하지 않다.
 
-중복 없는 Event 2~5개 선택, 관리자 토큰 로딩, 기존 활성 Scenario Group soft delete,
+중복 없는 Event 1~5개 선택, 관리자 토큰 로딩, 기존 활성 Scenario Group soft delete,
 timeout 및 동일 POST 재시도 금지 정책은 Multi-Event 버전 비교와 동일하다. 기존 그룹을
 보존하려면 명시적으로 `--no-delete-existing`을 사용한다.
 
@@ -139,9 +139,8 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 ```
 
 `--v4-only` manifest는 `versions=["v4"]`, `executionMode="v4-only"`를 고정한다.
-이 manifest에서는 v2/v3 실행을 거부하고 v4의 v2/v3 artifact barrier를 적용하지 않는다.
-나중에 v2/v3/v4 비교가 필요하면 같은 manifest나 `comparisonRunId`를 재사용하지 말고 새
-`prepare` batch를 만든다.
+이 manifest에서는 v2/v3 실행을 거부하며 v4는 다른 version 산출물 없이 독립 실행한다.
+나중에 v2/v3/v4 비교가 필요하면 기존 manifest를 재사용하지 말고 새 `prepare` batch를 만든다.
 
 `--quality-check true`는 v4 결정적 품질검사를 실행하지만 비교 대상이 없으므로 Agent Judge
 순위, 우수 version, 품질·실용 추천은 만들지 않는다. `false`이면 API 결과와 실제 Scenario
@@ -164,7 +163,7 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 
 ### 로컬 서버
 
-병렬 요청을 처리하도록 로컬 서버를 Gunicorn과 UvicornWorker 3개로 실행한다.
+로컬 서버는 기존 Gunicorn과 UvicornWorker 설정으로 실행할 수 있다.
 
 ```bash
 poetry run dotenv -f envs/.env run --no-override -- \
@@ -180,13 +179,13 @@ Docker의 기존 Gunicorn 3-worker 기본 설정은 변경하지 않는다. v1 �
 
 ### 이벤트 선택과 prepare
 
-중복 없는 이벤트 2~5개를 선택한다. 다음 선택법 중 하나만 사용한다.
+중복 없는 이벤트 1~5개를 선택한다. 다음 선택법 중 하나만 사용한다.
 
 - 명시 ID: `--event-ids 101 202`
 - 최신 또는 오래된 N개: `--event-count 3 --event-sort latest|oldest`
 - 키워드 기반 N개: `--event-count 5 --keyword 호르무즈 [--event-sort latest|oldest]`
 
-키워드 선택의 기본 정렬은 `latest`로 둔다. 이벤트 상세를 수집하고 동일한 이벤트 목록, `userId`, 고유 `comparisonRunId`를 manifest에 고정한다. v4도 단일 `targetMarket`을 입력받지 않으며 모든 Scenario의 pressure band는 글로벌 LNG 기준이다. 지역 가격 허브 관련성이 명확한 v4 Scenario만 응답 row의 `relatedMarkets`에 시장과 근거를 선택적 보조정보로 포함한다.
+키워드 선택의 기본 정렬은 `latest`로 둔다. 이벤트 상세를 수집하고 동일한 이벤트 목록과 `userId`, 로컬 `runId`를 manifest에 고정한다. `runId`는 API나 DB에 전달하지 않고 로컬 산출물을 묶는 용도로만 사용한다. v4도 단일 `targetMarket`을 입력받지 않으며 모든 Scenario의 pressure band는 글로벌 LNG 기준이다. 지역 가격 허브 관련성이 명확한 v4 Scenario만 응답 row의 `relatedMarkets`에 시장과 근거를 선택적 보조정보로 포함한다.
 
 선택된 이벤트에 연결된 기존 활성 Scenario Group은 버전 실행 전에 기본적으로 모두 soft delete한다. 기존 그룹을 보존해야 하는 예외적인 실행에만 `prepare --no-delete-existing`을 사용한다. 활성 그룹이 있으면 `--admin-token` 또는 `SCENARIO_GROUP_ADMIN_TOKEN`이 필요하다. 실행기는 이벤트별 `GET /scenario-groups?includeDeleted=false&miEventId=...` 결과에서 그룹 ID를 중복 제거하고, 각 그룹을 `DELETE /scenario-groups/{scenarioGroupId}`로 한 번씩 삭제한다. 삭제는 v2/v3/v4 실행 전에 한 번만 수행하며, v2나 v3가 이번 비교에서 새로 만든 그룹을 뒤 버전 실행 전에 삭제하지 않는다. 삭제 결과는 manifest의 `preRunCleanup`과 `existing_groups_soft_delete.json`에 기록한다.
 
@@ -203,16 +202,14 @@ python tests/manual/test_multi_event_scenario_versions.py prepare \
   --timeout 1200
 ```
 
-prepare가 출력한 batch/manifest 경로를 이후 모든 subagent에 동일하게 전달한다.
+prepare가 출력한 batch/manifest 경로를 이후 실행 단계에 동일하게 전달한다.
 
 ### 버전 실행 순서
 
-1. v2 `run-version`과 v3 `run-version`을 서로 다른 subagent 두 개에서 동시에 실행한다.
-2. 두 subagent가 모두 종료될 때까지 기다린다.
-3. v4 `run-version`을 subagent에서 실행한다.
+1. v2 `run-version`을 실행한다.
+2. 성공 여부와 관계없이 v3 `run-version`을 실행한다.
+3. 성공 여부와 관계없이 v4 `run-version`을 실행한다.
 4. 세 결과를 모아 `report`를 실행한다.
-
-각 subagent는 manifest를 읽고 지정된 version 하나만 실행한다.
 
 ```bash
 python tests/manual/test_multi_event_scenario_versions.py run-version \
@@ -220,10 +217,8 @@ python tests/manual/test_multi_event_scenario_versions.py run-version \
   --version v2
 ```
 
-v4까지 완전 병렬로 실행하지 않는다. v4가 먼저 저장되면 Template checksum이 없는 v4 lineage를 v2/v3가 읽어 동일 `comparisonRunId` 검증과 충돌할 수 있다. v2와 v3는 동일 Event·Template revision을 사용하므로 둘만 병렬 실행한다.
-
-subagent 기능을 사용할 수 없을 때만 다음 fallback을 사용한다. 실행기는
-`asyncio.gather(v2, v3)` 완료 후 v4를 호출하고 fallback 사용 사실을 보고서에 기록한다.
+한 명령으로 실행할 때는 다음 순차 orchestration을 사용한다. 각 version 실패를 기록하고도
+다음 version을 계속 실행한다.
 
 ```bash
 python tests/manual/test_multi_event_scenario_versions.py orchestrate \
@@ -231,7 +226,7 @@ python tests/manual/test_multi_event_scenario_versions.py orchestrate \
   --timeout 1200
 ```
 
-동일 version POST를 자동 재시도하지 않는다. DB에 `(comparisonRunId, apiVersion)` unique 제약이 없으므로 timeout 뒤 재호출하면 중복 Scenario Group이 생길 수 있다. timeout은 결과 불명으로 기록하고 API/DB 증적 확인이 필요하다고 보고한다. 한 version이 실패해도 나머지 version의 결과를 보존한다.
+동일 version POST를 자동 재시도하지 않는다. create API는 멱등하지 않으므로 timeout 뒤 재호출하면 중복 Scenario Group이 생길 수 있다. timeout은 결과 불명으로 기록하고 API/DB 증적 확인이 필요하다고 보고한다. 한 version이 실패해도 나머지 version의 결과를 보존한다.
 
 ### Agent Judge와 보고서 생성
 
@@ -274,6 +269,21 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 - dimension 수 v2/v3/v4 각각 3~6개와 전체 이벤트 lineage coverage
 
 Agent Judge는 먼저 각 기준을 1~5점과 PASS/WARN/FAIL로 절대평가한다. 이 점수는 version별 품질 조건 충족 여부를 확인하는 용도이며 최종 상대평가 승자를 자동 결정하지 않는다. Scenario별 실제 title, narrative, cells, role, probability와 API rationale를 근거로 판단한다. 기준 단순 평균 최고 version은 `절대 점수 최고 버전`으로 별도 표시한다.
+
+`generationDiagnostics.coverageStatus=partial|none`, `unsupportedLevers`,
+`unsupportedLeverDetails`는 현재 활성 모델 파라미터 catalog의 제한을 나타내는
+**비채점 capability warning**으로 취급한다. 향후 파라미터 확장을 전제로 생성한
+Scenario·Dimension의 품질 결함을 뜻하지 않으므로, 이 정보만으로 절대 점수,
+criterion verdict, pairwise 승자, `bestVersions`, 품질·실용 추천을 낮추지 않는다.
+보고서의 version별 아쉬운 점이나 추천 tradeoff에는 현재 실행 제약으로 명시한다.
+`parameterMappingReady=true`도 full coverage를 뜻한다고 해석하지 않는다.
+
+단, 다음처럼 coverage 상태와 별개로 확인되는 실제 품질 결함은 해당 기준에서 평가한다.
+
+- 선택 Event의 driver나 lineage가 Dimension에 반영되지 않음
+- Dimension·Value·Scenario 인과가 모순되거나 중복됨
+- 비활성·미지원 레버를 현재 실행 가능하다고 잘못 표기함
+- coverage 관련 API 필드가 서로 모순되거나 필요한 진단 정보가 누락됨
 
 성공한 모든 version 쌍을 직접 비교한다. v2/v3/v4가 모두 성공하면 `v2 vs v3`, `v2 vs v4`, `v3 vs v4`를 각각 한 번 평가한다. 각 pair에서 다음 기준별 승자 또는 동률, 실제 evidence, 반론, 최종 rationale를 작성한다.
 

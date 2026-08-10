@@ -101,7 +101,7 @@ def create_group_record(state: CreateScenariosState) -> dict[str, object]:
         "stage": ScenarioGroupStage.READY.value,
         "api_version": "v1",
         "generation_strategy": "single_event_template_dimensions",
-        "comparison_run_id": state.comparison_run_id,
+        "comparison_run_id": None,
         "parameter_mapping_ready": True,
         "dimension_definitions": [],
         "generation_diagnostics": {},

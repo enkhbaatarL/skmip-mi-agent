@@ -207,7 +207,7 @@ export function EventSelector({
         <div>
           <p className="eyebrow">Event Selector</p>
           <h2 id="event-selector-title">
-            {mode === "single" ? "단일 Event 선택" : "Event 2~5건 선택"}
+            {mode === "single" ? "단일 Event 선택" : "Event 1~5건 선택"}
           </h2>
         </div>
         <span className="selection-count" aria-live="polite">
@@ -576,9 +576,6 @@ export function EventSelector({
           })
         )}
       </div>
-      {mode === "multi" && selectedEvents.length > 0 && selectedEvents.length < 2 && (
-        <p className="field-error">비교 실행에는 Event가 최소 2건 필요합니다.</p>
-      )}
     </section>
   );
 }

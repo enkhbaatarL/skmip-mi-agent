@@ -267,7 +267,6 @@ class ScenarioGroupService:
         templates: list[dict[str, Any]],
         api_version: str,
         generation_strategy: str,
-        comparison_run_id: str,
         user_id: int,
     ) -> ScenarioGroupPayload:
         from apps.common.configs.database.sync_database.connection import (
@@ -294,55 +293,13 @@ class ScenarioGroupService:
         session = get_sync_session()
         try:
             repository = ScenarioGroupRepository(session=session)
-            comparison_groups = repository.fetch_all_by_comparison_run(
-                comparison_run_id,
-            )
-            for comparison_group in comparison_groups:
-                comparison_relations = repository.fetch_group_events(
-                    int(comparison_group.scenario_group_id),
-                )
-                persisted_checksums = {
-                    int(relation.mi_event_id): relation.template_checksum for relation in comparison_relations
-                }
-                if persisted_checksums != requested_template_checksums:
-                    raise MIBaseError(
-                        ErrorCode.INVALID_REQUEST,
-                        detail=("All groups in a comparisonRunId must use the same events and template revisions"),
-                    )
-            existing = repository.fetch_by_comparison_run(
-                comparison_run_id,
-                api_version,
-            )
-            if existing is not None:
-                relations = repository.fetch_group_events(
-                    int(existing.scenario_group_id),
-                )
-                persisted_checksums = {int(relation.mi_event_id): relation.template_checksum for relation in relations}
-                if persisted_checksums != requested_template_checksums:
-                    raise MIBaseError(
-                        ErrorCode.INVALID_REQUEST,
-                        detail=("comparisonRunId must use the same events and template revisions"),
-                    )
-                if existing.request_usr_id != user_id:
-                    raise MIBaseError(
-                        ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
-                        detail=f"시나리오 작성자: {existing.request_usr_id}",
-                    )
-                existing_stage = existing.stage.value if hasattr(existing.stage, "value") else str(existing.stage)
-                if existing_stage != ScenarioGroupStage.READY.value:
-                    raise MIBaseError(
-                        ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
-                        detail=f"시나리오 그룹 ID: {existing.scenario_group_id}",
-                    )
-                return ScenarioGroupPayload.from_model(existing)
-
             scenario_group_id = repository.insert_group(
                 {
                     "mi_event_id": None,
                     "event_type_l2_id": None,
                     "request_usr_id": user_id,
-                    "title": f"Multi-event scenario group ({len(events)} events)",
-                    "summary": "복수 MI Event 공동 전제 시나리오",
+                    "title": f"Scenario group ({len(events)} selected events)",
+                    "summary": "선택 MI Event 기반 시나리오",
                     "description": None,
                     "dimension_selected": [],
                     "scenario_count": 0,
@@ -350,7 +307,7 @@ class ScenarioGroupService:
                     "stage": ScenarioGroupStage.READY.value,
                     "api_version": api_version,
                     "generation_strategy": generation_strategy,
-                    "comparison_run_id": comparison_run_id,
+                    "comparison_run_id": None,
                     "template_checksum": aggregate_checksum,
                     "parameter_mapping_ready": False,
                     "dimension_definitions": [],
@@ -399,61 +356,22 @@ class ScenarioGroupService:
         events: list[dict[str, Any]],
         impact_catalog_version: str,
         impact_catalog_checksum: str,
-        comparison_run_id: str | None,
         user_id: int,
     ) -> ScenarioGroupPayload:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
 
-        event_ids = [int(event["mi_event_id"]) for event in events]
         session = get_sync_session()
         try:
             repository = ScenarioGroupRepository(session=session)
-            if comparison_run_id is not None:
-                comparison_groups = repository.fetch_all_by_comparison_run(
-                    comparison_run_id,
-                )
-                for comparison_group in comparison_groups:
-                    relations = repository.fetch_group_events(
-                        int(comparison_group.scenario_group_id),
-                    )
-                    persisted_event_ids = [int(relation.mi_event_id) for relation in relations]
-                    if set(persisted_event_ids) != set(event_ids):
-                        raise MIBaseError(
-                            ErrorCode.INVALID_REQUEST,
-                            detail=("All groups in a comparisonRunId must use the same events"),
-                        )
-                existing = repository.fetch_by_comparison_run(
-                    comparison_run_id,
-                    "v4",
-                )
-                if existing is not None:
-                    if getattr(existing, "impact_catalog_checksum", None) != impact_catalog_checksum:
-                        raise MIBaseError(
-                            ErrorCode.INVALID_REQUEST,
-                            detail=("comparisonRunId must use the same impact catalog revision"),
-                        )
-                    if existing.request_usr_id != user_id:
-                        raise MIBaseError(
-                            ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
-                            detail=f"시나리오 작성자: {existing.request_usr_id}",
-                        )
-                    existing_stage = existing.stage.value if hasattr(existing.stage, "value") else str(existing.stage)
-                    if existing_stage != ScenarioGroupStage.READY.value:
-                        raise MIBaseError(
-                            ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
-                            detail=f"시나리오 그룹 ID: {existing.scenario_group_id}",
-                        )
-                    return ScenarioGroupPayload.from_model(existing)
-
             scenario_group_id = repository.insert_group(
                 {
                     "mi_event_id": None,
                     "event_type_l2_id": None,
                     "request_usr_id": user_id,
-                    "title": "Global LNG multi-event scenario group",
-                    "summary": "복수 MI Event 기반 모델 영향 레버 시나리오",
+                    "title": f"Global LNG scenario group ({len(events)} selected events)",
+                    "summary": "선택 MI Event 기반 모델 영향 레버 시나리오",
                     "description": None,
                     "dimension_selected": [],
                     "scenario_count": 0,
@@ -461,7 +379,7 @@ class ScenarioGroupService:
                     "stage": ScenarioGroupStage.READY.value,
                     "api_version": "v4",
                     "generation_strategy": "multi_event_model_lever_dimensions",
-                    "comparison_run_id": comparison_run_id,
+                    "comparison_run_id": None,
                     "impact_catalog_version": impact_catalog_version,
                     "impact_catalog_checksum": impact_catalog_checksum,
                     "template_checksum": None,

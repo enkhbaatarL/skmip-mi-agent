@@ -65,7 +65,7 @@ export function VersionRunBoard({
         <div>
           <p className="eyebrow">2. 실행</p>
           <h2 id="version-board-title">Version 실행 상태</h2>
-          <p>v2/v3 병렬 실행이 모두 종료된 뒤 v4가 시작됩니다.</p>
+          <p>v2 → v3 → v4 순서로 실행하며, 한 버전이 실패해도 다음 버전을 계속 실행합니다.</p>
         </div>
       </div>
 

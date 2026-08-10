@@ -90,7 +90,6 @@ def prepare_multi_event_scenarios(
         templates=[template.model_dump() for template in templates],
         api_version=api_version,
         generation_strategy=GENERATION_STRATEGIES[api_version],
-        comparison_run_id=payload.comparison_run_id,
         user_id=payload.user_id,
     )
     return {
@@ -99,7 +98,6 @@ def prepare_multi_event_scenarios(
         "templates": templates,
         "api_version": api_version,
         "generation_strategy": GENERATION_STRATEGIES[api_version],
-        "comparison_run_id": payload.comparison_run_id,
         "user_id": payload.user_id,
     }
 
@@ -161,7 +159,6 @@ async def run_multi_event_scenarios_inline(
     if isinstance(finalized, V2FinalizedGenerationResult):
         return V2CreateScenariosOut(
             data=V2CreateScenariosData(
-                comparison_run_id=str(prepared["comparison_run_id"]),
                 scenario_group=table_data.scenario_group,
                 events=final_state.events,
                 dimension_definitions=finalized.dimension_definitions,
@@ -173,7 +170,6 @@ async def run_multi_event_scenarios_inline(
         data=VersionedCreateScenariosData(
             api_version=final_state.api_version,
             generation_strategy=final_state.generation_strategy,
-            comparison_run_id=prepared["comparison_run_id"],
             scenario_group=table_data.scenario_group,
             events=final_state.events,
             dimension_definitions=finalized.dimension_definitions,

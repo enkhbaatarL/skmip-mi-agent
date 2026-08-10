@@ -17,7 +17,7 @@ Backoffice는 Scenario Group Agent의 sync API를 직접 호출하는 내부 QA�
   - v1은 unversioned create부터 confirmation까지 순차 실행한다.
   - v2/v3/v4는 create sync API 결과를 비교하고, 사용자가 요청한 경우에만 별도 의미 품질 평가를 실행한다.
 - 화면은 결과보다 실행 조건을 먼저 보여준다.
-  - Event, userId, Base URL, comparisonRunId를 항상 확인할 수 있어야 한다.
+  - Event, userId, Base URL을 항상 확인할 수 있어야 한다.
 - 기본 화면은 API 응답을 사용자용 presentation view로 변환한다.
   - 내부 Dimension/Value ID 대신 label, 설명, lineage, 실제 근거를 표시한다.
   - 원본 request/response는 secret redaction 외 의미 변환 없이 Raw 탭과 Evidence Drawer에 별도 증적으로 보존한다.
@@ -154,7 +154,7 @@ segmented control:
 - 추천 항목만
 - paging
 
-v1은 Event 한 건만 선택할 수 있다. 비교 workspace는 중복 없는 Event 2~5건을 선택할 수 있다.
+v1은 Event 한 건만 선택할 수 있다. 비교 workspace는 중복 없는 Event 1~5건을 선택할 수 있다.
 
 ### 5.2 Event Table
 
@@ -424,15 +424,10 @@ POST /scenario-groups/{scenarioGroupId}/confirmation
 
 필드:
 
-- Event 2~5건
+- Event 1~5건
 - userId
-- `comparisonRunId`
 
-`comparisonRunId`:
-
-- 기본값은 `multi-event-{timestamp}-{random}` 형식이다.
-- 사용자가 수정할 수 있으나 실행 시작 시 lock한다.
-- 공백과 255자 초과를 허용하지 않는다.
+frontend는 화면 상태와 export 파일을 묶기 위한 로컬 `runId`를 생성한다. 사용자가 입력하지 않으며 API body에는 포함하지 않는다.
 
 ### 7.3 Manifest Summary
 
@@ -442,7 +437,7 @@ POST /scenario-groups/{scenarioGroupId}/confirmation
 - userId
 - Event ID와 순서
 - Event detail 조회 성공 여부
-- comparisonRunId
+- 로컬 runId
 - 요청 timeout
 
 `비교 실행`을 누르면 manifest를 고정하고 입력 control을 잠근다.
@@ -784,19 +779,16 @@ load event detail
 ### 9.3 Comparison Controller
 
 ```ts
-const [v2, v3] = await Promise.allSettled([
-  runVersion("v2", manifest),
-  runVersion("v3", manifest),
-]);
-
-const v4 = await runVersion("v4", manifest);
+for (const version of ["v2", "v3", "v4"] as const) {
+  await Promise.allSettled([runVersion(version, manifest)]);
+}
 ```
 
 `runVersion`은 같은 run/version에 대해 한 번만 실행되는 guard를 가진다.
 
-- v2/v3 실패도 barrier 완료로 본다.
-- v2/v3 promise가 terminal 처리되기 전 v4를 호출하지 않는다.
-- v2/v3/v4 request는 동일한 Event, userId, comparisonRunId를 사용한다.
+- v2, v3, v4 순서를 유지한다.
+- 앞 version 실패도 기록하고 다음 version을 실행한다.
+- v2/v3/v4 request는 동일한 Event와 userId를 사용한다.
 - version별 결과는 독립적으로 보존한다.
 
 품질 평가는 별도 사용자 action이다.
@@ -808,7 +800,7 @@ const successfulGroups = successfulVersions(run).map(({ version, groupId }) => (
 }));
 
 if (successfulGroups.length >= 2) {
-  await runQualityJudge(manifest.comparisonRunId, runtime.userId, successfulGroups);
+  await runQualityJudge(runtime.userId, successfulGroups);
 }
 ```
 
@@ -830,7 +822,6 @@ comparison:
 - HTTP 2xx
 - `status=success`
 - `data.apiVersion` 일치
-- `data.comparisonRunId` 일치
 - Event lineage 일치
 
 quality judge:
@@ -970,7 +961,7 @@ Empty:
 
 - Event 미선택: 선택 방법 안내
 - v1 미실행: `Event를 선택하고 Create를 실행하세요.`
-- comparison 미실행: `Event 2~5건을 선택하세요.`
+- comparison 미실행: `Event 1~5건을 선택하세요.`
 - 결과 없음: version별 원인 표시
 
 Error:
@@ -983,7 +974,7 @@ Error:
 Unknown:
 
 - `서버에서 작업이 완료되었을 수 있습니다. 동일 요청을 자동 재시도하지 않습니다.`
-- 새 comparisonRunId로 새 실행하거나 DB 증적을 확인하도록 안내
+- 새 로컬 run으로 실행하거나 DB 증적을 확인하도록 안내
 
 ## 13. 반응형
 

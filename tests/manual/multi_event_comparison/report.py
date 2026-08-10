@@ -89,7 +89,7 @@ def render_report(  # noqa: C901
         "",
         "## 실행 조건",
         "",
-        f"- comparisonRunId: `{manifest['comparisonRunId']}`",
+        f"- runId: `{manifest['runId']}`",
         f"- Agent: `{manifest['baseUrl']}`",
         f"- userId: `{manifest['userId']}`",
         f"- Event 선택: {manifest['selection']['description']}",

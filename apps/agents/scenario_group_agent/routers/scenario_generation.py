@@ -55,7 +55,7 @@ router = APIRouter(tags=["scenario-generation"])
 @router.post(
     "/v4/scenario-groups",
     response_model=ScenarioGroupAcceptedOut,
-    summary="v4 다중 이벤트 모델 영향 레버 시나리오 그룹 생성",
+    summary="v4 1~5개 이벤트 모델 영향 레버 시나리오 그룹 생성",
 )
 async def create_v4_scenarios(
     payload: V4MultiEventCreateScenariosIn,

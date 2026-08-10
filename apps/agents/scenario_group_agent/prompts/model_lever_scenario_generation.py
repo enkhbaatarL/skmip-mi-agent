@@ -5,7 +5,7 @@ from typing import Any
 from apps.agents.scenario_group_agent.prompts.event_context import CompactEventContext
 
 
-MODEL_LEVER_SYSTEM_PROMPT = """복수 MI Event로 JKM 시나리오를 설계합니다. 입력 사실과 가정을 구분하고,
+MODEL_LEVER_SYSTEM_PROMPT = """하나 이상의 MI Event로 JKM 시나리오를 설계합니다. 입력 사실과 가정을 구분하고,
 Catalog 밖 Lever를 만들지 마십시오. 모든 설명과 label은 한국어로 작성하고 단계별 출력 규칙의 길이와
 정보 밀도를 따르십시오."""
 

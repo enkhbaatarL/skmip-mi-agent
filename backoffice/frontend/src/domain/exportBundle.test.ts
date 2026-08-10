@@ -30,8 +30,7 @@ describe("comparison export bundle", () => {
       status: "success",
       request: {
         miEventIds: [101, 202],
-        userId: 10001,
-        comparisonRunId: "multi-event-test"
+        userId: 10001
       },
       response,
       call: result.record,

@@ -62,7 +62,6 @@ export function judgeConfirmation(
 }
 
 export interface ComparisonJudgmentManifest {
-  comparisonRunId: string;
   miEventIds: readonly number[];
 }
 
@@ -109,12 +108,6 @@ export function judgeComparisonVersion(
       `API_VERSION_MISMATCH: 요청 ${requestedVersion}, 응답 ${body.data.apiVersion}`
     );
   }
-  if (body.data.comparisonRunId !== manifest.comparisonRunId) {
-    issues.push(
-      `COMPARISON_RUN_ID_MISMATCH: manifest ${manifest.comparisonRunId}, 응답 ${body.data.comparisonRunId ?? "null"}`
-    );
-  }
-
   const expectedIds = [...manifest.miEventIds];
   const actualIds = orderedEventIds(body);
   if (

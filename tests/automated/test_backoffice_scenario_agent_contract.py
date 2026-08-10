@@ -71,11 +71,22 @@ def test_cors_preflight_reflects_only_allowed_origin() -> None:
     assert "access-control-allow-origin" not in disallowed.headers
 
 
+def test_multi_event_validation_error_is_json_serializable() -> None:
+    from main import app
+
+    response = TestClient(app).post(
+        "/v2/scenario-groups/sync",
+        json={"miEventIds": [101, 101], "userId": 7},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "value_error"
+
+
 def test_multi_event_prepare_preserves_request_event_order() -> None:
     payload = MultiEventCreateScenariosIn(
         mi_event_ids=[202, 101],
         user_id=7,
-        comparison_run_id="compare-order",
     )
     events = [
         EventPayload(mi_event_id=101, event_type_l2_id=8),
@@ -108,11 +119,10 @@ def test_multi_event_prepare_preserves_request_event_order() -> None:
     assert [event["mi_event_id"] for event in prepare_group.call_args.kwargs["events"]] == [202, 101]
 
 
-def test_v4_sync_requires_run_id_and_keeps_impact_path_lineage() -> None:
+def test_v4_sync_accepts_one_event_and_keeps_impact_path_lineage() -> None:
     payload = V4MultiEventCreateScenariosSyncIn(
-        mi_event_ids=[101, 202],
+        mi_event_ids=[101],
         user_id=7,
-        comparison_run_id="compare-1",
     )
     definition = V4DimensionDefinition(
         dimension_id="supply_pressure",
@@ -162,13 +172,8 @@ def test_v4_sync_requires_run_id_and_keeps_impact_path_lineage() -> None:
         ],
     )
 
-    assert payload.comparison_run_id == "compare-1"
+    assert payload.mi_event_ids == [101]
     assert definition.source_event_ids == [101, 202]
     assert definition.source_impact_path_ids == ["path_101", "path_202"]
     assert "event_groundings" not in definition.model_dump()
     assert "lever_mappings" not in definition.model_dump()
-    with pytest.raises(ValueError, match="comparisonRunId"):
-        V4MultiEventCreateScenariosSyncIn(
-            mi_event_ids=[101, 202],
-            user_id=7,
-        )

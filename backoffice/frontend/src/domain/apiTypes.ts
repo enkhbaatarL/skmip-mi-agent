@@ -155,7 +155,6 @@ export interface ScenarioGroupPayload {
   stage: string;
   apiVersion?: string;
   generationStrategy?: string;
-  comparisonRunId?: string | null;
   impactCatalogVersion?: string | null;
   impactCatalogChecksum?: string | null;
   templateChecksum?: string | null;
@@ -353,7 +352,6 @@ export interface LlmUsage {
 export interface VersionedCreateScenariosData {
   apiVersion: ApiVersion;
   generationStrategy: GenerationStrategy;
-  comparisonRunId: string | null;
   impactCatalogVersion: string | null;
   scenarioGroup: ScenarioGroupPayload;
   events: EventPayload[];
@@ -373,7 +371,6 @@ export interface VersionedCreateScenariosOut {
 export interface MultiEventCreateScenariosRequest {
   miEventIds: number[];
   userId: number;
-  comparisonRunId: string;
 }
 
 export type V4MultiEventCreateScenariosRequest =

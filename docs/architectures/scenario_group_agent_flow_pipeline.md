@@ -111,9 +111,9 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 | Endpoint                        | 입력                      | 생성 전략                                       |
 | ------------------------------- | ----------------------- | ------------------------------------------- |
 | `POST /v1/scenario-groups/sync` | `miEventId`             | 단일 Event·원본 Template dimension              |
-| `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event별 원본 dimension 3~6개                    |
-| `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 2~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개          |
-| `POST /v4/scenario-groups`      | 중복 없는 `miEventIds` 2~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
+| `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event별 원본 dimension 3~6개                    |
+| `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개          |
+| `POST /v4/scenario-groups`      | 중복 없는 `miEventIds` 1~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
 | `POST /v4/scenario-groups/sync` | v4와 동일                  | v4 생성 흐름 동기 실행                              |
 
 

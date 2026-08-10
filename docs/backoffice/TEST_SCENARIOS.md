@@ -35,7 +35,7 @@
 | 흐름 | Event | API 범위 | 비교 |
 | --- | --- | --- | --- |
 | v1 단일 이벤트 | 1건 | unversioned create, validation, signpost, detail, confirmation | 없음 |
-| v2/v3/v4 비교 | 중복 없는 2~5건 | versioned create sync, 사용자 요청 시 Agent 품질 평가 | 성공 version 비교 |
+| v2/v3/v4 비교 | 중복 없는 1~5건 | versioned create sync, 사용자 요청 시 Agent 품질 평가 | 성공 version 비교 |
 
 한 테스트 run에서 두 흐름을 섞지 않는다.
 
@@ -49,13 +49,13 @@
 - frontend와 Agent의 HTTP/HTTPS scheme이 browser mixed-content 정책에 맞아야 한다.
 - 유효한 `userId`가 준비되어 있어야 한다.
 - sync 실행 timeout은 기본 1,200초로 설정한다.
-- v1용 Event 1건과 비교용 Event 2~5건이 준비되어 있어야 한다.
+- v1용 Event 1건과 비교용 Event 1~5건이 준비되어 있어야 한다.
 - 기존 Scenario Group 정리에 필요한 admin token 또는 delete authorization은 필요할 때만 준비한다.
 - 브라우저 network log와 Evidence Drawer를 함께 확인할 수 있어야 한다.
 
 ### 3.1 Agent 실행 조건
 
-v2와 v3의 병렬 호출을 처리할 수 있도록 local Agent는 Gunicorn/UvicornWorker 3개 구성을 권장한다.
+local Agent는 기존 Gunicorn/UvicornWorker 구성으로 실행할 수 있다.
 
 ```bash
 poetry run dotenv -f envs/.env run --no-override -- \
@@ -71,8 +71,8 @@ v1 순차 테스트만 수행할 때는 기존 Uvicorn local 실행도 허용한
 
 ### 3.2 테스트 데이터 원칙
 
-- 비교 테스트마다 고유 `comparisonRunId`를 사용한다.
-- 동일 comparison run에서 Event 순서와 userId를 변경하지 않는다.
+- 비교 테스트마다 고유한 로컬 `runId`를 사용한다.
+- 동일 run에서 Event 순서와 userId를 변경하지 않는다.
 - create POST의 중복 실행 여부를 확인할 수 있도록 browser network log를 보존한다.
 - 테스트 중 생성된 모든 `scenarioGroupId`를 기록한다.
 - 기존 group이 있는 Event를 v1에 사용하려면 테스트 시작 전에 명시적으로 soft delete한다.
@@ -84,7 +84,7 @@ frontend 제품 범위에 별도 Scenario Group 관리 화면은 없다. 테스�
 
 정리 절차:
 
-1. 생성된 `scenarioGroupId`, API version, comparisonRunId를 기록한다.
+1. 생성된 `scenarioGroupId`, API version, 로컬 runId를 기록한다.
 2. 필요한 결과 JSON을 export한다.
 3. 유효한 권한으로 Agent soft-delete API 또는 기존 정리 도구를 실행한다.
 4. `GET /scenario-groups/{scenarioGroupId}` 또는 목록 조회로 삭제 상태를 확인한다.
@@ -98,8 +98,8 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - frontend가 `/backoffice/api/...`가 아니라 Agent Base URL을 직접 호출한다.
 - v1 request body는 현재 Event, userId, 최신 editable table을 사용한다.
-- comparison의 세 version은 동일 Event 순서, userId, comparisonRunId를 사용한다.
-- 세 version request는 동일한 Event, userId, comparisonRunId를 사용한다.
+- comparison의 세 version은 동일 Event 순서와 userId를 사용한다.
+- 세 version request는 동일한 Event와 userId를 사용한다.
 - HTTP 200의 `result=failure` 또는 `status=error`를 성공으로 표시하지 않는다.
 - create POST는 사용자 action 한 번당 정확히 한 번 전송된다.
 
@@ -459,14 +459,14 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 ### TC-M-N-001 Event ID 직접 선택과 Manifest 고정
 
-목적: 중복 없는 Event 2~5건으로 immutable comparison 조건을 만드는지 확인한다.
+목적: 중복 없는 Event 1~5건으로 immutable comparison 조건을 만드는지 확인한다.
 
 절차:
 
 1. `v2/v3/v4 비교` tab을 연다.
-2. Event ID 2~5개를 순서대로 입력한다.
+2. Event ID 1~5개를 순서대로 입력한다.
 3. 각 Event detail 조회 결과를 확인한다.
-4. 자동 생성된 comparisonRunId를 확인한다.
+4. 자동 생성된 로컬 runId를 확인한다.
 5. Manifest Summary에서 실행 조건을 확인한다.
 7. `비교 실행`을 클릭한다.
 
@@ -474,7 +474,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 - Event ID가 중복 없이 선택 순서대로 고정된다.
 - Event detail snapshot이 manifest에 포함된다.
-- Base URL, userId, comparisonRunId가 고정된다.
+- Base URL, userId, 로컬 runId가 고정된다.
 - 실행 시작 후 입력 control이 잠긴다.
 
 ### TC-M-N-002 최신순/오래된순 Event 선택
@@ -496,7 +496,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 절차:
 
 1. keyword를 입력하고 최신순 조회한다.
-2. 결과에서 Event 2~5건을 선택한다.
+2. 결과에서 Event 1~5건을 선택한다.
 
 기대결과:
 
@@ -504,22 +504,22 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - 기본 정렬은 최신순이다.
 - 선택 Event detail이 모두 로드된 후 실행 가능하다.
 
-### TC-M-N-004 v2/v3 병렬 후 v4 실행
+### TC-M-N-004 v2→v3→v4 순차 실행
 
-목적: pipeline의 version barrier를 검증한다.
+목적: 앞 version 실패와 관계없이 정해진 순서로 모든 version을 실행하는지 검증한다.
 
 절차:
 
 1. 유효한 manifest로 비교를 실행한다.
 2. browser network와 version card 시간을 확인한다.
-3. v2 또는 v3 중 더 늦은 요청이 끝나기 전 v4 호출 여부를 확인한다.
+3. v2 실패 조건에서도 v3와 v4 호출 여부를 확인한다.
 
 기대결과:
 
-- v2와 v3 POST가 병렬로 시작된다.
-- 두 요청 body의 Event, userId, comparisonRunId가 같다.
-- v2/v3가 모두 terminal 상태가 된 뒤 v4가 시작된다.
-- v4 body에도 동일한 Event, userId, comparisonRunId만 포함된다.
+- v2, v3, v4 POST가 순서대로 시작된다.
+- 세 요청 body의 Event와 userId가 같다.
+- 앞 version이 실패해도 다음 version이 시작된다.
+- 어떤 body에도 `comparisonRunId`가 포함되지 않는다.
 - 각 version POST는 한 번만 호출된다.
 
 확인 증적:
@@ -535,7 +535,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 기대결과:
 
 - 각 version의 `status=success`와 data가 success로 판정된다.
-- `apiVersion`, `comparisonRunId`, Event lineage가 manifest와 일치한다.
+- `apiVersion`과 Event lineage가 manifest와 일치한다.
 - group ID, 제목, 요약, 설명, dimension 수, Scenario 수가 표시된다.
 - baseline, floor/ceiling/mixed 수가 표시된다.
 - elapsed time과 token usage가 표시된다.
@@ -605,7 +605,7 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 기대결과:
 
 - `POST /scenario-group-comparisons/judge/sync`가 한 번 호출된다.
-- 요청에는 동일 `comparisonRunId`, userId와 성공한 version/group ID가 포함된다.
+- 요청에는 userId와 성공한 version/group ID가 포함된다.
 - Event 정합성, LNG Dimension, floor/ceiling, mixed 품질이 version별로 표시된다.
 - 적용 가능한 기준은 score 1~5와 PASS/WARN/FAIL, 근거, 판단 이유를 가진다.
 - 각 Scenario의 verdict와 근거가 해당 Scenario card에 표시된다.
@@ -662,13 +662,13 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 입력:
 
 - Event 0건
-- Event 1건
 - Event 6건 이상
 
 기대결과:
 
-- 비교 실행이 비활성화된다.
-- `중복 없는 Event 2~5건` 안내가 표시된다.
+- Event 0건과 6건 이상에서는 비교 실행이 비활성화된다.
+- Event 1건에서는 비교 실행이 활성화된다.
+- `중복 없는 Event 1~5건` 안내가 표시된다.
 - API call이 발생하지 않는다.
 
 ### TC-M-E-002 중복 Event
@@ -691,13 +691,13 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - 성공한 Event detail은 유지된다.
 - 재조회는 GET에 대해서만 허용된다.
 
-### TC-M-E-004 comparisonRunId 공백/길이 초과
+### TC-M-E-004 comparison 식별자 비전송
 
 기대결과:
 
-- 공백-only와 255자 초과는 validation 오류다.
-- API request가 전송되지 않는다.
-- 기본 고유값 재생성 action을 제공한다.
+- 비교 식별자 입력 UI가 없다.
+- v2/v3/v4 create request body에 `comparisonRunId`가 없다.
+- 로컬 runId는 API 응답 무결성 판정에 사용하지 않는다.
 
 ### TC-M-E-006 v2 실패, v3 성공
 
@@ -777,13 +777,13 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 - 다른 version column에 잘못 배치하지 않는다.
 - raw response를 유지한다.
 
-### TC-M-E-013 comparisonRunId 불일치
+### TC-M-E-013 응답 Event 순서 불일치
 
 기대결과:
 
-- integrity FAIL이다.
+- Event lineage integrity FAIL이다.
 - 결과를 정상 비교에 포함하지 않는다.
-- manifest 값과 응답 값을 함께 표시한다.
+- manifest Event 순서와 응답 Event 순서를 함께 표시한다.
 
 ### TC-M-E-014 Event lineage 불일치
 
@@ -864,7 +864,6 @@ timeout/unknown인 create는 서버에서 완료되었을 수 있으므로 DB/AP
 
 입력:
 
-- 다른 comparisonRunId의 Scenario Group
 - 요청 apiVersion과 저장된 apiVersion 불일치
 - 다른 userId가 소유한 Scenario Group
 - Event lineage가 다른 Scenario Group
@@ -1049,11 +1048,11 @@ python tests/manual/test_multi_event_scenario_versions.py prepare \
   --timeout 1200
 ```
 
-이후 동일 manifest로 v2/v3 barrier 후 v4를 실행하고 report를 만든다.
+이후 동일 manifest로 v2→v3→v4를 순차 실행하고 report를 만든다.
 
 교차 확인:
 
-- manifest Event/userId/comparisonRunId
+- manifest Event/userId/로컬 runId
 - version별 request body
 - 실행 순서
 - Scenario/dimension 실제 값
@@ -1092,10 +1091,10 @@ manual report의 Agent Judge와 Backoffice Agent 평가 API는 동일한 Event/A
 
 ### v2/v3/v4
 
-- [ ] Event 2~5건만 선택된다.
-- [ ] comparisonRunId가 고유하고 실행 중 고정된다.
-- [ ] v2/v3는 동일 manifest로 병렬 실행된다.
-- [ ] v2/v3 terminal 이후 v4가 실행된다.
+- [ ] Event 1~5건만 선택된다.
+- [ ] 로컬 runId가 고유하고 실행 중 고정되며 API에 전송되지 않는다.
+- [ ] v2→v3→v4가 동일 manifest로 순차 실행된다.
+- [ ] 앞 version 실패 후에도 다음 version이 실행된다.
 - [ ] v2/v3/v4 request 조건이 동일하다.
 - [ ] 동일 version POST를 자동 재시도하지 않는다.
 - [ ] 부분 실패 결과가 보존된다.

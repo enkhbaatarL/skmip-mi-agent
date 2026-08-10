@@ -89,11 +89,11 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - 기존 `POST /scenario-groups`의 prepare 및 생성 graph를 동기 실행
   - Response: `CreateScenariosOut`
 - `POST /v1/scenario-groups/sync`
-  - 단일 `miEventId`, 선택 `comparisonRunId`
+  - 단일 `miEventId`
   - Response: version/strategy, Event, dimension lineage, 공통 table을 포함한
     `VersionedCreateScenariosOut`
 - `POST /v2/scenario-groups/sync`
-  - 중복 없는 `miEventIds` 2~5개와 필수 `comparisonRunId`
+  - 중복 없는 양의 정수 `miEventIds` 1~5개
   - Event별 원본 Template dimension 3~6개를 선택하고 key를
     `e{eventId}__{dimKey}`로 namespace한다.
   - v2 전용 compact response schema를 사용하며 v3/v4 상세 diagnostics와 lineage 필드를
@@ -102,14 +102,13 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - v2와 같은 요청 계약
   - Event 충격과 관련 상호작용을 3~6개 합성 dimension으로 구성한다.
 - `POST /v4/scenario-groups`
-  - 요청: `miEventIds` 2~5개, `userId`, 선택적 `comparisonRunId`
+  - 요청: 중복 없는 양의 정수 `miEventIds` 1~5개와 `userId`
   - Template 없이 Event 근거와 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
   - Scenario의 pressure/floor/ceiling은 JKM 기준이며, TTF/HH 특이성이
     명확한 경우에만 row의 `relatedMarkets`에 시장과 근거를 보조정보로 포함
   - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
 - `POST /v4/scenario-groups/sync`
-  - v4와 같은 요청 계약에 필수 `comparisonRunId`를 추가하고 테스트·비교용으로
-    완료 응답을 동기 반환
+  - v4와 같은 요청 계약으로 테스트·비교용 완료 응답을 동기 반환
   - `generationDiagnostics`에 Event 상호작용, covered/uncovered dimension,
     unsupported lever와 전체 parameter coverage 상태를 포함
 - `POST /scenario-groups/{scenarioGroupId}/validation/sync`
@@ -124,7 +123,7 @@ prepare 단계의 입력 오류, 권한 오류, 중복 생성 오류는 기존 e
 
 versioned sync endpoint의 생성 오류는
 `{"status":"error","message":"...","data":null}` 형태로 반환한다. v2/v3/v4
-성공 응답은 `apiVersion`, `generationStrategy`, `comparisonRunId`,
+성공 응답은 `apiVersion`, `generationStrategy`,
 `events`, `dimensionDefinitions`, `table`, `generationDiagnostics`를 포함한다.
 `events`는 요청 Event 순서를 유지한다. v2의 각
 `dimensionDefinitions[].sourceRef`는 `eventId`, `scenarioDimensionTemplateId`,

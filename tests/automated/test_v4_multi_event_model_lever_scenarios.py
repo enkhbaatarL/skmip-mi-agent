@@ -449,11 +449,15 @@ def _finalized() -> tuple[V4GenerationResult, object]:
     )
 
 
-def test_v4_request_requires_two_to_five_unique_events() -> None:
-    payload = V4MultiEventCreateScenariosIn(mi_event_ids=[101, 202], user_id=7)
-    assert payload.mi_event_ids == [101, 202]
+def test_v4_request_requires_one_to_five_unique_events() -> None:
+    payload = V4MultiEventCreateScenariosIn(mi_event_ids=[101], user_id=7)
+    assert payload.mi_event_ids == [101]
     with pytest.raises(ValueError):
         V4MultiEventCreateScenariosIn(mi_event_ids=[101, 101], user_id=7)
+    with pytest.raises(ValueError):
+        V4MultiEventCreateScenariosIn(mi_event_ids=[], user_id=7)
+    with pytest.raises(ValueError):
+        V4MultiEventCreateScenariosIn(mi_event_ids=[1, 2, 3, 4, 5, 6], user_id=7)
 
 
 def test_v4_sync_and_background_routes_are_registered() -> None:
@@ -979,7 +983,6 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
         impact_levers=_catalog(),
         impact_catalog_version="v1",
         impact_catalog_checksum="checksum-v1",
-        comparison_run_id="compare-v4-graph",
         user_id=7,
     )
     v4_flow_module.get_compiled_graph.cache_clear()

@@ -481,30 +481,37 @@ def _v3_generation_state() -> MultiEventGenerationState:
         ],
         api_version="v3",
         generation_strategy="multi_event_composite_dimensions",
-        comparison_run_id="compare-v3",
         user_id=7,
     )
 
 
-def test_multi_event_request_requires_two_to_five_unique_events() -> None:
+def test_multi_event_request_requires_one_to_five_unique_events() -> None:
     valid = MultiEventCreateScenariosIn.model_validate(
         {
-            "miEventIds": [1, 2, 3, 4, 5],
+            "miEventIds": [1],
             "userId": 10,
-            "comparisonRunId": "compare-1",
         },
     )
-    assert valid.mi_event_ids == [1, 2, 3, 4, 5]
+    assert valid.mi_event_ids == [1]
 
-    for event_ids in ([1], [1, 1], [1, 2, 3, 4, 5, 6]):
+    for event_ids in ([], [1, 1], [1, 2, 3, 4, 5, 6]):
         with pytest.raises(ValidationError):
             MultiEventCreateScenariosIn.model_validate(
                 {
                     "miEventIds": event_ids,
                     "userId": 10,
-                    "comparisonRunId": "compare-1",
                 },
             )
+
+
+def test_v3_single_event_prompt_forbids_interactions() -> None:
+    state = _v3_generation_state()
+    prompt = build_v3_analysis_design_user_prompt(
+        events=[state.events[0].model_dump()],
+        templates=[state.templates[0].model_dump()],
+    )
+
+    assert "입력 Event가 하나이므로 interactions는 빈 배열" in prompt
 
 
 @pytest.mark.parametrize(
@@ -521,7 +528,6 @@ def test_v2_v3_prepare_does_not_load_model_impact_levers(
     payload = MultiEventCreateScenariosIn(
         mi_event_ids=EVENT_IDS,
         user_id=7,
-        comparison_run_id=f"compare-{api_version}-isolation",
     )
     events = [
         EventPayload(mi_event_id=101, event_type_l2_id=8),
@@ -838,7 +844,6 @@ def test_v3_langgraph_uses_three_independent_llm_stages() -> None:
         ],
         api_version="v3",
         generation_strategy="multi_event_composite_dimensions",
-        comparison_run_id="compare-graph",
         user_id=7,
     )
 
@@ -1173,7 +1178,6 @@ def test_v2_langgraph_uses_deterministic_event_grounding_and_two_stage_calls() -
         ],
         api_version="v2",
         generation_strategy="multi_event_source_dimensions",
-        comparison_run_id="compare-v2-graph",
         user_id=7,
     )
 
@@ -2326,7 +2330,6 @@ def test_v3_compact_definitions_round_trip_through_persistence_and_sync_response
         request_usr_id=7,
         api_version="v3",
         generation_strategy="multi_event_composite_dimensions",
-        comparison_run_id="compare-compact",
         dimension_selected=[definition.dimension_id for definition in finalized.dimension_definitions],
         dimension_definitions=compact_definitions,
     )
@@ -2375,7 +2378,6 @@ def test_v3_compact_definitions_round_trip_through_persistence_and_sync_response
         "templates": templates,
         "api_version": "v3",
         "generation_strategy": "multi_event_composite_dimensions",
-        "comparison_run_id": "compare-compact",
         "user_id": 7,
     }
 
@@ -2423,7 +2425,6 @@ def test_v2_compact_contract_round_trips_through_persistence_and_sync_response()
         request_usr_id=7,
         api_version="v2",
         generation_strategy="multi_event_source_dimensions",
-        comparison_run_id="compare-v2-compact",
         dimension_selected=[definition.dimension_id for definition in finalized.dimension_definitions],
         dimension_definitions=compact_definitions,
     )
@@ -2470,7 +2471,6 @@ def test_v2_compact_contract_round_trips_through_persistence_and_sync_response()
         ],
         "api_version": "v2",
         "generation_strategy": "multi_event_source_dimensions",
-        "comparison_run_id": "compare-v2-compact",
         "user_id": 7,
     }
 
@@ -2959,8 +2959,6 @@ def test_mapping_approval_rejects_stale_version() -> None:
 def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() -> None:
     session = Mock()
     repository = Mock()
-    repository.fetch_all_by_comparison_run.return_value = []
-    repository.fetch_by_comparison_run.return_value = None
     repository.insert_group.return_value = 99
     repository.fetch_by_id.return_value = SimpleNamespace(
         scenario_group_id=99,
@@ -2976,7 +2974,7 @@ def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() ->
         stage="ready",
         api_version="v3",
         generation_strategy="multi_event_composite_dimensions",
-        comparison_run_id="compare-1",
+        comparison_run_id=None,
         template_checksum="aggregate",
         parameter_mapping_ready=False,
         dimension_definitions=[],
@@ -3017,13 +3015,13 @@ def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() ->
             templates=templates,
             api_version="v3",
             generation_strategy="multi_event_composite_dimensions",
-            comparison_run_id="compare-1",
             user_id=7,
         )
 
     inserted_group = repository.insert_group.call_args.args[0]
     assert inserted_group["mi_event_id"] is None
     assert inserted_group["event_type_l2_id"] is None
+    assert inserted_group["comparison_run_id"] is None
     assert group.mi_event_id is None
     assert [call.args[0]["mi_event_id"] for call in repository.insert_group_event.call_args_list] == EVENT_IDS
     assert [call.args[0]["template_checksum"] for call in repository.insert_group_event.call_args_list] == [
@@ -3033,16 +3031,30 @@ def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() ->
     session.commit.assert_called_once()
 
 
-def test_comparison_run_rejects_different_event_or_template_revision() -> None:
+def test_multi_event_group_does_not_lookup_comparison_run() -> None:
     session = Mock()
     repository = Mock()
-    repository.fetch_all_by_comparison_run.return_value = [
-        SimpleNamespace(scenario_group_id=55),
-    ]
-    repository.fetch_group_events.return_value = [
-        SimpleNamespace(mi_event_id=101, template_checksum="checksum-8"),
-        SimpleNamespace(mi_event_id=999, template_checksum="different"),
-    ]
+    repository.insert_group.return_value = 99
+    repository.fetch_by_id.return_value = SimpleNamespace(
+        scenario_group_id=99,
+        mi_event_id=None,
+        event_type_l2_id=None,
+        request_usr_id=7,
+        title="Multi-event scenario group (2 events)",
+        summary="복수 MI Event 공동 전제 시나리오",
+        description=None,
+        dimension_selected=[],
+        scenario_count=0,
+        status="creating",
+        stage="ready",
+        api_version="v2",
+        generation_strategy="multi_event_source_dimensions",
+        comparison_run_id=None,
+        template_checksum="aggregate",
+        parameter_mapping_ready=False,
+        dimension_definitions=[],
+        generation_diagnostics={},
+    )
     connection_module = ModuleType(
         "apps.common.configs.database.sync_database.connection",
     )
@@ -3057,10 +3069,6 @@ def test_comparison_run_rejects_different_event_or_template_revision() -> None:
         patch(
             "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
             return_value=repository,
-        ),
-        pytest.raises(
-            MIBaseError,
-            match="same events and template revisions",
         ),
     ):
         ScenarioGroupService().prepare_multi_event_group(
@@ -3080,11 +3088,11 @@ def test_comparison_run_rejects_different_event_or_template_revision() -> None:
             ],
             api_version="v2",
             generation_strategy="multi_event_source_dimensions",
-            comparison_run_id="compare-1",
             user_id=7,
         )
 
-    session.rollback.assert_called_once()
+    assert repository.insert_group.call_args.args[0]["comparison_run_id"] is None
+    session.commit.assert_called_once()
 
 
 def test_versioned_sync_and_mapping_routes_are_registered() -> None:

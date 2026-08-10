@@ -780,9 +780,9 @@ class V3AnalysisDesignResult(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    event_shocks: list[V3EventShock] = Field(min_length=2, max_length=5)
+    event_shocks: list[V3EventShock] = Field(min_length=1, max_length=5)
     interactions: list[EventInteraction]
-    template_dimension_selections: list[V3TemplateDimensionSelectionDraft] = Field(min_length=2, max_length=20)
+    template_dimension_selections: list[V3TemplateDimensionSelectionDraft] = Field(min_length=1, max_length=20)
 
 
 class V3DimensionDesignResult(ApiModel):

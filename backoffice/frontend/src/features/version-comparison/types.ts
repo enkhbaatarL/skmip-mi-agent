@@ -25,7 +25,6 @@ export interface ComparisonManifest {
   agentBaseUrl: string;
   userId: number;
   timeoutMs: number;
-  comparisonRunId: string;
   miEventIds: number[];
   selectedEvents: ManifestEventSnapshot[];
 }

@@ -46,15 +46,14 @@ def parse_args() -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    prepare = subparsers.add_parser("prepare", help="Select 2..5 Events and write the immutable run manifest.")
+    prepare = subparsers.add_parser("prepare", help="Select 1..5 Events and write the immutable run manifest.")
     _add_target_arguments(prepare)
     selection = prepare.add_mutually_exclusive_group(required=True)
-    selection.add_argument("--event-ids", type=int, nargs="+", help="Explicit, unique Event IDs (2..5).")
-    selection.add_argument("--event-count", type=int, help="Select this many Events (2..5) through GET /events.")
+    selection.add_argument("--event-ids", type=int, nargs="+", help="Explicit, unique Event IDs (1..5).")
+    selection.add_argument("--event-count", type=int, help="Select this many Events (1..5) through GET /events.")
     prepare.add_argument("--event-sort", choices=["latest", "oldest"], default="latest")
     prepare.add_argument("--keyword", help="Optional GET /events keyword, only with --event-count.")
     prepare.add_argument("--event-page-size", type=int, default=100)
-    prepare.add_argument("--comparison-run-id", help="Defaults to a unique generated ID.")
     prepare.add_argument("--batch-id", help="Defaults to timestamp plus a random suffix.")
     prepare.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     prepare.add_argument(
@@ -83,7 +82,7 @@ def parse_args() -> argparse.Namespace:
 
     orchestrate = subparsers.add_parser(
         "orchestrate",
-        help="Fallback without subagents: run v2/v3 concurrently, then v4.",
+        help="Run v2, v3, and v4 sequentially while preserving every result.",
     )
     orchestrate.add_argument("--manifest", type=Path, required=True)
     orchestrate.add_argument("--timeout", type=float, default=1200)
@@ -164,8 +163,8 @@ async def prepare(args: argparse.Namespace) -> Path:
 
     batch_id = args.batch_id or f"{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     versions = V4_ONLY_VERSIONS if args.v4_only else ALL_VERSIONS
-    comparison_run_prefix = "v4-only" if args.v4_only else "multi-event"
-    comparison_run_id = args.comparison_run_id or f"{comparison_run_prefix}-{batch_id}"
+    run_prefix = "v4-only" if args.v4_only else "multi-event"
+    run_id = f"{run_prefix}-{batch_id}"
     artifact_dir = (args.output_root / batch_id).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=False)
     selected_events_path = artifact_dir / "selected_events.json"
@@ -182,11 +181,11 @@ async def prepare(args: argparse.Namespace) -> Path:
     )
     manifest = {
         "schemaVersion": 1,
+        "runId": run_id,
         "batchId": batch_id,
         "createdAt": _now(),
         "baseUrl": base_url,
         "userId": target.user_id,
-        "comparisonRunId": comparison_run_id,
         "versions": list(versions),
         "eventIds": event_ids,
         "events": event_details,
@@ -236,7 +235,6 @@ async def run_version(args: argparse.Namespace) -> int:
     request_body: dict[str, Any] = {
         "miEventIds": manifest["eventIds"],
         "userId": manifest["userId"],
-        "comparisonRunId": manifest["comparisonRunId"],
     }
     url = f"{manifest['baseUrl']}/{version}/scenario-groups/sync"
     started_at = _now()
@@ -280,7 +278,7 @@ async def run_version(args: argparse.Namespace) -> int:
         artifact["outcome"] = "unknown"
         artifact["error"] = (
             f"{type(exc).__name__}: {exc}. POST 결과가 불명확하므로 동일 version을 재호출하지 말고 "
-            "API/DB에서 comparisonRunId 상태를 확인해야 합니다."
+            "API/DB에서 생성 상태를 확인해야 합니다."
         )
     except httpx.HTTPError as exc:
         artifact["transportStatus"] = "error"
@@ -301,35 +299,26 @@ async def orchestrate(args: argparse.Namespace) -> int:
         raise ValueError(msg)
     manifest_path = args.manifest.resolve()
     started_at = _now()
-    phase_one = await asyncio.gather(
-        run_version(argparse.Namespace(manifest=manifest_path, version="v2", timeout=args.timeout)),
-        run_version(argparse.Namespace(manifest=manifest_path, version="v3", timeout=args.timeout)),
-        return_exceptions=True,
-    )
-    phase_one_results = [
-        {"version": version, "exitCode": result if isinstance(result, int) else None, "error": None}
-        if isinstance(result, int)
-        else {"version": version, "exitCode": None, "error": f"{type(result).__name__}: {result}"}
-        for version, result in zip(("v2", "v3"), phase_one, strict=True)
-    ]
-    if not all(Path(manifest["artifacts"][version]).is_file() for version in ("v2", "v3")):  # noqa: ASYNC240
-        v4_result: int | None = None
-        v4_error = "v2/v3 artifact barrier not satisfied; v4 was not called."
-    else:
+    results: list[dict[str, Any]] = []
+    for version in ALL_VERSIONS:
         try:
-            v4_result = await run_version(
-                argparse.Namespace(manifest=manifest_path, version="v4", timeout=args.timeout),
+            exit_code = await run_version(
+                argparse.Namespace(manifest=manifest_path, version=version, timeout=args.timeout),
             )
-            v4_error = None
+            results.append({"version": version, "exitCode": exit_code, "error": None})
         except (TypeError, ValueError, FileNotFoundError, FileExistsError, httpx.HTTPError) as exc:
-            v4_result = None
-            v4_error = f"{type(exc).__name__}: {exc}"
+            results.append(
+                {
+                    "version": version,
+                    "exitCode": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
     orchestration = {
-        "mode": "async_fallback",
+        "mode": "sequential",
         "startedAt": started_at,
         "finishedAt": _now(),
-        "phaseOne": phase_one_results,
-        "phaseTwo": {"version": "v4", "exitCode": v4_result, "error": v4_error},
+        "steps": results,
     }
     orchestration_path = Path(
         manifest["artifacts"].get(
@@ -338,7 +327,7 @@ async def orchestrate(args: argparse.Namespace) -> int:
         ),
     )
     _write_json(orchestration_path, orchestration)
-    return 0 if all(item["exitCode"] == 0 for item in phase_one_results) and v4_result == 0 else 1
+    return 0 if all(item["exitCode"] == 0 for item in results) else 1
 
 
 async def report(args: argparse.Namespace) -> Path:
@@ -571,8 +560,8 @@ def _validate_prepare_args(args: argparse.Namespace) -> None:
         if args.keyword:
             msg = "--keyword can only be used with --event-count"
             raise ValueError(msg)
-        if not 2 <= len(args.event_ids) <= 5:
-            msg = "--event-ids must contain 2..5 IDs"
+        if not 1 <= len(args.event_ids) <= 5:
+            msg = "--event-ids must contain 1..5 IDs"
             raise ValueError(msg)
         if len(set(args.event_ids)) != len(args.event_ids):
             msg = "--event-ids must not contain duplicates"
@@ -580,14 +569,11 @@ def _validate_prepare_args(args: argparse.Namespace) -> None:
         if any(value <= 0 for value in args.event_ids):
             msg = "--event-ids must contain positive IDs"
             raise ValueError(msg)
-    elif not 2 <= args.event_count <= 5:
-        msg = "--event-count must be between 2 and 5"
+    elif not 1 <= args.event_count <= 5:
+        msg = "--event-count must be between 1 and 5"
         raise ValueError(msg)
     if not 1 <= args.event_page_size <= 100:
         msg = "--event-page-size must be between 1 and 100"
-        raise ValueError(msg)
-    if args.comparison_run_id is not None and not args.comparison_run_id.strip():
-        msg = "--comparison-run-id must not be blank"
         raise ValueError(msg)
 
 
@@ -598,7 +584,6 @@ def _load_manifest(path: Path) -> dict[str, Any]:
         "batchId",
         "baseUrl",
         "userId",
-        "comparisonRunId",
         "eventIds",
         "artifacts",
     }
@@ -609,10 +594,11 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if manifest["schemaVersion"] != 1:
         msg = f"Unsupported manifest schemaVersion={manifest['schemaVersion']}"
         raise ValueError(msg)
+    manifest.setdefault("runId", manifest.get("comparisonRunId") or manifest["batchId"])
     _manifest_versions(manifest)
     event_ids = manifest["eventIds"]
-    if not isinstance(event_ids, list) or not 2 <= len(event_ids) <= 5 or len(set(event_ids)) != len(event_ids):
-        msg = "Manifest eventIds must contain 2..5 unique IDs"
+    if not isinstance(event_ids, list) or not 1 <= len(event_ids) <= 5 or len(set(event_ids)) != len(event_ids):
+        msg = "Manifest eventIds must contain 1..5 unique IDs"
         raise ValueError(msg)
     return manifest
 
@@ -634,8 +620,6 @@ def _validate_version_scope(manifest: dict[str, Any], version: ApiVersion) -> No
     if version not in versions:
         msg = f"{version} is outside this manifest's execution scope: {list(versions)}"
         raise ValueError(msg)
-    if version == "v4" and versions != V4_ONLY_VERSIONS:
-        _require_v2_v3_barrier(manifest)
 
 
 def _normalize_response_for_judge(response: dict[str, Any]) -> dict[str, Any]:
@@ -650,13 +634,6 @@ def _normalize_response_for_judge(response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _require_v2_v3_barrier(manifest: dict[str, Any]) -> None:
-    missing = [version for version in ("v2", "v3") if not Path(manifest["artifacts"][version]).is_file()]
-    if missing:
-        msg = f"v4 requires completed v2/v3 artifacts; missing={missing}"
-        raise ValueError(msg)
-
-
 def _validate_version_response(
     response: dict[str, Any],
     manifest: dict[str, Any],
@@ -669,16 +646,13 @@ def _validate_version_response(
     if data.get("apiVersion") != version:
         msg = f"apiVersion mismatch: expected={version}, actual={data.get('apiVersion')}"
         raise ValueError(msg)
-    if data.get("comparisonRunId") != manifest["comparisonRunId"]:
-        msg = f"comparisonRunId mismatch: expected={manifest['comparisonRunId']}, actual={data.get('comparisonRunId')}"
-        raise ValueError(msg)
-    response_event_ids = {
+    response_event_ids = [
         int(_field(event, "miEventId", "mi_event_id"))
         for event in data.get("events", [])
         if isinstance(event, dict) and _field(event, "miEventId", "mi_event_id") is not None
-    }
-    if response_event_ids != set(manifest["eventIds"]):
-        msg = f"Event set mismatch: expected={sorted(manifest['eventIds'])}, actual={sorted(response_event_ids)}"
+    ]
+    if response_event_ids != manifest["eventIds"]:
+        msg = f"Event order mismatch: expected={manifest['eventIds']}, actual={response_event_ids}"
         raise ValueError(msg)
 
 

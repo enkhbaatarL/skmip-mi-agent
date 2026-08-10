@@ -126,14 +126,10 @@ describe("AppShell", () => {
     const v1EventId = screen.getByLabelText("miEventId");
     await user.type(v1EventId, "12345");
     await user.click(screen.getByRole("tab", { name: "v2/v3/v4 비교" }));
-    const comparisonRunId = screen.getByLabelText("comparisonRunId");
-    await user.clear(comparisonRunId);
-    await user.type(comparisonRunId, "comparison-only");
+    expect(screen.getByText("Event 1~5건 선택")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "v1 단일 이벤트" }));
 
     expect(screen.getByLabelText("miEventId")).toHaveValue("12345");
-    await user.click(screen.getByRole("tab", { name: "v2/v3/v4 비교" }));
-    expect(screen.getByLabelText("comparisonRunId")).toHaveValue("comparison-only");
   });
 
   it("shows field errors and blocks connection checks for invalid runtime input", async () => {

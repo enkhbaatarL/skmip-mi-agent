@@ -18,7 +18,6 @@ export function makeManifest(
     agentBaseUrl: "http://127.0.0.1:8001",
     userId: 10001,
     timeoutMs: 10_000,
-    comparisonRunId: "multi-event-test",
     miEventIds: [101, 202],
     selectedEvents: [],
     ...overrides
@@ -67,7 +66,6 @@ function makeDimension(
 export function makeVersionData(
   version: ApiVersion = "v2",
   options: {
-    comparisonRunId?: string;
     eventIds?: number[];
     dimensionCount?: number;
     generationStrategy?: GenerationStrategy;
@@ -96,7 +94,6 @@ export function makeVersionData(
     apiVersion: version,
     generationStrategy:
       options.generationStrategy ?? VERSION_STRATEGIES[version],
-    comparisonRunId: options.comparisonRunId ?? "multi-event-test",
     impactCatalogVersion: version === "v4" ? "catalog-1" : null,
     scenarioGroup: {
       scenarioGroupId: Number(version.slice(1)),
@@ -111,7 +108,6 @@ export function makeVersionData(
       stage: "ready",
       apiVersion: version,
       generationStrategy: VERSION_STRATEGIES[version],
-      comparisonRunId: options.comparisonRunId ?? "multi-event-test",
       impactCatalogVersion: version === "v4" ? "catalog-1" : null,
       impactCatalogChecksum: null,
       templateChecksum: null,

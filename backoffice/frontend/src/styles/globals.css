@@ -1348,23 +1348,6 @@ input[aria-invalid="true"] {
   padding: 22px;
 }
 
-.comparison-setup-grid {
-  display: grid;
-  grid-template-columns: minmax(300px, 1.2fr) minmax(240px, 0.8fr);
-  gap: 18px;
-}
-
-.run-id-field {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
-  align-items: end;
-}
-
-.run-id-field .field-error {
-  grid-column: 1 / -1;
-}
-
 .market-fieldset {
   min-width: 0;
   margin: 0;
@@ -2167,13 +2150,10 @@ input[aria-invalid="true"] {
     padding: 17px;
   }
 
-  .comparison-setup-grid,
-  .run-id-field,
   .manifest-grid {
     grid-template-columns: 1fr;
   }
 
-  .run-id-field .button,
   .manifest-wide,
   .comparison-reason-field {
     grid-column: auto;

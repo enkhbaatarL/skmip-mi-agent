@@ -57,7 +57,6 @@ class MultiEventGenerationState(BaseModel):
     templates: list[ScenarioPipelineTemplate] = Field(default_factory=list)
     api_version: Literal["v2", "v3"] = "v2"
     generation_strategy: str = ""
-    comparison_run_id: str | None = None
     user_id: int | None = None
 
     event_shocks: list[V2EventShock | V3EventShock] = Field(default_factory=list)
@@ -101,7 +100,6 @@ class V4MultiEventGenerationState(BaseModel):
     impact_levers: list[ModelImpactLeverPayload] = Field(default_factory=list)
     impact_catalog_version: str = ""
     impact_catalog_checksum: str = ""
-    comparison_run_id: str | None = None
     user_id: int | None = None
     analysis_as_of: str = ""
 

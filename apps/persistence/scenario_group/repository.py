@@ -125,37 +125,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         )
         return self.session.execute(stmt).scalars().first()
 
-    def fetch_by_comparison_run(
-        self,
-        comparison_run_id: str,
-        api_version: str,
-    ) -> MiScenarioGroupModel | None:
-        stmt = (
-            select(MiScenarioGroupModel)
-            .where(
-                MiScenarioGroupModel.comparison_run_id == comparison_run_id,
-                MiScenarioGroupModel.api_version == api_version,
-                MiScenarioGroupModel.del_yn == "N",
-            )
-            .order_by(MiScenarioGroupModel.scenario_group_id.desc())
-            .limit(1)
-        )
-        return self.session.execute(stmt).scalars().first()
-
-    def fetch_all_by_comparison_run(
-        self,
-        comparison_run_id: str,
-    ) -> list[MiScenarioGroupModel]:
-        stmt = (
-            select(MiScenarioGroupModel)
-            .where(
-                MiScenarioGroupModel.comparison_run_id == comparison_run_id,
-                MiScenarioGroupModel.del_yn == "N",
-            )
-            .order_by(MiScenarioGroupModel.scenario_group_id)
-        )
-        return list(self.session.execute(stmt).scalars().all())
-
     def insert_group(self, payload: dict[str, Any]) -> int:
         group = MiScenarioGroupModel(**payload)
         self.session.add(group)
@@ -180,7 +149,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "mod_usr_logn_id",
             "api_version",
             "generation_strategy",
-            "comparison_run_id",
             "impact_catalog_version",
             "impact_catalog_checksum",
             "template_checksum",
@@ -385,7 +353,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "stage": group.stage,
             "api_version": group.api_version or "v1",
             "generation_strategy": (group.generation_strategy or "single_event_template_dimensions"),
-            "comparison_run_id": group.comparison_run_id,
             "template_checksum": group.template_checksum,
             "parameter_mapping_ready": bool(group.parameter_mapping_ready),
             "dimension_definitions": group.dimension_definitions or [],

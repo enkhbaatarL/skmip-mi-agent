@@ -217,7 +217,6 @@ class TracingContextTest(unittest.TestCase):
                 session_id="42",
                 tags={
                     "api_version": "v3",
-                    "comparison_run_id": "compare-20260730-01",
                     "generation_strategy": "multi_event_composite_dimensions",
                 },
             )
@@ -236,7 +235,6 @@ class TracingContextTest(unittest.TestCase):
             captured["tags"],
             {
                 "api_version": "v3",
-                "comparison_run_id": "compare-20260730-01",
                 "generation_strategy": "multi_event_composite_dimensions",
                 "app_id": "scenario-group-agent",
                 "session_id": "42",

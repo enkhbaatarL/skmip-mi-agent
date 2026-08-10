@@ -10,7 +10,7 @@ Scenario Comparison Backoffice는 Scenario Group Agent의 sync API를 브라우�
    - 이벤트 1건으로 기존 시나리오 생성 파이프라인을 순차 실행한다.
    - 생성, validation, signpost, confirmation 결과를 단계별로 확인한다.
 2. v2/v3/v4 다중 이벤트 시나리오 비교
-   - 동일한 이벤트 2~5건으로 v2, v3, v4 생성 API를 실행한다.
+   - 동일한 이벤트 1~5건으로 v2, v3, v4 생성 API를 실행한다.
    - 버전별 dimension, Scenario, pressure band, lineage, 진단 정보와 비용/시간을 한 화면에서 비교한다.
 
 기존 Backoffice backend가 담당하던 callback 수신, 상태 중계, OAuth mock, SSE 기능은 더 이상 필요하지 않다. frontend는 Agent의 테스트용 sync API를 직접 호출한다.
@@ -113,7 +113,7 @@ Workspace A: v1 단일 이벤트
   - 단계별 요청/응답
 
 Workspace B: v2/v3/v4 비교
-  - Event 2~5건 선택
+  - Event 1~5건 선택
   - 비교 조건 고정
   - v2/v3 실행
   - v4 실행
@@ -314,15 +314,14 @@ v2/v3/v4 Scenario lifecycle은 create sync API까지만 실행한다. create가 
 - confirmation 실행 안 함
 - callback API 사용 안 함
 
-모든 버전은 동일한 Event 목록, userId, `comparisonRunId`를 사용한다.
+모든 버전은 동일한 Event 목록과 userId를 사용한다.
 
 ### 9.2 입력
 
-- 중복 없는 `miEventIds` 2~5개
+- 중복 없는 양의 정수 `miEventIds` 1~5개
 - `userId`
-- 고유 `comparisonRunId`
 
-`comparisonRunId`는 기본적으로 frontend가 고유값을 생성하며 실행 시작 후 변경할 수 없다.
+frontend는 산출물과 화면 상태를 묶기 위한 로컬 `runId`를 생성한다. `runId`는 create API나 DB에 전달하지 않는다.
 
 Event 선택 시 상세를 모두 조회하고 다음 조건을 manifest 형태로 고정한다.
 
@@ -330,7 +329,7 @@ Event 선택 시 상세를 모두 조회하고 다음 조건을 manifest 형태�
 - Event 상세 snapshot
 - Base URL
 - userId
-- comparisonRunId
+- 로컬 runId
 - 생성 시각
 
 ### 9.3 API 요청
@@ -352,8 +351,7 @@ POST /v3/scenario-groups/sync
 ```json
 {
   "miEventIds": [101, 202],
-  "userId": 10001,
-  "comparisonRunId": "multi-event-unique-id"
+  "userId": 10001
 }
 ```
 
@@ -366,8 +364,7 @@ POST /v4/scenario-groups/sync
 ```json
 {
   "miEventIds": [101, 202],
-  "userId": 10001,
-  "comparisonRunId": "multi-event-unique-id"
+  "userId": 10001
 }
 ```
 
@@ -379,7 +376,6 @@ POST /scenario-group-comparisons/judge/sync
 
 ```json
 {
-  "comparisonRunId": "multi-event-unique-id",
   "userId": 10001,
   "versions": [
     { "apiVersion": "v2", "scenarioGroupId": 345 },
@@ -389,18 +385,16 @@ POST /scenario-group-comparisons/judge/sync
 }
 ```
 
-품질 평가는 create 완료 후 사용자가 명시적으로 실행한다. 성공 version이 2개 이상일 때만 요청하며, 실패한 version은 요청에서 제외한다. 서버는 group 소유자, `apiVersion`, `comparisonRunId`, Event lineage를 다시 검증한다.
+품질 평가는 create 완료 후 사용자가 명시적으로 실행한다. 성공 version이 2개 이상일 때만 요청하며, 실패한 version은 요청에서 제외한다. 서버는 group 소유자, `apiVersion`, Event lineage를 다시 검증한다.
 
 ### 9.4 실행 순서와 재시도 정책
 
 1. 입력 manifest를 고정한다.
-2. v2와 v3를 병렬 실행한다.
-3. v2와 v3가 모두 성공, 실패 또는 불명 상태로 종료될 때까지 기다린다.
-4. v4를 실행한다.
+2. v2를 실행한다.
+3. 성공 여부와 관계없이 v3를 실행한다.
+4. 성공 여부와 관계없이 v4를 실행한다.
 5. 완료된 응답을 비교 화면에 반영한다.
 6. 사용자가 원하면 `품질 평가 실행`으로 성공 version 2~3개를 평가한다.
-
-v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생성되면 같은 `comparisonRunId`의 lineage 검증과 충돌할 수 있다.
 
 동일 version의 POST는 자동 재시도하지 않는다.
 
@@ -414,9 +408,9 @@ v4를 v2/v3와 동시에 실행하지 않는다. v4 저장 결과가 먼저 생�
 
 | Version | 입력 | 생성 전략 | 기대 dimension |
 | --- | --- | --- | --- |
-| v2 | Event 2~5건 | Event별 원본 Template dimension을 namespace하여 사용 | 3~6개 |
-| v3 | Event 2~5건 | Event 충격과 상호작용을 합성 dimension으로 구성 | 3~6개 |
-| v4 | Event 2~5건 | Event 사실과 모델 영향 레버 기반 dimension 구성 | 3~6개 |
+| v2 | Event 1~5건 | Event별 원본 Template dimension을 namespace하여 사용 | 3~6개 |
+| v3 | Event 1~5건 | Event 충격과 상호작용을 합성 dimension으로 구성 | 3~6개 |
+| v4 | Event 1~5건 | Event 사실과 모델 영향 레버 기반 dimension 구성 | 3~6개 |
 
 v2/v3/v4의 `pressureTarget`은 항상 `JKM`이며 `pressureBand`와 `pressureRationale`도
 JKM 가격 압력 기준이다. v4의 `relatedMarkets`는 TTF/HH 관련 시장과 근거를 담는
@@ -431,7 +425,6 @@ JKM 가격 압력 기준이다. v4의 `relatedMarkets`는 TTF/HH 관련 시장�
 - response `status=success`
 - response `data` 존재
 - `apiVersion`이 요청 version과 일치
-- `comparisonRunId`가 manifest와 일치
 - 입력 Event lineage가 manifest와 일치
 
 성공 version이 2개 미만이면 비교 결론은 `판정 불가`로 표시한다.
@@ -440,9 +433,8 @@ JKM 가격 압력 기준이다. v4의 `relatedMarkets`는 TTF/HH 관련 시장�
 
 #### 입력 Event 영역
 
-- 선택한 Event 2~5건을 카드 또는 table로 표시
+- 선택한 Event 1~5건을 카드 또는 table로 표시
 - Event 제목, 요약, Event Type, 시장 영향 표시
-- comparisonRunId 표시 및 복사
 
 #### 실행 상태 영역
 
@@ -628,7 +620,7 @@ frontend는 실제 Event와 API 응답만 사용해 `comparison_report.md`의 �
 - 1,200초 이상 설정 가능한 timeout
 - 긴 JSON을 다룰 수 있는 접기/검색/복사 기능
 - 넓은 Scenario table의 가로 스크롤
-- 2~5개 Event 및 3개 version 비교에 대응하는 반응형 layout
+- 1~5개 Event 및 3개 version 비교에 대응하는 반응형 layout
 - 비교 중 다른 workspace로 이동해도 실행 상태 유지
 - 단위 테스트 가능한 request builder와 response 판정 함수
 
@@ -684,9 +676,9 @@ backoffice/frontend/src/
 
 ### 14.3 v2/v3/v4
 
-- 중복 없는 Event 2~5건을 선택할 수 있다.
-- 동일 Event, userId, comparisonRunId를 세 version에 사용한다.
-- v2와 v3 종료 후에만 v4를 실행한다.
+- 중복 없는 Event 1~5건을 선택할 수 있다.
+- 동일 Event와 userId를 세 version에 사용한다.
+- v2, v3, v4를 순서대로 실행하며 앞 버전 실패 후에도 다음 버전을 실행한다.
 - 각 version POST는 정확히 한 번만 호출된다.
 - timeout은 unknown으로 표시되고 자동 재시도되지 않는다.
 - 한 version이 실패해도 다른 결과를 확인하고 export할 수 있다.

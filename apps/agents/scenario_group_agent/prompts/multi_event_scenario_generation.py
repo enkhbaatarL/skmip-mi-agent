@@ -88,7 +88,7 @@ V3_STRATEGY_PROMPT = """\
 
 
 V3_ANALYSIS_SYSTEM_PROMPT = """\
-당신은 복수의 MI Event를 함께 분석해 관련 Template dimension 후보를 선별하는 전문가입니다.
+당신은 하나 이상의 MI Event를 분석해 관련 Template dimension 후보를 선별하는 전문가입니다.
 
 - Event Context는 현재 사건의 권위 있는 사실이며 Template은 해석을 돕는 참고 지식입니다.
 - Event별 핵심 충격과 예상 JKM 가격 방향을 eventShock 한 문장으로 요약합니다.
@@ -324,6 +324,11 @@ def build_v3_analysis_design_user_prompt(
         if validation_feedback
         else ""
     )
+    interaction_rule = (
+        "- 입력 Event가 하나이므로 interactions는 빈 배열로 출력하십시오.\n"
+        if len(events) == 1
+        else "- 실제로 관련된 서로 다른 Event만 interactions로 연결하십시오.\n"
+    )
     return (
         "## Selection Rules\n"
         "- relevanceType은 direct_event_fact, lng_impact_path, interaction_driver 중 하나입니다.\n"
@@ -337,6 +342,7 @@ def build_v3_analysis_design_user_prompt(
         "## Output\n"
         "- 입력 Event마다 eventShock을 정확히 하나씩 출력하십시오.\n"
         "- interactions와 templateDimensionSelections를 출력하십시오.\n"
+        f"{interaction_rule}"
         "- Event별 templateDimensionSelections를 1~4개 선택하십시오.\n"
         "- 후보에는 eventId, scenarioDimensionTemplateId, dimKey, relevanceType, "
         "observedBasis, selectionRationale만 출력하십시오.\n"

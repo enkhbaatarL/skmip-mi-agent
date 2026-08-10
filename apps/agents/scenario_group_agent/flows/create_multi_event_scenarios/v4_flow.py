@@ -94,7 +94,6 @@ def prepare_v4_multi_event_scenarios(
         events=[event.model_dump() for event in ordered_events],
         impact_catalog_version=catalog_version,
         impact_catalog_checksum=catalog_checksum,
-        comparison_run_id=payload.comparison_run_id,
         user_id=payload.user_id,
     )
     return {
@@ -103,7 +102,6 @@ def prepare_v4_multi_event_scenarios(
         "impact_levers": impact_levers,
         "impact_catalog_version": catalog_version,
         "impact_catalog_checksum": catalog_checksum,
-        "comparison_run_id": payload.comparison_run_id,
         "user_id": payload.user_id,
         "analysis_as_of": _analysis_as_of(),
     }
@@ -167,7 +165,6 @@ async def run_v4_multi_event_scenarios_inline(
         data=VersionedCreateScenariosData(
             api_version="v4",
             generation_strategy=V4_GENERATION_STRATEGY,
-            comparison_run_id=final_state.comparison_run_id,
             impact_catalog_version=final_state.impact_catalog_version,
             scenario_group=table_data.scenario_group,
             events=final_state.events,
@@ -211,11 +208,6 @@ async def run_v4_multi_event_scenarios_background(
         tags={
             "api_version": "v4",
             "generation_strategy": V4_GENERATION_STRATEGY,
-            **(
-                {"comparison_run_id": str(prepared["comparison_run_id"])}
-                if prepared["comparison_run_id"] is not None
-                else {}
-            ),
         },
     )
 

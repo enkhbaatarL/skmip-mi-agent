@@ -1,11 +1,10 @@
-import { CheckCircle2, Clipboard, LockKeyhole } from "lucide-react";
+import { CheckCircle2, LockKeyhole } from "lucide-react";
 import type { EventDetail } from "../../domain/apiTypes";
 import type { RuntimeSnapshot } from "../../domain/runtime";
 
 interface ManifestSummaryProps {
   runtime: RuntimeSnapshot;
   selectedEvents: EventDetail[];
-  comparisonRunId: string;
   locked: boolean;
   canExecute: boolean;
   onExecute: () => void;
@@ -14,7 +13,6 @@ interface ManifestSummaryProps {
 export function ManifestSummary({
   runtime,
   selectedEvents,
-  comparisonRunId,
   locked,
   canExecute,
   onExecute
@@ -48,27 +46,12 @@ export function ManifestSummary({
           <dt>Timeout</dt>
           <dd>{runtime.timeoutMs.toLocaleString()} ms</dd>
         </div>
-        <div className="manifest-wide">
-          <dt>comparisonRunId</dt>
-          <dd className="copy-value">
-            <code>{comparisonRunId || "입력 필요"}</code>
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="comparisonRunId 복사"
-              disabled={!comparisonRunId}
-              onClick={() => void navigator.clipboard.writeText(comparisonRunId)}
-            >
-              <Clipboard aria-hidden="true" size={16} />
-            </button>
-          </dd>
-        </div>
       </dl>
 
       <div className="manifest-events">
         <h3>Ordered Events · {selectedEvents.length}건</h3>
         {selectedEvents.length === 0 ? (
-          <p className="empty-hint">중복 없는 Event 2~5건을 선택하세요.</p>
+          <p className="empty-hint">중복 없는 Event 1~5건을 선택하세요.</p>
         ) : (
           <ol>
             {selectedEvents.map((event) => (
@@ -89,7 +72,7 @@ export function ManifestSummary({
       <div className="manifest-actions">
         <p>
           {!canExecute && !locked
-            ? "Event 2~5건과 유효한 comparisonRunId가 필요합니다."
+            ? "Event 1~5건을 선택해야 합니다."
             : "각 version POST는 이 실행에서 정확히 한 번만 전송됩니다."}
         </p>
         <button

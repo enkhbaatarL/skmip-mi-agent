@@ -12,12 +12,13 @@ from tests.manual.multi_event_comparison.models import ComparisonJudgment
 # performs no model call; the Codex or Claude instance executing the skill
 # writes a schema-conformant judgment.
 
-PROMPT_VERSION = "v4-agent-runtime-relative"
+PROMPT_VERSION = "v5-agent-runtime-relative-coverage-neutral"
 
 CRITERIA = {
     "event_consistency": "Supplied events와 모순이 없고 인과 근거가 있는지 평가한다.",
     "lng_dimension_quality": (
-        "LNG 가격 관련 공급·수요·무역·시점·회복·완화·상호작용 driver가 유용한 dimension으로 반영됐는지 평가한다."
+        "LNG 가격 관련 공급·수요·무역·시점·회복·완화·상호작용 driver가 유용한 dimension으로 반영됐는지 평가한다. "
+        "현재 활성 모델 파라미터 catalog의 coverage 자체는 dimension 품질 점수에 반영하지 않는다."
     ),
     "floor_ceiling_quality": (
         "floor와 ceiling이 단순 label이 아니라 실제 cells와 pressure rationale의 일관된 feasible 극단값인지 평가한다. "
@@ -72,6 +73,18 @@ def build_agent_judge_input(evidence: dict[str, Any]) -> dict[str, Any]:
                 "Do not penalize the absence of an optional mixed scenario by itself; judge the grounding only "
                 "when mixed exists, and penalize absence only for a material spectrum gap demonstrated by the "
                 "supplied evidence."
+            ),
+            (
+                "Treat coverageStatus=partial|none, unsupportedLevers, and unsupportedLeverDetails only as "
+                "non-scoring capability warnings caused by the currently active model-parameter catalog. Do not "
+                "lower criterion scores or verdicts, pairwise outcomes, bestVersions, qualityRecommendation, or "
+                "practicalRecommendation solely because full parameter coverage is unavailable. Preserve the "
+                "limitation in weaknesses or recommendation tradeoffs."
+            ),
+            (
+                "Do not interpret parameterMappingReady=true as full parameter coverage. Penalize only an "
+                "independent quality defect, such as missing Event lineage, incoherent or duplicate dimensions, "
+                "a false executable-support claim, or contradictory or missing coverage diagnostics."
             ),
             (
                 "Treat absolute criteria scores as eligibility and condition checks, not as the sole relative "

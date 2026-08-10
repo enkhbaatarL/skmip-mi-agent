@@ -24,7 +24,7 @@ function deferred<T>() {
 }
 
 describe("multi-event comparison orchestration", () => {
-  it("starts v2/v3 in parallel and does not invoke v4 until both settle", async () => {
+  it("runs v2, v3, and v4 sequentially with the same request", async () => {
     const pending = {
       v2: deferred<ApiCallResult<VersionedCreateScenariosOut>>(),
       v3: deferred<ApiCallResult<VersionedCreateScenariosOut>>(),
@@ -38,15 +38,12 @@ describe("multi-event comparison orchestration", () => {
     const manifest = makeManifest();
 
     const execution = runComparison(client, manifest);
-    expect(request).toHaveBeenCalledTimes(2);
-    expect(request.mock.calls.map(([path]) => path)).toEqual([
-      "/v2/scenario-groups/sync",
-      "/v3/scenario-groups/sync"
-    ]);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0][0]).toBe("/v2/scenario-groups/sync");
 
     pending.v2.resolve(makeApiResult(makeResponse("v2")));
-    await Promise.resolve();
-    expect(request).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request.mock.calls[1][0]).toBe("/v3/scenario-groups/sync");
 
     pending.v3.resolve(makeApiResult(makeResponse("v3")));
     await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(3));
@@ -63,10 +60,34 @@ describe("multi-event comparison orchestration", () => {
     );
     expect(v2Body).toEqual(v3Body);
     expect(v4Body).toEqual(v2Body);
+    expect(v2Body).toEqual({
+      miEventIds: [101, 202],
+      userId: 10001
+    });
 
     pending.v4.resolve(makeApiResult(makeResponse("v4")));
     const results = await execution;
     expect(results.v2.status).toBe("fulfilled");
+    expect(results.v3.status).toBe("fulfilled");
+    expect(results.v4.status).toBe("fulfilled");
+  });
+
+  it("continues with later versions after an earlier version rejects", async () => {
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("v2 failed"))
+      .mockResolvedValueOnce(makeApiResult(makeResponse("v3")))
+      .mockResolvedValueOnce(makeApiResult(makeResponse("v4")));
+    const client = { request } as unknown as Pick<AgentClient, "request">;
+
+    const results = await runComparison(client, makeManifest());
+
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      "/v2/scenario-groups/sync",
+      "/v3/scenario-groups/sync",
+      "/v4/scenario-groups/sync"
+    ]);
+    expect(results.v2.status).toBe("rejected");
     expect(results.v3.status).toBe("fulfilled");
     expect(results.v4.status).toBe("fulfilled");
   });

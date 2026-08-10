@@ -58,16 +58,12 @@ export function hasVersionRun(
 function validateManifest(manifest: ComparisonManifest): void {
   const ids = manifest.miEventIds;
   if (
-    ids.length < 2 ||
+    ids.length < 1 ||
     ids.length > 5 ||
     new Set(ids).size !== ids.length ||
     ids.some((id) => !Number.isSafeInteger(id) || id <= 0)
   ) {
-    throw new Error("miEventIds는 중복 없는 양의 정수 2~5개여야 합니다.");
-  }
-  const comparisonRunId = manifest.comparisonRunId.trim();
-  if (!comparisonRunId || comparisonRunId.length > 255) {
-    throw new Error("comparisonRunId는 공백이 아닌 255자 이하여야 합니다.");
+    throw new Error("miEventIds는 중복 없는 양의 정수 1~5개여야 합니다.");
   }
 }
 
@@ -77,8 +73,7 @@ export function buildVersionRequest(
 ): MultiEventCreateScenariosRequest {
   const common: MultiEventCreateScenariosRequest = {
     miEventIds: [...manifest.miEventIds],
-    userId: manifest.userId,
-    comparisonRunId: manifest.comparisonRunId
+    userId: manifest.userId
   };
   return common;
 }
@@ -160,11 +155,13 @@ export async function runComparison(
     }
   };
 
-  const [v2, v3] = await Promise.allSettled([
-    execute("v2"),
-    execute("v3")
-  ]);
-  const v4 = await Promise.allSettled([execute("v4")]);
-
-  return { v2, v3, v4: v4[0] };
+  const results = {} as Record<
+    ApiVersion,
+    PromiseSettledResult<JudgedVersionResult>
+  >;
+  for (const version of ["v2", "v3", "v4"] as const) {
+    const [result] = await Promise.allSettled([execute(version)]);
+    results[version] = result;
+  }
+  return results;
 }

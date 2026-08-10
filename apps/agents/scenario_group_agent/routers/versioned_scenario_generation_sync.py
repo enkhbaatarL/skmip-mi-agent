@@ -62,7 +62,6 @@ async def create_v1_scenarios_sync(
     prepared = prepare_create_scenarios(
         payload.mi_event_id,
         payload.user_id,
-        payload.comparison_run_id,
     )
     try:
         output = await run_create_scenarios_inline(
@@ -92,7 +91,6 @@ async def create_v1_scenarios_sync(
             data=VersionedCreateScenariosData(
                 api_version="v1",
                 generation_strategy="single_event_template_dimensions",
-                comparison_run_id=payload.comparison_run_id,
                 scenario_group=output.scenario_group,
                 events=[event],
                 dimension_definitions=definitions,
@@ -111,7 +109,7 @@ async def create_v1_scenarios_sync(
 @router.post(
     "/v2/scenario-groups/sync",
     response_model=V2CreateScenariosOut,
-    summary="v2 다중 이벤트 원본 dimension 시나리오 생성",
+    summary="v2 1~5개 이벤트 원본 dimension 시나리오 생성",
 )
 async def create_v2_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
@@ -125,7 +123,7 @@ async def create_v2_scenarios_sync(
 @router.post(
     "/v3/scenario-groups/sync",
     response_model=VersionedCreateScenariosOut,
-    summary="v3 다중 이벤트 합성 dimension 시나리오 생성",
+    summary="v3 1~5개 이벤트 합성 dimension 시나리오 생성",
 )
 async def create_v3_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
@@ -136,7 +134,7 @@ async def create_v3_scenarios_sync(
 @router.post(
     "/v4/scenario-groups/sync",
     response_model=VersionedCreateScenariosOut,
-    summary="v4 다중 이벤트 모델 영향 레버 시나리오 생성",
+    summary="v4 1~5개 이벤트 모델 영향 레버 시나리오 생성",
 )
 async def create_v4_scenarios_sync(
     payload: V4MultiEventCreateScenariosSyncIn,
@@ -156,11 +154,6 @@ async def create_v4_scenarios_sync(
             tags={
                 "api_version": "v4",
                 "generation_strategy": V4_GENERATION_STRATEGY,
-                **(
-                    {"comparison_run_id": str(prepared["comparison_run_id"])}
-                    if prepared["comparison_run_id"] is not None
-                    else {}
-                ),
             },
         )
         with mlflow_trace_context(trace_context):
@@ -205,7 +198,6 @@ async def _create_multi_event_scenarios_sync(
             ),
             tags={
                 "api_version": api_version,
-                "comparison_run_id": str(prepared["comparison_run_id"]),
                 "generation_strategy": str(prepared["generation_strategy"]),
             },
         )

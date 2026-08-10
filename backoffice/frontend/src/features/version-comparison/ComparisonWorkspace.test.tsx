@@ -80,12 +80,11 @@ describe("ComparisonWorkspace", () => {
         if (versionMatch) {
           const version = versionMatch[1] as "v2" | "v3" | "v4";
           postPaths.push(version);
-          const requestBody = JSON.parse(String(init?.body));
-          return response(
-            makeResponse(version, {
-              comparisonRunId: requestBody.comparisonRunId
-            })
-          );
+          expect(JSON.parse(String(init?.body))).toEqual({
+            miEventIds: [101],
+            userId: 10001
+          });
+          return response(makeResponse(version, { eventIds: [101] }));
         }
         return response({
           rows: [],
@@ -114,7 +113,7 @@ describe("ComparisonWorkspace", () => {
 
     await user.click(screen.getByRole("button", { name: "ID 직접 입력" }));
     const eventIdInput = screen.getByLabelText("miEventId");
-    for (const id of ["101", "202"]) {
+    for (const id of ["101"]) {
       await user.clear(eventIdInput);
       await user.type(eventIdInput, id);
       await user.click(
@@ -124,12 +123,8 @@ describe("ComparisonWorkspace", () => {
         name: `${id} Event 선택 해제`
       });
     }
-    const runIdInput = screen.getByLabelText("comparisonRunId");
-    await user.clear(runIdInput);
-    await user.type(runIdInput, "multi-event-ui-test");
     await user.click(screen.getByRole("button", { name: "비교 실행" }));
 
-    expect(runIdInput).toBeDisabled();
     expect(eventIdInput).toBeDisabled();
     await waitFor(() => expect(postPaths).toEqual(["v2", "v3", "v4"]));
     await waitFor(() =>

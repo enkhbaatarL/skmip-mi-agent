@@ -15,7 +15,6 @@ import type {
 } from "../../domain/apiTypes";
 import { buildComparisonExportBundle } from "../../domain/exportBundle";
 import type { RuntimeSnapshot } from "../../domain/runtime";
-import { ComparisonSetup, generateComparisonRunId, validateComparisonRunId } from "./ComparisonSetup";
 import { DiagnosticsComparison } from "./DiagnosticsComparison";
 import { DimensionComparison } from "./DimensionComparison";
 import { ManifestSummary } from "./ManifestSummary";
@@ -95,9 +94,6 @@ export function ComparisonWorkspace({
   const [selectedEvents, setSelectedEvents] = useState<EventDetail[]>(() =>
     restoredEvents(restoredRun)
   );
-  const [comparisonRunId, setComparisonRunId] = useState(
-    () => restoredRun?.manifest.comparisonRunId ?? generateComparisonRunId()
-  );
   const [run, setRun] = useState<ComparisonRunState | undefined>(restoredRun);
   const [activeTab, setActiveTab] = useState<ResultTab>("overview");
   const controllers = useRef<Partial<Record<ApiVersion, AbortController>>>({});
@@ -126,10 +122,9 @@ export function ComparisonWorkspace({
   const selectedIds = selectedEvents.map((event) => event.miEventId);
   const canExecute =
     Boolean(context) &&
-    selectedIds.length >= 2 &&
+    selectedIds.length >= 1 &&
     selectedIds.length <= 5 &&
-    new Set(selectedIds).size === selectedIds.length &&
-    !validateComparisonRunId(comparisonRunId);
+    new Set(selectedIds).size === selectedIds.length;
 
   useEffect(() => {
     onRunLockChange(comparisonRunLocked);
@@ -159,7 +154,6 @@ export function ComparisonWorkspace({
       agentBaseUrl: context.runtime.agentBaseUrl,
       userId: context.runtime.userId,
       timeoutMs: context.runtime.timeoutMs,
-      comparisonRunId: comparisonRunId.trim(),
       miEventIds: [...selectedIds],
       selectedEvents: selectedEvents.map((event) => ({
         miEventId: event.miEventId,
@@ -287,7 +281,7 @@ export function ComparisonWorkspace({
     );
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `comparison-${run.manifest.comparisonRunId}.json`;
+    anchor.download = `comparison-${run.manifest.runId}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -297,7 +291,6 @@ export function ComparisonWorkspace({
     controllers.current = {};
     clearComparisonRun();
     setRun(undefined);
-    setComparisonRunId(generateComparisonRunId());
     setActiveTab("overview");
   }
 
@@ -321,8 +314,7 @@ export function ComparisonWorkspace({
           <p className="eyebrow">Workspace B</p>
           <h2 id="comparison-workspace-title">v2/v3/v4 다중 Event 비교</h2>
           <p>
-            동일 manifest로 v2/v3를 병렬 실행하고 barrier 이후 v4를 한 번
-            실행합니다.
+            동일한 Event 순서로 v2, v3, v4를 각각 한 번씩 순차 실행합니다.
           </p>
         </div>
         {run?.completedAt && (
@@ -345,16 +337,9 @@ export function ComparisonWorkspace({
         locked={inputsLocked}
         onChange={setSelectedEvents}
       />
-      <ComparisonSetup
-        comparisonRunId={comparisonRunId}
-        locked={inputsLocked}
-        onComparisonRunIdChange={setComparisonRunId}
-        onRegenerate={() => setComparisonRunId(generateComparisonRunId())}
-      />
       <ManifestSummary
         runtime={run?.runtime ?? context.runtime}
         selectedEvents={selectedEvents}
-        comparisonRunId={comparisonRunId}
         locked={inputsLocked}
         canExecute={canExecute}
         onExecute={() => void executeComparison()}
