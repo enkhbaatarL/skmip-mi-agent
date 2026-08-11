@@ -224,6 +224,8 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 `--v4-only` manifest는 `versions=["v4"]`, `executionMode="v4-only"`를 고정한다.
 이 manifest에서는 v2/v3 실행을 거부하며 v4는 다른 version 산출물 없이 독립 실행한다.
 나중에 v2/v3/v4 비교가 필요하면 기존 manifest를 재사용하지 말고 새 `prepare` batch를 만든다.
+v4-only의 생성 Group은 자동 삭제하지 않는다. 버전별 생성 직후 soft delete는
+v2/v3/v4 비교 manifest에만 적용한다.
 
 `--quality-check true`는 v4 결정적 품질검사를 실행하지만 비교 대상이 없으므로 Agent Judge
 순위, 우수 version, 품질·실용 추천은 만들지 않는다. `false`이면 API 결과와 실제 Scenario
@@ -231,7 +233,10 @@ python tests/manual/test_multi_event_scenario_versions.py report \
 
 ## Multi-Event v2/v3/v4 비교
 
-`tests/manual/test_multi_event_scenario_versions.py`를 `prepare`, `run-version`, `report` 단계로 실행한다. create API만 비교하고 validation, signpost, confirmation을 실행하지 않는다.
+`tests/manual/test_multi_event_scenario_versions.py`를 `prepare`, `orchestrate`, `report` 단계로 실행한다.
+create API만 비교하고 validation, signpost, confirmation은 실행하지 않는다. 비교 실행은
+`v2 생성 → v2 Group soft delete → v3 생성 → v3 Group soft delete → v4 생성 → v4 Group soft delete`
+순서를 고정한다.
 
 ### 품질검사 여부 확인
 
@@ -270,7 +275,13 @@ Docker의 기존 Gunicorn 3-worker 기본 설정은 변경하지 않는다. 기�
 
 키워드 선택의 기본 정렬은 `latest`로 둔다. 이벤트 상세를 수집하고 동일한 이벤트 목록과 `userId`, 로컬 `runId`를 manifest에 고정한다. `runId`는 API나 DB에 전달하지 않고 로컬 산출물을 묶는 용도로만 사용한다. v4도 단일 `targetMarket`을 입력받지 않으며 모든 Scenario의 pressure band는 글로벌 LNG 기준이다. 지역 가격 허브 관련성이 명확한 v4 Scenario만 응답 row의 `relatedMarkets`에 시장과 근거를 선택적 보조정보로 포함한다.
 
-선택된 이벤트에 연결된 기존 활성 Scenario Group은 버전 실행 전에 기본적으로 모두 soft delete한다. 기존 그룹을 보존해야 하는 예외적인 실행에만 `prepare --no-delete-existing`을 사용한다. 활성 그룹이 있으면 `--admin-token` 또는 `SCENARIO_GROUP_ADMIN_TOKEN`이 필요하다. 실행기는 이벤트별 `GET /scenario-groups?includeDeleted=false&miEventId=...` 결과에서 그룹 ID를 중복 제거하고, 각 그룹을 `DELETE /scenario-groups/{scenarioGroupId}`로 한 번씩 삭제한다. 삭제는 v2/v3/v4 실행 전에 한 번만 수행하며, v2나 v3가 이번 비교에서 새로 만든 그룹을 뒤 버전 실행 전에 삭제하지 않는다. 삭제 결과는 manifest의 `preRunCleanup`과 `existing_groups_soft_delete.json`에 기록한다.
+선택된 이벤트에 연결된 기존 활성 Scenario Group은 버전 실행 전에 기본적으로 모두 soft delete한다. 기존 그룹을 보존해야 하는 예외적인 실행에만 `prepare --no-delete-existing`을 사용한다. 활성 그룹이 있으면 `--admin-token` 또는 `SCENARIO_GROUP_ADMIN_TOKEN`이 필요하다. 실행기는 이벤트별 `GET /scenario-groups?includeDeleted=false&miEventId=...` 결과에서 그룹 ID를 중복 제거하고, 각 그룹을 `DELETE /scenario-groups/{scenarioGroupId}`로 한 번씩 삭제한다. 사전 삭제 결과는 manifest의 `preRunCleanup`과 `existing_groups_soft_delete.json`에 기록한다.
+
+비교 중에는 성공한 각 version 응답의 정확한 `data.scenarioGroup.scenarioGroupId`만 즉시 soft delete한다.
+삭제 전에 create 응답 JSON을 먼저 저장하고, 삭제 응답은 `<version>_soft_delete.json`과
+create artifact의 `postRunCleanup`에 함께 저장한다. 관리자 토큰이 없으면 비멱등 create POST를
+호출하기 전에 중단한다. `prepare --no-delete-existing`은 사전 그룹 보존만 뜻하며 이번 비교가
+새로 생성한 v2/v3/v4 Group의 사후 삭제를 끄지 않는다.
 
 예:
 
@@ -289,27 +300,34 @@ prepare가 출력한 batch/manifest 경로를 이후 실행 단계에 동일하�
 
 ### 버전 실행 순서
 
-1. v2 `run-version`을 실행한다.
-2. 성공 여부와 관계없이 v3 `run-version`을 실행한다.
-3. 성공 여부와 관계없이 v4 `run-version`을 실행한다.
-4. 세 결과를 모아 `report`를 실행한다.
+1. v2 `run-version`으로 생성하고 성공 응답의 Group을 즉시 soft delete한다.
+2. v2 삭제 성공을 확인한 뒤 v3를 생성하고 즉시 soft delete한다.
+3. v3 삭제 성공을 확인한 뒤 v4를 생성하고 즉시 soft delete한다.
+4. v4 삭제 성공을 확인하고 세 create 응답을 모아 `report`를 실행한다.
 
 ```bash
 python tests/manual/test_multi_event_scenario_versions.py run-version \
   --manifest <manifest.json> \
-  --version v2
+  --version v2 \
+  --admin-token "$SCENARIO_GROUP_ADMIN_TOKEN" \
+  --timeout 1200
 ```
 
-한 명령으로 실행할 때는 다음 순차 orchestration을 사용한다. 각 version 실패를 기록하고도
-다음 version을 계속 실행한다.
+비교 manifest의 `run-version`은 성공한 create 뒤 soft delete까지 한 단계로 수행한다. 수동 실행도
+반드시 v2 명령 완료와 삭제 성공을 확인한 뒤 v3, 그 뒤 v4 순으로 호출한다.
+
+한 명령으로 실행할 때는 다음 순차 orchestration을 사용한다. 일반 create 실패는 기록하고
+다음 version을 계속 실행할 수 있지만, create 결과가 불명확하거나 성공한 Group의 삭제가 실패하면
+활성 서버 상태를 남길 수 있으므로 뒤 version을 실행하지 않는다.
 
 ```bash
 python tests/manual/test_multi_event_scenario_versions.py orchestrate \
   --manifest <manifest.json> \
+  --admin-token "$SCENARIO_GROUP_ADMIN_TOKEN" \
   --timeout 1200
 ```
 
-동일 version POST를 자동 재시도하지 않는다. create API는 멱등하지 않으므로 timeout 뒤 재호출하면 중복 Scenario Group이 생길 수 있다. timeout은 결과 불명으로 기록하고 API/DB 증적 확인이 필요하다고 보고한다. 한 version이 실패해도 나머지 version의 결과를 보존한다.
+동일 version POST를 자동 재시도하지 않는다. create API는 멱등하지 않으므로 timeout 뒤 재호출하면 중복 Scenario Group이 생길 수 있다. timeout은 결과 불명으로 기록하고 API/DB 증적 확인이 필요하다고 보고한다. 이미 완료된 version의 create·soft delete 증적은 보존한다.
 
 ### Agent Judge와 보고서 생성
 
@@ -431,12 +449,21 @@ driver가 Scenario cell 조합에 직접 반영되지 않았다는 의미를 명
 - `selected_events.json`
 - `existing_groups_soft_delete.json`
 - `v2_create_response.json`
+- `v2_soft_delete.json`
 - `v3_create_response.json`
+- `v3_soft_delete.json`
 - `v4_create_response.json`
+- `v4_soft_delete.json`
+- `orchestration.json`
 - `comparison_judge_input.json` (`quality-check=true`일 때)
 - `comparison_judge.json` (`quality-check=true`일 때만)
 - `comparison_report.md`
 
 v4-only batch에는 v2/v3 response artifact와 Agent Judge artifact가 생성되지 않는다.
 
-보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage, Scenario Group 제목·요약·설명, dimension 비교, label 기반 Scenario×dimension value 표, Scenario별 dimension/value 선택 근거, 글로벌 pressure band별 Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를 보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 절대 점수, version별 잘한 점·아쉬운 점, 모든 version pair의 직접 비교와 반론, 품질 우선 추천, 비용·속도 포함 실용 추천을 포함한다.
+보고서에 입력 조건과 이벤트 상세, version별 성공/실패·그룹 ID·시간·token usage,
+각 생성 Group의 soft delete 결과, Scenario Group 제목·요약·설명, dimension 비교,
+label 기반 Scenario×dimension value 표, Scenario별 dimension/value 선택 근거, 글로벌 pressure band별
+Scenario 실제 값과 API 판단 근거를 포함한다. v4 row에 `relatedMarkets`가 있으면 시장별 근거를
+보조정보로 표시하되 방향·강도 tag로 해석하지 않는다. 품질검사 시 절대 점수, version별 잘한 점·아쉬운 점,
+모든 version pair의 직접 비교와 반론, 품질 우선 추천, 비용·속도 포함 실용 추천을 포함한다.

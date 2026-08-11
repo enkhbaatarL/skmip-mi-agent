@@ -246,7 +246,7 @@ class V4ReadableEventImpact(ApiModel):
 
     evidence: list[str] = Field(min_length=1, max_length=2)
     analysis: str = Field(min_length=20, max_length=240)
-    lever_states: list[str] = Field(min_length=1, max_length=2)
+    lever_states: list[str] = Field(min_length=1, max_length=3)
     balance: BalanceWireValue
     importance: Materiality
 

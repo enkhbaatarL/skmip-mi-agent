@@ -152,6 +152,20 @@ def render_report(  # noqa: C901
             label = "결과 불명" if artifact.get("outcome") == "unknown" else "실패"
             lines.append(f"\n- **{version} {label}:** {_cell(reason)}")
 
+    if not v4_only:
+        lines.extend(
+            [
+                "",
+                "### 버전별 생성 Scenario Group soft delete",
+                "",
+                "| Version | 생성 후 정리 | Scenario Group | DELETE 결과 |",
+                "| --- | --- | --- | --- |",
+            ],
+        )
+        for version in versions:
+            cleanup = artifacts.get(version, {}).get("postRunCleanup")
+            lines.append(_post_version_cleanup_row(version, cleanup))
+
     lines.extend(["", "## Scenario Group 및 Dimension 결과" if v4_only else "## Scenario Group 및 Dimension 비교", ""])
     for version, data in successful.items():
         group = data.get("scenarioGroup") if isinstance(data.get("scenarioGroup"), dict) else {}
@@ -775,7 +789,16 @@ def _execution_mode(manifest: dict[str, Any]) -> str:
         return str(declared_mode)
     orchestration_path = manifest.get("artifacts", {}).get("orchestration")
     if orchestration_path and Path(orchestration_path).is_file():
-        return "async fallback (v2‖v3 → v4)"
+        try:
+            orchestration = json.loads(Path(orchestration_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            orchestration = {}
+        if isinstance(orchestration, dict) and orchestration.get("mode") == "sequential-create-soft-delete":
+            return "sequential cleanup (v2 생성→삭제→v3 생성→삭제→v4 생성→삭제)"
+        return "sequential (v2 → v3 → v4)"
+    cleanup = manifest.get("postVersionCleanup")
+    if isinstance(cleanup, dict) and cleanup.get("requested"):
+        return "manual staged cleanup (v2 생성→삭제→v3 생성→삭제→v4 생성→삭제)"
     return "manual staged (v2 → v3 → v4)"
 
 
@@ -794,6 +817,21 @@ def _pre_run_cleanup_summary(manifest: dict[str, Any]) -> str:
     group_ids = [str(group.get("scenarioGroupId")) for group in groups if isinstance(group, dict)]
     count = cleanup.get("deletedGroupCount", len(group_ids))
     return f"활성 그룹 soft delete {count}건 (Scenario Group IDs: {', '.join(group_ids) or '-'})"
+
+
+def _post_version_cleanup_row(version: str, cleanup: Any) -> str:  # noqa: ANN401
+    if not isinstance(cleanup, dict):
+        return f"| {version} | 미기록 | - | - |"
+    outcome = str(cleanup.get("outcome") or "unknown")
+    group_id = cleanup.get("scenarioGroupId", "-")
+    response = cleanup.get("response") if isinstance(cleanup.get("response"), dict) else {}
+    if outcome == "success":
+        deleted = _field(response, "scenarioGroupDeleted", "scenario_group_deleted")
+        detail = f"scenarioGroupDeleted={deleted if deleted is not None else '-'}"
+        return f"| {version} | 성공 | {group_id} | {detail} |"
+    reason = cleanup.get("error") or cleanup.get("reason") or "-"
+    label = "스킵" if outcome == "skipped" else "실패"
+    return f"| {version} | {label} | {group_id} | {_cell(reason)} |"
 
 
 def _field(payload: dict[str, Any], *names: str) -> Any:  # noqa: ANN401
