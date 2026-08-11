@@ -40,6 +40,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4GenerationResult,
 )
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
+from apps.agents.scenario_group_agent.persistence.model_impact_lever_service import (
+    ModelImpactLeverService,
+)
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
@@ -56,7 +59,6 @@ from apps.common.tracing.context import (
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
-from apps.persistence.model_impact_lever.service import ModelImpactLeverService
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
