@@ -744,6 +744,41 @@ def test_v4_readable_event_allows_two_open_questions_and_rejects_three() -> None
         V4ReadableEventAnalysisDraft.model_validate(payload)
 
 
+def test_v4_readable_event_allows_three_lever_states_and_rejects_four() -> None:
+    payload = _readable_event_draft(101).model_dump(by_alias=True)
+    payload["impacts"][0]["leverStates"] = [
+        "financial_market_sentiment|driver|increase|글로벌|단기",
+        "direct_gas_demand|transmission|increase|동북아|단기",
+        "weather_demand|primary|increase|동북아|단기",
+    ]
+
+    readable = V4ReadableEventAnalysisDraft.model_validate(payload)
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+    )
+    result = finalize_v4_event_impact_analysis(
+        draft,
+        event_ids=[101],
+        impact_levers=_catalog(),
+    )
+
+    assert [step.path_role for step in result.impact_paths[0].lever_steps] == [
+        "driver",
+        "transmission",
+        "primary",
+    ]
+    assert [step.impact_lever_id for step in result.impact_paths[0].lever_steps] == [3, 4, 1]
+
+    payload["impacts"][0]["leverStates"].append(
+        "liquefaction_availability|transmission|decrease|US Gulf|단기",
+    )
+    with pytest.raises(ValueError, match="leverStates"):
+        V4ReadableEventAnalysisDraft.model_validate(payload)
+
+
 def test_v4_readable_event_allows_three_facts_and_impacts_and_rejects_four() -> None:
     facts = [
         "동북아 한파 지속 전망",
@@ -1268,6 +1303,13 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
         catalog_version="v1",
         analysis_as_of="2026-08-07",
     )
+    retry = build_model_lever_user_prompt(
+        events=[{"mi_event_id": 101, "event_title_ko": "동북아 한파"}],
+        impact_levers=[lever.model_dump() for lever in _catalog()],
+        catalog_version="v1",
+        analysis_as_of="2026-08-07",
+        validation_feedback="leverStates List should have at most 3 items",
+    )
     dimension = build_v4_dimension_design_user_prompt(
         impact_analysis=_analysis().model_dump(),
         validation_warnings=[],
@@ -1285,6 +1327,12 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
     assert "decisionBasis" in first
     assert "핵심 질문 최대 2개" in first
+    assert "leverStates는 Impact마다 가급적 1~2개만 작성" in first
+    assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in first
+    assert "중요한 3개만 선택" in first
+    assert "leverStates는 Impact마다 가급적 1~2개만 작성" in retry
+    assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in retry
+    assert "leverStates List should have at most 3 items" in retry
     assert "48시간 사전 요청처럼 반복되는 운영 조건" in first
     assert "분석 기준일: 2026-08-07" in first
     assert "JKM의 상승·하락·혼조 방향" in first

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# ruff: noqa: ANN401, ASYNC240, CPY001, S101, SLF001
+# ruff: noqa: ANN401, ASYNC240, CPY001, S101, S106, SLF001
 import argparse
 import asyncio
 import json
@@ -374,6 +374,7 @@ def test_prepare_v4_only_writes_scoped_manifest(
     assert manifest["versions"] == ["v4"]
     assert manifest["executionMode"] == "v4-only"
     assert manifest["runId"] == "v4-only-v4-only-test"
+    assert manifest["postVersionCleanup"]["requested"] is False
     assert "v4" in manifest["artifacts"]
     assert "v2" not in manifest["artifacts"]
     assert "v3" not in manifest["artifacts"]
@@ -419,7 +420,7 @@ def test_soft_delete_existing_groups_deduplicates_groups_across_events() -> None
             base_url="http://agent.test",
             event_ids=[101, 202],
             user_id=10603,
-            admin_token="admin-token",  # noqa: S106
+            admin_token="admin-token",
         ),
     )
 
@@ -582,6 +583,11 @@ def test_report_without_quality_keeps_actual_values_and_omits_ranking(tmp_path: 
             "httpStatus": 200,
             "elapsedMs": 123,
             "response": _response("v2"),
+            "postRunCleanup": {
+                "outcome": "success",
+                "scenarioGroupId": 20,
+                "response": {"scenarioGroupDeleted": 1},
+            },
         },
         "v3": {"transportStatus": "not_run", "error": "artifact missing"},
         "v4": {"transportStatus": "not_run", "error": "artifact missing"},
@@ -593,6 +599,8 @@ def test_report_without_quality_keeps_actual_values_and_omits_ranking(tmp_path: 
     assert "Tight supply raises price pressure." in report
     assert "비교 범위: **v2/v3/v4 create API**" in report
     assert "사전 Scenario Group 정리: 미실행" in report
+    assert "### 버전별 생성 Scenario Group soft delete" in report
+    assert "| v2 | 성공 | 20 | scenarioGroupDeleted=1 |" in report
     assert "### 입력 Event 상세" in report
     assert "#### 101 · Event A" in report
     assert "Event Type: Supply / Production" in report
@@ -728,6 +736,96 @@ def test_run_version_sends_v4_only_request_without_v2_v3_barrier(
     assert not (tmp_path / "v4_create_response.running.lock").exists()
 
 
+def test_comparison_run_version_soft_deletes_created_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _manifest(tmp_path)
+    manifest["postVersionCleanup"] = {"requested": True}
+    manifest["artifacts"]["postVersionCleanups"] = {
+        version: str(tmp_path / f"{version}_soft_delete.json") for version in ("v2", "v3", "v4")
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    delete_calls: list[tuple[str, dict[str, Any], dict[str, str] | None]] = []
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+        text = ""
+
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_: Any) -> None:
+            return None
+
+        async def post(self, _: str, *, json: dict[str, Any]) -> FakeResponse:
+            assert json == {"miEventIds": [101, 202], "userId": 10603}
+            return FakeResponse(_response("v2"))
+
+        async def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            json: dict[str, Any],
+            headers: dict[str, str] | None,
+        ) -> FakeResponse:
+            assert method == "DELETE"
+            delete_calls.append((url, json, headers))
+            return FakeResponse({"scenarioGroupDeleted": 1, "scenarioDeleted": 3, "signpostDeleted": 0})
+
+    monkeypatch.setattr(runner.httpx, "AsyncClient", FakeClient)
+    args = argparse.Namespace(manifest=manifest_path, version="v2", timeout=1200, admin_token="admin-token")
+
+    assert asyncio.run(runner.run_version(args)) == 0
+    assert delete_calls == [
+        (
+            "http://agent.test/scenario-groups/20",
+            {"userId": 10603},
+            {"Authorization": "Bearer admin-token"},
+        ),
+    ]
+    artifact = json.loads((tmp_path / "v2_create_response.json").read_text(encoding="utf-8"))
+    assert artifact["postRunCleanup"]["outcome"] == "success"
+    assert artifact["postRunCleanup"]["scenarioGroupId"] == 20
+    cleanup = json.loads((tmp_path / "v2_soft_delete.json").read_text(encoding="utf-8"))
+    assert cleanup["response"]["scenarioGroupDeleted"] == 1
+
+
+def test_comparison_requires_admin_token_before_create(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _manifest(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.delenv("SCENARIO_GROUP_ADMIN_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="before calling the non-idempotent POST"):
+        asyncio.run(
+            runner.run_version(
+                argparse.Namespace(manifest=manifest_path, version="v2", timeout=1200, admin_token=None),
+            ),
+        )
+
+    assert not (tmp_path / "v2_create_response.json").exists()
+
+
 def test_v4_only_manifest_rejects_v2_execution(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     manifest["versions"] = ["v4"]
@@ -811,7 +909,7 @@ def test_timeout_is_recorded_as_unknown_and_cannot_be_retried(
             raise runner.httpx.ReadTimeout(msg)
 
     monkeypatch.setattr(runner.httpx, "AsyncClient", TimeoutClient)
-    args = argparse.Namespace(manifest=manifest_path, version="v2", timeout=1)
+    args = argparse.Namespace(manifest=manifest_path, version="v2", timeout=1, admin_token="admin-token")
 
     assert asyncio.run(runner.run_version(args)) == 1
     artifact = json.loads((tmp_path / "v2_create_response.json").read_text(encoding="utf-8"))
@@ -909,19 +1007,71 @@ def test_orchestration_runs_sequentially_and_continues_after_failure(
         version = str(args.version)
         execution_order.append(version)
         if version == "v2":
+            Path(manifest["artifacts"][version]).write_text(
+                json.dumps(
+                    {
+                        "outcome": "failure",
+                        "error": "create failed",
+                        "postRunCleanup": {"outcome": "skipped"},
+                    },
+                ),
+                encoding="utf-8",
+            )
             return 1
         if version == "v3":
             msg = "v3 failed before request"
             raise ValueError(msg)
+        Path(manifest["artifacts"][version]).write_text(
+            json.dumps(
+                {
+                    "outcome": "success",
+                    "postRunCleanup": {"outcome": "success"},
+                },
+            ),
+            encoding="utf-8",
+        )
         return 0
 
     monkeypatch.setattr(runner, "run_version", fake_run_version)
-    args = argparse.Namespace(manifest=manifest_path, timeout=1200)
+    args = argparse.Namespace(manifest=manifest_path, timeout=1200, admin_token="admin-token")
 
     assert asyncio.run(runner.orchestrate(args)) == 1
     assert execution_order == ["v2", "v3", "v4"]
     orchestration_path = tmp_path / "orchestration.json"
     orchestration = json.loads(orchestration_path.read_text(encoding="utf-8"))
-    assert orchestration["mode"] == "sequential"
+    assert orchestration["mode"] == "sequential-create-soft-delete"
     assert [step["version"] for step in orchestration["steps"]] == ["v2", "v3", "v4"]
     assert orchestration["steps"][1]["error"] == "ValueError: v3 failed before request"
+
+
+def test_orchestration_stops_when_created_group_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = _manifest(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    execution_order: list[str] = []
+
+    async def fake_run_version(args: argparse.Namespace) -> int:
+        version = str(args.version)
+        execution_order.append(version)
+        Path(manifest["artifacts"][version]).write_text(
+            json.dumps(
+                {
+                    "outcome": "success",
+                    "postRunCleanup": {"outcome": "failure", "error": "delete failed"},
+                },
+            ),
+            encoding="utf-8",
+        )
+        return 1
+
+    monkeypatch.setattr(runner, "run_version", fake_run_version)
+    args = argparse.Namespace(manifest=manifest_path, timeout=1200, admin_token="admin-token")
+
+    assert asyncio.run(runner.orchestrate(args)) == 1
+    assert execution_order == ["v2"]
+    orchestration = json.loads((tmp_path / "orchestration.json").read_text(encoding="utf-8"))
+    assert [step["createOutcome"] for step in orchestration["steps"]] == ["success", "skipped", "skipped"]
+    assert orchestration["steps"][1]["error"] == "v2 left uncertain or active server state"

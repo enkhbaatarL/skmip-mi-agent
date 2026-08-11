@@ -75,10 +75,17 @@ def parse_args() -> argparse.Namespace:
         help="Soft delete API Bearer token; defaults to SCENARIO_GROUP_ADMIN_TOKEN.",
     )
 
-    run_version = subparsers.add_parser("run-version", help="Call exactly one versioned sync POST without retry.")
+    run_version = subparsers.add_parser(
+        "run-version",
+        help="Call one versioned sync POST without retry and soft delete its created group for comparisons.",
+    )
     run_version.add_argument("--manifest", type=Path, required=True)
     run_version.add_argument("--version", choices=["v2", "v3", "v4"], required=True)
     run_version.add_argument("--timeout", type=float, default=1200)
+    run_version.add_argument(
+        "--admin-token",
+        help="Post-version soft delete Bearer token; defaults to SCENARIO_GROUP_ADMIN_TOKEN.",
+    )
 
     orchestrate = subparsers.add_parser(
         "orchestrate",
@@ -86,6 +93,10 @@ def parse_args() -> argparse.Namespace:
     )
     orchestrate.add_argument("--manifest", type=Path, required=True)
     orchestrate.add_argument("--timeout", type=float, default=1200)
+    orchestrate.add_argument(
+        "--admin-token",
+        help="Post-version soft delete Bearer token; defaults to SCENARIO_GROUP_ADMIN_TOKEN.",
+    )
 
     report = subparsers.add_parser("report", help="Render completed version artifacts as Markdown.")
     report.add_argument("--manifest", type=Path, required=True)
@@ -163,6 +174,7 @@ async def prepare(args: argparse.Namespace) -> Path:
 
     batch_id = args.batch_id or f"{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     versions = V4_ONLY_VERSIONS if args.v4_only else ALL_VERSIONS
+    post_version_cleanup_requested = versions == ALL_VERSIONS
     run_prefix = "v4-only" if args.v4_only else "multi-event"
     run_id = f"{run_prefix}-{batch_id}"
     artifact_dir = (args.output_root / batch_id).resolve()
@@ -194,6 +206,10 @@ async def prepare(args: argparse.Namespace) -> Path:
             "deletedGroupCount": len(cleanup_results),
             "groups": cleanup_results,
         },
+        "postVersionCleanup": {
+            "requested": post_version_cleanup_requested,
+            "policy": "soft-delete-created-group-after-each-successful-version",
+        },
         "selection": {
             "mode": "explicit" if args.event_ids else "query",
             "description": selection_description,
@@ -205,6 +221,7 @@ async def prepare(args: argparse.Namespace) -> Path:
             "selectedEvents": str(selected_events_path),
             "preRunCleanup": str(cleanup_path),
             **{version: str(artifact_dir / f"{version}_create_response.json") for version in versions},
+            "postVersionCleanups": {version: str(artifact_dir / f"{version}_soft_delete.json") for version in versions},
             "orchestration": str(artifact_dir / "orchestration.json"),
             "judgeInput": str(artifact_dir / "comparison_judge_input.json"),
             "judge": str(artifact_dir / "comparison_judge.json"),
@@ -217,10 +234,18 @@ async def prepare(args: argparse.Namespace) -> Path:
     return manifest_path
 
 
-async def run_version(args: argparse.Namespace) -> int:
+async def run_version(args: argparse.Namespace) -> int:  # noqa: C901
     manifest = _load_manifest(args.manifest)
     version: ApiVersion = args.version
     _validate_version_scope(manifest, version)
+    cleanup_requested = _post_version_cleanup_requested(manifest)
+    admin_token = getattr(args, "admin_token", None) or os.environ.get("SCENARIO_GROUP_ADMIN_TOKEN")
+    if cleanup_requested and not admin_token:
+        msg = (
+            "The v2/v3/v4 comparison must soft delete each created Scenario Group, but no admin token was provided. "
+            "Use --admin-token or SCENARIO_GROUP_ADMIN_TOKEN before calling the non-idempotent POST."
+        )
+        raise ValueError(msg)
     artifact_path = Path(manifest["artifacts"][version])
     if artifact_path.exists():  # noqa: ASYNC240
         msg = (
@@ -287,6 +312,19 @@ async def run_version(args: argparse.Namespace) -> int:
     artifact["finishedAt"] = _now()
     artifact["elapsedMs"] = round((time.perf_counter() - started) * 1000)
     _write_json(artifact_path, artifact)
+    if cleanup_requested:
+        cleanup = await _cleanup_version_result(
+            manifest=manifest,
+            version=version,
+            artifact=artifact,
+            admin_token=admin_token,
+            request_timeout=args.timeout,
+        )
+        artifact["postRunCleanup"] = cleanup
+        _write_json(_version_cleanup_artifact_path(manifest, version), cleanup)
+        _write_json(artifact_path, artifact)
+        if artifact.get("outcome") == "success" and cleanup.get("outcome") != "success":
+            exit_code = 1
     claim_path.unlink()
     LOGGER.info("%s result written: %s", version, artifact_path)
     return exit_code
@@ -298,24 +336,65 @@ async def orchestrate(args: argparse.Namespace) -> int:
         msg = "orchestrate is only available for the v2/v3/v4 comparison scope; run v4 directly for v4-only"
         raise ValueError(msg)
     manifest_path = args.manifest.resolve()
+    admin_token = getattr(args, "admin_token", None) or os.environ.get("SCENARIO_GROUP_ADMIN_TOKEN")
+    if not admin_token:
+        msg = (
+            "The v2/v3/v4 comparison must soft delete each created Scenario Group, but no admin token was provided. "
+            "Use --admin-token or SCENARIO_GROUP_ADMIN_TOKEN before orchestration."
+        )
+        raise ValueError(msg)
     started_at = _now()
     results: list[dict[str, Any]] = []
-    for version in ALL_VERSIONS:
+    for index, version in enumerate(ALL_VERSIONS):
         try:
             exit_code = await run_version(
-                argparse.Namespace(manifest=manifest_path, version=version, timeout=args.timeout),
+                argparse.Namespace(
+                    manifest=manifest_path,
+                    version=version,
+                    timeout=args.timeout,
+                    admin_token=admin_token,
+                ),
             )
-            results.append({"version": version, "exitCode": exit_code, "error": None})
+            artifact = _read_json(Path(manifest["artifacts"][version]))
+            cleanup = artifact.get("postRunCleanup") if isinstance(artifact.get("postRunCleanup"), dict) else {}
+            results.append(
+                {
+                    "version": version,
+                    "exitCode": exit_code,
+                    "createOutcome": artifact.get("outcome"),
+                    "cleanupOutcome": cleanup.get("outcome"),
+                    "error": artifact.get("error") or cleanup.get("error"),
+                },
+            )
+            blocking_state = artifact.get("outcome") == "unknown" or (
+                artifact.get("outcome") == "success" and cleanup.get("outcome") != "success"
+            )
+            if blocking_state:
+                results.extend(
+                    [
+                        {
+                            "version": skipped_version,
+                            "exitCode": None,
+                            "createOutcome": "skipped",
+                            "cleanupOutcome": "skipped",
+                            "error": f"{version} left uncertain or active server state",
+                        }
+                        for skipped_version in ALL_VERSIONS[index + 1 :]
+                    ],
+                )
+                break
         except (TypeError, ValueError, FileNotFoundError, FileExistsError, httpx.HTTPError) as exc:
             results.append(
                 {
                     "version": version,
                     "exitCode": None,
+                    "createOutcome": None,
+                    "cleanupOutcome": None,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
             )
     orchestration = {
-        "mode": "sequential",
+        "mode": "sequential-create-soft-delete",
         "startedAt": started_at,
         "finishedAt": _now(),
         "steps": results,
@@ -522,24 +601,15 @@ async def _soft_delete_existing_groups(
         )
         raise ValueError(msg)
 
-    headers = {"Authorization": f"Bearer {admin_token}"} if admin_token else None
     results: list[dict[str, Any]] = []
     for group_id, matched_event_ids in sorted(matched_event_ids_by_group.items()):
-        response = await client.request(
-            "DELETE",
-            f"{base_url}/scenario-groups/{group_id}",
-            json={"userId": user_id},
-            headers=headers,
+        payload = await _soft_delete_scenario_group(
+            client,
+            base_url=base_url,
+            scenario_group_id=group_id,
+            user_id=user_id,
+            admin_token=admin_token,
         )
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            msg = f"DELETE /scenario-groups/{group_id} returned a non-object payload"
-            raise TypeError(msg)
-        deleted_count = _field(payload, "scenarioGroupDeleted", "scenario_group_deleted")
-        if int(deleted_count or 0) != 1:
-            msg = f"Scenario Group {group_id} was not soft deleted: {payload}"
-            raise ValueError(msg)
         results.append(
             {
                 "scenarioGroupId": group_id,
@@ -553,6 +623,105 @@ async def _soft_delete_existing_groups(
             sorted(matched_event_ids),
         )
     return results
+
+
+async def _soft_delete_scenario_group(
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    scenario_group_id: int,
+    user_id: int,
+    admin_token: str | None,
+) -> dict[str, Any]:
+    if not admin_token:
+        msg = f"Scenario Group {scenario_group_id} requires an admin token for soft delete"
+        raise ValueError(msg)
+    response = await client.request(
+        "DELETE",
+        f"{base_url}/scenario-groups/{scenario_group_id}",
+        json={"userId": user_id},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        msg = f"DELETE /scenario-groups/{scenario_group_id} returned a non-object payload"
+        raise TypeError(msg)
+    deleted_count = _field(payload, "scenarioGroupDeleted", "scenario_group_deleted")
+    if int(deleted_count or 0) != 1:
+        msg = f"Scenario Group {scenario_group_id} was not soft deleted: {payload}"
+        raise ValueError(msg)
+    return payload
+
+
+async def _cleanup_version_result(
+    *,
+    manifest: dict[str, Any],
+    version: ApiVersion,
+    artifact: dict[str, Any],
+    admin_token: str | None,
+    request_timeout: float,
+) -> dict[str, Any]:
+    cleanup: dict[str, Any] = {
+        "apiVersion": version,
+        "requested": True,
+        "startedAt": _now(),
+    }
+    if artifact.get("outcome") != "success":
+        cleanup.update(
+            {
+                "outcome": "skipped",
+                "reason": f"create outcome={artifact.get('outcome')}",
+                "finishedAt": _now(),
+            },
+        )
+        return cleanup
+
+    try:
+        scenario_group_id = _created_scenario_group_id(artifact)
+        cleanup["scenarioGroupId"] = scenario_group_id
+        async with httpx.AsyncClient(timeout=httpx.Timeout(request_timeout)) as client:
+            response = await _soft_delete_scenario_group(
+                client,
+                base_url=str(manifest["baseUrl"]),
+                scenario_group_id=scenario_group_id,
+                user_id=int(manifest["userId"]),
+                admin_token=admin_token,
+            )
+        cleanup["outcome"] = "success"
+        cleanup["response"] = response
+        LOGGER.info("Soft deleted %s Scenario Group %s", version, scenario_group_id)
+    except (TypeError, ValueError, httpx.HTTPError) as exc:
+        cleanup["outcome"] = "failure"
+        cleanup["error"] = f"{type(exc).__name__}: {exc}"
+        LOGGER.exception("Failed to soft delete the %s Scenario Group", version)
+    cleanup["finishedAt"] = _now()
+    return cleanup
+
+
+def _created_scenario_group_id(artifact: dict[str, Any]) -> int:
+    response = artifact.get("response")
+    data = response.get("data") if isinstance(response, dict) else None
+    group = data.get("scenarioGroup") if isinstance(data, dict) else None
+    group_id = _field(group, "scenarioGroupId", "scenario_group_id") if isinstance(group, dict) else None
+    if group_id is None:
+        msg = "Successful create response is missing data.scenarioGroup.scenarioGroupId"
+        raise ValueError(msg)
+    return int(group_id)
+
+
+def _post_version_cleanup_requested(manifest: dict[str, Any]) -> bool:
+    cleanup = manifest.get("postVersionCleanup")
+    if isinstance(cleanup, dict) and "requested" in cleanup:
+        return bool(cleanup["requested"])
+    return _manifest_versions(manifest) == ALL_VERSIONS
+
+
+def _version_cleanup_artifact_path(manifest: dict[str, Any], version: ApiVersion) -> Path:
+    cleanup_paths = manifest.get("artifacts", {}).get("postVersionCleanups")
+    if isinstance(cleanup_paths, dict) and cleanup_paths.get(version):
+        return Path(cleanup_paths[version])
+    return Path(manifest["artifacts"][version]).with_name(f"{version}_soft_delete.json")
 
 
 def _validate_prepare_args(args: argparse.Namespace) -> None:
