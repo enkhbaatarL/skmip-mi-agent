@@ -674,6 +674,110 @@ def test_v4_readable_event_balance_uses_structured_output_literals() -> None:
         V4ReadableEventAnalysisDraft.model_validate(payload)
 
 
+def test_v4_physical_path_rejects_none_with_lever_domain_feedback() -> None:
+    readable = _readable_event_draft(101)
+    readable.impacts[0].balance = "none"
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"e101_p1 balance cannot be none; weather_demand=demand\. Use demand\|<direction>\.",
+    ):
+        finalize_v4_event_impact_analysis(
+            draft,
+            event_ids=[101],
+            impact_levers=_catalog(),
+        )
+
+
+def test_v4_mixed_physical_and_price_only_path_requires_physical_balance() -> None:
+    readable = _readable_event_draft(202)
+    readable.impacts[0].balance = "none"
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=202,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "미국 LNG 액화시설 가동 중단"},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"e202_p1 balance cannot be none; liquefaction_availability=supply, "
+            r"financial_market_sentiment=price_only\. Use supply\|<direction>\."
+        ),
+    ):
+        finalize_v4_event_impact_analysis(
+            draft,
+            event_ids=[202],
+            impact_levers=_catalog(),
+        )
+
+    readable.impacts[0].balance = "supply|decrease"
+    corrected = expand_v4_readable_event_analysis(
+        readable,
+        event_id=202,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "미국 LNG 액화시설 가동 중단"},
+    )
+    result = finalize_v4_event_impact_analysis(
+        corrected,
+        event_ids=[202],
+        impact_levers=_catalog(),
+    )
+
+    assert result.impact_paths[0].balance_effect is not None
+    assert result.impact_paths[0].balance_effect.domain == "supply"
+
+
+def test_v4_multi_domain_path_accepts_selected_domain_and_rejects_unrelated_domain() -> None:
+    readable = _readable_event_draft(101)
+    readable.impacts[0].lever_states.append(
+        "liquefaction_availability|transmission|decrease|글로벌|단기",
+    )
+    readable.impacts[0].balance = "demand|increase"
+    valid_draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+    )
+
+    result = finalize_v4_event_impact_analysis(
+        valid_draft,
+        event_ids=[101],
+        impact_levers=_catalog(),
+    )
+
+    assert result.impact_paths[0].balance_effect is not None
+    assert result.impact_paths[0].balance_effect.domain == "demand"
+
+    readable.impacts[0].balance = "trade|decrease"
+    invalid_draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+    )
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"e101_p1 balance domain trade does not match Lever domains; weather_demand=demand, "
+            r"liquefaction_availability=supply\. Use demand\|<direction> or supply\|<direction>\."
+        ),
+    ):
+        finalize_v4_event_impact_analysis(
+            invalid_draft,
+            event_ids=[101],
+            impact_levers=_catalog(),
+        )
+
+
 def test_v4_price_only_path_discards_non_physical_balance_hint() -> None:
     fact = "유럽 LNG 현물가격이 상승했다."
     readable = V4ReadableEventAnalysisDraft.model_validate(
@@ -808,6 +912,32 @@ def test_v4_readable_event_allows_three_facts_and_impacts_and_rejects_four() -> 
     impacts_payload["impacts"].append(dict(impacts_payload["impacts"][-1]))
     with pytest.raises(ValueError, match="impacts"):
         V4ReadableEventAnalysisDraft.model_validate(impacts_payload)
+
+
+def test_v4_readable_event_allows_three_evidence_items_and_rejects_four() -> None:
+    facts = [
+        "동북아 한파 지속 전망",
+        "역내 LNG 재고가 평년보다 낮다.",
+        "현물 LNG 선박 가용성이 감소했다.",
+    ]
+    payload = _readable_event_draft(101).model_dump(by_alias=True)
+    payload["eventFacts"] = facts
+    payload["impacts"][0]["evidence"] = list(facts)
+
+    parsed = V4ReadableEventAnalysisDraft.model_validate(payload)
+
+    assert parsed.impacts[0].evidence == facts
+    draft = expand_v4_readable_event_analysis(
+        parsed,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={f"f{index}": fact for index, fact in enumerate(facts, start=1)},
+    )
+    assert draft.impact_paths[0].source_fact_ids == ["e101_f1", "e101_f2", "e101_f3"]
+
+    payload["impacts"][0]["evidence"].append("네 번째 사실")
+    with pytest.raises(ValueError, match="evidence"):
+        V4ReadableEventAnalysisDraft.model_validate(payload)
 
 
 def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
@@ -982,7 +1112,6 @@ def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
             "rationale": f"{label} 변화에 따라 Scenario별 JKM 압력이 구분됨",
             "lever": lever,
             "axis": axis,
-            "format": "temporal" if axis == "recovery" else "categorical",
             "unit": "주" if axis == "recovery" else None,
             "choices": [
                 {
@@ -1040,6 +1169,45 @@ def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
             "notUsed": [],
         },
     )
+
+
+def test_v4_readable_dimension_omits_format_and_derives_value_kind() -> None:
+    readable = _readable_dimension_draft()
+    payload = readable.model_dump(by_alias=True)
+
+    assert all("format" not in dimension for dimension in payload["dimensions"])
+    expanded = expand_v4_readable_dimension_design(readable, impact_analysis=_analysis())
+    assert [dimension.value_kind for dimension in expanded.dimension_definitions] == [
+        "categorical",
+        "temporal",
+        "categorical",
+    ]
+
+    six_dimension_payload = dict(payload)
+    six_dimension_payload["dimensions"] = [
+        dict(payload["dimensions"][index % len(payload["dimensions"])]) for index in range(6)
+    ]
+    six_dimensions = V4ReadableDimensionDesignDraft.model_validate(six_dimension_payload)
+    assert (
+        len(expand_v4_readable_dimension_design(six_dimensions, impact_analysis=_analysis()).dimension_definitions) == 6
+    )
+
+    numeric_payload = readable.model_dump(by_alias=True)
+    numeric_payload["dimensions"][0]["unit"] = "%"
+    numeric = V4ReadableDimensionDesignDraft.model_validate(numeric_payload)
+    numeric_expanded = expand_v4_readable_dimension_design(numeric, impact_analysis=_analysis())
+    assert numeric_expanded.dimension_definitions[0].value_kind == "numeric_range"
+
+
+def test_v4_readable_dimension_ignores_legacy_format() -> None:
+    payload = _readable_dimension_draft().model_dump(by_alias=True)
+    payload["dimensions"][0]["format"] = "temporal"
+
+    readable = V4ReadableDimensionDesignDraft.model_validate(payload)
+    expanded = expand_v4_readable_dimension_design(readable, impact_analysis=_analysis())
+
+    assert "format" not in readable.model_dump(by_alias=True)["dimensions"][0]
+    assert expanded.dimension_definitions[0].value_kind == "categorical"
 
 
 def _readable_scenario_draft() -> V4ReadableScenarioSynthesisDraft:
@@ -1221,6 +1389,42 @@ def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:
     assert outcome.error == "Event 101 impact analysis exceeded 0.001s"
 
 
+def test_v4_invalid_balance_is_included_in_event_retry_prompt() -> None:
+    prompts: list[str] = []
+    invalid = _readable_event_draft(101)
+    invalid.impacts[0].balance = "none"
+    corrected = _readable_event_draft(101)
+
+    async def invoke_stage(*, user_prompt: str, **_kwargs: object) -> object:
+        prompts.append(user_prompt)
+        return invalid if len(prompts) == 1 else corrected
+
+    with (
+        patch.object(v4_nodes, "invoke_stage_structured_output", side_effect=invoke_stage),
+        patch.object(v4_nodes, "_backoff", new=AsyncMock()),
+    ):
+        outcome = asyncio.run(
+            v4_nodes._analyze_event_with_retries(
+                event=EventPayload(
+                    mi_event_id=101,
+                    event_type_l2_id=8,
+                    key_bullets=["동북아 한파 지속 전망"],
+                ),
+                impact_levers=_catalog(),
+                catalog_version="v1",
+                analysis_as_of="2026-08-07",
+                trace_context=None,
+            ),
+        )
+
+    assert outcome.attempts == 2
+    assert outcome.result is not None
+    assert len(prompts) == 2
+    assert "이전 Event Impact Analysis 검증 실패" not in prompts[0]
+    assert "e101_p1 balance cannot be none; weather_demand=demand. Use demand|<direction>." in prompts[1]
+    assert "잘못된 영향 경로·Lever·balance·열린 질문만 수정" in prompts[1]
+
+
 def test_v4_event_analysis_calls_are_concurrent() -> None:
     active_calls = 0
     max_active_calls = 0
@@ -1327,12 +1531,22 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
     assert "decisionBasis" in first
     assert "핵심 질문 최대 2개" in first
+    assert "eventFacts는 가급적 1~2개만 선택" in first
+    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in first
+    assert "impacts는 가급적 1~2개만 작성" in first
+    assert "별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인" in first
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in first
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in first
     assert "중요한 3개만 선택" in first
+    assert "demand, supply, trade domain Lever가 하나라도 있으면 balance에 none을 사용할 수 없습니다" in first
+    assert "지배적인 domain을 정할 수 없으면 Impact를 나눕니다" in first
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in retry
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in retry
     assert "leverStates List should have at most 3 items" in retry
+    assert "eventFacts는 가급적 1~2개만 선택" in retry
+    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in retry
+    assert "impacts는 가급적 1~2개만 작성" in retry
+    assert "잘못된 영향 경로·Lever·balance·열린 질문만 수정" in retry
     assert "48시간 사전 요청처럼 반복되는 운영 조건" in first
     assert "분석 기준일: 2026-08-07" in first
     assert "JKM의 상승·하락·혼조 방향" in first
@@ -1432,6 +1646,8 @@ def test_v4_structured_output_schemas_are_openai_strict_compatible() -> None:
     assert invalid_objects == []
     assert "price" not in schemas["V4ReadableEventAnalysisDraft"]["$defs"]["V4ReadableEventImpact"]["properties"]
     assert "price" not in schemas["V4ReadableInteractionAnalysisDraft"]["$defs"]["V4ReadableInteraction"]["properties"]
+    assert "format" not in schemas["V4ReadableDimensionDesignDraft"]["$defs"]["V4ReadableDimension"]["properties"]
+    assert "valueKind" in V4DimensionDefinition.model_json_schema(by_alias=True)["properties"]
     assert len(str(schemas["V4ReadableEventAnalysisDraft"])) < len(str(V4EventImpactAnalysisDraft.model_json_schema()))
     assert "dimensionValues" not in str(schemas["V4ReadableScenarioSynthesisDraft"])
 

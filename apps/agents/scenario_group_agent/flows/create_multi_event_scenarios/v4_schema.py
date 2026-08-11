@@ -244,7 +244,7 @@ class V4ReadableEventImpact(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    evidence: list[str] = Field(min_length=1, max_length=2)
+    evidence: list[str] = Field(min_length=1, max_length=3)
     analysis: str = Field(min_length=20, max_length=240)
     lever_states: list[str] = Field(min_length=1, max_length=3)
     balance: BalanceWireValue
@@ -510,9 +510,19 @@ class V4ReadableDimension(ApiModel):
     rationale: str = Field(min_length=10, max_length=100)
     lever: str = Field(min_length=1)
     axis: UncertaintyAxis
-    value_format: Literal["categorical", "numeric_range", "temporal"] = Field(alias="format")
     unit: str | None = None
     choices: list[V4ReadableDimensionChoice] = Field(min_length=2, max_length=4)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_format(cls, value: Any) -> Any:
+        """Accept cached relaxed-schema responses without retaining LLM-owned format metadata."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        normalized.pop("format", None)
+        normalized.pop("value_format", None)
+        return normalized
 
 
 class V4ReadableDimensionDesignDraft(ApiModel):
@@ -837,6 +847,16 @@ def _parse_dimension_state(value: str) -> V4LeverStateDraft:
     )
 
 
+def _derive_dimension_value_kind(
+    dimension: V4ReadableDimension,
+) -> Literal["categorical", "numeric_range", "temporal"]:
+    if dimension.axis in {"timing", "duration", "recovery"}:
+        return "temporal"
+    if dimension.unit and dimension.unit.strip():
+        return "numeric_range"
+    return "categorical"
+
+
 def expand_v4_readable_dimension_design(
     readable: V4ReadableDimensionDesignDraft,
     *,
@@ -879,7 +899,7 @@ def expand_v4_readable_dimension_design(
                 source_uncertainty_ids=[item.uncertainty_id for item in source_uncertainties],
                 primary_lever_code=dimension.lever,
                 dimension_type=dimension.axis,
-                value_kind=dimension.value_format,
+                value_kind=_derive_dimension_value_kind(dimension),
                 unit=dimension.unit,
                 values=values,
             ),
@@ -1024,16 +1044,22 @@ def finalize_v4_event_impact_analysis(
                     impact_lever_id=lever.impact_lever_id,
                 ),
             )
-        non_price_domains = {
-            catalog_by_code[step.lever_code].domain
-            for step in path.lever_steps
-            if catalog_by_code[step.lever_code].domain != "price_only"
-        }
+        lever_domains = [(step.lever_code, catalog_by_code[step.lever_code].domain) for step in path.lever_steps]
+        non_price_domains = list(
+            dict.fromkeys(domain for _lever_code, domain in lever_domains if domain != "price_only")
+        )
+        catalog_domain_summary = ", ".join(f"{lever_code}={domain}" for lever_code, domain in lever_domains)
+        allowed_balances = " or ".join(f"{domain}|<direction>" for domain in non_price_domains)
         if non_price_domains and path.balance_effect is None:
-            raise ValueError(f"impact path {path.impact_path_id} requires balanceEffect")
+            detail = f"{path.impact_path_id} balance cannot be none; {catalog_domain_summary}. Use {allowed_balances}."
+            raise ValueError(detail)
         balance_effect = path.balance_effect if non_price_domains else None
         if balance_effect is not None and balance_effect.domain not in non_price_domains:
-            raise ValueError(f"impact path {path.impact_path_id} balanceEffect domain does not match its levers")
+            detail = (
+                f"{path.impact_path_id} balance domain {balance_effect.domain} does not match Lever domains; "
+                f"{catalog_domain_summary}. Use {allowed_balances}."
+            )
+            raise ValueError(detail)
 
         signature = (
             path.event_id,
