@@ -51,6 +51,15 @@ operation owner worker에서는 event DB commit 이후 process-local EventHub가
 subscriber가 자신의 cursor 이후 event history를 range query하며, 변경이 발견되면 polling 간격을
 1초로 초기화한다. SSE keepalive는 DB를 조회하지 않는다.
 
+검증 완료 projection은 operation master의 `presentation_snapshot`에 저장한다. Event impact 검증은
+facts/exclusions, impact paths/uncertainties와 Event snapshot을 저장하고 `eventAnalysis=partial`을,
+Event interaction 검증은 interactions/uncertainties까지 포함해 `eventAnalysis=ready`를 기록한다.
+Dimension 검증은 전체 공통 Dimension definition을 저장하고 `scenarioDesign=partial`을 기록한다.
+각 projection commit은 `snapshotRevision`을 하나 올린 뒤 같은 transaction의 `section_ready` event에
+section 상태와 revision만 싣는다. 최종 persistence 후에는 Scenario Group·Scenario와 저장된
+generation diagnostics가 Presentation source of truth다. 렌더링된 Markdown과 실패 draft는 projection이나
+event history에 저장하지 않는다.
+
 생성 준비 단계의 중복 점유 단위는 개별 Event가 아니라 정렬된 Event ID 조합이다.
 요청 순서는 Event 연결의 `display_order`와 graph 입력에 유지하고, 중복 조회용
 `event_set_hash`는 `v1:` + compact JSON 정렬 배열의 SHA-256으로 계산한다.

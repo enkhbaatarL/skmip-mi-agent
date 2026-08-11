@@ -44,7 +44,8 @@ sequenceDiagram
 
 - `POST /scenario-groups`: `miEventIds` 1~5개와 `userId`를 받아 create operation을 시작하고 SSE 반환
 - `GET /scenario-groups`: 공통 목록과 latest/active operation 요약 반환
-- `GET /scenario-groups/{scenarioGroupId}`: Scenario table, presentation snapshot, latest/active operation 반환
+- `GET /scenario-groups/{scenarioGroupId}`: 업무 Scenario table과 latest/active operation 반환
+- `GET /scenario-groups/{scenarioGroupId}/presentation`: v1/v3/v4 차이를 흡수한 화면 전용 세 section read model 반환
 - `DELETE /scenario-groups/{scenarioGroupId}`: soft delete. queued/running operation이 있으면 HTTP 409
 - `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}`: polling용 operation JSON
 - `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}/stream`: `Last-Event-ID` 이후 SSE replay/live-tail
@@ -53,6 +54,33 @@ SSE live-tail은 owner worker에서는 DB commit 후 process-local EventHub 알�
 worker에서는 operation별 shared watcher가 `latestSequence`만 1초에서 최대 5초까지 adaptive
 polling하고, sequence가 증가할 때만 subscriber cursor 이후 event history를 읽는다. keepalive는
 DB polling과 분리한다.
+
+### 화면 전용 Presentation API
+
+`GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}`는 화면이 직접 사용하는
+read model이다. `operationId`가 없으면 최신 operation을 선택하며, 다른 Scenario Group의 operation은
+404로 처리한다. 응답은 엔진 버전과 무관하게 `eventAnalysis`, `scenarioDesign`,
+`roleSelectionRationale` 세 section을 항상 포함한다. 각 section은
+`pending | partial | ready | unavailable` 상태와 `full | limited | none` 근거 수준을 명시하며,
+아직 준비되지 않은 문자열과 배열도 빈 값으로 유지한다.
+
+Markdown은 저장된 Event, Dimension, Scenario, generation diagnostics만으로 결정론적으로 렌더링한다.
+동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. v3의
+`derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
+Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 동일한 표시 label과
+`cellEvidence`를 만든다. v1은 저장되지 않은 impact path, rationale, role을 추정하지 않고 제한 또는
+미제공 상태로 표시한다. 현재 Template은 저장된 `templateChecksum`과 canonical checksum이 일치할
+때만 v1 Dimension 복원에 사용한다.
+
+응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각으로 만든다.
+같은 값을 `If-None-Match`로 보내면 304를 반환한다. v4 진행 중 projection은 Event impact 검증 시
+`eventAnalysis=partial`, interaction 검증 시 `eventAnalysis=ready`, Dimension 검증 시
+`scenarioDesign=partial`로 갱신한다. `section_ready.details`는 변경 가능한 section 상태와 새
+`snapshotRevision`을 포함한다.
+
+기존 v1 데이터의 dry-run 분류, metadata/lineage 보완, 증적 기반 operation/event backfill과 rollback은
+`scripts/migrations/20260811_backfill_v1_presentation_operations.sql`을 사용한다. operation ID는
+Scenario Group과 operation type으로 결정론적으로 만들고 모든 insert를 idempotent하게 수행한다.
 
 operation event는 `accepted`, `phase_started`, `retrying`, `validated`, `section_ready`,
 `completed`, `failed`, `interrupted`를 사용한다. 실패 draft 원문은 event/presentation에 저장하지 않고

@@ -104,7 +104,7 @@ class V4OperationProgressRecorder:
         )
         section = self._safe_section(prefix, state)
         if section is not None:
-            self._presentation["sections"][prefix] = section
+            self._merge_projection(prefix, state, section)
             await self._append(
                 event_type="section_ready",
                 phase=phase,
@@ -112,6 +112,27 @@ class V4OperationProgressRecorder:
                 message_markdown=f"검증된 {label} 결과가 준비되었습니다.",
                 presentation_snapshot=deepcopy(self._presentation),
             )
+
+    def _merge_projection(
+        self,
+        prefix: str,
+        state: V4MultiEventGenerationState,
+        section: dict[str, Any],
+    ) -> None:
+        if prefix in {"analysis", "interaction"} and state.analysis_draft is not None:
+            self._presentation["events"] = [event.model_dump(mode="json", by_alias=True) for event in state.events]
+            self._presentation["generationDiagnostics"] = state.analysis_draft.model_dump(
+                mode="json",
+                by_alias=True,
+            )
+            self._presentation["sections"]["eventAnalysis"] = section
+            return
+        if prefix == "dimension" and state.dimension_draft is not None:
+            definitions = getattr(state.dimension_draft, "dimension_definitions", [])
+            self._presentation["dimensionDefinitions"] = [
+                definition.model_dump(mode="json", by_alias=True) for definition in definitions
+            ]
+            self._presentation["sections"]["scenarioDesign"] = section
 
     async def _record_retry(
         self,
@@ -160,25 +181,17 @@ class V4OperationProgressRecorder:
     def _safe_section(prefix: str, state: V4MultiEventGenerationState) -> dict[str, Any] | None:
         if prefix == "analysis" and state.analysis_draft is not None:
             return {
-                "status": "ready",
-                "eventCount": len(state.events),
-                "impactPathCount": len(getattr(state.analysis_draft, "impact_paths", [])),
+                "status": "partial",
             }
         if prefix == "interaction" and state.analysis_draft is not None:
             return {
                 "status": "ready",
-                "interactionCount": len(getattr(state.analysis_draft, "interactions", [])),
             }
         if prefix == "dimension" and state.dimension_draft is not None:
-            definitions = getattr(state.dimension_draft, "dimension_definitions", [])
             return {
-                "status": "ready",
-                "dimensionDefinitions": [definition.model_dump(by_alias=True) for definition in definitions],
-            }
-        if prefix == "scenario" and state.finalized_result is not None:
-            return {
-                "status": "ready",
-                "scenarioCount": len(state.finalized_result.scenarios),
+                "status": "partial",
+                "dimensionDefinitions": {"status": "ready"},
+                "scenarioTable": {"status": "pending"},
             }
         return None
 

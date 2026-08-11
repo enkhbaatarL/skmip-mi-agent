@@ -49,6 +49,13 @@ class ScenarioGroupCommonDetailData(ScenarioGroupDetailData):
     latest_operation: ScenarioGroupOperationPayload | None
 
 
+class ScenarioGroupPresentationData(ScenarioGroupDetailData):
+    events: list[EventPayload]
+    operation: ScenarioGroupOperationPayload | None
+    legacy_template_dimensions: list[dict[str, Any]]
+    legacy_snapshot_dimension_values: list[dict[str, Any]]
+
+
 def _normalize_probability_scores_to_100(
     rows: list[dict[str, Any]],
 ) -> dict[int, Decimal]:
@@ -341,6 +348,73 @@ class ScenarioGroupService:
             "events": EventService().load_events(event_ids) if event_ids else [],
             "latest_operation": ScenarioGroupOperationService().get_latest(scenario_group_id),
         }
+
+    def load_presentation_detail(
+        self,
+        scenario_group_id: int,
+        *,
+        operation_id: str | None = None,
+    ) -> ScenarioGroupPresentationData:
+        from apps.agents.scenario_group_agent.persistence.event_service import EventService
+        from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+            ScenarioGroupOperationService,
+        )
+
+        detail = self.load_detail(scenario_group_id)
+        group = detail["group"]
+        event_ids = self.load_event_ids(scenario_group_id)
+        if not event_ids and group.get("mi_event_id") is not None:
+            event_ids = [int(group["mi_event_id"])]
+        operation_service = ScenarioGroupOperationService()
+        operation = (
+            operation_service.get_operation(scenario_group_id, operation_id)
+            if operation_id is not None
+            else operation_service.get_latest(scenario_group_id)
+        )
+        return {
+            **detail,
+            "events": EventService().load_events(event_ids) if event_ids else [],
+            "operation": operation,
+            "legacy_template_dimensions": self._load_trusted_legacy_template_dimensions(group),
+            "legacy_snapshot_dimension_values": self._load_legacy_snapshot_dimension_values(
+                scenario_group_id,
+                group,
+            ),
+        }
+
+    @staticmethod
+    def _load_trusted_legacy_template_dimensions(group: dict[str, Any]) -> list[dict[str, Any]]:
+        if str(group.get("api_version") or "v1") != "v1":
+            return []
+        event_type_l2_id = group.get("event_type_l2_id")
+        stored_checksum = str(group.get("template_checksum") or "").strip()
+        if event_type_l2_id is None or not stored_checksum:
+            return []
+        try:
+            template = ScenarioService().load_template_record(int(event_type_l2_id))
+        except (KeyError, ValueError):
+            return []
+        if str(template.get("template_checksum") or "") != stored_checksum:
+            return []
+        return [item for item in template.get("template_json") or [] if isinstance(item, dict)]
+
+    @staticmethod
+    def _load_legacy_snapshot_dimension_values(
+        scenario_group_id: int,
+        group: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if str(group.get("api_version") or "v1") != "v1":
+            return []
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            rows = ScenarioGroupRepository(session=session).fetch_latest_confirmation_dimension_values(
+                scenario_group_id,
+            )
+            return [item for row in rows for item in row]
+        finally:
+            session.close()
 
     def approve_dimension_mappings(
         self,

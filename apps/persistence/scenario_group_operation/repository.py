@@ -163,10 +163,21 @@ class ScenarioGroupOperationRepository(BaseSyncSQLRepository):
     ) -> MiScenarioGroupOperationEventModel:
         sequence = int(operation.latest_sequence or 0) + 1
         snapshot_revision = int(operation.snapshot_revision or 0)
+        event_payload = dict(payload)
         if presentation_snapshot is not None:
             snapshot_revision += 1
             operation.presentation_snapshot = presentation_snapshot
             operation.snapshot_revision = snapshot_revision
+            if event_type == "section_ready":
+                ready_sections = []
+                for key, section in (presentation_snapshot.get("sections") or {}).items():
+                    if not isinstance(section, dict):
+                        continue
+                    ready_sections.append({"key": key, "status": section.get("status", "ready")})
+                event_payload["details"] = {
+                    "sections": ready_sections,
+                    "snapshotRevision": snapshot_revision,
+                }
         operation.latest_sequence = sequence
         operation.heartbeat_at = now
         if phase is not None:
@@ -191,7 +202,7 @@ class ScenarioGroupOperationRepository(BaseSyncSQLRepository):
             phase=phase,
             title=title,
             message_markdown=message_markdown,
-            payload=payload,
+            payload=event_payload,
             snapshot_revision=snapshot_revision,
             mlflow_trace_id=mlflow_trace_id or operation.mlflow_trace_id,
             crt_dtm=now,

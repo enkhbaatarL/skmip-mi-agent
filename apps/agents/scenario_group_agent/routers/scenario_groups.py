@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Security
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
@@ -18,7 +19,11 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_operation_servi
     new_operation_id,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
-from apps.agents.scenario_group_agent.presentation import build_common_scenario_group_query_data
+from apps.agents.scenario_group_agent.presentation import (
+    PRESENTATION_RENDERER_VERSION,
+    build_common_scenario_group_query_data,
+    build_scenario_group_presentation,
+)
 from apps.agents.scenario_group_agent.routers.scenario_group_stream import stream_operation_events
 from apps.agents.scenario_group_agent.routers.security import admin_bearer_scheme, authorization_header
 from apps.agents.scenario_group_agent.runtime import get_scenario_group_operation_task_runner
@@ -35,6 +40,9 @@ from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import 
     SoftDeleteScenarioGroupOut,
     SoftDeleteSignpostsIn,
     SoftDeleteSignpostsOut,
+)
+from apps.agents.scenario_group_agent.schemas.api.scenario_group_presentation import (
+    ScenarioGroupPresentationOut,
 )
 from apps.agents.scenario_group_agent.schemas.endpoint import (
     ScenarioGroupAcceptedData,
@@ -152,6 +160,39 @@ async def get_scenario_group(
         include_deleted=include_deleted,
     )
     return build_common_scenario_group_query_data(**context)
+
+
+@router.get(
+    "/scenario-groups/{scenario_group_id}/presentation",
+    response_model=ScenarioGroupPresentationOut,
+    summary="Scenario Group 화면 전용 Presentation 조회",
+)
+async def get_scenario_group_presentation(
+    scenario_group_id: int,
+    request: Request,
+    response: Response,
+    *,
+    operation_id: str | None = Query(default=None, alias="operationId"),
+) -> ScenarioGroupPresentationOut | Response:
+    context = ScenarioGroupService().load_presentation_detail(
+        scenario_group_id,
+        operation_id=operation_id,
+    )
+    operation = context["operation"]
+    updated_at = context["group"].get("updated_at")
+    etag_material = "|".join(
+        [
+            PRESENTATION_RENDERER_VERSION,
+            operation.operation_id if operation is not None else "",
+            str(operation.snapshot_revision if operation is not None else 0),
+            updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at or ""),
+        ]
+    )
+    etag = f'"{hashlib.sha256(etag_material.encode("utf-8")).hexdigest()}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    response.headers["ETag"] = etag
+    return build_scenario_group_presentation(**context)
 
 
 @router.delete(

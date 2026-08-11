@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -34,6 +35,7 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
     ScenarioGroupDetailOut as LegacyScenarioGroupDetailOut,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.persistence.scenario_group_operation.repository import ScenarioGroupOperationRepository
 from apps.persistence.scenario_group_operation.schema import (
     ScenarioGroupOperationEventPayload,
     ScenarioGroupOperationPayload,
@@ -90,8 +92,7 @@ def test_common_routes_and_v1_deprecation_are_exposed() -> None:
     assert paths["/v1/scenario-groups/{scenario_group_id}/validation"]["post"]["deprecated"] is True
     assert paths["/scenario-groups"]["post"]["tags"] == ["scenario-groups"]
     assert all(
-        parameter["name"].lower() != "accept"
-        for parameter in paths["/scenario-groups"]["post"].get("parameters", [])
+        parameter["name"].lower() != "accept" for parameter in paths["/scenario-groups"]["post"].get("parameters", [])
     )
     assert paths["/scenario-groups/{scenario_group_id}/operations/{operation_id}"]["get"]["tags"] == [
         "scenario-groups",
@@ -159,6 +160,31 @@ def test_create_accepted_in_session_returns_operation_payload() -> None:
     assert repository.append_event.call_args.kwargs["event_type"] == "accepted"
 
 
+def test_operation_from_another_scenario_group_is_not_found() -> None:
+    session = Mock()
+    repository = Mock()
+    repository.fetch_by_id.return_value = None
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=repository,
+        ),
+        pytest.raises(MIBaseError) as caught,
+    ):
+        ScenarioGroupOperationService().get_operation(120, "operation-owned-by-another-group")
+
+    assert caught.value.status_code == 404
+    repository.fetch_by_id.assert_called_once_with(120, "operation-owned-by-another-group")
+
+
 def test_sse_replays_only_after_last_event_id_and_closes_at_terminal() -> None:
     async def collect() -> list[str]:
         with (
@@ -222,6 +248,64 @@ def test_custom_retry_is_sanitized_before_operation_event_storage() -> None:
     }
     assert "raw validation payload" not in str(kwargs)
     assert "failed draft" not in str(kwargs)
+
+
+def test_section_ready_event_contains_projection_revision_details() -> None:
+    operation = SimpleNamespace(
+        operation_id="01JABCDEF0123456789ABCDEFX",
+        scenario_group_id=120,
+        latest_sequence=4,
+        snapshot_revision=2,
+        presentation_snapshot={},
+        heartbeat_at=None,
+        current_phase=None,
+        status="running",
+        started_at=datetime(2026, 8, 11, 4, 0, 0),
+        completed_at=None,
+        last_error=None,
+        retry_summary={},
+        mlflow_trace_id=None,
+    )
+    session = Mock()
+    repository = ScenarioGroupOperationRepository(session=session)
+    snapshot = {
+        "sections": {
+            "eventAnalysis": {"status": "ready"},
+            "scenarioDesign": {"status": "partial"},
+        }
+    }
+
+    event = repository.append_event(
+        operation,
+        event_type="section_ready",
+        phase="dimension_design",
+        title="ready",
+        message_markdown="ready",
+        payload={},
+        now=datetime(2026, 8, 11, 4, 1, 0),
+        presentation_snapshot=snapshot,
+    )
+
+    assert operation.snapshot_revision == 3
+    assert event.snapshot_revision == 3
+    assert event.payload["details"] == {
+        "sections": [
+            {"key": "eventAnalysis", "status": "ready"},
+            {"key": "scenarioDesign", "status": "partial"},
+        ],
+        "snapshotRevision": 3,
+    }
+
+
+def test_v1_backfill_migration_is_idempotent_and_has_scoped_rollback() -> None:
+    migration = Path("scripts/migrations/20260811_backfill_v1_presentation_operations.sql").read_text()
+
+    assert migration.count("INSERT IGNORE INTO tmm_mi_scenario_group_operation_m") == 4
+    assert "INSERT IGNORE INTO tmm_mi_scenario_group_operation_event_h" in migration
+    assert "operation.source = 'legacy_v1_backfill'" in migration
+    assert "DELETE FROM tmm_mi_scenario_group_operation_m WHERE source = 'legacy_v1_backfill'" in migration
+    assert "UPDATE tmm_mi_scenario_m" not in migration
+    assert "UPDATE tmm_mi_signpost_m" not in migration
 
 
 def test_same_retry_code_for_different_events_preserves_each_reference() -> None:

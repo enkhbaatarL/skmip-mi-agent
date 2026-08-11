@@ -112,7 +112,8 @@ apps/agents/<agent_name>/
 │   ├── __init__.py
 │   ├── api/
 │   │   ├── dimension_mapping.py       # flow-less mapping 승인 API DTO
-│   │   └── manage_scenario_groups.py  # 공통 조회·삭제·operation API DTO
+│   │   ├── manage_scenario_groups.py  # 공통 조회·삭제·operation API DTO
+│   │   └── scenario_group_presentation.py # 화면 전용 Presentation read model DTO
 │   ├── base.py
 │   ├── endpoint.py             # 기존 통합 FastAPI request/response 및 callback DTO
 │   ├── state.py                # flow 공통 base state와 공통 state DTO
@@ -234,6 +235,7 @@ apps/agents/<agent_name>/
 - `prompts/scenario_generation.py`, `prompts/scenario_validation.py`, `prompts/signpost_generation.py`: 생성/검증/Signpost LLM prompt와 structured output schema
 - `schemas/endpoint.py`: legacy flow endpoint request/response와 callback DTO. 이관된 관리 DTO는 호환 import만 제공
 - `schemas/api/manage_scenario_groups.py`: 공통 조회·삭제·operation API DTO
+- `schemas/api/scenario_group_presentation.py`: v1/v3/v4 공통 화면 Presentation read model DTO
 - `schemas/table.py`: 현재 endpoint, presentation, flow state에서 공유하는 table DTO
 - `apps/persistence/<domain>/schema.py`: `event`, `scenario_group`, `scenario_group_operation`, `scenario`, `signpost` service DTO
 - `subgraphs/scenario_generation/schema.py`, `subgraphs/scenario_review/schema.py`, `subgraphs/signpost_generation/schema.py`: 각 subgraph의 graph/review DTO

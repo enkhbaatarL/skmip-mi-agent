@@ -271,6 +271,10 @@ class ScenarioService:
             "template_checksum": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
         }
 
+    def load_template_record(self, event_type_l2_id: int) -> dict[str, Any]:
+        """Load a Template and its canonical checksum for read-side compatibility checks."""
+        return self._load_template_record_from_db(event_type_l2_id)
+
     def _map_template_json_to_pipeline_template(
         self,
         template_json: list[dict[str, Any]],

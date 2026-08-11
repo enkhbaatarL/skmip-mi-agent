@@ -207,6 +207,97 @@ export interface ScenarioGroupDetailResponse {
   deletedSignpostCount: number;
 }
 
+export type PresentationStatus =
+  | "pending"
+  | "partial"
+  | "ready"
+  | "unavailable";
+
+export type PresentationEvidenceLevel = "full" | "limited" | "none";
+
+export interface PresentationDimensionValue {
+  valueId: string;
+  label: string;
+  description: string | null;
+  rationale: string;
+  pressureContribution: string | null;
+  leverStates: Array<Record<string, unknown>>;
+}
+
+export interface PresentationDimensionDefinition {
+  dimensionId: string;
+  label: string;
+  description: string | null;
+  rationale: string | null;
+  sourceEventIds: number[];
+  modelSupportStatus: string | null;
+  source: string | null;
+  values: PresentationDimensionValue[];
+}
+
+export interface PresentationCellEvidence {
+  valueId: string;
+  valueLabel: string;
+  rationale: string;
+  pressureContribution: string | null;
+  evidenceLevel: PresentationEvidenceLevel;
+}
+
+export interface PresentationScenarioRow {
+  scenarioId: number | null;
+  displayOrder: number;
+  title: string;
+  narrative: string | null;
+  scenarioRole: string | null;
+  baselineYn: string | null;
+  pressureTarget: "JKM" | null;
+  pressureBand: string | null;
+  probabilityScore: number | null;
+  pressureRationale: string | null;
+  cells: Record<string, string | number | boolean | null>;
+  cellEvidence: Record<string, PresentationCellEvidence>;
+}
+
+export interface PresentationMarkdownSection {
+  status: PresentationStatus;
+  evidenceLevel: PresentationEvidenceLevel;
+  contentType: "text/markdown";
+  markdown: string;
+}
+
+export interface ScenarioGroupPresentationResponse {
+  schemaVersion: "v1";
+  rendererVersion: string;
+  scenarioGroupId: number;
+  engineVersion: string;
+  legacy: boolean;
+  warnings: string[];
+  operation: {
+    operationId: string;
+    status: string;
+    currentPhase: string | null;
+    latestSequence: number;
+    snapshotRevision: number;
+  } | null;
+  sections: {
+    eventAnalysis: PresentationMarkdownSection;
+    scenarioDesign: {
+      status: PresentationStatus;
+      evidenceLevel: PresentationEvidenceLevel;
+      dimensionDefinitions: {
+        status: PresentationStatus;
+        items: PresentationDimensionDefinition[];
+      };
+      scenarioTable: {
+        status: PresentationStatus;
+        headers: ScenarioTableHeader[];
+        rows: PresentationScenarioRow[];
+      };
+    };
+    roleSelectionRationale: PresentationMarkdownSection;
+  };
+}
+
 export interface SoftDeleteResponse {
   scenarioGroupDeleted: number;
   scenarioDeleted: number;

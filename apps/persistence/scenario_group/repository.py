@@ -371,6 +371,38 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         self.session.flush()
         return int(snapshot.snapshot_id)
 
+    def fetch_latest_confirmation_dimension_values(self, scenario_group_id: int) -> list[list[dict[str, Any]]]:
+        snapshot = (
+            self.session.execute(
+                select(MiSnapshotModel)
+                .where(
+                    MiSnapshotModel.scenario_group_id == scenario_group_id,
+                    MiSnapshotModel.stage_no == 2,
+                    MiSnapshotModel.phase_code == "AFTER",
+                    MiSnapshotModel.del_yn == "N",
+                )
+                .order_by(MiSnapshotModel.crt_dtm.desc(), MiSnapshotModel.snapshot_id.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        if snapshot is None:
+            return []
+        rows = (
+            self.session.execute(
+                select(MiScenarioSnapModel)
+                .where(MiScenarioSnapModel.snapshot_id == snapshot.snapshot_id)
+                .order_by(MiScenarioSnapModel.scenario_snap_id)
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            [item for item in (row.dimension_values or []) if isinstance(item, dict) and item.get("dim_key")]
+            for row in rows
+        ]
+
     @staticmethod
     def _to_snapshot_dimension_values(raw_dimension_values: Any) -> list[dict[str, Any]]:
         if isinstance(raw_dimension_values, list):
@@ -402,6 +434,7 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "parameter_mapping_ready": bool(group.parameter_mapping_ready),
             "dimension_definitions": group.dimension_definitions or [],
             "generation_diagnostics": group.generation_diagnostics or {},
+            "updated_at": group.mod_dtm,
         }
         if include_del_yn:
             payload["del_yn"] = group.del_yn
