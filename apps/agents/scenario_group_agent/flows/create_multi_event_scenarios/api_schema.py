@@ -43,11 +43,6 @@ GenerationStrategy = Literal[
 ]
 
 
-class VersionedCreateScenariosIn(ApiModel):
-    mi_event_id: int = Field(gt=0)
-    user_id: int
-
-
 class MultiEventCreateScenariosIn(ApiModel):
     mi_event_ids: list[int] = Field(min_length=1, max_length=5)
     user_id: int

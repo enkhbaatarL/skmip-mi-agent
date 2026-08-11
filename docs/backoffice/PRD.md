@@ -187,7 +187,7 @@ Raw JSON panel에서 request와 response를 그대로 확인하고 복사할 수
 
 v1 화면은 `scenario-sync-pipeline`의 기존 단일 이벤트 흐름을 따른다.
 
-`POST /v1/scenario-groups/sync`를 v2/v3/v4 비교에 섞지 않는다. v1 전체 workflow는 기존 unversioned sync API로 실행한다.
+기존 전체 workflow의 sync API를 v2/v3/v4 생성 비교에 섞지 않는다. 전체 workflow는 canonical unversioned API로 실행한다.
 
 ```text
 Event detail

@@ -13,8 +13,9 @@
 즉시 반환하는 API가 아니라, 생성 작업을 접수한 뒤 같은 HTTP 응답에서 진행 이벤트를 계속 보내는
 SSE API다.
 
-`/v1/scenario-groups`는 기존 단일 Event callback API이고, `/v4/scenario-groups`는 callback
-호환을 위한 deprecated API다. 신규 Client에서는 두 API를 Multi-Event 생성 진입점으로 사용하지 않는다.
+기존 단일 Event callback 생성 API는 제거되었다.
+`/v4/scenario-groups`는 callback 호환을 위한 deprecated API이므로 신규 Client에서는
+Multi-Event 생성 진입점으로 사용하지 않는다.
 
 ## 2. API 요약
 
@@ -129,14 +130,119 @@ GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}
 | `operation` | 선택한 operation의 status, phase, sequence, snapshot revision |
 | `sections.eventAnalysis` | Event 분석 Markdown과 준비/근거 상태 |
 | `sections.scenarioDesign` | 공통 Dimension definitions와 Scenario table |
+| `sections.scenarioDesign.dimensionDefinitions.items[].rationale` | 해당 Dimension이 Scenario와 JKM 결과를 구분하는 이유를 설명하는 문자열 |
 | `sections.roleSelectionRationale` | Ceiling/Floor/Mixed 선택 근거 Markdown |
+
+`engineVersion=v4`의 `dimensionDefinitions.items[]` 계약은 다음과 같다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `dimensionId` | string | Scenario table의 header/cell과 연결되는 Dimension ID |
+| `label` | string | 화면과 Scenario table header에 표시할 Dimension 이름 |
+| `description` | string | 사용자가 판단해야 할 불확실성을 질문 형태로 설명한 문장 |
+| `rationale` | string | 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유. 10~100자의 짧은 한국어 문장 |
+| `sourceEventIds` | number[] | Dimension의 근거가 된 Event ID 목록 |
+| `modelSupportStatus` | string \| null | 모델 파라미터 지원 상태 |
+| `source` | string \| null | Dimension 복원 출처. v3·v4에서는 `null`이며, v1 legacy 복원 시에만 식별 문자열을 반환 |
+| `values` | object[] | Dimension에서 선택할 수 있는 값과 값별 근거 및 압력 기여 |
+
+`rationale`은 Dimension 자체의 선정 근거이고, `values[].rationale`은 각 Dimension 값이 JKM에
+미치는 영향의 근거다. v4 응답에서 `items[].rationale`은 `null`이 아니라 문자열로 반환되므로
+Client는 두 필드를 구분해 표시한다.
+
+`source`는 Event 근거나 일반적인 출처를 나타내는 필드가 아니다. v3·v4에서는 사용하지 않으므로
+항상 `null`이며, 근거 Event는 `sourceEventIds`로 확인한다. v1에서도 저장된 Dimension 정의가 있으면
+`source`는 `null`이고, 저장된 정의가 없어 legacy 복원 로직을 사용한 경우에만 다음 값 중 하나를 반환한다.
+
+| `source` 값 | 의미 |
+| --- | --- |
+| `legacy_confirmation_snapshot` | confirmation 당시 저장된 Dimension snapshot에서 복원 |
+| `legacy_template_checksum_match` | 저장된 checksum과 일치하는 기존 Dimension template에서 복원 |
+| `legacy_observed` | 저장된 Scenario의 Dimension 관찰값에서 제한적으로 복원 |
+
+축약 응답 예시는 다음과 같다.
+
+```json
+{
+  "schemaVersion": "v1",
+  "rendererVersion": "v1",
+  "scenarioGroupId": 366,
+  "engineVersion": "v4",
+  "legacy": false,
+  "warnings": [],
+  "operation": {
+    "operationId": "01KZQNK7AJTV5DAA49G7ZE9ZZE",
+    "status": "succeeded",
+    "currentPhase": "persistence",
+    "latestSequence": 15,
+    "snapshotRevision": 5
+  },
+  "sections": {
+    "eventAnalysis": {
+      "status": "ready",
+      "evidenceLevel": "full",
+      "contentType": "text/markdown",
+      "markdown": "## Event 분석\n\n..."
+    },
+    "scenarioDesign": {
+      "status": "ready",
+      "evidenceLevel": "full",
+      "dimensionDefinitions": {
+        "status": "ready",
+        "items": [
+          {
+            "dimensionId": "d1",
+            "label": "2026년 수요 둔화 규모",
+            "description": "2026년 세계 성장률 하향이 실제 산업활동과 전력용 가스 소비 감소로 연결되는 규모는 어느 정도인가?",
+            "rationale": "수요 둔화 규모에 따라 산업·전력용 LNG 수요 기대와 JKM 하락 압력이 달라짐",
+            "sourceEventIds": [1132],
+            "modelSupportStatus": "full",
+            "source": null,
+            "values": [
+              {
+                "valueId": "d1_v1",
+                "label": "전망 하향만 기대에 반영",
+                "description": null,
+                "rationale": "실물 소비 감소가 확인되지 않으면 JKM 하락 압력은 제한적이다.",
+                "pressureContribution": "balanced",
+                "leverStates": [
+                  {
+                    "level": "실물 소비 감소 미확인",
+                    "scope": "세계 산업활동·전력용 가스 수요",
+                    "direction": "unchanged",
+                    "lever_code": "economic_activity",
+                    "time_window": "2026년 전망 형성기",
+                    "impact_lever_id": 3
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "scenarioTable": {
+        "status": "ready",
+        "headers": [],
+        "rows": []
+      }
+    },
+    "roleSelectionRationale": {
+      "status": "ready",
+      "evidenceLevel": "full",
+      "contentType": "text/markdown",
+      "markdown": "## 대표 Scenario 선택 근거\n\n..."
+    }
+  }
+}
+```
 
 Client는 마지막으로 반영한 `snapshotRevision`보다 큰 `section_ready`만 상세 재조회하면 된다.
 같은 revision을 다시 받거나 replay로 중복 수신한 경우에는 재조회를 생략할 수 있다.
 
 `completed` 수신 후에는 마지막으로 Presentation API를 조회한 뒤 Scenario Group 상세 화면으로 전환한다.
-신규 Multi-Event 생성 graph 안에서 각 단계 검증이 함께 수행되므로, Client가 생성 도중 legacy
-`/v1/.../validation` 또는 `/v1/.../signposts` API를 호출하지 않는다.
+신규 Multi-Event 생성 graph 안에서 각 단계 검증이 함께 수행되므로, Client가 생성 도중 후속 편집용
+`/scenario-groups/{scenarioGroupId}/validation` 또는
+`/scenario-groups/{scenarioGroupId}/signposts` API를 호출하지 않는다.
 
 ### 3.6 terminal 처리
 

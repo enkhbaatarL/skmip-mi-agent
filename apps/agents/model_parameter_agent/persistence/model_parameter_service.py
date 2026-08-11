@@ -180,35 +180,25 @@ class ModelParameterService:
                 if group is None:
                     context = None
                 else:
-                    is_v4 = (
-                        getattr(group, "generation_strategy", None)
-                        == "multi_event_model_lever_dimensions"
+                    relations = group_repository.fetch_group_events(
+                        int(group.scenario_group_id),
                     )
-                    if is_v4:
-                        relations = group_repository.fetch_group_events(
-                            int(group.scenario_group_id),
-                        )
-                        events = [
-                            event_repository.fetch_event_by_id(
-                                int(relation.mi_event_id),
-                            )
-                            for relation in relations
-                        ]
-                        events = [event for event in events if event is not None]
+                    event_models = [
+                        event_repository.fetch_event_by_id(int(relation.mi_event_id)) for relation in relations
+                    ]
+                    events = [event for event in event_models if event is not None]
+                    event_relation = relations[0] if len(relations) == 1 else None
+                    if len(events) > 1:
                         event = {
                             "event_title_ko": " / ".join(
                                 str(
-                                    item.get("event_title_ko")
-                                    or item.get("event_title")
-                                    or "",
+                                    item.get("event_title_ko") or item.get("event_title") or "",
                                 )
                                 for item in events
                                 if isinstance(item, dict)
                             ),
                             "one_line_summary": "\n".join(
-                                str(item.get("one_line_summary") or "")
-                                for item in events
-                                if isinstance(item, dict)
+                                str(item.get("one_line_summary") or "") for item in events if isinstance(item, dict)
                             ),
                             "key_bullets": [
                                 bullet
@@ -217,34 +207,30 @@ class ModelParameterService:
                                 for bullet in item.get("key_bullets") or []
                             ],
                             "detail_analysis": "\n".join(
-                                str(item.get("detail_analysis") or "")
-                                for item in events
-                                if isinstance(item, dict)
+                                str(item.get("detail_analysis") or "") for item in events if isinstance(item, dict)
                             ),
                         }
                         event_type = {}
-                        dimension_template = (
-                            getattr(group, "dimension_definitions", None) or []
-                        )
                     else:
-                        events = []
-                        event = event_repository.fetch_event_by_id(
-                            int(group.mi_event_id),
-                        )
-                        event_type = event_repository.fetch_event_type_by_l2_id(
-                            int(group.event_type_l2_id),
-                        )
-                        dimension_template = (
-                            scenario_repository.fetch_dimension_template(
-                                int(group.event_type_l2_id),
+                        event = events[0] if events else {}
+                        event_type = (
+                            event_repository.fetch_event_type_by_l2_id(
+                                int(event_relation.event_type_l2_id),
                             )
+                            if event_relation is not None
+                            else {}
+                        )
+                    dimension_template = getattr(group, "dimension_definitions", None) or []
+                    if not dimension_template and event_relation is not None:
+                        dimension_template = scenario_repository.fetch_dimension_template(
+                            int(event_relation.event_type_l2_id),
                         )
                     mapping_rules, parameter_definitions = (
                         model_parameter_repository.fetch_parameter_mapping_resources()
                     )
                     context = {
                         "scenario": _scenario_to_context_dict(scenario),
-                        "scenario_group": _group_to_context_dict(group),
+                        "scenario_group": _group_to_context_dict(group, event_relation),
                         "event": event or {},
                         "events": events,
                         "event_type": event_type or {},
@@ -568,11 +554,11 @@ def _scenario_to_context_dict(scenario: Any) -> dict[str, Any]:
     }
 
 
-def _group_to_context_dict(group: Any) -> dict[str, Any]:
+def _group_to_context_dict(group: Any, event_relation: Any | None = None) -> dict[str, Any]:
     return {
         "scenario_group_id": int(group.scenario_group_id),
-        "mi_event_id": _optional_int(group.mi_event_id),
-        "event_type_l2_id": _optional_int(group.event_type_l2_id),
+        "mi_event_id": _optional_int(event_relation.mi_event_id) if event_relation is not None else None,
+        "event_type_l2_id": (_optional_int(event_relation.event_type_l2_id) if event_relation is not None else None),
         "request_usr_id": (
             int(group.request_usr_id) if group.request_usr_id is not None else None
         ),

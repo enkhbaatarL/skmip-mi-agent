@@ -292,6 +292,7 @@ def _dimension_draft() -> V4DimensionDesignDraft:
                     "dimensionId": "cold_wave_intensity",
                     "label": "한파 수요 강도",
                     "description": "동북아 한파가 만드는 추가 LNG 수요 규모",
+                    "rationale": "한파 수요 규모에 따라 동북아 LNG 조달 경쟁과 JKM 압력이 변화됨",
                     "sourceImpactPathIds": ["path_101_demand"],
                     "sourceUncertaintyIds": ["u_weather_magnitude"],
                     "primaryLeverCode": "weather_demand",
@@ -307,6 +308,7 @@ def _dimension_draft() -> V4DimensionDesignDraft:
                     "dimensionId": "liquefaction_recovery",
                     "label": "액화시설 회복",
                     "description": "미국 Gulf 액화시설 재가동 속도",
+                    "rationale": "액화시설 회복 속도에 따라 미국발 가용 공급과 JKM 압력이 변화됨",
                     "sourceImpactPathIds": ["path_202_supply"],
                     "sourceUncertaintyIds": ["u_liq_recovery"],
                     "primaryLeverCode": "liquefaction_availability",
@@ -336,6 +338,7 @@ def _dimension_draft() -> V4DimensionDesignDraft:
                     "dimensionId": "risk_premium",
                     "label": "위험 프리미엄",
                     "description": "공급 차질에 대한 시장 위험 프리미엄 확대 폭",
+                    "rationale": "위험 프리미엄 확대 폭에 따라 공급 차질의 JKM 반영 강도가 변화됨",
                     "sourceImpactPathIds": ["path_202_supply"],
                     "sourceUncertaintyIds": ["u_risk_magnitude"],
                     "primaryLeverCode": "financial_market_sentiment",
@@ -519,7 +522,9 @@ def test_v4_dimension_contract_derives_event_and_lever_ids_without_legacy_fields
     schema_fields = V4DimensionDefinition.model_json_schema(by_alias=True)["properties"]
     assert definition.source_event_ids == [101]
     assert definition.primary_impact_lever_id == 1
+    assert definition.rationale == "한파 수요 규모에 따라 동북아 LNG 조달 경쟁과 JKM 압력이 변화됨"
     assert definition.values[0].lever_states[0].impact_lever_id == 1
+    assert "rationale" in schema_fields
     assert "eventGroundings" not in schema_fields
     assert "leverMappings" not in schema_fields
 
@@ -939,6 +944,7 @@ def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
             "from": [source],
             "label": label,
             "question": question,
+            "rationale": f"{label} 변화에 따라 Scenario별 JKM 압력이 구분됨",
             "lever": lever,
             "axis": axis,
             "format": "temporal" if axis == "recovery" else "categorical",
@@ -1115,6 +1121,9 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
+    assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == (
+        "동북아 한파와 추가 LNG 수요 변화에 따라 Scenario별 JKM 압력이 구분됨"
+    )
 
 
 def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
@@ -1291,6 +1300,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "분석 기준일 2026-08-07 현재 동북아 한파 전망" in dimension
     assert "[U1]" in dimension
     assert "label은 화면 표에 표시할 10~40자의 이름" in dimension
+    assert "rationale은 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유" in dimension
+    assert "10~100자의 짧은 한국어 한 문장" in dimension
     assert "Choice label은 10~25자" in dimension
     assert "새로운 수치 경계" in dimension
     assert "별도 Anchor 참조 ID는 작성하지 않습니다" in dimension
@@ -1312,12 +1323,25 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
 
     assert expanded.dimension_definitions[0].label == "동북아 한파와 추가 LNG 수요"
     assert expanded.dimension_definitions[0].description == "한파에 따른 추가 LNG 수요 규모는 얼마인가?"
+    assert expanded.dimension_definitions[0].rationale == (
+        "동북아 한파와 추가 LNG 수요 변화에 따라 Scenario별 JKM 압력이 구분됨"
+    )
     assert all(10 <= len(choice.label) <= 25 for dimension in readable.dimensions for choice in dimension.choices)
 
     invalid_choice = readable.model_dump(by_alias=True)
     invalid_choice["dimensions"][0]["choices"][0]["label"] = "낮음"
     with pytest.raises(ValueError, match="label"):
         V4ReadableDimensionDesignDraft.model_validate(invalid_choice)
+
+    short_rationale = readable.model_dump(by_alias=True)
+    short_rationale["dimensions"][0]["rationale"] = "너무 짧음"
+    with pytest.raises(ValueError, match="rationale"):
+        V4ReadableDimensionDesignDraft.model_validate(short_rationale)
+
+    long_rationale = readable.model_dump(by_alias=True)
+    long_rationale["dimensions"][0]["rationale"] = "가" * 101
+    with pytest.raises(ValueError, match="rationale"):
+        V4ReadableDimensionDesignDraft.model_validate(long_rationale)
 
     synthesis = _readable_scenario_draft()
     assert all(20 <= len(scenario.title) <= 40 for scenario in synthesis.scenarios)

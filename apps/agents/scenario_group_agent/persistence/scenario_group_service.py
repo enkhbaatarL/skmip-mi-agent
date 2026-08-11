@@ -205,8 +205,13 @@ class ScenarioGroupService:
             latest_operations = ScenarioGroupOperationRepository(session=session).fetch_latest_by_group_ids(
                 [int(group.scenario_group_id) for group in groups]
             )
+            relations_by_group_id = group_repository.fetch_active_group_events_by_group_ids(
+                [int(group.scenario_group_id) for group in groups]
+            )
             rows: list[dict[str, Any]] = []
             for group in groups:
+                group_relations = relations_by_group_id.get(int(group.scenario_group_id), [])
+                event_relation = group_relations[0] if len(group_relations) == 1 else None
                 scenarios = scenario_repository.fetch_models_by_group_id(
                     int(group.scenario_group_id),
                     include_deleted=include_deleted,
@@ -222,8 +227,8 @@ class ScenarioGroupService:
                     "scenario_group_id": int(group.scenario_group_id),
                     "title": group.title,
                     "baseEventTitle": None,
-                    "miEventId": (int(group.mi_event_id) if group.mi_event_id is not None else None),
-                    "mi_event_id": (int(group.mi_event_id) if group.mi_event_id is not None else None),
+                    "miEventId": int(event_relation.mi_event_id) if event_relation is not None else None,
+                    "mi_event_id": int(event_relation.mi_event_id) if event_relation is not None else None,
                     "status": status_value,
                     "stage": stage_value,
                     "scenarioCount": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
@@ -276,7 +281,10 @@ class ScenarioGroupService:
             group = repository.fetch_by_id(scenario_group_id)
             if group is None:
                 return None
-            return ScenarioGroupPayload.from_model(group)
+            return ScenarioGroupPayload.from_model(
+                group,
+                repository.fetch_single_active_group_event(scenario_group_id),
+            )
         finally:
             session.close()
 
@@ -339,10 +347,7 @@ class ScenarioGroupService:
         )
 
         detail = self.load_detail(scenario_group_id, include_deleted=include_deleted)
-        group = detail["group"]
         event_ids = self.load_event_ids(scenario_group_id)
-        if not event_ids and group.get("mi_event_id") is not None:
-            event_ids = [int(group["mi_event_id"])]
         return {
             **detail,
             "events": EventService().load_events(event_ids) if event_ids else [],
@@ -363,8 +368,6 @@ class ScenarioGroupService:
         detail = self.load_detail(scenario_group_id)
         group = detail["group"]
         event_ids = self.load_event_ids(scenario_group_id)
-        if not event_ids and group.get("mi_event_id") is not None:
-            event_ids = [int(group["mi_event_id"])]
         operation_service = ScenarioGroupOperationService()
         operation = (
             operation_service.get_operation(scenario_group_id, operation_id)
@@ -443,21 +446,6 @@ class ScenarioGroupService:
             )
         return refreshed.parameter_mapping_ready, results
 
-    def load_by_mi_event_id(self, mi_event_id: int) -> ScenarioGroupPayload | None:
-        from apps.common.configs.database.sync_database.connection import (
-            get_sync_session,
-        )
-
-        session = get_sync_session()
-        try:
-            repository = ScenarioGroupRepository(session=session)
-            group = repository.fetch_by_mi_event_id(mi_event_id)
-            if group is None:
-                return None
-            return ScenarioGroupPayload.from_model(group)
-        finally:
-            session.close()
-
     def load_event_ids(self, scenario_group_id: int) -> list[int]:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
@@ -471,23 +459,6 @@ class ScenarioGroupService:
                     session=session,
                 ).fetch_group_events(scenario_group_id)
             ]
-        finally:
-            session.close()
-
-    def create_group(self, payload: dict[str, Any]) -> int:
-        from apps.common.configs.database.sync_database.connection import (
-            get_sync_session,
-        )
-
-        session = get_sync_session()
-        try:
-            repository = ScenarioGroupRepository(session=session)
-            scenario_group_id = repository.insert_group(payload)
-            session.commit()
-            return scenario_group_id
-        except Exception:
-            session.rollback()
-            raise
         finally:
             session.close()
 
@@ -526,8 +497,6 @@ class ScenarioGroupService:
             repository = ScenarioGroupRepository(session=session)
             scenario_group_id = repository.insert_group(
                 {
-                    "mi_event_id": None,
-                    "event_type_l2_id": None,
                     "request_usr_id": user_id,
                     "title": f"Scenario group ({len(events)} selected events)",
                     "summary": "선택 MI Event 기반 시나리오",
@@ -574,7 +543,10 @@ class ScenarioGroupService:
                     ErrorCode.UNKNOWN_ERROR,
                     detail="Scenario group not found after creation",
                 )
-            return ScenarioGroupPayload.from_model(created)
+            return ScenarioGroupPayload.from_model(
+                created,
+                repository.fetch_single_active_group_event(scenario_group_id),
+            )
         except Exception:
             session.rollback()
             raise
@@ -634,8 +606,6 @@ class ScenarioGroupService:
                 )
             scenario_group_id = repository.insert_group(
                 {
-                    "mi_event_id": None,
-                    "event_type_l2_id": None,
                     "request_usr_id": user_id,
                     "title": f"Global LNG scenario group ({len(events)} selected events)",
                     "summary": "선택 MI Event 기반 모델 영향 레버 시나리오",
@@ -691,7 +661,10 @@ class ScenarioGroupService:
                     ErrorCode.UNKNOWN_ERROR,
                     detail="Scenario group not found after v4 creation",
                 )
-            return ScenarioGroupPayload.from_model(created)
+            return ScenarioGroupPayload.from_model(
+                created,
+                repository.fetch_single_active_group_event(scenario_group_id),
+            )
         except Exception:
             session.rollback()
             raise
@@ -780,62 +753,12 @@ class ScenarioGroupService:
             )
             session.commit()
             return (
-                ScenarioGroupPayload.from_model(group),
+                ScenarioGroupPayload.from_model(
+                    group,
+                    group_repository.fetch_single_active_group_event(scenario_group_id),
+                ),
                 [ScenarioPayload.from_model(scenario) for scenario in persisted_scenarios],
             )
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
-    def save_single_event_template_usage(
-        self,
-        *,
-        scenario_group_id: int,
-        event_id: int,
-        event_type_l2_id: int,
-        scenario_dimension_template_id: int,
-        template_checksum: str,
-        dimension_definitions: list[dict[str, Any]],
-        user_id: int,
-    ) -> None:
-        from apps.common.configs.database.sync_database.connection import (
-            get_sync_session,
-        )
-
-        session = get_sync_session()
-        try:
-            repository = ScenarioGroupRepository(session=session)
-            group = repository.fetch_by_id(scenario_group_id)
-            if group is None:
-                raise MIBaseError(
-                    ErrorCode.ENTITY_NOT_FOUND,
-                    detail=f"Scenario group not found: {scenario_group_id}",
-                )
-            repository.update_group(
-                group,
-                {
-                    "template_checksum": template_checksum,
-                    "dimension_definitions": dimension_definitions,
-                    "parameter_mapping_ready": True,
-                    "mod_usr_logn_id": user_id,
-                },
-            )
-            if not repository.fetch_group_events(scenario_group_id):
-                repository.insert_group_event(
-                    {
-                        "scenario_group_id": scenario_group_id,
-                        "mi_event_id": event_id,
-                        "event_type_l2_id": event_type_l2_id,
-                        "scenario_dimension_template_id": (scenario_dimension_template_id),
-                        "template_checksum": template_checksum,
-                        "display_order": 1,
-                        "crt_usr_logn_id": user_id,
-                        "mod_usr_logn_id": user_id,
-                    },
-                )
-            session.commit()
         except Exception:
             session.rollback()
             raise
@@ -869,21 +792,6 @@ class ScenarioGroupService:
                     "mod_usr_logn_id": user_id,
                 },
             )
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
-    def update_scenario_count(self, scenario_group_id: int, scenario_count: int) -> None:
-        from apps.common.configs.database.sync_database.connection import (
-            get_sync_session,
-        )
-
-        session = get_sync_session()
-        try:
-            ScenarioGroupRepository(session=session).update_scenario_count(scenario_group_id, scenario_count)
             session.commit()
         except Exception:
             session.rollback()
@@ -1176,6 +1084,7 @@ class ScenarioGroupService:
             scenarios_by_id = {int(scenario.scenario_id): scenario for scenario in scenarios}
             signposts = signpost_repository.fetch_models_by_scenario_ids(list(scenarios_by_id))
             signposts_by_id = {int(signpost.signpost_id): signpost for signpost in signposts}
+            event_relation = group_repository.fetch_single_active_group_event(scenario_group_id)
 
             rows = table_payload.get("rows", [])
             normalized_scores = (
@@ -1200,8 +1109,13 @@ class ScenarioGroupService:
                 if getattr(group, "dimension_definitions", None):
                     dimension_values = {str(key): value for key, value in row["cells"].items()}
                 else:
+                    if event_relation is None:
+                        return {
+                            "status": "failure",
+                            "message": "Scenario group requires exactly one active Event relation",
+                        }
                     dimension_values = ScenarioService().cells_to_dimension_values(
-                        int(group.event_type_l2_id),
+                        int(event_relation.event_type_l2_id),
                         row["cells"],
                     )
                 scenario_update: dict[str, Any] = {

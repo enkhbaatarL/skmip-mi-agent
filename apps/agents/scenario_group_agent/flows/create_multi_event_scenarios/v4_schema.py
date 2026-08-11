@@ -381,6 +381,7 @@ class V4DimensionDefinitionDraft(ApiModel):
     dimension_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
     description: str = Field(min_length=1)
+    rationale: str = Field(min_length=10, max_length=100)
     source_impact_path_ids: list[str] = Field(min_length=1)
     source_uncertainty_ids: list[str] = Field(min_length=1)
     primary_lever_code: str = Field(min_length=1)
@@ -407,6 +408,7 @@ class V4DimensionDefinition(ApiModel):
     dimension_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
     description: str = Field(min_length=1)
+    rationale: str = Field(min_length=10, max_length=100)
     source_event_ids: list[int] = Field(min_length=1)
     source_impact_path_ids: list[str] = Field(min_length=1)
     source_uncertainty_ids: list[str] = Field(min_length=1)
@@ -505,6 +507,7 @@ class V4ReadableDimension(ApiModel):
     source_questions: list[str] = Field(alias="from", min_length=1)
     label: str = Field(min_length=10, max_length=40)
     question: str = Field(min_length=5, max_length=120)
+    rationale: str = Field(min_length=10, max_length=100)
     lever: str = Field(min_length=1)
     axis: UncertaintyAxis
     value_format: Literal["categorical", "numeric_range", "temporal"] = Field(alias="format")
@@ -871,6 +874,7 @@ def expand_v4_readable_dimension_design(
                 dimension_id=dimension_id,
                 label=dimension.label,
                 description=dimension.question,
+                rationale=dimension.rationale,
                 source_impact_path_ids=source_paths,
                 source_uncertainty_ids=[item.uncertainty_id for item in source_uncertainties],
                 primary_lever_code=dimension.lever,

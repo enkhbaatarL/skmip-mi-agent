@@ -9,7 +9,6 @@ v4 다중 Event 모델 영향 레버 방식의 계획과 구현 이력은
 `scenario_group_agent`의 네 flow가 API 입력을 LangGraph state로 변환하고,
 노드를 순차 실행한 뒤 API 응답으로 변환하는 구조를 설명한다.
 
-- `flows/create_scenarios/` — 시나리오 그룹 생성
 - `flows/create_multi_event_scenarios/` — v2/v3 Template 기반 및 v4 모델 영향 레버 기반 다중 Event 생성
 - `flows/create_signposts/` — Signpost 생성
 - `flows/validate_scenarios/` — 시나리오 테이블 검증
@@ -17,7 +16,7 @@ v4 다중 Event 모델 영향 레버 방식의 계획과 구현 이력은
 
 ## 비동기 실행 패턴 (공통)
 
-legacy v1의 `create_scenarios`, `create_signposts`, `validate_scenarios` 세 flow는
+`create_signposts`, `validate_scenarios` 두 flow는
 **동기 prepare + FastAPI BackgroundTasks + callback** 패턴을 사용한다.
 
 ```text
@@ -79,7 +78,7 @@ deprecated `/v4/scenario-groups`와 `/v4/scenario-groups/sync`는 이 중복·�
 
 ### 1. 재사용 가능한 진입점
 
-`create_scenarios`, `create_signposts`, `validate_scenarios`는 `flow.py`의
+`create_signposts`, `validate_scenarios`는 `flow.py`의
 `get_compiled_graph().ainvoke(...)`를 호출한다.
 `confirm_generation`은 `flow.py`의 `get_api_runnable().ainvoke(...)`를 호출한다.
 
@@ -132,7 +131,6 @@ return builder.compile()
 
 | Flow               | State                    | 주요 전용 필드                                                                                                                                                                        |
 | ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| create_scenarios   | `CreateScenariosState`   | `mi_event_id`, `event_data`, `scenario_group`, `scenario_result`, `saved_scenario_ids`, `scenarios`                                                                             |
 | validate_scenarios | `ValidateScenariosState` | `scenario_group`, `scenarios`, `dimension_template`, `request_table`, `validation_result`, `is_valid`, `reason`                                                                 |
 | create_signposts   | `CreateSignpostsState`   | `mi_event_id`, `scenario_group`, `scenarios`, `signposts`, `request_table`, `signpost_result`, `saved_signpost_ids`, `signpost_target_scenario_ids`, `new_scenario_row_details` |
 | confirm_generation | `ConfirmGenerationState` | `scenario_group`, `scenarios`, `signposts`, `request_scenario_group`, `request_table`, `snapshot_id`, `confirmed`                                                               |
@@ -147,13 +145,12 @@ return builder.compile()
 
 ### Versioned sync 분기
 
-Create Scenario의 version 구분은 v1~v3에서 sync endpoint에만 적용하고,
+Create Scenario의 version 구분은 v2/v3에서 sync endpoint에만 적용하고,
 v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공한다.
 
 
 | Endpoint                        | 입력                      | 생성 전략                                       |
 | ------------------------------- | ----------------------- | ------------------------------------------- |
-| `POST /v1/scenario-groups/sync` | `miEventId`             | 단일 Event·원본 Template dimension              |
 | `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event별 원본 dimension 3~6개                    |
 | `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개          |
 | `POST /scenario-groups`         | 중복 없는 `miEventIds` 1~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, DB event + SSE 비동기 실행 |
@@ -249,12 +246,14 @@ Scenario `dimensionValues`는 strict JSON Schema가
 retry와 feedback을 명시적으로 추적할 수 있도록 connector 내부 `max_retries`는 0으로
 고정한다. 각 graph node와 fallback 경로는 LangGraph/MLflow step으로 관측된다.
 
-그룹은 대표 Event를 위장해 저장하지 않고 `mi_event_id`,
-`event_type_l2_id`를 `NULL`로 둔다. Event와 사용 Template ID/checksum은
-`tmm_mi_scenario_group_event_m`에 순서대로 저장한다. v1도 사용 Template
-checksum과 단일 Event lineage를 같은 연결 테이블에 보존한다.
+Scenario Group master에는 `mi_event_id`, `event_type_l2_id` 대표 Event 컬럼을 두지 않는다.
+Event와 사용 Template ID/checksum은 `tmm_mi_scenario_group_event_m`에 순서대로 저장한다.
+기존 v1 데이터도 사용 Template checksum과 단일 Event lineage를 같은 연결 테이블에 보존한다.
+목록 필터, Event context, legacy Template 조회, Model Parameter context도 이 관계를 기준으로 한다.
+응답 호환용 단일 Event 필드는 활성 연결 row가 정확히 하나일 때만 계산하고, 다중 Event 그룹은
+대표 Event를 임의로 만들지 않는다.
 
-v1~v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
+v2/v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
 `ModelImpactLeverService`와 Impact Path·Lever lineage 검증은 v4 경로에만 존재한다.
 최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
 adapter를 추가하지 않는다.
@@ -322,7 +321,8 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 4. `design_model_lever_dimensions`: 검증된 열린 질문을 `[U1]`, `[U2]` 카드로 전달하고, 각 질문을
    어떤 선택 축으로 모델링할지 Dimension 3~6개와 Value 2~4개로 답하게 한다. LLM은 질문·축·선택지와
    선택 결과를 자연어 및 짧은 상태 표현으로 생성하며 Dimension/Value ID와 source lineage는 서버가
-   부여한다. 화면용 Dimension label은 질문과 분리하고, Value label은 비교 가능한 시장·운영 상태를
+   부여한다. 화면용 Dimension label은 질문과 분리하고, Dimension rationale은 이 불확실성이 Scenario와
+   JKM 결과를 구분하는 이유를 10~100자의 짧은 한국어 한 문장으로 설명한다. Value label은 비교 가능한 시장·운영 상태를
    10~25자로 표현한다. `decisionBasis`에 현재 판단에 유효한 수치·기간·잔여일이 있으면 질문과 Value에
    반영하고, Value의 `assumptionRationale`에 어떤 Event 사실과 현재 시점 판단을 사용했는지 자연어로
    설명한다. Anchor ref는 추가하지 않으며 새로운 숫자 경계는 제공된 판단 근거가 실제 기준을 줄 때만
@@ -347,6 +347,7 @@ Dimension Choice pressure와 Scenario pressure만 폐쇄형 Enum으로 검증한
 
 v4 Dimension은 다음 정본을 저장한다.
 
+- 열린 질문인 `description`과 짧은 Dimension 선택 근거인 `rationale`
 - `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`
 - `primaryLeverCode`, 서버가 hydrate한 `primaryImpactLeverId`, `modelSupportStatus`
 - `values[]`: `valueId`, `label`, `leverStates[]`, `pressureContribution`, `assumptionRationale`
@@ -381,66 +382,14 @@ API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`
 DB 계약의 정본은 `skmip-mi-agent-mgmt`의 기존 Alembic 0022 revision이며,
 Scenario 관련 컬럼과 proposal의 `parameter_mapping_evidence` JSON 컬럼을 함께 반영한다.
 
-### 전체 흐름
+### 재사용 Scenario Generation Subgraph
 
-```mermaid
-flowchart LR
-    A[POST /scenario-groups] --> B[prepare_create_scenarios]
-    B --> C[200 ScenarioGroupAcceptedOut]
-    B --> D[BackgroundTasks]
-    D --> E[run_scenario_generation]
-    E --> F[save_scenarios]
-    F --> G[send_callback]
-```
+기존 v1 생성 flow와 endpoint는 제거되었지만, Signpost 생성이 신규 Scenario row를 보강할 때
+`subgraphs/scenario_generation/flow.py`의 6-stage subgraph를 재사용하므로 이 모듈은 유지한다.
+이 subgraph는 독립 API 진입점이나 Scenario Group master row 생성 책임을 갖지 않는다.
 
-
-
-`prepare_create_scenarios`는 LangGraph graph 없이 동기 함수로 실행된다.
-
-```text
-load_event → check_existing_scenario_group → create_group_record
-```
-
-- `load_event`: MI event 조회, 없으면 `MIBaseError` raise
-- `check_existing_scenario_group`: 기존 group 확인
-  - 없음 또는 `ready` 상태: 새로 생성 진행
-  - `creating` 상태이고 같은 사용자: `SCENARIO_GROUP_ALREADY_CREATED` raise
-  - `creating` 상태이고 다른 사용자: `SCENARIO_GROUP_OWNERSHIP_CONFLICT` raise
-  - 그 외 상태: `SCENARIO_GROUP_ALREADY_CREATED` raise
-- `create_group_record`: `status="creating"`, `stage="ready"`인 group row를 INSERT하고 `scenario_group_id`를 확보한다.
-
-백그라운드 graph는 `run_scenario_generation → save_scenarios`만 실행한다.
-
-### 입력과 출력 변환
-
-`to_state`는 `CreateScenariosIn`으로 검증 후 다음 state를 만든다.
-
-```python
-flow별 state(
-    scenario_group_id=...,   # prepare에서 확보한 ID
-    event_data=...,          # prepare에서 조회한 event
-    user_id=...,
-)
-```
-
-`to_output`(및 `_bg_to_output`)은 `build_scenario_group_table_data(group, scenarios)`를 사용해
-`CreateScenariosOut`의 `scenario_group`, `table` 필드를 구성한다.
-
-### Node 책임
-
-
-| 순서  | Node                      | 주요 동작                                                                                         | 오류 조건                        |
-| --- | ------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------- |
-| 1   | `run_scenario_generation` | scenario generation subgraph 실행                                                               | subgraph 내부 오류               |
-| 2   | `save_scenarios`          | group 존재 확인 후 scenarios 저장, scenario count 갱신, group `stage="scenario_created"` 갱신, 저장 결과 재조회 | group ID 또는 생성 결과 누락 시 raise |
-
-
-
-
-### `run_scenario_generation` 상세
-
-`subgraphs/scenario_generation/flow.py`에서 컴파일한 `get_scenario_generation_subgraph() 직접 호출`이
-직접 node로 등록된다. 6-stage subgraph가 하나의 node처럼 실행된다.
+`subgraphs/scenario_generation/flow.py`에서 컴파일한 `get_scenario_generation_subgraph()`를
+직접 node로 등록한다. 6-stage subgraph가 하나의 node처럼 실행된다.
 
 ```mermaid
 flowchart LR
@@ -808,7 +757,7 @@ validation 요청 row는 `scenario_id`, `display_order`, `title`, `cells`만 허
 | --------------------------------- | ------------- | ------------------------------- |
 | `request_table.headers`           | validation 요청 | 화면에 존재하는 dimension key 집합       |
 | `request_table.rows[].cells`      | validation 요청 | scenario별 현재 dimension value    |
-| `scenario_group.event_type_l2_id` | DB group      | scenario template 조회            |
+| 단일 활성 Event 관계의 `event_type_l2_id` | DB relation   | legacy scenario template 조회     |
 | `state.scenarios`                 | DB scenario   | 기존 scenario의 title/narrative 보강 |
 
 
@@ -999,18 +948,18 @@ flowchart LR
 `confirm_outputs`는 `request_scenario_group`과 `request_table`을 읽어
 시나리오·signpost 변경 사항을 한 번에 적용하고 `snapshot_id`를 state에 설정한다.
 
-## 네 Flow 비교
+## 후속 편집 Flow 비교
 
 
-| 항목         | Create Scenarios                | Create Signposts                                        | Validate Scenarios                         | Confirm Generation                   |
-| ---------- | ------------------------------- | ------------------------------------------------------- | ------------------------------------------ | ------------------------------------ |
-| 시작 식별자     | `mi_event_id`                   | `scenario_group_id`                                     | `scenario_group_id`                        | `scenario_group_id`                  |
-| 실행 방식      | prepare + 백그라운드                 | prepare + 백그라운드                                         | prepare + 백그라운드                            | 동기 ainvoke                           |
-| 입력 payload | `user_id`                       | `user_id`, `table`                                      | `user_id`, `table`                         | `user_id`, `scenario_group`, `table` |
-| 핵심 외부 처리   | scenario LLM pipeline (6 stage) | 신규 row fixed scenario detail 생성 + signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증                          | snapshot 생성 (DB only)                |
-| 중복 처리      | 기존 group 존재 시 에러 raise          | 미생성 scenario + target_ids 대상만 생성                        | 제목 완전 중복 FAIL, 의미 중복 WARN                  | 해당 없음                                |
-| stage 갱신   | `scenario_created`              | `signpost_created`                                      | `scenario_validated` 또는 `scenario_created` | `completed`                          |
-| 최종 DB 변경   | group/scenarios 생성              | signposts 생성, scenario 상태 갱신                            | judgment stage 갱신                          | snapshot 생성, 변경 사항 적용                |
+| 항목         | Create Signposts                                        | Validate Scenarios                         | Confirm Generation                   |
+| ---------- | ------------------------------------------------------- | ------------------------------------------ | ------------------------------------ |
+| 시작 식별자     | `scenario_group_id`                                     | `scenario_group_id`                        | `scenario_group_id`                  |
+| 실행 방식      | prepare + 백그라운드                                         | prepare + 백그라운드                            | 동기 ainvoke                           |
+| 입력 payload | `user_id`, `table`                                      | `user_id`, `table`                         | `user_id`, `scenario_group`, `table` |
+| 핵심 외부 처리   | 신규 row fixed scenario detail 생성 + signpost 비동기 pipeline | 차원값 생성 + 로컬 규칙 검증                          | snapshot 생성 (DB only)                |
+| 중복 처리      | 미생성 scenario + target_ids 대상만 생성                        | 제목 완전 중복 FAIL, 의미 중복 WARN                  | 해당 없음                                |
+| stage 갱신   | `signpost_created`                                      | `scenario_validated` 또는 `scenario_created` | `completed`                          |
+| 최종 DB 변경   | signposts 생성, scenario 상태 갱신                            | judgment stage 갱신                          | snapshot 생성, 변경 사항 적용                |
 
 
 

@@ -77,8 +77,6 @@ def load_scenarios(state: ValidateScenariosState) -> dict[str, object]:
         except (KeyError, TypeError, ValueError):
             dimension_template = []
     event_ids = ScenarioGroupService().load_event_ids(state.scenario_group_id)
-    if not event_ids and state.scenario_group.mi_event_id is not None:
-        event_ids = [int(state.scenario_group.mi_event_id)]
     events = EventService().load_events(event_ids)
     return validate_scenarios_state_update(
         scenarios=scenarios,

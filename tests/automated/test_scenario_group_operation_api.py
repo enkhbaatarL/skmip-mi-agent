@@ -22,8 +22,11 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_service import 
 from apps.agents.scenario_group_agent.routers.multi_event_scenario_group_sync import (
     router as multi_event_sync_router,
 )
+from apps.agents.scenario_group_agent.routers.scenario_generation_sync import (
+    router as scenario_generation_sync_router,
+)
 from apps.agents.scenario_group_agent.routers.scenario_group_stream import stream_operation_events
-from apps.agents.scenario_group_agent.routers.v1_scenario_groups import router as v1_router
+from apps.agents.scenario_group_agent.routers.scenario_groups import router as scenario_groups_router
 from apps.agents.scenario_group_agent.runtime import (
     ScenarioGroupOperationEventHub,
     ScenarioGroupOperationTaskRunner,
@@ -77,7 +80,7 @@ def _event(sequence: int, event_type: str) -> ScenarioGroupOperationEventPayload
     )
 
 
-def test_common_routes_and_v1_deprecation_are_exposed() -> None:
+def test_canonical_scenario_group_routes_are_exposed_without_v1_or_deprecation() -> None:
     app = FastAPI()
     app.include_router(agent_router)
     schema = app.openapi()
@@ -87,9 +90,14 @@ def test_common_routes_and_v1_deprecation_are_exposed() -> None:
     assert set(paths["/scenario-groups/{scenario_group_id}"]) == {"get", "delete"}
     assert "/scenario-groups/{scenario_group_id}/operations/{operation_id}" in paths
     assert "/scenario-groups/{scenario_group_id}/operations/{operation_id}/stream" in paths
-    assert paths["/v1/scenario-groups"]["post"]["deprecated"] is True
-    assert paths["/v1/scenario-groups/sync"]["post"]["deprecated"] is True
-    assert paths["/v1/scenario-groups/{scenario_group_id}/validation"]["post"]["deprecated"] is True
+    canonical_flow_paths = {
+        "/scenario-groups/{scenario_group_id}/validation",
+        "/scenario-groups/{scenario_group_id}/signposts",
+        "/scenario-groups/{scenario_group_id}/confirmation",
+    }
+    assert canonical_flow_paths <= set(paths)
+    assert not any(path.startswith("/v1/") for path in paths)
+    assert all("deprecated" not in paths[path]["post"] for path in canonical_flow_paths)
     assert paths["/scenario-groups"]["post"]["tags"] == ["scenario-groups"]
     assert all(
         parameter["name"].lower() != "accept" for parameter in paths["/scenario-groups"]["post"].get("parameters", [])
@@ -97,19 +105,20 @@ def test_common_routes_and_v1_deprecation_are_exposed() -> None:
     assert paths["/scenario-groups/{scenario_group_id}/operations/{operation_id}"]["get"]["tags"] == [
         "scenario-groups",
     ]
-    assert paths["/v1/scenario-groups"]["post"]["tags"] == ["scenario-groups-legacy-v1"]
+    assert paths["/scenario-groups/{scenario_group_id}/validation"]["post"]["tags"] == ["scenario-groups"]
     assert paths["/v4/scenario-groups/sync"]["post"]["tags"] == ["scenario-groups-sync-test"]
 
 
-def test_versioned_routes_are_declared_by_the_documented_owner_routers() -> None:
-    assert {route.path for route in v1_router.routes} == {
-        "/v1/scenario-groups",
-        "/v1/scenario-groups/sync",
-        "/v1/scenario-groups/{scenario_group_id}/validation",
-        "/v1/scenario-groups/{scenario_group_id}/validation/sync",
-        "/v1/scenario-groups/{scenario_group_id}/signposts",
-        "/v1/scenario-groups/{scenario_group_id}/signposts/sync",
-        "/v1/scenario-groups/{scenario_group_id}/confirmation",
+def test_routes_are_declared_by_the_documented_owner_routers() -> None:
+    scenario_group_paths = {route.path for route in scenario_groups_router.routes}
+    assert {
+        "/scenario-groups/{scenario_group_id}/validation",
+        "/scenario-groups/{scenario_group_id}/signposts",
+        "/scenario-groups/{scenario_group_id}/confirmation",
+    } <= scenario_group_paths
+    assert {route.path for route in scenario_generation_sync_router.routes} == {
+        "/scenario-groups/{scenario_group_id}/validation/sync",
+        "/scenario-groups/{scenario_group_id}/signposts/sync",
     }
     assert {route.path for route in multi_event_sync_router.routes} == {
         "/v2/scenario-groups/sync",

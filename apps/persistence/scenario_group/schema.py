@@ -6,7 +6,7 @@ from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
-from apps.persistence.scenario_group.models import MiScenarioGroupModel
+from apps.persistence.scenario_group.models import MiScenarioGroupEventModel, MiScenarioGroupModel
 from apps.persistence.schema_base import ApiModel
 
 
@@ -32,12 +32,16 @@ class ScenarioGroupPayload(ApiModel):
     generation_diagnostics: dict[str, object] = Field(default_factory=dict)
 
     @classmethod
-    def from_model(cls, model: MiScenarioGroupModel) -> ScenarioGroupPayload:
+    def from_model(
+        cls,
+        model: MiScenarioGroupModel,
+        event_relation: MiScenarioGroupEventModel | None = None,
+    ) -> ScenarioGroupPayload:
         return cls.model_validate(
             {
                 "scenario_group_id": model.scenario_group_id,
-                "mi_event_id": model.mi_event_id,
-                "event_type_l2_id": model.event_type_l2_id,
+                "mi_event_id": event_relation.mi_event_id if event_relation is not None else None,
+                "event_type_l2_id": event_relation.event_type_l2_id if event_relation is not None else None,
                 "request_usr_id": model.request_usr_id,
                 "title": model.title,
                 "summary": model.summary,

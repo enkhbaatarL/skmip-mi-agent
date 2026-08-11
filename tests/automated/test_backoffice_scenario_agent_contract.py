@@ -128,6 +128,7 @@ def test_v4_sync_accepts_one_event_and_keeps_impact_path_lineage() -> None:
         dimension_id="supply_pressure",
         label="공급 압력",
         description="선택 Event의 공급 영향을 결합한다.",
+        rationale="공급 영향의 변화에 따라 가용 LNG 물량과 JKM 압력이 구분됨",
         source_event_ids=[101, 202],
         source_impact_path_ids=["path_101", "path_202"],
         source_uncertainty_ids=["u_101", "u_202"],

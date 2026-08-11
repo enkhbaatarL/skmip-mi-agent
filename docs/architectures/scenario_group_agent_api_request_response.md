@@ -1,11 +1,13 @@
 # Scenario Group Agent API Request/Response
 
-> 버전: v9
+> 버전: v10
 
 ## API surface 기준
 
 - `/scenario-groups` 경로는 현재 운영 기준(canonical) API다.
-- `/v1/scenario-groups` 경로는 기존 단일 Event callback 계약을 유지하는 deprecated API다.
+- 검증·Signpost·확정도 `/scenario-groups/{scenarioGroupId}/...` canonical 경로를 사용한다.
+- `/v1/scenario-groups*` endpoint는 제거됐다. 문서의 `v1` 표기는 과거 저장 데이터의
+  `apiVersion`/`engineVersion`과 Presentation 복원 경로만 뜻한다.
 - `/v2`, `/v3`, `/v4`의 `/sync` 경로는 버전별 생성 로직을 검증·비교하는 테스트 API다.
 - router 모듈은 실행 계약과 transport 책임을 나눈 것이며, 별도의 Scenario Group 도메인을 뜻하지 않는다.
 
@@ -13,7 +15,7 @@
 💡
 
 신규 Multi-Event 생성은 `POST /scenario-groups`의 SSE와 operation event DB를 사용합니다.
-기존 단일 Event 생성·검토·Signpost·확정 API는 `/v1` 아래에서 deprecated 상태로 callback 계약을 유지합니다.
+Scenario Group의 검토·Signpost·확정 API는 canonical 경로에서 기존 callback 계약을 유지합니다.
 
 즉시 응답은 `ScenarioGroupAcceptedOut` 형태이며, 최종 결과 payload는 각 API의 Callback Body를 기준으로 합니다.
 
@@ -65,8 +67,9 @@ read model이다. `operationId`가 없으면 최신 operation을 선택하며, �
 아직 준비되지 않은 문자열과 배열도 빈 값으로 유지한다.
 
 Markdown은 저장된 Event, Dimension, Scenario, generation diagnostics만으로 결정론적으로 렌더링한다.
-동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. v3의
-`derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
+동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. 새 v4 Dimension의
+10~100자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
+v3의 `derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
 Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 동일한 표시 label과
 `cellEvidence`를 만든다. v1은 저장되지 않은 impact path, rationale, role을 추정하지 않고 제한 또는
 미제공 상태로 표시한다. 현재 Template은 저장된 `templateChecksum`과 canonical checksum이 일치할
@@ -137,10 +140,6 @@ validation code, reference ID, 사용자 메시지만 저장한다.
 sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가될 수 있습니다.
 `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`는 해당 sync 요청 안에서 누적된 LLM token 사용량입니다.
 
-- `POST /v1/scenario-groups/sync`
-  - 단일 `miEventId`
-  - Response: version/strategy, Event, dimension lineage, 공통 table을 포함한
-    `VersionedCreateScenariosOut`
 - `POST /v2/scenario-groups/sync`
   - 중복 없는 양의 정수 `miEventIds` 1~5개
   - Event별 원본 Template dimension 3~6개를 선택하고 key를
@@ -160,10 +159,10 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - v4와 같은 요청 계약으로 테스트·비교용 완료 응답을 동기 반환
   - `generationDiagnostics`에 Event 상호작용, covered/uncovered dimension,
     unsupported lever와 전체 parameter coverage 상태를 포함
-- `POST /v1/scenario-groups/{scenarioGroupId}/validation/sync`
+- `POST /scenario-groups/{scenarioGroupId}/validation/sync`
   - 기존 validation prepare 및 검증 graph를 동기 실행
   - Response: `ValidateScenariosOut`
-- `POST /v1/scenario-groups/{scenarioGroupId}/signposts/sync`
+- `POST /scenario-groups/{scenarioGroupId}/signposts/sync`
   - 기존 signpost prepare 및 생성 graph를 동기 실행
   - Response: `CreateSignpostsOut`
 
@@ -192,9 +191,10 @@ v3 `generationDiagnostics.templateDimensionSelections`는 Event별 Template 후�
 `relevanceType`, `observedBasis`, `selectionRationale`, 서버가 hydrate한 label·description·required,
 enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dimension에서 사용되지 않은 후보는
 `usedInDimensionIds=[]`로 남는다. 이 진단은 기존 Scenario Group JSON 컬럼에 저장하므로 DB migration은 없다.
-v4의 각 dimension은 `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`,
+v4의 각 dimension은 `rationale`, `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`,
 `primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`, `values`를 포함한다.
 화면용 `label`은 열린 질문인 `description`과 분리되며 핵심 대상과 변화 축을 간결하게 표시한다.
+`rationale`은 해당 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 담은 10~100자의 짧은 한국어 한 문장이다.
 각 value는 구체적인 방향·수준·범위·기간과 Catalog ID를 가진 `leverStates`,
 `pressureContribution`, `assumptionRationale`을 제공한다. 기존 `eventGroundings`와
 `leverMappings`는 새 v4 생성 응답에서 제거한다.
@@ -259,133 +259,16 @@ Backoffice Scenario Group List를 위한 목록 API도 제공합니다.
 - `GET /scenario-groups`
   - Query: `includeDeleted`, `miEventId`, `keyword`, `status`, `stage`, `sort`
   - Response: `rows`, `meta`
-  - 각 row는 scenario group ID/name, base `miEventId`, status/stage, scenario/signpost count, created/updated time, deleted state를 포함합니다.
+  - 각 row는 scenario group ID/name, 호환 `miEventId`, status/stage, scenario/signpost count, created/updated time, deleted state를 포함합니다.
+  - `miEventId`와 `eventTypeL2Id` 호환 필드는 활성 Event 관계가 정확히 하나일 때만 채워지며 다중 Event 그룹은 `null`입니다.
 
-### 1) 시나리오 그룹 및 시나리오 생성
-
-- Method/Path: `POST /v1/scenario-groups` (deprecated)
-- Description: `miEventId`를 기준으로 시나리오 그룹/시나리오를 생성한다.
-
-Request
-
-```json
-{
-  "miEventId": 12345,
-  "userId": 10001
-}
-```
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `miEventId` | number | Y | MI Event 식별자 |
-| `userId` | number | Y | 요청 사용자 식별자(int) |
-
-Response
-
-```json
-{
-  "status": "success",
-  "message": "성공",
-  "data": {
-    "scenarioGroupId": 1,
-    "status": "creating",
-    "stage": "ready"
-  }
-}
-```
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `status` | string | Y | `"success" \| "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroupId` | number | Y | 생성된 시나리오 그룹 ID |
-| `data.status` | string | Y | Scenario Group status |
-| `data.stage` | string | Y | Scenario Group stage |
-
-Error Response
-
-```json
-{
-  "status": "error",
-  "message": "Event not found for miEventId=113",
-  "data": null
-}
-```
-
-CallBack Body (`CreateScenariosOut`)
-
-> Platform Team에서 정의 예정
-
-```json
-{
-  "result": "success",
-  "reason": null,
-  "scenarioGroup": {
-    "scenarioGroupId": 12345,
-    "miEventId": 998877,
-    "eventTypeL2Id": 12,
-    "title": "호르무즈 봉쇄 + 전면전",
-    "summary": "단기 공급 차질 및 운임 급등 시나리오",
-    "description": "상세 설명...",
-    "dimensionSelected": ["period_label", "capacity_change", "recovery"],
-    "scenarioCount": 5,
-    "status": "creating",
-    "stage": "scenario_created"
-  },
-  "table": {
-    "headers": [
-      { "key": "period_label", "label": "기간", "displayOrder": 1 },
-      { "key": "capacity_change", "label": "생산능력 변화", "displayOrder": 2 },
-      { "key": "recovery", "label": "공급 복구", "displayOrder": 3 }
-    ],
-    "rows": [
-      {
-        "scenarioId": 90001,
-        "displayOrder": 1,
-        "title": "단기 외교 해결",
-        "cells": {
-          "period_label": "2026.5월 말 (~2개월)",
-          "capacity_change": "15%",
-          "recovery": "4~6주 대다수 재기동"
-        },
-        "baselineYn": "Y"
-      }
-    ]
-  }
-}
-```
-
-| Path | Type | Required | Description |
-| --- | --- | --- | --- |
-| `status` | string | Y | `"success" \| "error"` |
-| `message` | string | Y | 처리 결과 메시지 |
-| `data.scenarioGroup` | object | Y | 시나리오 그룹 메타 정보 |
-| `data.scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
-| `data.scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
-| `data.scenarioGroup.eventTypeL2Id` | number | Y | Event type L2 ID |
-| `data.scenarioGroup.title` | string | Y | 시나리오 그룹 제목 |
-| `data.scenarioGroup.summary` | string | N | 시나리오 그룹 요약 |
-| `data.scenarioGroup.description` | string | N | 시나리오 그룹 상세 설명 |
-| `data.scenarioGroup.dimensionSelected` | array(json) | Y | 선택된 테이블 차원 키 목록 |
-| `data.scenarioGroup.scenarioCount` | number | Y | 생성 시나리오 개수 |
-| `data.scenarioGroup.status` | string | Y | Scenario Group status |
-| `data.scenarioGroup.stage` | string | Y | Scenario Group stage |
-| `data.table.headers` | array(json) | Y | 테이블 헤더 정의 |
-| `data.table.headers[].key` | string | Y | 컬럼 키(예: `period_label`) |
-| `data.table.headers[].label` | string | Y | 표시 라벨 |
-| `data.table.headers[].displayOrder` | number | Y | 표시 순서 |
-| `data.table.rows` | array(json) | Y | 시나리오 행 목록 |
-| `data.table.rows[].scenarioId` | number | Y | 시나리오 ID |
-| `data.table.rows[].displayOrder` | number | Y | 표시 순서 |
-| `data.table.rows[].title` | string | Y | 시나리오 제목 |
-| `data.table.rows[].narrative` | string | N | 시나리오 내러티브 |
-| `data.table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
-| `data.table.rows[].metrics` | object | N | 확률/실현가능성 등 메트릭 |
-| `data.table.rows[].baselineYn` | CHAR(1) | N | Baseline 여부(`"Y" \| "N"`) |
+Scenario Group master에는 `mi_event_id`, `event_type_l2_id` 컬럼을 두지 않습니다. 목록의
+`miEventId` 필터와 숫자 keyword 검색, 상세/Callback의 단일 Event 호환 필드는 모두 활성
+`tmm_mi_scenario_group_event_m` 관계를 기준으로 처리합니다.
 
 ### 2) 시나리오 검증
 
-- Method/Path: `POST /v1/scenario-groups/{scenarioGroupId}/validation` (deprecated)
+- Method/Path: `POST /scenario-groups/{scenarioGroupId}/validation`
 - Description: 생성된 시나리오 그룹의 유효성을 검증한다.
 - Path Param: `scenarioGroupId` (int)
 
@@ -393,7 +276,7 @@ Request body
 
 ```json
 {
-  "user_id": "10001",
+  "userId": 10001,
   "table": {
     "headers": [
       { "key": "period_label", "label": "기간", "displayOrder": 1 },
@@ -422,17 +305,12 @@ Request body
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
-| `user_id` | number | Y | 요청 사용자 식별자(int) |
-| `scenarioGroup` | object | Y | 검증 대상 시나리오 그룹 정보 |
-| `scenarioGroup.scenarioGroupId` | number | Y | 시나리오 그룹 ID |
-| `scenarioGroup.miEventId` | number | Y | 연결된 MI Event ID |
-| `scenarioGroup.eventTypeL2Id` | number | Y | Event type L2 ID |
-| `scenarioGroup.title` | string | Y | 제목 |
-| `scenarioGroup.summary` | string | N | 요약 |
-| `scenarioGroup.description` | string | N | 상세 설명 |
+| `userId` | number | Y | 요청 사용자 식별자(int) |
 | `table.headers` | array(json) | Y | 테이블 헤더 정의 |
 | `table.rows` | array&lt;object&gt; | Y | 검증 대상 시나리오 행 목록 |
-| `table.rows[].scenarioId` | number | Y | 시나리오 ID |
+| `table.rows[].scenarioId` | number \| null | N | 기존 시나리오 ID. 신규 row는 `null` 또는 생략 |
+| `table.rows[].displayOrder` | number | N | 표시 순서. 생략 시 `0` |
+| `table.rows[].title` | string | N | 시나리오 제목. 생략 시 빈 문자열 |
 | `table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
 
 Response (`ValidateScenariosOut`)
@@ -529,7 +407,7 @@ Callback Body
 
 ### 3) Signpost 생성
 
-- Method/Path: `POST /v1/scenario-groups/{scenarioGroupId}/signposts` (deprecated)
+- Method/Path: `POST /scenario-groups/{scenarioGroupId}/signposts`
 - Description: 시나리오 그룹 기준 signpost를 생성한다.
 - Path Param: `scenarioGroupId` (int)
 
@@ -577,14 +455,14 @@ Request (body)
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `userId` | number | N | 요청 사용자 식별자(int) |
+| `userId` | number | Y | 요청 사용자 식별자(int) |
 | `table` | object | Y | Signpost 생성을 위한 테이블(헤더/행) |
 | `table.headers` | array(json) | Y | 테이블 헤더 정의 |
 | `table.headers[].key` | string | Y | 컬럼 키(예: `period_label`) |
 | `table.headers[].label` | string | Y | 표시 라벨 |
 | `table.headers[].displayOrder` | number | Y | 표시 순서 |
 | `table.rows` | array(object) | Y | 대상 시나리오 행 목록 |
-| `table.rows[].scenarioId` | number | Y | 시나리오 ID |
+| `table.rows[].scenarioId` | number \| null | N | 기존 시나리오 ID. 신규 row는 `null` 또는 생략 |
 | `table.rows[].displayOrder` | number | Y | 표시 순서 |
 | `table.rows[].title` | string | Y | 시나리오 제목 |
 | `table.rows[].cells` | object | Y | 헤더 key별 셀 값 |
@@ -693,7 +571,7 @@ Callback Body
 
 ### 4) 생성 확정
 
-- Method/Path: `POST /v1/scenario-groups/{scenarioGroupId}/confirmation` (deprecated)
+- Method/Path: `POST /scenario-groups/{scenarioGroupId}/confirmation`
 - Description: 시나리오/사인포스트 생성 결과를 확정하고 스냅샷을 남긴다.
 - Path Param: `scenarioGroupId` (int)
 
@@ -781,6 +659,7 @@ Response (`ConfirmGenerationOut`)
 
 | 버전 | 수정내용 | 수정날짜 | 배포여부 (버전) |
 | --- | --- | --- | --- |
+| v10 | Validation, Signpost 생성, Confirmation을 canonical `/scenario-groups/{scenarioGroupId}/...` 경로로 이관하고 `/v1` prefix 및 deprecated 표기를 제거 | 26/08/11 | - |
 | v2 | Req/Res body table 추가<br>`summary`, `description` 필수값을 `Y -> N`으로 변경(nullable 반영)<br>Signpost의 `probabilityDirectionCode`, `probabilityImpactScore` 필수값을 `Y -> N`으로 변경(nullable 반영)<br>예시 JSON 3곳에서 `feasibilityScore` 제거<br>Validation 요청의 `user_id` 표기 정리<br>Confirmation response의 `stage`는 `completed`로 반영된 상태 유지 | 26/06/10 | 외부망 배포<br>(v0.0.1) |
 | v3 | Request Body의 user_id 를 string -> number(int) 타입으로 변경<br>confirmation API 에서 안쓰는 파라미터 삭제(scenarioGroupId, eventId 등) | 26/06/11 | 외부망 배포<br>(v0.0.2) |
 | v4 | Validation API의 Request Body의 scenarioGroup 삭제(사유: 사용자가 수정못하는 영역이라 DB값 읽기로 함) | 26/06/12 | 외부망 배포<br>(v0.0.3) |

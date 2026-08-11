@@ -36,11 +36,6 @@ class ScenarioGroupAcceptedOut(BaseModel):
     data: ScenarioGroupAcceptedData
 
 
-class CreateScenariosIn(ApiModel):
-    mi_event_id: int = Field(description="MI Event ID to generate a scenario group for")
-    user_id: int
-
-
 class EventTypeInfo(ApiModel):
     id: int | None = None
     code: str = ""
@@ -141,10 +136,6 @@ class EventDetailOut(ApiModel):
 class CreateScenariosOut(CallBackBody):
     scenario_group: ScenarioGroupPayload | None = None
     table: ScenarioTable | None = None
-
-
-class CreateScenariosSyncOut(CreateScenariosOut):
-    usage: LLMUsageModel | None = None
 
 
 class ValidateScenariosHeaderIn(ScenarioHeader):

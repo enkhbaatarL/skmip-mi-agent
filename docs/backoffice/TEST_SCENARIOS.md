@@ -67,7 +67,7 @@ poetry run dotenv -f envs/.env run --no-override -- \
   --graceful-timeout 1200
 ```
 
-v1 순차 테스트만 수행할 때는 기존 Uvicorn local 실행도 허용한다.
+기존 전체 workflow 순차 테스트만 수행할 때는 Uvicorn local 실행도 허용한다.
 
 ### 3.2 테스트 데이터 원칙
 

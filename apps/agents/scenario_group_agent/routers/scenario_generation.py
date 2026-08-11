@@ -7,20 +7,15 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_service import 
 from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
 from apps.agents.scenario_group_agent.routers.scenario_groups import (
     approve_dimension_mappings,
+    confirm_generation,
+    create_signposts,
     create_v4_scenarios_compatibility,
     router as scenario_groups_router,
-)
-from apps.agents.scenario_group_agent.routers.v1_scenario_groups import (
-    confirm_generation,
-    create_scenarios,
-    create_signposts,
-    router as v1_router,
     validate_scenarios,
 )
 
 
 router = APIRouter()
-router.include_router(v1_router)
 router.include_router(scenario_groups_router)
 
 
@@ -29,7 +24,6 @@ __all__ = [
     "ScenarioService",
     "approve_dimension_mappings",
     "confirm_generation",
-    "create_scenarios",
     "create_signposts",
     "create_v4_scenarios_compatibility",
     "router",

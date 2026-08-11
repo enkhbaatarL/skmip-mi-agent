@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Query, Request, Security
 from fastapi.responses import Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 
+from apps.agents.scenario_group_agent.flows.confirm_generation.flow import run_confirm_generation
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
 )
@@ -14,6 +15,14 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operati
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
     prepare_v4_multi_event_scenarios,
     run_v4_multi_event_scenarios_background,
+)
+from apps.agents.scenario_group_agent.flows.create_signposts.flow import (
+    prepare_create_signposts,
+    run_create_signposts_background,
+)
+from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
+    prepare_validate_scenarios,
+    run_validate_scenarios_background,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
     new_operation_id,
@@ -45,8 +54,12 @@ from apps.agents.scenario_group_agent.schemas.api.scenario_group_presentation im
     ScenarioGroupPresentationOut,
 )
 from apps.agents.scenario_group_agent.schemas.endpoint import (
+    ConfirmGenerationIn,
+    ConfirmGenerationOut,
+    CreateSignpostsIn,
     ScenarioGroupAcceptedData,
     ScenarioGroupAcceptedOut,
+    ValidateScenariosIn,
 )
 
 
@@ -193,6 +206,73 @@ async def get_scenario_group_presentation(
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
     return build_scenario_group_presentation(**context)
+
+
+@router.post(
+    "/scenario-groups/{scenario_group_id}/validation",
+    response_model=ScenarioGroupAcceptedOut,
+    summary="시나리오 테이블 검증",
+)
+async def validate_scenarios(
+    scenario_group_id: int,
+    payload: ValidateScenariosIn,
+    background_tasks: BackgroundTasks,
+) -> ScenarioGroupAcceptedOut:
+    result = prepare_validate_scenarios(scenario_group_id, payload.user_id, payload.table.model_dump())
+    background_tasks.add_task(
+        run_validate_scenarios_background,
+        scenario_group_id=result["scenario_group_id"],
+        user_id=result["user_id"],
+        request_table=result["request_table"],
+    )
+    return ScenarioGroupAcceptedOut(
+        data=ScenarioGroupAcceptedData(
+            scenario_group_id=result["scenario_group_id"],
+            status=result["status"],
+            stage=result["stage"],
+        ),
+    )
+
+
+@router.post(
+    "/scenario-groups/{scenario_group_id}/signposts",
+    response_model=ScenarioGroupAcceptedOut,
+    summary="Signpost 생성",
+)
+async def create_signposts(
+    scenario_group_id: int,
+    payload: CreateSignpostsIn,
+    background_tasks: BackgroundTasks,
+) -> ScenarioGroupAcceptedOut:
+    result = prepare_create_signposts(scenario_group_id, payload.user_id, payload.table.model_dump())
+    background_tasks.add_task(
+        run_create_signposts_background,
+        scenario_group_id=result["scenario_group_id"],
+        user_id=result["user_id"],
+        request_table=result["request_table"],
+    )
+    return ScenarioGroupAcceptedOut(
+        data=ScenarioGroupAcceptedData(
+            scenario_group_id=result["scenario_group_id"],
+            status=result["status"],
+            stage=result["stage"],
+        ),
+    )
+
+
+@router.post(
+    "/scenario-groups/{scenario_group_id}/confirmation",
+    response_model=ConfirmGenerationOut,
+    summary="시나리오 생성 확정",
+)
+async def confirm_generation(
+    scenario_group_id: int,
+    payload: ConfirmGenerationIn,
+) -> ConfirmGenerationOut:
+    result = await run_confirm_generation(
+        {"scenario_group_id": scenario_group_id, **payload.model_dump(exclude_unset=True)},
+    )
+    return ConfirmGenerationOut.model_validate(result)
 
 
 @router.delete(

@@ -310,14 +310,13 @@ async def run_signpost_generation(
 def _load_group_event_context(
     group: object,
 ) -> EventPayload | None:
-    mi_event_id = getattr(group, "mi_event_id", None)
-    if mi_event_id is not None:
-        return EventService().load_event(int(mi_event_id))
     scenario_group_id = int(getattr(group, "scenario_group_id"))
     event_ids = ScenarioGroupService().load_event_ids(scenario_group_id)
     events = EventService().load_events(event_ids)
     if not events:
         return None
+    if len(events) == 1:
+        return events[0]
     return EventPayload(
         mi_event_id=",".join(str(event.mi_event_id) for event in events),
         event_type_l2_id=events[0].event_type_l2_id,

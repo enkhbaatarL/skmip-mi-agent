@@ -84,25 +84,6 @@ class NewScenarioInsertPayload(ExistingScenarioUpdatePayload):
     crt_usr_logn_id: int
 
 
-_LIKELIHOOD_WEIGHTS: dict[str, int] = {
-    "very_low": 5,
-    "low": 10,
-    "medium": 20,
-    "high": 35,
-    "very_high": 50,
-}
-
-
-def _normalize_scores_to_100(likelihoods: list[str]) -> list[Decimal]:
-    """likelihood_prior 목록을 합계가 정확히 100인 probability_score 목록으로 변환.
-
-    각 tier의 상대 가중치를 기반으로 비례 배분하고,
-    나머지는 largest-remainder 방식으로 처리해 정수 합계 100을 보장한다.
-    """
-    weights = [Decimal(_LIKELIHOOD_WEIGHTS.get(t, _LIKELIHOOD_WEIGHTS["medium"])) for t in likelihoods]
-    return _normalize_decimal_scores_to_100(weights)
-
-
 def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
     """Score 목록을 합계 100인 probability_score 목록으로 변환한다."""
     if not scores:
@@ -403,58 +384,6 @@ class ScenarioService:
             return [
                 ScenarioPayload.from_model(model) for model in repository.fetch_models_by_group_id(scenario_group_id)
             ]
-        finally:
-            session.close()
-
-    def save_generated_scenarios(
-        self,
-        scenario_group_id: int,
-        scenario_result: dict[str, Any],
-        user_id: int,
-    ) -> list[int]:
-        from apps.common.configs.database.sync_database.connection import (
-            get_sync_session,
-        )
-
-        stage4 = scenario_result.get("stage4_scenario_synthesis", {}) or {}
-        stage5 = scenario_result.get("stage5_validation", {}) or {}
-        scenarios = stage4.get("scenarios", []) or []
-        likelihood_prior = stage5.get("likelihood_prior", {}) or {}
-
-        likelihoods = [likelihood_prior.get(scenario.get("scenario_id", ""), "medium") for scenario in scenarios]
-        normalized_scores = _normalize_scores_to_100(likelihoods)
-
-        session = get_sync_session()
-        try:
-            repository = ScenarioRepository(session=session)
-            saved_ids: list[int] = []
-            for index, (scenario, probability_score) in enumerate(zip(scenarios, normalized_scores), start=1):
-                payload = {
-                    "scenario_group_id": scenario_group_id,
-                    "title": (scenario.get("title") or "")[:255],
-                    "narrative": scenario.get("description") or "",
-                    "status": ScenarioStatus.CREATING.value,
-                    "dimension_values": self._normalize_dimension_values_object(scenario.get("dimension_values") or {}),
-                    "probability_score": probability_score,
-                    "probability_delta": Decimal("0.0"),
-                    "impact_jkm": None,
-                    "impact_ttf": None,
-                    "impact_hh": None,
-                    "display_order": index,
-                    "baseline_yn": "N",
-                    "crt_usr_logn_id": user_id,
-                    "mod_usr_logn_id": user_id,
-                }
-                saved_ids.append(repository.insert_scenario(payload))
-            self.apply_baseline_by_probability(
-                repository.fetch_models_by_group_id(scenario_group_id),
-                user_id=user_id,
-            )
-            session.commit()
-            return saved_ids
-        except Exception:
-            session.rollback()
-            raise
         finally:
             session.close()
 

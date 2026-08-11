@@ -32,13 +32,10 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             stmt = stmt.where(MiScenarioGroupModel.del_yn == "N")
         if mi_event_id is not None:
             stmt = stmt.where(
-                or_(
-                    MiScenarioGroupModel.mi_event_id == mi_event_id,
-                    MiScenarioGroupModel.scenario_group_id.in_(
-                        select(MiScenarioGroupEventModel.scenario_group_id).where(
-                            MiScenarioGroupEventModel.mi_event_id == mi_event_id,
-                            MiScenarioGroupEventModel.del_yn == "N",
-                        ),
+                MiScenarioGroupModel.scenario_group_id.in_(
+                    select(MiScenarioGroupEventModel.scenario_group_id).where(
+                        MiScenarioGroupEventModel.mi_event_id == mi_event_id,
+                        MiScenarioGroupEventModel.del_yn == "N",
                     ),
                 ),
             )
@@ -51,7 +48,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
                 filters.extend(
                     [
                         MiScenarioGroupModel.scenario_group_id == numeric,
-                        MiScenarioGroupModel.mi_event_id == numeric,
                         MiScenarioGroupModel.scenario_group_id.in_(
                             select(
                                 MiScenarioGroupEventModel.scenario_group_id,
@@ -90,25 +86,10 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             stmt = stmt.where(MiScenarioGroupModel.del_yn == "N")
         return self.session.execute(stmt).scalars().one_or_none()
 
-    def fetch_by_mi_event_id(self, mi_event_id: int) -> MiScenarioGroupModel | None:
-        stmt = (
-            select(MiScenarioGroupModel)
-            .where(
-                MiScenarioGroupModel.mi_event_id == mi_event_id,
-                MiScenarioGroupModel.del_yn == "N",
-            )
-            .order_by(MiScenarioGroupModel.scenario_group_id.desc())
-            .limit(1)
-        )
-        return self.session.execute(stmt).scalars().first()
-
     def fetch_by_any_event_id(
         self,
         mi_event_id: int,
     ) -> MiScenarioGroupModel | None:
-        direct = self.fetch_by_mi_event_id(mi_event_id)
-        if direct is not None:
-            return direct
         stmt = (
             select(MiScenarioGroupModel)
             .join(
@@ -227,6 +208,36 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             )
         )
         return list(self.session.execute(stmt).scalars().all())
+
+    def fetch_single_active_group_event(
+        self,
+        scenario_group_id: int,
+    ) -> MiScenarioGroupEventModel | None:
+        relations = self.fetch_group_events(scenario_group_id)
+        return relations[0] if len(relations) == 1 else None
+
+    def fetch_active_group_events_by_group_ids(
+        self,
+        scenario_group_ids: list[int],
+    ) -> dict[int, list[MiScenarioGroupEventModel]]:
+        if not scenario_group_ids:
+            return {}
+        stmt = (
+            select(MiScenarioGroupEventModel)
+            .where(
+                MiScenarioGroupEventModel.scenario_group_id.in_(scenario_group_ids),
+                MiScenarioGroupEventModel.del_yn == "N",
+            )
+            .order_by(
+                MiScenarioGroupEventModel.scenario_group_id,
+                MiScenarioGroupEventModel.display_order,
+                MiScenarioGroupEventModel.scenario_group_event_id,
+            )
+        )
+        relations_by_group_id: dict[int, list[MiScenarioGroupEventModel]] = {}
+        for relation in self.session.execute(stmt).scalars():
+            relations_by_group_id.setdefault(int(relation.scenario_group_id), []).append(relation)
+        return relations_by_group_id
 
     def soft_delete_group(self, group: MiScenarioGroupModel, user_id: int) -> int:
         if group.del_yn == "Y":
@@ -416,10 +427,11 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         return []
 
     def model_to_dict(self, group: MiScenarioGroupModel, *, include_del_yn: bool = False) -> dict[str, Any]:
+        event_relation = self.fetch_single_active_group_event(int(group.scenario_group_id))
         payload = {
             "scenario_group_id": int(group.scenario_group_id),
-            "mi_event_id": int(group.mi_event_id) if group.mi_event_id is not None else None,
-            "event_type_l2_id": (int(group.event_type_l2_id) if group.event_type_l2_id is not None else None),
+            "mi_event_id": int(event_relation.mi_event_id) if event_relation is not None else None,
+            "event_type_l2_id": int(event_relation.event_type_l2_id) if event_relation is not None else None,
             "request_usr_id": (int(group.request_usr_id) if group.request_usr_id is not None else None),
             "title": group.title,
             "summary": group.summary,

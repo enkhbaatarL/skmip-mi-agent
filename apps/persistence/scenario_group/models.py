@@ -60,8 +60,6 @@ class AuditColumnsMixin:
 class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_scenario_group_m"
     __table_args__ = (
-        Index("idx_tmm_mi_scenario_group_m_01", "event_type_l2_id"),
-        Index("idx_tmm_mi_scenario_group_m_02", "mi_event_id"),
         Index(
             "idx_tmm_mi_scenario_group_m_03",
             "api_version",
@@ -91,18 +89,6 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         primary_key=True,
         autoincrement=True,
         comment="시나리오 그룹 ID",
-    )
-    mi_event_id: Mapped[int | None] = mapped_column(
-        mysql.INTEGER(unsigned=True),
-        ForeignKey("tmm_mi_mievent_m.mi_event_id"),
-        nullable=True,
-        comment="단일 이벤트 방식의 대표 MI 이벤트 ID",
-    )
-    event_type_l2_id: Mapped[int | None] = mapped_column(
-        mysql.INTEGER(unsigned=True),
-        ForeignKey("tmm_mi_event_type_l2_m.event_type_l2_id"),
-        nullable=True,
-        comment="단일 이벤트 방식의 이벤트 유형 L2 ID",
     )
     request_usr_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),

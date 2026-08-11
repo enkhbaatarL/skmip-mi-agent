@@ -2960,6 +2960,7 @@ def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() ->
     session = Mock()
     repository = Mock()
     repository.insert_group.return_value = 99
+    repository.fetch_single_active_group_event.return_value = None
     repository.fetch_by_id.return_value = SimpleNamespace(
         scenario_group_id=99,
         mi_event_id=None,
@@ -3019,8 +3020,8 @@ def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() ->
         )
 
     inserted_group = repository.insert_group.call_args.args[0]
-    assert inserted_group["mi_event_id"] is None
-    assert inserted_group["event_type_l2_id"] is None
+    assert "mi_event_id" not in inserted_group
+    assert "event_type_l2_id" not in inserted_group
     assert inserted_group["comparison_run_id"] is None
     assert group.mi_event_id is None
     assert [call.args[0]["mi_event_id"] for call in repository.insert_group_event.call_args_list] == EVENT_IDS
@@ -3035,6 +3036,7 @@ def test_multi_event_group_does_not_lookup_comparison_run() -> None:
     session = Mock()
     repository = Mock()
     repository.insert_group.return_value = 99
+    repository.fetch_single_active_group_event.return_value = None
     repository.fetch_by_id.return_value = SimpleNamespace(
         scenario_group_id=99,
         mi_event_id=None,
@@ -3097,7 +3099,7 @@ def test_multi_event_group_does_not_lookup_comparison_run() -> None:
 
 def test_versioned_sync_and_mapping_routes_are_registered() -> None:
     paths = {route.path for route in agent_router.routes}
-    assert "/v1/scenario-groups/sync" in paths
+    assert "/v1/scenario-groups/sync" not in paths
     assert "/v2/scenario-groups/sync" in paths
     assert "/v3/scenario-groups/sync" in paths
     assert "/scenario-groups/{scenario_group_id}/dimension-mapping-approvals" in paths
