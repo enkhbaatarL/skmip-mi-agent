@@ -35,6 +35,7 @@ router = APIRouter(tags=["scenario-generation-sync"])
     "/scenario-groups/sync",
     response_model=CreateScenariosSyncOut,
     summary="시나리오 그룹 생성 동기 실행",
+    include_in_schema=False,
     description=(
         "테스트용 API입니다. 기존 시나리오 그룹 생성 API와 같은 prepare 및 생성 graph를 실행하되, "
         "백그라운드 task와 callback 전송 없이 callback body를 HTTP 응답으로 반환합니다."
@@ -69,11 +70,7 @@ async def create_scenarios_sync(payload: CreateScenariosIn) -> CreateScenariosSy
 @router.post(
     "/scenario-groups/{scenario_group_id}/validation/sync",
     response_model=ValidateScenariosSyncOut,
-    summary="시나리오 테이블 검증 동기 실행",
-    description=(
-        "테스트용 API입니다. 기존 검증 API와 같은 prepare 및 검증 graph를 실행하되, "
-        "백그라운드 task와 callback 전송 없이 callback body를 HTTP 응답으로 반환합니다."
-    ),
+    include_in_schema=False,
 )
 async def validate_scenarios_sync(
     scenario_group_id: int,
@@ -106,11 +103,7 @@ async def validate_scenarios_sync(
 @router.post(
     "/scenario-groups/{scenario_group_id}/signposts/sync",
     response_model=CreateSignpostsSyncOut,
-    summary="Signpost 생성 동기 실행",
-    description=(
-        "테스트용 API입니다. 기존 signpost 생성 API와 같은 prepare 및 생성 graph를 실행하되, "
-        "백그라운드 task와 callback 전송 없이 callback body를 HTTP 응답으로 반환합니다."
-    ),
+    include_in_schema=False,
 )
 async def create_signposts_sync(
     scenario_group_id: int,

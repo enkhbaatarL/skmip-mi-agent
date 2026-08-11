@@ -21,13 +21,15 @@ def _resolve_status_code(exc: MIBaseError) -> HTTPStatus | int:
 
 
 def _mi_error_response(exc: MIBaseError) -> JSONResponse:
+    data = {
+        **exc.context,
+        "error_code": exc.code,
+        "error_name": exc.error_code.name,
+    }
     response = CommonResponse(
         status="error",
         message=exc.error_message,
-        data={
-            "error_code": exc.code,
-            "error_name": exc.error_code.name,
-        },
+        data=data,
     )
     return JSONResponse(
         status_code=_resolve_status_code(exc),

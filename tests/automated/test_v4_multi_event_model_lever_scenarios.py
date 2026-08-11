@@ -739,6 +739,111 @@ def test_v4_readable_event_allows_two_open_questions_and_rejects_three() -> None
         V4ReadableEventAnalysisDraft.model_validate(payload)
 
 
+def test_v4_readable_event_allows_three_facts_and_impacts_and_rejects_four() -> None:
+    facts = [
+        "동북아 한파 지속 전망",
+        "역내 LNG 재고가 평년보다 낮다.",
+        "현물 LNG 선박 가용성이 감소했다.",
+    ]
+
+    facts_payload = _readable_event_draft(101).model_dump(by_alias=True)
+    facts_payload["eventFacts"] = list(facts)
+    assert len(V4ReadableEventAnalysisDraft.model_validate(facts_payload).event_facts) == 3
+    facts_payload["eventFacts"].append("네 번째 사실")
+    with pytest.raises(ValueError, match="eventFacts"):
+        V4ReadableEventAnalysisDraft.model_validate(facts_payload)
+
+    impacts_payload = _readable_event_draft(101).model_dump(by_alias=True)
+    base_impact = impacts_payload["impacts"][0]
+    impacts_payload["impacts"] = [
+        {
+            **base_impact,
+            "evidence": [fact],
+            "analysis": f"{fact}가 LNG 수급 경로를 바꿔 JKM에 단기 상승 압력을 주는 영향 {index}이다.",
+        }
+        for index, fact in enumerate(facts, start=1)
+    ]
+    impacts_payload["openQuestions"][0]["impact"] = 3
+    assert len(V4ReadableEventAnalysisDraft.model_validate(impacts_payload).impacts) == 3
+    impacts_payload["impacts"].append(dict(impacts_payload["impacts"][-1]))
+    with pytest.raises(ValueError, match="impacts"):
+        V4ReadableEventAnalysisDraft.model_validate(impacts_payload)
+
+
+def test_v4_three_facts_hydrate_to_ordered_paths_and_preserve_lineage() -> None:
+    facts = [
+        "동북아 한파 지속 전망",
+        "역내 LNG 재고가 평년보다 낮다.",
+        "현물 LNG 선박 가용성이 감소했다.",
+    ]
+    readable = V4ReadableEventAnalysisDraft.model_validate(
+        {
+            "eventFacts": facts,
+            "decisionBasis": [],
+            "impacts": [
+                {
+                    "evidence": [fact],
+                    "analysis": f"{fact}가 동북아 LNG 수요를 바꾸는 대표 경로 {index}로 JKM에 단기 상승 압력을 준다.",
+                    "leverStates": ["weather_demand|primary|increase|동북아|단기"],
+                    "balance": "demand|increase",
+                    "importance": "high" if index == 1 else "medium",
+                }
+                for index, fact in enumerate(facts, start=1)
+            ],
+            "openQuestions": [
+                {
+                    "impact": 3,
+                    "question": "세 번째 경로의 영향은 언제까지 지속되는가?",
+                    "axis": "duration",
+                    "lever": "weather_demand",
+                },
+            ],
+            "excludedBecause": None,
+        },
+    )
+
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={f"f{index}": fact for index, fact in enumerate(reversed(facts), start=1)},
+    )
+    result = finalize_v4_event_impact_analysis(
+        draft,
+        event_ids=[101],
+        impact_levers=_catalog(),
+    )
+
+    assert [fact.fact_id for fact in result.event_facts] == ["e101_f1", "e101_f2", "e101_f3"]
+    assert [fact.observed_basis for fact in result.event_facts] == facts
+    assert [path.impact_path_id for path in result.impact_paths] == ["e101_p1", "e101_p2", "e101_p3"]
+    assert [path.source_fact_ids for path in result.impact_paths] == [
+        ["e101_f1"],
+        ["e101_f2"],
+        ["e101_f3"],
+    ]
+    assert result.path_uncertainties[0].impact_path_ids == ["e101_p3"]
+
+
+def test_v4_three_selected_facts_still_reject_an_unused_fact() -> None:
+    readable = _readable_event_draft(101)
+    facts = [
+        "동북아 한파 지속 전망",
+        "역내 LNG 재고가 평년보다 낮다.",
+        "현물 LNG 선박 가용성이 감소했다.",
+    ]
+    readable.event_facts = facts
+    readable.impacts[0].evidence = facts[:2]
+
+    with pytest.raises(ValueError, match="every selected Event Fact"):
+        expand_v4_readable_event_analysis(
+            readable,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates={f"f{index}": fact for index, fact in enumerate(facts, start=1)},
+        )
+
+
 def test_v4_readable_event_fact_requires_character_exact_match() -> None:
     readable = _readable_event_draft(101)
     readable.event_facts = ["동북아  한파 지속 전망"]

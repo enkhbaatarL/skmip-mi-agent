@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 import time
 from typing import Any
@@ -72,6 +73,8 @@ def _analysis_as_of() -> str:
 
 def prepare_v4_multi_event_scenarios(
     payload: V4MultiEventCreateScenariosIn,
+    *,
+    operation_id: str | None = None,
 ) -> dict[str, Any]:
     events = EventService().load_events(payload.mi_event_ids)
     loaded_ids = {int(event.mi_event_id) for event in events}
@@ -95,6 +98,7 @@ def prepare_v4_multi_event_scenarios(
         impact_catalog_version=catalog_version,
         impact_catalog_checksum=catalog_checksum,
         user_id=payload.user_id,
+        operation_id=operation_id,
     )
     return {
         "scenario_group": group,
@@ -104,6 +108,7 @@ def prepare_v4_multi_event_scenarios(
         "impact_catalog_checksum": catalog_checksum,
         "user_id": payload.user_id,
         "analysis_as_of": _analysis_as_of(),
+        "operation_id": operation_id,
     }
 
 
@@ -151,6 +156,48 @@ async def run_v4_multi_event_scenarios_inline(
         context=trace_context,
     )
     final_state = V4MultiEventGenerationState.model_validate(final_state_raw)
+    return _build_v4_output(final_state)
+
+
+async def run_v4_multi_event_scenarios_with_progress(
+    prepared: dict[str, Any],
+    *,
+    on_node_update: Callable[[str, dict[str, Any], V4MultiEventGenerationState], Awaitable[None]],
+    trace_context: TraceContext | None = None,
+) -> VersionedCreateScenariosOut:
+    """Execute the v4 graph while exposing validated node updates to the DB event producer."""
+    initial_state = V4MultiEventGenerationState.model_validate(prepared)
+    accumulated = initial_state.model_dump()
+    async for streamed in get_compiled_graph().astream(
+        initial_state,
+        config=build_langgraph_config(trace_context) if trace_context is not None else None,
+        context=trace_context,
+        stream_mode=["updates", "custom"],
+    ):
+        if isinstance(streamed, tuple) and len(streamed) == 2:
+            stream_mode, chunk = streamed
+        else:
+            stream_mode, chunk = "updates", streamed
+        if stream_mode == "custom":
+            if isinstance(chunk, dict):
+                await on_node_update(
+                    "__custom__",
+                    chunk,
+                    V4MultiEventGenerationState.model_validate(accumulated),
+                )
+            continue
+        if not isinstance(chunk, dict):
+            continue
+        for node_name, raw_update in chunk.items():
+            if not isinstance(raw_update, dict):
+                continue
+            accumulated.update(raw_update)
+            state = V4MultiEventGenerationState.model_validate(accumulated)
+            await on_node_update(str(node_name), raw_update, state)
+    return _build_v4_output(V4MultiEventGenerationState.model_validate(accumulated))
+
+
+def _build_v4_output(final_state: V4MultiEventGenerationState) -> VersionedCreateScenariosOut:
     if final_state.finalized_result is None or final_state.saved_group is None or not final_state.saved_scenarios:
         raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="v4 multi-event graph output is incomplete")
     diagnostics = final_state.generation_diagnostics
@@ -260,4 +307,5 @@ __all__ = [
     "prepare_v4_multi_event_scenarios",
     "run_v4_multi_event_scenarios_background",
     "run_v4_multi_event_scenarios_inline",
+    "run_v4_multi_event_scenarios_with_progress",
 ]

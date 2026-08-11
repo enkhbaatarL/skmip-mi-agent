@@ -50,11 +50,6 @@ from apps.persistence.scenario.schema import (
 router = APIRouter(tags=["versioned-scenario-generation-sync"])
 
 
-@router.post(
-    "/v1/scenario-groups/sync",
-    response_model=VersionedCreateScenariosOut,
-    summary="v1 단일 이벤트 시나리오 그룹 생성 동기 실행",
-)
 async def create_v1_scenarios_sync(
     payload: VersionedCreateScenariosIn,
 ) -> VersionedCreateScenariosOut:
@@ -106,11 +101,6 @@ async def create_v1_scenarios_sync(
         return VersionedCreateScenariosOut(status="error", message=str(exc))
 
 
-@router.post(
-    "/v2/scenario-groups/sync",
-    response_model=V2CreateScenariosOut,
-    summary="v2 1~5개 이벤트 원본 dimension 시나리오 생성",
-)
 async def create_v2_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
 ) -> V2CreateScenariosOut:
@@ -120,22 +110,12 @@ async def create_v2_scenarios_sync(
     return V2CreateScenariosOut(status=output.status, message=output.message)
 
 
-@router.post(
-    "/v3/scenario-groups/sync",
-    response_model=VersionedCreateScenariosOut,
-    summary="v3 1~5개 이벤트 합성 dimension 시나리오 생성",
-)
 async def create_v3_scenarios_sync(
     payload: MultiEventCreateScenariosIn,
 ) -> VersionedCreateScenariosOut:
     return await _create_multi_event_scenarios_sync(payload, api_version="v3")
 
 
-@router.post(
-    "/v4/scenario-groups/sync",
-    response_model=VersionedCreateScenariosOut,
-    summary="v4 1~5개 이벤트 모델 영향 레버 시나리오 생성",
-)
 async def create_v4_scenarios_sync(
     payload: V4MultiEventCreateScenariosSyncIn,
 ) -> VersionedCreateScenariosOut:

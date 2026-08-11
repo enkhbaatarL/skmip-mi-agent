@@ -17,7 +17,8 @@ v4 다중 Event 모델 영향 레버 방식의 계획과 구현 이력은
 
 ## 비동기 실행 패턴 (공통)
 
-`create_scenarios`, `create_signposts`, `validate_scenarios` 세 flow는 **동기 prepare + 비동기 백그라운드** 패턴을 사용한다.
+legacy v1의 `create_scenarios`, `create_signposts`, `validate_scenarios` 세 flow는
+**동기 prepare + FastAPI BackgroundTasks + callback** 패턴을 사용한다.
 
 ```text
 API 요청
@@ -29,6 +30,39 @@ API 요청
 API는 `ScenarioGroupAcceptedOut`(scenario_group_id, status, stage)을 즉시 반환하고,
 LLM 파이프라인이 끝나면 콜백으로 최종 결과를 전달한다.
 `confirm_generation`만 `flow.py`의 LangGraph graph를 직접 `ainvoke`한다.
+
+신규 `POST /scenario-groups`는 v4 Multi-Event 생성 전용이며 다른 실행 수명 모델을 사용한다.
+
+```text
+prepare transaction
+  -> Scenario Group + create operation + accepted event commit
+  -> lifespan task runner에 producer 등록
+  -> LangGraph updates/custom stream을 사용자 event로 정규화
+  -> operation event history append
+  -> POST 또는 재연결 GET SSE가 DB event를 replay/live-tail
+```
+
+SSE consumer가 끊겨도 producer는 계속 실행된다. worker shutdown에서는 task를 취소하고 operation을
+`interrupted`로 기록한다. 서버 재시작 후 LangGraph 재개는 아직 지원하지 않는다.
+
+operation owner worker에서는 event DB commit 이후 process-local EventHub가 subscriber queue를
+깨운다. 다른 worker로 재연결한 경우에는 operation별 shared tail watcher가 master row의
+`latestSequence`만 1초부터 최대 5초까지 adaptive polling한다. sequence가 증가했을 때만 각
+subscriber가 자신의 cursor 이후 event history를 range query하며, 변경이 발견되면 polling 간격을
+1초로 초기화한다. SSE keepalive는 DB를 조회하지 않는다.
+
+생성 준비 단계의 중복 점유 단위는 개별 Event가 아니라 정렬된 Event ID 조합이다.
+요청 순서는 Event 연결의 `display_order`와 graph 입력에 유지하고, 중복 조회용
+`event_set_hash`는 `v1:` + compact JSON 정렬 배열의 SHA-256으로 계산한다.
+canonical `POST /scenario-groups`만 Event 원본 행을 ID 오름차순으로 잠근 뒤
+`(api_version, event_set_hash)` 후보를 재조회한다. hash가 같은 후보도 연결 Event 집합을
+다시 비교하며, soft-deleted 부모 그룹은 연결 row 상태와 무관하게 제외한다.
+
+동일 조합 후보는 active `queued`/`running` operation을 가장 먼저 차단하고, 다음으로
+latest operation이 `succeeded`이거나 operation 이력이 없는 confirmation 전 그룹을 차단한다.
+`completed` 그룹과 latest operation이 `failed`/`interrupted`인 그룹은 새 생성을 허용한다.
+그룹, Event 연결, queued operation, accepted event는 같은 transaction에서 commit한다.
+deprecated `/v4/scenario-groups`와 `/v4/scenario-groups/sync`는 이 중복·잠금 정책을 적용하지 않는다.
 
 ## 공통 실행 구조
 
@@ -113,7 +147,8 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 | `POST /v1/scenario-groups/sync` | `miEventId`             | 단일 Event·원본 Template dimension              |
 | `POST /v2/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event별 원본 dimension 3~6개                    |
 | `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개          |
-| `POST /v4/scenario-groups`      | 중복 없는 `miEventIds` 1~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, 비동기 실행 |
+| `POST /scenario-groups`         | 중복 없는 `miEventIds` 1~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, DB event + SSE 비동기 실행 |
+| `POST /v4/scenario-groups`      | 신규 API와 동일             | 기존 callback 호환 alias, deprecated                    |
 | `POST /v4/scenario-groups/sync` | v4와 동일                  | v4 생성 흐름 동기 실행                              |
 
 
@@ -247,16 +282,20 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 
 1. `analyze_event_impacts`: Event별로 독립된 자연어 중심 structured-output 호출을 동시에 실행한다.
    입력은 원본 DTO JSON 대신 Event 설명, 핵심 사실 후보 문장, 사용 가능한 Lever 목록을 Markdown으로
-   보여준다. LLM은 LNG 시장에 중요한 Fact 문장을 후보에서 그대로 최대 2개 선택하고, 각 영향의
+   보여준다. LLM은 LNG 시장에 중요한 Fact 문장을 후보에서 그대로 최대 3개 선택하고, 각 영향의
    전달 경로·JKM 방향·영향 기간을 설명한다. 수치·기간·목표일과 실행 단위로 고정한
    `analysisAsOf`를 함께 해석한 판단 근거는 별도 ID나 source ref 없는 자연어 `decisionBasis`
    문장으로 Event당 최대 3개 보존한다. 각 문장은 그 자체로 어느 Event의 어떤 사실을 사용했는지
    식별 가능하게 작성한다. `48시간 사전 요청` 같은 반복 운영 조건과 `30일 내 복구 목표`,
    `60일 협상 기간` 같은 목표·유효 기간을 구분하고, 시작점을 확인할 수 있을 때만 현재 기한 경과나
-   잔여 기간을 해석한다. 중요한 수치·일정은 상위 Fact 두 문장에 선택되지 않아도 Fact 후보를 근거로
+   잔여 기간을 해석한다. 중요한 수치·일정은 상위 Fact에 선택되지 않아도 Fact 후보를 근거로
    `decisionBasis`에 남길 수 있다. 별도 `price` 필드는 생성하지 않는다. `factStatus`와 `confidence`, Fact/Path ID는
-   생성하지 않으며 서버가 선택 문장을 원본 후보와 대조한 뒤 ID와 lineage를 부여한다. Event당
-   Impact Path는 최대 2개, ordered Lever step은 Path당 최대 2개, 열린 질문은 최대 2개다. 열린 질문은
+   생성하지 않으며 서버가 선택 문장을 원본 후보와 대조한 뒤 ID와 lineage를 부여한다. 배열 첫 항목은
+   별도 필드 없이 의미 계약을 가진다. `eventFacts[0]`은 제목·요약의 핵심 주체·지표·상태·변화를 직접 담은
+   Primary Fact이고, `impacts[0]`은 그 Fact를 evidence로 사용해 대표 전달 경로를 설명하는 Primary Impact다.
+   뒤의 최대 두 Fact와 Impact는 서로 다른 Lever·방향·기간 또는 실질적인 증폭·상쇄를 추가할 때만 사용한다.
+   `decisionBasis`는 Primary Fact나 Impact를 대신하지 않는다. Event당 Impact Path는 최대 3개, ordered Lever
+   step은 Path당 최대 2개, 열린 질문은 최대 2개다. 열린 질문은
    분석 기준일에 아직 결과가 열려 있고 JKM pressure를 구분하는 변수를 우선하며, 이미 지난 목표는
    미래 가능성으로 되돌리지 않고 현재 남은 제약과 앞으로의 해소 시점으로 전환한다. 각 Event는
    자기 호출만 최대 3회 재시도하므로 한 Event 실패가 성공한 다른 Event의 재생성을 유발하지 않는다.
@@ -265,7 +304,8 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    `leverCode`로 `impactLeverId`를 hydrate한다. price-only Path는 `balanceEffect`를 생략하며,
    그 외 Path는 Catalog domain과 일치하는 balance effect를 가져야 한다.
 3. `analyze_event_interactions` / `validate_event_interactions`: 검증된 Path를 `[P1]`, `[P2]` 형태의
-   읽기 쉬운 카드로 전달한다. LLM은 함께 발생했을 때 달라지는 점을 한국어 문장으로 설명하고
+   읽기 쉬운 카드로 전달하고 Event별 첫 Path를 `Primary Impact`로 표시한다. LLM은 Primary Impact가 포함된
+   결합을 우선 검토하되 실제 추가 효과가 있을 때만 Interaction을 만들며, 함께 발생했을 때 달라지는 점을 한국어 문장으로 설명하고
    관련 Path 별칭만 선택한다. 결합 효과의 JKM 순방향과 기간도 `analysis` 문장에 포함하며 별도
    `price` 필드는 만들지 않는다. 중요한 cross-Event Interaction과 열린 질문을 각각 최대 3개만
    생성하며, 관계가 없으면 빈 배열을 허용한다. Interaction ID, Event ID, canonical Path ID와

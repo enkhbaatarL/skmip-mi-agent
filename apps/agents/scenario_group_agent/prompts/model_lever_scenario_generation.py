@@ -13,8 +13,9 @@ Catalog 밖 Lever를 만들지 마십시오. 모든 설명과 label은 한국어
 V4_EVENT_IMPACT_SYSTEM_PROMPT = (
     MODEL_LEVER_SYSTEM_PROMPT
     + """
-Event 한 건에서 LNG 시장에 필요한 핵심 사실 문장을 최대 2개 선택하고, 그 사실이 LNG 수급과
-JKM 가격에 전달되는 영향 문장을 최대 2개 작성하십시오. 영향 문장에는 JKM 방향과 기간을 포함하십시오.
+Event 한 건에서 LNG 시장에 필요한 핵심 사실 문장을 최대 3개 선택하고, 그 사실이 LNG 수급과
+JKM 가격에 전달되는 영향 문장을 최대 3개 작성하십시오. eventFacts[0]과 impacts[0]에는 Event 제목과
+요약의 핵심 주제·상태·변화를 직접 반영하십시오. 영향 문장에는 JKM 방향과 기간을 포함하십시오.
 Fact 후보 문장은 그대로 복사하십시오. 중요한 수치·기간과 분석 기준일을 함께 해석한 판단 근거는
 자연어 decisionBasis 문장으로 최대 3개 작성하고, 결과를 바꿀 열린 질문은 최대 2개만 선택하십시오.
 Interaction, Dimension, Scenario는 만들지 마십시오."""
@@ -148,11 +149,16 @@ def build_v4_event_impact_analysis_user_prompt(
         "3. 사실을 인정한 뒤에도 결과를 바꿀 열린 질문은 무엇입니까?\n\n"
         "## 출력 규칙\n"
         "- eventFacts에는 위 후보 문장을 글자까지 그대로 복사합니다. 새 사실을 작성하지 않습니다.\n"
+        "- eventFacts[0]은 Primary Fact입니다. Event 제목과 요약의 핵심 주체·지표·상태·변화를 가장 직접적으로\n"
+        "  담은 후보를 선택합니다. 배경 사실이 JKM과 더 직접 연결되더라도 Primary Fact를 밀어내지 않습니다.\n"
+        "- eventFacts[1]과 eventFacts[2]는 서로 다른 Lever·방향·기간을 추가하거나 Primary Fact의 영향을\n"
+        "  실질적으로 증폭·상쇄할 때만 선택합니다. 같은 주제를 반복하거나 배열을 채우기 위해 선택하지 않습니다.\n"
         "- decisionBasis에는 시나리오를 구분하는 중요한 수치·비율·가격·용량·기간·목표일과 분석 기준일을\n"
         "  함께 해석한 완결된 한국어 판단 근거를 최대 3개 작성합니다. 문장만 읽어도 어느 Event의 어떤\n"
         "  사실을 근거로 했는지 알 수 있게 쓰고, 별도 ID나 Fact 참조 필드는 만들지 않습니다.\n"
-        "  eventFacts의 두 문장에 선택되지 않았더라도 위 후보에 있는 중요한 수치·일정은\n"
+        "  eventFacts에 선택되지 않았더라도 위 후보에 있는 중요한 수치·일정은\n"
         "  decisionBasis에 보존할 수 있습니다.\n"
+        "  단, decisionBasis는 Primary Fact나 Primary Impact를 대신할 수 없습니다.\n"
         "  48시간 사전 요청처럼 반복되는 운영 조건은 남은 기간으로 계산하지 않습니다. 30일 내 복구 목표나\n"
         "  60일 협상 기간처럼 시작점이 있는 기간은 원문에서 시작점을 확인한 경우에만 분석 기준일 현재\n"
         "  기한 경과·잔여 기간을 설명합니다. Event 발생시각을 근거 없이 기간 시작점으로 간주하지 않습니다.\n"
@@ -160,6 +166,11 @@ def build_v4_event_impact_analysis_user_prompt(
         "  과거 관측 수치는 현재 수치처럼 쓰지 말고 관측 시점과 현재 지속 여부의 불확실성을 구분합니다.\n"
         "- impacts.analysis는 사실 → Lever → LNG 수급·거래 → JKM을 잇는 완결된 한국어 문장입니다.\n"
         "  JKM의 상승·하락·혼조 방향과 단기·중기·장기 중 영향 기간을 반드시 문장 안에 포함합니다.\n"
+        "- impacts[0]은 Primary Impact입니다. evidence에 eventFacts[0]을 반드시 포함하고, analysis에 Primary Fact의\n"
+        "  핵심 주체·지표를 보존해 해당 변화가 Lever와 JKM으로 전달되는 대표 경로를 설명합니다.\n"
+        "- impacts[1]과 impacts[2]는 서로 다른 Lever·방향·기간 또는 실질적인 증폭·상쇄 경로가 있을 때만 작성합니다.\n"
+        "  독립된 사실을 하나의 Path에 억지로 합치지 말고 최대 3개의 Impact에 나누며, 선택한 모든 eventFact는\n"
+        "  적어도 하나의 Impact evidence에 사용합니다.\n"
         "- leverStates는 `lever|role|direction|scope|timing` 형식입니다.\n"
         "  role은 primary(핵심 변화), driver(선행 원인), transmission(전달 경로) 중 하나입니다.\n"
         "  direction은 increase, decrease, disrupt, recover, unchanged 중 하나입니다.\n"
@@ -169,6 +180,7 @@ def build_v4_event_impact_analysis_user_prompt(
         "  별도의 price 필드는 만들지 않습니다.\n"
         "- openQuestions는 결과를 가장 크게 바꿀 서로 다른 핵심 질문 최대 2개를 작성하며,\n"
         "  Impact 번호를 1부터 참조합니다.\n"
+        "  Primary Impact의 규모·기간·회복 시점이 Scenario 결과를 바꾼다면 그 질문을 우선합니다.\n"
         "  이미 확인된 사실을 다시 질문하지 않습니다.\n"
         "  분석 기준일에 이미 지난 목표는 미래 선택지처럼 묻지 말고, 현재 남은 제약과 앞으로의 해소 시점을 묻습니다.\n"
         "  lever는 반드시 해당 Impact의 leverStates에 실제로 쓴 Lever code 중 하나를 글자까지 그대로 복사합니다.\n"
@@ -189,7 +201,11 @@ def build_v4_interaction_analysis_user_prompt(
         "검증된 Path ID는 유지하고 잘못된 관계만 수정하십시오.",
     )
     path_cards = []
+    seen_event_ids: set[object] = set()
     for index, path in enumerate(impact_paths, start=1):
+        event_id = path.get("event_id")
+        path_role = "Primary Impact" if event_id not in seen_event_ids else "Supporting Impact"
+        seen_event_ids.add(event_id)
         lever_text = ", ".join(
             f"{step.get('lever_code')} {step.get('state_direction')} ({step.get('scope')}, {step.get('timing')})"
             for step in path.get("lever_steps") or []
@@ -197,7 +213,8 @@ def build_v4_interaction_analysis_user_prompt(
         path_cards.append(
             "\n".join(
                 [
-                    f"### [P{index}] Event {path.get('event_id')}",
+                    f"### [P{index}] Event {event_id}",
+                    f"- 역할: {path_role}",
                     f"- 영향: {str(path.get('mechanism') or '')[:240]}",
                     f"- Lever: {lever_text}",
                     f"- 중요도: {path.get('materiality')}",
@@ -214,6 +231,8 @@ def build_v4_interaction_analysis_user_prompt(
         "- 결합 효과의 크기나 기간을 바꾸는 미결정 변수는 무엇입니까?\n\n"
         "## 출력 규칙\n"
         "- paths에는 위 P 번호만 사용하고 서로 다른 Event의 경로만 연결합니다.\n"
+        "- 각 Event의 Primary Impact가 포함된 결합을 먼저 검토합니다. 다만 실제 추가 효과가 있을 때만\n"
+        "  Interaction을 만들며, 단순히 Primary라는 이유로 관계를 만들어내지 않습니다.\n"
         "- analysis는 결합으로 새로 생기는 시장 효과와 JKM의 순방향·영향 기간을 한 문장으로 설명합니다.\n"
         "- 별도의 price 필드는 만들지 않습니다.\n"
         "- 중요한 Interaction이 없으면 interactions와 openQuestions를 빈 배열로 둡니다.\n"

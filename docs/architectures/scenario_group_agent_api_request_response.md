@@ -1,11 +1,19 @@
 # Scenario Group Agent API Request/Response
 
-> 버전: v8
+> 버전: v9
+
+## API surface 기준
+
+- `/scenario-groups` 경로는 현재 운영 기준(canonical) API다.
+- `/v1/scenario-groups` 경로는 기존 단일 Event callback 계약을 유지하는 deprecated API다.
+- `/v2`, `/v3`, `/v4`의 `/sync` 경로는 버전별 생성 로직을 검증·비교하는 테스트 API다.
+- router 모듈은 실행 계약과 transport 책임을 나눈 것이며, 별도의 Scenario Group 도메인을 뜻하지 않는다.
 
 <aside>
 💡
 
-시간이 오래 걸리는 시나리오 생성, 시나리오 검토, Signpost 생성은 HTTP 요청에서 접수 상태를 즉시 반환하고, 작업 완료 후 callback으로 최종 결과를 전송합니다.
+신규 Multi-Event 생성은 `POST /scenario-groups`의 SSE와 operation event DB를 사용합니다.
+기존 단일 Event 생성·검토·Signpost·확정 API는 `/v1` 아래에서 deprecated 상태로 callback 계약을 유지합니다.
 
 즉시 응답은 `ScenarioGroupAcceptedOut` 형태이며, 최종 결과 payload는 각 API의 Callback Body를 기준으로 합니다.
 
@@ -18,30 +26,46 @@ sync endpoint는 callback을 전송하지 않으며 운영 트래픽용 API가 �
 sequenceDiagram
     participant Client
     participant Server
+    participant DB
 
-    Client->>Server: POST /scenario-groups <br/> body: {miEventId}
-
-    Note over Server: 시나리오 그룹 및 시나리오 생성(id)
-    Server-->>Client: 시나리오 그룹 id (접수완료)
-
-    Note over Server: 시나리오그룹(나머지) 시나리오 N개 생성 + DB저장
-    Server-->>Client: Callback:시나리오그룹+시나리오 생성결과 <br/>(연결이벤트는 DB에서 검색)
-
-    Client->>Server: <br/><br/><br/><br/>POST /scenario-groups/{scenarioGroupId}/validation
-    Note over Server: 검토
-    Server-->>Client: 접수완료
-
-    Server-->>Client: Callback:시나리오 검토 결과 (isValid, reason) <br/>
-
-    Client->>Server: <br/><br/><br/><br/>POST /scenario-groups/{scenarioGroupId}/signposts
-    Server-->>Client: 접수완료
-    Note over Server: Signpost 생성 + DB저장
-    Server-->>Client: Callback: Signpost 생성 결과
-
-    Client->>Server: <br/><br/><br/><br/>POST /scenario-groups/{scenarioGroupId}/confirmation
-    Note over Server: 생성 확정/스냅샷 저장 + DB저장
-    Server-->>Client: 생성 확정 결과 (콜백없음)
+    Client->>Server: POST /scenario-groups<br/>{miEventIds, userId}
+    Server->>DB: group + operation + accepted transaction
+    Server-->>Client: SSE accepted
+    Note over Server: lifespan producer가 v4 graph 실행
+    Server->>DB: phase/retry/section/completed append
+    DB-->>Client: SSE replay + live-tail
+    Client--xServer: SSE disconnect
+    Note over Server: producer는 계속 실행
+    Client->>Server: GET .../operations/{operationId}/stream<br/>Last-Event-ID
+    DB-->>Client: 다음 sequence부터 replay
 ```
+
+### 신규 Multi-Event 업무·transport API
+
+- `POST /scenario-groups`: `miEventIds` 1~5개와 `userId`를 받아 create operation을 시작하고 SSE 반환
+- `GET /scenario-groups`: 공통 목록과 latest/active operation 요약 반환
+- `GET /scenario-groups/{scenarioGroupId}`: Scenario table, presentation snapshot, latest/active operation 반환
+- `DELETE /scenario-groups/{scenarioGroupId}`: soft delete. queued/running operation이 있으면 HTTP 409
+- `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}`: polling용 operation JSON
+- `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}/stream`: `Last-Event-ID` 이후 SSE replay/live-tail
+
+SSE live-tail은 owner worker에서는 DB commit 후 process-local EventHub 알림을 사용한다. 다른
+worker에서는 operation별 shared watcher가 `latestSequence`만 1초에서 최대 5초까지 adaptive
+polling하고, sequence가 증가할 때만 subscriber cursor 이후 event history를 읽는다. keepalive는
+DB polling과 분리한다.
+
+operation event는 `accepted`, `phase_started`, `retrying`, `validated`, `section_ready`,
+`completed`, `failed`, `interrupted`를 사용한다. 실패 draft 원문은 event/presentation에 저장하지 않고
+validation code, reference ID, 사용자 메시지만 저장한다.
+
+`POST /scenario-groups`의 중복 판정은 요청 순서와 무관한 Event ID 조합 및 engine version 기준이다.
+동일 조합의 active operation은 같은 사용자에게 HTTP 409
+`SCENARIO_GROUP_OPERATION_CONFLICT`, 다른 사용자에게 HTTP 403
+`SCENARIO_GROUP_OWNERSHIP_CONFLICT`를 반환한다. operation 성공 후 confirmation 전 그룹은
+같은 사용자에게 `SCENARIO_GROUP_ALREADY_CREATED`, 다른 사용자에게 ownership conflict를 반환한다.
+오류 `data`에는 기존 `error_code`, `error_name`과 함께 `scenarioGroupId`, 가능한 경우
+`operationId`를 포함한다. confirmation 완료, latest operation 실패·중단, soft delete 이력만 있으면
+새 그룹을 생성한다.
 
 ## Scenario Group과 Scenario 의 status / stage
 
@@ -85,9 +109,6 @@ sequenceDiagram
 sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가될 수 있습니다.
 `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`는 해당 sync 요청 안에서 누적된 LLM token 사용량입니다.
 
-- `POST /scenario-groups/sync`
-  - 기존 `POST /scenario-groups`의 prepare 및 생성 graph를 동기 실행
-  - Response: `CreateScenariosOut`
 - `POST /v1/scenario-groups/sync`
   - 단일 `miEventId`
   - Response: version/strategy, Event, dimension lineage, 공통 table을 포함한
@@ -106,15 +127,15 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
   - Template 없이 Event 근거와 모델 영향 레버 카탈로그로 3~6개 dimension을 생성
   - Scenario의 pressure/floor/ceiling은 JKM 기준이며, TTF/HH 특이성이
     명확한 경우에만 row의 `relatedMarkets`에 시장과 근거를 보조정보로 포함
-  - 즉시 `ScenarioGroupAcceptedOut`을 반환하고 완료 결과를 기존 scenario callback으로 전달
+  - deprecated callback 호환 API. 신규 업무 API는 `POST /scenario-groups` 사용
 - `POST /v4/scenario-groups/sync`
   - v4와 같은 요청 계약으로 테스트·비교용 완료 응답을 동기 반환
   - `generationDiagnostics`에 Event 상호작용, covered/uncovered dimension,
     unsupported lever와 전체 parameter coverage 상태를 포함
-- `POST /scenario-groups/{scenarioGroupId}/validation/sync`
+- `POST /v1/scenario-groups/{scenarioGroupId}/validation/sync`
   - 기존 validation prepare 및 검증 graph를 동기 실행
   - Response: `ValidateScenariosOut`
-- `POST /scenario-groups/{scenarioGroupId}/signposts/sync`
+- `POST /v1/scenario-groups/{scenarioGroupId}/signposts/sync`
   - 기존 signpost prepare 및 생성 graph를 동기 실행
   - Response: `CreateSignpostsOut`
 
@@ -214,7 +235,7 @@ Backoffice Scenario Group List를 위한 목록 API도 제공합니다.
 
 ### 1) 시나리오 그룹 및 시나리오 생성
 
-- Method/Path: `POST /scenario-groups`
+- Method/Path: `POST /v1/scenario-groups` (deprecated)
 - Description: `miEventId`를 기준으로 시나리오 그룹/시나리오를 생성한다.
 
 Request
@@ -336,7 +357,7 @@ CallBack Body (`CreateScenariosOut`)
 
 ### 2) 시나리오 검증
 
-- Method/Path: `POST /scenario-groups/{scenarioGroupId}/validation`
+- Method/Path: `POST /v1/scenario-groups/{scenarioGroupId}/validation` (deprecated)
 - Description: 생성된 시나리오 그룹의 유효성을 검증한다.
 - Path Param: `scenarioGroupId` (int)
 
@@ -480,7 +501,7 @@ Callback Body
 
 ### 3) Signpost 생성
 
-- Method/Path: `POST /scenario-groups/{scenarioGroupId}/signposts`
+- Method/Path: `POST /v1/scenario-groups/{scenarioGroupId}/signposts` (deprecated)
 - Description: 시나리오 그룹 기준 signpost를 생성한다.
 - Path Param: `scenarioGroupId` (int)
 
@@ -644,7 +665,7 @@ Callback Body
 
 ### 4) 생성 확정
 
-- Method/Path: `POST /scenario-groups/{scenarioGroupId}/confirmation`
+- Method/Path: `POST /v1/scenario-groups/{scenarioGroupId}/confirmation` (deprecated)
 - Description: 시나리오/사인포스트 생성 결과를 확정하고 스냅샷을 남긴다.
 - Path Param: `scenarioGroupId` (int)
 

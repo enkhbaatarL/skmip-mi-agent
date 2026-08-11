@@ -125,6 +125,51 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
         )
         return self.session.execute(stmt).scalars().first()
 
+    def fetch_event_set_candidates(
+        self,
+        *,
+        engine_version: str,
+        event_set_hash: str,
+        for_update: bool = False,
+    ) -> list[MiScenarioGroupModel]:
+        stmt = (
+            select(MiScenarioGroupModel)
+            .where(
+                MiScenarioGroupModel.api_version == engine_version,
+                MiScenarioGroupModel.event_set_hash == event_set_hash,
+                MiScenarioGroupModel.del_yn == "N",
+            )
+            .order_by(MiScenarioGroupModel.scenario_group_id.desc())
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return list(self.session.execute(stmt).scalars().all())
+
+    def fetch_event_ids_by_group_ids(
+        self,
+        scenario_group_ids: list[int],
+    ) -> dict[int, list[int]]:
+        if not scenario_group_ids:
+            return {}
+        stmt = (
+            select(
+                MiScenarioGroupEventModel.scenario_group_id,
+                MiScenarioGroupEventModel.mi_event_id,
+            )
+            .where(
+                MiScenarioGroupEventModel.scenario_group_id.in_(scenario_group_ids),
+                MiScenarioGroupEventModel.del_yn == "N",
+            )
+            .order_by(
+                MiScenarioGroupEventModel.scenario_group_id,
+                MiScenarioGroupEventModel.mi_event_id,
+            )
+        )
+        event_ids_by_group_id: dict[int, list[int]] = {}
+        for scenario_group_id, mi_event_id in self.session.execute(stmt):
+            event_ids_by_group_id.setdefault(int(scenario_group_id), []).append(int(mi_event_id))
+        return event_ids_by_group_id
+
     def insert_group(self, payload: dict[str, Any]) -> int:
         group = MiScenarioGroupModel(**payload)
         self.session.add(group)

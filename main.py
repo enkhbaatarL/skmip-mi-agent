@@ -27,6 +27,10 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    from apps.agents.scenario_group_agent.runtime import (
+        get_scenario_group_operation_event_hub,
+        get_scenario_group_operation_task_runner,
+    )
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
     from apps.connectors.mlflow.tracing import setup_mlflow_tracing
 
@@ -50,7 +54,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     else:
         logger.error("callback_oauth2_token_url not configured, skipping token pre-fetch")
 
-    yield
+    operation_event_hub = get_scenario_group_operation_event_hub()
+    operation_task_runner = get_scenario_group_operation_task_runner()
+    await operation_event_hub.start()
+    await operation_task_runner.start()
+    try:
+        yield
+    finally:
+        await operation_task_runner.shutdown()
+        await operation_event_hub.shutdown()
 
 
 app = FastAPI(
@@ -77,7 +89,6 @@ register_local_openapi_docs(app, INGRESS_PREFIX)
 app.include_router(
     scenario_group_router,
     prefix="",
-    tags=["scenario-group"],
 )
 app.include_router(
     interpret_router,

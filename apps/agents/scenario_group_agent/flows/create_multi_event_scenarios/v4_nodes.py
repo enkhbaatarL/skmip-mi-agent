@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
@@ -59,6 +60,31 @@ from apps.persistence.model_parameter.schema import ModelImpactLeverPayload
 
 
 V4_EVENT_LLM_TIMEOUT_SECONDS = 180.0
+
+
+def _emit_internal_retry(
+    *,
+    phase: str,
+    attempt: int,
+    validation_code: str | None,
+    reference_ids: list[str] | None = None,
+) -> None:
+    if attempt > MAX_STAGE_ATTEMPTS:
+        return
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        return
+    writer(
+        {
+            "kind": "stage_retry",
+            "phase": phase,
+            "attempt": attempt,
+            "maxAttempts": MAX_STAGE_ATTEMPTS,
+            "validationCode": validation_code,
+            "referenceIds": reference_ids or [],
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +146,13 @@ async def _analyze_event_with_retries(
         except Exception as exc:
             detail, error_code, retryable = classify_llm_error(exc)
             feedback = detail
+            if retryable and attempt < MAX_STAGE_ATTEMPTS:
+                _emit_internal_retry(
+                    phase="event_analysis",
+                    attempt=attempt + 1,
+                    validation_code=error_code,
+                    reference_ids=[str(event_id)],
+                )
             if not retryable or attempt >= MAX_STAGE_ATTEMPTS:
                 return _EventAnalysisOutcome(
                     event_id=event_id,
@@ -199,6 +232,12 @@ def validate_v4_event_impacts(state: V4MultiEventGenerationState) -> dict[str, A
         }
     except Exception as exc:
         detail, error_code, retryable = classify_llm_error(exc)
+        if retryable and state.analysis_attempt < MAX_STAGE_ATTEMPTS:
+            _emit_internal_retry(
+                phase="event_analysis",
+                attempt=state.analysis_attempt + 1,
+                validation_code=error_code,
+            )
         return {
             "analysis_error": detail,
             "analysis_error_code": error_code,
@@ -254,6 +293,12 @@ class AnalyzeEventInteractionsNode(BaseNode):
             }
         except Exception as exc:
             detail, error_code, retryable = classify_llm_error(exc)
+            if retryable and attempt < MAX_STAGE_ATTEMPTS:
+                _emit_internal_retry(
+                    phase="event_analysis",
+                    attempt=attempt + 1,
+                    validation_code=error_code,
+                )
             return {
                 "interaction_attempt": attempt,
                 "interaction_draft": None,
@@ -284,6 +329,12 @@ def validate_v4_event_interactions(state: V4MultiEventGenerationState) -> dict[s
         }
     except Exception as exc:
         detail, error_code, retryable = classify_llm_error(exc)
+        if retryable and state.interaction_attempt < MAX_STAGE_ATTEMPTS:
+            _emit_internal_retry(
+                phase="event_analysis",
+                attempt=state.interaction_attempt + 1,
+                validation_code=error_code,
+            )
         return {
             "interaction_error": detail,
             "interaction_error_code": error_code,
@@ -336,6 +387,12 @@ class DesignModelLeverDimensionsNode(BaseNode):
             }
         except Exception as exc:
             detail, error_code, retryable = classify_llm_error(exc)
+            if retryable and attempt < MAX_STAGE_ATTEMPTS:
+                _emit_internal_retry(
+                    phase="dimension_design",
+                    attempt=attempt + 1,
+                    validation_code=error_code,
+                )
             return {
                 "dimension_attempt": attempt,
                 "dimension_draft": None,
@@ -368,6 +425,12 @@ def validate_v4_dimensions(state: V4MultiEventGenerationState) -> dict[str, Any]
         }
     except Exception as exc:
         detail, error_code, retryable = classify_llm_error(exc)
+        if retryable and state.dimension_attempt < MAX_STAGE_ATTEMPTS:
+            _emit_internal_retry(
+                phase="dimension_design",
+                attempt=state.dimension_attempt + 1,
+                validation_code=error_code,
+            )
         return {
             "dimension_error": detail,
             "dimension_error_code": error_code,
@@ -429,6 +492,12 @@ class SynthesizeV4ScenariosNode(BaseNode):
             }
         except Exception as exc:
             detail, error_code, retryable = classify_llm_error(exc)
+            if retryable and attempt < MAX_STAGE_ATTEMPTS:
+                _emit_internal_retry(
+                    phase="scenario_synthesis",
+                    attempt=attempt + 1,
+                    validation_code=error_code,
+                )
             return {
                 "scenario_attempt": attempt,
                 "scenario_draft": None,
@@ -462,6 +531,12 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
         }
     except Exception as exc:
         detail, error_code, retryable = classify_llm_error(exc)
+        if retryable and state.scenario_attempt < MAX_STAGE_ATTEMPTS:
+            _emit_internal_retry(
+                phase="scenario_synthesis",
+                attempt=state.scenario_attempt + 1,
+                validation_code=error_code,
+            )
         return {
             "finalized_result": None,
             "parameter_coverage": None,

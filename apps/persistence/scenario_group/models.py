@@ -62,6 +62,12 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
     __table_args__ = (
         Index("idx_tmm_mi_scenario_group_m_01", "event_type_l2_id"),
         Index("idx_tmm_mi_scenario_group_m_02", "mi_event_id"),
+        Index(
+            "idx_tmm_mi_scenario_group_m_03",
+            "api_version",
+            "event_set_hash",
+            "del_yn",
+        ),
         CheckConstraint("JSON_TYPE(dimension_selected) = 'ARRAY'", name="ck_tmm_mi_scenario_group_m_01"),
         CheckConstraint(f"status IN ({_SCENARIO_GROUP_STATUS_CHECK_SQL})", name="ck_tmm_mi_scenario_group_m_02"),
         CheckConstraint(f"stage IN ({_SCENARIO_GROUP_STAGE_CHECK_SQL})", name="ck_tmm_mi_scenario_group_m_03"),
@@ -129,6 +135,11 @@ class MiScenarioGroupModel(AuditColumnsMixin, ORMBase):
         sa.String(100, collation=BIN),
         nullable=False,
         server_default=sa.text("'single_event_template_dimensions'"),
+    )
+    event_set_hash: Mapped[str | None] = mapped_column(
+        sa.CHAR(64, collation=BIN),
+        nullable=True,
+        comment="정렬된 MI Event ID 조합의 versioned SHA-256 hash",
     )
     comparison_run_id: Mapped[str | None] = mapped_column(
         sa.String(255, collation=BIN),

@@ -15,6 +15,7 @@ from apps.agents.scenario_group_agent.prompts.event_context import (
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     MODEL_LEVER_SYSTEM_PROMPT,
     build_model_lever_user_prompt,
+    build_v4_interaction_analysis_user_prompt,
 )
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
     build_multi_event_user_prompt,
@@ -237,6 +238,12 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
     for expected in (
         "## 핵심 사실 후보",
         "eventFacts",
+        "eventFacts[0]은 Primary Fact",
+        "impacts[0]은 Primary Impact",
+        "Event 제목과 요약의 핵심 주체·지표·상태·변화",
+        "서로 다른 Lever·방향·기간",
+        "decisionBasis는 Primary Fact나 Primary Impact를 대신할 수 없습니다",
+        "Primary Impact의 규모·기간·회복 시점",
         "impacts.analysis",
         "leverStates",
         "openQuestions",
@@ -257,3 +264,41 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
     assert "parameterBindings" not in prompt
     assert "둘째 Event" not in prompt
     assert "detailAnalysis" not in prompt
+
+
+def test_v4_interaction_prompt_marks_first_path_per_event_as_primary() -> None:
+    prompt = build_v4_interaction_analysis_user_prompt(
+        impact_paths=[
+            {
+                "event_id": 101,
+                "mechanism": "첫 Event 대표 경로",
+                "lever_steps": [],
+                "materiality": "high",
+            },
+            {
+                "event_id": 101,
+                "mechanism": "첫 Event 보조 경로",
+                "lever_steps": [],
+                "materiality": "medium",
+            },
+            {
+                "event_id": 202,
+                "mechanism": "둘째 Event 대표 경로",
+                "lever_steps": [],
+                "materiality": "high",
+            },
+        ],
+    )
+
+    p1 = prompt.split("### [P1]", maxsplit=1)[1].split("### [P2]", maxsplit=1)[0]
+    p2 = prompt.split("### [P2]", maxsplit=1)[1].split("### [P3]", maxsplit=1)[0]
+    p3 = prompt.split("### [P3]", maxsplit=1)[1].split("## 이번 단계의 질문", maxsplit=1)[0]
+
+    assert "Event 101" in p1
+    assert "역할: Primary Impact" in p1
+    assert "Event 101" in p2
+    assert "역할: Supporting Impact" in p2
+    assert "Event 202" in p3
+    assert "역할: Primary Impact" in p3
+    assert prompt.index("[P1]") < prompt.index("[P2]") < prompt.index("[P3]")
+    assert "실제 추가 효과가 있을 때만" in prompt

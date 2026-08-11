@@ -6,7 +6,7 @@ from typing import Any
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
-from apps.agents.scenario_group_agent.schemas.endpoint import (
+from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     ScenarioGroupDetailOut,
 )
 from apps.agents.scenario_group_agent.schemas.table import (
@@ -21,9 +21,11 @@ from apps.agents.scenario_group_agent.schemas.table import (
     SignpostBasePayload,
     SignpostQueryPayload,
 )
+from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
+from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
 def build_scenario_group_table_data(
@@ -107,6 +109,45 @@ def build_scenario_group_query_data(
         deleted_scenario_count=sum(1 for scenario in scenarios if scenario.get("del_yn") == "Y"),
         deleted_signpost_count=sum(1 for signpost in signposts_list if signpost.get("del_yn") == "Y"),
     )
+
+
+def build_common_scenario_group_query_data(
+    *,
+    group: dict[str, Any],
+    scenarios: list[dict[str, Any]],
+    signposts: list[dict[str, Any]],
+    events: list[EventPayload],
+    latest_operation: ScenarioGroupOperationPayload | None,
+) -> ScenarioGroupDetailOut:
+    detail = build_scenario_group_query_data(group, scenarios, signposts)
+    latest_payload = (
+        latest_operation.model_dump(mode="json", by_alias=True) if latest_operation is not None else None
+    )
+    detail.latest_operation = latest_payload
+    detail.active_operation = (
+        latest_payload
+        if latest_operation is not None and latest_operation.status in {"queued", "running"}
+        else None
+    )
+    scenario_group = detail.scenario_group
+    legacy = scenario_group.api_version == "v1"
+    presentation_snapshot = {
+        "schemaVersion": "v1",
+        "apiVersion": scenario_group.api_version,
+        "generationStrategy": scenario_group.generation_strategy,
+        "impactCatalogVersion": scenario_group.impact_catalog_version,
+        "legacy": legacy,
+        "warnings": (["legacy v1 데이터에는 상세 근거가 저장되지 않았습니다"] if legacy else []),
+        "scenarioGroup": scenario_group.model_dump(mode="json", by_alias=True),
+        "events": [event.model_dump(mode="json", by_alias=True) for event in events],
+        "dimensionDefinitions": scenario_group.dimension_definitions,
+        "table": detail.table.model_dump(mode="json", by_alias=True),
+        "generationDiagnostics": scenario_group.generation_diagnostics,
+    }
+    if latest_operation is not None and latest_operation.presentation_snapshot:
+        presentation_snapshot.update(latest_operation.presentation_snapshot)
+    detail.presentation_snapshot = presentation_snapshot
+    return detail
 
 
 def _build_headers(

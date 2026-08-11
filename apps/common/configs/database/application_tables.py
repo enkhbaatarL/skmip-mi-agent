@@ -26,6 +26,10 @@ from apps.persistence.scenario_group.models import (
     MiSignpostSnapModel,
     MiSnapshotModel,
 )
+from apps.persistence.scenario_group_operation.models import (
+    MiScenarioGroupOperationEventModel,
+    MiScenarioGroupOperationModel,
+)
 from apps.persistence.signpost.models import MiSignpostModel
 
 
@@ -37,6 +41,8 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiScenarioGroupModel.__table__,
     MiScenarioDimensionTemplateModel.__table__,
     MiScenarioGroupEventModel.__table__,
+    MiScenarioGroupOperationModel.__table__,
+    MiScenarioGroupOperationEventModel.__table__,
     MiScenarioModel.__table__,
     MiDimensionValueMappingModel.__table__,
     MiSignpostModel.__table__,

@@ -16,6 +16,21 @@ from apps.persistence.event.models import (
 
 
 class EventRepository(BaseSyncSQLRepository):
+    def lock_events(self, mi_event_ids: list[int]) -> list[int]:
+        """Lock active Event source rows in a deterministic order for create preparation."""
+        if not mi_event_ids:
+            return []
+        stmt = (
+            select(MiEventModel.mi_event_id)
+            .where(
+                MiEventModel.mi_event_id.in_(sorted(mi_event_ids)),
+                MiEventModel.del_yn == "N",
+            )
+            .order_by(MiEventModel.mi_event_id)
+            .with_for_update()
+        )
+        return [int(mi_event_id) for mi_event_id in self.session.execute(stmt).scalars().all()]
+
     def list_events(
         self,
         *,

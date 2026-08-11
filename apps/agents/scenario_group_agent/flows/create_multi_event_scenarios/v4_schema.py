@@ -254,7 +254,7 @@ class V4ReadableEventImpact(ApiModel):
 class V4ReadablePathQuestion(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    impact: int = Field(ge=1, le=2)
+    impact: int = Field(ge=1, le=3)
     question: str = Field(min_length=5, max_length=120)
     axis: UncertaintyAxis
     lever: str = Field(min_length=1)
@@ -265,9 +265,9 @@ class V4ReadableEventAnalysisDraft(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    event_facts: list[str] = Field(default_factory=list, max_length=2)
+    event_facts: list[str] = Field(default_factory=list, max_length=3)
     decision_basis: list[str] = Field(default_factory=list, max_length=3)
-    impacts: list[V4ReadableEventImpact] = Field(default_factory=list, max_length=2)
+    impacts: list[V4ReadableEventImpact] = Field(default_factory=list, max_length=3)
     open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list, max_length=2)
     excluded_because: str | None = Field(default=None, max_length=160)
 

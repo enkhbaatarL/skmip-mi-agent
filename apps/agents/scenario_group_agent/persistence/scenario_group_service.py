@@ -17,16 +17,22 @@ from apps.persistence.enums import (
     ScenarioGroupStatus,
     ScenarioStatus,
 )
+from apps.persistence.event.repository import EventRepository
+from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.repository import (
     ScenarioRepository,
 )
 from apps.persistence.scenario.schema import ScenarioPayload
+from apps.persistence.scenario_group.event_set import event_set_hash
+from apps.persistence.scenario_group.models import MiScenarioGroupModel
 from apps.persistence.scenario_group.repository import (
     ScenarioGroupRepository,
 )
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
+from apps.persistence.scenario_group_operation.models import MiScenarioGroupOperationModel
+from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 from apps.persistence.signpost.repository import (
     SignpostRepository,
 )
@@ -36,6 +42,11 @@ class ScenarioGroupDetailData(TypedDict):
     group: dict[str, Any]
     scenarios: list[dict[str, Any]]
     signposts: list[dict[str, Any]]
+
+
+class ScenarioGroupCommonDetailData(ScenarioGroupDetailData):
+    events: list[EventPayload]
+    latest_operation: ScenarioGroupOperationPayload | None
 
 
 def _normalize_probability_scores_to_100(
@@ -75,6 +86,80 @@ def _normalize_probability_scores_to_100(
 
 
 class ScenarioGroupService:
+    @staticmethod
+    def _raise_for_event_set_conflict(
+        *,
+        groups: list[MiScenarioGroupModel],
+        event_ids_by_group_id: dict[int, list[int]],
+        latest_operations: dict[int, MiScenarioGroupOperationModel],
+        active_operations: dict[int, MiScenarioGroupOperationModel],
+        requested_event_ids: list[int],
+        user_id: int,
+    ) -> None:
+        requested_set = sorted(requested_event_ids)
+        exact_groups = [
+            group
+            for group in groups
+            if sorted(event_ids_by_group_id.get(int(group.scenario_group_id), [])) == requested_set
+        ]
+
+        for group in exact_groups:
+            group_id = int(group.scenario_group_id)
+            active_operation = active_operations.get(group_id)
+            if active_operation is not None:
+                ScenarioGroupService._raise_existing_group_conflict(
+                    group=group,
+                    operation=active_operation,
+                    user_id=user_id,
+                    active=True,
+                )
+
+        for group in exact_groups:
+            group_id = int(group.scenario_group_id)
+            latest_operation = latest_operations.get(group_id)
+            if latest_operation is not None and latest_operation.status in {"failed", "interrupted"}:
+                continue
+            stage = group.stage.value if hasattr(group.stage, "value") else group.stage
+            if stage != ScenarioGroupStage.COMPLETED.value:
+                ScenarioGroupService._raise_existing_group_conflict(
+                    group=group,
+                    operation=latest_operation,
+                    user_id=user_id,
+                    active=False,
+                )
+
+    @staticmethod
+    def _raise_existing_group_conflict(
+        *,
+        group: MiScenarioGroupModel,
+        operation: MiScenarioGroupOperationModel | None,
+        user_id: int,
+        active: bool,
+    ) -> None:
+        group_id = int(group.scenario_group_id)
+        operation_id = str(operation.operation_id) if operation is not None else None
+        context: dict[str, Any] = {"scenarioGroupId": group_id}
+        if operation_id is not None:
+            context["operationId"] = operation_id
+        same_owner = group.request_usr_id is not None and int(group.request_usr_id) == user_id
+        if not same_owner:
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                detail=f"Scenario group {group_id} is owned by another user",
+                context=context,
+            )
+        if active:
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                detail=f"Scenario group {group_id} operation {operation_id} is still active",
+                context=context,
+            )
+        raise MIBaseError(
+            ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
+            detail=f"Scenario group {group_id} is awaiting confirmation",
+            context=context,
+        )
+
     def list_groups(
         self,
         *,
@@ -91,9 +176,17 @@ class ScenarioGroupService:
 
         session = get_sync_session()
         try:
+            from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+                ScenarioGroupOperationService,
+            )
+            from apps.persistence.scenario_group_operation.repository import (
+                ScenarioGroupOperationRepository,
+            )
+
             group_repository = ScenarioGroupRepository(session=session)
             scenario_repository = ScenarioRepository(session=session)
             signpost_repository = SignpostRepository(session=session)
+
             groups = group_repository.list_for_backoffice(
                 include_deleted=include_deleted,
                 mi_event_id=mi_event_id,
@@ -101,6 +194,9 @@ class ScenarioGroupService:
                 status=status,
                 stage=stage,
                 sort=sort,
+            )
+            latest_operations = ScenarioGroupOperationRepository(session=session).fetch_latest_by_group_ids(
+                [int(group.scenario_group_id) for group in groups]
             )
             rows: list[dict[str, Any]] = []
             for group in groups:
@@ -114,29 +210,41 @@ class ScenarioGroupService:
                 )
                 status_value = group.status.value if hasattr(group.status, "value") else group.status
                 stage_value = group.stage.value if hasattr(group.stage, "value") else group.stage
-                rows.append(
-                    {
-                        "scenarioGroupId": int(group.scenario_group_id),
-                        "scenario_group_id": int(group.scenario_group_id),
-                        "title": group.title,
-                        "baseEventTitle": None,
-                        "miEventId": (int(group.mi_event_id) if group.mi_event_id is not None else None),
-                        "mi_event_id": (int(group.mi_event_id) if group.mi_event_id is not None else None),
-                        "status": status_value,
-                        "stage": stage_value,
-                        "scenarioCount": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
-                        "scenario_count": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
-                        "signpostCount": len([signpost for signpost in signposts if signpost.del_yn != "Y"]),
-                        "signpost_count": len([signpost for signpost in signposts if signpost.del_yn != "Y"]),
-                        "createdAt": group.crt_dtm.isoformat() if group.crt_dtm else None,
-                        "created_at": group.crt_dtm.isoformat() if group.crt_dtm else None,
-                        "updatedAt": group.mod_dtm.isoformat() if group.mod_dtm else None,
-                        "updated_at": group.mod_dtm.isoformat() if group.mod_dtm else None,
-                        "deleted": group.del_yn == "Y",
-                        "delYn": group.del_yn,
-                        "del_yn": group.del_yn,
-                    }
+                row: dict[str, Any] = {
+                    "scenarioGroupId": int(group.scenario_group_id),
+                    "scenario_group_id": int(group.scenario_group_id),
+                    "title": group.title,
+                    "baseEventTitle": None,
+                    "miEventId": (int(group.mi_event_id) if group.mi_event_id is not None else None),
+                    "mi_event_id": (int(group.mi_event_id) if group.mi_event_id is not None else None),
+                    "status": status_value,
+                    "stage": stage_value,
+                    "scenarioCount": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
+                    "scenario_count": len([scenario for scenario in scenarios if scenario.del_yn != "Y"]),
+                    "signpostCount": len([signpost for signpost in signposts if signpost.del_yn != "Y"]),
+                    "signpost_count": len([signpost for signpost in signposts if signpost.del_yn != "Y"]),
+                    "createdAt": group.crt_dtm.isoformat() if group.crt_dtm else None,
+                    "created_at": group.crt_dtm.isoformat() if group.crt_dtm else None,
+                    "updatedAt": group.mod_dtm.isoformat() if group.mod_dtm else None,
+                    "updated_at": group.mod_dtm.isoformat() if group.mod_dtm else None,
+                    "deleted": group.del_yn == "Y",
+                    "delYn": group.del_yn,
+                    "del_yn": group.del_yn,
+                }
+                latest = latest_operations.get(int(group.scenario_group_id))
+                latest_payload = (
+                    ScenarioGroupOperationService.operation_payload_from_model(latest).model_dump(
+                        mode="json",
+                        by_alias=True,
+                    )
+                    if latest is not None
+                    else None
                 )
+                row["latestOperation"] = latest_payload
+                row["activeOperation"] = (
+                    latest_payload if latest is not None and latest.status in {"queued", "running"} else None
+                )
+                rows.append(row)
             return {
                 "rows": rows,
                 "meta": {
@@ -211,6 +319,55 @@ class ScenarioGroupService:
             }
         finally:
             session.close()
+
+    def load_common_detail(
+        self,
+        scenario_group_id: int,
+        *,
+        include_deleted: bool = False,
+    ) -> ScenarioGroupCommonDetailData:
+        from apps.agents.scenario_group_agent.persistence.event_service import EventService
+        from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+            ScenarioGroupOperationService,
+        )
+
+        detail = self.load_detail(scenario_group_id, include_deleted=include_deleted)
+        group = detail["group"]
+        event_ids = self.load_event_ids(scenario_group_id)
+        if not event_ids and group.get("mi_event_id") is not None:
+            event_ids = [int(group["mi_event_id"])]
+        return {
+            **detail,
+            "events": EventService().load_events(event_ids) if event_ids else [],
+            "latest_operation": ScenarioGroupOperationService().get_latest(scenario_group_id),
+        }
+
+    def approve_dimension_mappings(
+        self,
+        scenario_group_id: int,
+        *,
+        user_id: int,
+        decisions: list[dict[str, Any]],
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        group = self.load_by_id(scenario_group_id)
+        if group is None:
+            raise MIBaseError(
+                ErrorCode.ENTITY_NOT_FOUND,
+                detail=f"Scenario group not found: {scenario_group_id}",
+            )
+        if group.request_usr_id is not None and group.request_usr_id != user_id:
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                detail=f"이미 사용자 {group.request_usr_id}가 점유하고 있습니다.",
+            )
+        results = ScenarioService().decide_mapping_proposals(scenario_group_id, decisions, user_id)
+        refreshed = self.load_by_id(scenario_group_id)
+        if refreshed is None:
+            raise MIBaseError(
+                ErrorCode.ENTITY_NOT_FOUND,
+                detail=f"Scenario group not found: {scenario_group_id}",
+            )
+        return refreshed.parameter_mapping_ready, results
 
     def load_by_mi_event_id(self, mi_event_id: int) -> ScenarioGroupPayload | None:
         from apps.common.configs.database.sync_database.connection import (
@@ -357,14 +514,50 @@ class ScenarioGroupService:
         impact_catalog_version: str,
         impact_catalog_checksum: str,
         user_id: int,
+        operation_id: str | None = None,
     ) -> ScenarioGroupPayload:
         from apps.common.configs.database.sync_database.connection import (
             get_sync_session,
         )
 
+        event_ids = [int(event["mi_event_id"]) for event in events]
+        requested_event_set_hash = event_set_hash(event_ids)
         session = get_sync_session()
         try:
             repository = ScenarioGroupRepository(session=session)
+            if operation_id is not None:
+                locked_event_ids = EventRepository(session=session).lock_events(event_ids)
+                if locked_event_ids != sorted(event_ids):
+                    missing_event_ids = sorted(set(event_ids) - set(locked_event_ids))
+                    raise MIBaseError(
+                        ErrorCode.ENTITY_NOT_FOUND,
+                        detail=f"Events not found while preparing creation: {missing_event_ids}",
+                    )
+                candidates = repository.fetch_event_set_candidates(
+                    engine_version="v4",
+                    event_set_hash=requested_event_set_hash,
+                    for_update=True,
+                )
+                candidate_group_ids = [int(group.scenario_group_id) for group in candidates]
+                from apps.persistence.scenario_group_operation.repository import (
+                    ScenarioGroupOperationRepository,
+                )
+
+                operation_repository = ScenarioGroupOperationRepository(session=session)
+                self._raise_for_event_set_conflict(
+                    groups=candidates,
+                    event_ids_by_group_id=repository.fetch_event_ids_by_group_ids(candidate_group_ids),
+                    latest_operations=operation_repository.fetch_latest_by_group_ids(
+                        candidate_group_ids,
+                        for_update=True,
+                    ),
+                    active_operations=operation_repository.fetch_active_by_group_ids(
+                        candidate_group_ids,
+                        for_update=True,
+                    ),
+                    requested_event_ids=event_ids,
+                    user_id=user_id,
+                )
             scenario_group_id = repository.insert_group(
                 {
                     "mi_event_id": None,
@@ -379,6 +572,7 @@ class ScenarioGroupService:
                     "stage": ScenarioGroupStage.READY.value,
                     "api_version": "v4",
                     "generation_strategy": "multi_event_model_lever_dimensions",
+                    "event_set_hash": requested_event_set_hash,
                     "comparison_run_id": None,
                     "impact_catalog_version": impact_catalog_version,
                     "impact_catalog_checksum": impact_catalog_checksum,
@@ -402,6 +596,19 @@ class ScenarioGroupService:
                         "crt_usr_logn_id": user_id,
                         "mod_usr_logn_id": user_id,
                     },
+                )
+            if operation_id is not None:
+                from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+                    ScenarioGroupOperationService,
+                )
+
+                ScenarioGroupOperationService().create_accepted_in_session(
+                    session,
+                    scenario_group_id=scenario_group_id,
+                    operation_id=operation_id,
+                    operation_type="create",
+                    engine_version="v4",
+                    user_id=user_id,
                 )
             session.commit()
             created = repository.fetch_by_id(scenario_group_id)
@@ -695,6 +902,50 @@ class ScenarioGroupService:
                 group,
                 user_id=user_id,
             )
+            session.commit()
+            return {
+                "scenario_group_deleted": scenario_group_deleted,
+                "scenario_deleted": scenario_deleted,
+                "signpost_deleted": signpost_deleted,
+            }
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def soft_delete_group_for_owner(self, scenario_group_id: int, *, user_id: int) -> dict[str, int]:
+        """Business soft delete used by the common Multi-Event API."""
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.scenario_group_operation.repository import ScenarioGroupOperationRepository
+
+        session = get_sync_session()
+        try:
+            group_repository = ScenarioGroupRepository(session=session)
+            scenario_repository = ScenarioRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+            group = group_repository.fetch_by_id_for_query(scenario_group_id, include_deleted=False)
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+            if group.request_usr_id is not None and int(group.request_usr_id) != user_id:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                    detail=f"Scenario group owner is user {group.request_usr_id}",
+                )
+            active = ScenarioGroupOperationRepository(session=session).fetch_active(scenario_group_id)
+            if active is not None:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail=f"Operation is still {active.status}: {active.operation_id}",
+                )
+            scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
+            scenario_ids = [int(scenario.scenario_id) for scenario in scenarios]
+            signpost_deleted = signpost_repository.soft_delete_by_scenario_ids(scenario_ids, user_id=user_id)
+            scenario_deleted = scenario_repository.soft_delete_by_group_id(scenario_group_id, user_id=user_id)
+            scenario_group_deleted = group_repository.soft_delete_group(group, user_id=user_id)
             session.commit()
             return {
                 "scenario_group_deleted": scenario_group_deleted,
