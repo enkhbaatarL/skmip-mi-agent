@@ -18,10 +18,12 @@
 skmip-mi-agent/
 ├── AGENTS.md
 ├── Dockerfile
+├── Dockerfile_interpret
 ├── Dockerfile.base
 ├── Dockerfile.internal
 ├── README.md
 ├── main.py
+├── interpret.py
 ├── pyproject.toml
 ├── poetry.lock
 ├── poetry.toml
@@ -51,7 +53,8 @@ skmip-mi-agent/
     └── manual/
 ```
 
-- `main.py`: FastAPI app 구성, schema validation, 공통 middleware/openapi 설정, Agent router 등록
+- `main.py`: Scenario Group Agent 전용 FastAPI app 구성과 router 등록
+- `interpret.py`: Interpret Agent 전용 FastAPI app 구성과 router 등록. `Dockerfile_interpret`가 이미지에서 이 파일을 `main.py`로 복사한다.
 - `apps/agents/<agent_name>/`: Agent별 API, flow, API/graph schema, prompt, subgraph 구현 위치
 - `apps/common/`: 설정, 공통 예외, logging, middleware, openapi, runtime, streaming, 공통 util/value 구현 위치
 - `apps/connectors/`: callback, HTTP client, LLM client, observability, vector DB 같은 외부 시스템 adapter 구현 위치
@@ -78,13 +81,17 @@ apps/agents/<agent_name>/
 ├── routers/
 │   ├── __init__.py
 │   ├── events.py
-│   ├── scenario_generation.py
-│   ├── scenario_group_management.py
+│   ├── multi_event_scenario_group_sync.py
+│   ├── scenario_generation_sync.py
+│   ├── scenario_groups.py
+│   ├── scenario_group_stream.py
 │   └── security.py
 ├── persistence/
 │   ├── event_service.py
+│   ├── model_impact_lever_service.py
 │   ├── scenario_service.py
 │   ├── scenario_group_service.py
+│   ├── scenario_group_operation_service.py
 │   └── signpost_service.py
 ├── flows/
 │   ├── __init__.py
@@ -107,6 +114,10 @@ apps/agents/<agent_name>/
 │   └── <agent_util>.py
 ├── schemas/
 │   ├── __init__.py
+│   ├── api/
+│   │   ├── dimension_mapping.py       # flow-less mapping 승인 API DTO
+│   │   ├── manage_scenario_groups.py  # 공통 조회·삭제·operation API DTO
+│   │   └── scenario_group_presentation.py # 화면 전용 Presentation read model DTO
 │   ├── base.py
 │   ├── endpoint.py             # 기존 통합 FastAPI request/response 및 callback DTO
 │   ├── state.py                # flow 공통 base state와 공통 state DTO
@@ -130,7 +141,12 @@ apps/agents/<agent_name>/
 - `routers/`
   - FastAPI endpoint 선언, request schema 수신, background task 등록, flow 진입점 호출을 담당한다.
   - endpoint 내부에 도메인 로직을 길게 두지 않고 schema 변환, validation, flow/service 호출까지만 담당한다.
-  - workflow API는 `scenario_generation.py`, Scenario Group 조회/관리 API는 `scenario_group_management.py`, Event 조회 API는 `events.py`에 둔다.
+  - `/scenario-groups`를 canonical API로 삼는다. 버전 prefix가 있는 경로는 legacy 호환 또는 sync 테스트용이며,
+    router 파일 분리는 도메인 분리가 아니라 API 수명주기와 transport 책임 분리다.
+  - Scenario Group 생성·검증·Signpost·확정과 공통 업무 CRUD는 `scenario_groups.py`,
+    validation/signpost sync 테스트 API는 `scenario_generation_sync.py`, v2/v3/v4 생성 sync는
+    `multi_event_scenario_group_sync.py`,
+    operation 조회·SSE transport는 `scenario_group_stream.py`, Event 조회는 `events.py`에 둔다.
 - `presentation.py`
   - API 응답 표현 계층이다.
   - API 응답 payload, table, 표시값 등 입출력 shape을 조립/정규화한다.
@@ -149,7 +165,10 @@ apps/agents/<agent_name>/
   - 일반 공통 helper는 `tools/`가 아니라 `utils/`에 둔다.
 - `flows/<feature_or_domain>/`
   - API 동작 하나 또는 밀접한 기능 묶음 하나를 기능 단위, 도메인 단위로 나눈 flow 패키지다.
-  - 예: `create_scenarios`, `validate_scenarios`, `create_signposts`, `confirm_generation`
+  - 예: `create_multi_event_scenarios`, `validate_scenarios`, `create_signposts`, `confirm_generation`
+  - versioned 다중 Event 생성은 `create_multi_event_scenarios/`에 두며
+    v2 원본 dimension, v3 합성 dimension, v4 모델 영향 레버 dimension의
+    공통 계약·실행을 소유한다.
 - `flows/<feature_or_domain>/state.py`
   - 해당 flow가 실제로 읽고 쓰는 LangGraph state 필드만 정의한다.
 - `flows/<feature_or_domain>/api_schema.py`
@@ -188,15 +207,20 @@ apps/agents/<agent_name>/
 - `schemas/table.py`
   - 현재 코드에서 사용 중인 기존 endpoint, presentation, flow state 공유 scenario table DTO 위치다.
 - `schemas/api/`
-  - 신규/이관 대상 API 공통 schema 위치다. 현재 런타임 소스는 아직 `schemas/endpoint.py`, `schemas/table.py`를 사용한다.
+  - 신규/이관 대상 API 공통 schema 위치다. 기존 flow는 아직 `schemas/endpoint.py`, `schemas/table.py`를 사용한다.
   - `common.py`, `table.py`, `manage_scenario_groups.py`처럼 flow 경계에 속하지 않는 공유 API schema를 둔다.
 
 ## 현재 Agent 예시: `scenario_group_agent`
 
 `scenario_group_agent`는 위 기본 구조를 따르는 현재 런타임 Agent다.
 
-- `flows/create_scenarios/`: scenario 생성 기능 단위 flow
-  - `state.py`, `flow.py`, `nodes.py`로 구성되며 API background task 실행 경로만 둔다.
+- `flows/create_multi_event_scenarios/`: v2/v3 Template 기반 sync와 v4 모델
+  영향 레버 기반 sync/비동기 다중 Event scenario 생성 flow
+  - `state.py`가 v2/v3/v4 graph state를, `flow.py`가 v2/v3 graph를,
+    `v4_flow.py`가 v4 graph를 소유한다. LLM 호출 node는 `nodes.py`와
+    `v4_nodes.py`에 두고 sync 및 background 실행이 같은 compiled graph를 사용한다.
+  - Event/Template/impact catalog 조회와 빈 Scenario Group 준비는 graph 진입 전에
+    service로 일괄 수행한다. graph 안에서는 LLM 단계와 최종 일괄 저장만 node로 표현한다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
   - `state.py`, `flow.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow
@@ -210,11 +234,19 @@ apps/agents/<agent_name>/
 - `apps/connectors/http/`: 공유 HTTP client와 client manager
 - `apps/connectors/llm/`: LLM client adapter
 - `apps/connectors/vdb/`: vector DB 설정 loader, schema, client
-- `apps/persistence/event/`, `apps/persistence/scenario_group/`, `apps/persistence/scenario/`, `apps/persistence/signpost/`: DB domain 단위 persistence 계층
+- `apps/persistence/event/`, `apps/persistence/model_impact_lever/`, `apps/persistence/scenario_group/`, `apps/persistence/scenario_group_operation/`, `apps/persistence/scenario/`, `apps/persistence/signpost/`: DB domain 단위 persistence 계층
+- `apps/persistence/model_impact_lever/`: v4 Scenario 생성이 사용하는 모델 영향 레버 catalog의 ORM, DTO, repository. 기존 모델 파라미터 master는 binding 활성 상태 확인을 위한 외부 참조로만 사용한다.
+- `apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`: v4 생성 유스케이스에 필요한 레버 catalog hydration과 checksum 조립을 담당한다.
+- `apps/persistence/scenario_group/event_set.py`: 요청 순서와 무관한 Event 조합 canonical 값과 SHA-256 hash
+- `apps/persistence/scenario_group/models.py`: Scenario Group master와 Event 연결 ORM의 기준. master에는
+  `mi_event_id`, `event_type_l2_id`를 두지 않고 Event lineage는
+  `tmm_mi_scenario_group_event_m`에서만 관리한다.
 - `prompts/scenario_generation.py`, `prompts/scenario_validation.py`, `prompts/signpost_generation.py`: 생성/검증/Signpost LLM prompt와 structured output schema
-- `schemas/endpoint.py`: 현재 endpoint request/response와 callback DTO
+- `schemas/endpoint.py`: 기존 통합 flow endpoint request/response와 callback DTO. 이관된 관리 DTO는 호환 import만 제공
+- `schemas/api/manage_scenario_groups.py`: 공통 조회·삭제·operation API DTO
+- `schemas/api/scenario_group_presentation.py`: v1/v3/v4 공통 화면 Presentation read model DTO
 - `schemas/table.py`: 현재 endpoint, presentation, flow state에서 공유하는 table DTO
-- `apps/persistence/<domain>/schema.py`: `event`, `scenario_group`, `scenario`, `signpost` service DTO
+- `apps/persistence/<domain>/schema.py`: `event`, `scenario_group`, `scenario_group_operation`, `scenario`, `signpost` service DTO
 - `subgraphs/scenario_generation/schema.py`, `subgraphs/scenario_review/schema.py`, `subgraphs/signpost_generation/schema.py`: 각 subgraph의 graph/review DTO
 - `apps/persistence/scenario/baseline_contrast.py`: scenario/signpost persistence와 generation/review에서 공유하는 baseline 대비 coverage 계산 helper
 - `tools/`: 현재 구현된 Agent 전용 LLM tool은 없으며, 향후 tool 구현 위치로 예약
@@ -222,64 +254,73 @@ apps/agents/<agent_name>/
 - `subgraphs/scenario_review/`: scenario validation review subgraph
 - `subgraphs/signpost_generation/`: signpost 생성 pipeline subgraph
 
+`routers/scenario_generation.py`는 호환 import 집계 모듈이고,
+`versioned_scenario_generation_sync.py`는 v2/v3/v4 sync 실행 함수를 제공한다.
+운영 endpoint 조립은 `api.py`가 `scenario_groups.py`, `scenario_generation_sync.py`,
+`multi_event_scenario_group_sync.py`, `scenario_group_stream.py`, `events.py`만 직접 include한다.
+
 ## API Endpoint ↔ Flow 경로 매핑
 
 아래는 `scenario_group_agent`의 현재 매핑 예시다.
 `main.py`에서 router prefix는 빈 문자열이며, 실제 ingress/API prefix가 필요한 환경은 별도 gateway 또는 `OPENAPI_PREFIX` 설정에서 처리한다.
+Interpret Agent API는 전용 엔트리포인트 `interpret.py`에서만 등록하며 Scenario Group Agent의
+`main.py`에는 등록하지 않는다.
 
 ```text
 POST /scenario-groups
 → api.py
-→ routers/scenario_generation.py
-→ schemas/endpoint.py
-→ flows/create_scenarios/flow.py
-→ flows/create_scenarios/nodes.py
-→ subgraphs/scenario_generation/
+→ routers/scenario_groups.py
+→ flows/create_multi_event_scenarios/v4_flow.py (prepare)
+→ persistence/scenario_group_operation_service.py (group + operation + accepted transaction)
+→ runtime.py (lifespan task runner)
+→ flows/create_multi_event_scenarios/operation.py (producer)
+→ apps/persistence/scenario_group_operation/
 
 GET /scenario-groups/{scenario_group_id}
 → api.py
-→ routers/scenario_group_management.py
+→ routers/scenario_groups.py
 → apps/agents/scenario_group_agent/persistence/scenario_group_service.py
+→ apps/agents/scenario_group_agent/persistence/scenario_group_operation_service.py
 → presentation.py
 
 DELETE /scenario-groups/{scenario_group_id}
 → api.py
-→ routers/scenario_group_management.py
-→ apps/agents/scenario_group_agent/persistence/scenario_group_service.py
+→ routers/scenario_groups.py
+→ apps/agents/scenario_group_agent/persistence/scenario_group_service.py (running operation은 409)
 
-DELETE /scenario-groups/{scenario_group_id}/hard
+GET /scenario-groups/{scenario_group_id}/operations/{operation_id}
 → api.py
-→ routers/scenario_group_management.py
-→ apps/agents/scenario_group_agent/persistence/scenario_group_service.py
+→ routers/scenario_group_stream.py
+→ apps/agents/scenario_group_agent/persistence/scenario_group_operation_service.py
 
-POST /scenario-groups/{scenario_group_id}/validation
+GET /scenario-groups/{scenario_group_id}/operations/{operation_id}/stream
 → api.py
-→ routers/scenario_generation.py
-→ schemas/endpoint.py
-→ flows/validate_scenarios/flow.py
-→ flows/validate_scenarios/nodes.py
-→ subgraphs/scenario_review/
+→ routers/scenario_group_stream.py
+→ runtime.py (local EventHub 또는 operation별 adaptive DB tail watcher)
+→ operation event DB replay + live-tail
 
-DELETE /scenario-groups/{scenario_group_id}/signposts
+POST /scenario-groups/{scenario_group_id}/{validation|signposts|confirmation}
 → api.py
-→ routers/scenario_group_management.py
-→ apps/agents/scenario_group_agent/persistence/scenario_group_service.py
+→ routers/scenario_groups.py
+→ 해당 flow
 
-POST /scenario-groups/{scenario_group_id}/signposts
+POST /scenario-groups/{scenario_group_id}/{validation|signposts}/sync
 → api.py
-→ routers/scenario_generation.py
-→ schemas/endpoint.py
-→ flows/create_signposts/flow.py
-→ flows/create_signposts/nodes.py
-→ subgraphs/signpost_generation/
-
-POST /scenario-groups/{scenario_group_id}/confirmation
-→ api.py
-→ routers/scenario_generation.py
-→ schemas/endpoint.py
-→ flows/confirm_generation/flow.py
-→ flows/confirm_generation/nodes.py
+→ routers/scenario_generation_sync.py (테스트용, OpenAPI 미노출)
+→ 해당 flow 동기 실행
 ```
+
+`interpret_agent`의 현재 매핑은 아래와 같다.
+
+```text
+POST /scenario-groups/{scenario_group_id}/price-interpretations/preview
+POST /scenario-groups/{scenario_group_id}/price-interpretations
+→ interpret.py
+→ apps/agents/interpret_agent/api.py
+→ flows/interpret_price/flow.py
+```
+
+두 경로의 `scenario-groups`는 해석 대상 범위를 나타내며, endpoint 소유자는 Interpret Agent다.
 
 `model_parameter_agent`의 현재 매핑은 아래와 같다.
 
@@ -345,9 +386,18 @@ POST /model-parameters/proposals/{modelParamProposalId}/confirmation
   - 과거 `event_flow_agent` 모델 import를 새 코드에 추가하지 않는다.
 - Scenario Group
   - `apps/persistence/scenario_group/*`가 시나리오 그룹 aggregate 조회/상태 변경/삭제의 기준이다.
+  - `tmm_mi_scenario_group_m`은 Event 대표 컬럼을 소유하지 않는다. Event ID, Event Type L2,
+    Template lineage와 표시 순서는 `tmm_mi_scenario_group_event_m` 관계 row가 정본이다.
+  - API의 호환 `miEventId`, `eventTypeL2Id`는 활성 Event 관계가 정확히 하나일 때만 계산한다.
+    다중 Event 그룹은 대표 Event를 임의로 선택하지 않고 두 값을 `null`로 반환한다.
 - Scenario
   - `apps/persistence/scenario/*`가 시나리오 저장/조회/동기화의 기준이다.
   - 과거 `scenario_agent`의 모델/서비스/repository를 새 코드에 추가하지 않는다.
+- Model Impact Lever
+  - `apps/persistence/model_impact_lever/*`가 v4 Scenario 생성용 영향 레버 catalog의 기준이다.
+  - `tmm_mi_model_impact_lever_m` ORM과 레버 DTO·DB 조회를 소유한다.
+  - `apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`가 모델 파라미터 binding 지원 상태 hydration과 catalog checksum 조립을 소유한다.
+  - Scenario Group flow는 DB나 repository를 직접 조회하지 않고 Agent 내부 `ModelImpactLeverService`를 호출한다.
 - Signpost
   - `apps/persistence/signpost/*`가 Signpost 저장/조회 기준이다.
   - LLM stage 구현과 LangGraph node wrapper는 `subgraphs/signpost_generation/nodes.py`, subgraph 조립은 `subgraphs/signpost_generation/flow.py`에 둔다.

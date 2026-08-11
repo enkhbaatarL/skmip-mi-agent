@@ -33,7 +33,7 @@ event detail이 없으면 event payload 기반 검사는 임의로 통과시키�
 1. batch 대상과 증적을 확인한다. `--batch-id`가 없으면 SQLite의 `pipeline_runs`에 기록된 최신 batch를 선택한다. metrics가 없는 복사본에서는 `YYYYMMDD_HHMMSS/selected_events.json` 형태의 증적만 후보로 삼으므로 `live_logs` 같은 보조 디렉터리는 선택하지 않는다. CLI가 출력한 `quality batch:` 값을 먼저 확인한다.
 2. `pipeline_runs.status='success'`인 run만 품질 평가 대상으로 삼는다. 실패 run은 "pipeline 실패"로 별도 집계한다.
 3. Layer 1 결정적 규칙 검사를 실행한다.
-4. Layer 2 LLM-as-judge 루브릭 평가를 그룹당 최대 2회 실행한다.
+4. Layer 2 Agent Judge 루브릭 평가를 이 skill을 실행 중인 Codex 또는 Claude 모델이 직접 수행한다.
 5. 사용자가 validation 자체 평가를 요청했거나 `--mutations`/`--probe`가 지정되면 Layer 2.5 mutation probe를 실행한다.
 6. MLflow tracing이 활성이고 접근 가능하면 Layer 3 trace 진단을 실행한다. 접근 실패나 trace 부재는 infra fail/skip으로 기록하고 품질 fail로 섞지 않는다.
 7. SQLite에 평가 결과를 저장하고 `<batch_id>/quality_report.md`를 생성한다. (한국어로)
@@ -62,27 +62,45 @@ mlflow_password=<password>
 `--agent mi-vm` 또는 `--agent local`을 직접 주어도 된다. `--base-url`은 alias와
 local 파일보다 우선하며, user ID는 명시하지 않으면 항상 `10603`을 사용한다.
 
-```bash
-./.venv/bin/python tests/manual/eval_scenario_quality.py \
-  --batch-id <batch_id> --agent mi-vm
-```
-
-judge 안정성 수용 검증은 동일한 고정 batch/모델/prompt version을 두 번 평가해
-rubric verdict 일치율을 리포트에 남긴다. 80% 이상이 수용 기준이다.
+Agent Judge 입력을 먼저 생성한다. 이 명령은 LLM API를 호출하지 않는다.
 
 ```bash
 ./.venv/bin/python tests/manual/eval_scenario_quality.py \
-  --batch-id <batch_id> --judge-limit <N> --stability-runs 2
+  --batch-id <batch_id> --prepare-judge-only
 ```
 
-LLM 비용 없이 Layer 1·성능 리포트만 확인하려면 `--no-judge`를 사용한다.
+명령이 출력한 `quality_judge_input.json`을 직접 읽고 `constraints`, `rubrics`,
+`requiredJudgeIds`, `outputSchema`, `targets`에 따라 현재 skill을 실행 중인 모델이
+평가한다. 별도 LLM API, 앱 LLM connector, `codex exec`, `claude` CLI를 호출하지
+않는다. 결과를 같은 batch의 `quality_judge.json`에 작성한 뒤 평가 명령을 다시
+실행해 검증·SQLite 저장·보고서 생성을 완료한다.
+
+```bash
+./.venv/bin/python tests/manual/eval_scenario_quality.py \
+  --batch-id <batch_id>
+```
+
+judge 안정성 수용 검증은 `--stability-runs 2`로 입력을 만들고 동일한 고정
+batch/prompt version을 두 번 독립적으로 평가해 rubric verdict 일치율을 리포트에
+남긴다. 두 pass를 모두 `quality_judge.json`에 작성하며 80% 이상을 수용 기준으로
+삼는다.
+
+```bash
+./.venv/bin/python tests/manual/eval_scenario_quality.py \
+  --batch-id <batch_id> --judge-limit <N> --stability-runs 2 \
+  --prepare-judge-only
+```
+
+두 pass를 작성한 뒤 최종 실행에도 같은 `--judge-limit`과 `--stability-runs 2`를
+전달해 입력과 결과 집합을 동일하게 검증한다.
+
+Layer 1·성능 리포트만 확인하려면 `--no-judge`를 사용한다.
 trace는 명시적으로 URI를 줄 때만 수집하며, trace 없음/접근 실패는 품질 FAIL이
 아닌 별도 SKIP/infra 결과다.
 
 ```bash
 ./.venv/bin/python tests/manual/eval_scenario_quality.py \
-  --batch-id <batch_id> \
-  --agent mi-vm
+  --batch-id <batch_id> --no-judge
 ```
 
 mutation probe는 성공 run의 create table을 사용해 confirmation 전 validation sync만
@@ -125,16 +143,16 @@ Python 코드로 재현 가능하게 검사한다. 의미 판단이 필요한 �
 
 Layer 1 FAIL은 구조상 사용 불가능한 결과를 뜻한다. Layer 1 WARN/SKIP은 리포트에 분리해서 표시한다.
 
-## Layer 2: LLM-as-Judge
+## Layer 2: Agent Judge
 
-그룹당 judge 호출은 최대 2회로 제한한다.
+별도 모델 호출 없이 현재 skill runtime 모델이 그룹별 두 rubric 묶음을 직접 평가한다.
 
-- Call A: scenario set 평가. `J-01`~`J-06`, `J-11`.
-- Call B: signpost 평가. `J-07`~`J-10`.
+- `scenario_set`: scenario set 평가. `J-01`~`J-06`, `J-11`.
+- `signposts`: signpost 평가. `J-07`~`J-10`.
 
 입력 묶음은 event detail, `scenarioTemplate`, step1 scenario table, step2 validation table, step3 signpost table이다. 외부 web search는 기본 범위에서 제외한다.
 
-Judge 출력은 structured output으로 받는다.
+Judge 출력은 `quality_judge_input.json`의 schema에 맞춰 structured JSON으로 작성한다.
 
 - `score`: 1~5
 - `verdict`: `PASS | WARN | FAIL`
@@ -190,7 +208,7 @@ tracing이 활성화되어 있고 tracking server 접근이 가능할 때만 실
 - `scenario_group_id` tag로 trace를 검색한다.
 - flow별 trace, node/span, LLM CHAT_MODEL span의 inputs/outputs를 확인한다.
 - Layer 1/2 violation을 책임 stage와 연결한다.
-- 리포트에서는 trace에서 확인한 사실과 Claude/judge의 개선 해석을 구분한다.
+- 리포트에서는 trace에서 확인한 사실과 Agent Judge의 개선 해석을 구분한다.
 
 Trace가 없으면 "원인 국소화 불가(trace 없음)"로 명시한다.
 
@@ -234,13 +252,18 @@ Golden case md는 frontmatter에 `mi_event_id`, optional `scenario_group_id`, `e
 
 기존 `sync_pipeline_metrics.sqlite3`를 재사용한다. 필요 table은 평가 스크립트가 생성한다.
 
-- `quality_evals`: eval id, batch id, event id, scenario group id, judge model, prompt version, created at.
+- `quality_evals`: eval id, batch id, event id, scenario group id, skill runtime judge model, prompt version, created at.
 - `quality_check_results`: check id, status, detail, offenders.
 - `quality_judge_scores`: judge id, score, verdict, violations json.
 - `validation_probe_results`: mutation id, expected, observed, verdict, detail.
 - `golden_case_results`: golden id, matched/missed/extra, judge ids, detail.
 
 Judge prompt에는 `prompt_version` 상수를 두고 SQLite에 기록한다.
+
+batch 디렉터리에는 Agent Judge 교환 파일도 둔다.
+
+- `quality_judge_input.json`: 결정적 검사, rubric, evidence, 출력 schema.
+- `quality_judge.json`: 현재 skill runtime 모델이 작성한 판정.
 
 ## Report Format
 

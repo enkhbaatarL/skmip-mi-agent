@@ -87,6 +87,11 @@ class StructuredOutputStreamTest(unittest.IsolatedAsyncioTestCase):
             patch.object(llm_client, "get_http_semaphore", return_value=asyncio.Semaphore(1)),
             patch.object(llm_client, "get_current_langchain_callbacks", return_value=None),
             patch.object(llm_client, "accumulate_usage", accumulate_usage),
+            patch.object(
+                llm_client,
+                "get_settings",
+                return_value=SimpleNamespace(llm_structured_output_strict=False),
+            ),
         ):
             result = await llm_client.invoke_llm_structured_output(
                 output_schema=_StructuredOutput,

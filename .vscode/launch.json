@@ -19,7 +19,7 @@
       "justMyCode": false
     },
     {
-      "name": "[🌱]backend: uvicorn (main.py)",
+      "name": "[🌱]scenario-agent: uvicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
       "python": "${config:python.defaultInterpreterPath}",
@@ -59,14 +59,17 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "[🌱🌱]backend: gunicorn (main.py)",
+      "name": "[🌱🌱]scenario-agent: gunicorn (main.py)",
       "type": "debugpy",
       "request": "launch",
       "python": "${config:python.defaultInterpreterPath}",
       "module": "gunicorn",
       "args": [
         "main:app",
-        "-k=uvicorn.workers.UvicornWorker",
+        "--worker-class",
+        "uvicorn.workers.UvicornWorker",
+        "--workers",
+        "3",
         "--bind",
         "127.0.0.1:8000",
         "--timeout",
@@ -79,8 +82,10 @@
       "envFile": "${workspaceFolder}/envs/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}",
-        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml"
+        "APP_CONFIG": "${workspaceFolder}/envs/config.yaml",
+        "OBJC_DISABLE_INITIALIZE_FORK_SAFETY": "YES"
       },
+      "subProcess": true,
       "justMyCode": false
     },
     {

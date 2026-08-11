@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field, conlist, model_validator
 
+from apps.agents.scenario_group_agent.prompts.event_context import (
+    format_compact_event_context,
+)
 from apps.persistence.enums import SignpostStrength
 
 
@@ -86,25 +88,8 @@ class Stage45StructuredOutput(BaseModel):
     )
 
 
-def _current_date() -> str:
-    return date.today().strftime("%Y-%m-%d")  # noqa: DTZ011
-
-
 def _format_compact_event_context(base_event_summary: dict[str, Any]) -> str:
-    facts = "\n".join(
-        f"  - {fact}"
-        for fact in base_event_summary.get("key_facts", [])
-        if str(fact).strip()
-    ) or "  - (없음)"
-    tags = ", ".join(str(tag) for tag in base_event_summary.get("tags", []) if str(tag).strip()) or "(없음)"
-    return f"""\\
-- current_date: {_current_date()}
-- occurred_at: {base_event_summary.get("occurred_at", "") or "(없음)"}
-- temporal_reference: 최근 N일/개월, 계절 및 과거·현재·미래 판단은 current_date를 기준으로 할 것.
-  occurred_at은 Base Event 발생 시점으로 구분할 것.
-- key_facts:
-{facts}
-- tags: {tags}"""
+    return format_compact_event_context([base_event_summary])
 
 
 def build_stage2_user_prompt(
@@ -116,13 +101,9 @@ def build_stage2_user_prompt(
     max_n: int,
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
-    dim_values_block = ", ".join(
-        f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()
-    ) or "(없음)"
+    dim_values_block = ", ".join(f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()) or "(없음)"
     return f"""\
-## Base Event 요약
-- title: {base_event_summary.get("title", "")}
-- summary: {base_event_summary.get("summary", "")}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오
@@ -184,14 +165,11 @@ def build_stage4_user_prompt(
     labels: list[str],
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
-    signpost_block = "\n".join(f"  [{i+1}] {lbl}" for i, lbl in enumerate(labels))
-    dim_values = ", ".join(
-        f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()
-    ) or "(없음)"
+    signpost_block = "\n".join(f"  [{i + 1}] {lbl}" for i, lbl in enumerate(labels))
+    dim_values = ", ".join(f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()) or "(없음)"
     return f"""\
-## Base Event 요약
-- title: {base_event_summary.get("title", "")}
-- summary: {base_event_summary.get("summary", "")}
+## Event Context (authoritative current facts)
+{_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오
 - scenario_id: {scenario_id}
@@ -216,10 +194,10 @@ def build_stage5_user_prompt(
     labels: list[str],
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
-    label_block = "\n".join(f"  [{i+1}] {lbl}" for i, lbl in enumerate(labels))
+    label_block = "\n".join(f"  [{i + 1}] {lbl}" for i, lbl in enumerate(labels))
     return f"""\
-## Base Event 참고
-- title: {base_event_summary.get("title", "")}
+## Event Context (authoritative current facts)
+{_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오 ({scenario_id})
 - title: {scenario.get("title", "")}
@@ -242,14 +220,10 @@ def build_stage45_user_prompt(
     labels: list[str],
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
-    label_block = "\n".join(f"  [{i+1}] {lbl}" for i, lbl in enumerate(labels))
-    dim_values = ", ".join(
-        f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()
-    ) or "(없음)"
+    label_block = "\n".join(f"  [{i + 1}] {lbl}" for i, lbl in enumerate(labels))
+    dim_values = ", ".join(f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()) or "(없음)"
     return f"""\
-## Base Event 요약
-- title: {base_event_summary.get("title", "")}
-- summary: {base_event_summary.get("summary", "")}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(base_event_summary)}
 
 ## 대상 시나리오

@@ -1,12 +1,13 @@
 from http import HTTPStatus
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError, WebSocketRequestValidationError
 from fastapi.responses import JSONResponse
 
 from apps.common.exceptions.custom import MIBaseError
-from apps.common.values.error_codes import ErrorCode
 from apps.common.logging.logger_config import logger
+from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CommonResponse
 
 
@@ -20,13 +21,15 @@ def _resolve_status_code(exc: MIBaseError) -> HTTPStatus | int:
 
 
 def _mi_error_response(exc: MIBaseError) -> JSONResponse:
+    data = {
+        **exc.context,
+        "error_code": exc.code,
+        "error_name": exc.error_code.name,
+    }
     response = CommonResponse(
         status="error",
         message=exc.error_message,
-        data={
-            "error_code": exc.code,
-            "error_name": exc.error_code.name,
-        },
+        data=data,
     )
     return JSONResponse(
         status_code=_resolve_status_code(exc),
@@ -43,7 +46,10 @@ def register_exception_handlers(app: FastAPI) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         logger.info(f"RequestValidationError | request={_request_info(request)} | errors={exc.errors()}")
-        return JSONResponse(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, content={"detail": exc.errors()})
+        return JSONResponse(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            content=jsonable_encoder({"detail": exc.errors()}),
+        )
 
     @app.exception_handler(WebSocketRequestValidationError)
     async def websocket_request_validation_exception_handler(
@@ -51,7 +57,10 @@ def register_exception_handlers(app: FastAPI) -> FastAPI:
         exc: WebSocketRequestValidationError,
     ) -> JSONResponse:
         logger.error(f"WebSocketRequestValidationError | request={_request_info(request)} | errors={exc.errors()}")
-        return JSONResponse(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, content={"detail": exc.errors()})
+        return JSONResponse(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            content=jsonable_encoder({"detail": exc.errors()}),
+        )
 
     @app.exception_handler(MIBaseError)
     async def mi_base_exception_handler(request: Request, exc: MIBaseError) -> JSONResponse:

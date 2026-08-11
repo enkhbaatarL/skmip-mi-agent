@@ -8,7 +8,6 @@ writes a self-contained ``quality_report.md`` next to that batch.
 """
 
 import argparse
-import asyncio
 import json
 from pathlib import Path
 import sys
@@ -23,7 +22,13 @@ from tests.manual.eval_trace_utils import collect_trace_summary
 from tests.manual.eval_validation_probe import MUTATION_IDS, run_probe
 from tests.manual.quality_eval.artifacts import BatchArtifacts, RunArtifacts, load_batch
 from tests.manual.quality_eval.golden import GoldenCase, find_incidental_matches, load_golden_cases
-from tests.manual.quality_eval.judge import JudgeResult, PROMPT_VERSION, judge_scenario_set, judge_signposts
+from tests.manual.quality_eval.judge import (
+    JudgeResult,
+    PROMPT_VERSION,
+    build_agent_judge_input,
+    load_agent_judge_output,
+    write_agent_judge_input,
+)
 from tests.manual.quality_eval.layer1_checks import CheckResult, run_layer1_checks
 from tests.manual.quality_eval.report import collect_performance_stats, render_quality_report
 from tests.manual.quality_eval.runtime_config import AGENT_ALIASES, load_runtime_target
@@ -43,22 +48,41 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", help="agent URL; takes precedence over --agent and test_info.local")
     parser.add_argument("--user-id", type=int, help="agent user ID; defaults to 10603 or test_info.local")
     parser.add_argument("--test-info", type=Path, help="local config; defaults to skill/test_info.local when present")
-    parser.add_argument("--judge-limit", type=int, help="maximum successful groups to send to the bounded LLM judge")
+    parser.add_argument("--judge-limit", type=int, help="maximum successful groups to send to the bounded agent judge")
     parser.add_argument(
         "--stability-runs",
         type=int,
         choices=(1, 2),
         default=1,
-        help="run each fixed judge input once or twice; 2 reports verdict agreement for the acceptance smoke",
+        help="request one or two independent passes from the skill runtime model",
     )
-    parser.add_argument("--no-judge", action="store_true", help="run Layer 1/report only (no LLM calls)")
+    parser.add_argument("--no-judge", action="store_true", help="run Layer 1/report only")
+    parser.add_argument(
+        "--judge-input",
+        type=Path,
+        help="agent judge request path; defaults to <batch>/quality_judge_input.json",
+    )
+    parser.add_argument(
+        "--judge-result",
+        type=Path,
+        help="agent-produced result path; defaults to <batch>/quality_judge.json",
+    )
+    parser.add_argument(
+        "--prepare-judge-only",
+        action="store_true",
+        help="write the agent judge request and exit before persistence/report generation",
+    )
     parser.add_argument("--mlflow-uri", help="optional MLflow tracking URI for Layer 3 diagnosis")
-    parser.add_argument("--probe", action="store_true", help="run V-00…V-09 validation mutation probes for successful groups")
+    parser.add_argument(
+        "--probe", action="store_true", help="run V-00…V-09 validation mutation probes for successful groups"
+    )
     parser.add_argument("--probe-base-url", help="Agent URL; required with --probe")
     parser.add_argument("--probe-user-id", type=int, help="Agent user ID; required with --probe")
     parser.add_argument("--probe-mutations", default=",".join(MUTATION_IDS), help="comma-separated V-00…V-09 list")
     parser.add_argument("--probe-timeout", type=float, default=120.0)
-    parser.add_argument("--golden", action="store_true", help="evaluate golden-case event artifacts and show labels for review")
+    parser.add_argument(
+        "--golden", action="store_true", help="evaluate golden-case event artifacts and show labels for review"
+    )
     parser.add_argument("--golden-dir", type=Path, default=DEFAULT_GOLDEN_DIR)
     parser.add_argument(
         "--golden-record",
@@ -66,11 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="reviewed JSON records: golden_id, matched, missed, extra, optional judge_ids/detail",
     )
     return parser
-
-
-async def _judge_run(run: RunArtifacts) -> list[JudgeResult]:
-    """Keep the two-call judge limit explicit and co-located with orchestration."""
-    return [await judge_scenario_set(run), await judge_signposts(run)]
 
 
 def _find_golden_runs(batch: BatchArtifacts, output_root: Path, cases: list[GoldenCase]) -> list[RunArtifacts]:
@@ -98,10 +117,16 @@ def _find_golden_runs(batch: BatchArtifacts, output_root: Path, cases: list[Gold
                     candidate_batch = load_batch(output_root, directory.name)
                 except (FileNotFoundError, ValueError):
                     continue
-                candidates.extend((directory.name, item) for item in candidate_batch.runs if item.mi_event_id == case.mi_event_id)
+                candidates.extend(
+                    (directory.name, item) for item in candidate_batch.runs if item.mi_event_id == case.mi_event_id
+                )
             if candidates:
                 _, run = max(candidates, key=lambda item: item[0])
-        if run is not None and run.status == "success" and all(item.mi_event_id != run.mi_event_id for item in selected):
+        if (
+            run is not None
+            and run.status == "success"
+            and all(item.mi_event_id != run.mi_event_id for item in selected)
+        ):
             selected.append(run)
     return selected
 
@@ -165,6 +190,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(str(exc)) from exc
     if args.judge_limit is not None and args.judge_limit < 0:
         raise SystemExit("--judge-limit must be zero or greater")
+    if args.prepare_judge_only and args.no_judge:
+        raise SystemExit("--prepare-judge-only cannot be used with --no-judge")
+    if args.judge_result and args.no_judge:
+        raise SystemExit("--judge-result cannot be used with --no-judge")
     if args.golden_record and not args.golden:
         raise SystemExit("--golden-record requires --golden")
     probe_base_url = args.probe_base_url or target.base_url
@@ -192,11 +221,54 @@ def main(argv: list[str] | None = None) -> int:
 
     evaluated_runs = {run.mi_event_id: run for run in successful}
     evaluated_runs.update({run.mi_event_id: run for run in judge_targets})
-    layer1: dict[int, list[CheckResult]] = {event_id: run_layer1_checks(run) for event_id, run in evaluated_runs.items()}
+    layer1: dict[int, list[CheckResult]] = {
+        event_id: run_layer1_checks(run) for event_id, run in evaluated_runs.items()
+    }
     judge_results: dict[int, list[JudgeResult]] = {}
     judge_errors: list[str] = []
     probe_results: list[dict[str, str]] = []
     stability_agreements: list[bool] = []
+    judge_input_path = args.judge_input or batch.batch_dir / "quality_judge_input.json"
+    judge_result_path = args.judge_result or batch.batch_dir / "quality_judge.json"
+    if not args.no_judge:
+        deterministic_checks = {
+            event_id: [
+                {
+                    "checkId": check.check_id,
+                    "status": check.status,
+                    "detail": check.detail,
+                    "offenders": check.offenders,
+                }
+                for check in checks
+            ]
+            for event_id, checks in layer1.items()
+        }
+        judge_input = build_agent_judge_input(
+            batch_id=batch.batch_id,
+            runs=judge_targets,
+            stability_runs=args.stability_runs,
+            deterministic_checks=deterministic_checks,
+        )
+        write_agent_judge_input(judge_input_path, judge_input)
+        print(f"agent judge input: {judge_input_path}")
+        print(f"agent judge result expected: {judge_result_path}")
+        if args.prepare_judge_only:
+            return 0
+        if judge_result_path.is_file():
+            try:
+                judge_results, stability_agreements = load_agent_judge_output(
+                    judge_result_path,
+                    batch_id=batch.batch_id,
+                    expected_event_ids=[run.mi_event_id for run in judge_targets],
+                    stability_runs=args.stability_runs,
+                )
+            except (OSError, ValueError) as exc:
+                judge_errors.append(f"agent judge result validation failure — {exc}")
+        else:
+            judge_errors.append(
+                "agent judge pending — skill runtime model must evaluate "
+                f"{judge_input_path} and write {judge_result_path}",
+            )
     trace = (
         {
             run.mi_event_id: collect_trace_summary(
@@ -263,30 +335,13 @@ def main(argv: list[str] | None = None) -> int:
                         probe_results.append(result)
                         store.record_probe(eval_id=eval_id, **result)
 
-        if not args.no_judge:
+        if judge_results:
             for run in judge_targets:
-                try:
-                    results = asyncio.run(_judge_run(run))
-                except Exception as exc:  # LLM/network boundary; retain deterministic evaluation and report infra error.
-                    judge_errors.append(f"miEventId={run.mi_event_id}: judge infra failure — {exc}")
+                results = judge_results.get(run.mi_event_id)
+                if not results:
                     continue
-                judge_results[run.mi_event_id] = results
                 for result in results:
                     store.record_judge(eval_ids[run.mi_event_id], result)
-                if args.stability_runs == 2:
-                    try:
-                        repeated = asyncio.run(_judge_run(run))
-                    except Exception as exc:
-                        judge_errors.append(f"miEventId={run.mi_event_id}: stability judge infra failure — {exc}")
-                    else:
-                        for result in repeated:
-                            store.record_judge(eval_ids[run.mi_event_id], result)
-                        first_verdicts = {item.judge_id: item.verdict for result in results for item in result.items}
-                        repeated_verdicts = {item.judge_id: item.verdict for result in repeated for item in result.items}
-                        stability_agreements.extend(
-                            first_verdicts[judge_id] == repeated_verdicts.get(judge_id)
-                            for judge_id in first_verdicts
-                        )
                 store.update_eval_metadata(
                     eval_ids[run.mi_event_id],
                     judge_model=results[0].model,
@@ -309,8 +364,8 @@ def main(argv: list[str] | None = None) -> int:
     notices = (
         _golden_notices(
             golden_cases,
-            formal=not args.no_judge,
-            evaluated_event_ids={run.mi_event_id for run in judge_targets} if not args.no_judge else set(),
+            formal=bool(judge_results),
+            evaluated_event_ids=set(judge_results),
         )
         if args.golden
         else _golden_notices(incidental, formal=False)
@@ -326,11 +381,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             notices.append("골든 라벨의 matched/missed/extra는 검토 후 --golden-record JSON으로 기록해야 합니다.")
-    if args.stability_runs == 2:
+    if args.stability_runs == 2 and judge_results:
         agreed = sum(stability_agreements)
         total = len(stability_agreements)
         rate = agreed / total if total else 0.0
-        notices.append(f"judge stability (fixed inputs, two runs): {agreed}/{total} ({rate:.0%}); acceptance threshold 80%")
+        notices.append(
+            f"judge stability (fixed inputs, two runs): {agreed}/{total} ({rate:.0%}); acceptance threshold 80%"
+        )
     report = render_quality_report(
         batch,
         layer1,
@@ -345,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"quality report: {report_path}")
     print(f"SQLite: {db_path}")
     if judge_errors:
-        print(f"judge infra failures: {len(judge_errors)} (report records them separately)")
+        print(f"agent judge notices: {len(judge_errors)} (report records them separately)")
     return 0
 
 

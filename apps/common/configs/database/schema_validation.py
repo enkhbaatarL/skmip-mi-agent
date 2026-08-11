@@ -6,12 +6,12 @@ from __future__ import annotations
 #   application can still provide values, though DB data quality is looser.
 # - Missing ORM tables/columns, stricter DB nullability, and incompatible column
 #   definitions are errors because application code may depend on them at runtime.
-
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Engine, Table, inspect
+from sqlalchemy import Boolean, Engine, Table, inspect
+from sqlalchemy.dialects.mysql import TINYINT
 from sqlalchemy.sql.type_api import TypeEngine
 
 
@@ -40,6 +40,10 @@ def _type_details(column_type: TypeEngine[Any]) -> dict[str, Any]:
 
 
 def _types_match(expected: TypeEngine[Any], actual: TypeEngine[Any]) -> bool:
+    if isinstance(expected, Boolean) and isinstance(actual, TINYINT) and actual.display_width == 1:
+        # MySQL stores BOOL/BOOLEAN as TINYINT(1), and reflection returns TINYINT.
+        return True
+
     if not isinstance(actual, expected._type_affinity):  # noqa: SLF001
         return False
 

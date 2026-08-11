@@ -1,11 +1,16 @@
+"""
+화면에 보여지는 Table을 구성하는 schema (DB Table 아님)
+"""
+
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
+from apps.persistence.scenario.schema import RelatedMarket
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
 )
@@ -49,6 +54,12 @@ class ScenarioRow(ApiModel):
     cells: dict[str, Any] = Field(default_factory=dict)
     metrics: ScenarioMetrics | None = None
     baseline_yn: str | None = None
+    pressure_target: Literal["JKM"] | None = None
+    pressure_band: str | None = None
+    scenario_role: str | None = None
+    probability_score: Decimal | None = None
+    pressure_rationale: str | None = None
+    related_markets: list[RelatedMarket] = Field(default_factory=list)
     signposts: list[SignpostBasePayload] = Field(default_factory=list)
 
 

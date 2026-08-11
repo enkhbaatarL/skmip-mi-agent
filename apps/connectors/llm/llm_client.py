@@ -44,7 +44,7 @@ import httpx
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from apps.common.configs.config import BaseSettings, get_settings
 from apps.common.exceptions.custom import MIBaseError
@@ -162,15 +162,21 @@ def _structured_output_request_kwargs(
     stream: bool,
     reasoning_effort: ReasoningEffortOption | None,
 ) -> dict[str, Any]:
+    strict = get_settings().llm_structured_output_strict
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "extra_headers": _extra_headers(trace_context),
-        "response_format": _structured_output_response_format(output_schema),
+        # The SDK parsing helpers convert a Pydantic model into the strict JSON
+        # Schema subset expected by the API. Relaxed callers keep the existing
+        # explicit response_format payload for backward compatibility.
+        "response_format": output_schema if strict else _structured_output_response_format(output_schema),
     }
     if reasoning_effort not in (None, "default"):
         kwargs["reasoning_effort"] = reasoning_effort
-    if stream:
+    if stream and strict:
+        kwargs["stream_options"] = {"include_usage": True}
+    elif stream:
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
     return kwargs
@@ -196,6 +202,11 @@ def _parse_structured_output[T: BaseModel](
         output_schema.model_validate_json(completed_content),
         _structured_output_usage(raw_usage),
     )
+
+
+def _is_json_syntax_validation_error(exc: ValidationError) -> bool:
+    errors = exc.errors()
+    return bool(errors) and all(error.get("type") == "json_invalid" for error in errors)
 
 
 async def _consume_structured_output_stream[T: BaseModel](
@@ -238,6 +249,27 @@ async def _request_structured_output_stream[T: BaseModel](
             output_schema=output_schema,
             stream_response=stream_response,
         )
+    except ValidationError as exc:
+        # Schema/semantic validation is owned by the calling flow so it can
+        # decide whether and how to regenerate with validation feedback.
+        # Invalid JSON after streaming can still be a truncated transport
+        # response, so the complete request retry remains appropriate there.
+        if not _is_json_syntax_validation_error(exc):
+            raise
+        if retries_remaining <= 0:
+            raise
+        logger.warning(
+            "Structured output stream returned incomplete JSON; retrying the complete request "
+            "| retries_remaining={} error={!r}",
+            retries_remaining,
+            exc,
+        )
+        return await _request_structured_output_stream(
+            create=create,
+            output_schema=output_schema,
+            request_kwargs=request_kwargs,
+            retries_remaining=retries_remaining - 1,
+        )
     except Exception as exc:
         if retries_remaining <= 0:
             raise
@@ -249,6 +281,61 @@ async def _request_structured_output_stream[T: BaseModel](
         )
         return await _request_structured_output_stream(
             create=create,
+            output_schema=output_schema,
+            request_kwargs=request_kwargs,
+            retries_remaining=retries_remaining - 1,
+        )
+
+
+def _parse_sdk_structured_output[T: BaseModel](
+    *,
+    output_schema: type[T],
+    response: Any,  # noqa: ANN401
+) -> tuple[str, T, LLMUsageModel | None]:
+    choice = response.choices[0]
+    message = choice.message
+    refusal = getattr(message, "refusal", None)
+    if refusal:
+        raise MIBaseError(
+            ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+            detail=f"LLM refused structured output: {refusal}",
+        )
+
+    content = _require_content(message.content)
+    parsed = getattr(message, "parsed", None)
+    if parsed is None:
+        # Keep compatibility with OpenAI-compatible gateways that return the
+        # content but omit the SDK-only parsed convenience field.
+        parsed = output_schema.model_validate_json(content)
+    return content, parsed, _structured_output_usage(response.usage)
+
+
+async def _request_strict_structured_output_stream[T: BaseModel](
+    *,
+    stream: Any,  # noqa: ANN401
+    output_schema: type[T],
+    request_kwargs: dict[str, Any],
+    retries_remaining: int,
+) -> tuple[str, T, LLMUsageModel | None]:
+    try:
+        async with stream(**request_kwargs) as response_stream:
+            response = await response_stream.get_final_completion()
+        return _parse_sdk_structured_output(
+            output_schema=output_schema,
+            response=response,
+        )
+    except (MIBaseError, ValidationError):
+        raise
+    except Exception as exc:
+        if retries_remaining <= 0:
+            raise
+        logger.warning(
+            "Strict structured output stream failed; retrying the complete request | retries_remaining={} error={!r}",
+            retries_remaining,
+            exc,
+        )
+        return await _request_strict_structured_output_stream(
+            stream=stream,
             output_schema=output_schema,
             request_kwargs=request_kwargs,
             retries_remaining=retries_remaining - 1,
@@ -681,8 +768,14 @@ async def invoke_llm_structured_output[T: BaseModel](
     stream: bool = False,
     reasoning_effort: ReasoningEffortOption | None = None,
 ) -> LLMStructuredResult[T]:
-    """Structured output LLM 호출. 결과와 usage 정보를 함께 반환."""
+    """Structured output LLM 호출. 결과와 usage 정보를 함께 반환.
+
+    ``llm_structured_output_strict`` 설정이 활성화되면 OpenAI SDK의 Pydantic
+    parsing helper를 사용해 strict JSON Schema를 생성하고 같은
+    ``output_schema``로 응답을 파싱한다.
+    """
     await ensure_runtime_context_ready()
+    strict = get_settings().llm_structured_output_strict
     # Streaming failures can occur after the SDK has returned a response object.
     # Disable SDK retries for that path and retry create + consume + parse here so
     # no partial content buffer can leak into the next attempt.
@@ -707,6 +800,7 @@ async def invoke_llm_structured_output[T: BaseModel](
                 attributes={
                     "llm.call_type": "structured_output",
                     "llm.output_schema": output_schema.__name__,
+                    "llm.structured_output_strict": strict,
                 },
             ) as trace_run,
         ):
@@ -718,12 +812,25 @@ async def invoke_llm_structured_output[T: BaseModel](
                 stream=stream,
                 reasoning_effort=reasoning_effort,
             )
-            if stream:
+            if stream and strict:
+                content, parsed_result, usage = await _request_strict_structured_output_stream(
+                    stream=client.chat.completions.stream,
+                    output_schema=output_schema,
+                    request_kwargs=request_kwargs,
+                    retries_remaining=max(0, max_retries),
+                )
+            elif stream:
                 content, parsed_result, usage = await _request_structured_output_stream(
                     create=client.chat.completions.create,
                     output_schema=output_schema,
                     request_kwargs=request_kwargs,
                     retries_remaining=max(0, max_retries),
+                )
+            elif strict:
+                resp = await client.chat.completions.parse(**request_kwargs)
+                content, parsed_result, usage = _parse_sdk_structured_output(
+                    output_schema=output_schema,
+                    response=resp,
                 )
             else:
                 resp = await client.chat.completions.create(**request_kwargs)
@@ -747,6 +854,10 @@ async def invoke_llm_structured_output[T: BaseModel](
                 usage=usage,
             )
             return result
+    except MIBaseError:
+        raise
+    except ValidationError as ex:
+        raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail=str(ex)) from ex
     except Exception as ex:
         raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=str(ex)) from ex
     finally:

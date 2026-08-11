@@ -1,23 +1,39 @@
 from __future__ import annotations
 
-"""Structured LLM-as-judge calls for scenario-quality evaluation.
-
-This module intentionally uses the application connector instead of a separate
-manual-script OpenAI client.  That preserves the model selection, retry, usage,
-and tracing conventions used by the scenario agent itself.
-"""
-
+# ruff: noqa: CPY001
 import json
+from pathlib import Path
 from typing import Any, Literal
 
-import httpx
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from .artifacts import RunArtifacts
 
 
-PROMPT_VERSION = "v1"
+# Agent-runtime judge contracts for scenario-quality evaluation. The manual
+# evaluator exports evidence and a JSON schema. The Codex or Claude instance
+# executing the skill writes the semantic judgment; this module validates it.
+
+PROMPT_VERSION = "v2-agent-runtime"
+
+SCENARIO_JUDGE_IDS = ("J-01", "J-02", "J-03", "J-04", "J-05", "J-06", "J-11")
+SIGNPOST_JUDGE_IDS = ("J-07", "J-08", "J-09", "J-10")
+
+SCENARIO_RUBRIC = {
+    "J-01": "Event grounding: 이벤트 핵심 driver, 수치, 지역 반영 및 근거 없는 사실 생성을 평가한다.",
+    "J-02": "Baseline validity: baseline이 edge case가 아닌 가장 개연성 높은 전개인지 평가한다.",
+    "J-03": "Scenario spectrum: 낙관·비관·고충격 edge path와 중복 narrative를 평가한다.",
+    "J-04": "Dimension quality: dimension과 value가 이벤트 기반 분기 논리를 표현하는지 평가한다.",
+    "J-05": "Internal consistency: scenario 내부 모순과 상호 배타성 위반을 평가한다.",
+    "J-06": "Domain/geography/market consistency: 시장·지역·상품 맥락이 이벤트와 맞는지 평가한다.",
+    "J-11": "Clarity: 시장 참여자가 인과 사슬을 따라갈 수 있는지 평가한다.",
+}
+SIGNPOST_RUBRIC = {
+    "J-07": "Signpost relevance: signpost가 이벤트 및 소속 scenario와 직접 연결되는지 평가한다.",
+    "J-08": "Signpost discriminativeness: 소속 scenario를 다른 scenario와 구분하는지 평가한다.",
+    "J-09": "Observability/temporal relevance: 관측 가능한 표현이며 이벤트 horizon에 맞는지 평가한다.",
+    "J-10": "Causal direction/strength: direction, strength, reason이 scenario probability와 맞는지 평가한다.",
+}
 
 
 class Violation(BaseModel):
@@ -41,181 +57,145 @@ class JudgeItemScore(BaseModel):
 
 
 class JudgeResult(BaseModel):
-    """The result of one of the two bounded judge calls for a run."""
+    """One bounded rubric group evaluated by the skill runtime model."""
 
     items: list[JudgeItemScore]
-    model: str
+    model: str = Field(min_length=1)
     prompt_version: str
 
 
-class _JudgeResponse(BaseModel):
-    """LLM connector output schema, kept separate from persisted metadata."""
+class AgentJudgePass(BaseModel):
+    """The scenario and signpost judgments from one evaluation pass."""
 
-    items: list[JudgeItemScore]
-
-
-_SCENARIO_JUDGE_IDS = ("J-01", "J-02", "J-03", "J-04", "J-05", "J-06", "J-11")
-_SIGNPOST_JUDGE_IDS = ("J-07", "J-08", "J-09", "J-10")
+    scenario_set: JudgeResult
+    signposts: JudgeResult
 
 
-def _json_payload(value: dict[str, Any] | None) -> str:
-    """Serialize artifact payloads deterministically without leaking Python reprs."""
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=str) if value else "null"
+class AgentJudgeEvaluation(BaseModel):
+    """All requested passes for one Event."""
+
+    mi_event_id: int
+    passes: list[AgentJudgePass] = Field(min_length=1, max_length=2)
 
 
-def _build_evidence_bundle(run: RunArtifacts) -> str:
-    return "\n\n".join(
-        (
-            f"miEventId: {run.mi_event_id}",
-            f"scenarioGroupId: {run.scenario_group_id}",
-            "## Event detail\n" + _json_payload(run.event_detail),
-            "## Step 1 scenario table\n" + _json_payload(run.step1),
-            "## Step 2 validation table\n" + _json_payload(run.step2),
-            "## Step 3 signpost table\n" + _json_payload(run.step3),
-        )
-    )
+class AgentJudgeOutput(BaseModel):
+    """File written by the Codex or Claude instance executing the skill."""
+
+    schema_version: Literal[1]
+    batch_id: str
+    evaluations: list[AgentJudgeEvaluation]
 
 
-def _build_prompt(*, rubric: str, judge_ids: tuple[str, ...], run: RunArtifacts) -> str:
-    return f"""You are a strict quality evaluator for a market scenario-group agent.
-Prompt version: {PROMPT_VERSION}
-
-Evaluate only the supplied evidence. Do not browse or use outside facts. A missing
-event detail is missing evidence, not permission to invent facts. Use
-EXTERNAL_FACT_REQUIRED when a conclusion would require external verification; such
-violations must be specific but are not hard failures based on this payload alone.
-
-Return exactly one item for each required judge ID: {", ".join(judge_ids)}.
-For each item, score 1-5 and use PASS, WARN, or FAIL. Every non-pass finding must
-include target_type, target_id, a short direct evidence quote or precise payload
-reference, reason, suggested_fix, and fact_dependency. Do not claim facts absent
-from the evidence.
-
-Rubric:
-{rubric}
-
-Evidence bundle:
-{_build_evidence_bundle(run)}
-"""
-
-
-async def _invoke_judge(prompt: str) -> tuple[_JudgeResponse, str]:
-    """Initialize script runtime then make the project-standard structured call.
-
-    The connector itself performs the same readiness check. Calling it here makes
-    failure location explicit for manual evaluation and avoids an uninitialized
-    semaphore registry in script entry points. If that script bootstrap fails, a
-    tightly scoped standalone client retains the configured endpoint/model while
-    intentionally foregoing connector semaphores, tracing, and usage accounting.
-    """
-    # These imports are intentionally deferred. Manual parser/schema inspection
-    # must not instantiate the application's environment-bound Settings object.
-    from apps.common.runtime.runtime import ensure_runtime_context_ready
-    from apps.common.values.enums import ModelPreference
-    from apps.connectors.llm.llm_client import invoke_llm_structured_output
-
-    try:
-        await ensure_runtime_context_ready()
-    except Exception:
-        return await _invoke_standalone_fallback(prompt)
-    response = await invoke_llm_structured_output(
-        _JudgeResponse,
-        prompt=prompt,
-        preference=ModelPreference.QUALITY,
-        temperature=0,
-    )
-    return response.result, response.model or "unknown"
-
-
-async def _invoke_standalone_fallback(prompt: str) -> tuple[_JudgeResponse, str]:
-    """Manual-script-only fallback when the shared runtime cannot initialize.
-
-    This is deliberately private and only reached before the application connector
-    call. Application flows must never bypass runtime lifecycle management.
-    """
-    from apps.common.configs.config import get_settings
-
-    settings = get_settings()
-    model = settings.deeply_thinking_model_api_deployment_name or settings.model_api_deployment_name
-    http_client = httpx.AsyncClient(
-        verify=settings.http_verify,
-        http2=settings.http2,
-        timeout=httpx.Timeout(timeout=settings.llm_timeout_sec, connect=settings.http_connect_timeout),
-        limits=httpx.Limits(
-            max_connections=settings.http_max_connection,
-            max_keepalive_connections=settings.http_max_keepalive,
-        ),
-    )
-    client = AsyncOpenAI(
-        base_url=settings.model_endpoint,
-        api_key=settings.model_api_key,
-        http_client=http_client,
-        max_retries=2,
-    )
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": _JudgeResponse.__name__,
-                    "schema": _JudgeResponse.model_json_schema(),
-                    "strict": False,
+def build_agent_judge_input(
+    *,
+    batch_id: str,
+    runs: list[RunArtifacts],
+    stability_runs: int,
+    deterministic_checks: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Build a self-contained request for the model executing the skill."""
+    return {
+        "schemaVersion": 1,
+        "batchId": batch_id,
+        "promptVersion": PROMPT_VERSION,
+        "stabilityRuns": stability_runs,
+        "judgeRuntime": "Use the Codex or Claude model currently executing the skill. Do not call an LLM API.",
+        "constraints": [
+            "Evaluate only the supplied evidence; do not browse or add outside facts.",
+            "Treat missing event detail as missing evidence, not permission to invent facts.",
+            "Use EXTERNAL_FACT_REQUIRED when external verification is necessary.",
+            "Return every required judge ID exactly once in each pass.",
+            "Every WARN or FAIL must include a precise evidence reference, reason, suggested fix, and fact dependency.",
+            "Use model='skill-runtime-model' unless the runtime exposes an exact model identifier.",
+            f"Use prompt_version='{PROMPT_VERSION}' in every JudgeResult.",
+        ],
+        "rubrics": {
+            "scenarioSet": SCENARIO_RUBRIC,
+            "signposts": SIGNPOST_RUBRIC,
+        },
+        "requiredJudgeIds": {
+            "scenarioSet": list(SCENARIO_JUDGE_IDS),
+            "signposts": list(SIGNPOST_JUDGE_IDS),
+        },
+        "outputSchema": AgentJudgeOutput.model_json_schema(),
+        "targets": [
+            {
+                "miEventId": run.mi_event_id,
+                "scenarioGroupId": run.scenario_group_id,
+                "deterministicChecks": deterministic_checks.get(run.mi_event_id, []),
+                "evidence": {
+                    "eventDetail": run.event_detail,
+                    "step1ScenarioTable": run.step1,
+                    "step2ValidationTable": run.step2,
+                    "step3SignpostTable": run.step3,
                 },
-            },
-        )
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("Standalone judge fallback returned empty content")
-        return _JudgeResponse.model_validate_json(content), model
-    finally:
-        await http_client.aclose()
+            }
+            for run in runs
+        ],
+    }
 
 
-def _validate_required_items(
-    response: _JudgeResponse,
-    required_ids: tuple[str, ...],
-) -> list[JudgeItemScore]:
-    """Reject incomplete/extra rubric output instead of silently skewing averages."""
-    by_id = {item.judge_id: item for item in response.items}
-    expected = set(required_ids)
-    actual = set(by_id)
-    if actual != expected or len(by_id) != len(response.items):
-        raise ValueError(
-            "Judge returned an invalid rubric set: "
-            f"expected={sorted(expected)}, actual={sorted(actual)}"
-        )
-    return [by_id[judge_id] for judge_id in required_ids]
+def load_agent_judge_output(
+    path: Path,
+    *,
+    batch_id: str,
+    expected_event_ids: list[int],
+    stability_runs: int,
+) -> tuple[dict[int, list[JudgeResult]], list[bool]]:
+    """Load and strictly validate an agent-produced judge result."""
+    output = AgentJudgeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+    if output.batch_id != batch_id:
+        msg = f"Agent judge batch mismatch: expected={batch_id}, actual={output.batch_id}"
+        raise ValueError(msg)
+
+    actual_event_ids = [evaluation.mi_event_id for evaluation in output.evaluations]
+    if set(actual_event_ids) != set(expected_event_ids) or len(actual_event_ids) != len(set(actual_event_ids)):
+        msg = f"Agent judge Event set mismatch: expected={sorted(expected_event_ids)}, actual={actual_event_ids}"
+        raise ValueError(msg)
+
+    primary_results: dict[int, list[JudgeResult]] = {}
+    stability_agreements: list[bool] = []
+    for evaluation in output.evaluations:
+        if len(evaluation.passes) != stability_runs:
+            msg = (
+                f"miEventId={evaluation.mi_event_id}: expected {stability_runs} judge passes, "
+                f"actual={len(evaluation.passes)}"
+            )
+            raise ValueError(msg)
+        for judge_pass in evaluation.passes:
+            _validate_result(judge_pass.scenario_set, SCENARIO_JUDGE_IDS)
+            _validate_result(judge_pass.signposts, SIGNPOST_JUDGE_IDS)
+
+        first_pass = evaluation.passes[0]
+        primary_results[evaluation.mi_event_id] = [first_pass.scenario_set, first_pass.signposts]
+        if stability_runs == 2:
+            first_verdicts = _verdicts(first_pass)
+            repeated_verdicts = _verdicts(evaluation.passes[1])
+            stability_agreements.extend(
+                first_verdicts[judge_id] == repeated_verdicts[judge_id] for judge_id in first_verdicts
+            )
+    return primary_results, stability_agreements
 
 
-async def judge_scenario_set(run: RunArtifacts) -> JudgeResult:
-    """Run Call A for J-01~J-06 and J-11 (one bounded LLM request)."""
-    rubric = """- J-01 Event grounding: core event drivers, numbers, and geography are reflected without invention.
-- J-02 Baseline validity: the baseline is the most plausible path, not an edge case.
-- J-03 Scenario spectrum: covers plausible optimistic/pessimistic and high-impact edge paths without duplicate narratives.
-- J-04 Dimension quality: dimensions and values express event-driven branch logic.
-- J-05 Internal consistency: find contradictions and scenarios that are not mutually exclusive.
-- J-06 Domain/geography/market consistency: market, geography, and product context match the event.
-- J-11 Clarity: a market participant can follow the stated causal chain."""
-    response, model = await _invoke_judge(_build_prompt(rubric=rubric, judge_ids=_SCENARIO_JUDGE_IDS, run=run))
-    return JudgeResult(
-        items=_validate_required_items(response, _SCENARIO_JUDGE_IDS),
-        model=model,
-        prompt_version=PROMPT_VERSION,
-    )
+def write_agent_judge_input(path: Path, payload: dict[str, Any]) -> None:
+    """Persist an agent judge request deterministically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
 
 
-async def judge_signposts(run: RunArtifacts) -> JudgeResult:
-    """Run Call B for J-07~J-10 (one bounded LLM request)."""
-    rubric = """- J-07 Signpost relevance: each signpost directly connects to its event and owning scenario.
-- J-08 Signpost discriminativeness: signposts distinguish the owning scenario from alternatives.
-- J-09 Observability/temporal relevance: wording is observable via news, indicators, or official releases and fits the horizon.
-- J-10 Causal direction/strength: direction, strength, and reason coherently affect scenario probability."""
-    response, model = await _invoke_judge(_build_prompt(rubric=rubric, judge_ids=_SIGNPOST_JUDGE_IDS, run=run))
-    return JudgeResult(
-        items=_validate_required_items(response, _SIGNPOST_JUDGE_IDS),
-        model=model,
-        prompt_version=PROMPT_VERSION,
-    )
+def _validate_result(result: JudgeResult, required_ids: tuple[str, ...]) -> None:
+    if result.prompt_version != PROMPT_VERSION:
+        msg = f"Agent judge prompt version mismatch: expected={PROMPT_VERSION}, actual={result.prompt_version}"
+        raise ValueError(msg)
+    actual_ids = [item.judge_id for item in result.items]
+    if set(actual_ids) != set(required_ids) or len(actual_ids) != len(set(actual_ids)):
+        msg = f"Agent judge rubric mismatch: expected={list(required_ids)}, actual={actual_ids}"
+        raise ValueError(msg)
+
+
+def _verdicts(judge_pass: AgentJudgePass) -> dict[str, str]:
+    return {
+        item.judge_id: item.verdict
+        for result in (judge_pass.scenario_set, judge_pass.signposts)
+        for item in result.items
+    }

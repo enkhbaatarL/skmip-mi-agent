@@ -1,4 +1,4 @@
 interface:
   display_name: "Scenario Sync Pipeline"
-  short_description: "Run MI scenario sync API pipelines by event type."
-  default_prompt: "Run the scenario sync pipeline test across event types and report success, failures, and timings."
+  short_description: "Run scenario sync comparisons and format reports."
+  default_prompt: "Use $scenario-sync-pipeline to run or update a scenario comparison and produce the required evidence-rich report format."

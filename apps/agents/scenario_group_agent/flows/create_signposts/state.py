@@ -11,6 +11,7 @@ from apps.agents.scenario_group_agent.schemas.state import (
     state_update,
 )
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import SignpostGenerationResult
+from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.schema import NewScenarioGeneratedDetails, ScenarioPayload
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 from apps.persistence.signpost.schema import SignpostPayload
@@ -18,6 +19,7 @@ from apps.persistence.signpost.schema import SignpostPayload
 
 class CreateSignpostsState(BaseFlowState):
     mi_event_id: int | None = None
+    event_data: EventPayload | None = None
     include_details: bool = False
     scenario_group: ScenarioGroupPayload | None = None
     scenarios: list[ScenarioPayload] = Field(default_factory=list)

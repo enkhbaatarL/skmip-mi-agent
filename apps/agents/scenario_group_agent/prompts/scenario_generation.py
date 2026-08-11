@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, conlist, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, WithJsonSchema, conlist, model_validator
 
+from apps.agents.scenario_group_agent.prompts.event_context import (
+    format_compact_event_context,
+)
 from apps.agents.scenario_group_agent.subgraphs.scenario_generation.schema import (
     ExcludedDimension,
     LikelihoodTier,
@@ -63,10 +65,48 @@ class Stage4StructuredOutput(BaseModel):
     )
 
 
+def _likelihood_prior_from_wire(value: Any) -> Any:  # noqa: ANN401
+    if not isinstance(value, list):
+        return value
+
+    result: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return value
+        scenario_id = str(item.get("scenarioId", "")).strip()
+        if not scenario_id or scenario_id in result:
+            raise ValueError("likelihoodPrior entries require unique non-blank scenarioId values")
+        result[scenario_id] = item.get("likelihood")
+    return result
+
+
+LikelihoodPriorMap = Annotated[
+    dict[str, LikelihoodTier],
+    BeforeValidator(_likelihood_prior_from_wire),
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "scenarioId": {"type": "string"},
+                    "likelihood": {
+                        "type": "string",
+                        "enum": ["very_low", "low", "medium", "high", "very_high"],
+                    },
+                },
+                "required": ["scenarioId", "likelihood"],
+                "additionalProperties": False,
+            },
+        },
+    ),
+]
+
+
 class Stage6StructuredOutput(BaseModel):
     mutually_exclusive: bool = Field(description="시나리오 조합이 서로 중복되지 않는지 여부")
     rationale: str = Field(default="", description="조합 유일성 판정 근거 1~2줄")
-    likelihood_prior: dict[str, LikelihoodTier] = Field(
+    likelihood_prior: LikelihoodPriorMap = Field(
         description="scenario_id -> 5단계 Prior",
     )
 
@@ -82,27 +122,15 @@ def _format_dimensions_block(template: Any) -> str:
         value_enums = ", ".join(dimension.value_enums)
         required_mark = "Y" if dimension.required else "N"
         lines.append(
-            f"- {dimension.dim_key} (label={dimension.label}, required={required_mark}): value_enums=[{value_enums}]"
+            f"- {dimension.dim_key} "
+            f"(label={dimension.label}, description={dimension.description}, "
+            f"required={required_mark}): value_enums=[{value_enums}]"
         )
     return "\n".join(lines)
 
 
-def _current_date() -> str:
-    return date.today().strftime("%Y-%m-%d")  # noqa: DTZ011
-
-
 def _format_compact_event_context(pack: Stage1ContextPack) -> str:
-    base_event = pack.C1_base_event
-    facts = "\n".join(f"  - {fact}" for fact in base_event.key_facts) or "  - (없음)"
-    tags = ", ".join(base_event.tags) or "(없음)"
-    return f"""\\
-- current_date: {_current_date()}
-- occurred_at: {base_event.occurred_at or "(없음)"}
-- temporal_reference: 최근 N일/개월, 계절 및 과거·현재·미래 판단은 current_date를 기준으로 할 것.
-  occurred_at은 Base Event 발생 시점으로 구분할 것.
-- key_facts:
-{facts}
-- tags: {tags}"""
+    return format_compact_event_context([pack.C1_base_event.model_dump()])
 
 
 def build_stage2_user_prompt(
@@ -112,18 +140,17 @@ def build_stage2_user_prompt(
     required_dim_ids: list[str],
 ) -> str:
     return f"""\
-## Base Event
-- event_id: {pack.C1_base_event.event_id}
-- title: {pack.C1_base_event.title}
-- event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
-## Template (event_type_l1_l2 = {pack.C1_base_event.event_type_l1_l2})
+## Template Domain Knowledge (reference examples, not current facts)
+- event_type_l1_l2: {pack.C1_base_event.event_type_l1_l2}
+- event_type_definition: {template.event_type_definition or "(없음)"}
+- lng_price_impact_examples: {template.lng_price_impact_examples or "(없음)"}
 - template_dimensions_total: {template.resolved_total()}
 - dimensions: 아래 리스트의 dim_key 만 선택 가능.
 {_format_dimensions_block(template)}
-- required=true 인 dim_key: {required_dim_ids if required_dim_ids else '없음'}
+- required=true 인 dim_key: {required_dim_ids if required_dim_ids else "없음"}
 
 ## 산출 규칙
 - 선택 Dim: 3~5개.
@@ -139,9 +166,7 @@ def build_stage3_user_prompt(
     enum_full_block: str,
 ) -> str:
     return f"""\
-## Base Event 요약
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
 ## Dimension 정보
@@ -162,10 +187,7 @@ def build_stage3_batch_user_prompt(
 ) -> str:
     dimension_blocks: list[str] = []
     for dim in dimensions:
-        enum_full_block = ", ".join(
-            f"{enum['id']}({enum.get('label', '')})"
-            for enum in dim["enum"]
-        )
+        enum_full_block = ", ".join(f"{enum['id']}({enum.get('label', '')})" for enum in dim["enum"])
         dimension_blocks.append(
             f"- dim_key: {dim['dim_key']}\n"
             f"  label_ko: {dim.get('label_ko', '')}\n"
@@ -173,9 +195,7 @@ def build_stage3_batch_user_prompt(
             f"  value_enums: {enum_full_block}",
         )
     return f"""\
-## Base Event 요약
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
 ## Dimension 정보
@@ -214,9 +234,7 @@ def build_stage4_user_prompt(
         else ""
     )
     return f"""\
-## Base Event
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
@@ -241,9 +259,7 @@ def build_stage4_fixed_user_prompt(
     target_count: int,
 ) -> str:
     return f"""\
-## Base Event
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
 ## Dimension 라벨 (참고)
@@ -270,9 +286,7 @@ def build_scenario_group_metadata_user_prompt(
         for scenario in scenarios
     )
     return f"""\
-## Base Event
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
 ## 생성된 시나리오 목록 ({len(scenarios)}건)
@@ -282,14 +296,11 @@ def build_scenario_group_metadata_user_prompt(
 
 def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenario]) -> str:
     scenarios_block = "\n".join(
-        f"- {s.scenario_id} | {s.title}\n"
-        f"    dims: {', '.join(f'{k}={v}' for k, v in s.dimension_values.items())}"
+        f"- {s.scenario_id} | {s.title}\n    dims: {', '.join(f'{k}={v}' for k, v in s.dimension_values.items())}"
         for s in scenarios
     )
     return f"""\
-## Base Event 요약
-- title: {pack.C1_base_event.title}
-- summary: {pack.C1_base_event.summary}
+## Event Context (authoritative current facts)
 {_format_compact_event_context(pack)}
 
 ## 시나리오 목록 ({len(scenarios)}건)
@@ -297,7 +308,8 @@ def build_stage6_user_prompt(*, pack: Stage1ContextPack, scenarios: list[Scenari
 
 ## 산출
 - mutually_exclusive (bool) + rationale (1~2줄).
-- likelihood_prior: 모든 scenario_id 에 대해 5단계 중 1개.
+- likelihood_prior: 모든 scenario_id 에 대해
+  [{{"scenarioId": "S_01", "likelihood": "medium"}}] 배열 형식으로 5단계 중 1개.
 """
 
 
@@ -441,7 +453,8 @@ STAGE6_SYSTEM_PROMPT = """\
    - 모든 시나리오의 dimension_values 조합이 서로 유일하면 True.
    - 동일한 dimension_values 조합을 가진 시나리오 쌍이 있을 때만 False.
    - narrative(서술 톤·결과 가격 방향)가 비슷하다는 이유로 False 를 반환하지 마십시오.
-2. likelihood_prior: 각 시나리오마다 발생 가능성을 5단계 카테고리로 부여.
+2. likelihood_prior: [{"scenarioId": "S_01", "likelihood": "medium"}] 배열 형식으로
+   각 시나리오마다 발생 가능성을 5단계 카테고리로 부여.
    very_low, low, medium, high, very_high 중 정확히 1개.
 
 ## 절대 금지
@@ -457,7 +470,7 @@ STAGE6_SYSTEM_PROMPT = """\
 
 STAGE6_HARD_CONSTRAINTS = """\
 [중요한 출력 제약 — Stage 6]
-- likelihood_prior 키 집합은 입력된 scenario_id 와 정확히 일치 (누락·여분 금지).
+- likelihood_prior 의 scenarioId 집합은 입력된 scenario_id 와 정확히 일치 (누락·여분 금지).
 - 값은 {very_low|low|medium|high|very_high} 중 정확히 1개.
 - 수치 출력 금지. Coverage·Sum 검사 금지.
 """

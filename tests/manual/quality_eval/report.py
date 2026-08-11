@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 def collect_performance_stats(db_path: Path, batch_id: str, *, top_n: int = 10) -> dict[str, Any]:
-    """Recalculate report statistics from pipeline SQLite, never from LLM output."""
+    """Recalculate report statistics from pipeline SQLite, never from semantic judge output."""
     if not db_path.exists():
         return {"available": False, "reason": f"SQLite 없음: {db_path}"}
     try:
@@ -129,7 +129,7 @@ def render_quality_report(
     else:
         lines.append("| - | - | SKIP | Layer 1 결과 없음 | - |")
 
-    lines.extend(["", "## Layer 2 Judge 점수 및 violation", "", "| miEventId | Rubric | Score | Verdict |", "| --- | --- | --- | --- |"])
+    lines.extend(["", "## Layer 2 Agent Judge 점수 및 violation", "", "| miEventId | Rubric | Score | Verdict |", "| --- | --- | --- | --- |"])
     if all_scores:
         for event_id, result in judge.items():
             for item in _judge_items(result):
@@ -151,7 +151,7 @@ def render_quality_report(
         else:
             lines.append("- violation 없음")
     else:
-        lines.append("| - | - | - | SKIP: judge 미실행 또는 인프라 실패 |")
+        lines.append("| - | - | - | SKIP: Agent Judge 결과 대기 또는 검증 실패 |")
 
     lines.extend(_render_probe_section(probes))
     lines.extend(_render_golden_section(golden_notice))
