@@ -55,7 +55,8 @@ sequenceDiagram
 SSE live-tail은 owner worker에서는 DB commit 후 process-local EventHub 알림을 사용한다. 다른
 worker에서는 operation별 shared watcher가 `latestSequence`만 1초에서 최대 5초까지 adaptive
 polling하고, sequence가 증가할 때만 subscriber cursor 이후 event history를 읽는다. keepalive는
-DB polling과 분리한다.
+DB polling과 분리한다. master row 조회가 일시적으로 실패해도 subscriber가 남아 있는 동안 watcher를
+유지하고 최대 5초의 지수 backoff로 재시도한다.
 
 ### 화면 전용 Presentation API
 

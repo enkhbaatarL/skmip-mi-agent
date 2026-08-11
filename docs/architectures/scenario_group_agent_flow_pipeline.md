@@ -53,7 +53,8 @@ operation owner worker에서는 event DB commit 이후 process-local EventHub가
 깨운다. 다른 worker로 재연결한 경우에는 operation별 shared tail watcher가 master row의
 `latestSequence`만 1초부터 최대 5초까지 adaptive polling한다. sequence가 증가했을 때만 각
 subscriber가 자신의 cursor 이후 event history를 range query하며, 변경이 발견되면 polling 간격을
-1초로 초기화한다. SSE keepalive는 DB를 조회하지 않는다.
+1초로 초기화한다. master row 조회가 일시적으로 실패하면 subscriber가 남아 있는 동안 같은 watcher가
+최대 5초의 지수 backoff로 재시도한다. SSE keepalive는 DB를 조회하지 않는다.
 
 검증 완료 projection은 operation master의 `presentation_snapshot`에 저장한다. Event impact 검증은
 facts/exclusions, impact paths/uncertainties와 Event snapshot을 저장하고 `eventAnalysis=partial`을,

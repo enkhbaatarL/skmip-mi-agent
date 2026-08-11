@@ -651,6 +651,44 @@ def test_remote_tail_caps_backoff_at_five_seconds_and_resets_after_change() -> N
     assert latest_sequence == 3
 
 
+def test_remote_tail_retries_transient_db_error_while_subscriber_remains() -> None:
+    async def exercise() -> tuple[list[float], int, bool]:
+        poll_permissions: asyncio.Queue[None] = asyncio.Queue()
+        second_poll_ready = asyncio.Event()
+        intervals: list[float] = []
+
+        async def controlled_sleep(interval: float) -> None:
+            intervals.append(interval)
+            if len(intervals) == 2:
+                second_poll_ready.set()
+            await poll_permissions.get()
+
+        hub = ScenarioGroupOperationEventHub(sleep=controlled_sleep)
+        await hub.start()
+        get_operation = Mock(
+            side_effect=[
+                RuntimeError("temporary database failure"),
+                _operation(status="succeeded", latest_sequence=2),
+            ],
+        )
+        try:
+            with patch.object(ScenarioGroupOperationService, "get_operation", get_operation):
+                async with hub.subscribe(120, "01JABCDEF0123456789ABCDEFX", known_latest_sequence=1) as wakeups:
+                    poll_permissions.put_nowait(None)
+                    await asyncio.wait_for(second_poll_ready.wait(), timeout=1)
+                    poll_permissions.put_nowait(None)
+                    wakeup = await asyncio.wait_for(wakeups.get(), timeout=1)
+        finally:
+            await hub.shutdown()
+        return intervals, wakeup.latest_sequence, wakeup.terminal
+
+    intervals, latest_sequence, terminal = asyncio.run(exercise())
+
+    assert intervals == [1.0, 2.0]
+    assert latest_sequence == 2
+    assert terminal is True
+
+
 def test_sse_disconnect_does_not_cancel_registered_producer() -> None:
     async def exercise() -> bool:
         runner = ScenarioGroupOperationTaskRunner()

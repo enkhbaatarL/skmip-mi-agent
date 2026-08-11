@@ -150,7 +150,18 @@ class ScenarioGroupOperationEventHub:
         try:
             while operation_id in self._subscribers and operation_id not in self._owner_operations:
                 await self._sleep(interval)
-                operation = await asyncio.to_thread(service.get_operation, scenario_group_id, operation_id)
+                try:
+                    operation = await asyncio.to_thread(service.get_operation, scenario_group_id, operation_id)
+                except Exception as exc:
+                    interval = min(interval * 2, self._max_poll_interval_seconds)
+                    logger.warning(
+                        "Scenario Group remote operation tail poll failed; retrying | "
+                        "operation_id={} | retry_in_seconds={} | error={!r}",
+                        operation_id,
+                        interval,
+                        exc,
+                    )
+                    continue
                 previous_sequence = self._latest_sequences.get(operation_id, 0)
                 changed = operation.latest_sequence > previous_sequence
                 terminal = operation.status in TERMINAL_OPERATION_STATUSES
@@ -169,14 +180,6 @@ class ScenarioGroupOperationEventHub:
                     if changed
                     else min(interval * 2, self._max_poll_interval_seconds)
                 )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error(
-                "Scenario Group remote operation tail failed | operation_id={} | error={!r}",
-                operation_id,
-                exc,
-            )
         finally:
             if self._tail_watchers.get(operation_id) is current_task:
                 self._tail_watchers.pop(operation_id, None)
