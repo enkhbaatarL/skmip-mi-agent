@@ -337,6 +337,8 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    반영하고, Value의 `assumptionRationale`에 어떤 Event 사실과 현재 시점 판단을 사용했는지 자연어로
    설명한다. Anchor ref는 추가하지 않으며 새로운 숫자 경계는 제공된 판단 근거가 실제 기준을 줄 때만
    만든다. Dimension은 새 Lever를 선택하지 않고 source uncertainty의 affected Lever를 상속한다.
+   LLM은 별도 `format`을 생성하지 않는다. 서버는 `timing`·`duration`·`recovery` axis를 `temporal`,
+   그 외 axis에서 단위가 있으면 `numeric_range`, 나머지를 `categorical` `valueKind`로 결정한다.
 5. `validate_model_lever_dimensions`: Dimension의 source Event/Path/uncertainty와
    `primaryImpactLeverId`, Value별 Lever state ID 및 model support status를 hydrate한다.
 6. `synthesize_v4_scenarios`: 공통 영향, 검증된 Interaction, Dimension 선택지를 읽기 쉬운

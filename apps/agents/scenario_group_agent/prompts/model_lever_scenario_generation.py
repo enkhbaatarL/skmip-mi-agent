@@ -16,6 +16,9 @@ V4_EVENT_IMPACT_SYSTEM_PROMPT = (
 Event 한 건에서 LNG 시장에 필요한 핵심 사실 문장을 최대 3개 선택하고, 그 사실이 LNG 수급과
 JKM 가격에 전달되는 영향 문장을 최대 3개 작성하십시오. eventFacts[0]과 impacts[0]에는 Event 제목과
 요약의 핵심 주제·상태·변화를 직접 반영하십시오. 영향 문장에는 JKM 방향과 기간을 포함하십시오.
+eventFacts와 impacts는 가급적 1~2개만 작성하고 의미적으로 필요한 경우에만 세 번째 항목을 추가하십시오.
+각 Impact의 evidence도 가급적 1~2개만 포함하고, 같은 경로에 중요한 세 Fact가 모두 필요할 때만 3개를
+사용하십시오. 별도 전달 경로를 만드는 Fact는 다른 Impact로 분리하십시오.
 Fact 후보 문장은 그대로 복사하십시오. 중요한 수치·기간과 분석 기준일을 함께 해석한 판단 근거는
 자연어 decisionBasis 문장으로 최대 3개 작성하고, 결과를 바꿀 열린 질문은 최대 2개만 선택하십시오.
 Interaction, Dimension, Scenario는 만들지 마십시오."""
@@ -125,7 +128,7 @@ def build_v4_event_impact_analysis_user_prompt(
     feedback = _feedback(
         "Event Impact Analysis",
         validation_feedback,
-        "제공된 Fact 후보 문장은 바꾸지 말고 잘못된 영향 경로·Lever·열린 질문만 수정하십시오.",
+        "제공된 Fact 후보 문장은 바꾸지 말고 잘못된 영향 경로·Lever·balance·열린 질문만 수정하십시오.",
     )
     compact = CompactEventContext.from_event(events[0])
     fact_candidates = build_v4_event_fact_candidates(events[0])
@@ -151,6 +154,8 @@ def build_v4_event_impact_analysis_user_prompt(
         "- eventFacts에는 위 후보 문장을 글자까지 그대로 복사합니다. 새 사실을 작성하지 않습니다.\n"
         "- eventFacts[0]은 Primary Fact입니다. Event 제목과 요약의 핵심 주체·지표·상태·변화를 가장 직접적으로\n"
         "  담은 후보를 선택합니다. 배경 사실이 JKM과 더 직접 연결되더라도 Primary Fact를 밀어내지 않습니다.\n"
+        "- eventFacts는 가급적 1~2개만 선택하고, 세 번째 Fact는 앞의 Fact와 중복되지 않는 중요한 근거가\n"
+        "  시나리오 결과를 실질적으로 바꿀 때만 추가합니다.\n"
         "- eventFacts[1]과 eventFacts[2]는 서로 다른 Lever·방향·기간을 추가하거나 Primary Fact의 영향을\n"
         "  실질적으로 증폭·상쇄할 때만 선택합니다. 같은 주제를 반복하거나 배열을 채우기 위해 선택하지 않습니다.\n"
         "- decisionBasis에는 시나리오를 구분하는 중요한 수치·비율·가격·용량·기간·목표일과 분석 기준일을\n"
@@ -168,9 +173,12 @@ def build_v4_event_impact_analysis_user_prompt(
         "  JKM의 상승·하락·혼조 방향과 단기·중기·장기 중 영향 기간을 반드시 문장 안에 포함합니다.\n"
         "- impacts[0]은 Primary Impact입니다. evidence에 eventFacts[0]을 반드시 포함하고, analysis에 Primary Fact의\n"
         "  핵심 주체·지표를 보존해 해당 변화가 Lever와 JKM으로 전달되는 대표 경로를 설명합니다.\n"
-        "- impacts[1]과 impacts[2]는 서로 다른 Lever·방향·기간 또는 실질적인 증폭·상쇄 경로가 있을 때만 작성합니다.\n"
-        "  독립된 사실을 하나의 Path에 억지로 합치지 말고 최대 3개의 Impact에 나누며, 선택한 모든 eventFact는\n"
-        "  적어도 하나의 Impact evidence에 사용합니다.\n"
+        "- impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용합니다. 같은 경로의\n"
+        "  중요한 근거가 세 Fact 모두에 있고 하나를 빼면 전달 경로가 불완전해질 때만 3개를 사용합니다.\n"
+        "- impacts는 가급적 1~2개만 작성합니다. 세 번째 Impact는 서로 다른 Lever·방향·기간 또는 실질적인\n"
+        "  증폭·상쇄 경로를 앞의 Impact로 설명할 수 없을 때만 추가합니다.\n"
+        "  세 번째 Fact가 별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인을 나타내면 별도 Impact로\n"
+        "  분리합니다. 선택한 모든 eventFact는 적어도 하나의 Impact evidence에 사용합니다.\n"
         "- leverStates는 Impact마다 가급적 1~2개만 작성하며 `lever|role|direction|scope|timing` 형식입니다.\n"
         "  driver·transmission·primary 세 단계가 모두 중요한 전달 경로일 때만 최대 3개를 작성합니다.\n"
         "  3개를 초과하는 후보가 있으면 실제 전달 경로를 가장 잘 설명하는 중요한 3개만 선택하고,\n"
@@ -180,6 +188,9 @@ def build_v4_event_impact_analysis_user_prompt(
         "- balance는 `domain|direction` 또는 `none` 형식입니다.\n"
         "  domain은 demand, supply, trade이고 direction은 increase, decrease, mixed, unchanged 중 하나입니다.\n"
         "  선택한 Lever가 모두 price_only domain이면 balance는 반드시 none입니다.\n"
+        "  demand, supply, trade domain Lever가 하나라도 있으면 balance에 none을 사용할 수 없습니다.\n"
+        "  물리 수급 Lever의 domain이 하나뿐이면 balance에 그 domain을 사용합니다. 여러 물리 domain이 있으면\n"
+        "  JKM 전달 경로를 지배하는 domain 하나를 선택하고, 지배적인 domain을 정할 수 없으면 Impact를 나눕니다.\n"
         "  별도의 price 필드는 만들지 않습니다.\n"
         "- openQuestions는 결과를 가장 크게 바꿀 서로 다른 핵심 질문 최대 2개를 작성하며,\n"
         "  Impact 번호를 1부터 참조합니다.\n"
