@@ -254,7 +254,9 @@ Event와 사용 Template ID/checksum은 `tmm_mi_scenario_group_event_m`에 순�
 대표 Event를 임의로 만들지 않는다.
 
 v2/v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
-`ModelImpactLeverService`와 Impact Path·Lever lineage 검증은 v4 경로에만 존재한다.
+`apps/persistence/model_impact_lever/`의 `ModelImpactLeverService`와 Impact Path·Lever lineage 검증은
+v4 경로에만 존재한다. 레버 catalog는 독립 persistence 도메인이 소유하고, 기존 모델 파라미터
+master는 catalog binding의 활성·지원 상태 확인에만 사용한다.
 최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
 adapter를 추가하지 않는다.
 

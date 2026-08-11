@@ -12,7 +12,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     ScenarioDimensionValues,
 )
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
-from apps.persistence.model_parameter.schema import (
+from apps.persistence.model_impact_lever.schema import (
     ModelImpactLeverPayload,
     ModelImpactLeverSupportIssue,
 )

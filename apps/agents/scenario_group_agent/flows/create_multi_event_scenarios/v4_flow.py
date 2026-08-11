@@ -56,7 +56,7 @@ from apps.common.tracing.context import (
 from apps.common.values.error_codes import ErrorCode
 from apps.common.values.response import CallBackBody
 from apps.connectors.callback.callback_client import send_callback
-from apps.persistence.model_parameter.service import ModelImpactLeverService
+from apps.persistence.model_impact_lever.service import ModelImpactLeverService
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 

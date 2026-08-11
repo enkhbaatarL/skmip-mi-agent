@@ -85,7 +85,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes import (
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.model_parameter.service import ModelImpactLeverService
+from apps.persistence.model_impact_lever.service import ModelImpactLeverService
 from apps.persistence.scenario.schema import (
     ScenarioPayload,
     ScenarioPipelineTemplate,

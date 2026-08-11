@@ -56,7 +56,7 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.model_parameter.schema import ModelImpactLeverPayload
+from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 
 
 V4_EVENT_LLM_TIMEOUT_SECONDS = 180.0

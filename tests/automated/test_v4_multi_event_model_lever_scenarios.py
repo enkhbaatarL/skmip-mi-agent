@@ -45,7 +45,7 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.model_parameter.schema import (
+from apps.persistence.model_impact_lever.schema import (
     ModelImpactLeverParameterBinding,
     ModelImpactLeverPayload,
 )

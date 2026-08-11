@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from apps.persistence.model_parameter.service import _resolve_binding_support
+from apps.persistence.model_impact_lever.service import _resolve_binding_support
 
 
 def test_binding_support_distinguishes_active_and_inactive_master_rows() -> None:

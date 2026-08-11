@@ -981,6 +981,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             ]
             group_repository_cls.return_value.fetch_by_id.return_value = SimpleNamespace(
                 scenario_group_id=20,
+                mi_event_id=30,
+                event_type_l2_id=17,
                 request_usr_id=40,
                 title="group",
                 summary="",
@@ -990,9 +992,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 status="READY",
                 stage="DONE",
             )
-            group_repository_cls.return_value.fetch_group_events.return_value = [
-                SimpleNamespace(mi_event_id=30, event_type_l2_id=17),
-            ]
             event_repository_cls.return_value.fetch_event_by_id.return_value = {
                 "mi_event_id": 30,
             }
@@ -1013,7 +1012,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         }
         scenario_repository_cls.return_value.fetch_model_by_id.assert_called_once_with(100)
         group_repository_cls.return_value.fetch_by_id.assert_called_once_with(20)
-        group_repository_cls.return_value.fetch_group_events.assert_called_once_with(20)
         event_repository_cls.return_value.fetch_event_by_id.assert_called_once_with(30)
         event_repository_cls.return_value.fetch_event_type_by_l2_id.assert_called_once_with(17)
         scenario_repository_cls.return_value.fetch_dimension_template.assert_called_once_with(17)

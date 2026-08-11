@@ -233,7 +233,8 @@ apps/agents/<agent_name>/
 - `apps/connectors/http/`: 공유 HTTP client와 client manager
 - `apps/connectors/llm/`: LLM client adapter
 - `apps/connectors/vdb/`: vector DB 설정 loader, schema, client
-- `apps/persistence/event/`, `apps/persistence/scenario_group/`, `apps/persistence/scenario_group_operation/`, `apps/persistence/scenario/`, `apps/persistence/signpost/`: DB domain 단위 persistence 계층
+- `apps/persistence/event/`, `apps/persistence/model_impact_lever/`, `apps/persistence/scenario_group/`, `apps/persistence/scenario_group_operation/`, `apps/persistence/scenario/`, `apps/persistence/signpost/`: DB domain 단위 persistence 계층
+- `apps/persistence/model_impact_lever/`: v4 Scenario 생성이 사용하는 모델 영향 레버 catalog의 ORM, DTO, repository, service. 기존 모델 파라미터 master는 binding 활성 상태 확인을 위한 외부 참조로만 사용한다.
 - `apps/persistence/scenario_group/event_set.py`: 요청 순서와 무관한 Event 조합 canonical 값과 SHA-256 hash
 - `apps/persistence/scenario_group/models.py`: Scenario Group master와 Event 연결 ORM의 기준. master에는
   `mi_event_id`, `event_type_l2_id`를 두지 않고 Event lineage는
@@ -390,6 +391,10 @@ POST /model-parameters/proposals/{modelParamProposalId}/confirmation
 - Scenario
   - `apps/persistence/scenario/*`가 시나리오 저장/조회/동기화의 기준이다.
   - 과거 `scenario_agent`의 모델/서비스/repository를 새 코드에 추가하지 않는다.
+- Model Impact Lever
+  - `apps/persistence/model_impact_lever/*`가 v4 Scenario 생성용 영향 레버 catalog의 기준이다.
+  - `tmm_mi_model_impact_lever_m` ORM과 레버 DTO·조회·hydration을 소유하며, 모델 파라미터 master는 binding 지원 상태 확인을 위해 조회한다.
+  - Scenario Group flow는 DB나 Model Parameter repository를 직접 조회하지 않고 `ModelImpactLeverService`를 호출한다.
 - Signpost
   - `apps/persistence/signpost/*`가 Signpost 저장/조회 기준이다.
   - LLM stage 구현과 LangGraph node wrapper는 `subgraphs/signpost_generation/nodes.py`, subgraph 조립은 `subgraphs/signpost_generation/flow.py`에 둔다.

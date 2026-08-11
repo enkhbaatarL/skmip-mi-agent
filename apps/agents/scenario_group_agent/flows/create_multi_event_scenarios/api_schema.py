@@ -29,7 +29,7 @@ from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.values.llm_usage import LLMUsageModel
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.model_parameter.schema import ModelImpactLeverSupportIssue
+from apps.persistence.model_impact_lever.schema import ModelImpactLeverSupportIssue
 from apps.persistence.scenario.schema import DimensionDefinition
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 

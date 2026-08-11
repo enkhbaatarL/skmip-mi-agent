@@ -36,7 +36,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4ScenarioSynthesisResult,
 )
 from apps.persistence.event.schema import EventPayload
-from apps.persistence.model_parameter.schema import ModelImpactLeverPayload
+from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 from apps.persistence.scenario.schema import ScenarioPayload, ScenarioPipelineTemplate
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 

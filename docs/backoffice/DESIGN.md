@@ -1,1045 +1,637 @@
-# Scenario Comparison Backoffice Design
+# Backoffice Design Specification
 
-## 1. 문서 목적
+## 1. 목적과 기준
 
-이 문서는 [`PRD.md`](./PRD.md)에 정의된 Scenario Comparison Backoffice의 화면 구조, frontend 상태, API orchestration, 컴포넌트, 반응형 및 접근성 기준을 정의한다.
+이 문서는 `local/images/ui`의 AI Market Insights > AI Forecast 스크린샷을 기준으로 Backoffice 화면의 IA, 레이아웃, 컴포넌트, 상태, 시각 토큰, 반응형/접근성 기준을 정의한다.
 
-Backoffice는 Scenario Group Agent의 sync API를 직접 호출하는 내부 QA용 정적 frontend다. 다음 두 workspace를 분리해 제공한다.
+Backoffice는 Scenario Group 생성과 검토를 위한 내부 운영 도구다. 화면은 마케팅성 랜딩이 아니라 표, 입력, 검증 결과, 생성 결과를 빠르게 확인하는 업무 콘솔이어야 한다. 기본 톤은 흰 배경, 얇은 구분선, 절제된 블루 포인트, 높은 정보 밀도다.
 
-1. v1 단일 이벤트 sync pipeline
-2. v2/v3/v4 다중 이벤트 생성 결과 비교
+## 2. IA
 
-기존 Backoffice FastAPI backend, callback receiver, OAuth mock, SSE, 운영용 Scenario Group 관리 화면은 설계 범위에 포함하지 않는다.
+### 2.1 전역 쉘
 
-## 2. 설계 원칙
+모든 화면은 동일한 전역 쉘을 사용한다.
 
-- 두 workflow를 섞지 않는다.
-  - v1은 unversioned create부터 confirmation까지 순차 실행한다.
-  - v2/v3/v4는 create sync API 결과를 비교하고, 사용자가 요청한 경우에만 별도 의미 품질 평가를 실행한다.
-- 화면은 결과보다 실행 조건을 먼저 보여준다.
-  - Event, userId, Base URL을 항상 확인할 수 있어야 한다.
-- 기본 화면은 API 응답을 사용자용 presentation view로 변환한다.
-  - 내부 Dimension/Value ID 대신 label, 설명, lineage, 실제 근거를 표시한다.
-  - 원본 request/response는 secret redaction 외 의미 변환 없이 Raw 탭과 Evidence Drawer에 별도 증적으로 보존한다.
-- 중복 생성보다 안전한 중단을 우선한다.
-  - create POST는 자동 재시도하지 않는다.
-  - timeout과 취소는 `unknown`으로 보존한다.
-- 긴 실행 중에도 기존 결과를 유지한다.
-- HTTP 상태와 API body 판정을 분리한다.
-- secret은 frontend bundle, browser storage, export 파일에 남기지 않는다.
-- 정보 밀도는 높게 유지하되 버전과 단계 상태는 색상 외의 텍스트로도 구분한다.
+- 최상단 유틸리티 바: 좌측 `SK gas`, 우측 `Notice`, `Help Center`.
+- 메인 헤더: 원형 마크, `AI Market Insights`, 1차 내비게이션, 우측 유저 영역.
+- 1차 내비게이션: `Dashboard`, `AI Forecast`, `Market Data`, `Position Play`.
+- 현재 위치: `AI Forecast`를 브랜드 블루 텍스트와 2px 하단 라인으로 표시.
+- 우측 유틸리티: 알림 아이콘, 세로 구분선, 원형 아바타 이니셜, 사용자 ID `SKGAS001`, chevron.
 
-## 3. 전체 IA
+### 2.2 AI Forecast
 
-```text
-App Shell
-  ├─ Header
-  │    ├─ Product title
-  │    ├─ Agent connection status
-  │    └─ Runtime Settings
-  ├─ Workspace Tabs
-  │    ├─ v1 단일 이벤트
-  │    └─ v2/v3/v4 비교
-  ├─ Active Workspace
-  └─ Evidence Drawer
-       ├─ Request
-       ├─ Response
-       ├─ Raw
-       └─ Export
-```
+`AI Forecast` 하위의 시작 화면은 `Next-Gen MI`다.
 
-별도 landing page, production navigation, account menu, Scenario Group List 화면은 두지 않는다.
+- 상위 탭: `Event List`, `Scenario Group List`.
+- `Event List`: 원천 이벤트를 탐색하고 Scenario Design으로 진입한다.
+- `Scenario Group List`: 생성된 Scenario Group을 탐색하고 상세 화면으로 진입한다.
 
-## 4. App Shell
+### 2.3 Scenario Design 플로우
 
-### 4.1 Header
+진입 경로: `Event List` 행의 시나리오 액션 > `Scenario Design`.
 
-왼쪽:
+공통 구조:
 
-- 제목 `Scenario Comparison`
-- 보조 설명 `Scenario Group Agent QA`
+- 상단 `Back` 버튼.
+- 페이지 제목 `Scenario Design`.
+- 2단계 stepper.
+- 우측 comment/help 아이콘 버튼.
+- 긴 작업 화면에서는 하단 고정 액션 바.
 
-오른쪽:
+단계:
 
-- 연결 상태 badge
-  - `연결 안 됨`
-  - `확인 중`
-  - `연결됨`
-  - `연결 실패`
-- `Runtime 설정` toggle 또는 button
+1. `시나리오 분기항목 및 분기기준 검토`
+2. `시나리오 One-view 검토`
 
-Header는 workspace를 전환해도 유지한다.
+### 2.4 Scenario Group Detail
 
-### 4.2 Runtime Settings
+진입 경로: Scenario Group 생성 완료 또는 Scenario Group List 행 선택.
 
-desktop에서는 header 아래 compact horizontal panel, 좁은 화면에서는 drawer 또는 stacked panel로 표시한다.
+- 상단 뒤로가기 또는 `Scenario Group List` 버튼.
+- 엔티티 라벨 `Scenario Group`.
+- 제목: Scenario Group명.
+- 탭: `요약`, `가정 및 실현 가능성`, `가격 전망`, `시나리오 상세`.
+- 우측 액션: comment/help, overflow menu.
 
-필드:
+## 3. 화면별 레이아웃
 
-- `Agent Base URL`
-- `userId`
-- `Timeout (seconds)`
-- 선택적 인증 입력
+### 3.1 공통 페이지 레이아웃
 
-액션:
+- 페이지는 전체 폭을 사용하되 콘텐츠 좌우 여백을 유지한다.
+- 데스크톱 좌우 패딩: 48px.
+- 태블릿 좌우 패딩: 24px.
+- 모바일 좌우 패딩: 16px.
+- 헤더와 본문 사이 간격: 24-32px.
+- 페이지 제목과 탭/스텝 사이 간격: 24px.
+- 주요 섹션 사이 간격: 40-56px.
+- 섹션 제목과 콘텐츠 사이 간격: 12-16px.
+- 운영 도구이므로 섹션 전체를 카드로 감싸지 않는다. 카드 형태는 반복 데이터 객체, 입력 블록, 상세 패널에만 사용한다.
 
-- `연결 확인`
-- `저장`
-- `초기화`
+### 3.2 Event List
 
-규칙:
+목적: 이벤트를 찾고 시나리오 생성을 시작한다.
 
-- Base URL의 trailing slash는 API client에서 정규화한다.
-- userId는 정수만 허용한다.
-- timeout 기본값은 1,200초다.
-- 실행 중인 workspace가 있으면 해당 실행에 고정된 runtime 값은 변경하지 못한다.
-- 인증 값은 memory에만 유지하고 마스킹한다.
-- 마지막 Base URL, userId, timeout만 browser storage에 저장할 수 있다.
+구조:
 
-연결 확인:
+- 제목 `Next-Gen MI`.
+- 탭 `Event List`, `Scenario Group List`.
+- 섹션 제목 `Event List`.
+- 필터 바.
+- 이벤트 테이블.
+- 우측 floating comment/help 버튼.
 
-- `GET /events?page=1&pageSize=1`을 우선 사용한다.
-- 환경에 별도 health endpoint가 있으면 대체 가능하다.
-- 연결 실패 시 CORS, mixed content, network, HTTP/API 오류를 구분해 안내한다.
+필터 바:
 
-### 4.3 Workspace Tabs
+- 상태 segmented control: `전체`, `신규`, `갱신`.
+- `카테고리` dropdown.
+- 기간 shortcut `1개월`과 날짜 범위 `2026-06-02 - 2026-07-02`.
+- 정렬 dropdown `최신순`.
+- `추천 항목만 보기` toggle.
+- 키워드 검색 input, placeholder `이벤트명으로 검색`, 검색 아이콘.
 
-- `v1 단일 이벤트`
-- `v2/v3/v4 비교`
+테이블 컬럼:
 
-각 tab은 다음 상태 dot을 가질 수 있다.
+- 상태 badge: `U`, `N` 같은 단문 상태를 pastel 배경 원형/라운드 배지로 표시.
+- 일시.
+- 카테고리.
+- 이벤트명.
+- 시장 지표: `JKM`, `TTF`, `HH`.
+- 시나리오 액션.
 
-- 회색: 실행 없음
-- 파랑: 실행 중
-- 초록: 성공
-- 주황: warning 또는 unknown
-- 빨강: 실패
+행 상태:
 
-tab 전환은 실행을 취소하거나 상태를 초기화하지 않는다.
+- 기본 행은 흰 배경과 얇은 하단 divider.
+- hover 또는 선택 후보 행은 매우 옅은 gray 배경.
+- 이벤트명은 한 줄 유지가 기본이며, 좁은 폭에서는 2줄 clamp 후 tooltip 또는 상세 진입으로 원문 확인.
+- 시장 지표는 `S`/`L` 라벨과 작은 막대 아이콘을 조합한다.
+- 시나리오 생성 가능 행은 sparkle 아이콘 버튼, 단순 이동 행은 chevron 아이콘 버튼을 사용한다.
 
-### 4.4 Evidence Drawer
+### 3.2.1 Scenario Group List
 
-오른쪽 drawer 또는 화면 하단 panel로 제공한다.
+목적: 생성된 Scenario Group을 찾고, 상세로 진입하거나 로컬 테스트 데이터를 soft delete한다.
 
-기능:
+구조:
 
-- API call timeline
-- 선택한 call의 URL/method
-- request body
-- parsed response
-- raw response text
-- HTTP status와 transport status
-- 시작/종료 시각과 elapsed time
-- 판정과 오류
-- JSON 검색, 접기, 복사
-- 현재 실행 bundle export
+- 제목 `Next-Gen MI`.
+- 탭 `Event List`, `Scenario Group List`.
+- 섹션 제목 `Scenario Group List`.
+- 필터 바.
+- Scenario Group 테이블.
+- 삭제 확인 모달.
+- 우측 floating comment/help 버튼.
 
-drawer는 workflow의 주요 콘텐츠 폭을 지나치게 줄이지 않도록 desktop에서 420~560px, tablet/mobile에서는 full-width overlay를 사용한다.
+필터 바:
 
-## 5. 공통 Event Selector
+- 키워드 검색 input, placeholder `시나리오 그룹명, 이벤트명, ID로 검색`, 검색 아이콘.
+- `상태` dropdown.
+- `단계` dropdown.
+- 기간 shortcut과 날짜 범위.
+- 정렬 dropdown `최신순`.
+- `삭제 항목 포함` toggle. 기본값은 off.
+- 우측 `새로고침` icon button.
 
-### 5.1 선택 모드
+테이블 컬럼:
 
-segmented control:
+- Scenario Group ID.
+- Scenario Group명.
+- Base Event: 이벤트명 또는 `miEventId`.
+- Status.
+- Stage.
+- 시나리오 수.
+- Signpost 수.
+- 업데이트 일시.
+- 삭제 상태.
+- 액션.
 
-- `ID 직접 입력`
-- `목록에서 선택`
+행 상태:
 
-목록 모드의 filter:
+- 기본 행은 Event List와 같은 밀도의 흰 배경과 얇은 하단 divider를 사용한다.
+- hover 행은 매우 옅은 gray 배경으로 표시한다.
+- 상세 진입은 chevron 또는 external-detail icon button을 사용한다.
+- 삭제는 trash icon button을 사용하며 danger 색을 과하게 채우지 않고 hover/focus에서만 danger border/text를 강화한다.
+- 삭제 요청 중인 행은 row-level spinner와 disabled action을 표시한다.
+- soft-deleted 행은 include-deleted on 상태에서만 보이며, 행 전체를 비활성처럼 흐리게 하지 말고 `삭제됨` badge와 muted text로 구분한다.
 
-- keyword
-- 최신순/오래된순
-- status
-- Event Type L1/L2
-- 추천 항목만
-- paging
+삭제 확인 모달:
 
-v1은 Event 한 건만 선택할 수 있다. 비교 workspace는 중복 없는 Event 1~5건을 선택할 수 있다.
+- 모달 제목은 `Scenario Group 삭제`로 표시한다.
+- 본문에는 Scenario Group ID, Scenario Group명, Base Event 참조를 확인용으로 노출한다.
+- 설명 문구는 soft delete이며 snapshot 계열 데이터는 hard delete하지 않는다는 점을 짧게 알린다.
+- 액션은 좌측/보조 `취소`, 우측/danger `삭제`로 구성한다.
+- 삭제 중에는 `삭제` 버튼에 loading 상태를 표시하고 모달 닫기와 중복 submit을 막는다.
+- 실패 시 모달을 닫지 않고 error callout과 QA inspector 링크/힌트를 표시한다.
+- 성공 시 기본 목록에서는 행을 제거하고, `삭제 항목 포함`이 켜져 있으면 `삭제됨` 상태로 남긴다.
 
-### 5.2 Event Table
+빈 상태:
+
+- 전체 데이터가 없으면 `생성된 Scenario Group이 없습니다.`와 Event List 이동 액션을 표시한다.
+- 필터 결과가 없으면 `조건에 맞는 Scenario Group이 없습니다.`와 필터 초기화 액션을 표시한다.
+
+### 3.3 Scenario Design Step 1: 분기항목 및 기준 검토
+
+목적: 선택한 Base Event를 기준으로 생성된 시나리오 분기 목록과 기준값을 검토/수정한다.
+
+상단:
+
+- `Back` 버튼은 헤더 아래 좌측에 배치한다.
+- stepper의 1단계는 active 상태, `진행중` badge를 붙인다.
+- 2단계는 pending 상태다.
+
+Base Event:
+
+- 섹션 제목 `Base Event`.
+- 전체 폭 selectable card.
+- 1행: 이벤트명.
+- 2행: 일시와 카테고리.
+- 우측 chevron down으로 펼침/접힘 가능성을 표시한다.
+
+분기 항목 테이블:
+
+- 섹션 제목 `분기 항목 및 분기 기준 검토`.
+- 테이블 헤더 좌측 `시나리오 목록`, 보조 badge `3개 이상 구성 권장`.
+- 우측 상단 add icon button.
+- 하단 전체 폭 add row control.
 
 컬럼:
 
-- 선택
-- `miEventId`
-- Event 제목
-- 발생 시각
-- Event Type L1/L2
-- JKM
-- TTF
-- HH
-- Scenario 추천 상태
-- 기존 Scenario Group 상태
+- 삭제 icon.
+- `시나리오 목록`: text input, 첫 행은 `BC` badge 포함 가능.
+- `기간`: dropdown.
+- `Utilization 변화량`: dropdown.
+- `발생 패턴`: dropdown.
+- `회복 패턴`: dropdown.
+- `대체 LNG 공급 가능성`: dropdown.
 
-행 선택 후 상세를 조회해 Event summary panel에 표시한다.
+하단 고정 액션:
 
-### 5.3 Selected Event Card
+- 좌측: `전체 초기화`.
+- 우측: `취소`, `변경사항 검토`, `검토 완료`.
+- `변경사항 검토`는 dark emphasis 버튼.
+- `검토 완료`는 primary blue 버튼이며 검토 조건을 통과하기 전까지 disabled 또는 약한 blue disabled 상태다.
 
-표시 항목:
+### 3.4 Scenario Design Step 1 상태
 
-- Event ID와 제목
-- 한 줄 요약
-- 발생 시각
-- Event Type
-- key bullets
-- JKM/TTF/HH 영향
-- Scenario 추천 사유
-- 기존 Scenario Group ID/status/stage
+초기 로딩:
 
-다중 Event에서는 카드 순서가 manifest의 Event 순서가 된다. drag-and-drop은 제공하지 않고 선택 순서를 명시적으로 표시한다.
+- 페이지 쉘, stepper, Base Event 카드, 테이블 형태는 유지한다.
+- Base Event와 테이블 row는 skeleton으로 표시한다.
+- 중앙에 spinner와 `시나리오 설계를 불러오는 중입니다.`를 표시한다.
+- mutation 버튼은 disabled 처리한다. 취소가 안전하면 `취소`만 활성화할 수 있다.
 
-### 5.4 상태
+변경사항 검토 중:
 
-- loading: table skeleton
-- empty: filter를 유지하고 `조건에 맞는 Event가 없습니다.`
-- error: 기존 선택을 유지하고 inline error
-- disabled Event: 선택 불가 사유 tooltip 또는 helper text
+- 현재 입력값은 지우지 않는다.
+- 테이블 영역 전체를 흰색 반투명 overlay로 덮는다.
+- 중앙에 spinner와 `변경사항을 검토하고 있습니다.`를 표시한다.
+- 입력, dropdown, 삭제, 추가, 액션 버튼은 disabled 처리한다.
 
-## 6. v1 단일 이벤트 Workspace
+검토 경고:
 
-### 6.1 화면 구조
+- 테이블 아래에 `변경사항 검토 결과를 확인해 주세요` 안내 문구를 둔다.
+- 그 아래 full-width warning callout을 표시한다.
+- callout은 warning icon, 라벨 `값 조합 적합성`, 설명 문장, 우측 `확인 후 수정 권장` 텍스트 액션으로 구성한다.
+- 경고가 있어도 진행 가능한 정책이면 `검토 완료`를 활성화한다. 차단성 오류면 `검토 완료`는 disabled로 유지한다.
 
-```text
-V1 Run Header
-  - selected Event
-  - scenarioGroupId
-  - status/stage
-  - elapsed/token
+### 3.5 Scenario Design Step 2: One-view 검토
 
-Step Rail
-  1. Create
-  2. Validation
-  3. Signpost
-  4. Confirmation
+목적: Scenario Group명/설명, 시나리오 내러티브, 가능성, Signpost를 최종 검토하고 Scenario Group을 생성한다.
 
-Active Step Content
-  - request preview
-  - result summary
-  - editable Scenario table or Signpost view
+상단:
 
-Run Timeline
-```
+- stepper 1단계는 complete check 상태.
+- stepper 2단계는 active 상태, `진행중` badge를 붙인다.
 
-초기에는 Event selector와 `Create 실행` 버튼만 활성화한다.
+초기 로딩:
 
-### 6.2 V1 Run Header
+- 본문은 비우고 중앙 spinner와 `데이터를 로드 중입니다`를 표시한다.
+- comment/help와 전역 내비게이션은 유지한다.
 
-표시:
+그룹 메타 입력:
 
-- Event ID와 제목
-- `scenarioGroupId`
-- 현재 Agent status/stage
-- 현재 step
-- 전체 elapsed time
-- 누적 token usage
-- run 상태
+- `시나리오 그룹명`: 한 줄 또는 낮은 높이 textarea. 우측 상단 reset/regenerate icon. 하단 우측 counter `27 / 100`.
+- `시나리오 그룹 설명`: 큰 textarea. 생성된 내용은 light gray filled surface로 표시하되 수정 가능해야 한다. 하단 우측 counter `291 / 500`.
 
-액션:
+시나리오 검토 보드:
 
-- `새 실행`
-- `결과 Export`
-- 선택적 `기존 Group 정리`
+- 섹션 제목 `시나리오 검토`.
+- 데스크톱에서는 가로 스크롤 카드 보드.
+- 카드 폭은 440-520px 범위를 유지한다.
+- 화면 우측에 다음 카드가 일부 보이도록 해 가로 스크롤 가능성을 드러낸다.
+- 카드 수가 많아도 카드 폭을 과하게 줄이지 않는다.
 
-`새 실행`은 현재 결과가 있으면 export 여부를 확인한 뒤 별도 run state를 만든다.
+시나리오 카드:
 
-### 6.3 Step Rail
+- 상단: 번호 badge, 선택적으로 `BC` badge, 시나리오명.
+- 구분선.
+- `시나리오 내러티브`: textarea, reset/regenerate icon, 내부 세로 스크롤, counter.
+- `시나리오 특화 분기`: light gray assumption tile grid.
+- `시나리오 가능성`: percent input과 `%` suffix. 합계 검증 대상이다.
+- `주요 Signpost`: light gray list rows, edit pencil icon.
+
+Signpost list item:
+
+- 라벨은 한 줄 ellipsis.
+- 2행에 방향/영향도 요약 예: `가능성 강화 · 매우 높음`.
+- 우측 edit icon button은 36-40px hit area를 확보한다.
+
+하단 고정 액션:
+
+- 좌측: `전체 초기화`.
+- 우측: `취소`, `시나리오 그룹 생성`.
+- 생성 중에는 `시나리오 그룹 생성` 버튼에 loading 상태를 표시하고 중복 클릭을 막는다.
+
+### 3.6 Scenario Group Detail: 요약
+
+목적: 생성 완료된 Scenario Group의 기준 이벤트, 설명, 시나리오 가정을 읽기 전용으로 확인한다.
+
+상단:
+
+- `Scenario Group List`로 돌아가는 버튼.
+- entity label `Scenario Group`.
+- 제목: Scenario Group명.
+- 탭: `요약` active.
+- 우측 comment/help, overflow.
+
+본문:
+
+- 섹션 `요약`: 아이콘 + 제목.
+- `Base Event` table block.
+  - 컬럼: `이벤트`, `이벤트 유형`, `업데이트 일시`.
+  - light gray surface 안에 header와 body row를 둔다.
+- `시나리오 그룹 설명`: light gray content block.
+- 섹션 `가정 및 실현 가능성`: 아이콘 + 제목.
+- table:
+  - `시나리오`
+  - `기간`
+  - `Utilization 변화량`
+  - `발생 패턴`
+  - `회복 패턴`
+  - `대체 LNG 공급 가능성`
+  - `실현가능성`
+  - `상태`
+- `상태`는 compact select로 표시하며 기본값 예시는 `대기`.
+
+### 3.7 Scenario Group Detail: 시나리오 상세
+
+목적: 개별 시나리오의 내러티브, 발생 확률, 주요 가정, Signpost 정의를 자세히 확인한다.
+
+레이아웃:
+
+- 탭 `시나리오 상세` active.
+- 본문은 좌측 시나리오 목록 + 우측 상세 콘텐츠의 2컬럼.
+- 좌측 sidebar 폭: 320-360px.
+- 우측 콘텐츠는 남은 폭을 사용한다.
+
+좌측 시나리오 목록:
+
+- light gray surface.
+- 상단 count 예: `6개 시나리오`.
+- 각 item은 번호 badge, 선택적 `BC` badge, 시나리오명.
+- active item은 흰/옅은 gray 배경, border, 더 강한 텍스트로 표시한다.
+
+우측 상세:
+
+- entity label `Scenario`.
+- 번호 badge와 시나리오명.
+- divider.
+- `시나리오 내러티브`: light gray text block.
+- 우측 `시나리오 발생 확률`: 별도 summary block.
+- `시나리오 주요 가정`: 2-3열 tile grid.
+- `Signpost 정의`: table.
+
+Signpost 정의 컬럼:
+
+- `Signpost Label`
+- `방향`
+- `영향도`
+- `핵심 근거`
+
+긴 텍스트 정책:
+
+- 목록과 표에서는 2-3줄 clamp.
+- 상세/편집 context에서는 원문 표시 또는 펼침을 제공한다.
+
+## 4. 컴포넌트와 상호작용
+
+### 4.1 Buttons
+
+- Primary: blue background, white text, 6-8px radius.
+- Secondary: white background, gray border, dark text.
+- Dark emphasis: navy/dark slate background, white text. `변경사항 검토`에 사용.
+- Danger: white background, danger border/text 또는 danger background + white text. destructive confirmation의 최종 `삭제` 액션에만 사용한다.
+- Disabled: pale gray 또는 pale blue background, muted text, hover 없음.
+- Icon button: 36-44px 정사각, border, 8px radius, 중앙 정렬.
+
+아이콘 사용:
+
+- back arrow
+- trash/delete
+- plus/add
+- chevron down/right
+- reset/regenerate
+- comment/help
+- notification
+- overflow menu
+- edit pencil
+- search
+- calendar
+- refresh
+
+### 4.2 Tabs
+
+- AI Forecast 하위 page tabs: active blue text + blue underline.
+- Scenario Group detail tabs: active black text + black underline.
+- inactive tab은 배경 없이 neutral text만 사용한다.
+- keyboard focus 시 underline과 별도로 focus ring을 제공한다.
+
+### 4.3 Stepper
 
 상태:
 
-- `idle`
-- `ready`
-- `running`
-- `success`
-- `warning`
-- `error`
-- `unknown`
-
-표시 규칙:
-
-- active step은 blue border와 상태 text를 사용한다.
-- 완료 step은 check icon과 결과 요약을 표시한다.
-- warning은 다음 단계 진행 가능 여부를 helper text로 알린다.
-- error/unknown 이후 단계는 잠금 상태와 사유를 표시한다.
-
-### 6.4 Step 1: Create
-
-API:
-
-```http
-POST /scenario-groups/sync
-```
-
-화면:
-
-- 선택 Event summary
-- request preview
-- 기존 Scenario Group 경고
-- `Create 실행`
-- response summary
-- Scenario table
-
-성공 표시:
-
-- `result=success`
-- Scenario Group ID
-- status/stage
-- Scenario 수
-- dimension 수
-- elapsed time
-- token usage
-
-실패:
-
-- HTTP 200의 `result=failure`도 error callout으로 표시한다.
-- 중복 생성 오류면 기존 Group ID와 soft delete 안내를 보여준다.
-- 자동 재시도하지 않는다.
-
-### 6.5 Editable Scenario Table
-
-Create 성공 후 표시한다.
-
-고정 컬럼:
-
-- 순서
-- baseline
-- title
-- narrative
-- probability
-- role
-- pressure band/rationale가 있으면 해당 값
-
-동적 컬럼:
-
-- API table header 순서에 따른 dimension cell
-
-편집:
-
-- title, narrative, probability, dimension cell
-- row 추가/삭제
-- 원본값으로 row reset
-- 전체 reset
+- pending: gray outline number, neutral text.
+- active: blue filled number, blue text, light blue `진행중` badge.
+- complete: pale blue circle 또는 blue-tinted circle + check icon.
 
 규칙:
 
-- API 식별자는 편집 중에도 유지한다.
-- display order는 중복되지 않게 다시 계산한다.
-- 삭제한 row는 다음 request body에서 제외한다.
-- baseline 변경은 명시적 control을 사용한다.
-- validation request preview에서 최종 정규화 table을 보여준다.
-
-### 6.6 Step 2: Validation
-
-API:
-
-```http
-POST /scenario-groups/{scenarioGroupId}/validation/sync
-```
-
-화면:
-
-- validation request preview
-- `Validation 실행`
-- 결과 badge
-- `isValid`, `stage`, reason
-- 수정 권장 사항
-
-판정:
-
-- `stage=scenario_validated`: success
-- invalid 또는 `stage=scenario_created`: warning
-- transport/API failure: error
-
-invalid는 입력값을 유지한다. 사용자가 warning을 확인하면 signpost 단계로 계속할 수 있다.
-
-validation을 다시 실행하는 경우 request preview와 확인 dialog를 거친다.
-
-### 6.7 Step 3: Signpost
-
-API:
-
-```http
-POST /scenario-groups/{scenarioGroupId}/signposts/sync
-```
-
-화면:
-
-- 현재 Scenario table
-- request preview
-- `Signpost 실행`
-- Scenario별 Signpost accordion
-- 결과 요약
-
-Signpost 표시:
-
-- label
-- direction
-- impact
-- core evidence
-- 연결 Scenario
-
-성공 판정은 `result=success`다. 실패 시 confirmation을 잠근다.
-
-### 6.8 Step 4: Confirmation
-
-Confirmation 직전에 최신 detail을 조회한다.
-
-```http
-GET /scenario-groups/{scenarioGroupId}
-```
-
-확정 API:
-
-```http
-POST /scenario-groups/{scenarioGroupId}/confirmation
-```
-
-화면:
-
-- Scenario Group name/description
-- 최종 Scenario table
-- Signpost summary
-- confirmation request preview
-- `Confirmation 실행`
-- 최종 status/stage
-
-성공 판정:
-
-- `status=success`
-- `data.stage=completed`
-
-완료 후에도 별도 detail 관리 화면으로 이동하지 않는다. 현재 workspace에 final summary와 원본 응답을 유지한다.
-
-## 7. v2/v3/v4 비교 Workspace
-
-### 7.1 화면 단계
-
-```text
-1. 비교 조건
-2. 실행
-3. 비교 결과
-4. 선택적 품질 평가
-```
-
-### 7.2 비교 조건
-
-필드:
-
-- Event 1~5건
-- userId
-
-frontend는 화면 상태와 export 파일을 묶기 위한 로컬 `runId`를 생성한다. 사용자가 입력하지 않으며 API body에는 포함하지 않는다.
-
-### 7.3 Manifest Summary
-
-실행 전 confirmation panel에서 다음을 보여준다.
-
-- Base URL
-- userId
-- Event ID와 순서
-- Event detail 조회 성공 여부
-- 로컬 runId
-- 요청 timeout
-
-`비교 실행`을 누르면 manifest를 고정하고 입력 control을 잠근다.
-
-### 7.4 실행 상태 Board
-
-version card 3개를 가로로 배치한다.
-
-각 card:
-
-- v2/v3/v4 label
-- generation strategy
-- 상태
-- 시작/종료 시각
-- elapsed time
-- HTTP status
-- Scenario Group ID
-- token usage
-- 오류 요약
-
-실행 순서:
-
-```text
-v2 ─┐
-    ├─ barrier ─→ v4
-v3 ─┘
-```
-
-- v2와 v3는 동시에 시작한다.
-- 둘 다 terminal state가 된 후 v4를 시작한다.
-- terminal state는 success, error, unknown이다.
-- v4가 시작되기 전 card에 `v2/v3 종료 대기`를 표시한다.
-- 동일 version POST는 한 번만 허용한다.
-- 취소 또는 timeout은 unknown으로 남긴다.
-
-### 7.5 비교 결과 Navigation
-
-비교 결과 내부 tab:
-
-- `Overview`
-- `Dimensions`
-- `Scenarios`
-- `Diagnostics`
-- `Raw`
-
-성공 version이 2개 미만이면 상단에 `비교 판정 불가` callout을 표시하되 성공한 결과의 개별 view는 제공한다.
-
-`Raw`는 기본 해석 화면이 아니다. Group, Dimension, Scenario 탭이 사용자용 label과 근거를 제공하고, Raw는 원본 확인·복사·디버깅이 필요할 때만 사용한다.
-
-### 7.6 Overview
-
-버전별 비교 table:
-
-- API status
-- generation strategy
-- Scenario Group ID/name
-- Event 수
-- dimension 수
-- Scenario 수
-- baseline
-- floor/ceiling/mixed 수
-- pressure band 분포
-- probability 합계
-- lineage coverage
-- diagnostics coverage
-- elapsed time
-- token usage
-- 결정적 검사 결과
-- 의미 품질 평가 상태
-
-열은 v2, v3, v4 순서를 고정한다.
-
-v2/v3/v4 모두 `Global LNG pressure` label을 사용한다. v4의
-`relatedMarkets`는 기본 표 열이나 pressure 태그가 아니라 Scenario 상세의
-보조정보로만 표시한다.
-
-Overview 상단에는 version별 Scenario Group 제목·요약·설명을 분리해 보여준다. ID와 count만으로 그룹 의미를 대신하지 않는다.
-
-### 7.7 Dimensions
-
-두 가지 view를 제공한다.
-
-1. version별 list
-2. source lineage matrix
-
-dimension row:
-
-- label
-- description
-- values
-- source Event
-- source dimension
-- lineage type
-- Dimension 선택 근거
-- Value별 label, global pressure contribution, 선택/가정 근거
-- lever references
-- supported/unsupported
-- covered/uncovered
-
-version별 차이:
-
-- v2: `e{eventId}__{dimKey}` namespace를 강조한다.
-- v3: composite dimension과 다중 source 관계를 표시한다.
-- v4: Event grounding, model lever, parameter binding, unsupported reason을 표시한다.
-
-`dimensionId`와 `valueId`는 adapter의 lookup key로만 사용하고 기본 UI에는 사용자용 label을 표시한다. 같은 label이 둘 이상이면 `Event <lineage>`를 붙인다. 실제 응답에 근거가 없으면 `제공된 근거 없음`으로 표시하며 UI가 새 근거를 만들지 않는다.
-
-### 7.8 Scenarios
-
-기본 정렬:
-
-1. floor
-2. mixed 또는 내부 band
-3. baseline marker
-4. ceiling
-
-실제 응답의 role/pressure band를 기준으로 정렬하며 없는 값을 추측하지 않는다.
-
-비교 방식:
-
-- desktop: version column 3개
-- tablet/mobile: version switcher와 한 version씩 표시
-
-Scenario card:
-
-- order
-- baseline
-- role
-- title
-- narrative
-- label 기반 Dimension/Value 조합
-- Dimension 선택 근거
-- 선택 Value의 실제 근거
-- pressure band
-- pressure rationale
-- probability
-- Event coverage
-- 의미 품질 평가가 완료된 경우 Scenario별 verdict와 판단 근거
-
-대응 Scenario가 없으면 `생성되지 않음`과 excluded reason을 표시한다.
-
-### 7.9 Diagnostics
-
-공통:
-
-- target pressure bands
-- excluded candidates
-- excluded dimensions
-- covered/uncovered dimensions
-- coverage status
-- Event impact facts
-- Event interactions
-
-v4:
-
-- impact catalog version
-- unsupported levers
-- unsupported lever details
-
-긴 진단 값은 summary와 expandable raw block을 함께 제공한다.
-
-### 7.10 결정적 검사
-
-version card 및 Overview에 PASS/WARN/FAIL을 표시한다.
-
-검사항목은 M-01~M-08로 고정한다.
-
-- M-01: Scenario 3~5개
-- M-02: baseline 정확히 1개
-- M-03: Scenario 조합과 pressure band 존재·고유성
-- M-04: floor/ceiling 각각 1개, role과 극단 band 정합성, optional mixed 정합성
-- M-05: v2/v3/v4 Dimension 각각 3~6개
-- M-06: 전체 입력 Event lineage coverage
-- M-07: Scenario별 global pressure rationale 존재
-- M-08: 생성·제외 결과가 target pressure band 전체를 설명
-
-mixed가 없으면 M-04에서 실패시키지 않는다. mixed가 있으면 비극단 band인지, 선택 Value에 상승·하락 contribution이 함께 존재하는지, `globalPressureRationale`이 상쇄 관계를 설명하는지 확인한다. contribution 의미가 응답만으로 확정되지 않으면 추측하지 않고 WARN으로 표시한다.
-
-결정적 검사는 의미적 LLM 평가가 아니며 우수 version을 직접 선정하지 않는다.
-
-### 7.11 의미 품질 평가
-
-create 결과가 모두 terminal 상태이고 성공 version이 2개 이상이면 Overview에 품질 평가 panel을 표시한다.
-
-미실행 상태:
-
-- 평가 대상 version
-- Event/API 증적만 사용한다는 안내
-- 추가 LLM 호출로 시간과 token이 사용된다는 안내
-- `품질 평가 실행` button
-
-실행 후:
-
-- 단독 또는 공동 우수 version badge
-- version별 적용 가능 기준 평균
-- Event 정합성, LNG Dimension, floor/ceiling, mixed 품질의 score/verdict/rationale/evidence
-- version별 strengths/weaknesses
-- 종합 결론
-- Scenario card에 연결되는 Scenario별 판단
-
-mixed 품질은 다음처럼 표시한다.
-
-- mixed 없음: `N/A`, score 없음, 평균 제외
-- mixed 있음: 실제 상승·하락 Value 조합과 상쇄 근거를 1~5점으로 평가
-
-품질 평가는 create와 자동 연결하지 않는다. 사용자가 버튼을 눌렀을 때만 `POST /scenario-group-comparisons/judge/sync`를 호출한다. 실패·timeout은 create 결과를 유지한 채 judge 상태만 error/unknown으로 표시하고 `품질 평가 다시 실행`을 제공한다.
-
-## 8. Frontend 상태 설계
-
-### 8.1 공통 타입
-
-```ts
-type RunStatus =
-  | "idle"
-  | "ready"
-  | "running"
-  | "success"
-  | "warning"
-  | "error"
-  | "unknown";
-
-interface ApiCallRecord {
-  id: string;
-  workflow: "v1" | "comparison";
-  step: string;
-  version?: "v2" | "v3" | "v4";
-  method: string;
-  url: string;
-  request?: unknown;
-  startedAt: string;
-  finishedAt?: string;
-  elapsedMs?: number;
-  httpStatus?: number;
-  transportStatus: "pending" | "success" | "error" | "unknown";
-  parsedResponse?: unknown;
-  rawResponse?: string;
-  judgment?: RunStatus;
-  error?: string;
-}
-```
-
-### 8.2 V1 State
-
-```ts
-interface V1RunState {
-  runId: string;
-  runtime: RuntimeSnapshot;
-  event?: EventDetail;
-  scenarioGroupId?: number;
-  currentStep: "create" | "validation" | "signpost" | "confirmation";
-  steps: Record<string, StepState>;
-  editableTable?: ScenarioTable;
-  scenarioGroup?: ScenarioGroup;
-  signposts?: unknown[];
-  calls: ApiCallRecord[];
-}
-```
-
-### 8.3 Comparison State
-
-```ts
-interface ComparisonRunState {
-  runId: string;
-  runtime: RuntimeSnapshot;
-  manifest: ComparisonManifest;
-  versions: Record<"v2" | "v3" | "v4", VersionRunState>;
-  checks: Record<"v2" | "v3" | "v4", DeterministicCheckResult[]>;
-  qualityJudge: QualityJudgeState;
-  calls: ApiCallRecord[];
-}
-
-interface QualityJudgeState {
-  status: "idle" | "ready" | "running" | "success" | "error" | "unknown";
-  request?: ComparisonJudgeRequest;
-  response?: ComparisonJudgeResponse;
-  call?: ApiCallRecord;
-  error?: string;
-}
-```
-
-### 8.4 저장 정책
-
-memory:
-
-- 진행 중 request
-- AbortController
-- 인증값
-- 현재 편집 draft
-
-browser storage:
-
-- Base URL, userId, timeout
-- 최근 실행 metadata
-- 크기 제한 내의 결과
-- 품질 평가 상태와 결과
-
-export:
-
-- manifest
-- request/response
-- 판정
-- 시간/token
-- 결정적 검사
-- 의미 품질 평가 request/response와 우수 version
-
-인증 header와 secret은 storage/export 전에 제거한다.
-
-## 9. API Client와 Orchestration
-
-### 9.1 Agent Client
-
-책임:
-
-- Base URL 정규화
-- JSON request/response
-- timeout과 AbortController
-- raw response 보존
-- HTTP/API 오류 분리
-- call record 생성
-- 민감 header redaction
-
-`fetch`의 network error만으로 서버 실행 실패를 단정하지 않는다. POST 전송 후 응답을 받지 못한 경우 상태는 unknown이 될 수 있다.
-
-### 9.2 V1 Controller
-
-```text
-load event detail
-  → create
-  → normalize editable table
-  → validation
-  → normalize returned/latest table
-  → signpost
-  → get detail
-  → confirmation
-```
-
-각 단계는 사용자의 명시적 action으로 실행한다. controller는 다음 단계의 request를 미리 보내지 않는다.
-
-### 9.3 Comparison Controller
-
-```ts
-for (const version of ["v2", "v3", "v4"] as const) {
-  await Promise.allSettled([runVersion(version, manifest)]);
-}
-```
-
-`runVersion`은 같은 run/version에 대해 한 번만 실행되는 guard를 가진다.
-
-- v2, v3, v4 순서를 유지한다.
-- 앞 version 실패도 기록하고 다음 version을 실행한다.
-- v2/v3/v4 request는 동일한 Event와 userId를 사용한다.
-- version별 결과는 독립적으로 보존한다.
-
-품질 평가는 별도 사용자 action이다.
-
-```ts
-const successfulGroups = successfulVersions(run).map(({ version, groupId }) => ({
-  apiVersion: version,
-  scenarioGroupId: groupId,
-}));
-
-if (successfulGroups.length >= 2) {
-  await runQualityJudge(runtime.userId, successfulGroups);
-}
-```
-
-- 성공 version 2~3개만 요청한다.
-- create 실패 version은 제외하되 실패 사유는 기존 version card에 유지한다.
-- judge 호출은 create POST guard와 분리한다.
-- judge는 읽기 전용이므로 실패 후 사용자 확인으로 재호출할 수 있다.
-
-### 9.4 API Body 판정
-
-v1:
-
-- create/signpost: `result=success`
-- validation: `stage=scenario_validated` 또는 invalid warning
-- confirmation: `status=success && data.stage=completed`
-
-comparison:
-
-- HTTP 2xx
-- `status=success`
-- `data.apiVersion` 일치
-- Event lineage 일치
-
-quality judge:
-
-- HTTP 2xx와 `status=success`
-- 요청 version과 응답 version 집합 일치
-- 각 version의 필수 평가 기준과 Scenario 판단 집합 일치
-- `mixed_quality=N/A`이면 `score=null`
-- 평균과 `bestVersions`가 서버 계산 결과와 일치
-
-## 10. 컴포넌트 구조
-
-```text
-App
-├─ AppHeader
-├─ RuntimeSettings
-├─ WorkspaceTabs
-├─ V1Workspace
-│  ├─ EventSelector
-│  ├─ V1RunHeader
-│  ├─ StepRail
-│  ├─ CreateStep
-│  ├─ ScenarioTableEditor
-│  ├─ ValidationStep
-│  ├─ SignpostStep
-│  └─ ConfirmationStep
-├─ ComparisonWorkspace
-│  ├─ MultiEventSelector
-│  ├─ ComparisonSetup
-│  ├─ ManifestSummary
-│  ├─ VersionRunBoard
-│  ├─ OverviewComparison
-│  ├─ QualityJudgePanel
-│  ├─ DimensionComparison
-│  ├─ ScenarioComparison
-│  └─ DiagnosticsComparison
-└─ EvidenceDrawer
-```
-
-권장 module:
-
-```text
-backoffice/frontend/src/
-  api/
-    agentClient.ts
-    v1Pipeline.ts
-    multiEventComparison.ts
-    comparisonQualityJudge.ts
-  domain/
-    apiTypes.ts
-    judgments.ts
-    deterministicChecks.ts
-    comparisonPresentation.ts
-    exportBundle.ts
-  features/
-    runtime/
-    event-selector/
-    v1-pipeline/
-    version-comparison/
-    evidence/
-  App.tsx
-```
-
-## 11. 시각 스타일
-
-### 11.1 Color
-
-```css
-:root {
-  --color-brand: #2f55d4;
-  --color-brand-hover: #2446b8;
-  --color-brand-soft: #eaf2ff;
-
-  --color-text: #111827;
-  --color-text-secondary: #4b5563;
-  --color-text-muted: #7b8794;
-  --color-border: #dde3ea;
-  --color-divider: #e7ebf0;
-  --color-surface: #ffffff;
-  --color-surface-soft: #f7f9fb;
-
-  --color-success: #2f9e44;
-  --color-warning: #f97316;
-  --color-warning-bg: #fff7ed;
-  --color-danger: #d64545;
-  --color-danger-bg: #fff1f1;
-  --color-unknown: #a16207;
-}
-```
-
-### 11.2 Typography
-
-```css
-font-family: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
-```
-
-- page title: 28~32px, 700
-- section title: 20~24px, 700
-- card title: 16~18px, 700
-- body: 14~16px
-- table/meta: 13~14px
-- code/JSON: monospace, 12~13px
-
-### 11.3 Layout
-
-- desktop page padding: 40~48px
-- tablet: 24px
-- mobile: 16px
-- standard gap: 16px
-- section gap: 32~40px
-- radius: 8px
-- input/button height: 40~44px
-- version card min width: 300px
-- Evidence Drawer width: 420~560px
-
-중첩 card를 과도하게 사용하지 않는다. 실행 상태 card, Event card, Scenario card처럼 독립 객체에만 surface/border를 사용한다.
-
-### 11.4 Status
-
-- success: green + check + `성공`
-- warning: orange + warning icon + `경고`
-- error: red + error icon + `실패`
-- unknown: amber/brown + question icon + `결과 불명`
-- running: blue + spinner + `실행 중`
-
-색상만으로 상태를 표현하지 않는다.
-
-## 12. Loading, Empty, Error
-
-Loading:
-
-- Event list는 skeleton
-- API 실행은 기존 결과 위에 작은 progress indicator
-- 전체 화면을 blank 처리하지 않는다.
-
-Empty:
-
-- Event 미선택: 선택 방법 안내
-- v1 미실행: `Event를 선택하고 Create를 실행하세요.`
-- comparison 미실행: `Event 1~5건을 선택하세요.`
-- 결과 없음: version별 원인 표시
+- 단계 사이는 thin light gray connector line.
+- 현재 단계명은 줄바꿈이 되더라도 번호와 badge 정렬을 유지한다.
+- 모바일에서는 label을 축약하거나 2줄까지 허용한다.
+
+### 4.4 Tables
+
+- Header text: 14-16px, 600, neutral gray.
+- Read-only row height: 56-64px.
+- Editable row height: 64-72px.
+- Horizontal divider 중심, vertical grid line은 사용하지 않는다.
+- editable table input 높이: 40-44px.
+- 넓은 테이블은 viewport가 좁아지면 horizontal scroll을 사용한다.
+- 행 액션 아이콘은 36px 이상 hit area를 확보한다.
+
+### 4.5 Inputs, Selects, Textareas
+
+- Border: neutral border.
+- Radius: 6-8px.
+- Focus: blue border와 2px ring.
+- Placeholder: muted text.
+- Generated editable content: light gray filled surface.
+- Character counter: field 하단 우측.
+- Textarea resize handle이 보이면 카드 내부 간격을 침범하지 않게 한다.
+- Select는 chevron down을 우측에 고정한다.
+
+### 4.6 Badges와 Indicators
+
+- `BC`: blue filled rounded rectangle, white text.
+- `진행중`: light blue background, blue dot, blue text.
+- Event status `U`/`N`: compact pastel badge.
+- Scenario number: gray outline rounded badge.
+- Active scenario number 또는 current step number: blue filled badge.
+- 시장 mini-bar:
+  - green: 가능성 강화/상승/긍정.
+  - red: 약화/하락/부정.
+  - gray: 중립/데이터 없음.
+
+### 4.7 Callouts
+
+Warning:
+
+- Background: pale orange.
+- Border: orange.
+- Text: orange-brown.
+- 아이콘과 라벨을 포함한다.
+- 사용자에게 수정 방향을 짧게 제시한다.
 
 Error:
 
-- 해당 step/version 안에 inline callout
-- Evidence Drawer로 이동하는 `원본 보기`
-- 다음 안전한 행동 안내
-- 입력과 이전 성공 결과 유지
+- Background: pale red.
+- Border: red.
+- Text: dark red.
+- 재시도 또는 수정 가능한 위치를 안내한다.
 
-Unknown:
+Info:
 
-- `서버에서 작업이 완료되었을 수 있습니다. 동일 요청을 자동 재시도하지 않습니다.`
-- 새 로컬 run으로 실행하거나 DB 증적을 확인하도록 안내
+- Background: light blue.
+- Border: pale blue.
+- Text: brand blue 또는 dark text.
 
-## 13. 반응형
+### 4.8 Loading
 
-### Desktop: 1200px 이상
+- content shape가 명확하면 skeleton을 먼저 사용한다.
+- agent 단계 대기처럼 shape를 확정할 수 없으면 중앙 spinner와 짧은 메시지를 사용한다.
+- overlay loading은 기존 입력값을 보존하고 mutation만 막는다.
+- loading 메시지:
+  - `시나리오 설계를 불러오는 중입니다.`
+  - `변경사항을 검토하고 있습니다.`
+  - `데이터를 로드 중입니다`
+  - `시나리오 그룹을 생성하고 있습니다.`
 
-- Runtime Settings horizontal
-- v1 step rail + content 2-column 가능
-- version card 3개 가로 배치
-- Scenario comparison 3-column
-- Evidence Drawer side panel
+### 4.9 Empty
 
-### Tablet: 768~1199px
+- Event List empty: 필터 바는 유지하고 table body 중앙에 empty message와 필터 초기화 액션을 제공한다.
+- Scenario Group List empty: 생성 시작을 위해 Event List로 이동하는 액션을 제공한다.
+- Step 1 empty: add row control을 유지하고 최소 3개 권장 기준을 안내한다.
+- Step 2 empty: one-view 데이터 없음 메시지와 재생성/재시도 액션을 제공한다.
 
-- Runtime Settings 2-column
-- version card horizontal scroll
-- wide table horizontal scroll
-- Evidence Drawer overlay
+### 4.10 Dialogs
 
-### Mobile: 768px 미만
+- 삭제 확인처럼 되돌리기 어려운 액션은 modal dialog를 사용한다.
+- dialog width는 420-520px 범위를 기본으로 한다.
+- 제목, 대상 요약, 설명, error callout, action row 순서로 구성한다.
+- 배경 overlay는 검정 20-32% opacity로 충분히 구분하되 본문을 과하게 어둡게 하지 않는다.
+- Esc와 close button은 요청 전에는 허용하고, 요청 중에는 중복 작업 방지를 위해 disabled 처리할 수 있다.
+- destructive primary action은 항상 우측에 두고 `삭제`처럼 동작을 직접 표현한다.
 
-- Runtime Settings stacked drawer
-- workspace tab은 sticky
-- v1 step rail은 horizontal step chips
-- version 결과는 version switcher
-- table은 horizontal scroll 또는 key/value card
-- Evidence Drawer full-screen
-- primary action은 full-width
+### 4.11 Validation
 
-## 14. 접근성
+- field 단위 오류는 해당 input 아래에 표시한다.
+- row 조합 오류는 row highlight 또는 table 아래 callout으로 표시한다.
+- table 전체 오류는 action bar 바로 위나 table 아래에 persistent callout으로 표시한다.
+- 확률 입력은 숫자 범위 0-100, 전체 합계 100 여부를 검증한다.
+- 오류가 있어도 사용자의 입력값을 삭제하지 않는다.
 
-- 모든 icon button에 accessible name을 제공한다.
-- tab, step, dialog, drawer는 keyboard로 조작 가능해야 한다.
-- focus ring을 항상 표시한다.
-- 상태는 icon, text, color를 함께 사용한다.
-- loading 상태는 `aria-busy`와 live region으로 알린다.
-- 오류는 field와 `aria-describedby`로 연결한다.
-- 가로 스크롤 가능성을 시각적으로 표시하고 keyboard scroll을 지원한다.
-- JSON viewer는 screen reader용 raw text 보기와 복사 기능을 제공한다.
-- target size는 최소 36px, 권장 40px 이상이다.
-- WCAG AA contrast를 목표로 한다.
+## 5. 시각 스타일 토큰
 
-## 15. 보안과 배포
+기존 프론트엔드 토큰이 있다면 우선 사용하되, 스크린샷 기준 기본값은 아래와 같다.
 
-- 정적 build만 배포한다.
-- frontend는 Agent API를 직접 호출한다.
-- `/backoffice/api/...` 경로를 사용하지 않는다.
-- Agent가 Backoffice origin을 CORS allowlist에 포함해야 한다.
-- HTTPS frontend에서 HTTP Agent를 호출하지 않는다.
-- build-time 환경 변수에 token을 넣지 않는다.
-- request log와 export에서 Authorization, cookie, token 필드를 제거한다.
-- 인증이 필요한 경우 session memory에서만 header를 구성한다.
+### 5.1 Color
 
-## 16. 구현 완료 기준
+```css
+:root {
+  --color-brand-blue: #2f55d4;
+  --color-brand-blue-hover: #2446b8;
+  --color-brand-blue-soft: #eaf2ff;
+  --color-dark-emphasis: #243a5a;
 
-- v1과 comparison workspace가 독립 상태로 동작한다.
-- callback, SSE, OAuth mock에 의존하는 UI나 client 코드가 없다.
-- v1은 네 단계 sync workflow와 최신 detail 조회를 지원한다.
-- v2/v3 barrier 후 v4 실행 순서를 코드로 보장한다.
-- 동일 version의 create POST가 자동 재시도되지 않는다.
-- timeout/cancel은 unknown으로 표현한다.
-- 모든 API call을 Evidence Drawer에서 확인할 수 있다.
-- 모든 version의 pressure가 `Global LNG pressure`로 일관되며 v4 `relatedMarkets`는 보조정보로만 표시된다.
-- 비교 화면은 사용자용 Dimension/Value label과 실제 생성 근거를 제공하고 Raw 원본을 별도 보존한다.
-- 결정적 검사 M-01~M-08과 optional mixed 규칙이 동작한다.
-- 성공 version 2개 이상에서 사용자가 의미 품질 평가를 실행하고 우수 version과 근거를 확인할 수 있다.
-- mixed가 없는 version은 N/A로 표시되고 평균에서 제외된다.
-- 품질 평가 결과를 포함한 JSON export가 동작한다.
-- secret이 storage와 export에 남지 않는다.
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-muted: #8a95a3;
+  --color-text-disabled: #b8c0cc;
+
+  --color-bg-page: #ffffff;
+  --color-bg-soft: #f7f9fb;
+  --color-bg-header-utility: #d6dee9;
+  --color-bg-disabled: #f1f4f8;
+
+  --color-border: #dde3ea;
+  --color-divider: #e7ebf0;
+
+  --color-success: #2f9e44;
+  --color-danger: #d64545;
+  --color-danger-hover: #b93636;
+  --color-danger-bg: #fff1f1;
+  --color-warning: #f97316;
+  --color-warning-bg: #fff7ed;
+}
+```
+
+### 5.2 Typography
+
+```css
+font-family: Inter, Pretendard, "Noto Sans KR", system-ui, -apple-system,
+  BlinkMacSystemFont, "Segoe UI", sans-serif;
+```
+
+- Page title: 32-36px, 700.
+- Detail title: 28-32px, 700.
+- Section title: 20-24px, 700.
+- Subsection title: 16-18px, 700.
+- Table/header label: 14-16px, 600.
+- Body: 15-16px, 500.
+- Meta/helper: 13-14px, 500.
+- Button: 14-16px, 600.
+- Korean body line-height: 1.55-1.7.
+- Dense table line-height: 1.35-1.45.
+- Letter spacing은 0을 기본으로 한다.
+- viewport width 기반 font-size scaling은 사용하지 않는다.
+
+### 5.3 Spacing
+
+```css
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-14: 56px;
+}
+```
+
+### 5.4 Radius, Border, Shadow
+
+- Standard radius: 8px.
+- Compact controls: 6px.
+- Icon buttons: 8px.
+- Avatar/status badge: circular 또는 small pill.
+- Border: 1px solid neutral border.
+- Shadow는 최소화한다. 하단 고정 액션 바에는 subtle top shadow 또는 border만 사용한다.
+- 중첩 카드는 피한다.
+
+### 5.5 Sizing
+
+- Header utility bar height: 32px 내외.
+- Main header height: 80-88px.
+- Icon button: 36-44px.
+- Text input/select height: 40-44px.
+- Editable table row: 64-72px.
+- Bottom action bar height: 72-88px.
+- Scenario card width: 440-520px.
+- Scenario detail sidebar width: 320-360px.
+
+## 6. 반응형 기준
+
+### 6.1 Desktop >= 1200px
+
+- 전역 내비게이션을 모두 노출한다.
+- Event List와 상세 표는 전체 폭을 사용한다.
+- Step 1 editable table은 컬럼을 모두 표시한다.
+- Step 2 scenario cards는 가로 보드로 표시한다.
+- Scenario Detail은 좌측 sidebar + 우측 detail 2컬럼을 유지한다.
+- 하단 액션 바는 fixed로 유지하고 body bottom padding을 충분히 둔다.
+
+### 6.2 Tablet 768-1199px
+
+- page padding을 24px로 줄인다.
+- 긴 테이블은 horizontal scroll container로 감싼다.
+- editable table 컬럼을 억지로 압축하지 않는다.
+- scenario card는 최소 폭을 유지하고 가로 스크롤한다.
+- Scenario Detail sidebar는 280-320px까지 축소 가능하다.
+
+### 6.3 Mobile < 768px
+
+- 전역 내비게이션은 menu 또는 compact nav로 접는다.
+- page padding은 16px.
+- page title은 28-32px 범위로 낮춘다.
+- stepper label은 2줄까지 허용하거나 단계 번호 중심 compact 표시로 전환한다.
+- Event List와 editable table은 horizontal scroll을 기본으로 한다.
+- 필터 바는 1열 stack 또는 2열 grid로 재배치한다.
+- 하단 액션 바는 2줄 또는 full-width primary + secondary row로 전환한다.
+- Scenario Detail은 sidebar 대신 dropdown 또는 horizontal chips로 시나리오를 선택하고, 상세 콘텐츠를 아래에 배치한다.
+
+## 7. 접근성 기준
+
+- 모든 icon-only button에는 accessible label과 hover/focus tooltip을 제공한다.
+- keyboard로 tabs, buttons, inputs, dropdowns, row actions에 접근 가능해야 한다.
+- focus state는 색상 변화만이 아니라 outline/ring으로 표시한다.
+- warning/error/success는 색상만으로 구분하지 않고 아이콘과 텍스트를 함께 사용한다.
+- 텍스트와 배경 contrast는 WCAG AA를 목표로 한다.
+- disabled 버튼은 시각적으로 구분하되, disabled 사유는 인접 helper text 또는 tooltip으로 설명할 수 있어야 한다.
+- loading overlay는 `aria-busy` 또는 live region으로 상태를 알린다.
+- spinner만 단독으로 두지 않고 짧은 문구를 함께 제공한다.
+- form validation 오류는 `aria-describedby`로 해당 field와 연결한다.
+- row action hit target은 최소 36px, 권장 40px 이상이다.
+- 가로 스크롤 영역은 keyboard 조작과 스크롤 가능성 시각 단서를 제공한다.
+
+## 8. 구현 메모
+
+- 우선 재사용 쉘 컴포넌트를 분리한다: `AppHeader`, `PageTabs`, `Stepper`, `BottomActionBar`.
+- Step 1 editable table과 Step 2 scenario card board는 별도 컴포넌트로 관리한다.
+- wide workflow는 축소보다 horizontal scroll을 우선한다.
+- agent/API 호출 중에는 기존 생성 결과와 사용자 수정값을 유지한다.
+- reset/regenerate icon은 해당 섹션 단위로만 작동하도록 범위를 명확히 한다.
+- 로컬 테스트용 raw JSON/debug panel이 필요하면 primary workflow 아래에 접힌 영역으로 둔다.
+- 이 문서는 화면 설계 기준이다. API body, callback, status/stage 전이는 별도 아키텍처 문서를 따른다.

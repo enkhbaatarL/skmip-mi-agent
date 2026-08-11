@@ -55,7 +55,6 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     ParameterKnowledgeBase,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
-    normalize_parameter_name,
     to_compact_json,
 )
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
@@ -346,21 +345,10 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
             ErrorCode.INVALID_REQUEST,
             detail="parameter_knowledge_base is required",
         )
-    if (
-        (state.scenario_context.get("scenario_group") or {}).get(
-            "generation_strategy",
-        )
-        == "multi_event_model_lever_dimensions"
-    ):
-        candidates, non_inputs, warnings = _match_v4_lever_candidates(
-            state.parameter_knowledge_base,
-            state.scenario_context,
-        )
-    else:
-        candidates, non_inputs, warnings = match_parameter_candidates(
-            state.parameter_knowledge_base,
-            state.scenario_context,
-        )
+    candidates, non_inputs, warnings = match_parameter_candidates(
+        state.parameter_knowledge_base,
+        state.scenario_context,
+    )
     logger.info(
         "[model-parameter] selected candidate mappings | scenario_id={} candidate_count={} candidate_keys={} non_input_count={} warning_count={}",
         state.scenario_id,
@@ -380,212 +368,6 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
         {"selected_parameters": _parameter_selection_summary(candidates)},
     )
     return output
-
-
-def _match_v4_lever_candidates(
-    kb: ParameterKnowledgeBase,
-    scenario_context: dict[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    scenario = scenario_context.get("scenario") or {}
-    group = scenario_context.get("scenario_group") or {}
-    dimension_values = scenario.get("dimension_values") or {}
-    definitions = group.get("dimension_definitions") or []
-    catalog = scenario_context.get("impact_lever_catalog") or []
-    catalog_by_code = {
-        str(lever.get("lever_code")): lever
-        for lever in catalog
-        if isinstance(lever, dict) and lever.get("lever_code")
-    }
-    definition_by_id = {
-        str(definition.get("dimension_id")): definition
-        for definition in definitions
-        if isinstance(definition, dict) and definition.get("dimension_id")
-    }
-
-    candidates: list[dict[str, Any]] = []
-    non_inputs: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    seen: set[str] = set()
-    for dimension_id, source_value in dimension_values.items():
-        dimension = definition_by_id.get(str(dimension_id))
-        if dimension is None:
-            warnings.append(
-                "시나리오 그룹 dimension 정의에 없는 값을 제외했습니다: "
-                f"dimension_id={dimension_id}",
-            )
-            continue
-        source_label = str(dimension.get("label") or dimension_id)
-        lever_mappings = dimension.get("lever_mappings") or []
-        mapping_by_code = {
-            str(mapping.get("lever_code")): mapping
-            for mapping in lever_mappings
-            if isinstance(mapping, dict) and mapping.get("lever_code")
-        }
-        lever_codes = [
-            mapping.get("lever_code")
-            for mapping in lever_mappings
-            if isinstance(mapping, dict) and mapping.get("lever_code")
-        ] or list(dimension.get("lever_refs") or [])
-        grounding_event_ids = [
-            grounding.get("event_id")
-            for grounding in dimension.get("event_groundings") or []
-            if isinstance(grounding, dict) and grounding.get("event_id") is not None
-        ]
-        for lever_code in lever_codes:
-            lever_mapping = mapping_by_code.get(str(lever_code)) or {}
-            lever = catalog_by_code.get(str(lever_code))
-            if lever is None:
-                non_inputs.append(
-                    {
-                        "source_dimension_id": dimension_id,
-                        "source_dimension_label": source_label,
-                        "source_dimension_value": source_value,
-                        "lever_code": lever_code,
-                        "mapping_method": "unsupported",
-                        "reason": "현재 활성 impact lever catalog에 없는 항목입니다.",
-                    },
-                )
-                continue
-            if lever.get("domain") == "price_only":
-                non_inputs.append(
-                    {
-                        "source_dimension_id": dimension_id,
-                        "source_dimension_label": source_label,
-                        "source_dimension_value": source_value,
-                        "lever_code": lever_code,
-                        "mapping_method": "price_only",
-                        "unsupported_reason_code": "PRICE_ONLY",
-                        "reason": (
-                            "LNG 가격 시나리오에는 반영되지만 현재 수급모델 "
-                            "입력 파라미터로 직접 연결되지 않습니다."
-                        ),
-                    },
-                )
-                continue
-
-            bindings = lever.get("parameter_bindings") or []
-            if not bindings:
-                non_inputs.append(
-                    {
-                        "source_dimension_id": dimension_id,
-                        "source_dimension_label": source_label,
-                        "source_dimension_value": source_value,
-                        "lever_code": lever_code,
-                        "mapping_method": "known_unsupported",
-                        "unsupported_reason_code": "NO_PARAMETER_BINDING",
-                        "reason": (
-                            "현재 수급모델 parameter master에 직접 연결할 "
-                            "파라미터가 정의되지 않았습니다."
-                        ),
-                    },
-                )
-                continue
-
-            for binding in bindings:
-                parameter_name = str(
-                    binding.get("parameter_name") or "",
-                ).strip()
-                if binding.get("support_status") != "executable":
-                    non_inputs.append(
-                        {
-                            "source_dimension_id": dimension_id,
-                            "source_dimension_label": source_label,
-                            "source_dimension_value": source_value,
-                            "lever_code": lever_code,
-                            "parameter_name": parameter_name,
-                            "mapping_method": "known_unsupported",
-                            "unsupported_reason_code": (
-                                binding.get("unsupported_reason_code")
-                                or "CATALOG_MARKED_UNSUPPORTED"
-                            ),
-                            "reason": (
-                                binding.get("applicability")
-                                or "현재 모델 파라미터 생성 경로에서 지원되지 않습니다."
-                            ),
-                        },
-                    )
-                    continue
-
-                canonical = normalize_parameter_name(parameter_name)
-                parameter = kb.definition_for(canonical)
-                if parameter is None:
-                    warnings.append(
-                        "impact lever의 실행 가능 파라미터가 parameter master에 "
-                        f"없어 제외했습니다: lever_code={lever_code}, "
-                        f"parameter_name={parameter_name}",
-                    )
-                    continue
-                candidate_key = "|".join(
-                    [
-                        "v4",
-                        str(dimension_id),
-                        str(lever_code),
-                        canonical,
-                        parameter.model_file,
-                        parameter.model_sheet,
-                    ],
-                )
-                if candidate_key in seen:
-                    continue
-                seen.add(candidate_key)
-                profile = kb.profile_for(
-                    parameter.model_file,
-                    parameter.model_sheet,
-                )
-                candidates.append(
-                    {
-                        "candidate_key": candidate_key,
-                        "event_type_l2_id": None,
-                        "level_2_code": None,
-                        "event_label": None,
-                        "source_dimension_id": dimension_id,
-                        "dimension_key": dimension_id,
-                        "source_dimension_label": source_label,
-                        "source_dimension_value": source_value,
-                        "source_event_ids": dimension.get("source_event_ids")
-                        or grounding_event_ids,
-                        "lever_code": lever_code,
-                        "mapping_method": "direct",
-                        "model_file": parameter.model_file,
-                        "model_sheet": parameter.model_sheet,
-                        "model_table": parameter.model_table,
-                        "parameter_name": parameter.parameter_name,
-                        "canonical_parameter_name": canonical,
-                        "parameter_hint": parameter.parameter_hint,
-                        "semantic_axes": parameter.semantic_axes,
-                        "mapping_comment": lever_mapping.get("mapping_rationale")
-                        or binding.get("applicability"),
-                        "basecase_read_mode": parameter.basecase_read_mode,
-                        "basecase_header_row": parameter.basecase_header_row,
-                        "basecase_data_start_row": (
-                            parameter.basecase_data_start_row
-                        ),
-                        "basecase_column_roles": (
-                            parameter.basecase_column_roles
-                        ),
-                        "basecase_row_filter": parameter.basecase_row_filter,
-                        "basecase_year_row": parameter.basecase_year_row,
-                        "basecase_month_row": parameter.basecase_month_row,
-                        "basecase_period_row": parameter.basecase_period_row,
-                        "basecase_value_start_col": (
-                            parameter.basecase_value_start_col
-                        ),
-                        "basecase_value_end_col": (
-                            parameter.basecase_value_end_col
-                        ),
-                        "basecase_stop_rule": parameter.basecase_stop_rule,
-                        "basecase_available": bool(
-                            profile and profile.sheet_exists
-                        ),
-                    },
-                )
-
-    if not candidates:
-        warnings.append(
-            "v4 impact lever catalog에서 실행 가능한 모델 파라미터 후보를 "
-            "찾지 못했습니다.",
-        )
-    return candidates, non_inputs, warnings
 
 
 async def validate_parameter_candidates(
@@ -1749,7 +1531,6 @@ def _scenario_brief_for_value_prompt(
             "impact_jkm": impact.get("jkm"),
             "impact_ttf": impact.get("ttf"),
             "impact_hh": impact.get("hh"),
-            "related_markets": scenario.get("related_markets") or [],
         },
     )
     dimension_template_brief = _drop_none_or_empty(
