@@ -132,6 +132,69 @@ def _llm_result(
 
 
 class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
+    async def test_multi_event_review_prompt_includes_current_generation_grounding(
+        self,
+    ) -> None:
+        context = build_context(
+            {
+                **GROUP,
+                "generation_strategy": "multi_event_model_lever_dimensions",
+            },
+            ROWS,
+            PERSISTED_SCENARIOS,
+            TEMPLATE,
+            events=[
+                {"mi_event_id": 20, "event_title_ko": "Event A"},
+                {"mi_event_id": 21, "event_title_ko": "Event B"},
+            ],
+            generation_diagnostics={
+                "event_shocks": [{"shock_id": "v3-shock-evidence"}],
+                "event_facts": [{"fact_id": "v4-fact-evidence"}],
+                "event_exclusions": [{"reason": "v4-exclusion-evidence"}],
+                "impact_paths": [{"impact_path_id": "v4-impact-path-evidence"}],
+                "path_uncertainties": [{"reason": "v4-path-uncertainty-evidence"}],
+                "event_interactions": [
+                    {"interaction_id": "v4-interaction-evidence"},
+                ],
+            },
+        )
+        compatible = _llm_result(
+            CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+            event_coverage=[
+                EventCoverageItem(
+                    scenario_id=scenario_id,
+                    event_id=event_id,
+                    grounded=True,
+                    reason="공동 사실 유지",
+                )
+                for scenario_id in (100, 101)
+                for event_id in (20, 21)
+            ],
+        )
+        invoke_compatibility = AsyncMock(return_value=compatible)
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
+            "_invoke_compatibility",
+            new=invoke_compatibility,
+        ):
+            await run_review(context)
+
+        messages = invoke_compatibility.await_args.kwargs["messages"]
+        user_prompt = messages[1]["content"]
+        assert "## Generation grounding" in user_prompt
+        for key, evidence in (
+            ("event_shocks", "v3-shock-evidence"),
+            ("event_facts", "v4-fact-evidence"),
+            ("event_exclusions", "v4-exclusion-evidence"),
+            ("impact_paths", "v4-impact-path-evidence"),
+            ("path_uncertainties", "v4-path-uncertainty-evidence"),
+            ("event_interactions", "v4-interaction-evidence"),
+        ):
+            assert key in user_prompt
+            assert evidence in user_prompt
+
     async def test_multi_event_review_requires_and_reports_cartesian_event_coverage(
         self,
     ) -> None:

@@ -566,9 +566,11 @@ async def _check_compatibility(
             key: ctx.generation_diagnostics.get(key)
             for key in (
                 "event_shocks",
-                "event_impact_facts",
+                "event_facts",
+                "event_exclusions",
+                "impact_paths",
+                "path_uncertainties",
                 "event_interactions",
-                "event_dimension_coverage",
             )
             if ctx.generation_diagnostics.get(key)
         }
