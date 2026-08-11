@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
 
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 from apps.persistence.scenario_group_operation.models import (
@@ -117,6 +117,55 @@ class ScenarioGroupOperationRepository(BaseSyncSQLRepository):
             .limit(1)
         )
         return self.session.execute(stmt).scalars().first()
+
+    def fetch_stale_active(
+        self,
+        heartbeat_cutoff: datetime,
+        *,
+        limit: int = 100,
+    ) -> list[MiScenarioGroupOperationModel]:
+        stmt = (
+            select(MiScenarioGroupOperationModel)
+            .where(
+                MiScenarioGroupOperationModel.status.in_(("queued", "running")),
+                MiScenarioGroupOperationModel.del_yn == "N",
+                or_(
+                    MiScenarioGroupOperationModel.heartbeat_at <= heartbeat_cutoff,
+                    and_(
+                        MiScenarioGroupOperationModel.heartbeat_at.is_(None),
+                        MiScenarioGroupOperationModel.crt_dtm <= heartbeat_cutoff,
+                    ),
+                ),
+            )
+            .order_by(
+                MiScenarioGroupOperationModel.heartbeat_at,
+                MiScenarioGroupOperationModel.crt_dtm,
+                MiScenarioGroupOperationModel.operation_id,
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        return list(self.session.execute(stmt).scalars().all())
+
+    def touch_active_heartbeat(
+        self,
+        scenario_group_id: int,
+        operation_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        stmt = (
+            update(MiScenarioGroupOperationModel)
+            .where(
+                MiScenarioGroupOperationModel.scenario_group_id == scenario_group_id,
+                MiScenarioGroupOperationModel.operation_id == operation_id,
+                MiScenarioGroupOperationModel.status.in_(("queued", "running")),
+                MiScenarioGroupOperationModel.del_yn == "N",
+            )
+            .values(heartbeat_at=now)
+        )
+        result = self.session.execute(stmt)
+        return bool(result.rowcount)
 
     def list_events_after(
         self,

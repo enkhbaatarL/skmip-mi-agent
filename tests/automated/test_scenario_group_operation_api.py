@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -15,6 +15,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operati
     V4OperationProgressRecorder,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+    OperationAlreadyTerminalError,
     ScenarioGroupOperationService,
     new_operation_id,
 )
@@ -29,6 +30,7 @@ from apps.agents.scenario_group_agent.routers.scenario_group_stream import strea
 from apps.agents.scenario_group_agent.routers.scenario_groups import router as scenario_groups_router
 from apps.agents.scenario_group_agent.runtime import (
     ScenarioGroupOperationEventHub,
+    ScenarioGroupOperationRecoveryMonitor,
     ScenarioGroupOperationTaskRunner,
 )
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
@@ -167,6 +169,160 @@ def test_create_accepted_in_session_returns_operation_payload() -> None:
     build_payload.assert_called_once_with(operation_model)
     repository.append_event.assert_called_once()
     assert repository.append_event.call_args.kwargs["event_type"] == "accepted"
+
+
+def test_stale_active_operation_is_atomically_interrupted_and_published() -> None:
+    cutoff = datetime(2026, 8, 11, 4, 0, 0)
+    operation = SimpleNamespace(
+        operation_id="01JABCDEF0123456789ABCDEFX",
+        scenario_group_id=120,
+        status="running",
+        current_phase="dimension_design",
+        heartbeat_at=cutoff - timedelta(seconds=1),
+        crt_dtm=cutoff - timedelta(minutes=10),
+    )
+    event_model = SimpleNamespace(
+        operation_id=operation.operation_id,
+        scenario_group_id=operation.scenario_group_id,
+        sequence=4,
+        event_type="interrupted",
+        phase=operation.current_phase,
+        title="interrupted",
+        message_markdown="interrupted",
+        payload={"status": "interrupted", "reason": "stale_heartbeat"},
+        snapshot_revision=0,
+        mlflow_trace_id=None,
+        crt_dtm=cutoff,
+    )
+    session = Mock()
+    repository = Mock()
+    repository.fetch_stale_active.return_value = [operation]
+    repository.append_event.return_value = event_model
+    event_hub = Mock()
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.runtime.get_scenario_group_operation_event_hub",
+            return_value=event_hub,
+        ),
+    ):
+        recovered = ScenarioGroupOperationService().interrupt_stale_operations(cutoff)
+
+    assert [event.event_type for event in recovered] == ["interrupted"]
+    repository.fetch_stale_active.assert_called_once_with(cutoff, limit=100)
+    append_kwargs = repository.append_event.call_args.kwargs
+    assert append_kwargs["status"] == "interrupted"
+    assert append_kwargs["payload"] == {"status": "interrupted", "reason": "stale_heartbeat"}
+    assert append_kwargs["last_error"]["code"] == "STALE_HEARTBEAT"
+    session.commit.assert_called_once_with()
+    event_hub.publish.assert_called_once_with(operation.operation_id, 4, terminal=True)
+
+
+def test_stale_recovery_rechecks_heartbeat_after_lock() -> None:
+    cutoff = datetime(2026, 8, 11, 4, 0, 0)
+    operation = SimpleNamespace(
+        operation_id="01JABCDEF0123456789ABCDEFX",
+        scenario_group_id=120,
+        status="running",
+        current_phase="dimension_design",
+        heartbeat_at=cutoff + timedelta(seconds=1),
+        crt_dtm=cutoff - timedelta(minutes=10),
+    )
+    session = Mock()
+    repository = Mock()
+    repository.fetch_stale_active.return_value = [operation]
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=repository,
+        ),
+    ):
+        recovered = ScenarioGroupOperationService().interrupt_stale_operations(cutoff)
+
+    assert recovered == []
+    repository.append_event.assert_not_called()
+    session.commit.assert_called_once_with()
+
+
+@pytest.mark.parametrize("touched", [True, False])
+def test_touch_active_heartbeat_commits_conditional_update(touched: bool) -> None:
+    session = Mock()
+    repository = Mock()
+    repository.touch_active_heartbeat.return_value = touched
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=repository,
+        ),
+    ):
+        result = ScenarioGroupOperationService().touch_active_heartbeat(
+            120,
+            "01JABCDEF0123456789ABCDEFX",
+        )
+
+    assert result is touched
+    repository.touch_active_heartbeat.assert_called_once()
+    assert repository.touch_active_heartbeat.call_args.args == (120, "01JABCDEF0123456789ABCDEFX")
+    session.commit.assert_called_once_with()
+
+
+def test_terminal_operation_rejects_later_status_overwrite() -> None:
+    session = Mock()
+    repository = Mock()
+    repository.fetch_by_id.return_value = SimpleNamespace(status="interrupted")
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=repository,
+        ),
+        pytest.raises(OperationAlreadyTerminalError),
+    ):
+        ScenarioGroupOperationService().append_event(
+            120,
+            "01JABCDEF0123456789ABCDEFX",
+            event_type="completed",
+            title="completed",
+            message_markdown="completed",
+            status="succeeded",
+        )
+
+    repository.append_event.assert_not_called()
+    session.rollback.assert_called_once_with()
 
 
 def test_operation_from_another_scenario_group_is_not_found() -> None:
@@ -505,7 +661,7 @@ def test_sse_disconnect_does_not_cancel_registered_producer() -> None:
             finished.set()
 
         await runner.start()
-        runner.submit("01JABCDEF0123456789ABCDEFX", producer())
+        runner.submit(120, "01JABCDEF0123456789ABCDEFX", producer())
         chunks = [
             chunk
             async for chunk in stream_operation_events(
@@ -520,6 +676,84 @@ def test_sse_disconnect_does_not_cancel_registered_producer() -> None:
         return not chunks and finished.is_set()
 
     assert asyncio.run(exercise())
+
+
+def test_task_runner_renews_heartbeat_and_cancels_when_operation_is_terminal() -> None:
+    async def exercise() -> tuple[list[float], Mock, bool]:
+        heartbeat_permissions: asyncio.Queue[None] = asyncio.Queue()
+        intervals: list[float] = []
+        producer_stopped = asyncio.Event()
+
+        async def controlled_sleep(interval: float) -> None:
+            intervals.append(interval)
+            await heartbeat_permissions.get()
+
+        touch_heartbeat = Mock(return_value=False)
+        runner = ScenarioGroupOperationTaskRunner(
+            heartbeat_interval_seconds=30,
+            touch_heartbeat=touch_heartbeat,
+            sleep=controlled_sleep,
+        )
+
+        async def producer() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                producer_stopped.set()
+
+        await runner.start()
+        runner.submit(120, "01JABCDEF0123456789ABCDEFX", producer())
+        heartbeat_permissions.put_nowait(None)
+        await asyncio.wait_for(producer_stopped.wait(), timeout=1)
+        await runner.shutdown()
+        return intervals, touch_heartbeat, producer_stopped.is_set()
+
+    intervals, touch_heartbeat, producer_stopped = asyncio.run(exercise())
+
+    assert intervals == [30]
+    touch_heartbeat.assert_called_once_with(120, "01JABCDEF0123456789ABCDEFX")
+    assert producer_stopped is True
+
+
+def test_recovery_monitor_retries_after_initial_scan_failure() -> None:
+    async def exercise() -> tuple[list[float], Mock]:
+        scan_permissions: asyncio.Queue[None] = asyncio.Queue()
+        intervals: list[float] = []
+        fixed_now = datetime(2026, 8, 11, 4, 2, 0)
+        second_scan_finished = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def controlled_sleep(interval: float) -> None:
+            intervals.append(interval)
+            await scan_permissions.get()
+
+        recover_stale = Mock(side_effect=[RuntimeError("temporary database failure"), [object()]])
+
+        def recover_and_signal(cutoff: datetime) -> object:
+            try:
+                return recover_stale(cutoff)
+            finally:
+                if recover_stale.call_count == 2:
+                    loop.call_soon_threadsafe(second_scan_finished.set)
+
+        monitor = ScenarioGroupOperationRecoveryMonitor(
+            stale_after_seconds=120,
+            scan_interval_seconds=30,
+            recover_stale=recover_and_signal,
+            now=lambda: fixed_now,
+            sleep=controlled_sleep,
+        )
+        await monitor.start()
+        scan_permissions.put_nowait(None)
+        await asyncio.wait_for(second_scan_finished.wait(), timeout=1)
+        await monitor.shutdown()
+        return intervals, recover_stale
+
+    intervals, recover_stale = asyncio.run(exercise())
+
+    assert intervals == [30]
+    assert recover_stale.call_count == 2
+    assert all(call.args == (datetime(2026, 8, 11, 4, 0, 0),) for call in recover_stale.call_args_list)
 
 
 def test_running_operation_blocks_soft_delete_with_409() -> None:

@@ -124,6 +124,7 @@ async def create_scenario_group(
     prepared = prepare_v4_multi_event_scenarios(payload, operation_id=operation_id)
     group_id = int(prepared["scenario_group"].scenario_group_id)
     get_scenario_group_operation_task_runner().submit(
+        group_id,
         operation_id,
         run_v4_create_operation(prepared, operation_id),
     )

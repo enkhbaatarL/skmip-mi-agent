@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from apps.common.logging.logger_config import logger
 from apps.persistence.scenario_group_operation.schema import TERMINAL_OPERATION_STATUSES
@@ -196,14 +197,25 @@ class ScenarioGroupOperationEventHub:
 class ScenarioGroupOperationTaskRunner:
     """Lifespan-owned registry for producer tasks that outlive SSE consumers."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        heartbeat_interval_seconds: float = 30.0,
+        touch_heartbeat: Callable[[int, str], bool] | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._accepting = False
+        self._heartbeat_interval_seconds = heartbeat_interval_seconds
+        self._touch_heartbeat = touch_heartbeat or self._touch_active_heartbeat
+        self._sleep = sleep
 
-    async def start(self) -> None:
+    async def start(self, *, heartbeat_interval_seconds: float | None = None) -> None:
+        if heartbeat_interval_seconds is not None:
+            self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._accepting = True
 
-    def submit(self, operation_id: str, producer: Awaitable[None]) -> None:
+    def submit(self, scenario_group_id: int, operation_id: str, producer: Awaitable[None]) -> None:
         if not self._accepting:
             # Router-only TestClient apps do not run the project lifespan. The task
             # still belongs to this runner and will be cleaned up by its event loop.
@@ -212,7 +224,10 @@ class ScenarioGroupOperationTaskRunner:
             msg = f"Operation task already registered: {operation_id}"
             raise RuntimeError(msg)
         get_scenario_group_operation_event_hub().register_owner(operation_id)
-        task = asyncio.create_task(producer, name=f"scenario-group-operation:{operation_id}")
+        task = asyncio.create_task(
+            self._run_with_heartbeat(scenario_group_id, operation_id, producer),
+            name=f"scenario-group-operation:{operation_id}",
+        )
         self._tasks[operation_id] = task
         task.add_done_callback(lambda completed: self._discard(operation_id, completed))
 
@@ -225,6 +240,55 @@ class ScenarioGroupOperationTaskRunner:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+
+    async def _run_with_heartbeat(
+        self,
+        scenario_group_id: int,
+        operation_id: str,
+        producer: Awaitable[None],
+    ) -> None:
+        heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(scenario_group_id, operation_id),
+            name=f"scenario-group-operation-heartbeat:{operation_id}",
+        )
+        try:
+            await producer
+        finally:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+
+    async def _heartbeat_loop(self, scenario_group_id: int, operation_id: str) -> None:
+        while True:
+            await self._sleep(self._heartbeat_interval_seconds)
+            try:
+                touched = await asyncio.to_thread(
+                    self._touch_heartbeat,
+                    scenario_group_id,
+                    operation_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Scenario Group operation heartbeat failed; retrying | "
+                    "operation_id={} | retry_in_seconds={} | error={!r}",
+                    operation_id,
+                    self._heartbeat_interval_seconds,
+                    exc,
+                )
+                continue
+            if touched:
+                continue
+            owner_task = self._tasks.get(operation_id)
+            if owner_task is not None and owner_task is not asyncio.current_task():
+                owner_task.cancel()
+            return
+
+    @staticmethod
+    def _touch_active_heartbeat(scenario_group_id: int, operation_id: str) -> bool:
+        from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+            ScenarioGroupOperationService,
+        )
+
+        return ScenarioGroupOperationService().touch_active_heartbeat(scenario_group_id, operation_id)
 
     def _discard(self, operation_id: str, task: asyncio.Task[None]) -> None:
         self._tasks.pop(operation_id, None)
@@ -240,8 +304,86 @@ class ScenarioGroupOperationTaskRunner:
             )
 
 
+class ScenarioGroupOperationRecoveryMonitor:
+    """Periodically marks active operations with expired heartbeats as interrupted."""
+
+    def __init__(
+        self,
+        *,
+        stale_after_seconds: float = 120.0,
+        scan_interval_seconds: float = 30.0,
+        recover_stale: Callable[[datetime], object] | None = None,
+        now: Callable[[], datetime] | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._stale_after_seconds = stale_after_seconds
+        self._scan_interval_seconds = scan_interval_seconds
+        self._recover_stale = recover_stale or self._interrupt_stale_operations
+        self._now = now or self._utc_now
+        self._sleep = sleep
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(
+        self,
+        *,
+        stale_after_seconds: float | None = None,
+        scan_interval_seconds: float | None = None,
+    ) -> None:
+        if stale_after_seconds is not None:
+            self._stale_after_seconds = stale_after_seconds
+        if scan_interval_seconds is not None:
+            self._scan_interval_seconds = scan_interval_seconds
+        await self._recover_once()
+        self._task = asyncio.create_task(self._run(), name="scenario-group-operation-reaper")
+
+    async def shutdown(self) -> None:
+        task = self._task
+        self._task = None
+        if task is None:
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def _run(self) -> None:
+        while True:
+            await self._sleep(self._scan_interval_seconds)
+            await self._recover_once()
+
+    async def _recover_once(self) -> None:
+        cutoff = self._now() - timedelta(seconds=self._stale_after_seconds)
+        try:
+            recovered = await asyncio.to_thread(self._recover_stale, cutoff)
+        except Exception as exc:
+            logger.warning(
+                "Scenario Group stale operation recovery failed; retrying | retry_in_seconds={} | error={!r}",
+                self._scan_interval_seconds,
+                exc,
+            )
+            return
+        recovered_count = len(recovered) if hasattr(recovered, "__len__") else 0
+        if recovered_count:
+            logger.warning(
+                "Scenario Group stale operations interrupted | count={} | cutoff={}",
+                recovered_count,
+                cutoff.isoformat(),
+            )
+
+    @staticmethod
+    def _interrupt_stale_operations(heartbeat_cutoff: datetime) -> object:
+        from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+            ScenarioGroupOperationService,
+        )
+
+        return ScenarioGroupOperationService().interrupt_stale_operations(heartbeat_cutoff)
+
+    @staticmethod
+    def _utc_now() -> datetime:
+        return datetime.now(UTC).replace(tzinfo=None)
+
+
 _operation_task_runner = ScenarioGroupOperationTaskRunner()
 _operation_event_hub = ScenarioGroupOperationEventHub()
+_operation_recovery_monitor = ScenarioGroupOperationRecoveryMonitor()
 
 
 def get_scenario_group_operation_task_runner() -> ScenarioGroupOperationTaskRunner:
@@ -250,3 +392,7 @@ def get_scenario_group_operation_task_runner() -> ScenarioGroupOperationTaskRunn
 
 def get_scenario_group_operation_event_hub() -> ScenarioGroupOperationEventHub:
     return _operation_event_hub
+
+
+def get_scenario_group_operation_recovery_monitor() -> ScenarioGroupOperationRecoveryMonitor:
+    return _operation_recovery_monitor

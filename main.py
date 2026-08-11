@@ -28,6 +28,7 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from apps.agents.scenario_group_agent.runtime import (
         get_scenario_group_operation_event_hub,
+        get_scenario_group_operation_recovery_monitor,
         get_scenario_group_operation_task_runner,
     )
     from apps.connectors.callback.oauth2_token_manager import get_token_manager
@@ -55,11 +56,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     operation_event_hub = get_scenario_group_operation_event_hub()
     operation_task_runner = get_scenario_group_operation_task_runner()
+    operation_recovery_monitor = get_scenario_group_operation_recovery_monitor()
     await operation_event_hub.start()
-    await operation_task_runner.start()
+    await operation_task_runner.start(
+        heartbeat_interval_seconds=cfg.scenario_group_operation_heartbeat_interval_seconds,
+    )
+    await operation_recovery_monitor.start(
+        stale_after_seconds=cfg.scenario_group_operation_stale_after_seconds,
+        scan_interval_seconds=cfg.scenario_group_operation_reaper_interval_seconds,
+    )
     try:
         yield
     finally:
+        await operation_recovery_monitor.shutdown()
         await operation_task_runner.shutdown()
         await operation_event_hub.shutdown()
 

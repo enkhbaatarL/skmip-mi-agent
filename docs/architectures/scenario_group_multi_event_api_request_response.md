@@ -263,6 +263,12 @@ Client는 마지막으로 반영한 `snapshotRevision`보다 큰 `section_ready`
 SSE consumer와 생성 producer의 수명은 분리돼 있다. 브라우저 새로고침, 네트워크 단절 또는 Client의
 stream cancel로 POST 연결이 끝나도 서버 작업은 계속 실행된다.
 
+producer는 기본 30초마다 operation heartbeat를 갱신한다. worker crash나 강제 종료로 producer가
+사라져 heartbeat가 120초 이상 갱신되지 않으면 lifespan recovery monitor가 해당 `queued`/`running`
+operation을 `interrupted`로 전환하고 terminal event를 기록한다. `lastError.code=STALE_HEARTBEAT`와
+event payload의 `reason=stale_heartbeat`로 정상 shutdown 중단과 구분할 수 있다. 자동 재개는 지원하지
+않으며, interrupted 처리 후에는 동일 Event 조합을 다시 생성하거나 기존 그룹을 삭제할 수 있다.
+
 연결이 끊기면 마지막으로 처리한 `sequence`를 `Last-Event-ID`에 넣어 재연결한다.
 
 ```bash

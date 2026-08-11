@@ -42,7 +42,12 @@ prepare transaction
 ```
 
 SSE consumer가 끊겨도 producer는 계속 실행된다. worker shutdown에서는 task를 취소하고 operation을
-`interrupted`로 기록한다. 서버 재시작 후 LangGraph 재개는 아직 지원하지 않는다.
+`interrupted`로 기록한다. producer는 operation event와 별도로 기본 30초마다 master row의 heartbeat를
+갱신한다. 모든 worker의 lifespan recovery monitor는 시작 직후와 이후 기본 30초마다 active operation을
+조회하며, heartbeat가 기본 120초 이상 갱신되지 않은 `queued`/`running` operation을 row lock 후 다시
+검사해 `interrupted` event와 master 상태를 같은 transaction으로 저장한다. 여러 worker가 동시에 조회할
+때는 `SKIP LOCKED`로 한 worker만 처리한다. 최초 recovery scan이 일시적으로 실패해도 startup은 계속하고
+다음 주기에 재시도한다. 서버 재시작 후 LangGraph 재개는 아직 지원하지 않는다.
 
 operation owner worker에서는 event DB commit 이후 process-local EventHub가 subscriber queue를
 깨운다. 다른 worker로 재연결한 경우에는 operation별 shared tail watcher가 master row의

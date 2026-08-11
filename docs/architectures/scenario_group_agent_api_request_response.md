@@ -89,6 +89,12 @@ operation event는 `accepted`, `phase_started`, `retrying`, `validated`, `sectio
 `completed`, `failed`, `interrupted`를 사용한다. 실패 draft 원문은 event/presentation에 저장하지 않고
 validation code, reference ID, 사용자 메시지만 저장한다.
 
+producer는 기본 30초마다 operation heartbeat를 갱신한다. lifespan recovery monitor는 시작 직후와
+이후 기본 30초마다 stale active operation을 확인하고, heartbeat가 기본 120초 이상 갱신되지 않은
+`queued`/`running` operation을 원자적으로 `interrupted` 처리한다. 이 경우 `lastError.code`는
+`STALE_HEARTBEAT`, event payload의 `reason`은 `stale_heartbeat`이며, 기존 operation 조회와 SSE가
+terminal 상태를 그대로 전달한다. recovery scan 오류는 startup을 막지 않고 다음 주기에 재시도한다.
+
 `POST /scenario-groups`의 중복 판정은 요청 순서와 무관한 Event ID 조합 및 engine version 기준이다.
 동일 조합의 active operation은 같은 사용자에게 HTTP 409
 `SCENARIO_GROUP_OPERATION_CONFLICT`, 다른 사용자에게 HTTP 403

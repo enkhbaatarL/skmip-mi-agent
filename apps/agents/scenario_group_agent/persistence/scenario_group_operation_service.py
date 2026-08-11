@@ -16,12 +16,22 @@ from apps.persistence.scenario_group_operation.models import (
 from apps.persistence.scenario_group_operation.repository import ScenarioGroupOperationRepository
 from apps.persistence.scenario_group_operation.schema import (
     TERMINAL_EVENT_TYPES,
+    TERMINAL_OPERATION_STATUSES,
     ScenarioGroupOperationEventPayload,
     ScenarioGroupOperationPayload,
 )
 
 
 _CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+class OperationAlreadyTerminalError(RuntimeError):
+    """Raised when a producer attempts to mutate an operation after it became terminal."""
+
+    def __init__(self, operation_id: str, status: str) -> None:
+        super().__init__(f"Operation is already terminal: operation_id={operation_id}, status={status}")
+        self.operation_id = operation_id
+        self.status = status
 
 
 def new_operation_id() -> str:
@@ -121,6 +131,12 @@ class ScenarioGroupOperationService:
                     ErrorCode.ENTITY_NOT_FOUND,
                     detail=f"Operation not found: scenarioGroupId={scenario_group_id}, operationId={operation_id}",
                 )
+            if operation.status in TERMINAL_OPERATION_STATUSES:
+                if status == operation.status:
+                    last_event = repository.fetch_last_event(operation_id)
+                    if last_event is not None:
+                        return self._event_payload(last_event)
+                raise OperationAlreadyTerminalError(operation_id, operation.status)
             event = repository.append_event(
                 operation,
                 event_type=event_type,
@@ -150,6 +166,77 @@ class ScenarioGroupOperationService:
             raise
         finally:
             session.close()
+
+    def touch_active_heartbeat(self, scenario_group_id: int, operation_id: str) -> bool:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            touched = ScenarioGroupOperationRepository(session=session).touch_active_heartbeat(
+                scenario_group_id,
+                operation_id,
+                now=_db_now(),
+            )
+            session.commit()
+            return touched
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def interrupt_stale_operations(
+        self,
+        heartbeat_cutoff: datetime,
+        *,
+        limit: int = 100,
+    ) -> list[ScenarioGroupOperationEventPayload]:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        event_payloads: list[ScenarioGroupOperationEventPayload] = []
+        try:
+            repository = ScenarioGroupOperationRepository(session=session)
+            now = _db_now()
+            interrupted_message = " ".join(
+                (
+                    "서버 재시작 후 heartbeat가 만료되어 작업을 중단 처리했습니다.",
+                    "자동 재개는 지원하지 않습니다.",
+                )
+            )
+            for operation in repository.fetch_stale_active(heartbeat_cutoff, limit=limit):
+                effective_heartbeat = operation.heartbeat_at or operation.crt_dtm
+                if operation.status not in {"queued", "running"} or effective_heartbeat > heartbeat_cutoff:
+                    continue
+                event = repository.append_event(
+                    operation,
+                    event_type="interrupted",
+                    phase=operation.current_phase,
+                    title="작업 응답이 없어 중단 처리되었습니다",
+                    message_markdown=interrupted_message,
+                    payload={"status": "interrupted", "reason": "stale_heartbeat"},
+                    now=now,
+                    status="interrupted",
+                    last_error={
+                        "code": "STALE_HEARTBEAT",
+                        "message": "Operation heartbeat expired before recovery",
+                    },
+                )
+                event_payloads.append(self._event_payload(event))
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        if event_payloads:
+            from apps.agents.scenario_group_agent.runtime import get_scenario_group_operation_event_hub
+
+            event_hub = get_scenario_group_operation_event_hub()
+            for event_payload in event_payloads:
+                event_hub.publish(event_payload.operation_id, event_payload.sequence, terminal=True)
+        return event_payloads
 
     def get_operation(self, scenario_group_id: int, operation_id: str) -> ScenarioGroupOperationPayload:
         from apps.common.configs.database.sync_database.connection import get_sync_session

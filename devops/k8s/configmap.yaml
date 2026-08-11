@@ -44,6 +44,9 @@ data:
     scenario_group_admin_bearer_tokens:
       - ${SCENARIO_GROUP_ADMIN_TOKEN}
     create_signposts_max_concurrent_scenarios: 7
+    scenario_group_operation_heartbeat_interval_seconds: 30
+    scenario_group_operation_stale_after_seconds: 120
+    scenario_group_operation_reaper_interval_seconds: 30
 
     agents:
       scenario_group_agent:

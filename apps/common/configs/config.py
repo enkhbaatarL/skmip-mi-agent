@@ -237,6 +237,20 @@ class Settings(BaseSettings):
     )
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
     create_signposts_max_concurrent_scenarios: int = Field(default=10, ge=1)
+    scenario_group_operation_heartbeat_interval_seconds: float = Field(default=30.0, gt=0)
+    scenario_group_operation_stale_after_seconds: float = Field(default=120.0, gt=0)
+    scenario_group_operation_reaper_interval_seconds: float = Field(default=30.0, gt=0)
+
+    @model_validator(mode="after")
+    def validate_scenario_group_operation_timing(self) -> Settings:
+        minimum_stale_after = self.scenario_group_operation_heartbeat_interval_seconds * 3
+        if self.scenario_group_operation_stale_after_seconds < minimum_stale_after:
+            msg = (
+                "scenario_group_operation_stale_after_seconds must be at least three times "
+                "scenario_group_operation_heartbeat_interval_seconds"
+            )
+            raise ValueError(msg)
+        return self
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod

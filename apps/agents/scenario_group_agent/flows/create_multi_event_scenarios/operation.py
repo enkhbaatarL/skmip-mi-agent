@@ -12,6 +12,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_nodes import MAX_STAGE_ATTEMPTS
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+    OperationAlreadyTerminalError,
     ScenarioGroupOperationService,
 )
 from apps.common.logging.logger_config import logger
@@ -279,6 +280,13 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
             )
         )
         raise
+    except OperationAlreadyTerminalError:
+        logger.warning(
+            "Scenario Group operation producer stopped because the operation is already terminal | "
+            "group_id={} | operation_id={}",
+            scenario_group_id,
+            operation_id,
+        )
     except Exception as exc:
         error_message = str(exc)[:1000]
         logger.error(
