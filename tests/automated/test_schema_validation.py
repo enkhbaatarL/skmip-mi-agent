@@ -1,3 +1,5 @@
+# ruff: noqa: PT009, S101
+
 from __future__ import annotations
 
 import unittest
@@ -115,9 +117,7 @@ class SchemaValidationTest(unittest.TestCase):
 
         result = find_schema_validation_result(self.engine, [table])
 
-        self.assertTrue(
-            any("items: unexpected columns ['legacy_name']" in warning for warning in result.warnings)
-        )
+        self.assertTrue(any("items: unexpected columns ['legacy_name']" in warning for warning in result.warnings))
         self.assertFalse(any("unexpected columns" in error for error in result.errors))
 
 

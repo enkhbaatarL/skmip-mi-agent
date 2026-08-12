@@ -8,12 +8,12 @@ from sqlalchemy import CheckConstraint, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
+from apps.common.configs.database.sync_database.base import ORMBase
 from apps.persistence.scenario_group.models import (
-    AuditColumnsMixin,
     BIN,
     TABLE_ARGS,
+    AuditColumnsMixin,
 )
-from apps.common.configs.database.sync_database.base import ORMBase
 
 
 class MiModelParamProposalModel(AuditColumnsMixin, ORMBase):
@@ -69,15 +69,15 @@ class MiModelParamProposalModel(AuditColumnsMixin, ORMBase):
         nullable=False,
         comment="시나리오 그룹 ID",
     )
-    mi_event_id: Mapped[int] = mapped_column(
+    mi_event_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),
         ForeignKey(
             "tmm_mi_mievent_m.mi_event_id",
             name="fk_tmm_mi_model_param_proposal_m_03",
             ondelete="RESTRICT",
         ),
-        nullable=False,
-        comment="MI 이벤트 ID",
+        nullable=True,
+        comment="대표 MI 이벤트 ID (다중 이벤트 그룹은 NULL)",
     )
     request_usr_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),

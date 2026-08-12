@@ -72,9 +72,7 @@ async def _ensure_model_parameter_test_resource_runtime() -> ModelParameterResou
         lut_policy=ReferenceLoadPolicy(
             start_year=cfg.model_parameter_lut_horizon_start_year,
             end_year=cfg.model_parameter_lut_horizon_end_year,
-            value_max_decimal_places=(
-                cfg.model_parameter_basecase_value_max_decimal_places
-            ),
+            value_max_decimal_places=(cfg.model_parameter_basecase_value_max_decimal_places),
             value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
         ),
     )
@@ -392,11 +390,7 @@ def _proposal_parameters(final_response: dict[str, Any]) -> list[dict[str, Any]]
 
 
 def _selected_slots(parameter_slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        slot
-        for slot in parameter_slots
-        if slot.get("selected", True) is not False
-    ]
+    return [slot for slot in parameter_slots if slot.get("selected", True) is not False]
 
 
 def _slot_axis_names(slot: dict[str, Any]) -> list[str]:
@@ -438,19 +432,11 @@ def _value_issue_messages(adjustments: list[dict[str, Any]]) -> list[str]:
     issues: list[str] = []
     for adjustment in _selected_adjustments({"parameter_adjustments": adjustments}):
         candidate_key = str(adjustment.get("candidate_key") or "")
-        axis_names = [
-            str(axis.get("axis_name"))
-            for axis in adjustment.get("slot_axes") or []
-            if axis.get("axis_name")
-        ]
+        axis_names = [str(axis.get("axis_name")) for axis in adjustment.get("slot_axes") or [] if axis.get("axis_name")]
         seen_coordinates: set[str] = set()
         for cell in adjustment.get("value_grid") or []:
             coordinates = cell.get("coordinates") or {}
-            missing_axes = [
-                axis_name
-                for axis_name in axis_names
-                if axis_name not in coordinates
-            ]
+            missing_axes = [axis_name for axis_name in axis_names if axis_name not in coordinates]
             if missing_axes:
                 issues.append(f"{candidate_key}: value_grid 좌표 누락 {missing_axes}")
             coordinate_key = json.dumps(
@@ -466,11 +452,7 @@ def _value_issue_messages(adjustments: list[dict[str, Any]]) -> list[str]:
 
 
 def _slot_option_axis_value_count(slot_options: list[dict[str, Any]]) -> int:
-    return sum(
-        len(values or [])
-        for option in slot_options
-        for values in (option.get("axis_values") or {}).values()
-    )
+    return sum(len(values or []) for option in slot_options for values in (option.get("axis_values") or {}).values())
 
 
 def _slot_option_axis_counts_by_candidate(slot_options: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
@@ -478,8 +460,7 @@ def _slot_option_axis_counts_by_candidate(slot_options: list[dict[str, Any]]) ->
     for option in slot_options:
         candidate_key = str(option.get("candidate_key") or "")
         summary[candidate_key] = {
-            str(axis_name): len(values or [])
-            for axis_name, values in (option.get("axis_values") or {}).items()
+            str(axis_name): len(values or []) for axis_name, values in (option.get("axis_values") or {}).items()
         }
     return summary
 
@@ -548,9 +529,7 @@ def _build_step_summary(
     reference_counts_by_candidate: dict[str, int] = {}
     for record in value_reference_records:
         candidate_key = str(record.get("candidate_key") or "")
-        reference_counts_by_candidate[candidate_key] = (
-            reference_counts_by_candidate.get(candidate_key, 0) + 1
-        )
+        reference_counts_by_candidate[candidate_key] = reference_counts_by_candidate.get(candidate_key, 0) + 1
 
     if not selected_slots:
         basecase_status = "N/A"
@@ -665,11 +644,7 @@ def _failure_stage_trace_table_lines(
     if partial_state_captured is None:
         partial_state_captured = bool(summary) and "partial state 미수집" not in termination
     mapping_trace_captured = bool(trace.get("mapping_trace_captured")) or bool(partial_state_captured)
-    llm_steps = [
-        str(call.get("step") or "")
-        for call in (trace.get("llm_calls") or [])
-        if isinstance(call, dict)
-    ]
+    llm_steps = [str(call.get("step") or "") for call in (trace.get("llm_calls") or []) if isinstance(call, dict)]
 
     if summary and partial_state_captured:
         rule_count = int(summary.get("rule_candidate_count") or 0)
@@ -801,9 +776,7 @@ def _review_routing_selection(
     result: dict[str, Any],
 ) -> tuple[str, list[str]]:
     routing_candidates = [
-        candidate
-        for candidate in candidates
-        if str(candidate.get("mapping_method") or "").lower() == "routing"
+        candidate for candidate in candidates if str(candidate.get("mapping_method") or "").lower() == "routing"
     ]
     if not routing_candidates:
         return "N/A", []
@@ -831,11 +804,7 @@ def _build_group_status(
 ) -> dict[int, bool]:
     group_status: dict[int, bool] = {}
     for target in targets:
-        group_records = [
-            record
-            for record in records
-            if record["target"].event_type_l2_id == target.event_type_l2_id
-        ]
+        group_records = [record for record in records if record["target"].event_type_l2_id == target.event_type_l2_id]
         group_status[target.event_type_l2_id] = (
             len(group_records) == len(target.scenario_ids)
             and all(record["mapping_ok"] for record in group_records)
@@ -888,7 +857,10 @@ def _initial_failure_trace(scenario_id: int) -> dict[str, Any]:
         },
         "mapping_warnings": [],
         "basecase_warnings": [],
+        "slot_catalog": [],
         "step_summary": _uncaptured_step_summary(),
+        "effective_references": [],
+        "slot_candidate_mappings": [],
         "llm_calls": [],
         "mapping_trace_captured": False,
         "partial_state_captured": False,
@@ -939,6 +911,9 @@ async def _evaluate_scenario(
         raw_state = _normalize(raw_output)
         validated_candidates = raw_state.get("candidate_mappings") or []
         parameter_slots = raw_state.get("parameter_slots") or []
+        slot_catalog = raw_state.get("slot_catalog") or []
+        effective_references = raw_state.get("effective_references") or []
+        slot_candidate_mappings = raw_state.get("slot_candidate_mappings") or []
         llm_calls = raw_state.get("llm_calls") or []
         result = {
             "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
@@ -949,6 +924,9 @@ async def _evaluate_scenario(
             {
                 "expected_candidates": validated_candidates,
                 "parameter_slots": parameter_slots,
+                "slot_catalog": slot_catalog,
+                "effective_references": effective_references,
+                "slot_candidate_mappings": slot_candidate_mappings,
                 "result": result,
                 "llm_calls": llm_calls,
                 "partial_state_captured": True,
@@ -994,6 +972,9 @@ async def _evaluate_scenario(
             "mapping_warnings": mapping_warnings,
             "basecase_warnings": basecase_warnings,
             "parameter_slots": parameter_slots,
+            "slot_catalog": slot_catalog,
+            "effective_references": effective_references,
+            "slot_candidate_mappings": slot_candidate_mappings,
             "step_summary": step_summary,
             "result": result,
             "final_response": {},
@@ -1015,7 +996,12 @@ async def _evaluate_scenario(
         }
 
         failed_stage = "output validation/persistence"
-        final_response = to_output(raw_state).model_dump(by_alias=True, exclude_none=True)
+        # Match the public API serializer: optional fields remain present so a
+        # v3 proposal records the compatibility contract as eventId=null.
+        final_response = to_output(raw_state).model_dump(
+            by_alias=True,
+            exclude_none=False,
+        )
         record["final_response"] = final_response
         record["step_summary"] = _build_step_summary(
             rule_candidates=candidates,
@@ -1101,13 +1087,9 @@ def _render_md(
         value_signatures = {record["value_signature"] for record in group_records}
         has_expected_candidates = any(record["expected_candidates"] for record in group_records)
         has_selected_values = any(_selected_adjustments(record["result"]) for record in group_records)
-        value_diff_ok = (
-            (not has_expected_candidates)
-            or (not has_selected_values)
-            or len(value_signatures) > 1
-        )
-        value_diff_status = "N/A" if not has_expected_candidates or not has_selected_values else (
-            "PASS" if value_diff_ok else "FAIL"
+        value_diff_ok = (not has_expected_candidates) or (not has_selected_values) or len(value_signatures) > 1
+        value_diff_status = (
+            "N/A" if not has_expected_candidates or not has_selected_values else ("PASS" if value_diff_ok else "FAIL")
         )
         mapping_ok = all(record["mapping_ok"] for record in group_records)
         selected_ok = all(record["selected_ok"] for record in group_records)
@@ -1222,8 +1204,7 @@ async def run_evaluation(
     semaphore = asyncio.Semaphore(max(1, concurrency))
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = REPORT_DIR / (
-        f"model_parameter_proposal_evaluation_{suite}_iter{iteration}_"
-        f"{started_at.strftime('%Y%m%d_%H%M%S')}.md"
+        f"model_parameter_proposal_evaluation_{suite}_iter{iteration}_{started_at.strftime('%Y%m%d_%H%M%S')}.md"
     )
     records: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -1322,19 +1303,13 @@ async def run_evaluation(
 
     write_report(rendered_targets=())
     print("REPORT_IN_PROGRESS", report_path)
-    target_tasks = [
-        asyncio.create_task(run_target(order, target))
-        for order, target in enumerate(targets)
-    ]
+    target_tasks = [asyncio.create_task(run_target(order, target)) for order, target in enumerate(targets)]
     for target_task in asyncio.as_completed(target_tasks):
         target_result = await target_task
         records.extend(target_result["records"])
         errors.extend(target_result["errors"])
         completed_targets.append((target_result["order"], target_result["target"]))
-        rendered_targets = tuple(
-            target
-            for _, target in sorted(completed_targets, key=lambda item: item[0])
-        )
+        rendered_targets = tuple(target for _, target in sorted(completed_targets, key=lambda item: item[0]))
         write_report(rendered_targets=rendered_targets)
         print(
             "REPORT_UPDATED",

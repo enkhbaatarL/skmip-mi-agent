@@ -40,7 +40,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         *,
         scenario_id: int,
         scenario_group_id: int,
-        mi_event_id: int,
+        mi_event_id: int | None,
         request_usr_id: int | None,
         proposal_parameters: list[dict[str, Any]],
     ) -> int:
@@ -65,7 +65,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         *,
         scenario_id: int,
         scenario_group_id: int,
-        mi_event_id: int,
+        mi_event_id: int | None,
         request_usr_id: int | None,
     ) -> int:
         proposal = MiModelParamProposalModel(
@@ -112,9 +112,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             )
         )
         if scenario_ids:
-            stmt = stmt.where(
-                MiModelParamProposalModel.scenario_id.in_(scenario_ids)
-            )
+            stmt = stmt.where(MiModelParamProposalModel.scenario_id.in_(scenario_ids))
         rows = self.session.execute(stmt).scalars().all()
         latest: dict[int, MiModelParamProposalModel] = {}
         for proposal in rows:
@@ -124,7 +122,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             {
                 "scenario_id": int(proposal.scenario_id),
                 "scenario_group_id": int(proposal.scenario_group_id),
-                "mi_event_id": int(proposal.mi_event_id),
+                "mi_event_id": (int(proposal.mi_event_id) if proposal.mi_event_id is not None else None),
                 "status": proposal.status,
                 "proposal_parameters": _json_safe(
                     proposal.confirmation_parameters
@@ -153,8 +151,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         stmt = (
             select(MiModelParamProposalModel)
             .where(
-                MiModelParamProposalModel.model_param_proposal_id
-                == model_param_proposal_id,
+                MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
                 MiModelParamProposalModel.del_yn == "N",
             )
             .with_for_update()
@@ -172,7 +169,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             "model_param_proposal_id": int(proposal.model_param_proposal_id),
             "scenario_id": int(proposal.scenario_id),
             "scenario_group_id": int(proposal.scenario_group_id),
-            "mi_event_id": int(proposal.mi_event_id),
+            "mi_event_id": (int(proposal.mi_event_id) if proposal.mi_event_id is not None else None),
             "status": proposal.status,
             "callback_status": proposal.callback_status,
             "proposal_parameters": _json_safe(proposal.proposal_parameters),
@@ -277,8 +274,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             .outerjoin(
                 MiModelParamModel,
                 and_(
-                    MiModelParamDimensionMapModel.model_param_id
-                    == MiModelParamModel.model_param_id,
+                    MiModelParamDimensionMapModel.model_param_id == MiModelParamModel.model_param_id,
                     MiModelParamModel.del_yn == "N",
                     MiModelParamModel.use_yn == "Y",
                 ),
@@ -329,9 +325,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             "event_type_l2_id": int(mapping.event_type_l2_id),
             "dimension_key": mapping.dimension_key,
             "dimension_label": mapping.dimension_label,
-            "canonical_parameter_name": (
-                parameter.parameter_name if parameter is not None else ""
-            ),
+            "canonical_parameter_name": (parameter.parameter_name if parameter is not None else ""),
             "mapping_method": mapping.mapping_method,
             "comment": mapping.mapping_comment,
         }

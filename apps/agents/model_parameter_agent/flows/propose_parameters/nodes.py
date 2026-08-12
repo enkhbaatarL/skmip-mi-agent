@@ -98,6 +98,7 @@ def _scenario_event_debug_summary(
     scenario = context.get("scenario") or {}
     scenario_group = context.get("scenario_group") or {}
     event = context.get("event") or {}
+    events = context.get("events") or []
     return {
         "scenario": {
             "scenario_id": scenario.get("scenario_id") or scenario_id,
@@ -110,6 +111,24 @@ def _scenario_event_debug_summary(
             "event_type_l2_id": (event.get("event_type_l2_id") or scenario_group.get("event_type_l2_id")),
             "title": (event.get("event_title") or event.get("event_title_ko") or event.get("title")),
         },
+        "events": [
+            {
+                "mi_event_id": item.get("mi_event_id"),
+                "event_type_l2_id": item.get("event_type_l2_id"),
+                "scenario_dimension_template_id": item.get(
+                    "scenario_dimension_template_id",
+                ),
+                "title": (item.get("event_title") or item.get("event_title_ko") or item.get("title")),
+            }
+            for item in events
+            if isinstance(item, dict)
+        ],
+        "generation_strategy": scenario_group.get("generation_strategy"),
+        "parameter_mapping_ready": scenario_group.get(
+            "parameter_mapping_ready",
+        ),
+        "dimension_lineage_count": len(context.get("dimension_lineage") or []),
+        "validation_warnings": context.get("validation_warnings") or [],
     }
 
 
@@ -323,7 +342,7 @@ def _prompt_parameter_bytes(
     for task in packet.get(task_field) or []:
         parameter = task.get("parameter") or {}
         parameter_name = str(
-            parameter.get("parameter_name") or parameter.get("candidate_key") or "unknown",
+            parameter.get("parameter_name") or parameter.get("candidate_key") or task.get("dimension_key") or "unknown",
         )
         task_bytes = len(to_compact_json(task).encode("utf-8"))
         bytes_by_parameter[parameter_name] = bytes_by_parameter.get(parameter_name, 0) + task_bytes
@@ -412,7 +431,14 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
         state.scenario_id,
         _scenario_event_debug_summary(context, state.scenario_id),
     )
-    return {"scenario_context": context, "parameter_knowledge_base": kb}
+    return {
+        "scenario_context": context,
+        "parameter_knowledge_base": kb,
+        "validation_warnings": [
+            *state.validation_warnings,
+            *(context.get("validation_warnings") or []),
+        ],
+    }
 
 
 def _knowledge_base_from_context(
@@ -505,8 +531,11 @@ async def validate_parameter_candidates(
         )
         return output
 
-    deterministic_candidates, routing_tasks = _partition_candidate_validation_work(
+    validation_candidates = _merge_v3_routing_candidates_for_validation(
         state.candidate_mappings,
+    )
+    deterministic_candidates, routing_tasks = _partition_candidate_validation_work(
+        validation_candidates,
     )
     selected_routing_candidates: list[dict[str, Any]] = []
     validation_warnings: list[str] = []
@@ -518,6 +547,18 @@ async def validate_parameter_candidates(
         packet = _build_candidate_validation_prompt_packet(
             state.scenario_context or {},
             routing_tasks,
+            state.non_input_items,
+        )
+        prompt_limit_bytes = _configured_positive_int(
+            get_settings(),
+            "model_parameter_max_step2_prompt_bytes",
+            DEFAULT_MAX_PROMPT_BYTES,
+        )
+        packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
+            packet,
+            step="Step1.5",
+            task_field="routing_tasks",
+            limit=prompt_limit_bytes,
         )
         messages = [
             {
@@ -528,9 +569,7 @@ async def validate_parameter_candidates(
             },
             {
                 "role": "user",
-                "content": (
-                    f"아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n{to_compact_json(packet)}"
-                ),
+                "content": (f"아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n{packet_json}"),
             },
         ]
 
@@ -551,6 +590,9 @@ async def validate_parameter_candidates(
                 elapsed_seconds=time.perf_counter() - llm_started,
                 usage=usage,
                 success=True,
+                prompt_bytes=prompt_bytes,
+                prompt_limit_bytes=prompt_limit_bytes,
+                parameter_bytes=parameter_bytes,
             )
         except Exception as exc:
             logger.warning(
@@ -572,7 +614,7 @@ async def validate_parameter_candidates(
     }
     candidates = [
         candidate
-        for candidate in state.candidate_mappings
+        for candidate in validation_candidates
         if str(candidate.get("candidate_key") or "") in selected_candidate_keys
     ]
     merged_candidates, merge_warnings = _merge_candidates_by_parameter(candidates)
@@ -941,15 +983,16 @@ async def propose_parameter_values(
         value_references,
         state.non_input_items,
     )
+    prompt_limit_bytes = _configured_positive_int(
+        cfg,
+        "model_parameter_max_step3_prompt_bytes",
+        DEFAULT_MAX_PROMPT_BYTES,
+    )
     packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
         packet,
         step="Step3",
         task_field="parameter_value_tasks",
-        limit=_configured_positive_int(
-            cfg,
-            "model_parameter_max_step3_prompt_bytes",
-            DEFAULT_MAX_PROMPT_BYTES,
-        ),
+        limit=prompt_limit_bytes,
     )
     logger.info(
         "[model-parameter] built compact value prompt | scenario_id={} "
@@ -984,6 +1027,9 @@ async def propose_parameter_values(
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
         )
     except Exception as exc:
         logger.warning(
@@ -1051,15 +1097,16 @@ async def propose_parameter_slots(
         state.non_input_items,
     )
     cfg = get_settings()
+    prompt_limit_bytes = _configured_positive_int(
+        cfg,
+        "model_parameter_max_step2_prompt_bytes",
+        DEFAULT_MAX_PROMPT_BYTES,
+    )
     packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
         packet,
         step="Step2",
         task_field="parameter_slot_tasks",
-        limit=_configured_positive_int(
-            cfg,
-            "model_parameter_max_step2_prompt_bytes",
-            DEFAULT_MAX_PROMPT_BYTES,
-        ),
+        limit=prompt_limit_bytes,
     )
     logger.info(
         "[model-parameter] built compact slot catalog prompt | scenario_id={} "
@@ -1097,6 +1144,9 @@ async def propose_parameter_slots(
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
         )
     except Exception as exc:
         logger.warning(
@@ -1149,6 +1199,9 @@ def _llm_call_trace(
     usage: dict[str, Any] | None,
     success: bool,
     error: str | None = None,
+    prompt_bytes: int | None = None,
+    prompt_limit_bytes: int | None = None,
+    parameter_bytes: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     trace: dict[str, Any] = {
         "step": step,
@@ -1158,6 +1211,12 @@ def _llm_call_trace(
     }
     if usage is not None:
         trace["usage"] = usage
+    if prompt_bytes is not None:
+        trace["prompt_bytes"] = prompt_bytes
+    if prompt_limit_bytes is not None:
+        trace["prompt_limit_bytes"] = prompt_limit_bytes
+    if parameter_bytes is not None:
+        trace["parameter_bytes"] = parameter_bytes
     if error:
         trace["error"] = error
     logger.info(
@@ -1300,10 +1359,42 @@ def _allowed_slot_axes_field_names(candidate: dict[str, Any]) -> list[str]:
 def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "candidate_key": candidate.get("candidate_key"),
-        "dimension_key": (candidate.get("dimension_key") or candidate.get("source_dimension_id")),
+        "dimension_key": (
+            candidate.get("scenario_dimension_key")
+            or candidate.get("dimension_key")
+            or candidate.get("source_dimension_id")
+        ),
+        "scenario_dimension_key": candidate.get("scenario_dimension_key"),
+        "mapping_dimension_key": candidate.get("mapping_dimension_key"),
         "source_dimension_id": candidate.get("source_dimension_id"),
         "source_dimension_label": candidate.get("source_dimension_label"),
+        "source_dimension_description": candidate.get(
+            "source_dimension_description",
+        ),
+        "source_dimension_rationale": candidate.get(
+            "source_dimension_rationale",
+        ),
         "source_dimension_value": candidate.get("source_dimension_value"),
+        "source_dimension_value_id": candidate.get(
+            "source_dimension_value_id",
+        ),
+        "source_dimension_value_label": candidate.get(
+            "source_dimension_value_label",
+        ),
+        "value_description": candidate.get("value_description"),
+        "derivation_rationale": candidate.get("derivation_rationale"),
+        "pressure_contribution": candidate.get("pressure_contribution"),
+        "event_type_l2_id": candidate.get("event_type_l2_id"),
+        "scenario_dimension_template_id": candidate.get(
+            "scenario_dimension_template_id",
+        ),
+        "source_event_ids": candidate.get("source_event_ids"),
+        "source_refs": candidate.get("source_refs"),
+        "approved_source_projections": candidate.get(
+            "approved_source_projections",
+        ),
+        "parameter_mapping_ready": candidate.get("parameter_mapping_ready"),
+        "is_free_value": candidate.get("is_free_value"),
         "mapping_method": candidate.get("mapping_method"),
         "mapping_comment": candidate.get("mapping_comment"),
     }
@@ -1359,13 +1450,25 @@ def _allowed_prompt_dimension_keys(
 
 
 def _supporting_dimension_for_prompt(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "source_dimension_id": item.get("source_dimension_id"),
+        "scenario_dimension_key": item.get("scenario_dimension_key"),
+        "mapping_dimension_key": item.get("mapping_dimension_key"),
         "source_dimension_label": item.get("source_dimension_label"),
         "source_dimension_value": item.get("source_dimension_value"),
+        "value_description": item.get("value_description"),
+        "derivation_rationale": item.get("derivation_rationale"),
+        "pressure_contribution": item.get("pressure_contribution"),
+        "event_type_l2_id": item.get("event_type_l2_id"),
+        "source_event_ids": item.get("source_event_ids"),
+        "source_refs": item.get("source_refs"),
+        "approved_source_projections": item.get(
+            "approved_source_projections",
+        ),
         "mapping_method": item.get("mapping_method"),
         "reason": item.get("reason"),
     }
+    return _drop_none_or_empty(payload)
 
 
 def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
@@ -1379,7 +1482,9 @@ def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
-    event_type_l2_id = candidate.get("event_type_l2_id")
+    event_type_l2_id: Any = candidate.get("event_type_l2_id")
+    if str(candidate.get("mapping_strategy") or "").lower() == "v3":
+        event_type_l2_id = "v3"
     parts = [
         "parameter",
         _field_key(event_type_l2_id),
@@ -1394,7 +1499,7 @@ def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
     return "|".join(parts)
 
 
-def _merge_candidates_by_parameter(
+def _merge_candidates_by_parameter(  # noqa: C901
     candidates: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -1405,10 +1510,13 @@ def _merge_candidates_by_parameter(
     for group_candidates in groups.values():
         if len(group_candidates) == 1:
             candidate = dict(group_candidates[0])
-            candidate["merged_candidate_keys"] = candidate.get("merged_candidate_keys") or [
-                candidate.get("candidate_key")
-            ]
+            original_candidate_key = candidate.get("candidate_key")
+            candidate["merged_candidate_keys"] = candidate.get(
+                "merged_candidate_keys",
+            ) or [original_candidate_key]
             candidate["source_dimensions"] = _source_dimensions_for_prompt(candidate)
+            if str(candidate.get("mapping_strategy") or "").lower() == "v3":
+                candidate["candidate_key"] = _parameter_candidate_key(candidate)
             merged_candidates.append(candidate)
             continue
 
@@ -1417,6 +1525,9 @@ def _merge_candidates_by_parameter(
         source_dimensions: list[dict[str, Any]] = []
         mapping_methods: list[str] = []
         mapping_comments: list[str] = []
+        source_event_ids: list[int] = []
+        source_refs: list[dict[str, Any]] = []
+        approved_source_projections: list[dict[str, Any]] = []
         for candidate in group_candidates:
             for candidate_key in candidate.get("merged_candidate_keys") or [candidate.get("candidate_key")]:
                 _append_unique_text(merged_candidate_keys, candidate_key)
@@ -1424,6 +1535,18 @@ def _merge_candidates_by_parameter(
                 _append_unique_source_dimension(source_dimensions, source_dimension)
             _append_unique_text(mapping_methods, candidate.get("mapping_method"))
             _append_unique_text(mapping_comments, candidate.get("mapping_comment"))
+            for event_id in candidate.get("source_event_ids") or []:
+                if event_id not in source_event_ids:
+                    source_event_ids.append(event_id)
+            for source_ref in candidate.get("source_refs") or []:
+                if isinstance(source_ref, dict):
+                    _append_unique_source_dimension(source_refs, source_ref)
+            for projection in candidate.get("approved_source_projections") or []:
+                if isinstance(projection, dict):
+                    _append_unique_source_dimension(
+                        approved_source_projections,
+                        projection,
+                    )
 
         merged_method = mapping_methods[0] if len(mapping_methods) == 1 else "merged"
         base.update(
@@ -1437,6 +1560,9 @@ def _merge_candidates_by_parameter(
                 "dimension_key": None,
                 "mapping_method": merged_method,
                 "mapping_comment": " ".join(mapping_comments),
+                "source_event_ids": source_event_ids,
+                "source_refs": source_refs,
+                "approved_source_projections": approved_source_projections,
             },
         )
         merged_candidates.append(base)
@@ -1451,6 +1577,19 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
             "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "scenario_dimension_key": candidate.get(
+                "scenario_dimension_key",
+            ),
+            "mapping_dimension_key": candidate.get(
+                "mapping_dimension_key",
+            ),
+            "event_type_l2_id": candidate.get("event_type_l2_id"),
+            "source_event_ids": candidate.get("source_event_ids"),
+            "source_refs": candidate.get("source_refs"),
+            "approved_source_projections": candidate.get(
+                "approved_source_projections",
+            ),
+            "source_dimensions": _source_dimensions_for_prompt(candidate),
             "mapping_comment": candidate.get("mapping_comment"),
         },
     )
@@ -1471,15 +1610,81 @@ def _partition_candidate_validation_work(
     routing_tasks: list[dict[str, Any]] = []
     for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
         first = group_candidates[0]
+        first_source = _source_dimensions_for_prompt(first)[0]
         routing_tasks.append(
             {
-                "dimension_key": (first.get("dimension_key") or first.get("source_dimension_id")),
-                "dimension_label": first.get("source_dimension_label"),
-                "dimension_value": first.get("source_dimension_value"),
+                "dimension_key": (
+                    first.get("scenario_dimension_key")
+                    or first.get("dimension_key")
+                    or first.get("source_dimension_id")
+                ),
+                "dimension_label": (first.get("source_dimension_label") or first_source.get("source_dimension_label")),
+                "dimension_value": (first.get("source_dimension_value") or first_source.get("source_dimension_value")),
                 "candidates": group_candidates,
             },
         )
     return deterministic, routing_tasks
+
+
+def _merge_v3_routing_candidates_for_validation(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse one composite dimension's converged routing sources.
+
+    Step1.5 decides whether a parameter is relevant to a composite dimension,
+    not whether an arbitrary one of that parameter's sourceRefs survives. Keep
+    v1 and direct candidates untouched, while exposing one routing choice with
+    the complete source/event union for each v3 dimension and model target.
+    """
+    routing_groups: dict[
+        tuple[str, tuple[str, str, str]],
+        list[dict[str, Any]],
+    ] = {}
+    for candidate in candidates:
+        if (
+            str(candidate.get("mapping_strategy") or "").lower() == "v3"
+            and str(candidate.get("mapping_method") or "").lower() == "routing"
+        ):
+            composite_key = str(
+                candidate.get("scenario_dimension_key")
+                or candidate.get("dimension_key")
+                or candidate.get("source_dimension_id")
+                or "",
+            )
+            routing_groups.setdefault(
+                (composite_key, _candidate_group_key(candidate)),
+                [],
+            ).append(candidate)
+
+    prepared: list[dict[str, Any]] = []
+    emitted_groups: set[tuple[str, tuple[str, str, str]]] = set()
+    for candidate in candidates:
+        if not (
+            str(candidate.get("mapping_strategy") or "").lower() == "v3"
+            and str(candidate.get("mapping_method") or "").lower() == "routing"
+        ):
+            prepared.append(candidate)
+            continue
+        composite_key = str(
+            candidate.get("scenario_dimension_key")
+            or candidate.get("dimension_key")
+            or candidate.get("source_dimension_id")
+            or "",
+        )
+        group_key = (composite_key, _candidate_group_key(candidate))
+        if group_key in emitted_groups:
+            continue
+        emitted_groups.add(group_key)
+        group_candidates = routing_groups[group_key]
+        if len(group_candidates) == 1:
+            prepared.append(candidate)
+            continue
+        merged, _ = _merge_candidates_by_parameter(group_candidates)
+        merged_candidate = merged[0]
+        merged_candidate["candidate_key"] = min(str(item.get("candidate_key") or "") for item in group_candidates)
+        merged_candidate["scenario_dimension_key"] = composite_key
+        prepared.append(merged_candidate)
+    return prepared
 
 
 def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
@@ -1496,10 +1701,15 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
 def _build_candidate_validation_prompt_packet(
     scenario_context: dict[str, Any],
     routing_tasks: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    allowed_dimension_keys = {
-        str(task.get("dimension_key") or "") for task in routing_tasks if str(task.get("dimension_key") or "")
-    }
+    routing_candidates = [
+        candidate for task in routing_tasks for candidate in task.get("candidates") or [] if isinstance(candidate, dict)
+    ]
+    allowed_dimension_keys = _allowed_prompt_dimension_keys(
+        routing_candidates,
+        non_input_items,
+    )
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
@@ -1587,7 +1797,13 @@ def _filter_dimension_selected(
     filtered: list[Any] = []
     for item in dimension_selected:
         if isinstance(item, dict):
-            key = item.get("dim_key") or item.get("dimension_key") or item.get("key")
+            key = (
+                item.get("dim_key")
+                or item.get("dimension_key")
+                or item.get("dimension_id")
+                or item.get("dimensionId")
+                or item.get("key")
+            )
             if key is not None and str(key) in allowed_dimension_keys:
                 filtered.append(item)
             continue
@@ -1607,10 +1823,43 @@ def _filter_dimension_template(
     for item in dimension_template:
         if not isinstance(item, dict):
             continue
-        key = item.get("dim_key") or item.get("dimension_key") or item.get("key")
+        key = (
+            item.get("dim_key")
+            or item.get("dimension_key")
+            or item.get("dimension_id")
+            or item.get("dimensionId")
+            or item.get("key")
+        )
         if key is not None and str(key) in allowed_dimension_keys:
             filtered.append(item)
     return filtered
+
+
+def _bounded_v3_event_brief(event: dict[str, Any]) -> dict[str, Any]:
+    event_type = event.get("event_type")
+    event_type = event_type if isinstance(event_type, dict) else {}
+    bullets = event.get("key_bullets")
+    tags = event.get("tags")
+    detail = str(event.get("detail_analysis") or "")[:1200]
+    return _drop_none_or_empty(
+        {
+            "event_id": event.get("mi_event_id"),
+            "event_type_l2_id": event.get("event_type_l2_id"),
+            "event_type": _drop_none_or_empty(
+                {
+                    "level_1_code": event_type.get("level_1_code"),
+                    "level_1_label": event_type.get("level_1_label"),
+                    "level_2_code": event_type.get("level_2_code"),
+                    "level_2_label": event_type.get("level_2_label"),
+                },
+            ),
+            "title": (event.get("event_title_ko") or event.get("event_title") or event.get("title")),
+            "one_line_summary": event.get("one_line_summary"),
+            "key_bullets": bullets[:5] if isinstance(bullets, list) else [],
+            "tags": tags[:8] if isinstance(tags, list) else [],
+            "detail_excerpt": detail,
+        },
+    )
 
 
 def _scenario_brief_for_value_prompt(
@@ -1622,6 +1871,8 @@ def _scenario_brief_for_value_prompt(
     scenario_group = scenario_context.get("scenario_group") or {}
     dimension_template = scenario_context.get("dimension_template") or []
     event = scenario_context.get("event") or {}
+    events = scenario_context.get("events") or []
+    is_v3 = str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions"
     impact = scenario.get("impact") or {}
     filtered_dimension_values = _filter_dimension_values(
         scenario.get("dimension_values"),
@@ -1640,6 +1891,9 @@ def _scenario_brief_for_value_prompt(
                 scenario_group.get("dimension_selected"),
                 allowed_dimension_keys,
             ),
+            "api_version": scenario_group.get("api_version") if is_v3 else None,
+            "generation_strategy": (scenario_group.get("generation_strategy") if is_v3 else None),
+            "parameter_mapping_ready": (scenario_group.get("parameter_mapping_ready") if is_v3 else None),
         },
     )
     scenario_detail = _drop_none_or_empty(
@@ -1666,7 +1920,7 @@ def _scenario_brief_for_value_prompt(
             "tag_json": event.get("tags"),
         },
     )
-    brief = {
+    brief: dict[str, Any] = {
         "scenario_id": scenario.get("scenario_id"),
         "title": scenario.get("title"),
         "selected_dimensions": _selected_dimensions_for_value_prompt(
@@ -1676,8 +1930,11 @@ def _scenario_brief_for_value_prompt(
         "scenario_group": scenario_group_brief,
         "scenario": scenario_detail,
         "dimension_template": dimension_template_brief,
-        "event": event_brief,
     }
+    if is_v3:
+        brief["events"] = [_bounded_v3_event_brief(item) for item in events if isinstance(item, dict)]
+    else:
+        brief["event"] = event_brief
     return _drop_none_or_empty(brief)
 
 
@@ -1687,6 +1944,44 @@ def _selected_dimensions_for_value_prompt(
     allowed_dimension_keys: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     scenario = scenario_context.get("scenario") or {}
+    scenario_group = scenario_context.get("scenario_group") or {}
+    if str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions":
+        selected: list[dict[str, Any]] = []
+        for item in scenario_context.get("dimension_lineage") or []:
+            if not isinstance(item, dict):
+                continue
+            dimension_key = str(item.get("scenario_dimension_key") or "")
+            if allowed_dimension_keys is not None and dimension_key not in allowed_dimension_keys:
+                continue
+            selected.append(
+                _drop_none_or_empty(
+                    {
+                        "dimension_key": dimension_key,
+                        "dimension_label": item.get("scenario_dimension_label"),
+                        "dimension_value": item.get("scenario_dimension_value"),
+                        "dimension_value_id": item.get(
+                            "scenario_dimension_value_id",
+                        ),
+                        "dimension_value_label": item.get(
+                            "scenario_dimension_value_label",
+                        ),
+                        "description": item.get("value_description"),
+                        "derivation_rationale": item.get(
+                            "derivation_rationale",
+                        ),
+                        "pressure_contribution": item.get(
+                            "pressure_contribution",
+                        ),
+                        "source_event_ids": item.get("source_event_ids"),
+                        "source_refs": item.get("source_refs"),
+                        "approved_source_projections": item.get(
+                            "approved_source_projections",
+                        ),
+                    },
+                ),
+            )
+        return selected
+
     dimension_values = _filter_dimension_values(
         scenario.get("dimension_values") or {},
         allowed_dimension_keys,
@@ -1698,9 +1993,9 @@ def _selected_dimensions_for_value_prompt(
     for item in scenario_context.get("dimension_template") or []:
         if not isinstance(item, dict):
             continue
-        key = item.get("dim_key")
+        key = item.get("dim_key") or item.get("dimension_id") or item.get("dimensionId")
         if key:
-            label_by_key[str(key)] = item.get("label")
+            label_by_key[str(key)] = item.get("label") or item.get("label_ko")
 
     selected: list[dict[str, Any]] = []
     for key, value in dimension_values.items():
@@ -1723,9 +2018,27 @@ def _drop_none_or_empty(value: dict[str, Any]) -> dict[str, Any]:
 def _source_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
-            "dimension_key": (item.get("dimension_key") or item.get("source_dimension_id")),
+            "dimension_key": (
+                item.get("scenario_dimension_key") or item.get("dimension_key") or item.get("source_dimension_id")
+            ),
+            "scenario_dimension_key": item.get("scenario_dimension_key"),
+            "mapping_dimension_key": item.get("mapping_dimension_key"),
             "dimension_label": item.get("source_dimension_label"),
             "dimension_value": item.get("source_dimension_value"),
+            "dimension_value_id": item.get("source_dimension_value_id"),
+            "dimension_value_label": item.get(
+                "source_dimension_value_label",
+            ),
+            "value_description": item.get("value_description"),
+            "derivation_rationale": item.get("derivation_rationale"),
+            "pressure_contribution": item.get("pressure_contribution"),
+            "event_type_l2_id": item.get("event_type_l2_id"),
+            "source_event_ids": item.get("source_event_ids"),
+            "source_refs": item.get("source_refs"),
+            "approved_source_projections": item.get(
+                "approved_source_projections",
+            ),
+            "parameter_mapping_ready": item.get("parameter_mapping_ready"),
             "mapping_method": item.get("mapping_method"),
             "mapping_comment": item.get("mapping_comment"),
         },
@@ -1757,9 +2070,20 @@ def _supporting_dimension_for_value_task(
 
     return _drop_none_or_empty(
         {
-            "dimension_key": item.get("source_dimension_id"),
+            "dimension_key": (item.get("scenario_dimension_key") or item.get("source_dimension_id")),
+            "scenario_dimension_key": item.get("scenario_dimension_key"),
+            "mapping_dimension_key": item.get("mapping_dimension_key"),
             "dimension_label": item.get("source_dimension_label"),
             "dimension_value": item.get("source_dimension_value"),
+            "value_description": item.get("value_description"),
+            "derivation_rationale": item.get("derivation_rationale"),
+            "pressure_contribution": item.get("pressure_contribution"),
+            "event_type_l2_id": item.get("event_type_l2_id"),
+            "source_event_ids": item.get("source_event_ids"),
+            "source_refs": item.get("source_refs"),
+            "approved_source_projections": item.get(
+                "approved_source_projections",
+            ),
             "mapping_method": item.get("mapping_method"),
             "usage_policy": _supporting_dimension_usage_policy(item, candidate),
             "reason": item.get("reason"),
@@ -2155,9 +2479,16 @@ def _routing_groups_by_dimension(
     for candidate in candidates:
         if str(candidate.get("mapping_method") or "").lower() != "routing":
             continue
+        is_v3 = str(candidate.get("mapping_strategy") or "").lower() == "v3"
+        dimension_key = str(
+            candidate.get("scenario_dimension_key")
+            or candidate.get("dimension_key")
+            or candidate.get("source_dimension_id")
+            or "",
+        )
         group_key = (
-            candidate.get("event_type_l2_id"),
-            str(candidate.get("dimension_key") or candidate.get("source_dimension_id") or ""),
+            "v3" if is_v3 else candidate.get("event_type_l2_id"),
+            dimension_key,
         )
         routing_groups.setdefault(group_key, []).append(candidate)
     return routing_groups

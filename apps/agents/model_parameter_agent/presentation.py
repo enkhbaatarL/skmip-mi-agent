@@ -148,10 +148,7 @@ def _canonical_slot_axis_name(axis_name: str, allowed_axes: list[str]) -> str | 
     if axis_key in allowed_by_key:
         return allowed_by_key[axis_key]
 
-    country_axes = [
-        axis for axis in allowed_axes
-        if _field_key(axis).endswith("country")
-    ]
+    country_axes = [axis for axis in allowed_axes if _field_key(axis).endswith("country")]
     if axis_key in {"country", "province"} and len(country_axes) == 1:
         return country_axes[0]
     for axis in country_axes:
@@ -207,10 +204,7 @@ def _build_proposal_parameters(
     *,
     include_lut_value: bool = False,
 ) -> list[ProposalParameter]:
-    candidate_index = {
-        str(candidate.get("candidate_key") or ""): candidate
-        for candidate in candidates
-    }
+    candidate_index = {str(candidate.get("candidate_key") or ""): candidate for candidate in candidates}
     grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
     for adjustment in adjustments:
         if adjustment.get("selected", True) is False:
@@ -291,8 +285,7 @@ def _build_proposal_parameters(
                     value_field_names=group["value_field_names"],
                     slot_axes_field_names=group["slot_axes_field_names"],
                 ),
-                rationale=" ".join(group["rationales"])
-                or "파라미터 선택 근거가 제공되지 않았습니다.",
+                rationale=" ".join(group["rationales"]) or "파라미터 선택 근거가 제공되지 않았습니다.",
                 values=group["values"],
             ),
         )
@@ -308,10 +301,14 @@ def _context_ids(
     event = scenario_context.get("event") or {}
     scenario_id = int(scenario.get("scenario_id") or fallback_scenario_id)
     scenario_group_id = _int_or_none(
-        scenario.get("scenario_group_id")
-        or scenario_group.get("scenario_group_id"),
+        scenario.get("scenario_group_id") or scenario_group.get("scenario_group_id"),
     )
-    event_id = _int_or_none(event.get("mi_event_id") or scenario_group.get("mi_event_id"))
+    if str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions":
+        event_id = None
+    else:
+        event_id = _int_or_none(
+            event.get("mi_event_id") or scenario_group.get("mi_event_id"),
+        )
     return scenario_id, scenario_group_id, event_id
 
 

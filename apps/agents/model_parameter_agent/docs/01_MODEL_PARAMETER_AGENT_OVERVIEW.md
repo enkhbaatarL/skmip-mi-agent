@@ -4,12 +4,14 @@
 
 Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모델 입력 파라미터의 변경안으로 제안한다.
 
-- DB mapping으로 시나리오와 관련된 파라미터를 찾는다.
+- v1 단일 이벤트와 v3 멀티 이벤트 시나리오를 구분하고, 기존 DB mapping으로 관련 파라미터를 찾는다.
 - Basecase와 LUT에 실제로 존재하는 국가·기간·시설 slot만 사용한다.
 - 현재 기준값을 바탕으로 제안값과 근거를 만든다.
 - 사용자가 검토·수정한 최종값을 확정 상태로 저장한다.
 
 현재 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption`의 10개다. Coal/Gas Futures는 2026년 이후 값이 없어 보류하고, ElectrificationRate는 승인된 Basecase·LUT·mapping이 없어 보류한다.
+
+v1은 scenario group의 대표 event type과 scenario dimension key를 그대로 mapping에 대입한다. `generation_strategy=multi_event_composite_dimensions`인 v3는 동적 composite dimension을 master mapping에 추가하지 않는다. 대신 `dimensionDefinitions[].sourceRefs`의 template ID를 그룹 이벤트 관계에 연결해 각 원본 `(event_type_l2_id, dimKey)`를 복원하고 같은 129개 dimension mapping을 재사용한다.
 
 기계 판정 기준은 [canonical JSON](../../../../scripts/model_parameter/model-parameter-canonical-v1.json), 사람이 읽는 설명은 [canonical mapping 문서](../resources/Model_Parameter_Base_Case_Mapping.md), 업무용 표는 [canonical mapping Excel](../resources/mapping/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx)이다. 이전 Excel은 `resources/mapping/archive/`의 역사·검토 자료이며 현재 실행 기준이 아니다.
 
@@ -29,19 +31,22 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 
 [DB 문서](03_MODEL_PARAMETER_AGENT_DB_SPEC.md)는 파라미터 기준, 시나리오 연결 규칙, 제안·확정 결과의 저장 구조를 설명한다.
 
-| 테이블                             | 역할                                                        |
-| ---------------------------------- | ----------------------------------------------------------- |
-| `tmm_mi_model_param_m`             | 파라미터명, 모델 대상, Basecase 읽기 기준, prompt hint 관리 |
-| `tmm_mi_model_param_dimension_map` | event type·dimension과 파라미터의 연결 방법 관리            |
-| `tmm_mi_model_param_proposal_m`    | 제안 상태, 제안값, 확정값, 오류·callback 결과 저장          |
+| 테이블                             | 역할                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `tmm_mi_model_param_m`             | 파라미터명, 모델 대상, Basecase 읽기 기준, prompt hint 관리          |
+| `tmm_mi_model_param_dimension_map` | 원본 event type·dimension과 파라미터의 연결 방법 관리                |
+| `tmm_mi_scenario_group_event_m`    | v3 그룹의 ordered event·event type·dimension template 관계 관리     |
+| `tmm_mi_dimension_value_mapping_m` | v3 자유 value의 source projection과 승인 상태 관리                  |
+| `tmm_mi_model_param_proposal_m`    | 제안 상태, 제안값, 확정값, 오류·callback 결과 저장                   |
 
 ### 2.3 Flow 문서
 
 [Flow 문서](04_MODEL_PARAMETER_AGENT_FLOW.md)는 다음 핵심 처리 순서와 Step1.5·Step2·Step3 prompt를 설명한다.
 
 ```text
-시나리오 조회
-→ DB mapping으로 파라미터 후보 결정
+시나리오·그룹 전략 조회
+→ v1 event/dimension 또는 v3 sourceRefs lineage 정규화
+→ 기존 DB mapping으로 파라미터 후보 결정
 → Step1.5 routing 조건 검증·후보 선택(routing이 있는 경우)
 → Basecase/LUT slot catalog 생성
 → Step2 적용 slot 선택
@@ -50,6 +55,10 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 → 서버 검증 및 PROPOSED 저장
 → 사용자 확인 및 CONFIRMED 저장
 ```
+
+v3의 그룹 이벤트는 `display_order` 순서로 Step1.5·Step2·Step3의 `scenario_brief.events`에 들어간다. 이벤트별 핵심 정보는 bullet 최대 5개, tag 최대 8개, detail excerpt 최대 1,200자로 제한하고 현재 후보와 관련된 composite/indirect dimension만 남긴다. `parameter_mapping_ready=false`는 실행 차단 조건이 아니다. 선택 value에 승인된 source projection이 있으면 보조 근거로 사용하고, 없거나 pending/rejected이면 경고만 남긴다.
+
+한 composite dimension이 여러 파라미터에 연결되면 direct/routing 정책에 따라 모두 유지한다. 반대로 여러 dimension 또는 event type이 같은 모델 파라미터로 수렴하면 모든 source lineage를 보존한 하나의 task로 병합한다. 값은 서버가 dimension별 결과를 합산·평균하지 않고, LLM이 전체 근거를 종합해 slot별 최종 절대값 하나를 제안한다.
 
 scenario `595`를 이용한 실제 prompt 입력·출력과 제안 결과도 Flow 문서에 포함되어 있다.
 
@@ -113,7 +122,9 @@ skmip-mi-agent/
     └── reports/model_parameter_agent/     # 시나리오 테스트 리포트
 ```
 
-API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 DB mapping, Basecase/LUT, prompt와 저장 service를 사용하고, 확정 Flow는 사용자가 보낸 전체 값을 검증해 기존 proposal을 갱신한다. DB query는 Agent Flow가 직접 작성하지 않고 service와 `apps/persistence/model_parameter/`를 통해 실행한다.
+API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 v1/v3 context adapter, DB mapping, Basecase/LUT, prompt와 저장 service를 사용하고, 확정 Flow는 사용자가 보낸 전체 값을 검증해 기존 proposal을 갱신한다. v1 proposal은 대표 event ID를 저장하지만 v3 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 Agent Flow가 직접 작성하지 않고 service와 `apps/persistence/model_parameter/`를 통해 실행한다.
+
+확정 단계의 custom parameter 허용 동작과 proposal/confirmation의 기존 유한 숫자·정밀도 정규화는 그대로 유지한다. 이번 v3 연계는 parameter별 min/max·정수·단위 validator를 추가하지 않으며, canonical master·129개 dimension mapping·Basecase/LUT·mapping workbook이나 DB DDL을 변경하지 않는다. 배포 대상 DB에는 v3 scenario group/event relation·dimension value mapping schema와 proposal `mi_event_id` nullable 변경이 먼저 적용되어 있어야 한다.
 
 ## 4. 자연어 프롬프트로 배포하기
 

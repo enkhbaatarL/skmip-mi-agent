@@ -168,7 +168,11 @@ class MiDimensionValueMappingModel(AuditColumnsMixin, ORMBase):
     display_value: Mapped[str] = mapped_column(sa.Text(collation=BIN), nullable=False)
     source_projections: Mapped[Any] = mapped_column(sa.JSON, nullable=False)
     mapping_proposal: Mapped[Any] = mapped_column(sa.JSON, nullable=False)
-    mapping_version: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("1"))
+    mapping_version: Mapped[int] = mapped_column(
+        sa.Integer,
+        nullable=False,
+        server_default=sa.text("1"),
+    )
     status: Mapped[str] = mapped_column(
         sa.String(50, collation=BIN),
         nullable=False,

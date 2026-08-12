@@ -22,15 +22,9 @@ def _route_after_candidate_validation(state: ModelParameterProposalState | dict[
 
 def _route_after_basecase_filter(state: ModelParameterProposalState | dict[str, Any]) -> str:
     slots = (
-        state.parameter_slots
-        if isinstance(state, ModelParameterProposalState)
-        else state.get("parameter_slots") or []
+        state.parameter_slots if isinstance(state, ModelParameterProposalState) else state.get("parameter_slots") or []
     )
-    selected_slots = [
-        slot
-        for slot in slots
-        if slot.get("selected", True) is not False
-    ]
+    selected_slots = [slot for slot in slots if slot.get("selected", True) is not False]
     if selected_slots:
         return "propose_parameter_values"
     return "finalize_empty_parameter_values"
@@ -46,10 +40,7 @@ def _raise_no_mapping_candidates(state: ModelParameterProposalState | dict[str, 
     scenario_id = _scenario_id_from_state(state)
     raise MIBaseError(
         ErrorCode.INVALID_REQUEST,
-        detail=(
-            "No model parameter mapping candidates found"
-            f" for scenario_id={scenario_id}"
-        ),
+        detail=(f"No model parameter mapping candidates found for scenario_id={scenario_id}"),
     )
 
 
@@ -64,10 +55,7 @@ def _raise_no_proposal_parameters(
     reason: str | None = None,
 ) -> NoReturn:
     scenario_id = _scenario_id_from_state(data)
-    detail = (
-        "No valid model parameter proposal parameters generated"
-        f" for scenario_id={scenario_id}"
-    )
+    detail = f"No valid model parameter proposal parameters generated for scenario_id={scenario_id}"
     if reason:
         detail = f"{detail}: {reason}"
     raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=detail)
@@ -79,11 +67,7 @@ def _ensure_proposal_parameters(
 ) -> None:
     if proposal_parameters:
         return
-    warnings = [
-        str(warning)
-        for warning in (data.get("validation_warnings") or [])
-        if str(warning).strip()
-    ]
+    warnings = [str(warning) for warning in (data.get("validation_warnings") or []) if str(warning).strip()]
     _raise_no_proposal_parameters(
         data,
         reason="; ".join(warnings[-3:]) if warnings else None,
@@ -98,9 +82,7 @@ def _event_type_l2_id_from_context(scenario_context: dict[str, Any]) -> int | No
     scenario_group = scenario_context.get("scenario_group") or {}
     event_type = scenario_context.get("event_type") or {}
     raw_value = (
-        scenario_group.get("event_type_l2_id")
-        or event_type.get("event_type_l2_id")
-        or event_type.get("level_2_id")
+        scenario_group.get("event_type_l2_id") or event_type.get("event_type_l2_id") or event_type.get("level_2_id")
     )
     if raw_value is None:
         return None
@@ -115,11 +97,7 @@ def _scenario_dimension_keys(scenario_context: dict[str, Any]) -> set[str]:
     dimension_values = scenario.get("dimension_values")
     if not isinstance(dimension_values, dict):
         return set()
-    return {
-        _normalize_key(key)
-        for key in dimension_values
-        if _normalize_key(key)
-    }
+    return {_normalize_key(key) for key in dimension_values if _normalize_key(key)}
 
 
 def _parameter_definitions_by_name(
@@ -127,13 +105,11 @@ def _parameter_definitions_by_name(
 ) -> set[str]:
     return {
         _normalize_key(
-            definition.get("canonical_parameter_name")
-            or definition.get("parameter_name"),
+            definition.get("canonical_parameter_name") or definition.get("parameter_name"),
         )
         for definition in parameter_definitions
         if _normalize_key(
-            definition.get("canonical_parameter_name")
-            or definition.get("parameter_name"),
+            definition.get("canonical_parameter_name") or definition.get("parameter_name"),
         )
         and _normalize_key(definition.get("model_file"))
         and _normalize_key(definition.get("model_sheet"))
@@ -153,11 +129,32 @@ def _has_mapping_candidates_from_db_rows(
             detail="parameter mapping resources not loaded from DB",
         )
 
-    event_type_l2_id = _event_type_l2_id_from_context(scenario_context)
-    dimension_keys = _scenario_dimension_keys(scenario_context)
     parameter_names = _parameter_definitions_by_name(parameter_definitions)
-    if event_type_l2_id is None or not dimension_keys or not parameter_names:
+    if not parameter_names:
         return False
+
+    scenario_group = scenario_context.get("scenario_group") or {}
+    is_v3 = str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions"
+    if is_v3:
+        source_pairs = {
+            (
+                int(mapped_source["event_type_l2_id"]),
+                _normalize_key(mapped_source.get("mapping_dimension_key")),
+            )
+            for lineage in scenario_context.get("dimension_lineage") or []
+            if isinstance(lineage, dict)
+            for mapped_source in lineage.get("mapped_sources") or []
+            if isinstance(mapped_source, dict)
+            and mapped_source.get("event_type_l2_id") is not None
+            and _normalize_key(mapped_source.get("mapping_dimension_key"))
+        }
+        if not source_pairs:
+            return False
+    else:
+        event_type_l2_id = _event_type_l2_id_from_context(scenario_context)
+        dimension_keys = _scenario_dimension_keys(scenario_context)
+        if event_type_l2_id is None or not dimension_keys:
+            return False
 
     for rule in mapping_rules:
         if str(rule.get("mapping_method") or "").strip() not in {"direct", "routing"}:
@@ -166,13 +163,17 @@ def _has_mapping_candidates_from_db_rows(
             rule_event_type_l2_id = int(rule.get("event_type_l2_id"))
         except (TypeError, ValueError):
             continue
-        if rule_event_type_l2_id != event_type_l2_id:
-            continue
-        if _normalize_key(rule.get("dimension_key")) not in dimension_keys:
-            continue
+        rule_dimension_key = _normalize_key(rule.get("dimension_key"))
+        if is_v3:
+            if (rule_event_type_l2_id, rule_dimension_key) not in source_pairs:
+                continue
+        else:
+            if rule_event_type_l2_id != event_type_l2_id:
+                continue
+            if rule_dimension_key not in dimension_keys:
+                continue
         parameter_name = _normalize_key(
-            rule.get("canonical_parameter_name")
-            or rule.get("parameter_name"),
+            rule.get("canonical_parameter_name") or rule.get("parameter_name"),
         )
         if parameter_name in parameter_names:
             return True

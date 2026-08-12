@@ -87,10 +87,7 @@ def _timing_special_note(
     if elapsed_seconds is None:
         return f"REVIEW · 소요시간 미수집 (outer retry {retry_count}회)"
     if elapsed_seconds > 180:
-        return (
-            f"FAIL · 180초 초과 ({_format_seconds(elapsed_seconds)}, "
-            f"outer retry {retry_count}회)"
-        )
+        return f"FAIL · 180초 초과 ({_format_seconds(elapsed_seconds)}, outer retry {retry_count}회)"
     if retry_count:
         return f"REVIEW · outer retry {retry_count}회, 180초 이내"
     return "PASS · 특이사항 없음 (retry 0회, 180초 이내)"
@@ -127,10 +124,7 @@ def _timing_special_summary(
     if not elapsed_cases:
         return summary
     max_scenario_id, max_elapsed_seconds = max(elapsed_cases, key=lambda item: item[1])
-    return (
-        f"{summary}; 최장 scenario_id={max_scenario_id} "
-        f"({_format_seconds(max_elapsed_seconds)})"
-    )
+    return f"{summary}; 최장 scenario_id={max_scenario_id} ({_format_seconds(max_elapsed_seconds)})"
 
 
 def _proposal_parameters(final_response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -156,11 +150,9 @@ def _scenario_group_context(
 ) -> dict[str, Any]:
     group = context.get("scenario_group") or {}
     return {
-        "scenario_group_id": group.get("scenario_group_id")
-        or (target.scenario_group_id if target else None),
+        "scenario_group_id": group.get("scenario_group_id") or (target.scenario_group_id if target else None),
         "mi_event_id": group.get("mi_event_id"),
-        "event_type_l2_id": group.get("event_type_l2_id")
-        or (target.event_type_l2_id if target else None),
+        "event_type_l2_id": group.get("event_type_l2_id") or (target.event_type_l2_id if target else None),
         "request_usr_id": group.get("request_usr_id"),
         "title": group.get("title") or (target.group_title if target else None),
         "summary": _summarize_text(group.get("summary")),
@@ -199,9 +191,7 @@ def _parameter_definitions_by_name(context: dict[str, Any]) -> dict[str, dict[st
         if not isinstance(definition, dict):
             continue
         name = str(
-            definition.get("canonical_parameter_name")
-            or definition.get("parameter_name")
-            or "",
+            definition.get("canonical_parameter_name") or definition.get("parameter_name") or "",
         ).strip()
         if name:
             by_name[name] = definition
@@ -340,46 +330,11 @@ def _proposal_id(final_response: dict[str, Any]) -> int | None:
 
 
 def _fetch_proposal_db_row(model_param_proposal_id: int | None) -> dict[str, Any]:
-    if model_param_proposal_id is None:
-        return {}
-    from apps.common.configs.database.sync_database.connection import get_sync_session
+    from tests.manual.model_parameter_agent.runner_common import (
+        fetch_proposal_db_row,
+    )
 
-    session = get_sync_session()
-    try:
-        stmt = select(MiModelParamProposalModel).where(
-            MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
-            MiModelParamProposalModel.del_yn == "N",
-        )
-        proposal = session.execute(stmt).scalars().one_or_none()
-        if proposal is None:
-            return {
-                "model_param_proposal_id": model_param_proposal_id,
-                "fetch_status": "NOT_FOUND",
-            }
-        return {
-            "model_param_proposal_id": int(proposal.model_param_proposal_id),
-            "scenario_id": int(proposal.scenario_id),
-            "scenario_group_id": int(proposal.scenario_group_id),
-            "mi_event_id": int(proposal.mi_event_id),
-            "request_usr_id": (
-                int(proposal.request_usr_id)
-                if proposal.request_usr_id is not None
-                else None
-            ),
-            "status": proposal.status,
-            "callback_status": proposal.callback_status,
-            "proposal_completed_dtm": proposal.proposal_completed_dtm,
-            "callback_sent_dtm": proposal.callback_sent_dtm,
-            "confirmed_dtm": proposal.confirmed_dtm,
-            "error_code": proposal.error_code,
-            "error_message": proposal.error_message,
-            "proposal_parameters": proposal.proposal_parameters or [],
-            "confirmation_parameters": proposal.confirmation_parameters,
-            "mod_usr_logn_id": proposal.mod_usr_logn_id,
-            "mod_dtm": proposal.mod_dtm,
-        }
-    finally:
-        session.close()
+    return fetch_proposal_db_row(model_param_proposal_id)
 
 
 _ROLLBACK_SNAPSHOT_FIELDS = (
@@ -465,8 +420,7 @@ async def _run_confirmation_workflow(
         or not proposal_parameters
     ):
         result["message"] = (
-            "confirmation precondition failed: a PROPOSED row with non-empty "
-            "proposal_parameters is required"
+            "confirmation precondition failed: a PROPOSED row with non-empty proposal_parameters is required"
         )
         result["elapsed_seconds"] = time.perf_counter() - workflow_started
         return result, proposal_row
@@ -529,19 +483,13 @@ async def _run_confirmation_workflow(
         "response_id_matches": valid_data.get("modelParamProposalId") == proposal_id,
         "response_status_confirmed": valid_data.get("status") == "CONFIRMED",
         "db_status_confirmed": after_valid.get("status") == "CONFIRMED",
-        "confirmation_payload_matches": (
-            after_valid.get("confirmation_parameters") == proposal_parameters
-        ),
+        "confirmation_payload_matches": (after_valid.get("confirmation_parameters") == proposal_parameters),
         "confirmed_dtm_populated": after_valid.get("confirmed_dtm") is not None,
-        "proposal_payload_unchanged": (
-            after_valid.get("proposal_parameters") == proposal_parameters
-        ),
+        "proposal_payload_unchanged": (after_valid.get("proposal_parameters") == proposal_parameters),
     }
     request_usr_id = proposal_row.get("request_usr_id")
     if request_usr_id is not None:
-        valid_checks["modifier_matches_request_user"] = (
-            str(after_valid.get("mod_usr_logn_id")) == str(request_usr_id)
-        )
+        valid_checks["modifier_matches_request_user"] = str(after_valid.get("mod_usr_logn_id")) == str(request_usr_id)
     if all(valid_checks.values()):
         result["valid_confirmation"] = {
             "status": "PASS",
@@ -580,16 +528,10 @@ async def _run_confirmation_workflow(
             "response_id_matches": reconfirm_data.get("modelParamProposalId") == proposal_id,
             "response_status_confirmed": reconfirm_data.get("status") == "CONFIRMED",
             "db_status_confirmed": after_reconfirm.get("status") == "CONFIRMED",
-            "confirmation_payload_matches": (
-                after_reconfirm.get("confirmation_parameters") == proposal_parameters
-            ),
-            "proposal_payload_unchanged": (
-                after_reconfirm.get("proposal_parameters") == proposal_parameters
-            ),
+            "confirmation_payload_matches": (after_reconfirm.get("confirmation_parameters") == proposal_parameters),
+            "proposal_payload_unchanged": (after_reconfirm.get("proposal_parameters") == proposal_parameters),
             "confirmed_dtm_refreshed": (
-                first_confirmed_dtm is not None
-                and refreshed_dtm is not None
-                and refreshed_dtm > first_confirmed_dtm
+                first_confirmed_dtm is not None and refreshed_dtm is not None and refreshed_dtm > first_confirmed_dtm
             ),
         }
         if all(reconfirm_checks.values()):
@@ -601,10 +543,7 @@ async def _run_confirmation_workflow(
         else:
             result["reconfirmation"] = _confirmation_failure(
                 elapsed_seconds=reconfirm_elapsed,
-                message=(
-                    "reconfirmation contract failed: "
-                    f"error={reconfirm_error!r}, checks={reconfirm_checks}"
-                ),
+                message=(f"reconfirmation contract failed: error={reconfirm_error!r}, checks={reconfirm_checks}"),
                 before=_rollback_snapshot(after_valid),
                 after=_rollback_snapshot(after_reconfirm),
             )
@@ -652,11 +591,7 @@ async def _run_invalid_status_confirmation(
     from apps.common.values.error_codes import ErrorCode
 
     source_record = next(
-        (
-            record
-            for record in records
-            if (record.get("confirmation") or {}).get("status") == "PASS"
-        ),
+        (record for record in records if (record.get("confirmation") or {}).get("status") == "PASS"),
         None,
     )
     if source_record is None:
@@ -675,8 +610,7 @@ async def _run_invalid_status_confirmation(
     created_ids = {
         int(proposal_id)
         for record in records
-        if (proposal_id := (record.get("proposal_db_row") or {}).get("model_param_proposal_id"))
-        is not None
+        if (proposal_id := (record.get("proposal_db_row") or {}).get("model_param_proposal_id")) is not None
     }
     failed_proposal_id = _find_safe_failed_proposal_id(created_ids)
     if failed_proposal_id is None:
@@ -756,10 +690,7 @@ async def _confirm_scenario_result(result: dict[str, Any]) -> None:
             "status": "FAIL",
             "model_param_proposal_id": proposal_id,
             "elapsed_seconds": time.perf_counter() - confirmation_started,
-            "message": (
-                "confirmation evidence workflow raised unexpectedly: "
-                f"{confirmation_error!r}"
-            ),
+            "message": (f"confirmation evidence workflow raised unexpectedly: {confirmation_error!r}"),
             "invalid_payload": {"status": "NOT_RUN"},
             "valid_confirmation": {"status": "NOT_RUN"},
             "reconfirmation": {"status": "NOT_RUN"},
@@ -768,10 +699,7 @@ async def _confirm_scenario_result(result: dict[str, Any]) -> None:
         try:
             result["proposal_db_row"] = _fetch_proposal_db_row(proposal_id)
         except Exception as readback_error:
-            result["confirmation"]["message"] += (
-                "; final DB read-back also failed: "
-                f"{readback_error!r}"
-            )
+            result["confirmation"]["message"] += f"; final DB read-back also failed: {readback_error!r}"
 
 
 def _attach_invalid_status_confirmation(
@@ -779,11 +707,7 @@ def _attach_invalid_status_confirmation(
     invalid_status_confirmation: dict[str, Any],
 ) -> None:
     confirmation_owner = next(
-        (
-            record
-            for record in records
-            if (record.get("confirmation") or {}).get("status") == "PASS"
-        ),
+        (record for record in records if (record.get("confirmation") or {}).get("status") == "PASS"),
         None,
     )
     if confirmation_owner is None:
@@ -834,10 +758,7 @@ def _normalize_parameter_name_for_report(value: Any) -> str:
 
 
 def _parameter_name_matches(value: Any, target_parameter: str) -> bool:
-    return (
-        _normalize_parameter_name_for_report(value)
-        == _normalize_parameter_name_for_report(target_parameter)
-    )
+    return _normalize_parameter_name_for_report(value) == _normalize_parameter_name_for_report(target_parameter)
 
 
 def _candidate_parameter_name(candidate: dict[str, Any]) -> str:
@@ -856,9 +777,7 @@ def _filter_parameters_by_name(
     if not target_parameter:
         return parameters
     return [
-        parameter
-        for parameter in parameters
-        if _parameter_name_matches(_parameter_name(parameter), target_parameter)
+        parameter for parameter in parameters if _parameter_name_matches(_parameter_name(parameter), target_parameter)
     ]
 
 
@@ -879,11 +798,7 @@ def _parameter_values(parameter: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _slot_axis_field_names(parameter: dict[str, Any]) -> list[str]:
     target = _model_target(parameter)
-    raw = (
-        target.get("slotAxesFieldNames")
-        or target.get("slot_axes_field_names")
-        or []
-    )
+    raw = target.get("slotAxesFieldNames") or target.get("slot_axes_field_names") or []
     return [str(item) for item in raw] if isinstance(raw, list) else []
 
 
@@ -897,11 +812,7 @@ def _slot_coordinates_for_value(
     parameter: dict[str, Any],
     value: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
-        axis: value.get(axis)
-        for axis in _slot_axis_field_names(parameter)
-        if axis in value
-    }
+    return {axis: value.get(axis) for axis in _slot_axis_field_names(parameter) if axis in value}
 
 
 def _md_cell(value: Any, *, max_chars: int = 500) -> str:
@@ -1379,9 +1290,7 @@ def _discover_event_type_l2_ids_for_parameters(
     if not normalized_targets:
         return {}
 
-    event_type_ids_by_parameter: dict[str, set[int]] = {
-        parameter: set() for parameter in normalized_targets.values()
-    }
+    event_type_ids_by_parameter: dict[str, set[int]] = {parameter: set() for parameter in normalized_targets.values()}
     from apps.common.configs.database.sync_database.connection import get_sync_session
 
     session = get_sync_session()
@@ -1393,8 +1302,7 @@ def _discover_event_type_l2_ids_for_parameters(
             )
             .join(
                 MiModelParamDimensionMapModel,
-                MiModelParamDimensionMapModel.model_param_id
-                == MiModelParamModel.model_param_id,
+                MiModelParamDimensionMapModel.model_param_id == MiModelParamModel.model_param_id,
             )
             .where(
                 MiModelParamModel.del_yn == "N",
@@ -1533,8 +1441,7 @@ def _lut_summary_line(records: list[dict[str, Any]]) -> str:
         return "- LUT: N/A (아직 완료된 시나리오 없음)"
 
     enabled_values = {
-        bool((record.get("resolved_config") or {}).get("model_parameter_lut_enabled"))
-        for record in records
+        bool((record.get("resolved_config") or {}).get("model_parameter_lut_enabled")) for record in records
     }
     enabled_label = "enabled" if enabled_values == {True} else "disabled" if enabled_values == {False} else "mixed"
     versions = sorted({str(record["lut_version"]) for record in records if record.get("lut_version")})
@@ -1556,10 +1463,7 @@ def _confirmation_failure_summary(record: dict[str, Any]) -> str | None:
         )
         if (confirmation.get(name) or {}).get("status") == "FAIL"
     ]
-    return (
-        "FAIL · proposal 성공, confirmation/DB read-back 실패"
-        f" ({', '.join(failed_subcases) or 'precondition'})"
-    )
+    return f"FAIL · proposal 성공, confirmation/DB read-back 실패 ({', '.join(failed_subcases) or 'precondition'})"
 
 
 def _completed_scenario_result_summary(
@@ -1578,10 +1482,7 @@ def _completed_scenario_result_summary(
     if str(record.get("routing_status") or "").upper() == "REVIEW":
         return "REVIEW · proposal 성공, routing 결과 확인 필요"
     if timing_judgement == "REVIEW":
-        return (
-            "REVIEW · proposal/confirmation 성공, "
-            f"{timing_note.split(' · ', 1)[1]}"
-        )
+        return f"REVIEW · proposal/confirmation 성공, {timing_note.split(' · ', 1)[1]}"
     if confirmation.get("status") != "PASS":
         return "REVIEW · proposal 성공, confirmation 미완료"
     return "PASS · proposal/confirmation 및 DB read-back 완료"
@@ -1717,14 +1618,8 @@ def _scenario_result_table_lines(
     target_parameters: tuple[str, ...],
     target_event_type_l2_ids_by_parameter: dict[str, tuple[int, ...]],
 ) -> list[str]:
-    record_by_key = {
-        (record["target"], int(record["scenario_id"])): record
-        for record in records
-    }
-    error_by_key = {
-        (error["target"], int(error["scenario_id"])): error
-        for error in errors
-    }
+    record_by_key = {(record["target"], int(record["scenario_id"])): record for record in records}
+    error_by_key = {(error["target"], int(error["scenario_id"])): error for error in errors}
     lines = [
         "### 시나리오별 결과",
         "",
@@ -1782,9 +1677,7 @@ def _scenario_result_table_lines(
                     ),
                     parameters=_md_cell(", ".join(parameters) if parameters else "-", max_chars=180),
                     summary=_scenario_result_summary(record=record, error=error),
-                    elapsed=(
-                        f"{_format_duration(elapsed_seconds)} ({_format_seconds(elapsed_seconds)})"
-                    ),
+                    elapsed=(f"{_format_duration(elapsed_seconds)} ({_format_seconds(elapsed_seconds)})"),
                     tokens=_scenario_token_summary(record),
                 ),
             )
@@ -1812,11 +1705,7 @@ def _scenario_token_summary(record: dict[str, Any] | None) -> str:
                 return "N/A"
             totals[field] += value
 
-    return (
-        f"{totals['prompt_tokens']:,} / "
-        f"{totals['completion_tokens']:,} / "
-        f"{totals['total_tokens']:,}"
-    )
+    return f"{totals['prompt_tokens']:,} / {totals['completion_tokens']:,} / {totals['total_tokens']:,}"
 
 
 def _group_context(
@@ -1834,11 +1723,7 @@ def _group_scenario_contexts(
     records: list[dict[str, Any]],
     errors: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    return [
-        context
-        for item in [*records, *errors]
-        if (context := item.get("context") or {})
-    ]
+    return [context for item in [*records, *errors] if (context := item.get("context") or {})]
 
 
 def _failed_scenario_detail_lines(
@@ -1902,12 +1787,10 @@ def _failed_scenario_detail_lines(
         trace = dict(attempt_trace)
         trace.setdefault("error", error.get("error"))
         expected_names = [
-            _candidate_parameter_name(candidate)
-            for candidate in (trace.get("expected_candidates") or [])
+            _candidate_parameter_name(candidate) for candidate in (trace.get("expected_candidates") or [])
         ]
         selected_names = [
-            _parameter_name(adjustment)
-            for adjustment in _selected_adjustments(trace.get("result") or {})
+            _parameter_name(adjustment) for adjustment in _selected_adjustments(trace.get("result") or {})
         ]
         lines.extend(
             [
@@ -1965,10 +1848,7 @@ def _group_status(target: EventTypeTarget, records: list[dict[str, Any]], errors
     )
     target_parameter_ok = target.target_parameter is None or (
         bool(group_records)
-        and all(
-            _target_parameter_present_in_record(record, target.target_parameter)
-            for record in group_records
-        )
+        and all(_target_parameter_present_in_record(record, target.target_parameter) for record in group_records)
     )
     return (
         not group_errors
@@ -2076,18 +1956,13 @@ def _render_parameter_ordered_result_lines(
             group_errors = _errors_for_target(target, errors)
             signatures = {_signature(record) for record in group_records}
             has_expected = any(record["expected_candidates"] for record in group_records)
-            has_selected = any(
-                _selected_adjustments(record["result"])
-                for record in group_records
-            )
+            has_selected = any(_selected_adjustments(record["result"]) for record in group_records)
             value_diff_status = "N/A"
             if len(group_records) > 1 and has_expected and has_selected:
                 value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
             group_ok = _group_status(target, records, errors)
             confirmation_status = (
-                "PASS"
-                if group_records and all(_confirmation_ok(record) for record in group_records)
-                else "FAIL"
+                "PASS" if group_records and all(_confirmation_ok(record) for record in group_records) else "FAIL"
             )
             group_context = _group_context(group_records, group_errors)
 
@@ -2150,21 +2025,14 @@ def _render_parameter_ordered_result_lines(
             for record in group_records:
                 context = record["context"]
                 scenario = context.get("scenario") or {}
-                expected_names = [
-                    _candidate_parameter_name(candidate)
-                    for candidate in record["expected_candidates"]
-                ]
+                expected_names = [_candidate_parameter_name(candidate) for candidate in record["expected_candidates"]]
                 target_expected_names = [
-                    name
-                    for name in expected_names
-                    if _parameter_name_matches(name, target_parameter)
+                    name for name in expected_names if _parameter_name_matches(name, target_parameter)
                 ]
                 selected = _selected_adjustments(record["result"])
                 actual_names = [adjustment.get("parameter_name") for adjustment in selected]
                 target_actual_names = [
-                    str(name)
-                    for name in actual_names
-                    if _parameter_name_matches(name, target_parameter)
+                    str(name) for name in actual_names if _parameter_name_matches(name, target_parameter)
                 ]
                 proposal_parameters = _filter_parameters_by_name(
                     _proposal_parameters_from_record(record),
@@ -2302,8 +2170,7 @@ def _render_report(
         "",
         (
             "- confirmation: 실패 증적 없음 · 개선 필요 없음"
-            if not _confirmation_failure_count(records)
-            and (invalid_status_confirmation or {}).get("status") != "FAIL"
+            if not _confirmation_failure_count(records) and (invalid_status_confirmation or {}).get("status") != "FAIL"
             else (
                 "- confirmation: FAIL subcase의 DB before/after evidence를 기준으로 "
                 "validation 또는 transaction 경계를 우선 점검 (P0)"
@@ -2336,9 +2203,7 @@ def _render_report(
                 records=records,
                 errors=errors,
                 target_parameters=target_parameters,
-                target_event_type_l2_ids_by_parameter=(
-                    target_event_type_l2_ids_by_parameter or {}
-                ),
+                target_event_type_l2_ids_by_parameter=(target_event_type_l2_ids_by_parameter or {}),
             ),
         ],
     )
@@ -2380,9 +2245,7 @@ def _render_report(
             value_diff_status = "PASS" if len(signatures) > 1 else "FAIL"
         group_ok = _group_status(target, records, errors)
         confirmation_status = (
-            "PASS"
-            if group_records and all(_confirmation_ok(record) for record in group_records)
-            else "FAIL"
+            "PASS" if group_records and all(_confirmation_ok(record) for record in group_records) else "FAIL"
         )
         group_context = _group_context(group_records, group_errors)
         lines.extend(
@@ -2537,11 +2400,7 @@ def _render_report(
                     "title": (record["context"].get("scenario") or {}).get("title"),
                 },
             )
-    status_label = (
-        "PARAMETER_SCENARIO_STATUS"
-        if parameter_scenario_scope
-        else "GROUP_STATUS_BY_SCENARIO_GROUP"
-    )
+    status_label = "PARAMETER_SCENARIO_STATUS" if parameter_scenario_scope else "GROUP_STATUS_BY_SCENARIO_GROUP"
     invalid_status_preview = _json_preview(
         invalid_status_confirmation or {"status": "N/A"},
         max_chars=1200,
@@ -2615,21 +2474,12 @@ async def run_event_type_evaluation(
     timestamp = started_at.strftime("%Y%m%d_%H%M%S")
     if target_parameters:
         parameter_part = "_".join(
-            "".join(
-                char if char.isalnum() or char in {"-", "_"} else "_"
-                for char in parameter
-            )
+            "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in parameter)
             for parameter in target_parameters
         )
-        report_path = REPORT_DIR / (
-            f"model_parameter_proposal_evaluation_parameters_{parameter_part}_"
-            f"{timestamp}.md"
-        )
+        report_path = REPORT_DIR / (f"model_parameter_proposal_evaluation_parameters_{parameter_part}_{timestamp}.md")
     else:
-        report_path = REPORT_DIR / (
-            f"model_parameter_proposal_evaluation_event_types_{event_id_part}_"
-            f"{timestamp}.md"
-        )
+        report_path = REPORT_DIR / (f"model_parameter_proposal_evaluation_event_types_{event_id_part}_{timestamp}.md")
     records: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     invalid_status_confirmation: dict[str, Any] = {
@@ -2714,11 +2564,7 @@ async def run_event_type_evaluation(
                         continue
                     elapsed_seconds = time.perf_counter() - scenario_started_monotonic
                     context = next(
-                        (
-                            trace.get("context") or {}
-                            for trace in reversed(attempt_traces)
-                            if trace.get("context")
-                        ),
+                        (trace.get("context") or {} for trace in reversed(attempt_traces) if trace.get("context")),
                         {},
                     )
                     scenario = context.get("scenario") or {}
@@ -2779,11 +2625,7 @@ async def run_event_type_evaluation(
             ),
         )
     await asyncio.gather(
-        *(
-            run_one(target, scenario_id)
-            for target in targets
-            for scenario_id in target.scenario_ids
-        ),
+        *(run_one(target, scenario_id) for target in targets for scenario_id in target.scenario_ids),
     )
     invalid_status_confirmation = await _run_invalid_status_confirmation(records)
     _attach_invalid_status_confirmation(records, invalid_status_confirmation)

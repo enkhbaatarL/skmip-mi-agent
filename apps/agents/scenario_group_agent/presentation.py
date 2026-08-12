@@ -171,12 +171,15 @@ def _build_headers(
     dimension_definitions = group.get("dimension_definitions") or []
     if dimension_definitions:
         template_by_key = {
-            str(item.get("dimension_id")): {
-                "dim_key": item.get("dimension_id"),
+            str(item.get("dimension_id") or item.get("dimensionId")): {
+                "dim_key": item.get("dimension_id") or item.get("dimensionId"),
                 "label": item.get("label"),
                 "description": item.get("description"),
                 "required": item.get("required", False),
-                "display_order": item.get("display_order", index),
+                "display_order": item.get(
+                    "display_order",
+                    item.get("displayOrder", index),
+                ),
                 "value_enums": [
                     value.get("label")
                     for value in item.get("values") or []
@@ -185,12 +188,12 @@ def _build_headers(
                 "value_labels_by_id": _value_labels_by_id(item.get("values")),
             }
             for index, item in enumerate(dimension_definitions, start=1)
-            if isinstance(item, dict) and item.get("dimension_id")
+            if isinstance(item, dict) and (item.get("dimension_id") or item.get("dimensionId"))
         }
     else:
         event_type_l2_id = group.get("event_type_l2_id")
         template_json = (
-            ScenarioService()._load_template_json_from_db(
+            ScenarioService()._load_template_json_from_db(  # noqa: SLF001
                 int(event_type_l2_id),
             )
             if event_type_l2_id is not None
@@ -262,7 +265,11 @@ def _pressure_target(group: dict[str, Any]) -> str | None:
     return "JKM" if group.get("api_version") in {"v2", "v3", "v4"} else None
 
 
-def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] | None) -> Any:
+def _enum_id_to_label(
+    dimension_key: str,
+    value: Any,  # noqa: ANN401
+    template: dict[str, Any] | None,
+) -> Any:  # noqa: ANN401
     if value is None or not template:
         return value
     value_text = str(value)

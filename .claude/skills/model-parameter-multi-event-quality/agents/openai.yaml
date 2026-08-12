@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Parameter Multi-Event Quality"
+  short_description: "Assess v3 multi-event mapping and proposal quality"
+  default_prompt: "Use $model-parameter-multi-event-quality to discover v3 scenarios and evaluate source lineage, proposal, and confirmation quality."

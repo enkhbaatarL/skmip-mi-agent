@@ -990,8 +990,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             ]
             group_repository_cls.return_value.fetch_by_id.return_value = SimpleNamespace(
                 scenario_group_id=20,
-                mi_event_id=30,
-                event_type_l2_id=17,
                 request_usr_id=40,
                 title="group",
                 summary="",
@@ -1000,6 +998,10 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 scenario_count=1,
                 status="READY",
                 stage="DONE",
+            )
+            group_repository_cls.return_value.fetch_single_active_group_event.return_value = SimpleNamespace(
+                mi_event_id=30,
+                event_type_l2_id=17,
             )
             event_repository_cls.return_value.fetch_event_by_id.return_value = {
                 "mi_event_id": 30,
@@ -1021,6 +1023,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         }
         scenario_repository_cls.return_value.fetch_model_by_id.assert_called_once_with(100)
         group_repository_cls.return_value.fetch_by_id.assert_called_once_with(20)
+        group_repository_cls.return_value.fetch_single_active_group_event.assert_called_once_with(
+            20,
+        )
         event_repository_cls.return_value.fetch_event_by_id.assert_called_once_with(30)
         event_repository_cls.return_value.fetch_event_type_by_l2_id.assert_called_once_with(17)
         scenario_repository_cls.return_value.fetch_dimension_template.assert_called_once_with(17)
@@ -3299,8 +3304,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
 class ModelParameterEntrypointTest(unittest.IsolatedAsyncioTestCase):
     async def test_lifespan_uses_configured_reference_precision(self) -> None:
-        import model_param as model_param_entrypoint
         from apps.common.configs.config import get_settings
+        import model_param as model_param_entrypoint
 
         cfg = get_settings().model_copy(
             update={
@@ -4543,6 +4548,69 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         )
 
         assert parsed.data.confirmation_parameters[0].parameter_name == "UserCustomParameter"
+
+    def test_model_parameter_service_persists_unknown_parameter_metadata(self) -> None:
+        confirmation_parameters = [
+            {
+                "parameterName": "UserCustomParameter",
+                "modelTarget": {
+                    "modelFile": "Custom",
+                    "modelSheet": "CustomSheet",
+                    "tableName": "table9",
+                    "valueFieldNames": ["CustomValue"],
+                    "slotAxesFieldNames": ["CustomSlot"],
+                },
+                "rationale": "사용자 추가 파라미터",
+                "values": [
+                    {
+                        "CustomSlot": "A",
+                        "basecaseValue": None,
+                        "proposedValue": 1,
+                        "rationale": "사용자 입력",
+                    },
+                ],
+            },
+        ]
+        fake_session = SimpleNamespace(
+            commit=Mock(),
+            rollback=Mock(),
+            close=Mock(),
+        )
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROPOSED",
+            }
+
+            result = ModelParameterService().confirm_proposal_result(
+                model_param_proposal_id=901,
+                user_id=56,
+                confirmation_parameters=confirmation_parameters,
+            )
+
+        persisted = repository.confirm_model_param_proposal.call_args.kwargs["confirmation_parameters"]
+        assert result["status"] == "CONFIRMED"
+        assert persisted[0]["parameterName"] == "UserCustomParameter"
+        assert persisted[0]["modelTarget"]["modelFile"] == "Custom"
+        assert persisted[0]["values"][0]["CustomSlot"] == "A"
+        fake_session.commit.assert_called_once()
+        fake_session.rollback.assert_not_called()
 
     def test_confirmation_validation_accepts_known_parameter_metadata(self) -> None:
         payload = {

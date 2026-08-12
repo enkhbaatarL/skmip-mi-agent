@@ -340,7 +340,15 @@ dimension mapping은 129행이다. 정확한 DB matrix는 `scripts/model_paramet
 제안 Flow는 전체 LUT record를 서버 cache/index에 유지한다. Step2 prompt에는 동일 기간을 공유하는 leaf를
 `period_groups`로 묶고 Country→Plant→Train 고정축을 `fixed_axis_hierarchy`로 중첩하며, Step3에는 exact
 검증된 slot의 단일 effective reference만 전달한다. 파라미터별 slot 상한과 별도로 요청 전체 slot,
-Step2·Step3 compact JSON byte 상한을 node에서 LLM 호출 전에 검사한다.
+Step1.5·Step2·Step3 compact JSON byte 상한을 node에서 LLM 호출 전에 검사한다.
+
+제안 context는 Scenario Group의 `generation_strategy`에 따라 분기한다. v1은 대표 event와 기존 scenario
+dimension을 사용한다. v3 `multi_event_composite_dimensions`는
+`apps/persistence/scenario_group/`이 소유한 ordered group-event relation과
+`apps/persistence/scenario/`이 소유한 dimension-value projection을 조회하고,
+`dimensionDefinitions[].sourceRefs`를 원본 `(event_type_l2_id, dimKey)`로 역투영한다. 이 정규화된 lineage만
+기존 129개 Model Parameter mapping에 전달하며 Scenario 생성 flow나 동적 composite dimension master를
+변경하지 않는다. v3 proposal의 event 연결은 nullable이고 `scenario_group_id`가 authoritative link다.
 
 ```text
 POST /model-parameters/scenarios/{scenario_id}/proposals
@@ -402,12 +410,17 @@ POST /model-parameters/proposals/{modelParamProposalId}/confirmation
     다중 Event 그룹은 대표 Event를 임의로 선택하지 않고 두 값을 `null`로 반환한다.
 - Scenario
   - `apps/persistence/scenario/*`가 시나리오 저장/조회/동기화의 기준이다.
+  - v3 자유 dimension value의 source projection과 승인 상태 조회도 같은 domain이 소유한다.
   - 과거 `scenario_agent`의 모델/서비스/repository를 새 코드에 추가하지 않는다.
 - Model Impact Lever
   - `apps/persistence/model_impact_lever/*`가 v4 Scenario 생성용 영향 레버 catalog의 기준이다.
   - `tmm_mi_model_impact_lever_m` ORM과 레버 DTO·DB 조회를 소유한다.
   - `apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`가 모델 파라미터 binding 지원 상태 hydration과 catalog checksum 조립을 소유한다.
   - Scenario Group flow는 DB나 repository를 직접 조회하지 않고 Agent 내부 `ModelImpactLeverService`를 호출한다.
+- Model Parameter
+  - `apps/persistence/model_parameter/*`가 canonical parameter/mapping 조회와 proposal·confirmation 저장을
+    소유하고, Agent 내부 `persistence/model_parameter_service.py`가 v1/v3 context를 조합한다.
+  - v3 proposal은 `mi_event_id=NULL`을 허용하며 `scenario_group_id`로 그룹을 식별한다.
 - Signpost
   - `apps/persistence/signpost/*`가 Signpost 저장/조회 기준이다.
   - LLM stage 구현과 LangGraph node wrapper는 `subgraphs/signpost_generation/nodes.py`, subgraph 조립은 `subgraphs/signpost_generation/flow.py`에 둔다.

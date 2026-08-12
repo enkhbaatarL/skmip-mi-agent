@@ -512,6 +512,15 @@ def match_parameter_candidates(
     kb: ParameterKnowledgeBase,
     scenario_context: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    generation_strategy = str(
+        (scenario_context.get("scenario_group") or {}).get(
+            "generation_strategy",
+        )
+        or "single_event_template_dimensions",
+    )
+    if generation_strategy == "multi_event_composite_dimensions":
+        return _match_v3_parameter_candidates(kb, scenario_context)
+
     scenario = scenario_context.get("scenario") or {}
     event_type = scenario_context.get("event_type") or {}
     event_type_l2_id = _resolve_event_type_l2_id(scenario_context)
@@ -637,6 +646,236 @@ def match_parameter_candidates(
     if not candidates:
         warnings.append(
             "DB dimension-parameter 매핑 기준 직접 또는 라우팅 parameter 후보를 찾지 못했습니다.",
+        )
+    return candidates, non_inputs, warnings
+
+
+def _v3_event_type_context(
+    scenario_context: dict[str, Any],
+    event_type_l2_id: int,
+) -> dict[str, Any]:
+    for event in scenario_context.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        if _coerce_int(event.get("event_type_l2_id")) != event_type_l2_id:
+            continue
+        event_type = event.get("event_type")
+        return event_type if isinstance(event_type, dict) else {}
+    return {}
+
+
+def _v3_source_payload(
+    lineage: dict[str, Any],
+    mapped_source: dict[str, Any],
+    *,
+    mapping_method: str,
+    mapping_comment: str | None,
+) -> dict[str, Any]:
+    return {
+        "scenario_dimension_key": lineage.get("scenario_dimension_key"),
+        "dimension_key": lineage.get("scenario_dimension_key"),
+        "mapping_dimension_key": mapped_source.get("mapping_dimension_key"),
+        "source_dimension_id": lineage.get("scenario_dimension_key"),
+        "source_dimension_label": lineage.get("scenario_dimension_label"),
+        "source_dimension_description": lineage.get(
+            "scenario_dimension_description",
+        ),
+        "source_dimension_rationale": lineage.get(
+            "scenario_dimension_rationale",
+        ),
+        "source_dimension_value": lineage.get("scenario_dimension_value"),
+        "source_dimension_value_id": lineage.get(
+            "scenario_dimension_value_id",
+        ),
+        "source_dimension_value_label": lineage.get(
+            "scenario_dimension_value_label",
+        ),
+        "value_description": lineage.get("value_description"),
+        "derivation_rationale": lineage.get("derivation_rationale"),
+        "pressure_contribution": lineage.get("pressure_contribution"),
+        "event_type_l2_id": mapped_source.get("event_type_l2_id"),
+        "scenario_dimension_template_id": mapped_source.get(
+            "scenario_dimension_template_id",
+        ),
+        "source_event_ids": list(mapped_source.get("source_event_ids") or []),
+        "source_refs": [dict(mapped_source.get("source_ref") or {})],
+        "approved_source_projections": list(
+            lineage.get("approved_source_projections") or [],
+        ),
+        "parameter_mapping_ready": bool(
+            lineage.get("parameter_mapping_ready"),
+        ),
+        "is_free_value": bool(lineage.get("is_free_value")),
+        "mapping_method": mapping_method,
+        "mapping_comment": mapping_comment,
+    }
+
+
+def _v3_candidate_key(
+    *,
+    lineage: dict[str, Any],
+    mapped_source: dict[str, Any],
+    canonical_parameter_name: str,
+    model_file: str,
+    model_sheet: str,
+) -> str:
+    return "|".join(
+        [
+            "v3-source",
+            _normalize_for_key(lineage.get("scenario_dimension_key")),
+            _normalize_for_key(
+                mapped_source.get("scenario_dimension_template_id"),
+            ),
+            _normalize_for_key(mapped_source.get("event_type_l2_id")),
+            _normalize_for_key(mapped_source.get("mapping_dimension_key")),
+            _normalize_for_key(canonical_parameter_name),
+            _normalize_for_key(model_file),
+            _normalize_for_key(model_sheet),
+        ],
+    )
+
+
+def _match_v3_parameter_candidates(  # noqa: C901
+    kb: ParameterKnowledgeBase,
+    scenario_context: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    raw_lineage = scenario_context.get("dimension_lineage") or []
+    lineage_items = [item for item in raw_lineage if isinstance(item, dict)]
+    warnings: list[str] = []
+    if not lineage_items:
+        warnings.append(
+            "v3 composite dimension lineage가 없어 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        )
+        return [], [], warnings
+
+    candidates: list[dict[str, Any]] = []
+    non_inputs: list[dict[str, Any]] = []
+    seen_candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for lineage in lineage_items:
+        mapped_sources = [item for item in lineage.get("mapped_sources") or [] if isinstance(item, dict)]
+        for mapped_source in mapped_sources:
+            event_type_l2_id = _coerce_int(
+                mapped_source.get("event_type_l2_id"),
+            )
+            mapping_dimension_key = _clean_text(
+                mapped_source.get("mapping_dimension_key"),
+            )
+            if event_type_l2_id is None or not mapping_dimension_key:
+                warnings.append(
+                    "v3 source lineage의 event type 또는 mapping dimension이 비어 있어 제외했습니다: "
+                    f"dimension={lineage.get('scenario_dimension_key')}",
+                )
+                continue
+            source_rules = [
+                rule
+                for rule in kb.mapping_rules
+                if rule.event_type_l2_id == event_type_l2_id and rule.dimension_key == mapping_dimension_key
+            ]
+            if not source_rules:
+                warnings.append(
+                    "v3 sourceRef에 대응하는 DB dimension-parameter 매핑이 없어 source를 제외했습니다: "
+                    f"event_type_l2_id={event_type_l2_id}, "
+                    f"dimension_key={mapping_dimension_key}, "
+                    f"scenario_dimension={lineage.get('scenario_dimension_key')}",
+                )
+                continue
+
+            event_type = _v3_event_type_context(
+                scenario_context,
+                event_type_l2_id,
+            )
+            for rule in source_rules:
+                canonical = normalize_parameter_name(
+                    rule.canonical_parameter_name,
+                )
+                definition = kb.definition_for(canonical)
+                has_model_target = bool(definition and definition.model_file and definition.model_sheet and canonical)
+                source_payload = _v3_source_payload(
+                    lineage,
+                    mapped_source,
+                    mapping_method=rule.mapping_method,
+                    mapping_comment=rule.comment,
+                )
+                if rule.mapping_method not in {"direct", "routing"} or not has_model_target:
+                    reason = rule.comment or "수급모델 input parameter 직접 대상이 아닙니다."
+                    if rule.mapping_method in {"direct", "routing"} and not has_model_target:
+                        reason = (
+                            "tmm_mi_model_param_m에 parameter_name="
+                            f"{canonical or '-'} target 정보가 없어 후보에서 제외했습니다. "
+                            f"{reason}"
+                        )
+                    non_inputs.append(
+                        {
+                            **source_payload,
+                            "reason": reason,
+                        },
+                    )
+                    continue
+
+                model_file = definition.model_file
+                model_sheet = definition.model_sheet
+                dedupe_key = (
+                    lineage.get("scenario_dimension_key"),
+                    mapped_source.get("scenario_dimension_template_id"),
+                    event_type_l2_id,
+                    mapping_dimension_key,
+                    canonical,
+                    model_file,
+                    model_sheet,
+                    rule.mapping_method,
+                )
+                existing = seen_candidates.get(dedupe_key)
+                if existing is not None:
+                    existing["source_event_ids"] = list(
+                        dict.fromkeys(
+                            [
+                                *(existing.get("source_event_ids") or []),
+                                *(mapped_source.get("source_event_ids") or []),
+                            ],
+                        ),
+                    )
+                    continue
+
+                profile = kb.profile_for(model_file, model_sheet)
+                candidate = {
+                    "candidate_key": _v3_candidate_key(
+                        lineage=lineage,
+                        mapped_source=mapped_source,
+                        canonical_parameter_name=canonical,
+                        model_file=model_file,
+                        model_sheet=model_sheet,
+                    ),
+                    "mapping_strategy": "v3",
+                    "event_type_l2_id": event_type_l2_id,
+                    "level_2_code": _clean_text(event_type.get("level_2_code")),
+                    "event_label": _clean_text(event_type.get("level_2_label")),
+                    **source_payload,
+                    "model_file": model_file,
+                    "model_sheet": model_sheet,
+                    "model_table": definition.model_table,
+                    "parameter_name": definition.parameter_name,
+                    "canonical_parameter_name": canonical,
+                    "parameter_hint": definition.parameter_hint,
+                    "semantic_axes": definition.semantic_axes,
+                    "basecase_read_mode": definition.basecase_read_mode,
+                    "basecase_header_row": definition.basecase_header_row,
+                    "basecase_data_start_row": definition.basecase_data_start_row,
+                    "basecase_column_roles": definition.basecase_column_roles,
+                    "basecase_row_filter": definition.basecase_row_filter,
+                    "basecase_year_row": definition.basecase_year_row,
+                    "basecase_month_row": definition.basecase_month_row,
+                    "basecase_period_row": definition.basecase_period_row,
+                    "basecase_value_start_col": definition.basecase_value_start_col,
+                    "basecase_value_end_col": definition.basecase_value_end_col,
+                    "basecase_stop_rule": definition.basecase_stop_rule,
+                    "basecase_available": bool(profile and profile.sheet_exists),
+                }
+                seen_candidates[dedupe_key] = candidate
+                candidates.append(candidate)
+
+    if not candidates:
+        warnings.append(
+            "v3 sourceRef 역투영 결과 직접 또는 라우팅 parameter 후보를 찾지 못했습니다.",
         )
     return candidates, non_inputs, warnings
 

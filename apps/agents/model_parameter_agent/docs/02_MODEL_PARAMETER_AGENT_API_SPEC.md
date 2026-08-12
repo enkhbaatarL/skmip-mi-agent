@@ -13,6 +13,15 @@
 
 master 활성 범위가 canonical 10개로 확장되어도 이 문서의 endpoint, request body, proposal/confirmation payload schema는 바뀌지 않는다. 실제 응답의 `proposalParameters`에는 해당 scenario의 활성 direct/routing mapping과 exact LUT/Basecase slot을 통과한 항목만 나타난다.
 
+같은 세 API가 v1 단일 이벤트와 `generation_strategy=multi_event_composite_dimensions`인 v3 멀티 이벤트를 모두 처리한다. 요청자는 버전 필드나 event ID를 추가로 보내지 않으며, path의 `scenario_id`가 속한 scenario group으로 서버가 분기한다.
+
+| 구분 | `scenarioGroupId` | `eventId` |
+|---|---|---|
+| v1 단일 이벤트 | scenario가 속한 그룹 ID | 그룹의 대표 event ID |
+| v3 멀티 이벤트 | 여러 event를 묶는 authoritative 그룹 ID | `null` |
+
+v3에서도 endpoint와 기존 optional `eventId` 필드는 유지된다. 개별 source event는 public proposal 응답에 필드를 추가해 노출하지 않고 내부 lineage와 prompt grounding에 사용한다.
+
 ## 1. 동기 제안 API
 
 ```http
@@ -32,6 +41,8 @@ POST /model-parameters/scenarios/100/proposals/sync
   "data": {
     "modelParamProposalId": 42,
     "scenarioId": 100,
+    "scenarioGroupId": 20,
+    "eventId": 30,
     "proposalParameters": [{
       "parameterName": "GDP",
       "modelTarget": {
@@ -52,6 +63,12 @@ POST /model-parameters/scenarios/100/proposals/sync
 ```
 
 `proposalParameters`가 사용자가 검토할 제안 목록입니다. `basecaseValue`는 현재 모델 값, `lutValue`는 참고값, `proposedValue`는 AI 제안값입니다. GDP는 비율 단위이므로 이 샘플의 `0.019`는 `1.9%`, `0.0185`는 `1.85%`를 뜻합니다.
+
+위 식별자는 v1 예시다. 같은 응답이 v3 scenario를 대상으로 하면 `scenarioGroupId`는 그대로 채워지고 `eventId`는 다음처럼 명시적으로 `null`이다.
+
+```json
+{"scenarioId": 100, "scenarioGroupId": 20, "eventId": null}
+```
 
 ## 2. 비동기 제안 API
 
@@ -126,6 +143,8 @@ POST /model-parameters/proposals/42/confirmation
 
 확정할 항목은 최소 1개가 필요합니다. 이미 `CONFIRMED`인 제안을 다시 확정하면 이전 확정 내용을 새 요청으로 바꿉니다.
 
+기존 confirmation 호환성도 유지한다. canonical master에 없는 custom parameter라도 현재의 공통 payload 구조 검증을 통과하면 확정할 수 있다. proposal과 confirmation의 숫자 필드는 persistence의 기존 유한 숫자·정밀도 정규화를 적용하며, 이번 v3 지원으로 parameter별 min/max·정수·단위 validator가 새로 추가되지는 않는다.
+
 ## 4. 오류를 받았을 때 확인할 것
 
 ### 4.1 HTTP 상태와 Agent 오류 코드의 차이
@@ -173,12 +192,18 @@ HTTP `422`는 path/body 타입 오류나 잘못된 JSON처럼 FastAPI 요청 검
 |---|---:|---:|---|---|
 | scenario 또는 scenario group을 찾지 못함 | `404` | `-201` | `ENTITY_NOT_FOUND` | `요청한 리소스를 찾을 수 없습니다 - Scenario context not found: scenario_id={scenario_id}` |
 | DB mapping rule 또는 parameter definition이 비어 있음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - parameter mapping resources not loaded from DB` |
+| v3 group relation이 2~5개 경계를 벗어나거나 group event가 선택 dimension lineage에서 orphan임 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 lineage 검증 사유}` |
+| v3 `sourceEventIds`가 그룹 밖 event를 가리키거나 `sourceRefs` template이 그룹 관계와 연결되지 않음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 lineage 검증 사유}` |
 | event type과 scenario dimension에 대응하는 유효 mapping 후보가 없음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - No model parameter mapping candidates found for scenario_id={scenario_id}` |
-| proposal 저장에 필요한 scenario/group/event ID가 비정상 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {field} is required for model parameter proposal persistence` |
+| proposal 저장에 필요한 scenario/group ID 또는 v1 대표 event ID가 비정상 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {field} is required for model parameter proposal persistence` |
 | DB 연결 또는 proposal row 생성 중 예상하지 못한 예외 | `500` | `-9999` | `UNKNOWN_ERROR` | `알 수 없는 오류가 발생했습니다. - {원본 예외 메시지}` |
 | `scenario_id`, `userId` 타입 또는 JSON 형식 오류 | `422` | 없음 | 없음 | 없음. `detail` 배열 반환 |
 
 mapping 후보가 없는 요청은 `PROCESSING` row를 만들기 전에 거절합니다. proposal row 생성 중 오류가 발생하면 transaction을 rollback하므로 정상적으로 commit된 접수 row는 남지 않습니다.
+
+v3의 `parameter_mapping_ready=false`, 승인 projection 부재, pending 또는 rejected projection은 접수 거절 조건이 아니다. 승인된 projection이 있으면 보조 근거로 사용하고 나머지는 validation warning과 trace에 남긴다. 다만 source lineage 자체가 잘못됐거나 lineage에서 복원한 모든 `(event_type_l2_id, dimKey)`에 유효한 DB mapping 후보가 없으면 위 표처럼 접수 전에 실패한다.
+
+배포 전 DB에는 v3 scenario group의 전략·dimension 컬럼, event의 authoritative link인 group-event relation, dimension-value mapping과 proposal `mi_event_id` nullable schema가 먼저 적용되어 있어야 한다. Agent는 이 API 호출로 DDL을 수행하지 않으며, 필수 테이블·컬럼 또는 nullable 계약이 없으면 시작 시 schema validation이나 context 조회 단계에서 명확히 실패한다.
 
 ### 4.3 Background 처리 실패 callback과 DB 오류
 
@@ -197,6 +222,8 @@ mapping 후보가 없는 요청은 `PROCESSING` row를 만들기 전에 거절�
   }
 }
 ```
+
+위 callback도 v1 예시다. v3 성공·실패 callback은 같은 필드를 유지하되 `eventId: null`을 보내고, `scenarioGroupId`로 대상 그룹을 식별한다.
 
 현재 실패 callback에는 별도의 `code` 또는 `errorCode` 필드가 없습니다.
 

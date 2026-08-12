@@ -5,7 +5,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from apps.agents.scenario_group_agent.schemas.endpoint import EventDetailOut
+from apps.persistence.event import service as event_service
 from apps.persistence.event.repository import EventRepository
 
 
@@ -101,3 +104,34 @@ def test_event_detail_schema_preserves_context_fields() -> None:
     assert output["event"]["tags"] == ["EemsEnergyTerminal", "Gasunie"]
     assert output["event"]["sourceMiRecordIds"] == [2271, 2281]
     assert "marketImpacts" not in output["event"]
+
+
+def test_event_detail_resolves_groups_through_multi_event_relations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_repository = Mock()
+    group_repository.fetch_by_any_event_id.return_value = None
+    monkeypatch.setattr(
+        event_service,
+        "ScenarioGroupRepository",
+        lambda session: group_repository,
+    )
+    monkeypatch.setattr(
+        event_service,
+        "ScenarioRepository",
+        lambda session: Mock(),
+    )
+    monkeypatch.setattr(
+        event_service,
+        "SignpostRepository",
+        lambda session: Mock(),
+    )
+
+    payload = event_service.EventService()._with_related_group(
+        {"mi_event_id": 1116},
+        Mock(),
+    )
+
+    group_repository.fetch_by_any_event_id.assert_called_once_with(1116)
+    assert payload["related_scenario_group"] is None
+    assert payload["scenario_action_state"]["type"] == "create"

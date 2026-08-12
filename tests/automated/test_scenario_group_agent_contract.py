@@ -1128,8 +1128,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "get_signpost_generation_subgraph",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.get_signpost_generation_subgraph",
                 return_value=subgraph,
             ),
             patch.dict(
@@ -1148,10 +1147,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert subgraph.ainvoke.await_count == 2
         generation_result = result["signpost_result"]
         assert len(generation_result["signposts"]) == 1
-        statuses = {
-            item["scenario_id"]: item["status"]
-            for item in generation_result["scenario_results"]
-        }
+        statuses = {item["scenario_id"]: item["status"] for item in generation_result["scenario_results"]}
         assert statuses == {100: "success", 101: "failure"}
 
     def test_signpost_generation_runs_scenarios_in_parallel_with_configured_limit(
@@ -1198,8 +1194,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 },
             ),
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "get_signpost_generation_subgraph",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.get_signpost_generation_subgraph",
                 return_value=subgraph,
             ),
             patch.dict(
@@ -1217,10 +1212,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert max_active == 2
         assert len(result["signpost_result"]["signposts"]) == 3
-        assert all(
-            item["status"] == "success"
-            for item in result["signpost_result"]["scenario_results"]
-        )
+        assert all(item["status"] == "success" for item in result["signpost_result"]["scenario_results"])
 
     def test_signpost_partial_failure_saves_successes_without_advancing_stage(
         self,
@@ -1251,12 +1243,10 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                 return_value=[1000],
             ) as save_generated,
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "ScenarioService.update_status",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.ScenarioService.update_status",
             ) as update_scenario_status,
             patch(
-                "apps.agents.scenario_group_agent.flows.create_signposts.nodes."
-                "ScenarioGroupService.update_state",
+                "apps.agents.scenario_group_agent.flows.create_signposts.nodes.ScenarioGroupService.update_state",
             ) as update_group_state,
             self.assertRaises(MIBaseError) as error,
         ):
@@ -1548,6 +1538,53 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert serialized["table"]["headers"][0]["label"] == "기간"
         assert serialized["table"]["rows"][0]["cells"]["period"] == "단기"
         assert "impact" not in serialized["table"]["rows"][0]
+
+    def test_v3_dimension_definitions_build_headers_without_event_type(self) -> None:
+        group = {
+            "scenario_group_id": 10,
+            "mi_event_id": None,
+            "event_type_l2_id": None,
+            "title": "multi-event group",
+            "summary": None,
+            "description": None,
+            "dimension_selected": ["composite_pressure"],
+            "scenario_count": 1,
+            "status": "created",
+            "stage": "scenario_created",
+            "api_version": "v3",
+            "generation_strategy": "multi_event_composite_dimensions",
+            "dimension_definitions": [
+                {
+                    "dimensionId": "composite_pressure",
+                    "label": "복합 압력",
+                    "displayOrder": 1,
+                    "values": [{"label": "높음"}, {"label": "낮음"}],
+                },
+            ],
+        }
+        scenarios = [
+            {
+                "scenario_id": 100,
+                "title": "scenario",
+                "narrative": "narrative",
+                "dimension_values": {
+                    "composite_pressure": "composite_pressure_v1",
+                },
+                "display_order": 1,
+                "baseline_yn": "N",
+            },
+        ]
+
+        with patch.object(
+            ScenarioService,
+            "_load_template_json_from_db",
+            side_effect=AssertionError("v3 must use dimension definitions"),
+        ):
+            result = build_scenario_group_table_data(group, scenarios)
+
+        serialized = result.model_dump(by_alias=True)
+        assert serialized["table"]["headers"][0]["label"] == "복합 압력"
+        assert serialized["table"]["rows"][0]["cells"]["composite_pressure"] == "높음"
 
     def test_query_response_includes_delete_flags_and_counts(self) -> None:
         from apps.agents.scenario_group_agent.presentation import (

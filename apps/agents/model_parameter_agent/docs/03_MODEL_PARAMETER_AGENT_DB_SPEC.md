@@ -4,34 +4,44 @@
 
 | 질문 | 답 |
 |---|---|
-| DB에는 무엇이 있나요? | 파라미터 기준, 상황과 파라미터의 연결 규칙, 제안·확정 결과가 있습니다. |
-| Agent는 어떻게 사용하나요? | 앞의 두 기준표는 읽고, 제안 결과표에는 처리 결과를 저장합니다. |
+| DB에는 무엇이 있나요? | 파라미터 기준, 상황과 파라미터의 연결 규칙, v3 event lineage, 제안·확정 결과가 있습니다. |
+| Agent는 어떻게 사용하나요? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장합니다. |
 | 현재 사용하는 파라미터는 몇 개인가요? | master 21개 중 canonical 10개입니다. |
 | 이 문서의 범위는 무엇인가요? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명합니다. |
 
 > 아래 내용은 2026-08-07 외부개발 DB snapshot과 `model-parameter-canonical-v1`을 기준으로 합니다. ID, 사용자 정보, 제안값과 근거는 가렸습니다.
 
-## 1. 세 테이블을 한 문장으로 이해하기
+## 1. 핵심 테이블을 한 문장으로 이해하기
 
 | 테이블 | 역할 | Agent 사용 방식 |
 |---|---|---|
 | `tmm_mi_model_param_m` | “어떤 파라미터를 어느 모델 위치에 넣는가?”를 정한 파라미터 사전 | 읽기 |
 | `tmm_mi_model_param_dimension_map` | “이 사건과 영향 항목에는 어떤 파라미터를 검토하는가?”를 정한 연결표 | 읽기 |
+| `tmm_mi_scenario_m` | proposal 대상 scenario와 선택된 dimension value | 읽기 |
+| `tmm_mi_scenario_group_m` | v1/v3 전략, composite dimension 정의와 mapping readiness | 읽기 |
+| `tmm_mi_scenario_group_event_m` | v3 그룹의 event·event type·dimension template 관계와 표시 순서 | 읽기 |
+| `tmm_mi_dimension_value_mapping_m` | v3 자유 value의 source projection, 승인 상태와 version | 읽기 |
 | `tmm_mi_model_param_proposal_m` | Agent의 제안과 사용자의 최종 확정을 보관하는 작업 결과표 | 읽기·쓰기 |
 
 업무 흐름으로 보면 다음과 같습니다.
 
 ```mermaid
 flowchart LR
-    A[사건 유형과 영향 항목] --> B[연결표에서\n후보 찾기]
-    B --> C[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
-    C --> D[Basecase와 LUT를 참고해\n값 제안]
-    D --> E[제안 결과 저장]
-    E --> F[사용자 검토·수정]
-    F --> G[확정 결과 저장]
+    A[scenario와 group 전략] --> V{v1 / v3}
+    V -->|v1| B[대표 event type과\nscenario dimension]
+    V -->|v3| R[sourceRefs와\ngroup-event relation 역투영]
+    R --> B
+    B --> C[기존 연결표에서\n후보 찾기]
+    C --> D[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
+    D --> E[Basecase와 LUT를 참고해\n값 제안]
+    E --> F[제안 결과 저장]
+    F --> G[사용자 검토·수정]
+    G --> H[확정 결과 저장]
 ```
 
 연결표는 파라미터 사전의 항목을 가리킵니다. 결과표는 파라미터 사전과 직접 연결되지 않고, 당시 이름과 값을 JSON 이력으로 보관합니다.
+
+v3 context 테이블은 동적 composite dimension의 lineage를 기존 연결표가 이해하는 원본 event type·dimension으로 되돌리는 데 사용한다. composite dimension ID 자체를 `tmm_mi_model_param_dimension_map`에 추가하지 않는다.
 
 ## 2. 파라미터 사전: 무엇을 조정할지 알려주는 표
 
@@ -82,10 +92,36 @@ Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PAR
 
 후보 선정부터 Basecase/LUT 파싱까지 설정이 이어지는 순서는 [Basecase/LUT 문서의 설정 역할 구분](05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md#21-db와-configyaml은-각각-무엇을-정하나)에서 확인할 수 있습니다.
 
+### 3.1 v1과 v3가 같은 연결표를 사용하는 방법
+
+v1은 group의 대표 `event_type_l2_id`와 scenario의 dimension key를 연결표의 `(event_type_l2_id, dimension_key)`에 직접 대입한다. v3 `multi_event_composite_dimensions`는 다음 순서로 원본 key를 복원한다.
+
+1. `tmm_mi_scenario_group_event_m`을 `display_order` 순서로 읽고 그룹에 속한 event ID, event type L2 ID와 scenario dimension template ID를 확보한다.
+2. `tmm_mi_scenario_group_m.dimension_definitions`의 각 composite dimension에서 `source_event_ids`와 `source_refs`를 읽는다.
+3. `source_ref.scenario_dimension_template_id`가 같고 event ID가 `source_event_ids`에 포함되는 relation을 찾는다.
+4. relation의 `event_type_l2_id`와 source ref의 `dim_key`를 기존 연결표 key로 사용한다.
+5. 같은 source ref가 여러 event relation에 걸리면 후보는 중복 생성하지 않고 관련 event ID lineage만 모두 보존한다.
+
+v3 group relation은 2~5개여야 하고, 각 group event는 선택된 composite dimension의 source lineage에서 적어도 한 번 참조되어야 한다. `source_event_ids`가 그룹 밖 event를 가리키거나 source ref template과 연결되는 relation이 없으면 잘못된 lineage이므로 LLM 호출 전에 요청을 실패시킨다. relation은 유효하지만 해당 `(event_type_l2_id, dim_key)` mapping이 없으면 전체 요청을 실패시키지 않고 그 source만 제외하고 경고한다.
+
+한 composite dimension이 여러 `direct`·`routing` 파라미터에 연결되면 각 후보를 모두 유지한다. 반대로 여러 composite dimension 또는 서로 다른 event type이 동일한 모델 target·parameter로 수렴하면 모든 source lineage를 보존한 하나의 parameter task로 병합한다. `direct` 자동 통과, composite dimension별 routing 최대 2개, `indirect` 보조정보와 `na` 제외 정책은 v1과 같다.
+
+선택 value가 정의 밖 자유 value이면 `tmm_mi_dimension_value_mapping_m`에서 같은 group·composite dimension·display value의 projection을 확인한다. `status=approved` projection만 보조 근거로 사용한다. mapping row가 없거나 pending/rejected여도 proposal은 허용하고 warning을 남긴다. group의 `parameter_mapping_ready=false`도 실행 gate가 아니다.
+
+이 역투영은 canonical master 21행, 활성 10개, 129개 dimension mapping, canonical JSON·SQL·Excel, Basecase/LUT를 변경하지 않는다.
+
 ## 4. 결과표: 제안부터 확정까지 남기는 표
 
 `tmm_mi_model_param_proposal_m`은 한 번의 제안 작업을 한 행으로 관리합니다.
 주요 내용은 대상 scenario, 처리 상태, 제안 JSON, 확정 JSON, 오류와 callback 결과입니다.
+
+| 식별 컬럼 | v1 단일 이벤트 | v3 멀티 이벤트 |
+|---|---|---|
+| `scenario_id` | 요청 scenario ID | 요청 scenario ID |
+| `scenario_group_id` | scenario가 속한 그룹 ID | authoritative multi-event group ID |
+| `mi_event_id` | 대표 event ID | `NULL` |
+
+v3 proposal을 개별 event 하나에 귀속시키지 않는다. repository·DTO·serializer 소비자는 `mi_event_id`를 nullable로 처리하고 그룹 연결을 기준으로 조회해야 한다.
 
 ```mermaid
 stateDiagram-v2
@@ -139,6 +175,8 @@ stateDiagram-v2
 
 확정 JSON은 제안 JSON과 같은 모양입니다. 사용자가 수정했다면 `proposedValue`에 수정값이 들어가며, 후속 조회에서는 확정값을 우선 사용합니다.
 
+확정은 기존 호환성을 유지해 canonical master에 없는 custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. proposal과 confirmation의 숫자 값에는 동일한 유한 숫자·정밀도 정규화를 적용한다. 이번 v3 기능은 parameter별 min/max·정수·단위 validator를 추가하지 않는다.
+
 ## 6. 운영자가 기억할 점
 
 - 새 파라미터를 추가하려면 이름만 등록하는 것으로 끝나지 않습니다. 모델 위치, Basecase 읽기 기준, 사건·영향 항목 연결이 함께 맞아야 합니다.
@@ -146,6 +184,8 @@ stateDiagram-v2
 - 같은 좌표에서는 Basecase 값이 LUT 값보다 우선합니다. DB는 어느 파일과 위치를 읽을지 정하고, 실제 참고값은 Basecase/LUT에서 얻습니다.
 - 확정은 새 결과 행을 추가하지 않고 기존 제안 행을 `CONFIRMED`로 갱신합니다. 다시 확정하면 이전 확정 내용이 최신 요청으로 바뀝니다.
 - 실패 원인은 결과표의 오류 정보에 남고, 비동기 요청은 callback 상태도 함께 확인해야 합니다.
+- v3 배포 전 대상 DB에는 scenario group의 API version·generation strategy·dimension definitions·mapping readiness 컬럼, event의 authoritative link인 group-event relation과 dimension-value mapping 테이블, proposal `mi_event_id` nullable 변경이 먼저 적용되어 있어야 합니다. Scenario Group master에는 `mi_event_id`·`event_type_l2_id` 직접 컬럼을 두지 않습니다.
+- Agent는 이 기능에서 DDL이나 canonical DML을 수행하지 않습니다. 시작 시 schema validation과 context 조회가 필수 테이블·컬럼·nullable 계약 누락을 명확히 차단합니다.
 
 ## 관련 문서
 

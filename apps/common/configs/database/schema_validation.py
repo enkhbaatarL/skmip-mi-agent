@@ -81,30 +81,25 @@ def find_schema_validation_result(engine: Engine, tables: Sequence[Table]) -> Sc
 
             if not _types_match(expected.type, actual["type"]):
                 errors.append(
-                    f"{table.name}.{column_name}: type mismatch "
-                    f"(ORM={expected.type!s}, DB={actual['type']!s})"
+                    f"{table.name}.{column_name}: type mismatch (ORM={expected.type!s}, DB={actual['type']!s})"
                 )
 
             actual_nullable = bool(actual["nullable"])
             if expected.nullable != actual_nullable:
                 message = (
-                    f"{table.name}.{column_name}: nullable mismatch "
-                    f"(ORM={expected.nullable}, DB={actual_nullable})"
+                    f"{table.name}.{column_name}: nullable mismatch (ORM={expected.nullable}, DB={actual_nullable})"
                 )
                 if expected.nullable is False and actual_nullable is True:
-                    # ORM nullable=False, DB nullable=True (DB가 더 느슨함) → warning 
+                    # ORM nullable=False, DB nullable=True (DB가 더 느슨함) → warning
                     warnings.append(message)
                 else:
-                    # ORM nullable=True, DB nullable=False (DB가 더 엄격함) → error 
+                    # ORM nullable=True, DB nullable=False (DB가 더 엄격함) → error
                     errors.append(message)
 
         expected_pk = {column.name for column in table.primary_key.columns}
         actual_pk = set(inspector.get_pk_constraint(table.name).get("constrained_columns") or [])
         if expected_pk != actual_pk:
-            errors.append(
-                f"{table.name}: primary key mismatch "
-                f"(ORM={sorted(expected_pk)}, DB={sorted(actual_pk)})"
-            )
+            errors.append(f"{table.name}: primary key mismatch (ORM={sorted(expected_pk)}, DB={sorted(actual_pk)})")
 
     return SchemaValidationResult(errors=errors, warnings=warnings)
 
