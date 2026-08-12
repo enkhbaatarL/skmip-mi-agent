@@ -43,6 +43,13 @@ class TraceContext(BaseModel):
             "AIP aip-chat-id header로 사용된다."
         ),
     )
+    tags: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Agent/flow별 MLflow trace tag. app_id, session_id, api_identifier 공통 태그는 "
+            "이 값보다 우선한다."
+        ),
+    )
 
 
 class _TraceManager(Protocol):
@@ -112,7 +119,8 @@ def _mlflow_metadata(context: TraceContext) -> dict[str, str]:
 
 
 def _mlflow_tags(context: TraceContext) -> dict[str, str]:
-    tags = {"app_id": context.app_identifier}
+    tags = dict(context.tags)
+    tags["app_id"] = context.app_identifier
     if context.session_id:
         tags["session_id"] = context.session_id
     if context.api_identifier:

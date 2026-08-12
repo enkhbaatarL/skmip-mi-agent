@@ -1,7 +1,5 @@
 name: skmip
 
-version: "3.9"
-
 services:
   scenario-group-agent:
     build:

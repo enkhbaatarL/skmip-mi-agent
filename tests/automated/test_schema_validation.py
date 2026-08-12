@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, text
+from sqlalchemy import Boolean, Column, Integer, MetaData, String, Table, create_engine, text
+from sqlalchemy.dialects.mysql import TINYINT
 
 from apps.common.configs.database.schema_validation import (
     SchemaMismatchError,
+    _types_match,
     find_schema_mismatches,
     find_schema_validation_result,
     validate_schema,
@@ -30,6 +32,12 @@ class SchemaValidationTest(unittest.TestCase):
         metadata.create_all(self.engine)
 
         self.assertEqual(find_schema_mismatches(self.engine, [table]), [])
+
+    def test_mysql_tinyint_one_matches_boolean(self) -> None:
+        assert _types_match(Boolean(), TINYINT(display_width=1))
+
+    def test_mysql_tinyint_without_boolean_width_does_not_match_boolean(self) -> None:
+        assert not _types_match(Boolean(), TINYINT())
 
     def test_schema_difference_raises_with_details(self) -> None:
         orm_metadata = MetaData()

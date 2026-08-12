@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import pytest
 
 from apps.common.exceptions.custom import MIBaseError
@@ -52,6 +52,20 @@ class _FakeStream:
             raise self._final_error
 
 
+class _FakeStrictStream:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> _FakeStrictStream:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    async def get_final_completion(self) -> object:
+        return self._response
+
+
 def _content_chunk(content: str) -> object:
     return SimpleNamespace(
         choices=[SimpleNamespace(delta=SimpleNamespace(content=content))],
@@ -63,9 +77,23 @@ def _usage_chunk(usage: _Usage) -> object:
     return SimpleNamespace(choices=[], usage=usage)
 
 
-def _nonstream_response(content: str | None, usage: _Usage | None = None) -> object:
+def _nonstream_response(
+    content: str | None,
+    usage: _Usage | None = None,
+    *,
+    parsed: BaseModel | None = None,
+    refusal: str | None = None,
+) -> object:
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=content,
+                    parsed=parsed,
+                    refusal=refusal,
+                ),
+            ),
+        ],
         usage=usage,
     )
 
@@ -75,18 +103,28 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
         self,
         create: AsyncMock,
         *,
+        output_schema: type[BaseModel] = _StructuredOutput,
+        parse: AsyncMock | None = None,
+        strict_stream: MagicMock | None = None,
         stream: bool = False,
         reasoning_effort: llm_client.ReasoningEffortOption | None = None,
         max_retries: int = 2,
+        strict: bool = False,
     ) -> tuple[
-        llm_client.LLMStructuredResult[_StructuredOutput],
+        llm_client.LLMStructuredResult[BaseModel],
         MagicMock,
         MagicMock,
         AsyncMock,
     ]:
+        parse = parse or AsyncMock()
+        strict_stream = strict_stream or MagicMock()
         client = SimpleNamespace(
             chat=SimpleNamespace(
-                completions=SimpleNamespace(create=create),
+                completions=SimpleNamespace(
+                    create=create,
+                    parse=parse,
+                    stream=strict_stream,
+                ),
             ),
         )
         close = AsyncMock()
@@ -101,10 +139,14 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
             patch.object(llm_client, "get_http_semaphore", return_value=asyncio.Semaphore(1)),
             patch.object(llm_client, "get_current_langchain_callbacks", return_value=None),
             patch.object(llm_client, "accumulate_usage", accumulate_usage),
-            patch.object(llm_client, "get_settings", return_value=object()),
+            patch.object(
+                llm_client,
+                "get_settings",
+                return_value=SimpleNamespace(llm_structured_output_strict=strict),
+            ),
         ):
             result = await llm_client.invoke_llm_structured_output(
-                output_schema=_StructuredOutput,
+                output_schema=output_schema,
                 messages=[{"role": "user", "content": "return json"}],
                 model_name="test-model",
                 max_retries=max_retries,
@@ -113,6 +155,74 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
             )
 
         return result, create_client, accumulate_usage, close
+
+    async def test_strict_nonstream_uses_sdk_parse_with_same_pydantic_schema(self) -> None:
+        create = AsyncMock()
+        parsed = _StructuredOutput(value=10)
+        parse = AsyncMock(
+            return_value=_nonstream_response(
+                '{"value":10}',
+                _Usage(),
+                parsed=parsed,
+            ),
+        )
+
+        result, _, _, _ = await self._invoke(
+            create,
+            parse=parse,
+            strict=True,
+        )
+
+        assert result.result is parsed
+        assert parse.await_args.kwargs["response_format"] is _StructuredOutput
+        assert "stream" not in parse.await_args.kwargs
+        create.assert_not_awaited()
+
+    async def test_pydantic_validation_error_is_classified_as_invalid_response(self) -> None:
+        create = AsyncMock()
+        with pytest.raises(ValidationError) as caught:
+            _StructuredOutput.model_validate({"value": "not-an-integer"})
+        parse = AsyncMock(side_effect=caught.value)
+
+        with pytest.raises(MIBaseError) as error:
+            await self._invoke(
+                create,
+                parse=parse,
+                strict=True,
+            )
+
+        assert error.value.error_code is llm_client.ErrorCode.LLM_INVALID_RESPONSE_ERROR
+        create.assert_not_awaited()
+
+    async def test_strict_stream_uses_sdk_parser_without_raw_stream_flag(self) -> None:
+        create = AsyncMock()
+        parse = AsyncMock()
+        parsed = _StructuredOutput(value=19)
+        strict_stream = MagicMock(
+            return_value=_FakeStrictStream(
+                _nonstream_response(
+                    '{"value":19}',
+                    _Usage(),
+                    parsed=parsed,
+                ),
+            ),
+        )
+
+        result, _, _, _ = await self._invoke(
+            create,
+            parse=parse,
+            strict_stream=strict_stream,
+            stream=True,
+            strict=True,
+        )
+
+        assert result.result is parsed
+        request = strict_stream.call_args.kwargs
+        assert request["response_format"] is _StructuredOutput
+        assert request["stream_options"] == {"include_usage": True}
+        assert "stream" not in request
+        create.assert_not_awaited()
+        parse.assert_not_awaited()
 
     async def test_nonstream_returns_parsed_result_and_usage_without_stream_options(self) -> None:
         create = AsyncMock(return_value=_nonstream_response('{"value":11}', _Usage()))
@@ -127,6 +237,7 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
         assert "stream" not in request
         assert "stream_options" not in request
         assert "reasoning_effort" not in request
+        assert request["response_format"]["json_schema"]["strict"] is False
         create_client.assert_called_once_with(max_retries=2)
         accumulate_usage.assert_called_once_with(result.usage)
         close.assert_awaited_once()
@@ -200,6 +311,19 @@ class StructuredOutputConnectorTest(unittest.IsolatedAsyncioTestCase):
 
         assert result.result.value == 15
         assert create.await_count == 2
+
+    async def test_stream_schema_validation_is_not_retried_by_connector(self) -> None:
+        create = AsyncMock(
+            return_value=_FakeStream(
+                [_content_chunk('{"value":"not-an-integer"}')],
+            ),
+        )
+
+        with pytest.raises(MIBaseError) as error:
+            await self._invoke(create, stream=True, max_retries=2)
+
+        assert error.value.error_code is llm_client.ErrorCode.LLM_INVALID_RESPONSE_ERROR
+        assert create.await_count == 1
 
     async def test_reasoning_default_and_none_omit_request_key(self) -> None:
         for reasoning_effort in (None, "default"):

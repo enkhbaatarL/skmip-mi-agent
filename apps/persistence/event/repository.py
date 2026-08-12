@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 from typing import Any
 
-from datetime import date
 from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import joinedload
 
@@ -16,6 +16,21 @@ from apps.persistence.event.models import (
 
 
 class EventRepository(BaseSyncSQLRepository):
+    def lock_events(self, mi_event_ids: list[int]) -> list[int]:
+        """Lock active Event source rows in a deterministic order for create preparation."""
+        if not mi_event_ids:
+            return []
+        stmt = (
+            select(MiEventModel.mi_event_id)
+            .where(
+                MiEventModel.mi_event_id.in_(sorted(mi_event_ids)),
+                MiEventModel.del_yn == "N",
+            )
+            .order_by(MiEventModel.mi_event_id)
+            .with_for_update()
+        )
+        return [int(mi_event_id) for mi_event_id in self.session.execute(stmt).scalars().all()]
+
     def list_events(
         self,
         *,
@@ -196,26 +211,22 @@ class EventRepository(BaseSyncSQLRepository):
             "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
             "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
             "latest_record_first_created": (
-                event.latest_record_first_created.isoformat()
-                if event.latest_record_first_created
-                else ""
+                event.latest_record_first_created.isoformat() if event.latest_record_first_created else ""
             ),
             "oldest_record_first_created": (
-                event.oldest_record_first_created.isoformat()
-                if event.oldest_record_first_created
-                else ""
+                event.oldest_record_first_created.isoformat() if event.oldest_record_first_created else ""
             ),
             "event_type": {
+                "event_type_l1_id": (int(l1.event_type_l1_id) if l1 else None),
+                "event_type_l2_id": (int(l2.event_type_l2_id) if l2 else None),
                 "level_1_code": l1.level_1_code if l1 else "",
+                "level_1_label": l1.level_1_label if l1 else "",
                 "level_2_code": l2.level_2_code if l2 else "",
+                "level_2_label": l2.level_2_label if l2 else "",
             },
             "language": "ko",
             "occurred_at": event.occurred_at.isoformat() if event.occurred_at else "",
-            "tags": [
-                str(item).strip()
-                for item in self._parse_json_list(event.tags_json, wrapper_key="tags")
-                if item
-            ],
+            "tags": [str(item).strip() for item in self._parse_json_list(event.tags_json, wrapper_key="tags") if item],
         }
 
     def _event_to_backoffice_dict(self, event: MiEventModel) -> dict[str, Any]:

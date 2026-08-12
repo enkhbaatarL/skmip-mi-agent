@@ -31,6 +31,8 @@ class CheckResult:
 @dataclass
 class ReviewContext:
     group: dict[str, Any]
+    events: list[dict[str, Any]]
+    generation_diagnostics: dict[str, Any]
     scenarios: list[dict[str, Any]]
     template_dims: list[dict[str, Any]]
     selected_dims: list[str]

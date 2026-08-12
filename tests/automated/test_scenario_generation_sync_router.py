@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from apps.agents.scenario_group_agent.routers.scenario_generation_sync import router
 from apps.agents.scenario_group_agent.schemas.endpoint import (
-    CreateScenariosOut,
     ValidateScenariosCallBackScenarioGroup,
     ValidateScenariosOut,
 )
@@ -22,39 +21,6 @@ def _client() -> TestClient:
 
 
 class TestScenarioGenerationSyncRouter:
-    def test_create_scenarios_sync_returns_callback_body(self) -> None:
-        with (
-            patch(
-                "apps.agents.scenario_group_agent.routers.scenario_generation_sync.prepare_create_scenarios",
-                return_value={
-                    "scenario_group_id": 10,
-                    "event_data": {"mi_event_id": 100},
-                    "user_id": 101,
-                    "should_run_background": True,
-                },
-            ) as prepare,
-            patch(
-                "apps.agents.scenario_group_agent.routers.scenario_generation_sync.run_create_scenarios_inline",
-                new=AsyncMock(return_value=CreateScenariosOut(result="success", reason=None)),
-            ) as run_inline,
-        ):
-            response = _client().post("/scenario-groups/sync", json={"miEventId": 100, "userId": 101})
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "result": "success",
-            "reason": None,
-            "scenarioGroup": None,
-            "table": None,
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        }
-        prepare.assert_called_once_with(100, 101)
-        run_inline.assert_awaited_once_with(
-            scenario_group_id=10,
-            event_data={"mi_event_id": 100},
-            user_id=101,
-        )
-
     def test_validate_scenarios_sync_returns_callback_body(self) -> None:
         with (
             patch(

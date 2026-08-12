@@ -16,6 +16,11 @@ class ErrorCode(Enum):
     SCENARIO_VALIDATION_INPUT_ERROR = (-1002, "시나리오 검증 입력 오류", 422)
     SCENARIO_GROUP_OWNERSHIP_CONFLICT = (-1003, "시나리오 그룹 생성 권한이 없습니다. 다른 사용자에 의해 시나리오가 생성중입니다.", 403)
     SCENARIO_GROUP_ADMIN_FORBIDDEN = (-1004, "시나리오 그룹 관리자 권한이 없습니다.", 403)
+    SCENARIO_GROUP_OPERATION_CONFLICT = (
+        -1005,
+        "실행 중인 Scenario Group 작업과 충돌합니다.",
+        409,
+    )
 
     # 추후 분류 예정
     FLOW_MAPPING_FAILED = (-2000, "Flow매핑에 실패했습니다.", 500)

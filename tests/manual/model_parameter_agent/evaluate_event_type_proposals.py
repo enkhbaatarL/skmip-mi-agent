@@ -35,6 +35,7 @@ from apps.persistence.model_parameter.models import (
 )
 from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.scenario_group.models import (
+    MiScenarioGroupEventModel,
     MiScenarioGroupModel,
 )
 from tests.manual.model_parameter_agent.evaluate_proposals import (
@@ -1147,26 +1148,35 @@ def _discover_parameter_scenario_targets(
         stmt = (
             select(
                 MiScenarioModel.scenario_id,
-                MiScenarioGroupModel.event_type_l2_id,
+                MiScenarioGroupEventModel.event_type_l2_id,
                 MiScenarioGroupModel.scenario_group_id,
                 MiScenarioGroupModel.title,
                 MiEventTypeL2Model.level_2_label,
             )
+            .distinct()
             .join(
                 MiScenarioGroupModel,
                 MiScenarioGroupModel.scenario_group_id == MiScenarioModel.scenario_group_id,
             )
             .join(
+                MiScenarioGroupEventModel,
+                MiScenarioGroupEventModel.scenario_group_id == MiScenarioGroupModel.scenario_group_id,
+            )
+            .join(
                 MiEventTypeL2Model,
-                MiEventTypeL2Model.event_type_l2_id == MiScenarioGroupModel.event_type_l2_id,
+                MiEventTypeL2Model.event_type_l2_id == MiScenarioGroupEventModel.event_type_l2_id,
             )
             .where(
                 MiScenarioModel.scenario_id.in_(scenario_ids),
                 MiScenarioModel.del_yn == "N",
                 MiScenarioGroupModel.del_yn == "N",
+                MiScenarioGroupEventModel.del_yn == "N",
                 MiEventTypeL2Model.del_yn == "N",
             )
-            .order_by(MiScenarioModel.scenario_id)
+            .order_by(
+                MiScenarioModel.scenario_id,
+                MiScenarioGroupEventModel.event_type_l2_id,
+            )
         )
         rows = session.execute(stmt).all()
     finally:
@@ -1260,17 +1270,24 @@ def _discover_targets(
 
         group_stmt = (
             select(
-                MiScenarioGroupModel.event_type_l2_id,
+                MiScenarioGroupEventModel.event_type_l2_id,
                 MiScenarioGroupModel.scenario_group_id,
                 MiScenarioGroupModel.title,
             )
+            .distinct()
+            .select_from(MiScenarioGroupModel)
+            .join(
+                MiScenarioGroupEventModel,
+                MiScenarioGroupEventModel.scenario_group_id == MiScenarioGroupModel.scenario_group_id,
+            )
             .where(
                 MiScenarioGroupModel.del_yn == "N",
+                MiScenarioGroupEventModel.del_yn == "N",
             )
         )
         if selected_event_type_l2_ids:
             group_stmt = group_stmt.where(
-                MiScenarioGroupModel.event_type_l2_id.in_(selected_event_type_l2_ids),
+                MiScenarioGroupEventModel.event_type_l2_id.in_(selected_event_type_l2_ids),
             )
         if group_title_prefix:
             group_stmt = group_stmt.where(
@@ -1278,7 +1295,7 @@ def _discover_targets(
             )
         groups = session.execute(
             group_stmt.order_by(
-                MiScenarioGroupModel.event_type_l2_id,
+                MiScenarioGroupEventModel.event_type_l2_id,
                 MiScenarioGroupModel.scenario_group_id,
             ),
         ).all()
@@ -1287,19 +1304,26 @@ def _discover_targets(
             select(
                 MiScenarioModel.scenario_group_id,
                 MiScenarioModel.scenario_id,
+                MiScenarioModel.display_order,
             )
+            .distinct()
             .join(
                 MiScenarioGroupModel,
                 MiScenarioGroupModel.scenario_group_id == MiScenarioModel.scenario_group_id,
             )
+            .join(
+                MiScenarioGroupEventModel,
+                MiScenarioGroupEventModel.scenario_group_id == MiScenarioGroupModel.scenario_group_id,
+            )
             .where(
                 MiScenarioGroupModel.del_yn == "N",
+                MiScenarioGroupEventModel.del_yn == "N",
                 MiScenarioModel.del_yn == "N",
             )
         )
         if selected_event_type_l2_ids:
             scenario_stmt = scenario_stmt.where(
-                MiScenarioGroupModel.event_type_l2_id.in_(selected_event_type_l2_ids),
+                MiScenarioGroupEventModel.event_type_l2_id.in_(selected_event_type_l2_ids),
             )
         if group_title_prefix:
             scenario_stmt = scenario_stmt.where(
@@ -1316,7 +1340,7 @@ def _discover_targets(
         session.close()
 
     scenario_ids_by_group: dict[int, list[int]] = defaultdict(list)
-    for scenario_group_id, scenario_id in scenario_rows:
+    for scenario_group_id, scenario_id, _display_order in scenario_rows:
         scenario_ids_by_group[int(scenario_group_id)].append(int(scenario_id))
 
     targets: list[EventTypeTarget] = []

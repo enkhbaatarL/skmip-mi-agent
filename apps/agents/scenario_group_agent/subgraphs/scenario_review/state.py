@@ -11,6 +11,8 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.schema import (
 
 class ScenarioReviewState(BaseModel):
     group: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    generation_diagnostics: dict[str, Any] = Field(default_factory=dict)
     requested_rows: list[dict[str, Any]] = Field(default_factory=list)
     requested_headers: list[dict[str, Any]] = Field(default_factory=list)
     persisted_scenarios: list[dict[str, Any]] = Field(default_factory=list)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -13,6 +14,8 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
     EventTypeTarget,
     _build_parameter_scenario_targets,
     _confirmation_ok,
+    _discover_parameter_scenario_targets,
+    _discover_targets,
     _failed_scenario_detail_lines,
     _group_status,
     _lut_summary_line,
@@ -543,6 +546,53 @@ def test_parameter_scenario_targets_reject_scenarios_from_different_groups() -> 
                 (307, 21, 61, "국가별 경기 B", "국가별 경기"),
             ],
         )
+
+
+def test_parameter_scenario_discovery_joins_scenario_group_event_relation() -> None:
+    selections = _parse_parameter_scenarios(("GDP=305",), ("GDP",))
+    result = Mock()
+    result.all.return_value = [(305, 21, 60, "국가별 경기", "국가별 경기")]
+    session = Mock()
+    session.execute.return_value = result
+
+    with patch(
+        "apps.common.configs.database.sync_database.connection.get_sync_session",
+        return_value=session,
+    ):
+        targets = _discover_parameter_scenario_targets(selections)
+
+    statement = str(session.execute.call_args.args[0])
+    assert "JOIN tmm_mi_scenario_group_event_m" in statement
+    assert "tmm_mi_scenario_group_event_m.event_type_l2_id" in statement
+    assert targets == (EventTypeTarget(21, "국가별 경기", 60, "국가별 경기", (305,), "GDP"),)
+    session.close.assert_called_once_with()
+
+
+def test_event_type_target_discovery_joins_relation_without_duplicate_scenarios() -> None:
+    label_result = Mock()
+    label_result.all.return_value = [(21, "국가별 경기")]
+    group_result = Mock()
+    group_result.all.return_value = [(21, 60, "국가별 경기")]
+    scenario_result = Mock()
+    scenario_result.all.return_value = [(60, 305, 0)]
+    session = Mock()
+    session.execute.side_effect = [label_result, group_result, scenario_result]
+
+    with patch(
+        "apps.common.configs.database.sync_database.connection.get_sync_session",
+        return_value=session,
+    ):
+        targets = _discover_targets((21,))
+
+    group_statement = str(session.execute.call_args_list[1].args[0])
+    scenario_statement = str(session.execute.call_args_list[2].args[0])
+    assert "JOIN tmm_mi_scenario_group_event_m" in group_statement
+    assert "JOIN tmm_mi_scenario_group_event_m" in scenario_statement
+    assert group_statement.startswith("SELECT DISTINCT")
+    assert scenario_statement.startswith("SELECT DISTINCT")
+    assert "tmm_mi_scenario_m.display_order" in scenario_statement
+    assert targets == (EventTypeTarget(21, "국가별 경기", 60, "국가별 경기", (305,)),)
+    session.close.assert_called_once_with()
 
 
 def test_explicit_parameter_targets_do_not_mix_scenarios_in_the_same_group() -> None:

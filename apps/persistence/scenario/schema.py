@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from apps.persistence.enums import ScenarioStatus
 from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.schema_base import ApiModel
+
+
+class RelatedMarket(ApiModel):
+    market: Literal["TTF", "HH"]
+    rationale: str = Field(min_length=1)
+
+    @field_validator("rationale")
+    @classmethod
+    def _normalize_rationale(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("related market rationale must not be blank")
+        return normalized
 
 
 class ScenarioPayload(ApiModel):
@@ -21,6 +34,10 @@ class ScenarioPayload(ApiModel):
     probability_score: Decimal | None = None
     probability_delta: Decimal | None = Decimal("0.0")
     baseline_yn: str | None = "N"
+    global_pressure_band: str | None = None
+    scenario_role: str | None = None
+    global_pressure_rationale: str | None = None
+    related_markets: list[RelatedMarket] = Field(default_factory=list)
     status: str = ScenarioStatus.CREATING.value
     del_yn: str | None = None
 
@@ -38,6 +55,14 @@ class ScenarioPayload(ApiModel):
                 "probability_score": model.probability_score,
                 "probability_delta": model.probability_delta,
                 "baseline_yn": model.baseline_yn,
+                "global_pressure_band": model.global_pressure_band,
+                "scenario_role": model.scenario_role,
+                "global_pressure_rationale": model.global_pressure_rationale,
+                "related_markets": [
+                    item
+                    for item in (getattr(model, "related_markets", None) or [])
+                    if isinstance(item, dict) and item.get("market") in {"TTF", "HH"}
+                ],
                 "status": model.status,
                 "del_yn": getattr(model, "del_yn", None),
             }
@@ -120,6 +145,7 @@ class ScenarioPipelineTemplateDimension(BaseModel):
         description="Dimension 값 후보 목록",
     )
     display_order: int = Field(default=999999, description="표시 순서")
+    description: str = Field(default="", description="Dimension 의미 설명")
 
     @model_validator(mode="after")
     def _validate_template_dimension(self) -> "ScenarioPipelineTemplateDimension":
@@ -127,12 +153,13 @@ class ScenarioPipelineTemplateDimension(BaseModel):
         if not dim_key:
             raise ValueError("dim_key is required.")
         enums = [str(value).strip() for value in self.value_enums if str(value).strip()]
-        if len(enums) < 2:
-            raise ValueError(f"value_enums must include at least two values: dim_key={dim_key}")
+        if len(enums) == 1:
+            raise ValueError(f"value_enums must be empty or include at least two values: dim_key={dim_key}")
         if len(set(enums)) != len(enums):
             raise ValueError(f"value_enums contains duplicates: dim_key={dim_key}")
         self.dim_key = dim_key
         self.label = str(self.label).strip() or dim_key
+        self.description = str(self.description).strip() or self.label
         self.value_enums = enums
         return self
 
@@ -150,12 +177,17 @@ class ScenarioPipelineTemplateDimension(BaseModel):
         return {
             "dim_key": self.dim_key,
             "label_ko": self.label,
-            "description": self.label,
+            "description": self.description,
             "enum": self.enum_items(),
         }
 
 
 class ScenarioPipelineTemplate(BaseModel):
+    scenario_dimension_template_id: int | None = None
+    event_type_l2_id: int | None = None
+    event_type_definition: str = ""
+    lng_price_impact_examples: str = ""
+    template_checksum: str = ""
     label_ko: str = Field(default="", description="템플릿 라벨")
     template_dimensions_total: int | None = Field(
         default=None,
@@ -192,3 +224,105 @@ class ScenarioPipelineTemplate(BaseModel):
 
     def resolved_total(self) -> int:
         return self.template_dimensions_total or len(self.dimensions)
+
+
+SourceType = Literal[
+    "event_fact",
+    "template_domain_knowledge",
+    "scenario_assumption",
+    "derived_interpretation",
+]
+
+SelectionCriterion = Literal[
+    "direct_event_fact",
+    "lng_impact_path",
+    "both",
+    "none",
+]
+
+
+class SourceLineage(ApiModel):
+    event_id: int
+    event_type_l2_id: int
+    scenario_dimension_template_id: int | None = None
+    template_checksum: str | None = None
+    dim_key: str = Field(min_length=1)
+    value: str | None = None
+    source_type: SourceType
+    assumption_yn: Literal["Y", "N"]
+    rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_assumption_contract(self) -> SourceLineage:
+        expected = "Y" if self.source_type == "scenario_assumption" else "N"
+        if self.assumption_yn != expected:
+            raise ValueError(
+                "assumption_yn must be Y only for source_type=scenario_assumption",
+            )
+        return self
+
+
+class DimensionValueDefinition(ApiModel):
+    value_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    pressure_contribution: str | None = None
+    source_assignments: list[SourceLineage] = Field(default_factory=list)
+
+
+class ImpactLeverReference(ApiModel):
+    # LLM output selects a stable lever code. The v4 finalizer hydrates the
+    # catalog PK and rejects unresolved references before persistence.
+    impact_lever_id: int | None = Field(default=None, gt=0)
+    lever_code: str = Field(min_length=1)
+    source_fact_ids: list[str] = Field(default_factory=list)
+    mapping_rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_source_fact_ids(self) -> ImpactLeverReference:
+        normalized = [fact_id.strip() for fact_id in self.source_fact_ids]
+        if any(not fact_id for fact_id in normalized):
+            raise ValueError("impact lever sourceFactIds must not contain blanks")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("impact lever sourceFactIds must be unique")
+        self.source_fact_ids = normalized
+        self.lever_code = self.lever_code.strip()
+        self.mapping_rationale = self.mapping_rationale.strip()
+        return self
+
+
+class DimensionDefinition(ApiModel):
+    dimension_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    required: bool = False
+    display_order: int
+    dimension_type: (
+        Literal[
+            "magnitude",
+            "scope",
+            "timing",
+            "recovery",
+            "mitigation",
+            "interaction",
+        ]
+        | None
+    ) = None
+    value_kind: Literal["categorical", "numeric_range", "temporal"] | None = None
+    unit: str | None = None
+    selection_criterion: SelectionCriterion | None = None
+    selection_rationale: str | None = None
+    source_event_ids: list[int] = Field(default_factory=list)
+    source_fact_ids: list[str] = Field(default_factory=list)
+    lever_refs: list[str] = Field(default_factory=list)
+    impact_lever_refs: list[ImpactLeverReference] = Field(default_factory=list)
+    model_support_status: (
+        Literal[
+            "full",
+            "partial",
+            "none",
+            "price_only",
+        ]
+        | None
+    ) = None
+    source_refs: list[SourceLineage] = Field(default_factory=list)
+    values: list[DimensionValueDefinition] = Field(default_factory=list)

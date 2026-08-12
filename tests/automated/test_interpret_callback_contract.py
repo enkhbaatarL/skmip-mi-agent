@@ -37,8 +37,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
         settings = SimpleNamespace(
             callback_base_url="https://mi.mingovvv.info",
             callback_price_interpretations_path=(
-                "/api/v1/mi/next-gen/scenario-groups/"
-                "{scenario_group_id}/price-interpretations/callback"
+                "/api/v1/mi/next-gen/scenario-groups/{scenario_group_id}/price-interpretations/callback"
             ),
         )
         with patch("apps.common.configs.config.get_settings", return_value=settings):
@@ -46,9 +45,23 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             callback_url,
-            "https://mi.mingovvv.info/api/v1/mi/next-gen/"
-            "scenario-groups/52/price-interpretations/callback",
+            "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback",
         )
+
+    def test_interpret_routes_are_exposed_only_by_interpret_entrypoint(self) -> None:
+        from interpret import app as interpret_app
+        from main import app as scenario_group_app
+
+        preview_path = "/scenario-groups/{scenario_group_id}/price-interpretations/preview"
+        async_path = "/scenario-groups/{scenario_group_id}/price-interpretations"
+
+        scenario_group_paths = scenario_group_app.openapi()["paths"]
+        interpret_paths = interpret_app.openapi()["paths"]
+
+        self.assertNotIn(preview_path, scenario_group_paths)
+        self.assertNotIn(async_path, scenario_group_paths)
+        self.assertIn(preview_path, interpret_paths)
+        self.assertIn(async_path, interpret_paths)
 
     async def test_success_callback_matches_backend_contract(self) -> None:
         send_callback = AsyncMock()
@@ -58,8 +71,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
                 flow,
                 "_resolve_callback_url",
                 return_value=(
-                    "https://mi.mingovvv.info/api/v1/mi/next-gen/"
-                    "scenario-groups/52/price-interpretations/callback"
+                    "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback"
                 ),
             ),
             patch(
@@ -72,8 +84,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
         callback_url, payload = send_callback.await_args.args
         self.assertEqual(
             callback_url,
-            "https://mi.mingovvv.info/api/v1/mi/next-gen/"
-            "scenario-groups/52/price-interpretations/callback",
+            "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback",
         )
         self.assertEqual(
             payload.model_dump(by_alias=True, mode="json"),
@@ -109,8 +120,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
                 flow,
                 "_resolve_callback_url",
                 return_value=(
-                    "https://mi.mingovvv.info/api/v1/mi/next-gen/"
-                    "scenario-groups/52/price-interpretations/callback"
+                    "https://mi.mingovvv.info/api/v1/mi/next-gen/scenario-groups/52/price-interpretations/callback"
                 ),
             ),
             patch(

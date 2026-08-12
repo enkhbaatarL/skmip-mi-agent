@@ -4,12 +4,19 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (  # noqa: F401
+    HardDeleteScenarioGroupIn,
+    HardDeleteScenarioGroupOut,
+    ScenarioGroupDetailOut,
+    SoftDeleteScenarioGroupIn,
+    SoftDeleteScenarioGroupOut,
+    SoftDeleteSignpostsIn,
+    SoftDeleteSignpostsOut,
+)
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.agents.scenario_group_agent.schemas.state import ConfirmScenarioGroupState
 from apps.agents.scenario_group_agent.schemas.table import (
-    ScenarioGroupQueryPayload,
     ScenarioHeader,
-    ScenarioQueryTable,
     ScenarioTable,
 )
 from apps.common.values.llm_usage import LLMUsageModel
@@ -27,11 +34,6 @@ class ScenarioGroupAcceptedOut(BaseModel):
     status: str = "success"
     message: str = "성공"
     data: ScenarioGroupAcceptedData
-
-
-class CreateScenariosIn(ApiModel):
-    mi_event_id: int = Field(description="MI Event ID to generate a scenario group for")
-    user_id: int
 
 
 class EventTypeInfo(ApiModel):
@@ -109,6 +111,7 @@ class ScenarioTemplateDimension(ApiModel):
     key: str
     label: str
     required: bool = False
+    description: str = ""
     display_order: int = 0
     enum_values: list[Any] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
@@ -116,6 +119,10 @@ class ScenarioTemplateDimension(ApiModel):
 
 class EventScenarioTemplate(ApiModel):
     event_type_l2_id: int
+    scenario_dimension_template_id: int | None = None
+    event_type_definition: str | None = None
+    lng_price_impact_examples: str | None = None
+    template_checksum: str | None = None
     dimensions: list[ScenarioTemplateDimension] = Field(default_factory=list)
     raw_template_json: list[Any] = Field(default_factory=list)
 
@@ -129,10 +136,6 @@ class EventDetailOut(ApiModel):
 class CreateScenariosOut(CallBackBody):
     scenario_group: ScenarioGroupPayload | None = None
     table: ScenarioTable | None = None
-
-
-class CreateScenariosSyncOut(CreateScenariosOut):
-    usage: LLMUsageModel | None = None
 
 
 class ValidateScenariosHeaderIn(ScenarioHeader):
@@ -188,6 +191,8 @@ class ValidateScenariosOut(CallBackBody):
     is_valid: bool | None = None
     scenario_group: ValidateScenariosCallBackScenarioGroup | None = None
     table: ScenarioTable | None = None
+    mapping_proposals: list[dict[str, Any]] = Field(default_factory=list)
+    parameter_mapping_ready: bool | None = None
 
 
 class ValidateScenariosSyncOut(ValidateScenariosOut):
@@ -264,44 +269,3 @@ class ConfirmGenerationData(ApiModel):
 
 class ConfirmGenerationOut(CommonResponse):
     data: ConfirmGenerationData | None = None
-
-
-class ScenarioGroupDetailOut(ApiModel):
-    scenario_group: ScenarioGroupQueryPayload
-    table: ScenarioQueryTable
-    scenario_count: int = 0
-    signpost_count: int = 0
-    deleted_scenario_count: int = 0
-    deleted_signpost_count: int = 0
-
-
-class SoftDeleteScenarioGroupIn(ApiModel):
-    user_id: int
-
-
-class SoftDeleteScenarioGroupOut(ApiModel):
-    scenario_group_deleted: int = 0
-    scenario_deleted: int = 0
-    signpost_deleted: int = 0
-
-
-class SoftDeleteSignpostsIn(ApiModel):
-    user_id: int
-
-
-class SoftDeleteSignpostsOut(ApiModel):
-    signpost_deleted: int = 0
-
-
-class HardDeleteScenarioGroupIn(ApiModel):
-    user_id: int
-    confirm: bool = False
-
-
-class HardDeleteScenarioGroupOut(ApiModel):
-    tmm_mi_signpost_snap_m: int = Field(default=0, alias="tmm_mi_signpost_snap_m")
-    tmm_mi_scenario_snap_m: int = Field(default=0, alias="tmm_mi_scenario_snap_m")
-    tmm_mi_snapshot_m: int = Field(default=0, alias="tmm_mi_snapshot_m")
-    tmm_mi_signpost_m: int = Field(default=0, alias="tmm_mi_signpost_m")
-    tmm_mi_scenario_m: int = Field(default=0, alias="tmm_mi_scenario_m")
-    tmm_mi_scenario_group_m: int = Field(default=0, alias="tmm_mi_scenario_group_m")

@@ -1,15 +1,18 @@
-"""YAML 기반 앱 설정 로더."""
+from __future__ import annotations
 
+# YAML 기반 앱 설정 로더.
 from collections.abc import Mapping
 from functools import lru_cache
+import json
 import os
 from pathlib import Path
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, computed_field, model_validator
+from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     YamlConfigSettingsSource,
@@ -25,6 +28,46 @@ CONFIG_FILE_PATH = Path(os.getenv("APP_CONFIG", str(DEFAULT_CONFIG_FILE))).expan
 ENV_PLACEHOLDER_PATTERN = re.compile(r"\${(\w+)}")
 
 
+def _decode_cors_allowed_origins(value: object) -> list[object]:
+    if not isinstance(value, str):
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        message = "cors_allowed_origins must be a list or comma-separated origins"
+        raise ValueError(message)
+
+    stripped = value.strip()
+    if not stripped:
+        return []
+    if not stripped.startswith("["):
+        return stripped.split(",")
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        message = "cors_allowed_origins must be a JSON list or comma-separated origins"
+        raise ValueError(message) from exc
+    if not isinstance(decoded, list):
+        message = "cors_allowed_origins JSON value must be a list"
+        raise ValueError(message)  # noqa: TRY004
+    return decoded
+
+
+def _normalize_cors_allowed_origins(raw_origins: list[object]) -> list[str]:
+    origins: list[str] = []
+    for raw_origin in raw_origins:
+        if not isinstance(raw_origin, str):
+            message = "cors_allowed_origins entries must be strings"
+            raise ValueError(message)  # noqa: TRY004
+        origin = raw_origin.strip().rstrip("/")
+        if not origin:
+            continue
+        if origin == "*":
+            message = "cors_allowed_origins must contain explicit origins, not '*'"
+            raise ValueError(message)
+        if origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 def _replace_env_placeholders(value: Any) -> Any:  # noqa: ANN401
     """Replace placeholders after YAML parsing so environment values stay YAML-safe."""
     if isinstance(value, str):
@@ -35,10 +78,7 @@ def _replace_env_placeholders(value: Any) -> Any:  # noqa: ANN401
     if isinstance(value, list):
         return [_replace_env_placeholders(item) for item in value]
     if isinstance(value, dict):
-        return {
-            _replace_env_placeholders(key): _replace_env_placeholders(item)
-            for key, item in value.items()
-        }
+        return {_replace_env_placeholders(key): _replace_env_placeholders(item) for key, item in value.items()}
     return value
 
 
@@ -157,6 +197,7 @@ class Settings(BaseSettings):
         "high",
         "xhigh",
     ] = "default"
+    llm_structured_output_strict: bool = Field(default=False)
 
     # Model parameter proposal
     model_parameter_lut_enabled: bool = Field(default=False)
@@ -179,7 +220,7 @@ class Settings(BaseSettings):
     model_parameter_resources: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_model_parameter_lut_horizon(self) -> "Settings":
+    def validate_model_parameter_lut_horizon(self) -> Settings:
         if self.model_parameter_lut_horizon_start_year > self.model_parameter_lut_horizon_end_year:
             message = (
                 "model_parameter_lut_horizon_start_year must be less than or equal to "
@@ -191,8 +232,34 @@ class Settings(BaseSettings):
     http_max_concurrency: int
 
     # Scenario group admin/test APIs
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+        ],
+    )
     scenario_group_admin_bearer_tokens: list[str] = Field(default_factory=list)
     create_signposts_max_concurrent_scenarios: int = Field(default=10, ge=1)
+    scenario_group_operation_heartbeat_interval_seconds: float = Field(default=30.0, gt=0)
+    scenario_group_operation_stale_after_seconds: float = Field(default=120.0, gt=0)
+    scenario_group_operation_reaper_interval_seconds: float = Field(default=30.0, gt=0)
+
+    @model_validator(mode="after")
+    def validate_scenario_group_operation_timing(self) -> Settings:
+        minimum_stale_after = self.scenario_group_operation_heartbeat_interval_seconds * 3
+        if self.scenario_group_operation_stale_after_seconds < minimum_stale_after:
+            msg = (
+                "scenario_group_operation_stale_after_seconds must be at least three times "
+                "scenario_group_operation_heartbeat_interval_seconds"
+            )
+            raise ValueError(msg)
+        return self
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def parse_cors_allowed_origins(cls, value: object) -> list[str]:
+        """JSON 배열과 쉼표 구분 문자열을 명시적 origin 목록으로 정규화한다."""
+        return _normalize_cors_allowed_origins(_decode_cors_allowed_origins(value))
 
     # Agent profiles
     agents: dict[str, AgentConfig] = Field(default_factory=lambda: {"default": AgentConfig()})
