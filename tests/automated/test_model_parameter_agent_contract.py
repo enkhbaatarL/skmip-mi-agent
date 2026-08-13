@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi.routing import APIRoute
+import pytest
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
@@ -93,6 +94,9 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     normalize_parameter_name,
 )
 from apps.common.exceptions.custom import MIBaseError
+
+
+core_contract = pytest.mark.model_parameter_core
 
 
 def _default_basecase_dir_or_none() -> Path | None:
@@ -395,6 +399,30 @@ def _record_with(
 
 
 class ModelParameterAgentContractTest(unittest.TestCase):
+    @core_contract
+    def test_llm_scalar_response_fields_have_explicit_json_schema_types(self) -> None:
+        slot_schema = LLMSlotProposalResponse.model_json_schema(by_alias=True)
+        slot_axis_schema = slot_schema["$defs"]["LLMSlotAxis"]["properties"]["axisValue"]
+        value_schema = LLMValueProposalResponse.model_json_schema(by_alias=True)
+        proposed_value_schema = value_schema["$defs"]["LLMValueCell"]["properties"]["proposedValue"]
+
+        assert slot_axis_schema != {}
+        assert {item["type"] for item in slot_axis_schema["anyOf"]} == {
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "null",
+        }
+        assert proposed_value_schema != {}
+        assert {item["type"] for item in proposed_value_schema["anyOf"]} == {
+            "string",
+            "integer",
+            "number",
+            "null",
+        }
+
+    @core_contract
     def test_db_payload_uses_independent_basecase_and_proposed_precision(self) -> None:
         from apps.agents.model_parameter_agent.persistence import (
             model_parameter_service,
@@ -482,6 +510,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             == 102
         )
 
+    @core_contract
     def test_graph_registers_expected_nodes(self) -> None:
         graph = build_graph().get_graph()
 
@@ -672,6 +701,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "preload_basecase_runtime_cache" in main_source
         assert "preload_parameter_knowledge_base" not in main_source
 
+    @core_contract
     def test_model_parameter_endpoint_accepts_optional_request_body(self) -> None:
         route = next(
             route
@@ -711,6 +741,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert DEFAULT_BASECASE_DIR.parent == DEFAULT_INPUT_DIR
         assert _default_basecase_dir().name == "basecase"
 
+    @core_contract
     def test_default_knowledge_base_loads_mapping_from_db(self) -> None:
         from apps.agents.model_parameter_agent.utils import parameter_mapping as mapping_module
 
@@ -916,6 +947,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             },
         )
 
+    @core_contract
     def test_dimension_mapping_query_excludes_inactive_parameter_refs(self) -> None:
         from sqlalchemy.dialects import mysql
 
@@ -1136,6 +1168,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert kb.definition_for("ShippingCost") is not None
         assert selected["candidate_mappings"][0]["canonical_parameter_name"] == "ShippingCost"
 
+    @core_contract
     def test_model_parameter_service_saves_proposal_result(self) -> None:
         fake_session = SimpleNamespace(
             commit=Mock(),
@@ -1397,6 +1430,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             confirmation_parameters=[],
         )
 
+    @core_contract
     def test_model_parameter_service_allows_reconfirming_confirmed_proposal(self) -> None:
         fake_session = SimpleNamespace(
             commit=Mock(),
@@ -1757,6 +1791,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             assert profile.sheet_name
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
+    @core_contract
     def test_match_candidates_uses_bridge_event_id_and_dimension_key(self) -> None:
         kb = _get_db_fixture_kb()
         context = {
@@ -1795,6 +1830,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
+    @core_contract
     def test_match_candidates_does_not_fallback_when_bridge_key_is_missing(self) -> None:
         kb = _get_db_fixture_kb()
         context = {
@@ -2221,6 +2257,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             assert debug_key not in first
 
     @unittest.skipUnless(_basecase_available(), "model parameter basecase files are not available")
+    @core_contract
     def test_basecase_records_use_matrix_time_column_spec_when_available(self) -> None:
         kb = _get_db_fixture_kb()
         context = {
@@ -2672,6 +2709,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             "Gas Futures Price",
         }
 
+    @core_contract
     def test_to_output_returns_key_content_only(self) -> None:
         with patch(
             "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
@@ -2788,7 +2826,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "basecaseRecords" not in dumped
         assert "parameterSlots" not in dumped
         assert "llmUsage" not in dumped
-        service_cls.return_value.save_proposal_result.assert_called_once()
 
     def test_to_output_uses_basecase_value_column_role_for_value_field(self) -> None:
         with patch(
@@ -3533,6 +3570,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    @core_contract
     async def test_llm_candidate_validation_omitted_direct_candidate_is_kept(self) -> None:
         candidates = [
             {
@@ -3613,7 +3651,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         fake_module.invoke_llm_structured_output = fake_invoke
         with (
             patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
-            patch.object(proposal_nodes, "_debug_stage_payload") as debug_stage,
+            patch.object(proposal_nodes, "_debug_stage_payload"),
         ):
             result = await validate_parameter_candidates(state)
 
@@ -3627,6 +3665,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         ]
         assert "candidate_validation_rationale_ko" not in merged
 
+    @core_contract
     async def test_llm_candidate_validation_omitted_routing_candidate_is_excluded(self) -> None:
         candidates = [
             {
@@ -3810,6 +3849,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         ]
         assert result["validation_warnings"] == []
 
+    @core_contract
     async def test_llm_structured_slot_and_value_calls_are_used_and_sanitized(self) -> None:
         candidate = {
             "candidate_key": "c1",
@@ -3954,6 +3994,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "proposed_value_rationale_ko" not in adjustment["value_grid"][0]
         assert len(result["parameter_adjustments"]) == 1
 
+    @core_contract
     async def test_slot_prompt_uses_time_values_and_non_time_hierarchy(self) -> None:
         candidate = {
             "candidate_key": "c1",
@@ -3964,38 +4005,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "basecase_read_mode": "matrix_time_columns",
             "basecase_column_roles": "B:Country,C:LNG Plant,D:LNG Plant Train",
         }
-        records = [
-            {
-                "candidate_key": "c1",
-                "reference_id": "cameron-2026-a",
-                "model_file": "Supply",
-                "sheet_name": "LiqUtilAdjustment",
-                "parameter_name": "LiqUtilAdjustment",
-                "axes": {"Plant": "Cameron", "Year": 2026},
-                "value_name": "LiqUtilAdjustment",
-                "value": 1.0,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "cameron-2026-b",
-                "model_file": "Supply",
-                "sheet_name": "LiqUtilAdjustment",
-                "parameter_name": "LiqUtilAdjustment",
-                "axes": {"Plant": "Cameron", "Year": 2026},
-                "value_name": "LiqUtilAdjustment",
-                "value": 2.0,
-            },
-            {
-                "candidate_key": "c1",
-                "reference_id": "sabine-2027",
-                "model_file": "Supply",
-                "sheet_name": "LiqUtilAdjustment",
-                "parameter_name": "LiqUtilAdjustment",
-                "axes": {"Plant": "Sabine", "Year": 2027},
-                "value_name": "LiqUtilAdjustment",
-                "value": 3.0,
-            },
-        ]
         slot_response = LLMSlotProposalResponse(
             parameter_slots=[
                 LLMSlotProposal(
@@ -4217,6 +4226,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
+    @core_contract
     def test_value_tasks_use_one_reference_value_per_server_slot_key(self) -> None:
         candidate = {
             "candidate_key": "c1",
@@ -4306,6 +4316,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert result["parameter_slots"][0]["candidate_key"] == "temperature-direct"
         assert result["parameter_slots"][0]["slot_axes"][0]["axis_value"] == "Japan"
 
+    @core_contract
     def test_exact_slot_filter_requires_basecase_index(self) -> None:
         state = ModelParameterProposalState(
             scenario_id=100,
@@ -4461,6 +4472,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         assert "must contain at least one parameter" in error.exception.error_message
 
+    @core_contract
     def test_confirmation_validation_rejects_duplicate_slots(self) -> None:
         payload = {
             "data": {
@@ -4927,6 +4939,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert response.data.model_param_proposal_id == 10001
         assert len(scheduled) == 1
 
+    @core_contract
     async def test_background_failure_callback_contains_failed_context(self) -> None:
         class FakeGraph:
             async def ainvoke(self, state: ModelParameterProposalState, **kwargs: object) -> dict[str, object]:

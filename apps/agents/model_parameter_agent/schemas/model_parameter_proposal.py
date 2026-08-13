@@ -38,7 +38,7 @@ class ParameterSlotAxis(ApiModel):
 
 class LLMSlotAxis(ApiModel):
     axis_name: str
-    axis_value: Any = Field(
+    axis_value: str | int | float | bool | None = Field(
         description=(
             "Slot axis value. If axis_name is Year, Month, or Period, return an "
             'integer JSON number such as 2026, not a string such as "2026".'
@@ -113,7 +113,7 @@ class LLMValueCell(ApiModel):
             "boundary exists only so malformed items can be dropped without retry."
         ),
     )
-    proposed_value: Any
+    proposed_value: str | int | float | None
     rationale_ko: str
 
 

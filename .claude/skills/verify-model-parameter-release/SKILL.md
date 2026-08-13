@@ -24,10 +24,10 @@ Prove the rollout from immutable inputs through runtime behavior and DB persiste
 ## Phase 1: Verify artifacts without target DB mutation
 
 1. Validate the current workbook/archive with `sync_mapping_workbook.py --check-only`.
-2. Run the focused six-file Model Parameter suite in the verification matrix.
-3. Confirm active resources start successfully, every packaged CSV has exactly one classification, catalog records round-trip to exact slots, and disabled/reference files do not create parameter records.
-4. Compare local YAML and Kubernetes ConfigMap resource definitions and limits semantically.
-5. Verify prompt compression preserves every exact slot and that request-wide slot and Step2/Step3 byte guards reject before any LLM call.
+2. Run the named `core-smoke` suite in the verification matrix first. Treat its runtime collected count as evidence; do not make a historical total such as 106 part of the contract.
+3. Run only the named domain suites affected by the current change. Use the verification matrix as the single source for suite membership and commands.
+4. Use `lut-runtime` and `resource-config-storage` evidence to confirm active resource startup, one classification per packaged CSV, exact catalog round-trip, disabled/reference exclusion, and YAML/ConfigMap parity.
+5. Use `agent-contract-detail` evidence for prompt compression, exact Step3 references, request-wide slot limits, and Step2/Step3 byte guards when proposal-flow code changed.
 6. Run Ruff and compile checks on changed Python files, then `git diff --check`. Do not reformat unrelated files.
 7. Fix the smallest relevant implementation, fixture, mapping, prompt, or document defect and rerun the affected phase before continuing.
 
@@ -52,7 +52,7 @@ Prove the rollout from immutable inputs through runtime behavior and DB persiste
 
 ## Phase 4: Run regression and real flow tests
 
-1. Run the full automated suite after focused checks and any DB apply.
+1. Run the full automated suite once on the final worktree after the core and affected-domain checks. Do not rerun unchanged local suites merely because target DB DML was applied; prove target DB state with dry-run/read-back evidence.
 2. For real proposal/confirmation coverage, read `.claude/skills/model-parameter-agent-test/SKILL.md` completely and follow it as the execution/reporting contract.
 3. Derive active parameters, event types, mappings, and candidate scenarios from the current DB. Never reuse historical scenario IDs or expected routing winners blindly.
 4. Exercise each requested/active parameter where a valid mapped scenario exists. Do not insert synthetic scenario fixtures merely to manufacture coverage; record a precise coverage limit instead.
@@ -63,7 +63,7 @@ Prove the rollout from immutable inputs through runtime behavior and DB persiste
 ## Phase 5: Produce one integrated result
 
 1. Write one Markdown report under `tests/reports/model_parameter_agent/`. Extend the runner's report instead of creating competing raw and evaluated reports.
-2. Include canonical version, target environment, commit method, canonical/snapshot/workbook hashes, snapshot path, executed commands, test counts, DB read-back, isolated SQL rollback evidence, active/pending parameter outcomes, catalog/slot counts, and API compatibility.
+2. Include canonical version, target environment, commit method, canonical/snapshot/workbook hashes, snapshot path, executed commands, suite별 collected/passed/failed/skipped counts, DB read-back, isolated SQL rollback evidence, active/pending parameter outcomes, catalog/slot counts, and API compatibility.
 3. For each exercised parameter, include candidate and selected mapping, scenario/event IDs, selected slots and values, rationale, Basecase/LUT source, prompt tokens, time, retry, proposal ID, negative confirmation result, valid confirmation, reconfirmation, and DB read-back.
 4. Distinguish `FAIL` from `COVERAGE LIMIT`. Missing a suitable existing scenario is a coverage limit; broken mapping, exact-slot validation, persistence, rollback, or confirmation is a failure.
 5. Record any known review result honestly. Do not convert `EMPTY_RECOMMENDATIONS` or a routing review flag into an automatic product failure without checking the current DB-derived candidate set.

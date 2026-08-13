@@ -18,6 +18,12 @@ Before raw-graph execution, the shared test runner initializes Model Parameter r
 - `enabled: true`: reuse a valid `<local_root>/current`; only sync from Object Storage when current is absent or invalid.
 - Keep the selected release fixed for the lifetime of the test process. Do not initialize resources per scenario.
 
+Before a real scenario run, require the `core-smoke` suite from
+[`verification-matrix.md`](../verify-model-parameter-release/references/verification-matrix.md) to pass on the same
+worktree and config. A result from the same unchanged worktree may be reused. If proposal/confirmation, runner, or
+report code changed, also run the affected named domain suite from that matrix. Scenario-only testing does not require
+the full release suite; release acceptance remains the responsibility of `verify-model-parameter-release`.
+
 ## Request Mapping
 
 For a single scenario request such as `289 시나리오 테스트해줘` or `scenario_id=289 테스트해줘`, run:
@@ -88,7 +94,10 @@ Treat any failed valid-confirmation call, mismatched stored payload, missing con
 
 Use the report path printed as `REPORT` or `REPORT_IN_PROGRESS`. Event-type evaluation updates the markdown as scenarios finish, so the partial report can be inspected while the run continues.
 
-Write one integrated markdown report per user test request. If an automated script already created a markdown report, append any parameter-specific quality evaluation, findings, and improvement plan to that same file instead of creating a second markdown file. Do not split "raw execution result" and "quality evaluation" into separate report files unless the user explicitly asks for separate files.
+Write one integrated markdown report per user test request. If a manual evaluation runner such as
+`evaluate_event_type_proposals.py` already created a markdown report, append any parameter-specific quality evaluation,
+findings, and improvement plan to that same file instead of creating a second markdown file. Do not split "raw execution
+result" and "quality evaluation" into separate report files unless the user explicitly asks for separate files.
 
 Put an `종합 평가` section at the top of the report, immediately after the title and compact execution metadata. It must summarize total execution/error counts, aggregate judgements for the seven criteria, review/failure flags, confirmation status, and the maximum elapsed scenario as compact timing evidence. Do not leave the aggregate evaluation only at the end of the report.
 
