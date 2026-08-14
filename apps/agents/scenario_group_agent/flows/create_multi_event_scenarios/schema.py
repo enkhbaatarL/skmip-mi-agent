@@ -1599,8 +1599,8 @@ def _finalize_scenario_candidates(
         | {value.label: value.pressure_contribution for value in dimension.values}
         for dimension in dimensions
     }
-    seen_combinations: set[tuple[tuple[str, str], ...]] = set()
-    for scenario in sorted_scenarios:
+    combination_owners: dict[tuple[tuple[str, str], ...], str] = {}
+    for scenario_index, scenario in enumerate(sorted_scenarios):
         if set(scenario.dimension_values) != expected_keys:
             raise ValueError(
                 f"scenario cells must match all dimension definitions: {scenario.title}",
@@ -1611,9 +1611,13 @@ def _finalize_scenario_candidates(
                     f"scenario value is missing from dimensionDefinitions.values: {dimension_id}={value}",
                 )
         combination = tuple(sorted(scenario.dimension_values.items()))
-        if combination in seen_combinations:
-            raise ValueError("scenario dimension combinations must be unique")
-        seen_combinations.add(combination)
+        scenario_reference = f"scenarios[{scenario_index}] ({scenario.title!r})"
+        if previous_reference := combination_owners.get(combination):
+            raise ValueError(
+                f"{scenario_reference}.dimensionValues duplicates {previous_reference}.dimensionValues: "
+                f"{dict(combination)}"
+            )
+        combination_owners[combination] = scenario_reference
         contributions = {
             contribution_by_value[dimension_id][value] for dimension_id, value in scenario.dimension_values.items()
         }

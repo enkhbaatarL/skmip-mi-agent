@@ -8,7 +8,10 @@ from fastapi.testclient import TestClient
 
 from apps.agents.scenario_group_agent.api import router as agent_router
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
-from apps.agents.scenario_group_agent.presentation import build_scenario_group_presentation
+from apps.agents.scenario_group_agent.presentation import (
+    build_presentation_follow_up_request_bodies,
+    build_scenario_group_presentation,
+)
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
@@ -419,6 +422,146 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
     assert second.content == b""
     assert second.headers["etag"] == first.headers["etag"]
     assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
+
+
+def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
+    group = _group("v4", [_v4_definition()])
+    group["generation_diagnostics"] = _v4_diagnostics()
+    presentation = build_scenario_group_presentation(
+        group=group,
+        scenarios=[_scenario(cell="d1_v1")],
+        signposts=[],
+        events=[_event(101)],
+        operation=_operation(status="succeeded", revision=4),
+    )
+
+    result = build_presentation_follow_up_request_bodies(presentation, user_id=10603)
+    payload = result.model_dump(mode="json", by_alias=True)
+
+    assert payload["ready"] is True
+    assert payload["scenarioTableStatus"] == "ready"
+    assert payload["operationId"] == "01JABCDEF0123456789ABCDEFX"
+    assert payload["validationRequestBody"] == payload["signpostRequestBody"]
+    assert payload["validationRequestBody"] == {
+        "userId": 10603,
+        "table": {
+            "headers": [{"key": "d1", "label": "수급 방향", "displayOrder": 1}],
+            "rows": [
+                {
+                    "scenarioId": 2056,
+                    "displayOrder": 1,
+                    "title": "Scenario <img src=x onerror=alert(1)>",
+                    "cells": {"d1": "상승"},
+                },
+            ],
+        },
+    }
+    assert "cellEvidence" not in payload["validationRequestBody"]["table"]["rows"][0]
+    assert "narrative" not in payload["validationRequestBody"]["table"]["rows"][0]
+
+
+def test_follow_up_request_bodies_are_null_until_scenario_table_is_ready() -> None:
+    presentation = build_scenario_group_presentation(
+        group=_group("v4", []),
+        scenarios=[],
+        signposts=[],
+        events=[_event(101)],
+        operation=_operation(status="running", revision=1),
+    )
+
+    result = build_presentation_follow_up_request_bodies(presentation, user_id=10603)
+
+    assert result.ready is False
+    assert result.scenario_table_status == "pending"
+    assert result.reason is not None
+    assert result.validation_request_body is None
+    assert result.signpost_request_body is None
+
+
+def test_follow_up_signpost_draft_always_includes_table_for_all_engine_versions() -> None:
+    definition = {
+        "dimension_id": "d1",
+        "label": "수급 방향",
+        "values": [{"value_id": "d1_v1", "label": "상승"}],
+    }
+
+    for version in ("v1", "v2", "v3", "v4"):
+        presentation = build_scenario_group_presentation(
+            group=_group(version, [definition]),
+            scenarios=[_scenario(cell="d1_v1")],
+            signposts=[],
+            events=[_event(101)],
+            operation=None,
+        )
+        presentation.sections.scenario_design.scenario_table.rows[0].scenario_id = None
+
+        result = build_presentation_follow_up_request_bodies(presentation, user_id=10603)
+
+        assert result.signpost_request_body is not None
+        assert result.signpost_request_body.table is not None
+        assert result.signpost_request_body.table.rows[0].scenario_id is None
+        assert result.signpost_request_body.table.rows[0].cells == {"d1": "상승"}
+
+
+def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selection() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    operation = _operation(status="succeeded", revision=4)
+    context = {
+        "group": _group("v4", [_v4_definition()]),
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "operation": operation,
+        "legacy_template_dimensions": [],
+        "legacy_snapshot_dimension_values": [],
+    }
+    context["group"]["generation_diagnostics"] = _v4_diagnostics()
+
+    with patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context) as load:
+        response = TestClient(app).get(
+            "/scenario-groups/120/presentation/follow-up-request-bodies",
+            params={"userId": 10603, "operationId": operation.operation_id},
+        )
+        latest_response = TestClient(app).get(
+            "/scenario-groups/120/presentation/follow-up-request-bodies",
+            params={"userId": 10603},
+        )
+
+    assert response.status_code == 200
+    assert latest_response.status_code == 200
+    assert response.json()["validationRequestBody"]["userId"] == 10603
+    assert response.json()["signpostRequestBody"]["table"]["rows"][0]["cells"] == {"d1": "상승"}
+    assert load.call_args_list[0].args == (120,)
+    assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
+    assert load.call_args_list[1].args == (120,)
+    assert load.call_args_list[1].kwargs == {"operation_id": None}
+
+
+def test_scenario_group_detail_query_can_hide_dimension_definitions() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    group = {**_group("v4", [_v4_definition()]), "del_yn": "N"}
+    context = {
+        "group": group,
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "latest_operation": None,
+    }
+
+    with patch.object(ScenarioGroupService, "load_common_detail", return_value=context):
+        response = TestClient(app).get(
+            "/scenario-groups/120",
+            params={"includeDimensions": "false"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert list(payload)[:2] == ["scenarioGroup", "table"]
+    assert next(iter(payload["scenarioGroup"])) == "delYn"
+    assert "dimensionDefinitions" not in payload["scenarioGroup"]
+    assert "dimensionDefinitions" not in payload["presentationSnapshot"]
 
 
 def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> None:

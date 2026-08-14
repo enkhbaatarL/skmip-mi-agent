@@ -93,7 +93,12 @@ def build_v4_event_fact_candidates(event: dict[str, Any]) -> dict[str, str]:
 def _feedback(title: str, validation_feedback: str | None, instruction: str) -> str:
     if not validation_feedback:
         return ""
-    return f"\n## 이전 {title} 검증 실패\n- {validation_feedback[:600]}\n- {instruction}\n"
+    return (
+        f"\n## 이전 {title} 검증 실패\n"
+        f"- 검증 오류: {validation_feedback[:600]}\n"
+        "- 이전 시도의 오류가 발생한 필드 또는 조합을 수정하고 동일한 실수를 반복하지 마십시오.\n"
+        f"- {instruction}\n"
+    )
 
 
 def build_model_lever_user_prompt(
@@ -419,6 +424,9 @@ def build_v4_scenario_synthesis_user_prompt(
         "## 출력 규칙\n"
         "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
         "- choices에는 각 D의 V를 정확히 하나씩 `D1.V1` 형식으로 선택합니다.\n"
+        "- 제외 후보도 choices에 각 D의 V를 정확히 하나씩 선택해, 제외된 실제 조합을 보존합니다.\n"
+        "- 발생 가능성이 낮아 제외하면 reasonCode는 LOW_PROBABILITY로 작성합니다. 조합이 독립적인 검토 가치가\n"
+        "  없어 제외하는 경우에는 NOT_INDEPENDENT를 사용합니다.\n"
         "- interactions에는 실제로 추가 효과를 적용한 I 번호만 넣습니다.\n"
         "- 각 Scenario는 다른 Scenario와 구분되는 핵심 전제 조합과 결과 전달 경로를 가져야 합니다.\n"
         "- 공급·수요·운송·회복 같은 미리 정한 유형에 맞추지 말고, 입력된 Dimension과 Interaction에서\n"
@@ -435,7 +443,8 @@ def build_v4_scenario_synthesis_user_prompt(
         "자연스러운 한국어 문장으로 설명합니다.\n"
         "- 공통 영향은 분기 효과에 다시 더하지 않습니다.\n"
         "- probability는 공통 사실에 가깝고 추가 가정이 적을수록 높게 부여합니다.\n"
-        "- relatedMarkets는 `TTF|이유` 또는 `HH|이유` 형식이며 특별한 영향이 있을 때만 씁니다.\n"
+        "- relatedMarkets는 `TTF|이유` 또는 `HH|이유` 형식이며 특별한 영향이 있을 때만 씁니다. "
+        "한 Scenario 안에서 TTF와 HH는 각각 최대 한 번만 작성하고 같은 시장을 중복하지 마십시오.\n"
         f"{feedback}"
     )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema import (
     PRESSURE_BANDS,
@@ -459,15 +459,24 @@ class V4ScenarioCandidateDraft(ApiModel):
     mixed_factors: list[str] = Field(default_factory=list)
     explanation: str = Field(min_length=1)
 
+    @field_validator("related_markets")
+    @classmethod
+    def discard_duplicate_related_markets(cls, value: list[RelatedMarket]) -> list[RelatedMarket]:
+        unique_markets: list[RelatedMarket] = []
+        seen_markets: set[str] = set()
+        for related_market in value:
+            if related_market.market in seen_markets:
+                continue
+            seen_markets.add(related_market.market)
+            unique_markets.append(related_market)
+        return unique_markets
+
     @model_validator(mode="after")
     def validate_unique_references(self) -> V4ScenarioCandidateDraft:
         if len(self.common_impact_path_ids) != len(set(self.common_impact_path_ids)):
             raise ValueError("Scenario commonImpactPathIds must be unique")
         if len(self.applied_interaction_ids) != len(set(self.applied_interaction_ids)):
             raise ValueError("Scenario appliedInteractionIds must be unique")
-        markets = [item.market for item in self.related_markets]
-        if len(markets) != len(set(markets)):
-            raise ValueError("related markets must be unique within a scenario")
         return self
 
 
@@ -481,6 +490,7 @@ class V4ExcludedScenarioCandidate(ApiModel):
     pressure_band: PressureBand
     reason_code: str = Field(min_length=1)
     reason: str = Field(min_length=1)
+    dimension_values: dict[str, str]
 
 
 class V4ScenarioSynthesisResult(ApiModel):
@@ -547,6 +557,15 @@ class V4ReadableScenario(ApiModel):
     related_markets: list[str] = Field(default_factory=list, max_length=2)
 
 
+class V4ReadableExcludedScenarioCandidate(ApiModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pressure_band: PressureBand
+    reason_code: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    choices: list[str] = Field(min_length=3, max_length=6)
+
+
 class V4ReadableScenarioSynthesisDraft(ApiModel):
     """Scenario prose plus readable aliases selected from the rendered decision matrix."""
 
@@ -555,7 +574,7 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
     title: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1, max_length=600)
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
-    excluded: list[V4ExcludedScenarioCandidate] = Field(default_factory=list, max_length=2)
+    excluded: list[V4ReadableExcludedScenarioCandidate] = Field(default_factory=list, max_length=2)
 
 
 class V4GenerationResult(ApiModel):
@@ -980,11 +999,32 @@ def expand_v4_readable_scenario_synthesis(
                 explanation=scenario.explanation,
             ),
         )
+    excluded_scenarios: list[V4ExcludedScenarioCandidate] = []
+    for candidate_index, candidate in enumerate(readable.excluded, start=1):
+        if len(candidate.choices) != len(set(candidate.choices)):
+            raise ValueError(f"Excluded Scenario {candidate_index} contains duplicate choice aliases")
+        unknown_choices = set(candidate.choices) - set(choice_by_alias)
+        if unknown_choices:
+            raise ValueError(
+                f"Excluded Scenario {candidate_index} references unknown choices: {sorted(unknown_choices)}"
+            )
+        selected = [choice_by_alias[alias] for alias in candidate.choices]
+        dimension_values = {dimension.dimension_id: value.value_id for dimension, value in selected}
+        if len(dimension_values) != len(dimension_design.dimension_definitions):
+            raise ValueError(f"Excluded Scenario {candidate_index} must select one Value for every Dimension")
+        excluded_scenarios.append(
+            V4ExcludedScenarioCandidate(
+                pressure_band=candidate.pressure_band,
+                reason_code=candidate.reason_code,
+                reason=candidate.reason,
+                dimension_values=dimension_values,
+            ),
+        )
     return V4ScenarioSynthesisResult(
         group_title=readable.title,
         group_description=readable.description,
         scenarios=scenarios,
-        excluded_scenarios=readable.excluded,
+        excluded_scenarios=excluded_scenarios,
     )
 
 
@@ -1302,11 +1342,11 @@ def _validate_scenarios(
     dimension_by_id = {dimension.dimension_id: dimension for dimension in dimension_definitions}
     path_ids = {path.impact_path_id for path in impact_analysis.impact_paths}
     interaction_ids = {interaction.interaction_id for interaction in impact_analysis.interactions}
-    combinations: set[tuple[tuple[str, str], ...]] = set()
+    combination_owners: dict[tuple[tuple[str, str], ...], str] = {}
     generated_bands: list[PressureBand] = []
     contribution_by_scenario: dict[int, list[int]] = {}
     scores = {"bullish": 1, "balanced": 0, "bearish": -1}
-    for scenario in scenarios:
+    for scenario_index, scenario in enumerate(scenarios):
         if set(scenario.dimension_values) != set(dimension_by_id):
             raise ValueError("every scenario must provide every dimension value")
         if set(scenario.common_impact_path_ids) != path_ids:
@@ -1325,9 +1365,13 @@ def _validate_scenarios(
                 raise ValueError(f"invalid value {selected_value!r} for dimension {dimension_id}")
             contributions.append(scores[selected_definition.pressure_contribution])
         combination = tuple(sorted(scenario.dimension_values.items()))
-        if combination in combinations:
-            raise ValueError("scenario dimension combinations must be unique")
-        combinations.add(combination)
+        scenario_reference = f"scenarios[{scenario_index}] ({scenario.title!r})"
+        if previous_reference := combination_owners.get(combination):
+            raise ValueError(
+                f"{scenario_reference}.dimensionValues duplicates {previous_reference}.dimensionValues: "
+                f"{dict(combination)}"
+            )
+        combination_owners[combination] = scenario_reference
         generated_bands.append(scenario.pressure_band)
         contribution_by_scenario[id(scenario)] = contributions
         if scenario.mixed_factors and not ({-1, 1} <= set(contributions)):
@@ -1340,6 +1384,21 @@ def _validate_scenarios(
         raise ValueError("generated and excluded pressure bands must not overlap")
     if set(generated_bands + excluded_bands) != set(PRESSURE_BANDS):
         raise ValueError("generated and excluded scenarios must cover all pressure bands")
+    for scenario_index, scenario in enumerate(excluded_scenarios):
+        if set(scenario.dimension_values) != set(dimension_by_id):
+            raise ValueError("every excluded Scenario must provide every dimension value")
+        for dimension_id, selected_value in scenario.dimension_values.items():
+            dimension = dimension_by_id[dimension_id]
+            if not any(selected_value == value.value_id for value in dimension.values):
+                raise ValueError(f"invalid excluded value {selected_value!r} for dimension {dimension_id}")
+        combination = tuple(sorted(scenario.dimension_values.items()))
+        scenario_reference = f"excludedScenarios[{scenario_index}]"
+        if previous_reference := combination_owners.get(combination):
+            raise ValueError(
+                f"{scenario_reference}.dimensionValues duplicates {previous_reference}.dimensionValues: "
+                f"{dict(combination)}"
+            )
+        combination_owners[combination] = scenario_reference
     ordered = sorted(scenarios, key=lambda scenario: PRESSURE_RANK[scenario.pressure_band])
     pressure_scores = [sum(contribution_by_scenario[id(scenario)]) for scenario in ordered]
     if ordered[0].pressure_band == "strong_bearish" and pressure_scores[0] >= 0:

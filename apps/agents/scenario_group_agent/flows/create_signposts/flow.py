@@ -18,6 +18,11 @@ from apps.agents.scenario_group_agent.flows.create_signposts.nodes import (
     sync_scenarios_from_table,
 )
 from apps.agents.scenario_group_agent.flows.create_signposts.state import CreateSignpostsState
+from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import V4_GENERATION_STRATEGY
+from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+    ScenarioGroupOperationService,
+)
+from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.endpoint import CreateSignpostsOut
 from apps.common.exceptions.custom import MIBaseError
@@ -45,7 +50,7 @@ from apps.persistence.enums import (
 def prepare_create_signposts(
     scenario_group_id: int,
     user_id: int,
-    request_table: dict[str, Any],
+    request_table: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Group 존재·권한 확인. 반환값으로 200 응답을 구성한다."""
     state = CreateSignpostsState(
@@ -56,12 +61,26 @@ def prepare_create_signposts(
     )
     group_result = load_scenario_group(state)  # not found / 권한 오류 시 MIBaseError raise
     group = group_result["scenario_group"]
+    operation_id: str | None = None
+    target_scenario_ids: list[int] = []
+    if group.get("generation_strategy") == V4_GENERATION_STRATEGY:
+        accepted = ScenarioService().accept_validation_change_set(
+            scenario_group_id=scenario_group_id,
+            user_id=user_id,
+        )
+        operation_id = accepted["operation_id"]
+        target_scenario_ids = accepted["signpost_target_scenario_ids"]
+        group = accepted["scenario_group"]
+    elif request_table is None:
+        raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required for v1-v3 Signpost creation")
     return {
         "scenario_group_id": scenario_group_id,
         "status": group.get("status", ScenarioGroupStatus.CREATING.value),
         "stage": group.get("stage", ScenarioGroupStage.SCENARIO_VALIDATED.value),
         "user_id": user_id,
         "request_table": request_table,
+        "operation_id": operation_id,
+        "signpost_target_scenario_ids": target_scenario_ids,
     }
 
 
@@ -123,7 +142,9 @@ def get_compiled_graph() -> Runnable:
 async def run_create_signposts_inline(
     scenario_group_id: int,
     user_id: int,
-    request_table: dict[str, Any],
+    request_table: dict[str, Any] | None,
+    operation_id: str | None = None,
+    signpost_target_scenario_ids: list[int] | None = None,
 ) -> CreateSignpostsOut:
     """Run the background graph inline and return the callback payload."""
     from apps.common.configs.config import get_settings
@@ -142,13 +163,38 @@ async def run_create_signposts_inline(
         user_id=user_id,
         include_details=True,
         request_table=request_table,
+        operation_id=operation_id,
+        signpost_target_scenario_ids=signpost_target_scenario_ids or [],
     )
-    with mlflow_trace_context(trace_context):
-        final_state = await get_compiled_graph().ainvoke(
-            state,
-            config=build_langgraph_config(trace_context),
-            context=trace_context,
-        )
+    try:
+        if operation_id is not None:
+            ScenarioGroupOperationService().start_operation(
+                scenario_group_id,
+                operation_id,
+                phase="signpost",
+            )
+        with mlflow_trace_context(trace_context):
+            final_state = await get_compiled_graph().ainvoke(
+                state,
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
+        if operation_id is not None:
+            ScenarioGroupOperationService().complete_operation(
+                scenario_group_id=scenario_group_id,
+                operation_id=operation_id,
+                phase="signpost",
+                message_markdown="Signpost 생성을 완료했습니다.",
+            )
+    except Exception as exc:
+        if operation_id is not None:
+            ScenarioGroupOperationService().fail_signpost(
+                scenario_group_id=scenario_group_id,
+                operation_id=operation_id,
+                user_id=user_id,
+                error=exc,
+            )
+        raise
     return _bg_to_output(final_state)
 
 
@@ -160,7 +206,9 @@ async def run_create_signposts_inline(
 async def run_create_signposts_background(
     scenario_group_id: int,
     user_id: int,
-    request_table: dict[str, Any],
+    request_table: dict[str, Any] | None,
+    operation_id: str | None = None,
+    signpost_target_scenario_ids: list[int] | None = None,
 ) -> None:
     from apps.common.configs.config import get_settings
 
@@ -175,6 +223,8 @@ async def run_create_signposts_background(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
+            operation_id=operation_id,
+            signpost_target_scenario_ids=signpost_target_scenario_ids,
         )
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)

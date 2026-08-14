@@ -10,6 +10,7 @@ from apps.agents.scenario_group_agent.flows.create_signposts.state import (
     CreateSignpostsState,
     create_signposts_state_update,
 )
+from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import V4_GENERATION_STRATEGY
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
@@ -118,6 +119,8 @@ async def generate_new_scenario_row_details_node(
 ) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
+    if state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
+        return {}
     if state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
     request_table = state.request_table.model_dump(exclude_unset=True)
@@ -157,6 +160,8 @@ async def generate_new_scenario_row_details_node(
 def sync_scenarios_from_table(state: CreateSignpostsState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
+    if state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
+        return {}
     if state.user_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
     if state.request_table is None:

@@ -14,6 +14,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.nodes import (
     MAX_STAGE_ATTEMPTS,
     _backoff,
+    _retry_validation_feedback,
     classify_llm_error,
     error_code_from_name,
     invoke_stage_structured_output,
@@ -472,7 +473,10 @@ class SynthesizeV4ScenariosNode(BaseNode):
                         definition.model_dump() for definition in state.dimension_draft.dimension_definitions
                     ],
                     validation_warnings=[warning.model_dump() for warning in warnings],
-                    validation_feedback=state.scenario_error,
+                    validation_feedback=_retry_validation_feedback(
+                        state.scenario_error,
+                        state.scenario_error_code,
+                    ),
                 ),
                 trace_context=runtime.context if runtime is not None else None,
                 stage="scenario_synthesis",
@@ -571,6 +575,7 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
                 pressure_band=candidate.pressure_band,
                 reason_code=candidate.reason_code,
                 reason=candidate.reason,
+                dimension_values=candidate.dimension_values,
             )
             for candidate in finalized.excluded_scenarios
         ],

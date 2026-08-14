@@ -109,6 +109,15 @@ def test_canonical_scenario_group_routes_are_exposed_without_v1_or_deprecation()
     ]
     assert paths["/scenario-groups/{scenario_group_id}/validation"]["post"]["tags"] == ["scenario-groups"]
     assert paths["/v4/scenario-groups/sync"]["post"]["tags"] == ["scenario-groups-sync-test"]
+    follow_up_path = "/scenario-groups/{scenario_group_id}/presentation/follow-up-request-bodies"
+    assert paths[follow_up_path]["get"]["tags"] == ["scenario-generation-sync"]
+    detail_get = paths["/scenario-groups/{scenario_group_id}"]["get"]
+    assert "requestBody" not in detail_get
+    include_dimensions = next(
+        parameter for parameter in detail_get["parameters"] if parameter["name"] == "includeDimensions"
+    )
+    assert include_dimensions["in"] == "query"
+    assert include_dimensions["schema"]["default"] is True
 
 
 def test_routes_are_declared_by_the_documented_owner_routers() -> None:
@@ -119,6 +128,7 @@ def test_routes_are_declared_by_the_documented_owner_routers() -> None:
         "/scenario-groups/{scenario_group_id}/confirmation",
     } <= scenario_group_paths
     assert {route.path for route in scenario_generation_sync_router.routes} == {
+        "/scenario-groups/{scenario_group_id}/presentation/follow-up-request-bodies",
         "/scenario-groups/{scenario_group_id}/validation/sync",
         "/scenario-groups/{scenario_group_id}/signposts/sync",
     }

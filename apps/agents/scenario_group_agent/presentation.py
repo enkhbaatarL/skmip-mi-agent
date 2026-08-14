@@ -5,11 +5,15 @@ from decimal import Decimal
 import html
 from typing import Any
 
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     ScenarioGroupDetailOut,
+)
+from apps.agents.scenario_group_agent.schemas.api.presentation_followup_requests import (
+    PresentationFollowUpRequestBodiesOut,
 )
 from apps.agents.scenario_group_agent.schemas.api.scenario_group_presentation import (
     PresentationCellEvidence,
@@ -25,6 +29,7 @@ from apps.agents.scenario_group_agent.schemas.api.scenario_group_presentation im
     PresentationSections,
     ScenarioGroupPresentationOut,
 )
+from apps.agents.scenario_group_agent.schemas.endpoint import CreateSignpostsIn
 from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
@@ -45,6 +50,54 @@ from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperat
 
 
 PRESENTATION_RENDERER_VERSION = "v1"
+
+
+def build_presentation_follow_up_request_bodies(
+    presentation: ScenarioGroupPresentationOut,
+    *,
+    user_id: int,
+) -> PresentationFollowUpRequestBodiesOut:
+    """Build initial Validation and Signpost request bodies from a Presentation read model."""
+    scenario_table = presentation.sections.scenario_design.scenario_table
+    operation_id = presentation.operation.operation_id if presentation.operation is not None else None
+    if scenario_table.status != "ready":
+        return PresentationFollowUpRequestBodiesOut(
+            scenario_group_id=presentation.scenario_group_id,
+            operation_id=operation_id,
+            scenario_table_status=scenario_table.status,
+            ready=False,
+            reason="scenarioTable.status가 ready가 아니므로 후속 요청 body를 생성할 수 없습니다.",
+        )
+
+    table = {
+        "headers": [
+            {
+                "key": header.key,
+                "label": header.label,
+                "display_order": header.display_order,
+            }
+            for header in scenario_table.headers
+        ],
+        "rows": [
+            {
+                "scenario_id": row.scenario_id,
+                "display_order": row.display_order,
+                "title": row.title,
+                "cells": dict(row.cells),
+            }
+            for row in scenario_table.rows
+        ],
+    }
+    validation_request = ValidateScenariosIn(user_id=user_id, table=table)
+    signpost_request = CreateSignpostsIn(user_id=user_id, table=table)
+    return PresentationFollowUpRequestBodiesOut(
+        scenario_group_id=presentation.scenario_group_id,
+        operation_id=operation_id,
+        scenario_table_status=scenario_table.status,
+        ready=True,
+        validation_request_body=validation_request,
+        signpost_request_body=signpost_request,
+    )
 
 
 def build_scenario_group_table_data(
@@ -89,6 +142,8 @@ def build_scenario_group_query_data(
     group: dict[str, Any],
     scenarios: list[dict[str, Any]],
     signposts: list[dict[str, Any]] | None = None,
+    *,
+    include_dimension_definitions: bool = True,
 ) -> ScenarioGroupDetailOut:
     template_by_key, selected_keys, headers = _build_headers(group)
     signposts_by_scenario_id = _group_signposts(signposts)
@@ -121,7 +176,12 @@ def build_scenario_group_query_data(
 
     signposts_list = signposts or []
     return ScenarioGroupDetailOut(
-        scenario_group=ScenarioGroupQueryPayload.model_validate(group),
+        scenario_group=ScenarioGroupQueryPayload.model_validate(
+            {
+                **group,
+                "include_dimension_definitions": include_dimension_definitions,
+            },
+        ),
         table=ScenarioQueryTable(headers=headers, rows=rows),
         scenario_count=sum(1 for scenario in scenarios if scenario.get("del_yn") != "Y"),
         signpost_count=sum(1 for signpost in signposts_list if signpost.get("del_yn") != "Y"),
@@ -137,8 +197,14 @@ def build_common_scenario_group_query_data(
     signposts: list[dict[str, Any]],
     events: list[EventPayload],
     latest_operation: ScenarioGroupOperationPayload | None,
+    include_dimension_definitions: bool = True,
 ) -> ScenarioGroupDetailOut:
-    detail = build_scenario_group_query_data(group, scenarios, signposts)
+    detail = build_scenario_group_query_data(
+        group,
+        scenarios,
+        signposts,
+        include_dimension_definitions=include_dimension_definitions,
+    )
     latest_payload = latest_operation.model_dump(mode="json", by_alias=True) if latest_operation is not None else None
     detail.latest_operation = latest_payload
     detail.active_operation = (
@@ -146,7 +212,7 @@ def build_common_scenario_group_query_data(
     )
     scenario_group = detail.scenario_group
     legacy = scenario_group.api_version == "v1"
-    presentation_snapshot = {
+    presentation_snapshot: dict[str, Any] = {
         "schemaVersion": "v1",
         "apiVersion": scenario_group.api_version,
         "generationStrategy": scenario_group.generation_strategy,
@@ -155,12 +221,15 @@ def build_common_scenario_group_query_data(
         "warnings": (["legacy v1 데이터에는 상세 근거가 저장되지 않았습니다"] if legacy else []),
         "scenarioGroup": scenario_group.model_dump(mode="json", by_alias=True),
         "events": [event.model_dump(mode="json", by_alias=True) for event in events],
-        "dimensionDefinitions": scenario_group.dimension_definitions,
         "table": detail.table.model_dump(mode="json", by_alias=True),
         "generationDiagnostics": scenario_group.generation_diagnostics,
     }
+    if include_dimension_definitions:
+        presentation_snapshot["dimensionDefinitions"] = scenario_group.dimension_definitions
     if latest_operation is not None and latest_operation.presentation_snapshot:
         presentation_snapshot.update(latest_operation.presentation_snapshot)
+    if not include_dimension_definitions:
+        presentation_snapshot.pop("dimensionDefinitions", None)
     detail.presentation_snapshot = presentation_snapshot
     return detail
 

@@ -63,7 +63,7 @@ class ConfirmScenarioGroupState(ApiModel):
 
 
 ValidationCheckStatus = Literal["PASS", "WARN", "FAIL", "INFO"]
-ValidationVerdict = Literal["PASS", "REVIEW", "BLOCK", ""]
+ValidationVerdict = Literal["PASS", "PASS_WITH_WARNINGS", "REVIEW", "BLOCK", ""]
 
 
 class ScenarioValidationResult(ApiModel):

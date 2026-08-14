@@ -239,6 +239,9 @@ Client는 두 필드를 구분해 표시한다.
 Client는 마지막으로 반영한 `snapshotRevision`보다 큰 `section_ready`만 상세 재조회하면 된다.
 같은 revision을 다시 받거나 replay로 중복 수신한 경우에는 재조회를 생략할 수 있다.
 
+Presentation 응답에서 Validation·Signpost request body를 조립하는 필드별 규칙은
+[`presentation_followup_api_request_mapping.md`](../guides/presentation_followup_api_request_mapping.md)를 참고한다.
+
 `completed` 수신 후에는 마지막으로 Presentation API를 조회한 뒤 Scenario Group 상세 화면으로 전환한다.
 신규 Multi-Event 생성 graph 안에서 각 단계 검증이 함께 수행되므로, Client가 생성 도중 후속 편집용
 `/scenario-groups/{scenarioGroupId}/validation` 또는

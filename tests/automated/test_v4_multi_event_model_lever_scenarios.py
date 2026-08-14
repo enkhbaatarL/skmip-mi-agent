@@ -436,8 +436,26 @@ def _synthesis() -> V4ScenarioSynthesisResult:
                 ),
             ],
             "excludedScenarios": [
-                {"pressureBand": "bullish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "상단과 유사"},
-                {"pressureBand": "bearish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "하단과 유사"},
+                {
+                    "pressureBand": "bullish",
+                    "reasonCode": "LOW_DISTINCTIVENESS",
+                    "reason": "상단과 유사",
+                    "dimensionValues": {
+                        "cold_wave_intensity": "high",
+                        "liquefaction_recovery": "fast",
+                        "risk_premium": "high",
+                    },
+                },
+                {
+                    "pressureBand": "bearish",
+                    "reasonCode": "LOW_DISTINCTIVENESS",
+                    "reason": "하단과 유사",
+                    "dimensionValues": {
+                        "cold_wave_intensity": "low",
+                        "liquefaction_recovery": "delayed",
+                        "risk_premium": "low",
+                    },
+                },
             ],
         },
     )
@@ -573,6 +591,24 @@ def test_v4_scenario_rejects_missing_common_path() -> None:
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
         )
+
+
+def test_v4_scenario_duplicate_combination_error_identifies_both_scenarios() -> None:
+    synthesis = _synthesis()
+    synthesis.scenarios[1].dimension_values = dict(synthesis.scenarios[0].dimension_values)
+
+    with pytest.raises(ValueError) as error:
+        finalize_v4_generation_result(
+            synthesis,
+            impact_analysis=_analysis(),
+            dimension_design=_dimensions(),
+            impact_levers=_catalog(),
+        )
+
+    detail = str(error.value)
+    assert "scenarios[1] ('혼합').dimensionValues" in detail
+    assert "scenarios[0] ('상단').dimensionValues" in detail
+    assert "cold_wave_intensity" in detail
 
 
 def _readable_event_draft(event_id: int) -> V4ReadableEventAnalysisDraft:
@@ -1253,8 +1289,18 @@ def _readable_scenario_draft() -> V4ReadableScenarioSynthesisDraft:
                 ),
             ],
             "excluded": [
-                {"pressureBand": "bullish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "상단과 유사"},
-                {"pressureBand": "bearish", "reasonCode": "LOW_DISTINCTIVENESS", "reason": "하단과 유사"},
+                {
+                    "pressureBand": "bullish",
+                    "reasonCode": "LOW_DISTINCTIVENESS",
+                    "reason": "상단과 유사",
+                    "choices": ["D1.V2", "D2.V1", "D3.V2"],
+                },
+                {
+                    "pressureBand": "bearish",
+                    "reasonCode": "LOW_DISTINCTIVENESS",
+                    "reason": "하단과 유사",
+                    "choices": ["D1.V1", "D2.V2", "D3.V1"],
+                },
             ],
         },
     )
@@ -1496,6 +1542,7 @@ def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
     assert saved_diagnostics["decision_basis"] == finalized.impact_analysis.decision_basis
     assert saved_diagnostics["impact_paths"][0]["lever_steps"][0]["impact_lever_id"] == 1
     assert saved_diagnostics["event_interactions"][0]["impact_path_ids"]
+    assert saved_diagnostics["excluded_candidates"][0]["dimension_values"]
     assert saved_diagnostics["scenario_pressure_breakdowns"]
     assert result["generation_diagnostics"].impact_paths
 
@@ -1523,6 +1570,12 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
+    )
+    scenario_retry = build_v4_scenario_synthesis_user_prompt(
+        impact_analysis=_analysis().model_dump(),
+        dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
+        validation_warnings=[],
+        validation_feedback="scenarios[1].dimensionValues duplicates scenarios[0].dimensionValues",
     )
     interaction = build_v4_interaction_analysis_user_prompt(
         impact_paths=[path.model_dump() for path in _analysis().impact_paths],
@@ -1577,6 +1630,30 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "내부 참조 ID를 노출하지 말고" in scenario
     assert "ID는 choices와 interactions 필드에서만 사용" in scenario
     assert "commonImpactPathIds" not in scenario
+    assert "TTF와 HH는 각각 최대 한 번만 작성" in scenario
+    assert "검증 오류: scenarios[1].dimensionValues duplicates scenarios[0].dimensionValues" in scenario_retry
+    assert "동일한 실수를 반복하지 마십시오" in scenario_retry
+
+
+def test_llm_validation_error_detail_preserves_field_locations_for_retry() -> None:
+    with pytest.raises(ValueError) as error:
+        V4ReadableScenarioSynthesisDraft.model_validate(
+            {
+                "title": "테스트 그룹",
+                "description": "테스트 설명",
+                "scenarios": [{}],
+            },
+        )
+
+    detail, error_code, retryable = v4_nodes.classify_llm_error(error.value)
+
+    assert "field=scenarios.0.title" in detail
+    assert "type=missing" in detail
+    assert "input_value" not in detail
+    assert error_code == "LLM_INVALID_RESPONSE_ERROR"
+    assert retryable is True
+    assert v4_nodes._retry_validation_feedback(detail, error_code) == detail
+    assert v4_nodes._retry_validation_feedback(detail, "LLM_RESPONSE_TIMEOUT") is None
 
 
 def test_v4_readable_copy_contract_matches_table_density() -> None:
@@ -1655,3 +1732,17 @@ def test_v4_structured_output_schemas_are_openai_strict_compatible() -> None:
 def test_related_markets_excludes_primary_jkm_market() -> None:
     with pytest.raises(ValueError, match="TTF|HH"):
         RelatedMarket(market="JKM", rationale="JKM은 pressure breakdown에서 설명한다.")
+
+
+def test_v4_scenario_discards_duplicate_related_markets_after_first() -> None:
+    payload = _synthesis().model_dump(by_alias=True)
+    payload["scenarios"][0]["relatedMarkets"] = [
+        {"market": "TTF", "rationale": "첫 번째 TTF 근거를 유지한다."},
+        {"market": "TTF", "rationale": "중복된 두 번째 TTF 근거는 버린다."},
+    ]
+
+    synthesis = V4ScenarioSynthesisResult.model_validate(payload)
+
+    assert synthesis.scenarios[0].related_markets == [
+        RelatedMarket(market="TTF", rationale="첫 번째 TTF 근거를 유지한다."),
+    ]

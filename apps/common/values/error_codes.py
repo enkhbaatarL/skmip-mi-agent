@@ -14,11 +14,20 @@ class ErrorCode(Enum):
     CLASSIFY_SCENARIO_TYPE_FAILED = (-1000, "사용자 질의 내용 기반으로 시나리오 타입 분류에 실패했습니다.", 500)
     SCENARIO_GROUP_ALREADY_CREATED = (-1001, "시나리오 그룹이 이미 생성되었습니다.", 400)
     SCENARIO_VALIDATION_INPUT_ERROR = (-1002, "시나리오 검증 입력 오류", 422)
-    SCENARIO_GROUP_OWNERSHIP_CONFLICT = (-1003, "시나리오 그룹 생성 권한이 없습니다. 다른 사용자에 의해 시나리오가 생성중입니다.", 403)
+    SCENARIO_GROUP_OWNERSHIP_CONFLICT = (
+        -1003,
+        "시나리오 그룹 생성 권한이 없습니다. 다른 사용자에 의해 시나리오가 생성중입니다.",
+        403,
+    )
     SCENARIO_GROUP_ADMIN_FORBIDDEN = (-1004, "시나리오 그룹 관리자 권한이 없습니다.", 403)
     SCENARIO_GROUP_OPERATION_CONFLICT = (
         -1005,
         "실행 중인 Scenario Group 작업과 충돌합니다.",
+        409,
+    )
+    SCENARIO_VALIDATION_STALE = (
+        -1006,
+        "Validation 이후 Scenario 또는 Dimension 정의가 변경되었습니다. 화면을 새로고침한 뒤 Validation을 다시 실행해주세요.",
         409,
     )
 

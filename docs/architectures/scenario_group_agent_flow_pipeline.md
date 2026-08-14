@@ -541,6 +541,14 @@ Stage 2~6의 LLM 호출은 retry 가능한 오류에 한해 `REF_MAX_RETRIES`만
 
 ### 전체 흐름
 
+v4는 `prepare_create_signposts`의 짧은 transaction에서 최신 Validation operation과 두 fingerprint를
+검증하고 `scenarioChangeSet`을 먼저 확정한다. 신규 ID 발급, 기존 row update/soft-delete, 기존 Signpost
+soft-delete, baseline/role 재계산과 Validation application 기록을 완료한 뒤 Signpost operation과
+background task를 만든다. 따라서 v4 graph의 `generate_new_scenario_row_details`와
+`sync_scenarios_from_table` node는 no-op이며, Validation에서 생성한 DB 저장 필드를 다시 LLM으로 만들지 않는다.
+
+v1~v3는 아래 table 기반 흐름을 유지한다.
+
 ```mermaid
 flowchart LR
     A[POST /scenario-groups/:id/signposts] --> B[prepare_create_signposts]
@@ -562,7 +570,9 @@ flowchart LR
 
 ### 입력과 출력 변환
 
-`CreateSignpostsIn`은 `user_id`와 `table`(ScenarioTable)을 받는다.
+`CreateSignpostsIn`은 `user_id`와 optional `table`(ScenarioTable)을 받는다. v1~v3는 table이 필수이며,
+v4는 최신 Validation Change Set을 서버에서 적용하므로 table을 사용하지 않는다. 로컬·QA용 Presentation 후속
+request body helper는 버전별 초안 shape을 통일하기 위해 v4 body에도 table을 포함한다.
 `to_state`는 `request_table=parsed.table.model_dump()`를 state에 설정한다.
 
 `to_output`은 `build_scenario_group_table_data(group, scenarios, signposts)`로
@@ -711,6 +721,26 @@ Stage 4+5 응답은 다음 조건을 확인한다.
 
 
 ### 전체 흐름
+
+v4는 prepare에서 validation operation을 만들고 stage를 `scenario_created`로 정리한다. background graph의
+review node 안에서는 다음 v4 전용 순서를 수행한다.
+
+```text
+label/valueId -> canonical valueId 정규화
+  -> Scenario 수·header/cell·enum·title·조합 결정적 검사
+  -> unchanged이면 LLM 없이 PASS
+  -> title/조합 변경 및 신규 row만 semantic review
+  -> 신규·조합 변경 row만 DB 저장 필드 structured generation
+  -> 최소 scenarioChangeSet 조립
+  -> operation.result_payload 저장 + stage 갱신 (같은 transaction)
+```
+
+canonical table은 메모리 표현이며 별도 DB table로 저장하지 않는다. operation에는 변경 row의 최종 DB payload와
+삭제 ID만 저장하고 unchanged row, 전체 table, `leverState`는 저장하지 않는다. warning만 존재하면
+`PASS_WITH_WARNINGS`, `canProceed=true`이고, blocking은 operation `succeeded` 이력과 결과를 남기되
+`scenarioChangeSet=null`, `stage=scenario_created`로 처리한다.
+
+v1~v3는 아래 optional dimension 보정·mapping·review 흐름을 유지한다.
 
 ```mermaid
 flowchart LR

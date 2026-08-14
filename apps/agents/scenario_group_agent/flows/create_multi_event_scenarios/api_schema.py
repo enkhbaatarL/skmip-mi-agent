@@ -87,6 +87,7 @@ class ExcludedCandidate(ApiModel):
     ]
     reason_code: str
     reason: str
+    dimension_values: dict[str, str] = Field(default_factory=dict)
 
 
 class V3TemplateDimensionSelectionDiagnostic(ApiModel):

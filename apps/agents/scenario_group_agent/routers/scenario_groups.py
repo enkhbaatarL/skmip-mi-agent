@@ -20,6 +20,7 @@ from apps.agents.scenario_group_agent.flows.create_signposts.flow import (
     prepare_create_signposts,
     run_create_signposts_background,
 )
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
 from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     prepare_validate_scenarios,
     run_validate_scenarios_background,
@@ -59,7 +60,6 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
     CreateSignpostsIn,
     ScenarioGroupAcceptedData,
     ScenarioGroupAcceptedOut,
-    ValidateScenariosIn,
 )
 
 
@@ -168,12 +168,16 @@ async def get_scenario_group(
     scenario_group_id: int,
     *,
     include_deleted: Annotated[bool, Query(alias="includeDeleted")] = False,
+    include_dimensions: Annotated[bool, Query(alias="includeDimensions")] = True,
 ) -> ScenarioGroupDetailOut:
     context = ScenarioGroupService().load_common_detail(
         scenario_group_id,
         include_deleted=include_deleted,
     )
-    return build_common_scenario_group_query_data(**context)
+    return build_common_scenario_group_query_data(
+        **context,
+        include_dimension_definitions=include_dimensions,
+    )
 
 
 @router.get(
@@ -225,6 +229,7 @@ async def validate_scenarios(
         scenario_group_id=result["scenario_group_id"],
         user_id=result["user_id"],
         request_table=result["request_table"],
+        operation_id=result.get("operation_id"),
     )
     return ScenarioGroupAcceptedOut(
         data=ScenarioGroupAcceptedData(
@@ -245,12 +250,18 @@ async def create_signposts(
     payload: CreateSignpostsIn,
     background_tasks: BackgroundTasks,
 ) -> ScenarioGroupAcceptedOut:
-    result = prepare_create_signposts(scenario_group_id, payload.user_id, payload.table.model_dump())
+    result = prepare_create_signposts(
+        scenario_group_id,
+        payload.user_id,
+        payload.table.model_dump() if payload.table is not None else None,
+    )
     background_tasks.add_task(
         run_create_signposts_background,
         scenario_group_id=result["scenario_group_id"],
         user_id=result["user_id"],
         request_table=result["request_table"],
+        operation_id=result.get("operation_id"),
+        signpost_target_scenario_ids=result.get("signpost_target_scenario_ids"),
     )
     return ScenarioGroupAcceptedOut(
         data=ScenarioGroupAcceptedData(

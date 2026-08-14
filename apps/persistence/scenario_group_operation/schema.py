@@ -35,6 +35,96 @@ class ScenarioGroupOperationPayload(ApiModel):
     updated_at: datetime | None = None
 
 
+ValidationVerdict = Literal["PASS", "PASS_WITH_WARNINGS", "BLOCK"]
+ValidationCheckStatus = Literal["PASS", "WARN", "FAIL", "INFO"]
+ValidationChangeType = Literal["NEW", "TITLE_CHANGED", "REORDERED", "COMBINATION_CHANGED"]
+
+
+class ValidationCheckPayload(ApiModel):
+    check_id: str
+    status: ValidationCheckStatus
+    blocking: bool
+    detail: str
+    offenders: list[str] = Field(default_factory=list)
+    advice: list[str] = Field(default_factory=list)
+
+
+class ValidationGeneratedFieldsPayload(ApiModel):
+    narrative: str
+    probability_score: float = Field(ge=0, le=100)
+    probability_delta: float = 0
+    pressure_band: Literal[
+        "strong_bullish",
+        "bullish",
+        "balanced",
+        "bearish",
+        "strong_bearish",
+    ]
+    pressure_rationale: str
+    related_markets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ValidationScenarioUpsertPayload(ApiModel):
+    scenario_id: int | None = None
+    client_row_key: str
+    change_type: ValidationChangeType
+    display_order: int
+    title: str
+    dimension_values: dict[str, str]
+    generated_fields: ValidationGeneratedFieldsPayload
+
+
+class ValidationScenarioChangeSetPayload(ApiModel):
+    upserts: list[ValidationScenarioUpsertPayload] = Field(default_factory=list)
+    delete_scenario_ids: list[int] = Field(default_factory=list)
+
+
+class ValidationGeneratedDetailPayload(ApiModel):
+    client_row_key: str
+    scenario_id: int | None = None
+    title: str
+    narrative: str
+    probability_score: float
+    pressure_band: str
+    pressure_rationale: str
+    related_markets: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ValidationResultPayload(ApiModel):
+    verdict: ValidationVerdict
+    is_valid: bool
+    can_proceed: bool
+    review_skipped: bool = False
+    summary: dict[str, int] = Field(default_factory=dict)
+    checks: list[ValidationCheckPayload] = Field(default_factory=list)
+    generated_details: list[ValidationGeneratedDetailPayload] = Field(default_factory=list)
+    reason_markdown: str
+
+
+class ValidationApplicationPayload(ApiModel):
+    applied_at: datetime
+    applied_scenario_fingerprint: str
+    new_scenario_id_map: dict[str, int] = Field(default_factory=dict)
+
+
+class ValidationOperationResultPayload(ApiModel):
+    schema_version: Literal["v1"] = "v1"
+    mode: Literal["unchanged", "changed", "blocked"]
+    base_scenario_fingerprint: str
+    dimension_definition_fingerprint: str
+    validation_result: ValidationResultPayload
+    scenario_change_set: ValidationScenarioChangeSetPayload | None = None
+    application: ValidationApplicationPayload | None = None
+
+
+class ScenarioGroupOperationInternalPayload(ApiModel):
+    operation_id: str
+    scenario_group_id: int
+    operation_type: OperationType
+    status: OperationStatus
+    result_payload: ValidationOperationResultPayload | dict[str, Any] | None = None
+
+
 class ScenarioGroupOperationEventPayload(ApiModel):
     operation_id: str
     scenario_group_id: int
@@ -47,4 +137,3 @@ class ScenarioGroupOperationEventPayload(ApiModel):
     snapshot_revision: int = 0
     mlflow_trace_id: str | None = None
     created_at: datetime | None = None
-

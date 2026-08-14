@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from decimal import Decimal
 import hashlib
 import json
@@ -62,6 +63,13 @@ class ScenarioSyncResult(TypedDict):
     updated_scenario_ids: list[int]
     deleted_scenario_ids: list[int]
     unchanged_existing_scenario_ids: list[int]
+
+
+class ValidationChangeSetAcceptanceResult(TypedDict):
+    operation_id: str
+    validation_operation_id: str
+    signpost_target_scenario_ids: list[int]
+    scenario_group: dict[str, Any]
 
 
 class ExistingScenarioUpdatePayload(TypedDict):
@@ -599,6 +607,318 @@ class ScenarioService:
                 dimension_definitions=dimension_definitions,
             )
         )
+
+    def accept_validation_change_set(
+        self,
+        *,
+        scenario_group_id: int,
+        user_id: int,
+    ) -> ValidationChangeSetAcceptanceResult:
+        from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
+            dimension_definition_fingerprint,
+            scenario_fingerprint,
+        )
+        from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+            ScenarioGroupOperationService,
+            new_operation_id,
+        )
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+        from apps.persistence.scenario_group_operation.repository import ScenarioGroupOperationRepository
+        from apps.persistence.scenario_group_operation.schema import (
+            ValidationApplicationPayload,
+            ValidationOperationResultPayload,
+        )
+
+        session = get_sync_session()
+        stale_detail: str | None = None
+        try:
+            scenario_repository = ScenarioRepository(session=session)
+            group_repository = ScenarioGroupRepository(session=session)
+            signpost_repository = SignpostRepository(session=session)
+            operation_repository = ScenarioGroupOperationRepository(session=session)
+            group = group_repository.fetch_by_id(scenario_group_id, for_update=True)
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+            if group.request_usr_id is not None and int(group.request_usr_id) != user_id:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                    detail=f"이미 사용자 {group.request_usr_id}가 점유하고 있습니다.",
+                )
+            current_stage = getattr(group.stage, "value", group.stage)
+            if current_stage != "scenario_validated":
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail="Scenario Validation을 먼저 통과해야 합니다.",
+                )
+            active_operation = operation_repository.fetch_active(scenario_group_id)
+            if active_operation is not None:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail=f"실행 중인 operation이 있습니다: {active_operation.operation_id}",
+                )
+            validation_operation = operation_repository.fetch_latest_by_type(
+                scenario_group_id,
+                "validation",
+                for_update=True,
+            )
+            if validation_operation is None or validation_operation.status != "succeeded":
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail="가장 최근 Validation이 정상 완료되지 않았습니다.",
+                )
+            validation_result = ValidationOperationResultPayload.model_validate(
+                validation_operation.result_payload,
+            )
+            if not validation_result.validation_result.can_proceed:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail="가장 최근 Validation 결과로는 다음 단계로 진행할 수 없습니다.",
+                )
+
+            scenarios = scenario_repository.fetch_models_by_group_id(
+                scenario_group_id,
+                for_update=True,
+            )
+            scenario_dicts = [scenario_repository.model_to_dict(scenario) for scenario in scenarios]
+            current_scenario_fingerprint = scenario_fingerprint(scenario_dicts)
+            current_definition_fingerprint = dimension_definition_fingerprint(
+                list(group.dimension_definitions or []),
+            )
+            target_ids: list[int] = []
+            application = validation_result.application
+            if application is not None:
+                if current_definition_fingerprint != validation_result.dimension_definition_fingerprint:
+                    stale_detail = "Change Set 적용 후 Dimension definition이 다시 변경되었습니다."
+                elif current_scenario_fingerprint != application.applied_scenario_fingerprint:
+                    stale_detail = "Change Set 적용 후 Scenario가 다시 변경되었습니다."
+            elif (
+                current_scenario_fingerprint != validation_result.base_scenario_fingerprint
+                or current_definition_fingerprint != validation_result.dimension_definition_fingerprint
+            ):
+                stale_detail = "Validation 기준 Scenario 또는 Dimension definition fingerprint가 현재 값과 다릅니다."
+            elif validation_result.mode == "changed":
+                change_set = validation_result.scenario_change_set
+                if change_set is None:
+                    raise MIBaseError(
+                        ErrorCode.UNKNOWN_ERROR,
+                        detail="Validation Change Set이 누락되었습니다.",
+                    )
+                scenarios_by_id = {int(scenario.scenario_id): scenario for scenario in scenarios}
+                delete_ids = list(change_set.delete_scenario_ids)
+                existing_upsert_ids = {
+                    int(upsert.scenario_id) for upsert in change_set.upserts if upsert.scenario_id is not None
+                }
+                missing_upsert_ids = existing_upsert_ids - set(scenarios_by_id)
+                missing_delete_ids = set(delete_ids) - set(scenarios_by_id)
+                if missing_upsert_ids:
+                    stale_detail = "변경 대상 Scenario가 현재 그룹과 일치하지 않습니다: " + ", ".join(
+                        str(item) for item in sorted(missing_upsert_ids)
+                    )
+                elif missing_delete_ids:
+                    stale_detail = "삭제 대상 Scenario가 현재 그룹과 일치하지 않습니다."
+                else:
+                    new_id_map: dict[str, int] = {}
+                    updated_ids: list[int] = []
+                    for upsert in change_set.upserts:
+                        fields = upsert.generated_fields
+                        payload = {
+                            "title": upsert.title,
+                            "narrative": fields.narrative,
+                            "dimension_values": upsert.dimension_values,
+                            "probability_score": Decimal(str(fields.probability_score)),
+                            "probability_delta": Decimal("0"),
+                            "display_order": upsert.display_order,
+                            "baseline_yn": "N",
+                            "global_pressure_band": fields.pressure_band,
+                            "scenario_role": None,
+                            "global_pressure_rationale": fields.pressure_rationale,
+                            "related_markets": fields.related_markets,
+                            "status": ScenarioStatus.CREATING.value,
+                            "mod_usr_logn_id": user_id,
+                        }
+                        if upsert.scenario_id is None:
+                            scenario_id = scenario_repository.insert_scenario(
+                                {
+                                    **payload,
+                                    "scenario_group_id": scenario_group_id,
+                                    "crt_usr_logn_id": user_id,
+                                },
+                            )
+                            new_id_map[upsert.client_row_key] = scenario_id
+                            target_ids.append(scenario_id)
+                            continue
+                        scenario_id = int(upsert.scenario_id)
+                        scenario_repository.update_from_payload(
+                            scenarios_by_id[scenario_id],
+                            payload,
+                        )
+                        updated_ids.append(scenario_id)
+                        target_ids.append(scenario_id)
+                    scenario_repository.soft_delete_by_ids(delete_ids, user_id=user_id)
+                    signpost_repository.soft_delete_by_scenario_ids(
+                        [*updated_ids, *delete_ids],
+                        user_id=user_id,
+                    )
+                    active_scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
+                    self._apply_v4_baseline_and_roles(
+                        active_scenarios,
+                        list(group.dimension_definitions or []),
+                        user_id=user_id,
+                    )
+                    group_repository.update_group(
+                        group,
+                        {
+                            "scenario_count": len(active_scenarios),
+                            "mod_usr_logn_id": user_id,
+                        },
+                    )
+                    applied_dicts = [scenario_repository.model_to_dict(item) for item in active_scenarios]
+                    applied_fingerprint = scenario_fingerprint(applied_dicts)
+                    validation_result.application = ValidationApplicationPayload(
+                        applied_at=datetime.now(UTC),
+                        applied_scenario_fingerprint=applied_fingerprint,
+                        new_scenario_id_map=new_id_map,
+                    )
+                    validation_operation.result_payload = validation_result.model_dump(
+                        mode="json",
+                        by_alias=True,
+                    )
+
+            if stale_detail is not None:
+                group_repository.update_group(
+                    group,
+                    {
+                        "stage": "scenario_created",
+                        "mod_usr_logn_id": user_id,
+                    },
+                )
+                session.commit()
+                raise MIBaseError(ErrorCode.SCENARIO_VALIDATION_STALE, detail=stale_detail)
+
+            signpost_operation_id = new_operation_id()
+            ScenarioGroupOperationService().create_accepted_in_session(
+                session,
+                scenario_group_id=scenario_group_id,
+                operation_id=signpost_operation_id,
+                operation_type="signpost",
+                engine_version=str(group.api_version or "v1"),
+                user_id=user_id,
+            )
+            signpost_operation = operation_repository.fetch_by_id(
+                scenario_group_id,
+                signpost_operation_id,
+                for_update=True,
+            )
+            if signpost_operation is None:
+                raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Signpost operation creation failed")
+            signpost_operation.result_payload = {
+                "schemaVersion": "v1",
+                "validationOperationId": validation_operation.operation_id,
+            }
+            session.commit()
+            return {
+                "operation_id": signpost_operation_id,
+                "validation_operation_id": validation_operation.operation_id,
+                "signpost_target_scenario_ids": target_ids,
+                "scenario_group": group_repository.model_to_dict(group),
+            }
+        except MIBaseError as exc:
+            if stale_detail is None:
+                session.rollback()
+            raise exc
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def _apply_v4_baseline_and_roles(
+        self,
+        scenarios: list[Any],
+        dimension_definitions: list[dict[str, Any]],
+        *,
+        user_id: int,
+    ) -> None:
+        if not scenarios:
+            return
+        contribution_by_value: dict[tuple[str, str], int] = {}
+        contribution_score = {"bearish": -1, "balanced": 0, "bullish": 1}
+        for definition in dimension_definitions:
+            dimension_id = str(definition.get("dimension_id") or definition.get("dimensionId") or "")
+            for value in definition.get("values") or []:
+                if not isinstance(value, dict):
+                    continue
+                value_id = str(value.get("value_id") or value.get("valueId") or "")
+                contribution = str(
+                    value.get("pressure_contribution") or value.get("pressureContribution") or "balanced",
+                )
+                contribution_by_value[(dimension_id, value_id)] = contribution_score.get(contribution, 0)
+
+        pressure_rank = {
+            "strong_bearish": 0,
+            "bearish": 1,
+            "balanced": 2,
+            "bullish": 3,
+            "strong_bullish": 4,
+        }
+        scenario_scores: dict[int, tuple[int, set[int]]] = {}
+        for scenario in scenarios:
+            contributions = {
+                contribution_by_value.get((str(key), str(value)), 0)
+                for key, value in (scenario.dimension_values or {}).items()
+            }
+            score = sum(
+                contribution_by_value.get((str(key), str(value)), 0)
+                for key, value in (scenario.dimension_values or {}).items()
+            )
+            scenario_scores[int(scenario.scenario_id)] = (score, contributions)
+            scenario.baseline_yn = "N"
+            scenario.scenario_role = None
+            scenario.mod_usr_logn_id = user_id
+
+        baseline = max(
+            scenarios,
+            key=lambda item: (
+                Decimal(str(item.probability_score or 0)),
+                -int(item.display_order or 0),
+            ),
+        )
+        baseline.baseline_yn = "Y"
+        floor = min(
+            scenarios,
+            key=lambda item: (
+                scenario_scores[int(item.scenario_id)][0],
+                pressure_rank.get(str(item.global_pressure_band), 2),
+                int(item.display_order or 0),
+            ),
+        )
+        ceiling = max(
+            scenarios,
+            key=lambda item: (
+                scenario_scores[int(item.scenario_id)][0],
+                pressure_rank.get(str(item.global_pressure_band), 2),
+                int(item.display_order or 0),
+            ),
+        )
+        floor.scenario_role = "floor"
+        ceiling.scenario_role = "ceiling"
+        mixed_candidates = [
+            item
+            for item in scenarios
+            if int(item.scenario_id) not in {int(floor.scenario_id), int(ceiling.scenario_id)}
+            and {-1, 1} <= scenario_scores[int(item.scenario_id)][1]
+        ]
+        if mixed_candidates:
+            min(
+                mixed_candidates,
+                key=lambda item: (
+                    abs(pressure_rank.get(str(item.global_pressure_band), 2) - 2),
+                    -Decimal(str(item.probability_score or 0)),
+                ),
+            ).scenario_role = "mixed"
 
     async def sync_from_table_async(
         self,

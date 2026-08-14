@@ -17,6 +17,7 @@ class ScenarioReviewState(BaseModel):
     requested_headers: list[dict[str, Any]] = Field(default_factory=list)
     persisted_scenarios: list[dict[str, Any]] = Field(default_factory=list)
     template_dims: list[dict[str, Any]] = Field(default_factory=list)
+    review_scenario_ids: list[int] = Field(default_factory=list)
     scenario_group_id: int | None = None
     report: ReviewReport | None = None
     skip_review: bool = False
