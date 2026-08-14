@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Security
 from fastapi.responses import Response, StreamingResponse
@@ -33,6 +33,7 @@ from apps.agents.scenario_group_agent.presentation import (
     PRESENTATION_RENDERER_VERSION,
     build_common_scenario_group_query_data,
     build_scenario_group_presentation,
+    build_scenario_group_table_view_data,
 )
 from apps.agents.scenario_group_agent.routers.scenario_group_stream import stream_operation_events
 from apps.agents.scenario_group_agent.routers.security import admin_bearer_scheme, authorization_header
@@ -46,6 +47,7 @@ from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import 
     HardDeleteScenarioGroupIn,
     HardDeleteScenarioGroupOut,
     ScenarioGroupDetailOut,
+    ScenarioGroupTableViewOut,
     SoftDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupOut,
     SoftDeleteSignpostsIn,
@@ -161,23 +163,21 @@ async def list_scenario_groups(
 
 @router.get(
     "/scenario-groups/{scenario_group_id}",
-    response_model=ScenarioGroupDetailOut,
+    response_model=ScenarioGroupDetailOut | ScenarioGroupTableViewOut,
     summary="Scenario Group 공통 상세 조회",
 )
 async def get_scenario_group(
     scenario_group_id: int,
     *,
     include_deleted: Annotated[bool, Query(alias="includeDeleted")] = False,
-    include_dimensions: Annotated[bool, Query(alias="includeDimensions")] = True,
-) -> ScenarioGroupDetailOut:
+    view: Annotated[Literal["full", "table"], Query()] = "full",
+) -> ScenarioGroupDetailOut | ScenarioGroupTableViewOut:
     context = ScenarioGroupService().load_common_detail(
         scenario_group_id,
         include_deleted=include_deleted,
     )
-    return build_common_scenario_group_query_data(
-        **context,
-        include_dimension_definitions=include_dimensions,
-    )
+    detail = build_common_scenario_group_query_data(**context)
+    return build_scenario_group_table_view_data(detail) if view == "table" else detail
 
 
 @router.get(

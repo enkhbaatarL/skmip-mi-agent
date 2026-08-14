@@ -75,16 +75,12 @@ class ScenarioGroupTableData(ApiModel):
 
 class ScenarioGroupQueryPayload(ScenarioGroupPayload):
     del_yn: str = "N"
-    include_dimension_definitions: bool = Field(default=True, exclude=True)
 
     @model_serializer(mode="wrap")
     def serialize_query_payload(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         payload = handler(self)
         del_yn_key = "delYn" if "delYn" in payload else "del_yn"
         ordered = {del_yn_key: payload.pop(del_yn_key)}
-        if not self.include_dimension_definitions:
-            payload.pop("dimensionDefinitions", None)
-            payload.pop("dimension_definitions", None)
         ordered.update(payload)
         return ordered
 

@@ -14,8 +14,8 @@ from apps.agents.scenario_group_agent.routers.scenario_groups import router as s
 
 
 router = APIRouter()
-router.include_router(multi_event_scenario_group_sync_router)
-router.include_router(scenario_generation_sync_router)
 router.include_router(scenario_groups_router)
 router.include_router(scenario_group_stream_router)
+router.include_router(multi_event_scenario_group_sync_router)
+router.include_router(scenario_generation_sync_router)
 router.include_router(events_router)

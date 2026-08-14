@@ -1633,14 +1633,6 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert serialized["deletedScenarioCount"] == 1
         assert serialized["deletedSignpostCount"] == 1
 
-        without_definitions = build_scenario_group_query_data(
-            {**group, "dimension_definitions": [{"dimension_id": "period"}]},
-            scenarios,
-            signposts,
-            include_dimension_definitions=False,
-        ).model_dump(by_alias=True)
-        assert "dimensionDefinitions" not in without_definitions["scenarioGroup"]
-
 
 if __name__ == "__main__":
     unittest.main()

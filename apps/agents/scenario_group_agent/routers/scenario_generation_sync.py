@@ -30,7 +30,7 @@ from apps.common.logging.logger_config import logger
 from apps.common.runtime.usage_context import get_accumulated_usage, reset_usage
 
 
-router = APIRouter(tags=["scenario-generation-sync"])
+router = APIRouter(tags=["scenario-groups-sync-test"])
 
 
 @router.get(
@@ -54,7 +54,7 @@ async def get_presentation_follow_up_request_bodies(
 @router.post(
     "/scenario-groups/{scenario_group_id}/validation/sync",
     response_model=ValidateScenariosSyncOut,
-    include_in_schema=False,
+    summary="시나리오 테이블 검증 동기 테스트",
 )
 async def validate_scenarios_sync(
     scenario_group_id: int,
@@ -90,7 +90,7 @@ async def validate_scenarios_sync(
 @router.post(
     "/scenario-groups/{scenario_group_id}/signposts/sync",
     response_model=CreateSignpostsSyncOut,
-    include_in_schema=False,
+    summary="Signpost 생성 동기 테스트",
 )
 async def create_signposts_sync(
     scenario_group_id: int,

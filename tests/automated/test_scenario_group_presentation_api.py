@@ -538,7 +538,7 @@ def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selecti
     assert load.call_args_list[1].kwargs == {"operation_id": None}
 
 
-def test_scenario_group_detail_query_can_hide_dimension_definitions() -> None:
+def test_scenario_group_table_view_returns_metadata_and_labeled_dimension_keys() -> None:
     app = FastAPI()
     app.include_router(agent_router)
     group = {**_group("v4", [_v4_definition()]), "del_yn": "N"}
@@ -553,15 +553,29 @@ def test_scenario_group_detail_query_can_hide_dimension_definitions() -> None:
     with patch.object(ScenarioGroupService, "load_common_detail", return_value=context):
         response = TestClient(app).get(
             "/scenario-groups/120",
-            params={"includeDimensions": "false"},
+            params={"view": "table"},
         )
 
     assert response.status_code == 200
     payload = response.json()
-    assert list(payload)[:2] == ["scenarioGroup", "table"]
-    assert next(iter(payload["scenarioGroup"])) == "delYn"
-    assert "dimensionDefinitions" not in payload["scenarioGroup"]
-    assert "dimensionDefinitions" not in payload["presentationSnapshot"]
+    assert list(payload) == ["scenarioGroup", "table"]
+    assert list(payload["scenarioGroup"]) == [
+        "delYn",
+        "scenarioGroupId",
+        "miEventId",
+        "eventTypeL2Id",
+        "requestUsrId",
+        "title",
+        "summary",
+        "description",
+        "dimensionSelected",
+        "scenarioCount",
+        "status",
+        "stage",
+        "apiVersion",
+    ]
+    assert payload["scenarioGroup"]["dimensionSelected"] == ["d1|수급 방향"]
+    assert payload["table"]["headers"][0]["label"] == "수급 방향"
 
 
 def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> None:

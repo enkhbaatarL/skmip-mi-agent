@@ -11,6 +11,8 @@ from apps.agents.scenario_group_agent.persistence.scenario_service import (
 )
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     ScenarioGroupDetailOut,
+    ScenarioGroupTableViewGroup,
+    ScenarioGroupTableViewOut,
 )
 from apps.agents.scenario_group_agent.schemas.api.presentation_followup_requests import (
     PresentationFollowUpRequestBodiesOut,
@@ -142,8 +144,6 @@ def build_scenario_group_query_data(
     group: dict[str, Any],
     scenarios: list[dict[str, Any]],
     signposts: list[dict[str, Any]] | None = None,
-    *,
-    include_dimension_definitions: bool = True,
 ) -> ScenarioGroupDetailOut:
     template_by_key, selected_keys, headers = _build_headers(group)
     signposts_by_scenario_id = _group_signposts(signposts)
@@ -176,12 +176,7 @@ def build_scenario_group_query_data(
 
     signposts_list = signposts or []
     return ScenarioGroupDetailOut(
-        scenario_group=ScenarioGroupQueryPayload.model_validate(
-            {
-                **group,
-                "include_dimension_definitions": include_dimension_definitions,
-            },
-        ),
+        scenario_group=ScenarioGroupQueryPayload.model_validate(group),
         table=ScenarioQueryTable(headers=headers, rows=rows),
         scenario_count=sum(1 for scenario in scenarios if scenario.get("del_yn") != "Y"),
         signpost_count=sum(1 for signpost in signposts_list if signpost.get("del_yn") != "Y"),
@@ -197,14 +192,8 @@ def build_common_scenario_group_query_data(
     signposts: list[dict[str, Any]],
     events: list[EventPayload],
     latest_operation: ScenarioGroupOperationPayload | None,
-    include_dimension_definitions: bool = True,
 ) -> ScenarioGroupDetailOut:
-    detail = build_scenario_group_query_data(
-        group,
-        scenarios,
-        signposts,
-        include_dimension_definitions=include_dimension_definitions,
-    )
+    detail = build_scenario_group_query_data(group, scenarios, signposts)
     latest_payload = latest_operation.model_dump(mode="json", by_alias=True) if latest_operation is not None else None
     detail.latest_operation = latest_payload
     detail.active_operation = (
@@ -221,17 +210,41 @@ def build_common_scenario_group_query_data(
         "warnings": (["legacy v1 데이터에는 상세 근거가 저장되지 않았습니다"] if legacy else []),
         "scenarioGroup": scenario_group.model_dump(mode="json", by_alias=True),
         "events": [event.model_dump(mode="json", by_alias=True) for event in events],
+        "dimensionDefinitions": scenario_group.dimension_definitions,
         "table": detail.table.model_dump(mode="json", by_alias=True),
         "generationDiagnostics": scenario_group.generation_diagnostics,
     }
-    if include_dimension_definitions:
-        presentation_snapshot["dimensionDefinitions"] = scenario_group.dimension_definitions
     if latest_operation is not None and latest_operation.presentation_snapshot:
         presentation_snapshot.update(latest_operation.presentation_snapshot)
-    if not include_dimension_definitions:
-        presentation_snapshot.pop("dimensionDefinitions", None)
     detail.presentation_snapshot = presentation_snapshot
     return detail
+
+
+def build_scenario_group_table_view_data(detail: ScenarioGroupDetailOut) -> ScenarioGroupTableViewOut:
+    scenario_group = detail.scenario_group
+    labels_by_key = {header.key: header.label for header in detail.table.headers}
+    dimension_selected = [
+        f"{dimension_key}|{labels_by_key[dimension_key]}" if labels_by_key.get(dimension_key) else dimension_key
+        for dimension_key in scenario_group.dimension_selected
+    ]
+    return ScenarioGroupTableViewOut(
+        scenario_group=ScenarioGroupTableViewGroup(
+            del_yn=scenario_group.del_yn,
+            scenario_group_id=scenario_group.scenario_group_id,
+            mi_event_id=scenario_group.mi_event_id,
+            event_type_l2_id=scenario_group.event_type_l2_id,
+            request_usr_id=scenario_group.request_usr_id,
+            title=scenario_group.title,
+            summary=scenario_group.summary,
+            description=scenario_group.description,
+            dimension_selected=dimension_selected,
+            scenario_count=scenario_group.scenario_count,
+            status=scenario_group.status,
+            stage=scenario_group.stage,
+            api_version=scenario_group.api_version,
+        ),
+        table=detail.table,
+    )
 
 
 def _build_headers(
@@ -239,23 +252,25 @@ def _build_headers(
 ) -> tuple[dict[str, dict[str, Any]], list[str], list[ScenarioHeader]]:
     dimension_definitions = group.get("dimension_definitions") or []
     if dimension_definitions:
-        template_by_key = {
-            str(item.get("dimension_id")): {
-                "dim_key": item.get("dimension_id"),
+        template_by_key: dict[str, dict[str, Any]] = {}
+        for index, item in enumerate(dimension_definitions, start=1):
+            if not isinstance(item, dict):
+                continue
+            dimension_id = item.get("dimension_id", item.get("dimensionId"))
+            if not dimension_id:
+                continue
+            values = item.get("values") or []
+            template_by_key[str(dimension_id)] = {
+                "dim_key": dimension_id,
                 "label": item.get("label"),
                 "description": item.get("description"),
                 "required": item.get("required", False),
-                "display_order": item.get("display_order", index),
+                "display_order": item.get("display_order", item.get("displayOrder", index)),
                 "value_enums": [
-                    value.get("label")
-                    for value in item.get("values") or []
-                    if isinstance(value, dict) and value.get("label")
+                    value.get("label") for value in values if isinstance(value, dict) and value.get("label")
                 ],
-                "value_labels_by_id": _value_labels_by_id(item.get("values")),
+                "value_labels_by_id": _value_labels_by_id(values),
             }
-            for index, item in enumerate(dimension_definitions, start=1)
-            if isinstance(item, dict) and item.get("dimension_id")
-        }
     else:
         event_type_l2_id = group.get("event_type_l2_id")
         template_json = (

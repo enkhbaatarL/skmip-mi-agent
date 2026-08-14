@@ -34,6 +34,27 @@ class ScenarioGroupDetailOut(ApiModel):
     latest_operation: dict[str, Any] | None = None
 
 
+class ScenarioGroupTableViewGroup(ApiModel):
+    del_yn: str = "N"
+    scenario_group_id: int
+    mi_event_id: int | None = None
+    event_type_l2_id: int | None = None
+    request_usr_id: int | None = None
+    title: str = ""
+    summary: str | None = None
+    description: str | None = None
+    dimension_selected: list[str] = Field(default_factory=list)
+    scenario_count: int = 0
+    status: str
+    stage: str
+    api_version: str
+
+
+class ScenarioGroupTableViewOut(ApiModel):
+    scenario_group: ScenarioGroupTableViewGroup
+    table: ScenarioQueryTable
+
+
 class SoftDeleteScenarioGroupIn(ApiModel):
     user_id: int
 

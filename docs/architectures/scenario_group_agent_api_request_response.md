@@ -47,9 +47,9 @@ sequenceDiagram
 - `POST /scenario-groups`: `miEventIds` 1~5개와 `userId`를 받아 create operation을 시작하고 SSE 반환
 - `GET /scenario-groups`: 공통 목록과 latest/active operation 요약 반환
 - `GET /scenario-groups/{scenarioGroupId}`: 업무 Scenario table과 latest/active operation 반환.
-  `includeDimensions=false` query를 보내면 `scenarioGroup`과 `presentationSnapshot`의
-  `dimensionDefinitions`를 생략하며, query가 없거나 값이 `true`이면 기존처럼 포함한다. 응답은
-  `scenarioGroup.delYn`을 Scenario Group의 첫 필드로, `table`을 그 다음 최상위 필드로 직렬화한다.
+  기본 `view=full`은 전체 상세를 반환한다. `view=table`은 `scenarioGroup` 기본 메타데이터와 `table`만
+  반환하며, `dimensionSelected`는 table header label을 결합한 `dimensionKey|label` 형식이다.
+  두 view 모두 `scenarioGroup.delYn`을 Scenario Group의 첫 필드로 직렬화한다.
 - `GET /scenario-groups/{scenarioGroupId}/presentation`: v1/v3/v4 차이를 흡수한 화면 전용 세 section read model 반환
 - `DELETE /scenario-groups/{scenarioGroupId}`: soft delete. queued/running operation이 있으면 HTTP 409
 - `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}`: polling용 operation JSON
@@ -149,6 +149,8 @@ terminal 상태를 그대로 전달한다. recovery scan 오류는 startup을 �
 아래 API는 기존 background API와 같은 request body를 사용하고, response body는 각 API의 Callback Body와 같습니다.
 sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가될 수 있습니다.
 `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`는 해당 sync 요청 안에서 누적된 LLM token 사용량입니다.
+Swagger에서는 Presentation 후속 request body 생성 QA API와 함께 `scenario-groups-sync-test` 태그로 묶으며,
+`scenario-groups` 태그 다음에 표시합니다.
 
 - `POST /v2/scenario-groups/sync`
   - 중복 없는 양의 정수 `miEventIds` 1~5개

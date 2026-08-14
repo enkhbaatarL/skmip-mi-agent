@@ -109,15 +109,34 @@ def test_canonical_scenario_group_routes_are_exposed_without_v1_or_deprecation()
     ]
     assert paths["/scenario-groups/{scenario_group_id}/validation"]["post"]["tags"] == ["scenario-groups"]
     assert paths["/v4/scenario-groups/sync"]["post"]["tags"] == ["scenario-groups-sync-test"]
-    follow_up_path = "/scenario-groups/{scenario_group_id}/presentation/follow-up-request-bodies"
-    assert paths[follow_up_path]["get"]["tags"] == ["scenario-generation-sync"]
+    sync_test_operations = (
+        ("/scenario-groups/{scenario_group_id}/presentation/follow-up-request-bodies", "get"),
+        ("/scenario-groups/{scenario_group_id}/validation/sync", "post"),
+        ("/scenario-groups/{scenario_group_id}/signposts/sync", "post"),
+    )
+    assert all(paths[path][method]["tags"] == ["scenario-groups-sync-test"] for path, method in sync_test_operations)
+
+    tags_in_display_order: list[str] = []
+    for path_item in paths.values():
+        for operation in path_item.values():
+            for tag in operation.get("tags", []):
+                if tag not in tags_in_display_order:
+                    tags_in_display_order.append(tag)
+    assert tags_in_display_order.index("scenario-groups") < tags_in_display_order.index("scenario-groups-sync-test")
+    assert "scenario-generation-sync" not in tags_in_display_order
+
+    assert paths["/scenario-groups/{scenario_group_id}/validation/sync"]["post"]["requestBody"] == paths[
+        "/scenario-groups/{scenario_group_id}/validation"
+    ]["post"]["requestBody"]
+    assert paths["/scenario-groups/{scenario_group_id}/signposts/sync"]["post"]["requestBody"] == paths[
+        "/scenario-groups/{scenario_group_id}/signposts"
+    ]["post"]["requestBody"]
     detail_get = paths["/scenario-groups/{scenario_group_id}"]["get"]
     assert "requestBody" not in detail_get
-    include_dimensions = next(
-        parameter for parameter in detail_get["parameters"] if parameter["name"] == "includeDimensions"
-    )
-    assert include_dimensions["in"] == "query"
-    assert include_dimensions["schema"]["default"] is True
+    view = next(parameter for parameter in detail_get["parameters"] if parameter["name"] == "view")
+    assert view["in"] == "query"
+    assert view["schema"]["default"] == "full"
+    assert view["schema"]["enum"] == ["full", "table"]
 
 
 def test_routes_are_declared_by_the_documented_owner_routers() -> None:
