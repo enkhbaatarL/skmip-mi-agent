@@ -72,8 +72,11 @@ read model이다. `operationId`가 없으면 최신 operation을 선택하며, �
 
 Markdown은 저장된 Event, Dimension, Scenario, generation diagnostics만으로 결정론적으로 렌더링한다.
 동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. 새 v4 Dimension의
-10~100자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
+10~200자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
 v3의 `derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
+v4 Dimension value의 `description`은 저장된 명시값이 없으면 검증된 `leverStates`의
+`timeWindow`, `scope`, `level`, `direction`을 입력 순서대로 문장화해 Presentation에서만 생성한다.
+direction 한글명과 생성 단계의 허용 direction은 동일한 코드 Enum을 사용하며 DB에는 별도 저장하지 않는다.
 Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 동일한 표시 label과
 `cellEvidence`를 만든다. v1은 저장되지 않은 impact path, rationale, role을 추정하지 않고 제한 또는
 미제공 상태로 표시한다. 현재 Template은 저장된 `templateChecksum`과 canonical checksum이 일치할
@@ -220,9 +223,13 @@ enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dime
 v4의 각 dimension은 `rationale`, `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`,
 `primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`, `values`를 포함한다.
 화면용 `label`은 열린 질문인 `description`과 분리되며 핵심 대상과 변화 축을 간결하게 표시한다.
-`rationale`은 해당 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 담은 10~100자의 짧은 한국어 한 문장이다.
+`rationale`은 `description`의 관측일·분석 기준일·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고
+질문 어미만 `...하는지에 따라` 형태로 바꿔 해당 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 설명하는
+10~200자의 구체적인 한국어 한 문장이다.
 각 value는 구체적인 방향·수준·범위·기간과 Catalog ID를 가진 `leverStates`,
-`pressureContribution`, `assumptionRationale`을 제공한다. 기존 `eventGroundings`와
+`pressureContribution`, `assumptionRationale`을 제공한다. `assumptionRationale`은 관측된 사실을 기반으로
+Value의 미래 상태와 JKM 영향을 간결하게 연결하고 문장 끝의 `가정`으로만 불확실성을 표시한다. 가정 의미를
+반복하거나 Value를 답·응답·선택으로 지칭하지 않는다. 기존 `eventGroundings`와
 `leverMappings`는 새 v4 생성 응답에서 제거한다.
 
 v4 `generationDiagnostics`는 실행 전체에서 고정한 `analysisAsOf`, 수치·기간·현재 시점 해석을

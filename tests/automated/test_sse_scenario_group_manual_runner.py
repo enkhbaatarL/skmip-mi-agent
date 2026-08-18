@@ -186,6 +186,51 @@ def test_validate_final_presentation_rejects_missing_dimension_rationale() -> No
         )
 
 
+def test_validate_final_presentation_accepts_200_character_dimension_rationale() -> None:
+    payload = _presentation()
+    sections = payload["sections"]
+    assert isinstance(sections, dict)
+    design = sections["scenarioDesign"]
+    assert isinstance(design, dict)
+    definitions = design["dimensionDefinitions"]
+    assert isinstance(definitions, dict)
+    items = definitions["items"]
+    assert isinstance(items, list)
+    items[0]["rationale"] = "가" * 200
+
+    validate_presentation(
+        payload,
+        scenario_group_id=366,
+        operation_id=OPERATION_ID,
+        minimum_sequence=4,
+        minimum_revision=2,
+        final=True,
+    )
+
+
+def test_validate_final_presentation_rejects_201_character_dimension_rationale() -> None:
+    payload = _presentation()
+    sections = payload["sections"]
+    assert isinstance(sections, dict)
+    design = sections["scenarioDesign"]
+    assert isinstance(design, dict)
+    definitions = design["dimensionDefinitions"]
+    assert isinstance(definitions, dict)
+    items = definitions["items"]
+    assert isinstance(items, list)
+    items[0]["rationale"] = "가" * 201
+
+    with pytest.raises(ValueError, match=r"10\.\.200"):
+        validate_presentation(
+            payload,
+            scenario_group_id=366,
+            operation_id=OPERATION_ID,
+            minimum_sequence=4,
+            minimum_revision=2,
+            final=True,
+        )
+
+
 def test_presentation_fetch_validates_etag_conditional_get(tmp_path: Path) -> None:
     etag = '"presentation-etag"'
 

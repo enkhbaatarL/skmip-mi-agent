@@ -11,6 +11,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     PressureBand,
     ScenarioDimensionValues,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
+    StateDirection,
+)
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.persistence.model_impact_lever.schema import (
     ModelImpactLeverPayload,
@@ -20,7 +23,6 @@ from apps.persistence.scenario.schema import RelatedMarket
 
 
 Materiality = Literal["high", "medium", "low"]
-StateDirection = Literal["increase", "decrease", "disrupt", "recover", "unchanged"]
 BalanceDirection = Literal["increase", "decrease", "mixed", "unchanged"]
 BalanceWireValue = Literal[
     "demand|increase",
@@ -381,7 +383,7 @@ class V4DimensionDefinitionDraft(ApiModel):
     dimension_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    rationale: str = Field(min_length=10, max_length=100)
+    rationale: str = Field(min_length=10, max_length=200)
     source_impact_path_ids: list[str] = Field(min_length=1)
     source_uncertainty_ids: list[str] = Field(min_length=1)
     primary_lever_code: str = Field(min_length=1)
@@ -408,7 +410,7 @@ class V4DimensionDefinition(ApiModel):
     dimension_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    rationale: str = Field(min_length=10, max_length=100)
+    rationale: str = Field(min_length=10, max_length=200)
     source_event_ids: list[int] = Field(min_length=1)
     source_impact_path_ids: list[str] = Field(min_length=1)
     source_uncertainty_ids: list[str] = Field(min_length=1)
@@ -508,7 +510,14 @@ class V4ReadableDimensionChoice(ApiModel):
     label: str = Field(min_length=10, max_length=25)
     states: list[str] = Field(min_length=1, max_length=2)
     pressure: Literal["bullish", "balanced", "bearish"]
-    why: str = Field(min_length=10, max_length=240)
+    why: str = Field(
+        min_length=10,
+        max_length=240,
+        description=(
+            "제공된 관측 사실을 기반으로 Choice의 미래 상태와 JKM 영향을 바로 연결하고 문장 끝의 '가정'으로만 "
+            "불확실성을 표시하는 간결한 한국어 문장. 가정 의미를 반복하거나 Choice를 답·응답·선택으로 표현하지 않음"
+        ),
+    )
 
 
 class V4ReadableDimension(ApiModel):
@@ -517,7 +526,15 @@ class V4ReadableDimension(ApiModel):
     source_questions: list[str] = Field(alias="from", min_length=1)
     label: str = Field(min_length=10, max_length=40)
     question: str = Field(min_length=5, max_length=120)
-    rationale: str = Field(min_length=10, max_length=100)
+    rationale: str = Field(
+        min_length=10,
+        max_length=200,
+        description=(
+            "question의 관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고 질문 어미만 "
+            "'...하는지에 따라' 형태로 바꿔, 왜 이 Dimension이 Scenario와 JKM 결과를 구분하는지 설명하는 "
+            "구체적인 한국어 근거 문장"
+        ),
+    )
     lever: str = Field(min_length=1)
     axis: UncertaintyAxis
     unit: str | None = None
@@ -571,8 +588,19 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=120)
-    description: str = Field(min_length=1, max_length=600)
+    title: str = Field(
+        min_length=1,
+        max_length=120,
+        description="선택한 이벤트의 구체적인 대상·지역·지표·변화를 나타내는 시나리오 그룹 제목",
+    )
+    description: str = Field(
+        min_length=1,
+        max_length=600,
+        description=(
+            "발생한 사건은 '이벤트', 미래 분기는 '시나리오'로 표현하고 이벤트 내용과 분기 조건을 요약한 "
+            "시나리오 그룹 설명. 영문 Event/Scenario, '입력 사실', JKM은 사용하지 않음"
+        ),
+    )
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
     excluded: list[V4ReadableExcludedScenarioCandidate] = Field(default_factory=list, max_length=2)
 
@@ -607,12 +635,14 @@ def _parse_lever_step(value: str) -> V4LeverStepDraft:
     code, role, direction, scope, timing = _split_wire_token(value, size=5, label="lever state")
     if role not in {"primary", "driver", "transmission"}:
         raise ValueError(f"invalid lever role: {role}")
-    if direction not in {"increase", "decrease", "disrupt", "recover", "unchanged"}:
-        raise ValueError(f"invalid lever direction: {direction}")
+    try:
+        state_direction = StateDirection(direction)
+    except ValueError as exc:
+        raise ValueError(f"invalid lever direction: {direction}") from exc
     return V4LeverStepDraft(
         lever_code=code,
         path_role=role,
-        state_direction=direction,
+        state_direction=state_direction,
         scope=scope,
         timing=timing,
     )
@@ -855,11 +885,13 @@ def _lever_support_status(
 
 def _parse_dimension_state(value: str) -> V4LeverStateDraft:
     code, direction, level, scope, time_window = _split_wire_token(value, size=5, label="Dimension state")
-    if direction not in {"increase", "decrease", "disrupt", "recover", "unchanged"}:
-        raise ValueError(f"invalid Dimension state direction: {direction}")
+    try:
+        state_direction = StateDirection(direction)
+    except ValueError as exc:
+        raise ValueError(f"invalid Dimension state direction: {direction}") from exc
     return V4LeverStateDraft(
         lever_code=code,
-        direction=direction,
+        direction=state_direction,
         level=level,
         scope=scope,
         time_window=time_window,
@@ -1278,14 +1310,14 @@ def finalize_v4_dimension_design(
             )
             expected_contribution: Literal["bullish", "bearish"] | None = None
             if primary_lever.domain == "demand":
-                if primary_state.direction == "increase":
+                if primary_state.direction == StateDirection.INCREASE:
                     expected_contribution = "bullish"
-                elif primary_state.direction == "decrease":
+                elif primary_state.direction == StateDirection.DECREASE:
                     expected_contribution = "bearish"
             elif primary_lever.domain == "supply":
-                if primary_state.direction in {"increase", "recover"}:
+                if primary_state.direction in {StateDirection.INCREASE, StateDirection.RECOVER}:
                     expected_contribution = "bearish"
-                elif primary_state.direction in {"decrease", "disrupt"}:
+                elif primary_state.direction in {StateDirection.DECREASE, StateDirection.DISRUPT}:
                     expected_contribution = "bullish"
             if expected_contribution is not None and value.pressure_contribution not in {
                 expected_contribution,

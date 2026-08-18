@@ -48,10 +48,10 @@ def _event_context() -> dict[str, object]:
 
 
 def test_signpost_generation_subgraph_returns_generated_signposts(monkeypatch) -> None:
-    async def fake_stage2(scenario, base_event_summary):
+    async def fake_stage2(scenario, event_contexts, scenario_context):
         return ["정부 공식 발표", "주요 터미널 가동률 보도", "선박 운임 급등 보도"]
 
-    async def fake_stage45(scenario, base_event_summary, labels):
+    async def fake_stage45(scenario, event_contexts, labels, scenario_context):
         assignments = [
             {
                 "label_ko": label,
@@ -70,7 +70,7 @@ def test_signpost_generation_subgraph_returns_generated_signposts(monkeypatch) -
         get_signpost_generation_subgraph().ainvoke(
             SignpostGenerationState(
                 scenario=_scenario(),
-                base_event_summary=_event_summary(),
+                event_contexts=[_event_summary()],
             ),
         ),
     )
@@ -83,7 +83,7 @@ def test_signpost_generation_subgraph_returns_generated_signposts(monkeypatch) -
 
 
 def test_stage2_empty_result_still_completes(monkeypatch) -> None:
-    async def fake_stage2(scenario, base_event_summary):
+    async def fake_stage2(scenario, event_contexts, scenario_context):
         return []
 
     monkeypatch.setattr(nodes, "stage2_observability_filter", fake_stage2)
@@ -92,7 +92,7 @@ def test_stage2_empty_result_still_completes(monkeypatch) -> None:
         get_signpost_generation_subgraph().ainvoke(
             SignpostGenerationState(
                 scenario=_scenario(),
-                base_event_summary=_event_summary(),
+                event_contexts=[_event_summary()],
             ),
         ),
     )
@@ -103,10 +103,10 @@ def test_stage2_empty_result_still_completes(monkeypatch) -> None:
 
 
 def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
-    async def fake_stage2(scenario, base_event_summary):
+    async def fake_stage2(scenario, event_contexts, scenario_context):
         return ["공식 비축 방출 발표", "수입 입찰 증가 보도", "재고 수준 공식 발표"]
 
-    async def fake_stage45(scenario, base_event_summary, labels):
+    async def fake_stage45(scenario, event_contexts, labels, scenario_context):
         return [
             {
                 "label_ko": labels[0],
@@ -132,7 +132,7 @@ def test_stage4_and_stage5_results_are_assembled(monkeypatch) -> None:
         get_signpost_generation_subgraph().ainvoke(
             SignpostGenerationState(
                 scenario=_scenario(),
-                base_event_summary=_event_summary(),
+                event_contexts=[_event_summary()],
             ),
         ),
     )
@@ -170,16 +170,13 @@ def test_retry_exhaustion_raises_original_llm_error(monkeypatch) -> None:
 def test_stage2_truncates_candidates_above_max_without_retry(monkeypatch) -> None:
     async def fake_invoke(*_args, **_kwargs):
         return nodes.Stage2StructuredOutput(
-            candidates=[
-                Stage2Candidate(label_ko=f"관측 신호 {index}")
-                for index in range(1, 8)
-            ]
+            candidates=[Stage2Candidate(label_ko=f"관측 신호 {index}") for index in range(1, 8)]
         )
 
     monkeypatch.setattr(nodes, "_invoke_structured", fake_invoke)
     monkeypatch.setattr(nodes, "REF_MAX_RETRIES", 1)
 
-    labels = asyncio.run(nodes.stage2_observability_filter(_scenario(), _event_context()))
+    labels = asyncio.run(nodes.stage2_observability_filter(_scenario(), [_event_context()]))
 
     assert labels == [f"관측 신호 {index}" for index in range(1, 7)]
 
@@ -187,17 +184,14 @@ def test_stage2_truncates_candidates_above_max_without_retry(monkeypatch) -> Non
 def test_stage2_rejects_candidates_below_minimum(monkeypatch) -> None:
     async def fake_invoke(*_args, **_kwargs):
         return nodes.Stage2StructuredOutput(
-            candidates=[
-                Stage2Candidate(label_ko=f"관측 신호 {index}")
-                for index in range(1, 3)
-            ]
+            candidates=[Stage2Candidate(label_ko=f"관측 신호 {index}") for index in range(1, 3)]
         )
 
     monkeypatch.setattr(nodes, "_invoke_structured", fake_invoke)
     monkeypatch.setattr(nodes, "REF_MAX_RETRIES", 1)
 
     with pytest.raises(MIBaseError):
-        asyncio.run(nodes.stage2_observability_filter(_scenario(), _event_context()))
+        asyncio.run(nodes.stage2_observability_filter(_scenario(), [_event_context()]))
 
 
 def test_assemble_signposts_rejects_count_outside_contract() -> None:
@@ -207,10 +201,7 @@ def test_assemble_signposts_rejects_count_outside_contract() -> None:
             SignpostGenerationState(
                 scenario=_scenario(),
                 labels=labels,
-                stage4_assignments=[
-                    {"strength": SignpostStrength.MEDIUM.to_string()}
-                    for _ in labels
-                ],
+                stage4_assignments=[{"strength": SignpostStrength.MEDIUM.to_string()} for _ in labels],
                 stage5_keyword_hints=[["a", "b", "c"] for _ in labels],
             )
         )

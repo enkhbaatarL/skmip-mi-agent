@@ -140,14 +140,16 @@ GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}
 | `dimensionId` | string | Scenario table의 header/cell과 연결되는 Dimension ID |
 | `label` | string | 화면과 Scenario table header에 표시할 Dimension 이름 |
 | `description` | string | 사용자가 판단해야 할 불확실성을 질문 형태로 설명한 문장 |
-| `rationale` | string | 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유. 10~100자의 짧은 한국어 문장 |
+| `rationale` | string | `description`의 관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고 질문 어미만 `...하는지에 따라`로 바꿔 이 Dimension의 선정 근거를 설명하는 10~200자의 구체적인 한국어 문장 |
 | `sourceEventIds` | number[] | Dimension의 근거가 된 Event ID 목록 |
 | `modelSupportStatus` | string \| null | 모델 파라미터 지원 상태 |
 | `source` | string \| null | Dimension 복원 출처. v3·v4에서는 `null`이며, v1 legacy 복원 시에만 식별 문자열을 반환 |
 | `values` | object[] | Dimension에서 선택할 수 있는 값과 값별 근거 및 압력 기여 |
 
-`rationale`은 Dimension 자체의 선정 근거이고, `values[].rationale`은 각 Dimension 값이 JKM에
-미치는 영향의 근거다. v4 응답에서 `items[].rationale`은 `null`이 아니라 문자열로 반환되므로
+`rationale`은 Dimension 자체의 선정 근거이고, `values[].rationale`은 관측 사실을 기반으로 해당 Value의
+미래 상태와 JKM 영향을 간결하게 연결하고 문장 끝의 `가정`으로만 불확실성을 표시하는 근거다. 가정 의미를
+반복하거나 Value를 답·응답·선택으로 지칭하지 않는다.
+v4 응답에서 `items[].rationale`은 `null`이 아니라 문자열로 반환되므로
 Client는 두 필드를 구분해 표시한다.
 
 `source`는 Event 근거나 일반적인 출처를 나타내는 필드가 아니다. v3·v4에서는 사용하지 않으므로

@@ -196,6 +196,105 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     ]
 
 
+def test_v4_value_description_is_derived_from_valid_lever_states() -> None:
+    definition = _v4_definition()
+    values = definition["values"]
+    assert isinstance(values, list)
+    values.extend(
+        [
+            {
+                "valueId": "d1_v2",
+                "label": "차익 폐쇄",
+                "assumptionRationale": "하락 가정",
+                "pressureContribution": "bearish",
+                "leverStates": [
+                    {
+                        "leverCode": "regional_price_spread",
+                        "direction": "decrease",
+                        "level": "JKM-NWE 차익 폐쇄",
+                        "scope": "동서 재정거래",
+                        "timeWindow": "2026년 9월 이후물",
+                    },
+                ],
+            },
+            {
+                "valueId": "d1_v3",
+                "label": "복합 상태",
+                "assumptionRationale": "복합 가정",
+                "pressureContribution": "balanced",
+                "lever_states": [
+                    {
+                        "lever_code": "inventory_condition",
+                        "direction": "recover",
+                        "level": "저장 부담 완화",
+                        "scope": "유럽 NWE",
+                        "time_window": "분석 기준일 이후 단기",
+                    },
+                    {
+                        "lever_code": "route_disruption",
+                        "direction": "unchanged",
+                        "level": "일부 지연",
+                        "scope": "중동발 아시아향",
+                        "time_window": "단기",
+                    },
+                ],
+            },
+            {
+                "valueId": "d1_v4",
+                "label": "명시 설명",
+                "description": "저장된 설명을 우선한다.",
+                "assumptionRationale": "명시 설명 가정",
+                "pressureContribution": "bullish",
+                "leverStates": [
+                    {
+                        "direction": "increase",
+                        "level": "현물 경쟁 확대",
+                        "scope": "아시아",
+                        "timeWindow": "단기",
+                    },
+                ],
+            },
+            {
+                "valueId": "d1_v5",
+                "label": "과거 미등록 방향",
+                "assumptionRationale": "과거 데이터 가정",
+                "pressureContribution": "balanced",
+                "leverStates": [
+                    {
+                        "direction": "sideways",
+                        "level": "횡보",
+                        "scope": "글로벌 LNG",
+                        "timeWindow": "중기",
+                    },
+                ],
+            },
+        ],
+    )
+    group = _group("v4", [definition])
+    group["generation_diagnostics"] = _v4_diagnostics()
+
+    result = build_scenario_group_presentation(
+        group=group,
+        scenarios=[_scenario(cell="d1_v2")],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+    )
+
+    output_values = result.sections.scenario_design.dimension_definitions.items[0].values
+    assert output_values[0].description is None
+    assert output_values[1].description == (
+        "2026년 9월 이후물 기준 동서 재정거래에서는 JKM-NWE 차익 폐쇄 상태가 전개된다(변화 방향: 감소)."
+    )
+    assert output_values[2].description == (
+        "분석 기준일 이후 단기 기준 유럽 NWE에서는 저장 부담 완화 상태가 전개된다(변화 방향: 회복). "
+        "단기 기준 중동발 아시아향에서는 일부 지연 상태가 전개된다(변화 방향: 현 수준 유지)."
+    )
+    assert output_values[3].description == "저장된 설명을 우선한다."
+    assert output_values[4].description is None
+    assert output_values[1].rationale == "하락 가정"
+
+
 def test_historical_v4_dimension_without_rationale_remains_null() -> None:
     definition = _v4_definition()
     definition.pop("rationale")

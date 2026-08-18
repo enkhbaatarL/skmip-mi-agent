@@ -28,7 +28,7 @@ class Stage2StructuredOutput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_unique_labels(self) -> "Stage2StructuredOutput":
+    def _validate_unique_labels(self) -> Stage2StructuredOutput:
         seen: set[str] = set()
         for candidate in self.candidates:
             key = candidate.label_ko.strip()
@@ -88,29 +88,116 @@ class Stage45StructuredOutput(BaseModel):
     )
 
 
-def _format_compact_event_context(base_event_summary: dict[str, Any]) -> str:
-    return format_compact_event_context([base_event_summary])
+def _format_compact_event_context(event_contexts: list[dict[str, Any]]) -> str:
+    return format_compact_event_context(event_contexts)
+
+
+def _format_scenario_assumptions(
+    scenario: dict[str, Any],
+    scenario_context: dict[str, Any] | None,
+    scenario_description: str,
+) -> str:
+    if not scenario_context:
+        dimension_values = scenario.get("dimension_values") or {}
+        selections = "\n".join(f"- {key}: {value}" for key, value in dimension_values.items()) or "- (없음)"
+        return (
+            f"- title: {scenario.get('title', '')}\n"
+            f"- narrative: {scenario_description}\n"
+            "- dimension selections:\n"
+            f"{selections}"
+        )
+
+    dimension_blocks = []
+    for selection in scenario_context.get("dimension_selections") or []:
+        dimension_label = selection.get("dimension_label") or selection.get("dimension_id") or "(알 수 없음)"
+        dimension_description = selection.get("dimension_description") or "(설명 없음)"
+        value_label = selection.get("value_label") or selection.get("value_id") or "(알 수 없음)"
+        assumption_rationale = selection.get("assumption_rationale") or "(선택값 근거 없음)"
+        dimension_rationale = selection.get("dimension_rationale") or "(Dimension 근거 없음)"
+        dimension_blocks.append(
+            "\n".join(
+                [
+                    f"- Dimension: {dimension_label} | {dimension_description}",
+                    f"  - Selected Value: {value_label} | {assumption_rationale}",
+                    f"  - Dimension rationale: {dimension_rationale}",
+                ],
+            ),
+        )
+    dimensions = "\n".join(dimension_blocks) or "- (없음)"
+    related_markets = (
+        "\n".join(
+            f"- {item.get('market') or '(시장 없음)'} | {item.get('rationale') or '(근거 없음)'}"
+            for item in scenario_context.get("related_markets") or []
+        )
+        or "- (없음)"
+    )
+    impact_paths = (
+        "\n".join(
+            f"- eventId={item.get('event_id')} | mechanism={item.get('mechanism') or '(없음)'}"
+            for item in scenario_context.get("impact_paths") or []
+        )
+        or "- (매칭된 최신 조합 근거 없음)"
+    )
+    interactions = (
+        "\n".join(
+            f"- eventIds={item.get('event_ids') or []} | mechanism={item.get('mechanism') or '(없음)'}"
+            for item in scenario_context.get("interactions") or []
+        )
+        or "- (매칭된 최신 조합 근거 없음)"
+    )
+    probability = scenario_context.get("probability")
+    return f"""\
+- title: {scenario_context.get("title") or scenario.get("title", "")}
+- narrative: {scenario_context.get("narrative") or scenario_description}
+- probability: {probability if probability is not None else "(없음)"}
+- baseline: {scenario_context.get("baseline") or "N"}
+- role: {scenario_context.get("role") or "(없음)"}
+- JKM pressure band: {scenario_context.get("jkm_pressure_band") or "(없음)"}
+- pressure rationale: {scenario_context.get("pressure_rationale") or "(없음)"}
+
+### Dimension selections
+{dimensions}
+
+### Related markets
+{related_markets}
+
+### Matched Impact Paths
+{impact_paths}
+
+### Matched Event Interactions
+{interactions}"""
 
 
 def build_stage2_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    scenario_context: dict[str, Any] | None = None,
     scenario_description: str,
     min_n: int,
     max_n: int,
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
-    dim_values_block = ", ".join(f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()) or "(없음)"
-    return f"""\
-## Event Context (authoritative current facts)
-{_format_compact_event_context(base_event_summary)}
-
+    if not scenario_context:
+        dim_values_block = (
+            ", ".join(f"{key}={value}" for key, value in (scenario.get("dimension_values") or {}).items()) or "(없음)"
+        )
+        scenario_block = f"""\
 ## 대상 시나리오
 - scenario_id: {scenario_id}
 - title: {scenario.get("title", "")}
 - description: {scenario_description}
-- dimension_values: {dim_values_block}
+- dimension_values: {dim_values_block}"""
+    else:
+        scenario_block = f"""\
+## Scenario Assumptions and Rationale (not current facts)
+- scenario_id: {scenario_id}
+{_format_scenario_assumptions(scenario, scenario_context, scenario_description)}"""
+    return f"""\
+## Event Context (authoritative current facts)
+{_format_compact_event_context(event_contexts)}
+
+{scenario_block}
 
 ## 산출
 - candidates: 3-필터를 모두 통과한 후보만 {min_n}~{max_n}개.
@@ -160,22 +247,33 @@ def build_stage4_hard_constraints(
 def build_stage4_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    scenario_context: dict[str, Any] | None = None,
     scenario_description: str,
     labels: list[str],
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
     signpost_block = "\n".join(f"  [{i + 1}] {lbl}" for i, lbl in enumerate(labels))
-    dim_values = ", ".join(f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()) or "(없음)"
-    return f"""\
-## Event Context (authoritative current facts)
-{_format_compact_event_context(base_event_summary)}
-
+    if not scenario_context:
+        dim_values = (
+            ", ".join(f"{key}={value}" for key, value in (scenario.get("dimension_values") or {}).items()) or "(없음)"
+        )
+        scenario_block = f"""\
 ## 대상 시나리오
 - scenario_id: {scenario_id}
 - title: {scenario.get("title", "")}
 - description: {scenario_description}
-- dimension_values: {dim_values}
+- dimension_values: {dim_values}"""
+    else:
+        scenario_block = f"""\
+## Scenario Assumptions and Rationale (not current facts)
+- scenario_id: {scenario_id}
+{_format_scenario_assumptions(scenario, scenario_context, scenario_description)}"""
+    return f"""\
+## Event Context (authoritative current facts)
+{_format_compact_event_context(event_contexts)}
+
+{scenario_block}
 
 ## 입력 Signpost ({len(labels)}개)
 {signpost_block}
@@ -189,19 +287,28 @@ def build_stage4_user_prompt(
 def build_stage5_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    scenario_context: dict[str, Any] | None = None,
     scenario_description: str,
     labels: list[str],
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
     label_block = "\n".join(f"  [{i + 1}] {lbl}" for i, lbl in enumerate(labels))
-    return f"""\
-## Event Context (authoritative current facts)
-{_format_compact_event_context(base_event_summary)}
-
+    if not scenario_context:
+        scenario_block = f"""\
 ## 대상 시나리오 ({scenario_id})
 - title: {scenario.get("title", "")}
-- description: {scenario_description}
+- description: {scenario_description}"""
+    else:
+        scenario_block = f"""\
+## Scenario Assumptions and Rationale (not current facts)
+- scenario_id: {scenario_id}
+{_format_scenario_assumptions(scenario, scenario_context, scenario_description)}"""
+    return f"""\
+## Event Context (authoritative current facts)
+{_format_compact_event_context(event_contexts)}
+
+{scenario_block}
 
 ## 입력 Signpost label ({len(labels)}개) — 이 순서를 유지하여 hints 출력
 {label_block}
@@ -215,22 +322,33 @@ def build_stage5_user_prompt(
 def build_stage45_user_prompt(
     *,
     scenario: dict[str, Any],
-    base_event_summary: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    scenario_context: dict[str, Any] | None = None,
     scenario_description: str,
     labels: list[str],
 ) -> str:
     scenario_id = scenario.get("scenario_id", "S_??")
     label_block = "\n".join(f"  [{i + 1}] {lbl}" for i, lbl in enumerate(labels))
-    dim_values = ", ".join(f"{k}={v}" for k, v in (scenario.get("dimension_values") or {}).items()) or "(없음)"
-    return f"""\
-## Event Context (authoritative current facts)
-{_format_compact_event_context(base_event_summary)}
-
+    if not scenario_context:
+        dim_values = (
+            ", ".join(f"{key}={value}" for key, value in (scenario.get("dimension_values") or {}).items()) or "(없음)"
+        )
+        scenario_block = f"""\
 ## 대상 시나리오
 - scenario_id: {scenario_id}
 - title: {scenario.get("title", "")}
 - description: {scenario_description}
-- dimension_values: {dim_values}
+- dimension_values: {dim_values}"""
+    else:
+        scenario_block = f"""\
+## Scenario Assumptions and Rationale (not current facts)
+- scenario_id: {scenario_id}
+{_format_scenario_assumptions(scenario, scenario_context, scenario_description)}"""
+    return f"""\
+## Event Context (authoritative current facts)
+{_format_compact_event_context(event_contexts)}
+
+{scenario_block}
 
 ## 입력 Signpost label ({len(labels)}개) — 이 순서를 유지하여 signposts 출력
 {label_block}
@@ -246,6 +364,12 @@ STAGE2_SYSTEM_PROMPT = """\
 당신은 LNG 멀티시나리오 'Observability Filter' 입니다.
 입력으로 시나리오 1건의 가정치 조합(dimension_values + 서술)을 받아, **이 시나리오가
 참이라면 향후 관측 가능한 신호** 후보를 생성한 뒤, 아래 3개 필터를 모두 통과한 후보만 출력하십시오.
+
+## Context 해석 원칙
+- Event Context의 모든 Event를 개별 현재 사실로 함께 고려하고, Event 간 Interaction도 빠뜨리지 말 것.
+- Scenario Assumptions and Rationale는 미래 가정과 인과 근거이며 이미 관측된 현재 사실이 아님.
+- rationale·pressure 설명을 현재 사실로 바꾸거나 그대로 Signpost로 복사하지 말 것.
+- 해당 Scenario가 현실화되는지를 판별할 미래의 관측 가능하고 binary한 신호만 만들 것.
 
 ## 후보 생성 가이드
 - 각 후보는 한국어 한 줄로 작성 (예: 'Ras Laffan 재가동 공식 발표').
@@ -356,6 +480,12 @@ STAGE45_SYSTEM_PROMPT = """\
 입력으로 시나리오 1건과 Stage2를 통과한 Signpost label 리스트를 받습니다.
 각 label 별로 strength/rationale_ko/keyword_hints 를 한 번에 작성하십시오.
 direction 은 downstream 에서 'SUP' 로 고정되므로 출력하지 않습니다.
+
+## Context 해석 원칙
+- Event Context의 모든 Event와 Event 간 Interaction을 함께 고려할 것.
+- Scenario Assumptions and Rationale는 미래 가정과 인과 근거이며 현재 사실이 아님.
+- 각 label이 해당 Scenario를 판별하는 미래의 관측 가능·binary 신호인지 유지하고,
+  Scenario rationale을 이미 실현된 사실처럼 strength 근거에 사용하지 말 것.
 
 ## strength 결정
 {stage4_strength_guide}

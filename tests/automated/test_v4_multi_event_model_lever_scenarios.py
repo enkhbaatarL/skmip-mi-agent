@@ -16,6 +16,9 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_sch
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import (
     V4MultiEventGenerationState,
 )
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
+    StateDirection,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_schema import (
     V4DimensionDefinition,
     V4DimensionDesignDraft,
@@ -23,6 +26,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4EventImpactAnalysisDraft,
     V4EventImpactAnalysisResult,
     V4GenerationResult,
+    V4LeverStateDraft,
     V4ReadableDimensionDesignDraft,
     V4ReadableEventAnalysisDraft,
     V4ReadableInteractionAnalysisDraft,
@@ -547,6 +551,74 @@ def test_v4_dimension_contract_derives_event_and_lever_ids_without_legacy_fields
     assert "leverMappings" not in schema_fields
 
 
+def test_v4_state_direction_is_shared_by_schema_and_wire_parser() -> None:
+    expected = {
+        "increase": "증가",
+        "decrease": "감소",
+        "disrupt": "차질",
+        "recover": "회복",
+        "unchanged": "현 수준 유지",
+    }
+
+    assert {direction.value: direction.label_ko for direction in StateDirection} == expected
+    schema = V4LeverStateDraft.model_json_schema(by_alias=True)
+    assert schema["$defs"]["StateDirection"]["enum"] == list(expected)
+
+    for direction in StateDirection:
+        state = V4LeverStateDraft(
+            lever_code="weather_demand",
+            direction=direction,
+            level="추가 LNG 수요",
+            scope="동북아",
+            time_window="단기",
+        )
+        assert state.model_dump(mode="json", by_alias=True)["direction"] == direction.value
+
+        payload = _readable_dimension_draft().model_dump(by_alias=True)
+        payload["dimensions"][0]["choices"][0]["states"] = [
+            f"weather_demand|{direction.value}|추가 LNG 수요|동북아|단기",
+        ]
+        expanded = expand_v4_readable_dimension_design(
+            V4ReadableDimensionDesignDraft.model_validate(payload),
+            impact_analysis=_analysis(),
+        )
+        assert expanded.dimension_definitions[0].values[0].lever_states[0].direction == direction
+
+        readable_event = _readable_event_draft(101)
+        readable_event.impacts[0].lever_states = [
+            f"weather_demand|primary|{direction.value}|동북아|단기",
+        ]
+        expanded_event = expand_v4_readable_event_analysis(
+            readable_event,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates={"f1": "동북아 한파 지속 전망"},
+        )
+        assert expanded_event.impact_paths[0].lever_steps[0].state_direction == direction
+
+    invalid = _readable_dimension_draft().model_dump(by_alias=True)
+    invalid["dimensions"][0]["choices"][0]["states"] = [
+        "weather_demand|sideways|추가 LNG 수요|동북아|단기",
+    ]
+    with pytest.raises(ValueError, match="invalid Dimension state direction: sideways"):
+        expand_v4_readable_dimension_design(
+            V4ReadableDimensionDesignDraft.model_validate(invalid),
+            impact_analysis=_analysis(),
+        )
+
+    invalid_event = _readable_event_draft(101)
+    invalid_event.impacts[0].lever_states = [
+        "weather_demand|primary|sideways|동북아|단기",
+    ]
+    with pytest.raises(ValueError, match="invalid lever direction: sideways"):
+        expand_v4_readable_event_analysis(
+            invalid_event,
+            event_id=101,
+            observed_at="2026-08-05",
+            fact_candidates={"f1": "동북아 한파 지속 전망"},
+        )
+
+
 def test_v4_dimension_rejects_lever_outside_source_paths() -> None:
     draft = _dimension_draft()
     draft.dimension_definitions[0].values[0].lever_states[0].lever_code = "direct_gas_demand"
@@ -557,7 +629,7 @@ def test_v4_dimension_rejects_lever_outside_source_paths() -> None:
 def test_v4_dimension_records_explained_counter_directional_value_warning() -> None:
     draft = _dimension_draft()
     value = draft.dimension_definitions[0].values[1]
-    value.lever_states[0].direction = "decrease"
+    value.lever_states[0].direction = StateDirection.DECREASE
     value.assumption_rationale = "대체 연료 전환이 동시에 제한되어 수요 감소에도 JKM 압력이 상승하는 예외를 가정한다."
 
     result = finalize_v4_dimension_design(
@@ -1145,7 +1217,7 @@ def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
             "from": [source],
             "label": label,
             "question": question,
-            "rationale": f"{label} 변화에 따라 Scenario별 JKM 압력이 구분됨",
+            "rationale": f"관측된 {label} 변화가 계속되는지에 따라 관련 시장 경로와 Scenario별 JKM 압력이 달라짐",
             "lever": lever,
             "axis": axis,
             "unit": "주" if axis == "recovery" else None,
@@ -1154,13 +1226,15 @@ def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
                     "label": low_label,
                     "states": [low_state],
                     "pressure": "bearish",
-                    "why": "공통 영향 대비 JKM 상승 압력을 완화하는 상태다.",
+                    "why": (f"관측된 시장 사실을 기반으로, {low_label} 상태가 이어지고 JKM 상승 압력이 완화되는 가정."),
                 },
                 {
                     "label": high_label,
                     "states": [high_state],
                     "pressure": "bullish",
-                    "why": "공통 영향 대비 JKM 상승 압력을 강화하는 상태다.",
+                    "why": (
+                        f"관측된 시장 사실을 기반으로, {high_label} 상태가 이어지고 JKM 상승 압력이 강화되는 가정."
+                    ),
                 },
             ],
         }
@@ -1371,7 +1445,7 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
     assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == (
-        "동북아 한파와 추가 LNG 수요 변화에 따라 Scenario별 JKM 압력이 구분됨"
+        "관측된 동북아 한파와 추가 LNG 수요 변화가 계속되는지에 따라 관련 시장 경로와 Scenario별 JKM 압력이 달라짐"
     )
 
 
@@ -1567,11 +1641,27 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
         analysis_as_of="2026-08-07",
     )
     scenario = build_v4_scenario_synthesis_user_prompt(
+        events=[
+            {
+                "mi_event_id": 101,
+                "event_title_ko": "동북아 한파",
+                "one_line_summary": "한파로 난방 수요가 증가했다.",
+                "occurred_at": "2026-08-07T00:00:00Z",
+                "key_facts": ["동북아 기온이 평년을 밑돌았다."],
+                "tags": ["한파", "수요"],
+            },
+            {
+                "mi_event_id": 202,
+                "event_title_ko": "액화시설 정비",
+                "one_line_summary": "액화시설 유지보수가 시작됐다.",
+            },
+        ],
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
     )
     scenario_retry = build_v4_scenario_synthesis_user_prompt(
+        events=[{"mi_event_id": 101, "event_title_ko": "동북아 한파"}],
         impact_analysis=_analysis().model_dump(),
         dimension_definitions=[item.model_dump() for item in _dimensions().dimension_definitions],
         validation_warnings=[],
@@ -1604,6 +1694,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "분석 기준일: 2026-08-07" in first
     assert "JKM의 상승·하락·혼조 방향" in first
     assert "별도의 price 필드는 만들지 않습니다" in first
+    assert f"direction은 {StateDirection.prompt_values()}" in first
     assert "factStatus" not in first
     assert "selectionHint" not in first
     assert "parameterBindings" not in first
@@ -1613,13 +1704,38 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "## Dimension 후보가 되는 열린 질문" in dimension
     assert "## 숫자·시점 판단 근거" in dimension
     assert "분석 기준일 2026-08-07 현재 동북아 한파 전망" in dimension
+    assert "## 그룹 제목·설명의 근거가 되는 이벤트" in scenario
+    assert "[이벤트 1]" in scenario
+    assert "제목: 동북아 한파" in scenario
+    assert "요약: 한파로 난방 수요가 증가했다." in scenario
+    assert "동북아 기온이 평년을 밑돌았다." in scenario
+    assert "태그: 한파, 수요" in scenario
+    assert "[이벤트 2]" in scenario
+    assert "제목: 액화시설 정비" in scenario
+    assert scenario.index("[이벤트 1]") < scenario.index("[이벤트 2]")
+    assert "루트 title은 20~60자의 한국어" in scenario
+    assert "영문 `Event`, `Scenario`를 쓰지 않습니다" in scenario
+    assert "description에는\n  `입력 사실`과 `JKM`을 쓰지 않습니다" in scenario
     assert "[U1]" in dimension
     assert "label은 화면 표에 표시할 10~40자의 이름" in dimension
-    assert "rationale은 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유" in dimension
-    assert "10~100자의 짧은 한국어 한 문장" in dimension
+    assert "왜 이 Dimension을 Scenario 구분 축으로 선택했는지" in dimension
+    assert "10~200자의 구체적인 한국어" in dimension
+    assert "question의 사실절은 사실상 그대로 유지" in dimension
+    assert "질문 어미만" in dimension
+    assert "2026년 6월 30일 49.1%로 관측된 유럽 저장률" in dimension
+    assert "가격 지지 지속 기간에 따라`처럼 일반 명사로" in dimension
     assert "Choice label은 10~25자" in dimension
     assert "새로운 수치 경계" in dimension
-    assert "별도 Anchor 참조 ID는 작성하지 않습니다" in dimension
+    assert f"direction은 {StateDirection.prompt_values()}" in dimension
+    assert "`관측된 사실 → 미래 상태 → JKM 영향`" in dimension
+    assert "문장 끝의 `가정`" in dimension
+    assert "가정이라는 메타 표현은 문장 끝에서 한 번만" in dimension
+    assert "`상태를 가정하면`, `상황을 가정하면`, `나타나는 가정이다`" in dimension
+    assert "`Event 배경으로 제시된 사실` 같은 출처 메타 설명 없이" in dimension
+    assert "`답`, `응답`, `선택`, `선택한 값`이라는 말도" in dimension
+    assert "주입 부담이 완화되고 NWE 가격 지지" in dimension
+    assert "스프레드가 다시 벌어지고 아시아가" in dimension
+    assert "별도 Anchor 참조 ID나 새 사실을" in dimension
     assert "sourceImpactPathIds" not in dimension
     assert "## Dimension 질문과 선택지" in scenario
     assert "[D1.V1]" in scenario
@@ -1659,12 +1775,24 @@ def test_llm_validation_error_detail_preserves_field_locations_for_retry() -> No
 def test_v4_readable_copy_contract_matches_table_density() -> None:
     readable = _readable_dimension_draft()
     expanded = expand_v4_readable_dimension_design(readable, impact_analysis=_analysis())
+    rationale_schema = V4ReadableDimensionDesignDraft.model_json_schema(by_alias=True)["$defs"]["V4ReadableDimension"][
+        "properties"
+    ]["rationale"]
+    why_schema = V4ReadableDimensionDesignDraft.model_json_schema(by_alias=True)["$defs"]["V4ReadableDimensionChoice"][
+        "properties"
+    ]["why"]
 
     assert expanded.dimension_definitions[0].label == "동북아 한파와 추가 LNG 수요"
     assert expanded.dimension_definitions[0].description == "한파에 따른 추가 LNG 수요 규모는 얼마인가?"
     assert expanded.dimension_definitions[0].rationale == (
-        "동북아 한파와 추가 LNG 수요 변화에 따라 Scenario별 JKM 압력이 구분됨"
+        "관측된 동북아 한파와 추가 LNG 수요 변화가 계속되는지에 따라 관련 시장 경로와 Scenario별 JKM 압력이 달라짐"
     )
+    assert "관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지" in rationale_schema["description"]
+    assert "질문 어미만" in rationale_schema["description"]
+    assert "Choice의 미래 상태와 JKM 영향을 바로 연결" in why_schema["description"]
+    assert "문장 끝의 '가정'으로만" in why_schema["description"]
+    assert "가정 의미를 반복" in why_schema["description"]
+    assert "답·응답·선택으로 표현하지 않음" in why_schema["description"]
     assert all(10 <= len(choice.label) <= 25 for dimension in readable.dimensions for choice in dimension.choices)
 
     invalid_choice = readable.model_dump(by_alias=True)
@@ -1678,7 +1806,7 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
         V4ReadableDimensionDesignDraft.model_validate(short_rationale)
 
     long_rationale = readable.model_dump(by_alias=True)
-    long_rationale["dimensions"][0]["rationale"] = "가" * 101
+    long_rationale["dimensions"][0]["rationale"] = "가" * 201
     with pytest.raises(ValueError, match="rationale"):
         V4ReadableDimensionDesignDraft.model_validate(long_rationale)
 
@@ -1727,6 +1855,14 @@ def test_v4_structured_output_schemas_are_openai_strict_compatible() -> None:
     assert "valueKind" in V4DimensionDefinition.model_json_schema(by_alias=True)["properties"]
     assert len(str(schemas["V4ReadableEventAnalysisDraft"])) < len(str(V4EventImpactAnalysisDraft.model_json_schema()))
     assert "dimensionValues" not in str(schemas["V4ReadableScenarioSynthesisDraft"])
+
+
+def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> None:
+    properties = V4ReadableScenarioSynthesisDraft.model_json_schema()["properties"]
+
+    assert "선택한 이벤트" in properties["title"]["description"]
+    assert "영문 Event/Scenario" in properties["description"]["description"]
+    assert "'입력 사실', JKM은 사용하지 않음" in properties["description"]["description"]
 
 
 def test_related_markets_excludes_primary_jkm_market() -> None:

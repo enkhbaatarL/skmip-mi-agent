@@ -5,6 +5,9 @@ from decimal import Decimal
 import html
 from typing import Any
 
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
+    StateDirection,
+)
 from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
@@ -572,6 +575,8 @@ def _normalize_dimension_definitions(
             if engine_version == "v4":
                 rationale = str(_field(raw_value, "assumption_rationale") or "")
                 lever_states = _field(raw_value, "lever_states", default=[]) or []
+                if description is None:
+                    description = _v4_value_description(lever_states)
             elif engine_version == "v3":
                 rationale = str(_field(raw_value, "derivation_rationale") or description or "")
                 lever_states = []
@@ -604,6 +609,33 @@ def _normalize_dimension_definitions(
             )
         )
     return normalized
+
+
+def _v4_value_description(raw_states: Any) -> str | None:
+    if not isinstance(raw_states, list):
+        return None
+    sentences: list[str] = []
+    for raw_state in raw_states:
+        if not isinstance(raw_state, dict):
+            continue
+        level = _optional_text(_field(raw_state, "level"))
+        scope = _optional_text(_field(raw_state, "scope"))
+        time_window = _optional_text(_field(raw_state, "time_window"))
+        raw_direction = _field(raw_state, "direction")
+        if not level or not scope or not time_window or raw_direction is None:
+            continue
+        try:
+            direction = (
+                raw_direction
+                if isinstance(raw_direction, StateDirection)
+                else StateDirection(str(raw_direction).strip())
+            )
+        except ValueError:
+            continue
+        sentences.append(
+            f"{time_window} 기준 {scope}에서는 {level} 상태가 전개된다(변화 방향: {direction.label_ko}).",
+        )
+    return " ".join(sentences) or None
 
 
 def _legacy_dimension_definitions(

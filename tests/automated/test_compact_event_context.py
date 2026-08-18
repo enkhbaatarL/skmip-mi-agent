@@ -107,7 +107,7 @@ def test_v1_signpost_v2_and_v3_prompts_use_shared_context(
         build_scenario_stage2_user_prompt(pack=pack, template=template, required_dim_ids=[]),
         build_signpost_stage2_user_prompt(
             scenario={"scenario_id": "S1", "dimension_values": {}},
-            base_event_summary=pack.C1_base_event.model_dump(),
+            event_contexts=[pack.C1_base_event.model_dump()],
             scenario_description="설명",
             min_n=3,
             max_n=6,

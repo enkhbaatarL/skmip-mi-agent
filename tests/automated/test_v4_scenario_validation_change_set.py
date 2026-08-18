@@ -5,6 +5,7 @@ import asyncio
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -38,6 +39,7 @@ from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.scenario.schema import ScenarioPayload, ScenarioTemplateDimension, ScenarioTemplateEnum
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
+from apps.persistence.scenario_group_operation.models import MiScenarioGroupOperationModel
 from apps.persistence.scenario_group_operation.schema import (
     ValidationGeneratedFieldsPayload,
     ValidationOperationResultPayload,
@@ -67,6 +69,16 @@ DEFINITIONS = [
         ],
     },
 ]
+
+
+def test_result_payload_has_orm_column_and_deployment_migration() -> None:
+    assert MiScenarioGroupOperationModel.__table__.c.result_payload.nullable is True
+
+    repository_root = Path(__file__).resolve().parents[2]
+    migration = repository_root / "scripts/migrations/20260814_add_scenario_group_operation_result_payload.sql"
+    migration_sql = migration.read_text(encoding="utf-8")
+    assert "ALTER TABLE `tmm_mi_scenario_group_operation_m`" in migration_sql
+    assert "ADD COLUMN `result_payload` JSON NULL" in migration_sql
 
 
 def _scenarios() -> list[dict[str, object]]:

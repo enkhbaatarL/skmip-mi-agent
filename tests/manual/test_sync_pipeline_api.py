@@ -586,12 +586,14 @@ def field(payload: dict[str, Any], *names: str) -> Any:
 
 
 def scenario_group_from(payload: dict[str, Any]) -> dict[str, Any] | None:
-    group = field(payload, "scenarioGroup", "scenario_group")
+    body = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    group = field(body, "scenarioGroup", "scenario_group")
     return group if isinstance(group, dict) else None
 
 
 def table_from(payload: dict[str, Any]) -> dict[str, Any] | None:
-    table = payload.get("table")
+    body = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    table = body.get("table")
     return table if isinstance(table, dict) else None
 
 
@@ -631,7 +633,10 @@ def target_event_from_row(row: dict[str, Any], fallback_event_type_l2_id: int | 
 
 
 def require_success_callback(payload: dict[str, Any], step: str) -> None:
-    if payload.get("result") != "success":
+    result = payload.get("result")
+    if result == "success" or (result is None and payload.get("status") == "success"):
+        return
+    if result != "success":
         raise PipelineStop(step, callback_reason(payload) or f"{step} result != success")
 
 
@@ -706,7 +711,11 @@ def soft_delete_existing_group(
     mi_event_id: int,
     group_id: int | None,
 ) -> None:
-    existing_group_id = group_id or find_existing_group_id(client, args.base_url, mi_event_id)
+    existing_group_id = (
+        find_existing_group_id(client, args.base_url, mi_event_id)
+        if args.delete_existing
+        else group_id or find_existing_group_id(client, args.base_url, mi_event_id)
+    )
     if existing_group_id is None:
         return
     soft_delete_group(
@@ -735,8 +744,8 @@ def create_scenarios_with_retry(
             run_id,
             step="create_scenarios",
             method="POST",
-            url=f"{args.base_url}/scenario-groups/sync",
-            json_body={"miEventId": mi_event_id, "userId": args.user_id},
+            url=f"{args.base_url}/v4/scenario-groups/sync",
+            json_body={"miEventIds": [mi_event_id], "userId": args.user_id},
         )
     except PipelineStop as exc:
         if "SCENARIO_GROUP_ALREADY_CREATED" not in exc.reason and "이미" not in exc.reason:
@@ -762,8 +771,8 @@ def create_scenarios_with_retry(
             run_id,
             step="create_scenarios_retry",
             method="POST",
-            url=f"{args.base_url}/scenario-groups/sync",
-            json_body={"miEventId": mi_event_id, "userId": args.user_id},
+            url=f"{args.base_url}/v4/scenario-groups/sync",
+            json_body={"miEventIds": [mi_event_id], "userId": args.user_id},
         )
 
 
