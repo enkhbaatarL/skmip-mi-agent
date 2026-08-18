@@ -647,10 +647,45 @@ def test_v4_finalizer_assigns_roles_builds_pressure_rationale_and_coverage() -> 
     finalized, coverage = _finalized()
     assert [scenario.scenario_role for scenario in finalized.scenarios] == ["ceiling", "mixed", "floor"]
     assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
+    assert [scenario.probability_score for scenario in finalized.scenarios] == [35, 50, 15]
     assert finalized.scenarios[0].pressure_rationale == "상단의 JKM 압력 근거를 자연어로 설명한다."
     assert coverage.coverage_status == "partial"
     assert coverage.covered_dimension_ids == ["cold_wave_intensity"]
     assert coverage.uncovered_dimension_ids == ["liquefaction_recovery", "risk_premium"]
+
+
+def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages() -> None:
+    synthesis = _synthesis()
+    for scenario, probability_score in zip(synthesis.scenarios, [0.35, 0.5, 0.15], strict=True):
+        scenario.probability_score = probability_score
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert [scenario.probability_score for scenario in finalized.scenarios] == [35, 50, 15]
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
+    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [False, True, False]
+
+
+def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -> None:
+    synthesis = _synthesis()
+    for scenario in synthesis.scenarios:
+        scenario.probability_score = 0
+
+    finalized, _coverage = finalize_v4_generation_result(
+        synthesis,
+        impact_analysis=_analysis(),
+        dimension_design=_dimensions(),
+        impact_levers=_catalog(),
+    )
+
+    assert [scenario.probability_score for scenario in finalized.scenarios] == [34, 33, 33]
+    assert sum(scenario.probability_score for scenario in finalized.scenarios) == 100
+    assert [scenario.baseline_yn for scenario in finalized.scenarios] == [True, False, False]
 
 
 def test_v4_scenario_rejects_missing_common_path() -> None:
@@ -1608,6 +1643,7 @@ def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
 
     saved_dimensions = persist.call_args.kwargs["dimension_definitions"]
     saved_diagnostics = persist.call_args.kwargs["generation_diagnostics"]
+    saved_scenarios = persist.call_args.kwargs["scenarios"]
     assert "event_groundings" not in saved_dimensions[0]
     assert "lever_mappings" not in saved_dimensions[0]
     assert saved_dimensions[0]["source_impact_path_ids"] == ["path_101_demand"]
@@ -1618,6 +1654,7 @@ def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
     assert saved_diagnostics["event_interactions"][0]["impact_path_ids"]
     assert saved_diagnostics["excluded_candidates"][0]["dimension_values"]
     assert saved_diagnostics["scenario_pressure_breakdowns"]
+    assert [scenario["probability_score"] for scenario in saved_scenarios] == [35, 50, 15]
     assert result["generation_diagnostics"].impact_paths
 
 
@@ -1747,6 +1784,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "ID는 choices와 interactions 필드에서만 사용" in scenario
     assert "commonImpactPathIds" not in scenario
     assert "TTF와 HH는 각각 최대 한 번만 작성" in scenario
+    assert "0~100 정수 백분율" in scenario
+    assert "합계를 정확히 100" in scenario
     assert "검증 오류: scenarios[1].dimensionValues duplicates scenarios[0].dimensionValues" in scenario_retry
     assert "동일한 실수를 반복하지 마십시오" in scenario_retry
 
@@ -1858,11 +1897,14 @@ def test_v4_structured_output_schemas_are_openai_strict_compatible() -> None:
 
 
 def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> None:
-    properties = V4ReadableScenarioSynthesisDraft.model_json_schema()["properties"]
+    schema = V4ReadableScenarioSynthesisDraft.model_json_schema()
+    properties = schema["properties"]
 
     assert "선택한 이벤트" in properties["title"]["description"]
     assert "영문 Event/Scenario" in properties["description"]["description"]
     assert "'입력 사실', JKM은 사용하지 않음" in properties["description"]["description"]
+    assert "0~100 정수 백분율" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]
+    assert "합계는 100" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]
 
 
 def test_related_markets_excludes_primary_jkm_market() -> None:

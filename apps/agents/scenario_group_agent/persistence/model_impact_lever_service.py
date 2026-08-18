@@ -26,6 +26,16 @@ def _resolve_binding_support(
 
 
 class ModelImpactLeverService:
+    def load_display_labels(self) -> dict[str, str]:
+        """Load current screen labels without validating model-parameter bindings."""
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            return ModelImpactLeverRepository(session=session).fetch_display_labels()
+        finally:
+            session.close()
+
     def load_active_catalog(self) -> tuple[list[ModelImpactLeverPayload], str, str]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 

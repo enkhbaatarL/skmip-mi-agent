@@ -383,6 +383,9 @@ breakdown은 기존 `generation_diagnostics` JSON에 저장하며 v4 sync 응답
 pressure band partition과 contribution 순서를 검증한다. floor·ceiling 및 실제 bullish·bearish
 contribution이 함께 있는 선택적 mixed를 지정하고 전체 Scenario 중 최고 `probabilityScore`
 하나를 baseline으로 지정한다.
+v4 `probabilityScore`는 생성 후보 전체의 상대 가중치를 서버가 합계 100인 정수 백분율로
+정규화한 값이다. LLM이 `0~1` 확률이나 합계가 100이 아닌 가중치를 반환해도 최종화 단계에서
+largest-remainder 방식으로 합계를 정확히 100으로 맞춘 뒤 baseline을 계산하고 저장한다.
 여기서 가격 결과는 절대 가격 예측값이 아니라 모든 v2/v3/v4 Scenario에 필수인 JKM
 pressure band와 rationale이다. 응답의 `pressureTarget`은 LLM이 아닌 서버가 `JKM`으로 고정한다.
 TTF 또는 HH가 특별히 관련된 v4 Scenario만 `related_markets`에 시장과 근거를 선택적으로

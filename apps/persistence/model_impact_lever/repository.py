@@ -23,6 +23,17 @@ def _json_safe(value: Any) -> Any:  # noqa: ANN401
 
 
 class ModelImpactLeverRepository(BaseSyncSQLRepository):
+    def fetch_display_labels(self) -> dict[str, str]:
+        stmt = select(
+            MiModelImpactLeverModel.lever_code,
+            MiModelImpactLeverModel.label,
+        ).order_by(MiModelImpactLeverModel.lever_code)
+        return {
+            str(lever_code): str(label)
+            for lever_code, label in self.session.execute(stmt).all()
+            if lever_code and label
+        }
+
     def fetch_active_impact_levers(self) -> list[dict[str, Any]]:
         stmt = (
             select(MiModelImpactLeverModel)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 import html
+import re
 from typing import Any
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
@@ -54,7 +55,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v1"
+PRESENTATION_RENDERER_VERSION = "v2"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -395,6 +396,7 @@ def build_scenario_group_presentation(
     signposts: list[dict[str, Any]],
     events: list[EventPayload],
     operation: ScenarioGroupOperationPayload | None,
+    lever_labels: dict[str, str] | None = None,
     legacy_template_dimensions: list[dict[str, Any]] | None = None,
     legacy_snapshot_dimension_values: list[dict[str, Any]] | None = None,
 ) -> ScenarioGroupPresentationOut:
@@ -462,6 +464,7 @@ def build_scenario_group_presentation(
         rows=rows,
         diagnostics=diagnostics,
         operation=operation,
+        lever_labels=lever_labels or {},
     )
     warnings.extend(role_warnings)
     operation_out = (
@@ -953,6 +956,7 @@ def _role_rationale_markdown(
     rows: list[PresentationScenarioRow],
     diagnostics: dict[str, Any],
     operation: ScenarioGroupOperationPayload | None,
+    lever_labels: dict[str, str],
 ) -> tuple[str, str, str, list[str]]:
     role_rows = {row.scenario_role: row for row in rows if row.scenario_role in {"ceiling", "mixed", "floor"}}
     if not role_rows:
@@ -965,6 +969,7 @@ def _role_rationale_markdown(
         "mixed": "상승·하락 기여를 동시에 가진 내부 Scenario 중 Balanced에 가장 가까운 Scenario",
         "floor": "생성된 Scenario 중 JKM 압력대가 가장 낮은 Scenario",
     }
+    lever_code_pattern = _lever_code_pattern(lever_labels)
     breakdowns = _field(diagnostics, "scenario_pressure_breakdowns", default=[]) or []
     for role in ("ceiling", "mixed", "floor"):
         row = role_rows.get(role)
@@ -980,7 +985,7 @@ def _role_rationale_markdown(
                 f"- 선택 기준: {criteria[role]}",
                 f"- Pressure Band: {_display_enum(row.pressure_band)}",
                 f"- 발생 가능성: {_format_probability(row.probability_score)}",
-                f"- 종합 근거: {_escape(row.pressure_rationale or '')}",
+                f"- 종합 근거: {_escape_lever_labels(row.pressure_rationale, lever_labels, lever_code_pattern)}",
             ]
         )
         if row.baseline_yn == "Y":
@@ -1001,14 +1006,14 @@ def _role_rationale_markdown(
             ):
                 value = _field(raw_breakdown, key)
                 if value:
-                    lines.append(f"- {label}: {_escape(value)}")
+                    lines.append(f"- {label}: {_escape_lever_labels(value, lever_labels, lever_code_pattern)}")
         lines.extend(["", "#### 적용된 Dimension 근거"])
         if row.cell_evidence:
             for dimension_id, cell in row.cell_evidence.items():
                 lines.extend(
                     [
                         f"- {_escape(dimension_id)} — {_escape(cell.value_label)}",
-                        f"  - 근거: {_escape(cell.rationale)}",
+                        f"  - 근거: {_escape_lever_labels(cell.rationale, lever_labels, lever_code_pattern)}",
                         f"  - 압력 기여: {_display_enum(cell.pressure_contribution)}",
                     ]
                 )
@@ -1061,6 +1066,28 @@ def _optional_int(value: Any) -> int | None:
 
 def _escape(value: Any) -> str:
     return html.escape(str(value), quote=False)
+
+
+def _lever_code_pattern(lever_labels: dict[str, str]) -> re.Pattern[str] | None:
+    codes = sorted(
+        (code for code, label in lever_labels.items() if code and label),
+        key=lambda code: (-len(code), code),
+    )
+    if not codes:
+        return None
+    alternatives = "|".join(re.escape(code) for code in codes)
+    return re.compile(rf"(?<![A-Za-z0-9_])(?:{alternatives})(?![A-Za-z0-9_])")
+
+
+def _escape_lever_labels(
+    value: Any,
+    lever_labels: dict[str, str],
+    pattern: re.Pattern[str] | None,
+) -> str:
+    text = str(value or "")
+    if pattern is not None:
+        text = pattern.sub(lambda match: lever_labels.get(match.group(0), match.group(0)), text)
+    return _escape(text)
 
 
 def _display_enum(value: str | None) -> str:

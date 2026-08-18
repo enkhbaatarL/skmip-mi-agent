@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import ROUND_FLOOR, Decimal
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -457,7 +458,11 @@ class V4ScenarioCandidateDraft(ApiModel):
     pressure_band: PressureBand
     pressure_breakdown: V4PressureBreakdown
     related_markets: list[RelatedMarket] = Field(default_factory=list, max_length=2)
-    probability_score: float = Field(ge=0, le=100)
+    probability_score: float = Field(
+        ge=0,
+        le=100,
+        description="서버 정규화 후 전체 Scenario 합계가 100이 되는 0~100 정수 백분율 점수",
+    )
     mixed_factors: list[str] = Field(default_factory=list)
     explanation: str = Field(min_length=1)
 
@@ -570,7 +575,11 @@ class V4ReadableScenario(ApiModel):
     interactions: list[str] = Field(default_factory=list, max_length=3)
     pressure: PressureBand
     explanation: str = Field(min_length=30, max_length=600)
-    probability: float = Field(ge=0, le=100)
+    probability: float = Field(
+        ge=0,
+        le=100,
+        description="0~100 정수 백분율이며 모든 Scenario probability의 합계는 100",
+    )
     related_markets: list[str] = Field(default_factory=list, max_length=2)
 
 
@@ -1460,6 +1469,31 @@ def _validate_scenarios(
     scenarios.sort(key=lambda scenario: PRESSURE_RANK[scenario.pressure_band], reverse=True)
 
 
+def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> None:
+    """v4 Scenario 가중치를 합계 100인 정수 백분율 점수로 정규화한다."""
+    if not scenarios:
+        return
+
+    scores = [Decimal(str(scenario.probability_score)) for scenario in scenarios]
+    total = sum(scores)
+    if total <= 0:
+        scores = [Decimal(1)] * len(scenarios)
+        total = Decimal(len(scenarios))
+
+    exact_scores = [score * Decimal(100) / total for score in scores]
+    normalized_scores = [int(score.to_integral_value(rounding=ROUND_FLOOR)) for score in exact_scores]
+    deficit = 100 - sum(normalized_scores)
+    remainder_order = sorted(
+        range(len(scenarios)),
+        key=lambda index: (-(exact_scores[index] - normalized_scores[index]), index),
+    )
+    for index in remainder_order[:deficit]:
+        normalized_scores[index] += 1
+
+    for scenario, probability_score in zip(scenarios, normalized_scores, strict=True):
+        scenario.probability_score = probability_score
+
+
 def finalize_v4_generation_result(
     synthesis: V4ScenarioSynthesisResult,
     *,
@@ -1474,6 +1508,7 @@ def finalize_v4_generation_result(
         )
         for scenario in synthesis.scenarios
     ]
+    _normalize_v4_probability_scores(finalized_scenarios)
     _validate_scenarios(
         finalized_scenarios,
         synthesis.excluded_scenarios,

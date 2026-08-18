@@ -63,6 +63,7 @@ V4_SCENARIO_SYSTEM_PROMPT = (
 결과 전달 경로를 가져야 합니다. narrative는 주요 조건과 최종 JKM 전달 경로를 두 문장으로 설명하십시오.
 루트 그룹 title과 description은 원본 이벤트를 대표하는 한국어 메타데이터로 작성하고, 영문 Event·Scenario를
 사용하지 마십시오. description에는 `입력 사실`과 `JKM`을 사용하지 마십시오.
+probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
 """
 )
 
@@ -501,7 +502,8 @@ def build_v4_scenario_synthesis_user_prompt(
         "- explanation은 공통 영향, 선택한 분기, 적용한 상호작용이 최종 JKM 압력을 만드는 과정을 "
         "자연스러운 한국어 문장으로 설명합니다.\n"
         "- 공통 영향은 분기 효과에 다시 더하지 않습니다.\n"
-        "- probability는 공통 사실에 가깝고 추가 가정이 적을수록 높게 부여합니다.\n"
+        "- probability는 공통 사실에 가깝고 추가 가정이 적을수록 높게 부여하는 0~100 정수 백분율입니다. "
+        "모든 Scenario probability의 합계를 정확히 100으로 맞춥니다.\n"
         "- relatedMarkets는 `TTF|이유` 또는 `HH|이유` 형식이며 특별한 영향이 있을 때만 씁니다. "
         "한 Scenario 안에서 TTF와 HH는 각각 최대 한 번만 작성하고 같은 시장을 중복하지 마십시오.\n"
         f"{feedback}"

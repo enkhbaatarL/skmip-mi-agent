@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Security
@@ -198,12 +199,14 @@ async def get_scenario_group_presentation(
     )
     operation = context["operation"]
     updated_at = context["group"].get("updated_at")
+    lever_labels = context.get("lever_labels", {})
     etag_material = "|".join(
         [
             PRESENTATION_RENDERER_VERSION,
             operation.operation_id if operation is not None else "",
             str(operation.snapshot_revision if operation is not None else 0),
             updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at or ""),
+            json.dumps(lever_labels, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         ]
     )
     etag = f'"{hashlib.sha256(etag_material.encode("utf-8")).hexdigest()}"'

@@ -337,6 +337,50 @@ def test_v4_markdown_is_deterministic_escaped_and_reports_missing_mixed() -> Non
     )
 
 
+def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
+    definition = _v4_definition()
+    definition["values"][0]["assumptionRationale"] = (
+        "liquefaction_availability 하락과 inventory_condition_extra는 구분한다."
+    )
+    group = _group("v4", [definition])
+    diagnostics = _v4_diagnostics()
+    diagnostics["scenarioPressureBreakdowns"] = [
+        {
+            "title": "Scenario <img src=x onerror=alert(1)>",
+            "pressureBreakdown": {
+                "commonImpact": "regional_price_spread 경로",
+                "valueDelta": "inventory_condition을 반영",
+            },
+        },
+    ]
+    group["generation_diagnostics"] = diagnostics
+    scenario = _scenario(cell="d1_v1")
+    scenario["global_pressure_rationale"] = (
+        "inventory_condition을 통해 regional_price_spread 경로를 강화하고 unknown_lever는 그대로 둔다."
+    )
+
+    result = build_scenario_group_presentation(
+        group=group,
+        scenarios=[scenario],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+        lever_labels={
+            "inventory_condition": "재고 여건",
+            "regional_price_spread": "지역 가격 스프레드",
+            "liquefaction_availability": "액화설비 가용성",
+        },
+    )
+
+    markdown = result.sections.role_selection_rationale.markdown
+    assert "재고 여건을 통해 지역 가격 스프레드 경로" in markdown
+    assert "공통 영향: 지역 가격 스프레드 경로" in markdown
+    assert "Dimension 값 차이: 재고 여건을 반영" in markdown
+    assert "근거: 액화설비 가용성 하락" in markdown
+    assert "inventory_condition_extra" in markdown
+    assert "unknown_lever" in markdown
+
+
 def test_running_v4_projection_moves_partial_to_ready_with_snapshot_revision() -> None:
     analysis_snapshot = {
         "generationDiagnostics": _v4_diagnostics(include_interaction=False),
@@ -499,6 +543,7 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
         "signposts": [],
         "events": [_event(101)],
         "operation": operation,
+        "lever_labels": {"inventory_condition": "재고 여건"},
         "legacy_template_dimensions": [],
     }
     context["group"]["generation_diagnostics"] = _v4_diagnostics()
@@ -516,11 +561,42 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
         )
 
     assert first.status_code == 200
+    assert first.json()["rendererVersion"] == "v2"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""
     assert second.headers["etag"] == first.headers["etag"]
     assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
+
+
+def test_presentation_etag_changes_with_lever_display_labels() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    operation = _operation(status="succeeded", revision=4)
+    context = {
+        "group": _group("v4", [_v4_definition()]),
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "operation": operation,
+        "lever_labels": {"inventory_condition": "재고 여건"},
+        "legacy_template_dimensions": [],
+        "legacy_snapshot_dimension_values": [],
+    }
+    context["group"]["generation_diagnostics"] = _v4_diagnostics()
+
+    with patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context):
+        client = TestClient(app)
+        first = client.get("/scenario-groups/120/presentation")
+        context["lever_labels"] = {"inventory_condition": "유럽 재고 여건"}
+        second = client.get(
+            "/scenario-groups/120/presentation",
+            headers={"If-None-Match": first.headers["etag"]},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.headers["etag"] != first.headers["etag"]
 
 
 def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
@@ -701,9 +777,16 @@ def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> N
             "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
             "ScenarioGroupOperationService.get_operation",
         ) as get_operation,
+        patch(
+            "apps.agents.scenario_group_agent.persistence.model_impact_lever_service."
+            "ModelImpactLeverService.load_display_labels",
+            return_value={"inventory_condition": "재고 여건"},
+        ) as load_display_labels,
     ):
         result = service.load_presentation_detail(120)
 
     assert result["operation"] is operation
+    assert result["lever_labels"] == {"inventory_condition": "재고 여건"}
     get_latest.assert_called_once_with(120)
     get_operation.assert_not_called()
+    load_display_labels.assert_called_once_with()

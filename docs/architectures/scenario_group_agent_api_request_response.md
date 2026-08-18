@@ -70,7 +70,10 @@ read model이다. `operationId`가 없으면 최신 operation을 선택하며, �
 `pending | partial | ready | unavailable` 상태와 `full | limited | none` 근거 수준을 명시하며,
 아직 준비되지 않은 문자열과 배열도 빈 값으로 유지한다.
 
-Markdown은 저장된 Event, Dimension, Scenario, generation diagnostics만으로 결정론적으로 렌더링한다.
+Markdown의 생성 근거는 저장된 Event, Dimension, Scenario, generation diagnostics로 한정한다.
+v4 `roleSelectionRationale`의 사용자 표시 문구는 현재 모델 영향 Lever master의 `lever_code → label`을
+적용하며, label을 찾지 못한 code는 원문을 유지한다. Lever label은 화면 표시 메타데이터이므로 변경되면
+Presentation 결과와 ETag도 함께 변경된다.
 동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. 새 v4 Dimension의
 10~200자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
 v3의 `derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
@@ -82,7 +85,8 @@ Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 �
 미제공 상태로 표시한다. 현재 Template은 저장된 `templateChecksum`과 canonical checksum이 일치할
 때만 v1 Dimension 복원에 사용한다.
 
-응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각으로 만든다.
+응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각과 현재 Lever label
+mapping으로 만든다.
 같은 값을 `If-None-Match`로 보내면 304를 반환한다. v4 진행 중 projection은 Event impact 검증 시
 `eventAnalysis=partial`, interaction 검증 시 `eventAnalysis=ready`, Dimension 검증 시
 `scenarioDesign=partial`로 갱신한다. `section_ready.details`는 변경 가능한 section 상태와 새
@@ -252,6 +256,8 @@ adapter에서만 사용하며 public API에는 노출하지 않는다. `scenario
 floor·ceiling·mixed를 포함한 전체 Scenario 중
 최고 `probabilityScore` 하나에 서버가 지정한다. `relatedMarkets`는 table header/cell이나
 pressure tag가 아니라 Scenario 상세에서만 표시하는 선택적 보조정보이며 TTF/HH만 허용한다.
+v4의 `probabilityScore`는 `0~100` 정수 백분율이며 같은 그룹의 활성 Scenario 합계는 100이다.
+생성 모델의 원시 응답이 `0~1` 확률 또는 임의 가중치여도 서버가 합계 100으로 정규화한 값만 저장·반환한다.
 
 ### 자유 dimension value mapping 승인
 

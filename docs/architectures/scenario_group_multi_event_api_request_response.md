@@ -167,7 +167,7 @@ Client는 두 필드를 구분해 표시한다.
 ```json
 {
   "schemaVersion": "v1",
-  "rendererVersion": "v1",
+  "rendererVersion": "v2",
   "scenarioGroupId": 366,
   "engineVersion": "v4",
   "legacy": false,

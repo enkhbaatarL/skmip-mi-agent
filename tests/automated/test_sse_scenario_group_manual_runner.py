@@ -63,7 +63,7 @@ def _presentation() -> dict[str, object]:
     ]
     return {
         "schemaVersion": "v1",
-        "rendererVersion": "v1",
+        "rendererVersion": "v2",
         "scenarioGroupId": 366,
         "engineVersion": "v4",
         "legacy": False,
