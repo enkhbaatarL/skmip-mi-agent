@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -46,8 +47,9 @@ MULTI_EVENT_COMPAT_SYSTEM_PROMPT = """\
 - 명백한 물리적 또는 논리적 모순이 있을 때만 compatible=false로 판정합니다.
 - 단지 드물거나 강한 조합이라는 이유로 false로 판정하지 않습니다.
 - narrative가 조합의 의도를 합리적으로 설명하면 모순으로 판정하지 않습니다.
-- 입력의 모든 scenario_id를 정확히 한 번 포함하고 reason은 한국어 한 줄로 작성합니다.
-- 입력의 모든 Scenario와 Shared Event 조합을 event_coverage에 정확히 한 번 포함합니다.
+- Review targets가 제공되면 items에는 해당 scenario_id만 정확히 한 번 포함합니다.
+  targets가 없으면 입력의 모든 scenario_id를 포함합니다. reason은 한국어 한 줄로 작성합니다.
+- Review targets의 모든 Scenario와 Shared Event 조합을 event_coverage에 정확히 한 번 포함합니다.
 - 각 event_coverage 항목은 scenario_id, event_id, grounded, reason을 채웁니다.
 - Event가 Scenario의 공동 전제로 유지되고 서술·Dimension 값과 모순되지 않으면 grounded=true,
   누락되거나 사실과 충돌하면 grounded=false로 두고 reason에 근거를 작성합니다.
@@ -149,6 +151,76 @@ class GeneratedDimensionCell(BaseModel):
 
 class DimensionValueStructuredOutput(BaseModel):
     items: list[GeneratedDimensionCell] = Field(default_factory=list)
+
+
+class ValidationRelatedMarket(BaseModel):
+    market: Literal["TTF", "HH"]
+    rationale: str = Field(min_length=1)
+
+
+class V4ValidationGeneratedScenario(BaseModel):
+    client_row_key: str
+    narrative: str = Field(min_length=1)
+    probability_score: float = Field(ge=0, le=100)
+    pressure_band: Literal[
+        "strong_bullish",
+        "bullish",
+        "balanced",
+        "bearish",
+        "strong_bearish",
+    ]
+    pressure_rationale: str = Field(min_length=1)
+    related_markets: list[ValidationRelatedMarket] = Field(default_factory=list, max_length=2)
+
+
+class V4ValidationGeneratedScenariosOutput(BaseModel):
+    items: list[V4ValidationGeneratedScenario] = Field(default_factory=list)
+
+
+V4_VALIDATION_GENERATION_SYSTEM_PROMPT = """\
+당신은 사용자가 편집한 v4 Multi-Event LNG Scenario의 DB 저장 필드를 작성합니다.
+- 입력된 clientRowKey마다 정확히 한 항목을 출력하고 키를 바꾸지 마십시오.
+- Dimension value ID와 정의, 공통 Event 사실을 근거로 narrative를 작성하십시오.
+- probabilityScore는 0~100의 상대적 발생 가능성 점수입니다.
+- pressureBand와 pressureRationale은 글로벌 LNG 가격 압력 기준입니다.
+- relatedMarkets는 TTF 또는 HH에 특별한 영향이 있을 때만 최대 2개 작성하십시오.
+- title이나 Dimension value를 새로 만들거나 변경하지 마십시오.
+"""
+
+
+def build_v4_validation_generation_messages(
+    *,
+    rows: list[dict[str, Any]],
+    dimension_definitions: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    generation_diagnostics: dict[str, Any],
+) -> list[dict[str, str]]:
+    payload = {
+        "rows": rows,
+        "dimensionDefinitions": dimension_definitions,
+        "events": events,
+        "generationGrounding": {
+            key: generation_diagnostics.get(key)
+            for key in (
+                "event_facts",
+                "impact_paths",
+                "path_uncertainties",
+                "event_interactions",
+                "decision_basis",
+            )
+            if generation_diagnostics.get(key)
+        },
+    }
+    return [
+        {"role": "system", "content": V4_VALIDATION_GENERATION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                "다음 JSON의 rows에 대해 저장 필드를 생성하십시오.\n"
+                + json.dumps(payload, ensure_ascii=False, default=str)
+            ),
+        },
+    ]
 
 
 def build_dimension_value_messages(

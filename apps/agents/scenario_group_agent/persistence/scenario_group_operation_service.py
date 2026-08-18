@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from apps.persistence.scenario_group_operation.models import (
     MiScenarioGroupOperationEventModel,
     MiScenarioGroupOperationModel,
@@ -18,7 +19,9 @@ from apps.persistence.scenario_group_operation.schema import (
     TERMINAL_EVENT_TYPES,
     TERMINAL_OPERATION_STATUSES,
     ScenarioGroupOperationEventPayload,
+    ScenarioGroupOperationInternalPayload,
     ScenarioGroupOperationPayload,
+    ValidationOperationResultPayload,
 )
 
 
@@ -89,12 +92,20 @@ class ScenarioGroupOperationService:
                 "mod_usr_logn_id": str(user_id),
             }
         )
+        title = (
+            "시나리오 그룹 생성을 접수했습니다" if operation_type == "create" else "Scenario Group 작업을 접수했습니다"
+        )
+        message = (
+            "선택한 Event를 바탕으로 시나리오 그룹 생성을 시작합니다."
+            if operation_type == "create"
+            else f"{operation_type} 작업을 시작합니다."
+        )
         repository.append_event(
             operation,
             event_type="accepted",
             phase=None,
-            title="시나리오 그룹 생성을 접수했습니다",
-            message_markdown="선택한 Event를 바탕으로 시나리오 그룹 생성을 시작합니다.",
+            title=title,
+            message_markdown=message,
             payload={
                 "operationType": operation_type,
                 "engineVersion": engine_version,
@@ -103,6 +114,229 @@ class ScenarioGroupOperationService:
             now=now,
         )
         return self.operation_payload_from_model(operation)
+
+    def create_validation_operation(
+        self,
+        *,
+        scenario_group_id: int,
+        user_id: int,
+    ) -> ScenarioGroupOperationPayload:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            group_repository = ScenarioGroupRepository(session=session)
+            group = group_repository.fetch_by_id(scenario_group_id, for_update=True)
+            if group is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Scenario group not found: {scenario_group_id}",
+                )
+            if group.request_usr_id is not None and int(group.request_usr_id) != user_id:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
+                    detail=f"이미 사용자 {group.request_usr_id}가 점유하고 있습니다.",
+                )
+            operation_repository = ScenarioGroupOperationRepository(session=session)
+            active = operation_repository.fetch_active(scenario_group_id)
+            if active is not None:
+                raise MIBaseError(
+                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                    detail=f"실행 중인 operation이 있습니다: {active.operation_id}",
+                )
+            group_repository.update_group(
+                group,
+                {
+                    "stage": "scenario_created",
+                    "mod_usr_logn_id": user_id,
+                },
+            )
+            operation = self.create_accepted_in_session(
+                session,
+                scenario_group_id=scenario_group_id,
+                operation_id=new_operation_id(),
+                operation_type="validation",
+                engine_version=str(group.api_version or "v1"),
+                user_id=user_id,
+            )
+            session.commit()
+            return operation
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def start_operation(self, scenario_group_id: int, operation_id: str, *, phase: str) -> None:
+        self.append_event(
+            scenario_group_id,
+            operation_id,
+            event_type="phase_started",
+            phase=phase,
+            title="작업을 시작했습니다",
+            message_markdown=f"{phase} 단계를 실행합니다.",
+            status="running",
+        )
+
+    def complete_validation(
+        self,
+        *,
+        scenario_group_id: int,
+        operation_id: str,
+        result_payload: ValidationOperationResultPayload,
+        user_id: int,
+    ) -> dict[str, Any]:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            operation_repository = ScenarioGroupOperationRepository(session=session)
+            group_repository = ScenarioGroupRepository(session=session)
+            operation = operation_repository.fetch_by_id(scenario_group_id, operation_id, for_update=True)
+            group = group_repository.fetch_by_id(scenario_group_id, for_update=True)
+            if operation is None or operation.operation_type != "validation":
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=f"Validation operation not found: {operation_id}",
+                )
+            if group is None:
+                raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {scenario_group_id}")
+            operation.result_payload = result_payload.model_dump(mode="json", by_alias=True)
+            next_stage = "scenario_validated" if result_payload.validation_result.can_proceed else "scenario_created"
+            group_repository.update_group(
+                group,
+                {
+                    "stage": next_stage,
+                    "status": "creating",
+                    "mod_usr_logn_id": user_id,
+                },
+            )
+            operation_repository.append_event(
+                operation,
+                event_type="completed",
+                phase="validation",
+                title="Scenario Validation을 완료했습니다",
+                message_markdown=result_payload.validation_result.reason_markdown,
+                payload={
+                    "verdict": result_payload.validation_result.verdict,
+                    "isValid": result_payload.validation_result.is_valid,
+                    "canProceed": result_payload.validation_result.can_proceed,
+                },
+                now=_db_now(),
+                status="succeeded",
+            )
+            session.commit()
+            return group_repository.model_to_dict(group)
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def fail_validation(
+        self,
+        *,
+        scenario_group_id: int,
+        operation_id: str,
+        user_id: int,
+        error: Exception,
+    ) -> None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            operation_repository = ScenarioGroupOperationRepository(session=session)
+            group_repository = ScenarioGroupRepository(session=session)
+            operation = operation_repository.fetch_by_id(scenario_group_id, operation_id, for_update=True)
+            group = group_repository.fetch_by_id(scenario_group_id, for_update=True)
+            if operation is None or group is None or operation.status in TERMINAL_OPERATION_STATUSES:
+                return
+            group_repository.update_group(
+                group,
+                {
+                    "stage": "scenario_created",
+                    "mod_usr_logn_id": user_id,
+                },
+            )
+            operation_repository.append_event(
+                operation,
+                event_type="failed",
+                phase="validation",
+                title="Scenario Validation에 실패했습니다",
+                message_markdown=str(error),
+                payload={"status": "failed"},
+                now=_db_now(),
+                status="failed",
+                last_error={"message": str(error)},
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def complete_operation(
+        self,
+        *,
+        scenario_group_id: int,
+        operation_id: str,
+        phase: str,
+        message_markdown: str,
+    ) -> None:
+        self.append_event(
+            scenario_group_id,
+            operation_id,
+            event_type="completed",
+            phase=phase,
+            title="작업을 완료했습니다",
+            message_markdown=message_markdown,
+            payload={"status": "succeeded"},
+            status="succeeded",
+        )
+
+    def fail_signpost(
+        self,
+        *,
+        scenario_group_id: int,
+        operation_id: str,
+        user_id: int,
+        error: Exception,
+    ) -> None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            operation_repository = ScenarioGroupOperationRepository(session=session)
+            group_repository = ScenarioGroupRepository(session=session)
+            operation = operation_repository.fetch_by_id(scenario_group_id, operation_id, for_update=True)
+            group = group_repository.fetch_by_id(scenario_group_id, for_update=True)
+            if operation is None or group is None or operation.status in TERMINAL_OPERATION_STATUSES:
+                return
+            group_repository.update_group(
+                group,
+                {
+                    "stage": "scenario_validated",
+                    "mod_usr_logn_id": user_id,
+                },
+            )
+            operation_repository.append_event(
+                operation,
+                event_type="failed",
+                phase="signpost",
+                title="Signpost 생성에 실패했습니다",
+                message_markdown=str(error),
+                payload={"status": "failed"},
+                now=_db_now(),
+                status="failed",
+                last_error={"message": str(error)},
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def append_event(
         self,
@@ -263,6 +497,34 @@ class ScenarioGroupOperationService:
         try:
             operation = ScenarioGroupOperationRepository(session=session).fetch_latest(scenario_group_id)
             return self.operation_payload_from_model(operation) if operation is not None else None
+        finally:
+            session.close()
+
+    def get_latest_internal_by_type(
+        self,
+        scenario_group_id: int,
+        operation_type: str,
+    ) -> ScenarioGroupOperationInternalPayload | None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            operation = ScenarioGroupOperationRepository(session=session).fetch_latest_by_type(
+                scenario_group_id,
+                operation_type,
+            )
+            if operation is None:
+                return None
+            result_payload: ValidationOperationResultPayload | dict[str, Any] | None = operation.result_payload
+            if operation_type == "validation" and isinstance(result_payload, dict):
+                result_payload = ValidationOperationResultPayload.model_validate(result_payload)
+            return ScenarioGroupOperationInternalPayload(
+                operation_id=operation.operation_id,
+                scenario_group_id=int(operation.scenario_group_id),
+                operation_type=operation.operation_type,
+                status=operation.status,
+                result_payload=result_payload,
+            )
         finally:
             session.close()
 

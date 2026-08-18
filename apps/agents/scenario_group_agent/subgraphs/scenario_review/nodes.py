@@ -58,6 +58,7 @@ def build_context(
     *,
     events: list[dict[str, Any]] | None = None,
     generation_diagnostics: dict[str, Any] | None = None,
+    review_scenario_ids: list[int] | None = None,
 ) -> ReviewContext:
     persisted_by_id = {int(scenario["scenario_id"]): scenario for scenario in persisted_scenarios}
     scenarios = [
@@ -78,6 +79,11 @@ def build_context(
     if selected_dims is None:
         selected_dims = [str(key) for key in group.get("dimension_selected") or []]
     apply_single_baseline_by_probability(scenarios)
+    review_ids = (
+        set(review_scenario_ids)
+        if review_scenario_ids is not None
+        else {int(scenario["scenario_id"]) for scenario in scenarios}
+    )
     return ReviewContext(
         group=group,
         events=events or [],
@@ -87,6 +93,7 @@ def build_context(
         selected_dims=selected_dims,
         dim_index=dim_index,
         enum_index=enum_index,
+        review_scenario_ids=review_ids,
         unchanged=_is_request_unchanged(requested_rows, persisted_scenarios),
     )
 
@@ -455,8 +462,9 @@ def _has_only_unusable_enum_recommendations(
 def _build_similar_title_check(
     ctx: ReviewContext,
     output: CompatibilityStructuredOutput,
-    expected_ids: set[int],
+    allowed_ids: set[int],
     title_by_id: dict[int, str],
+    review_ids: set[int] | None = None,
 ) -> CheckResult:
     exact_pair_keys = {
         _title_pair_key(
@@ -475,7 +483,7 @@ def _build_similar_title_check(
                 ErrorCode.LLM_INVALID_RESPONSE_ERROR,
                 detail=f"유사 시나리오명 LLM 응답에 self-pair가 있습니다: {scenario_id_a}",
             )
-        if scenario_id_a not in expected_ids or scenario_id_b not in expected_ids:
+        if scenario_id_a not in allowed_ids or scenario_id_b not in allowed_ids:
             raise MIBaseError(
                 ErrorCode.LLM_INVALID_RESPONSE_ERROR,
                 detail=(
@@ -489,7 +497,9 @@ def _build_similar_title_check(
                 detail=f"유사 시나리오명 LLM 응답 pair가 중복되었습니다: {pair_key}",
             )
         seen_pairs.add(pair_key)
-        if pair_key not in exact_pair_keys:
+        if pair_key not in exact_pair_keys and (
+            not review_ids or scenario_id_a in review_ids or scenario_id_b in review_ids
+        ):
             similar_pairs.append(pair)
 
     offenders = [f"{pair.scenario_id_a} = {pair.scenario_id_b}: {pair.reason}" for pair in similar_pairs]
@@ -532,6 +542,7 @@ async def _check_compatibility(
             ),
         ]
     lines: list[str] = []
+    review_ids = ctx.review_scenario_ids or {int(scenario["scenario_id"]) for scenario in ctx.scenarios}
     for scenario in ctx.scenarios:
         rendered_pairs: list[str] = []
         for key, value in scenario["dimension_values"].items():
@@ -579,7 +590,13 @@ async def _check_compatibility(
     if enum_lines:
         heading = "## Reference dimension values" if is_multi_event else "## Dimension enum"
         user_prompt += heading + "\n" + "\n".join(enum_lines) + "\n\n"
-    user_prompt += "## Scenarios\n" + "\n".join(lines)
+    user_prompt += (
+        "## Review targets\n"
+        + ", ".join(str(item) for item in sorted(review_ids))
+        + "\n대상 Scenario만 items와 event_coverage에 출력하십시오. 나머지는 중복·모순 비교용 context입니다.\n\n"
+        + "## Scenarios\n"
+        + "\n".join(lines)
+    )
     messages = [
         {
             "role": "system",
@@ -590,7 +607,7 @@ async def _check_compatibility(
     try:
         result = await _invoke_compatibility(messages=messages, trace_context=trace_context)
         items = result.result.items
-        expected = {scenario["scenario_id"] for scenario in ctx.scenarios}
+        expected = review_ids
         actual = {item.scenario_id for item in items}
         if len(items) != len(actual) or actual != expected:
             raise MIBaseError(
@@ -603,9 +620,7 @@ async def _check_compatibility(
         event_coverage = result.result.event_coverage
         if is_multi_event and ctx.events:
             expected_coverage = {
-                (scenario["scenario_id"], int(event["mi_event_id"]))
-                for scenario in ctx.scenarios
-                for event in ctx.events
+                (scenario_id, int(event["mi_event_id"])) for scenario_id in expected for event in ctx.events
             }
             actual_coverage = {(item.scenario_id, item.event_id) for item in event_coverage}
             if len(event_coverage) != len(actual_coverage) or actual_coverage != expected_coverage:
@@ -643,8 +658,9 @@ async def _check_compatibility(
         similar_title_check = _build_similar_title_check(
             ctx,
             result.result,
-            expected,
+            {int(scenario["scenario_id"]) for scenario in ctx.scenarios},
             title_by_id,
+            review_ids,
         )
         checks = [compatibility_check, similar_title_check]
         if is_multi_event and ctx.events:
@@ -660,10 +676,7 @@ async def _check_compatibility(
                         if not ungrounded
                         else f"Event 사실 누락·모순 {len(ungrounded)}건"
                     ),
-                    [
-                        f"scenario={item.scenario_id}, event={item.event_id}: {item.reason}"
-                        for item in ungrounded
-                    ],
+                    [f"scenario={item.scenario_id}, event={item.event_id}: {item.reason}" for item in ungrounded],
                 ),
             )
         return checks
@@ -1005,6 +1018,26 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
             summary={"PASS": 0, "WARN": 0, "FAIL": 0, "INFO": 0},
             checks=[],
         )
+    is_v4_edit = ctx.group.get("generation_strategy") == "multi_event_model_lever_dimensions"
+    if is_v4_edit:
+        checks = [_check_exact_title_duplicates(ctx), _check_mece(ctx)]
+        if ctx.review_scenario_ids:
+            checks.extend(await _check_compatibility(ctx, trace_context=trace_context))
+        for check in checks:
+            if check.check_id in {"R03", "R04", "R06", "R07"} and check.status == "WARN":
+                check.status = "FAIL"
+        counts = Counter(check.status for check in checks)
+        summary = {status: counts.get(status, 0) for status in ("PASS", "WARN", "FAIL", "INFO")}
+        notable = [check for check in checks if check.status in {"FAIL", "WARN"}]
+        return ReviewReport(
+            verdict="BLOCK" if summary["FAIL"] else "PASS",
+            is_valid=not summary["FAIL"],
+            reason=(
+                _build_reason(notable, _dim_label_map(ctx)) if notable else "모든 시나리오 검토 항목을 통과했습니다."
+            ),
+            summary=summary,
+            checks=checks,
+        )
     checks: list[CheckResult] = []
     for check in CHECKS:
         try:
@@ -1079,6 +1112,7 @@ class RunReviewNode(BaseNode):
                     group=state.group,
                     events=state.events,
                     generation_diagnostics=state.generation_diagnostics,
+                    review_scenario_ids=state.review_scenario_ids,
                     requested_rows=state.requested_rows,
                     persisted_scenarios=state.persisted_scenarios,
                     template_dims=state.template_dims,

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
+    StateDirection,
+)
 from apps.agents.scenario_group_agent.prompts.event_context import CompactEventContext
 
 
@@ -41,6 +44,12 @@ V4_DIMENSION_SYSTEM_PROMPT = (
 현재 단계에서는 검증된 열린 질문만 사용해 Dimension 3~6개와 각 선택지 2~4개를 설계하십시오.
 각 Dimension은 화면용 이름과 사용자가 답할 질문을 함께 가져야 합니다. 새 Fact, Path, Interaction 또는
 Lever를 만들지 말고, 선택지에는 비교 가능한 시장·운영 상태와 그 상태가 JKM 압력을 바꾸는 이유를 작성하십시오.
+Dimension rationale은 question의 구체적인 관측 시점·수치·신호·대상·영향 경로를 빠짐없이 유지하고,
+질문 어미만 `...하는지에 따라 ...가 달라짐` 형태로 바꾼 근거 문장으로 작성하십시오. 각 Choice의 why는
+답이나 응답이 아니라 `관측된 사실 → Choice가 나타내는 미래 상태 → JKM 영향`을 자연스럽게 연결하고
+문장 끝의 `가정`으로 불확실성을 표시하는 간결한 문장입니다. `상태를 ... 가정`처럼 가정이라는
+뜻을 한 문장 안에서 반복하지 마십시오.
+Dimension rationale에서 구체적 근거를 생략하거나 Choice why를 `답`, `응답`, `선택`으로 부르면 잘못된 출력입니다.
 """
 )
 
@@ -52,6 +61,9 @@ V4_SCENARIO_SYSTEM_PROMPT = (
 현재 단계에서는 공통 영향, Interaction, Dimension 질문과 선택지를 변경하지 말고 대표 Scenario
 3~5개를 합성하십시오. 각 Scenario는 모든 질문에 정확히 하나씩 답하고, 서로 구분되는 핵심 전제 조합과
 결과 전달 경로를 가져야 합니다. narrative는 주요 조건과 최종 JKM 전달 경로를 두 문장으로 설명하십시오.
+루트 그룹 title과 description은 원본 이벤트를 대표하는 한국어 메타데이터로 작성하고, 영문 Event·Scenario를
+사용하지 마십시오. description에는 `입력 사실`과 `JKM`을 사용하지 마십시오.
+probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
 """
 )
 
@@ -93,7 +105,12 @@ def build_v4_event_fact_candidates(event: dict[str, Any]) -> dict[str, str]:
 def _feedback(title: str, validation_feedback: str | None, instruction: str) -> str:
     if not validation_feedback:
         return ""
-    return f"\n## 이전 {title} 검증 실패\n- {validation_feedback[:600]}\n- {instruction}\n"
+    return (
+        f"\n## 이전 {title} 검증 실패\n"
+        f"- 검증 오류: {validation_feedback[:600]}\n"
+        "- 이전 시도의 오류가 발생한 필드 또는 조합을 수정하고 동일한 실수를 반복하지 마십시오.\n"
+        f"- {instruction}\n"
+    )
 
 
 def build_model_lever_user_prompt(
@@ -184,7 +201,7 @@ def build_v4_event_impact_analysis_user_prompt(
         "  3개를 초과하는 후보가 있으면 실제 전달 경로를 가장 잘 설명하는 중요한 3개만 선택하고,\n"
         "  배열을 채우기 위해 불필요한 Lever를 추가하지 않습니다.\n"
         "  role은 primary(핵심 변화), driver(선행 원인), transmission(전달 경로) 중 하나입니다.\n"
-        "  direction은 increase, decrease, disrupt, recover, unchanged 중 하나입니다.\n"
+        f"  direction은 {StateDirection.prompt_values()} 중 하나입니다.\n"
         "- balance는 `domain|direction` 또는 `none` 형식입니다.\n"
         "  domain은 demand, supply, trade이고 direction은 increase, decrease, mixed, unchanged 중 하나입니다.\n"
         "  선택한 Lever가 모두 price_only domain이면 balance는 반드시 none입니다.\n"
@@ -328,15 +345,22 @@ def build_v4_dimension_design_user_prompt(
         f"{_render_validation_warnings(validation_warnings)}\n\n"
         "## 이번 단계의 질문\n"
         "1. 어떤 열린 질문이 JKM 결과를 실질적으로 구분합니까?\n"
-        "2. 사용자가 비교할 수 있는 상호 배타적인 답은 무엇입니까?\n"
-        "3. 각 답은 Lever 상태와 JKM 압력을 어떻게 바꿉니까?\n\n"
+        "2. 사용자가 비교할 수 있는 상호 배타적인 미래 가정은 무엇입니까?\n"
+        "3. 각 가정은 Lever 상태와 JKM 압력을 어떻게 바꿉니까?\n\n"
         "## 출력 규칙\n"
         "- from에는 위 U 번호만 사용합니다. Dimension ID와 Value ID는 서버가 부여합니다.\n"
         "- label은 화면 표에 표시할 10~40자의 이름입니다. 핵심 대상과 변화 축만 담고 전체 인과를 넣지 않습니다.\n"
         "- question은 사용자가 답할 수 있는 한국어 질문이며 상세 화면과 생성 근거에 사용합니다.\n"
-        "- rationale은 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 10~100자의 짧은 한국어 한 문장으로 "
-        "작성합니다. question을 반복하지 말고 `운항 지연 범위에 따라 아시아 가용 화물과 JKM 리스크 프리미엄이 "
-        "변화됨`처럼 핵심 인과만 설명합니다.\n"
+        "- rationale은 왜 이 Dimension을 Scenario 구분 축으로 선택했는지 설명하는 10~200자의 구체적인 한국어 "
+        "한 문장입니다. question의 관측일·분석 기준일·수치·시장 신호·대상·영향 경로를 하나도 생략하거나 "
+        "일반론으로 축약하지 않습니다. question의 사실절은 사실상 그대로 유지하고, `얼마나 오래 유지합니까?`는 "
+        "`얼마나 오래 유지하는지에 따라`, `언제 회복됩니까?`는 `언제 회복되는지에 따라`처럼 질문 어미만 "
+        "근거형 연결어로 바꾼 뒤 구분되는 시장 결과를 붙입니다.\n"
+        "  예: `2026년 6월 30일 49.1%로 관측된 유럽 저장률과 겨울 주입 기대가 분석 기준일 이후 NWE 가격 "
+        "지지를 얼마나 오래 유지합니까?` → `2026년 6월 30일 49.1%로 관측된 유럽 저장률과 겨울 주입 기대가 "
+        "분석 기준일 이후 NWE 가격 지지를 얼마나 오래 유지하는지에 따라 아시아 구매 경쟁이 달라짐`.\n"
+        "  question에 있는 날짜·수치·신호 중 하나라도 빠지거나 `가격 지지 지속 기간에 따라`처럼 일반 명사로 "
+        "줄인 rationale은 잘못된 출력입니다. 예시의 정보는 입력 question에 실제로 있을 때만 사용합니다.\n"
         "- lever와 axis는 source 질문에 표시된 값을 그대로 사용합니다.\n"
         "- 각 Dimension에는 같은 판단 축·단위를 사용하는 선택지 2~4개를 만듭니다.\n"
         "- Choice label은 10~25자로 하나의 비교 가능한 시장·운영 상태만 표현합니다.\n"
@@ -345,9 +369,21 @@ def build_v4_dimension_design_user_prompt(
         "  과거 목표일은 미래 가능성처럼 되돌리지 말고 현재 상태의 전제로 사용합니다. 새로운 수치 경계는\n"
         "  제공된 판단 근거가 실제 기준을 줄 때만 만들며, 근거가 없으면 비교 가능한 운영 상태로 표현합니다.\n"
         "- states는 `lever|direction|level|scope|timeWindow` 형식입니다.\n"
-        "  direction은 increase, decrease, disrupt, recover, unchanged 중 하나이며 나머지는 짧은 자연어입니다.\n"
-        "- why는 해당 답이 공통 영향 대비 JKM 압력을 바꾸는 이유와 어떤 Event 사실·현재 시점 판단을\n"
-        "  바탕으로 만들었는지 문장 자체에서 알 수 있게 자연어로 설명합니다. 별도 Anchor 참조 ID는 작성하지 않습니다.\n"
+        f"  direction은 {StateDirection.prompt_values()} 중 하나이며 나머지는 짧은 자연어입니다.\n"
+        "- why는 Choice의 간결한 가정 근거입니다. 반드시 `관측된 사실 → 미래 상태 → JKM 영향` 순서의 한 문장으로 "
+        "쓰고, 문장 끝의 `가정`으로 미래 상태가 확정 사실이 아님을 표시합니다. 가정이라는 메타 표현은 문장 끝에서 "
+        "한 번만 사용하며 `상태를 가정하면`, `상황을 가정하면`, `나타나는 가정이다`처럼 반복하지 않습니다. "
+        "`Event 배경으로 제시된 사실` 같은 출처 메타 설명 없이 관측 사실을 바로 서술하고, `답`, `응답`, `선택`, "
+        "`선택한 값`이라는 말도 사용하지 않습니다. 제공된 Event 사실과 숫자·시점 판단 근거만 사용하고 별도 Anchor "
+        "참조 ID나 새 사실을 만들지 않습니다.\n"
+        "  권장 형식: `[관측된 과거·현재 사실]을 기반으로, [분석 기준일 이후 Choice의 미래 상태가 발생·유지·완화되고], "
+        "[시장 전달 경로를 거쳐 JKM 영향이 나타나는] 가정.`\n"
+        "  예: `2026년 6월 30일 유럽 저장률이 49.1%로 관측되고 겨울 주입 기대가 있었던 사실을 기반으로, "
+        "분석 기준일 이후 주입 부담이 완화되고 NWE 가격 지지와 글로벌 LNG 가격 지지력이 약해져 JKM 하방 "
+        "압력이 우세해지는 가정.`\n"
+        "  예: `2026년 7월 2일 JKM-NWE 계절물 스프레드의 약화·폐쇄 신호가 관측된 사실을 기반으로, 9월 "
+        "이후물에서 JKM-NWE 스프레드가 다시 벌어지고 아시아가 대서양 화물을 끌어올 가격 신호를 회복해 JKM "
+        "상승 압력이 커지는 가정.`\n"
         "- 사용하지 않은 질문은 notUsed에 자연어 이유를 남깁니다.\n"
         f"{feedback}"
     )
@@ -367,6 +403,24 @@ def _render_interaction_cards(impact_analysis: dict[str, Any]) -> str:
         for index, interaction in enumerate(impact_analysis.get("interactions") or [], start=1)
     ]
     return "\n".join(cards) or "- 없음"
+
+
+def _render_group_metadata_event_cards(events: list[dict[str, Any]]) -> str:
+    cards = []
+    for index, event in enumerate(events, start=1):
+        compact = CompactEventContext.from_event(event)
+        facts = "\n".join(f"  - {fact}" for fact in compact.key_facts) or "  - 없음"
+        tags = ", ".join(compact.tags) or "없음"
+        cards.append(
+            f"### [이벤트 {index}]\n"
+            f"- ID: {compact.event_id or '없음'}\n"
+            f"- 제목: {compact.title[:120] or '없음'}\n"
+            f"- 요약: {compact.summary[:240] or '없음'}\n"
+            f"- 발생시각: {compact.occurred_at or '없음'}\n"
+            f"- 핵심 사실:\n{facts}\n"
+            f"- 태그: {tags}"
+        )
+    return "\n\n".join(cards) or "- 없음"
 
 
 def _render_dimension_matrix(dimension_definitions: list[dict[str, Any]]) -> str:
@@ -392,6 +446,7 @@ def _render_dimension_matrix(dimension_definitions: list[dict[str, Any]]) -> str
 
 def build_v4_scenario_synthesis_user_prompt(
     *,
+    events: list[dict[str, Any]],
     impact_analysis: dict[str, Any],
     dimension_definitions: list[dict[str, Any]],
     validation_warnings: list[dict[str, Any]],
@@ -405,6 +460,8 @@ def build_v4_scenario_synthesis_user_prompt(
     return (
         "## 목적\n"
         "공통 영향에 모든 Dimension 질문의 답과 필요한 Interaction을 더해 대표 JKM Scenario를 만듭니다.\n\n"
+        "## 그룹 제목·설명의 근거가 되는 이벤트\n"
+        f"{_render_group_metadata_event_cards(events)}\n\n"
         "## 모든 Scenario에 공통인 영향\n"
         f"{_render_common_impact_cards(impact_analysis)}\n\n"
         "## 적용 가능한 Interaction\n"
@@ -417,8 +474,19 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 어떤 선택지 조합이 서로 구분되는 대표 전개를 만듭니까?\n"
         "- 공통 영향, 선택지 효과, Interaction이 최종 JKM 압력에 각각 어떻게 기여합니까?\n\n"
         "## 출력 규칙\n"
+        "- 루트 title과 description은 개별 시나리오가 아니라 시나리오 그룹의 화면용 메타데이터입니다.\n"
+        "- 루트 title은 20~60자의 한국어로 작성합니다. 여러 이벤트이면 위 이벤트에서 사용자가 검색할 만한\n"
+        "  구체적인 대상·지역·지표·변화 2~3개를, 단일 이벤트이면 대표 요소 1개를 제목에 직접 반영합니다.\n"
+        "  `JKM 대표 전개`, `합성 초안`, `복수 이벤트 시나리오`처럼 생성 목적만 표현하지 않습니다.\n"
+        "- 루트 description은 이미 발생한 사건을 `이벤트`, 미래 분기를 `시나리오`로 지칭하고, 이벤트의 핵심\n"
+        "  내용과 지속·회복·확대 등 시나리오를 구분하는 조건을 자연스러운 한국어로 요약합니다.\n"
+        "  루트 title과 description에는 영문 `Event`, `Scenario`를 쓰지 않습니다. description에는\n"
+        "  `입력 사실`과 `JKM`을 쓰지 않습니다.\n"
         "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
         "- choices에는 각 D의 V를 정확히 하나씩 `D1.V1` 형식으로 선택합니다.\n"
+        "- 제외 후보도 choices에 각 D의 V를 정확히 하나씩 선택해, 제외된 실제 조합을 보존합니다.\n"
+        "- 발생 가능성이 낮아 제외하면 reasonCode는 LOW_PROBABILITY로 작성합니다. 조합이 독립적인 검토 가치가\n"
+        "  없어 제외하는 경우에는 NOT_INDEPENDENT를 사용합니다.\n"
         "- interactions에는 실제로 추가 효과를 적용한 I 번호만 넣습니다.\n"
         "- 각 Scenario는 다른 Scenario와 구분되는 핵심 전제 조합과 결과 전달 경로를 가져야 합니다.\n"
         "- 공급·수요·운송·회복 같은 미리 정한 유형에 맞추지 말고, 입력된 Dimension과 Interaction에서\n"
@@ -434,8 +502,10 @@ def build_v4_scenario_synthesis_user_prompt(
         "- explanation은 공통 영향, 선택한 분기, 적용한 상호작용이 최종 JKM 압력을 만드는 과정을 "
         "자연스러운 한국어 문장으로 설명합니다.\n"
         "- 공통 영향은 분기 효과에 다시 더하지 않습니다.\n"
-        "- probability는 공통 사실에 가깝고 추가 가정이 적을수록 높게 부여합니다.\n"
-        "- relatedMarkets는 `TTF|이유` 또는 `HH|이유` 형식이며 특별한 영향이 있을 때만 씁니다.\n"
+        "- probability는 공통 사실에 가깝고 추가 가정이 적을수록 높게 부여하는 0~100 정수 백분율입니다. "
+        "모든 Scenario probability의 합계를 정확히 100으로 맞춥니다.\n"
+        "- relatedMarkets는 `TTF|이유` 또는 `HH|이유` 형식이며 특별한 영향이 있을 때만 씁니다. "
+        "한 Scenario 안에서 TTF와 HH는 각각 최대 한 번만 작성하고 같은 시장을 중복하지 마십시오.\n"
         f"{feedback}"
     )
 

@@ -234,8 +234,8 @@ def validate_presentation(  # noqa: C901
             msg = f"dimensionDefinitions.items[{index}] must be an object"
             raise TypeError(msg)
         rationale = _required_str(item, "rationale").strip()
-        if not 10 <= len(rationale) <= 100:
-            msg = f"dimensionDefinitions.items[{index}].rationale must contain 10..100 characters"
+        if not 10 <= len(rationale) <= 200:
+            msg = f"dimensionDefinitions.items[{index}].rationale must contain 10..200 characters"
             raise ValueError(msg)
 
     rows = table.get("rows")
@@ -741,7 +741,7 @@ def _render_report(result: dict[str, Any], presentations: list[dict[str, Any]]) 
 - 첫 `accepted`, 연속 sequence, SSE id와 JSON sequence/event type 일치, resource ID 불변
 - revision이 증가한 `section_ready` 및 `completed`에서 Presentation 조회
 - Presentation의 v1 공통 schema, v4 engine, 공통 3-section, 최종 ready 상태
-- 최종 Dimension 3~6개, rationale 10~100자, Scenario 3~5개
+- 최종 Dimension 3~6개, rationale 10~200자, Scenario 3~5개
 - 동일 ETag의 conditional GET이 빈 HTTP 304 반환
 """
 

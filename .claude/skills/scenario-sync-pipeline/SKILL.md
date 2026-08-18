@@ -169,7 +169,7 @@ create POST는 멱등하지 않으므로 timeout이나 stream 오류 뒤 동일 
   `roleSelectionRationale` 세 section을 요구한다.
 - 조회를 유발한 SSE보다 `operation.latestSequence`, `snapshotRevision`이 뒤처지지 않아야 한다.
 - 최종 조회는 operation과 모든 하위 section이 성공/`ready`여야 한다.
-- 최종 v4 결과는 Dimension 3~6개, 각 Dimension `rationale` 10~100자,
+- 최종 v4 결과는 Dimension 3~6개, 각 Dimension `rationale` 10~200자,
   Scenario row 3~5개를 요구한다.
 - 모든 Presentation 200 응답에 `ETag`가 있어야 하고, 같은 URL과 ETag의
   conditional GET이 body 없는 HTTP 304와 동일 ETag를 반환해야 한다.

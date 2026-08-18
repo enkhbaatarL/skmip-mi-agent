@@ -110,14 +110,14 @@ def test_scenario_and_signpost_prompts_include_compact_event_context(monkeypatch
     context = pack.C1_base_event.model_dump()
     signpost_prompt = build_stage2_user_prompt(
         scenario=_scenario(),
-        base_event_summary=context,
+        event_contexts=[context],
         scenario_description="시나리오 설명",
         min_n=3,
         max_n=6,
     )
     enrich_prompt = build_stage45_user_prompt(
         scenario=_scenario(),
-        base_event_summary=context,
+        event_contexts=[context],
         scenario_description="시나리오 설명",
         labels=["인허가 승인 공식 발표", "FID 확정 발표", "상업화 일정 공표"],
     )
@@ -196,7 +196,7 @@ def test_prompt_includes_current_date_when_occurred_at_is_missing(monkeypatch: p
 
     prompt = build_stage2_user_prompt(
         scenario=_scenario(),
-        base_event_summary=context,
+        event_contexts=[context],
         scenario_description="시나리오 설명",
         min_n=3,
         max_n=6,
@@ -212,14 +212,14 @@ def test_signpost_prompts_do_not_include_price_direction() -> None:
 
     stage2_prompt = build_stage2_user_prompt(
         scenario=_scenario(),
-        base_event_summary=context,
+        event_contexts=[context],
         scenario_description="시나리오 설명",
         min_n=3,
         max_n=6,
     )
     stage45_prompt = build_stage45_user_prompt(
         scenario=_scenario(),
-        base_event_summary=context,
+        event_contexts=[context],
         scenario_description="시나리오 설명",
         labels=["인허가 승인 공식 발표"],
     )

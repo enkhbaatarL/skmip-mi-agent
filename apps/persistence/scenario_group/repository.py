@@ -69,11 +69,18 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             stmt = stmt.order_by(MiScenarioGroupModel.mod_dtm.desc(), MiScenarioGroupModel.scenario_group_id.desc())
         return list(self.session.execute(stmt).scalars().all())
 
-    def fetch_by_id(self, scenario_group_id: int) -> MiScenarioGroupModel | None:
+    def fetch_by_id(
+        self,
+        scenario_group_id: int,
+        *,
+        for_update: bool = False,
+    ) -> MiScenarioGroupModel | None:
         stmt = select(MiScenarioGroupModel).where(
             MiScenarioGroupModel.scenario_group_id == scenario_group_id,
             MiScenarioGroupModel.del_yn == "N",
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         return self.session.execute(stmt).scalars().one_or_none()
 
     def fetch_by_id_for_query(

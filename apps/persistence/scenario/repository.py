@@ -62,7 +62,11 @@ class ScenarioRepository(BaseSyncSQLRepository):
         return raw if isinstance(raw, list) else []
 
     def fetch_models_by_group_id(
-        self, scenario_group_id: int, *, include_deleted: bool = False
+        self,
+        scenario_group_id: int,
+        *,
+        include_deleted: bool = False,
+        for_update: bool = False,
     ) -> list[MiScenarioModel]:
         stmt = (
             select(MiScenarioModel)
@@ -73,6 +77,8 @@ class ScenarioRepository(BaseSyncSQLRepository):
         )
         if not include_deleted:
             stmt = stmt.where(MiScenarioModel.del_yn == "N")
+        if for_update:
+            stmt = stmt.with_for_update()
         return list(self.session.execute(stmt).scalars().all())
 
     def insert_scenario(self, payload: dict[str, Any]) -> int:

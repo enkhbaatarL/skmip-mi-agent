@@ -7,7 +7,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from apps.agents.scenario_group_agent.schemas.base import ApiModel
 from apps.persistence.scenario.schema import RelatedMarket
@@ -75,6 +75,14 @@ class ScenarioGroupTableData(ApiModel):
 
 class ScenarioGroupQueryPayload(ScenarioGroupPayload):
     del_yn: str = "N"
+
+    @model_serializer(mode="wrap")
+    def serialize_query_payload(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        payload = handler(self)
+        del_yn_key = "delYn" if "delYn" in payload else "del_yn"
+        ordered = {del_yn_key: payload.pop(del_yn_key)}
+        ordered.update(payload)
+        return ordered
 
 
 class SignpostQueryPayload(SignpostBasePayload):

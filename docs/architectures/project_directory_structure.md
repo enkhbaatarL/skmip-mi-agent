@@ -144,7 +144,8 @@ apps/agents/<agent_name>/
   - `/scenario-groups`를 canonical API로 삼는다. 버전 prefix가 있는 경로는 legacy 호환 또는 sync 테스트용이며,
     router 파일 분리는 도메인 분리가 아니라 API 수명주기와 transport 책임 분리다.
   - Scenario Group 생성·검증·Signpost·확정과 공통 업무 CRUD는 `scenario_groups.py`,
-    validation/signpost sync 테스트 API는 `scenario_generation_sync.py`, v2/v3/v4 생성 sync는
+    validation/signpost sync 테스트 API와 Presentation 기반 후속 request body 생성 QA API는
+    `scenario_generation_sync.py`, v2/v3/v4 생성 sync는
     `multi_event_scenario_group_sync.py`,
     operation 조회·SSE transport는 `scenario_group_stream.py`, Event 조회는 `events.py`에 둔다.
 - `presentation.py`
@@ -308,6 +309,11 @@ POST /scenario-groups/{scenario_group_id}/{validation|signposts}/sync
 → api.py
 → routers/scenario_generation_sync.py (테스트용, OpenAPI 미노출)
 → 해당 flow 동기 실행
+
+GET /scenario-groups/{scenario_group_id}/presentation/follow-up-request-bodies
+→ api.py
+→ routers/scenario_generation_sync.py (로컬·QA용, OpenAPI 노출)
+→ presentation.py (최신 Presentation table의 허용 필드만 후속 request body로 투영)
 ```
 
 `interpret_agent`의 현재 매핑은 아래와 같다.

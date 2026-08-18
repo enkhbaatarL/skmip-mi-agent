@@ -4,7 +4,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from langgraph.runtime import Runtime
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     GenerationDiagnostics,
@@ -70,10 +70,25 @@ def _exception_chain(exc: BaseException) -> list[BaseException]:
     return chain
 
 
+def _format_pydantic_validation_error(exc: ValidationError) -> str:
+    details: list[str] = []
+    for error in exc.errors(include_url=False, include_context=False, include_input=False):
+        location = ".".join(str(part) for part in error["loc"]) or "<root>"
+        details.append(f"field={location}; message={error['msg']}; type={error['type']}")
+    return f"Pydantic validation failed: {' | '.join(details)}"[:600]
+
+
+def _retry_validation_feedback(detail: str | None, error_code: str | None) -> str | None:
+    if error_code != ErrorCode.LLM_INVALID_RESPONSE_ERROR.name:
+        return None
+    return detail
+
+
 def classify_llm_error(exc: BaseException) -> tuple[str, str, bool]:
     """Return a bounded detail, domain error name and graph retry decision."""
     chain = _exception_chain(exc)
-    detail = str(exc)[:600]
+    validation_error = next((item for item in chain if isinstance(item, ValidationError)), None)
+    detail = _format_pydantic_validation_error(validation_error) if validation_error is not None else str(exc)[:600]
     if isinstance(exc, MIBaseError):
         error_code = exc.error_code
     elif isinstance(exc, ValueError):
@@ -701,7 +716,10 @@ class GenerateScenariosNode(BaseNode):
                     event_shocks=[shock.model_dump() for shock in state.event_shocks],
                     dimension_definitions=[dimension.model_dump() for dimension in state.dimension_definitions],
                     interactions=[interaction.model_dump() for interaction in state.interactions],
-                    validation_feedback=state.scenario_error,
+                    validation_feedback=_retry_validation_feedback(
+                        state.scenario_error,
+                        state.scenario_error_code,
+                    ),
                 ),
                 trace_context=runtime.context if runtime is not None else None,
                 stage="scenario_synthesis",

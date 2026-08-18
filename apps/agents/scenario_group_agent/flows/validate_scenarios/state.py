@@ -11,9 +11,11 @@ from apps.agents.scenario_group_agent.schemas.state import (
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.schema import ScenarioPayload, ScenarioTemplateDimension
 from apps.persistence.scenario_group.schema import ScenarioGroupPayload
+from apps.persistence.scenario_group_operation.schema import ValidationOperationResultPayload
 
 
 class ValidateScenariosState(BaseFlowState):
+    operation_id: str | None = None
     scenario_group: ScenarioGroupPayload | None = None
     events: list[EventPayload] = Field(default_factory=list)
     generation_diagnostics: dict[str, object] = Field(default_factory=dict)
@@ -25,6 +27,9 @@ class ValidateScenariosState(BaseFlowState):
     reason: str = ""
     mapping_proposals: list[dict[str, object]] = Field(default_factory=list)
     parameter_mapping_ready: bool = False
+    operation_result: ValidationOperationResultPayload | None = None
+    can_proceed: bool = False
+    review_skipped: bool = False
 
 
 def validate_scenarios_state_update(**values: object) -> dict[str, object]:

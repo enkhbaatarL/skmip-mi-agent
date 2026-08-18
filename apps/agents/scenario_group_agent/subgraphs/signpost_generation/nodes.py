@@ -6,12 +6,13 @@ with proper LLM client injection support using the project's invoke_llm_structur
 
 Reference: ./tmp/stage_integrated_signpost_openai.py
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import random
-from typing import Any, Dict, List
+from typing import Any
 
 from langgraph.runtime import Runtime
 from pydantic import BaseModel
@@ -22,19 +23,19 @@ from apps.agents.scenario_group_agent.prompts.signpost_generation import (
     STAGE2_SYSTEM_PROMPT,
     STAGE5_HARD_CONSTRAINTS,
     STAGE5_SYSTEM_PROMPT,
-    Stage45StructuredOutput,
     Stage2StructuredOutput,
     Stage4StructuredOutput,
     Stage5StructuredOutput,
-    build_stage45_hard_constraints,
-    build_stage45_system_prompt,
-    build_stage45_user_prompt,
+    Stage45StructuredOutput,
     build_stage2_hard_constraints,
     build_stage2_user_prompt,
     build_stage4_hard_constraints,
     build_stage4_system_prompt,
     build_stage4_user_prompt,
     build_stage5_user_prompt,
+    build_stage45_hard_constraints,
+    build_stage45_system_prompt,
+    build_stage45_user_prompt,
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
 from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema import GeneratedSignpost
@@ -69,6 +70,7 @@ REF_MAX_RETRIES: int = int(os.getenv("REF_MAX_RETRIES", "5"))
 # 3. LLM Infrastructure
 # ==============================================
 
+
 def _exception_chain(exc: Exception) -> list[BaseException]:
     chain: list[BaseException] = []
     current: BaseException | None = exc
@@ -94,15 +96,22 @@ def _is_retryable_schema_error(exc: Exception) -> bool:
     name = " ".join(item.__class__.__name__.lower() for item in chain)
     msg = " ".join(str(item).lower() for item in chain)
     keywords = (
-        "validationerror", "validation error", "structured", "min_length",
-        "max_length", "json", "output parsing", "literal", "enum",
+        "validationerror",
+        "validation error",
+        "structured",
+        "min_length",
+        "max_length",
+        "json",
+        "output parsing",
+        "literal",
+        "enum",
     )
     return "validation" in name or any(k in msg for k in keywords)
 
 
 async def _invoke_structured(
     schema_cls: type[BaseModel],
-    messages: List[Dict[str, str]],
+    messages: list[dict[str, str]],
     temperature: float = 0.0,
     trace_context: TraceContext | None = None,
 ) -> BaseModel | None:
@@ -129,10 +138,7 @@ def _raise_llm_failure(stage_label: str, exc: Exception | None) -> None:
             ErrorCode.LLM_INVOCATION_ERROR,
             detail=f"{stage_label} LLM 호출 결과가 없습니다.",
         )
-    combined = " ".join(
-        f"{item.__class__.__name__}: {item}".lower()
-        for item in _exception_chain(exc)
-    )
+    combined = " ".join(f"{item.__class__.__name__}: {item}".lower() for item in _exception_chain(exc))
     if "timeout" in combined or "timed out" in combined:
         error_code = ErrorCode.LLM_RESPONSE_TIMEOUT
     elif _is_retryable_schema_error(exc) or any(
@@ -168,9 +174,7 @@ async def _ainvoke_with_retry(
             if accumulated_hint:
                 user_text = user_text + "\n\n" + accumulated_hint.strip()
             if last_validation_exc is not None and attempt >= 2:
-                user_text = user_text + (
-                    f"\n[직전 실패 사유]\n- {str(last_validation_exc)[:240]}"
-                )
+                user_text = user_text + (f"\n[직전 실패 사유]\n- {str(last_validation_exc)[:240]}")
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -206,9 +210,7 @@ async def _ainvoke_with_retry(
 
             if is_validation or is_schema:
                 last_validation_exc = exc
-                accumulated_hint = hard_constraints + (
-                    f"\n[직전 실패 원인 — {stage_label}]\n- {str(exc)[:240]}\n"
-                )
+                accumulated_hint = hard_constraints + (f"\n[직전 실패 원인 — {stage_label}]\n- {str(exc)[:240]}\n")
                 reason = "출력 검증/스키마 불일치"
             elif is_api:
                 reason = "API 과부하/레이트리밋"
@@ -234,6 +236,7 @@ async def _ainvoke_with_retry(
 # 4. Stage 2 — Observability Filter
 # ==============================================
 
+
 def _shorten(text: str, n: int) -> str:
     text = (text or "").strip()
     if len(text) <= n:
@@ -242,15 +245,17 @@ def _shorten(text: str, n: int) -> str:
 
 
 async def stage2_observability_filter(
-    scenario: Dict[str, Any],
-    base_event_summary: Dict[str, Any],
+    scenario: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    scenario_context: dict[str, Any] | None = None,
     trace_context: TraceContext | None = None,
-) -> List[str]:
+) -> list[str]:
     """Stage 2 진입점 — 시나리오 1건 → 통과 label_ko 리스트 반환."""
     scenario_id = scenario.get("scenario_id", "S_??")
     user_prompt = build_stage2_user_prompt(
         scenario=scenario,
-        base_event_summary=base_event_summary,
+        event_contexts=event_contexts,
+        scenario_context=scenario_context,
         scenario_description=_shorten(scenario.get("description", ""), 600),
         min_n=REF_SIGNPOSTS_PER_SCENARIO_MIN,
         max_n=REF_SIGNPOSTS_PER_SCENARIO_MAX,
@@ -263,10 +268,7 @@ async def stage2_observability_filter(
     def _validate(out: Stage2StructuredOutput) -> None:
         candidate_count = len(out.candidates)
         if candidate_count < REF_SIGNPOSTS_PER_SCENARIO_MIN:
-            raise ValueError(
-                f"후보 수 {candidate_count} 이 최소 허용 개수 "
-                f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}개 미만."
-            )
+            raise ValueError(f"후보 수 {candidate_count} 이 최소 허용 개수 {REF_SIGNPOSTS_PER_SCENARIO_MIN}개 미만.")
 
     out = await _ainvoke_with_retry(
         stage_label="Stage 2",
@@ -296,19 +298,22 @@ async def stage2_observability_filter(
 # 6. Stage 4 — Direction & Strength Assignment
 # ==============================================
 
+
 async def stage4_assign_direction_strength(
-    scenario: Dict[str, Any],
-    base_event_summary: Dict[str, Any],
-    labels: List[str],
+    scenario: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    labels: list[str],
+    scenario_context: dict[str, Any] | None = None,
     trace_context: TraceContext | None = None,
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """Stage 4 진입점 — labels → [{label_ko, strength, rationale_ko}, ...]."""
     if not labels:
         return []
 
     user_prompt = build_stage4_user_prompt(
         scenario=scenario,
-        base_event_summary=base_event_summary,
+        event_contexts=event_contexts,
+        scenario_context=scenario_context,
         scenario_description=_shorten(scenario.get("description", ""), 600),
         labels=labels,
     )
@@ -323,19 +328,12 @@ async def stage4_assign_direction_strength(
 
     def _validate(out: Stage4StructuredOutput) -> None:
         if len(out.assignments) != len(labels):
-            raise ValueError(
-                f"assignments 길이 불일치: {len(out.assignments)} != {len(labels)}"
-            )
+            raise ValueError(f"assignments 길이 불일치: {len(out.assignments)} != {len(labels)}")
         out_labels = [a.label_ko.strip() for a in out.assignments]
         if out_labels != label_set:
-            raise ValueError(
-                "assignments 의 label_ko 순서가 입력과 다름. "
-                f"expected={label_set}, got={out_labels}"
-            )
+            raise ValueError(f"assignments 의 label_ko 순서가 입력과 다름. expected={label_set}, got={out_labels}")
         n_strong = sum(
-            1
-            for a in out.assignments
-            if a.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
+            1 for a in out.assignments if a.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
         )
         n_early = sum(
             1
@@ -348,15 +346,9 @@ async def stage4_assign_direction_strength(
             )
         )
         if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
-            raise ValueError(
-                f"STRONG 쿼터 위반: {n_strong} "
-                f"(허용 {REF_STRONG_QUOTA_MIN}~{REF_STRONG_QUOTA_MAX})"
-            )
+            raise ValueError(f"STRONG 쿼터 위반: {n_strong} (허용 {REF_STRONG_QUOTA_MIN}~{REF_STRONG_QUOTA_MAX})")
         if not (REF_EARLY_QUOTA_MIN <= n_early <= REF_EARLY_QUOTA_MAX):
-            raise ValueError(
-                f"MEDIUM+WEAK 쿼터 위반: {n_early} "
-                f"(허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})"
-            )
+            raise ValueError(f"MEDIUM+WEAK 쿼터 위반: {n_early} (허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})")
 
     out = await _ainvoke_with_retry(
         stage_label="Stage 4",
@@ -387,18 +379,20 @@ async def stage4_assign_direction_strength(
 
 
 async def stage45_enrich_signposts(
-    scenario: Dict[str, Any],
-    base_event_summary: Dict[str, Any],
-    labels: List[str],
+    scenario: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    labels: list[str],
+    scenario_context: dict[str, Any] | None = None,
     trace_context: TraceContext | None = None,
-) -> tuple[List[Dict[str, str]], List[List[str]]]:
+) -> tuple[list[dict[str, str]], list[list[str]]]:
     """Stage 4+5 진입점 — strength/rationale/keyword_hints 를 한 번에 생성."""
     if not labels:
         return [], []
 
     user_prompt = build_stage45_user_prompt(
         scenario=scenario,
-        base_event_summary=base_event_summary,
+        event_contexts=event_contexts,
+        scenario_context=scenario_context,
         scenario_description=_shorten(scenario.get("description", ""), 600),
         labels=labels,
     )
@@ -412,19 +406,12 @@ async def stage45_enrich_signposts(
 
     def _validate(out: Stage45StructuredOutput) -> None:
         if len(out.signposts) != len(labels):
-            raise ValueError(
-                f"signposts 길이 불일치: {len(out.signposts)} != {len(labels)}"
-            )
+            raise ValueError(f"signposts 길이 불일치: {len(out.signposts)} != {len(labels)}")
         out_labels = [item.label_ko.strip() for item in out.signposts]
         if out_labels != label_set:
-            raise ValueError(
-                "signposts 의 label_ko 순서가 입력과 다름. "
-                f"expected={label_set}, got={out_labels}"
-            )
+            raise ValueError(f"signposts 의 label_ko 순서가 입력과 다름. expected={label_set}, got={out_labels}")
         n_strong = sum(
-            1
-            for item in out.signposts
-            if item.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
+            1 for item in out.signposts if item.strength in (SignpostStrength.VERYSTRONG, SignpostStrength.STRONG)
         )
         n_early = sum(
             1
@@ -437,20 +424,13 @@ async def stage45_enrich_signposts(
             )
         )
         if not (REF_STRONG_QUOTA_MIN <= n_strong <= REF_STRONG_QUOTA_MAX):
-            raise ValueError(
-                f"STRONG 쿼터 위반: {n_strong} "
-                f"(허용 {REF_STRONG_QUOTA_MIN}~{REF_STRONG_QUOTA_MAX})"
-            )
+            raise ValueError(f"STRONG 쿼터 위반: {n_strong} (허용 {REF_STRONG_QUOTA_MIN}~{REF_STRONG_QUOTA_MAX})")
         if not (REF_EARLY_QUOTA_MIN <= n_early <= REF_EARLY_QUOTA_MAX):
-            raise ValueError(
-                f"MEDIUM+WEAK 쿼터 위반: {n_early} "
-                f"(허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})"
-            )
+            raise ValueError(f"MEDIUM+WEAK 쿼터 위반: {n_early} (허용 {REF_EARLY_QUOTA_MIN}~{REF_EARLY_QUOTA_MAX})")
         for item in out.signposts:
             if not (KEYWORD_HINTS_MIN <= len(item.keyword_hints) <= KEYWORD_HINTS_MAX):
                 raise ValueError(
-                    f"keyword_hints 길이 위반 ({len(item.keyword_hints)}): "
-                    f"허용 {KEYWORD_HINTS_MIN}~{KEYWORD_HINTS_MAX}"
+                    f"keyword_hints 길이 위반 ({len(item.keyword_hints)}): 허용 {KEYWORD_HINTS_MIN}~{KEYWORD_HINTS_MAX}"
                 )
             if any(not str(kw).strip() for kw in item.keyword_hints):
                 raise ValueError("keyword_hints 안에 빈 문자열 존재.")
@@ -489,19 +469,22 @@ async def stage45_enrich_signposts(
 # 7. Stage 5 — Keyword Hint Mint
 # ==============================================
 
+
 async def stage5_mint_keywords(
-    scenario: Dict[str, Any],
-    base_event_summary: Dict[str, Any],
-    labels: List[str],
+    scenario: dict[str, Any],
+    event_contexts: list[dict[str, Any]],
+    labels: list[str],
+    scenario_context: dict[str, Any] | None = None,
     trace_context: TraceContext | None = None,
-) -> List[List[str]]:
+) -> list[list[str]]:
     """Stage 5 진입점 — labels → [keyword_hints, ...] (signpost 별 3~5개)."""
     if not labels:
         return []
 
     user_prompt = build_stage5_user_prompt(
         scenario=scenario,
-        base_event_summary=base_event_summary,
+        event_contexts=event_contexts,
+        scenario_context=scenario_context,
         scenario_description=_shorten(scenario.get("description", ""), 400),
         labels=labels,
     )
@@ -510,20 +493,14 @@ async def stage5_mint_keywords(
 
     def _validate(out: Stage5StructuredOutput) -> None:
         if len(out.hints) != len(labels):
-            raise ValueError(
-                f"hints 길이 불일치: {len(out.hints)} != {len(labels)}"
-            )
+            raise ValueError(f"hints 길이 불일치: {len(out.hints)} != {len(labels)}")
         out_labels = [h.label_ko.strip() for h in out.hints]
         if out_labels != label_set:
-            raise ValueError(
-                "hints 의 label_ko 순서가 입력과 다름. "
-                f"expected={label_set}, got={out_labels}"
-            )
+            raise ValueError(f"hints 의 label_ko 순서가 입력과 다름. expected={label_set}, got={out_labels}")
         for h in out.hints:
             if not (KEYWORD_HINTS_MIN <= len(h.keyword_hints) <= KEYWORD_HINTS_MAX):
                 raise ValueError(
-                    f"keyword_hints 길이 위반 ({len(h.keyword_hints)}): "
-                    f"허용 {KEYWORD_HINTS_MIN}~{KEYWORD_HINTS_MAX}"
+                    f"keyword_hints 길이 위반 ({len(h.keyword_hints)}): 허용 {KEYWORD_HINTS_MIN}~{KEYWORD_HINTS_MAX}"
                 )
             if any(not str(kw).strip() for kw in h.keyword_hints):
                 raise ValueError("keyword_hints 안에 빈 문자열 존재.")
@@ -571,20 +548,20 @@ class ObservabilityFilterNode(BaseNode):
             return {"error": "scenario is required"}
         trace_context = runtime.context if runtime is not None else None
         if trace_context is None:
-            labels = await stage2_observability_filter(state.scenario, state.base_event_summary)
+            labels = await stage2_observability_filter(
+                state.scenario,
+                state.event_contexts,
+                state.scenario_context,
+            )
         else:
             labels = await stage2_observability_filter(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
+                state.scenario_context,
                 trace_context=trace_context,
             )
         if not labels:
-            return {
-                "error": (
-                    "Stage 2 signpost 후보가 최소 "
-                    f"{REF_SIGNPOSTS_PER_SCENARIO_MIN}개에 미달했습니다."
-                )
-            }
+            return {"error": (f"Stage 2 signpost 후보가 최소 {REF_SIGNPOSTS_PER_SCENARIO_MIN}개에 미달했습니다.")}
         return {"labels": labels}
 
 
@@ -602,14 +579,16 @@ class DirectionStrengthNode(BaseNode):
         if trace_context is None:
             assignments = await stage4_assign_direction_strength(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
                 state.labels,
+                state.scenario_context,
             )
         else:
             assignments = await stage4_assign_direction_strength(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
                 state.labels,
+                state.scenario_context,
                 trace_context=trace_context,
             )
         strengths = [
@@ -645,14 +624,16 @@ class EnrichSignpostsNode(BaseNode):
         if trace_context is None:
             assignments, keyword_hints = await stage45_enrich_signposts(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
                 state.labels,
+                state.scenario_context,
             )
         else:
             assignments, keyword_hints = await stage45_enrich_signposts(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
                 state.labels,
+                state.scenario_context,
                 trace_context=trace_context,
             )
         strengths = [
@@ -689,14 +670,16 @@ class KeywordHintsNode(BaseNode):
         if trace_context is None:
             keyword_hints = await stage5_mint_keywords(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
                 state.labels,
+                state.scenario_context,
             )
         else:
             keyword_hints = await stage5_mint_keywords(
                 state.scenario,
-                state.base_event_summary,
+                state.event_contexts,
                 state.labels,
+                state.scenario_context,
                 trace_context=trace_context,
             )
         return {"stage5_keyword_hints": keyword_hints}

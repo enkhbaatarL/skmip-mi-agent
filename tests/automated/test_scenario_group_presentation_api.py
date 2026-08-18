@@ -8,7 +8,10 @@ from fastapi.testclient import TestClient
 
 from apps.agents.scenario_group_agent.api import router as agent_router
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
-from apps.agents.scenario_group_agent.presentation import build_scenario_group_presentation
+from apps.agents.scenario_group_agent.presentation import (
+    build_presentation_follow_up_request_bodies,
+    build_scenario_group_presentation,
+)
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
@@ -193,6 +196,105 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     ]
 
 
+def test_v4_value_description_is_derived_from_valid_lever_states() -> None:
+    definition = _v4_definition()
+    values = definition["values"]
+    assert isinstance(values, list)
+    values.extend(
+        [
+            {
+                "valueId": "d1_v2",
+                "label": "차익 폐쇄",
+                "assumptionRationale": "하락 가정",
+                "pressureContribution": "bearish",
+                "leverStates": [
+                    {
+                        "leverCode": "regional_price_spread",
+                        "direction": "decrease",
+                        "level": "JKM-NWE 차익 폐쇄",
+                        "scope": "동서 재정거래",
+                        "timeWindow": "2026년 9월 이후물",
+                    },
+                ],
+            },
+            {
+                "valueId": "d1_v3",
+                "label": "복합 상태",
+                "assumptionRationale": "복합 가정",
+                "pressureContribution": "balanced",
+                "lever_states": [
+                    {
+                        "lever_code": "inventory_condition",
+                        "direction": "recover",
+                        "level": "저장 부담 완화",
+                        "scope": "유럽 NWE",
+                        "time_window": "분석 기준일 이후 단기",
+                    },
+                    {
+                        "lever_code": "route_disruption",
+                        "direction": "unchanged",
+                        "level": "일부 지연",
+                        "scope": "중동발 아시아향",
+                        "time_window": "단기",
+                    },
+                ],
+            },
+            {
+                "valueId": "d1_v4",
+                "label": "명시 설명",
+                "description": "저장된 설명을 우선한다.",
+                "assumptionRationale": "명시 설명 가정",
+                "pressureContribution": "bullish",
+                "leverStates": [
+                    {
+                        "direction": "increase",
+                        "level": "현물 경쟁 확대",
+                        "scope": "아시아",
+                        "timeWindow": "단기",
+                    },
+                ],
+            },
+            {
+                "valueId": "d1_v5",
+                "label": "과거 미등록 방향",
+                "assumptionRationale": "과거 데이터 가정",
+                "pressureContribution": "balanced",
+                "leverStates": [
+                    {
+                        "direction": "sideways",
+                        "level": "횡보",
+                        "scope": "글로벌 LNG",
+                        "timeWindow": "중기",
+                    },
+                ],
+            },
+        ],
+    )
+    group = _group("v4", [definition])
+    group["generation_diagnostics"] = _v4_diagnostics()
+
+    result = build_scenario_group_presentation(
+        group=group,
+        scenarios=[_scenario(cell="d1_v2")],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+    )
+
+    output_values = result.sections.scenario_design.dimension_definitions.items[0].values
+    assert output_values[0].description is None
+    assert output_values[1].description == (
+        "2026년 9월 이후물 기준 동서 재정거래에서는 JKM-NWE 차익 폐쇄 상태가 전개된다(변화 방향: 감소)."
+    )
+    assert output_values[2].description == (
+        "분석 기준일 이후 단기 기준 유럽 NWE에서는 저장 부담 완화 상태가 전개된다(변화 방향: 회복). "
+        "단기 기준 중동발 아시아향에서는 일부 지연 상태가 전개된다(변화 방향: 현 수준 유지)."
+    )
+    assert output_values[3].description == "저장된 설명을 우선한다."
+    assert output_values[4].description is None
+    assert output_values[1].rationale == "하락 가정"
+
+
 def test_historical_v4_dimension_without_rationale_remains_null() -> None:
     definition = _v4_definition()
     definition.pop("rationale")
@@ -233,6 +335,50 @@ def test_v4_markdown_is_deterministic_escaped_and_reports_missing_mixed() -> Non
     assert result.sections.role_selection_rationale.markdown.index("### Ceiling") < (
         result.sections.role_selection_rationale.markdown.index("### Mixed")
     )
+
+
+def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
+    definition = _v4_definition()
+    definition["values"][0]["assumptionRationale"] = (
+        "liquefaction_availability 하락과 inventory_condition_extra는 구분한다."
+    )
+    group = _group("v4", [definition])
+    diagnostics = _v4_diagnostics()
+    diagnostics["scenarioPressureBreakdowns"] = [
+        {
+            "title": "Scenario <img src=x onerror=alert(1)>",
+            "pressureBreakdown": {
+                "commonImpact": "regional_price_spread 경로",
+                "valueDelta": "inventory_condition을 반영",
+            },
+        },
+    ]
+    group["generation_diagnostics"] = diagnostics
+    scenario = _scenario(cell="d1_v1")
+    scenario["global_pressure_rationale"] = (
+        "inventory_condition을 통해 regional_price_spread 경로를 강화하고 unknown_lever는 그대로 둔다."
+    )
+
+    result = build_scenario_group_presentation(
+        group=group,
+        scenarios=[scenario],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+        lever_labels={
+            "inventory_condition": "재고 여건",
+            "regional_price_spread": "지역 가격 스프레드",
+            "liquefaction_availability": "액화설비 가용성",
+        },
+    )
+
+    markdown = result.sections.role_selection_rationale.markdown
+    assert "재고 여건을 통해 지역 가격 스프레드 경로" in markdown
+    assert "공통 영향: 지역 가격 스프레드 경로" in markdown
+    assert "Dimension 값 차이: 재고 여건을 반영" in markdown
+    assert "근거: 액화설비 가용성 하락" in markdown
+    assert "inventory_condition_extra" in markdown
+    assert "unknown_lever" in markdown
 
 
 def test_running_v4_projection_moves_partial_to_ready_with_snapshot_revision() -> None:
@@ -397,6 +543,7 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
         "signposts": [],
         "events": [_event(101)],
         "operation": operation,
+        "lever_labels": {"inventory_condition": "재고 여건"},
         "legacy_template_dimensions": [],
     }
     context["group"]["generation_diagnostics"] = _v4_diagnostics()
@@ -414,11 +561,196 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
         )
 
     assert first.status_code == 200
+    assert first.json()["rendererVersion"] == "v2"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""
     assert second.headers["etag"] == first.headers["etag"]
     assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
+
+
+def test_presentation_etag_changes_with_lever_display_labels() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    operation = _operation(status="succeeded", revision=4)
+    context = {
+        "group": _group("v4", [_v4_definition()]),
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "operation": operation,
+        "lever_labels": {"inventory_condition": "재고 여건"},
+        "legacy_template_dimensions": [],
+        "legacy_snapshot_dimension_values": [],
+    }
+    context["group"]["generation_diagnostics"] = _v4_diagnostics()
+
+    with patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context):
+        client = TestClient(app)
+        first = client.get("/scenario-groups/120/presentation")
+        context["lever_labels"] = {"inventory_condition": "유럽 재고 여건"}
+        second = client.get(
+            "/scenario-groups/120/presentation",
+            headers={"If-None-Match": first.headers["etag"]},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.headers["etag"] != first.headers["etag"]
+
+
+def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
+    group = _group("v4", [_v4_definition()])
+    group["generation_diagnostics"] = _v4_diagnostics()
+    presentation = build_scenario_group_presentation(
+        group=group,
+        scenarios=[_scenario(cell="d1_v1")],
+        signposts=[],
+        events=[_event(101)],
+        operation=_operation(status="succeeded", revision=4),
+    )
+
+    result = build_presentation_follow_up_request_bodies(presentation, user_id=10603)
+    payload = result.model_dump(mode="json", by_alias=True)
+
+    assert payload["ready"] is True
+    assert payload["scenarioTableStatus"] == "ready"
+    assert payload["operationId"] == "01JABCDEF0123456789ABCDEFX"
+    assert payload["validationRequestBody"] == payload["signpostRequestBody"]
+    assert payload["validationRequestBody"] == {
+        "userId": 10603,
+        "table": {
+            "headers": [{"key": "d1", "label": "수급 방향", "displayOrder": 1}],
+            "rows": [
+                {
+                    "scenarioId": 2056,
+                    "displayOrder": 1,
+                    "title": "Scenario <img src=x onerror=alert(1)>",
+                    "cells": {"d1": "상승"},
+                },
+            ],
+        },
+    }
+    assert "cellEvidence" not in payload["validationRequestBody"]["table"]["rows"][0]
+    assert "narrative" not in payload["validationRequestBody"]["table"]["rows"][0]
+
+
+def test_follow_up_request_bodies_are_null_until_scenario_table_is_ready() -> None:
+    presentation = build_scenario_group_presentation(
+        group=_group("v4", []),
+        scenarios=[],
+        signposts=[],
+        events=[_event(101)],
+        operation=_operation(status="running", revision=1),
+    )
+
+    result = build_presentation_follow_up_request_bodies(presentation, user_id=10603)
+
+    assert result.ready is False
+    assert result.scenario_table_status == "pending"
+    assert result.reason is not None
+    assert result.validation_request_body is None
+    assert result.signpost_request_body is None
+
+
+def test_follow_up_signpost_draft_always_includes_table_for_all_engine_versions() -> None:
+    definition = {
+        "dimension_id": "d1",
+        "label": "수급 방향",
+        "values": [{"value_id": "d1_v1", "label": "상승"}],
+    }
+
+    for version in ("v1", "v2", "v3", "v4"):
+        presentation = build_scenario_group_presentation(
+            group=_group(version, [definition]),
+            scenarios=[_scenario(cell="d1_v1")],
+            signposts=[],
+            events=[_event(101)],
+            operation=None,
+        )
+        presentation.sections.scenario_design.scenario_table.rows[0].scenario_id = None
+
+        result = build_presentation_follow_up_request_bodies(presentation, user_id=10603)
+
+        assert result.signpost_request_body is not None
+        assert result.signpost_request_body.table is not None
+        assert result.signpost_request_body.table.rows[0].scenario_id is None
+        assert result.signpost_request_body.table.rows[0].cells == {"d1": "상승"}
+
+
+def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selection() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    operation = _operation(status="succeeded", revision=4)
+    context = {
+        "group": _group("v4", [_v4_definition()]),
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "operation": operation,
+        "legacy_template_dimensions": [],
+        "legacy_snapshot_dimension_values": [],
+    }
+    context["group"]["generation_diagnostics"] = _v4_diagnostics()
+
+    with patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context) as load:
+        response = TestClient(app).get(
+            "/scenario-groups/120/presentation/follow-up-request-bodies",
+            params={"userId": 10603, "operationId": operation.operation_id},
+        )
+        latest_response = TestClient(app).get(
+            "/scenario-groups/120/presentation/follow-up-request-bodies",
+            params={"userId": 10603},
+        )
+
+    assert response.status_code == 200
+    assert latest_response.status_code == 200
+    assert response.json()["validationRequestBody"]["userId"] == 10603
+    assert response.json()["signpostRequestBody"]["table"]["rows"][0]["cells"] == {"d1": "상승"}
+    assert load.call_args_list[0].args == (120,)
+    assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
+    assert load.call_args_list[1].args == (120,)
+    assert load.call_args_list[1].kwargs == {"operation_id": None}
+
+
+def test_scenario_group_table_view_returns_metadata_and_labeled_dimension_keys() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    group = {**_group("v4", [_v4_definition()]), "del_yn": "N"}
+    context = {
+        "group": group,
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "latest_operation": None,
+    }
+
+    with patch.object(ScenarioGroupService, "load_common_detail", return_value=context):
+        response = TestClient(app).get(
+            "/scenario-groups/120",
+            params={"view": "table"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert list(payload) == ["scenarioGroup", "table"]
+    assert list(payload["scenarioGroup"]) == [
+        "delYn",
+        "scenarioGroupId",
+        "miEventId",
+        "eventTypeL2Id",
+        "requestUsrId",
+        "title",
+        "summary",
+        "description",
+        "dimensionSelected",
+        "scenarioCount",
+        "status",
+        "stage",
+        "apiVersion",
+    ]
+    assert payload["scenarioGroup"]["dimensionSelected"] == ["d1|수급 방향"]
+    assert payload["table"]["headers"][0]["label"] == "수급 방향"
 
 
 def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> None:
@@ -445,9 +777,16 @@ def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> N
             "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
             "ScenarioGroupOperationService.get_operation",
         ) as get_operation,
+        patch(
+            "apps.agents.scenario_group_agent.persistence.model_impact_lever_service."
+            "ModelImpactLeverService.load_display_labels",
+            return_value={"inventory_condition": "재고 여건"},
+        ) as load_display_labels,
     ):
         result = service.load_presentation_detail(120)
 
     assert result["operation"] is operation
+    assert result["lever_labels"] == {"inventory_condition": "재고 여건"}
     get_latest.assert_called_once_with(120)
     get_operation.assert_not_called()
+    load_display_labels.assert_called_once_with()

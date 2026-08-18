@@ -1620,6 +1620,8 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             result = build_scenario_group_query_data(group, scenarios, signposts)
 
         serialized = result.model_dump(by_alias=True)
+        assert list(serialized)[:2] == ["scenarioGroup", "table"]
+        assert next(iter(serialized["scenarioGroup"])) == "delYn"
         assert serialized["scenarioGroup"]["delYn"] == "N"
         assert serialized["table"]["rows"][1]["delYn"] == "Y"
         assert all("impact" not in row for row in serialized["table"]["rows"])

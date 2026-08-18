@@ -38,6 +38,7 @@ class ReviewContext:
     selected_dims: list[str]
     dim_index: dict[str, dict[str, Any]]
     enum_index: dict[str, list[str]]
+    review_scenario_ids: set[int] = field(default_factory=set)
     # 요청 본문이 DB(create scenario 결과)와 정확히 일치하는지 여부.
     # True 면 사용자가 수정한 것이 없으므로 review 를 건너뛰고 통과 처리한다.
     unchanged: bool = False

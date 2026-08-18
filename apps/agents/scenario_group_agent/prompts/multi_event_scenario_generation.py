@@ -399,7 +399,8 @@ def build_scenario_synthesis_user_prompt(
     """Build the final small prompt from validated dimensions only."""
     feedback = (
         "\n## Previous Scenario validation failure\n"
-        f"- {validation_feedback[:300]}\n"
+        f"- 검증 오류: {validation_feedback[:600]}\n"
+        "- 이전 시도의 오류가 발생한 필드 또는 조합을 수정하고 동일한 실수를 반복하지 마십시오.\n"
         "- Event 분석과 dimension 정의는 유지하고 Scenario만 수정하십시오.\n"
         if validation_feedback
         else ""

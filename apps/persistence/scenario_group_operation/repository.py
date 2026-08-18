@@ -50,6 +50,30 @@ class ScenarioGroupOperationRepository(BaseSyncSQLRepository):
         )
         return self.session.execute(stmt).scalars().first()
 
+    def fetch_latest_by_type(
+        self,
+        scenario_group_id: int,
+        operation_type: str,
+        *,
+        for_update: bool = False,
+    ) -> MiScenarioGroupOperationModel | None:
+        stmt = (
+            select(MiScenarioGroupOperationModel)
+            .where(
+                MiScenarioGroupOperationModel.scenario_group_id == scenario_group_id,
+                MiScenarioGroupOperationModel.operation_type == operation_type,
+                MiScenarioGroupOperationModel.del_yn == "N",
+            )
+            .order_by(
+                MiScenarioGroupOperationModel.crt_dtm.desc(),
+                MiScenarioGroupOperationModel.operation_id.desc(),
+            )
+            .limit(1)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return self.session.execute(stmt).scalars().first()
+
     def fetch_latest_by_group_ids(
         self,
         scenario_group_ids: list[int],

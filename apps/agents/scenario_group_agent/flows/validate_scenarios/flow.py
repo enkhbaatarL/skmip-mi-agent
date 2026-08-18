@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import lru_cache
 import time
 from typing import Any
@@ -8,6 +9,10 @@ from langchain_core.runnables import Runnable
 from langgraph.graph import StateGraph
 
 from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_VALIDATE_SCENARIOS
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (
+    ValidateScenariosCallBackScenarioGroup,
+    ValidateScenariosOut,
+)
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     create_mapping_proposals,
     generate_dimension_values,
@@ -17,10 +22,11 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
     save_validation_result,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.state import ValidateScenariosState
-from apps.agents.scenario_group_agent.schemas.endpoint import (
-    ValidateScenariosCallBackScenarioGroup,
-    ValidateScenariosOut,
+from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import V4_GENERATION_STRATEGY
+from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+    ScenarioGroupOperationService,
 )
+from apps.agents.scenario_group_agent.schemas.state import ScenarioTableState
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -37,6 +43,7 @@ from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
 )
+from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
 # ---------------------------------------------------------------------------
@@ -57,12 +64,21 @@ def prepare_validate_scenarios(
     )
     group_result = load_scenario_group(state)  # not found / 권한 오류 시 MIBaseError raise
     group = group_result["scenario_group"]
+    operation_id: str | None = None
+    if group.get("generation_strategy") == V4_GENERATION_STRATEGY:
+        operation = ScenarioGroupOperationService().create_validation_operation(
+            scenario_group_id=scenario_group_id,
+            user_id=user_id,
+        )
+        operation_id = operation.operation_id
+        group["stage"] = ScenarioGroupStage.SCENARIO_CREATED.value
     return {
         "scenario_group_id": scenario_group_id,
         "status": group.get("status", ScenarioGroupStatus.CREATING.value),
         "stage": group.get("stage", ScenarioGroupStage.SCENARIO_CREATED.value),
         "user_id": user_id,
         "request_table": request_table,
+        "operation_id": operation_id,
     }
 
 
@@ -98,19 +114,63 @@ def _bg_to_output(state: dict[str, Any] | ValidateScenariosState) -> ValidateSce
         )
     group = data.get("scenario_group") or {}
     request_table = data.get("request_table")
+    operation_result = data.get("operation_result") or {}
+    if hasattr(operation_result, "model_dump"):
+        operation_result = operation_result.model_dump()
+    result_detail = operation_result.get("validation_result") or {}
+    output_table = _validation_table_for_output(request_table, group)
     return ValidateScenariosOut(
         result="success",
-        is_valid=data.get("is_valid"),
+        verdict=result_detail.get("verdict"),
+        is_valid=result_detail.get("is_valid", data.get("is_valid")),
+        can_proceed=result_detail.get("can_proceed"),
+        review_skipped=result_detail.get("review_skipped"),
+        summary=result_detail.get("summary") or {},
+        checks=result_detail.get("checks") or [],
+        generated_details=result_detail.get("generated_details") or [],
         reason=data.get("reason") or None,
         scenario_group=ValidateScenariosCallBackScenarioGroup(
             scenario_group_id=data.get("scenario_group_id") or 0,
             status=group.get("status") or ScenarioGroupStatus.CREATING.value,
             stage=group.get("stage") or ScenarioGroupStage.SCENARIO_CREATED.value,
         ),
-        table=ScenarioTable.model_validate(request_table) if request_table else None,
+        table=ScenarioTable.model_validate(output_table) if output_table else None,
         mapping_proposals=data.get("mapping_proposals") or [],
         parameter_mapping_ready=data.get("parameter_mapping_ready"),
     )
+
+
+def _validation_table_for_output(
+    request_table: dict[str, Any] | ScenarioTableState | None,
+    group: dict[str, Any] | ScenarioGroupPayload,
+) -> dict[str, Any] | None:
+    if request_table is None:
+        return None
+    request_table_payload = (
+        request_table.model_dump() if isinstance(request_table, ScenarioTableState) else request_table
+    )
+    group_payload = group.model_dump() if isinstance(group, ScenarioGroupPayload) else group
+    if group_payload.get("generation_strategy") != V4_GENERATION_STRATEGY:
+        return request_table_payload
+    table = deepcopy(request_table_payload)
+    labels_by_dimension: dict[str, dict[str, str]] = {}
+    for definition in group_payload.get("dimension_definitions") or []:
+        if not isinstance(definition, dict):
+            continue
+        dimension_id = str(definition.get("dimension_id") or definition.get("dimensionId") or "")
+        labels_by_dimension[dimension_id] = {
+            str(value.get("value_id") or value.get("valueId")): str(value.get("label") or "")
+            for value in definition.get("values") or []
+            if isinstance(value, dict) and (value.get("value_id") or value.get("valueId"))
+        }
+    for row in table.get("rows") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("cells"), dict):
+            continue
+        for dimension_id, raw_value in list(row["cells"].items()):
+            label = labels_by_dimension.get(str(dimension_id), {}).get(str(raw_value))
+            if label:
+                row["cells"][dimension_id] = label
+    return table
 
 
 @lru_cache(maxsize=1)
@@ -122,6 +182,7 @@ async def run_validate_scenarios_inline(
     scenario_group_id: int,
     user_id: int,
     request_table: dict[str, Any],
+    operation_id: str | None = None,
 ) -> ValidateScenariosOut:
     """Run the background graph inline and return the callback payload."""
     from apps.common.configs.config import get_settings
@@ -139,13 +200,30 @@ async def run_validate_scenarios_inline(
         scenario_group_id=scenario_group_id,
         user_id=user_id,
         request_table=request_table,
+        operation_id=operation_id,
     )
-    with mlflow_trace_context(trace_context):
-        final_state = await get_compiled_graph().ainvoke(
-            state,
-            config=build_langgraph_config(trace_context),
-            context=trace_context,
-        )
+    try:
+        if operation_id is not None:
+            ScenarioGroupOperationService().start_operation(
+                scenario_group_id,
+                operation_id,
+                phase="validation",
+            )
+        with mlflow_trace_context(trace_context):
+            final_state = await get_compiled_graph().ainvoke(
+                state,
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
+    except Exception as exc:
+        if operation_id is not None:
+            ScenarioGroupOperationService().fail_validation(
+                scenario_group_id=scenario_group_id,
+                operation_id=operation_id,
+                user_id=user_id,
+                error=exc,
+            )
+        raise
     return _bg_to_output(final_state)
 
 
@@ -158,6 +236,7 @@ async def run_validate_scenarios_background(
     scenario_group_id: int,
     user_id: int,
     request_table: dict[str, Any],
+    operation_id: str | None = None,
 ) -> None:
     from apps.common.configs.config import get_settings
 
@@ -174,6 +253,7 @@ async def run_validate_scenarios_background(
             scenario_group_id=scenario_group_id,
             user_id=user_id,
             request_table=request_table,
+            operation_id=operation_id,
         )
         await send_callback(callback_url, callback_payload)
         elapsed_ms = int((time.perf_counter() - start) * 1000)

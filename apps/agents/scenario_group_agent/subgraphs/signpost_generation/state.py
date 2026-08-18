@@ -9,7 +9,8 @@ from apps.agents.scenario_group_agent.subgraphs.signpost_generation.schema impor
 
 class SignpostGenerationState(BaseModel):
     scenario: dict[str, Any] | None = None
-    base_event_summary: dict[str, Any] = Field(default_factory=dict)
+    event_contexts: list[dict[str, Any]] = Field(default_factory=list)
+    scenario_context: dict[str, Any] = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
     stage4_assignments: list[dict[str, str]] = Field(default_factory=list)
     stage5_keyword_hints: list[list[str]] = Field(default_factory=list)

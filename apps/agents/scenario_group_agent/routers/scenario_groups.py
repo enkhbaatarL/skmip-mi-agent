@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Any
+import json
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Security
 from fastapi.responses import Response, StreamingResponse
@@ -20,6 +21,7 @@ from apps.agents.scenario_group_agent.flows.create_signposts.flow import (
     prepare_create_signposts,
     run_create_signposts_background,
 )
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
 from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     prepare_validate_scenarios,
     run_validate_scenarios_background,
@@ -32,6 +34,7 @@ from apps.agents.scenario_group_agent.presentation import (
     PRESENTATION_RENDERER_VERSION,
     build_common_scenario_group_query_data,
     build_scenario_group_presentation,
+    build_scenario_group_table_view_data,
 )
 from apps.agents.scenario_group_agent.routers.scenario_group_stream import stream_operation_events
 from apps.agents.scenario_group_agent.routers.security import admin_bearer_scheme, authorization_header
@@ -45,6 +48,7 @@ from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import 
     HardDeleteScenarioGroupIn,
     HardDeleteScenarioGroupOut,
     ScenarioGroupDetailOut,
+    ScenarioGroupTableViewOut,
     SoftDeleteScenarioGroupIn,
     SoftDeleteScenarioGroupOut,
     SoftDeleteSignpostsIn,
@@ -59,7 +63,6 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
     CreateSignpostsIn,
     ScenarioGroupAcceptedData,
     ScenarioGroupAcceptedOut,
-    ValidateScenariosIn,
 )
 
 
@@ -161,19 +164,21 @@ async def list_scenario_groups(
 
 @router.get(
     "/scenario-groups/{scenario_group_id}",
-    response_model=ScenarioGroupDetailOut,
+    response_model=ScenarioGroupDetailOut | ScenarioGroupTableViewOut,
     summary="Scenario Group 공통 상세 조회",
 )
 async def get_scenario_group(
     scenario_group_id: int,
     *,
     include_deleted: Annotated[bool, Query(alias="includeDeleted")] = False,
-) -> ScenarioGroupDetailOut:
+    view: Annotated[Literal["full", "table"], Query()] = "full",
+) -> ScenarioGroupDetailOut | ScenarioGroupTableViewOut:
     context = ScenarioGroupService().load_common_detail(
         scenario_group_id,
         include_deleted=include_deleted,
     )
-    return build_common_scenario_group_query_data(**context)
+    detail = build_common_scenario_group_query_data(**context)
+    return build_scenario_group_table_view_data(detail) if view == "table" else detail
 
 
 @router.get(
@@ -194,12 +199,14 @@ async def get_scenario_group_presentation(
     )
     operation = context["operation"]
     updated_at = context["group"].get("updated_at")
+    lever_labels = context.get("lever_labels", {})
     etag_material = "|".join(
         [
             PRESENTATION_RENDERER_VERSION,
             operation.operation_id if operation is not None else "",
             str(operation.snapshot_revision if operation is not None else 0),
             updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at or ""),
+            json.dumps(lever_labels, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         ]
     )
     etag = f'"{hashlib.sha256(etag_material.encode("utf-8")).hexdigest()}"'
@@ -225,6 +232,7 @@ async def validate_scenarios(
         scenario_group_id=result["scenario_group_id"],
         user_id=result["user_id"],
         request_table=result["request_table"],
+        operation_id=result.get("operation_id"),
     )
     return ScenarioGroupAcceptedOut(
         data=ScenarioGroupAcceptedData(
@@ -245,12 +253,18 @@ async def create_signposts(
     payload: CreateSignpostsIn,
     background_tasks: BackgroundTasks,
 ) -> ScenarioGroupAcceptedOut:
-    result = prepare_create_signposts(scenario_group_id, payload.user_id, payload.table.model_dump())
+    result = prepare_create_signposts(
+        scenario_group_id,
+        payload.user_id,
+        payload.table.model_dump() if payload.table is not None else None,
+    )
     background_tasks.add_task(
         run_create_signposts_background,
         scenario_group_id=result["scenario_group_id"],
         user_id=result["user_id"],
         request_table=result["request_table"],
+        operation_id=result.get("operation_id"),
+        signpost_target_scenario_ids=result.get("signpost_target_scenario_ids"),
     )
     return ScenarioGroupAcceptedOut(
         data=ScenarioGroupAcceptedData(

@@ -47,6 +47,7 @@ class MiScenarioGroupOperationModel(AuditColumnsMixin, ORMBase):
         nullable=False,
         server_default=sa.text("(JSON_OBJECT())"),
     )
+    result_payload: Mapped[Any | None] = mapped_column(sa.JSON, nullable=True)
     snapshot_revision: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     latest_sequence: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=sa.text("0"))
     last_error: Mapped[Any | None] = mapped_column(sa.JSON, nullable=True)
@@ -96,4 +97,3 @@ class MiScenarioGroupOperationEventModel(ORMBase):
         nullable=False,
         server_default=sa.text("CURRENT_TIMESTAMP(6)"),
     )
-

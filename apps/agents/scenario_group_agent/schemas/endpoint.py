@@ -4,6 +4,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import (  # noqa: F401
+    ValidateScenariosCallBackScenarioGroup,
+    ValidateScenariosHeaderIn,
+    ValidateScenariosIn,
+    ValidateScenariosOut,
+    ValidateScenariosRowIn,
+    ValidateScenariosSyncOut,
+    ValidateScenariosTableIn,
+)
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (  # noqa: F401
     HardDeleteScenarioGroupIn,
     HardDeleteScenarioGroupOut,
@@ -138,67 +147,6 @@ class CreateScenariosOut(CallBackBody):
     table: ScenarioTable | None = None
 
 
-class ValidateScenariosHeaderIn(ScenarioHeader):
-    model_config = ConfigDict(
-        alias_generator=ApiModel.model_config["alias_generator"],
-        populate_by_name=True,
-        extra="forbid",
-    )
-
-
-class ValidateScenariosRowIn(ApiModel):
-    model_config = ConfigDict(
-        alias_generator=ApiModel.model_config["alias_generator"],
-        populate_by_name=True,
-        extra="forbid",
-    )
-
-    scenario_id: int | None = None
-    display_order: int = 0
-    title: str = ""
-    cells: dict[str, Any] = Field(default_factory=dict)
-
-
-class ValidateScenariosTableIn(ApiModel):
-    model_config = ConfigDict(
-        alias_generator=ApiModel.model_config["alias_generator"],
-        populate_by_name=True,
-        extra="forbid",
-    )
-
-    headers: list[ValidateScenariosHeaderIn]
-    rows: list[ValidateScenariosRowIn]
-
-
-class ValidateScenariosIn(ApiModel):
-    model_config = ConfigDict(
-        alias_generator=ApiModel.model_config["alias_generator"],
-        populate_by_name=True,
-        extra="forbid",
-    )
-
-    user_id: int
-    table: ValidateScenariosTableIn
-
-
-class ValidateScenariosCallBackScenarioGroup(ApiModel):
-    scenario_group_id: int
-    status: str
-    stage: str
-
-
-class ValidateScenariosOut(CallBackBody):
-    is_valid: bool | None = None
-    scenario_group: ValidateScenariosCallBackScenarioGroup | None = None
-    table: ScenarioTable | None = None
-    mapping_proposals: list[dict[str, Any]] = Field(default_factory=list)
-    parameter_mapping_ready: bool | None = None
-
-
-class ValidateScenariosSyncOut(ValidateScenariosOut):
-    usage: LLMUsageModel | None = None
-
-
 class CreateSignpostsHeaderIn(ScenarioHeader):
     model_config = ConfigDict(
         alias_generator=ApiModel.model_config["alias_generator"],
@@ -239,7 +187,7 @@ class CreateSignpostsIn(ApiModel):
     )
 
     user_id: int
-    table: CreateSignpostsTableIn
+    table: CreateSignpostsTableIn | None = None
 
 
 class CreateSignpostsOut(CallBackBody):

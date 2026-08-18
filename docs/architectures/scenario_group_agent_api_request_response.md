@@ -46,7 +46,10 @@ sequenceDiagram
 
 - `POST /scenario-groups`: `miEventIds` 1~5개와 `userId`를 받아 create operation을 시작하고 SSE 반환
 - `GET /scenario-groups`: 공통 목록과 latest/active operation 요약 반환
-- `GET /scenario-groups/{scenarioGroupId}`: 업무 Scenario table과 latest/active operation 반환
+- `GET /scenario-groups/{scenarioGroupId}`: 업무 Scenario table과 latest/active operation 반환.
+  기본 `view=full`은 전체 상세를 반환한다. `view=table`은 `scenarioGroup` 기본 메타데이터와 `table`만
+  반환하며, `dimensionSelected`는 table header label을 결합한 `dimensionKey|label` 형식이다.
+  두 view 모두 `scenarioGroup.delYn`을 Scenario Group의 첫 필드로 직렬화한다.
 - `GET /scenario-groups/{scenarioGroupId}/presentation`: v1/v3/v4 차이를 흡수한 화면 전용 세 section read model 반환
 - `DELETE /scenario-groups/{scenarioGroupId}`: soft delete. queued/running operation이 있으면 HTTP 409
 - `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}`: polling용 operation JSON
@@ -67,16 +70,23 @@ read model이다. `operationId`가 없으면 최신 operation을 선택하며, �
 `pending | partial | ready | unavailable` 상태와 `full | limited | none` 근거 수준을 명시하며,
 아직 준비되지 않은 문자열과 배열도 빈 값으로 유지한다.
 
-Markdown은 저장된 Event, Dimension, Scenario, generation diagnostics만으로 결정론적으로 렌더링한다.
+Markdown의 생성 근거는 저장된 Event, Dimension, Scenario, generation diagnostics로 한정한다.
+v4 `roleSelectionRationale`의 사용자 표시 문구는 현재 모델 영향 Lever master의 `lever_code → label`을
+적용하며, label을 찾지 못한 code는 원문을 유지한다. Lever label은 화면 표시 메타데이터이므로 변경되면
+Presentation 결과와 ETag도 함께 변경된다.
 동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. 새 v4 Dimension의
-10~100자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
+10~200자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
 v3의 `derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
+v4 Dimension value의 `description`은 저장된 명시값이 없으면 검증된 `leverStates`의
+`timeWindow`, `scope`, `level`, `direction`을 입력 순서대로 문장화해 Presentation에서만 생성한다.
+direction 한글명과 생성 단계의 허용 direction은 동일한 코드 Enum을 사용하며 DB에는 별도 저장하지 않는다.
 Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 동일한 표시 label과
 `cellEvidence`를 만든다. v1은 저장되지 않은 impact path, rationale, role을 추정하지 않고 제한 또는
 미제공 상태로 표시한다. 현재 Template은 저장된 `templateChecksum`과 canonical checksum이 일치할
 때만 v1 Dimension 복원에 사용한다.
 
-응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각으로 만든다.
+응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각과 현재 Lever label
+mapping으로 만든다.
 같은 값을 `If-None-Match`로 보내면 304를 반환한다. v4 진행 중 projection은 Event impact 검증 시
 `eventAnalysis=partial`, interaction 검증 시 `eventAnalysis=ready`, Dimension 검증 시
 `scenarioDesign=partial`로 갱신한다. `section_ready.details`는 변경 가능한 section 상태와 새
@@ -146,6 +156,8 @@ terminal 상태를 그대로 전달한다. recovery scan 오류는 startup을 �
 아래 API는 기존 background API와 같은 request body를 사용하고, response body는 각 API의 Callback Body와 같습니다.
 sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가될 수 있습니다.
 `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`는 해당 sync 요청 안에서 누적된 LLM token 사용량입니다.
+Swagger에서는 Presentation 후속 request body 생성 QA API와 함께 `scenario-groups-sync-test` 태그로 묶으며,
+`scenario-groups` 태그 다음에 표시합니다.
 
 - `POST /v2/scenario-groups/sync`
   - 중복 없는 양의 정수 `miEventIds` 1~5개
@@ -172,6 +184,20 @@ sync endpoint 응답에는 테스트 지표 수집을 위해 `usage`가 추가�
 - `POST /scenario-groups/{scenarioGroupId}/signposts/sync`
   - 기존 signpost prepare 및 생성 graph를 동기 실행
   - Response: `CreateSignpostsOut`
+
+### Presentation 후속 request body 생성 QA API
+
+`GET /scenario-groups/{scenarioGroupId}/presentation/follow-up-request-bodies`는 로컬·QA에서 최신
+Presentation table로 Validation과 Signpost의 초기 request body를 만드는 read-only helper다.
+`userId`는 필수 query이고 `operationId`는 Presentation API와 동일하게 선택 query다. Swagger에서 직접 테스트할 수
+있도록 OpenAPI에 노출한다.
+
+`scenarioTable.status=ready`이면 두 body 모두 `userId`와 최소 table 필드만 반환한다. 모든 버전에서
+Signpost body에도 table을 포함하지만 v4 Signpost는 최신 Validation Change Set을 적용하므로 이 table을 사용하지 않는다.
+table이 아직 준비되지 않았으면 HTTP 200에 `ready=false`, 두 body는 `null`로 반환한다.
+
+이 응답은 committed Presentation 기준의 초기 초안이다. 화면의 미저장 편집값이나 v1~v3 Validation callback에서
+보정된 table은 자동 반영하지 않으므로 실제 후속 호출 전에 호출자가 최신 table로 교체해야 한다.
 
 graph 실행 중 오류가 발생하면 HTTP 200에 `{"result": "failure", "reason": "..."}` 형태의 callback body를 반환합니다.
 prepare 단계의 입력 오류, 권한 오류, 중복 생성 오류는 기존 exception handler 응답을 따릅니다.
@@ -201,9 +227,13 @@ enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dime
 v4의 각 dimension은 `rationale`, `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`,
 `primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`, `values`를 포함한다.
 화면용 `label`은 열린 질문인 `description`과 분리되며 핵심 대상과 변화 축을 간결하게 표시한다.
-`rationale`은 해당 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 담은 10~100자의 짧은 한국어 한 문장이다.
+`rationale`은 `description`의 관측일·분석 기준일·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고
+질문 어미만 `...하는지에 따라` 형태로 바꿔 해당 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 설명하는
+10~200자의 구체적인 한국어 한 문장이다.
 각 value는 구체적인 방향·수준·범위·기간과 Catalog ID를 가진 `leverStates`,
-`pressureContribution`, `assumptionRationale`을 제공한다. 기존 `eventGroundings`와
+`pressureContribution`, `assumptionRationale`을 제공한다. `assumptionRationale`은 관측된 사실을 기반으로
+Value의 미래 상태와 JKM 영향을 간결하게 연결하고 문장 끝의 `가정`으로만 불확실성을 표시한다. 가정 의미를
+반복하거나 Value를 답·응답·선택으로 지칭하지 않는다. 기존 `eventGroundings`와
 `leverMappings`는 새 v4 생성 응답에서 제거한다.
 
 v4 `generationDiagnostics`는 실행 전체에서 고정한 `analysisAsOf`, 수치·기간·현재 시점 해석을
@@ -226,6 +256,8 @@ adapter에서만 사용하며 public API에는 노출하지 않는다. `scenario
 floor·ceiling·mixed를 포함한 전체 Scenario 중
 최고 `probabilityScore` 하나에 서버가 지정한다. `relatedMarkets`는 table header/cell이나
 pressure tag가 아니라 Scenario 상세에서만 표시하는 선택적 보조정보이며 TTF/HH만 허용한다.
+v4의 `probabilityScore`는 `0~100` 정수 백분율이며 같은 그룹의 활성 Scenario 합계는 100이다.
+생성 모델의 원시 응답이 `0~1` 확률 또는 임의 가중치여도 서버가 합계 100으로 정규화한 값만 저장·반환한다.
 
 ### 자유 dimension value mapping 승인
 
@@ -278,6 +310,11 @@ Scenario Group master에는 `mi_event_id`, `event_type_l2_id` 컬럼을 두지 �
 - Method/Path: `POST /scenario-groups/{scenarioGroupId}/validation`
 - Description: 생성된 시나리오 그룹의 유효성을 검증한다.
 - Path Param: `scenarioGroupId` (int)
+
+v4 `multi_event_model_lever_dimensions` 그룹은 Create의 `dimensionDefinitions`를 closed enum으로 사용한다.
+header는 현재 Dimension ID 전체를 Create 순서대로 보내고, cell은 해당 Dimension의 `valueId` 또는 정확한
+label만 허용하며 최종 Scenario는 2~7개여야 한다. v1~v3의 optional dimension `null` 보정과 자유 value
+mapping은 v4에 적용하지 않는다.
 
 Request body
 
@@ -359,7 +396,22 @@ Callback Body
 ```json
 {
   "result": "success",
+  "verdict": "PASS_WITH_WARNINGS",
   "isValid": true,
+  "canProceed": true,
+  "reviewSkipped": false,
+  "summary": { "PASS": 3, "WARN": 1, "FAIL": 0, "INFO": 0 },
+  "checks": [
+    {
+      "checkId": "V4_LOW_PROBABILITY_REINTRODUCED",
+      "status": "WARN",
+      "blocking": false,
+      "detail": "Create에서 낮은 가능성으로 제외한 조합입니다.",
+      "offenders": ["new:4"],
+      "advice": ["낮은 가능성 조합임을 확인한 뒤 그대로 진행할 수 있습니다."]
+    }
+  ],
+  "generatedDetails": [],
   "reason": "MECE and plausibility checks passed",
   "scenarioGroup": {
     "scenarioGroupId": 12345,
@@ -390,7 +442,18 @@ Callback Body
 }
 ```
 
-> `table`은 agent가 자동생성한 값을 포함한 전체 테이블의 header/value를 담습니다. Agent가 자동생성한 값은 DB에는 저장하지 않습니다.
+v4에서 변경 없는 요청은 `reviewSkipped=true`, `verdict=PASS`로 LLM 없이 통과한다. warning만 있으면
+`isValid=true`, `canProceed=true`, `stage=scenario_validated`이며 다음 버튼을 활성화할 수 있다. blocking
+검사는 `isValid=false`, `canProceed=false`, `stage=scenario_created`로 완료된다. Validation 실행 자체가
+정상 종료한 blocking 판정도 operation status는 `succeeded`다.
+
+내부 Validation 결과와 최소 `scenarioChangeSet`은 최신 validation operation의 nullable
+`result_payload`에 저장한다. `generationDiagnostics`, operation 조회 응답, Scenario Group 상세 및
+Presentation 응답에는 이 내부 payload를 병합하거나 노출하지 않는다.
+
+> `table`은 agent가 자동생성한 값을 포함한 전체 테이블의 header/value를 담습니다. v1~v3의 자동 보정 값은
+> DB에 저장하지 않는다. v4는 별도 자동 보정을 하지 않고, 통과한 변경 행의 canonical value와 Validation에서
+> 생성한 저장 필드를 내부 Change Set으로 확정한다.
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -419,6 +482,21 @@ Callback Body
 - Path Param: `scenarioGroupId` (int)
 
 Request (body)
+
+v4 request는 table이나 validation operation ID를 받지 않는다.
+
+```json
+{
+  "userId": 10001
+}
+```
+
+서버는 가장 최근 Validation 시도를 선택해 `status=succeeded`, `canProceed=true`와 Scenario/Dimension
+fingerprint를 확인한다. 변경 결과라면 background task 등록 전에 Change Set을 Scenario table에 원자 적용하고,
+변경 없는 결과라면 Scenario write 없이 Signpost 생성을 시작한다. fingerprint가 달라졌으면
+`SCENARIO_VALIDATION_STALE` HTTP 409를 반환하고 stage를 `scenario_created`로 되돌린다.
+
+v1~v3 request는 기존처럼 table이 필수다.
 
 ```json
 {

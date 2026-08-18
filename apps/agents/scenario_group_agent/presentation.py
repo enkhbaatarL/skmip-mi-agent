@@ -3,13 +3,23 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 import html
+import re
 from typing import Any
 
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
+    StateDirection,
+)
+from apps.agents.scenario_group_agent.flows.validate_scenarios.api_schema import ValidateScenariosIn
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
 from apps.agents.scenario_group_agent.schemas.api.manage_scenario_groups import (
     ScenarioGroupDetailOut,
+    ScenarioGroupTableViewGroup,
+    ScenarioGroupTableViewOut,
+)
+from apps.agents.scenario_group_agent.schemas.api.presentation_followup_requests import (
+    PresentationFollowUpRequestBodiesOut,
 )
 from apps.agents.scenario_group_agent.schemas.api.scenario_group_presentation import (
     PresentationCellEvidence,
@@ -25,6 +35,7 @@ from apps.agents.scenario_group_agent.schemas.api.scenario_group_presentation im
     PresentationSections,
     ScenarioGroupPresentationOut,
 )
+from apps.agents.scenario_group_agent.schemas.endpoint import CreateSignpostsIn
 from apps.agents.scenario_group_agent.schemas.table import (
     ScenarioGroupQueryPayload,
     ScenarioGroupTableData,
@@ -44,7 +55,55 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v1"
+PRESENTATION_RENDERER_VERSION = "v2"
+
+
+def build_presentation_follow_up_request_bodies(
+    presentation: ScenarioGroupPresentationOut,
+    *,
+    user_id: int,
+) -> PresentationFollowUpRequestBodiesOut:
+    """Build initial Validation and Signpost request bodies from a Presentation read model."""
+    scenario_table = presentation.sections.scenario_design.scenario_table
+    operation_id = presentation.operation.operation_id if presentation.operation is not None else None
+    if scenario_table.status != "ready":
+        return PresentationFollowUpRequestBodiesOut(
+            scenario_group_id=presentation.scenario_group_id,
+            operation_id=operation_id,
+            scenario_table_status=scenario_table.status,
+            ready=False,
+            reason="scenarioTable.status가 ready가 아니므로 후속 요청 body를 생성할 수 없습니다.",
+        )
+
+    table = {
+        "headers": [
+            {
+                "key": header.key,
+                "label": header.label,
+                "display_order": header.display_order,
+            }
+            for header in scenario_table.headers
+        ],
+        "rows": [
+            {
+                "scenario_id": row.scenario_id,
+                "display_order": row.display_order,
+                "title": row.title,
+                "cells": dict(row.cells),
+            }
+            for row in scenario_table.rows
+        ],
+    }
+    validation_request = ValidateScenariosIn(user_id=user_id, table=table)
+    signpost_request = CreateSignpostsIn(user_id=user_id, table=table)
+    return PresentationFollowUpRequestBodiesOut(
+        scenario_group_id=presentation.scenario_group_id,
+        operation_id=operation_id,
+        scenario_table_status=scenario_table.status,
+        ready=True,
+        validation_request_body=validation_request,
+        signpost_request_body=signpost_request,
+    )
 
 
 def build_scenario_group_table_data(
@@ -146,7 +205,7 @@ def build_common_scenario_group_query_data(
     )
     scenario_group = detail.scenario_group
     legacy = scenario_group.api_version == "v1"
-    presentation_snapshot = {
+    presentation_snapshot: dict[str, Any] = {
         "schemaVersion": "v1",
         "apiVersion": scenario_group.api_version,
         "generationStrategy": scenario_group.generation_strategy,
@@ -165,28 +224,57 @@ def build_common_scenario_group_query_data(
     return detail
 
 
+def build_scenario_group_table_view_data(detail: ScenarioGroupDetailOut) -> ScenarioGroupTableViewOut:
+    scenario_group = detail.scenario_group
+    labels_by_key = {header.key: header.label for header in detail.table.headers}
+    dimension_selected = [
+        f"{dimension_key}|{labels_by_key[dimension_key]}" if labels_by_key.get(dimension_key) else dimension_key
+        for dimension_key in scenario_group.dimension_selected
+    ]
+    return ScenarioGroupTableViewOut(
+        scenario_group=ScenarioGroupTableViewGroup(
+            del_yn=scenario_group.del_yn,
+            scenario_group_id=scenario_group.scenario_group_id,
+            mi_event_id=scenario_group.mi_event_id,
+            event_type_l2_id=scenario_group.event_type_l2_id,
+            request_usr_id=scenario_group.request_usr_id,
+            title=scenario_group.title,
+            summary=scenario_group.summary,
+            description=scenario_group.description,
+            dimension_selected=dimension_selected,
+            scenario_count=scenario_group.scenario_count,
+            status=scenario_group.status,
+            stage=scenario_group.stage,
+            api_version=scenario_group.api_version,
+        ),
+        table=detail.table,
+    )
+
+
 def _build_headers(
     group: dict[str, Any],
 ) -> tuple[dict[str, dict[str, Any]], list[str], list[ScenarioHeader]]:
     dimension_definitions = group.get("dimension_definitions") or []
     if dimension_definitions:
-        template_by_key = {
-            str(item.get("dimension_id")): {
-                "dim_key": item.get("dimension_id"),
+        template_by_key: dict[str, dict[str, Any]] = {}
+        for index, item in enumerate(dimension_definitions, start=1):
+            if not isinstance(item, dict):
+                continue
+            dimension_id = item.get("dimension_id", item.get("dimensionId"))
+            if not dimension_id:
+                continue
+            values = item.get("values") or []
+            template_by_key[str(dimension_id)] = {
+                "dim_key": dimension_id,
                 "label": item.get("label"),
                 "description": item.get("description"),
                 "required": item.get("required", False),
-                "display_order": item.get("display_order", index),
+                "display_order": item.get("display_order", item.get("displayOrder", index)),
                 "value_enums": [
-                    value.get("label")
-                    for value in item.get("values") or []
-                    if isinstance(value, dict) and value.get("label")
+                    value.get("label") for value in values if isinstance(value, dict) and value.get("label")
                 ],
-                "value_labels_by_id": _value_labels_by_id(item.get("values")),
+                "value_labels_by_id": _value_labels_by_id(values),
             }
-            for index, item in enumerate(dimension_definitions, start=1)
-            if isinstance(item, dict) and item.get("dimension_id")
-        }
     else:
         event_type_l2_id = group.get("event_type_l2_id")
         template_json = (
@@ -308,6 +396,7 @@ def build_scenario_group_presentation(
     signposts: list[dict[str, Any]],
     events: list[EventPayload],
     operation: ScenarioGroupOperationPayload | None,
+    lever_labels: dict[str, str] | None = None,
     legacy_template_dimensions: list[dict[str, Any]] | None = None,
     legacy_snapshot_dimension_values: list[dict[str, Any]] | None = None,
 ) -> ScenarioGroupPresentationOut:
@@ -375,6 +464,7 @@ def build_scenario_group_presentation(
         rows=rows,
         diagnostics=diagnostics,
         operation=operation,
+        lever_labels=lever_labels or {},
     )
     warnings.extend(role_warnings)
     operation_out = (
@@ -488,6 +578,8 @@ def _normalize_dimension_definitions(
             if engine_version == "v4":
                 rationale = str(_field(raw_value, "assumption_rationale") or "")
                 lever_states = _field(raw_value, "lever_states", default=[]) or []
+                if description is None:
+                    description = _v4_value_description(lever_states)
             elif engine_version == "v3":
                 rationale = str(_field(raw_value, "derivation_rationale") or description or "")
                 lever_states = []
@@ -520,6 +612,33 @@ def _normalize_dimension_definitions(
             )
         )
     return normalized
+
+
+def _v4_value_description(raw_states: Any) -> str | None:
+    if not isinstance(raw_states, list):
+        return None
+    sentences: list[str] = []
+    for raw_state in raw_states:
+        if not isinstance(raw_state, dict):
+            continue
+        level = _optional_text(_field(raw_state, "level"))
+        scope = _optional_text(_field(raw_state, "scope"))
+        time_window = _optional_text(_field(raw_state, "time_window"))
+        raw_direction = _field(raw_state, "direction")
+        if not level or not scope or not time_window or raw_direction is None:
+            continue
+        try:
+            direction = (
+                raw_direction
+                if isinstance(raw_direction, StateDirection)
+                else StateDirection(str(raw_direction).strip())
+            )
+        except ValueError:
+            continue
+        sentences.append(
+            f"{time_window} 기준 {scope}에서는 {level} 상태가 전개된다(변화 방향: {direction.label_ko}).",
+        )
+    return " ".join(sentences) or None
 
 
 def _legacy_dimension_definitions(
@@ -837,6 +956,7 @@ def _role_rationale_markdown(
     rows: list[PresentationScenarioRow],
     diagnostics: dict[str, Any],
     operation: ScenarioGroupOperationPayload | None,
+    lever_labels: dict[str, str],
 ) -> tuple[str, str, str, list[str]]:
     role_rows = {row.scenario_role: row for row in rows if row.scenario_role in {"ceiling", "mixed", "floor"}}
     if not role_rows:
@@ -849,6 +969,7 @@ def _role_rationale_markdown(
         "mixed": "상승·하락 기여를 동시에 가진 내부 Scenario 중 Balanced에 가장 가까운 Scenario",
         "floor": "생성된 Scenario 중 JKM 압력대가 가장 낮은 Scenario",
     }
+    lever_code_pattern = _lever_code_pattern(lever_labels)
     breakdowns = _field(diagnostics, "scenario_pressure_breakdowns", default=[]) or []
     for role in ("ceiling", "mixed", "floor"):
         row = role_rows.get(role)
@@ -864,7 +985,7 @@ def _role_rationale_markdown(
                 f"- 선택 기준: {criteria[role]}",
                 f"- Pressure Band: {_display_enum(row.pressure_band)}",
                 f"- 발생 가능성: {_format_probability(row.probability_score)}",
-                f"- 종합 근거: {_escape(row.pressure_rationale or '')}",
+                f"- 종합 근거: {_escape_lever_labels(row.pressure_rationale, lever_labels, lever_code_pattern)}",
             ]
         )
         if row.baseline_yn == "Y":
@@ -885,14 +1006,14 @@ def _role_rationale_markdown(
             ):
                 value = _field(raw_breakdown, key)
                 if value:
-                    lines.append(f"- {label}: {_escape(value)}")
+                    lines.append(f"- {label}: {_escape_lever_labels(value, lever_labels, lever_code_pattern)}")
         lines.extend(["", "#### 적용된 Dimension 근거"])
         if row.cell_evidence:
             for dimension_id, cell in row.cell_evidence.items():
                 lines.extend(
                     [
                         f"- {_escape(dimension_id)} — {_escape(cell.value_label)}",
-                        f"  - 근거: {_escape(cell.rationale)}",
+                        f"  - 근거: {_escape_lever_labels(cell.rationale, lever_labels, lever_code_pattern)}",
                         f"  - 압력 기여: {_display_enum(cell.pressure_contribution)}",
                     ]
                 )
@@ -945,6 +1066,28 @@ def _optional_int(value: Any) -> int | None:
 
 def _escape(value: Any) -> str:
     return html.escape(str(value), quote=False)
+
+
+def _lever_code_pattern(lever_labels: dict[str, str]) -> re.Pattern[str] | None:
+    codes = sorted(
+        (code for code, label in lever_labels.items() if code and label),
+        key=lambda code: (-len(code), code),
+    )
+    if not codes:
+        return None
+    alternatives = "|".join(re.escape(code) for code in codes)
+    return re.compile(rf"(?<![A-Za-z0-9_])(?:{alternatives})(?![A-Za-z0-9_])")
+
+
+def _escape_lever_labels(
+    value: Any,
+    lever_labels: dict[str, str],
+    pattern: re.Pattern[str] | None,
+) -> str:
+    text = str(value or "")
+    if pattern is not None:
+        text = pattern.sub(lambda match: lever_labels.get(match.group(0), match.group(0)), text)
+    return _escape(text)
 
 
 def _display_enum(value: str | None) -> str:

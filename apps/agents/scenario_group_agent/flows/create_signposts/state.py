@@ -18,6 +18,7 @@ from apps.persistence.signpost.schema import SignpostPayload
 
 
 class CreateSignpostsState(BaseFlowState):
+    operation_id: str | None = None
     mi_event_id: int | None = None
     event_data: EventPayload | None = None
     include_details: bool = False

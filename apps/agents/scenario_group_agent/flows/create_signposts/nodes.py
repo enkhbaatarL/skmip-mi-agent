@@ -6,10 +6,14 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
+from apps.agents.scenario_group_agent.flows.create_signposts.context import (
+    build_v4_scenario_context,
+)
 from apps.agents.scenario_group_agent.flows.create_signposts.state import (
     CreateSignpostsState,
     create_signposts_state_update,
 )
+from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import V4_GENERATION_STRATEGY
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
@@ -47,6 +51,7 @@ from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario.schema import (
     NewScenarioGeneratedDetails,
 )
+from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
 _LIKELIHOOD_WEIGHTS: dict[str, int] = {
@@ -118,6 +123,8 @@ async def generate_new_scenario_row_details_node(
 ) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
+    if state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
+        return {}
     if state.request_table is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="table is required")
     request_table = state.request_table.model_dump(exclude_unset=True)
@@ -157,6 +164,8 @@ async def generate_new_scenario_row_details_node(
 def sync_scenarios_from_table(state: CreateSignpostsState) -> dict[str, object]:
     if state.scenario_group_id is None or state.scenario_group is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="scenario_group_id is required")
+    if state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
+        return {}
     if state.user_id is None:
         raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="user_id is required")
     if state.request_table is None:
@@ -207,29 +216,8 @@ async def run_signpost_generation(
 ) -> dict[str, object]:
     if state.status in {"failure", "already_exist"}:
         return {}
-    if state.event_data is not None:
-        event = state.event_data
-    elif state.scenario_group is not None:
-        event = _load_group_event_context(state.scenario_group)
-    elif state.mi_event_id is not None:
-        event = EventService().load_event(state.mi_event_id)
-    else:
-        raise MIBaseError(
-            ErrorCode.INVALID_REQUEST,
-            detail="Scenario group Event context is required",
-        )
-    if event is None:
-        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
-
-    pack = stage1_build_context_pack(event)
-    c1 = pack.model_dump().get("C1_base_event", {})
-    base_event_summary = {
-        "title": c1.get("title", ""),
-        "summary": c1.get("summary", ""),
-        "occurred_at": c1.get("occurred_at", ""),
-        "key_facts": c1.get("key_facts", []),
-        "tags": c1.get("tags", []),
-    }
+    is_v4 = _uses_v4_signpost_context(state.scenario_group)
+    event_contexts = _load_signpost_event_contexts(state, preserve_individual_events=is_v4)
     existing_scenario_ids = {int(signpost.scenario_id) for signpost in state.signposts}
     target_ids = {int(scenario_id) for scenario_id in state.signpost_target_scenario_ids}
     scenarios_to_process = [
@@ -254,10 +242,20 @@ async def run_signpost_generation(
 
     async def process_one(scenario: dict[str, Any]) -> list[GeneratedSignpost]:
         async with semaphore:
+            scenario_context = (
+                build_v4_scenario_context(
+                    scenario,
+                    dimension_definitions=state.scenario_group.dimension_definitions,
+                    generation_diagnostics=state.scenario_group.generation_diagnostics,
+                )
+                if is_v4 and state.scenario_group is not None
+                else {}
+            )
             result_state = await get_signpost_generation_subgraph().ainvoke(
                 SignpostGenerationState(
                     scenario=scenario,
-                    base_event_summary=base_event_summary,
+                    event_contexts=event_contexts,
+                    scenario_context=scenario_context,
                 ),
                 config=(build_langgraph_config(trace_context) if trace_context is not None else None),
                 context=trace_context,
@@ -308,9 +306,9 @@ async def run_signpost_generation(
 
 
 def _load_group_event_context(
-    group: object,
+    group: ScenarioGroupPayload,
 ) -> EventPayload | None:
-    scenario_group_id = int(getattr(group, "scenario_group_id"))
+    scenario_group_id = int(group.scenario_group_id)
     event_ids = ScenarioGroupService().load_event_ids(scenario_group_id)
     events = EventService().load_events(event_ids)
     if not events:
@@ -336,6 +334,42 @@ def _load_group_event_context(
             dict.fromkeys(tag for event in events for tag in event.tags),
         )[:20],
     )
+
+
+def _load_group_events(group: ScenarioGroupPayload) -> list[EventPayload]:
+    scenario_group_id = int(group.scenario_group_id)
+    event_ids = ScenarioGroupService().load_event_ids(scenario_group_id)
+    return EventService().load_events(event_ids)
+
+
+def _uses_v4_signpost_context(group: ScenarioGroupPayload | None) -> bool:
+    return group is not None and group.generation_strategy == V4_GENERATION_STRATEGY
+
+
+def _load_signpost_event_contexts(
+    state: CreateSignpostsState,
+    *,
+    preserve_individual_events: bool,
+) -> list[dict[str, Any]]:
+    events: list[EventPayload | dict[str, Any]]
+    if state.event_data is not None:
+        events = [state.event_data]
+    elif preserve_individual_events and state.scenario_group is not None:
+        events = _load_group_events(state.scenario_group)
+    elif state.scenario_group is not None:
+        event = _load_group_event_context(state.scenario_group)
+        events = [event] if event is not None else []
+    elif state.mi_event_id is not None:
+        event = EventService().load_event(state.mi_event_id)
+        events = [event] if event is not None else []
+    else:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="Scenario group Event context is required",
+        )
+    if not events:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Event not found")
+    return [stage1_build_context_pack(event).C1_base_event.model_dump() for event in events]
 
 
 def save_signposts(state: CreateSignpostsState) -> dict[str, object]:

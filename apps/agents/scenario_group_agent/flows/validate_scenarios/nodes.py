@@ -9,12 +9,25 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.state import (
     ValidateScenariosState,
     validate_scenarios_state_update,
 )
+from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
+    V4_GENERATION_STRATEGY,
+    analyze_v4_validation_request,
+    check_counts,
+    render_reason_markdown,
+)
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
+from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
+    ScenarioGroupOperationService,
+)
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
+)
+from apps.agents.scenario_group_agent.prompts.scenario_validation import (
+    V4ValidationGeneratedScenariosOutput,
+    build_v4_validation_generation_messages,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
     get_scenario_review_subgraph,
@@ -32,6 +45,15 @@ from apps.persistence.enums import (
     ScenarioGroupStage,
     ScenarioGroupStatus,
     ScenarioStatus,
+)
+from apps.persistence.scenario_group_operation.schema import (
+    ValidationCheckPayload,
+    ValidationGeneratedDetailPayload,
+    ValidationGeneratedFieldsPayload,
+    ValidationOperationResultPayload,
+    ValidationResultPayload,
+    ValidationScenarioChangeSetPayload,
+    ValidationScenarioUpsertPayload,
 )
 
 
@@ -91,6 +113,8 @@ async def generate_dimension_values(
     runtime: Runtime[TraceContext] | None = None,
 ) -> dict[str, object]:
     if state.status == "failure":
+        return {}
+    if state.scenario_group is not None and state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
         return {}
 
     def build_dimension_generation_rows(
@@ -384,6 +408,8 @@ async def run_scenario_review(
 ) -> dict[str, object]:
     if state.status == "failure":
         return {}
+    if state.scenario_group is not None and state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
+        return await _run_v4_scenario_validation(state, runtime=runtime)
     request_table = state.request_table.model_dump() if state.request_table is not None else {}
     subgraph_state = ScenarioReviewState(
         scenario_group_id=state.scenario_group_id,
@@ -429,9 +455,261 @@ async def run_scenario_review(
     )
 
 
+async def _invoke_v4_generated_fields(
+    *,
+    rows: list[dict[str, Any]],
+    dimension_definitions: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    generation_diagnostics: dict[str, Any],
+    trace_context: TraceContext | None,
+) -> V4ValidationGeneratedScenariosOutput:
+    from apps.common.configs.config import get_settings
+    from apps.connectors.llm.llm_client import invoke_llm_structured_output
+
+    cfg = get_settings()
+    invocation = await invoke_llm_structured_output(
+        V4ValidationGeneratedScenariosOutput,
+        messages=build_v4_validation_generation_messages(
+            rows=rows,
+            dimension_definitions=dimension_definitions,
+            events=events,
+            generation_diagnostics=generation_diagnostics,
+        ),
+        trace_context=trace_context,
+        stream=cfg.llm_stream_enabled,
+        reasoning_effort=cfg.llm_reasoning_effort,
+    )
+    return invocation.result
+
+
+def _persisted_generated_fields(scenario: dict[str, Any]) -> ValidationGeneratedFieldsPayload:
+    pressure_band = scenario.get("global_pressure_band") or scenario.get("pressure_band")
+    pressure_rationale = scenario.get("global_pressure_rationale") or scenario.get("pressure_rationale")
+    narrative = str(scenario.get("narrative") or scenario.get("description") or "").strip()
+    if not narrative or not pressure_band or not pressure_rationale:
+        raise MIBaseError(
+            ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
+            detail=f"v4 Scenario 저장 필드가 불완전합니다: scenarioId={scenario.get('scenario_id')}",
+        )
+    return ValidationGeneratedFieldsPayload(
+        narrative=narrative,
+        probability_score=float(scenario.get("probability_score") or 0),
+        probability_delta=float(scenario.get("probability_delta") or 0),
+        pressure_band=str(pressure_band),
+        pressure_rationale=str(pressure_rationale),
+        related_markets=list(scenario.get("related_markets") or []),
+    )
+
+
+def _review_check_payload(check: dict[str, Any]) -> ValidationCheckPayload:
+    status = str(check.get("status") or "INFO")
+    return ValidationCheckPayload(
+        check_id=str(check.get("check_id") or "V4_SEMANTIC_REVIEW"),
+        status=status,
+        blocking=status == "FAIL",
+        detail=str(check.get("detail") or ""),
+        offenders=[str(item) for item in check.get("offenders") or []],
+        advice=[str(item) for item in check.get("advice") or []],
+    )
+
+
+async def _run_v4_scenario_validation(
+    state: ValidateScenariosState,
+    *,
+    runtime: Runtime[TraceContext] | None,
+) -> dict[str, object]:
+    if state.scenario_group is None:
+        raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group is required")
+    request_table = state.request_table.model_dump() if state.request_table is not None else {}
+    persisted = [_model_or_dict_dump(scenario) for scenario in state.scenarios]
+    definitions = list(state.scenario_group.dimension_definitions or [])
+    diagnostics = dict(state.generation_diagnostics or {})
+    analysis = analyze_v4_validation_request(
+        request_table=request_table,
+        persisted_scenarios=persisted,
+        dimension_definitions=definitions,
+        generation_diagnostics=diagnostics,
+        stored_header_order=[str(item) for item in state.scenario_group.dimension_selected or []],
+    )
+    checks = list(analysis.checks)
+    generated_details: list[ValidationGeneratedDetailPayload] = []
+    trace_context = runtime.context if runtime is not None else None
+
+    semantic_rows = [
+        row for row in analysis.changed_rows if row.change_type in {"NEW", "TITLE_CHANGED", "COMBINATION_CHANGED"}
+    ]
+    if not analysis.blocking and semantic_rows:
+        review_state = ScenarioReviewState(
+            scenario_group_id=state.scenario_group_id,
+            group=state.scenario_group.model_dump(),
+            events=[_model_or_dict_dump(event) for event in state.events],
+            generation_diagnostics=diagnostics,
+            requested_rows=[row.as_review_row() for row in analysis.canonical_rows],
+            requested_headers=[{"key": key} for key in analysis.canonical_headers],
+            persisted_scenarios=persisted,
+            template_dims=[_model_or_dict_dump(dimension) for dimension in state.dimension_template],
+            review_scenario_ids=[row.review_scenario_id() for row in semantic_rows],
+        )
+        review_output = await get_scenario_review_subgraph().ainvoke(
+            review_state,
+            config=build_langgraph_config(trace_context) if trace_context is not None else None,
+            context=trace_context,
+        )
+        reviewed = (
+            review_output
+            if isinstance(review_output, ScenarioReviewState)
+            else ScenarioReviewState.model_validate(review_output)
+        )
+        if reviewed.error:
+            raise MIBaseError(ErrorCode.LLM_INVOCATION_ERROR, detail=reviewed.error)
+        if reviewed.report is None:
+            raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail="Scenario review report is missing")
+        checks.extend(_review_check_payload(check.to_dict()) for check in reviewed.report.checks)
+
+    blocking = any(check.blocking and check.status == "FAIL" for check in checks)
+    change_set: ValidationScenarioChangeSetPayload | None = None
+    if not blocking and not analysis.unchanged:
+        generation_targets = [row for row in analysis.changed_rows if row.change_type in {"NEW", "COMBINATION_CHANGED"}]
+        generated_by_key: dict[str, ValidationGeneratedFieldsPayload] = {}
+        if generation_targets:
+            generated_output = await _invoke_v4_generated_fields(
+                rows=[
+                    {
+                        "clientRowKey": row.client_row_key,
+                        "title": row.title,
+                        "dimensionValues": row.dimension_values,
+                    }
+                    for row in generation_targets
+                ],
+                dimension_definitions=definitions,
+                events=[_model_or_dict_dump(event) for event in state.events],
+                generation_diagnostics=diagnostics,
+                trace_context=trace_context,
+            )
+            expected_keys = {row.client_row_key for row in generation_targets}
+            actual_keys = {item.client_row_key for item in generated_output.items}
+            if len(generated_output.items) != len(actual_keys) or actual_keys != expected_keys:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail=(
+                        "v4 Validation 생성 필드 row key 불일치: "
+                        f"누락={sorted(expected_keys - actual_keys)}, 여분={sorted(actual_keys - expected_keys)}"
+                    ),
+                )
+            for item in generated_output.items:
+                fields = ValidationGeneratedFieldsPayload(
+                    narrative=item.narrative,
+                    probability_score=item.probability_score,
+                    probability_delta=0,
+                    pressure_band=item.pressure_band,
+                    pressure_rationale=item.pressure_rationale,
+                    related_markets=[market.model_dump() for market in item.related_markets],
+                )
+                generated_by_key[item.client_row_key] = fields
+
+        persisted_by_id = {int(item["scenario_id"]): item for item in persisted}
+        upserts: list[ValidationScenarioUpsertPayload] = []
+        for row in analysis.changed_rows:
+            generated_fields = generated_by_key.get(row.client_row_key)
+            if generated_fields is None:
+                if row.scenario_id is None:
+                    raise MIBaseError(
+                        ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                        detail=f"신규 Scenario 생성 필드가 누락되었습니다: {row.client_row_key}",
+                    )
+                generated_fields = _persisted_generated_fields(persisted_by_id[row.scenario_id])
+            upserts.append(
+                ValidationScenarioUpsertPayload(
+                    scenario_id=row.scenario_id,
+                    client_row_key=row.client_row_key,
+                    change_type=row.change_type,
+                    display_order=row.display_order,
+                    title=row.title,
+                    dimension_values=row.dimension_values,
+                    generated_fields=generated_fields,
+                )
+            )
+            if row.client_row_key in generated_by_key:
+                generated_details.append(
+                    ValidationGeneratedDetailPayload(
+                        client_row_key=row.client_row_key,
+                        scenario_id=row.scenario_id,
+                        title=row.title,
+                        narrative=generated_fields.narrative,
+                        probability_score=generated_fields.probability_score,
+                        pressure_band=generated_fields.pressure_band,
+                        pressure_rationale=generated_fields.pressure_rationale,
+                        related_markets=generated_fields.related_markets,
+                    )
+                )
+        change_set = ValidationScenarioChangeSetPayload(
+            upserts=upserts,
+            delete_scenario_ids=analysis.deleted_scenario_ids,
+        )
+
+    warning_count = sum(1 for check in checks if check.status == "WARN" and not check.blocking)
+    can_proceed = not blocking
+    if analysis.unchanged:
+        reason = "Create 결과와 동일하여 추가 검토 없이 통과했습니다."
+        mode = "unchanged"
+        review_skipped = True
+    else:
+        reason = render_reason_markdown(checks, generated_count=len(generated_details))
+        mode = "blocked" if blocking else "changed"
+        review_skipped = False
+    validation_result = ValidationResultPayload(
+        verdict="BLOCK" if blocking else "PASS_WITH_WARNINGS" if warning_count else "PASS",
+        is_valid=can_proceed,
+        can_proceed=can_proceed,
+        review_skipped=review_skipped,
+        summary=check_counts(checks),
+        checks=checks,
+        generated_details=generated_details,
+        reason_markdown=reason,
+    )
+    operation_result = ValidationOperationResultPayload(
+        mode=mode,
+        base_scenario_fingerprint=analysis.base_scenario_fingerprint,
+        dimension_definition_fingerprint=analysis.dimension_definition_fingerprint,
+        validation_result=validation_result,
+        scenario_change_set=change_set if can_proceed and mode == "changed" else None,
+    )
+    return validate_scenarios_state_update(
+        is_valid=can_proceed,
+        can_proceed=can_proceed,
+        review_skipped=review_skipped,
+        reason=reason,
+        validation_result={
+            "scenario_group_id": state.scenario_group_id,
+            "scenario_count": len(analysis.canonical_rows),
+            "verdict": validation_result.verdict,
+            "summary": validation_result.summary,
+            "checks": [check.model_dump() for check in checks],
+        },
+        operation_result=operation_result,
+    )
+
+
 def save_validation_result(state: ValidateScenariosState) -> dict[str, object]:
     if state.status == "failure" or state.scenario_group_id is None:
         return {}
+    if state.scenario_group is not None and state.scenario_group.generation_strategy == V4_GENERATION_STRATEGY:
+        if state.operation_id is None or state.operation_result is None or state.user_id is None:
+            raise MIBaseError(
+                ErrorCode.UNKNOWN_ERROR,
+                detail="v4 Validation operation result is incomplete",
+            )
+        group = ScenarioGroupOperationService().complete_validation(
+            scenario_group_id=state.scenario_group_id,
+            operation_id=state.operation_id,
+            result_payload=state.operation_result,
+            user_id=state.user_id,
+        )
+        return validate_scenarios_state_update(
+            scenario_group=group,
+            status="success",
+            message="Validation completed",
+        )
     ScenarioService().update_status(state.scenario_group_id, ScenarioStatus.CREATING.value)
     next_stage = ScenarioGroupStage.SCENARIO_VALIDATED if state.is_valid else ScenarioGroupStage.SCENARIO_CREATED
     group = ScenarioGroupService().update_state(

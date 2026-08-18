@@ -52,6 +52,7 @@ class ScenarioGroupCommonDetailData(ScenarioGroupDetailData):
 class ScenarioGroupPresentationData(ScenarioGroupDetailData):
     events: list[EventPayload]
     operation: ScenarioGroupOperationPayload | None
+    lever_labels: dict[str, str]
     legacy_template_dimensions: list[dict[str, Any]]
     legacy_snapshot_dimension_values: list[dict[str, Any]]
 
@@ -361,6 +362,9 @@ class ScenarioGroupService:
         operation_id: str | None = None,
     ) -> ScenarioGroupPresentationData:
         from apps.agents.scenario_group_agent.persistence.event_service import EventService
+        from apps.agents.scenario_group_agent.persistence.model_impact_lever_service import (
+            ModelImpactLeverService,
+        )
         from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
             ScenarioGroupOperationService,
         )
@@ -378,6 +382,9 @@ class ScenarioGroupService:
             **detail,
             "events": EventService().load_events(event_ids) if event_ids else [],
             "operation": operation,
+            "lever_labels": (
+                ModelImpactLeverService().load_display_labels() if str(group.get("api_version") or "v1") == "v4" else {}
+            ),
             "legacy_template_dimensions": self._load_trusted_legacy_template_dimensions(group),
             "legacy_snapshot_dimension_values": self._load_legacy_snapshot_dimension_values(
                 scenario_group_id,

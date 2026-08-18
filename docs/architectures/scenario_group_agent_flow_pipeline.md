@@ -331,21 +331,29 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
 4. `design_model_lever_dimensions`: 검증된 열린 질문을 `[U1]`, `[U2]` 카드로 전달하고, 각 질문을
    어떤 선택 축으로 모델링할지 Dimension 3~6개와 Value 2~4개로 답하게 한다. LLM은 질문·축·선택지와
    선택 결과를 자연어 및 짧은 상태 표현으로 생성하며 Dimension/Value ID와 source lineage는 서버가
-   부여한다. 화면용 Dimension label은 질문과 분리하고, Dimension rationale은 이 불확실성이 Scenario와
-   JKM 결과를 구분하는 이유를 10~100자의 짧은 한국어 한 문장으로 설명한다. Value label은 비교 가능한 시장·운영 상태를
+   부여한다. 화면용 Dimension label은 질문과 분리하고, Dimension rationale은 질문의 관측일·분석 기준일·
+   수치·시장 신호·대상·영향 경로를 빠짐없이 유지하며 질문 어미만 `...하는지에 따라` 형태의 근거형 평서문으로
+   바꿔, 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 10~200자의 구체적인 한국어 한 문장으로 설명한다.
+   Value label은 비교 가능한 시장·운영 상태를
    10~25자로 표현한다. `decisionBasis`에 현재 판단에 유효한 수치·기간·잔여일이 있으면 질문과 Value에
-   반영하고, Value의 `assumptionRationale`에 어떤 Event 사실과 현재 시점 판단을 사용했는지 자연어로
-   설명한다. Anchor ref는 추가하지 않으며 새로운 숫자 경계는 제공된 판단 근거가 실제 기준을 줄 때만
+   반영한다. Value의 `assumptionRationale`은 `관측된 사실 → Value의 미래 상태 → JKM 영향`을 간결하게
+   연결하고 문장 끝의 `가정`으로만 불확실성을 표시한다. `상태를 가정하면 ... 가정이다`처럼 가정 의미를
+   반복하거나 Value를 답·응답·선택으로 지칭하지 않는다. Anchor ref는 추가하지 않으며 새로운 숫자 경계는
+   제공된 판단 근거가 실제 기준을 줄 때만
    만든다. Dimension은 새 Lever를 선택하지 않고 source uncertainty의 affected Lever를 상속한다.
    LLM은 별도 `format`을 생성하지 않는다. 서버는 `timing`·`duration`·`recovery` axis를 `temporal`,
    그 외 axis에서 단위가 있으면 `numeric_range`, 나머지를 `categorical` `valueKind`로 결정한다.
 5. `validate_model_lever_dimensions`: Dimension의 source Event/Path/uncertainty와
    `primaryImpactLeverId`, Value별 Lever state ID 및 model support status를 hydrate한다.
 6. `synthesize_v4_scenarios`: 공통 영향, 검증된 Interaction, Dimension 선택지를 읽기 쉬운
-   의사결정표로 전달한다. LLM은 `D1.V1` 같은 선택지 별칭을 골라 Scenario 3~5개의 제목·서사·JKM
+   의사결정표로 전달하고, 원본 Event의 ID·제목·요약·발생시각·핵심 사실·태그도 compact block으로 함께
+   제공한다. LLM은 `D1.V1` 같은 선택지 별칭을 골라 Scenario 3~5개의 제목·서사·JKM
    압력 설명을 자연스러운 한국어 문장으로 생성한다. 미리 정한 공급·수요·운송 유형에 맞추지 않고
    입력 Dimension과 Interaction에서 Scenario별 구분 요인을 선택한다. 제목은 핵심 조건이나 메커니즘을
    20~40자로 표현하고, narrative는 주요 조건과 최종 전달 경로를 80~300자의 두 문장으로 설명한다.
+   그룹 title은 선택한 Event의 구체적인 대상·지역·지표·변화 2~3개를 반영해 검색 가능한 이름으로 만들고,
+   생성 목적만 나타내는 `JKM 대표 전개`·`합성 초안` 같은 이름은 사용하지 않는다. 그룹 description은 발생한
+   사건을 `이벤트`, 미래 분기를 `시나리오`로 표기하며 영문 `Event`·`Scenario`, `입력 사실`, `JKM`을 쓰지 않는다.
    서버는 이 설명을 파싱하지 않고 보존하며,
    공통 Path analysis·선택 Value의 why·적용 Interaction analysis로 pressure breakdown을 구성한다.
    Scenario ID와 canonical Dimension/Value/Interaction ID도 서버가 hydrate한다.
@@ -375,6 +383,9 @@ breakdown은 기존 `generation_diagnostics` JSON에 저장하며 v4 sync 응답
 pressure band partition과 contribution 순서를 검증한다. floor·ceiling 및 실제 bullish·bearish
 contribution이 함께 있는 선택적 mixed를 지정하고 전체 Scenario 중 최고 `probabilityScore`
 하나를 baseline으로 지정한다.
+v4 `probabilityScore`는 생성 후보 전체의 상대 가중치를 서버가 합계 100인 정수 백분율로
+정규화한 값이다. LLM이 `0~1` 확률이나 합계가 100이 아닌 가중치를 반환해도 최종화 단계에서
+largest-remainder 방식으로 합계를 정확히 100으로 맞춘 뒤 baseline을 계산하고 저장한다.
 여기서 가격 결과는 절대 가격 예측값이 아니라 모든 v2/v3/v4 Scenario에 필수인 JKM
 pressure band와 rationale이다. 응답의 `pressureTarget`은 LLM이 아닌 서버가 `JKM`으로 고정한다.
 TTF 또는 HH가 특별히 관련된 v4 Scenario만 `related_markets`에 시장과 근거를 선택적으로
@@ -541,6 +552,14 @@ Stage 2~6의 LLM 호출은 retry 가능한 오류에 한해 `REF_MAX_RETRIES`만
 
 ### 전체 흐름
 
+v4는 `prepare_create_signposts`의 짧은 transaction에서 최신 Validation operation과 두 fingerprint를
+검증하고 `scenarioChangeSet`을 먼저 확정한다. 신규 ID 발급, 기존 row update/soft-delete, 기존 Signpost
+soft-delete, baseline/role 재계산과 Validation application 기록을 완료한 뒤 Signpost operation과
+background task를 만든다. 따라서 v4 graph의 `generate_new_scenario_row_details`와
+`sync_scenarios_from_table` node는 no-op이며, Validation에서 생성한 DB 저장 필드를 다시 LLM으로 만들지 않는다.
+
+v1~v3는 아래 table 기반 흐름을 유지한다.
+
 ```mermaid
 flowchart LR
     A[POST /scenario-groups/:id/signposts] --> B[prepare_create_signposts]
@@ -562,7 +581,9 @@ flowchart LR
 
 ### 입력과 출력 변환
 
-`CreateSignpostsIn`은 `user_id`와 `table`(ScenarioTable)을 받는다.
+`CreateSignpostsIn`은 `user_id`와 optional `table`(ScenarioTable)을 받는다. v1~v3는 table이 필수이며,
+v4는 최신 Validation Change Set을 서버에서 적용하므로 table을 사용하지 않는다. 로컬·QA용 Presentation 후속
+request body helper는 버전별 초안 shape을 통일하기 위해 v4 body에도 table을 포함한다.
 `to_state`는 `request_table=parsed.table.model_dump()`를 state에 설정한다.
 
 `to_output`은 `build_scenario_group_table_data(group, scenarios, signposts)`로
@@ -623,6 +644,34 @@ flowchart TD
 
 
 
+
+#### v4 Signpost context 조립
+
+`generation_strategy="multi_event_model_lever_dimensions"`인 그룹은 연결된 Event를 하나의 합성 Event로
+병합하지 않는다. Event 관계의 `display_order` 순서대로 원본 Event를 읽고, 각 Event에 compact 제한을
+독립 적용해 ID·제목·요약·발생시각·핵심 사실·태그를 별도 block으로 만든다. 따라서 한 Event의 긴 사실
+목록이 다른 Event의 사실을 밀어내지 않는다. v1~v3는 기존 단일/composite Event context를 유지한다.
+
+Scenario별 context는 저장된 Scenario와 그룹의 `dimensionDefinitions`, `generationDiagnostics`로 조립한다.
+title·narrative·probability·baseline·role·JKM pressure band/rationale·related market을 포함하고,
+선택한 Dimension/Value ID는 다음 표시 정보로 변환한다.
+
+- `Dimension label | description`과 별도 Dimension `rationale`
+- `Value label | assumptionRationale`
+- 알 수 없는 Value 또는 definition은 원본 ID를 표시 fallback으로 사용하며 생성을 중단하지 않음
+
+`generationDiagnostics.scenarioPressureBreakdowns`는 title이 아니라 Dimension/Value label을 canonical ID로
+정규화한 `dimensionValues` 조합 전체로 매칭한다. 매칭된 breakdown이 참조하는 Impact Path와 적용
+Interaction만 각각 `eventId + mechanism`, `eventIds + mechanism`으로 축약한다. Validation에서 조합이
+변경됐거나 신규 Scenario라 동일 조합이 없으면 과거 breakdown의 Path·Interaction을 사용하지 않는다.
+이 경우 최신 Scenario 및 Dimension/Value 근거만으로 Signpost를 생성한다. diagnostics 일부가 누락돼도
+동일하게 빈 causal evidence로 진행한다.
+
+Signpost subgraph state는 `event_contexts`와 Scenario별 `scenario_context`를 받아 Stage 2와 Stage 4+5에
+동일하게 전달한다. 두 prompt는 현재 사실인 `Event Context`와 미래 가정·근거인
+`Scenario Assumptions and Rationale`를 분리하며, 모든 Event와 Event 간 Interaction을 함께 고려하되
+Scenario rationale을 현재 사실로 오인하지 않고 해당 Scenario를 판별할 미래의 관측 가능·binary 신호를
+만들도록 지시한다.
 
 #### 대상 scenario 결정
 
@@ -711,6 +760,26 @@ Stage 4+5 응답은 다음 조건을 확인한다.
 
 
 ### 전체 흐름
+
+v4는 prepare에서 validation operation을 만들고 stage를 `scenario_created`로 정리한다. background graph의
+review node 안에서는 다음 v4 전용 순서를 수행한다.
+
+```text
+label/valueId -> canonical valueId 정규화
+  -> Scenario 수·header/cell·enum·title·조합 결정적 검사
+  -> unchanged이면 LLM 없이 PASS
+  -> title/조합 변경 및 신규 row만 semantic review
+  -> 신규·조합 변경 row만 DB 저장 필드 structured generation
+  -> 최소 scenarioChangeSet 조립
+  -> operation.result_payload 저장 + stage 갱신 (같은 transaction)
+```
+
+canonical table은 메모리 표현이며 별도 DB table로 저장하지 않는다. operation에는 변경 row의 최종 DB payload와
+삭제 ID만 저장하고 unchanged row, 전체 table, `leverState`는 저장하지 않는다. warning만 존재하면
+`PASS_WITH_WARNINGS`, `canProceed=true`이고, blocking은 operation `succeeded` 이력과 결과를 남기되
+`scenarioChangeSet=null`, `stage=scenario_created`로 처리한다.
+
+v1~v3는 아래 optional dimension 보정·mapping·review 흐름을 유지한다.
 
 ```mermaid
 flowchart LR
