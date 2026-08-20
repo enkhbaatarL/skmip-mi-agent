@@ -164,22 +164,27 @@ async def run_v4_multi_event_scenarios_inline(
 async def run_v4_multi_event_scenarios_with_progress(
     prepared: dict[str, Any],
     *,
+    on_node_start: Callable[[str], Awaitable[None]],
     on_node_update: Callable[[str, dict[str, Any], V4MultiEventGenerationState], Awaitable[None]],
     trace_context: TraceContext | None = None,
 ) -> VersionedCreateScenariosOut:
-    """Execute the v4 graph while exposing validated node updates to the DB event producer."""
+    """Execute the v4 graph while exposing node starts and validated updates to the DB event producer."""
     initial_state = V4MultiEventGenerationState.model_validate(prepared)
     accumulated = initial_state.model_dump()
     async for streamed in get_compiled_graph().astream(
         initial_state,
         config=build_langgraph_config(trace_context) if trace_context is not None else None,
         context=trace_context,
-        stream_mode=["updates", "custom"],
+        stream_mode=["tasks", "updates", "custom"],
     ):
         if isinstance(streamed, tuple) and len(streamed) == 2:
             stream_mode, chunk = streamed
         else:
             stream_mode, chunk = "updates", streamed
+        if stream_mode == "tasks":
+            if isinstance(chunk, dict) and "input" in chunk and isinstance(chunk.get("name"), str):
+                await on_node_start(chunk["name"])
+            continue
         if stream_mode == "custom":
             if isinstance(chunk, dict):
                 await on_node_update(

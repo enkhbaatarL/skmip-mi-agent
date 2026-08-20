@@ -272,11 +272,8 @@ def test_additional_generation_rejects_wrong_version_and_stage() -> None:
             service.queue_additional_dimension_generation(10, user_id=7)
         with pytest.raises(MIBaseError) as wrong_version_get:
             service.load_additional_dimensions(10)
-    with _service_fixture(_group(stage="scenario_validated")):
-        with pytest.raises(MIBaseError) as wrong_stage:
-            service.queue_additional_dimension_generation(10, user_id=7)
-        with pytest.raises(MIBaseError) as wrong_stage_get:
-            service.load_additional_dimensions(10)
+    with _service_fixture(_group(stage="scenario_validated")), pytest.raises(MIBaseError) as wrong_stage:
+        service.queue_additional_dimension_generation(10, user_id=7)
 
     assert wrong_version.value.error_code is ErrorCode.INVALID_REQUEST
     assert wrong_version.value.status_code == 400
@@ -284,8 +281,6 @@ def test_additional_generation_rejects_wrong_version_and_stage() -> None:
     assert wrong_version_get.value.status_code == 400
     assert wrong_stage.value.error_code is ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT
     assert wrong_stage.value.status_code == 409
-    assert wrong_stage_get.value.error_code is ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT
-    assert wrong_stage_get.value.status_code == 409
 
 
 def test_additional_get_is_read_only_and_hides_internal_lineage() -> None:
@@ -313,6 +308,7 @@ def test_additional_get_is_read_only_and_hides_internal_lineage() -> None:
         ],
     }
     group = _group(
+        stage="scenario_validated",
         diagnostics={
             "additional_dimension_generation": {
                 "status": "ready",
@@ -1043,6 +1039,11 @@ def test_create_operation_records_completed_before_auxiliary_submit() -> None:
     settings.get_agent_config.return_value = SimpleNamespace(aip_app_id="scenario-group-test")
     settings_module = ModuleType("apps.common.configs.config")
     settings_module.get_settings = Mock(return_value=settings)  # type: ignore[attr-defined]
+
+    async def run_generation(*_args: object, **kwargs: object) -> object:
+        await kwargs["on_node_start"]("analyze_event_impacts")  # type: ignore[operator]
+        return output
+
     with (
         patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
         patch(
@@ -1057,7 +1058,7 @@ def test_create_operation_records_completed_before_auxiliary_submit() -> None:
         patch(
             "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
             "run_v4_multi_event_scenarios_with_progress",
-            new=AsyncMock(return_value=output),
+            new=AsyncMock(side_effect=run_generation),
         ),
         patch(
             "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.mlflow_trace_context",

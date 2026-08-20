@@ -36,7 +36,7 @@ LLM 파이프라인이 끝나면 콜백으로 최종 결과를 전달한다.
 prepare transaction
   -> Scenario Group + create operation + accepted event commit
   -> lifespan task runner에 producer 등록
-  -> LangGraph updates/custom stream을 사용자 event로 정규화
+  -> LangGraph tasks/updates/custom stream을 사용자 event로 정규화
   -> operation event history append
   -> POST 또는 재연결 GET SSE가 DB event를 replay/live-tail
 ```
@@ -64,6 +64,17 @@ Dimension 검증은 전체 공통 Dimension definition을 저장하고 `scenario
 section 상태와 revision만 싣는다. 최종 persistence 후에는 Scenario Group·Scenario와 저장된
 generation diagnostics가 Presentation source of truth다. 렌더링된 Markdown과 실패 draft는 projection이나
 event history에 저장하지 않는다.
+
+`tasks` stream에서는 node 시작 chunk의 `name`만 사용해 phase 시작을 기록하고, 완료 chunk의
+`result`/`error`는 저장하거나 외부로 전달하지 않는다. `phase_started`는 phase마다 한 번만 기록하며,
+같은 phase의 재시도나 여러 node 실행에서는 반복하지 않는다. 각 검증 성공 경계의 정상 순서는
+`validated → section_ready → phase_started(다음 phase)`이고, 재시도가 있으면 해당 phase의
+`phase_started` 뒤에 `retrying`을 기록한다.
+
+`event_analysis` phase 안에서 2개 이상의 Event에 검증된 영향 경로가 있으면 Event 영향 분석의
+`validated` 문구가 이어지는 `Event 상호작용 분석` 시작을 안내한다. 상호작용 분석의 첫 시도 실패 후
+발행되는 `retrying`은 phase 이름 대신 하위 stage를 사용해 `Event 상호작용 분석을 다시 수행합니다`로
+표시한다. 단일 Event이거나 영향 경로가 한 Event에만 남은 경우에는 상호작용 시작을 안내하지 않는다.
 
 최종 persistence 직후 canonical create operation과 `POST /v4/scenario-groups/sync`는 unused open question ID와
 source fingerprint를 `additional_dimension_generation=queued`로 저장한다. canonical 경로는 create
@@ -411,13 +422,22 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    입력 Dimension과 Interaction에서 Scenario별 구분 요인을 선택한다. 제목은 최소 길이를 강제하지 않고
    핵심 조건이나 메커니즘을 최대 40자로 표현하며, narrative는 주요 조건과 최종 전달 경로를
    80~300자의 두 문장으로 설명한다.
-   그룹 title은 선택한 Event의 구체적인 대상·지역·지표·변화 2~3개를 반영해 검색 가능한 이름으로 만들고,
-   생성 목적만 나타내는 `JKM 대표 전개`·`합성 초안` 같은 이름은 사용하지 않는다. 그룹 description은 발생한
-   사건을 `이벤트`, 미래 분기를 `시나리오`로 표기하며 영문 `Event`·`Scenario`, `입력 사실`, `JKM`을 쓰지 않는다.
-   서버는 이 설명을 파싱하지 않고 보존하며,
+   그룹 metadata 중 `title`과 `description`만 같은 structured-output 호출에서 생성한다. `title`은 선택한
+   Event의 구체적인 대상·지역·상품·변화를 반영해 검색 가능한 이름으로 만들며, `선택 MI Event`,
+   `모델 영향 레버`, `복수 이벤트 시나리오`처럼 생성 방식만 설명하는 일반 문구는 사용하지 않는다.
+   `description`은 두 문장으로 구성한다. 첫 문장은 관측된 Event 사실을 직접 서술하고, 둘째 문장은
+   Dimension 이름을 나열하지 않은 채 충격의 지속·전달·증폭과 대체·회복·상쇄 같은 인과 묶음으로
+   핵심 분기를 설명한다. 인과는 검증된 Fact·Impact Path·Interaction·Dimension만 사용하며 독립 Event에
+   임의의 상호작용을 추가하지 않는다. 두 필드에는 영문 `Event`·`Scenario`를 쓰지 않고 description에는
+   `입력 사실`, `JKM`도 쓰지 않는다. 서버는 이 서술을 파싱하지 않고 보존하며,
    공통 Path analysis·선택 Value의 why·적용 Interaction analysis로 pressure breakdown을 구성한다.
    Scenario ID와 canonical Dimension/Value/Interaction ID도 서버가 hydrate한다.
-7. `persist_generation`: 완성된 결과를 service 호출 한 번으로 일괄 저장한다.
+7. `persist_generation`: readable synthesis의 `title`·`description`과 Event에서 조합한 `summary`를 finalized
+   result에 담아 Scenario와 함께 service 호출 한 번으로 일괄 저장한다. summary는 요청 순서대로 Event별
+   `oneLineSummary`, `eventTitleKo`, `이벤트 {miEventId}` 순서의 fallback을 적용하고, 줄바꿈·탭·연속 공백을
+   단일 공백으로 정규화한 뒤 각 문자열 앞 40자를 말줄임표 없이 ` | `로 연결한다. 최대 5개 Event이면
+   최대 212자다. v4 준비 row의 `summary`는 `null`이며 생성 완료 때만 조합값으로 갱신한다. 공통 persistence의
+   optional `summary`를 생략하는 v2/v3는 준비 단계에 저장된 기존 summary를 유지한다.
 
 각 LLM 단계는 최대 3회 재시도하며 검증을 통과한 앞 단계 결과는 재사용한다. ID·lineage·Enum,
 Fact 부정과 같이 설명으로 성립할 수 없는 모순은 해당 단계를 재생성한다. Event/Interaction의

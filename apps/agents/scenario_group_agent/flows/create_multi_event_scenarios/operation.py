@@ -40,6 +40,12 @@ _VALIDATION_NODES = {
     "validate_model_lever_dimensions": ("dimension", "Dimension 설계"),
     "finalize_v4_scenarios": ("scenario", "Scenario 합성"),
 }
+_RETRY_STAGE_LABELS = {
+    "event_impact_analysis": "Event 분석",
+    "event_interaction_analysis": "Event 상호작용 분석",
+    "dimension_design": "Dimension 설계",
+    "scenario_synthesis": "Scenario 합성",
+}
 
 
 class V4OperationProgressRecorder:
@@ -57,6 +63,11 @@ class V4OperationProgressRecorder:
             "sections": {},
         }
 
+    async def on_node_start(self, node_name: str) -> None:
+        phase = _NODE_PHASES.get(node_name)
+        if phase is not None:
+            await self._ensure_phase_started(phase)
+
     async def on_node_update(
         self,
         node_name: str,
@@ -64,23 +75,20 @@ class V4OperationProgressRecorder:
         state: V4MultiEventGenerationState,
     ) -> None:
         if node_name == "__custom__" and update.get("kind") == "stage_retry":
+            retry_phase = str(update.get("phase") or "unknown")
+            retry_stage = str(update.get("stage") or "")
+            await self._ensure_phase_started(retry_phase)
             await self._record_retry(
-                phase=str(update.get("phase") or "unknown"),
+                phase=retry_phase,
                 attempt=int(update.get("attempt") or 1),
                 validation_code=(str(update["validationCode"]) if update.get("validationCode") else None),
                 reference_ids=[str(item) for item in (update.get("referenceIds") or [])],
+                label=_RETRY_STAGE_LABELS.get(retry_stage),
             )
             return
         phase = _NODE_PHASES.get(node_name)
-        if phase is not None and phase not in self._started_phases:
-            self._started_phases.add(phase)
-            self.current_phase = phase
-            await self._append(
-                event_type="phase_started",
-                phase=phase,
-                title=f"{self._phase_label(phase)}을 시작했습니다",
-                message_markdown=f"{self._phase_label(phase)}을 진행하고 있습니다.",
-            )
+        if phase is not None:
+            await self._ensure_phase_started(phase)
         validation = _VALIDATION_NODES.get(node_name)
         if validation is None:
             return
@@ -100,11 +108,16 @@ class V4OperationProgressRecorder:
             return
         if error is not None:
             return
+        title = f"{label}이 완료되었습니다"
+        message_markdown = f"{label} 결과가 검증되었습니다."
+        if prefix == "analysis" and self._will_analyze_event_interactions(state):
+            title = "Event 분석이 완료되었습니다. 이제 Event 상호작용 분석을 시작합니다"
+            message_markdown = "Event 분석 결과가 검증되었습니다. 이제 Event 상호작용 분석을 시작합니다."
         await self._append(
             event_type="validated",
             phase=phase,
-            title=f"{label}이 완료되었습니다",
-            message_markdown=f"{label} 결과가 검증되었습니다.",
+            title=title,
+            message_markdown=message_markdown,
             payload={"attempt": attempt, "maxAttempts": MAX_STAGE_ATTEMPTS},
         )
         section = self._safe_section(prefix, state)
@@ -117,6 +130,19 @@ class V4OperationProgressRecorder:
                 message_markdown=f"검증된 {label} 결과가 준비되었습니다.",
                 presentation_snapshot=deepcopy(self._presentation),
             )
+
+    async def _ensure_phase_started(self, phase: str) -> None:
+        self.current_phase = phase
+        if phase in self._started_phases:
+            return
+        self._started_phases.add(phase)
+        await self._append(
+            event_type="phase_started",
+            phase=phase,
+            title=f"{self._phase_label(phase)}을 시작했습니다",
+            message_markdown=self._phase_started_message(phase),
+            status="running",
+        )
 
     def _merge_projection(
         self,
@@ -201,6 +227,11 @@ class V4OperationProgressRecorder:
         return None
 
     @staticmethod
+    def _will_analyze_event_interactions(state: V4MultiEventGenerationState) -> bool:
+        impact_paths = getattr(state.analysis_draft, "impact_paths", [])
+        return len({path.event_id for path in impact_paths}) >= 2
+
+    @staticmethod
     def _phase_label(phase: str) -> str:
         return {
             "event_analysis": "Event 분석",
@@ -208,6 +239,12 @@ class V4OperationProgressRecorder:
             "scenario_synthesis": "Scenario 합성",
             "persistence": "결과 저장",
         }.get(phase, phase)
+
+    @staticmethod
+    def _phase_started_message(phase: str) -> str:
+        if phase == "event_analysis":
+            return "선택한 Event의 LNG 시장 영향 경로를 분석하고 있습니다."
+        return f"{V4OperationProgressRecorder._phase_label(phase)}을 진행하고 있습니다."
 
 
 async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -> None:
@@ -228,22 +265,10 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
     )
     recorder = V4OperationProgressRecorder(scenario_group_id, operation_id, trace_id)
     try:
-        await asyncio.to_thread(
-            service.append_event,
-            scenario_group_id,
-            operation_id,
-            event_type="phase_started",
-            phase="event_analysis",
-            title="Event 분석을 시작했습니다",
-            message_markdown="선택한 Event의 LNG 시장 영향 경로를 분석하고 있습니다.",
-            status="running",
-            mlflow_trace_id=trace_id,
-        )
-        recorder._started_phases.add("event_analysis")
-        recorder.current_phase = "event_analysis"
         with mlflow_trace_context(trace_context):
             output = await run_v4_multi_event_scenarios_with_progress(
                 prepared,
+                on_node_start=recorder.on_node_start,
                 on_node_update=recorder.on_node_update,
                 trace_context=trace_context,
             )

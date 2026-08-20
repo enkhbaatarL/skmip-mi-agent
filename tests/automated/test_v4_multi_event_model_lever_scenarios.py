@@ -49,6 +49,10 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     build_v4_scenario_synthesis_user_prompt,
     event_open_question_budgets,
 )
+from apps.agents.scenario_group_agent.utils.scenario_group_summary import (
+    EVENT_SUMMARY_PREVIEW_LENGTH,
+    build_scenario_group_event_summary,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.schema import EventPayload
@@ -468,9 +472,27 @@ def _synthesis() -> V4ScenarioSynthesisResult:
     )
 
 
+def _group_summary() -> str:
+    return build_scenario_group_event_summary(
+        [
+            EventPayload(
+                mi_event_id=101,
+                event_type_l2_id=8,
+                one_line_summary="동북아 한파 수요가 증가했다.",
+            ),
+            EventPayload(
+                mi_event_id=202,
+                event_type_l2_id=12,
+                one_line_summary="미국 액화시설 공급 차질이 발생했다.",
+            ),
+        ],
+    )
+
+
 def _finalized() -> tuple[V4GenerationResult, object]:
     return finalize_v4_generation_result(
         _synthesis(),
+        group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
         impact_levers=_catalog(),
@@ -486,6 +508,57 @@ def test_v4_request_requires_one_to_five_unique_events() -> None:
         V4MultiEventCreateScenariosIn(mi_event_ids=[], user_id=7)
     with pytest.raises(ValueError):
         V4MultiEventCreateScenariosIn(mi_event_ids=[1, 2, 3, 4, 5, 6], user_id=7)
+
+
+def test_v4_group_summary_preserves_text_up_to_40_characters() -> None:
+    summary = "가" * EVENT_SUMMARY_PREVIEW_LENGTH
+
+    result = build_scenario_group_event_summary(
+        [EventPayload(mi_event_id=101, event_type_l2_id=8, one_line_summary=summary)],
+    )
+
+    assert result == summary
+
+
+def test_v4_group_summary_truncates_without_ellipsis() -> None:
+    result = build_scenario_group_event_summary(
+        [EventPayload(mi_event_id=101, event_type_l2_id=8, one_line_summary="가" * 45)],
+    )
+
+    assert result == "가" * EVENT_SUMMARY_PREVIEW_LENGTH
+    assert "…" not in result
+
+
+def test_v4_group_summary_combines_five_events_in_request_order_at_max_length() -> None:
+    events = [
+        EventPayload(mi_event_id=index, event_type_l2_id=8, one_line_summary=str(index) * 45) for index in range(1, 6)
+    ]
+
+    result = build_scenario_group_event_summary(events)
+
+    assert result == " | ".join(str(index) * EVENT_SUMMARY_PREVIEW_LENGTH for index in range(1, 6))
+    assert len(result) == 212
+
+
+def test_v4_group_summary_normalizes_whitespace_and_uses_title_then_id_fallback() -> None:
+    result = build_scenario_group_event_summary(
+        [
+            EventPayload(
+                mi_event_id=101,
+                event_type_l2_id=8,
+                one_line_summary="  한파로\n난방\t 수요가   증가했다.  ",
+            ),
+            EventPayload(
+                mi_event_id=202,
+                event_type_l2_id=12,
+                event_title_ko="  액화시설\n 정비  ",
+                one_line_summary=" \t ",
+            ),
+            EventPayload(mi_event_id=303, event_type_l2_id=15),
+        ],
+    )
+
+    assert result == "한파로 난방 수요가 증가했다. | 액화시설 정비 | 이벤트 303"
 
 
 def test_v4_sync_and_background_routes_are_registered() -> None:
@@ -664,6 +737,7 @@ def test_v4_finalizer_normalizes_fractional_probabilities_to_integer_percentages
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
         impact_levers=_catalog(),
@@ -681,6 +755,7 @@ def test_v4_finalizer_distributes_zero_probability_weights_deterministically() -
 
     finalized, _coverage = finalize_v4_generation_result(
         synthesis,
+        group_summary=_group_summary(),
         impact_analysis=_analysis(),
         dimension_design=_dimensions(),
         impact_levers=_catalog(),
@@ -697,6 +772,7 @@ def test_v4_scenario_rejects_missing_common_path() -> None:
     with pytest.raises(ValueError, match="all common Impact Paths"):
         finalize_v4_generation_result(
             synthesis,
+            group_summary=_group_summary(),
             impact_analysis=_analysis(),
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
@@ -710,6 +786,7 @@ def test_v4_scenario_duplicate_combination_error_identifies_both_scenarios() -> 
     with pytest.raises(ValueError) as error:
         finalize_v4_generation_result(
             synthesis,
+            group_summary=_group_summary(),
             impact_analysis=_analysis(),
             dimension_design=_dimensions(),
             impact_levers=_catalog(),
@@ -1538,8 +1615,11 @@ def _readable_scenario_draft() -> V4ReadableScenarioSynthesisDraft:
 
     return V4ReadableScenarioSynthesisDraft.model_validate(
         {
-            "title": "JKM 복수 Event 시나리오",
-            "description": "공통 영향과 열린 질문의 답을 결합한 JKM 시나리오",
+            "title": "동북아 한파와 미국 Gulf 액화시설 중단",
+            "description": (
+                "동북아 한파 전망과 미국 Gulf LNG 액화시설 가동 중단이 관측됐다. "
+                "수요 충격의 지속과 공급 차질의 전달·증폭, 기온 완화와 설비 회복에 따른 상쇄가 핵심 분기를 만든다."
+            ),
             "scenarios": [
                 scenario(
                     "한파 수요와 액화시설 차질이 결합되는 상방 천장",
@@ -1609,8 +1689,18 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     state = V4MultiEventGenerationState(
         scenario_group=group,
         events=[
-            EventPayload(mi_event_id=101, event_type_l2_id=8, key_bullets=["동북아 한파 지속 전망"]),
-            EventPayload(mi_event_id=202, event_type_l2_id=12, key_bullets=["미국 LNG 액화시설 가동 중단"]),
+            EventPayload(
+                mi_event_id=101,
+                event_type_l2_id=8,
+                one_line_summary="한파로 난방 수요가 증가했다.",
+                key_bullets=["동북아 한파 지속 전망"],
+            ),
+            EventPayload(
+                mi_event_id=202,
+                event_type_l2_id=12,
+                one_line_summary="액화시설 유지보수가 시작됐다.",
+                key_bullets=["미국 LNG 액화시설 가동 중단"],
+            ),
         ],
         impact_levers=_catalog(),
         impact_catalog_version="v1",
@@ -1642,6 +1732,7 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
+    assert persist.call_args.kwargs["summary"] == ("한파로 난방 수요가 증가했다. | 액화시설 유지보수가 시작됐다.")
     assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == "동북아 한파와 추가 분기 기준"
 
 
@@ -1927,6 +2018,9 @@ def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
     saved_dimensions = persist.call_args.kwargs["dimension_definitions"]
     saved_diagnostics = persist.call_args.kwargs["generation_diagnostics"]
     saved_scenarios = persist.call_args.kwargs["scenarios"]
+    assert persist.call_args.kwargs["title"] == finalized.group_title
+    assert persist.call_args.kwargs["summary"] == finalized.group_summary
+    assert persist.call_args.kwargs["description"] == finalized.group_description
     assert "event_groundings" not in saved_dimensions[0]
     assert "lever_mappings" not in saved_dimensions[0]
     assert saved_dimensions[0]["source_impact_path_ids"] == ["path_101_demand"]
@@ -2006,6 +2100,13 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "전달 경로를 가장 잘 대표하는 하나의 step으로" in first
     assert "서로 다른 Impact에서는 같은 Lever code를 다시 사용할 수 있습니다" in first
     assert "첫 번째 `lever` code를 비교해" in first
+    assert "루트 summary" not in scenario
+    assert "`선택 MI Event`, `모델 영향 레버`, `복수 이벤트 시나리오`" in scenario
+    assert "첫 문장은 관측된 이벤트 사실을 직접 서술" in scenario
+    assert "`반영한다`, `바탕으로 한다`, `정리한다`" in scenario
+    assert "Dimension 이름을" in scenario
+    assert "충격의 지속·전달·증폭과 대체·회복·상쇄" in scenario
+    assert "독립 이벤트에는 임의의 상호작용을 만들지 않습니다" in scenario
     lever_states_schema = V4ReadableEventAnalysisDraft.model_json_schema(by_alias=True)["$defs"][
         "V4ReadableEventImpact"
     ]["properties"]["leverStates"]
@@ -2203,6 +2304,14 @@ def test_llm_validation_error_detail_preserves_field_locations_for_retry() -> No
     assert v4_nodes._retry_validation_feedback(detail, "LLM_RESPONSE_TIMEOUT") is None
 
 
+def test_v4_scenario_structured_output_rejects_llm_summary() -> None:
+    payload = _readable_scenario_draft().model_dump(by_alias=True)
+    payload["summary"] = "LLM이 생성하면 안 되는 summary"
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        V4ReadableScenarioSynthesisDraft.model_validate(payload)
+
+
 def test_v4_readable_copy_contract_matches_table_density() -> None:
     readable = _readable_dimension_draft()
     expanded = expand_v4_readable_dimension_design(readable, impact_analysis=_analysis())
@@ -2283,6 +2392,7 @@ def test_v4_structured_output_schemas_are_openai_strict_compatible() -> None:
     assert "valueKind" in V4DimensionDefinition.model_json_schema(by_alias=True)["properties"]
     assert len(str(schemas["V4ReadableEventAnalysisDraft"])) < len(str(V4EventImpactAnalysisDraft.model_json_schema()))
     assert "dimensionValues" not in str(schemas["V4ReadableScenarioSynthesisDraft"])
+    assert "summary" not in schemas["V4ReadableScenarioSynthesisDraft"]["properties"]
 
 
 def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> None:
@@ -2290,6 +2400,7 @@ def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> N
     properties = schema["properties"]
 
     assert "선택한 이벤트" in properties["title"]["description"]
+    assert "summary" not in properties
     assert "영문 Event/Scenario" in properties["description"]["description"]
     assert "'입력 사실', JKM은 사용하지 않음" in properties["description"]["description"]
     assert "0~100 정수 백분율" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]

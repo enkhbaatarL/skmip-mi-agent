@@ -496,13 +496,6 @@ class ScenarioGroupService:
                 or str(group.generation_strategy or "") != "multi_event_model_lever_dimensions"
             ):
                 raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="Additional Dimensions are supported only for v4")
-            status = str(getattr(group.status, "value", group.status))
-            stage = str(getattr(group.stage, "value", group.stage))
-            if status != ScenarioGroupStatus.CREATING.value or stage != ScenarioGroupStage.SCENARIO_CREATED.value:
-                raise MIBaseError(
-                    ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
-                    detail=f"Additional Dimension changes are not allowed at status={status}, stage={stage}",
-                )
             diagnostics = dict(group.generation_diagnostics or {})
             generation = self._diagnostic_field(
                 diagnostics,
@@ -1050,7 +1043,7 @@ class ScenarioGroupService:
                 {
                     "request_usr_id": user_id,
                     "title": f"Global LNG scenario group ({len(events)} selected events)",
-                    "summary": "선택 MI Event 기반 모델 영향 레버 시나리오",
+                    "summary": None,
                     "description": None,
                     "dimension_selected": [],
                     "scenario_count": 0,
@@ -1123,6 +1116,7 @@ class ScenarioGroupService:
         generation_diagnostics: dict[str, Any],
         scenarios: list[dict[str, Any]],
         user_id: int,
+        summary: str | None = None,
     ) -> tuple[ScenarioGroupPayload, list[ScenarioPayload]]:
         """Persist scenarios and group metadata in one transaction."""
         from apps.common.configs.database.sync_database.connection import (
@@ -1176,20 +1170,20 @@ class ScenarioGroupService:
                         "mod_usr_logn_id": user_id,
                     },
                 )
-            group_repository.update_group(
-                group,
-                {
-                    "title": title[:255],
-                    "description": description,
-                    "dimension_selected": [definition["dimension_id"] for definition in dimension_definitions],
-                    "dimension_definitions": dimension_definitions,
-                    "generation_diagnostics": generation_diagnostics,
-                    "scenario_count": len(scenarios),
-                    "status": ScenarioGroupStatus.CREATING.value,
-                    "stage": ScenarioGroupStage.SCENARIO_CREATED.value,
-                    "mod_usr_logn_id": user_id,
-                },
-            )
+            group_update = {
+                "title": title[:255],
+                "description": description,
+                "dimension_selected": [definition["dimension_id"] for definition in dimension_definitions],
+                "dimension_definitions": dimension_definitions,
+                "generation_diagnostics": generation_diagnostics,
+                "scenario_count": len(scenarios),
+                "status": ScenarioGroupStatus.CREATING.value,
+                "stage": ScenarioGroupStage.SCENARIO_CREATED.value,
+                "mod_usr_logn_id": user_id,
+            }
+            if summary is not None:
+                group_update["summary"] = summary
+            group_repository.update_group(group, group_update)
             persisted_scenarios = scenario_repository.fetch_models_by_group_id(
                 scenario_group_id,
             )

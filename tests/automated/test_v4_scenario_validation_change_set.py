@@ -5,10 +5,11 @@ import asyncio
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 import sys
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -203,6 +204,208 @@ def test_scenario_fingerprint_ignores_workflow_status_but_detects_content_change
 
     assert scenario_fingerprint(status_changed) == original
     assert scenario_fingerprint(title_changed) != original
+
+
+def test_changed_validation_refreshes_decimals_before_signpost_stale_check() -> None:
+    analysis = _analyze(_table())
+    result_payload = ValidationOperationResultPayload(
+        mode="changed",
+        base_scenario_fingerprint=analysis.base_scenario_fingerprint,
+        dimension_definition_fingerprint=analysis.dimension_definition_fingerprint,
+        validation_result=ValidationResultPayload(
+            verdict="PASS",
+            is_valid=True,
+            can_proceed=True,
+            reason_markdown="변경 통과",
+        ),
+        scenario_change_set=ValidationScenarioChangeSetPayload(
+            upserts=[
+                ValidationScenarioUpsertPayload(
+                    scenario_id=1,
+                    client_row_key="scenario:1",
+                    change_type="TITLE_CHANGED",
+                    display_order=1,
+                    title="상방 수정",
+                    dimension_values={"demand": "demand_high", "supply": "supply_low"},
+                    generated_fields=ValidationGeneratedFieldsPayload(
+                        narrative="상방 수정 narrative",
+                        probability_score=23.0,
+                        probability_delta=0,
+                        pressure_band="strong_bullish",
+                        pressure_rationale="상방 수정 pressure",
+                        related_markets=[],
+                    ),
+                ),
+            ],
+        ),
+    )
+    group = SimpleNamespace(
+        scenario_group_id=10,
+        request_usr_id=101,
+        stage="scenario_created",
+        status="creating",
+        api_version="v4",
+        dimension_selected=["demand", "supply"],
+        dimension_definitions=deepcopy(DEFINITIONS),
+    )
+    scenarios = [SimpleNamespace(**deepcopy(item)) for item in _scenarios()]
+    validation_operation = SimpleNamespace(
+        operation_id="validation-op",
+        operation_type="validation",
+        status="running",
+        result_payload=None,
+    )
+    signpost_operation = SimpleNamespace(result_payload=None)
+    session = Mock()
+    scenario_repository = Mock()
+    scenario_repository.fetch_models_by_group_id.side_effect = [scenarios, scenarios]
+
+    def model_to_dict(target: SimpleNamespace) -> dict[str, object]:
+        return {
+            key: getattr(target, key)
+            for key in (
+                "scenario_id",
+                "scenario_group_id",
+                "display_order",
+                "title",
+                "narrative",
+                "dimension_values",
+                "probability_score",
+                "probability_delta",
+                "baseline_yn",
+                "global_pressure_band",
+                "scenario_role",
+                "global_pressure_rationale",
+                "related_markets",
+                "status",
+            )
+        }
+
+    def update_model(target: SimpleNamespace, payload: dict[str, object]) -> None:
+        for key, value in payload.items():
+            setattr(target, key, value)
+
+    def refresh_decimal_columns(target: SimpleNamespace) -> None:
+        target.probability_score = Decimal(str(target.probability_score)).quantize(Decimal("0.00"))
+        target.probability_delta = Decimal(str(target.probability_delta)).quantize(Decimal("0.00"))
+
+    scenario_repository.model_to_dict.side_effect = model_to_dict
+    scenario_repository.update_from_payload.side_effect = update_model
+    session.refresh.side_effect = refresh_decimal_columns
+    group_repository = Mock()
+    group_repository.fetch_by_id.return_value = group
+    group_repository.model_to_dict.return_value = {
+        "scenario_group_id": 10,
+        "status": "creating",
+        "stage": "scenario_validated",
+    }
+    group_repository.update_group.side_effect = update_model
+    signpost_repository = Mock()
+    operation_repository = Mock()
+    operation_repository.fetch_by_id.return_value = validation_operation
+
+    def complete_event(target: SimpleNamespace, **kwargs: object) -> None:
+        target.status = kwargs["status"]
+
+    operation_repository.append_event.side_effect = complete_event
+
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "apps.common.configs.database.sync_database.connection": SimpleNamespace(
+                    get_sync_session=lambda: session,
+                ),
+            },
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=operation_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service.ScenarioGroupRepository",
+            return_value=group_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service.ScenarioRepository",
+            return_value=scenario_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service.SignpostRepository",
+            return_value=signpost_repository,
+        ),
+    ):
+        ScenarioGroupOperationService().complete_validation(
+            scenario_group_id=10,
+            operation_id="validation-op",
+            result_payload=result_payload,
+            user_id=101,
+        )
+
+    stored = ValidationOperationResultPayload.model_validate(validation_operation.result_payload)
+    assert stored.application is not None
+    assert scenarios[0].probability_score == Decimal("23.00")
+    assert scenarios[0].probability_delta == Decimal("0.00")
+    assert stored.application.applied_scenario_fingerprint == scenario_fingerprint(
+        [model_to_dict(item) for item in scenarios]
+    )
+    assert session.method_calls[:4] == [
+        call.flush(),
+        *(call.refresh(scenario) for scenario in scenarios),
+    ]
+
+    scenario_repository.fetch_models_by_group_id.side_effect = None
+    scenario_repository.fetch_models_by_group_id.return_value = scenarios
+    operation_repository.fetch_active.return_value = None
+    operation_repository.fetch_latest_by_type.return_value = validation_operation
+    operation_repository.fetch_by_id.return_value = signpost_operation
+
+    def accept_change_set() -> dict[str, object]:
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": SimpleNamespace(
+                        get_sync_session=lambda: session,
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service.ScenarioRepository",
+                return_value=scenario_repository,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service.ScenarioGroupRepository",
+                return_value=group_repository,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service.SignpostRepository",
+                return_value=signpost_repository,
+            ),
+            patch(
+                "apps.persistence.scenario_group_operation.repository.ScenarioGroupOperationRepository",
+                return_value=operation_repository,
+            ),
+            patch.object(ScenarioGroupOperationService, "create_accepted_in_session", return_value=Mock()),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service.new_operation_id",
+                return_value="signpost-op",
+            ),
+        ):
+            return ScenarioService().accept_validation_change_set(scenario_group_id=10, user_id=101)
+
+    accepted = accept_change_set()
+
+    assert accepted["validation_operation_id"] == "validation-op"
+    assert signpost_operation.result_payload["validationOperationId"] == "validation-op"
+
+    scenarios[0].title = "validation 이후 외부 변경"
+    group.stage = "scenario_validated"
+    with pytest.raises(MIBaseError) as error:
+        accept_change_set()
+
+    assert error.value.error_code is ErrorCode.SCENARIO_VALIDATION_STALE
 
 
 def test_v4_signpost_request_accepts_user_id_without_table() -> None:

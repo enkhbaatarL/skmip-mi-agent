@@ -50,10 +50,11 @@ sequenceDiagram
   기본 `view=full`은 전체 상세를 반환한다. `view=table`은 `scenarioGroup` 기본 메타데이터와 `table`만
   반환하며, `dimensionSelected`는 table header label을 결합한 `dimensionKey|label` 형식이다.
   두 view 모두 `scenarioGroup.delYn`을 Scenario Group의 첫 필드로 직렬화한다.
-- `GET /scenario-groups/{scenarioGroupId}/additional-dimensions`: v4 `scenario_created` 그룹의 아직
+- `GET /scenario-groups/{scenarioGroupId}/additional-dimensions`: v4 그룹의 아직
   승격되지 않은 Additional Dimension 후보를 조회한다. `generationStatus`는
   `not_requested|queued|running|ready|failed|interrupted|discarded`, 표시 상태는
-  `pending|ready|unavailable`이다. v1~v3는 400, Dimension 변경이 허용되지 않는 status/stage는 409로 처리한다.
+  `pending|ready|unavailable`이다. v1~v3는 400으로 처리한다. 조회는 lifecycle stage와 무관하게
+  저장된 후보 snapshot을 반환하되, 후보 생성·승격 같은 변경 작업은 각 작업의 stage 제한을 유지한다.
 - `GET /scenario-groups/{scenarioGroupId}/presentation`: v1/v3/v4 차이를 흡수한 화면 전용 세 section read model 반환
 - `DELETE /scenario-groups/{scenarioGroupId}`: soft delete. queued/running operation이 있으면 HTTP 409
 - `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}`: polling용 operation JSON
@@ -69,6 +70,7 @@ DB polling과 분리한다. master row 조회가 일시적으로 실패해도 su
 
 `GET /scenario-groups/{scenarioGroupId}/additional-dimensions`는 request body와 query parameter가 없다.
 GET은 저장된 후보만 읽으며 LLM 호출, background enqueue, 정식 Dimension 변경을 하지 않는다.
+검증 후 수정·재검증 흐름을 지원하기 위해 `scenario_validated` 이후에도 동일한 저장 후보를 조회할 수 있다.
 
 ```json
 {
@@ -121,7 +123,6 @@ unused question이 없거나 LLM이 명시적으로 빈 `dimensions`를 반환�
 | --- | --- |
 | 404 | Scenario Group이 없음 |
 | 400 | v4 `multi_event_model_lever_dimensions` 그룹이 아님 |
-| 409 | status/stage가 `creating/scenario_created`가 아님 |
 
 ### 화면 전용 Presentation API
 
@@ -161,6 +162,9 @@ Scenario Group과 operation type으로 결정론적으로 만들고 모든 inser
 operation event는 `accepted`, `phase_started`, `retrying`, `validated`, `section_ready`,
 `completed`, `failed`, `interrupted`를 사용한다. 실패 draft 원문은 event/presentation에 저장하지 않고
 validation code, reference ID, 사용자 메시지만 저장한다.
+`event_analysis`의 Event 영향 분석이 검증되고 2개 이상의 Event에 영향 경로가 있으면 `validated` 문구로
+이어서 `Event 상호작용 분석`을 시작함을 안내한다. 상호작용 재시도는 `eventType=retrying`과 기존
+`phase=event_analysis`를 유지하면서 제목과 메시지에 `Event 상호작용 분석` 용어를 사용한다.
 
 producer는 기본 30초마다 operation heartbeat를 갱신한다. lifespan recovery monitor는 시작 직후와
 이후 기본 30초마다 stale active operation을 확인하고, heartbeat가 기본 120초 이상 갱신되지 않은

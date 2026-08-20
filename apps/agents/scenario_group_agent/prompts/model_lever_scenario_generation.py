@@ -87,8 +87,8 @@ V4_SCENARIO_SYSTEM_PROMPT = (
 현재 단계에서는 공통 영향, Interaction, Dimension 질문과 선택지를 변경하지 말고 대표 Scenario
 3~5개를 합성하십시오. 각 Scenario는 모든 질문에 정확히 하나씩 답하고, 서로 구분되는 핵심 전제 조합과
 결과 전달 경로를 가져야 합니다. narrative는 주요 조건과 최종 JKM 전달 경로를 두 문장으로 설명하십시오.
-루트 그룹 title과 description은 원본 이벤트를 대표하는 한국어 메타데이터로 작성하고, 영문 Event·Scenario를
-사용하지 마십시오. description에는 `입력 사실`과 `JKM`을 사용하지 마십시오.
+루트 그룹 title·description은 원본 이벤트와 검증된 분석을 대표하는 한국어 메타데이터로 작성하십시오.
+영문 Event·Scenario를 사용하지 말고 description에는 `입력 사실`과 `JKM`을 사용하지 마십시오.
 probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
 """
 )
@@ -665,9 +665,14 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 루트 title은 20~60자의 한국어로 작성합니다. 여러 이벤트이면 위 이벤트에서 사용자가 검색할 만한\n"
         "  구체적인 대상·지역·지표·변화 2~3개를, 단일 이벤트이면 대표 요소 1개를 제목에 직접 반영합니다.\n"
         "  `JKM 대표 전개`, `합성 초안`, `복수 이벤트 시나리오`처럼 생성 목적만 표현하지 않습니다.\n"
-        "- 루트 description은 이미 발생한 사건을 `이벤트`, 미래 분기를 `시나리오`로 지칭하고, 이벤트의 핵심\n"
-        "  내용과 지속·회복·확대 등 시나리오를 구분하는 조건을 자연스러운 한국어로 요약합니다.\n"
-        "  루트 title과 description에는 영문 `Event`, `Scenario`를 쓰지 않습니다. description에는\n"
+        "  `선택 MI Event`, `모델 영향 레버`, `복수 이벤트 시나리오`처럼 생성 방식 중심의 일반 문구를 쓰지 않습니다.\n"
+        "- 루트 description은 정확히 두 문장으로 작성합니다. 첫 문장은 관측된 이벤트 사실을 직접 서술하고\n"
+        "  `반영한다`, `바탕으로 한다`, `정리한다` 같은 메타 표현을 쓰지 않습니다. 둘째 문장은 Dimension 이름을\n"
+        "  나열하지 않고 충격의 지속·전달·증폭과 대체·회복·상쇄 같은 인과 묶음으로 핵심 분기를 설명합니다.\n"
+        "- description의 인과 관계는 검증된 Event fact, impact path, interaction, Dimension에 있는 내용만 사용합니다.\n"
+        "  독립 이벤트에는 임의의 상호작용을 만들지 않습니다. 발생한 사건은 `이벤트`, 미래 분기는 `시나리오`로\n"
+        "  지칭합니다. 영문 `Event`, `Scenario`를 쓰지 않습니다. 이 규칙은 루트 title과 description에\n"
+        "  모두 적용합니다. description에는\n"
         "  `입력 사실`과 `JKM`을 쓰지 않습니다.\n"
         "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
         "- choices에는 각 D의 V를 정확히 하나씩 `D1.V1` 형식으로 선택합니다.\n"

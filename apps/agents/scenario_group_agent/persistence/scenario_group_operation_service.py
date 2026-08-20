@@ -236,23 +236,17 @@ class ScenarioGroupOperationService:
                         detail="Validation 실행 중 Scenario 또는 정식 Dimension definition이 변경되었습니다.",
                     )
 
-                formal_definitions = [
-                    item for item in (group.dimension_definitions or []) if isinstance(item, dict)
-                ]
+                formal_definitions = [item for item in (group.dimension_definitions or []) if isinstance(item, dict)]
                 formal_by_id = {
-                    str(item.get("dimension_id") or item.get("dimensionId") or ""): item
-                    for item in formal_definitions
+                    str(item.get("dimension_id") or item.get("dimensionId") or ""): item for item in formal_definitions
                 }
                 current_selected = [str(item) for item in (getattr(group, "dimension_selected", None) or [])]
-                requested_ids = list(
-                    result_payload.requested_dimension_ids
-                    or current_selected
-                    or formal_by_id
-                )
+                requested_ids = list(result_payload.requested_dimension_ids or current_selected or formal_by_id)
                 current_selected_set = set(current_selected)
-                if current_selected and [
-                    item for item in requested_ids if item in current_selected_set
-                ] != current_selected:
+                if (
+                    current_selected
+                    and [item for item in requested_ids if item in current_selected_set] != current_selected
+                ):
                     raise MIBaseError(
                         ErrorCode.SCENARIO_VALIDATION_STALE,
                         detail="Validation 실행 중 Dimension header 순서가 변경되었습니다.",
@@ -312,9 +306,7 @@ class ScenarioGroupOperationService:
                         for definition in (group.dimension_definitions or [])
                         if isinstance(definition, dict)
                         for source_id in (
-                            definition.get("source_uncertainty_ids")
-                            or definition.get("sourceUncertaintyIds")
-                            or []
+                            definition.get("source_uncertainty_ids") or definition.get("sourceUncertaintyIds") or []
                         )
                     }
                     for candidate_id in promoted_ids:
@@ -419,8 +411,11 @@ class ScenarioGroupOperationService:
                         "mod_usr_logn_id": user_id,
                     },
                 )
+                session.flush()
+                for scenario in active_scenarios:
+                    session.refresh(scenario)
                 applied_fingerprint = scenario_fingerprint(
-                    [scenario_repository.model_to_dict(item) for item in active_scenarios]
+                    [scenario_repository.model_to_dict(item) for item in active_scenarios],
                 )
                 result_payload.application = ValidationApplicationPayload(
                     applied_at=datetime.now(UTC),

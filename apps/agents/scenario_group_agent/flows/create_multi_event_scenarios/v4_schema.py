@@ -634,8 +634,9 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
         min_length=1,
         max_length=600,
         description=(
-            "발생한 사건은 '이벤트', 미래 분기는 '시나리오'로 표현하고 이벤트 내용과 분기 조건을 요약한 "
-            "시나리오 그룹 설명. 영문 Event/Scenario, '입력 사실', JKM은 사용하지 않음"
+            "첫 문장은 관측된 이벤트 사실을 직접 서술하고, 둘째 문장은 검증된 충격의 지속·전달·증폭과 "
+            "대체·회복·상쇄를 중심으로 핵심 분기를 설명하는 두 문장. Dimension 이름을 나열하거나 독립 이벤트의 "
+            "상호작용을 만들지 않으며 영문 Event/Scenario, '입력 사실', JKM은 사용하지 않음"
         ),
     )
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
@@ -644,6 +645,7 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
 
 class V4GenerationResult(ApiModel):
     group_title: str = Field(min_length=1)
+    group_summary: str = Field(min_length=1, max_length=300)
     group_description: str = Field(min_length=1)
     impact_analysis: V4EventImpactAnalysisResult
     dimension_definitions: list[V4DimensionDefinition] = Field(min_length=3, max_length=6)
@@ -1783,6 +1785,7 @@ def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> No
 def finalize_v4_generation_result(
     synthesis: V4ScenarioSynthesisResult,
     *,
+    group_summary: str,
     impact_analysis: V4EventImpactAnalysisResult,
     dimension_design: V4DimensionDesignResult,
     impact_levers: list[ModelImpactLeverPayload],
@@ -1803,6 +1806,7 @@ def finalize_v4_generation_result(
     )
     result = V4GenerationResult(
         group_title=synthesis.group_title,
+        group_summary=group_summary,
         group_description=synthesis.group_description,
         impact_analysis=impact_analysis,
         dimension_definitions=dimension_design.dimension_definitions,
