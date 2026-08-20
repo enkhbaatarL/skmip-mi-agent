@@ -133,6 +133,21 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             stmt = stmt.with_for_update()
         return list(self.session.execute(stmt).scalars().all())
 
+    def fetch_v4_scenario_created_groups(self, *, limit: int = 50) -> list[MiScenarioGroupModel]:
+        stmt = (
+            select(MiScenarioGroupModel)
+            .where(
+                MiScenarioGroupModel.api_version == "v4",
+                MiScenarioGroupModel.generation_strategy == "multi_event_model_lever_dimensions",
+                MiScenarioGroupModel.status == "creating",
+                MiScenarioGroupModel.stage == "scenario_created",
+                MiScenarioGroupModel.del_yn == "N",
+            )
+            .order_by(MiScenarioGroupModel.scenario_group_id)
+            .limit(limit)
+        )
+        return list(self.session.execute(stmt).scalars().all())
+
     def fetch_event_ids_by_group_ids(
         self,
         scenario_group_ids: list[int],

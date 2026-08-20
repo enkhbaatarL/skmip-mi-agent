@@ -9,6 +9,11 @@ import re
 from typing import Any
 import unicodedata
 
+from apps.agents.scenario_group_agent.flows.add_dimension.nodes import filter_available_candidates
+from apps.agents.scenario_group_agent.utils.dimension_values import (
+    build_dimension_value_catalog,
+    canonicalize_dimension_value,
+)
 from apps.persistence.scenario_group_operation.schema import ValidationCheckPayload
 
 
@@ -106,6 +111,10 @@ class V4ValidationAnalysis:
     checks: list[ValidationCheckPayload] = field(default_factory=list)
     base_scenario_fingerprint: str = ""
     dimension_definition_fingerprint: str = ""
+    base_dimension_definition_fingerprint: str = ""
+    requested_dimension_definitions: list[dict[str, Any]] = field(default_factory=list)
+    promoted_dimension_ids: list[str] = field(default_factory=list)
+    candidate_source_fingerprint: str | None = None
 
     @property
     def blocking(self) -> bool:
@@ -217,20 +226,56 @@ def analyze_v4_validation_request(  # noqa: C901
     generation_diagnostics: dict[str, Any],
     stored_header_order: list[str] | None = None,
 ) -> V4ValidationAnalysis:
-    expected_headers, value_ids_by_dimension, labels_by_dimension = _definition_indexes(dimension_definitions)
+    formal_definitions = [item for item in dimension_definitions if isinstance(item, dict)]
+    generation = _get(
+        generation_diagnostics,
+        "additional_dimension_generation",
+        "additionalDimensionGeneration",
+    ) or {}
+    raw_candidates = _get(
+        generation_diagnostics,
+        "additional_dimension_candidates",
+        "additionalDimensionCandidates",
+    ) or []
+    candidates = (
+        filter_available_candidates(
+            [item for item in raw_candidates if isinstance(item, dict)],
+            dimension_selected=stored_header_order or [],
+            active_definitions=formal_definitions,
+        )
+        if isinstance(generation, dict) and generation.get("status") == "ready"
+        else []
+    )
+    effective_by_id = {
+        str(_get(item, "dimension_id", "dimensionId")): item for item in [*formal_definitions, *candidates]
+    }
     base_fingerprint = scenario_fingerprint(persisted_scenarios)
-    definition_fingerprint = dimension_definition_fingerprint(dimension_definitions)
     analysis = V4ValidationAnalysis(
         canonical_headers=[],
         canonical_rows=[],
         changed_rows=[],
         deleted_scenario_ids=[],
         base_scenario_fingerprint=base_fingerprint,
-        dimension_definition_fingerprint=definition_fingerprint,
+        base_dimension_definition_fingerprint=dimension_definition_fingerprint(formal_definitions),
+        candidate_source_fingerprint=(
+            str(generation.get("source_fingerprint") or generation.get("sourceFingerprint"))
+            if isinstance(generation, dict)
+            and (generation.get("source_fingerprint") or generation.get("sourceFingerprint"))
+            else None
+        ),
     )
     raw_headers = request_table.get("headers") or []
     header_ids = [str(header.get("key") or "").strip() for header in raw_headers if isinstance(header, dict)]
     analysis.canonical_headers = header_ids
+    requested_definitions = [effective_by_id[item] for item in header_ids if item in effective_by_id]
+    analysis.requested_dimension_definitions = requested_definitions
+    analysis.dimension_definition_fingerprint = dimension_definition_fingerprint(requested_definitions)
+    candidate_ids = {
+        str(_get(item, "dimension_id", "dimensionId")) for item in candidates
+    }
+    analysis.promoted_dimension_ids = [item for item in header_ids if item in candidate_ids]
+    _requested_headers, value_ids_by_dimension, labels_by_dimension = _definition_indexes(requested_definitions)
+    requested_catalog = build_dimension_value_catalog(requested_definitions)
     if len(header_ids) != len(set(header_ids)):
         analysis.checks.append(
             _check(
@@ -240,15 +285,16 @@ def analyze_v4_validation_request(  # noqa: C901
                 detail="Dimension header가 중복되었습니다.",
             )
         )
-    unknown_headers = [header for header in header_ids if header not in value_ids_by_dimension]
-    missing_headers = [header for header in expected_headers if header not in set(header_ids)]
-    if unknown_headers or missing_headers or len(header_ids) != len(expected_headers):
+    unknown_headers = [header for header in header_ids if header not in effective_by_id]
+    required_headers = [str(item) for item in (stored_header_order or [])]
+    missing_headers = [header for header in required_headers if header not in set(header_ids)]
+    if unknown_headers or missing_headers:
         analysis.checks.append(
             _check(
                 "V4_INPUT_HEADERS",
                 status="FAIL",
                 blocking=True,
-                detail="현재 Dimension definition과 header 구성이 일치하지 않습니다.",
+                detail="정식 Dimension과 available candidate 범위를 벗어난 header가 있습니다.",
                 offenders=[
                     *[f"unknown:{item}" for item in unknown_headers],
                     *[f"missing:{item}" for item in missing_headers],
@@ -352,13 +398,14 @@ def analyze_v4_validation_request(  # noqa: C901
         canonical_cells: dict[str, str] = {}
         invalid_cells: list[str] = []
         for dimension_id in header_ids:
-            canonical = _canonical_value(
-                dimension_id,
-                raw_cells.get(dimension_id),
-                value_ids_by_dimension,
-                labels_by_dimension,
-            )
-            if canonical is None:
+            try:
+                canonical = canonicalize_dimension_value(
+                    requested_catalog,
+                    dimension_id,
+                    raw_cells.get(dimension_id),
+                    allow_label_compatibility=True,
+                )
+            except ValueError:
                 invalid_cells.append(f"{dimension_id}={raw_cells.get(dimension_id)!r}")
             else:
                 canonical_cells[dimension_id] = canonical
@@ -417,14 +464,14 @@ def analyze_v4_validation_request(  # noqa: C901
             analysis.changed_rows.append(row)
 
     analysis.deleted_scenario_ids = sorted(set(persisted_by_id) - seen_ids)
-    expected_order = stored_header_order or expected_headers
-    if header_ids != expected_order:
+    preserved_existing_order = [item for item in header_ids if item in set(stored_header_order or [])]
+    if preserved_existing_order != list(stored_header_order or []):
         analysis.checks.append(
             _check(
                 "V4_HEADER_ORDER",
                 status="FAIL",
                 blocking=True,
-                detail="Dimension header 순서가 Create 결과와 일치하지 않습니다.",
+                detail="기존 Dimension header의 상대 순서가 저장된 순서와 일치하지 않습니다.",
                 offenders=header_ids,
             )
         )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from functools import lru_cache
 import time
 from typing import Any
@@ -152,25 +151,7 @@ def _validation_table_for_output(
     group_payload = group.model_dump() if isinstance(group, ScenarioGroupPayload) else group
     if group_payload.get("generation_strategy") != V4_GENERATION_STRATEGY:
         return request_table_payload
-    table = deepcopy(request_table_payload)
-    labels_by_dimension: dict[str, dict[str, str]] = {}
-    for definition in group_payload.get("dimension_definitions") or []:
-        if not isinstance(definition, dict):
-            continue
-        dimension_id = str(definition.get("dimension_id") or definition.get("dimensionId") or "")
-        labels_by_dimension[dimension_id] = {
-            str(value.get("value_id") or value.get("valueId")): str(value.get("label") or "")
-            for value in definition.get("values") or []
-            if isinstance(value, dict) and (value.get("value_id") or value.get("valueId"))
-        }
-    for row in table.get("rows") or []:
-        if not isinstance(row, dict) or not isinstance(row.get("cells"), dict):
-            continue
-        for dimension_id, raw_value in list(row["cells"].items()):
-            label = labels_by_dimension.get(str(dimension_id), {}).get(str(raw_value))
-            if label:
-                row["cells"][dimension_id] = label
-    return table
+    return request_table_payload
 
 
 @lru_cache(maxsize=1)

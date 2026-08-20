@@ -178,7 +178,9 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     for result in (v3, v4):
         payload = result.model_dump(mode="json", by_alias=True)
         assert set(payload["sections"]) == {"eventAnalysis", "scenarioDesign", "roleSelectionRationale"}
-        assert payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cells"] == {"d1": "상승"}
+        assert payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cells"] == {
+            "d1": "d1_v1"
+        }
         assert (
             payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cellEvidence"]["d1"]["valueId"]
             == "d1_v1"
@@ -626,7 +628,7 @@ def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
                     "scenarioId": 2056,
                     "displayOrder": 1,
                     "title": "Scenario <img src=x onerror=alert(1)>",
-                    "cells": {"d1": "상승"},
+                    "cells": {"d1": "d1_v1"},
                 },
             ],
         },
@@ -675,7 +677,7 @@ def test_follow_up_signpost_draft_always_includes_table_for_all_engine_versions(
         assert result.signpost_request_body is not None
         assert result.signpost_request_body.table is not None
         assert result.signpost_request_body.table.rows[0].scenario_id is None
-        assert result.signpost_request_body.table.rows[0].cells == {"d1": "상승"}
+        assert result.signpost_request_body.table.rows[0].cells == {"d1": "d1_v1"}
 
 
 def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selection() -> None:
@@ -706,7 +708,7 @@ def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selecti
     assert response.status_code == 200
     assert latest_response.status_code == 200
     assert response.json()["validationRequestBody"]["userId"] == 10603
-    assert response.json()["signpostRequestBody"]["table"]["rows"][0]["cells"] == {"d1": "상승"}
+    assert response.json()["signpostRequestBody"]["table"]["rows"][0]["cells"] == {"d1": "d1_v1"}
     assert load.call_args_list[0].args == (120,)
     assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
     assert load.call_args_list[1].args == (120,)

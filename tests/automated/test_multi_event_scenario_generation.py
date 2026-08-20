@@ -2568,7 +2568,7 @@ def test_v3_compact_dimension_array_order_controls_table_headers() -> None:
     assert [header.key for header in result.table.headers] == ["zeta", "alpha"]
 
 
-def test_v3_table_resolves_free_value_id_to_user_label() -> None:
+def test_v3_table_preserves_canonical_value_id() -> None:
     group = ScenarioGroupPayload(
         scenario_group_id=10,
         api_version="v3",
@@ -2607,7 +2607,7 @@ def test_v3_table_resolves_free_value_id_to_user_label() -> None:
         ],
     )
 
-    assert result.table.rows[0].cells == {"europe_gas_pull": "3~5GW 감발·흡수 25%"}
+    assert result.table.rows[0].cells == {"europe_gas_pull": "eu_nuke_v3"}
 
 
 def test_validation_creates_pending_mapping_for_free_value() -> None:
@@ -3158,12 +3158,17 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
     session = Mock()
     group = SimpleNamespace(
         scenario_group_id=10,
+        request_usr_id=7,
         generation_strategy="multi_event_composite_dimensions",
         parameter_mapping_ready=True,
+        dimension_selected=["tightness"],
         dimension_definitions=[
             {
                 "dimension_id": "tightness",
                 "label": "수급 긴축",
+                "values": [
+                    {"value_id": "tightness_v1", "label": "사용자 승인 값"},
+                ],
             },
         ],
         event_type_l2_id=None,
@@ -3174,6 +3179,7 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
         display_order=1,
         baseline_yn="Y",
         mod_usr_logn_id=7,
+        dimension_values={"tightness": "tightness_v1"},
     )
     signpost = SimpleNamespace(
         signpost_id=1000,
@@ -3225,10 +3231,11 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
             10,
             {"title": "복수 Event 확정"},
             {
+                "headers": [{"key": "tightness", "label": "수급 긴축", "display_order": 1}],
                 "rows": [
                     {
                         "scenario_id": 100,
-                        "cells": {"tightness": "사용자 승인 값"},
+                        "cells": {"tightness": "tightness_v1"},
                         "metrics": {
                             "probability_score": 60,
                             "probability_delta": 0,
@@ -3247,9 +3254,7 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
 
     assert result["status"] == "success"
     scenario_update = scenario_repository.update_from_payload.call_args.args[1]
-    assert scenario_update["dimension_values"] == {
-        "tightness": "사용자 승인 값",
-    }
+    assert "dimension_values" not in scenario_update
     legacy_cell_mapping.assert_not_called()
     group_repository.create_confirmation_snapshot.assert_called_once()
     session.commit.assert_called_once()
@@ -3259,6 +3264,7 @@ def test_confirmation_waits_for_multi_event_mapping_approval() -> None:
     session = Mock()
     group_repository = Mock()
     group_repository.fetch_by_id.return_value = SimpleNamespace(
+        request_usr_id=7,
         generation_strategy="multi_event_source_dimensions",
         parameter_mapping_ready=False,
     )

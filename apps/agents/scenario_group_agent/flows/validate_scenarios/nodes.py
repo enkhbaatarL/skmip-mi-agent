@@ -522,15 +522,25 @@ async def _run_v4_scenario_validation(
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="Scenario group is required")
     request_table = state.request_table.model_dump() if state.request_table is not None else {}
     persisted = [_model_or_dict_dump(scenario) for scenario in state.scenarios]
-    definitions = list(state.scenario_group.dimension_definitions or [])
     diagnostics = dict(state.generation_diagnostics or {})
     analysis = analyze_v4_validation_request(
         request_table=request_table,
         persisted_scenarios=persisted,
-        dimension_definitions=definitions,
+        dimension_definitions=list(state.scenario_group.dimension_definitions or []),
         generation_diagnostics=diagnostics,
         stored_header_order=[str(item) for item in state.scenario_group.dimension_selected or []],
     )
+    definitions = analysis.requested_dimension_definitions
+    selected_diagnostics = {
+        key: value
+        for key, value in diagnostics.items()
+        if key not in {
+            "additional_dimension_generation",
+            "additionalDimensionGeneration",
+            "additional_dimension_candidates",
+            "additionalDimensionCandidates",
+        }
+    }
     checks = list(analysis.checks)
     generated_details: list[ValidationGeneratedDetailPayload] = []
     trace_context = runtime.context if runtime is not None else None
@@ -543,11 +553,14 @@ async def _run_v4_scenario_validation(
             scenario_group_id=state.scenario_group_id,
             group=state.scenario_group.model_dump(),
             events=[_model_or_dict_dump(event) for event in state.events],
-            generation_diagnostics=diagnostics,
+            generation_diagnostics=selected_diagnostics,
             requested_rows=[row.as_review_row() for row in analysis.canonical_rows],
             requested_headers=[{"key": key} for key in analysis.canonical_headers],
             persisted_scenarios=persisted,
-            template_dims=[_model_or_dict_dump(dimension) for dimension in state.dimension_template],
+            template_dims=[
+                dimension.model_dump()
+                for dimension in ScenarioService().load_group_dimension_template(definitions)
+            ],
             review_scenario_ids=[row.review_scenario_id() for row in semantic_rows],
         )
         review_output = await get_scenario_review_subgraph().ainvoke(
@@ -583,7 +596,7 @@ async def _run_v4_scenario_validation(
                 ],
                 dimension_definitions=definitions,
                 events=[_model_or_dict_dump(event) for event in state.events],
-                generation_diagnostics=diagnostics,
+                generation_diagnostics=selected_diagnostics,
                 trace_context=trace_context,
             )
             expected_keys = {row.client_row_key for row in generation_targets}
@@ -671,6 +684,11 @@ async def _run_v4_scenario_validation(
         mode=mode,
         base_scenario_fingerprint=analysis.base_scenario_fingerprint,
         dimension_definition_fingerprint=analysis.dimension_definition_fingerprint,
+        base_dimension_definition_fingerprint=analysis.base_dimension_definition_fingerprint,
+        requested_dimension_ids=analysis.canonical_headers,
+        requested_dimension_definitions=definitions,
+        promoted_dimension_ids=analysis.promoted_dimension_ids,
+        candidate_source_fingerprint=analysis.candidate_source_fingerprint,
         validation_result=validation_result,
         scenario_change_set=change_set if can_proceed and mode == "changed" else None,
     )
@@ -687,6 +705,10 @@ async def _run_v4_scenario_validation(
             "checks": [check.model_dump() for check in checks],
         },
         operation_result=operation_result,
+        request_table={
+            "headers": request_table.get("headers") or [],
+            "rows": [row.as_review_row() for row in analysis.canonical_rows],
+        },
     )
 
 

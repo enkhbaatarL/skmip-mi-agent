@@ -140,7 +140,7 @@ GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}
 | `dimensionId` | string | Scenario table의 header/cell과 연결되는 Dimension ID |
 | `label` | string | 화면과 Scenario table header에 표시할 Dimension 이름 |
 | `description` | string | 사용자가 판단해야 할 불확실성을 질문 형태로 설명한 문장 |
-| `rationale` | string | `description`의 관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고 질문 어미만 `...하는지에 따라`로 바꿔 이 Dimension의 선정 근거를 설명하는 10~200자의 구체적인 한국어 문장 |
+| `rationale` | string | `description`의 관측 시점·수치·시장 신호·대상·영향 경로를 유지하고 질문 어미만 `...하는지에 따라`로 바꿔 이 Dimension의 선정 근거를 설명하는 최대 200자의 구체적인 한국어 문장. 최소 길이는 강제하지 않음 |
 | `sourceEventIds` | number[] | Dimension의 근거가 된 Event ID 목록 |
 | `modelSupportStatus` | string \| null | 모델 파라미터 지원 상태 |
 | `source` | string \| null | Dimension 복원 출처. v3·v4에서는 `null`이며, v1 legacy 복원 시에만 식별 문자열을 반환 |

@@ -50,6 +50,10 @@ sequenceDiagram
   기본 `view=full`은 전체 상세를 반환한다. `view=table`은 `scenarioGroup` 기본 메타데이터와 `table`만
   반환하며, `dimensionSelected`는 table header label을 결합한 `dimensionKey|label` 형식이다.
   두 view 모두 `scenarioGroup.delYn`을 Scenario Group의 첫 필드로 직렬화한다.
+- `GET /scenario-groups/{scenarioGroupId}/additional-dimensions`: v4 `scenario_created` 그룹의 아직
+  승격되지 않은 Additional Dimension 후보를 조회한다. `generationStatus`는
+  `not_requested|queued|running|ready|failed|interrupted|discarded`, 표시 상태는
+  `pending|ready|unavailable`이다. v1~v3는 400, Dimension 변경이 허용되지 않는 status/stage는 409로 처리한다.
 - `GET /scenario-groups/{scenarioGroupId}/presentation`: v1/v3/v4 차이를 흡수한 화면 전용 세 section read model 반환
 - `DELETE /scenario-groups/{scenarioGroupId}`: soft delete. queued/running operation이 있으면 HTTP 409
 - `GET /scenario-groups/{scenarioGroupId}/operations/{operationId}`: polling용 operation JSON
@@ -60,6 +64,64 @@ worker에서는 operation별 shared watcher가 `latestSequence`만 1초에서 �
 polling하고, sequence가 증가할 때만 subscriber cursor 이후 event history를 읽는다. keepalive는
 DB polling과 분리한다. master row 조회가 일시적으로 실패해도 subscriber가 남아 있는 동안 watcher를
 유지하고 최대 5초의 지수 backoff로 재시도한다.
+
+### Additional Dimension 조회
+
+`GET /scenario-groups/{scenarioGroupId}/additional-dimensions`는 request body와 query parameter가 없다.
+GET은 저장된 후보만 읽으며 LLM 호출, background enqueue, 정식 Dimension 변경을 하지 않는다.
+
+```json
+{
+  "status": "success",
+  "message": "성공",
+  "data": {
+    "scenarioGroupId": 12345,
+    "generationStatus": "ready",
+    "dimensionDefinitions": {
+      "status": "ready",
+      "items": [
+        {
+          "dimensionId": "ad_1",
+          "label": "공급 확대 지속성",
+          "description": "공급 확대가 얼마나 지속되는가?",
+          "rationale": "공급 분기 기준",
+          "sourceEventIds": [101],
+          "modelSupportStatus": "full",
+          "values": [
+            {
+              "valueId": "ad_1_v1",
+              "label": "단기 종료",
+              "rationale": "공급 효과가 제한되는 가정",
+              "pressureContribution": "balanced",
+              "leverStates": []
+            }
+          ]
+        }
+      ]
+    },
+    "availableCount": 1,
+    "updatedAt": "2026-08-19T10:00:20Z",
+    "errorCode": null
+  }
+}
+```
+
+`queued|running`은 HTTP 200과 `dimensionDefinitions.status=pending`, 빈 `items`를 반환한다.
+`failed|interrupted|discarded|not_requested`도 조회는 200이며 `status=unavailable`, 빈 `items`다.
+`ready`이면서 후보가 0개인 경우도 정상 응답이다. 내부 source path/question/Lever lineage는
+응답에 노출하지 않는다.
+
+unused question이 없거나 LLM이 명시적으로 빈 `dimensions`를 반환한 경우는 `ready + 빈 items`다. LLM이
+후보를 반환한 경우에는 item 단위로 검증해 일부 유효 후보를 보존하고 재시도하지 않는다. 반환 후보가 모두
+탈락한 batch만 탈락 reason feedback과 1초·2초 backoff로 최대 3회 시도한다. 세 번 모두 전부 탈락하면
+`generationStatus=failed`, `dimensionDefinitions.status=unavailable`,
+`errorCode=ADDITIONAL_DIMENSION_CANDIDATES_INVALID`를 반환한다. 공개 response shape은 변경하지 않는다.
+
+| HTTP | 조건 |
+| --- | --- |
+| 404 | Scenario Group이 없음 |
+| 400 | v4 `multi_event_model_lever_dimensions` 그룹이 아님 |
+| 409 | status/stage가 `creating/scenario_created`가 아님 |
 
 ### 화면 전용 Presentation API
 
@@ -75,7 +137,7 @@ v4 `roleSelectionRationale`의 사용자 표시 문구는 현재 모델 영향 L
 적용하며, label을 찾지 못한 code는 원문을 유지한다. Lever label은 화면 표시 메타데이터이므로 변경되면
 Presentation 결과와 ETag도 함께 변경된다.
 동적 문자열의 raw HTML은 escape하며 렌더링 결과 자체는 DB에 저장하지 않는다. 새 v4 Dimension의
-10~200자 선택 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
+최대 200자의 구체적인 선정 근거는 공통 Dimension `rationale`로 반환하며, 과거 v4 데이터에 근거가 없으면 `null`을 유지한다.
 v3의 `derivationRationale`와 v4의 `assumptionRationale`는 공통 Dimension value `rationale`로 변환한다.
 v4 Dimension value의 `description`은 저장된 명시값이 없으면 검증된 `leverStates`의
 `timeWindow`, `scope`, `level`, `direction`을 입력 순서대로 문장화해 Presentation에서만 생성한다.
@@ -178,6 +240,10 @@ Swagger에서는 Presentation 후속 request body 생성 QA API와 함께 `scena
   - v4와 같은 요청 계약으로 테스트·비교용 완료 응답을 동기 반환
   - `generationDiagnostics`에 Event 상호작용, covered/uncovered dimension,
     unsupported lever와 전체 parameter coverage 상태를 포함
+  - Scenario persistence 완료 후 Additional Dimension lifecycle을 `queued` 또는 `ready`로 저장한다.
+    `queued`이면 lifespan task runner에 background 생성을 제출하고, sync 응답은 기다리지 않고
+    `generationDiagnostics.additionalDimensionGeneration`에 현재 상태를 포함해 반환한다.
+  - background LLM trace는 `api_identifier=add_dimension`, `api_version=v4_b1`을 사용한다.
 - `POST /scenario-groups/{scenarioGroupId}/validation/sync`
   - 기존 validation prepare 및 검증 graph를 동기 실행
   - Response: `ValidateScenariosOut`
@@ -218,8 +284,10 @@ LLM 없이 구성한 compact EventShock,
 `sourceRefs`를 가지며 value에는 `valueId`, `label`, `pressureContribution`,
 `description`, `derivationRationale`을 포함한다. 신규 두 value 필드는 과거 저장 데이터와의
 호환을 위해 nullable이지만 새 v3 생성 결과에서는 빈 문자열을 허용하지 않는다.
-v2/v3/v4 `table.rows[].cells`는 저장된 `valueId`가 `dimensionDefinitions[].values[]`와 일치하면
-내부 ID 대신 해당 value의 사용자용 `label`을 표시한다. 과거 순번형 value ID도 같은 label 변환을 유지한다.
+v2/v3/v4를 포함한 모든 `table.rows[].cells`는 `{dimensionId: valueId}`를 반환한다.
+화면 label은 `dimensionDefinitions[].values[].label`, Presentation에서는 `cellEvidence.valueLabel`로만
+표시한다. 과도기에는 동일 Dimension의 정확한 단일 label request를 valueId로 정규화할 수 있지만
+response와 DB에는 valueId만 남긴다.
 v3 `generationDiagnostics.templateDimensionSelections`는 Event별 Template 후보의
 `relevanceType`, `observedBasis`, `selectionRationale`, 서버가 hydrate한 label·description·required,
 enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dimension에서 사용되지 않은 후보는
@@ -227,9 +295,10 @@ enum 예시와 `usedInDimensionIds`를 반환한다. 선택됐지만 합성 dime
 v4의 각 dimension은 `rationale`, `sourceEventIds`, `sourceImpactPathIds`, `sourceUncertaintyIds`,
 `primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`, `values`를 포함한다.
 화면용 `label`은 열린 질문인 `description`과 분리되며 핵심 대상과 변화 축을 간결하게 표시한다.
-`rationale`은 `description`의 관측일·분석 기준일·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고
-질문 어미만 `...하는지에 따라` 형태로 바꿔 해당 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 설명하는
-10~200자의 구체적인 한국어 한 문장이다.
+`description`은 열린 질문의 관측일·분석 기준일·수치·시장 신호·대상·영향 경로를 유지한다.
+`rationale`은 `description`의 관측 정보와 영향 경로를 유지한 최대 200자의 구체적인 선정 근거다. 최소 길이는
+강제하지 않는다. Dimension/Choice label은 30자 이내,
+Scenario title은 40자 이내이며 question에는 글자 수 제한을 두지 않는다.
 각 value는 구체적인 방향·수준·범위·기간과 Catalog ID를 가진 `leverStates`,
 `pressureContribution`, `assumptionRationale`을 제공한다. `assumptionRationale`은 관측된 사실을 기반으로
 Value의 미래 상태와 JKM 영향을 간결하게 연결하고 문장 끝의 `가정`으로만 불확실성을 표시한다. 가정 의미를
@@ -242,6 +311,12 @@ v4 `generationDiagnostics`는 실행 전체에서 고정한 `analysisAsOf`, 수�
 `validationWarnings`, `scenarioPressureBreakdowns`를 포함한다. 이 진단은 기존 Scenario Group
 JSON 컬럼에 동일하게 저장하므로 DB migration은 없다. 운영 비동기 완료 callback은 기존
 `scenarioGroup + table` 계약을 유지하며 전체 분석 graph는 v4 sync 응답과 DB 조회에서 확인한다.
+질문·Interaction 개수 초과와 동일 Event Interaction은 LLM 재시도 대신 결정론적으로 제거한다.
+이때 `validationWarnings`에는 각각 `EVENT_OPEN_QUESTION_LIMIT_APPLIED`,
+`INTERACTION_COUNT_LIMIT_APPLIED`, `INTERACTION_OPEN_QUESTION_LIMIT_APPLIED`,
+`SAME_EVENT_INTERACTION_DROPPED` code를 기존 warning 구조 그대로 기록한다. 단일 Event 질문 3개와
+다중 Event 최종 질문 7~10개를 정상 목표로 사용하며, 목표 미달은 `OPEN_QUESTION_TARGET_UNDERSHOT`
+warning만 남기고 보충하지 않는다.
 `eventFacts`의 사실 본문은 `observedBasis` 문장이다. 새 v4 생성 결과는 서버가 부여한 `factId`,
 `eventId`, 원문 발생시각인 `observedAt`만 함께 제공한다. 영향 제외 이유는 `eventExclusions`에만
 저장한다. LLM의 주관적 분류인 `factStatus`와 `confidence`, 과거 `noMaterialImpactReason`은
@@ -664,6 +739,7 @@ Request Body:
 
 ```json
 {
+  "userId": 10603,
   "scenarioGroup": {
     "title": "호르무즈 봉쇄 + 전면전",
     "summary": "단기 공급 차질 및 운임 급등 시나리오",
@@ -682,9 +758,9 @@ Request Body:
         "title": "단기 외교 해결",
         "narrative": "시나리오 내러티브...",
         "cells": {
-          "period_label": "2026.5월 말 (~2개월)",
-          "capacity_change": "15%",
-          "recovery": "4~6주 대다수 재기동"
+          "period_label": "period_label_v1",
+          "capacity_change": "capacity_change_v2",
+          "recovery": "recovery_v1"
         },
         "metrics": {
           "probabilityScore": 75.0,
@@ -710,8 +786,24 @@ Request Body:
 
 | Path | Type | Required | Description |
 | --- | --- | --- | --- |
+| `userId` | number | Y | Scenario Group 소유 사용자 ID |
 | `scenarioGroup` | object | Y | 확정 대상 시나리오 그룹 |
 | `table` | object | Y | 확정 대상 시나리오 테이블(행 + signposts 포함) |
+
+Confirmation의 header 순서와 Scenario ID 집합은 현재 활성 DB 상태와 정확히 같아야 한다.
+각 cell은 해당 Dimension의 valueId여야 하며 request/DB 조합이 다르면
+`SCENARIO_CONFIRMATION_STALE`(409)을 반환한다. Confirmation은 `dimension_values`를 갱신하지 않는다.
+
+기존 label 오염 데이터는 다음 data repair로 Scenario와 confirmation snapshot을 함께 점검한다.
+dry-run이 기본이며 `--apply`를 지정한 경우에만 변경한다. 중복 label·unknown value·definition 누락은
+자동 변경하지 않고 JSON audit report에 남긴다.
+
+```bash
+poetry run python -m scripts.migrations.20260819_canonicalize_scenario_dimension_value_ids \
+  --report local/reports/dimension_value_repair.json
+poetry run python -m scripts.migrations.20260819_canonicalize_scenario_dimension_value_ids \
+  --apply --report local/reports/dimension_value_repair_apply.json
+```
 
 Response (`ConfirmGenerationOut`)
 

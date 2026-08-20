@@ -8,6 +8,8 @@ from fastapi import APIRouter, BackgroundTasks, Query, Request, Security
 from fastapi.responses import Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 
+from apps.agents.scenario_group_agent.flows.add_dimension.api_schema import AdditionalDimensionsOut
+from apps.agents.scenario_group_agent.flows.add_dimension.flow import get_additional_dimensions
 from apps.agents.scenario_group_agent.flows.confirm_generation.flow import run_confirm_generation
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
     V4MultiEventCreateScenariosIn,
@@ -160,6 +162,15 @@ async def list_scenario_groups(
         stage=stage,
         sort=sort,
     )
+
+
+@router.get(
+    "/scenario-groups/{scenario_group_id}/additional-dimensions",
+    response_model=AdditionalDimensionsOut,
+    summary="미선택 Additional Dimension 후보 조회",
+)
+async def list_additional_dimensions(scenario_group_id: int) -> AdditionalDimensionsOut:
+    return get_additional_dimensions(scenario_group_id)
 
 
 @router.get(

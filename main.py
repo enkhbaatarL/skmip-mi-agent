@@ -27,6 +27,7 @@ INGRESS_PREFIX = os.getenv("OPENAPI_PREFIX", "").rstrip("/")
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from apps.agents.scenario_group_agent.runtime import (
+        get_additional_dimension_task_runner,
         get_scenario_group_operation_event_hub,
         get_scenario_group_operation_recovery_monitor,
         get_scenario_group_operation_task_runner,
@@ -57,6 +58,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     operation_event_hub = get_scenario_group_operation_event_hub()
     operation_task_runner = get_scenario_group_operation_task_runner()
     operation_recovery_monitor = get_scenario_group_operation_recovery_monitor()
+    additional_dimension_task_runner = get_additional_dimension_task_runner()
     await operation_event_hub.start()
     await operation_task_runner.start(
         heartbeat_interval_seconds=cfg.scenario_group_operation_heartbeat_interval_seconds,
@@ -65,11 +67,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         stale_after_seconds=cfg.scenario_group_operation_stale_after_seconds,
         scan_interval_seconds=cfg.scenario_group_operation_reaper_interval_seconds,
     )
+    await additional_dimension_task_runner.start()
     try:
         yield
     finally:
         await operation_recovery_monitor.shutdown()
         await operation_task_runner.shutdown()
+        await additional_dimension_task_runner.shutdown()
         await operation_event_hub.shutdown()
 
 

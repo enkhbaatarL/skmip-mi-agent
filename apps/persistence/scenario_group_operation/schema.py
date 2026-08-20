@@ -112,6 +112,11 @@ class ValidationOperationResultPayload(ApiModel):
     mode: Literal["unchanged", "changed", "blocked"]
     base_scenario_fingerprint: str
     dimension_definition_fingerprint: str
+    base_dimension_definition_fingerprint: str | None = None
+    requested_dimension_ids: list[str] = Field(default_factory=list)
+    requested_dimension_definitions: list[dict[str, Any]] = Field(default_factory=list)
+    promoted_dimension_ids: list[str] = Field(default_factory=list)
+    candidate_source_fingerprint: str | None = None
     validation_result: ValidationResultPayload
     scenario_change_set: ValidationScenarioChangeSetPayload | None = None
     application: ValidationApplicationPayload | None = None

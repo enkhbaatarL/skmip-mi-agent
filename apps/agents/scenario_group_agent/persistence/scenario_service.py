@@ -961,6 +961,7 @@ class ScenarioService:
                             for value in definition.get("values") or []
                             if isinstance(value, dict)
                         ],
+                        "values": list(definition.get("values") or []),
                         "display_order": definition.get(
                             "display_order",
                             999999,
@@ -974,6 +975,30 @@ class ScenarioService:
                 )
             else:
                 raise ValueError("Scenario group dimension definitions are missing")
+            if dimension_definitions:
+                from apps.agents.scenario_group_agent.utils.dimension_values import (
+                    build_dimension_value_catalog,
+                    canonicalize_dimension_cells,
+                )
+
+                header_keys = [
+                    str(header["key"])
+                    for header in table_payload.get("headers", []) or []
+                    if header.get("key")
+                ]
+                catalog = build_dimension_value_catalog(dimension_definitions)
+                rows = [
+                    {
+                        **row,
+                        "cells": canonicalize_dimension_cells(
+                            catalog,
+                            header_keys,
+                            row.get("cells") or {},
+                            allow_label_compatibility=True,
+                        ),
+                    }
+                    for row in rows
+                ]
             new_rows = [row for row in rows if row.get("scenario_id") is None]
             if new_rows and len(new_row_details or []) != len(new_rows):
                 raise ValueError("Generated scenario details are required for every new scenario row")

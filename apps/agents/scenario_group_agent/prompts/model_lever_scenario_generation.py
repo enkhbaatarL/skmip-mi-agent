@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import (
+    event_open_question_budgets,
+    interaction_count_target,
+    interaction_question_budget,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
     StateDirection,
 )
@@ -22,8 +27,10 @@ JKM 가격에 전달되는 영향 문장을 최대 3개 작성하십시오. even
 eventFacts와 impacts는 가급적 1~2개만 작성하고 의미적으로 필요한 경우에만 세 번째 항목을 추가하십시오.
 각 Impact의 evidence도 가급적 1~2개만 포함하고, 같은 경로에 중요한 세 Fact가 모두 필요할 때만 3개를
 사용하십시오. 별도 전달 경로를 만드는 Fact는 다른 Impact로 분리하십시오.
+각 Impact의 leverStates 안에서는 같은 Lever code를 두 번 이상 사용하지 마십시오. 하나의 Lever가 여러 역할이나
+시점에 걸쳐 작동하더라도 가장 대표적인 role·direction·scope·timing 하나로 통합하십시오.
 Fact 후보 문장은 그대로 복사하십시오. 중요한 수치·기간과 분석 기준일을 함께 해석한 판단 근거는
-자연어 decisionBasis 문장으로 최대 3개 작성하고, 결과를 바꿀 열린 질문은 최대 2개만 선택하십시오.
+자연어 decisionBasis 문장으로 최대 3개 작성하고, 결과를 바꿀 열린 질문은 중요도에 따라 선택하십시오.
 Interaction, Dimension, Scenario는 만들지 마십시오."""
 )
 
@@ -33,6 +40,8 @@ V4_INTERACTION_SYSTEM_PROMPT = (
     + """
 검증된 서로 다른 Event의 영향 문장 사이에서 중요한 Interaction만 최대 3개 선택하십시오.
 두 경로가 결합될 때 생기는 추가 효과, JKM 순방향과 영향 기간을 완결된 한국어 문장으로 설명하십시오.
+Interaction과 연결 질문은 Scenario 분기 기여도가 높은 순서로 출력하고, Interaction마다 가장 중요한
+열린 질문을 최대 1개만 작성하십시오.
 중요한 관계가 없으면 빈 배열을 반환하고 Dimension과 Scenario는 만들지 마십시오."""
 )
 
@@ -45,12 +54,29 @@ V4_DIMENSION_SYSTEM_PROMPT = (
 각 Dimension은 화면용 이름과 사용자가 답할 질문을 함께 가져야 합니다. 새 Fact, Path, Interaction 또는
 Lever를 만들지 말고, 선택지에는 비교 가능한 시장·운영 상태와 그 상태가 JKM 압력을 바꾸는 이유를 작성하십시오.
 Dimension rationale은 question의 구체적인 관측 시점·수치·신호·대상·영향 경로를 빠짐없이 유지하고,
-질문 어미만 `...하는지에 따라 ...가 달라짐` 형태로 바꾼 근거 문장으로 작성하십시오. 각 Choice의 why는
+질문 어미만 `...하는지에 따라 ...가 달라짐` 형태로 바꾼 최대 200자의 근거 문장으로 작성하십시오. 각 Choice의 why는
 답이나 응답이 아니라 `관측된 사실 → Choice가 나타내는 미래 상태 → JKM 영향`을 자연스럽게 연결하고
 문장 끝의 `가정`으로 불확실성을 표시하는 간결한 문장입니다. `상태를 ... 가정`처럼 가정이라는
 뜻을 한 문장 안에서 반복하지 마십시오.
 Dimension rationale에서 구체적 근거를 생략하거나 Choice why를 `답`, `응답`, `선택`으로 부르면 잘못된 출력입니다.
 """
+)
+
+
+V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT = (
+    MODEL_LEVER_SYSTEM_PROMPT
+    + f"""
+검증됐지만 초기 Scenario 생성에서 사용하지 않은 열린 질문만 Additional Dimension 후보로 변환하십시오.
+후보 수를 맞추지 말고 의미 있는 질문만 사용하며, 변환할 후보가 없으면 빈 dimensions 배열을 반환하십시오.
+새 Fact, Path, Interaction 또는 Lever를 만들지 말고 하나의 열린 질문을 여러 후보에 중복 사용하지 마십시오.
+각 후보는 화면용 이름, 원본 질문, 최대 200자의 구체적인 선정 근거와 비교 가능한 선택지 2~4개를 가집니다.
+각 Choice의 states 항목은 정확히 `lever|direction|level|scope|timeWindow` 다섯 부분으로 작성하십시오.
+direction은 {StateDirection.prompt_values()} 중 하나만 사용하십시오. 첫 번째 state의 lever는 반드시 Dimension의
+source Lever와 같아야 하며, 한 Choice 안에서 같은 Lever code를 두 번 사용하지 마십시오.
+올바른 예시는
+`liquefaction_availability|increase|feedgas 유입이 설비 가동으로 전환|미국 LNG 수출설비|2026-08-20 이후 단기`입니다.
+Group 441에서 생성된 `LNG 수출 설비로의 가스 유입 증가가 실제 액화설비 가동률과 수출 가능 물량 증가로 이어지는 상태`처럼
+구분자 없이 자연어 문장만 넣은 states는 잘못된 출력입니다."""
 )
 
 
@@ -119,6 +145,8 @@ def build_model_lever_user_prompt(
     impact_levers: list[dict[str, Any]],
     catalog_version: str,
     analysis_as_of: str,
+    selected_event_count: int = 1,
+    open_question_budget: int | None = None,
     validation_feedback: str | None = None,
 ) -> str:
     """Compatibility wrapper for the first v4 analysis prompt."""
@@ -127,8 +155,15 @@ def build_model_lever_user_prompt(
         impact_levers=impact_levers,
         catalog_version=catalog_version,
         analysis_as_of=analysis_as_of,
+        selected_event_count=selected_event_count,
+        open_question_budget=open_question_budget,
         validation_feedback=validation_feedback,
     )
+
+
+def event_open_question_recommendations(event_count: int) -> list[int]:
+    """Compatibility name for the deterministic numeric Event question budgets."""
+    return event_open_question_budgets(event_count)
 
 
 def build_v4_event_impact_analysis_user_prompt(
@@ -137,6 +172,8 @@ def build_v4_event_impact_analysis_user_prompt(
     impact_levers: list[dict[str, Any]],
     catalog_version: str,
     analysis_as_of: str,
+    selected_event_count: int = 1,
+    open_question_budget: int | None = None,
     validation_feedback: str | None = None,
 ) -> str:
     if len(events) != 1:
@@ -150,6 +187,7 @@ def build_v4_event_impact_analysis_user_prompt(
     compact = CompactEventContext.from_event(events[0])
     fact_candidates = build_v4_event_fact_candidates(events[0])
     fact_lines = "\n".join(f"{index}. {fact}" for index, fact in enumerate(fact_candidates.values(), start=1))
+    question_budget = open_question_budget or event_open_question_budgets(selected_event_count)[0]
     return (
         "## 목적\n"
         "Event에서 LNG 시장에 중요한 사실을 고르고, 그 사실이 JKM까지 전달되는 경로와 열린 질문을 설명합니다.\n\n"
@@ -159,6 +197,8 @@ def build_v4_event_impact_analysis_user_prompt(
         f"- 요약: {compact.summary[:240]}\n"
         f"- 발생시각: {compact.occurred_at or '미제공'}\n"
         f"- 분석 기준일: {analysis_as_of}\n\n"
+        f"- 전체 선택 Event 수: {selected_event_count}\n\n"
+        f"- 이번 Event openQuestions 목표·상한: {question_budget}개\n\n"
         "## 핵심 사실 후보\n"
         f"{fact_lines}\n\n"
         f"## 사용할 수 있는 Lever · catalog {catalog_version}\n"
@@ -196,10 +236,19 @@ def build_v4_event_impact_analysis_user_prompt(
         "  증폭·상쇄 경로를 앞의 Impact로 설명할 수 없을 때만 추가합니다.\n"
         "  세 번째 Fact가 별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인을 나타내면 별도 Impact로\n"
         "  분리합니다. 선택한 모든 eventFact는 적어도 하나의 Impact evidence에 사용합니다.\n"
+        "- 동일 Event 안의 원인 → 전달 → 결과 관계는 별도 Impact로 쪼개지 말고 하나의 Impact 안에서\n"
+        "  driver → transmission → primary Lever step으로 표현합니다. JKM 방향·영향 기간·Lever 경로가\n"
+        "  독립적으로 달라 하나의 전달 경로로 설명할 수 있을 때만 추가 Impact를 만듭니다.\n"
         "- leverStates는 Impact마다 가급적 1~2개만 작성하며 `lever|role|direction|scope|timing` 형식입니다.\n"
         "  driver·transmission·primary 세 단계가 모두 중요한 전달 경로일 때만 최대 3개를 작성합니다.\n"
         "  3개를 초과하는 후보가 있으면 실제 전달 경로를 가장 잘 설명하는 중요한 3개만 선택하고,\n"
         "  배열을 채우기 위해 불필요한 Lever를 추가하지 않습니다.\n"
+        "  같은 Impact의 leverStates 안에서 `lever` code는 반드시 서로 달라야 합니다. 동일 Lever code를\n"
+        "  driver·transmission·primary 등 다른 role로 반복하거나 direction·scope·timing만 바꿔 중복 작성하지\n"
+        "  않습니다. 하나의 Lever가 여러 역할·범위·시점에 걸치면 전달 경로를 가장 잘 대표하는 하나의 step으로\n"
+        "  통합합니다. 서로 다른 Impact에서는 같은 Lever code를 다시 사용할 수 있습니다.\n"
+        "  출력 전에 각 Impact의 `lever|role|direction|scope|timing` 값에서 첫 번째 `lever` code를 비교해\n"
+        "  중복이 없는지 반드시 확인합니다.\n"
         "  role은 primary(핵심 변화), driver(선행 원인), transmission(전달 경로) 중 하나입니다.\n"
         f"  direction은 {StateDirection.prompt_values()} 중 하나입니다.\n"
         "- balance는 `domain|direction` 또는 `none` 형식입니다.\n"
@@ -209,9 +258,14 @@ def build_v4_event_impact_analysis_user_prompt(
         "  물리 수급 Lever의 domain이 하나뿐이면 balance에 그 domain을 사용합니다. 여러 물리 domain이 있으면\n"
         "  JKM 전달 경로를 지배하는 domain 하나를 선택하고, 지배적인 domain을 정할 수 없으면 Impact를 나눕니다.\n"
         "  별도의 price 필드는 만들지 않습니다.\n"
-        "- openQuestions는 결과를 가장 크게 바꿀 서로 다른 핵심 질문 최대 2개를 작성하며,\n"
-        "  Impact 번호를 1부터 참조합니다.\n"
-        "  Primary Impact의 규모·기간·회복 시점이 Scenario 결과를 바꾼다면 그 질문을 우선합니다.\n"
+        f"- openQuestions는 Event별 열린 질문 배열이며 이번 Event의 목표이자 상한은 {question_budget}개입니다.\n"
+        "  Scenario 분기 기여도가 높은 중요한 질문부터 출력합니다. 목표보다 적더라도 의미가 중복되거나 분기력이\n"
+        "  낮은 질문으로 개수를 억지로 채우지 않습니다. Impact 번호는 1부터 참조합니다.\n"
+        "- high importance Impact는 결과를 실제로 다르게 만드는 판단 축이 여러 개면 복수 질문을 허용합니다.\n"
+        "  특히 Primary Impact의 규모·기간·회복 시점 중 실제 Scenario 분기를 만드는 축을 우선 검토합니다.\n"
+        "  medium은 일반적으로 1~2개, low는 독립적인 Scenario 분기를 만들 때만 0~1개를 작성합니다.\n"
+        "  Primary Impact와 high importance Impact를 우선하되 같은 불확실성을 magnitude·timing·duration으로\n"
+        "  기계적으로 나누지 않습니다. 상한을 넘는 질문은 서버가 출력 순서대로 제거합니다.\n"
         "  이미 확인된 사실을 다시 질문하지 않습니다.\n"
         "  분석 기준일에 이미 지난 목표는 미래 선택지처럼 묻지 말고, 현재 남은 제약과 앞으로의 해소 시점을 묻습니다.\n"
         "  lever는 반드시 해당 Impact의 leverStates에 실제로 쓴 Lever code 중 하나를 글자까지 그대로 복사합니다.\n"
@@ -224,6 +278,9 @@ def build_v4_event_impact_analysis_user_prompt(
 def build_v4_interaction_analysis_user_prompt(
     *,
     impact_paths: list[dict[str, Any]],
+    event_question_count: int = 0,
+    event_count: int | None = None,
+    events: list[dict[str, Any]] | None = None,
     validation_feedback: str | None = None,
 ) -> str:
     feedback = _feedback(
@@ -231,20 +288,33 @@ def build_v4_interaction_analysis_user_prompt(
         validation_feedback,
         "검증된 Path ID는 유지하고 잘못된 관계만 수정하십시오.",
     )
-    path_cards = []
+    path_cards_by_event: dict[int, list[str]] = {}
+    event_order: list[int] = []
+    event_path_counts: dict[int, int] = {}
     seen_event_ids: set[object] = set()
-    for index, path in enumerate(impact_paths, start=1):
-        event_id = path.get("event_id")
-        path_role = "Primary Impact" if event_id not in seen_event_ids else "Supporting Impact"
+    for path in impact_paths:
+        event_id = int(path.get("event_id"))
+        if event_id not in event_path_counts:
+            event_path_counts[event_id] = 0
+            event_order.append(event_id)
+        event_path_counts[event_id] += 1
+        alias = f"E{event_id}-P{event_path_counts[event_id]}"
+        lever_steps = path.get("lever_steps") or []
+        path_role = (
+            "Primary Impact"
+            if any(step.get("path_role") == "primary" for step in lever_steps)
+            or (not lever_steps and event_id not in seen_event_ids)
+            else "Supporting Impact"
+        )
         seen_event_ids.add(event_id)
         lever_text = ", ".join(
             f"{step.get('lever_code')} {step.get('state_direction')} ({step.get('scope')}, {step.get('timing')})"
             for step in path.get("lever_steps") or []
         )
-        path_cards.append(
+        path_cards_by_event.setdefault(event_id, []).append(
             "\n".join(
                 [
-                    f"### [P{index}] Event {event_id}",
+                    f"### [{alias}]",
                     f"- 역할: {path_role}",
                     f"- 영향: {str(path.get('mechanism') or '')[:240]}",
                     f"- Lever: {lever_text}",
@@ -252,22 +322,55 @@ def build_v4_interaction_analysis_user_prompt(
                 ],
             ),
         )
+    event_details = {int(item.get("mi_event_id")): item for item in events or [] if item.get("mi_event_id") is not None}
+    path_sections: list[str] = []
+    for event_id in event_order:
+        event = event_details.get(event_id, {})
+        title = str(event.get("event_title_ko") or event.get("title") or "제목 미제공")
+        summary = str(event.get("one_line_summary") or event.get("summary") or "요약 미제공")
+        path_sections.append(
+            f"## Event {event_id} · {title[:120]}\n"
+            f"- 요약: {summary[:240]}\n\n" + "\n\n".join(path_cards_by_event[event_id]),
+        )
+    selected_event_count = event_count if event_count is not None else len(event_order)
+    interaction_minimum, interaction_maximum = interaction_count_target(selected_event_count)
+    question_budget = interaction_question_budget(
+        retained_interaction_count=interaction_maximum,
+        retained_event_question_count=event_question_count,
+    )
+    interaction_target = (
+        str(interaction_maximum)
+        if interaction_minimum == interaction_maximum
+        else f"{interaction_minimum}~{interaction_maximum}"
+    )
     return (
         "## 목적\n"
         "서로 다른 Event의 영향 경로가 결합될 때 생기는 추가 효과와 열린 질문을 찾습니다.\n\n"
         "## 검증된 영향 경로\n"
-        f"{'\n\n'.join(path_cards)}\n\n"
+        f"{'\n\n'.join(path_sections)}\n\n"
+        "## Interaction 개수 목표\n"
+        f"- 의미 있는 Interaction 목표: {interaction_target}개\n"
+        f"- Interaction 상한: {interaction_maximum}개\n\n"
+        "## 기존 Event 열린 질문\n"
+        f"- 실제 Event openQuestions 수: {event_question_count}개\n"
+        f"- Interaction openQuestions 전체 상한: {question_budget}개\n\n"
         "## 이번 단계의 질문\n"
         "- 두 경로가 단순히 같은 방향입니까, 아니면 증폭·상쇄·인과 연결 같은 추가 효과가 있습니까?\n"
         "- 결합 효과의 크기나 기간을 바꾸는 미결정 변수는 무엇입니까?\n\n"
         "## 출력 규칙\n"
-        "- paths에는 위 P 번호만 사용하고 서로 다른 Event의 경로만 연결합니다.\n"
+        "- paths에는 위 E{Event ID}-P{번호} 별칭만 사용하고 서로 다른 Event의 경로만 연결합니다.\n"
         "- 각 Event의 Primary Impact가 포함된 결합을 먼저 검토합니다. 다만 실제 추가 효과가 있을 때만\n"
         "  Interaction을 만들며, 단순히 Primary라는 이유로 관계를 만들어내지 않습니다.\n"
         "- analysis는 결합으로 새로 생기는 시장 효과와 JKM의 순방향·영향 기간을 한 문장으로 설명합니다.\n"
         "- 별도의 price 필드는 만들지 않습니다.\n"
+        "- interactions는 Scenario 분기 기여도가 높은 순서로 출력합니다. 상한을 넘는 Interaction은 서버가\n"
+        "  출력 순서대로 제거하며, 목표보다 적더라도 의미 없는 관계를 만들어 채우지 않습니다.\n"
         "- 중요한 Interaction이 없으면 interactions와 openQuestions를 빈 배열로 둡니다.\n"
-        "- openQuestions는 전체 Interaction 중 결과를 가장 크게 바꿀 핵심 질문 최대 1개만 작성합니다.\n"
+        f"- Interaction openQuestions는 전체 최대 {question_budget}개이며 각 Interaction에는 가장 중요한 질문을\n"
+        "  최대 1개만 작성합니다. 질문도 연결된 Interaction의 중요도 순서에 맞춰 출력합니다. Interaction 질문은\n"
+        "  교차 Event 효과가 새로운 Scenario 분기를 만들 때만 작성하고 relation=independent에는 작성하지 않습니다.\n"
+        "  목표보다 적더라도 의미가 중복되거나 분기력이 낮은 질문을 추가하지 않습니다. 상한을 넘는 질문은\n"
+        "  서버가 출력 순서대로 제거합니다.\n"
         "  interaction은 Interaction 배열의 1부터 시작하는 번호입니다.\n"
         "  lever는 해당 Interaction의 paths 카드에 표시된 Lever code 중 하나를 글자까지 그대로 복사합니다.\n"
         "  질문에 필요한 Lever가 그 paths에 없으면 다른 Lever로 바꾸지 말고 그 질문을 생략합니다.\n"
@@ -333,6 +436,21 @@ def build_v4_dimension_design_user_prompt(
         validation_feedback,
         "검증된 열린 질문은 유지하고 Dimension 질문과 선택지만 수정하십시오.",
     )
+    question_count = len(impact_analysis.get("path_uncertainties") or []) + len(
+        impact_analysis.get("interaction_uncertainties") or []
+    )
+    if question_count == 3:
+        dimension_recommendation = "3개"
+        unused_recommendation = "세 질문을 모두 초기 Dimension에 사용해 unused question이 없어도 정상입니다."
+    elif question_count == 4:
+        dimension_recommendation = "3개"
+        unused_recommendation = "unused question을 최소 1개 남기기를 권장합니다."
+    elif question_count >= 5:
+        dimension_recommendation = "3~4개"
+        unused_recommendation = "unused question을 최소 1개 남기기를 권장합니다."
+    else:
+        dimension_recommendation = "3~4개"
+        unused_recommendation = "의미 있는 질문을 우선 사용합니다."
     return (
         "## 목적\n"
         "검증된 열린 질문을 사용자가 비교할 수 있는 Scenario 판단 축과 선택지로 바꿉니다.\n\n"
@@ -341,6 +459,11 @@ def build_v4_dimension_design_user_prompt(
         f"{_render_decision_basis(impact_analysis)}\n\n"
         "## Dimension 후보가 되는 열린 질문\n"
         f"{_render_uncertainty_cards(impact_analysis)}\n\n"
+        "## 개수 권장\n"
+        f"- 실제 open question 수: {question_count}개\n"
+        f"- 초기 Dimension 권장 범위: {dimension_recommendation}\n"
+        f"- {unused_recommendation}\n"
+        "- 구조적으로는 Dimension 3~6개를 허용하며 권장 범위 위반만으로 실패하지 않습니다.\n\n"
         "## 검증 참고사항\n"
         f"{_render_validation_warnings(validation_warnings)}\n\n"
         "## 이번 단계의 질문\n"
@@ -349,21 +472,14 @@ def build_v4_dimension_design_user_prompt(
         "3. 각 가정은 Lever 상태와 JKM 압력을 어떻게 바꿉니까?\n\n"
         "## 출력 규칙\n"
         "- from에는 위 U 번호만 사용합니다. Dimension ID와 Value ID는 서버가 부여합니다.\n"
-        "- label은 화면 표에 표시할 10~40자의 이름입니다. 핵심 대상과 변화 축만 담고 전체 인과를 넣지 않습니다.\n"
-        "- question은 사용자가 답할 수 있는 한국어 질문이며 상세 화면과 생성 근거에 사용합니다.\n"
-        "- rationale은 왜 이 Dimension을 Scenario 구분 축으로 선택했는지 설명하는 10~200자의 구체적인 한국어 "
-        "한 문장입니다. question의 관측일·분석 기준일·수치·시장 신호·대상·영향 경로를 하나도 생략하거나 "
-        "일반론으로 축약하지 않습니다. question의 사실절은 사실상 그대로 유지하고, `얼마나 오래 유지합니까?`는 "
-        "`얼마나 오래 유지하는지에 따라`, `언제 회복됩니까?`는 `언제 회복되는지에 따라`처럼 질문 어미만 "
-        "근거형 연결어로 바꾼 뒤 구분되는 시장 결과를 붙입니다.\n"
-        "  예: `2026년 6월 30일 49.1%로 관측된 유럽 저장률과 겨울 주입 기대가 분석 기준일 이후 NWE 가격 "
-        "지지를 얼마나 오래 유지합니까?` → `2026년 6월 30일 49.1%로 관측된 유럽 저장률과 겨울 주입 기대가 "
-        "분석 기준일 이후 NWE 가격 지지를 얼마나 오래 유지하는지에 따라 아시아 구매 경쟁이 달라짐`.\n"
-        "  question에 있는 날짜·수치·신호 중 하나라도 빠지거나 `가격 지지 지속 기간에 따라`처럼 일반 명사로 "
-        "줄인 rationale은 잘못된 출력입니다. 예시의 정보는 입력 question에 실제로 있을 때만 사용합니다.\n"
+        "- label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다.\n"
+        "- question은 필요한 관측 정보와 판단 대상을 충분히 포함하며 글자 수 제한이 없습니다.\n"
+        "- rationale은 최대 200자의 구체적인 한국어 한 문장입니다. question의 관측일·분석 기준일·수치·시장 "
+        "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
+        "결과가 구분되는 이유를 설명합니다. 최소 글자 수는 강제하지 않습니다.\n"
         "- lever와 axis는 source 질문에 표시된 값을 그대로 사용합니다.\n"
         "- 각 Dimension에는 같은 판단 축·단위를 사용하는 선택지 2~4개를 만듭니다.\n"
-        "- Choice label은 10~25자로 하나의 비교 가능한 시장·운영 상태만 표현합니다.\n"
+        "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
         "  낮음·중간·높음, 단기·중기·장기, 거의 없음·일부 감소·큰 감소처럼 강도만 쓰지 않습니다.\n"
         "- 숫자·시점 판단 근거에 현재 판단에 유효한 수치·기간·잔여일이 있으면 question과 Choice에 반영합니다.\n"
         "  과거 목표일은 미래 가능성처럼 되돌리지 말고 현재 상태의 전제로 사용합니다. 새로운 수치 경계는\n"
@@ -385,6 +501,77 @@ def build_v4_dimension_design_user_prompt(
         "이후물에서 JKM-NWE 스프레드가 다시 벌어지고 아시아가 대서양 화물을 끌어올 가격 신호를 회복해 JKM "
         "상승 압력이 커지는 가정.`\n"
         "- 사용하지 않은 질문은 notUsed에 자연어 이유를 남깁니다.\n"
+        f"{feedback}"
+    )
+
+
+def build_v4_additional_dimension_user_prompt(
+    *,
+    impact_analysis: dict[str, Any],
+    impact_levers: list[dict[str, Any]],
+    selected_definitions: list[dict[str, Any]],
+    validation_feedback: str | None = None,
+) -> str:
+    selected = (
+        "\n".join(
+            f"- {item.get('label') or item.get('dimension_id')}: {', '.join(item.get('source_uncertainty_ids') or [])}"
+            for item in selected_definitions
+        )
+        or "- 없음"
+    )
+    used_levers = {
+        str(item.get("affected_lever_code") or "")
+        for item in [
+            *(impact_analysis.get("path_uncertainties") or []),
+            *(impact_analysis.get("interaction_uncertainties") or []),
+        ]
+    }
+    compact_catalog = [item for item in impact_levers if str(item.get("lever_code") or "") in used_levers]
+    unused_question_count = len(impact_analysis.get("path_uncertainties") or []) + len(
+        impact_analysis.get("interaction_uncertainties") or []
+    )
+    candidate_recommendation = f"1~{unused_question_count}개" if unused_question_count else "0개"
+    feedback = _feedback(
+        "Additional Dimension 후보",
+        validation_feedback,
+        "탈락 reason code별로 states wire 형식, source alias, Lever lineage와 Value 중복을 모두 수정하십시오.",
+    )
+    return (
+        "## 목적\n"
+        "초기 Scenario 생성에서 선택되지 않은 열린 질문을 추가 Dimension 후보로 일괄 변환합니다.\n"
+        "의미 있는 질문만 후보로 만들며 후보 개수를 맞추기 위해 약한 질문을 사용하지 않습니다.\n\n"
+        "## 아직 사용되지 않은 열린 질문\n"
+        f"{_render_uncertainty_cards(impact_analysis)}\n\n"
+        "## 개수 권장\n"
+        f"- 실제 unused question 수: {unused_question_count}개\n"
+        f"- Additional Dimension 후보 권장 범위: {candidate_recommendation}\n"
+        "- 의미 있는 후보가 없으면 빈 dimensions도 정상 결과입니다.\n\n"
+        "## 관련 Lever catalog\n"
+        f"{_render_impact_catalog(compact_catalog)}\n\n"
+        "## 이미 선택된 Dimension\n"
+        f"{selected}\n\n"
+        "## 출력 규칙\n"
+        "- dimensions에는 위 U 번호만 from으로 참조합니다. 하나의 U는 후보 간 중복 사용하지 않습니다.\n"
+        "- 초기 Dimension과 의미가 겹치는 후보는 만들지 않습니다. 변환할 가치가 없으면 빈 dimensions를 반환합니다.\n"
+        "- label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다.\n"
+        "- question은 필요한 관측 정보와 판단 대상을 충분히 포함하며 글자 수 제한이 없습니다.\n"
+        "- rationale은 최대 200자의 구체적인 한국어 한 문장입니다. question의 관측일·분석 기준일·수치·시장 "
+        "신호·대상·영향 경로를 생략하지 않고, 질문 어미만 `...하는지에 따라` 형태로 바꿔 Scenario와 JKM "
+        "결과가 구분되는 이유를 설명합니다. 최소 글자 수는 강제하지 않습니다.\n"
+        "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
+        "- lever와 axis는 source 질문의 값을 그대로 사용하고 Choice는 2~4개를 만듭니다.\n"
+        "- 각 Choice의 states 항목은 정확히 `lever|direction|level|scope|timeWindow` 형식입니다. 다섯 부분을 `|`로 "
+        "구분하고 빈 부분을 만들지 않습니다.\n"
+        f"- direction은 {StateDirection.prompt_values()} 중 하나만 사용합니다.\n"
+        "- 첫 번째 state의 lever는 반드시 Dimension의 source Lever와 같아야 합니다. 한 Choice 안에서 같은 Lever "
+        "code를 중복하지 않습니다.\n"
+        "- 올바른 states 예시: `liquefaction_availability|increase|feedgas 유입이 설비 가동으로 전환|미국 LNG "
+        "수출설비|2026-08-20 이후 단기`\n"
+        "- 잘못된 Group 441 형태: `LNG 수출 설비로의 가스 유입 증가가 실제 액화설비 가동률과 수출 가능 물량 "
+        "증가로 이어지는 상태`처럼 자연어 문장만 작성하면 안 됩니다.\n"
+        "- 서로 다른 Choice는 label과 states 조합이 중복되면 안 됩니다.\n"
+        "- why는 제공된 관측 사실을 기반으로 `관측된 사실 → 미래 상태 → JKM 영향`을 한 문장으로 연결하고, "
+        "문장 끝의 `가정`으로만 불확실성을 표시합니다. `답`, `응답`, `선택`이라는 말이나 새 사실을 만들지 않습니다.\n"
         f"{feedback}"
     )
 
@@ -491,7 +678,7 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 각 Scenario는 다른 Scenario와 구분되는 핵심 전제 조합과 결과 전달 경로를 가져야 합니다.\n"
         "- 공급·수요·운송·회복 같은 미리 정한 유형에 맞추지 말고, 입력된 Dimension과 Interaction에서\n"
         "  Scenario별 구분 요인을 선택합니다. pressure 단계만 한 칸씩 바꾼 유사 조합을 반복하지 않습니다.\n"
-        "- title은 20~40자로 Scenario를 구분하는 핵심 조건이나 메커니즘 1~2개를 표현합니다.\n"
+        "- title은 핵심 조건이나 메커니즘을 40자 이내로 표현합니다.\n"
         "  pressure 이름만 반복하지 않습니다. 상반된 효과가 중요할 때만 상쇄·우세 관계를 포함하고,\n"
         "  같은 방향이면 결합·증폭을, 단일 경로가 결정적이면 그 경로를 중심으로 작성합니다.\n"
         "- narrative는 80~300자의 한국어 두 문장입니다. 첫 문장은 주요 조건과 변화를, 둘째 문장은\n"
@@ -512,14 +699,18 @@ def build_v4_scenario_synthesis_user_prompt(
 
 __all__ = [
     "MODEL_LEVER_SYSTEM_PROMPT",
+    "V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT",
     "V4_DIMENSION_SYSTEM_PROMPT",
     "V4_EVENT_IMPACT_SYSTEM_PROMPT",
     "V4_INTERACTION_SYSTEM_PROMPT",
     "V4_SCENARIO_SYSTEM_PROMPT",
     "build_model_lever_user_prompt",
     "build_v4_dimension_design_user_prompt",
+    "build_v4_additional_dimension_user_prompt",
     "build_v4_event_fact_candidates",
     "build_v4_event_impact_analysis_user_prompt",
+    "event_open_question_budgets",
+    "event_open_question_recommendations",
     "build_v4_interaction_analysis_user_prompt",
     "build_v4_scenario_synthesis_user_prompt",
 ]

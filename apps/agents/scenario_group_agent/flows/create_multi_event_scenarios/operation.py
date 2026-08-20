@@ -5,6 +5,9 @@ from copy import deepcopy
 from typing import Any
 
 from apps.agents.scenario_group_agent.constants import AGENT_NAME, API_IDENTIFIER_CREATE_SCENARIOS
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
+    AdditionalDimensionGeneration,
+)
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.state import V4MultiEventGenerationState
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow import (
     V4_GENERATION_STRATEGY,
@@ -15,6 +18,7 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_operation_servi
     OperationAlreadyTerminalError,
     ScenarioGroupOperationService,
 )
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, mlflow_trace_context, new_transaction_id
 
@@ -246,10 +250,18 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
         if output.data is None:
             msg = "v4 operation output is empty"
             raise RuntimeError(msg)
+        generation = await asyncio.to_thread(
+            ScenarioGroupService().queue_additional_dimension_generation,
+            scenario_group_id,
+            user_id=int(prepared["user_id"]),
+        )
         presentation = {
             "schemaVersion": "v1",
             **output.data.model_dump(mode="json", by_alias=True),
         }
+        presentation.setdefault("generationDiagnostics", {})["additionalDimensionGeneration"] = (
+            AdditionalDimensionGeneration.model_validate(generation).model_dump(mode="json", by_alias=True)
+        )
         await asyncio.to_thread(
             service.append_event,
             scenario_group_id,
@@ -263,6 +275,10 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
             presentation_snapshot=presentation,
             mlflow_trace_id=trace_id,
         )
+        if generation.get("status") == "queued":
+            from apps.agents.scenario_group_agent.runtime import get_additional_dimension_task_runner
+
+            get_additional_dimension_task_runner().submit(scenario_group_id)
     except asyncio.CancelledError:
         await asyncio.shield(
             asyncio.to_thread(
@@ -277,7 +293,7 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
                 status="interrupted",
                 last_error={"code": "SERVER_SHUTDOWN", "message": "Operation producer was interrupted"},
                 mlflow_trace_id=trace_id,
-            )
+            ),
         )
         raise
     except OperationAlreadyTerminalError:

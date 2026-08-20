@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+
 from apps.agents.scenario_group_agent.constants import (
     AGENT_NAME,
     API_IDENTIFIER_CREATE_SCENARIOS,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.api_schema import (
+    AdditionalDimensionGeneration,
     MultiEventCreateScenariosIn,
     V2CreateScenariosOut,
     V4MultiEventCreateScenariosSyncIn,
@@ -19,6 +22,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_flow
     prepare_v4_multi_event_scenarios,
     run_v4_multi_event_scenarios_inline,
 )
+from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
 from apps.common.logging.logger_config import logger
 from apps.common.runtime.usage_context import get_accumulated_usage, reset_usage
 from apps.common.tracing.context import (
@@ -68,6 +72,33 @@ async def create_v4_scenarios_sync(
                 prepared,
                 trace_context=trace_context,
             )
+        if output.data is not None:
+            scenario_group_id = int(prepared["scenario_group"].scenario_group_id)
+            generation_payload = await asyncio.to_thread(
+                ScenarioGroupService().queue_additional_dimension_generation,
+                scenario_group_id,
+                user_id=int(prepared["user_id"]),
+            )
+            generation = AdditionalDimensionGeneration.model_validate(generation_payload)
+            output.data.generation_diagnostics.additional_dimension_generation = generation
+            logger.info(
+                "[SYNC][v4] Additional Dimension generation queued | scenario_group_id={} | "
+                "generation_status={} | source_count={}",
+                scenario_group_id,
+                generation.status,
+                len(generation.source_uncertainty_ids),
+            )
+            if generation.status == "queued":
+                from apps.agents.scenario_group_agent.runtime import get_additional_dimension_task_runner
+
+                get_additional_dimension_task_runner().submit(scenario_group_id)
+            else:
+                logger.info(
+                    "[SYNC][v4] Additional Dimension generation completed without background task | "
+                    "scenario_group_id={} | generation_status={} | candidate_count=0",
+                    scenario_group_id,
+                    generation.status,
+                )
     except Exception as exc:
         logger.error(
             "[SYNC][v4 create_scenarios] FAILED | group_id={} | error={!r}",

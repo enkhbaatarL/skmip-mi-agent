@@ -384,9 +384,100 @@ class ScenarioGroupOperationRecoveryMonitor:
         return datetime.now(UTC).replace(tzinfo=None)
 
 
+class AdditionalDimensionTaskRunner:
+    """Lifespan-owned auxiliary tasks that are independent from create operation status."""
+
+    def __init__(self) -> None:
+        self._tasks: dict[int, asyncio.Task[None]] = {}
+        self._accepting = False
+
+    async def start(self, *, recovery_limit: int = 50) -> None:
+        self._accepting = True
+        try:
+            from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
+
+            group_ids = await asyncio.to_thread(
+                ScenarioGroupService().list_recoverable_additional_dimension_group_ids,
+                limit=recovery_limit,
+            )
+        except Exception as exc:
+            logger.warning("Additional Dimension recovery scan failed; startup continues | error={!r}", exc)
+            return
+        for scenario_group_id in group_ids:
+            self.submit(scenario_group_id)
+
+    def submit(self, scenario_group_id: int) -> None:
+        if scenario_group_id in self._tasks:
+            logger.info(
+                "Additional Dimension background task submit skipped | scenario_group_id={} | "
+                "reason=already_registered",
+                scenario_group_id,
+            )
+            return
+        if not self._accepting:
+            self._accepting = True
+        from apps.agents.scenario_group_agent.flows.add_dimension.flow import run_additional_dimension_generation
+
+        task = asyncio.create_task(
+            run_additional_dimension_generation(scenario_group_id),
+            name=f"additional-dimension:{scenario_group_id}",
+        )
+        self._tasks[scenario_group_id] = task
+        task.add_done_callback(lambda completed: self._discard(scenario_group_id, completed))
+        logger.info(
+            "Additional Dimension background task submitted | scenario_group_id={}",
+            scenario_group_id,
+        )
+
+    async def shutdown(self) -> None:
+        self._accepting = False
+        scenario_group_ids = list(self._tasks)
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if scenario_group_ids:
+            from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
+
+            service = ScenarioGroupService()
+            results = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        service.interrupt_additional_dimension_generation,
+                        scenario_group_id,
+                    )
+                    for scenario_group_id in scenario_group_ids
+                ),
+                return_exceptions=True,
+            )
+            for scenario_group_id, result in zip(scenario_group_ids, results, strict=True):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "Additional Dimension shutdown status update failed | scenario_group_id={} | error={!r}",
+                        scenario_group_id,
+                        result,
+                    )
+        self._tasks.clear()
+
+    def _discard(self, scenario_group_id: int, task: asyncio.Task[None]) -> None:
+        self._tasks.pop(scenario_group_id, None)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Additional Dimension task escaped | scenario_group_id={} | error={!r}",
+                scenario_group_id,
+                error,
+            )
+
+
 _operation_task_runner = ScenarioGroupOperationTaskRunner()
 _operation_event_hub = ScenarioGroupOperationEventHub()
 _operation_recovery_monitor = ScenarioGroupOperationRecoveryMonitor()
+_additional_dimension_task_runner = AdditionalDimensionTaskRunner()
 
 
 def get_scenario_group_operation_task_runner() -> ScenarioGroupOperationTaskRunner:
@@ -399,3 +490,7 @@ def get_scenario_group_operation_event_hub() -> ScenarioGroupOperationEventHub:
 
 def get_scenario_group_operation_recovery_monitor() -> ScenarioGroupOperationRecoveryMonitor:
     return _operation_recovery_monitor
+
+
+def get_additional_dimension_task_runner() -> AdditionalDimensionTaskRunner:
+    return _additional_dimension_task_runner

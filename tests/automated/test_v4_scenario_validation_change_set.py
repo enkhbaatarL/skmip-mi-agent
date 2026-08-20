@@ -158,6 +158,41 @@ def test_label_and_value_id_normalize_to_unchanged_fast_path() -> None:
     assert analysis.changed_rows == []
 
 
+def test_ready_additional_candidate_extends_effective_validation_catalog() -> None:
+    candidate = {
+        "dimension_id": "duration",
+        "label": "지속 기간",
+        "display_order": 3,
+        "source_uncertainty_ids": ["u_duration"],
+        "values": [
+            {"value_id": "duration_short", "label": "단기", "pressure_contribution": "balanced"},
+            {"value_id": "duration_long", "label": "장기", "pressure_contribution": "bullish"},
+        ],
+    }
+    table = _table()
+    table["headers"].append({"key": "duration", "label": "지속 기간", "display_order": 3})
+    for index, row in enumerate(table["rows"]):
+        row["cells"]["duration"] = "duration_short" if index == 0 else "duration_long"
+
+    analysis = _analyze(
+        table,
+        diagnostics={
+            "additional_dimension_generation": {
+                "status": "ready",
+                "source_fingerprint": "sha256:candidate-source",
+            },
+            "additional_dimension_candidates": [candidate],
+        },
+    )
+
+    assert analysis.blocking is False
+    assert analysis.canonical_headers == ["demand", "supply", "duration"]
+    assert analysis.promoted_dimension_ids == ["duration"]
+    assert analysis.candidate_source_fingerprint == "sha256:candidate-source"
+    assert analysis.requested_dimension_definitions[-1]["dimension_id"] == "duration"
+    assert all("duration" in row.dimension_values for row in analysis.canonical_rows)
+
+
 def test_scenario_fingerprint_ignores_workflow_status_but_detects_content_changes() -> None:
     scenarios = _scenarios()
     original = scenario_fingerprint(scenarios)
@@ -177,7 +212,7 @@ def test_v4_signpost_request_accepts_user_id_without_table() -> None:
     assert request.table is None
 
 
-def test_v4_validation_callback_table_projects_value_ids_to_labels() -> None:
+def test_v4_validation_callback_table_preserves_value_ids() -> None:
     source = _table()
     projected = _validation_table_for_output(
         source,
@@ -188,7 +223,7 @@ def test_v4_validation_callback_table_projects_value_ids_to_labels() -> None:
     )
 
     assert projected is not None
-    assert projected["rows"][0]["cells"] == {"demand": "높은 수요", "supply": "낮은 공급"}
+    assert projected["rows"][0]["cells"] == {"demand": "demand_high", "supply": "supply_low"}
     assert source["rows"][0]["cells"] == {"demand": "demand_high", "supply": "supply_low"}
 
 
@@ -216,7 +251,7 @@ def test_v4_validation_callback_accepts_nested_scenario_table_state() -> None:
     )
 
     assert output.table is not None
-    assert output.table.rows[0].cells == {"demand": "높은 수요", "supply": "낮은 공급"}
+    assert output.table.rows[0].cells == {"demand": "demand_high", "supply": "supply_low"}
 
 
 def test_public_operation_payload_does_not_expose_internal_result_payload() -> None:

@@ -27,6 +27,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     V4EventImpactAnalysisResult,
     V4GenerationResult,
     V4LeverStateDraft,
+    V4ReadableAdditionalDimensionDesignDraft,
     V4ReadableDimensionDesignDraft,
     V4ReadableEventAnalysisDraft,
     V4ReadableInteractionAnalysisDraft,
@@ -41,10 +42,12 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
 )
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     build_model_lever_user_prompt,
+    build_v4_additional_dimension_user_prompt,
     build_v4_dimension_design_user_prompt,
     build_v4_event_fact_candidates,
     build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
+    event_open_question_budgets,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -296,7 +299,7 @@ def _dimension_draft() -> V4DimensionDesignDraft:
                     "dimensionId": "cold_wave_intensity",
                     "label": "한파 수요 강도",
                     "description": "동북아 한파가 만드는 추가 LNG 수요 규모",
-                    "rationale": "한파 수요 규모에 따라 동북아 LNG 조달 경쟁과 JKM 압력이 변화됨",
+                    "rationale": "한파 수요 분기 기준",
                     "sourceImpactPathIds": ["path_101_demand"],
                     "sourceUncertaintyIds": ["u_weather_magnitude"],
                     "primaryLeverCode": "weather_demand",
@@ -312,7 +315,7 @@ def _dimension_draft() -> V4DimensionDesignDraft:
                     "dimensionId": "liquefaction_recovery",
                     "label": "액화시설 회복",
                     "description": "미국 Gulf 액화시설 재가동 속도",
-                    "rationale": "액화시설 회복 속도에 따라 미국발 가용 공급과 JKM 압력이 변화됨",
+                    "rationale": "공급 회복 분기 기준",
                     "sourceImpactPathIds": ["path_202_supply"],
                     "sourceUncertaintyIds": ["u_liq_recovery"],
                     "primaryLeverCode": "liquefaction_availability",
@@ -342,7 +345,7 @@ def _dimension_draft() -> V4DimensionDesignDraft:
                     "dimensionId": "risk_premium",
                     "label": "위험 프리미엄",
                     "description": "공급 차질에 대한 시장 위험 프리미엄 확대 폭",
-                    "rationale": "위험 프리미엄 확대 폭에 따라 공급 차질의 JKM 반영 강도가 변화됨",
+                    "rationale": "위험 프리미엄 분기",
                     "sourceImpactPathIds": ["path_202_supply"],
                     "sourceUncertaintyIds": ["u_risk_magnitude"],
                     "primaryLeverCode": "financial_market_sentiment",
@@ -544,7 +547,7 @@ def test_v4_dimension_contract_derives_event_and_lever_ids_without_legacy_fields
     schema_fields = V4DimensionDefinition.model_json_schema(by_alias=True)["properties"]
     assert definition.source_event_ids == [101]
     assert definition.primary_impact_lever_id == 1
-    assert definition.rationale == "한파 수요 규모에 따라 동북아 LNG 조달 경쟁과 JKM 압력이 변화됨"
+    assert definition.rationale == "한파 수요 분기 기준"
     assert definition.values[0].lever_states[0].impact_lever_id == 1
     assert "rationale" in schema_fields
     assert "eventGroundings" not in schema_fields
@@ -975,7 +978,7 @@ def test_v4_readable_question_reports_allowed_impact_levers() -> None:
         )
 
 
-def test_v4_readable_event_allows_two_open_questions_and_rejects_three() -> None:
+def test_v4_readable_event_question_count_is_not_schema_limited() -> None:
     payload = _readable_event_draft(101).model_dump(by_alias=True)
     second = dict(payload["openQuestions"][0])
     second["question"] = "한파의 현재 전망은 언제까지 유효한가?"
@@ -986,9 +989,7 @@ def test_v4_readable_event_allows_two_open_questions_and_rejects_three() -> None
 
     assert len(parsed.open_questions) == 2
     payload["openQuestions"].append(dict(second))
-
-    with pytest.raises(ValueError, match="openQuestions"):
-        V4ReadableEventAnalysisDraft.model_validate(payload)
+    assert len(V4ReadableEventAnalysisDraft.model_validate(payload).open_questions) == 3
 
 
 def test_v4_readable_event_allows_three_lever_states_and_rejects_four() -> None:
@@ -1203,7 +1204,7 @@ def _readable_interaction_draft() -> V4ReadableInteractionAnalysisDraft:
         {
             "interactions": [
                 {
-                    "paths": ["P1", "P2"],
+                    "paths": ["E101-P1", "E202-P1"],
                     "analysis": "동북아 수요 증가와 미국 공급 감소가 동시에 단기 JKM 상승 압력을 강화한다.",
                     "relation": "amplification",
                 },
@@ -1220,6 +1221,63 @@ def _readable_interaction_draft() -> V4ReadableInteractionAnalysisDraft:
     )
 
 
+def _interaction_budget_analysis(
+    event_count: int,
+    *,
+    event_question_count: int = 0,
+    two_paths_for_first_event: bool = False,
+) -> V4EventImpactAnalysisResult:
+    paths: list[dict[str, object]] = []
+    for event_id in range(1, event_count + 1):
+        path_count = 2 if event_id == 1 and two_paths_for_first_event else 1
+        for path_index in range(1, path_count + 1):
+            path_id = f"path_{event_id}_{path_index}"
+            paths.append(
+                {
+                    "impactPathId": path_id,
+                    "eventId": event_id,
+                    "sourceFactIds": [f"fact_{event_id}_{path_index}"],
+                    "mechanism": f"Event {event_id} 영향 경로 {path_index}",
+                    "leverSteps": [
+                        {
+                            "impactLeverId": event_id,
+                            "leverCode": f"lever_{event_id}",
+                            "pathRole": "primary" if path_index == 1 else "transmission",
+                            "stateDirection": "increase",
+                            "scope": "글로벌 LNG",
+                            "timing": "단기",
+                        },
+                    ],
+                    "materiality": "high",
+                },
+            )
+    uncertainties = []
+    primary_paths = [path for path in paths if str(path["impactPathId"]).endswith("_1")]
+    axes = ["magnitude", "scope", "timing", "duration", "recovery", "mitigation", "substitution"]
+    for index in range(event_question_count):
+        path = primary_paths[index % len(primary_paths)]
+        event_id = int(path["eventId"])
+        path_id = str(path["impactPathId"])
+        uncertainties.append(
+            {
+                "uncertaintyId": f"event_u{index + 1}",
+                "impactPathIds": [path_id],
+                "axisType": axes[index % len(axes)],
+                "subject": f"Event 질문 {index + 1}",
+                "affectedLeverCode": f"lever_{event_id}",
+                "reason": f"Event 질문 {index + 1}",
+                "materiality": "high",
+                "semanticKey": f"{path_id}:{axes[index % len(axes)]}:{index + 1}",
+            },
+        )
+    return V4EventImpactAnalysisResult.model_validate(
+        {
+            "impactPaths": paths,
+            "pathUncertainties": uncertainties,
+        },
+    )
+
+
 def test_v4_readable_interaction_question_reports_allowed_path_levers() -> None:
     readable = _readable_interaction_draft()
     readable.open_questions[0].lever = "direct_gas_demand"
@@ -1228,12 +1286,117 @@ def test_v4_readable_interaction_question_reports_allowed_path_levers() -> None:
         merge_v4_readable_interactions(_analysis(), readable)
 
 
-def test_v4_readable_interaction_limits_open_question_to_one() -> None:
+def test_v4_readable_interaction_question_count_is_not_schema_limited() -> None:
     payload = _readable_interaction_draft().model_dump(by_alias=True)
     payload["openQuestions"].append(dict(payload["openQuestions"][0]))
 
-    with pytest.raises(ValueError, match="openQuestions"):
-        V4ReadableInteractionAnalysisDraft.model_validate(payload)
+    assert len(V4ReadableInteractionAnalysisDraft.model_validate(payload).open_questions) == 2
+
+
+@pytest.mark.parametrize(
+    ("event_count", "expected_limit"),
+    [(2, 1), (3, 2), (4, 3), (5, 3)],
+)
+def test_v4_interaction_count_overage_is_deterministically_capped(
+    event_count: int,
+    expected_limit: int,
+) -> None:
+    analysis = _interaction_budget_analysis(event_count)
+    interactions = [
+        {
+            "paths": [f"E{pair_index % event_count + 1}-P1", f"E{(pair_index + 1) % event_count + 1}-P1"],
+            "analysis": f"중요도 {pair_index + 1}의 서로 다른 Event 결합 효과가 단기 JKM 분기를 만든다.",
+            "relation": "amplification",
+        }
+        for pair_index in range(5)
+    ]
+    readable = V4ReadableInteractionAnalysisDraft.model_validate({"interactions": interactions})
+
+    merged = merge_v4_readable_interactions(analysis, readable, event_count=event_count)
+
+    assert [item.interaction_id for item in merged.interactions] == [
+        f"i{index}" for index in range(1, expected_limit + 1)
+    ]
+    assert len(merged.interactions) == expected_limit
+    assert any(warning.code == "INTERACTION_COUNT_LIMIT_APPLIED" for warning in merged.validation_warnings)
+
+
+def test_v4_same_event_interaction_is_dropped_before_budget_and_references_are_renumbered() -> None:
+    analysis = _interaction_budget_analysis(3, two_paths_for_first_event=True)
+    readable = V4ReadableInteractionAnalysisDraft.model_validate(
+        {
+            "interactions": [
+                {
+                    "paths": ["E1-P1", "E2-P1"],
+                    "analysis": "첫 번째 cross-Event 결합 효과가 단기 JKM 상승 분기를 강화한다.",
+                    "relation": "amplification",
+                },
+                {
+                    "paths": ["E1-P1", "E1-P2"],
+                    "analysis": "동일 Event 내부의 원인과 전달 경로를 별도 관계로 잘못 구성했다.",
+                    "relation": "causal_link",
+                },
+                {
+                    "paths": ["E2-P1", "E3-P1"],
+                    "analysis": "세 번째 원래 Interaction의 cross-Event 효과가 JKM 분기를 만든다.",
+                    "relation": "offset",
+                },
+            ],
+            "openQuestions": [
+                {"interaction": 1, "question": "첫 결합 기간은?", "axis": "duration", "lever": "lever_1"},
+                {"interaction": 2, "question": "내부 결합 기간은?", "axis": "duration", "lever": "lever_1"},
+                {"interaction": 3, "question": "셋째 결합 기간은?", "axis": "duration", "lever": "lever_2"},
+            ],
+        },
+    )
+
+    merged = merge_v4_readable_interactions(analysis, readable, event_count=3)
+
+    assert [item.interaction_id for item in merged.interactions] == ["i1", "i2"]
+    assert [item.interaction_id for item in merged.interaction_uncertainties] == ["i1", "i2"]
+    assert [item.uncertainty_id for item in merged.interaction_uncertainties] == ["iu1", "iu2"]
+    same_event_warning = next(
+        warning for warning in merged.validation_warnings if warning.code == "SAME_EVENT_INTERACTION_DROPPED"
+    )
+    assert same_event_warning.reference_ids == ["2", "1", "E1-P1", "E1-P2"]
+    assert "연결 질문 1개" in same_event_warning.message
+
+
+def test_v4_interaction_questions_use_one_per_interaction_and_final_ten_question_budget() -> None:
+    analysis = _interaction_budget_analysis(4, event_question_count=8)
+    readable = V4ReadableInteractionAnalysisDraft.model_validate(
+        {
+            "interactions": [
+                {
+                    "paths": [f"E{index}-P1", f"E{index + 1}-P1"],
+                    "analysis": f"Interaction {index}의 결합 효과가 단기 JKM 분기를 만든다.",
+                    "relation": "amplification",
+                }
+                for index in range(1, 4)
+            ],
+            "openQuestions": [
+                {
+                    "interaction": interaction,
+                    "question": f"Interaction {interaction} 질문 {question}",
+                    "axis": "duration" if question == 1 else "timing",
+                    "lever": f"lever_{interaction}",
+                }
+                for interaction in range(1, 4)
+                for question in range(1, 3)
+            ],
+        },
+    )
+
+    merged = merge_v4_readable_interactions(analysis, readable, event_count=4)
+
+    assert len(merged.interactions) == 3
+    assert len(merged.path_uncertainties) + len(merged.interaction_uncertainties) == 10
+    assert [item.interaction_id for item in merged.interaction_uncertainties] == ["i1", "i2"]
+    assert [item.subject for item in merged.interaction_uncertainties] == [
+        "Interaction 1 질문 1",
+        "Interaction 2 질문 1",
+    ]
+    assert any(warning.code == "INTERACTION_OPEN_QUESTION_LIMIT_APPLIED" for warning in merged.validation_warnings)
 
 
 def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
@@ -1252,7 +1415,7 @@ def _readable_dimension_draft() -> V4ReadableDimensionDesignDraft:
             "from": [source],
             "label": label,
             "question": question,
-            "rationale": f"관측된 {label} 변화가 계속되는지에 따라 관련 시장 경로와 Scenario별 JKM 압력이 달라짐",
+            "rationale": f"{label[:10]} 분기 기준",
             "lever": lever,
             "axis": axis,
             "unit": "주" if axis == "recovery" else None,
@@ -1479,9 +1642,7 @@ def test_v4_graph_parallelizes_events_and_retries_only_the_failed_event() -> Non
     assert final_state["dimension_attempt"] == 1
     assert final_state["scenario_attempt"] == 1
     persist.assert_called_once()
-    assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == (
-        "관측된 동북아 한파와 추가 LNG 수요 변화가 계속되는지에 따라 관련 시장 경로와 Scenario별 JKM 압력이 달라짐"
-    )
+    assert persist.call_args.kwargs["dimension_definitions"][0]["rationale"] == "동북아 한파와 추가 분기 기준"
 
 
 def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
@@ -1611,6 +1772,128 @@ def test_v4_event_analysis_calls_are_concurrent() -> None:
     assert isinstance(result["analysis_draft"], V4EventImpactAnalysisDraft)
 
 
+@pytest.mark.parametrize(
+    ("event_count", "expected"),
+    [
+        (1, [3]),
+        (2, [3, 3]),
+        (3, [3, 3, 2]),
+        (4, [2, 2, 2, 2]),
+        (5, [2, 2, 2, 1, 1]),
+    ],
+)
+def test_v4_event_question_budgets_follow_request_order(
+    event_count: int,
+    expected: list[int],
+) -> None:
+    captured: list[int | None] = []
+
+    async def analyze_event(**kwargs: object) -> v4_nodes._EventAnalysisOutcome:
+        captured.append(kwargs.get("open_question_budget"))  # type: ignore[arg-type]
+        event = kwargs["event"]
+        assert isinstance(event, EventPayload)
+        return v4_nodes._EventAnalysisOutcome(
+            event_id=int(event.mi_event_id),
+            attempts=1,
+            result=V4EventImpactAnalysisResult(),
+        )
+
+    state = V4MultiEventGenerationState(
+        events=[EventPayload(mi_event_id=index + 1, event_type_l2_id=8) for index in range(event_count)],
+    )
+    with patch.object(v4_nodes, "_analyze_event_with_retries", side_effect=analyze_event):
+        asyncio.run(v4_nodes.AnalyzeEventImpactsNode().run(state))
+
+    assert event_open_question_budgets(event_count) == expected
+    assert captured == expected
+
+
+@pytest.mark.parametrize(
+    ("event_count", "expected_budgets"),
+    [
+        (1, [3]),
+        (2, [3, 3]),
+        (3, [3, 3, 2]),
+        (4, [2, 2, 2, 2]),
+        (5, [2, 2, 2, 1, 1]),
+    ],
+)
+def test_v4_event_question_overage_is_capped_in_output_order(
+    event_count: int,
+    expected_budgets: list[int],
+) -> None:
+    retained_counts: list[int] = []
+    warning_counts: list[int] = []
+    for event_id, budget in enumerate(expected_budgets, start=1):
+        payload = _readable_event_draft(101).model_dump(by_alias=True)
+        payload["openQuestions"] = [
+            {
+                "impact": 1,
+                "question": f"Event {event_id} 중요 질문 {index}",
+                "axis": axis,
+                "lever": "weather_demand",
+            }
+            for index, axis in enumerate(["magnitude", "scope", "timing", "duration"], start=1)
+        ]
+        draft = expand_v4_readable_event_analysis(
+            V4ReadableEventAnalysisDraft.model_validate(payload),
+            event_id=event_id,
+            observed_at="2026-08-05",
+            fact_candidates={"f1": "동북아 한파 지속 전망"},
+            open_question_limit=budget,
+        )
+
+        retained_counts.append(len(draft.path_uncertainties))
+        warning_counts.append(
+            sum(warning.code == "EVENT_OPEN_QUESTION_LIMIT_APPLIED" for warning in draft.validation_warnings),
+        )
+        assert [item.subject for item in draft.path_uncertainties] == [
+            f"Event {event_id} 중요 질문 {index}" for index in range(1, budget + 1)
+        ]
+
+    assert retained_counts == expected_budgets
+    assert warning_counts == [1] * event_count
+
+
+def test_v4_single_event_skips_interaction_and_accepts_three_questions_without_warning() -> None:
+    payload = _readable_event_draft(101).model_dump(by_alias=True)
+    payload["openQuestions"] = [
+        {
+            "impact": 1,
+            "question": f"단일 Event 분기 질문 {index}",
+            "axis": axis,
+            "lever": "weather_demand",
+        }
+        for index, axis in enumerate(["magnitude", "scope", "timing"], start=1)
+    ]
+    readable = V4ReadableEventAnalysisDraft.model_validate(payload)
+    draft = expand_v4_readable_event_analysis(
+        readable,
+        event_id=101,
+        observed_at="2026-08-05",
+        fact_candidates={"f1": "동북아 한파 지속 전망"},
+        open_question_limit=3,
+    )
+    analysis = finalize_v4_event_impact_analysis(draft, event_ids=[101], impact_levers=_catalog())
+    state = V4MultiEventGenerationState(
+        events=[EventPayload(mi_event_id=101, event_type_l2_id=8)],
+        impact_levers=_catalog(),
+        analysis_draft=analysis,
+    )
+    invoke = AsyncMock()
+    with patch.object(v4_nodes, "invoke_stage_structured_output", invoke):
+        interaction_update = asyncio.run(v4_nodes.AnalyzeEventInteractionsNode().run(state))
+
+    invoke.assert_not_awaited()
+    validated = v4_nodes.validate_v4_event_interactions(state.model_copy(update=interaction_update))
+    finalized = validated["analysis_draft"]
+    assert isinstance(finalized, V4EventImpactAnalysisResult)
+    assert len(finalized.path_uncertainties) == 3
+    assert finalized.interactions == []
+    assert finalized.interaction_uncertainties == []
+    assert finalized.validation_warnings == []
+
+
 def test_v4_persistence_keeps_analysis_graph_in_diagnostics() -> None:
     finalized, coverage = _finalized()
     group = ScenarioGroupPayload(
@@ -1710,7 +1993,7 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "## 핵심 사실 후보" in first
     assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
     assert "decisionBasis" in first
-    assert "핵심 질문 최대 2개" in first
+    assert "이번 Event openQuestions 목표·상한: 3개" in first
     assert "eventFacts는 가급적 1~2개만 선택" in first
     assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in first
     assert "impacts는 가급적 1~2개만 작성" in first
@@ -1718,10 +2001,21 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in first
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in first
     assert "중요한 3개만 선택" in first
+    assert "같은 Impact의 leverStates 안에서 `lever` code는 반드시 서로 달라야 합니다" in first
+    assert "동일 Lever code를" in first
+    assert "전달 경로를 가장 잘 대표하는 하나의 step으로" in first
+    assert "서로 다른 Impact에서는 같은 Lever code를 다시 사용할 수 있습니다" in first
+    assert "첫 번째 `lever` code를 비교해" in first
+    lever_states_schema = V4ReadableEventAnalysisDraft.model_json_schema(by_alias=True)["$defs"][
+        "V4ReadableEventImpact"
+    ]["properties"]["leverStates"]
+    assert "첫 번째 lever code가 모두 달라야" in lever_states_schema["description"]
+    assert "대표 step 하나로 통합" in lever_states_schema["description"]
     assert "demand, supply, trade domain Lever가 하나라도 있으면 balance에 none을 사용할 수 없습니다" in first
     assert "지배적인 domain을 정할 수 없으면 Impact를 나눕니다" in first
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in retry
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in retry
+    assert "같은 Impact의 leverStates 안에서 `lever` code는 반드시 서로 달라야 합니다" in retry
     assert "leverStates List should have at most 3 items" in retry
     assert "eventFacts는 가급적 1~2개만 선택" in retry
     assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in retry
@@ -1736,9 +2030,14 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "selectionHint" not in first
     assert "parameterBindings" not in first
     assert "## 검증된 영향 경로" in interaction
-    assert "[P1]" in interaction
+    assert "[E101-P1]" in interaction
     assert "JKM의 순방향·영향 기간" in interaction
+    assert "실제 Event openQuestions 수: 0개" in interaction
+    assert "Interaction openQuestions 전체 상한: 1개" in interaction
     assert "## Dimension 후보가 되는 열린 질문" in dimension
+    assert "실제 open question 수: 4개" in dimension
+    assert "초기 Dimension 권장 범위: 3개" in dimension
+    assert "unused question을 최소 1개" in dimension
     assert "## 숫자·시점 판단 근거" in dimension
     assert "분석 기준일 2026-08-07 현재 동북아 한파 전망" in dimension
     assert "## 그룹 제목·설명의 근거가 되는 이벤트" in scenario
@@ -1754,14 +2053,11 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "영문 `Event`, `Scenario`를 쓰지 않습니다" in scenario
     assert "description에는\n  `입력 사실`과 `JKM`을 쓰지 않습니다" in scenario
     assert "[U1]" in dimension
-    assert "label은 화면 표에 표시할 10~40자의 이름" in dimension
-    assert "왜 이 Dimension을 Scenario 구분 축으로 선택했는지" in dimension
-    assert "10~200자의 구체적인 한국어" in dimension
-    assert "question의 사실절은 사실상 그대로 유지" in dimension
-    assert "질문 어미만" in dimension
-    assert "2026년 6월 30일 49.1%로 관측된 유럽 저장률" in dimension
-    assert "가격 지지 지속 기간에 따라`처럼 일반 명사로" in dimension
-    assert "Choice label은 10~25자" in dimension
+    assert "label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다" in dimension
+    assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
+    assert "question은 필요한 관측 정보와 판단 대상을 충분히 포함" in dimension
+    assert "2026년 6월 30일 유럽 저장률이 49.1%로 관측" in dimension
+    assert "Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내" in dimension
     assert "새로운 수치 경계" in dimension
     assert f"direction은 {StateDirection.prompt_values()}" in dimension
     assert "`관측된 사실 → 미래 상태 → JKM 영향`" in dimension
@@ -1788,6 +2084,102 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "합계를 정확히 100" in scenario
     assert "검증 오류: scenarios[1].dimensionValues duplicates scenarios[0].dimensionValues" in scenario_retry
     assert "동일한 실수를 반복하지 마십시오" in scenario_retry
+
+
+@pytest.mark.parametrize(
+    ("event_question_count", "expected_limit"),
+    [(8, 2), (10, 0), (12, 0)],
+)
+def test_v4_interaction_prompt_applies_the_remaining_question_capacity(
+    event_question_count: int,
+    expected_limit: int,
+) -> None:
+    prompt = build_v4_interaction_analysis_user_prompt(
+        impact_paths=[path.model_dump() for path in _analysis().impact_paths],
+        event_question_count=event_question_count,
+        event_count=4,
+    )
+
+    assert f"실제 Event openQuestions 수: {event_question_count}개" in prompt
+    assert f"Interaction openQuestions 전체 상한: {expected_limit}개" in prompt
+    assert "의미 있는 Interaction 목표: 2~3개" in prompt
+    assert "Interaction 상한: 3개" in prompt
+
+
+def test_v4_interaction_question_overage_is_dropped_without_retry() -> None:
+    axes = ["magnitude", "scope", "timing", "duration", "recovery", "mitigation", "substitution"]
+    levers = ["weather_demand", "liquefaction_availability", "financial_market_sentiment"]
+    payload = _readable_interaction_draft().model_dump(by_alias=True)
+    payload["openQuestions"] = [
+        {
+            "interaction": 1,
+            "question": f"Interaction 추가 분기 질문 {index}",
+            "axis": axes[index % len(axes)],
+            "lever": levers[index % len(levers)],
+        }
+        for index in range(8)
+    ]
+    state = V4MultiEventGenerationState(
+        events=[
+            EventPayload(mi_event_id=101, event_type_l2_id=8),
+            EventPayload(mi_event_id=202, event_type_l2_id=12),
+        ],
+        impact_levers=_catalog(),
+        analysis_draft=_analysis(),
+        interaction_draft=V4ReadableInteractionAnalysisDraft.model_validate(payload),
+        interaction_attempt=1,
+    )
+
+    update = v4_nodes.validate_v4_event_interactions(state)
+
+    finalized = update["analysis_draft"]
+    assert isinstance(finalized, V4EventImpactAnalysisResult)
+    assert update["interaction_error"] is None
+    assert update["interaction_retryable"] is False
+    assert len(finalized.path_uncertainties) == 3
+    assert len(finalized.interaction_uncertainties) == 1
+    assert finalized.interaction_uncertainties[0].uncertainty_id == "iu1"
+    assert any(warning.code == "INTERACTION_OPEN_QUESTION_LIMIT_APPLIED" for warning in finalized.validation_warnings)
+
+
+@pytest.mark.parametrize("dimension_count", [5, 6])
+def test_v4_dimension_contract_accepts_five_or_six_dimensions(dimension_count: int) -> None:
+    readable = _readable_dimension_draft()
+    dimensions = list(readable.dimensions)
+    while len(dimensions) < dimension_count:
+        clone = dimensions[0].model_copy(
+            update={
+                "label": f"추가 분기 축 {len(dimensions) + 1}",
+                "question": f"추가 분기 질문 {len(dimensions) + 1}",
+                "rationale": f"추가 분기 근거 {len(dimensions) + 1}",
+            },
+        )
+        dimensions.append(clone)
+    parsed = V4ReadableDimensionDesignDraft.model_validate(
+        readable.model_copy(update={"dimensions": dimensions}).model_dump(by_alias=True),
+    )
+    expanded = expand_v4_readable_dimension_design(parsed, impact_analysis=_analysis())
+
+    finalized = finalize_v4_dimension_design(
+        expanded,
+        impact_analysis=_analysis(),
+        impact_levers=_catalog(),
+    )
+
+    assert len(finalized.dimension_definitions) == dimension_count
+
+
+def test_v4_additional_dimension_prompt_recommends_unused_count_but_allows_empty_result() -> None:
+    prompt = build_v4_additional_dimension_user_prompt(
+        impact_analysis=_analysis().model_dump(),
+        impact_levers=[lever.model_dump() for lever in _catalog()],
+        selected_definitions=[],
+    )
+
+    assert "실제 unused question 수: 4개" in prompt
+    assert "Additional Dimension 후보 권장 범위: 1~4개" in prompt
+    assert "빈 dimensions도 정상 결과" in prompt
+    assert V4ReadableAdditionalDimensionDesignDraft(dimensions=[]).dimensions == []
 
 
 def test_llm_validation_error_detail_preserves_field_locations_for_retry() -> None:
@@ -1823,26 +2215,23 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
 
     assert expanded.dimension_definitions[0].label == "동북아 한파와 추가 LNG 수요"
     assert expanded.dimension_definitions[0].description == "한파에 따른 추가 LNG 수요 규모는 얼마인가?"
-    assert expanded.dimension_definitions[0].rationale == (
-        "관측된 동북아 한파와 추가 LNG 수요 변화가 계속되는지에 따라 관련 시장 경로와 Scenario별 JKM 압력이 달라짐"
-    )
-    assert "관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지" in rationale_schema["description"]
-    assert "질문 어미만" in rationale_schema["description"]
+    assert expanded.dimension_definitions[0].rationale == "동북아 한파와 추가 분기 기준"
+    assert "관측 시점·수치·시장 신호·대상·영향 경로" in rationale_schema["description"]
+    assert rationale_schema["maxLength"] == 200
+    assert "minLength" not in rationale_schema
     assert "Choice의 미래 상태와 JKM 영향을 바로 연결" in why_schema["description"]
     assert "문장 끝의 '가정'으로만" in why_schema["description"]
     assert "가정 의미를 반복" in why_schema["description"]
     assert "답·응답·선택으로 표현하지 않음" in why_schema["description"]
-    assert all(10 <= len(choice.label) <= 25 for dimension in readable.dimensions for choice in dimension.choices)
+    assert all(len(choice.label) <= 30 for dimension in readable.dimensions for choice in dimension.choices)
 
     invalid_choice = readable.model_dump(by_alias=True)
     invalid_choice["dimensions"][0]["choices"][0]["label"] = "낮음"
-    with pytest.raises(ValueError, match="label"):
-        V4ReadableDimensionDesignDraft.model_validate(invalid_choice)
+    assert V4ReadableDimensionDesignDraft.model_validate(invalid_choice).dimensions[0].choices[0].label == "낮음"
 
     short_rationale = readable.model_dump(by_alias=True)
     short_rationale["dimensions"][0]["rationale"] = "너무 짧음"
-    with pytest.raises(ValueError, match="rationale"):
-        V4ReadableDimensionDesignDraft.model_validate(short_rationale)
+    assert V4ReadableDimensionDesignDraft.model_validate(short_rationale).dimensions[0].rationale == "너무 짧음"
 
     long_rationale = readable.model_dump(by_alias=True)
     long_rationale["dimensions"][0]["rationale"] = "가" * 201
@@ -1854,7 +2243,7 @@ def test_v4_readable_copy_contract_matches_table_density() -> None:
     assert all(80 <= len(scenario.narrative) <= 300 for scenario in synthesis.scenarios)
 
     invalid_scenario = synthesis.model_dump(by_alias=True)
-    invalid_scenario["scenarios"][0]["title"] = "전면 강세"
+    invalid_scenario["scenarios"][0]["title"] = "가" * 41
     with pytest.raises(ValueError, match="title"):
         V4ReadableScenarioSynthesisDraft.model_validate(invalid_scenario)
 

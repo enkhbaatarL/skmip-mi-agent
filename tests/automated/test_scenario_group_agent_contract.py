@@ -671,15 +671,14 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert "metrics" not in serialized["table"]["rows"][0]
         assert "impact" not in serialized["table"]["rows"][0]
 
-    def test_confirmation_request_allows_missing_user_id_temporarily(self) -> None:
-        payload = ConfirmGenerationIn.model_validate(
-            {
-                "scenarioGroup": CONFIRM_SCENARIO_GROUP,
-                "table": TABLE,
-            },
-        )
-
-        assert payload.user_id is None
+    def test_confirmation_request_requires_user_id(self) -> None:
+        with self.assertRaises(ValidationError):
+            ConfirmGenerationIn.model_validate(
+                {
+                    "scenarioGroup": CONFIRM_SCENARIO_GROUP,
+                    "table": TABLE,
+                },
+            )
 
     def test_confirmation_updates_scenario_group_title_summary_description(
         self,
@@ -694,6 +693,13 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             summary="old summary",
             description="old description",
             dimension_selected=["period"],
+            dimension_definitions=[
+                {
+                    "dimension_id": "period",
+                    "label": "기간",
+                    "values": [{"value_id": "period_v1", "label": "단기"}],
+                },
+            ],
             scenario_count=1,
             status="creating",
             stage="ready",
@@ -782,10 +788,11 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                     "description": "updated description",
                 },
                 {
+                    "headers": [{"key": "period", "label": "기간", "display_order": 1}],
                     "rows": [
                         {
                             "scenario_id": 100,
-                            "cells": {"period": "단기"},
+                            "cells": {"period": "period_v1"},
                             "impact": {
                                 "jkm": "bear",
                                 "ttf": "bull",
@@ -812,6 +819,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert group_update["status"] == "created"
         assert group_update["stage"] == "completed"
         scenario_update = scenario_repository.update_from_payload.call_args.args[1]
+        assert "dimension_values" not in scenario_update
         assert "impact_jkm" not in scenario_update
         assert "impact_ttf" not in scenario_update
         assert "impact_hh" not in scenario_update
@@ -1546,7 +1554,7 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         serialized = result.model_dump(by_alias=True)
         assert serialized["table"]["headers"][0]["label"] == "기간"
-        assert serialized["table"]["rows"][0]["cells"]["period"] == "단기"
+        assert serialized["table"]["rows"][0]["cells"]["period"] == "period_v1"
         assert "impact" not in serialized["table"]["rows"][0]
 
     def test_query_response_includes_delete_flags_and_counts(self) -> None:

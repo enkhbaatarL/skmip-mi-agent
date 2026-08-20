@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 import secrets
 import time
 from typing import Any
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from apps.persistence.scenario_group_operation.models import (
     MiScenarioGroupOperationEventModel,
@@ -21,8 +23,10 @@ from apps.persistence.scenario_group_operation.schema import (
     ScenarioGroupOperationEventPayload,
     ScenarioGroupOperationInternalPayload,
     ScenarioGroupOperationPayload,
+    ValidationApplicationPayload,
     ValidationOperationResultPayload,
 )
+from apps.persistence.signpost.repository import SignpostRepository
 
 
 _CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -201,6 +205,229 @@ class ScenarioGroupOperationService:
                 )
             if group is None:
                 raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {scenario_group_id}")
+            if operation.status in TERMINAL_OPERATION_STATUSES:
+                raise OperationAlreadyTerminalError(operation_id, operation.status)
+            if result_payload.validation_result.can_proceed:
+                from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
+                    dimension_definition_fingerprint,
+                    scenario_fingerprint,
+                )
+                from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
+                from apps.persistence.enums import ScenarioStatus
+
+                scenario_repository = ScenarioRepository(session=session)
+                signpost_repository = SignpostRepository(session=session)
+                scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id, for_update=True)
+                scenario_dicts = [scenario_repository.model_to_dict(item) for item in scenarios]
+                current_scenario_fingerprint = scenario_fingerprint(scenario_dicts)
+                current_definition_fingerprint = dimension_definition_fingerprint(
+                    list(group.dimension_definitions or [])
+                )
+                base_definition_fingerprint = (
+                    result_payload.base_dimension_definition_fingerprint
+                    or result_payload.dimension_definition_fingerprint
+                )
+                if (
+                    current_scenario_fingerprint != result_payload.base_scenario_fingerprint
+                    or current_definition_fingerprint != base_definition_fingerprint
+                ):
+                    raise MIBaseError(
+                        ErrorCode.SCENARIO_VALIDATION_STALE,
+                        detail="Validation 실행 중 Scenario 또는 정식 Dimension definition이 변경되었습니다.",
+                    )
+
+                formal_definitions = [
+                    item for item in (group.dimension_definitions or []) if isinstance(item, dict)
+                ]
+                formal_by_id = {
+                    str(item.get("dimension_id") or item.get("dimensionId") or ""): item
+                    for item in formal_definitions
+                }
+                current_selected = [str(item) for item in (getattr(group, "dimension_selected", None) or [])]
+                requested_ids = list(
+                    result_payload.requested_dimension_ids
+                    or current_selected
+                    or formal_by_id
+                )
+                current_selected_set = set(current_selected)
+                if current_selected and [
+                    item for item in requested_ids if item in current_selected_set
+                ] != current_selected:
+                    raise MIBaseError(
+                        ErrorCode.SCENARIO_VALIDATION_STALE,
+                        detail="Validation 실행 중 Dimension header 순서가 변경되었습니다.",
+                    )
+                promoted_ids = [item for item in requested_ids if item not in formal_by_id]
+                if promoted_ids != list(result_payload.promoted_dimension_ids):
+                    raise MIBaseError(
+                        ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                        detail="Validation candidate header가 현재 정식 Dimension과 일치하지 않습니다.",
+                    )
+
+                candidate_by_id: dict[str, dict[str, Any]] = {}
+                if promoted_ids:
+                    from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
+                        ScenarioGroupService,
+                    )
+
+                    diagnostics = dict(group.generation_diagnostics or {})
+                    generation = diagnostics.get("additional_dimension_generation") or diagnostics.get(
+                        "additionalDimensionGeneration",
+                        {},
+                    )
+                    if (
+                        generation.get("status") != "ready"
+                        or generation.get("source_fingerprint", generation.get("sourceFingerprint"))
+                        != result_payload.candidate_source_fingerprint
+                    ):
+                        raise MIBaseError(
+                            ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                            detail="Additional Dimension source fingerprint가 변경되었습니다.",
+                        )
+                    _unused_uncertainties, current_candidate_fingerprint = (
+                        ScenarioGroupService._additional_dimension_source(group)
+                    )
+                    if current_candidate_fingerprint != result_payload.candidate_source_fingerprint:
+                        raise MIBaseError(
+                            ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                            detail="Additional Dimension active source pool이 변경되었습니다.",
+                        )
+                    candidates = diagnostics.get("additional_dimension_candidates") or diagnostics.get(
+                        "additionalDimensionCandidates",
+                        [],
+                    )
+                    candidate_by_id = {
+                        str(item.get("dimension_id") or item.get("dimensionId")): item
+                        for item in candidates
+                        if isinstance(item, dict)
+                    }
+                    missing_candidates = set(promoted_ids) - set(candidate_by_id)
+                    if missing_candidates:
+                        raise MIBaseError(
+                            ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                            detail=f"Additional Dimension 후보가 없습니다: {sorted(missing_candidates)}",
+                        )
+                    reserved_sources = {
+                        str(source_id)
+                        for definition in (group.dimension_definitions or [])
+                        if isinstance(definition, dict)
+                        for source_id in (
+                            definition.get("source_uncertainty_ids")
+                            or definition.get("sourceUncertaintyIds")
+                            or []
+                        )
+                    }
+                    for candidate_id in promoted_ids:
+                        candidate_sources = {
+                            str(item)
+                            for item in (
+                                candidate_by_id[candidate_id].get("source_uncertainty_ids")
+                                or candidate_by_id[candidate_id].get("sourceUncertaintyIds")
+                                or []
+                            )
+                        }
+                        if reserved_sources.intersection(candidate_sources):
+                            raise MIBaseError(
+                                ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                                detail=f"Additional Dimension source가 이미 사용 중입니다: {candidate_id}",
+                            )
+                        reserved_sources.update(candidate_sources)
+
+                definition_by_id = {**candidate_by_id, **formal_by_id}
+                missing_definitions = [item for item in requested_ids if item not in definition_by_id]
+                if missing_definitions:
+                    raise MIBaseError(
+                        ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                        detail=f"Validation Dimension definition이 없습니다: {missing_definitions}",
+                    )
+                target_definitions = [definition_by_id[item] for item in requested_ids]
+                if (
+                    dimension_definition_fingerprint(target_definitions)
+                    != result_payload.dimension_definition_fingerprint
+                ):
+                    raise MIBaseError(
+                        ErrorCode.SCENARIO_DIMENSION_CANDIDATE_STALE,
+                        detail="Validation requested Dimension definition이 변경되었습니다.",
+                    )
+                result_payload.requested_dimension_ids = requested_ids
+                result_payload.requested_dimension_definitions = target_definitions
+                result_payload.promoted_dimension_ids = promoted_ids
+
+                change_set = result_payload.scenario_change_set
+                new_id_map: dict[str, int] = {}
+                if result_payload.mode == "changed" and change_set is not None:
+                    scenarios_by_id = {int(item.scenario_id): item for item in scenarios}
+                    existing_upsert_ids = {
+                        int(item.scenario_id) for item in change_set.upserts if item.scenario_id is not None
+                    }
+                    if not existing_upsert_ids.issubset(scenarios_by_id) or not set(
+                        change_set.delete_scenario_ids
+                    ).issubset(scenarios_by_id):
+                        raise MIBaseError(
+                            ErrorCode.SCENARIO_VALIDATION_STALE,
+                            detail="Validation Change Set의 Scenario ID가 현재 그룹과 일치하지 않습니다.",
+                        )
+                    updated_ids: list[int] = []
+                    for upsert in change_set.upserts:
+                        fields = upsert.generated_fields
+                        payload = {
+                            "title": upsert.title,
+                            "narrative": fields.narrative,
+                            "dimension_values": upsert.dimension_values,
+                            "probability_score": Decimal(str(fields.probability_score)),
+                            "probability_delta": Decimal("0"),
+                            "display_order": upsert.display_order,
+                            "baseline_yn": "N",
+                            "global_pressure_band": fields.pressure_band,
+                            "scenario_role": None,
+                            "global_pressure_rationale": fields.pressure_rationale,
+                            "related_markets": fields.related_markets,
+                            "status": ScenarioStatus.CREATING.value,
+                            "mod_usr_logn_id": user_id,
+                        }
+                        if upsert.scenario_id is None:
+                            inserted_id = scenario_repository.insert_scenario(
+                                {
+                                    **payload,
+                                    "scenario_group_id": scenario_group_id,
+                                    "crt_usr_logn_id": user_id,
+                                }
+                            )
+                            new_id_map[upsert.client_row_key] = inserted_id
+                        else:
+                            scenario_id = int(upsert.scenario_id)
+                            scenario_repository.update_from_payload(scenarios_by_id[scenario_id], payload)
+                            updated_ids.append(scenario_id)
+                    scenario_repository.soft_delete_by_ids(change_set.delete_scenario_ids, user_id=user_id)
+                    signpost_repository.soft_delete_by_scenario_ids(
+                        [*updated_ids, *change_set.delete_scenario_ids],
+                        user_id=user_id,
+                    )
+
+                active_scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
+                ScenarioService()._apply_v4_baseline_and_roles(
+                    active_scenarios,
+                    target_definitions,
+                    user_id=user_id,
+                )
+                group_repository.update_group(
+                    group,
+                    {
+                        "dimension_definitions": target_definitions,
+                        "dimension_selected": requested_ids,
+                        "scenario_count": len(active_scenarios),
+                        "mod_usr_logn_id": user_id,
+                    },
+                )
+                applied_fingerprint = scenario_fingerprint(
+                    [scenario_repository.model_to_dict(item) for item in active_scenarios]
+                )
+                result_payload.application = ValidationApplicationPayload(
+                    applied_at=datetime.now(UTC),
+                    applied_scenario_fingerprint=applied_fingerprint,
+                    new_scenario_id_map=new_id_map,
+                )
+
             operation.result_payload = result_payload.model_dump(mode="json", by_alias=True)
             next_stage = "scenario_validated" if result_payload.validation_result.can_proceed else "scenario_created"
             group_repository.update_group(

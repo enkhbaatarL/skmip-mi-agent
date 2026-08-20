@@ -65,6 +65,30 @@ section 상태와 revision만 싣는다. 최종 persistence 후에는 Scenario G
 generation diagnostics가 Presentation source of truth다. 렌더링된 Markdown과 실패 draft는 projection이나
 event history에 저장하지 않는다.
 
+최종 persistence 직후 canonical create operation과 `POST /v4/scenario-groups/sync`는 unused open question ID와
+source fingerprint를 `additional_dimension_generation=queued`로 저장한다. canonical 경로는 create
+`completed` event를 기록한 뒤 task를 제출하고, sync 경로는 같은 lifecycle을 응답
+`generationDiagnostics.additionalDimensionGeneration`에 반영한 뒤 task를 제출하고 create 응답을 반환한다.
+별도 lifespan-owned `AdditionalDimensionTaskRunner`가 create operation과 독립적으로 질문 전체를 batch
+structured LLM 호출로 후보화한다. unused question이 없거나 LLM이 명시적으로 `dimensions=[]`를 반환하면
+`ready + []`로 완료한다. 일부 후보만 hydrate/검증을 통과하면 유효 후보를 즉시 저장하고 재시도하지 않는다.
+후보를 하나 이상 반환했지만 모두 탈락한 경우에만 reason code를 validation feedback으로 전달해 1초·2초
+backoff로 최대 3회 시도한다. 세 번 모두 전부 탈락하면 `failed`와
+`ADDITIONAL_DIMENSION_CANDIDATES_INVALID`를 저장한다. 결과와 lifecycle
+(`queued|running|ready|failed|interrupted|discarded`)은 `generation_diagnostics`의 additional key만 merge한다.
+서버 시작 시 `scenario_created` v4 그룹의 queued/running 작업을 제한 개수만 재등록하고, shutdown 취소는
+`interrupted`로 남긴다. LLM 호출 동안 Scenario Group row lock은 유지하지 않는다.
+
+Additional Dimension task는 submit, start, complete를 INFO로 기록하고 후보 일부 탈락은 WARN, 실패·shutdown
+interrupt는 ERROR로 기록한다. 완료/탈락 로그에는 입력·유효·탈락 개수와 reason code를 남긴다. structured
+LLM 호출은 별도 MLflow trace를 사용하며 `api_identifier=add_dimension`, `api_version=v4_b1` tag와 Scenario
+Group ID session을 남긴다. attempt span에는 시도 번호, 입력·유효·탈락 개수와 탈락 reason code를 기록한다.
+
+2026-08-20에는 위 개선 적용 후 안전 조건을 모두 만족한 기존 Group `441`만 service/manual 경로로 한 번
+재queue했다. 첫 호출에서 입력 2개·유효 2개·탈락 0개로 `ready`가 되었고 GET `availableCount=2`를
+확인했다. 저장된 6개 Lever state의 `impactLeverId`는 현재 catalog의 canonical ID와 모두 일치했으며,
+기존 정식 Dimension과 `dimensionSelected`는 `d1`~`d4` 그대로 유지됐다.
+
 생성 준비 단계의 중복 점유 단위는 개별 Event가 아니라 정렬된 Event ID 조합이다.
 요청 순서는 Event 연결의 `display_order`와 graph 입력에 유지하고, 중복 조회용
 `event_set_hash`는 `v1:` + compact JSON 정렬 배열의 SHA-256으로 계산한다.
@@ -161,7 +185,7 @@ v4는 운영 비동기 endpoint와 테스트용 sync endpoint를 함께 제공�
 | `POST /v3/scenario-groups/sync` | 중복 없는 `miEventIds` 1~5개 | Event 충격·상호작용 기반 합성 dimension 3~6개          |
 | `POST /scenario-groups`         | 중복 없는 `miEventIds` 1~5개 | Event grounding·모델 영향 레버 기반 dimension 3~6개, DB event + SSE 비동기 실행 |
 | `POST /v4/scenario-groups`      | 신규 API와 동일             | 기존 callback 호환 alias, deprecated                    |
-| `POST /v4/scenario-groups/sync` | v4와 동일                  | v4 생성 흐름 동기 실행                              |
+| `POST /v4/scenario-groups/sync` | v4와 동일                  | v4 생성 흐름 동기 실행 후 Additional Dimension 비동기 queue |
 
 
 v2/v3는 `flows/create_multi_event_scenarios/flow.py`에서 Event와 Event Type
@@ -313,7 +337,22 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    뒤의 최대 두 Fact와 Impact는 서로 다른 Lever·방향·기간 또는 실질적인 증폭·상쇄를 추가할 때만 사용한다.
    `decisionBasis`는 Primary Fact나 Impact를 대신하지 않는다. Event당 Impact Path는 최대 3개, ordered Lever
    step은 Path당 가급적 1~2개로 제한하되 driver·transmission·primary 세 단계가 모두 중요한 경우에만
-   최대 3개까지 허용하며, 열린 질문은 최대 2개다. 열린 질문은
+   최대 3개까지 허용한다. 동일 Event의 원인→전달→결과는 가능한 한 하나의 Path 안에서 세 role로 표현하고,
+   JKM 방향·기간·Lever 경로가 독립적으로 다를 때만 추가 Path를 허용한다. 열린 질문 배열은 schema의
+   `max_length`로 validation하지 않는다. Event 수별 숫자 목표·상한을 요청 순서에 따라 각 병렬 prompt에
+   전달하고, LLM이 초과 반환하면 중요한 질문부터 출력된 순서대로 상한까지만 보존한다.
+
+   | Event 수 | 요청 순서별 Event openQuestions 목표·상한 |
+   | ---: | --- |
+   | 1 | `3` |
+   | 2 | `3`, `3` |
+   | 3 | `3`, `3`, `2` |
+   | 4 | `2`, `2`, `2`, `2` |
+   | 5 | `2`, `2`, `2`, `1`, `1` |
+
+   high Path는 복수 질문, medium은 보통 1~2개, low는 분기력이 있을 때만 0~1개를 허용하며 Path
+   materiality를 상속한다. 부족한 질문은 재시도하거나 보충하지 않는다. 상한 적용은 retry 조건이 아니며
+   `EVENT_OPEN_QUESTION_LIMIT_APPLIED` warning에 Event ID·상한·제거 수를 남긴다. 열린 질문은
    분석 기준일에 아직 결과가 열려 있고 JKM pressure를 구분하는 변수를 우선하며, 이미 지난 목표는
    미래 가능성으로 되돌리지 않고 현재 남은 제약과 앞으로의 해소 시점으로 전환한다. 각 Event는
    자기 호출만 최대 3회 재시도하므로 한 Event 실패가 성공한 다른 Event의 재생성을 유발하지 않는다.
@@ -321,21 +360,36 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    Fact→Path→Lever lineage를 검증하고
    `leverCode`로 `impactLeverId`를 hydrate한다. price-only Path는 `balanceEffect`를 생략하며,
    그 외 Path는 Catalog domain과 일치하는 balance effect를 가져야 한다.
-3. `analyze_event_interactions` / `validate_event_interactions`: 검증된 Path를 `[P1]`, `[P2]` 형태의
-   읽기 쉬운 카드로 전달하고 Event별 첫 Path를 `Primary Impact`로 표시한다. LLM은 Primary Impact가 포함된
+3. `analyze_event_interactions` / `validate_event_interactions`: 검증된 Path를 `E1463-P1` 형태로
+   Event ID·제목·요약별 그룹화한 카드로 전달하고 `pathRole=primary` Lever를 가진 Path를 `Primary Impact`로 표시한다. LLM은 Primary Impact가 포함된
    결합을 우선 검토하되 실제 추가 효과가 있을 때만 Interaction을 만들며, 함께 발생했을 때 달라지는 점을 한국어 문장으로 설명하고
    관련 Path 별칭만 선택한다. 결합 효과의 JKM 순방향과 기간도 `analysis` 문장에 포함하며 별도
-   `price` 필드는 만들지 않는다. 중요한 cross-Event Interaction과 열린 질문을 각각 최대 3개만
-   생성하며, 관계가 없으면 빈 배열을 허용한다. Interaction ID, Event ID, canonical Path ID와
-   semantic key는 서버가 Path lineage에서 hydrate한다.
+   `price` 필드는 만들지 않는다. 단일 Event는 이 LLM 호출을 생략하고 Interaction과 Interaction 질문을
+   모두 빈 배열로 유지한다. Event 수별 Interaction 목표·상한은 2개 Event `1`, 3개 Event `2`,
+   4~5개 Event `2~3`이며 상한은 각각 `1`, `2`, `3`이다. Interaction과 질문은 Scenario 분기 기여도
+   순으로 출력한다. 초과 Interaction은 출력 순서대로 drop하고 `INTERACTION_COUNT_LIMIT_APPLIED` warning을
+   남기며, 부족한 관계는 만들지 않는다. Interaction 질문은 각 Interaction당 첫 질문 최대 1개만 후보로 삼고,
+   전체 예산은 `max(0, min(2, retained_interaction_count, 10-retained_event_question_count))`로 계산한다.
+   초과 질문은 `INTERACTION_OPEN_QUESTION_LIMIT_APPLIED` warning과 함께 drop한다. 개수 조정은 retry 조건이
+   아니며 `relation=independent`에는 질문을 만들지 않고 관계가 없으면 빈 배열을 허용한다.
+   Interaction ID, Event ID, canonical Path ID와
+   semantic key는 서버가 Path lineage에서 hydrate한다. 동일 Event Path만 선택한 Interaction과 연결 질문은
+   `SAME_EVENT_INTERACTION_DROPPED` warning과 함께 먼저 drop한다. 이후 남은 Interaction과 질문을
+   `i1...`, `iu1...`으로 재번호화한다. unknown·duplicate Path 별칭과 잘못된 Lever는 validation error로 유지한다.
+   최종 질문 pool은 의미 중복을 제거한다. 중복 제거 뒤 단일 Event가 3개 미만이거나 다중 Event가 7개 미만이면
+   `OPEN_QUESTION_TARGET_UNDERSHOT` warning만 남기고 생성 흐름은 계속한다.
 4. `design_model_lever_dimensions`: 검증된 열린 질문을 `[U1]`, `[U2]` 카드로 전달하고, 각 질문을
-   어떤 선택 축으로 모델링할지 Dimension 3~6개와 Value 2~4개로 답하게 한다. LLM은 질문·축·선택지와
+   어떤 선택 축으로 모델링할지 기본 3~4개 Dimension과 Value 2~4개를 권장한다. 단일 Event의 질문 3개는
+   모두 초기 Dimension에 사용해 unused question이 없어도 정상이다. 실제 질문이 4개이면
+   Dimension 3개와 unused question 1개를, 질문이 5개 이상이면 Dimension 3~4개와 unused question 최소
+   1개를 권장한다. 구조적 허용 범위는 Dimension 3~6개이므로 5~6개 응답도 retry 없이 수용한다.
+   LLM은 질문·축·선택지와
    선택 결과를 자연어 및 짧은 상태 표현으로 생성하며 Dimension/Value ID와 source lineage는 서버가
-   부여한다. 화면용 Dimension label은 질문과 분리하고, Dimension rationale은 질문의 관측일·분석 기준일·
-   수치·시장 신호·대상·영향 경로를 빠짐없이 유지하며 질문 어미만 `...하는지에 따라` 형태의 근거형 평서문으로
-   바꿔, 이 불확실성이 Scenario와 JKM 결과를 구분하는 이유를 10~200자의 구체적인 한국어 한 문장으로 설명한다.
-   Value label은 비교 가능한 시장·운영 상태를
-   10~25자로 표현한다. `decisionBasis`에 현재 판단에 유효한 수치·기간·잔여일이 있으면 질문과 Value에
+   부여한다. 화면용 Dimension label은 질문과 분리하며 30자 이내로 작성한다. 원본 열린 질문은
+   `description`에 제한 없이 보존하고, Dimension `rationale`은 관측 정보와 영향 경로를 유지한 최대 200자의
+   구체적인 선정 근거로 작성한다. 최소 길이는 강제하지 않는다.
+   Value label은 비교 가능한 시장·운영 상태를 30자 이내로 표현한다.
+   `decisionBasis`에 현재 판단에 유효한 수치·기간·잔여일이 있으면 질문과 Value에
    반영한다. Value의 `assumptionRationale`은 `관측된 사실 → Value의 미래 상태 → JKM 영향`을 간결하게
    연결하고 문장 끝의 `가정`으로만 불확실성을 표시한다. `상태를 가정하면 ... 가정이다`처럼 가정 의미를
    반복하거나 Value를 답·응답·선택으로 지칭하지 않는다. Anchor ref는 추가하지 않으며 새로운 숫자 경계는
@@ -343,14 +397,20 @@ binding 자체가 없으면 `NO_PARAMETER_BINDING`, master의 `use_yn=N`이면
    만든다. Dimension은 새 Lever를 선택하지 않고 source uncertainty의 affected Lever를 상속한다.
    LLM은 별도 `format`을 생성하지 않는다. 서버는 `timing`·`duration`·`recovery` axis를 `temporal`,
    그 외 axis에서 단위가 있으면 `numeric_range`, 나머지를 `categorical` `valueKind`로 결정한다.
+   초기 생성 뒤 Additional Dimension prompt에는 실제 unused question 수와 후보 권장 범위
+   `1~unused_count`를 표시한다. 이 범위도 best-effort이며 빈 후보 배열은 정상 `ready` 결과다. Additional
+   Dimension의 각 `states`는 정확히 `lever|direction|level|scope|timeWindow`이며 direction은
+   `increase|decrease|disrupt|recover|unchanged` 중 하나다. 첫 state는 source Lever를 사용하고 같은 Choice
+   안에서 Lever code를 중복하지 않는다.
 5. `validate_model_lever_dimensions`: Dimension의 source Event/Path/uncertainty와
    `primaryImpactLeverId`, Value별 Lever state ID 및 model support status를 hydrate한다.
 6. `synthesize_v4_scenarios`: 공통 영향, 검증된 Interaction, Dimension 선택지를 읽기 쉬운
    의사결정표로 전달하고, 원본 Event의 ID·제목·요약·발생시각·핵심 사실·태그도 compact block으로 함께
    제공한다. LLM은 `D1.V1` 같은 선택지 별칭을 골라 Scenario 3~5개의 제목·서사·JKM
    압력 설명을 자연스러운 한국어 문장으로 생성한다. 미리 정한 공급·수요·운송 유형에 맞추지 않고
-   입력 Dimension과 Interaction에서 Scenario별 구분 요인을 선택한다. 제목은 핵심 조건이나 메커니즘을
-   20~40자로 표현하고, narrative는 주요 조건과 최종 전달 경로를 80~300자의 두 문장으로 설명한다.
+   입력 Dimension과 Interaction에서 Scenario별 구분 요인을 선택한다. 제목은 최소 길이를 강제하지 않고
+   핵심 조건이나 메커니즘을 최대 40자로 표현하며, narrative는 주요 조건과 최종 전달 경로를
+   80~300자의 두 문장으로 설명한다.
    그룹 title은 선택한 Event의 구체적인 대상·지역·지표·변화 2~3개를 반영해 검색 가능한 이름으로 만들고,
    생성 목적만 나타내는 `JKM 대표 전개`·`합성 초안` 같은 이름은 사용하지 않는다. 그룹 description은 발생한
    사건을 `이벤트`, 미래 분기를 `시나리오`로 표기하며 영문 `Event`·`Scenario`, `입력 사실`, `JKM`을 쓰지 않는다.
@@ -761,11 +821,14 @@ Stage 4+5 응답은 다음 조건을 확인한다.
 
 ### 전체 흐름
 
-v4는 prepare에서 validation operation을 만들고 stage를 `scenario_created`로 정리한다. background graph의
-review node 안에서는 다음 v4 전용 순서를 수행한다.
+v4는 prepare에서 validation operation을 만들고 stage를 `scenario_created`로 정리한다. 요청 header는
+현재 정식 Dimension과 ready 상태의 가용 Additional candidate로 만든 effective catalog에서 검증한다.
+Validation 성공 transaction은 Scenario Change Set 적용과 candidate의 `dimension_definitions` 승격,
+`dimension_selected` 순서 저장을 같은 row lock/commit에서 수행한다. source fingerprint나 candidate source가
+달라졌으면 stale conflict로 중단한다. background graph의 review node 안에서는 다음 v4 전용 순서를 수행한다.
 
 ```text
-label/valueId -> canonical valueId 정규화
+valueId 검증 (정확한 단일 legacy label만 과도기 변환)
   -> Scenario 수·header/cell·enum·title·조합 결정적 검사
   -> unchanged이면 LLM 없이 PASS
   -> title/조합 변경 및 신규 row만 semantic review
@@ -1026,8 +1089,10 @@ flowchart LR
 | 4   | `confirm_outputs`     | `ScenarioGroupService.apply_confirmation()`으로 변경 내용 저장 및 confirmation snapshot 생성 | request payload 누락 또는 저장 실패 시 raise |
 
 
-`confirm_outputs`는 `request_scenario_group`과 `request_table`을 읽어
-시나리오·signpost 변경 사항을 한 번에 적용하고 `snapshot_id`를 state에 설정한다.
+`confirm_outputs`는 필수 `user_id` 소유권, 활성 Scenario ID 집합, header 순서와 request/DB canonical
+`{dimensionId: valueId}` 조합의 동일성을 먼저 확인한다. Confirmation은 Dimension 조합을 덮어쓰지 않으며,
+불일치하면 stale 오류로 Validation/Signpost 재실행을 요구한다. 동일할 때만 텍스트·확률·signpost 변경과
+canonical 상태의 confirmation snapshot을 한 번에 적용하고 `snapshot_id`를 state에 설정한다.
 
 ## 후속 편집 Flow 비교
 

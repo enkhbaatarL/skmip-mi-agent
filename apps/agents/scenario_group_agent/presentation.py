@@ -274,6 +274,7 @@ def _build_headers(
                     value.get("label") for value in values if isinstance(value, dict) and value.get("label")
                 ],
                 "value_labels_by_id": _value_labels_by_id(values),
+                "value_ids_by_label": _value_ids_by_unique_label(values),
             }
     else:
         event_type_l2_id = group.get("event_type_l2_id")
@@ -321,7 +322,7 @@ def _row_common_payload(
     pressure_target: str | None,
 ) -> dict[str, Any]:
     raw_values = scenario.get("dimension_values") or {}
-    cells = {key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key)) for key in selected_keys}
+    cells = {key: _canonical_cell_value(raw_values.get(key), template_by_key.get(key)) for key in selected_keys}
     return {
         "scenario_id": int(scenario["scenario_id"]),
         "display_order": int(scenario.get("display_order") or 0),
@@ -350,22 +351,13 @@ def _pressure_target(group: dict[str, Any]) -> str | None:
     return "JKM" if group.get("api_version") in {"v2", "v3", "v4"} else None
 
 
-def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] | None) -> Any:
+def _canonical_cell_value(value: Any, template: dict[str, Any] | None) -> Any:
     if value is None or not template:
         return value
-    value_text = str(value)
-    label_by_id = template.get("value_labels_by_id") or {}
-    if value_text in label_by_id:
-        return label_by_id[value_text]
-    prefix = f"{dimension_key}_v"
-    if not value_text.startswith(prefix):
-        return value
-    try:
-        index = int(value_text.removeprefix(prefix)) - 1
-    except ValueError:
-        return value
-    value_enums = template.get("value_enums") or []
-    return value_enums[index] if 0 <= index < len(value_enums) else value
+    text = str(value)
+    if text in (template.get("value_labels_by_id") or {}):
+        return text
+    return (template.get("value_ids_by_label") or {}).get(text, value)
 
 
 def _value_labels_by_id(values: Any) -> dict[str, str]:
@@ -380,6 +372,18 @@ def _value_labels_by_id(values: Any) -> dict[str, str]:
         if value_id is not None and label:
             labels[str(value_id)] = str(label)
     return labels
+
+
+def _value_ids_by_unique_label(values: Any) -> dict[str, str]:
+    candidates: dict[str, list[str]] = defaultdict(list)
+    for value in values or []:
+        if not isinstance(value, dict):
+            continue
+        value_id = value.get("value_id", value.get("valueId"))
+        label = value.get("label")
+        if value_id is not None and label:
+            candidates[str(label)].append(str(value_id))
+    return {label: ids[0] for label, ids in candidates.items() if len(ids) == 1}
 
 
 def _display_order(template: dict[str, Any] | None) -> int:
@@ -420,8 +424,18 @@ def build_scenario_group_presentation(
     if legacy:
         warnings.append("기존 v1 데이터에는 상세 생성 근거가 저장되지 않았습니다.")
 
-    definitions = _normalize_dimension_definitions(
-        raw_definitions,
+    selected_ids = {str(item) for item in group.get("dimension_selected") or []}
+    selected_raw_definitions = [
+        item
+        for item in raw_definitions
+        if isinstance(item, dict)
+        and (
+            not selected_ids
+            or str(_field(item, "dimension_id") or "") in selected_ids
+        )
+    ] if isinstance(raw_definitions, list) else raw_definitions
+    definitions = build_presentation_dimension_definitions(
+        selected_raw_definitions,
         engine_version=engine_version,
     )
     if legacy and not definitions:
@@ -552,7 +566,7 @@ def _camel_key(value: str) -> str:
     return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
-def _normalize_dimension_definitions(
+def build_presentation_dimension_definitions(
     raw_definitions: Any,
     *,
     engine_version: str,
@@ -740,7 +754,7 @@ def _presentation_table(
             raw_cell = raw_cells.get(header.key)
             raw_text = "" if raw_cell is None else str(raw_cell)
             value = _match_dimension_value(definition_by_id[header.key], raw_text)
-            cells[header.key] = value.label if value is not None else raw_cell
+            cells[header.key] = value.value_id if value is not None else raw_cell
             evidence[header.key] = PresentationCellEvidence(
                 value_id=value.value_id if value is not None else raw_text,
                 value_label=value.label if value is not None else raw_text,

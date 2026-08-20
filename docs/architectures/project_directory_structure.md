@@ -222,6 +222,11 @@ apps/agents/<agent_name>/
     `v4_nodes.py`에 두고 sync 및 background 실행이 같은 compiled graph를 사용한다.
   - Event/Template/impact catalog 조회와 빈 Scenario Group 준비는 graph 진입 전에
     service로 일괄 수행한다. graph 안에서는 LLM 단계와 최종 일괄 저장만 node로 표현한다.
+- `flows/add_dimension/`: v4 create 완료 뒤 unused open question을 Additional Dimension 후보로
+  생성하고 조회하는 auxiliary flow
+  - `flow.py`가 create operation과 독립적인 background 실행 및 GET projection을,
+    `nodes.py`가 unused question 계산·candidate hydrate·가용 후보 filtering을 소유한다.
+  - 후보와 lifecycle 상태는 별도 테이블 없이 Scenario Group의 `generation_diagnostics`에 저장한다.
 - `flows/validate_scenarios/`: scenario 검증 기능 단위 flow
   - `state.py`, `flow.py`, `nodes.py`로 구성되며 review 실행은 `subgraphs/scenario_review/`에 위임한다.
 - `flows/create_signposts/`: signpost 생성 기능 단위 flow
@@ -283,6 +288,17 @@ GET /scenario-groups/{scenario_group_id}
 → apps/agents/scenario_group_agent/persistence/scenario_group_service.py
 → apps/agents/scenario_group_agent/persistence/scenario_group_operation_service.py
 → presentation.py
+
+GET /scenario-groups/{scenario_group_id}/additional-dimensions
+→ api.py
+→ routers/scenario_groups.py
+→ flows/add_dimension/flow.py
+→ persistence/scenario_group_service.py
+
+POST /scenario-groups create persistence 완료
+→ persistence/scenario_group_service.py (additional generation queued)
+→ runtime.py (독립 auxiliary task runner 및 startup recovery)
+→ flows/add_dimension/flow.py
 
 DELETE /scenario-groups/{scenario_group_id}
 → api.py
