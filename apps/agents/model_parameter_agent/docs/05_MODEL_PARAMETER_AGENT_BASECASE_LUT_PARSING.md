@@ -2,7 +2,7 @@
 
 ## 1. 기준 범위
 
-Model Parameter Agent는 DB mapping이 허용한 활성 파라미터에 대해서만 Basecase와 LUT exact slot을 만든다. 현재 canonical 기준은 master 21행 중 10개 활성, dimension mapping 129행이며 공개 API payload는 바뀌지 않는다.
+Model Parameter Agent는 전략별 후보 선정이 허용한 활성 파라미터에 대해서만 Basecase와 LUT exact slot을 만든다. 현재 v4 canonical 기준은 master 21행 중 활성 16개이며, LUT-backed 10개와 Basecase-only 6개로 나뉜다. v1/v3는 shared dimension mapping 129행의 direct/routing으로 LUT-backed 10개까지 후보화하고, v4는 별도 Lever-native 경로를 사용한다. 공개 API payload는 바뀌지 않는다.
 
 Basecase는 Demand·Supply·Trade workbook의 현재 모델 입력값이고, LUT는 Basecase가 없는 exact slot의 기준값을 제공한다. 둘 다 후보 파라미터를 새로 만들지는 않는다.
 
@@ -24,7 +24,8 @@ Basecase는 Demand·Supply·Trade workbook의 현재 모델 입력값이고, LUT
 
 | 기준 | 정하는 내용 |
 |---|---|
-| tmm_mi_model_param_dimension_map | event type·dimension에서 허용되는 direct/routing 후보와 comment, indirect 보조정보 |
+| tmm_mi_model_param_dimension_map | v1/v3 event type·dimension에서 허용되는 direct/routing 후보와 comment, indirect 보조정보 |
+| tmm_mi_model_impact_lever_m | v4 selected Lever state에서 허용되는 primary/alternative parameter binding과 applicability |
 | tmm_mi_model_param_m | parameter 이름·hint, 모델 target, Basecase Sheet·행·열 규칙 |
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
 | config.yaml > model_parameter_resources.lut | enabled, adapter, files, required header, key_axes, metadata_axes |
@@ -33,7 +34,7 @@ Basecase는 Demand·Supply·Trade workbook의 현재 모델 입력값이고, LUT
 
 envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다. adapter schema는 model-parameter-lut-adapters-v3으로 catalog hash에 포함되어 이전 cache와 분리된다.
 
-## 3. 활성 LUT 10개
+## 3. LUT-backed 활성 10개
 
 | Parameter | Adapter | exact key axes | 값 또는 계산 |
 |---|---|---|---|
@@ -50,29 +51,34 @@ envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 �
 
 LiqProd와 LiqUtil은 BCLiquefaction.csv를 공유한다. Closed 시설은 제외하며 생산능력·이용률의 숫자/결측을 검증한다. SupplyDisruption은 Seasonality 값을 재정규화하지 않고 동일 Country/Year/Month로 귀결되는 생산 row는 합산한다.
 
-## 4. 보류 LUT와 보조 reference
+## 4. Basecase-only 활성 6개
+
+`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`는 별도 LUT adapter를 만들지 않는다. master의 Basecase 읽기 규칙으로 검증된 exact slot이 있을 때만 executable하다. Basecase record가 없거나 key/value 검증을 통과하지 못한 slot에는 LUT·유사 시설·부분 key fallback을 적용하지 않고 그 slot을 제외한다.
+
+## 5. 보류 LUT와 보조 reference
 
 - Coal Futures Price와 Gas Futures Price는 futures_price adapter, enabled=false다. CSV 다운로드와 header 검증은 하지만 2026년 이후 strip이 없으므로 catalog record를 만들지 않는다.
 - ElectrificationRate는 유효 Basecase·국가/연/Drive Train LUT·승인 mapping이 없어 LUT spec 자체를 만들지 않는다.
 - demand_general_country_list는 Demand_Model_LUT_General_value_based_t6.csv를 검증·동기화하는 reference다.
 - resources/lut의 모든 CSV는 활성 spec, disabled spec 또는 reference 중 하나에 선언되어야 한다.
 
-## 5. Basecase와 LUT 중 무엇을 선택하나
+## 6. Basecase와 LUT 중 무엇을 선택하나
 
-1. direct/routing mapping과 활성 master로 후보를 확정한다.
+1. v1/v3는 direct/routing mapping, v4는 선택 value의 executable Lever binding과 활성 master로 후보를 확정한다.
 2. master의 basecase_* 규칙으로 workbook record를 읽고 config adapter로 LUT record를 읽는다.
 3. key_axes 전체가 같은 exact slot끼리만 결합한다. nearest·부분 key·서로 다른 시설의 축 조합은 금지한다.
 4. 같은 slot에 Basecase 값이 있으면 그것을 effective reference로 쓴다.
-5. Basecase가 없고 LUT만 있으면 LUT를 쓰며 저장되는 basecaseValue는 null이다.
-6. 둘 다 없으면 그 slot은 제외한다.
+5. LUT-backed parameter는 Basecase가 없고 LUT만 있으면 LUT를 쓰며 저장되는 `basecaseValue`는 `null`이다.
+6. Basecase-only parameter는 Basecase가 없으면 slot을 제외한다.
+7. Basecase와 LUT가 모두 없으면 그 slot은 제외한다.
 
 Step2에는 값·source·원본 record를 보내지 않는다. 동일 기간을 period_groups로 묶고 Country→Plant→Train 고정축을 fixed_axis_hierarchy로 중첩한다. Step3에는 exact 검증된 slot의 좌표와 단일 effective reference만 전달한다.
 
-## 6. 검증 규칙
+## 7. 검증 규칙
 
 startup과 자동화 테스트는 다음을 실패로 처리한다.
 
-- horizon 밖 값만 존재하거나 활성 parameter record가 0개
+- LUT-backed parameter는 horizon 안 selectable LUT record가 0개, Basecase-only parameter는 검증된 exact Basecase slot이 0개
 - 필수 header 누락, 숫자 형식 오류, 필수 key/value 빈 값
 - 같은 exact key의 상충 값, join 누락, 허용되지 않은 시설 상태
 - config.yaml/ConfigMap 차이, 선언되지 않은 packaged CSV, 잘못된 object prefix
@@ -80,4 +86,4 @@ startup과 자동화 테스트는 다음을 실패로 처리한다.
 
 byte 상한을 넘으면 LLM을 호출하지 않고 actual/limit byte와 parameter별 byte를 포함한 INVALID_REQUEST를 반환한다. LiqUtil 단독 평면 catalog 약 129KB·약 40K input token을 기준선으로 삼고, 실제 테스트 리포트에는 provider input/output/total token과 실행시간을 기록한다.
 
-정확한 파일명·header·object key는 envs/config.yaml, 최종 master·mapping·공식은 resources/Model_Parameter_Base_Case_Mapping.md가 canonical 기준이다.
+정확한 파일명·header·object key는 `envs/config.yaml`, v4 master·Lever binding·공식은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다. `resources/Model_Parameter_Base_Case_Mapping.md`는 이를 통합해 설명한다.

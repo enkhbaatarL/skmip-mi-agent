@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -460,17 +459,6 @@ def test_section_ready_event_contains_projection_revision_details() -> None:
         ],
         "snapshotRevision": 3,
     }
-
-
-def test_v1_backfill_migration_is_idempotent_and_has_scoped_rollback() -> None:
-    migration = Path("scripts/migrations/20260811_backfill_v1_presentation_operations.sql").read_text()
-
-    assert migration.count("INSERT IGNORE INTO tmm_mi_scenario_group_operation_m") == 4
-    assert "INSERT IGNORE INTO tmm_mi_scenario_group_operation_event_h" in migration
-    assert "operation.source = 'legacy_v1_backfill'" in migration
-    assert "DELETE FROM tmm_mi_scenario_group_operation_m WHERE source = 'legacy_v1_backfill'" in migration
-    assert "UPDATE tmm_mi_scenario_m" not in migration
-    assert "UPDATE tmm_mi_signpost_m" not in migration
 
 
 def test_same_retry_code_for_different_events_preserves_each_reference() -> None:

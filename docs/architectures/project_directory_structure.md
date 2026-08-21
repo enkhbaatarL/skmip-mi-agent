@@ -58,7 +58,7 @@ skmip-mi-agent/
 - `apps/agents/<agent_name>/`: Agent별 API, flow, API/graph schema, prompt, subgraph 구현 위치
 - `apps/common/`: 설정, 공통 예외, logging, middleware, openapi, runtime, streaming, 공통 util/value 구현 위치
 - `apps/connectors/`: callback, HTTP client, LLM client, observability, vector DB 같은 외부 시스템 adapter 구현 위치
-- `apps/persistence/`: 여러 Agent가 공유하는 DB ORM, repository, 공용 persistence DTO 구현 위치
+- `apps/persistence/`: 여러 Agent가 공유하는 DB ORM, repository, domain service와 공용 persistence DTO 구현 위치
 - `apps/agents/scenario_group_agent/`: 현재 운영 중인 Agent이자 새 Agent 구조의 기준 예시
 - `devops/`: docker compose와 Kubernetes manifest
 - `envs/`: 로컬/배포 실행 설정 파일 템플릿과 config
@@ -88,7 +88,7 @@ apps/agents/<agent_name>/
 │   └── security.py
 ├── persistence/
 │   ├── event_service.py
-│   ├── model_impact_lever_service.py
+│   ├── model_impact_lever_service.py  # 공용 persistence service 호환 wrapper
 │   ├── scenario_service.py
 │   ├── scenario_group_service.py
 │   ├── scenario_group_operation_service.py
@@ -235,8 +235,8 @@ apps/agents/<agent_name>/
 - `apps/connectors/llm/`: LLM client adapter
 - `apps/connectors/vdb/`: vector DB 설정 loader, schema, client
 - `apps/persistence/event/`, `apps/persistence/model_impact_lever/`, `apps/persistence/scenario_group/`, `apps/persistence/scenario_group_operation/`, `apps/persistence/scenario/`, `apps/persistence/signpost/`: DB domain 단위 persistence 계층
-- `apps/persistence/model_impact_lever/`: v4 Scenario 생성이 사용하는 모델 영향 레버 catalog의 ORM, DTO, repository. 기존 모델 파라미터 master는 binding 활성 상태 확인을 위한 외부 참조로만 사용한다.
-- `apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`: v4 생성 유스케이스에 필요한 레버 catalog hydration과 checksum 조립을 담당한다.
+- `apps/persistence/model_impact_lever/`: v4 Scenario 생성과 Model Parameter proposal이 공유하는 모델 영향 레버 catalog의 ORM, DTO, repository, service. `service.py`가 catalog hydration, parameter master 활성 검증과 checksum 계산을 소유한다.
+- `apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`: 기존 import를 위한 호환 wrapper이며 공용 service의 정책을 재구현하지 않는다.
 - `apps/persistence/scenario_group/event_set.py`: 요청 순서와 무관한 Event 조합 canonical 값과 SHA-256 hash
 - `apps/persistence/scenario_group/models.py`: Scenario Group master와 Event 연결 ORM의 기준. master에는
   `mi_event_id`, `event_type_l2_id`를 두지 않고 Event lineage는
@@ -331,11 +331,13 @@ POST /scenario-groups/{scenario_group_id}/price-interpretations
 `utils/resource_runtime.py`에 worker별 immutable 경로를 등록한다. Object Storage가 활성화된 환경은
 `apps/connectors/object_storage/`의 exact `HeadObject`/`GetObject`만 사용하며, 원격 실패 시 packaged
 리소스로 폴백한다. manifest의 `lut`은 `enabled`로 catalog 생성 여부를 구분하고, `references`는 독립
-parameter record를 만들지 않는 보조 CSV를 소유한다. 현재 canonical master는 21행·활성 10개이며
-dimension mapping은 129행이다. 정확한 DB matrix는 `scripts/model_parameter/model-parameter-canonical-v1.json`,
-사람이 읽는 명세는 `resources/Model_Parameter_Base_Case_Mapping.md`, 업무용 현재 표는
-`resources/mapping/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx`가 소유한다.
-`resources/mapping/archive/`의 이전 Excel은 역사·검토 자료이며 실행 기준이 아니다.
+parameter record를 만들지 않는 보조 CSV를 소유한다. v4 canonical master는 21행·활성 16개이며
+LUT-backed 10개와 Basecase-only 6개로 나뉜다. v1/v3는 공유 DB의 dimension mapping 129행·35/6/55/33을 사용하여 LUT-backed 10개까지 후보화한다.
+정확한 v4 DB matrix는 `scripts/model_parameter/model-parameter-canonical-v4.json`과
+`scripts/model_parameter/model-impact-lever-canonical-v4.json`, 사람이 읽는 명세는
+`resources/Model_Parameter_Base_Case_Mapping.md`와
+`resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx`가
+소유한다. workbook의 129행 dimension mapping은 현재 v1/v3 정보를 표시하며 v4 Lever 후보 소스가 아니다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
 
 제안 Flow는 전체 LUT record를 서버 cache/index에 유지한다. Step2 prompt에는 동일 기간을 공유하는 leaf를
 `period_groups`로 묶고 Country→Plant→Train 고정축을 `fixed_axis_hierarchy`로 중첩하며, Step3에는 exact
@@ -347,8 +349,16 @@ dimension을 사용한다. v3 `multi_event_composite_dimensions`는
 `apps/persistence/scenario_group/`이 소유한 ordered group-event relation과
 `apps/persistence/scenario/`이 소유한 dimension-value projection을 조회하고,
 `dimensionDefinitions[].sourceRefs`를 원본 `(event_type_l2_id, dimKey)`로 역투영한다. 이 정규화된 lineage만
-기존 129개 Model Parameter mapping에 전달하며 Scenario 생성 flow나 동적 composite dimension master를
+공유 DB의 129개 Model Parameter mapping에 전달하며 Scenario 생성 flow나 동적 composite dimension master를
 변경하지 않는다. v3 proposal의 event 연결은 nullable이고 `scenario_group_id`가 authoritative link다.
+
+v4 `multi_event_model_lever_dimensions`는 Scenario, Group, ordered Group–Event 관계와 선택 value의
+`lever_states`, 공용 active Lever catalog·active parameter definition만 읽는다. Event Type, 외부개발 DB
+shared legacy 129행
+mapping, 과거 `lever_mappings` 계열을 조회하거나 fallback으로 사용하지 않는다. group API version/strategy,
+catalog checksum, dimension/value/primary Lever, source Event 부분집합과 Lever code/ID를 strict 검증하고
+executable binding을 parameter별 provenance와 함께 병합한다. v4 proposal도 `mi_event_id=NULL`이며 public
+proposal/confirmation payload와 저장 JSON shape은 바뀌지 않는다.
 
 ```text
 POST /model-parameters/scenarios/{scenario_id}/proposals
@@ -413,14 +423,14 @@ POST /model-parameters/proposals/{modelParamProposalId}/confirmation
   - v3 자유 dimension value의 source projection과 승인 상태 조회도 같은 domain이 소유한다.
   - 과거 `scenario_agent`의 모델/서비스/repository를 새 코드에 추가하지 않는다.
 - Model Impact Lever
-  - `apps/persistence/model_impact_lever/*`가 v4 Scenario 생성용 영향 레버 catalog의 기준이다.
-  - `tmm_mi_model_impact_lever_m` ORM과 레버 DTO·DB 조회를 소유한다.
-  - `apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`가 모델 파라미터 binding 지원 상태 hydration과 catalog checksum 조립을 소유한다.
-  - Scenario Group flow는 DB나 repository를 직접 조회하지 않고 Agent 내부 `ModelImpactLeverService`를 호출한다.
+  - `apps/persistence/model_impact_lever/*`가 Scenario 생성과 Model Parameter proposal이 공유하는 영향 레버 catalog의 기준이다.
+  - `tmm_mi_model_impact_lever_m` ORM, DTO, repository와 공용 service를 소유한다.
+  - `apps/persistence/model_impact_lever/service.py`가 모델 파라미터 binding 지원 상태 hydration과 catalog checksum 조립을 소유한다.
+  - 두 Agent의 flow/node는 DB나 repository를 직접 조회하지 않고 service를 호출한다.
 - Model Parameter
   - `apps/persistence/model_parameter/*`가 canonical parameter/mapping 조회와 proposal·confirmation 저장을
-    소유하고, Agent 내부 `persistence/model_parameter_service.py`가 v1/v3 context를 조합한다.
-  - v3 proposal은 `mi_event_id=NULL`을 허용하며 `scenario_group_id`로 그룹을 식별한다.
+    소유하고, Agent 내부 `persistence/model_parameter_service.py`가 v1/v3 legacy 또는 v4 Lever-native context를 조합한다.
+  - v3/v4 proposal은 `mi_event_id=NULL`을 허용하며 `scenario_group_id`로 그룹을 식별한다.
 - Signpost
   - `apps/persistence/signpost/*`가 Signpost 저장/조회 기준이다.
   - LLM stage 구현과 LangGraph node wrapper는 `subgraphs/signpost_generation/nodes.py`, subgraph 조립은 `subgraphs/signpost_generation/flow.py`에 둔다.

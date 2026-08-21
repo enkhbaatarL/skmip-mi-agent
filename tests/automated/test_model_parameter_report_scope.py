@@ -155,6 +155,34 @@ def test_scenario_result_summary_covers_success_timing_and_mapping_failure() -> 
     assert _scenario_result_summary(error=mapping_error) == "FAIL · 매핑 후보 없음"
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "파라미터로 반영할 변경 항목이 없습니다.\n"
+            "이벤트와 시나리오 분기값을 확인했지만, 수급모델에 반영할 변경 항목이 없습니다.",
+            "FAIL · 변경 항목 없음",
+        ),
+        (
+            "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n"
+            "액화설비 가동률과 생산량 파라미터는 확인했지만, 해당 설비와 적용 기간에 대응하는 "
+            "모델 입력 위치가 없습니다.",
+            "FAIL · 모델 입력 위치 없음",
+        ),
+        (
+            "적용할 파라미터 값을 생성하지 못했습니다.\n"
+            "관련 파라미터와 모델 입력 위치는 확인했지만, 유효한 적용 수치를 생성하지 못했습니다.",
+            "FAIL · 적용값 생성 실패",
+        ),
+    ],
+)
+def test_scenario_result_summary_classifies_v4_semantic_failure_messages(
+    message: str,
+    expected: str,
+) -> None:
+    assert _scenario_result_summary(error={"error": message}) == expected
+
+
 def test_scenario_result_table_includes_failed_execution() -> None:
     target = EventTypeTarget(
         1,

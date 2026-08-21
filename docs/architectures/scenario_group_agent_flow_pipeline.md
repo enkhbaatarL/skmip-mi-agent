@@ -260,10 +260,10 @@ Event와 사용 Template ID/checksum은 `tmm_mi_scenario_group_event_m`에 순�
 대표 Event를 임의로 만들지 않는다.
 
 v2/v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지 않는다.
-`apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`의
-`ModelImpactLeverService`와 Impact Path·Lever lineage 검증은 v4 경로에만 존재한다.
-레버 catalog의 ORM·DTO·DB 조회는 `apps/persistence/model_impact_lever/`가 소유하고, 기존 모델
-파라미터 master는 catalog binding의 활성·지원 상태 확인에만 사용한다.
+`apps/persistence/model_impact_lever/service.py`의 공용 `ModelImpactLeverService`와 Impact
+Path·Lever lineage 검증은 v4 경로에만 존재한다. 레버 catalog의 ORM·DTO·repository·service는
+`apps/persistence/model_impact_lever/`가 소유하고, 기존 모델 파라미터 master는 catalog binding의
+활성·지원 상태 확인에만 사용한다. Agent flow/node는 repository를 직접 호출하지 않는다.
 최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
 adapter를 추가하지 않는다.
 
@@ -384,9 +384,14 @@ floor·ceiling을 생성하지 않는다. 지원 상태는 dimension 선택 우�
 서버는 실행 가능한 binding coverage를 진단 정보로만 계산한다.
 
 그룹에는 카탈로그 version/checksum, 새 Dimension 정의와 전체 분석 진단을 저장한다.
-현재 Model Parameter Agent는 기존 v4의 `leverMappings`를 소비하므로 새 v4 그룹의
-`values[].leverStates[]` 연계는 후속 구현 범위다. 이번 변경에서는 해당 소비부와 기존 저장
-데이터를 변환하지 않는다.
+Model Parameter Agent는 `generation_strategy=multi_event_model_lever_dimensions`인 그룹에서
+Scenario가 선택한 `dimensionValues`와 `dimensionDefinitions[].values[].leverStates[]`를 소비한다.
+group API version/strategy, catalog checksum, dimension/value/primary Lever, source Event 부분집합,
+Lever code/ID를 strict 검증하고 active catalog의 executable binding만 후보화한다. legacy
+dimension mapping, Event Type 또는 과거 `leverMappings` 계열을 fallback으로 사용하지 않는다.
+catalog checksum이 바뀌면 기존 v4 Scenario proposal을 차단하며 master와 Lever catalog를 원자적으로
+적용한 뒤 신규 v4 Scenario를 생성해야 한다. public proposal/confirmation payload와 저장 JSON shape은
+변경하지 않는다.
 API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`/`N`으로
 변환한다.
 관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.
@@ -604,6 +609,17 @@ flowchart LR
 - Stage 6 likelihood는 신규 row의 초기 `probability_score`로 변환된다.
 - 신규 row의 `impact_jkm/ttf/hh`는 생성하지 않고 `NULL`로 저장한다.
 - `ScenarioService.sync_from_table*()`는 `new_scenario_row_details`를 받아 DB insert/update만 담당한다.
+- v4 `multi_event_model_lever_dimensions` 그룹은 화면의 value label 또는 `value_id`를 기존
+  `dimension_definitions`에서 exact lookup하고 DB에는 항상 `value_id`를 저장한다. label이
+  중복되어 모호하거나 등록되지 않았으면 실패한다.
+- v4 신규·수정 row는 Group의 모든 Dimension을 정확히 하나씩 선택해야 한다. 일부 key 누락,
+  정의 밖 key/value는 validation과 저장 경계에서 거부되며 Model Parameter v4 loader도 같은
+  full key-set 계약을 재검증한다.
+- v4 header key도 Group Dimension ID 전체와 exact set이고 중복이 없어야 하며, Group 정의의
+  Dimension ID/value ID 누락·중복도 validation과 persistence 경계에서 거부한다. 이 strict 계약은
+  v4에만 적용하고 v1~v3의 사용자 확장 Dimension 저장 동작은 유지한다.
+- 분기를 추가하지 않는 신규 row에는 별도 Lever JSON을 생성하지 않는다. 선택한 기존 value의
+  `lever_states`, primary Lever와 source lineage를 그대로 사용한다.
 
 
 

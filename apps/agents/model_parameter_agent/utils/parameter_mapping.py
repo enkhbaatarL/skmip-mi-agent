@@ -249,6 +249,7 @@ def _parameter_knowledge_base_cache_key(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
+    allow_empty_mapping_rows: bool = False,
 ) -> tuple[Any, ...]:
     basecase_dir = Path(basecase_dir_path).expanduser().resolve(strict=False)
     return (
@@ -257,6 +258,7 @@ def _parameter_knowledge_base_cache_key(
         str(basecase_dir),
         stable_digest(mapping_rows),
         stable_digest(parameter_rows),
+        allow_empty_mapping_rows,
         _basecase_workbook_signatures(basecase_dir),
     )
 
@@ -320,6 +322,7 @@ def get_parameter_knowledge_base_from_resources(
     mapping_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
     basecase_dir_path: str | None = None,
+    allow_empty_mapping_rows: bool = False,
 ) -> ParameterKnowledgeBase:
     basecase_dir = _resolve_basecase_dir(basecase_dir_path)
     return _build_parameter_knowledge_base_from_rows(
@@ -327,6 +330,7 @@ def get_parameter_knowledge_base_from_resources(
         parameter_rows=parameter_rows,
         mapping_source=DB_MAPPING_SOURCE,
         basecase_dir_path=str(basecase_dir),
+        allow_empty_mapping_rows=allow_empty_mapping_rows,
     )
 
 
@@ -451,12 +455,14 @@ def _build_parameter_knowledge_base_from_rows(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
+    allow_empty_mapping_rows: bool = False,
 ) -> ParameterKnowledgeBase:
     cache_key = _parameter_knowledge_base_cache_key(
         mapping_rows=mapping_rows,
         parameter_rows=parameter_rows,
         mapping_source=mapping_source,
         basecase_dir_path=basecase_dir_path,
+        allow_empty_mapping_rows=allow_empty_mapping_rows,
     )
     return _PARAMETER_KB_CACHE.get_or_build(
         cache_key,
@@ -465,6 +471,7 @@ def _build_parameter_knowledge_base_from_rows(
             parameter_rows=parameter_rows,
             mapping_source=mapping_source,
             basecase_dir_path=basecase_dir_path,
+            allow_empty_mapping_rows=allow_empty_mapping_rows,
         ),
     )
 
@@ -475,11 +482,13 @@ def _build_parameter_knowledge_base_from_rows_uncached(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
+    allow_empty_mapping_rows: bool = False,
 ) -> ParameterKnowledgeBase:
     workbook_loader = _require_workbook_loader()
     mapping_rules = _mapping_rules_from_rows(
         mapping_rows,
         source_name="tmm_mi_model_param_dimension_map",
+        allow_empty=allow_empty_mapping_rows,
     )
     parameter_definitions = _parameter_definitions_from_rows(
         parameter_rows,
@@ -508,7 +517,7 @@ def _load_db_mapping_resources() -> tuple[list[dict[str, Any]], list[dict[str, A
     return ModelParameterService().load_parameter_mapping_resources()
 
 
-def match_parameter_candidates(
+def match_parameter_candidates(  # noqa: C901
     kb: ParameterKnowledgeBase,
     scenario_context: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
@@ -520,6 +529,8 @@ def match_parameter_candidates(
     )
     if generation_strategy == "multi_event_composite_dimensions":
         return _match_v3_parameter_candidates(kb, scenario_context)
+    if generation_strategy == "multi_event_model_lever_dimensions":
+        return _match_v4_parameter_candidates(kb, scenario_context)
 
     scenario = scenario_context.get("scenario") or {}
     event_type = scenario_context.get("event_type") or {}
@@ -648,6 +659,318 @@ def match_parameter_candidates(
             "DB dimension-parameter 매핑 기준 직접 또는 라우팅 parameter 후보를 찾지 못했습니다.",
         )
     return candidates, non_inputs, warnings
+
+
+def _v4_source_payload(
+    lineage: dict[str, Any],
+    lever_state: dict[str, Any],
+    *,
+    mapping_method: str,
+    mapping_comment: str | None,
+) -> dict[str, Any]:
+    lever_provenance = {
+        "scenario_dimension_key": lineage.get("scenario_dimension_key"),
+        "scenario_dimension_value_id": lineage.get(
+            "scenario_dimension_value_id",
+        ),
+        "source_event_ids": list(lineage.get("source_event_ids") or []),
+        "source_impact_path_ids": list(
+            lineage.get("source_impact_path_ids") or [],
+        ),
+        "source_uncertainty_ids": list(
+            lineage.get("source_uncertainty_ids") or [],
+        ),
+        "lever_code": lever_state.get("lever_code"),
+        "impact_lever_id": lever_state.get("impact_lever_id"),
+        "lever_label": lever_state.get("lever_label"),
+        "lever_domain": lever_state.get("lever_domain"),
+        "direction": lever_state.get("direction"),
+        "level": lever_state.get("level"),
+        "scope": lever_state.get("scope"),
+        "time_window": lever_state.get("time_window"),
+        "is_primary_lever": bool(lever_state.get("is_primary_lever")),
+    }
+    return {
+        "scenario_dimension_key": lineage.get("scenario_dimension_key"),
+        "dimension_key": lineage.get("scenario_dimension_key"),
+        "source_dimension_id": lineage.get("scenario_dimension_key"),
+        "source_dimension_label": lineage.get("scenario_dimension_label"),
+        "source_dimension_description": lineage.get(
+            "scenario_dimension_description",
+        ),
+        "source_dimension_rationale": lineage.get(
+            "scenario_dimension_rationale",
+        ),
+        "source_dimension_value": lineage.get("scenario_dimension_value"),
+        "source_dimension_value_id": lineage.get(
+            "scenario_dimension_value_id",
+        ),
+        "source_dimension_value_label": lineage.get(
+            "scenario_dimension_value_label",
+        ),
+        "derivation_rationale": lineage.get("assumption_rationale"),
+        "pressure_contribution": lineage.get("pressure_contribution"),
+        "source_event_ids": list(lineage.get("source_event_ids") or []),
+        "source_impact_path_ids": list(
+            lineage.get("source_impact_path_ids") or [],
+        ),
+        "source_uncertainty_ids": list(
+            lineage.get("source_uncertainty_ids") or [],
+        ),
+        "primary_lever_code": lineage.get("primary_lever_code"),
+        "primary_impact_lever_id": lineage.get("primary_impact_lever_id"),
+        "model_support_status": lineage.get("model_support_status"),
+        "lever_code": lever_state.get("lever_code"),
+        "impact_lever_id": lever_state.get("impact_lever_id"),
+        "lever_label": lever_state.get("lever_label"),
+        "lever_description": lever_state.get("lever_description"),
+        "lever_domain": lever_state.get("lever_domain"),
+        "lever_applicability_hint": lever_state.get(
+            "lever_applicability_hint",
+        ),
+        "direction": lever_state.get("direction"),
+        "level": lever_state.get("level"),
+        "scope": lever_state.get("scope"),
+        "time_window": lever_state.get("time_window"),
+        "is_primary_lever": bool(lever_state.get("is_primary_lever")),
+        "lever_provenance": [lever_provenance],
+        "mapping_method": mapping_method,
+        "mapping_comment": mapping_comment,
+    }
+
+
+def _v4_definition_fields(
+    definition: ParameterDefinition,
+    *,
+    basecase_available: bool,
+) -> dict[str, Any]:
+    return {
+        "model_file": definition.model_file,
+        "model_sheet": definition.model_sheet,
+        "model_table": definition.model_table,
+        "parameter_name": definition.parameter_name,
+        "canonical_parameter_name": definition.canonical_parameter_name,
+        "parameter_hint": definition.parameter_hint,
+        "semantic_axes": definition.semantic_axes,
+        "basecase_read_mode": definition.basecase_read_mode,
+        "basecase_header_row": definition.basecase_header_row,
+        "basecase_data_start_row": definition.basecase_data_start_row,
+        "basecase_column_roles": definition.basecase_column_roles,
+        "basecase_row_filter": definition.basecase_row_filter,
+        "basecase_year_row": definition.basecase_year_row,
+        "basecase_month_row": definition.basecase_month_row,
+        "basecase_period_row": definition.basecase_period_row,
+        "basecase_value_start_col": definition.basecase_value_start_col,
+        "basecase_value_end_col": definition.basecase_value_end_col,
+        "basecase_stop_rule": definition.basecase_stop_rule,
+        "basecase_available": basecase_available,
+    }
+
+
+def _v4_candidate_key(
+    *,
+    dimension_key: object,
+    lever_code: object,
+    parameter_name: object,
+    model_file: object,
+    model_sheet: object,
+) -> str:
+    return "|".join(
+        [
+            "v4-lever",
+            _normalize_for_key(dimension_key),
+            _normalize_for_key(lever_code),
+            _normalize_for_key(parameter_name),
+            _normalize_for_key(model_file),
+            _normalize_for_key(model_sheet),
+        ],
+    )
+
+
+def _match_v4_parameter_candidates(  # noqa: C901
+    kb: ParameterKnowledgeBase,
+    scenario_context: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    lineage_items = [item for item in scenario_context.get("dimension_lineage") or [] if isinstance(item, dict)]
+    warnings: list[str] = []
+    if not lineage_items:
+        warnings.append(
+            "v4 selected-value Lever lineage가 없어 model parameter 후보를 생성하지 않았습니다.",
+        )
+        return [], [], warnings
+
+    candidates: list[dict[str, Any]] = []
+    non_inputs: list[dict[str, Any]] = []
+    seen_candidate_keys: set[str] = set()
+    for lineage in lineage_items:
+        for lever_state in lineage.get("lever_states") or []:
+            if not isinstance(lever_state, dict):
+                continue
+            direction = _clean_text(lever_state.get("direction")).lower()
+            domain = _clean_text(lever_state.get("lever_domain")).lower()
+            raw_bindings = [
+                binding for binding in lever_state.get("parameter_bindings") or [] if isinstance(binding, dict)
+            ]
+            common_payload = _v4_source_payload(
+                lineage,
+                lever_state,
+                mapping_method="excluded",
+                mapping_comment=None,
+            )
+            if direction == "unchanged":
+                non_inputs.append(
+                    {
+                        **common_payload,
+                        "mapping_method": "indirect",
+                        "reason_code": "UNCHANGED_LEVER_STATE",
+                        "reason": (
+                            "direction=unchanged Lever state는 변화 후보가 아니라 supporting context로 사용합니다."
+                        ),
+                    },
+                )
+                continue
+            if domain == "price_only":
+                non_inputs.append(
+                    {
+                        **common_payload,
+                        "reason_code": "PRICE_ONLY",
+                        "reason": "price_only Lever는 수급모델 input 후보에서 제외합니다.",
+                    },
+                )
+                continue
+            if not raw_bindings:
+                non_inputs.append(
+                    {
+                        **common_payload,
+                        "reason_code": "NO_PARAMETER_BINDING",
+                        "reason": "활성 Lever catalog에 model parameter binding이 없습니다.",
+                    },
+                )
+                continue
+
+            executable_bindings = [binding for binding in raw_bindings if binding.get("support_status") == "executable"]
+            for binding in raw_bindings:
+                parameter_name = normalize_parameter_name(
+                    binding.get("parameter_name"),
+                )
+                if binding.get("support_status") != "executable":
+                    non_inputs.append(
+                        {
+                            **common_payload,
+                            "parameter_name": parameter_name or None,
+                            "binding_role": binding.get("role"),
+                            "binding_applicability": binding.get(
+                                "applicability",
+                            ),
+                            "reason_code": (binding.get("unsupported_reason_code") or "CATALOG_MARKED_UNSUPPORTED"),
+                            "reason": ("Lever binding이 현재 master/catalog에서 실행 가능하지 않습니다."),
+                        },
+                    )
+                    continue
+
+                definition = kb.definition_for(parameter_name)
+                if definition is None or not definition.model_file or not definition.model_sheet:
+                    non_inputs.append(
+                        {
+                            **common_payload,
+                            "parameter_name": parameter_name or None,
+                            "binding_role": binding.get("role"),
+                            "binding_applicability": binding.get(
+                                "applicability",
+                            ),
+                            "reason_code": "ACTIVE_PARAMETER_DEFINITION_MISSING",
+                            "reason": ("실행 가능한 binding의 active parameter target 정의가 없습니다."),
+                        },
+                    )
+                    continue
+
+                mapping_method = "direct" if len(executable_bindings) == 1 else "routing"
+                source_payload = _v4_source_payload(
+                    lineage,
+                    lever_state,
+                    mapping_method=mapping_method,
+                    mapping_comment=_clean_text(
+                        binding.get("applicability"),
+                    ),
+                )
+                binding_provenance = {
+                    "lever_code": lever_state.get("lever_code"),
+                    "impact_lever_id": lever_state.get("impact_lever_id"),
+                    "parameter_name": parameter_name,
+                    "role": binding.get("role") or "primary",
+                    "applicability": binding.get("applicability") or "",
+                    "support_status": "executable",
+                }
+                candidate_key = _v4_candidate_key(
+                    dimension_key=lineage.get("scenario_dimension_key"),
+                    lever_code=lever_state.get("lever_code"),
+                    parameter_name=parameter_name,
+                    model_file=definition.model_file,
+                    model_sheet=definition.model_sheet,
+                )
+                if candidate_key in seen_candidate_keys:
+                    continue
+                seen_candidate_keys.add(candidate_key)
+                profile = kb.profile_for(
+                    definition.model_file,
+                    definition.model_sheet,
+                )
+                candidates.append(
+                    {
+                        "candidate_key": candidate_key,
+                        "mapping_strategy": "v4",
+                        **source_payload,
+                        "binding_role": binding.get("role") or "primary",
+                        "binding_applicability": binding.get(
+                            "applicability",
+                        )
+                        or "",
+                        "binding_support_status": "executable",
+                        "binding_provenance": [binding_provenance],
+                        **_v4_definition_fields(
+                            definition,
+                            basecase_available=bool(
+                                profile and profile.sheet_exists,
+                            ),
+                        ),
+                    },
+                )
+
+    if not candidates:
+        reason_codes = sorted(
+            {str(item.get("reason_code") or "") for item in non_inputs if str(item.get("reason_code") or "")},
+        )
+        warnings.append(
+            "v4 selected-value Lever lineage에서 실행 후보를 찾지 못했습니다: "
+            + (", ".join(reason_codes) or "NO_EXECUTABLE_BINDING"),
+        )
+    return candidates, non_inputs, warnings
+
+
+def match_v4_parameter_candidates_from_rows(
+    *,
+    parameter_rows: list[dict[str, Any]],
+    scenario_context: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Run the production v4 matcher without loading Basecase workbooks.
+
+    Callback acceptance only needs to know whether the selected Lever lineage can
+    reach an active model target. Basecase availability is evaluated later by the
+    graph, so this lightweight knowledge base deliberately omits profiles while
+    sharing the exact candidate/exclusion predicate with graph execution.
+    """
+    parameter_definitions = _parameter_definitions_from_rows(
+        parameter_rows,
+        source_name="tmm_mi_model_param_m",
+    )
+    knowledge_base = ParameterKnowledgeBase(
+        mapping_source=DB_MAPPING_SOURCE,
+        basecase_dir_path="",
+        parameter_definitions=parameter_definitions,
+        mapping_rules=[],
+        basecase_profiles={},
+    )
+    return _match_v4_parameter_candidates(knowledge_base, scenario_context)
 
 
 def _v3_event_type_context(
@@ -1080,6 +1403,7 @@ def _mapping_rules_from_rows(
     rows: list[dict[str, Any]],
     *,
     source_name: str,
+    allow_empty: bool = False,
 ) -> list[MappingRule]:
     rules: list[MappingRule] = []
     for row_map in rows:
@@ -1106,7 +1430,7 @@ def _mapping_rules_from_rows(
                 comment=_none_if_dash(row_map.get("comment")),
             ),
         )
-    if not rules:
+    if not rules and not allow_empty:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail=f"{source_name} active mapping rows not found",
@@ -1569,14 +1893,24 @@ def basecase_slot_axis_names_from_candidate(candidate: dict[str, Any]) -> list[s
         spec = _matrix_time_column_spec_from_candidate(candidate)
         if spec is not None:
             axes.extend(spec.axis_columns.values())
+            configured_time_axes = {
+                "Year": spec.year_row,
+                "Month": spec.month_row,
+                "Period": spec.period_row,
+            }
         else:
             axes.extend(
                 _parse_column_roles(
                     _clean_text(candidate.get("basecase_column_roles")),
                 ).values(),
             )
-        for axis_name in ("Year", "Month", "Period"):
-            if axis_name not in axes:
+            configured_time_axes = {
+                "Year": _int_or_none(candidate.get("basecase_year_row")),
+                "Month": _int_or_none(candidate.get("basecase_month_row")),
+                "Period": _int_or_none(candidate.get("basecase_period_row")),
+            }
+        for axis_name, row_number in configured_time_axes.items():
+            if row_number is not None and axis_name not in axes:
                 axes.append(axis_name)
         return axes
 

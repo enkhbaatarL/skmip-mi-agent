@@ -1,0 +1,4363 @@
+{
+  "snapshot_version": 2,
+  "snapshot_name": "external-dev-before-model-parameter-v4-20260813",
+  "captured_at_utc": "2026-08-13T03:46:34.935151+00:00",
+  "source": "configured external development metadata database (credentials, username, and host intentionally omitted)",
+  "capture_mode": "read-only transaction with unconditional rollback",
+  "master_count": 21,
+  "mapping_count": 128,
+  "impact_lever_count": 16,
+  "scenario_dimension_template_count": 21,
+  "table_digests": {
+    "master_sha256": "6eca0c49df408e6163ef34ce23afa9d5b6f5101755ae31dd9264ec004ac2b74e",
+    "dimension_mappings_sha256": "218bc5a0038b91aec9c885ea66e62a55e9d228db16af09445dfc944eaf6a07e8",
+    "impact_levers_sha256": "312e31739912ea95e69f616324af8c3731c6b361a8c4838476041b2891821055",
+    "scenario_dimension_templates_sha256": "b007a63d4fe631f46df8884ada15a68e2f9869b42b971cdd1375ce86fac71c8c"
+  },
+  "core_database_sha256": "8f7d3ae98102d8c3ca54068d2b76c8ab19808ee5ab50a8246fe20971b1ac852e",
+  "master": [
+    {
+      "model_param_id": 1,
+      "use_yn": "N",
+      "parameter_name": "CDD",
+      "parameter_hint": "Country/year-month CDD value (degree-day)",
+      "model_file": "Demand",
+      "model_sheet": "WeatherAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "평년 대비 기온편차 변환 — 국가·연·월",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "B:Year,C:Month,D:Country,E:HDD/CDD,G:HDD/CDD",
+      "basecase_row_filter": "E=CDD",
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 2,
+      "use_yn": "N",
+      "parameter_name": "Coal Futures Price",
+      "parameter_hint": "Monthly coal futures price by region (USD/t)",
+      "model_file": "Demand",
+      "model_sheet": "CoalGasAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "석탄 선물가격 strip — 지역·월 (Asia=Newcastle, EU=ARA)",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "B:Month-Year,C:Region,E:Coal Futures Price (USD/t)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.887402",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 3,
+      "use_yn": "N",
+      "parameter_name": "Gas Futures Price",
+      "parameter_hint": "Monthly gas futures price by region (USD/mmbtu)",
+      "model_file": "Demand",
+      "model_sheet": "CoalGasAdjustment",
+      "model_table": "table2",
+      "semantic_axes": "가스 선물가격 strip — 지역·월 (Asia=JKM, EU=TTF)",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "H:Month-Year,I:Region,K:Gas Futures Price (USD/mmbtu)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.887402",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 4,
+      "use_yn": "Y",
+      "parameter_name": "GDP",
+      "parameter_hint": "국가·연도별 실질 GDP 전년 대비 성장률의 최종 입력값이다. value는 % change를 소수로 입력한다(0.042=4.2%, -0.015=-1.5%). proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year에 적용할 성장률 자체다. basecase가 있으면 기존 성장률과 이벤트에 명시된 GDP 전망·조정폭을 비교해 최종 성장률로 제안한다.",
+      "model_file": "Demand",
+      "model_sheet": "GDPPopulationAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "slot=B:Year(YYYY, 2026~2030), C:Country(국가명; basecase 예: United States, China, Japan, South Korea, Taiwan (China), Belgium, France, Germany, Italy, Netherlands, Spain, India); value=F:% change(+/-), 소수형 전년대비 실질 GDP 성장률",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "B:Year,C:Country,F:% change (+/-)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:27.570067",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 5,
+      "use_yn": "N",
+      "parameter_name": "HDD",
+      "parameter_hint": "Country/year-month HDD value (degree-day)",
+      "model_file": "Demand",
+      "model_sheet": "WeatherAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "평년 대비 기온편차 변환 — 국가·연·월",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "B:Year,C:Month,D:Country,E:HDD/CDD,G:HDD/CDD",
+      "basecase_row_filter": "E=HDD",
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 6,
+      "use_yn": "Y",
+      "parameter_name": "PMI",
+      "parameter_hint": "국가·연월별 PMI 지수의 최종 입력값이다. value는 PMI index 절대값으로 입력한다(예: 49.5). PMI 기준값은 보통 50이며, 50 초과는 경기 확장/생산활동 증가, 50은 중립, 50 미만은 경기 위축/생산활동 감소를 의미한다. 이 모델에서 PMI는 주로 industrial demand, 즉 산업용 가스 수요를 조정하는 경기 민감도 변수다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year/Month에 적용할 PMI 값 자체다.",
+      "model_file": "Demand",
+      "model_sheet": "PMIAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "slot=B:Year(YYYY, 2026~2030), C:Month(1~12), D:Country(국가명; basecase 예: China, Philippines); value=F:PMI, PMI index 절대값",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 13,
+      "basecase_column_roles": "B:Year,C:Month,D:Country,F:PMI",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:27.654393",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 7,
+      "use_yn": "Y",
+      "parameter_name": "PowerMix",
+      "parameter_hint": "국가·연도·에너지원별 발전 믹스 비중의 최종 입력값이다. value는 전체 발전량에서 해당 Energy Source가 차지하는 비중을 소수로 입력한다(0.30=30%). proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year/Energy Source에 적용할 최종 비중이다. 현재 basecase는 Gas 위주로 제공되므로, 명확한 전원별 사유가 없으면 Gas 비중 조정을 우선 검토하고 상쇄 전원은 rationale에 설명한다.",
+      "model_file": "Demand",
+      "model_sheet": "PowerMixAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "slot=B:Year(YYYY, 2026~2030), C:Country(국가명; basecase 예: China, Japan, South Korea, Taiwan (China), Germany, France, Italy, Spain, Netherlands, Belgium, United Kingdom), D:Energy Source(Liquids/Hydro/Solar/Wind/Bioenergy/Gas/Coal/Nuclear/Geothermal/Other; basecase 예: Gas); value=F:% Power Mix, 소수형 발전 비중",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "B:Year,C:Country,D:Energy Source,F:% Power Mix",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:27.760496",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 8,
+      "use_yn": "Y",
+      "parameter_name": "Temperature",
+      "parameter_hint": "국가·연월별 평균 기온의 최종 입력값이다. value는 섭씨(°C) 절대값으로 입력한다(예: 2.3, -1.5, 31.0). proposedValue는 basecase 대비 편차가 아니라 해당 Country/Year/Month에 적용할 기온 자체다. 한파는 정상 기온 대비 하향, 폭염은 정상 기온 대비 상향 방향으로 조정한다. 국가별 기후 차이가 크므로 basecase가 없는 경우 다른 국가의 기온 수준을 기준값으로 삼지 않는다.",
+      "model_file": "Demand",
+      "model_sheet": "WeatherAdjustment",
+      "model_table": "table2",
+      "semantic_axes": "slot=K:Year(YYYY, 2026~2030), L:Month(1~12; basecase 예: 1~3), M:Country(국가명; basecase 예: China, Japan, South Korea, Germany, France, Netherlands, Spain, Italy, Belgium, United Kingdom); value=O:Temperature (°C), 섭씨 절대 기온",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "K:Year,L:Month,M:Country,O:Temperature (°C)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:27.853647",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 9,
+      "use_yn": "N",
+      "parameter_name": "User-Adjusted Gas Demand",
+      "parameter_hint": "Country/year-month/sub-sector demand overwrite value (BCM)",
+      "model_file": "Demand",
+      "model_sheet": "DemandOutputOverwrite",
+      "model_table": "table1",
+      "semantic_axes": "수요 출력 직접 덮어쓰기 — 국가·연·월·Sub-Sector",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 7,
+      "basecase_data_start_row": 8,
+      "basecase_column_roles": "D:Country,E:Year,F:Month,G:Demand Sub-Sector,H:User-Adjusted Gas Demand [BCM]",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 10,
+      "use_yn": "N",
+      "parameter_name": "ElectrificationRate",
+      "parameter_hint": "Country/year transportation electrification rate (% new car sales)",
+      "model_file": "Demand",
+      "model_sheet": "ElectrificationRateAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "수송 전기화율 (본 21종 직접 해당 적음)",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "B:Year,C:Country,D:Drive Train,F:% New Car Sales",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 11,
+      "use_yn": "N",
+      "parameter_name": "Population",
+      "parameter_hint": "Country/year population value (thousands)",
+      "model_file": "Demand",
+      "model_sheet": "GDPPopulationAdjustment",
+      "model_table": "table2",
+      "semantic_axes": "인구 — 국가·연",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 6,
+      "basecase_data_start_row": 12,
+      "basecase_column_roles": "J:Year,K:Country,M:Population (Thousands)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 12,
+      "use_yn": "N",
+      "parameter_name": "HurricaneIntensity",
+      "parameter_hint": "US hurricane intensity integer (1-4; blank or 0 means no impact)",
+      "model_file": "Supply",
+      "model_sheet": "{USA}Hurricanes",
+      "model_table": "table1",
+      "semantic_axes": "美 액화시설 허리케인 차질 — 연·월",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 7,
+      "basecase_data_start_row": 13,
+      "basecase_column_roles": "B:Year,C:Month,D:Hurricane intensity",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.887402",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 13,
+      "use_yn": "N",
+      "parameter_name": "LiqProdAdjustment",
+      "parameter_hint": "Train/month LNG production absolute value (Mt LNG/month; >= 0)",
+      "model_file": "Supply",
+      "model_sheet": "LiqProdAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "액화시설 생산량 override — Country>Plant>Train·연·월",
+      "basecase_read_mode": "matrix_time_columns",
+      "basecase_header_row": 10,
+      "basecase_data_start_row": 11,
+      "basecase_column_roles": "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)",
+      "basecase_row_filter": null,
+      "basecase_year_row": 7,
+      "basecase_month_row": 8,
+      "basecase_period_row": 9,
+      "basecase_value_start_col": "G",
+      "basecase_value_end_col": "DA",
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.887402",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 14,
+      "use_yn": "Y",
+      "parameter_name": "LiqUtilAdjustment",
+      "parameter_hint": "액화 Plant Train·월별 가동률의 최종 입력값이다. value는 0~1 소수로 입력한다(1.0=100%, 0.7=70%). 100 같은 percent 표기는 사용하지 않는다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Train/Year/Month에 적용할 가동률 자체다. 기본 범위는 0~1이며, 1 초과는 명확한 근거가 있을 때만 제안한다. Base Case에 존재하는 LNG Plant Train만 수정하고, Country/LNG Plant/Life Cycle Category/Nameplate Capacity는 해당 Train에 종속된 식별 속성으로 맞춘다.",
+      "model_file": "Supply",
+      "model_sheet": "LiqUtilAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "slot=Country(국가명; 예: Algeria, Angola), LNG Plant(예: Arzew GL1Z, Angola LNG), LNG Plant Train(348개 basecase Train 중 선택; 예: Arzew GL1Z T1-T6, Angola LNG T1, Gorgon LNG T1, North West Shelf LNG T1, Sabine Pass LNG Stage 5 Expansion T1), Life Cycle Category(예: Operational), Nameplate Capacity MTPA(숫자; 예: 7.9, 5.2), Year(YYYY), Month(1~12), Period(숫자); value=Utilization Rate, 0~1 소수형 월별 가동률",
+      "basecase_read_mode": "matrix_time_columns",
+      "basecase_header_row": 10,
+      "basecase_data_start_row": 11,
+      "basecase_column_roles": "B:Country,C:LNG Plant,D:LNG Plant Train,E:Life Cycle Category,F:Nameplate Capacity (MTPA)",
+      "basecase_row_filter": null,
+      "basecase_year_row": 7,
+      "basecase_month_row": 8,
+      "basecase_period_row": 9,
+      "basecase_value_start_col": "G",
+      "basecase_value_end_col": "DA",
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:27.937763",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 15,
+      "use_yn": "N",
+      "parameter_name": "PipelineAdjustment",
+      "parameter_hint": "Pipeline/year-month sendout capacity absolute value (Bcm/y; >= 0)",
+      "model_file": "Supply",
+      "model_sheet": "PipelineAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "PNG 송출 capa override — Pipeline·From·To·연·월",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 7,
+      "basecase_data_start_row": 13,
+      "basecase_column_roles": "B:Year,C:Month,D:Pipeline name,H:User adjusted capacity (Bcm/y)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.887402",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 16,
+      "use_yn": "N",
+      "parameter_name": "RegasAdjustment",
+      "parameter_hint": "Regasification plant/month capacity absolute value (Mt LNG; >= 0)",
+      "model_file": "Supply",
+      "model_sheet": "RegasAdjustment",
+      "model_table": "table1",
+      "semantic_axes": "재기화(수입) 설비 capa override — Continent>Region>Country>Plant·연·월",
+      "basecase_read_mode": "matrix_time_columns",
+      "basecase_header_row": 10,
+      "basecase_data_start_row": 11,
+      "basecase_column_roles": "B:Continent,C:Region,D:Country,E:Regasification plant,F:Life Cycle Category,G:Nameplate capacity (MTPA)",
+      "basecase_row_filter": null,
+      "basecase_year_row": 9,
+      "basecase_month_row": 10,
+      "basecase_period_row": null,
+      "basecase_value_start_col": "H",
+      "basecase_value_end_col": "DK",
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 17,
+      "use_yn": "N",
+      "parameter_name": "SupplyDisruption",
+      "parameter_hint": "Province/country/year supply volume absolute value (Bcm; >= 0)",
+      "model_file": "Supply",
+      "model_sheet": "VolumeAdjustment",
+      "model_table": "table2",
+      "semantic_axes": "Upstream 공급량 override — Country·연·월",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 7,
+      "basecase_data_start_row": 8,
+      "basecase_column_roles": "I:Year,J:Month,K:Country,M:Volumes (Bcm)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.887402",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 18,
+      "use_yn": "N",
+      "parameter_name": "PNG Contract Volume",
+      "parameter_hint": "From/to country/year PNG contract volume (BCM)",
+      "model_file": "Trade",
+      "model_sheet": "MidstreamContractInput",
+      "model_table": "table1",
+      "semantic_axes": "PNG 계약 물량(Nord Stream 재가동·Pipeline Disruption) — From·To·연",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 4,
+      "basecase_data_start_row": 5,
+      "basecase_column_roles": "A:Year,B:From Country,C:To Country,D:Unadjusted Gross Gas Import [BCM]",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 19,
+      "use_yn": "N",
+      "parameter_name": "RemainingUnrestrictedAmount",
+      "parameter_hint": "From/to country/year remaining unrestricted trade volume (BCM)",
+      "model_file": "Trade",
+      "model_sheet": "TradeRestrictionInput",
+      "model_table": "table1",
+      "semantic_axes": "계약 취소·통과 제약 — From·To·연",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 5,
+      "basecase_data_start_row": 6,
+      "basecase_column_roles": "B:Year,C:From Country,D:To Country,J:Remaining Unrestricted Amount [BCM]",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 20,
+      "use_yn": "N",
+      "parameter_name": "ShippingCost",
+      "parameter_hint": "Yearly user input absolute shipping cost value ($/d)",
+      "model_file": "Trade",
+      "model_sheet": "ShippingCostInput",
+      "model_table": "table1",
+      "semantic_axes": "Charter·Fuel·Suez/Panama Crossing 비용·Disruption 여부 — impact_scope·연",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 5,
+      "basecase_data_start_row": 6,
+      "basecase_column_roles": "B:Year,F:User Input Absolute Value ($/d)",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    },
+    {
+      "model_param_id": 21,
+      "use_yn": "N",
+      "parameter_name": "VolumeCancelled",
+      "parameter_hint": "From/to country/year cancelled trade volume (BCM)",
+      "model_file": "Trade",
+      "model_sheet": "TradeRestrictionInput",
+      "model_table": "table1",
+      "semantic_axes": "계약 취소·통과 제약 — From·To·연",
+      "basecase_read_mode": "fixed_columns",
+      "basecase_header_row": 5,
+      "basecase_data_start_row": 6,
+      "basecase_column_roles": "B:Year,C:From Country,D:To Country,F:Volume [BCM]",
+      "basecase_row_filter": null,
+      "basecase_year_row": null,
+      "basecase_month_row": null,
+      "basecase_period_row": null,
+      "basecase_value_start_col": null,
+      "basecase_value_end_col": null,
+      "basecase_stop_rule": "stop_when_all_key_columns_empty",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.203729",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.203729",
+      "del_yn": "N"
+    }
+  ],
+  "dimension_mappings": [
+    {
+      "model_param_dimension_map_id": 1,
+      "use_yn": "Y",
+      "event_type_l2_id": 1,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "LiqUtilAdjustment의 Year/Month 적용 기간 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.015707",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 2,
+      "use_yn": "Y",
+      "event_type_l2_id": 1,
+      "dimension_key": "utilization_change_amount",
+      "dimension_label": "Utilization 변화 폭",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "Province/Basin 생산 차질량(Bcm 또는 %); 증산은 음(-)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 3,
+      "use_yn": "Y",
+      "event_type_l2_id": 1,
+      "dimension_key": "onset_pattern",
+      "dimension_label": "발생 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률 변화가 급격히 반영되는지 점진적으로 반영되는지 월별 시계열 형태 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.091708",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 4,
+      "use_yn": "Y",
+      "event_type_l2_id": 1,
+      "dimension_key": "recovery_pattern",
+      "dimension_label": "회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률이 basecase 수준으로 회복되는 시점과 월별 회복 경로 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.166594",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 5,
+      "use_yn": "Y",
+      "event_type_l2_id": 1,
+      "dimension_key": "alt_gas_supply_availability",
+      "dimension_label": "대체 가스 공급 가능성",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 6,
+      "use_yn": "Y",
+      "event_type_l2_id": 1,
+      "dimension_key": "alt_gas_supply_availability",
+      "dimension_label": "대체 가스 공급 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "대체 공급이 LNG 전환으로 설명되는 경우, 대체 가능한 공급국의 기존 LNG Plant Train 가동률을 상향 조정한다. alt_gas_supply_availability는 상향 조정 가능한 물량과 배분 강도의 근거로 사용하고, period/onset_pattern/recovery_pattern은 적용 월과 시계열 형태에 반영한다. Train별 가동률은 0~1 범위와 기존 basecase 수준을 고려해 산정한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.301373",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 7,
+      "use_yn": "Y",
+      "event_type_l2_id": 2,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "LiqUtilAdjustment의 Year/Month 적용 기간 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.384916",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 8,
+      "use_yn": "Y",
+      "event_type_l2_id": 2,
+      "dimension_key": "utilization_change_amount",
+      "dimension_label": "Utilization 변화량",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "차질 또는 회복 대상 LNG Plant Train의 가동률 최종값을 산정한다. utilization_change_amount는 basecase 대비 가동률 하향·상향 조정폭의 주된 근거로 사용하고, period/onset_pattern/recovery_pattern은 적용 월과 월별 변화 경로에 반영한다. 단기·부분 차질은 생산량 직접 입력보다 Train 가동률 조정을 우선한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.478683",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 9,
+      "use_yn": "Y",
+      "event_type_l2_id": 2,
+      "dimension_key": "utilization_change_amount",
+      "dimension_label": "Utilization 변화량",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 10,
+      "use_yn": "Y",
+      "event_type_l2_id": 2,
+      "dimension_key": "onset_pattern",
+      "dimension_label": "발생 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률 변화가 급격히 반영되는지 점진적으로 반영되는지 월별 시계열 형태 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.674845",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 11,
+      "use_yn": "Y",
+      "event_type_l2_id": 2,
+      "dimension_key": "recovery_pattern",
+      "dimension_label": "회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률이 basecase 수준으로 회복되는 시점과 월별 회복 경로 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.743606",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 12,
+      "use_yn": "Y",
+      "event_type_l2_id": 2,
+      "dimension_key": "alt_lng_supply_availability",
+      "dimension_label": "대체 LNG 공급 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "차질로 감소한 LNG 공급을 대체 가능한 다른 공급국/Plant Train의 가동률 상향으로 일부 상쇄한다. alt_lng_supply_availability는 대체 가능 물량과 배분 강도의 근거로 사용하고, 기존 basecase 가동률이 높은 Train에는 추가 상향을 제한한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.811700",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 13,
+      "use_yn": "Y",
+      "event_type_l2_id": 3,
+      "dimension_key": "cod_timing",
+      "dimension_label": "COD 시점",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "신규 생산량 투입 시작 시간축(기존 대비 ±N월)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 14,
+      "use_yn": "Y",
+      "event_type_l2_id": 3,
+      "dimension_key": "ramp_up_completion_timing",
+      "dimension_label": "Ramp-up 완료 시점",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단계 투입 완료 시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 15,
+      "use_yn": "Y",
+      "event_type_l2_id": 3,
+      "dimension_key": "ramp_up_pattern",
+      "dimension_label": "Ramp-up 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격/점진; FID 무산 시 투입 없음",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 16,
+      "use_yn": "Y",
+      "event_type_l2_id": 3,
+      "dimension_key": "target_utilization_at_ramp_up",
+      "dimension_label": "Ramp-up 완료 시 도달 가동률 (Nameplate Capa 대비)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "신규 Plant>Train 생산량 추가(Mt); FID무산=0 : COD 지연·Ramp-up 단계에 맞춰 신규 Plant/Train 생산량을 월별로 반영하고, FID 무산은 추가 생산량 0으로 처리",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 17,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "LiqUtilAdjustment의 Year/Month 적용 기간 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:28.878756",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 18,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "utilization_change_amount",
+      "dimension_label": "Utilization 변화 폭 (송출용량 대비)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 19,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "utilization_change_amount",
+      "dimension_label": "Utilization 변화 폭 (송출용량 대비)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.020660",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 20,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률 조정이 한시적인지 구조적·장기적으로 지속되는지 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.111810",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 21,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "onset_pattern",
+      "dimension_label": "발생 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률 변화가 급격히 반영되는지 점진적으로 반영되는지 월별 시계열 형태 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.177483",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 22,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "recovery_pattern",
+      "dimension_label": "회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률이 basecase 수준으로 회복되는 시점과 월별 회복 경로 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.254158",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 23,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "alt_supply_availability",
+      "dimension_label": "대체 공급원 가능성 (타 노선·LNG 전환)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 24,
+      "use_yn": "Y",
+      "event_type_l2_id": 4,
+      "dimension_key": "alt_supply_availability",
+      "dimension_label": "대체 공급원 가능성 (타 노선·LNG 전환)",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "파이프라인 공급 차질을 LNG 전환으로 대체하는 경우, 대체 가능한 공급국의 기존 LNG Plant Train 가동률을 상향 조정한다. alt_supply_availability는 LNG 전환 가능 물량과 배분 강도의 근거로 사용하고, period/onset_pattern/recovery_pattern/structural_change_yn은 적용 월과 지속성 판단에 반영한다. Train별 가동률은 0~1 범위와 기존 basecase 수준을 고려해 산정한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.405649",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 25,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "affected_period",
+      "dimension_label": "영향 기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 26,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "capacity_change_scale",
+      "dimension_label": "Capacity 변화 규모",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "발전소 용량·가동 변화 규모를 근거로 해당 Country/Year의 Gas PowerMix 최종 비중을 산정한다. capacity_change_scale은 조정폭의 주된 근거로 사용하고, affected_period와 structural_change_yn은 적용 연도와 지속성 판단에 반영한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.478952",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 27,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "capacity_change_scale",
+      "dimension_label": "Capacity 변화 규모",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.547182",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 28,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발(정비·사고)/구조적(COD·폐쇄)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 29,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "alt_energy_absorption",
+      "dimension_label": "타 에너지원 흡수 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "발전소 용량·가동 변화로 발생한 전력 공백 또는 증분을 타 에너지원이 얼마나 흡수하는지 반영해 Gas PowerMix 최종 비중을 산정한다. alt_energy_absorption이 낮을수록 Gas 비중 변화를 크게 반영하고, 높을수록 Gas 비중 변화는 작게 둔다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.627389",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 30,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "onset_pattern",
+      "dimension_label": "발생 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격/점진",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 31,
+      "use_yn": "Y",
+      "event_type_l2_id": 5,
+      "dimension_key": "recovery_pattern",
+      "dimension_label": "회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "원상복귀 속도",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 32,
+      "use_yn": "Y",
+      "event_type_l2_id": 6,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "동절기 월 슬롯",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 33,
+      "use_yn": "Y",
+      "event_type_l2_id": 6,
+      "dimension_key": "cold_wave_intensity",
+      "dimension_label": "한파 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.697430",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 34,
+      "use_yn": "Y",
+      "event_type_l2_id": 6,
+      "dimension_key": "cold_wave_intensity",
+      "dimension_label": "한파 강도",
+      "mapping_method": "direct",
+      "model_param_id": 8,
+      "comment": "event에 명시된 한파 강도와 적용 기간을 근거로 해당 Country/Year/Month의 Temperature 최종값을 산정한다. 한파는 정상 기온 대비 하향 방향으로 반영하고, 해당 국가 기준 겨울 또는 한파가 발생 가능한 계절의 월을 선택한다. cold_wave_intensity의 온도 편차 범위와 peak_timing_pattern을 참고해 월별 조정폭을 차등 적용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.771078",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 35,
+      "use_yn": "Y",
+      "event_type_l2_id": 6,
+      "dimension_key": "entry_gas_inventory",
+      "dimension_label": "진입 시점 가스 재고 (평년 대비)",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "재고는 수급모델 input 아님(Annual Balancing) — 영향 증폭/완화 해석 맥락",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 36,
+      "use_yn": "Y",
+      "event_type_l2_id": 6,
+      "dimension_key": "alt_energy_absorption",
+      "dimension_label": "타 에너지원 흡수 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "석탄·석유 등 흡수 비율",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 37,
+      "use_yn": "Y",
+      "event_type_l2_id": 6,
+      "dimension_key": "peak_timing_pattern",
+      "dimension_label": "Peak 시점, 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "월별 수요 분배",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 38,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "하절기 월 슬롯(동남아·인도 4~5월 포함)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 39,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "heatwave_intensity",
+      "dimension_label": "폭염 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.834854",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 40,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "heatwave_intensity",
+      "dimension_label": "폭염 강도",
+      "mapping_method": "direct",
+      "model_param_id": 8,
+      "comment": "event에 명시된 폭염 강도와 적용 기간을 근거로 해당 Country/Year/Month의 Temperature 최종값을 산정한다. 폭염은 정상 기온 대비 상향 방향으로 반영하고, 해당 국가 기준 여름 또는 폭염이 발생 가능한 계절의 월을 선택한다. heatwave_intensity의 온도 편차 범위와 peak_timing_pattern을 참고해 월별 조정폭을 차등 적용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:29.917633",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 41,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "entry_gas_inventory",
+      "dimension_label": "진입 시점 가스 재고 (평년 대비)",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "재고는 수급모델 input 아님 — 해석 맥락",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 42,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "injection_pattern",
+      "dimension_label": "Injection 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "재고 회복 속도 = 재고 개념 — 수급모델 input 아님(맥락)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 43,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "alt_energy_absorption",
+      "dimension_label": "타 에너지원 흡수 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "재생E·원전 등 흡수",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 44,
+      "use_yn": "Y",
+      "event_type_l2_id": 7,
+      "dimension_key": "peak_timing_pattern",
+      "dimension_label": "Peak 시점, 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "월별 분배",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 45,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "affected_period",
+      "dimension_label": "영향 기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "정비=Shoulder/사고·정책=단발 OR 영구",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 46,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "capacity_change_scale",
+      "dimension_label": "Capacity 변화 규모",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "원전 비중 변동→가스 비중 대체(원전 전용 input 없음)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 47,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "capacity_change_scale",
+      "dimension_label": "Capacity 변화 규모",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "발전 가스 수요 직접 강제 시 : User-Adjusted Gas Demand는 미대상 수동 overwrite이므로 직접 쓰지 말고, 발전 설비 변화는 PowerMix의 Gas 비중 조정으로 반영",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 48,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발(정비)/구조적(COD·폐쇄·수명연장)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 49,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "alt_energy_absorption",
+      "dimension_label": "타 에너지원 흡수 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "재생E·석탄 등 흡수",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 50,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "onset_pattern",
+      "dimension_label": "발생 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격(사고)/점진(정비)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 51,
+      "use_yn": "Y",
+      "event_type_l2_id": 8,
+      "dimension_key": "recovery_pattern",
+      "dimension_label": "회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격(재가동)/점진(COD)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 52,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "affected_period",
+      "dimension_label": "영향 기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "동절기 둔켈플라우테/하절기 열파 풍력 약화",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 53,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "capacity_change_scale",
+      "dimension_label": "Capacity 변화 규모",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "재생 출력 변동→가스 비중 대체(재생 전용 input 없음)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 54,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "capacity_change_scale",
+      "dimension_label": "Capacity 변화 규모",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "발전 가스 수요 직접 강제 시 : User-Adjusted Gas Demand는 미대상 수동 overwrite이므로 직접 쓰지 말고, 발전 설비 변화는 PowerMix의 Gas 비중 조정으로 반영",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 55,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발(기상)/구조적(신규 Farm·정책)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 56,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "alt_energy_absorption",
+      "dimension_label": "타 에너지원 흡수 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "석탄·원전 등 흡수",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 57,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "onset_pattern",
+      "dimension_label": "발생 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격(무풍)/점진(정책 phase-out)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 58,
+      "use_yn": "Y",
+      "event_type_l2_id": 9,
+      "dimension_key": "recovery_pattern",
+      "dimension_label": "회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격(기상)/점진(COD)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 59,
+      "use_yn": "Y",
+      "event_type_l2_id": 10,
+      "dimension_key": "affected_period",
+      "dimension_label": "영향 기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발(가격)/중기(계약)/장기(정책)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 60,
+      "use_yn": "Y",
+      "event_type_l2_id": 10,
+      "dimension_key": "lng_demand_impact_intensity",
+      "dimension_label": "LNG 수요 영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "가격기반 석탄↔가스 스위칭(Asia=Newcastle/JKM, EU=ARA/TTF) : 지역별 기준 가격쌍을 사용해 석탄-가스 전환 유인을 판단하고, 단기 가격 이벤트는 CoalGasAdjustment를 우선 사용",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 61,
+      "use_yn": "Y",
+      "event_type_l2_id": 10,
+      "dimension_key": "lng_demand_impact_intensity",
+      "dimension_label": "LNG 수요 영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "가격기반 석탄↔가스 스위칭(Asia=Newcastle/JKM, EU=ARA/TTF) : 지역별 기준 가격쌍을 사용해 석탄-가스 전환 유인을 판단하고, 단기 가격 이벤트는 CoalGasAdjustment를 우선 사용",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 62,
+      "use_yn": "Y",
+      "event_type_l2_id": 10,
+      "dimension_key": "lng_demand_impact_intensity",
+      "dimension_label": "LNG 수요 영향 강도",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "구조적 비중 변화(정책·폐쇄) : 정책·폐쇄·설비 변화처럼 구조적 전환이면 PowerMix에서 Gas/Coal 비중을 연 단위로 조정",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 63,
+      "use_yn": "Y",
+      "event_type_l2_id": 10,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발(가격→CoalGas)/구조적(정책→PowerMix) 결정",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 64,
+      "use_yn": "Y",
+      "event_type_l2_id": 10,
+      "dimension_key": "alt_energy_absorption",
+      "dimension_label": "타 에너지원 흡수 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "원전·재생E 등 흡수",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 65,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 66,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "affected_facility_type",
+      "dimension_label": "영향 시설 유형",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 67,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "affected_facility_type",
+      "dimension_label": "영향 시설 유형",
+      "mapping_method": "routing",
+      "model_param_id": 14,
+      "comment": "자연재해가 수출(액화) 시설의 단기·부분 가동 차질을 유발하는 경우 LiqUtilAdjustment를 선택한다. 선택된 경우 설비 용량 자체가 아니라 정전·침수·정비·운영 제약 등으로 기존 LNG Plant Train의 이용률이 낮아지는 상황을 해당 Train/Year/Month의 가동률 하향 조정으로 반영한다. affected_facility_type은 대상 시설이 액화 Plant/Train인지 판단하는 근거로 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.069714",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 68,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "affected_facility_type",
+      "dimension_label": "영향 시설 유형",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 69,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "affected_facility_type",
+      "dimension_label": "영향 시설 유형",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.213202",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 70,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "affected_facility_type",
+      "dimension_label": "영향 시설 유형",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 71,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 강도",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시설 가동률 감소율로 변환 — 강도가 값 크기 결정 : routing으로 선택된 시설·파라미터의 감소율 또는 감소량을 결정하며, 강도 단계에 따라 조정폭을 차등 적용",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 72,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "supply_disruption_pattern",
+      "dimension_label": "공급 차질 - 발생/회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "Ref. 공급 차질 패턴 — 시계열 형태",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 73,
+      "use_yn": "Y",
+      "event_type_l2_id": 11,
+      "dimension_key": "alt_lng_supply_availability",
+      "dimension_label": "대체 LNG 공급 가능성",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "자연재해로 감소한 LNG 공급을 대체 가능한 다른 공급국/Plant Train의 가동률 상향으로 일부 상쇄한다. alt_lng_supply_availability는 대체 가능 물량과 배분 강도의 근거로 사용하고, 기존 basecase 가동률이 높은 Train에는 추가 상향을 제한한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.351463",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 74,
+      "use_yn": "Y",
+      "event_type_l2_id": 12,
+      "dimension_key": "inventory_level",
+      "dimension_label": "재고 수준 (평년 대비)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "Annual Balancing — 재고/timing은 수급모델 input 아님; 시장·가격 해석 단계 : 재고 수준은 수급모델 input이 아니므로 직접 조정하지 않고, 공급 부족의 완충·증폭 맥락으로 기간·강도 판단에만 사용",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 75,
+      "use_yn": "Y",
+      "event_type_l2_id": 12,
+      "dimension_key": "duration_recovery_timing",
+      "dimension_label": "지속 기간 / 회복 시점",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "재고 자체가 대상 아님 → 해당 없음 : 재고 회복 시점은 직접 입력하지 않고, 필요 시 이벤트 기간·회복 패턴 dimension으로만 반영",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 76,
+      "use_yn": "Y",
+      "event_type_l2_id": 12,
+      "dimension_key": "stockpile_policy_change",
+      "dimension_label": "비축 정책 변화",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "비축 정책 변화가 그 해 LNG 구매량(연간 수요)을 바꾸는 부분만 — 재고 수준 자체는 아님 : 비축 정책이 실제 연간 LNG 구매량을 바꾸는 경우에만 수요·수입 방향성 판단에 사용하고, 재고 수준 자체 조정은 제외",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 77,
+      "use_yn": "Y",
+      "event_type_l2_id": 12,
+      "dimension_key": "spot_purchase_impact",
+      "dimension_label": "Spot 구매 영향",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "Spot 가격 반응 = 가격 Output 단계 : Spot 구매·가격 반응은 가격 output·시장 해석 영역이므로 수급모델 input으로 직접 반영하지 않음",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 78,
+      "use_yn": "Y",
+      "event_type_l2_id": 13,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 79,
+      "use_yn": "Y",
+      "event_type_l2_id": 13,
+      "dimension_key": "freight_change_magnitude",
+      "dimension_label": "운임 변동 폭",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "용선료·연료비 — impact_scope축 : 운임·연료비는 Trade/ShippingCost 미대상으로 직접 조정하지 않고, 물리적 운송 차질이 공급량·기간에 영향을 줄 때만 별도 dimension으로 해석",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 80,
+      "use_yn": "Y",
+      "event_type_l2_id": 13,
+      "dimension_key": "freight_change_pattern",
+      "dimension_label": "변화 진행 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "급격/점진",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 81,
+      "use_yn": "Y",
+      "event_type_l2_id": 13,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발/구조적",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 82,
+      "use_yn": "Y",
+      "event_type_l2_id": 14,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 83,
+      "use_yn": "Y",
+      "event_type_l2_id": 14,
+      "dimension_key": "cargo_flow_disruption_intensity",
+      "dimension_label": "화물 흐름 차질 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "항로 통과비용·차단 여부 : 화물 흐름·항로 비용 이슈는 ShippingCost 미대상이라 직접 반영하지 않고, 실제 공급 지연·물량 차질이 명시될 때 기간·강도 판단에만 사용",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 84,
+      "use_yn": "Y",
+      "event_type_l2_id": 14,
+      "dimension_key": "rerouting_availability",
+      "dimension_label": "우회·재라우팅 가능성",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "우회 비용 상승; 높을수록 완화 : 우회 가능성은 비용 파라미터가 아니라 공급 차질 완화계수로 해석하고, 직접 수급모델 입력은 하지 않음",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 85,
+      "use_yn": "Y",
+      "event_type_l2_id": 14,
+      "dimension_key": "rerouting_availability",
+      "dimension_label": "우회·재라우팅 가능성",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "봉쇄 시 통과 제약 : 봉쇄·통과 제한은 TradeRestrictionInput 미대상으로 직접 조정하지 않고, 실제 물량 차단이 확인될 때 공급 차질 이벤트로 별도 반영",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 86,
+      "use_yn": "Y",
+      "event_type_l2_id": 14,
+      "dimension_key": "transit_delay",
+      "dimension_label": "운송 지연 규모",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "납기 지연 — ShippingCost 경유 간접",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 87,
+      "use_yn": "Y",
+      "event_type_l2_id": 15,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 88,
+      "use_yn": "Y",
+      "event_type_l2_id": 15,
+      "dimension_key": "transaction_scale",
+      "dimension_label": "규모",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "대규모 계약 분쟁·취소 물량 From-To (단순 헷지 포지션 재편은 실물 수급 아님→case) : 거래 분쟁·취소 물량은 TradeRestriction 미대상으로 직접 입력하지 않고, 실물 공급 또는 수요 변화가 명확한 경우 해당 공급·수요 파라미터로만 우회 반영",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 89,
+      "use_yn": "Y",
+      "event_type_l2_id": 15,
+      "dimension_key": "market_impact_persistence",
+      "dimension_label": "시장 영향 지속성",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "일시/단기/구조적",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 90,
+      "use_yn": "Y",
+      "event_type_l2_id": 16,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "수급모델 Input 해당 없음 : 인덱스 Spread 이벤트는 가격·시장 해석 영역이므로 기간도 수급모델 파라미터 적용 기간으로 사용하지 않음",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 91,
+      "use_yn": "Y",
+      "event_type_l2_id": 16,
+      "dimension_key": "spread_change_magnitude",
+      "dimension_label": "Spread 변동 폭",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "가격 인덱스 간 관계 = 가격 Output 단계 — 수급모델 input으로 건드리지 않음 : 가격 spread 변화는 가격 output·시장 신호로만 사용하고 수급모델 input 값을 직접 변경하지 않음",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 92,
+      "use_yn": "Y",
+      "event_type_l2_id": 16,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "상동 — 본 매핑 대상 외 : 구조적 여부도 spread 해석 구분용이며 수급모델 input 선정 조건으로 사용하지 않음",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 93,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "LiqUtilAdjustment의 Year/Month 적용 기간 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.426504",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 94,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "transport_disruption",
+      "dimension_label": "운송 차질",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.497141",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 95,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 - 강도",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "지정학적 긴장·전쟁으로 영향권 액화시설의 단기·부분 가동 제약이 발생하는 경우, 기존 LNG Plant Train의 가동률을 하향 조정한다. supply_disruption_intensity는 하향 조정폭의 주된 근거로 사용하고, period/supply_disruption_pattern은 적용 월과 월별 변화 경로에 반영한다. Train별 가동률은 0~1 범위와 기존 basecase 수준을 고려해 산정한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.573698",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 96,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 - 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 97,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 - 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 98,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "supply_disruption_pattern",
+      "dimension_label": "공급 차질 - 발생/회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률 변화가 급격히 반영되는지 점진적으로 반영되는지 월별 시계열 형태 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.797504",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 99,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "demand_response_alternative_lng",
+      "dimension_label": "수요측 대응 - 타 공급원 경유 LNG 확보량",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "수요측이 타 공급원 경유 LNG를 확보하는 경우, 대체 가능한 공급국의 기존 LNG Plant Train 가동률을 상향 조정한다. demand_response_alternative_lng는 대체 가능 물량과 배분 강도의 근거로 사용하고, 기존 basecase 가동률이 높은 Train에는 추가 상향을 제한한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.875210",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 100,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "demand_response_powermix_reduction",
+      "dimension_label": "수요측 대응 - PowerMix 조정 등을 통한 LNG 수요 감소량",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "자체 PowerMix 조정으로 LNG 수요 감소(SPR/대체 효과 포함) : 수요국의 정책·비상 대응으로 LNG 발전 수요가 줄면 PowerMix의 Gas 비중을 낮추고 대체 전원 비중을 조정",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 101,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "demand_response_powermix_reduction",
+      "dimension_label": "수요측 대응 - PowerMix 조정 등을 통한 LNG 수요 감소량",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "해당 섹터 수요 직접 감소 강제 시 : User-Adjusted Gas Demand 미대상 수동 overwrite는 직접 쓰지 않고, 수요 감소는 PowerMix Gas 비중 또는 대상 섹터 proxy로 환산",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 102,
+      "use_yn": "Y",
+      "event_type_l2_id": 17,
+      "dimension_key": "trade_restriction",
+      "dimension_label": "거래 제한 (계약 취소 등)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:30.949195",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 103,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "LiqUtilAdjustment의 Year/Month 적용 기간 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.035250",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 104,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "transport_disruption",
+      "dimension_label": "운송 차질",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.100015",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 105,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 - 강도",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "경제 제재·무역 제한으로 영향권 액화시설의 단기·부분 가동 제약이 발생하는 경우, 기존 LNG Plant Train의 가동률을 하향 조정한다. supply_disruption_intensity는 하향 조정폭의 주된 근거로 사용하고, period/supply_disruption_pattern은 적용 월과 월별 변화 경로에 반영한다. Train별 가동률은 0~1 범위와 기존 basecase 수준을 고려해 산정한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.173687",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 106,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 - 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 107,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "supply_disruption_intensity",
+      "dimension_label": "공급 차질 - 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 108,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "supply_disruption_pattern",
+      "dimension_label": "공급 차질 - 발생/회복 패턴",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "가동률 변화가 급격히 반영되는지 점진적으로 반영되는지 월별 시계열 형태 판단에 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.369200",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 109,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "demand_response_alternative_lng",
+      "dimension_label": "수요측 대응 - 타 공급원 경유 LNG 확보량",
+      "mapping_method": "direct",
+      "model_param_id": 14,
+      "comment": "수요측이 타 공급원 경유 LNG를 확보하는 경우, 대체 가능한 공급국의 기존 LNG Plant Train 가동률을 상향 조정한다. demand_response_alternative_lng는 대체 가능 물량과 배분 강도의 근거로 사용하고, 기존 basecase 가동률이 높은 Train에는 추가 상향을 제한한다. 제재·무역 제한에서는 대체 공급 형성에 일부 지연이 있을 수 있음을 월별 배분 시 보조적으로 고려한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.445254",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 110,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "demand_response_powermix_reduction",
+      "dimension_label": "수요측 대응 - PowerMix 조정 등을 통한 LNG 수요 감소량",
+      "mapping_method": "direct",
+      "model_param_id": 7,
+      "comment": "자체 PowerMix 조정 수요 감소",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 111,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "demand_response_powermix_reduction",
+      "dimension_label": "수요측 대응 - PowerMix 조정 등을 통한 LNG 수요 감소량",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "해당 섹터 수요 직접 감소 강제 시 : User-Adjusted Gas Demand 미대상 수동 overwrite는 직접 쓰지 않고, 수요 감소는 PowerMix Gas 비중 또는 대상 섹터 proxy로 환산",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 112,
+      "use_yn": "Y",
+      "event_type_l2_id": 18,
+      "dimension_key": "trade_restriction",
+      "dimension_label": "거래 제한 (계약 취소 등)",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.513101",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 113,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 114,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "implementation_stage",
+      "dimension_label": "시행 확실성·단계",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "검토/루머~시행 — 반영 시점·확률 weighting",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 115,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "impact_intensity",
+      "dimension_label": "영향 강도",
+      "mapping_method": "routing",
+      "model_param_id": 7,
+      "comment": "전원믹스·탄소규제·발전설비·연료전환 정책처럼 에너지원별 발전 비중이 구조적으로 변하는 경우 PowerMix를 적용한다. impact_intensity는 영향 국가·연도와 Gas 발전 비중 조정폭을 판단하는 근거로 사용한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-13T04:49:29.959834",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 116,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "impact_intensity",
+      "dimension_label": "영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "정책 영향 라우팅 후보(3개 중 선택) : 석탄 가격·세금·보조금·수입규제 등으로 석탄 발전 경제성이 변해 Gas↔Coal 전환 유인이 생기면 Coal Futures Price 선택",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 117,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "impact_intensity",
+      "dimension_label": "영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "정책 영향 라우팅 후보(3개 중 선택) : 가스/LNG 가격·세금·보조금·구매규제 등으로 가스 발전 경제성이 변해 Gas↔Coal 전환 유인이 생기면 Gas Futures Price 선택",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.960951",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 118,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "impact_intensity",
+      "dimension_label": "영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "발전·수요 정책 (탄소·전환 등) : User-Adjusted Gas Demand 미대상 수동 overwrite는 쓰지 않고, 발전·수요 정책은 PowerMix/CoalGasAdjustment 등 대상 파라미터로만 라우팅",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 119,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "impact_intensity",
+      "dimension_label": "영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "수출입 규제(관세·금수) : 관세·금수 등 TradeRestrictionInput 미대상 항목은 직접 반영하지 않고, 실제 물량 차질이 명확할 때 Supply 파라미터로 별도 반영",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 120,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "impact_intensity",
+      "dimension_label": "영향 강도",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": "운송 규제(FuelEU 등) : 운송 규제·비용은 ShippingCost 미대상이라 직접 반영하지 않고, 물리적 운송 지연·제약이 공급량에 연결될 때만 기간·강도 판단에 사용",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 121,
+      "use_yn": "Y",
+      "event_type_l2_id": 19,
+      "dimension_key": "structural_change_yn",
+      "dimension_label": "구조적 변동 여부",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "단발/한시 vs 구조적/영구",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 122,
+      "use_yn": "Y",
+      "event_type_l2_id": 20,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "시간축",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 123,
+      "use_yn": "Y",
+      "event_type_l2_id": 20,
+      "dimension_key": "change_magnitude",
+      "dimension_label": "변동 폭",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "환율·금리 직접 input 없음 — 구매력→수요 효과는 간접(필요 시 경기(PMI) 변동으로 대용 해석)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 124,
+      "use_yn": "Y",
+      "event_type_l2_id": 20,
+      "dimension_key": "persistence",
+      "dimension_label": "지속성",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "일시/단기/구조적",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-06T11:14:02.354122",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 125,
+      "use_yn": "Y",
+      "event_type_l2_id": 21,
+      "dimension_key": "period",
+      "dimension_label": "기간",
+      "mapping_method": "indirect",
+      "model_param_id": null,
+      "comment": "파라미터의 시간축으로 사용될 수 있다(PMI:Year/Month, GDP:Year)",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.581705",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 126,
+      "use_yn": "Y",
+      "event_type_l2_id": 21,
+      "dimension_key": "economic_intensity",
+      "dimension_label": "강도",
+      "mapping_method": "direct",
+      "model_param_id": 6,
+      "comment": "event에 명시된 제조업/서비스업 경기, 생산활동 증가·감소, 산업활동 둔화·회복, 단기 경기 강도를 근거로 해당 Country/Year/Month의 PMI 지수 최종값을 산정한다. basecase가 있으면 기존 PMI 수준과 이벤트 방향을 비교해 보수적으로 조정한다. basecase가 없으면 다른 국가의 PMI 수준을 기준값으로 삼지 않고, 이벤트에 제시된 해당 국가의 경기 방향과 PMI 기준값 50을 중심으로 산정한다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.656112",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 127,
+      "use_yn": "Y",
+      "event_type_l2_id": 21,
+      "dimension_key": "economic_intensity",
+      "dimension_label": "강도",
+      "mapping_method": "direct",
+      "model_param_id": 4,
+      "comment": "event에 명시된 국가별 GDP 성장률 전망, 전망치 수정폭, 하방/상방 시나리오를 우선 사용해 해당 Country/Year의 최종 성장률을 산정한다. 성장률 전망이 정량으로 제시되지 않으면 경기 둔화/회복 강도와 기간을 근거로 basecase 대비 보수적으로 조정한다. LNG 수요 영향률이나 가격 영향률을 GDP 성장률 multiplier로 사용하지 않는다.",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.726171",
+      "del_yn": "N"
+    },
+    {
+      "model_param_dimension_map_id": 128,
+      "use_yn": "Y",
+      "event_type_l2_id": 21,
+      "dimension_key": "demand_impact",
+      "dimension_label": "LNG 수요 영향 규모",
+      "mapping_method": "na",
+      "model_param_id": null,
+      "comment": null,
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-07-06T11:14:02.354122",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-07-08T07:47:31.795311",
+      "del_yn": "N"
+    }
+  ],
+  "impact_levers": [
+    {
+      "impact_lever_id": 1,
+      "lever_code": "weather_demand",
+      "domain": "demand",
+      "label": "기상 기반 수요",
+      "description": "평년 대비 기온 변동으로 난방·냉방 및 가스발전용 LNG 수요가 변하는 영향",
+      "applicability_hint": "겨울 한파·따뜻한 겨울 또는 여름 폭염의 기간, Temperature·HDD·CDD 기반 강도, 진입 재고, 타 에너지원 흡수 가능성, Peak 시점·패턴이 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연·월 기온 직접 조정",
+          "parameter_name": "Temperature",
+          "role": "primary",
+          "support_status": "executable"
+        },
+        {
+          "applicability": "난방도일로 표현 가능한 한파",
+          "parameter_name": "HDD",
+          "role": "alternative",
+          "support_status": "executable"
+        },
+        {
+          "applicability": "냉방도일로 표현 가능한 폭염",
+          "parameter_name": "CDD",
+          "role": "alternative",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 2,
+      "lever_code": "power_generation_mix",
+      "domain": "demand",
+      "label": "발전 믹스",
+      "description": "가스·원자력·재생에너지·석탄 발전의 가동률, 설비용량 또는 발전 비중 변화에 따른 LNG 발전 수요 변화",
+      "applicability_hint": "발전원별 영향 기간, Capacity 변화 규모, 단발·구조적 변동, 타 에너지원 흡수 가능성, 발생·회복 패턴을 분기할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연·에너지원별 발전 비중 조정",
+          "parameter_name": "PowerMix",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 3,
+      "lever_code": "economic_activity",
+      "domain": "demand",
+      "label": "경제 활동",
+      "description": "GDP·PMI 등 국가별 경기 변동에 따른 산업·발전 부문의 LNG 수요 변화",
+      "applicability_hint": "대상 국가의 경기 확장·둔화 방향과 기간, 경기 강도, LNG 수요 영향 규모가 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가별 연간 경제 성장 경로",
+          "parameter_name": "GDP",
+          "role": "primary",
+          "support_status": "executable"
+        },
+        {
+          "applicability": "국가별 월간 경기 강도",
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 4,
+      "lever_code": "direct_gas_demand",
+      "domain": "demand",
+      "label": "직접 가스 수요",
+      "description": "산업·도시가스·수송 부문의 직접 LNG·가스 소비 변화",
+      "applicability_hint": "21개 Event Type 중 직접 대응 유형은 없으며, 경제 활동이나 발전 믹스로 설명되지 않는 수요 정책·절감·연료 전환의 기간, 영향 강도, 구조성이 핵심일 때 제한적으로 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 5,
+      "lever_code": "upstream_production",
+      "domain": "supply",
+      "label": "Upstream 생산",
+      "description": "기존 가스전의 생산량·가동률 증감과 차질 후 회복에 따른 LNG 공급 변화",
+      "applicability_hint": "기간, Nameplate 대비 Utilization 변화 폭, 급격·점진 발생, 급격·점진·영구 회복, 대체 가스 공급 가능성을 분기할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "생산 지역별 연간 공급 차질",
+          "parameter_name": "SupplyDisruption",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 6,
+      "lever_code": "liquefaction_availability",
+      "domain": "supply",
+      "label": "액화시설 가용성",
+      "description": "기존 LNG 액화·수출 터미널의 가동률·생산량 변동과 신규 수출 터미널의 COD·Ramp-up 일정 변화",
+      "applicability_hint": "기존 플랜트·Train의 기간, Utilization 변화량, 발생·회복 패턴, 대체 LNG 공급 가능성 또는 신규 설비의 COD, Ramp-up 완료 시점·패턴·도달 가동률이 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "플랜트·Train별 가동률 조정",
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        },
+        {
+          "applicability": "플랜트·Train별 생산량 직접 조정",
+          "parameter_name": "LiqProdAdjustment",
+          "role": "alternative",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 7,
+      "lever_code": "regasification_capacity",
+      "domain": "supply",
+      "label": "재기화 수용력",
+      "description": "수입 터미널의 재기화 처리 가능 물량과 신규 수입 터미널의 COD·Ramp-up 일정 변화",
+      "applicability_hint": "신규 수입 터미널의 COD·Ramp-up 완료 시점과 도달 가동률 또는 자연재해로 인한 수입 시설의 차질 강도·회복 패턴이 수요 흡수력을 제한할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "재기화 플랜트별 용량 조정",
+          "parameter_name": "RegasAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 8,
+      "lever_code": "natural_disaster_disruption",
+      "domain": "supply",
+      "label": "자연재해 공급 차질",
+      "description": "허리케인·태풍·지진 등 자연재해가 생산·수출·수입 LNG 인프라에 일으키는 물리적 공급 차질",
+      "applicability_hint": "기간, 영향 시설 유형, 공급 차질 강도, P1~P9 발생·회복 패턴, 대체 LNG 공급 가능성을 분기할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "미국 액화시설 허리케인 차질",
+          "parameter_name": "HurricaneIntensity",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 9,
+      "lever_code": "pipeline_capacity",
+      "domain": "supply",
+      "label": "파이프라인 수송력",
+      "description": "PNG 파이프라인 송출 가동률과 수송용량의 단발적·구조적 변화",
+      "applicability_hint": "기간, 송출용량 대비 Utilization 변화 폭, 단발·구조적 여부, 발생·회복 패턴, 타 노선·LNG 전환 가능성을 분기할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 10,
+      "lever_code": "shipping_cost",
+      "domain": "trade",
+      "label": "해상 운송비",
+      "description": "선복 수급, 항로 차질, 연료비, 계절성, 지정학·제재로 인한 LNG·원유 선박 운임과 부대 운송비 변화",
+      "applicability_hint": "해상 운임의 기간, 변동 폭, 급격·점진 진행, 단발·구조적 여부를 분기하거나 항로·지정학·제재 충격의 운송비 효과를 정량 반영할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "영향 범위별 연간 운송비 조정",
+          "parameter_name": "ShippingCost",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 11,
+      "lever_code": "route_disruption",
+      "domain": "trade",
+      "label": "항로 제약",
+      "description": "운하·해협·항만의 혼잡·봉쇄·운항 차질·우회로 발생하는 LNG 화물 흐름의 지연과 왜곡",
+      "applicability_hint": "기간, 화물 흐름 차질 강도, 우회·재라우팅 가능성, 운송 지연 규모 또는 지정학·제재에 따른 운송 차질 강도가 불확실할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "우회로 인한 비용 효과만 직접 반영",
+          "parameter_name": "ShippingCost",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 12,
+      "lever_code": "contract_volume",
+      "domain": "trade",
+      "label": "계약 물량",
+      "description": "대규모 장기계약의 분쟁·취소·재협상과 거래 제한으로 현물시장에 유입되거나 이탈하는 계약 물량 변화",
+      "applicability_hint": "거래 규모와 시장 영향 지속성 또는 지정학·제재 시 일부·전체 계약 취소 여부가 지역별 가용 화물을 바꿀 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 13,
+      "lever_code": "trade_restriction",
+      "domain": "trade",
+      "label": "거래 제한",
+      "description": "지정학적 갈등, 정부 제재, 관세, 수출입·목적지 제한 및 정책·규제로 인한 LNG 거래 가능 물량 변화",
+      "applicability_hint": "적용 기간, 시행 단계, 운송·공급 차질 강도와 회복 패턴, 대체 공급·PowerMix 대응, 계약 취소 범위가 지역 간 화물 흐름을 제한할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 14,
+      "lever_code": "inventory_condition",
+      "domain": "price_only",
+      "label": "재고 여건",
+      "description": "평년 대비 LNG·PNG 재고 수준, 주입·인출 여력과 비축 정책 변화가 현물 구매 압력 및 가격 민감도에 미치는 영향",
+      "applicability_hint": "평년 대비 5단계 재고 수준, 지속·회복 기간, 비축 정책, Spot 구매 영향 또는 한파·폭염 진입 재고와 Injection 패턴을 가격 조건으로 반영할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 15,
+      "lever_code": "regional_price_spread",
+      "domain": "price_only",
+      "label": "지역 가격 스프레드",
+      "description": "JKM·TTF·Henry Hub 등 가격 인덱스 간 Spread의 비정상적·구조적 변화와 그에 따른 차익거래 유인 변화",
+      "applicability_hint": "기간, 대상 Spread의 확대·축소 방향, 변동 폭, 단발·구조적 여부가 화물 유인과 지역별 가격을 차별화할 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    },
+    {
+      "impact_lever_id": 16,
+      "lever_code": "financial_market_sentiment",
+      "domain": "price_only",
+      "label": "금융시장 심리",
+      "description": "헷지 포지션 재편, 환율·금리 변동과 위험 프리미엄이 시장 유동성, 수입국 구매력 및 단기 LNG 가격에 미치는 간접 영향",
+      "applicability_hint": "거래·헷징의 규모·지속성 또는 금리·통화의 변동 폭·지속성이 실물 수급모델 입력으로 직접 연결되지 않지만 가격 범위와 구매 여건을 바꿀 때 사용",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v2",
+      "use_yn": "Y",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-08-11T10:34:41.803263",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": "2026-08-11T10:34:41.803263",
+      "del_yn": "N"
+    }
+  ],
+  "scenario_dimension_templates": [
+    {
+      "scenario_dimension_template_id": 1,
+      "event_type_l2_id": 2,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "액화·수출 터미널 가동률 변화의 시작·종료 시점. 회복 미고려 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Utilization 변화량",
+          "dim_key": "utilization_change_amount",
+          "required": true,
+          "description": "Nameplate Capa 대비 터미널 가동률 변화 폭. 0%는 제외.",
+          "value_enums": [
+            "<5%",
+            "15%",
+            "30%",
+            "60%",
+            "100%"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "발생 패턴",
+          "dim_key": "onset_pattern",
+          "required": false,
+          "description": "감소·차질이 급격 또는 점진적으로 발생하는지.",
+          "value_enums": [
+            "급격",
+            "점진"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "회복 패턴",
+          "dim_key": "recovery_pattern",
+          "required": false,
+          "description": "터미널 가동률이 원상 복귀하는 속도. 영구 손실이면 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (영구 손실)"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "대체 LNG 공급 가능성",
+          "dim_key": "alt_lng_supply_availability",
+          "required": false,
+          "description": "차질 LNG 물량 중 다른 공급원으로 대체 가능한 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 5
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 2,
+      "event_type_l2_id": 3,
+      "template_json": [
+        {
+          "label": "COD 시점",
+          "dim_key": "cod_timing",
+          "required": true,
+          "description": "신규 프로젝트 COD 시점 또는 기존 계획 대비 변동. 취소 시 N/A.",
+          "value_enums": [
+            "지연 없음",
+            "3개월 지연",
+            "6개월 지연",
+            "1년 지연",
+            "1년 초과 지연",
+            "FID 무산"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Ramp-up 완료 시점",
+          "dim_key": "ramp_up_completion_timing",
+          "required": true,
+          "description": "Ramp-up 완료 시점 또는 기존 계획 대비 변동. 취소 시 N/A.",
+          "value_enums": [
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "N/A (FID 무산)"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "Ramp-up 패턴",
+          "dim_key": "ramp_up_pattern",
+          "required": false,
+          "description": "Ramp-up 진행 속도. FID 무산 시 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (FID 무산)"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "Ramp-up 완료 시 도달 가동률 (Nameplate Capa 대비)",
+          "dim_key": "target_utilization_at_ramp_up",
+          "required": false,
+          "description": "Ramp-up 완료 시 Nameplate Capa 대비 도달 가동률.",
+          "value_enums": [
+            "100%",
+            "90%",
+            "75%",
+            "50%",
+            "FID 무산 (0%)"
+          ],
+          "display_order": 4
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 3,
+      "event_type_l2_id": 6,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "한파의 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "한파 강도",
+          "dim_key": "cold_wave_intensity",
+          "required": true,
+          "description": "평년 대비 기온 편차 또는 HDD로 표현한 한파 강도.",
+          "value_enums": [
+            "-2~-3℃: 약",
+            "-3~-5℃: 중",
+            "-5℃ 이하: 강",
+            "기록적(-8℃ 이하·기록 경신)"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "진입 시점 가스 재고 (평년 대비)",
+          "dim_key": "entry_gas_inventory",
+          "required": false,
+          "description": "동절기 진입 시 5년 평균 대비 가스 재고 수준.",
+          "value_enums": [
+            "+20%↑ (매우 여유)",
+            "+5%~+20% (여유)",
+            "±5% (정상)",
+            "-5%~-20% (긴장)",
+            "-20%↓ (위험)"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "타 에너지원 흡수 가능성",
+          "dim_key": "alt_energy_absorption",
+          "required": false,
+          "description": "한파로 증가한 LNG 수요를 석탄·석유 등이 흡수하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "Peak 시점, 패턴",
+          "dim_key": "peak_timing_pattern",
+          "required": false,
+          "description": "한파 영향이 집중되는 월 또는 기간 분포.",
+          "value_enums": [
+            "전체 균등",
+            "12월 Peak",
+            "1월 Peak",
+            "2월 Peak"
+          ],
+          "display_order": 5
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 4,
+      "event_type_l2_id": 7,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "폭염의 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "폭염 강도",
+          "dim_key": "heatwave_intensity",
+          "required": true,
+          "description": "평년 대비 기온 편차 또는 CDD로 표현한 폭염 강도.",
+          "value_enums": [
+            "+1~+2℃: 약",
+            "+2~+3℃: 중",
+            "+3℃ 이상: 강",
+            "기록적(+4℃ 이상·기록 경신)"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "진입 시점 가스 재고 (평년 대비)",
+          "dim_key": "entry_gas_inventory",
+          "required": false,
+          "description": "봄 진입 시 5년 평균 대비 가스 재고 수준.",
+          "value_enums": [
+            "+20%↑ (매우 여유)",
+            "+5%~+20% (여유)",
+            "±5% (정상)",
+            "-5%~-20% (긴장)",
+            "-20%↓ (위험)"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "Injection 패턴",
+          "dim_key": "injection_pattern",
+          "required": false,
+          "description": "하절기 재고 충전의 적극성·회복 속도.",
+          "value_enums": [
+            "적극",
+            "정상",
+            "지연"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "타 에너지원 흡수 가능성",
+          "dim_key": "alt_energy_absorption",
+          "required": false,
+          "description": "폭염으로 증가한 LNG 수요를 재생에너지·원전 등이 흡수하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "Peak 시점, 패턴",
+          "dim_key": "peak_timing_pattern",
+          "required": false,
+          "description": "폭염 영향이 집중되는 월 또는 기간 분포.",
+          "value_enums": [
+            "전체 균등",
+            "6월 Peak",
+            "7월 Peak",
+            "8월 Peak"
+          ],
+          "display_order": 6
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 5,
+      "event_type_l2_id": 8,
+      "template_json": [
+        {
+          "label": "영향 기간",
+          "dim_key": "affected_period",
+          "required": true,
+          "description": "원전 가동 변화가 영향을 미치는 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Capacity 변화 규모",
+          "dim_key": "capacity_change_scale",
+          "required": true,
+          "description": "원전 설비용량 변화 규모.",
+          "value_enums": [
+            "1 GW 미만",
+            "1~3 GW",
+            "3~5 GW",
+            "5 GW 이상"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "정비·일시정지의 단발 변화인지 신규 COD·폐쇄의 구조적 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "타 에너지원 흡수 가능성",
+          "dim_key": "alt_energy_absorption",
+          "required": false,
+          "description": "원전 감소로 증가한 LNG 수요를 다른 에너지원이 흡수하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "발생 패턴",
+          "dim_key": "onset_pattern",
+          "required": false,
+          "description": "원전 가동 감소가 급격 또는 점진적으로 발생하는지. 용량 증가 시 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (Capa 증가 시)"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "회복 패턴",
+          "dim_key": "recovery_pattern",
+          "required": false,
+          "description": "원전 가동이 원상 복귀하는 속도. 회복 불가면 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (회복 불가)"
+          ],
+          "display_order": 6
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 6,
+      "event_type_l2_id": 9,
+      "template_json": [
+        {
+          "label": "영향 기간",
+          "dim_key": "affected_period",
+          "required": true,
+          "description": "재생에너지 출력·설비 변화가 영향을 미치는 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Capacity 변화 규모",
+          "dim_key": "capacity_change_scale",
+          "required": true,
+          "description": "재생에너지 출력 또는 설비용량 변화 규모.",
+          "value_enums": [
+            "1 GW 미만",
+            "1~3 GW",
+            "3~5 GW",
+            "5 GW 이상"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "기상에 따른 단발 출력 변화인지 신규 설비·정책의 구조적 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "타 에너지원 흡수 가능성",
+          "dim_key": "alt_energy_absorption",
+          "required": false,
+          "description": "재생에너지 감소로 증가한 LNG 수요를 다른 에너지원이 흡수하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "발생 패턴",
+          "dim_key": "onset_pattern",
+          "required": false,
+          "description": "재생에너지 감소가 급격 또는 점진적으로 발생하는지. 용량 증가 시 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (Capa 증가 시)"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "회복 패턴",
+          "dim_key": "recovery_pattern",
+          "required": false,
+          "description": "재생에너지 출력·설비 영향이 회복되는 속도. 회복 불가면 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (회복 불가)"
+          ],
+          "display_order": 6
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 7,
+      "event_type_l2_id": 10,
+      "template_json": [
+        {
+          "label": "영향 기간",
+          "dim_key": "affected_period",
+          "required": true,
+          "description": "석탄↔가스 발전 전환이 영향을 미치는 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "LNG 수요 영향 강도",
+          "dim_key": "lng_demand_impact_intensity",
+          "required": true,
+          "description": "석탄 발전 변화가 LNG 수요를 증감시키는 영향 크기.",
+          "value_enums": [
+            "소폭",
+            "중간",
+            "대폭"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "일시 가격·공급 변화인지 정책·폐쇄의 구조적 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "타 에너지원 흡수 가능성",
+          "dim_key": "alt_energy_absorption",
+          "required": false,
+          "description": "증가한 LNG 수요를 원전·재생에너지 등이 흡수하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 4
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 8,
+      "event_type_l2_id": 12,
+      "template_json": [
+        {
+          "label": "재고 수준 (평년 대비)",
+          "dim_key": "inventory_level",
+          "required": true,
+          "description": "5년 평균 대비 LNG·PNG 재고 수준.",
+          "value_enums": [
+            "+20%↑ (매우 여유)",
+            "+5%~+20% (여유)",
+            "±5% (정상)",
+            "-5%~-20% (긴장)",
+            "-20%↓ (위험)"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "지속 기간 / 회복 시점",
+          "dim_key": "duration_recovery_timing",
+          "required": true,
+          "description": "비정상 재고가 지속되는 기간과 정상화 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "종료 미정"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "비축 정책 변화",
+          "dim_key": "stockpile_policy_change",
+          "required": false,
+          "description": "비축 의무·목표의 유지, 완화, 강화 또는 신규 도입 여부.",
+          "value_enums": [
+            "기존 유지",
+            "완화",
+            "강화",
+            "신규 도입"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "Spot 구매 영향",
+          "dim_key": "spot_purchase_impact",
+          "required": false,
+          "description": "재고 수준이 현물 구매·재판매 압력에 미치는 방향과 강도.",
+          "value_enums": [
+            "구매 압력 강",
+            "중",
+            "약",
+            "없음",
+            "매도 압력 (Resell)"
+          ],
+          "display_order": 4
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 9,
+      "event_type_l2_id": 17,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "지정학적 긴장·분쟁 영향의 시작·종료 시점. 장기화 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "운송 차질",
+          "dim_key": "transport_disruption",
+          "required": true,
+          "description": "용선료·보험료와 실제 운항에 미치는 운송 차질 강도.",
+          "value_enums": [
+            "전혀 없음",
+            "낮음",
+            "중간",
+            "높음",
+            "매우 높음"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "공급 차질 - 강도",
+          "dim_key": "supply_disruption_intensity",
+          "required": false,
+          "description": "생산·수출·수입 시설에 발생하는 실제 공급 차질 강도.",
+          "value_enums": [
+            "전혀 없음",
+            "낮음",
+            "중간",
+            "높음",
+            "매우 높음"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "공급 차질 - 발생/회복 패턴",
+          "dim_key": "supply_disruption_pattern",
+          "required": false,
+          "description": "공급 차질의 발생·회복 시간 경로. 직접 시설 피해 시 사고형 패턴 우선.",
+          "value_enums": [
+            "급차질-급회복",
+            "급손상-단기수리",
+            "급손상-장기재건",
+            "영구 손실",
+            "지연발생-단계적 회복",
+            "지연발생-즉시 해소",
+            "점진차질-단계적 회복",
+            "점진차질-즉시 해소",
+            "즉시발생-장기 잠식"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "수요측 대응 - 타 공급원 경유 LNG 확보량",
+          "dim_key": "demand_response_alternative_lng",
+          "required": false,
+          "description": "부족 LNG 물량 중 다른 공급국·경로로 확보하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "수요측 대응 - PowerMix 조정 등을 통한 LNG 수요 감소량",
+          "dim_key": "demand_response_powermix_reduction",
+          "required": false,
+          "description": "부족분 중 PowerMix 조정으로 LNG 수요를 줄이는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 6
+        },
+        {
+          "label": "거래 제한 (계약 취소 등)",
+          "dim_key": "trade_restriction",
+          "required": false,
+          "description": "지정학 영향으로 유지·일부·전체 취소되는 계약 범위.",
+          "value_enums": [
+            "계약 유지 (취소 없음)",
+            "일부 계약 취소",
+            "전체 계약 취소"
+          ],
+          "display_order": 7
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 10,
+      "event_type_l2_id": 18,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "제재·무역 제한의 시행 시작·종료 시점. 영구 제재는 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "운송 차질",
+          "dim_key": "transport_disruption",
+          "required": false,
+          "description": "제재 회피·항로 제한이 운임과 운항에 미치는 차질 강도.",
+          "value_enums": [
+            "전혀 없음",
+            "낮음",
+            "중간",
+            "높음",
+            "매우 높음"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "공급 차질 - 강도",
+          "dim_key": "supply_disruption_intensity",
+          "required": true,
+          "description": "제재로 생산·수출·수입 가능 물량이 감소하는 강도.",
+          "value_enums": [
+            "전혀 없음",
+            "낮음",
+            "중간",
+            "높음",
+            "매우 높음"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "공급 차질 - 발생/회복 패턴",
+          "dim_key": "supply_disruption_pattern",
+          "required": true,
+          "description": "제재 시행·해제에 따른 공급 차질의 발생·회복 시간 경로.",
+          "value_enums": [
+            "급차질-급회복",
+            "급손상-단기수리",
+            "급손상-장기재건",
+            "영구 손실",
+            "지연발생-단계적 회복",
+            "지연발생-즉시 해소",
+            "점진차질-단계적 회복",
+            "점진차질-즉시 해소",
+            "즉시발생-장기 잠식"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "수요측 대응 - 타 공급원 경유 LNG 확보량",
+          "dim_key": "demand_response_alternative_lng",
+          "required": true,
+          "description": "부족 LNG 물량 중 다른 공급국·경로로 확보하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "수요측 대응 - PowerMix 조정 등을 통한 LNG 수요 감소량",
+          "dim_key": "demand_response_powermix_reduction",
+          "required": true,
+          "description": "부족분 중 PowerMix 조정으로 LNG 수요를 줄이는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 6
+        },
+        {
+          "label": "거래 제한 (계약 취소 등)",
+          "dim_key": "trade_restriction",
+          "required": false,
+          "description": "제재로 유지·일부·전체 취소되는 계약 범위.",
+          "value_enums": [
+            "계약 유지 (취소 없음)",
+            "일부 계약 취소",
+            "전체 계약 취소"
+          ],
+          "display_order": 7
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 11,
+      "event_type_l2_id": 1,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "생산량·가동률 변화의 시작·종료 시점. 회복 미고려 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Utilization 변화 폭",
+          "dim_key": "utilization_change_amount",
+          "required": true,
+          "description": "Nameplate Capa 대비 생산 가동률 변화 폭.",
+          "value_enums": [
+            "<5%",
+            "15%",
+            "30%",
+            "60%",
+            "100%"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "발생 패턴",
+          "dim_key": "onset_pattern",
+          "required": false,
+          "description": "생산 차질·증산이 급격 또는 점진적으로 발생하는지.",
+          "value_enums": [
+            "급격",
+            "점진"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "회복 패턴",
+          "dim_key": "recovery_pattern",
+          "required": false,
+          "description": "생산량이 원상 복귀하는 속도. 영구 변화면 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (영구)"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "대체 가스 공급 가능성",
+          "dim_key": "alt_gas_supply_availability",
+          "required": false,
+          "description": "차질 물량 중 다른 가스 공급으로 대체 가능한 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 5
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 12,
+      "event_type_l2_id": 4,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "파이프라인 송출 변화의 시작·종료 시점. 회복 미고려 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Utilization 변화 폭 (송출용량 대비)",
+          "dim_key": "utilization_change_amount",
+          "required": true,
+          "description": "송출용량 대비 파이프라인 가동률 변화 폭.",
+          "value_enums": [
+            "<5%",
+            "15%",
+            "30%",
+            "60%",
+            "100%"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "정비·사고의 단발 변화인지 노선 폐쇄·신설의 구조적 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "발생 패턴",
+          "dim_key": "onset_pattern",
+          "required": false,
+          "description": "송출 차질·증가가 급격 또는 점진적으로 발생하는지.",
+          "value_enums": [
+            "급격",
+            "점진"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "회복 패턴",
+          "dim_key": "recovery_pattern",
+          "required": false,
+          "description": "파이프라인 송출이 원상 복귀하는 속도. 영구 변화면 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (영구)"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "대체 공급원 가능성 (타 노선·LNG 전환)",
+          "dim_key": "alt_supply_availability",
+          "required": false,
+          "description": "차질 물량 중 타 노선 또는 LNG로 대체 가능한 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 6
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 13,
+      "event_type_l2_id": 11,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "자연재해 영향의 시작·종료 시점. 회복 미고려 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "영향 시설 유형",
+          "dim_key": "affected_facility_type",
+          "required": true,
+          "description": "자연재해로 차질을 받는 생산·수입·수출 시설 유형. 복수 선택 가능.",
+          "value_enums": [
+            "생산 시설",
+            "수입 시설",
+            "수출 시설"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "공급 차질 강도",
+          "dim_key": "supply_disruption_intensity",
+          "required": true,
+          "description": "시설 가동률 감소로 환산할 물리적 공급 차질 강도.",
+          "value_enums": [
+            "전혀 없음",
+            "낮음",
+            "중간",
+            "높음",
+            "매우 높음"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "공급 차질 - 발생/회복 패턴",
+          "dim_key": "supply_disruption_pattern",
+          "required": false,
+          "description": "시설 차질의 발생·회복 시간 경로. 직접 피해 시 사고형 패턴 우선.",
+          "value_enums": [
+            "급차질-급회복",
+            "급손상-단기수리",
+            "급손상-장기재건",
+            "영구 손실",
+            "지연발생-단계적 회복",
+            "지연발생-즉시 해소",
+            "점진차질-단계적 회복",
+            "점진차질-즉시 해소",
+            "즉시발생-장기 잠식"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "대체 LNG 공급 가능성",
+          "dim_key": "alt_lng_supply_availability",
+          "required": false,
+          "description": "차질 LNG 물량 중 다른 공급원으로 대체 가능한 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 5
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 14,
+      "event_type_l2_id": 5,
+      "template_json": [
+        {
+          "label": "영향 기간",
+          "dim_key": "affected_period",
+          "required": true,
+          "description": "가스발전 가동 변화가 영향을 미치는 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Capacity 변화 규모",
+          "dim_key": "capacity_change_scale",
+          "required": true,
+          "description": "가스발전 설비용량 변화 규모.",
+          "value_enums": [
+            "1 GW 미만",
+            "1~3 GW",
+            "3~5 GW",
+            "5 GW 이상"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "정비·사고의 단발 변화인지 신규 COD·폐쇄의 구조적 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "타 에너지원 흡수 가능성",
+          "dim_key": "alt_energy_absorption",
+          "required": false,
+          "description": "LNG 발전 수요 변화분을 다른 에너지원이 흡수하는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 4
+        },
+        {
+          "label": "발생 패턴",
+          "dim_key": "onset_pattern",
+          "required": false,
+          "description": "가스발전 가동 변화가 급격 또는 점진적으로 발생하는지.",
+          "value_enums": [
+            "급격",
+            "점진"
+          ],
+          "display_order": 5
+        },
+        {
+          "label": "회복 패턴",
+          "dim_key": "recovery_pattern",
+          "required": false,
+          "description": "가스발전 가동이 원상 복귀하는 속도. 영구 변화면 없음.",
+          "value_enums": [
+            "급격",
+            "점진",
+            "없음 (영구)"
+          ],
+          "display_order": 6
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 15,
+      "event_type_l2_id": 13,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "해상 운임 변화의 시작·종료 시점. 회복 미고려 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "구조적/영구",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "운임 변동 폭",
+          "dim_key": "freight_change_magnitude",
+          "required": true,
+          "description": "평시 대비 LNG·원유 선박 운임 변화 폭.",
+          "value_enums": [
+            "±25% 이내",
+            "±25~100%",
+            "±100~300%",
+            "+300% 초과"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "변화 진행 패턴",
+          "dim_key": "freight_change_pattern",
+          "required": false,
+          "description": "운임 변화가 급격 또는 점진적으로 진행되는지.",
+          "value_enums": [
+            "급격",
+            "점진"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "계절·단기 충격인지 지속적인 선복·항로 구조 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 4
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 16,
+      "event_type_l2_id": 14,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "항로·화물 흐름 차질의 시작·종료 시점. 회복 미고려 시 종료 미정.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "영구 (회복 불가)",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "화물 흐름 차질 강도",
+          "dim_key": "cargo_flow_disruption_intensity",
+          "required": true,
+          "description": "항만·운하·해협 차질이 LNG 화물 흐름을 제한하는 강도.",
+          "value_enums": [
+            "전혀 없음",
+            "낮음",
+            "중간",
+            "높음",
+            "매우 높음"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "우회·재라우팅 가능성",
+          "dim_key": "rerouting_availability",
+          "required": true,
+          "description": "차질 화물을 다른 항로로 우회·재배치할 수 있는 비율.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "운송 지연 규모",
+          "dim_key": "transit_delay",
+          "required": false,
+          "description": "우회·혼잡으로 추가되는 운송 지연 기간.",
+          "value_enums": [
+            "1주 이내",
+            "1~2주",
+            "2~4주",
+            "1개월 초과"
+          ],
+          "display_order": 4
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 17,
+      "event_type_l2_id": 15,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "계약 분쟁·취소 또는 헷지 재편의 영향 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "구조적/영구",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "규모",
+          "dim_key": "transaction_scale",
+          "required": true,
+          "description": "계약 물량 또는 헷지 포지션 변화의 시장 규모.",
+          "value_enums": [
+            "소규모",
+            "중간",
+            "대규모",
+            "시장 지배적"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "시장 영향 지속성",
+          "dim_key": "market_impact_persistence",
+          "required": false,
+          "description": "거래 변화가 가격·유동성에 영향을 미치는 지속 기간.",
+          "value_enums": [
+            "일시적",
+            "단기",
+            "구조적"
+          ],
+          "display_order": 3
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 18,
+      "event_type_l2_id": 16,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "가격 인덱스 간 Spread 변화의 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "구조적/영구",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "Spread 변동 폭",
+          "dim_key": "spread_change_magnitude",
+          "required": true,
+          "description": "대상 가격 인덱스 간 Spread 확대·축소 폭.",
+          "value_enums": [
+            "$0.5/MMBtu 이내",
+            "$0.5~1.5",
+            "$1.5~3",
+            "$3~6",
+            "$6 초과"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "일시적 가격 괴리인지 지속적인 차익거래 구조 변화인지.",
+          "value_enums": [
+            "단발적",
+            "구조적"
+          ],
+          "display_order": 3
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 19,
+      "event_type_l2_id": 19,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "정책·규제 영향의 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "구조적/영구",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "시행 확실성·단계",
+          "dim_key": "implementation_stage",
+          "required": true,
+          "description": "정책이 검토·발표·확정·단계 시행 중 어느 단계인지.",
+          "value_enums": [
+            "검토/루머",
+            "발표",
+            "시행 확정",
+            "단계적 시행"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "영향 강도",
+          "dim_key": "impact_intensity",
+          "required": false,
+          "description": "정책·규제가 LNG 수급에 미치는 영향 크기.",
+          "value_enums": [
+            "경미",
+            "보통",
+            "큼"
+          ],
+          "display_order": 3
+        },
+        {
+          "label": "구조적 변동 여부",
+          "dim_key": "structural_change_yn",
+          "required": false,
+          "description": "한시적 조치인지 장기·영구적인 제도 변화인지.",
+          "value_enums": [
+            "단발적/한시",
+            "구조적/영구"
+          ],
+          "display_order": 4
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 20,
+      "event_type_l2_id": 20,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "금리·환율 변화가 영향을 미치는 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "구조적/영구",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "변동 폭",
+          "dim_key": "change_magnitude",
+          "required": true,
+          "description": "금리·환율 변동의 크기와 급격성.",
+          "value_enums": [
+            "경미",
+            "보통",
+            "큼",
+            "급격"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "지속성",
+          "dim_key": "persistence",
+          "required": false,
+          "description": "구매력·조달비용 영향이 일시적·단기·구조적인지.",
+          "value_enums": [
+            "일시적",
+            "단기",
+            "구조적"
+          ],
+          "display_order": 3
+        }
+      ],
+      "del_yn": "N"
+    },
+    {
+      "scenario_dimension_template_id": 21,
+      "event_type_l2_id": 21,
+      "template_json": [
+        {
+          "label": "기간",
+          "dim_key": "period",
+          "required": true,
+          "description": "경기 변화가 LNG 수요에 영향을 미치는 시작·종료 시점.",
+          "value_enums": [
+            "1개월 이하",
+            "3개월",
+            "6개월",
+            "1년",
+            "1년 초과",
+            "구조적/영구",
+            "종료 미정"
+          ],
+          "display_order": 1
+        },
+        {
+          "label": "강도",
+          "dim_key": "economic_intensity",
+          "required": true,
+          "description": "GDP·PMI 등으로 판단한 경기 확장·둔화 강도.",
+          "value_enums": [
+            "경미",
+            "보통",
+            "강함",
+            "경기 충격"
+          ],
+          "display_order": 2
+        },
+        {
+          "label": "LNG 수요 영향 규모",
+          "dim_key": "demand_impact",
+          "required": false,
+          "description": "경기 변화가 산업·발전 LNG 수요에 미치는 영향 규모.",
+          "value_enums": [
+            "100%",
+            "75%",
+            "50%",
+            "25%",
+            "0%"
+          ],
+          "display_order": 3
+        }
+      ],
+      "del_yn": "N"
+    }
+  ]
+}

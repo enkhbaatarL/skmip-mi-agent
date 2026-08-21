@@ -329,7 +329,7 @@ agents:
     mlflow_tracing_enabled: true
   parameter_agent:
     mlflow_experiment_name: parameter_agent_local
-    aip_app_id: parameter_agent
+    aip_app_id: parameter-agent-local
     mlflow_tracing_enabled: true
   interpret_agent:
     mlflow_experiment_name: interpret_agent_local

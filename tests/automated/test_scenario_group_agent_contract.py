@@ -10,6 +10,7 @@ import types
 from typing import ClassVar
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
 from pydantic import ValidationError
 
 from apps.persistence.scenario.baseline_contrast import (
@@ -25,6 +26,7 @@ from apps.persistence.scenario_group.models import (
 )
 from apps.persistence.signpost.models import MiSignpostModel
 from apps.agents.scenario_group_agent.flows.validate_scenarios.nodes import (
+    _validate_v4_request_dimension_values,
     load_scenario_group as load_validation_scenario_group,
     save_validation_result,
 )
@@ -65,6 +67,9 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.flow import (
     _bg_to_output as validate_scenarios_bg_to_output,
 )
 from apps.agents.scenario_group_agent.flows.confirm_generation.state import ConfirmGenerationState
+from apps.agents.scenario_group_agent.flows.confirm_generation.nodes import (
+    confirm_outputs,
+)
 from apps.agents.scenario_group_agent.flows.create_signposts.state import CreateSignpostsState
 from apps.agents.scenario_group_agent.flows.validate_scenarios.state import ValidateScenariosState
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
@@ -390,6 +395,333 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             "impact_hh": None,
         }
 
+    def test_v4_table_cells_are_normalized_to_complete_value_id_selection(self) -> None:
+        service = ScenarioService()
+        definitions = [
+            {
+                "dimension_id": "facility_recovery",
+                "label": "회복 속도",
+                "values": [
+                    {
+                        "value_id": "delayed_recovery",
+                        "label": "저가동 지속",
+                    },
+                    {
+                        "value_id": "rapid_recovery",
+                        "label": "정상 가동 복귀",
+                    },
+                ],
+            },
+            {
+                "dimension_id": "inventory",
+                "label": "재고",
+                "values": [
+                    {"value_id": "high_inventory", "label": "높은 재고"},
+                    {"value_id": "low_inventory", "label": "낮은 재고"},
+                ],
+            },
+        ]
+        template = service.build_group_dimension_template_by_key(definitions)
+
+        normalized = service.cells_to_dimension_values_with_template(
+            template,
+            {
+                "facility_recovery": "저가동 지속",
+                "inventory": "high_inventory",
+            },
+            require_complete_catalog_values=True,
+        )
+
+        assert normalized == {
+            "facility_recovery": "delayed_recovery",
+            "inventory": "high_inventory",
+        }
+        with pytest.raises(ValueError, match="every Dimension"):
+            service.cells_to_dimension_values_with_template(
+                template,
+                {"facility_recovery": "delayed_recovery"},
+                require_complete_catalog_values=True,
+            )
+        with pytest.raises(ValueError, match="unknown Dimension value"):
+            service.cells_to_dimension_values_with_template(
+                template,
+                {
+                    "facility_recovery": "등록되지 않은 분기",
+                    "inventory": "high_inventory",
+                },
+                require_complete_catalog_values=True,
+            )
+
+        ambiguous_template = service.build_group_dimension_template_by_key(
+            [
+                {
+                    "dimension_id": "facility_recovery",
+                    "values": [
+                        {"value_id": "slow_a", "label": "저가동 지속"},
+                        {"value_id": "slow_b", "label": "저가동 지속"},
+                    ],
+                },
+            ],
+        )
+        with pytest.raises(ValueError, match="ambiguous"):
+            service.cells_to_dimension_values_with_template(
+                ambiguous_template,
+                {"facility_recovery": "저가동 지속"},
+                require_complete_catalog_values=True,
+            )
+
+        assert service.cells_to_dimension_values_with_template(
+            template,
+            {"facility_recovery": "표시값 그대로", "unknown": "legacy value"},
+        ) == {"facility_recovery": "표시값 그대로"}
+
+    def test_v4_dimension_template_rejects_missing_and_duplicate_ids(self) -> None:
+        service = ScenarioService()
+        valid_value = {"value_id": "known", "label": "등록 값"}
+
+        with pytest.raises(ValueError, match="missing dimension_id"):
+            service.build_group_dimension_template_by_key(
+                [{"label": "식별자 없음", "values": [valid_value]}],
+                require_catalog_value_ids=True,
+            )
+        with pytest.raises(ValueError, match="duplicate dimension_id"):
+            service.build_group_dimension_template_by_key(
+                [
+                    {"dimension_id": "duplicate", "values": [valid_value]},
+                    {"dimension_id": "duplicate", "values": [valid_value]},
+                ],
+                require_catalog_value_ids=True,
+            )
+        with pytest.raises(ValueError, match="missing value_id"):
+            service.build_group_dimension_template_by_key(
+                [
+                    {
+                        "dimension_id": "facility_recovery",
+                        "values": [{"label": "표시값만 있음"}],
+                    },
+                ],
+                require_catalog_value_ids=True,
+            )
+        with pytest.raises(ValueError, match="duplicate value_id"):
+            service.build_group_dimension_template_by_key(
+                [
+                    {
+                        "dimension_id": "facility_recovery",
+                        "values": [
+                            {"value_id": "duplicate", "label": "첫 번째"},
+                            {"value_id": "duplicate", "label": "두 번째"},
+                        ],
+                    },
+                ],
+                require_catalog_value_ids=True,
+            )
+
+        legacy_template = service.build_group_dimension_template_by_key(
+            [
+                {
+                    "dimension_id": "legacy_dimension",
+                    "values": [{"label": "기존 표시값"}],
+                },
+            ],
+        )
+        assert legacy_template["legacy_dimension"]["value_ids"] == [
+            "기존 표시값",
+        ]
+
+    def test_v4_validation_requires_exact_unique_dimension_headers(self) -> None:
+        definitions = [
+            {
+                "dimension_id": "facility_recovery",
+                "values": [
+                    {"value_id": "delayed", "label": "복구 지연"},
+                ],
+            },
+            {
+                "dimension_id": "inventory",
+                "values": [
+                    {"value_id": "high", "label": "높은 재고"},
+                ],
+            },
+        ]
+        state = ValidateScenariosState(
+            scenario_group=ScenarioGroupPayload(
+                scenario_group_id=10,
+                api_version="v4",
+                generation_strategy="multi_event_model_lever_dimensions",
+                dimension_definitions=definitions,
+            ),
+        )
+        rows = [
+            {
+                "cells": {
+                    "facility_recovery": "복구 지연",
+                    "inventory": "high",
+                },
+            },
+        ]
+
+        _validate_v4_request_dimension_values(
+            state,
+            [
+                {"key": "facility_recovery"},
+                {"key": "inventory"},
+            ],
+            rows,
+        )
+        with pytest.raises(MIBaseError, match="headers must match") as missing:
+            _validate_v4_request_dimension_values(
+                state,
+                [{"key": "facility_recovery"}],
+                rows,
+            )
+        assert missing.value.error_code is ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR
+        with pytest.raises(MIBaseError, match="duplicate keys"):
+            _validate_v4_request_dimension_values(
+                state,
+                [
+                    {"key": "facility_recovery"},
+                    {"key": "inventory"},
+                    {"key": "inventory"},
+                ],
+                rows,
+            )
+
+    def test_v4_sync_rejects_non_exact_headers_and_rolls_back(self) -> None:
+        session = Mock()
+        definitions = [
+            {
+                "dimension_id": "facility_recovery",
+                "values": [
+                    {"value_id": "delayed", "label": "복구 지연"},
+                ],
+            },
+            {
+                "dimension_id": "inventory",
+                "values": [
+                    {"value_id": "high", "label": "높은 재고"},
+                ],
+            },
+        ]
+        group_repository = Mock()
+        group_repository.fetch_by_id.return_value = types.SimpleNamespace(
+            generation_strategy="multi_event_model_lever_dimensions",
+            dimension_definitions=definitions,
+        )
+        scenario_repository = Mock()
+        scenario_repository.fetch_models_by_group_id.return_value = []
+        signpost_repository = Mock()
+        connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        connection_module.get_sync_session = lambda: session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service."
+                "ScenarioGroupRepository",
+                return_value=group_repository,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service."
+                "ScenarioRepository",
+                return_value=scenario_repository,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service."
+                "SignpostRepository",
+                return_value=signpost_repository,
+            ),
+            pytest.raises(ValueError, match="headers must match"),
+        ):
+            asyncio.run(
+                ScenarioService().sync_from_table_async(
+                    scenario_group_id=10,
+                    event_type_l2_id=None,
+                    table_payload={
+                        "headers": [{"key": "facility_recovery"}],
+                        "rows": [],
+                    },
+                    user_id=101,
+                    dimension_definitions=definitions,
+                ),
+            )
+
+        session.rollback.assert_called_once_with()
+        session.commit.assert_not_called()
+        group_repository.update_group.assert_not_called()
+
+    def test_v3_sync_preserves_legacy_header_behavior(self) -> None:
+        session = Mock()
+        group = types.SimpleNamespace(
+            generation_strategy="multi_event_composite_dimensions",
+        )
+        group_repository = Mock()
+        group_repository.fetch_by_id.return_value = group
+        scenario_repository = Mock()
+        scenario_repository.fetch_models_by_group_id.return_value = []
+        signpost_repository = Mock()
+        connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        connection_module.get_sync_session = lambda: session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (
+                        connection_module
+                    ),
+                },
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service."
+                "ScenarioGroupRepository",
+                return_value=group_repository,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service."
+                "ScenarioRepository",
+                return_value=scenario_repository,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.persistence.scenario_service."
+                "SignpostRepository",
+                return_value=signpost_repository,
+            ),
+        ):
+            result = asyncio.run(
+                ScenarioService().sync_from_table_async(
+                    scenario_group_id=10,
+                    event_type_l2_id=None,
+                    table_payload={
+                        "headers": [{"key": "legacy_user_added"}],
+                        "rows": [],
+                    },
+                    user_id=101,
+                    dimension_definitions=[
+                        {
+                            "dimension_id": "stored_dimension",
+                            "values": [{"label": "기존 값"}],
+                        },
+                    ],
+                ),
+            )
+
+        assert result["active_scenario_ids"] == []
+        group_update = group_repository.update_group.call_args.args[1]
+        assert group_update["dimension_selected"] == ["legacy_user_added"]
+        session.commit.assert_called_once_with()
+        session.rollback.assert_not_called()
+
     def test_create_signposts_node_generates_new_row_details_before_sync(self) -> None:
         detail = NewScenarioGeneratedDetails(
             narrative="generated narrative",
@@ -681,6 +1013,38 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
 
         assert payload.user_id is None
 
+    def test_confirmation_maps_v4_dimension_input_failure_to_invalid_request(self) -> None:
+        request_scenario_group = Mock()
+        request_scenario_group.model_dump.return_value = {"title": "group"}
+        request_table = Mock()
+        request_table.model_dump.return_value = {"rows": []}
+        state = types.SimpleNamespace(
+            status="success",
+            scenario_group_id=10,
+            request_scenario_group=request_scenario_group,
+            request_table=request_table,
+            user_id=101,
+            scenario_group=types.SimpleNamespace(request_usr_id=101),
+        )
+
+        with (
+            patch.object(
+                ScenarioGroupService,
+                "apply_confirmation",
+                return_value={
+                    "status": "failure",
+                    "error_code": "INVALID_REQUEST",
+                    "message": "v4 Scenario selected an unknown Dimension value",
+                },
+            ),
+            pytest.raises(MIBaseError) as captured,
+        ):
+            confirm_outputs(state)
+
+        assert captured.value.error_code is ErrorCode.INVALID_REQUEST
+        assert captured.value.status_code == 400
+        assert "unknown Dimension value" in captured.value.error_message
+
     def test_confirmation_updates_scenario_group_title_summary_description(
         self,
     ) -> None:
@@ -694,9 +1058,17 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             summary="old summary",
             description="old description",
             dimension_selected=["period"],
+            dimension_definitions=[
+                {
+                    "dimension_id": "period",
+                    "values": [{"value_id": "period_v1", "label": "단기"}],
+                },
+            ],
             scenario_count=1,
             status="creating",
             stage="ready",
+            generation_strategy="multi_event_composite_dimensions",
+            parameter_mapping_ready=True,
             del_yn="N",
         )
         scenario = MiScenarioModel(
@@ -785,7 +1157,10 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
                     "rows": [
                         {
                             "scenario_id": 100,
-                            "cells": {"period": "단기"},
+                            "cells": {
+                                "period": "단기",
+                                "new_dimension": "new_value",
+                            },
                             "impact": {
                                 "jkm": "bear",
                                 "ttf": "bull",
@@ -812,6 +1187,10 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert group_update["status"] == "created"
         assert group_update["stage"] == "completed"
         scenario_update = scenario_repository.update_from_payload.call_args.args[1]
+        assert scenario_update["dimension_values"] == {
+            "period": "단기",
+            "new_dimension": "new_value",
+        }
         assert "impact_jkm" not in scenario_update
         assert "impact_ttf" not in scenario_update
         assert "impact_hh" not in scenario_update

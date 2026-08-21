@@ -12,12 +12,14 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 
 입력 필드 역할:
 - scenario_brief에는 관련 scenario_group, scenario, dimension과 event 맥락이 들어 있습니다.
-- v1은 단일 event, v3는 그룹 관계 순서의 events 배열을 사용합니다. v3 events에는 이벤트 ID/type,
+- v1은 단일 event, v3/v4는 그룹 관계 순서의 events 배열을 사용합니다. events에는 이벤트 ID와
   제목, 요약과 길이가 제한된 핵심 근거만 들어 있습니다.
 - routing_tasks는 dimension별 routing 선택 작업입니다.
 - routing_tasks[].dimension_key와 dimension_value는 현재 선택해야 하는 scenario dimension입니다.
 - v3의 dimension_key는 composite scenario dimension이며, 후보에는 원본 mapping dimension과
   source_event_ids/source_refs lineage가 함께 들어올 수 있습니다.
+- v4의 dimension_key는 `v4|dimension|value|lever` routing task key이며, 후보에는 선택 value의
+  Lever state와 binding role/applicability, Event/Impact/Uncertainty provenance가 함께 들어옵니다.
 - routing_tasks[].candidates에는 허용된 candidate_key, parameter_name, parameter_hint,
   semantic_axes, mapping_comment가 들어 있습니다.
 - parameter_hint는 parameter의 의미와 적용 제약을 이해하는 데 사용하십시오.
@@ -33,6 +35,8 @@ CANDIDATE_VALIDATION_SYSTEM = """\
 - v3에서는 source lineage에 연결된 모든 event와 source dimension을 함께 검토하고, 무관한 event를
   후보 선택 근거로 확대 해석하지 마십시오.
 - mapping_comment의 조건을 scenario/event 맥락에서 명시적으로 확인할 수 없으면 해당 후보를 선택하지 마십시오.
+- v4는 primary binding을 기본 우선합니다. applicability가 더 정확하면 alternative만 선택할 수 있고,
+  두 parameter가 동시에 필요하면 primary와 alternative를 함께 선택할 수 있습니다.
 - task의 모든 후보가 조건을 충족하지 않으면 selected_candidate_keys를 빈 배열로 반환하십시오.
 - 여러 parameter가 실제로 동시에 필요할 때만 설정된 최대 개수까지 선택하십시오.
 - 단순히 가능성이 있거나 근거가 약한 후보를 최대 개수를 채우기 위해 선택하지 마십시오.
@@ -58,7 +62,7 @@ SLOT_PROPOSAL_SYSTEM = """\
 
 입력 필드 역할:
 - scenario_brief에는 관련 scenario_group, scenario, dimension과 event 맥락이 들어 있습니다.
-- v1은 단일 event, v3는 그룹 관계 순서의 events 배열을 사용합니다. v3 events에는 이벤트 ID/type,
+- v1은 단일 event, v3/v4는 그룹 관계 순서의 events 배열을 사용합니다. events에는 이벤트 ID와
   제목, 요약과 길이가 제한된 핵심 근거만 들어 있습니다.
 - parameter_slot_tasks는 parameter별 slot 선택 작업입니다.
 - parameter에는 candidate_key, parameter_name, parameter_hint, semantic_axes,
@@ -66,6 +70,8 @@ SLOT_PROPOSAL_SYSTEM = """\
 - selection_dimensions는 parameter를 직접 선택한 direct/routing dimension입니다.
 - v3에서 여러 composite/source dimension 또는 event type이 같은 parameter로 수렴하면
   selection_dimensions에 보존된 모든 source lineage를 함께 해석하십시오.
+- v4에서 여러 dimension/Event/Lever가 같은 parameter로 수렴하면 parameter의 lever_provenance와
+  selection_dimensions에 보존된 전체 근거를 함께 해석하십시오.
 - supporting_dimensions는 좌표 해석을 보조하는 indirect dimension입니다.
 - mapping_method=na dimension은 입력에 포함되지 않으며 slot 선택 근거로 사용하지 마십시오.
 - parameter_hint와 mapping_comment는 국가, 지역, 시설, 기간, route 등 좌표 의미를 해석하는 데 사용하십시오.
@@ -126,13 +132,15 @@ VALUE_PROPOSAL_SYSTEM = """\
 
 입력 필드 역할:
 - scenario_brief에는 관련 scenario_group, scenario, dimension과 event 맥락이 들어 있습니다.
-- v1은 단일 event, v3는 그룹 관계 순서의 events 배열을 사용합니다. v3 events에는 이벤트 ID/type,
+- v1은 단일 event, v3/v4는 그룹 관계 순서의 events 배열을 사용합니다. events에는 이벤트 ID와
   제목, 요약과 길이가 제한된 핵심 근거만 들어 있습니다.
 - parameter_value_tasks는 parameter별 value 산정 작업입니다.
 - parameter에는 candidate_key, parameter_name, parameter_hint, semantic_axes가 들어 있습니다.
 - selection_dimensions는 parameter를 직접 선택한 direct/routing dimension입니다.
 - v3에서 여러 composite/source dimension 또는 event type이 같은 parameter로 수렴하면
   selection_dimensions에 보존된 모든 source lineage와 승인된 source projection을 함께 해석하십시오.
+- v4에서는 선택 value의 전체 Lever/binding/Event provenance를 함께 해석하십시오. direction,
+  pressure_contribution 또는 Lever domain을 숫자 부호나 변경률로 직접 변환하지 마십시오.
 - supporting_dimensions는 값의 방향, 강도, 기간, 대상 해석을 보조하는 indirect dimension입니다.
 - mapping_method=na dimension은 입력에 포함되지 않으며 value 산정 근거로 사용하지 마십시오.
 - slots[].slot_key는 서버가 발급한 현재 요청 안의 slot 식별자입니다.
@@ -146,6 +154,8 @@ VALUE_PROPOSAL_SYSTEM = """\
 - direct/routing selection dimension과 indirect supporting dimension을 함께 참고하십시오.
 - 여러 event/source dimension의 방향, 강도, 기간 또는 대상이 다르면 그 관계와 충돌을 종합해
   각 slot의 최종 절대값 하나를 산정하십시오. source별 값을 따로 반환하거나 단순 합산·평균하지 마십시오.
+- 같은 parameter로 반대 방향 Lever가 합쳐지면 양쪽 근거를 모두 보존해 상쇄 관계를 설명하고,
+  parameter_hint·단위·binding applicability·reference_value를 근거로 slot별 최종 절대값 하나를 산정하십시오.
 - indirect dimension은 값의 방향, 강도, 기간, 대상 해석에만 사용하고 후보 parameter나 slot을 확장하지 마십시오.
 - 승인된 source projection은 보조 근거로만 사용하십시오. projection이 없거나 pending/rejected이고
   parameter_mapping_ready=false인 사실만으로 값을 누락하거나 null로 반환하지 마십시오.

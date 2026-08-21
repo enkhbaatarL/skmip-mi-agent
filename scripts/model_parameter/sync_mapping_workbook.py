@@ -22,20 +22,21 @@ import yaml
 LOGGER = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
+PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
+LEGACY_MAPPING_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
+IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
 CONFIG_PATH = ROOT_DIR / "envs/config.yaml"
 MAPPING_DIR = ROOT_DIR / "apps/agents/model_parameter_agent/resources/mapping"
 ARCHIVE_DIR = MAPPING_DIR / "archive"
-FINAL_WORKBOOK_PATH = MAPPING_DIR / "260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx"
+FINAL_WORKBOOK_PATH = MAPPING_DIR / "260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx"
 LEGACY_WORKBOOK_NAMES = (
     "260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx",
     "260702_시나리오가정_MI수급모델_input_매핑_모델파트수정_v0.4.xlsx",
+    "260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx",
 )
 
 PARAMETER_SHEET = "Parameter Excel Mapping"
 DIMENSION_SHEET = "Dimension Parameter Mapping"
-EXPECTED_METHOD_COUNTS = Counter({"direct": 35, "routing": 6, "indirect": 55, "na": 33})
-
 PARAMETER_HEADERS = (
     "model_param_id",
     "use_yn",
@@ -89,6 +90,47 @@ LUT_HEADERS = (
     "key_axes",
 )
 CONFLICT_HEADERS = ("conflict", "final_decision", "evidence", "reflected_artifact")
+BASECASE_ONLY_PARAMETER_NAMES = frozenset(
+    {
+        "User-Adjusted Gas Demand",
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "RemainingUnrestrictedAmount",
+        "ShippingCost",
+        "VolumeCancelled",
+    },
+)
+EXPECTED_LEGACY_MAPPING_COUNT = 129
+EXPECTED_LEGACY_MAPPING_METHOD_COUNTS = {
+    "direct": 35,
+    "routing": 6,
+    "indirect": 55,
+    "na": 33,
+}
+EXPECTED_LEGACY_CANDIDATE_PARAMETER_NAMES = frozenset(
+    {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
+        "LiqUtilAdjustment",
+        "PipelineAdjustment",
+        "SupplyDisruption",
+    },
+)
+LEVER_BINDING_HEADERS = (
+    "lever_code",
+    "domain",
+    "impact_lever_id",
+    "parameter_name",
+    "role",
+    "applicability",
+    "catalog_support_status",
+    "effective_support_status",
+)
 
 TITLE_FILL = PatternFill("solid", fgColor="17365D")
 HEADER_FILL = PatternFill("solid", fgColor="5B9BD5")
@@ -120,6 +162,66 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         msg = f"Expected a YAML object: {path}"
         raise TypeError(msg)
     return document
+
+
+def _compose_workbook_canonical(  # noqa: C901
+    parameter_canonical: Mapping[str, Any],
+    legacy_mapping_canonical: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Combine the v4 master with only the approved shared v1/v3 mapping payload."""
+    if parameter_canonical.get("canonical_version") != "model-parameter-canonical-v4":
+        msg = "Workbook parameter source must be model-parameter-canonical-v4"
+        raise ValueError(msg)
+    if legacy_mapping_canonical.get("canonical_version") != "model-parameter-canonical-v1":
+        msg = "Workbook legacy mapping source must be model-parameter-canonical-v1"
+        raise ValueError(msg)
+
+    master = parameter_canonical.get("master")
+    mappings = legacy_mapping_canonical.get("dimension_mappings")
+    if not isinstance(master, list) or not all(isinstance(row, dict) for row in master):
+        msg = "v4 master must be an array of objects"
+        raise TypeError(msg)
+    if not isinstance(mappings, list) or not all(isinstance(row, dict) for row in mappings):
+        msg = "shared legacy mappings must be an array of objects"
+        raise TypeError(msg)
+    if len(mappings) != EXPECTED_LEGACY_MAPPING_COUNT:
+        msg = f"Shared legacy mapping count must be {EXPECTED_LEGACY_MAPPING_COUNT}"
+        raise ValueError(msg)
+
+    method_counts = Counter(str(row.get("mapping_method")) for row in mappings)
+    if dict(method_counts) != EXPECTED_LEGACY_MAPPING_METHOD_COUNTS:
+        msg = f"Shared legacy mapping methods mismatch: {dict(method_counts)}"
+        raise ValueError(msg)
+
+    active_by_id = {
+        int(row["model_param_id"]): str(row["parameter_name"])
+        for row in master
+        if row.get("use_yn") == "Y" and row.get("del_yn") == "N"
+    }
+    candidate_names: set[str] = set()
+    for row in mappings:
+        model_param_id = row.get("model_param_id")
+        if model_param_id is None:
+            continue
+        parameter_name = active_by_id.get(int(model_param_id))
+        if parameter_name is None:
+            msg = f"Shared mapping references an inactive or missing v4 master row: {model_param_id}"
+            raise ValueError(msg)
+        if row.get("mapping_method") in {"direct", "routing"}:
+            candidate_names.add(parameter_name)
+    if candidate_names != EXPECTED_LEGACY_CANDIDATE_PARAMETER_NAMES:
+        msg = f"Shared legacy candidate names mismatch: {sorted(candidate_names)}"
+        raise ValueError(msg)
+
+    canonical = dict(parameter_canonical)
+    canonical["dimension_mappings"] = [dict(row) for row in mappings]
+    canonical["mapping_count"] = len(mappings)
+    canonical["expected_counts"] = dict(parameter_canonical["expected_counts"])
+    canonical["expected_counts"]["dimension_mappings"] = len(mappings)
+    canonical["expected_counts"]["mapping_methods"] = dict(method_counts)
+    canonical["legacy_mapping_canonical_version"] = legacy_mapping_canonical["canonical_version"]
+    canonical["legacy_mapping_generated_from_snapshot"] = legacy_mapping_canonical["generated_from_snapshot"]
+    return canonical
 
 
 def _write_row(worksheet: Worksheet, row_index: int, values: Sequence[object]) -> None:
@@ -184,7 +286,7 @@ def _build_overview(
     worksheet.sheet_view.showGridLines = False
     worksheet.merge_cells("A1:D2")
     title = worksheet["A1"]
-    title.value = "MI Model Parameter Mapping — Canonical v1"
+    title.value = "MI Model Parameter Mapping — Lever-native Canonical v4"
     title.fill = TITLE_FILL
     title.font = Font(color="FFFFFF", bold=True, size=15)
     title.alignment = Alignment(horizontal="center", vertical="center")
@@ -194,9 +296,22 @@ def _build_overview(
 
     current_path = FINAL_WORKBOOK_PATH.relative_to(ROOT_DIR)
     metadata = (
-        ("Canonical version", canonical["canonical_version"]),
-        ("DB matrix", "master 21 / active 10 / dimension mapping 129"),
-        ("Generated from", canonical["generated_from_snapshot"]),
+        ("Master canonical", canonical["canonical_version"]),
+        ("Legacy mapping canonical", canonical["legacy_mapping_canonical_version"]),
+        (
+            "DB matrix",
+            (
+                f"master {canonical['master_count']} / active {len(canonical['active_parameter_names'])} / "
+                f"shared v1/v3 legacy dimension mapping {canonical['mapping_count']}"
+            ),
+        ),
+        (
+            "Source snapshots",
+            (
+                f"master={Path(str(canonical['generated_from_snapshot'])).name}\n"
+                f"legacy mapping={Path(str(canonical['legacy_mapping_generated_from_snapshot'])).name}"
+            ),
+        ),
         ("Audit user", canonical["audit_user"]),
         ("Current workbook", f"{current_path.parent}/\n{current_path.name}"),
         ("Historical workbooks", str(ARCHIVE_DIR.relative_to(ROOT_DIR))),
@@ -213,7 +328,7 @@ def _build_overview(
         ("A11", "A12:A13", "Master rows", canonical["master_count"]),
         ("B11", "B12:B13", "Active parameters", len(canonical["active_parameter_names"])),
         ("C11", "C12:C13", "Dimension mappings", canonical["mapping_count"]),
-        ("D11", "D12:D13", "Active LUT parameters", len(canonical["active_parameter_names"])),
+        ("D11", "D12:D13", "LUT", 10),
     )
     for label_address, value_range, label, value in cards:
         worksheet.merge_cells(value_range)
@@ -229,15 +344,21 @@ def _build_overview(
         value_cell.alignment = Alignment(horizontal="center", vertical="center")
 
     worksheet.merge_cells("A16:D16")
-    worksheet["A16"] = "활성 10개 Parameter"
+    worksheet["A16"] = "활성 16개 Parameter (LUT 10 + Basecase-only 6)"
     worksheet["A16"].fill = SUBHEADER_FILL
     worksheet["A16"].font = Font(bold=True, color="17365D")
     worksheet["A16"].alignment = Alignment(horizontal="center")
     worksheet.merge_cells("A17:D18")
     active_names = canonical["active_parameter_names"]
-    worksheet["A17"] = ", ".join(active_names[:5]) + "\n" + ", ".join(active_names[5:])
+    worksheet["A17"] = (
+        ", ".join(active_names[:6])
+        + "\n"
+        + ", ".join(active_names[6:11])
+        + "\n"
+        + ", ".join(active_names[11:])
+    )
     worksheet["A17"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    worksheet["A17"].font = Font(bold=True, color="375623", size=10)
+    worksheet["A17"].font = Font(bold=True, color="375623", size=9)
 
     worksheet.merge_cells("A20:D20")
     worksheet["A20"] = "사용 기준"
@@ -246,7 +367,7 @@ def _build_overview(
     worksheet["A20"].alignment = Alignment(horizontal="center")
     worksheet.merge_cells("A21:D23")
     worksheet["A21"] = (
-        "이 workbook의 Parameter/Dimension Mapping sheet가 현재 기준이다.\n"
+        "이 workbook의 Parameter/Lever Binding sheet가 v4 실행 기준이며 Dimension Mapping은 v1/v3 legacy 전용이다.\n"
         "archive 디렉터리의 이전 Excel은 역사·검토 자료이며 실행 기준으로 사용하지 않는다.\n"
         "공개 proposal/confirmation API와 payload는 변경하지 않는다."
     )
@@ -258,7 +379,8 @@ def _build_overview(
     _set_column_widths(worksheet, {"A": 24, "B": 28, "C": 28, "D": 28})
     worksheet.row_dimensions[1].height = 30
     worksheet.row_dimensions[2].height = 30
-    worksheet.row_dimensions[8].height = 34
+    worksheet.row_dimensions[7].height = 34
+    worksheet.row_dimensions[9].height = 34
     worksheet.row_dimensions[17].height = 28
     worksheet.row_dimensions[18].height = 28
     worksheet.row_dimensions[21].height = 30
@@ -399,6 +521,19 @@ def _lut_manifest_rows(config: Mapping[str, Any]) -> list[list[Any]]:
                 ],
             )
     rows.append(["deferred-no-lut", "ElectrificationRate", "N", None, None, None, None, None])
+    rows.extend(
+        [
+            "basecase-only",
+            parameter_name,
+            "Y",
+            "canonical Basecase parser",
+            "exact slot",
+            "basecase workbook",
+            None,
+            "master semantic axes",
+        ]
+        for parameter_name in sorted(BASECASE_ONLY_PARAMETER_NAMES)
+    )
     for reference_name, spec in resources["references"].items():
         rows.append(
             [
@@ -428,7 +563,7 @@ def _build_lut_sheet(workbook: Workbook, lut_rows: Sequence[Sequence[Any]]) -> N
     )
     for row in range(2, worksheet.max_row + 1):
         classification = worksheet.cell(row=row, column=1).value
-        if classification == "active":
+        if classification in {"active", "basecase-only"}:
             worksheet.cell(row=row, column=1).fill = ACTIVE_FILL
         elif classification in {"deferred", "deferred-no-lut"}:
             worksheet.cell(row=row, column=1).fill = DEFERRED_FILL
@@ -437,17 +572,17 @@ def _build_lut_sheet(workbook: Workbook, lut_rows: Sequence[Sequence[Any]]) -> N
     _add_table(worksheet, name="LutResourceManifestTable")
 
 
-def _build_conflict_sheet(workbook: Workbook) -> None:
+def _build_conflict_sheet(workbook: Workbook, canonical: Mapping[str, Any]) -> None:
     rows = (
         (
             "초안 Markdown/Excel의 활성 상태 차이",
-            "DB master 21행, 활성 10행",
+            "DB master 21행, 활성 16행; LUT 10행 + Basecase-only 6행",
             "외부개발 DB snapshot, 최종 허용 목록, LUT horizon",
             "canonical JSON/SQL/config/docs/current workbook",
         ),
         (
             "DB와 초안의 data start row·column role 차이",
-            "기존 활성 5개는 검증 DB 값 유지, 나머지는 실제 workbook/LUT 구조로 정규화",
+            "기존 LUT 10개는 유지하고 신규 6개는 검증된 Basecase exact slot만 사용",
             "basecase workbook 구조 및 외부개발 DB read-back",
             "Parameter Excel Mapping 21행",
         ),
@@ -464,10 +599,16 @@ def _build_conflict_sheet(workbook: Workbook) -> None:
             "master use_yn=N, LUT manifest deferred-no-lut",
         ),
         (
-            "Population routing 범위",
-            "명시적 인구·이민·인구전망 event만 선택, 일반 경기는 GDP·PMI 우선",
-            "event type 21 economic_intensity 승인 comment",
-            "Dimension Parameter Mapping ID 129",
+            "legacy mapping 기준",
+            (
+                f"v1/v3 shared mapping을 canonical {canonical['mapping_count']}행으로 정비하고, "
+                "v4는 legacy mapping을 조회하지 않는 경계를 유지"
+            ),
+            (
+                "model-parameter-canonical-v1 dimension_mappings; "
+                "historical pre-change v4 snapshot은 128행"
+            ),
+            f"Dimension Parameter Mapping {canonical['mapping_count']}행",
         ),
         (
             "이전 Excel의 상충 sheet",
@@ -486,13 +627,65 @@ def _build_conflict_sheet(workbook: Workbook) -> None:
     _add_table(worksheet, name="ConflictResolutionTable")
 
 
-def _build_workbook(canonical: Mapping[str, Any], config: Mapping[str, Any]) -> Workbook:
+def _effective_binding_status(
+    binding: Mapping[str, Any],
+    active_parameter_names: set[str],
+) -> str:
+    if binding.get("support_status") != "executable":
+        return "known_unsupported"
+    if str(binding.get("parameter_name") or "") not in active_parameter_names:
+        return "known_unsupported:INACTIVE_MODEL_PARAMETER"
+    return "executable"
+
+
+def _build_lever_binding_sheet(
+    workbook: Workbook,
+    canonical: Mapping[str, Any],
+    impact_canonical: Mapping[str, Any],
+) -> None:
+    worksheet = workbook.create_sheet("Impact Lever Bindings")
+    _write_row(worksheet, 1, LEVER_BINDING_HEADERS)
+    active_names = set(canonical["active_parameter_names"])
+    row_index = 2
+    for lever in impact_canonical["impact_levers"]:
+        for binding in lever.get("parameter_bindings") or []:
+            _write_row(
+                worksheet,
+                row_index,
+                [
+                    lever["lever_code"],
+                    lever["domain"],
+                    lever["impact_lever_id"],
+                    binding["parameter_name"],
+                    binding["role"],
+                    binding.get("applicability"),
+                    binding["support_status"],
+                    _effective_binding_status(binding, active_names),
+                ],
+            )
+            row_index += 1
+    _style_header(worksheet, len(LEVER_BINDING_HEADERS))
+    _style_body(worksheet, text_columns={1, 2, 4, 5, 6, 7, 8})
+    _set_column_widths(
+        worksheet,
+        {"A": 30, "B": 14, "C": 16, "D": 32, "E": 14, "F": 78, "G": 24, "H": 38},
+    )
+    _add_table(worksheet, name="ImpactLeverBindingTable")
+
+
+def _build_workbook(
+    canonical: Mapping[str, Any],
+    impact_canonical: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> Workbook:
     workbook = Workbook()
-    workbook.properties.creator = "model-parameter-canonical-v1"
+    workbook.properties.creator = "model-parameter-canonical-v4"
     workbook.properties.title = "MI Model Parameter Canonical Mapping"
-    workbook.properties.subject = "21 master rows and 129 dimension mappings"
+    workbook.properties.subject = (
+        f"{canonical['master_count']} v4 master rows and {canonical['mapping_count']} shared v1/v3 mappings"
+    )
     workbook.properties.description = (
-        "Canonical Model Parameter mapping generated from model-parameter-canonical-v1.json"
+        "v4 Model Parameter master and Lever bindings composed with the shared v1/v3 canonical mapping"
     )
     workbook.calculation.calcMode = "auto"
     workbook.calculation.fullCalcOnLoad = True
@@ -502,8 +695,9 @@ def _build_workbook(canonical: Mapping[str, Any], config: Mapping[str, Any]) -> 
     _build_overview(workbook, canonical)
     _build_parameter_sheet(workbook, canonical)
     _build_dimension_sheet(workbook, canonical)
+    _build_lever_binding_sheet(workbook, canonical, impact_canonical)
     _build_lut_sheet(workbook, lut_rows)
-    _build_conflict_sheet(workbook)
+    _build_conflict_sheet(workbook, canonical)
     workbook.active = 0
     return workbook
 
@@ -520,12 +714,18 @@ def _assert_equal(actual: object, expected: object, *, label: str) -> None:
         raise ValueError(msg)
 
 
-def validate_workbook(path: Path, canonical: Mapping[str, Any], config: Mapping[str, Any]) -> None:
+def validate_workbook(
+    path: Path,
+    canonical: Mapping[str, Any],
+    impact_canonical: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> None:
     workbook = load_workbook(path, read_only=False, data_only=False)
     expected_sheets = [
         "0. Canonical Overview",
         PARAMETER_SHEET,
         DIMENSION_SHEET,
+        "Impact Lever Bindings",
         "LUT Resource Manifest",
         "Conflict Resolution",
     ]
@@ -545,7 +745,7 @@ def validate_workbook(path: Path, canonical: Mapping[str, Any], config: Mapping[
 
     dimension_rows = _worksheet_dicts(workbook[DIMENSION_SHEET])
     expected_dimension_rows = _normalized_dimension_rows(canonical)
-    _assert_equal(len(dimension_rows), 129, label="dimension mapping row count")
+    _assert_equal(len(dimension_rows), canonical["mapping_count"], label="dimension mapping row count")
     for actual, expected in zip(dimension_rows, expected_dimension_rows, strict=True):
         for header in DIMENSION_HEADERS:
             _assert_equal(
@@ -555,18 +755,38 @@ def validate_workbook(path: Path, canonical: Mapping[str, Any], config: Mapping[
             )
     _assert_equal(
         Counter(row["mapping_method"] for row in dimension_rows),
-        EXPECTED_METHOD_COUNTS,
+        Counter(canonical["expected_counts"]["mapping_methods"]),
         label="mapping method counts",
     )
 
     lut_rows = _worksheet_dicts(workbook["LUT Resource Manifest"])
     _assert_equal(len(lut_rows), len(_lut_manifest_rows(config)), label="LUT manifest row count")
     active_lut_names = {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "active"}
-    _assert_equal(active_lut_names, set(canonical["active_parameter_names"]), label="active LUT names")
+    _assert_equal(
+        active_lut_names,
+        set(canonical["active_parameter_names"]) - BASECASE_ONLY_PARAMETER_NAMES,
+        label="active LUT names",
+    )
+    _assert_equal(
+        {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "basecase-only"},
+        BASECASE_ONLY_PARAMETER_NAMES,
+        label="Basecase-only parameter names",
+    )
     _assert_equal(
         {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred"},
         {"Coal Futures Price", "Gas Futures Price"},
         label="deferred LUT names",
+    )
+    lever_rows = _worksheet_dicts(workbook["Impact Lever Bindings"])
+    expected_binding_count = sum(
+        len(lever.get("parameter_bindings") or []) for lever in impact_canonical["impact_levers"]
+    )
+    _assert_equal(len(lever_rows), expected_binding_count, label="Lever binding row count")
+    _assert_equal(expected_binding_count, 20, label="v4 raw Lever binding count")
+    _assert_equal(
+        sum(row["effective_support_status"] == "executable" for row in lever_rows),
+        18,
+        label="v4 executable Lever binding count",
     )
 
     for worksheet in workbook.worksheets:
@@ -598,12 +818,16 @@ def _archive_legacy_workbooks() -> None:
 
 
 def sync_workbook() -> Path:
-    canonical = _load_json(CANONICAL_PATH)
+    canonical = _compose_workbook_canonical(
+        _load_json(PARAMETER_CANONICAL_PATH),
+        _load_json(LEGACY_MAPPING_CANONICAL_PATH),
+    )
+    impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
     config = _load_yaml(CONFIG_PATH)
-    workbook = _build_workbook(canonical, config)
+    workbook = _build_workbook(canonical, impact_canonical, config)
     MAPPING_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        prefix=".model-parameter-canonical-v1-",
+        prefix=".model-parameter-canonical-v4-",
         suffix=".xlsx",
         dir=MAPPING_DIR,
         delete=False,
@@ -611,12 +835,12 @@ def sync_workbook() -> Path:
         temporary_path = Path(temporary_file.name)
     try:
         workbook.save(temporary_path)
-        validate_workbook(temporary_path, canonical, config)
+        validate_workbook(temporary_path, canonical, impact_canonical, config)
         _archive_legacy_workbooks()
         temporary_path.replace(FINAL_WORKBOOK_PATH)
     finally:
         temporary_path.unlink(missing_ok=True)
-    validate_workbook(FINAL_WORKBOOK_PATH, canonical, config)
+    validate_workbook(FINAL_WORKBOOK_PATH, canonical, impact_canonical, config)
     return FINAL_WORKBOOK_PATH
 
 
@@ -628,10 +852,14 @@ def main() -> None:
         help="Validate the current workbook and archive without rewriting files.",
     )
     args = parser.parse_args()
-    canonical = _load_json(CANONICAL_PATH)
+    canonical = _compose_workbook_canonical(
+        _load_json(PARAMETER_CANONICAL_PATH),
+        _load_json(LEGACY_MAPPING_CANONICAL_PATH),
+    )
+    impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
     config = _load_yaml(CONFIG_PATH)
     if args.check_only:
-        validate_workbook(FINAL_WORKBOOK_PATH, canonical, config)
+        validate_workbook(FINAL_WORKBOOK_PATH, canonical, impact_canonical, config)
         missing_archive = [name for name in LEGACY_WORKBOOK_NAMES if not (ARCHIVE_DIR / name).is_file()]
         if missing_archive:
             msg = f"Archived workbooks are missing: {missing_archive}"

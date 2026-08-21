@@ -16,6 +16,8 @@ from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
+from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
+from apps.persistence.model_impact_lever.service import ModelImpactLeverService
 from apps.persistence.model_parameter.repository import ModelParameterRepository
 from apps.persistence.scenario.repository import ScenarioRepository
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
@@ -29,6 +31,7 @@ PERSISTED_PARAMETER_VALUE_FIELDS = frozenset({"basecaseValue", "proposedValue"})
 ParameterValuePrecision = Mapping[str, tuple[int, NumericPrecisionMode]]
 V1_GENERATION_STRATEGY = "single_event_template_dimensions"
 V3_GENERATION_STRATEGY = "multi_event_composite_dimensions"
+V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 
 
 def _json_payload(value: Any) -> Any:
@@ -704,6 +707,524 @@ def _load_v3_context(
     }
 
 
+def _v4_group_event_to_context(
+    relation: Any,  # noqa: ANN401
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    mi_event_id = _required_context_int(
+        _model_field(relation, "mi_event_id"),
+        field_name="scenario_group_event.mi_event_id",
+    )
+    return _json_safe(
+        {
+            **event,
+            "mi_event_id": mi_event_id,
+            "display_order": _required_context_int(
+                _model_field(relation, "display_order"),
+                field_name="scenario_group_event.display_order",
+            ),
+        },
+    )
+
+
+def _v4_definition_id(definition: Mapping[str, Any]) -> str:
+    return str(
+        _json_field(definition, "dimension_id", "dimensionId") or "",
+    ).strip()
+
+
+def _v4_value_id(value: Mapping[str, Any]) -> str:
+    return str(_json_field(value, "value_id", "valueId") or "").strip()
+
+
+def _v4_source_event_ids(
+    definition: Mapping[str, Any],
+    *,
+    dimension_id: str,
+    group_event_ids: set[int],
+) -> list[int]:
+    raw_ids = _json_field(definition, "source_event_ids", "sourceEventIds")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(f"v4 dimension sourceEventIds must be a non-empty array: dimension={dimension_id}"),
+        )
+    event_ids = [
+        _required_context_int(
+            event_id,
+            field_name=f"dimensionDefinitions[{dimension_id}].sourceEventIds",
+        )
+        for event_id in raw_ids
+    ]
+    if len(event_ids) != len(set(event_ids)):
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=f"v4 dimension contains duplicate sourceEventIds: dimension={dimension_id}",
+        )
+    outside_ids = sorted(set(event_ids) - group_event_ids)
+    if outside_ids:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                "v4 dimension sourceEventIds are not members of the scenario group: "
+                f"dimension={dimension_id}, event_ids={outside_ids}"
+            ),
+        )
+    return event_ids
+
+
+def _v4_catalog_integrity_error(detail: str) -> MIBaseError:
+    return MIBaseError(
+        ErrorCode.INVALID_REQUEST,
+        detail=(
+            f"{detail}. Regenerate the v4 Scenario with the active impact Lever catalog or request an operator review"
+        ),
+    )
+
+
+def _selected_v4_dimension_template(
+    *,
+    definitions: list[Any],
+    dimension_lineage: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected_value_by_dimension = {
+        str(item.get("scenario_dimension_key") or ""): str(
+            item.get("scenario_dimension_value_id") or "",
+        )
+        for item in dimension_lineage
+    }
+    selected_definitions: list[dict[str, Any]] = []
+    for raw_definition in definitions:
+        if not isinstance(raw_definition, Mapping):
+            continue
+        dimension_id = _v4_definition_id(raw_definition)
+        selected_value_id = selected_value_by_dimension.get(dimension_id)
+        if selected_value_id is None:
+            continue
+        values = _json_field(raw_definition, "values")
+        if not isinstance(values, list):
+            continue
+        selected_definition = dict(raw_definition)
+        selected_definition["values"] = [
+            value for value in values if isinstance(value, Mapping) and _v4_value_id(value) == selected_value_id
+        ]
+        selected_definitions.append(_json_safe(selected_definition))
+    return selected_definitions
+
+
+def _normalize_v4_dimension_lineage(  # noqa: C901
+    *,
+    scenario: dict[str, Any],
+    group: dict[str, Any],
+    group_event_ids: set[int],
+    impact_levers: list[ModelImpactLeverPayload],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    raw_definitions = group.get("dimension_definitions")
+    if not isinstance(raw_definitions, list) or not raw_definitions:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="v4 scenario group dimensionDefinitions are required",
+        )
+    dimension_values = scenario.get("dimension_values")
+    if not isinstance(dimension_values, dict) or not dimension_values:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="v4 scenario.dimension_values must be a non-empty JSON object",
+        )
+
+    definition_by_id: dict[str, Mapping[str, Any]] = {}
+    for raw_definition in raw_definitions:
+        if not isinstance(raw_definition, Mapping):
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail="v4 dimensionDefinitions item must be an object",
+            )
+        dimension_id = _v4_definition_id(raw_definition)
+        if not dimension_id:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail="v4 dimensionDefinitions.dimensionId is required",
+            )
+        if dimension_id in definition_by_id:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"v4 dimensionDefinitions contains duplicate dimensionId: {dimension_id}",
+            )
+        definition_by_id[dimension_id] = raw_definition
+
+    selected_dimension_ids = {str(item).strip() for item in dimension_values}
+    expected_dimension_ids = set(definition_by_id)
+    if selected_dimension_ids != expected_dimension_ids:
+        missing = sorted(expected_dimension_ids - selected_dimension_ids)
+        unexpected = sorted(selected_dimension_ids - expected_dimension_ids)
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                "v4 scenario must select exactly one value for every group Dimension: "
+                f"missing={missing}, unexpected={unexpected}"
+            ),
+        )
+
+    catalog_by_code = {lever.lever_code: lever for lever in impact_levers}
+    lineage: list[dict[str, Any]] = []
+    support_issues: list[dict[str, Any]] = []
+    executable_binding_occurrences = 0
+    for raw_dimension_id, selected_value_id in dimension_values.items():
+        dimension_id = str(raw_dimension_id).strip()
+        definition = definition_by_id.get(dimension_id)
+        if definition is None:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    f"v4 scenario selected a dimension missing from dimensionDefinitions: dimension={dimension_id}"
+                ),
+            )
+        values = _json_field(definition, "values")
+        if not isinstance(values, list) or not values:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"v4 dimension values are required: dimension={dimension_id}",
+            )
+        selected_value_text = str(selected_value_id).strip()
+        matching_values = [
+            value for value in values if isinstance(value, Mapping) and _v4_value_id(value) == selected_value_text
+        ]
+        if len(matching_values) != 1:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "v4 scenario selected value is missing or duplicated in dimensionDefinitions: "
+                    f"dimension={dimension_id}, value={selected_value_text}"
+                ),
+            )
+        selected_value = matching_values[0]
+        source_event_ids = _v4_source_event_ids(
+            definition,
+            dimension_id=dimension_id,
+            group_event_ids=group_event_ids,
+        )
+
+        primary_lever_code = str(
+            _json_field(definition, "primary_lever_code", "primaryLeverCode") or "",
+        ).strip()
+        primary_lever = catalog_by_code.get(primary_lever_code)
+        if primary_lever is None:
+            detail = (
+                "v4 dimension references an unregistered primary Lever "
+                f"dimension={dimension_id}, leverCode={primary_lever_code or '-'}"
+            )
+            raise _v4_catalog_integrity_error(detail)
+        primary_impact_lever_id = _required_context_int(
+            _json_field(
+                definition,
+                "primary_impact_lever_id",
+                "primaryImpactLeverId",
+            ),
+            field_name=(f"dimensionDefinitions[{dimension_id}].primaryImpactLeverId"),
+        )
+        if primary_impact_lever_id != primary_lever.impact_lever_id:
+            detail = (
+                "v4 primary Lever code/ID mismatch "
+                f"dimension={dimension_id}, leverCode={primary_lever_code}, "
+                f"storedId={primary_impact_lever_id}, activeId={primary_lever.impact_lever_id}"
+            )
+            raise _v4_catalog_integrity_error(detail)
+
+        raw_states = _json_field(selected_value, "lever_states", "leverStates")
+        if not isinstance(raw_states, list) or not raw_states:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "v4 selected dimension value must contain leverStates: "
+                    f"dimension={dimension_id}, value={selected_value_text}"
+                ),
+            )
+        lever_states: list[dict[str, Any]] = []
+        seen_codes: set[str] = set()
+        for raw_state in raw_states:
+            if not isinstance(raw_state, Mapping):
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=(
+                        "v4 selected value leverState must be an object: "
+                        f"dimension={dimension_id}, value={selected_value_text}"
+                    ),
+                )
+            lever_code = str(
+                _json_field(raw_state, "lever_code", "leverCode") or "",
+            ).strip()
+            if lever_code in seen_codes:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=(
+                        "v4 selected dimension value contains duplicate leverCode: "
+                        f"dimension={dimension_id}, value={selected_value_text}, "
+                        f"leverCode={lever_code or '-'}"
+                    ),
+                )
+            lever = catalog_by_code.get(lever_code)
+            if lever is None:
+                detail = (
+                    "v4 selected value references an unregistered Lever "
+                    f"dimension={dimension_id}, value={selected_value_text}, "
+                    f"leverCode={lever_code or '-'}"
+                )
+                raise _v4_catalog_integrity_error(detail)
+            impact_lever_id = _required_context_int(
+                _json_field(raw_state, "impact_lever_id", "impactLeverId"),
+                field_name=(
+                    f"dimensionDefinitions[{dimension_id}].values[{selected_value_text}].leverStates.impactLeverId"
+                ),
+            )
+            if impact_lever_id != lever.impact_lever_id:
+                detail = (
+                    "v4 selected value Lever code/ID mismatch "
+                    f"dimension={dimension_id}, value={selected_value_text}, "
+                    f"leverCode={lever_code}, storedId={impact_lever_id}, "
+                    f"activeId={lever.impact_lever_id}"
+                )
+                raise _v4_catalog_integrity_error(detail)
+            seen_codes.add(lever_code)
+            state_payload = {
+                "lever_code": lever_code,
+                "impact_lever_id": impact_lever_id,
+                "direction": _json_field(raw_state, "direction"),
+                "level": _json_field(raw_state, "level"),
+                "scope": _json_field(raw_state, "scope"),
+                "time_window": _json_field(raw_state, "time_window", "timeWindow"),
+                "is_primary_lever": lever_code == primary_lever_code,
+                "lever_domain": lever.domain,
+                "lever_label": lever.label,
+                "lever_description": lever.description,
+                "lever_applicability_hint": lever.applicability_hint,
+                "parameter_bindings": [binding.model_dump(mode="json") for binding in lever.parameter_bindings],
+            }
+            lever_states.append(state_payload)
+
+            direction = str(state_payload.get("direction") or "").lower()
+            if direction == "unchanged":
+                support_issues.append(
+                    {
+                        "dimension_id": dimension_id,
+                        "value_id": selected_value_text,
+                        "lever_code": lever_code,
+                        "reason_code": "UNCHANGED_LEVER_STATE",
+                    },
+                )
+                continue
+            if lever.domain == "price_only":
+                support_issues.append(
+                    {
+                        "dimension_id": dimension_id,
+                        "value_id": selected_value_text,
+                        "lever_code": lever_code,
+                        "reason_code": "PRICE_ONLY",
+                    },
+                )
+                continue
+            if not lever.parameter_bindings:
+                support_issues.append(
+                    {
+                        "dimension_id": dimension_id,
+                        "value_id": selected_value_text,
+                        "lever_code": lever_code,
+                        "reason_code": "NO_PARAMETER_BINDING",
+                    },
+                )
+                continue
+            for binding in lever.parameter_bindings:
+                if binding.support_status == "executable":
+                    executable_binding_occurrences += 1
+                else:
+                    support_issues.append(
+                        {
+                            "dimension_id": dimension_id,
+                            "value_id": selected_value_text,
+                            "lever_code": lever_code,
+                            "parameter_name": binding.parameter_name,
+                            "reason_code": (binding.unsupported_reason_code or "CATALOG_MARKED_UNSUPPORTED"),
+                        },
+                    )
+
+        if primary_lever_code not in seen_codes:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "v4 selected dimension value omits its primary Lever: "
+                    f"dimension={dimension_id}, value={selected_value_text}, "
+                    f"primaryLeverCode={primary_lever_code}"
+                ),
+            )
+        lineage.append(
+            {
+                "scenario_dimension_key": dimension_id,
+                "scenario_dimension_label": _json_field(definition, "label"),
+                "scenario_dimension_description": _json_field(
+                    definition,
+                    "description",
+                ),
+                "scenario_dimension_rationale": _json_field(
+                    definition,
+                    "rationale",
+                ),
+                "source_event_ids": source_event_ids,
+                "source_impact_path_ids": list(
+                    _json_field(
+                        definition,
+                        "source_impact_path_ids",
+                        "sourceImpactPathIds",
+                    )
+                    or [],
+                ),
+                "source_uncertainty_ids": list(
+                    _json_field(
+                        definition,
+                        "source_uncertainty_ids",
+                        "sourceUncertaintyIds",
+                    )
+                    or [],
+                ),
+                "primary_lever_code": primary_lever_code,
+                "primary_impact_lever_id": primary_impact_lever_id,
+                "model_support_status": _json_field(
+                    definition,
+                    "model_support_status",
+                    "modelSupportStatus",
+                ),
+                "scenario_dimension_value": selected_value_text,
+                "scenario_dimension_value_id": selected_value_text,
+                "scenario_dimension_value_label": _json_field(
+                    selected_value,
+                    "label",
+                ),
+                "assumption_rationale": _json_field(
+                    selected_value,
+                    "assumption_rationale",
+                    "assumptionRationale",
+                ),
+                "pressure_contribution": _json_field(
+                    selected_value,
+                    "pressure_contribution",
+                    "pressureContribution",
+                ),
+                "lever_states": lever_states,
+            },
+        )
+    return lineage, support_issues, executable_binding_occurrences
+
+
+def _load_v4_context(
+    *,
+    scenario: Any,  # noqa: ANN401
+    group: Any,  # noqa: ANN401
+    group_repository: ScenarioGroupRepository,
+    event_repository: EventRepository,
+    impact_levers: list[ModelImpactLeverPayload],
+    catalog_version: str,
+    catalog_checksum: str,
+) -> dict[str, Any]:
+    api_version = str(_model_field(group, "api_version", "") or "")
+    if api_version != "v4":
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(f"multi_event_model_lever_dimensions requires api_version=v4: api_version={api_version}"),
+        )
+    scenario_group_id = _required_context_int(
+        _model_field(group, "scenario_group_id"),
+        field_name="scenario_group.scenario_group_id",
+    )
+    stored_catalog_version = str(
+        _model_field(group, "impact_catalog_version", "") or "",
+    )
+    stored_catalog_checksum = str(
+        _model_field(group, "impact_catalog_checksum", "") or "",
+    )
+    if stored_catalog_version != catalog_version:
+        detail = (
+            "v4 Scenario impact Lever catalog version mismatch "
+            f"stored={stored_catalog_version or '-'}, active={catalog_version}"
+        )
+        raise _v4_catalog_integrity_error(detail)
+    if stored_catalog_checksum != catalog_checksum:
+        detail = (
+            "v4 Scenario impact Lever catalog checksum mismatch "
+            f"stored={stored_catalog_checksum or '-'}, active={catalog_checksum}"
+        )
+        raise _v4_catalog_integrity_error(detail)
+
+    relations = sorted(
+        group_repository.fetch_group_events(scenario_group_id),
+        key=lambda relation: _required_context_int(
+            _model_field(relation, "display_order"),
+            field_name="scenario_group_event.display_order",
+        ),
+    )
+    if not 1 <= len(relations) <= 5:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                "v4 scenario group must contain 1 to 5 event relations: "
+                f"scenario_group_id={scenario_group_id}, count={len(relations)}"
+            ),
+        )
+    events: list[dict[str, Any]] = []
+    seen_event_ids: set[int] = set()
+    for relation in relations:
+        event_id = _required_context_int(
+            _model_field(relation, "mi_event_id"),
+            field_name="scenario_group_event.mi_event_id",
+        )
+        if event_id in seen_event_ids:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"v4 scenario group contains a duplicate event relation: mi_event_id={event_id}",
+            )
+        seen_event_ids.add(event_id)
+        event = event_repository.fetch_event_core_by_id(event_id)
+        if event is None:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=(
+                    "v4 scenario group relation references a missing event: "
+                    f"scenario_group_id={scenario_group_id}, mi_event_id={event_id}"
+                ),
+            )
+        events.append(_v4_group_event_to_context(relation, event))
+
+    scenario_context = _scenario_to_context_dict(scenario)
+    group_context = _group_to_context_dict(group)
+    dimension_lineage, support_issues, executable_count = _normalize_v4_dimension_lineage(
+        scenario=scenario_context,
+        group=group_context,
+        group_event_ids=seen_event_ids,
+        impact_levers=impact_levers,
+    )
+    selected_dimension_template = _selected_v4_dimension_template(
+        definitions=group_context.get("dimension_definitions") or [],
+        dimension_lineage=dimension_lineage,
+    )
+    reason_codes = sorted(
+        {str(issue.get("reason_code") or "") for issue in support_issues if str(issue.get("reason_code") or "")},
+    )
+    return {
+        "scenario": scenario_context,
+        "scenario_group": group_context,
+        "event": {},
+        "events": events,
+        "event_type": {},
+        "dimension_template": selected_dimension_template,
+        "dimension_value_mappings": [],
+        "dimension_lineage": dimension_lineage,
+        "impact_levers": [lever.model_dump(mode="json") for lever in impact_levers],
+        "impact_catalog_version": catalog_version,
+        "impact_catalog_checksum": catalog_checksum,
+        "model_support_issues": support_issues,
+        "candidate_exclusion_reason_codes": reason_codes,
+        "executable_binding_occurrences": executable_count,
+        "validation_warnings": ["v4 non-executable Lever states: " + ", ".join(reason_codes)] if reason_codes else [],
+    }
+
+
 class ModelParameterService:
     def load_context(self, scenario_id: int) -> dict[str, Any]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
@@ -723,11 +1244,26 @@ class ModelParameterService:
                 if group is None:
                     context = None
                 else:
-                    mapping_rules, parameter_definitions = (
-                        model_parameter_repository.fetch_parameter_mapping_resources()
-                    )
                     strategy = str(getattr(group, "generation_strategy", None) or V1_GENERATION_STRATEGY)
-                    if strategy == V3_GENERATION_STRATEGY:
+                    if strategy == V4_GENERATION_STRATEGY:
+                        parameter_definitions = model_parameter_repository.fetch_model_parameter_definitions()
+                        impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService(
+                            session=session,
+                        ).load_active_catalog()
+                        context = _load_v4_context(
+                            scenario=scenario,
+                            group=group,
+                            group_repository=group_repository,
+                            event_repository=event_repository,
+                            impact_levers=impact_levers,
+                            catalog_version=catalog_version,
+                            catalog_checksum=catalog_checksum,
+                        )
+                        mapping_rules: list[dict[str, Any]] = []
+                    elif strategy == V3_GENERATION_STRATEGY:
+                        mapping_rules, parameter_definitions = (
+                            model_parameter_repository.fetch_parameter_mapping_resources()
+                        )
                         context = _load_v3_context(
                             scenario=scenario,
                             group=group,
@@ -736,6 +1272,9 @@ class ModelParameterService:
                             event_repository=event_repository,
                         )
                     elif strategy == V1_GENERATION_STRATEGY:
+                        mapping_rules, parameter_definitions = (
+                            model_parameter_repository.fetch_parameter_mapping_resources()
+                        )
                         context = _load_v1_context(
                             scenario=scenario,
                             group=group,
@@ -1069,6 +1608,8 @@ def _group_to_context_dict(group: Any) -> dict[str, Any]:
         "dimension_definitions": _json_safe(
             getattr(group, "dimension_definitions", None) or [],
         ),
+        "impact_catalog_version": getattr(group, "impact_catalog_version", None),
+        "impact_catalog_checksum": getattr(group, "impact_catalog_checksum", None),
     }
 
 
@@ -1080,7 +1621,7 @@ def _proposal_event_id(
     strategy = str(
         scenario_group.get("generation_strategy") or V1_GENERATION_STRATEGY,
     )
-    if strategy == V3_GENERATION_STRATEGY:
+    if strategy in {V3_GENERATION_STRATEGY, V4_GENERATION_STRATEGY}:
         return None
     return _required_int(
         event.get("mi_event_id") or scenario_group.get("mi_event_id"),

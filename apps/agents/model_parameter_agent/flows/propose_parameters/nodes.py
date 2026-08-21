@@ -10,6 +10,9 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.runtime import Runtime
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    _raise_v4_semantic_empty_if_applicable,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -448,7 +451,11 @@ def _knowledge_base_from_context(
     resources = context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
     parameter_definitions = resources.get("parameter_definitions") or []
-    if not mapping_rules or not parameter_definitions:
+    strategy = str(
+        (context.get("scenario_group") or {}).get("generation_strategy") or "",
+    )
+    is_v4 = strategy == "multi_event_model_lever_dimensions"
+    if not parameter_definitions or (not mapping_rules and not is_v4):
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail="parameter mapping resources not loaded from DB",
@@ -458,6 +465,7 @@ def _knowledge_base_from_context(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
         basecase_dir_path=str(resource_paths.basecase_dir),
+        allow_empty_mapping_rows=is_v4,
     )
 
 
@@ -528,6 +536,11 @@ async def validate_parameter_candidates(
                 "selection_method": "skip_llm",
                 "selected_parameters": [],
             },
+        )
+        _raise_v4_semantic_empty_if_applicable(
+            stage="candidate_generation",
+            scenario_context=state.scenario_context,
+            non_input_items=state.non_input_items,
         )
         return output
 
@@ -650,6 +663,13 @@ async def validate_parameter_candidates(
             "selected_parameters": _parameter_names(merged_candidates),
         },
     )
+    if not merged_candidates:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step1_5",
+            scenario_context=state.scenario_context,
+            candidates=state.candidate_mappings,
+            non_input_items=state.non_input_items,
+        )
     return output
 
 
@@ -927,6 +947,13 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
         len(state.candidate_mappings),
         reason,
     )
+    if state.candidate_mappings:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step2",
+            scenario_context=state.scenario_context,
+            candidates=state.candidate_mappings,
+            non_input_items=state.non_input_items,
+        )
     output = {
         "parameter_adjustments": _unselected_adjustments_for_missing_slots(
             state.candidate_mappings,
@@ -950,6 +977,12 @@ async def propose_parameter_values(
         in {str(slot.get("candidate_key") or "") for slot in _selected_parameter_slots(state.parameter_slots)}
     ]
     if not value_candidates:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step2",
+            scenario_context=state.scenario_context,
+            candidates=state.candidate_mappings,
+            non_input_items=state.non_input_items,
+        )
         output = {
             "parameter_adjustments": [],
             "validation_warnings": [
@@ -1068,6 +1101,13 @@ async def propose_parameter_values(
         state.scenario_id,
         {"slot_values": _adjustment_debug_summary(adjustments)},
     )
+    if not selected_adjustments:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step3",
+            scenario_context=state.scenario_context,
+            candidates=value_candidates,
+            non_input_items=state.non_input_items,
+        )
     return output
 
 
@@ -1384,6 +1424,29 @@ def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
         "value_description": candidate.get("value_description"),
         "derivation_rationale": candidate.get("derivation_rationale"),
         "pressure_contribution": candidate.get("pressure_contribution"),
+        "source_impact_path_ids": candidate.get("source_impact_path_ids"),
+        "source_uncertainty_ids": candidate.get("source_uncertainty_ids"),
+        "primary_lever_code": candidate.get("primary_lever_code"),
+        "primary_impact_lever_id": candidate.get(
+            "primary_impact_lever_id",
+        ),
+        "lever_code": candidate.get("lever_code"),
+        "impact_lever_id": candidate.get("impact_lever_id"),
+        "lever_label": candidate.get("lever_label"),
+        "lever_description": candidate.get("lever_description"),
+        "lever_domain": candidate.get("lever_domain"),
+        "lever_applicability_hint": candidate.get(
+            "lever_applicability_hint",
+        ),
+        "lever_direction": candidate.get("direction"),
+        "lever_level": candidate.get("level"),
+        "lever_scope": candidate.get("scope"),
+        "lever_time_window": candidate.get("time_window"),
+        "is_primary_lever": candidate.get("is_primary_lever"),
+        "binding_role": candidate.get("binding_role"),
+        "binding_applicability": candidate.get("binding_applicability"),
+        "binding_provenance": candidate.get("binding_provenance"),
+        "lever_provenance": candidate.get("lever_provenance"),
         "event_type_l2_id": candidate.get("event_type_l2_id"),
         "scenario_dimension_template_id": candidate.get(
             "scenario_dimension_template_id",
@@ -1459,6 +1522,14 @@ def _supporting_dimension_for_prompt(item: dict[str, Any]) -> dict[str, Any]:
         "value_description": item.get("value_description"),
         "derivation_rationale": item.get("derivation_rationale"),
         "pressure_contribution": item.get("pressure_contribution"),
+        "lever_code": item.get("lever_code"),
+        "impact_lever_id": item.get("impact_lever_id"),
+        "lever_domain": item.get("lever_domain"),
+        "lever_direction": item.get("direction"),
+        "lever_level": item.get("level"),
+        "lever_scope": item.get("scope"),
+        "lever_time_window": item.get("time_window"),
+        "reason_code": item.get("reason_code"),
         "event_type_l2_id": item.get("event_type_l2_id"),
         "source_event_ids": item.get("source_event_ids"),
         "source_refs": item.get("source_refs"),
@@ -1483,8 +1554,9 @@ def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
 
 def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
     event_type_l2_id: Any = candidate.get("event_type_l2_id")
-    if str(candidate.get("mapping_strategy") or "").lower() == "v3":
-        event_type_l2_id = "v3"
+    mapping_strategy = str(candidate.get("mapping_strategy") or "").lower()
+    if mapping_strategy in {"v3", "v4"}:
+        event_type_l2_id = mapping_strategy
     parts = [
         "parameter",
         _field_key(event_type_l2_id),
@@ -1515,7 +1587,10 @@ def _merge_candidates_by_parameter(  # noqa: C901
                 "merged_candidate_keys",
             ) or [original_candidate_key]
             candidate["source_dimensions"] = _source_dimensions_for_prompt(candidate)
-            if str(candidate.get("mapping_strategy") or "").lower() == "v3":
+            if str(candidate.get("mapping_strategy") or "").lower() in {
+                "v3",
+                "v4",
+            }:
                 candidate["candidate_key"] = _parameter_candidate_key(candidate)
             merged_candidates.append(candidate)
             continue
@@ -1528,6 +1603,10 @@ def _merge_candidates_by_parameter(  # noqa: C901
         source_event_ids: list[int] = []
         source_refs: list[dict[str, Any]] = []
         approved_source_projections: list[dict[str, Any]] = []
+        lever_provenance: list[dict[str, Any]] = []
+        binding_provenance: list[dict[str, Any]] = []
+        source_impact_path_ids: list[str] = []
+        source_uncertainty_ids: list[str] = []
         for candidate in group_candidates:
             for candidate_key in candidate.get("merged_candidate_keys") or [candidate.get("candidate_key")]:
                 _append_unique_text(merged_candidate_keys, candidate_key)
@@ -1547,6 +1626,22 @@ def _merge_candidates_by_parameter(  # noqa: C901
                         approved_source_projections,
                         projection,
                     )
+            for provenance in candidate.get("lever_provenance") or []:
+                if isinstance(provenance, dict):
+                    _append_unique_source_dimension(
+                        lever_provenance,
+                        provenance,
+                    )
+            for provenance in candidate.get("binding_provenance") or []:
+                if isinstance(provenance, dict):
+                    _append_unique_source_dimension(
+                        binding_provenance,
+                        provenance,
+                    )
+            for impact_path_id in candidate.get("source_impact_path_ids") or []:
+                _append_unique_text(source_impact_path_ids, impact_path_id)
+            for uncertainty_id in candidate.get("source_uncertainty_ids") or []:
+                _append_unique_text(source_uncertainty_ids, uncertainty_id)
 
         merged_method = mapping_methods[0] if len(mapping_methods) == 1 else "merged"
         base.update(
@@ -1563,6 +1658,10 @@ def _merge_candidates_by_parameter(  # noqa: C901
                 "source_event_ids": source_event_ids,
                 "source_refs": source_refs,
                 "approved_source_projections": approved_source_projections,
+                "lever_provenance": lever_provenance,
+                "binding_provenance": binding_provenance,
+                "source_impact_path_ids": source_impact_path_ids,
+                "source_uncertainty_ids": source_uncertainty_ids,
             },
         )
         merged_candidates.append(base)
@@ -1591,7 +1690,33 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
             ),
             "source_dimensions": _source_dimensions_for_prompt(candidate),
             "mapping_comment": candidate.get("mapping_comment"),
+            "lever_code": candidate.get("lever_code"),
+            "impact_lever_id": candidate.get("impact_lever_id"),
+            "lever_domain": candidate.get("lever_domain"),
+            "lever_direction": candidate.get("direction"),
+            "lever_level": candidate.get("level"),
+            "lever_scope": candidate.get("scope"),
+            "lever_time_window": candidate.get("time_window"),
+            "binding_role": candidate.get("binding_role"),
+            "binding_applicability": candidate.get("binding_applicability"),
+            "binding_provenance": candidate.get("binding_provenance"),
+            "lever_provenance": candidate.get("lever_provenance"),
         },
+    )
+
+
+def _v4_routing_task_key(candidate: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            "v4",
+            _field_key(
+                candidate.get("scenario_dimension_key")
+                or candidate.get("dimension_key")
+                or candidate.get("source_dimension_id"),
+            ),
+            _field_key(candidate.get("source_dimension_value_id")),
+            _field_key(candidate.get("lever_code")),
+        ],
     )
 
 
@@ -1611,15 +1736,25 @@ def _partition_candidate_validation_work(
     for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
         first = group_candidates[0]
         first_source = _source_dimensions_for_prompt(first)[0]
+        is_v4 = str(first.get("mapping_strategy") or "").lower() == "v4"
         routing_tasks.append(
             {
                 "dimension_key": (
-                    first.get("scenario_dimension_key")
-                    or first.get("dimension_key")
-                    or first.get("source_dimension_id")
+                    _v4_routing_task_key(first)
+                    if is_v4
+                    else (
+                        first.get("scenario_dimension_key")
+                        or first.get("dimension_key")
+                        or first.get("source_dimension_id")
+                    )
+                ),
+                "scenario_dimension_key": first.get(
+                    "scenario_dimension_key",
                 ),
                 "dimension_label": (first.get("source_dimension_label") or first_source.get("source_dimension_label")),
                 "dimension_value": (first.get("source_dimension_value") or first_source.get("source_dimension_value")),
+                "lever_code": first.get("lever_code"),
+                "is_v4": is_v4,
                 "candidates": group_candidates,
             },
         )
@@ -1693,6 +1828,13 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
             "dimension_key": task.get("dimension_key"),
             "dimension_label": task.get("dimension_label"),
             "dimension_value": task.get("dimension_value"),
+            "scenario_dimension_key": task.get("scenario_dimension_key"),
+            "lever_code": task.get("lever_code"),
+            "default_selection_rule": (
+                "primary binding을 기본 선택하고 applicability 근거가 있으면 alternative 또는 둘 다 선택"
+                if task.get("is_v4")
+                else None
+            ),
             "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in task.get("candidates") or []],
         },
     )
@@ -1835,6 +1977,47 @@ def _filter_dimension_template(
     return filtered
 
 
+def _filter_v4_selected_dimension_values(
+    dimension_template: object,
+    dimension_values: object,
+) -> list[dict[str, Any]]:
+    if not isinstance(dimension_template, list) or not isinstance(
+        dimension_values,
+        dict,
+    ):
+        return []
+
+    selected_value_by_dimension = {
+        str(dimension_key): str(value_id).strip() for dimension_key, value_id in dimension_values.items()
+    }
+    selected_definitions: list[dict[str, Any]] = []
+    for item in dimension_template:
+        if not isinstance(item, dict):
+            continue
+        dimension_key = (
+            item.get("dim_key")
+            or item.get("dimension_key")
+            or item.get("dimension_id")
+            or item.get("dimensionId")
+            or item.get("key")
+        )
+        selected_value_id = selected_value_by_dimension.get(
+            str(dimension_key),
+        )
+        values = item.get("values")
+        if selected_value_id is None or not isinstance(values, list):
+            continue
+        selected_definition = dict(item)
+        selected_definition["values"] = [
+            value
+            for value in values
+            if isinstance(value, dict)
+            and str(value.get("value_id") or value.get("valueId") or "").strip() == selected_value_id
+        ]
+        selected_definitions.append(selected_definition)
+    return selected_definitions
+
+
 def _bounded_v3_event_brief(event: dict[str, Any]) -> dict[str, Any]:
     event_type = event.get("event_type")
     event_type = event_type if isinstance(event_type, dict) else {}
@@ -1844,6 +2027,7 @@ def _bounded_v3_event_brief(event: dict[str, Any]) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
             "event_id": event.get("mi_event_id"),
+            "display_order": event.get("display_order"),
             "event_type_l2_id": event.get("event_type_l2_id"),
             "event_type": _drop_none_or_empty(
                 {
@@ -1872,7 +2056,12 @@ def _scenario_brief_for_value_prompt(
     dimension_template = scenario_context.get("dimension_template") or []
     event = scenario_context.get("event") or {}
     events = scenario_context.get("events") or []
-    is_v3 = str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions"
+    generation_strategy = str(
+        scenario_group.get("generation_strategy") or "",
+    )
+    is_v3 = generation_strategy == "multi_event_composite_dimensions"
+    is_v4 = generation_strategy == "multi_event_model_lever_dimensions"
+    is_multi_event = is_v3 or is_v4
     impact = scenario.get("impact") or {}
     filtered_dimension_values = _filter_dimension_values(
         scenario.get("dimension_values"),
@@ -1882,6 +2071,11 @@ def _scenario_brief_for_value_prompt(
         dimension_template,
         allowed_dimension_keys,
     )
+    if is_v4:
+        filtered_dimension_template = _filter_v4_selected_dimension_values(
+            filtered_dimension_template,
+            filtered_dimension_values,
+        )
     scenario_group_brief = _drop_none_or_empty(
         {
             "title": scenario_group.get("title"),
@@ -1891,9 +2085,10 @@ def _scenario_brief_for_value_prompt(
                 scenario_group.get("dimension_selected"),
                 allowed_dimension_keys,
             ),
-            "api_version": scenario_group.get("api_version") if is_v3 else None,
-            "generation_strategy": (scenario_group.get("generation_strategy") if is_v3 else None),
+            "api_version": scenario_group.get("api_version") if is_multi_event else None,
+            "generation_strategy": (scenario_group.get("generation_strategy") if is_multi_event else None),
             "parameter_mapping_ready": (scenario_group.get("parameter_mapping_ready") if is_v3 else None),
+            "impact_catalog_version": (scenario_group.get("impact_catalog_version") if is_v4 else None),
         },
     )
     scenario_detail = _drop_none_or_empty(
@@ -1931,7 +2126,7 @@ def _scenario_brief_for_value_prompt(
         "scenario": scenario_detail,
         "dimension_template": dimension_template_brief,
     }
-    if is_v3:
+    if is_multi_event:
         brief["events"] = [_bounded_v3_event_brief(item) for item in events if isinstance(item, dict)]
     else:
         brief["event"] = event_brief
@@ -1945,7 +2140,14 @@ def _selected_dimensions_for_value_prompt(
 ) -> list[dict[str, Any]]:
     scenario = scenario_context.get("scenario") or {}
     scenario_group = scenario_context.get("scenario_group") or {}
-    if str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions":
+    generation_strategy = str(
+        scenario_group.get("generation_strategy") or "",
+    )
+    if generation_strategy in {
+        "multi_event_composite_dimensions",
+        "multi_event_model_lever_dimensions",
+    }:
+        is_v4 = generation_strategy == "multi_event_model_lever_dimensions"
         selected: list[dict[str, Any]] = []
         for item in scenario_context.get("dimension_lineage") or []:
             if not isinstance(item, dict):
@@ -1967,7 +2169,7 @@ def _selected_dimensions_for_value_prompt(
                         ),
                         "description": item.get("value_description"),
                         "derivation_rationale": item.get(
-                            "derivation_rationale",
+                            "assumption_rationale" if is_v4 else "derivation_rationale",
                         ),
                         "pressure_contribution": item.get(
                             "pressure_contribution",
@@ -1977,6 +2179,19 @@ def _selected_dimensions_for_value_prompt(
                         "approved_source_projections": item.get(
                             "approved_source_projections",
                         ),
+                        "source_impact_path_ids": item.get(
+                            "source_impact_path_ids",
+                        ),
+                        "source_uncertainty_ids": item.get(
+                            "source_uncertainty_ids",
+                        ),
+                        "primary_lever_code": item.get(
+                            "primary_lever_code",
+                        ),
+                        "primary_impact_lever_id": item.get(
+                            "primary_impact_lever_id",
+                        ),
+                        "lever_states": item.get("lever_states") if is_v4 else None,
                     },
                 ),
             )
@@ -2189,6 +2404,8 @@ def _parameter_prompt_payload(
             "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "lever_provenance": candidate.get("lever_provenance"),
+            "binding_provenance": candidate.get("binding_provenance"),
             "allowed_slot_axes_field_names": (
                 allowed_slot_axes if allowed_slot_axes is not None else _allowed_slot_axes_field_names(candidate)
             ),
@@ -2479,22 +2696,43 @@ def _routing_groups_by_dimension(
     for candidate in candidates:
         if str(candidate.get("mapping_method") or "").lower() != "routing":
             continue
-        is_v3 = str(candidate.get("mapping_strategy") or "").lower() == "v3"
+        mapping_strategy = str(
+            candidate.get("mapping_strategy") or "",
+        ).lower()
         dimension_key = str(
             candidate.get("scenario_dimension_key")
             or candidate.get("dimension_key")
             or candidate.get("source_dimension_id")
             or "",
         )
-        group_key = (
-            "v3" if is_v3 else candidate.get("event_type_l2_id"),
-            dimension_key,
-        )
+        if mapping_strategy == "v4":
+            group_key = ("v4", _v4_routing_task_key(candidate))
+        else:
+            group_key = (
+                "v3" if mapping_strategy == "v3" else candidate.get("event_type_l2_id"),
+                dimension_key,
+            )
         routing_groups.setdefault(group_key, []).append(candidate)
     return routing_groups
 
 
-def _sanitize_routing_decisions(
+def _v4_default_primary_candidate_keys(
+    task: dict[str, Any],
+    *,
+    limit: int,
+) -> list[str]:
+    if not task.get("is_v4"):
+        return []
+    keys = [
+        str(candidate.get("candidate_key") or "")
+        for candidate in task.get("candidates") or []
+        if str(candidate.get("binding_role") or "primary").lower() == "primary"
+        and str(candidate.get("candidate_key") or "")
+    ]
+    return keys[:limit]
+
+
+def _sanitize_routing_decisions(  # noqa: C901
     decisions: list[RoutingDecision],
     routing_tasks: list[dict[str, Any]],
     *,
@@ -2547,12 +2785,39 @@ def _sanitize_routing_decisions(
                 continue
             selected_dimension_keys.add(candidate_key)
             selected_keys.add(candidate_key)
+        if not selected_dimension_keys:
+            default_keys = _v4_default_primary_candidate_keys(
+                task,
+                limit=max_candidates_per_dimension,
+            )
+            if default_keys:
+                selected_keys.update(default_keys)
+                warnings.append(
+                    "v4 routing 응답이 비어 primary binding 기본값을 적용했습니다: "
+                    f"task={dimension_key}, candidates={default_keys}",
+                )
 
     missing_dimensions = sorted(set(task_by_dimension) - returned_dimensions)
-    if missing_dimensions:
+    missing_v4_defaults: list[str] = []
+    for dimension_key in missing_dimensions:
+        default_keys = _v4_default_primary_candidate_keys(
+            task_by_dimension[dimension_key],
+            limit=max_candidates_per_dimension,
+        )
+        if default_keys:
+            selected_keys.update(default_keys)
+            missing_v4_defaults.append(dimension_key)
+    missing_without_default = sorted(
+        set(missing_dimensions) - set(missing_v4_defaults),
+    )
+    if missing_v4_defaults:
+        warnings.append(
+            f"v4 routing task 응답 누락에 primary binding 기본값을 적용했습니다: {missing_v4_defaults}",
+        )
+    if missing_without_default:
         warning = (
             "LLM routing_decisions에 누락된 dimension task가 있어 해당 routing 후보를 제외했습니다: "
-            f"{missing_dimensions}"
+            f"{missing_without_default}"
         )
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
@@ -2943,20 +3208,29 @@ def _scenario_period_text(dimensions: dict[str, Any], scenario_context: dict[str
 def _event_period_text(scenario_context: dict[str, Any]) -> str:
     group = scenario_context.get("scenario_group") or {}
     event = scenario_context.get("event") or {}
-    return "\n".join(
-        str(item or "")
-        for item in (
-            group.get("title"),
-            group.get("summary"),
-            group.get("description"),
-            event.get("occurred_at"),
-            event.get("latest_record_first_created"),
-            event.get("oldest_record_first_created"),
-            event.get("event_title_ko"),
-            event.get("one_line_summary"),
-            event.get("detail_analysis"),
+    event_items: list[Any] = [
+        group.get("title"),
+        group.get("summary"),
+        group.get("description"),
+        event.get("occurred_at"),
+        event.get("latest_record_first_created"),
+        event.get("oldest_record_first_created"),
+        event.get("event_title_ko"),
+        event.get("one_line_summary"),
+        event.get("detail_analysis"),
+    ]
+    for group_event in scenario_context.get("events") or []:
+        if not isinstance(group_event, dict):
+            continue
+        event_items.extend(
+            [
+                group_event.get("occurred_at"),
+                group_event.get("event_title_ko"),
+                group_event.get("one_line_summary"),
+                group_event.get("detail_analysis"),
+            ],
         )
-    )
+    return "\n".join(str(item or "") for item in event_items)
 
 
 def _period_start_year_month(

@@ -1495,6 +1495,12 @@ def _scenario_result_summary(
 ) -> str:
     if error is not None:
         error_text = " ".join(str(error.get("error") or "").split())
+        if "파라미터로 반영할 변경 항목이 없습니다." in error_text:
+            return "FAIL · 변경 항목 없음"
+        if "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다." in error_text:
+            return "FAIL · 모델 입력 위치 없음"
+        if "적용할 파라미터 값을 생성하지 못했습니다." in error_text:
+            return "FAIL · 적용값 생성 실패"
         if "No model parameter mapping candidates" in error_text:
             return "FAIL · 매핑 후보 없음"
         return f"FAIL · 실행 오류: {_md_cell(error_text, max_chars=120)}"

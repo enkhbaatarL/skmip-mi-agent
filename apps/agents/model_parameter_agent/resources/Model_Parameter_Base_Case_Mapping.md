@@ -2,13 +2,15 @@
 
 ## 기준과 범위
 
-이 문서는 model-parameter-canonical-v1의 사람이 읽는 canonical 명세다. DB에 실제 반영되는 모든 문자열과 nullable 값의 기계 판정 기준은 scripts/model_parameter/model-parameter-canonical-v1.json이며, 적용 전 원본은 scripts/model_parameter/snapshots/external_dev_before_20260807.json에 보존한다.
+이 문서는 v4 master·Impact Lever와 v1/v3 shared dimension mapping을 함께 설명하는 사람이 읽는 canonical 명세다. v4 DB 값의 기계 판정 기준은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping의 기계 판정 기준은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중 `dimension_mappings`다. `scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json`의 128행 mapping은 2026-08-13 변경 전 증적으로 보존한다.
 
-- master: 21행, 활성 10행
-- dimension mapping: 129행 (direct 35, routing 6, indirect 55, na 33)
-- 수정 대상 테이블: tmm_mi_model_param_m, tmm_mi_model_param_dimension_map
+- master: 21행, 활성 16행
+- reference capability: LUT-backed 10개, Basecase-only 6개
+- v4 impact Lever: 16개, binding occurrence 20개, effective executable occurrence 18개/고유 활성 parameter 16개
+- v1/v3 shared legacy dimension mapping: 129행 (direct 35, routing 6, indirect 55, na 33), 최대 후보 10개
+- 본 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
-- audit user/version: model-parameter-canonical-v1
+- audit user/version: `model-parameter-canonical-v4`, impact catalog version `v4`
 
 ## 최종 master
 
@@ -23,19 +25,19 @@
 | 6   | Y      | PMI                         | 국가·연월별 PMI 지수의 최종 입력값이다. value는 PMI index 절대값으로 입력한다(예: 49.5). PMI 기준값은 보통 50이며, 50 초과는 경기 확장/생산활동 증가, 50은 중립, 50 미만은 경기 위축/생산활동 감소를 의미한다. 이 모델에서 PMI는 주로 industrial demand, 즉 산업용 가스 수요를 조정하는 경기 민감도 변수다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year/Month에 적용할 PMI 값 자체다.                                                              |
 | 7   | Y      | PowerMix                    | 국가·연도·에너지원별 발전 믹스 비중의 최종 입력값이다. value는 전체 발전량에서 해당 Energy Source가 차지하는 비중을 소수로 입력한다(0.30=30%). proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year/Energy Source에 적용할 최종 비중이다. 현재 basecase는 Gas 위주로 제공되므로, 명확한 전원별 사유가 없으면 Gas 비중 조정을 우선 검토하고 상쇄 전원은 rationale에 설명한다.                                                                             |
 | 8   | Y      | Temperature                 | 국가·연월별 평균 기온의 최종 입력값이다. value는 섭씨(°C) 절대값으로 입력한다(예: 2.3, -1.5, 31.0). proposedValue는 basecase 대비 편차가 아니라 해당 Country/Year/Month에 적용할 기온 자체다. 한파는 정상 기온 대비 하향, 폭염은 정상 기온 대비 상향 방향으로 조정한다. 국가별 기후 차이가 크므로 basecase가 없는 경우 다른 국가의 기온 수준을 기준값으로 삼지 않는다.                                                                                                |
-| 9   | N      | User-Adjusted Gas Demand    | Country/year-month/sub-sector demand overwrite value (BCM)                                                                                                                                                                                                                                                                                        |
+| 9   | Y      | User-Adjusted Gas Demand    | 국가·연월·수요 하위부문별 가스 수요의 최종 절대값이다. value는 BCM 단위이며 0 이상이다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year/Month/Demand Sub-Sector에 적용할 최종 수요량이다. 경제 활동이나 발전 믹스 파라미터로 설명되지 않는 직접 수요 정책·절감·연료 전환이 명시된 경우에 사용한다.                                                                                                                     |
 | 10  | N      | ElectrificationRate         | Country/year transportation electrification rate (% new car sales)                                                                                                                                                                                                                                                                                |
 | 11  | Y      | Population                  | 국가·연도별 인구의 최종 입력값이다. value는 천 명 단위 절대값으로 입력한다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Country/Year에 적용할 인구 자체다. 인구·이민·인구전망 변화가 event에 명시된 경우에만 사용하고, 일반 경기 변화에는 GDP·PMI를 우선한다.                                                                                                                                                                    |
 | 12  | Y      | HurricaneIntensity          | 미국 Gulf of Mexico 허리케인의 월별 강도 최종 입력값이다. value는 0~4 정수이며 0은 허리케인 영향 없음, 1~4는 승인된 강도 단계다. event가 GoM 허리케인과 적용 Year/Month를 명시하고 영향 대상 액화 또는 upstream 시설과 연결되는 경우에만 1~4를 제안한다.                                                                                                                                                                      |
 | 13  | Y      | LiqProdAdjustment           | 액화 Plant Train·월별 LNG 생산량의 최종 절대값이다. value는 Mt LNG/month 단위이며 0 이상이다. LUT 기준값은 월 생산능력 × 이용률로 계산한다. proposedValue는 증감폭이 아니라 해당 Country/LNG Plant/LNG Plant Train/Year/Month의 최종 생산량이며, 대폭·영구 차질이나 신규 Train ramp-up처럼 생산량 직접 override가 필요한 경우에 사용한다.                                                                                                |
 | 14  | Y      | LiqUtilAdjustment           | 액화 Plant Train·월별 가동률의 최종 입력값이다. value는 0~1 소수로 입력한다(1.0=100%, 0.7=70%). 100 같은 percent 표기는 사용하지 않는다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Train/Year/Month에 적용할 가동률 자체다. 기본 범위는 0~1이며, 1 초과는 명확한 근거가 있을 때만 제안한다. Base Case에 존재하는 LNG Plant Train만 수정하고, Country/LNG Plant/Life Cycle Category/Nameplate Capacity는 해당 Train에 종속된 식별 속성으로 맞춘다. |
 | 15  | Y      | PipelineAdjustment          | 파이프라인·월별 송출능력의 최종 절대값이다. value는 Bcm/y 단위이며 0 이상이다. 연간 LUT capacity를 동일 연도의 12개월 기준값으로 확장한다. proposedValue는 증감폭이 아니라 해당 Pipeline Name/From Country/To Country/Year/Month에 적용할 최종 송출능력이다.                                                                                                                                                           |
-| 16  | N      | RegasAdjustment             | Regasification plant/month capacity absolute value (Mt LNG; >= 0)                                                                                                                                                                                                                                                                                 |
+| 16  | Y      | RegasAdjustment             | 재기화 플랜트·월별 처리용량의 최종 절대값이다. value는 Mt LNG/month 단위이며 0 이상이다. proposedValue는 증감폭이 아니라 해당 Continent/Region/Country/Regasification plant/Life Cycle Category/Nameplate capacity/Year/Month에 적용할 최종 처리용량이다. Basecase exact slot만 사용하고 서로 다른 설비나 lifecycle 행을 합치지 않는다.                                                                          |
 | 17  | Y      | SupplyDisruption            | 국가·연월별 upstream 가스 공급량의 최종 절대값이다. value는 Bcm 단위이며 0 이상이다. LUT 기준값은 BCProduction의 연간 Base case supply를 동일 Province/PNG-LNG의 원본 월별 Seasonality 계수와 곱한 뒤 Country/Year/Month로 합산한다. 계수를 재정규화하지 않는다. proposedValue는 차질량이 아니라 해당 월에 적용할 최종 공급량이다.                                                                                                       |
-| 18  | N      | PNG Contract Volume         | From/to country/year PNG contract volume (BCM)                                                                                                                                                                                                                                                                                                    |
-| 19  | N      | RemainingUnrestrictedAmount | From/to country/year remaining unrestricted trade volume (BCM)                                                                                                                                                                                                                                                                                    |
-| 20  | N      | ShippingCost                | Yearly user input absolute shipping cost value ($/d)                                                                                                                                                                                                                                                                                              |
-| 21  | N      | VolumeCancelled             | From/to country/year cancelled trade volume (BCM)                                                                                                                                                                                                                                                                                                 |
+| 18  | Y      | PNG Contract Volume         | From/To 국가·연도별 PNG 계약 물량의 최종 절대값이다. value는 BCM 단위이며 0 이상이다. proposedValue는 증감폭이 아니라 해당 Year/From Country/To Country에 적용할 Unadjusted Gross Gas Import 계약 물량이다. Basecase exact slot만 사용한다.                                                                                                                                                                        |
+| 19  | Y      | RemainingUnrestrictedAmount | From/To 국가·연도별 거래 제한 이후 남은 무제한 거래 가능 물량의 최종 절대값이다. value는 BCM 단위이며 0 이상이다. proposedValue는 증감폭이 아니라 해당 Year/From Country/To Country에 적용할 Remaining Unrestricted Amount다. Basecase exact slot만 사용한다.                                                                                                                                                       |
+| 20  | Y      | ShippingCost                | 연도별 해상 운송비 사용자 입력의 최종 절대값이다. value는 $/d 단위이며 0 이상이다. proposedValue는 basecase 대비 증감폭이 아니라 해당 Year에 적용할 User Input Absolute Value다. Basecase가 제공하는 Year exact slot만 사용하고 영향 범위는 rationale에 보존한다.                                                                                                                                                    |
+| 21  | Y      | VolumeCancelled             | From/To 국가·연도별 취소 계약 물량의 최종 절대값이다. value는 BCM 단위이며 0 이상이다. proposedValue는 증감폭이 아니라 해당 Year/From Country/To Country에 적용할 취소 물량이다. Basecase exact slot만 사용한다.                                                                                                                                                                                                       |
 
 
 
@@ -53,19 +55,19 @@
 | 6   | Demand     | PMIAdjustment                 | table1      | slot=B:Year(YYYY, 2026~2030), C:Month(1~12), D:Country(국가명; basecase 예: China, Philippines); value=F:PMI, PMI index 절대값                                                                                                                                                                                                                                                                              |
 | 7   | Demand     | PowerMixAdjustment            | table1      | slot=B:Year(YYYY, 2026~2030), C:Country(국가명; basecase 예: China, Japan, South Korea, Taiwan (China), Germany, France, Italy, Spain, Netherlands, Belgium, United Kingdom), D:Energy Source(Liquids/Hydro/Solar/Wind/Bioenergy/Gas/Coal/Nuclear/Geothermal/Other; basecase 예: Gas); value=F:% Power Mix, 소수형 발전 비중                                                                                       |
 | 8   | Demand     | WeatherAdjustment             | table2      | slot=K:Year(YYYY, 2026~2030), L:Month(1~12; basecase 예: 1~3), M:Country(국가명; basecase 예: China, Japan, South Korea, Germany, France, Netherlands, Spain, Italy, Belgium, United Kingdom); value=O:Temperature (°C), 섭씨 절대 기온                                                                                                                                                                         |
-| 9   | Demand     | DemandOutputOverwrite         | table1      | 수요 출력 직접 덮어쓰기 — 국가·연·월·Sub-Sector                                                                                                                                                                                                                                                                                                                                                                      |
+| 9   | Demand     | DemandOutputOverwrite         | table1      | slot=D:Country, E:Year(YYYY, 2026~2030), F:Month(1~12), G:Demand Sub-Sector; value=H:User-Adjusted Gas Demand [BCM], 직접 수요 절대값                                                                                                                                                                                                                                                                                  |
 | 10  | Demand     | ElectrificationRateAdjustment | table1      | 수송 전기화율 (본 21종 직접 해당 적음)                                                                                                                                                                                                                                                                                                                                                                               |
 | 11  | Demand     | GDPPopulationAdjustment       | table2      | slot=J:Year(YYYY, 2026~2030), K:Country(국가명), value=M:Population (Thousands), 천 명 단위 인구 절대값                                                                                                                                                                                                                                                                                                            |
 | 12  | Supply     | {USA}Hurricanes               | table1      | slot=B:Year(YYYY, 2026~2030), C:Month(1~12); value=D:Hurricane intensity(0~4 정수, 0=no hurricane)                                                                                                                                                                                                                                                                                                     |
 | 13  | Supply     | LiqProdAdjustment             | table1      | slot=Country, LNG Plant, LNG Plant Train, Year(YYYY), Month(1~12); metadata=Life Cycle Category, Nameplate Capacity (MTPA), Period; value=Production (Mt LNG/month), 월 생산능력×이용률                                                                                                                                                                                                                        |
 | 14  | Supply     | LiqUtilAdjustment             | table1      | slot=Country(국가명; 예: Algeria, Angola), LNG Plant(예: Arzew GL1Z, Angola LNG), LNG Plant Train(348개 basecase Train 중 선택; 예: Arzew GL1Z T1-T6, Angola LNG T1, Gorgon LNG T1, North West Shelf LNG T1, Sabine Pass LNG Stage 5 Expansion T1), Life Cycle Category(예: Operational), Nameplate Capacity MTPA(숫자; 예: 7.9, 5.2), Year(YYYY), Month(1~12), Period(숫자); value=Utilization Rate, 0~1 소수형 월별 가동률 |
 | 15  | Supply     | PipelineAdjustment            | table1      | slot=B:Year(YYYY, 2026~2030), C:Month(1~12), D:Pipeline Name, routing=From Country, To Country; value=H:User adjusted capacity (Bcm/y)                                                                                                                                                                                                                                                               |
-| 16  | Supply     | RegasAdjustment               | table1      | 재기화(수입) 설비 capa override — Continent>Region>Country>Plant·연·월                                                                                                                                                                                                                                                                                                                                          |
+| 16  | Supply     | RegasAdjustment               | table1      | slot=B:Continent, C:Region, D:Country, E:Regasification plant, F:Life Cycle Category, G:Nameplate capacity (MTPA), Year(YYYY, 2026~2030), Month(1~12); value=RegasAdjustment (Mt LNG/month), 재기화 처리용량 절대값                                                                                                                                                                                                  |
 | 17  | Supply     | VolumeAdjustment              | table2      | slot=I:Year(YYYY, 2026~2030), J:Month(1~12), K:Country; value=M:Volumes (Bcm), Country별 월 공급량 절대값                                                                                                                                                                                                                                                                                                    |
-| 18  | Trade      | MidstreamContractInput        | table1      | PNG 계약 물량(Nord Stream 재가동·Pipeline Disruption) — From·To·연                                                                                                                                                                                                                                                                                                                                             |
-| 19  | Trade      | TradeRestrictionInput         | table1      | 계약 취소·통과 제약 — From·To·연                                                                                                                                                                                                                                                                                                                                                                                |
-| 20  | Trade      | ShippingCostInput             | table1      | Charter·Fuel·Suez/Panama Crossing 비용·Disruption 여부 — impact_scope·연                                                                                                                                                                                                                                                                                                                                    |
-| 21  | Trade      | TradeRestrictionInput         | table1      | 계약 취소·통과 제약 — From·To·연                                                                                                                                                                                                                                                                                                                                                                                |
+| 18  | Trade      | MidstreamContractInput        | table1      | slot=A:Year(YYYY, 2026~2030), B:From Country, C:To Country; value=D:Unadjusted Gross Gas Import [BCM], PNG 계약 물량 절대값                                                                                                                                                                                                                                                                                       |
+| 19  | Trade      | TradeRestrictionInput         | table1      | slot=B:Year(YYYY, 2026~2030), C:From Country, D:To Country; value=J:Remaining Unrestricted Amount [BCM], 거래 가능 물량 절대값                                                                                                                                                                                                                                                                                    |
+| 20  | Trade      | ShippingCostInput             | table1      | slot=B:Year(YYYY, 2026~2030); value=F:User Input Absolute Value ($/d), 연도별 해상 운송비 절대값                                                                                                                                                                                                                                                                                                                 |
+| 21  | Trade      | TradeRestrictionInput         | table1      | slot=B:Year(YYYY, 2026~2030), C:From Country, D:To Country; value=F:Volume [BCM], 취소 계약 물량 절대값                                                                                                                                                                                                                                                                                                           |
 
 
 
@@ -119,11 +121,47 @@
 
 모든 경로 prefix는 fundamental_model_artifact/LUT/이다. 활성 LUT는 download, header·horizon 검증과 catalog 생성을 모두 수행한다. adapter schema version은 model-parameter-lut-adapters-v3이다.
 
+### Basecase-only canonical
+
+다음 6개는 master의 `basecase_*`로 읽은 exact slot만 사용한다. 별도 LUT adapter나 nearest/partial-key fallback을 만들지 않으며, Basecase slot이 없으면 해당 slot을 후보에서 제외한다.
+
+| parameter | exact Basecase 기준 |
+|---|---|
+| User-Adjusted Gas Demand | Country, Year, Month, Demand Sub-Sector |
+| RegasAdjustment | Continent, Region, Country, Regasification Plant, Life Cycle Category, Nameplate Capacity (MTPA), Year, Month |
+| PNG Contract Volume | Year, From Country, To Country |
+| RemainingUnrestrictedAmount | Year, From Country, To Country |
+| ShippingCost | Year |
+| VolumeCancelled | Year, From Country, To Country |
+
+## v4 Model Impact Lever canonical
+
+v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding을 사용한다. `tmm_mi_model_param_dimension_map`, Event Type, 과거 `lever_mappings`/`lever_refs`/`impact_lever_refs`를 조회하거나 fallback으로 사용하지 않는다.
+
+| Lever code | binding |
+|---|---|
+| `weather_demand` | Temperature primary; HDD, CDD alternative(비활성 진단) |
+| `power_generation_mix` | PowerMix primary |
+| `economic_activity` | GDP primary; PMI alternative; Population alternative(인구·이민·인구전망 명시 시) |
+| `direct_gas_demand` | User-Adjusted Gas Demand primary |
+| `upstream_production` | SupplyDisruption primary |
+| `liquefaction_availability` | LiqUtilAdjustment primary; LiqProdAdjustment alternative |
+| `regasification_capacity` | RegasAdjustment primary |
+| `natural_disaster_disruption` | HurricaneIntensity primary |
+| `pipeline_capacity` | PipelineAdjustment primary |
+| `shipping_cost` | ShippingCost primary |
+| `route_disruption` | ShippingCost primary |
+| `contract_volume` | VolumeCancelled primary; PNG Contract Volume alternative |
+| `trade_restriction` | RemainingUnrestrictedAmount primary; VolumeCancelled alternative |
+
+세 `price_only` Lever는 binding이 없다. CDD/HDD binding을 포함하면 catalog binding occurrence는 20개이며, 비활성 master binding을 제외한 effective executable occurrence는 18개, 고유 활성 parameter는 16개다. single primary는 결정적으로 선택하고 primary/alternative가 함께 있으면 applicability와 Scenario/Event/Lever 맥락을 Step1.5에서 판단한다.
+
 ### 보류와 보조 resource
 
 
 | 분류  | 이름                          | 설정                           | 사유/용도                                                                                    |
 | --- | --------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------- |
+| 비활성 | CDD, HDD                    | use_yn=N                     | weather Lever binding capability와 `INACTIVE_MODEL_PARAMETER` 진단은 보존하되 실행 후보에서 제외 |
 | 보류  | Coal Futures Price          | enabled=false, futures_price | 2026년 이후 futures strip 부재; 구조만 검증하고 catalog 제외                                           |
 | 보류  | Gas Futures Price           | enabled=false, futures_price | 2026년 이후 futures strip 부재; 구조만 검증하고 catalog 제외                                           |
 | 보류  | ElectrificationRate         | LUT spec 없음                  | 유효 Basecase·국가/연/Drive Train LUT·승인 mapping 부재                                           |
@@ -132,56 +170,69 @@
 
 
 
-## Dimension mapping
+## v1/v3 legacy Dimension mapping
 
-- 기존 128행을 보존하고 아래 13행만 snapshot의 na/null 상태에서 canonical direct 또는 routing으로 복구한다.
-- Population은 event type 21 / economic_intensity / model_param_id 11 routing 1행을 신규 추가한다.
+- 현재 shared mapping은 129행이고 method count는 direct 35, routing 6, indirect 55, na 33이다. 모두 `use_yn='Y'`, `del_yn='N'`이다.
+- direct/routing으로 도달하는 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다.
+- 아래 128행·25/2/55/46 설명과 표는 2026-08-13 변경 전 snapshot 증적이다. 현재 DB 상태로 사용하지 않는다.
+
+### 변경 전 증적
+
+- 128행 전체는 2026-08-13 외부 개발 DB snapshot과 정확히 같았으며, 당시 v4 rollout은 이 행을 추가·복구·삭제하지 않았다.
+- 아래 13행은 이전 local v1 canonical에서는 direct/routing 복구 대상이었지만, 변경 전 외부 DB에서는 `na`/`model_param_id=NULL`이었다. 당시에는 외부 DB를 우선해 v1/v3 후보에서 제외했다.
+- 이전 local v1 canonical의 Population `(event type 21, economic_intensity, model_param_id 11)` routing 1행도 변경 전 외부 DB에는 없었다. 당시 Population은 v4 `economic_activity` Lever의 alternative binding으로만 실행했다.
+- mapping ID 67·95·105는 method와 model parameter 연결을 바꾸지 않고 comment를 현재 외부 DB snapshot 문자열로 맞췄다.
 - null model_param_id인 indirect/na 역사 행은 유지한다. 이 때문에 null을 포함한 SQL UNIQUE의 의미와 별개로, 중복 불변식은 model_param_id가 있는 natural key에 적용한다.
+- 이 128행은 변경 전 v1/v3 전용 상태였다. Basecase-only 6개에는 direct/routing row를 추가하지 않았으며 v4 후보 선정에는 사용하지 않는다.
 
 
-| mapping ID | event type | dimension key                 | method  | model_param_id | comment                                                                                                                                                                                     |
-| ---------- | ---------- | ----------------------------- | ------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2          | 1          | utilization_change_amount     | direct  | 17             | 생산시설 가동 변화가 upstream 공급량에 직접 연결되면 SupplyDisruption을 적용한다. utilization_change_amount는 영향 Country와 최종 월 공급량 조정폭의 근거로 사용하고, period/onset_pattern/recovery_pattern은 적용 Year/Month와 변화 경로에 반영한다. |
-| 5          | 1          | alt_gas_supply_availability   | direct  | 17             | 대체 가스전 증산이나 다른 upstream 공급이 명시되면 대체 Country의 SupplyDisruption 최종 공급량을 상향 조정한다. alt_gas_supply_availability는 상쇄 가능한 물량과 월별 배분의 근거로 사용한다.                                                     |
-| 9          | 2          | utilization_change_amount     | direct  | 13             | 액화 Plant Train의 대폭·영구 생산 손실 또는 회복을 월 생산량 최종값으로 직접 반영한다. utilization_change_amount와 period/onset_pattern/recovery_pattern을 생산량의 크기와 월별 경로에 사용하며, 단기·부분 차질은 LiqUtilAdjustment를 우선한다.          |
-| 16         | 3          | target_utilization_at_ramp_up | direct  | 13             | 신규 액화 Train의 COD와 ramp-up 완료 가동률을 기준으로 월 생산량을 산정한다. target_utilization_at_ramp_up은 nameplate 월 생산능력에 곱하고 cod_timing/ramp_up_pattern은 적용 월에 반영한다. FID 무산이 명시되면 신규 생산량은 0으로 처리한다.             |
-| 18         | 4          | utilization_change_amount     | direct  | 15             | 파이프라인 송출능력 변화가 명시되면 해당 Pipeline/From/To/Year/Month의 최종 Bcm/y capacity를 산정한다. utilization_change_amount는 capacity 조정폭에, period/onset/recovery/structural_change는 적용 월과 지속성에 반영한다.            |
-| 23         | 4          | alt_supply_availability       | direct  | 15             | 타 파이프라인 노선으로 대체 공급이 가능한 경우 해당 대체 Pipeline의 최종 송출능력을 상향 조정한다. LNG 전환만 설명된 경우에는 PipelineAdjustment 대신 LiqUtilAdjustment 경로를 사용한다.                                                             |
-| 66         | 11         | affected_facility_type        | routing | 17             | affected_facility_type이 생산·upstream 시설이고 자연재해가 Country별 가스 생산량을 직접 훼손하는 경우 SupplyDisruption을 선택한다. 액화·수입 시설 피해에는 해당 시설 파라미터를 우선한다.                                                          |
-| 68         | 11         | affected_facility_type        | routing | 13             | affected_facility_type이 수출·액화 시설이고 자연재해가 Train 생산량의 대폭·영구 손실 또는 ramp-up 변경을 명시하는 경우 LiqProdAdjustment를 선택한다. 단기 가동률 차질은 LiqUtilAdjustment를 우선한다.                                            |
-| 70         | 11         | affected_facility_type        | routing | 12             | event가 미국 Gulf of Mexico 허리케인이고 강도 1~4와 영향 Year/Month를 식별할 수 있으며 승인된 GoM 액화 또는 upstream 영향 시설과 연결되는 경우에만 HurricaneIntensity를 선택한다. 일반 자연재해에는 선택하지 않는다.                                      |
-| 96         | 17         | supply_disruption_intensity   | direct  | 13             | 지정학적 긴장·전쟁이 액화 Plant Train 생산량의 대폭·영구 감소를 유발하면 LiqProdAdjustment로 월별 최종 생산량을 직접 조정한다. 부분·단기 가동률 차질은 LiqUtilAdjustment를 우선한다.                                                                |
-| 97         | 17         | supply_disruption_intensity   | direct  | 17             | 지정학적 긴장·전쟁이 upstream 가스 생산을 훼손하면 supply_disruption_intensity와 period/pattern을 근거로 해당 Country/Year/Month의 최종 공급량을 조정한다.                                                                      |
-| 106        | 18         | supply_disruption_intensity   | direct  | 13             | 경제 제재·무역 제한이 액화 Plant Train 생산량의 직접 감소를 유발하면 LiqProdAdjustment로 월별 최종 생산량을 조정한다. 부분·단기 가동률 차질은 LiqUtilAdjustment를 우선한다.                                                                     |
-| 107        | 18         | supply_disruption_intensity   | direct  | 17             | 경제 제재·무역 제한이 upstream 가스 생산을 직접 제한하면 supply_disruption_intensity와 period/pattern을 근거로 해당 Country/Year/Month의 최종 공급량을 조정한다.                                                                  |
-| 신규         | 21         | economic_intensity            | routing | 11             | event에 인구·이민·인구전망 변화가 명시되어 Country/Year별 인구 절대값이 직접 달라지는 경우에만 Population을 선택한다. 일반 경기 변화나 산업활동 변화에는 GDP·PMI를 우선하고 Population을 선택하지 않는다.                                                     |
+| mapping ID | event type | dimension key | 이전 local v1 canonical | 변경 전 외부 DB AS-IS | 당시 v1/v3 결과 |
+| --- | ---: | --- | --- | --- | --- |
+| 2 | 1 | utilization_change_amount | direct → SupplyDisruption | na / NULL | 후보 제외 |
+| 5 | 1 | alt_gas_supply_availability | direct → SupplyDisruption | na / NULL | 후보 제외 |
+| 9 | 2 | utilization_change_amount | direct → LiqProdAdjustment | na / NULL | 후보 제외 |
+| 16 | 3 | target_utilization_at_ramp_up | direct → LiqProdAdjustment | na / NULL | 후보 제외 |
+| 18 | 4 | utilization_change_amount | direct → PipelineAdjustment | na / NULL | 후보 제외 |
+| 23 | 4 | alt_supply_availability | direct → PipelineAdjustment | na / NULL | 후보 제외 |
+| 66 | 11 | affected_facility_type | routing → SupplyDisruption | na / NULL | 후보 제외 |
+| 68 | 11 | affected_facility_type | routing → LiqProdAdjustment | na / NULL | 후보 제외 |
+| 70 | 11 | affected_facility_type | routing → HurricaneIntensity | na / NULL | 후보 제외 |
+| 96 | 17 | supply_disruption_intensity | direct → LiqProdAdjustment | na / NULL | 후보 제외 |
+| 97 | 17 | supply_disruption_intensity | direct → SupplyDisruption | na / NULL | 후보 제외 |
+| 106 | 18 | supply_disruption_intensity | direct → LiqProdAdjustment | na / NULL | 후보 제외 |
+| 107 | 18 | supply_disruption_intensity | direct → SupplyDisruption | na / NULL | 후보 제외 |
+| 없음 | 21 | economic_intensity | routing → Population 신규 행 | 행 없음 | Population 후보 없음 |
+
+현재는 위 13개 `na/NULL` 행을 표의 이전 local v1 canonical에 적힌 direct/routing으로 복구했고, Population routing 1행을 추가했다. mapping ID 67·95·105는 method·parameter 연결은 유지하고 comment만 현행화했다. 이 mapping-only 변경은 v4 master, Impact Lever catalog, Scenario/proposal 결과를 변경하지 않는다.
 
 
-적용 후 direct/routing 매핑은 모두 활성·미삭제 master만 참조해야 하며, 모든 event type/dimension key는 활성 scenario dimension template에 존재해야 한다. orphan FK, model_param_id가 있는 natural key 중복, 후보 매핑이 없는 활성 master는 허용하지 않는다.
+legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야 하며, 모든 event type/dimension key는 활성 scenario dimension template에 존재해야 한다. orphan FK와 `model_param_id`가 있는 natural key 중복은 허용하지 않는다. Basecase-only 6개에 legacy 후보 mapping이 없는 것은 의도된 상태다.
 
 ## 충돌 해결 이력
 
 
 | 충돌                                             | 최종 선택                                                        | 근거와 반영 위치                                                                                                         |
 | ---------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| 초안 Markdown/Excel은 17행·활성 15행 또는 과거 활성 상태를 표시  | DB master 21행·활성 10행                                         | 외부개발 DB snapshot, 실제 workbook/LUT horizon, 승인된 10개 목록을 통합. JSON/SQL/config/docs에 model-parameter-canonical-v1로 반영 |
+| v1 mapping 후보는 LUT-backed 10개                            | v4 master 21행·활성 16행                                         | v1/v3 shared mapping은 129행·10개 후보로 정비하고, v4는 master·Lever-native 16개 범위를 독립 유지 |
 | 초안의 header/data start/column role과 현재 DB 값이 다름 | 기존 활성 5개는 검증된 DB 값을 유지; 나머지는 실제 workbook 구조와 최종 LUT 계산으로 정규화 | canonical JSON의 21행 전체 basecase_*가 read-back 기준                                                                   |
 | Coal/Gas futures를 활성으로 표시                      | enabled=false 및 use_yn=N                                     | 2026년 이후 strip이 제공되기 전 과거값 이월 금지                                                                                  |
 | ElectrificationRate 활성 여부                      | use_yn=N, LUT spec 없음                                        | 유효 Basecase/LUT/승인 mapping 부재                                                                                     |
-| LiqProdAdjustment 미지원/미대상 안내                   | use_yn=Y, 5개 mapping 복구, liq_prod adapter                    | BCLiquefaction 월 생산능력×이용률로 exact slot 생성                                                                          |
-| Population의 일반 경제 이벤트 적용 가능성                   | event 21 economic_intensity의 제한 routing                      | 인구·이민·인구전망이 명시된 경우만 사용하고 일반 경기는 GDP·PMI 우선                                                                        |
+| LiqProdAdjustment 미지원/미대상 안내                   | use_yn=Y, liq_prod adapter, legacy direct/routing 복구, v4 Lever alternative binding | BCLiquefaction 월 생산능력×이용률로 exact slot을 만들고 v1/v3와 v4의 각 후보 소스에서 조건부 후보화 |
+| Population의 일반 경제 이벤트 적용 가능성                   | v1/v3 routing 1건과 v4 `economic_activity` alternative binding | 인구·이민·인구전망이 명시된 경우만 선택하고 일반 경기는 GDP·PMI 우선 |
+| 신규 활성 6개를 legacy mapping에도 추가할지 여부             | 추가하지 않음                                                   | v4는 Lever-native 전용이며 v1/v3 후보 범위를 바꾸지 않음                                                                                    |
+| catalog 변경 뒤 기존 v4 Scenario 처리                         | proposal 차단 후 신규 Scenario 생성                             | 저장된 checksum과 active catalog checksum이 다르면 조용히 재해석하지 않음                                                                    |
 
 
 
 
 ## 적용과 검증
 
-1. poetry run python scripts/model_parameter/apply_canonical.py 로 dry-run한다. 행 잠금, snapshot-or-final precondition, 전체 불변식과 read-back을 수행하고 rollback한다.
-2. diff가 승인되면 같은 명령에 --apply를 추가하거나 apply_model_parameter_canonical_v1.sql을 MySQL 8.0에서 실행한다.
-3. 적용 후 master 21행, mapping 129행, 활성 이름 10개, method count 35/6/55/33과 template/FK/natural-key 불변식을 다시 확인한다.
-4. poetry run python scripts/model_parameter/sync_mapping_workbook.py --check-only 로 canonical Excel과 JSON·config·archive의 정합성을 확인한다.
-5. poetry run python tests/manual/model_parameter_agent/verify_canonical_sql_mysql.py 로 `model_parameter_sql_verify*` 격리 DB에서 정적 SQL의 2회 적용과 precondition/post-invariant rollback을 확인한다.
+1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
+2. 승인된 외부 개발 DB에는 같은 runner의 `--apply`로 mapping-only transaction을 commit한다. 적용 후 master 21행·활성 16개, Impact Lever 16개·hydrated checksum, v4 Scenario/proposal 결과 invariant hash가 변경 전과 같은지 확인한다.
+3. 적용 후 master 21행·활성 16개, Lever 16개·binding 20/18/16이 정확히 보존되고 shared legacy mapping이 129행·method count 35/6/55/33인지 확인한다.
+4. `poetry run python scripts/model_parameter/sync_mapping_workbook.py --check-only`로 legacy mapping Excel과 JSON·config·archive의 정합성을 확인한다.
+5. 역사적 v4 release replay는 `poetry run python tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py`로 격리 MySQL 8의 128행 snapshot에서만 검증한다. 현재 129행 외부 DB의 사후 판정에는 dated v4 runner/SQL을 사용하지 않는다.
 
-현재 업무용 Excel은 `resources/mapping/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx`다. 사용자 명시 승인에 따른 openpyxl fallback으로 생성했고, `Parameter Excel Mapping` 21행·활성 10개와 `Dimension Parameter Mapping` 129행·method count 35/6/55/33을 canonical JSON과 전수 비교했다. LUT manifest·충돌 해결 sheet, Excel table/filter·freeze pane, 오류 marker 검사와 5개 sheet Quick Look 렌더 검증도 통과했다.
+현재 업무용 Excel은 `resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx`다. parameter 21행·활성 16개, Lever binding과 v1/v3 shared legacy mapping 129행을 함께 보여 준다. 기계 판정은 v4 master·Lever JSON과 v1 mapping JSON의 `dimension_mappings`를 분리해 사용한다.
 
-이전 `260625_...xlsx`, `260702_...v0.4.xlsx`는 `resources/mapping/archive/`로 이동했으며 현재 실행 기준이 아니다. 정적 SQL은 외부개발 DB와 분리된 MySQL 8.0.46에서 첫 적용과 두 번째 semantic idempotency, 강제 master precondition 실패의 상태 보존, canonical DML 이후 template invariant 실패의 전체 rollback을 통과했다. idempotency digest에서는 실행마다 의도적으로 갱신되는 `mod_dtm`만 제외했다.
+이전 `260625_...xlsx`, `260702_...v0.4.xlsx`, `260807_...canonical-v1.xlsx`는 `resources/mapping/archive/`의 역사 자료다. 실제 v4 SQL 검증 결과와 외부 DB rollback digest는 실행한 명령·환경·hash와 함께 통합 release report에 기록하며, 이 문서 자체는 아직 수행하지 않은 DB 적용이나 검증 통과를 주장하지 않는다.

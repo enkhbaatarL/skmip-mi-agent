@@ -2,7 +2,7 @@
 
 ## 한눈에 보기
 
-- v1 단일 이벤트와 v3 멀티 이벤트 시나리오 문맥을 전략별로 정규화하고, 기존 DB 파라미터 후보와 실제 Basecase/LUT 좌표 안에서 값을 제안한다.
+- v1/v3는 legacy DB mapping, v4는 선택 value의 Lever state와 active catalog binding으로 후보를 정규화하고 실제 Basecase/LUT 좌표 안에서 값을 제안한다.
 - LLM 판단은 조건부 Step1.5, Step2, Step3으로 나뉘며 각 단계의 역할과 출력이 다르다.
 - Step2는 “어디를 바꿀지”, Step3는 “얼마로 바꾸고 왜 그런지”를 판단한다.
 - 최종 확인은 LLM을 다시 호출하지 않고 서버 검증 후 `CONFIRMED`로 저장한다.
@@ -20,6 +20,7 @@
 | 제안값 | 시나리오를 반영해 LLM이 제안한 값 | GDP 성장률 `0.041` |
 | composite dimension | v3에서 여러 event/source dimension을 조합해 만든 scenario dimension | `복합 공급 압력` |
 | source lineage | composite dimension을 원본 event·template·dimension으로 연결하는 근거 | `sourceEventIds`, `sourceRefs` |
+| Lever provenance | v4 선택 value를 dimension·event·Lever·binding으로 연결하는 근거 | `lever_states`, binding role/applicability |
 
 `candidate_key`와 `slot_key`는 처리 중 항목을 안전하게 연결하는 서버 식별자다. 사용자가 직접 만들 필요는 없다.
 
@@ -31,13 +32,18 @@ flowchart TD
     B --> V{generation strategy}
     V -- v1 --> C1[대표 event type과\nscenario dimension 정규화]
     V -- v3 --> C2[sourceRefs와 group relation으로\n원본 event type·dimKey 역투영]
+    V -- v4 --> C3[선택 value의 Lever states와\nactive catalog 검증]
     C1 --> C[기존 DB mapping으로 파라미터 후보 결정]
     C2 --> C
+    C3 --> C4[executable Lever binding으로\n파라미터 후보 결정]
     C --> D{routing 후보가<br/>하나라도 있는가?}
+    C4 --> D4{primary/alternative\nrouting이 필요한가?}
     D -- 예 --> E[Step1.5<br/>routing 조건 검증·후보 선택]
     D -- 아니오 --> F[direct 후보 확정]
     E --> G[같은 파라미터 후보 병합]
     F --> G
+    D4 -- 예 --> E
+    D4 -- 아니오 --> G
     G --> H[Basecase·LUT exact slot catalog 생성]
     H --> I[Step2<br/>적용할 slot 선택]
     I --> J[서버 exact 검증·slot_key 발급]
@@ -51,9 +57,9 @@ flowchart TD
 
 | 단계 | 실행 주체 | 핵심 입력 | 핵심 출력 |
 |---|---|---|---|
-| 문맥 조회 | 서버 | `scenario_id` | scenario, group strategy, ordered event, dimension과 lineage 정보 |
-| 후보 결정 | 서버 | v1 key 또는 v3에서 역투영한 event type L2·원본 dimKey | direct/routing 후보와 indirect 보조정보 |
-| Step1.5 | LLM, 조건부 | 단일·복수 routing 후보와 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
+| 문맥 조회 | 서버 | `scenario_id` | scenario, group strategy, ordered event, dimension과 lineage/Lever provenance |
+| 후보 결정 | 서버 | v1/v3 legacy key 또는 v4 selected Lever state | direct/routing 또는 executable primary/alternative 후보 |
+| Step1.5 | LLM, 조건부 | legacy routing 또는 v4 primary/alternative와 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
 | reference 준비 | 서버 | 확정 후보, Basecase, LUT | 값이 존재하는 exact slot catalog |
 | Step2 | LLM | 시나리오 문맥, 파라미터별 slot catalog | `candidate_key + slot_axes` |
 | 기준값 결정 | 서버 | Step2 좌표 | `slot_key + coordinates + reference_value` |
@@ -71,6 +77,11 @@ Basecase/LUT 파일 자체를 읽는 기준은 [Basecase·LUT 문서](./05_MODEL
 
 - v1 `single_event_template_dimensions`는 group의 대표 event, event type L2와 scenario dimension template을 읽는다. 현재 scenario dimension key를 기존 `(event_type_l2_id, dimension_key)` DB mapping에 직접 대입한다.
 - v3 `multi_event_composite_dimensions`는 2~5개 group-event relation을 `display_order` 순서로 읽고 모든 event의 핵심 정보를 로드한다. 각 `dimensionDefinitions[].sourceRefs[]`의 `scenarioDimensionTemplateId`를 relation template ID에 연결하고, definition의 `sourceEventIds`와 교집합인 relation에서 `event_type_l2_id`를 복원한다. source ref의 `dimKey`와 합친 `(event_type_l2_id, dimKey)`를 같은 DB mapping에 대입한다. 선택 dimension lineage에서 참조되지 않은 group event가 있으면 LLM 호출 전에 실패한다.
+- v4 `multi_event_model_lever_dimensions`는 Scenario, Group, ordered Group–Event 관계, active Lever catalog와 active parameter definition만 조회한다. `dimension_values`가 선택한 value 하나의 `lever_states`만 추출하고 legacy dimension mapping, Event Type, `lever_mappings`·`lever_refs`·`impact_lever_refs`를 후보 source나 fallback으로 사용하지 않는다.
+
+v4 loader는 group API version/strategy와 catalog checksum, dimension/value/primary Lever 존재, `source_event_ids`의 group event 부분집합, Lever code/ID 일치와 primary state 포함 여부를 strict 검증한다. checksum 불일치, 미등록 code, ID 불일치, primary 누락은 LLM 호출 전에 `INVALID_REQUEST`로 실패한다. catalog checksum이 바뀐 기존 v4 Scenario는 재해석하지 않고 현재 catalog로 다시 생성해야 한다.
+
+v4 selector는 executable binding만 후보화한다. `price_only`, binding 없음, 비활성 parameter와 catalog unsupported는 제외 reason을 내부 state/trace에 보존한다. `direction=unchanged`는 변화 후보가 아니라 supporting context다. parameter별 중복 후보는 dimension, 선택 value, ordered Event, Lever state와 binding provenance를 모두 보존해 하나로 병합한다.
 
 v3 adapter는 composite `scenario_dimension_key`·label·선택 value와 원본 `mapping_dimension_key`·`event_type_l2_id`를 분리한다. 또한 `source_event_ids`, `source_refs`, 선택 value의 description·derivation rationale·pressure contribution, 승인 projection과 mapping readiness를 lineage에 보존한다. 선택 value가 definition의 `valueId` 또는 label과 일치하면 해당 metadata를 사용하고, 정의에 없는 자유 value이면 raw composite value를 유지한다.
 
@@ -85,16 +96,16 @@ v3 adapter는 composite `scenario_dimension_key`·label·선택 value와 원본 
 | `indirect` | 파라미터 후보로 만들지 않고 Step2·Step3의 보조 dimension으로 유지 |
 | `na` | 파라미터·slot·값 판단 prompt에서 제외 |
 
-이 단계에서는 Basecase 값이나 LUT 값으로 파라미터 필요성을 판단하지 않는다. 활성 mapping에 없는 파라미터도 새로 만들지 않는다.
+이 단계에서는 Basecase 값이나 LUT 값으로 파라미터 필요성을 판단하지 않는다. v1/v3는 활성 mapping 밖, v4는 catalog binding 밖의 파라미터를 새로 만들지 않는다.
 
-후보의 확장·수렴 정책은 두 버전에서 같다.
+다음 후보 확장·수렴 정책은 v1/v3 legacy 경로에서 같다.
 
 - 한 scenario/composite dimension이 여러 direct/routing 파라미터에 매핑되면 모든 후보를 유지한다.
 - 여러 dimension 또는 서로 다른 event type이 동일한 model file·sheet·parameter로 수렴하면 하나의 parameter task로 병합하고 모든 source dimension과 event lineage를 보존한다.
 - 같은 v3 source ref가 여러 event relation에 반복되면 후보는 중복 생성하지 않지만 관련 event ID는 모두 보존한다.
 - direct 후보는 Step1.5를 거치지 않고 자동 통과한다. routing만 composite scenario dimension 단위로 검증하며 dimension당 최대 2개를 유지한다.
 
-v1의 기존 candidate key 형식은 유지한다. 병합된 v3 parameter task는 단일 event ID에 의존하지 않는 `parameter|v3|model_file|model_sheet|parameter` 형식의 안정적인 key를 사용한다.
+v1의 기존 candidate key 형식은 유지한다. 병합된 v3/v4 parameter task는 단일 event ID에 의존하지 않는 안정적인 key를 사용한다.
 
 #### Step1.5·Step2·Step3의 `scenario_brief`
 
@@ -104,18 +115,21 @@ v1의 기존 candidate key 형식은 유지한다. 병합된 v3 parameter task�
 |---|---|---|
 | v1 | 기존 단일 `event` | 관련 scenario value와 dimension template |
 | v3 | group relation `display_order` 순서의 `events` 배열 | composite dimension, 원본 mapping dimension, source event/ref lineage와 승인 projection |
+| v4 | group relation `display_order` 순서의 `events` 배열 | 선택 value와 전체 Lever state·binding provenance, parameter hint·semantic axes |
 
-v3 event 항목에는 event ID/type, title, one-line summary, key bullet 최대 5개, tag 최대 8개, detail excerpt 최대 1,200자를 넣는다. 이 제한과 dimension 필터는 prompt byte guard 이전에 적용한다. Step2의 slot catalog에는 기존처럼 값이 없고, Step3에는 병합된 모든 source dimension과 선택 좌표별 단일 `reference_value`가 들어간다.
+v3/v4 event 항목에는 event ID, title, one-line summary, 제한된 핵심 정보만 넣고 `display_order`를 유지한다. 이 제한과 dimension 필터는 prompt byte guard 이전에 적용한다. Step2의 slot catalog에는 값·기준값이 없고, Step3에는 exact 좌표별 단일 `reference_value`와 병합된 전체 Lever provenance가 들어간다.
 
 ### 3.2 Step1.5: routing 조건 검증·후보 선택
 
-Step1.5는 **routing 후보가 하나라도 있으면** 호출한다. 단일 후보도 `mapping_comment`의 조건이 scenario/event에 명시적으로 드러난 경우에만 통과시키기 위함이다. v3에서는 원본 dimKey가 아니라 composite `scenario_dimension_key`가 routing task의 grouping key다. system prompt `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
+Step1.5는 legacy routing 후보 또는 v4 primary/alternative 판단이 필요할 때 호출한다. v4에서 단일 primary binding은 결정적으로 통과시키며, primary와 alternative가 함께 있으면 primary를 기본 우선하되 applicability와 Scenario/Event/Lever 맥락에 따라 alternative 또는 양쪽을 선택할 수 있다. system prompt `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
 
-- scenario, v1 event 또는 v3 ordered events, 현재 dimension과 source lineage를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
+- scenario, ordered events, 현재 dimension/value와 source 또는 Lever provenance를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
 - `parameter_hint`로 후보의 의미와 적용 제약을 이해한다.
 - `mapping_comment`를 필수 조건으로 판단하고, 명시적 근거가 없으면 해당 후보를 제외한다.
 - dimension task별로 0개부터 설정된 최대 개수까지 선택할 수 있다.
 - 후보 밖의 파라미터나 key를 만들지 않고 Basecase 존재 여부를 선택 근거로 쓰지 않는다.
+
+v4 task에는 `parameter_hint`, semantic axes, binding role/applicability와 선택 value의 모든 Lever state가 들어간다. Lever `direction`, `pressure_contribution` 또는 domain을 숫자 부호로 직접 변환하지 않는다.
 
 실제 user message prefix는 다음과 같다.
 
@@ -177,7 +191,7 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
 이 단계는 LLM을 호출하지 않는다.
 
 1. 확정된 파라미터별 Basecase를 DB 파싱 설정으로 읽는다.
-2. LUT가 활성화돼 있으면 같은 파라미터의 LUT를 읽는다.
+2. LUT-backed parameter이면 같은 파라미터의 LUT를 읽는다. Basecase-only 6개에는 LUT fallback을 만들지 않는다.
 3. 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합을 만든다.
 4. 같은 좌표가 양쪽에 있어도 Step2 선택 좌표는 하나로 만든다.
 5. Step2에는 값과 출처를 빼고 선택 가능한 좌표 catalog만 전달한다.
@@ -189,7 +203,7 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
 system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 catalog 안에서 적용 좌표만 고른다”는 역할이다.
 
 - 이전 단계에서 확정된 파라미터의 필요성을 다시 판단하지 않는다.
-- v1 scenario/event/dimension 또는 v3의 ordered events와 병합된 multi-source lineage에 관련된 exact slot만 선택한다.
+- v1/v3 lineage 또는 v4 ordered events·선택 value·Lever provenance에 관련된 exact slot만 선택한다.
 - `parameter_hint`와 `mapping_comment`는 국가·시설·기간·route 같은 좌표 의미를 해석하는 데 쓴다.
 - 승인 projection은 좌표 해석의 보조 근거로만 쓰고 readiness가 false라는 이유로 task를 생략하지 않는다.
 - catalog에 없는 값, nearest 좌표, 서로 다른 hierarchy branch를 섞은 좌표를 만들지 않는다.
@@ -203,7 +217,7 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 
 | 입력 최상위 항목 | 기능 |
 |---|---|
-| `scenario_brief` | 관련 scenario group·scenario·dimension과 v1 event 또는 ordered v3 events 문맥 |
+| `scenario_brief` | 관련 scenario group·scenario·dimension과 v1 event 또는 ordered v3/v4 events 문맥 |
 | `period_resolution_policy` | “3개월” 같은 표현을 현재 연월 이후 기간으로 해석하는 규칙 |
 | `slot_selection_limits` | 파라미터별 반환 slot 상한과 우선순위 |
 | `parameter_slot_tasks` | 파라미터, 선택·보조 dimension, 실제 slot catalog |
@@ -236,6 +250,8 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 | 값 없음 | 값 있음 | LUT 값 |
 | 값 없음 | 값 없음 | 해당 slot 제외 |
 
+Basecase-only parameter는 두 번째 행의 LUT fallback 대상이 아니므로 Basecase가 없으면 제외한다.
+
 서버는 각 유효 slot에 현재 요청의 파라미터 task 안에서만 사용하는 `slot_key`를 발급하고, Step3에 `slot_key + coordinates + reference_value`를 전달한다. Basecase와 LUT의 두 값이나 source 이름을 동시에 보내지 않는다.
 
 ### 3.6 Step3: 제안값과 근거 생성
@@ -243,10 +259,11 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 system prompt `VALUE_PROPOSAL_SYSTEM`은 “확정된 slot과 기준값을 바꾸지 말고 실제 모델 입력값과 근거를 만든다”는 역할이다.
 
 - `parameter_hint`로 값의 의미·단위·스케일·산정 제약을 해석한다.
-- `mapping_comment`와 모든 direct/routing source dimension·event lineage로 적용 방향을 판단한다.
+- legacy `mapping_comment` 또는 v4 binding applicability와 모든 dimension·event·Lever provenance로 적용 방향을 판단한다.
 - indirect dimension은 기간·강도·대상 해석에만 쓰고 후보나 slot을 확장하지 않는다.
 - 여러 dimension/event의 방향·강도·기간·대상이 다르면 그 관계와 충돌을 하나의 최종값과 근거로 종합한다.
 - 서버가 dimension별 결과를 합산·평균하는 공식을 적용하지 않으며, LLM이 parameter task 전체를 보고 slot별 최종 절대값 하나를 반환한다.
+- 서로 반대 방향의 Lever가 같은 parameter로 병합되면 양쪽 provenance를 보존하고 상쇄 관계를 설명하되 slot별 최종값은 하나만 반환한다. Lever direction·pressure/domain을 숫자 부호로 직접 변환하지 않고 parameter hint, 단위, applicability와 기준값으로 산정한다.
 - 모든 입력 slot에 유효한 숫자 하나와 slot별 근거 하나를 반환한다.
 - 입력에 없던 `candidate_key`나 `slot_key`를 만들지 않는다.
 
@@ -260,7 +277,7 @@ system prompt `VALUE_PROPOSAL_SYSTEM`은 “확정된 slot과 기준값을 바�
 |---|---|
 | `scenario_brief` | 값의 방향·강도·기간을 판단할 관련 문맥 |
 | `parameter_value_tasks[].parameter` | 파라미터명, hint, semantic axes |
-| `selection_dimensions` | 파라미터를 직접 선택한 모든 direct/routing dimension, comment와 v3 source lineage·승인 projection |
+| `selection_dimensions` | legacy selection source 또는 v4 dimension/value/Event/Lever/binding provenance 전체 |
 | `supporting_dimensions` | 값 산정을 보조하는 indirect dimension과 reason |
 | `slots` | 서버가 확정한 `slot_key`, 좌표, 단일 기준값 |
 
@@ -306,13 +323,13 @@ prompt는 파라미터 근거에 개별 slot 값을 나열하지 말고, slot �
 - 서버가 보관한 좌표, Basecase/LUT reference, 모델 대상을 key로 다시 결합한다.
 - 유효한 slot이 남은 결과만 proposal JSON으로 만든다.
 
-의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. 최초 DB mapping 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절한다. 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다. 구조화 응답 자체를 파싱하지 못한 LLM 오류도 해당 단계 전체 실패로 처리한다.
+의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. 전략별 최초 executable 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절하고 proposal row를 만들지 않는다. 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다.
 
-숫자 검증은 proposal과 confirmation에 공통으로 적용하던 유한 숫자·정밀도 정규화를 그대로 사용한다. v3 도입으로 parameter별 min/max, 정수 여부 또는 단위 validator를 추가하지 않는다.
+숫자 검증은 proposal과 confirmation에 공통으로 적용하던 유한 숫자·정밀도 정규화를 그대로 사용한다. v4 도입으로 public JSON 필드나 parameter별 min/max, 정수 여부 또는 단위 validator를 추가하지 않는다.
 
 동기 요청은 처리가 끝난 `PROPOSED` 결과를 바로 반환한다. 비동기 요청은 먼저 `PROCESSING`을 반환하고 백그라운드 성공 시 `PROPOSED`, 실패 시 `FAILED`로 갱신한 뒤 callback을 보낸다. 두 방식의 후보·slot·값 판단 규칙은 같다.
 
-저장 식별자는 버전에 따라 다르다. v1은 proposal의 `mi_event_id`에 대표 event ID를 저장한다. v3는 여러 event 중 하나를 대표값으로 선택하지 않고 `mi_event_id=NULL`로 저장하며 `scenario_group_id`를 authoritative link로 사용한다. 기존 API와 callback의 optional `eventId`도 v3에서 `null`로 반환한다.
+저장 식별자는 버전에 따라 다르다. v1은 proposal의 `mi_event_id`에 대표 event ID를 저장한다. v3/v4는 여러 event 중 하나를 대표값으로 선택하지 않고 `mi_event_id=NULL`로 저장하며 `scenario_group_id`를 authoritative link로 사용한다. 기존 API와 callback의 optional `eventId`도 v3/v4에서 `null`로 반환한다.
 
 ### 3.8 사용자 확인
 
@@ -324,7 +341,7 @@ flowchart LR
     C -->|오류| E[수정할 내용 안내]
 ```
 
-확인 단계에서는 LLM을 호출하지 않는다. 사용자가 보낸 파라미터명, 모델 대상, slot 축, 기준값, 제안값과 근거의 구조를 확인한 뒤 같은 proposal 행을 `CONFIRMED`로 갱신한다. 이미 확정된 건도 유효한 전체 payload로 다시 확정할 수 있다. canonical master에 없는 custom parameter도 기존 공통 구조 검증을 통과하면 확정할 수 있으며, v3 지원은 이 호환 동작을 바꾸지 않는다.
+확인 단계에서는 LLM을 호출하지 않는다. 사용자가 보낸 파라미터명, 모델 대상, slot 축, 기준값, 제안값과 근거의 구조를 확인한 뒤 같은 proposal 행을 `CONFIRMED`로 갱신한다. 이미 확정된 건도 유효한 전체 payload로 다시 확정할 수 있다. canonical master에 없는 custom parameter도 기존 공통 구조 검증을 통과하면 확정할 수 있으며, v4 지원은 이 public/storage 호환 동작을 바꾸지 않는다.
 
 <a id="actual-test-sample"></a>
 
@@ -350,7 +367,7 @@ Value 산정의 `REVIEW`는 실행 실패가 아니다. 8개 값의 형식·방�
 | `period` | indirect | 3개월 기간을 해석하는 보조정보 |
 | `demand_impact` | na | prompt에서 제외 |
 
-이 실행 시점의 DB mapping에는 Population routing이 없어 `routing_tasks=0`이었다. 따라서 Step1.5 prompt와 LLM 호출은 없었고 `PMI`, `GDP`가 바로 Step2로 넘어갔다. 현재 canonical mapping에서는 `economic_intensity` 차원의 Population 단일 routing도 Step1.5에서 검증하며, 인구·이민·인구전망 변화가 명시된 경우에만 선택한다.
+이 2026-07-21 실행 시점과 2026-08-13 변경 전 snapshot에는 Population routing이 없었다. 따라서 당시에는 `routing_tasks=0`이었고 Step1.5 prompt와 LLM 호출 없이 `PMI`, `GDP`가 바로 Step2로 넘어갔다. 현재 shared mapping에는 Population routing 1건이 있으므로 같은 시나리오를 재실행할 때 인구·이민·인구전망 변화가 명시되면 v1/v3에서도 routing 검토 대상이 된다. 위 실행 결과는 역사 증적이므로 재기록하지 않는다.
 
 ### 4.2 실제 Step2 입력과 선택 결과
 
@@ -533,9 +550,9 @@ LLM은 8개 입력 slot 모두에 값과 근거를 반환했고 서버 검증을
 
 | 구간 | 실제 적용 방식 |
 |---|---|
-| Step1.5 | routing 후보가 하나라도 있으면 호출하고, 단일 후보도 명시적 mapping 조건을 검증 |
-| 관련 문맥 | 각 단계와 현재 후보에 필요한 dimension만 남기고 `na`, 무관 dimension, 상태·감사 컬럼 제외. v3 event는 ordered 배열로 보내되 bullet 5개·tag 8개·detail 1,200자로 제한 |
-| 후보 task | 같은 파라미터의 여러 dimension/event type mapping을 한 task로 병합하고 source lineage 보존 |
+| Step1.5 | legacy routing 또는 v4 primary/alternative applicability 판단이 필요할 때만 호출 |
+| 관련 문맥 | 각 단계와 현재 후보에 필요한 dimension/value/Event/Lever만 남기고 무관 정보와 상태·감사 컬럼 제외 |
+| 후보 task | 같은 파라미터의 여러 source를 한 task로 병합하고 legacy lineage 또는 v4 Lever provenance 보존 |
 | Step2 입력 | Basecase/LUT 원본 행·값·출처·metadata를 제외하고 compact 좌표 catalog만 전달 |
 | Step2 응답 | `candidate_key + slot_axes`만 수신 |
 | Step3 입력 | Step2 exact 검증을 통과한 slot만 `slot_key + coordinates + reference_value`로 전달 |
@@ -551,10 +568,10 @@ Agent가 업무 문맥을 조회하는 핵심 키는 `scenario_id`다. DB 행 �
 flowchart LR
     A[(scenario)] --> G[scenario_brief]
     B[(scenario_group)] --> G
-    C[(v1 event / v3 events)] --> G
-    D[(v1 dimension template /\nv3 dimension definitions)] --> G
-    R[(v3 group-event relation /\nvalue projection)] --> G
-    E[(dimension-parameter map)] --> H[parameter task]
+    C[(v1 event / v3·v4 events)] --> G
+    D[(v1 template /\nv3·v4 dimension definitions)] --> G
+    R[(ordered group-event relation)] --> G
+    E[(legacy mapping / v4 Lever catalog)] --> H[parameter task]
     F[(model parameter)] --> H
     G --> I[Step1.5 / Step2 / Step3]
     H --> I
@@ -563,15 +580,16 @@ flowchart LR
 | DB 테이블 | 실제로 읽는 주요 컬럼 | prompt 또는 서버 사용 위치 |
 |---|---|---|
 | `tmm_mi_scenario_m` | `scenario_id`, `title`, `narrative`, `dimension_values`, `impact_jkm`, `impact_ttf`, `impact_hh` | `scenario_brief` |
-| `tmm_mi_scenario_group_m` | `title`, `summary`, `description`, `dimension_selected`, `api_version`, `generation_strategy`, `dimension_definitions`, `parameter_mapping_ready` | adapter 분기, `scenario_brief.scenario_group`, v3 composite dimension |
-| `tmm_mi_scenario_group_event_m` | `mi_event_id`, `event_type_l2_id`, `scenario_dimension_template_id`, `display_order` | v3 source ref 역투영과 ordered `scenario_brief.events` |
+| `tmm_mi_scenario_group_m` | `title`, `summary`, `description`, `dimension_selected`, `api_version`, `generation_strategy`, `dimension_definitions`, catalog checksum | adapter 분기, v3 lineage 또는 v4 selected value·Lever 검증 |
+| `tmm_mi_scenario_group_event_m` | `mi_event_id`, `event_type_l2_id`, `scenario_dimension_template_id`, `display_order` | v3는 source ref 역투영, v4는 `mi_event_id`·`display_order` 관계만 사용 |
 | `tmm_mi_scenario_dimension_template_m` | `scenario_dimension_template_id`, `template_json` | v1 관련 dimension과 v3 source ref relation 검증 |
 | `tmm_mi_dimension_value_mapping_m` | `dimension_id`, `display_value`, `source_projections`, `status`, `mapping_version` | 같은 v3 자유 value의 approved projection 보조 근거와 warning |
 | `tmm_mi_mievent_m` | `mi_event_id`, `event_type_l2_id`, `event_title`, `one_line_summary`, `key_bullets_json`, `detail_analysis`, `tags_json` | v1 `scenario_brief.event` 또는 제한된 v3 `scenario_brief.events[]` |
-| `tmm_mi_model_param_dimension_map` | `event_type_l2_id`, `dimension_key`, `dimension_label`, `mapping_method`, `model_param_id`, `comment` | 후보 선정, selection/supporting dimension |
+| `tmm_mi_model_param_dimension_map` | `event_type_l2_id`, `dimension_key`, `dimension_label`, `mapping_method`, `model_param_id`, `comment` | v1/v3 후보 선정, selection/supporting dimension. v4는 조회하지 않음 |
+| `tmm_mi_model_impact_lever_m` | Lever code/ID, domain, binding, applicability, active/catalog version | v4 catalog checksum·code/ID 검증과 executable 후보 선정 |
 | `tmm_mi_model_param_m` | `parameter_name`, `parameter_hint`, `semantic_axes`, `model_file`, `model_sheet`, `model_table`, `basecase_*` | parameter task, 모델 대상, 서버 Basecase·slot catalog 생성 |
 | `tmm_mi_event_type_l1_m` | `event_type_l1_id`, `level_1_code`, `level_1_label` | event type 문맥 조회 |
-| `tmm_mi_event_type_l2_m` | `event_type_l2_id`, `event_type_l1_id`, `level_2_code`, `level_2_label` | mapping 조회와 v3 events의 event type 문맥 |
+| `tmm_mi_event_type_l2_m` | `event_type_l2_id`, `event_type_l1_id`, `level_2_code`, `level_2_label` | v1/v3 legacy mapping 문맥. v4 후보 선정에는 사용하지 않음 |
 
 prompt에 넣지 않는 대표 정보는 scenario의 상태·확률·baseline 여부, group의 상태·단계·사용자 정보, event의 일자·감사 컬럼, model parameter의 Excel 행·열 설정 원문이다. v3에서는 lineage grounding을 위해 event ID/type을 예외적으로 `events[]`에 포함한다.
 
@@ -583,12 +601,13 @@ prompt에 넣지 않는 대표 정보는 scenario의 상태·확률·baseline �
 |---|---|
 | `tmm_mi_model_param_m.parameter_hint` | 파라미터 값의 의미·단위·스케일·산정 제약 |
 | `tmm_mi_model_param_dimension_map.comment` | 현재 dimension과 파라미터가 연결되는 이유와 우선 판단 근거 |
+| `tmm_mi_model_impact_lever_m` binding applicability | v4 Lever와 primary/alternative parameter를 연결하는 적용 조건 |
 
 | 단계 | `parameter_hint` 위치 | mapping `comment` 위치 |
 |---|---|---|
-| Step1.5 | `routing_tasks[].candidates[].parameter_hint` | `routing_tasks[].candidates[].mapping_comment` |
-| Step2 | `parameter_slot_tasks[].parameter.parameter_hint` | `selection_dimensions[].mapping_comment` |
-| Step3 | `parameter_value_tasks[].parameter.parameter_hint` | `selection_dimensions[].mapping_comment` |
+| Step1.5 | `routing_tasks[].candidates[].parameter_hint` | legacy `mapping_comment` 또는 v4 binding applicability |
+| Step2 | `parameter_slot_tasks[].parameter.parameter_hint` | selection provenance의 legacy comment 또는 v4 applicability |
+| Step3 | `parameter_value_tasks[].parameter.parameter_hint` | 전체 selection/Lever provenance와 applicability |
 
 `indirect` comment는 `supporting_dimensions[].reason`으로 들어가고, `na` comment는 prompt에 넣지 않는다.
 
@@ -661,11 +680,14 @@ LiqUtil 단독의 과거 평면 Step2 catalog는 약 129KB·약 40K input token 
 
 | 단계 | prompt에 남기는 dimension |
 |---|---|
-| Step1.5 | routing 조건 검증에 필요한 composite scenario dimension과 원본 source lineage |
-| Step2·Step3 | 후보를 만든 direct·routing composite/source dimension과 값 산정에 필요한 indirect dimension |
-| 모든 단계 | `na`와 현재 후보에 무관한 dimension은 제외 |
+| v1/v3 Step1.5 | routing 조건 검증에 필요한 composite scenario dimension과 원본 source lineage |
+| v1/v3 Step2·Step3 | 후보를 만든 direct·routing composite/source dimension과 값 산정에 필요한 indirect dimension |
+| v4 모든 단계 | 선택 value의 dimension/Event/Lever/binding provenance와 unchanged supporting context |
+| 모든 단계 | 현재 후보에 무관한 dimension은 제외 |
 
 v1은 같은 allow-list를 scenario의 `dimension_values`, group의 `dimension_selected`, dimension template에 적용한다. v3는 scenario composite value, group `dimension_definitions`, source refs/event IDs와 승인 projection을 함께 필터링하되 선택된 source lineage는 잘라내지 않는다.
+
+v4는 scenario `dimension_values`가 선택한 value만 찾고 그 value의 `lever_states` 전체를 보존한다. 미선택 value의 state 합집합, legacy `lever_mappings` 계열, Event Type/dimension mapping fallback은 포함하지 않는다. unchanged state는 supporting context에만 남긴다.
 
 LLM 응답은 서버 key로 원본과 다시 조합한다.
 
@@ -697,10 +719,10 @@ flowchart LR
 
 ### 5.5 호환성 경계와 배포 전제
 
-- public proposal/confirmation request·response·callback schema는 바뀌지 않는다. v3는 기존 optional `eventId`를 `null`로 반환하고 `scenarioGroupId`를 authoritative 식별자로 사용한다.
-- v1 candidate key, 단일 event context, direct/routing·Basecase 우선/LUT fallback 동작은 그대로 유지한다. v3의 병합 key만 단일 event ID에 의존하지 않는다.
-- canonical master, 활성 10개, 129개 dimension mapping, canonical JSON·SQL·Excel workbook, Basecase/LUT와 config를 이 기능에서 변경하지 않는다. 동적 composite dimension mapping도 추가하지 않는다.
-- Agent는 DDL이나 canonical DML을 실행하지 않는다. 대상 DB에는 scenario group의 전략·dimension 컬럼, event의 authoritative link인 group-event relation, dimension-value mapping, proposal `mi_event_id` nullable migration이 먼저 적용되어 있어야 한다. Scenario Group master에는 `mi_event_id`·`event_type_l2_id` 직접 컬럼을 두지 않는다.
+- public proposal/confirmation request·response·callback와 저장 JSON shape은 바뀌지 않는다. v3/v4는 기존 optional `eventId`를 `null`로 반환하고 `scenarioGroupId`를 authoritative 식별자로 사용한다.
+- v1/v3는 shared 129행 mapping의 direct/routing 후보 10개와 Basecase 우선/LUT fallback을 사용한다. v4에서만 Lever-native 후보 경로를 사용한다.
+- v4 canonical master는 21행·활성 16개이고, LUT-backed 10개·Basecase-only 6개다. shared mapping은 129행·35/6/55/33이지만 v4는 이 테이블을 조회하지 않는다. mapping-only rollout은 v4 master·Lever·Scenario/proposal 결과와 Basecase-only 6개의 legacy 후보 여부를 변경하지 않는다.
+- parameter master와 Lever catalog는 한 transaction으로 적용한다. catalog checksum이 바뀌면 신규 v4 Scenario를 생성하며 기존 v4 Scenario를 새 catalog로 재해석하지 않는다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.
 - 시작 시 schema validation이 필수 테이블·컬럼과 nullable 계약을 검사한다. 누락된 schema를 임의로 우회하지 않고 startup 또는 context load에서 명확히 실패시킨다.
 - confirmation의 custom parameter 허용과 proposal/confirmation의 기존 유한 숫자·정밀도 정규화는 유지한다. parameter별 min/max·정수·단위 validator는 이 기능의 범위가 아니다.
 

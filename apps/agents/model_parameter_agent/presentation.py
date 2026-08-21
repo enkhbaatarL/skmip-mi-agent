@@ -303,7 +303,10 @@ def _context_ids(
     scenario_group_id = _int_or_none(
         scenario.get("scenario_group_id") or scenario_group.get("scenario_group_id"),
     )
-    if str(scenario_group.get("generation_strategy") or "") == "multi_event_composite_dimensions":
+    if str(scenario_group.get("generation_strategy") or "") in {
+        "multi_event_composite_dimensions",
+        "multi_event_model_lever_dimensions",
+    }:
         event_id = None
     else:
         event_id = _int_or_none(

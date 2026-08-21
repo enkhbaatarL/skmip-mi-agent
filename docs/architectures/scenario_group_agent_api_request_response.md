@@ -1,6 +1,6 @@
 # Scenario Group Agent API Request/Response
 
-> 버전: v10
+> 버전: v11
 
 ## API surface 기준
 
@@ -81,10 +81,6 @@ Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 �
 `eventAnalysis=partial`, interaction 검증 시 `eventAnalysis=ready`, Dimension 검증 시
 `scenarioDesign=partial`로 갱신한다. `section_ready.details`는 변경 가능한 section 상태와 새
 `snapshotRevision`을 포함한다.
-
-기존 v1 데이터의 dry-run 분류, metadata/lineage 보완, 증적 기반 operation/event backfill과 rollback은
-`scripts/migrations/20260811_backfill_v1_presentation_operations.sql`을 사용한다. operation ID는
-Scenario Group과 operation type으로 결정론적으로 만들고 모든 insert를 idempotent하게 수행한다.
 
 operation event는 `accepted`, `phase_started`, `retrying`, `validated`, `section_ready`,
 `completed`, `failed`, `interrupted`를 사용한다. 실패 draft 원문은 event/presentation에 저장하지 않고
@@ -460,6 +456,17 @@ Request (body)
 
 > 검증이 끝난 뒤 사용자가 추가한 신규 시나리오는 `scenarioId: null`로 보내주세요. Signpost 생성 request body의 값으로 scenarioGroup, scenario 테이블을 업데이트합니다.
 
+> v4 그룹에서 기존 분기만 선택하는 경우 `cells`는 화면 label 또는 기존 `valueId`를 받을 수
+> 있습니다. 서버는 유일한 label을 `valueId`로 정규화해 저장하며, Group의 모든 Dimension을
+> 한 번씩 선택하지 않았거나 등록되지 않은 label/ID이면 요청을 거부합니다. Lever 정보는 row에
+> 보내지 않으며 Group `dimensionDefinitions.values[].leverStates`의 기존 값을 사용합니다. 동기화
+> 요청에서 빠진 기존 row는 삭제 대상으로 처리되므로 새 row만 보내지 말고 활성 table 전체를
+> 보내야 합니다.
+>
+> v4의 `headers[].key`도 Group Dimension ID 전체와 정확히 일치하고 중복이 없어야 합니다.
+> Group 정의의 Dimension ID와 value ID 역시 누락·중복될 수 없습니다. 이 검증은 잘못된
+> `dimensionSelected`가 저장되어 Presentation에서 정상 Dimension이 사라지는 일을 막습니다.
+
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `userId` | number | Y | 요청 사용자 식별자(int) |
@@ -666,6 +673,7 @@ Response (`ConfirmGenerationOut`)
 
 | 버전 | 수정내용 | 수정날짜 | 배포여부 (버전) |
 | --- | --- | --- | --- |
+| v11 | v4 기존 분기 기반 수동 Scenario row의 label→value ID 정규화, full Dimension key-set 및 Lever handoff 계약 명시 | 26/08/13 | - |
 | v10 | Validation, Signpost 생성, Confirmation을 canonical `/scenario-groups/{scenarioGroupId}/...` 경로로 이관하고 `/v1` prefix 및 deprecated 표기를 제거 | 26/08/11 | - |
 | v2 | Req/Res body table 추가<br>`summary`, `description` 필수값을 `Y -> N`으로 변경(nullable 반영)<br>Signpost의 `probabilityDirectionCode`, `probabilityImpactScore` 필수값을 `Y -> N`으로 변경(nullable 반영)<br>예시 JSON 3곳에서 `feasibilityScore` 제거<br>Validation 요청의 `user_id` 표기 정리<br>Confirmation response의 `stage`는 `completed`로 반영된 상태 유지 | 26/06/10 | 외부망 배포<br>(v0.0.1) |
 | v3 | Request Body의 user_id 를 string -> number(int) 타입으로 변경<br>confirmation API 에서 안쓰는 파라미터 삭제(scenarioGroupId, eventId 등) | 26/06/11 | 외부망 배포<br>(v0.0.2) |

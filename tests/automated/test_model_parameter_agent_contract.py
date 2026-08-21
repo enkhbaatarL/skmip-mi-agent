@@ -41,6 +41,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
+    _partition_candidate_validation_work,
     _period_start_year_month,
     _scenario_brief_for_value_prompt,
     filter_basecase_records_by_slots,
@@ -54,6 +55,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
     _has_mapping_candidates_from_db_rows,
+    _raise_v4_semantic_empty_if_applicable,
 )
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
@@ -94,9 +96,52 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     normalize_parameter_name,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.values.error_codes import ErrorCode
 
 
 core_contract = pytest.mark.model_parameter_core
+V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
+V4_NO_CHANGE_TITLE = "파라미터로 반영할 변경 항목이 없습니다."
+V4_NO_MODEL_INPUT_TITLE = "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다."
+V4_NO_PARAMETER_VALUE_TITLE = "적용할 파라미터 값을 생성하지 못했습니다."
+
+
+def _assert_v4_semantic_empty_error(
+    error: MIBaseError,
+    *,
+    expected_title: str,
+) -> None:
+    assert error.error_code is ErrorCode.INVALID_REQUEST
+    assert error.code == -202
+    assert error.status_code == 400
+    assert str(error) == error.error_message
+    assert error.error_message.count("\n") == 1
+    title, detail = error.error_message.split("\n")
+    assert title == expected_title
+    assert 0 < len(detail) <= 300
+    forbidden_fragments = (
+        "[INVALID_REQUEST]",
+        "요청이 유효하지 않습니다",
+        "scenario_id",
+        "scenarioId",
+        "event_id",
+        "eventId",
+        "candidate_key",
+        "candidateKey",
+        "candidate=",
+        "slot_key",
+        "slotKey",
+        "slot-1",
+        "exclusion_reason_codes",
+        "재요청",
+        "다시 요청",
+        "재호출",
+        "retry",
+    )
+    for fragment in forbidden_fragments:
+        assert fragment.lower() not in error.error_message.lower()
+    for internal_id in ("501", "701", "101"):
+        assert internal_id not in error.error_message
 
 
 def _default_basecase_dir_or_none() -> Path | None:
@@ -2946,6 +2991,65 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "No model parameter mapping candidates found" in (error.exception.error_message)
         service_cls.return_value.create_processing_proposal.assert_not_called()
 
+    def test_v4_candidate_generation_failure_uses_two_line_public_message(self) -> None:
+        scenario_context = {
+            "scenario": {
+                "scenario_id": 501,
+                "scenario_group_id": 701,
+                "title": "선적 미확대 속 냉방 타이트닝 재부각 심화",
+                "dimension_values": {"liquefaction_path": "변화 없음"},
+            },
+            "scenario_group": {
+                "scenario_group_id": 701,
+                "generation_strategy": V4_GENERATION_STRATEGY,
+            },
+            "events": [
+                {
+                    "mi_event_id": 101,
+                    "event_title_ko": "미국 Lower 48 폭염과 가스선물 반등",
+                },
+            ],
+            "parameter_mapping_resources": {
+                "mapping_rules": [],
+                "parameter_definitions": [
+                    {
+                        "canonical_parameter_name": "LiqUtilAdjustment",
+                        "parameter_name": "LiqUtilAdjustment",
+                        "model_file": "Supply",
+                        "model_sheet": "LiqUtilAdjustment",
+                    },
+                ],
+            },
+        }
+        non_input_items = [
+            {
+                "reason_code": "UNCHANGED_LEVER_STATE",
+                "lever_label": ("액화시설 가용성 " * 30) + "\n내부 진단",
+            },
+        ]
+
+        with (
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+            ) as service_cls,
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
+                "match_v4_parameter_candidates_from_rows",
+                return_value=([], non_input_items, []),
+            ),
+        ):
+            service_cls.return_value.load_context.return_value = scenario_context
+
+            with self.assertRaises(MIBaseError) as error:
+                prepare_propose_parameters_callback(501)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_CHANGE_TITLE,
+        )
+        assert "변화 없음" in error.exception.error_message
+        service_cls.return_value.create_processing_proposal.assert_not_called()
+
     def test_prepare_callback_creates_processing_row_when_mapping_exists(self) -> None:
         scenario_context = {
             "scenario": {
@@ -3569,6 +3673,64 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "selected_parameters": ["GDP"],
             },
         )
+
+    async def test_v4_step1_5_empty_routing_result_uses_two_line_public_message(self) -> None:
+        candidate = {
+            "candidate_key": "candidate_key-internal",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_role": "alternative",
+            "scenario_dimension_key": "liquefaction_path",
+            "source_dimension_id": "liquefaction_path",
+            "source_dimension_label": "액화 경로",
+            "source_dimension_value": "단기 회복",
+            "source_dimension_value_id": "short_recovery",
+            "lever_code": "liquefaction_availability",
+            "lever_label": "액화시설 가용성",
+            "model_file": "Supply",
+            "model_sheet": "LiqProdAdjustment",
+            "model_table": "table1",
+            "parameter_name": "LiqProdAdjustment",
+            "canonical_parameter_name": "LiqProdAdjustment",
+        }
+        _, routing_tasks = _partition_candidate_validation_work([candidate])
+        candidate_response = LLMCandidateValidationResponse(
+            routing_decisions=[
+                RoutingDecision(
+                    dimension_key=str(routing_tasks[0]["dimension_key"]),
+                    selected_candidate_keys=[],
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMCandidateValidationResponse
+            return SimpleNamespace(result=candidate_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario": {"scenario_id": 501, "scenario_group_id": 701},
+                "scenario_group": {
+                    "scenario_group_id": 701,
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+                "events": [{"mi_event_id": 101}],
+            },
+            candidate_mappings=[candidate],
+        )
+        with (
+            patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
+            patch.object(proposal_nodes, "_debug_stage_payload"),
+        ):
+            with self.assertRaises(MIBaseError) as error:
+                await validate_parameter_candidates(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_CHANGE_TITLE,
+        )
+        assert "액화설비 생산량 파라미터 후보" in error.exception.error_message
 
     @core_contract
     async def test_llm_candidate_validation_omitted_direct_candidate_is_kept(self) -> None:
@@ -4335,6 +4497,48 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         assert "BasecaseIndex is required" in error.exception.error_message
 
+    def test_v4_step2_empty_slots_use_two_line_public_message(self) -> None:
+        utilization_candidate = {
+            "candidate_key": "candidate_key-internal",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "lever_label": "액화시설 가용성",
+            "model_file": "Supply",
+            "model_sheet": "LiqUtilAdjustment",
+            "parameter_name": "LiqUtilAdjustment",
+            "canonical_parameter_name": "LiqUtilAdjustment",
+        }
+        production_candidate = {
+            **utilization_candidate,
+            "candidate_key": "candidate_key-production-internal",
+            "model_sheet": "LiqProdAdjustment",
+            "parameter_name": "LiqProdAdjustment",
+            "canonical_parameter_name": "LiqProdAdjustment",
+        }
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario": {"scenario_id": 501, "scenario_group_id": 701},
+                "scenario_group": {
+                    "scenario_group_id": 701,
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+                "events": [{"mi_event_id": 101}],
+            },
+            candidate_mappings=[utilization_candidate, production_candidate],
+            parameter_slots=[],
+        )
+
+        with self.assertRaises(MIBaseError) as error:
+            finalize_empty_parameter_values(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_MODEL_INPUT_TITLE,
+        )
+        assert "액화설비 가동률과 생산량 파라미터" in error.exception.error_message
+        assert "대상과 적용 기간" in error.exception.error_message
+
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:
         candidate = {
             "candidate_key": "c1",
@@ -4422,6 +4626,97 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         assert sanitized == []
         assert any("slotKey가 요청 목록에 없어" in warning for warning in warnings)
+
+    async def test_v4_step3_empty_values_use_two_line_public_message(self) -> None:
+        candidate = {
+            "candidate_key": "candidate_key-internal",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "lever_label": "액화시설 가용성",
+            "model_file": "Supply",
+            "model_sheet": "LiqUtilAdjustment",
+            "parameter_name": "LiqUtilAdjustment",
+            "canonical_parameter_name": "LiqUtilAdjustment",
+        }
+        slots = [
+            {
+                "candidate_key": "candidate_key-internal",
+                "slot_key": "slot-1",
+                "slot_axes": [
+                    {"axis_name": "LNG Plant Train", "axis_value": "Corpus Christi Stage 3 T1"},
+                    {"axis_name": "Year", "axis_value": 2026},
+                    {"axis_name": "Month", "axis_value": 8},
+                ],
+            },
+        ]
+        references = [
+            {
+                "candidate_key": "candidate_key-internal",
+                "slot_key": "slot-1",
+                "axes": {
+                    "LNG Plant Train": "Corpus Christi Stage 3 T1",
+                    "Year": 2026,
+                    "Month": 8,
+                },
+                "actual_basecase_value": 0.90738,
+                "lut_default_value": 0.90738,
+                "llm_reference_value": 0.90738,
+                "basecase_reference_id": "basecase-reference-internal",
+            },
+        ]
+        value_response = LLMValueProposalResponse(
+            parameter_adjustments=[
+                LLMValueAdjustment(
+                    candidate_key="candidate_key-internal",
+                    slot_values=[
+                        LLMValueCell(
+                            slot_key="slot-1",
+                            proposed_value=None,
+                            rationale_ko="적용 수치를 확정할 근거가 부족합니다.",
+                        ),
+                    ],
+                    rationale_ko="액화시설 가동률을 검토했습니다.",
+                ),
+            ],
+        )
+
+        async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
+            assert kwargs["output_schema"] is LLMValueProposalResponse
+            return SimpleNamespace(result=value_response, usage=None)
+
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario": {"scenario_id": 501, "scenario_group_id": 701},
+                "scenario_group": {
+                    "scenario_group_id": 701,
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+                "events": [{"mi_event_id": 101}],
+            },
+            candidate_mappings=[candidate],
+            slot_candidate_mappings=[candidate],
+            parameter_slots=slots,
+            effective_references=references,
+        )
+        with (
+            patch.object(
+                proposal_nodes,
+                "_build_value_proposal_prompt_packet",
+                return_value={"parameter_value_tasks": [{}]},
+            ),
+            patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
+            patch.object(proposal_nodes, "_debug_stage_payload"),
+        ):
+            with self.assertRaises(MIBaseError) as error:
+                await propose_parameter_values(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_PARAMETER_VALUE_TITLE,
+        )
+        assert "액화설비 가동률 파라미터와 모델 입력 위치" in error.exception.error_message
+        assert "기준값" in error.exception.error_message
 
     def test_confirmation_schema_accepts_valid_parameter_payload(self) -> None:
         payload = {
@@ -5014,6 +5309,90 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 },
             },
         ]
+
+    async def test_v4_semantic_failure_uses_same_clean_message_for_db_and_callback(self) -> None:
+        with pytest.raises(MIBaseError) as caught:
+            _raise_v4_semantic_empty_if_applicable(
+                stage="step2",
+                scenario_context={
+                    "scenario": {"scenario_id": 501, "scenario_group_id": 701},
+                    "scenario_group": {
+                        "scenario_group_id": 701,
+                        "generation_strategy": V4_GENERATION_STRATEGY,
+                    },
+                    "events": [{"mi_event_id": 101}],
+                },
+                candidates=[{"lever_label": "액화시설 가용성"}],
+            )
+        semantic_error = caught.value
+        _assert_v4_semantic_empty_error(
+            semantic_error,
+            expected_title=V4_NO_MODEL_INPUT_TITLE,
+        )
+
+        class FakeGraph:
+            async def ainvoke(self, state: ModelParameterProposalState, **kwargs: object) -> dict[str, object]:
+                assert state.scenario_id == 501
+                raise semantic_error
+
+        class FakeModelParameterService:
+            def __init__(self) -> None:
+                self.failures: list[dict[str, object]] = []
+
+            def complete_proposal_result(self, **kwargs: object) -> None:
+                raise AssertionError(f"unexpected proposal completion: {kwargs}")
+
+            def fail_proposal_result(self, **kwargs: object) -> None:
+                self.failures.append(kwargs)
+
+            def update_callback_status(self, **kwargs: object) -> None:
+                assert kwargs == {
+                    "model_param_proposal_id": 10001,
+                    "callback_status": "SUCCEEDED",
+                }
+
+        service = FakeModelParameterService()
+        sent_payloads: list[dict[str, object]] = []
+
+        async def fake_send_callback(_url: str, payload: object) -> None:
+            sent_payloads.append(payload.model_dump(by_alias=True))  # type: ignore[attr-defined]
+
+        settings = SimpleNamespace(
+            callback_base_url="https://callback.example",
+            callback_model_parameter_proposals_path="/scenarios/{scenario_id}/callback",
+            skip_callback=False,
+        )
+        fake_config_module = types.ModuleType("apps.common.configs.config")
+        fake_config_module.get_settings = lambda: settings
+
+        with (
+            patch.dict(sys.modules, {"apps.common.configs.config": fake_config_module}),
+            patch.object(propose_flow, "build_graph", return_value=FakeGraph()),
+            patch.object(propose_flow, "ModelParameterService", return_value=service),
+            patch.object(propose_flow, "send_callback", side_effect=fake_send_callback),
+        ):
+            await propose_flow.run_propose_parameters_background(
+                model_param_proposal_id=10001,
+                scenario_id=501,
+                scenario_group_id=701,
+                event_id=None,
+            )
+
+        assert service.failures == [
+            {
+                "model_param_proposal_id": 10001,
+                "error_code": "INVALID_REQUEST",
+                "error_message": semantic_error.error_message,
+            },
+        ]
+        assert sent_payloads[0]["message"] == semantic_error.error_message
+        assert sent_payloads[0]["data"] == {
+            "modelParamProposalId": 10001,
+            "scenarioId": 501,
+            "scenarioGroupId": 701,
+            "eventId": None,
+            "status": "FAILED",
+        }
 
     async def test_background_marks_callback_skipped_when_skip_callback_enabled(self) -> None:
         class FakeGraph:

@@ -272,8 +272,9 @@ def _validate_documents(  # noqa: C901
     if len(snapshot_master) != 21 or snapshot.get("master_count") != 21:
         message = "snapshot master count must be 21"
         raise RuntimeError(message)
-    if len(snapshot_mappings) != 129 or snapshot.get("mapping_count") != 129:
-        message = "snapshot dimension mapping count must be 129"
+    declared_mapping_count = snapshot.get("mapping_count")
+    if not isinstance(declared_mapping_count, int) or len(snapshot_mappings) != declared_mapping_count:
+        message = "snapshot dimension mapping count does not match its declared mapping_count"
         raise RuntimeError(message)
 
     canonical_by_id = _by_id(canonical_levers, "impact_lever_id")
@@ -346,8 +347,11 @@ def _assert_preconditions(  # noqa: C901
     if len(live_levers) != EXPECTED_LEVER_COUNT:
         message = f"live impact lever count must be 16, got {len(live_levers)}"
         raise RuntimeError(message)
-    if len(live_mappings) != 129:
-        message = f"live dimension mapping count must be 129, got {len(live_mappings)}"
+    if len(live_mappings) != len(snapshot_mappings):
+        message = (
+            "live dimension mapping count must match the selected snapshot, "
+            f"expected {len(snapshot_mappings)}, got {len(live_mappings)}"
+        )
         raise RuntimeError(message)
 
     snapshot_master_by_id = _by_id(snapshot_master, "model_param_id")

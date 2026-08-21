@@ -41,6 +41,40 @@ def _model_or_dict_dump(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+def _validate_v4_request_dimension_values(
+    state: ValidateScenariosState,
+    headers: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> None:
+    if (
+        state.scenario_group is None
+        or state.scenario_group.generation_strategy
+        != "multi_event_model_lever_dimensions"
+    ):
+        return
+    try:
+        scenario_service = ScenarioService()
+        template_by_key = scenario_service.build_group_dimension_template_by_key(
+            state.scenario_group.dimension_definitions,
+            require_catalog_value_ids=True,
+        )
+        scenario_service.validate_complete_dimension_headers(
+            template_by_key,
+            headers,
+        )
+        for row in rows:
+            scenario_service.cells_to_dimension_values_with_template(
+                template_by_key,
+                row.get("cells") or {},
+                require_complete_catalog_values=True,
+            )
+    except ValueError as exc:
+        raise MIBaseError(
+            ErrorCode.SCENARIO_VALIDATION_INPUT_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
 def load_scenario_group(state: ValidateScenariosState) -> dict[str, object]:
     if state.scenario_group_id is None:
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="scenario_group_id is required")
@@ -204,6 +238,8 @@ async def generate_dimension_values(
             for key, value in values.items():
                 if cells.get(key) is None:
                     cells[key] = value
+
+    _validate_v4_request_dimension_values(state, headers, rows)
 
     return validate_scenarios_state_update(request_table=request_table)
 

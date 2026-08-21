@@ -28,8 +28,17 @@ def _json_safe(value: Any) -> Any:
 
 class ModelParameterRepository(BaseSyncSQLRepository):
     def fetch_parameter_mapping_resources(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        parameter_definitions = self._fetch_model_parameter_definitions()
         mapping_rules = self._fetch_dimension_mapping_rules()
+        candidate_parameter_names = {
+            str(rule.get("canonical_parameter_name") or "")
+            for rule in mapping_rules
+            if rule.get("mapping_method") in {"direct", "routing"} and str(rule.get("canonical_parameter_name") or "")
+        }
+        parameter_definitions = [
+            definition
+            for definition in self._fetch_model_parameter_definitions()
+            if str(definition.get("canonical_parameter_name") or "") in candidate_parameter_names
+        ]
         return mapping_rules, parameter_definitions
 
     def fetch_model_parameter_definitions(self) -> list[dict[str, Any]]:

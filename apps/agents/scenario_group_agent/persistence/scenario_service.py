@@ -39,6 +39,46 @@ ScenarioDimensionValues = dict[str, Any]
 ScenarioDimensionTemplateByKey = dict[str, dict[str, Any]]
 
 
+def is_v4_model_lever_group(group: object | None) -> bool:
+    return (
+        group is not None
+        and getattr(group, "generation_strategy", None)
+        == "multi_event_model_lever_dimensions"
+    )
+
+
+def _resolve_catalog_dimension_value(
+    *,
+    dimension_key: str,
+    template: dict[str, Any],
+    value: object,
+) -> str:
+    if value is None or not str(value).strip():
+        message = f"v4 Scenario Dimension value is required: {dimension_key}"
+        raise ValueError(message)
+    value_text = str(value).strip()
+    valid_ids = {str(item) for item in template.get("value_ids") or []}
+    if value_text in valid_ids:
+        return value_text
+    matching_ids = [
+        str(item)
+        for item in (template.get("value_ids_by_label") or {}).get(value_text, [])
+    ]
+    if len(matching_ids) == 1:
+        return matching_ids[0]
+    if len(matching_ids) > 1:
+        message = (
+            "v4 Scenario Dimension label is ambiguous; send value_id instead: "
+            f"dimension={dimension_key}, label={value_text}"
+        )
+        raise ValueError(message)
+    message = (
+        "v4 Scenario selected an unknown Dimension value: "
+        f"dimension={dimension_key}, value={value_text}"
+    )
+    raise ValueError(message)
+
+
 class ScenarioSyncRowPayload(TypedDict, total=False):
     scenario_id: int | None
     display_order: int
@@ -106,6 +146,136 @@ def _normalize_decimal_scores_to_100(scores: list[Decimal]) -> list[Decimal]:
 
 
 class ScenarioService:
+    def build_group_dimension_template_by_key(
+        self,
+        dimension_definitions: list[dict[str, Any]],
+        *,
+        require_catalog_value_ids: bool = False,
+    ) -> ScenarioDimensionTemplateByKey:
+        if require_catalog_value_ids and not dimension_definitions:
+            raise ValueError("v4 Scenario Dimension definitions are required")
+
+        template_by_key: ScenarioDimensionTemplateByKey = {}
+        for index, definition in enumerate(dimension_definitions, start=1):
+            if not isinstance(definition, dict):
+                if require_catalog_value_ids:
+                    raise ValueError(
+                        "v4 Scenario Dimension definition must be an object: "
+                        f"index={index}",
+                    )
+                continue
+            dimension_id = str(
+                definition.get("dimension_id") or definition.get("dimensionId") or "",
+            ).strip()
+            if not dimension_id:
+                if require_catalog_value_ids:
+                    raise ValueError(
+                        "v4 Scenario Dimension definition is missing dimension_id: "
+                        f"index={index}",
+                    )
+                continue
+            if require_catalog_value_ids and dimension_id in template_by_key:
+                raise ValueError(
+                    "v4 Scenario Dimension definition contains duplicate dimension_id: "
+                    f"{dimension_id}",
+                )
+            value_ids: list[str] = []
+            value_ids_by_label: dict[str, list[str]] = {}
+            value_labels: list[str] = []
+            raw_values = definition.get("values")
+            if require_catalog_value_ids and not isinstance(raw_values, list):
+                raise ValueError(
+                    "v4 Scenario Dimension values must be an array: "
+                    f"dimension={dimension_id}",
+                )
+            if require_catalog_value_ids and not raw_values:
+                raise ValueError(
+                    "v4 Scenario Dimension values are required: "
+                    f"dimension={dimension_id}",
+                )
+            for value_index, value in enumerate(raw_values or [], start=1):
+                if not isinstance(value, dict):
+                    if require_catalog_value_ids:
+                        raise ValueError(
+                            "v4 Scenario Dimension value must be an object: "
+                            f"dimension={dimension_id}, index={value_index}",
+                        )
+                    continue
+                raw_value_id = value.get("value_id") or value.get("valueId")
+                if require_catalog_value_ids:
+                    value_id = str(raw_value_id or "").strip()
+                    if not value_id:
+                        raise ValueError(
+                            "v4 Scenario Dimension value is missing value_id: "
+                            f"dimension={dimension_id}, index={value_index}",
+                        )
+                    if value_id in value_ids:
+                        raise ValueError(
+                            "v4 Scenario Dimension contains duplicate value_id: "
+                            f"dimension={dimension_id}, value_id={value_id}",
+                        )
+                else:
+                    value_id = str(raw_value_id or value.get("label") or "").strip()
+                label = str(value.get("label") or value_id).strip()
+                if not value_id or not label:
+                    continue
+                value_ids.append(value_id)
+                value_labels.append(label)
+                value_ids_by_label.setdefault(label, []).append(value_id)
+            template_by_key[dimension_id] = {
+                "dim_key": dimension_id,
+                "label": definition.get("label") or dimension_id,
+                "description": definition.get("description") or definition.get("label") or dimension_id,
+                "required": definition.get("required", False),
+                "value_enums": value_labels,
+                "value_ids": value_ids,
+                "value_ids_by_label": value_ids_by_label,
+                "display_order": definition.get(
+                    "display_order",
+                    definition.get("displayOrder", index),
+                ),
+            }
+        return template_by_key
+
+    def validate_complete_dimension_headers(
+        self,
+        template_by_key: ScenarioDimensionTemplateByKey,
+        headers: list[ScenarioSyncHeaderPayload],
+    ) -> None:
+        header_keys: list[str] = []
+        for index, header in enumerate(headers, start=1):
+            if not isinstance(header, dict):
+                raise ValueError(
+                    "v4 Scenario Dimension header must be an object: "
+                    f"index={index}",
+                )
+            key = str(header.get("key") or "").strip()
+            if not key:
+                raise ValueError(
+                    "v4 Scenario Dimension header key is required: "
+                    f"index={index}",
+                )
+            header_keys.append(key)
+
+        duplicate_keys = sorted(
+            key for key in set(header_keys) if header_keys.count(key) > 1
+        )
+        if duplicate_keys:
+            raise ValueError(
+                "v4 Scenario Dimension headers contain duplicate keys: "
+                f"{', '.join(duplicate_keys)}",
+            )
+
+        expected_keys = set(template_by_key)
+        actual_keys = set(header_keys)
+        if actual_keys != expected_keys:
+            missing_keys = sorted(expected_keys - actual_keys)
+            unexpected_keys = sorted(actual_keys - expected_keys)
+            raise ValueError(
+                "v4 Scenario Dimension headers must match group definitions exactly: "
+                f"missing={missing_keys}, unexpected={unexpected_keys}",
+            )
+
     def load_dimension_template(self, event_type_l2_id: int) -> list["CommonScenarioTemplateDimension"]:
         from apps.persistence.scenario.schema import (
             ScenarioTemplateDimension as CommonScenarioTemplateDimension,
@@ -619,6 +789,7 @@ class ScenarioService:
             signpost_repository = SignpostRepository(session=session)
             group_repository = ScenarioGroupRepository(session=session)
             group = group_repository.fetch_by_id(scenario_group_id)
+            requires_v4_value_ids = is_v4_model_lever_group(group)
 
             scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
             scenarios_by_id = {int(scenario.scenario_id): scenario for scenario in scenarios}
@@ -627,33 +798,26 @@ class ScenarioService:
             updated_ids: list[int] = []
             unchanged_existing_ids: list[int] = []
             rows = table_payload.get("rows", []) or []
-            if dimension_definitions:
-                template_by_key = {
-                    str(definition["dimension_id"]): {
-                        "dim_key": definition["dimension_id"],
-                        "label": definition.get("label") or definition["dimension_id"],
-                        "description": definition.get("description")
-                        or definition.get("label")
-                        or definition["dimension_id"],
-                        "required": definition.get("required", False),
-                        "value_enums": [
-                            value.get("label") or value.get("value_id")
-                            for value in definition.get("values") or []
-                            if isinstance(value, dict)
-                        ],
-                        "display_order": definition.get(
-                            "display_order",
-                            999999,
-                        ),
-                    }
-                    for definition in dimension_definitions
-                }
+            if requires_v4_value_ids:
+                template_by_key = self.build_group_dimension_template_by_key(
+                    getattr(group, "dimension_definitions", None) or [],
+                    require_catalog_value_ids=True,
+                )
+            elif dimension_definitions:
+                template_by_key = self.build_group_dimension_template_by_key(
+                    dimension_definitions,
+                )
             elif event_type_l2_id is not None:
                 template_by_key = self._load_dimension_template_by_key(
                     event_type_l2_id,
                 )
             else:
                 raise ValueError("Scenario group dimension definitions are missing")
+            if requires_v4_value_ids:
+                self.validate_complete_dimension_headers(
+                    template_by_key,
+                    table_payload.get("headers", []) or [],
+                )
             new_rows = [row for row in rows if row.get("scenario_id") is None]
             if new_rows and len(new_row_details or []) != len(new_rows):
                 raise ValueError("Generated scenario details are required for every new scenario row")
@@ -671,6 +835,7 @@ class ScenarioService:
                         row=row,
                         user_id=user_id,
                         generated_details=generated_details,
+                        require_complete_catalog_values=requires_v4_value_ids,
                     )
                     inserted_ids.append(scenario_repository.insert_scenario(payload))
                     continue
@@ -684,6 +849,7 @@ class ScenarioService:
                     template_by_key=template_by_key,
                     row=row,
                     user_id=user_id,
+                    require_complete_catalog_values=requires_v4_value_ids,
                 )
                 if self._scenario_requires_update(scenario, payload):
                     scenario_repository.update_from_payload(scenario, payload)
@@ -771,11 +937,40 @@ class ScenarioService:
         self,
         template_by_key: ScenarioDimensionTemplateByKey,
         cells: dict[str, Any],
+        *,
+        require_complete_catalog_values: bool = False,
     ) -> ScenarioDimensionValues:
         converted: dict[str, Any] = {}
-        for key, value in cells.items():
-            if key in template_by_key:
+        cell_keys = {str(key) for key in cells}
+        if require_complete_catalog_values:
+            unknown_keys = sorted(cell_keys - set(template_by_key))
+            if unknown_keys:
+                message = (
+                    "v4 Scenario contains unknown Dimension keys: "
+                    f"{', '.join(unknown_keys)}"
+                )
+                raise ValueError(message)
+        for raw_key, value in cells.items():
+            key = str(raw_key)
+            template = template_by_key.get(key)
+            if template is None:
+                continue
+            if not require_complete_catalog_values:
                 converted[key] = value
+                continue
+            converted[key] = _resolve_catalog_dimension_value(
+                dimension_key=key,
+                template=template,
+                value=value,
+            )
+        if require_complete_catalog_values:
+            missing_keys = sorted(set(template_by_key) - set(converted))
+            if missing_keys:
+                message = (
+                    "v4 Scenario must select one value for every Dimension; missing: "
+                    f"{', '.join(missing_keys)}"
+                )
+                raise ValueError(message)
         return self._normalize_dimension_values_object(converted)
 
     def _row_to_existing_scenario_payload(
@@ -784,12 +979,14 @@ class ScenarioService:
         template_by_key: ScenarioDimensionTemplateByKey,
         row: ScenarioSyncRowPayload,
         user_id: int,
+        require_complete_catalog_values: bool = False,
     ) -> ExistingScenarioUpdatePayload:
         return {
             "title": (row.get("title") or "")[:255],
             "dimension_values": self.cells_to_dimension_values_with_template(
                 template_by_key,
                 row.get("cells") or {},
+                require_complete_catalog_values=require_complete_catalog_values,
             ),
             "display_order": int(row.get("display_order") or 0),
             "mod_usr_logn_id": user_id,
@@ -803,6 +1000,7 @@ class ScenarioService:
         row: ScenarioSyncRowPayload,
         user_id: int,
         generated_details: NewScenarioGeneratedDetails,
+        require_complete_catalog_values: bool = False,
     ) -> NewScenarioInsertPayload:
         return {
             "scenario_group_id": scenario_group_id,
@@ -812,6 +1010,7 @@ class ScenarioService:
             "dimension_values": self.cells_to_dimension_values_with_template(
                 template_by_key,
                 row.get("cells") or {},
+                require_complete_catalog_values=require_complete_catalog_values,
             ),
             "display_order": int(row.get("display_order") or 0),
             "baseline_yn": "N",

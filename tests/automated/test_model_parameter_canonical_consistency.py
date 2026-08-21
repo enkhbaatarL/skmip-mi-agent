@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -10,24 +12,55 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
+import pytest
 import yaml
+
+from scripts.model_parameter.apply_model_parameter_v4 import (
+    _validate_documents,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
-SNAPSHOT_PATH = ROOT_DIR / "scripts/model_parameter/snapshots/external_dev_before_20260807.json"
+CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
+LEGACY_MAPPING_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
+IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
+SNAPSHOT_PATH = ROOT_DIR / "scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json"
 CANONICAL_DOC_PATH = ROOT_DIR / "apps/agents/model_parameter_agent/resources/Model_Parameter_Base_Case_Mapping.md"
 LUT_ROOT = ROOT_DIR / "apps/agents/model_parameter_agent/resources/lut"
 MAPPING_ROOT = ROOT_DIR / "apps/agents/model_parameter_agent/resources/mapping"
 CURRENT_MAPPING_WORKBOOK_PATH = (
-    MAPPING_ROOT / "260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx"
+    MAPPING_ROOT / "260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx"
+)
+ARCHIVED_V1_WORKBOOK_PATH = (
+    MAPPING_ROOT / "archive/260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx"
 )
 ARCHIVED_MAPPING_WORKBOOK_NAMES = {
     "260625_시나리오가정_MI수급모델_input_매핑_vfShare_agent.xlsx",
     "260702_시나리오가정_MI수급모델_input_매핑_모델파트수정_v0.4.xlsx",
+    "260807_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v1.xlsx",
 }
 
 EXPECTED_ACTIVE_PARAMETER_NAMES = frozenset(
+    {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "Population",
+        "User-Adjusted Gas Demand",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
+        "LiqUtilAdjustment",
+        "PipelineAdjustment",
+        "RegasAdjustment",
+        "SupplyDisruption",
+        "PNG Contract Volume",
+        "RemainingUnrestrictedAmount",
+        "ShippingCost",
+        "VolumeCancelled",
+    },
+)
+EXPECTED_LUT_BACKED_PARAMETER_NAMES = frozenset(
     {
         "GDP",
         "PMI",
@@ -41,9 +74,48 @@ EXPECTED_ACTIVE_PARAMETER_NAMES = frozenset(
         "SupplyDisruption",
     },
 )
+EXPECTED_BASECASE_ONLY_PARAMETER_NAMES = frozenset(
+    {
+        "User-Adjusted Gas Demand",
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "RemainingUnrestrictedAmount",
+        "ShippingCost",
+        "VolumeCancelled",
+    },
+)
+EXPECTED_INACTIVE_PARAMETER_NAMES = frozenset(
+    {
+        "CDD",
+        "Coal Futures Price",
+        "Gas Futures Price",
+        "HDD",
+        "ElectrificationRate",
+    },
+)
 DEFERRED_SPECS = {"Coal Futures Price", "Gas Futures Price"}
-EXPECTED_METHOD_COUNTS = {"direct": 35, "routing": 6, "indirect": 55, "na": 33}
-EXPECTED_RESTORED_IDS = {2, 5, 9, 16, 18, 23, 66, 68, 70, 96, 97, 106, 107}
+EXPECTED_V4_SNAPSHOT_METHOD_COUNTS = {"direct": 25, "routing": 2, "indirect": 55, "na": 46}
+EXPECTED_V4_SNAPSHOT_CANDIDATE_PARAMETER_NAMES = {
+    "GDP",
+    "PMI",
+    "PowerMix",
+    "Temperature",
+    "LiqUtilAdjustment",
+}
+EXPECTED_SHARED_METHOD_COUNTS = {"direct": 35, "routing": 6, "indirect": 55, "na": 33}
+EXPECTED_SHARED_CANDIDATE_PARAMETER_NAMES = {
+    "GDP",
+    "PMI",
+    "PowerMix",
+    "Temperature",
+    "Population",
+    "HurricaneIntensity",
+    "LiqProdAdjustment",
+    "LiqUtilAdjustment",
+    "PipelineAdjustment",
+    "SupplyDisruption",
+}
+EXPECTED_SHARED_MAPPING_SHA256 = "1c365c37184eb8a4141a996d2d298072bc8be58b22bc8d86c4116e0fc1f23dc4"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -132,49 +204,59 @@ def test_canonical_master_and_dimension_mapping_invariants() -> None:
     master = canonical["master"]
     mappings = canonical["dimension_mappings"]
 
-    assert canonical["canonical_version"] == "model-parameter-canonical-v1"
+    assert canonical["canonical_version"] == "model-parameter-canonical-v4"
     assert canonical["generated_from_snapshot"] == (
-        "scripts/model_parameter/snapshots/external_dev_before_20260807.json"
+        "scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json"
     )
     assert canonical["master_count"] == len(master) == 21
-    assert canonical["mapping_count"] == len(mappings) == 129
+    assert canonical["mapping_count"] == len(mappings) == 128
     assert snapshot["master_count"] == len(snapshot["master"]) == 21
     assert snapshot["mapping_count"] == len(snapshot["dimension_mappings"]) == 128
+    assert mappings == snapshot["dimension_mappings"]
+    mapping_payload = json.dumps(
+        mappings,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert (
+        canonical["legacy_dimension_mapping_sha256"]
+        == hashlib.sha256(
+            mapping_payload,
+        ).hexdigest()
+    )
 
     active_rows = [row for row in master if row["use_yn"] == "Y" and row["del_yn"] == "N"]
+    inactive_rows = [row for row in master if row["use_yn"] == "N" and row["del_yn"] == "N"]
     assert {row["parameter_name"] for row in active_rows} == EXPECTED_ACTIVE_PARAMETER_NAMES
     assert set(canonical["active_parameter_names"]) == EXPECTED_ACTIVE_PARAMETER_NAMES
-    assert Counter(row["mapping_method"] for row in mappings) == EXPECTED_METHOD_COUNTS
+    assert {row["parameter_name"] for row in inactive_rows} == EXPECTED_INACTIVE_PARAMETER_NAMES
+    assert set(canonical["inactive_parameter_names"]) == EXPECTED_INACTIVE_PARAMETER_NAMES
+    assert EXPECTED_ACTIVE_PARAMETER_NAMES == (
+        EXPECTED_LUT_BACKED_PARAMETER_NAMES | EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+    )
+    assert not (EXPECTED_LUT_BACKED_PARAMETER_NAMES & EXPECTED_BASECASE_ONLY_PARAMETER_NAMES)
+    assert Counter(row["mapping_method"] for row in mappings) == EXPECTED_V4_SNAPSHOT_METHOD_COUNTS
 
     identified = {
         row["model_param_dimension_map_id"] for row in mappings if row["model_param_dimension_map_id"] is not None
     }
     assert identified == set(range(1, 129))
-    restored = {
-        row["model_param_dimension_map_id"]
-        for row in mappings
-        if row["model_param_dimension_map_id"] in EXPECTED_RESTORED_IDS
-    }
-    assert restored == EXPECTED_RESTORED_IDS
-
-    population_rows = [
-        row
-        for row in mappings
-        if (
-            row["event_type_l2_id"],
-            row["dimension_key"],
-            row["model_param_id"],
-        )
-        == (21, "economic_intensity", 11)
-    ]
-    assert len(population_rows) == 1
-    assert population_rows[0]["mapping_method"] == "routing"
-    assert "인구·이민·인구전망" in population_rows[0]["comment"]
-    assert "GDP·PMI" in population_rows[0]["comment"]
 
     active_by_id = {row["model_param_id"]: row for row in active_rows}
     candidate_rows = [row for row in mappings if row["mapping_method"] in {"direct", "routing"}]
-    assert {row["model_param_id"] for row in candidate_rows} == set(active_by_id)
+    assert {
+        active_by_id[row["model_param_id"]]["parameter_name"] for row in candidate_rows
+    } == EXPECTED_V4_SNAPSHOT_CANDIDATE_PARAMETER_NAMES
+    basecase_only_ids = {
+        row["model_param_id"] for row in active_rows if row["parameter_name"] in EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+    }
+    assert not {row["model_param_id"] for row in candidate_rows} & basecase_only_ids
+    assert not [
+        row
+        for row in mappings
+        if row["model_param_id"] in basecase_only_ids and row["mapping_method"] in {"direct", "routing"}
+    ]
     assert all(row["model_param_id"] in active_by_id for row in candidate_rows)
     assert all(row["model_param_id"] is None or row["model_param_id"] in active_by_id for row in mappings)
     assert all(row["use_yn"] == "Y" and row["del_yn"] == "N" for row in mappings)
@@ -190,7 +272,74 @@ def test_canonical_master_and_dimension_mapping_invariants() -> None:
     for template in snapshot["scenario_dimension_templates"]:
         if template["del_yn"] != "N":
             continue
-        for dimension in json.loads(template["template_json"]):
+        template_json = template["template_json"]
+        dimensions = json.loads(template_json) if isinstance(template_json, str) else template_json
+        for dimension in dimensions:
+            template_keys.add((template["event_type_l2_id"], dimension["dim_key"]))
+    mapping_keys = {(row["event_type_l2_id"], row["dimension_key"]) for row in mappings}
+    assert mapping_keys <= template_keys
+
+
+def test_shared_v1_v3_mapping_invariants_against_v4_master() -> None:
+    parameter_canonical = _load_json(CANONICAL_PATH)
+    mapping_canonical = _load_json(LEGACY_MAPPING_CANONICAL_PATH)
+    snapshot = _load_json(SNAPSHOT_PATH)
+    master = parameter_canonical["master"]
+    mappings = mapping_canonical["dimension_mappings"]
+
+    assert mapping_canonical["canonical_version"] == "model-parameter-canonical-v1"
+    assert mapping_canonical["mapping_count"] == len(mappings) == 129
+    assert Counter(row["mapping_method"] for row in mappings) == EXPECTED_SHARED_METHOD_COUNTS
+    assert all(row["use_yn"] == "Y" and row["del_yn"] == "N" for row in mappings)
+
+    mapping_payload = json.dumps(
+        mappings,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(mapping_payload).hexdigest() == EXPECTED_SHARED_MAPPING_SHA256
+
+    identified = {
+        row["model_param_dimension_map_id"]
+        for row in mappings
+        if row["model_param_dimension_map_id"] is not None
+    }
+    assert identified == set(range(1, 129))
+    assert sum(row["model_param_dimension_map_id"] is None for row in mappings) == 1
+
+    active_by_id = {
+        row["model_param_id"]: row
+        for row in master
+        if row["use_yn"] == "Y" and row["del_yn"] == "N"
+    }
+    candidate_rows = [row for row in mappings if row["mapping_method"] in {"direct", "routing"}]
+    assert {
+        active_by_id[row["model_param_id"]]["parameter_name"] for row in candidate_rows
+    } == EXPECTED_SHARED_CANDIDATE_PARAMETER_NAMES
+    assert all(row["model_param_id"] is None or row["model_param_id"] in active_by_id for row in mappings)
+
+    basecase_only_ids = {
+        row["model_param_id"]
+        for row in active_by_id.values()
+        if row["parameter_name"] in EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+    }
+    assert not {row["model_param_id"] for row in candidate_rows} & basecase_only_ids
+
+    non_null_keys = [
+        (row["event_type_l2_id"], row["dimension_key"], row["model_param_id"])
+        for row in mappings
+        if row["model_param_id"] is not None
+    ]
+    assert len(non_null_keys) == len(set(non_null_keys))
+
+    template_keys: set[tuple[int, str]] = set()
+    for template in snapshot["scenario_dimension_templates"]:
+        if template["del_yn"] != "N":
+            continue
+        template_json = template["template_json"]
+        dimensions = json.loads(template_json) if isinstance(template_json, str) else template_json
+        for dimension in dimensions:
             template_keys.add((template["event_type_l2_id"], dimension["dim_key"]))
     mapping_keys = {(row["event_type_l2_id"], row["dimension_key"]) for row in mappings}
     assert mapping_keys <= template_keys
@@ -224,9 +373,12 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     lut = local_resources["lut"]
     enabled_names = {name for name, spec in lut.items() if spec.get("enabled", True)}
     disabled_names = {name for name, spec in lut.items() if not spec.get("enabled", True)}
-    assert enabled_names == active_names == EXPECTED_ACTIVE_PARAMETER_NAMES
+    assert active_names == EXPECTED_ACTIVE_PARAMETER_NAMES
+    assert enabled_names == EXPECTED_LUT_BACKED_PARAMETER_NAMES
+    assert active_names >= EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+    assert not (EXPECTED_BASECASE_ONLY_PARAMETER_NAMES & set(lut))
     assert disabled_names == DEFERRED_SPECS
-    assert "ElectrificationRate" not in lut
+    assert {"CDD", "HDD", "ElectrificationRate"}.isdisjoint(lut)
     assert set(lut) <= set(master_by_name)
     for name, parameter_spec in lut.items():
         assert parameter_spec["enabled"] is (master_by_name[name]["use_yn"] == "Y")
@@ -234,9 +386,17 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     document_lut_rows = _parse_markdown_table(document, "## LUT canonical 명세")
     document_lut_by_name = {row["parameter"]: row for row in document_lut_rows}
     assert len(document_lut_by_name) == len(document_lut_rows)
-    assert set(document_lut_by_name) == active_names
+    assert set(document_lut_by_name) == EXPECTED_LUT_BACKED_PARAMETER_NAMES
 
-    for name in active_names:
+    document_basecase_rows = _parse_markdown_table(
+        document,
+        "### Basecase-only canonical",
+    )
+    document_basecase_by_name = {row["parameter"]: row for row in document_basecase_rows}
+    assert len(document_basecase_by_name) == len(document_basecase_rows) == 6
+    assert set(document_basecase_by_name) == EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+
+    for name in EXPECTED_LUT_BACKED_PARAMETER_NAMES:
         parameter_spec = lut[name]
         document_spec = document_lut_by_name[name]
         documented_adapter, documented_layout = _split_adapter_label(document_spec["adapter"])
@@ -297,9 +457,12 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
 
 def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     canonical = _load_json(CANONICAL_PATH)
+    mapping_canonical = _load_json(LEGACY_MAPPING_CANONICAL_PATH)
+    impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
     assert {path.name for path in MAPPING_ROOT.glob("*.xlsx")} == {CURRENT_MAPPING_WORKBOOK_PATH.name}
     archive_root = MAPPING_ROOT / "archive"
     assert {path.name for path in archive_root.glob("*.xlsx")} == ARCHIVED_MAPPING_WORKBOOK_NAMES
+    assert ARCHIVED_V1_WORKBOOK_PATH.is_file()
     assert (archive_root / "README.md").is_file()
 
     workbook = load_workbook(CURRENT_MAPPING_WORKBOOK_PATH, read_only=False, data_only=False)
@@ -307,6 +470,7 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
         "0. Canonical Overview",
         "Parameter Excel Mapping",
         "Dimension Parameter Mapping",
+        "Impact Lever Bindings",
         "LUT Resource Manifest",
         "Conflict Resolution",
     ]
@@ -323,10 +487,16 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
 
     parameter_names = {row["model_param_id"]: row["parameter_name"] for row in canonical["master"]}
     expected_mappings: list[dict[str, Any]] = []
-    for source in canonical["dimension_mappings"]:
+    next_mapping_id = max(
+        row["model_param_dimension_map_id"]
+        for row in mapping_canonical["dimension_mappings"]
+        if row["model_param_dimension_map_id"] is not None
+    ) + 1
+    for source in mapping_canonical["dimension_mappings"]:
         expected = dict(source)
         if expected["model_param_dimension_map_id"] is None:
-            expected["model_param_dimension_map_id"] = 129
+            expected["model_param_dimension_map_id"] = next_mapping_id
+            next_mapping_id += 1
         expected["parameter_name"] = parameter_names.get(expected["model_param_id"])
         expected_mappings.append(expected)
 
@@ -335,20 +505,50 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     assert dimension_sheet.max_row == 130
     assert len(dimension_sheet.tables) == 1
     assert dimension_rows == expected_mappings
-    assert Counter(row["mapping_method"] for row in dimension_rows) == EXPECTED_METHOD_COUNTS
+    assert Counter(row["mapping_method"] for row in dimension_rows) == EXPECTED_SHARED_METHOD_COUNTS
 
     overview = workbook["0. Canonical Overview"]
-    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [21, 10, 129, 10]
+    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [21, 16, 129, 10]
     lut_rows = _worksheet_dicts(workbook["LUT Resource Manifest"])
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "active"} == (
-        EXPECTED_ACTIVE_PARAMETER_NAMES
+        EXPECTED_LUT_BACKED_PARAMETER_NAMES
     )
-    assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred"} == (
-        DEFERRED_SPECS
+    assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "basecase-only"} == (
+        EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
     )
+    assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred"} == (DEFERRED_SPECS)
+    assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred-no-lut"} == {
+        "ElectrificationRate",
+    }
+
+    lever_rows = _worksheet_dicts(workbook["Impact Lever Bindings"])
+    assert len(lever_rows) == impact_canonical["expected_counts"]["binding_occurrences"] == 20
+    assert Counter(row["effective_support_status"] for row in lever_rows) == {
+        "executable": 18,
+        "known_unsupported:INACTIVE_MODEL_PARAMETER": 2,
+    }
     assert {
-        row["parameter_or_resource"] for row in lut_rows if row["classification"] == "deferred-no-lut"
-    } == {"ElectrificationRate"}
+        row["parameter_name"] for row in lever_rows if row["effective_support_status"] == "executable"
+    } == EXPECTED_ACTIVE_PARAMETER_NAMES
+    assert {row["parameter_name"] for row in lever_rows if row["effective_support_status"] != "executable"} == {
+        "CDD",
+        "HDD",
+    }
+    assert len(workbook["Impact Lever Bindings"].tables) == 1
+
+    archived_v1 = load_workbook(
+        ARCHIVED_V1_WORKBOOK_PATH,
+        read_only=False,
+        data_only=False,
+    )
+    assert "Impact Lever Bindings" not in archived_v1.sheetnames
+    archived_overview = archived_v1["0. Canonical Overview"]
+    assert [archived_overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [
+        21,
+        10,
+        129,
+        10,
+    ]
 
     excel_error_markers = {"#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A"}
     assert not {
@@ -360,16 +560,20 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     }
 
 
-def test_canonical_document_and_apply_artifacts_are_versioned_and_complete() -> None:
+def test_canonical_document_and_combined_apply_runner_are_versioned_and_complete() -> None:
     canonical = _load_json(CANONICAL_PATH)
+    impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
     document = CANONICAL_DOC_PATH.read_text(encoding="utf-8")
-    runner = (ROOT_DIR / "scripts/model_parameter/apply_canonical.py").read_text(encoding="utf-8")
-    sql = (ROOT_DIR / "scripts/model_parameter/apply_model_parameter_canonical_v1.sql").read_text(encoding="utf-8")
+    runner_path = ROOT_DIR / "scripts/model_parameter/apply_model_parameter_v4.py"
+    runner = runner_path.read_text(encoding="utf-8")
 
-    assert "model-parameter-canonical-v1" in document
-    assert "master: 21행, 활성 10행" in document
-    assert "dimension mapping: 129행" in document
+    assert "model-parameter-canonical-v4" in document
+    assert "model-impact-lever-canonical-v4" in document
+    assert "master: 21행, 활성 16행" in document
+    assert "shared legacy dimension mapping: 129행" in document
     assert "direct 35, routing 6, indirect 55, na 33" in document
+    assert "LUT-backed 10개, Basecase-only 6개" in document
+    assert "binding occurrence 20개, effective executable occurrence 18개/고유 활성 parameter 16개" in document
     document_master_rows = _parse_markdown_table(document, "## 최종 master")
     document_master_by_id = {int(row["ID"]): row for row in document_master_rows}
     assert len(document_master_by_id) == len(document_master_rows) == canonical["master_count"]
@@ -379,27 +583,45 @@ def test_canonical_document_and_apply_artifacts_are_versioned_and_complete() -> 
         assert document_row["parameter_name"] == canonical_row["parameter_name"]
         assert document_row["parameter_hint"] == canonical_row["parameter_hint"]
 
+    assert runner_path.is_file()
+    assert 'MODEL_PARAMETER_VERSION = "model-parameter-canonical-v4"' in runner
+    assert 'IMPACT_LEVER_VERSION = "model-impact-lever-canonical-v4"' in runner
+    assert "EXPECTED_BINDING_COUNT = 20" in runner
+    assert "EXPECTED_EFFECTIVE_EXECUTABLE_COUNT = 18" in runner
+    assert "EXPECTED_EFFECTIVE_UNIQUE_PARAMETER_COUNT = 16" in runner
+    assert "def _assert_mapping_unchanged(" in runner
+    assert "def _assert_cross_table_invariants(" in runner
+    assert "def _assert_read_back(" in runner
+    assert "--model-parameter-canonical" in runner
+    assert "--impact-lever-canonical" in runner
+    assert "--snapshot" in runner
     assert "--apply" in runner
     assert "session.rollback()" in runner
     assert "FOR UPDATE" in runner
     assert "FOR SHARE" in runner
-    assert "FOR SHARE" in sql
-    assert 'if column not in {"model_param_dimension_map_id", "crt_dtm"}' in runner
-    assert "START TRANSACTION" in sql
-    assert "DECLARE EXIT HANDLER FOR SQLEXCEPTION" in sql
-    assert "ROLLBACK" in sql
-    assert "ALTER TABLE" not in sql
-    assert "`comment`, crt_usr_logn_id, mod_usr_logn_id, del_yn" in sql
-    assert "d.dimension_label <=> '강도'" in sql
-    assert "d.crt_usr_logn_id <=> 'model-parameter-canonical-v1'" in sql
-    assert "AND crt_usr_logn_id = 'model-parameter-canonical-v1'" in sql
-    assert "expected exactly 10 active parameters" in sql
-    assert "expected 129 mappings" in sql
-    assert "JSON_TABLE" in sql
-    assert " unit " not in sql.lower()
+    assert "dry-run rollback did not preserve the exact pre-transaction table state" in runner
+
+    snapshot = _load_json(SNAPSHOT_PATH)
+    validated = _validate_documents(
+        canonical,
+        impact_canonical,
+        snapshot,
+        snapshot_path=SNAPSHOT_PATH,
+    )
+    assert tuple(len(rows) for rows in validated) == (21, 128, 16, 21, 128, 16, 21)
+
+    invalid_impact = deepcopy(impact_canonical)
+    invalid_impact["impact_levers"][0]["parameter_bindings"][0]["parameter_name"] = "UnknownParameter"
+    with pytest.raises(RuntimeError):
+        _validate_documents(
+            canonical,
+            invalid_impact,
+            snapshot,
+            snapshot_path=SNAPSHOT_PATH,
+        )
 
 
-def test_operator_docs_do_not_reintroduce_the_previous_five_parameter_state() -> None:
+def test_operator_docs_do_not_reintroduce_pre_v4_active_or_legacy_mapping_state() -> None:
     canonical_docs = [
         ROOT_DIR / "README.md",
         ROOT_DIR / "apps/agents/model_parameter_agent/docs/01_MODEL_PARAMETER_AGENT_OVERVIEW.md",
@@ -411,11 +633,17 @@ def test_operator_docs_do_not_reintroduce_the_previous_five_parameter_state() ->
     stale_phrases = (
         "현재 활성 5개",
         "현재 활성 항목은 다음 5개",
-        "현재 연결 128건",
+        "master: 21행, 활성 10행",
         "LiqProd master는 비활성",
         "현재 미사용인 `LiqProdAdjustment`",
     )
     for path in canonical_docs:
         content = path.read_text(encoding="utf-8")
-        assert all(parameter_name in content for parameter_name in EXPECTED_ACTIVE_PARAMETER_NAMES)
         assert not any(phrase in content for phrase in stale_phrases)
+
+    readme = canonical_docs[0].read_text(encoding="utf-8")
+    assert "master 21행·활성 16개" in readme
+    assert all(parameter_name in readme for parameter_name in EXPECTED_BASECASE_ONLY_PARAMETER_NAMES)
+    for path in canonical_docs[1:]:
+        content = path.read_text(encoding="utf-8")
+        assert all(parameter_name in content for parameter_name in EXPECTED_ACTIVE_PARAMETER_NAMES)

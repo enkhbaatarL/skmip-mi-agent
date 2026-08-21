@@ -17,6 +17,7 @@ ModelSupportIssueReasonCode = Literal[
     "INACTIVE_MODEL_PARAMETER",
     "CATALOG_MARKED_UNSUPPORTED",
     "PRICE_ONLY",
+    "UNCHANGED_LEVER_STATE",
 ]
 
 

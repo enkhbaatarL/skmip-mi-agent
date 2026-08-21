@@ -68,7 +68,16 @@ def confirm_outputs(state: ConfirmGenerationState) -> dict[str, object]:
         user_id=effective_user_id,
     )
     if result.get("status") != "success":
-        raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail=result.get("message", "Confirmation failed"))
+        raw_error_code = result.get("error_code")
+        error_code = (
+            ErrorCode.__members__.get(str(raw_error_code), ErrorCode.UNKNOWN_ERROR)
+            if raw_error_code
+            else ErrorCode.UNKNOWN_ERROR
+        )
+        raise MIBaseError(
+            error_code,
+            detail=result.get("message", "Confirmation failed"),
+        )
     return confirm_generation_state_update(
         snapshot_id=result["snapshot_id"],
         scenario_group=result["group"],

@@ -10,11 +10,11 @@ from typing import Any
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-IMPACT_LEVER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v3.json"
-MODEL_PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
+IMPACT_LEVER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
+MODEL_PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
 
-EXPECTED_CANONICAL_VERSION = "model-impact-lever-canonical-v3"
-EXPECTED_CATALOG_VERSION = "v3"
+EXPECTED_CANONICAL_VERSION = "model-impact-lever-canonical-v4"
+EXPECTED_CATALOG_VERSION = "v4"
 EXPECTED_IMPACT_LEVER_IDS = frozenset(range(1, 17))
 EXPECTED_LEVER_DOMAINS = {
     "weather_demand": "demand",
@@ -41,8 +41,12 @@ EXPECTED_BINDING_ROLES_BY_LEVER = {
         "CDD": "alternative",
     },
     "power_generation_mix": {"PowerMix": "primary"},
-    "economic_activity": {"GDP": "primary", "PMI": "alternative"},
-    "direct_gas_demand": {},
+    "economic_activity": {
+        "GDP": "primary",
+        "PMI": "alternative",
+        "Population": "alternative",
+    },
+    "direct_gas_demand": {"User-Adjusted Gas Demand": "primary"},
     "upstream_production": {"SupplyDisruption": "primary"},
     "liquefaction_availability": {
         "LiqUtilAdjustment": "primary",
@@ -53,8 +57,14 @@ EXPECTED_BINDING_ROLES_BY_LEVER = {
     "pipeline_capacity": {"PipelineAdjustment": "primary"},
     "shipping_cost": {"ShippingCost": "primary"},
     "route_disruption": {"ShippingCost": "primary"},
-    "contract_volume": {},
-    "trade_restriction": {},
+    "contract_volume": {
+        "VolumeCancelled": "primary",
+        "PNG Contract Volume": "alternative",
+    },
+    "trade_restriction": {
+        "RemainingUnrestrictedAmount": "primary",
+        "VolumeCancelled": "alternative",
+    },
     "inventory_condition": {},
     "regional_price_spread": {},
     "financial_market_sentiment": {},
@@ -66,35 +76,38 @@ EXPECTED_ACTIVE_PARAMETER_NAMES = frozenset(
         "PowerMix",
         "Temperature",
         "Population",
+        "User-Adjusted Gas Demand",
         "HurricaneIntensity",
         "LiqProdAdjustment",
         "LiqUtilAdjustment",
         "PipelineAdjustment",
-        "SupplyDisruption",
-    },
-)
-EXPECTED_EFFECTIVE_EXECUTABLE_NAMES = EXPECTED_ACTIVE_PARAMETER_NAMES - {"Population"}
-EXPECTED_CATALOG_CAPABILITY_NAMES = frozenset(
-    {
-        "CDD",
-        "HDD",
         "RegasAdjustment",
+        "SupplyDisruption",
+        "PNG Contract Volume",
+        "RemainingUnrestrictedAmount",
         "ShippingCost",
+        "VolumeCancelled",
     },
 )
+EXPECTED_EFFECTIVE_EXECUTABLE_NAMES = EXPECTED_ACTIVE_PARAMETER_NAMES
+EXPECTED_CATALOG_CAPABILITY_NAMES = frozenset({"CDD", "HDD"})
 EXPECTED_COUNTS = {
     "impact_levers": 16,
-    "raw_executable_binding_occurrences": 14,
-    "effective_executable_binding_occurrences": 9,
-    "effective_known_unsupported_binding_occurrences": 5,
-    "binding_occurrences": 14,
+    "binding_occurrences": 20,
+    "raw_executable_binding_occurrences": 20,
+    "effective_executable_binding_occurrences": 18,
+    "effective_known_unsupported_binding_occurrences": 2,
+    "effective_executable_unique_parameter_names": 16,
 }
 EXPECTED_TOP_LEVEL_KEYS = {
     "canonical_version",
     "catalog_version",
     "audit_user",
     "generated_from_snapshot",
+    "generated_from_canonical",
     "snapshot_sha256",
+    "source_canonical_sha256",
+    "hydrated_catalog_checksum",
     "impact_lever_count",
     "expected_counts",
     "active_parameter_names",
@@ -130,7 +143,7 @@ def _non_empty_string(value: object, *, field: str) -> str:
     return value
 
 
-def test_impact_lever_canonical_v3_catalog_rows_are_complete_and_unique() -> None:
+def test_impact_lever_canonical_v4_catalog_rows_are_complete_and_unique() -> None:
     canonical = _load_json(IMPACT_LEVER_CANONICAL_PATH)
     impact_levers = canonical["impact_levers"]
 
@@ -149,6 +162,18 @@ def test_impact_lever_canonical_v3_catalog_rows_are_complete_and_unique() -> Non
             (ROOT_DIR / generated_from_snapshot).read_bytes(),
         ).hexdigest()
     )
+    generated_from_canonical = _non_empty_string(
+        canonical["generated_from_canonical"],
+        field="generated_from_canonical",
+    )
+    assert (ROOT_DIR / generated_from_canonical).is_file()
+    assert (
+        canonical["source_canonical_sha256"]
+        == hashlib.sha256(
+            (ROOT_DIR / generated_from_canonical).read_bytes(),
+        ).hexdigest()
+    )
+    assert len(_non_empty_string(canonical["hydrated_catalog_checksum"], field="hydrated_catalog_checksum")) == 64
     assert canonical["expected_counts"] == EXPECTED_COUNTS
     assert canonical["impact_lever_count"] == len(impact_levers) == EXPECTED_COUNTS["impact_levers"]
     assert isinstance(impact_levers, list)
@@ -240,8 +265,9 @@ def test_raw_bindings_preserve_catalog_capability_and_match_master_authority() -
         EXPECTED_EFFECTIVE_EXECUTABLE_NAMES
     )
     assert {name for name in raw_names if master_by_name[name]["use_yn"] == "N"} == (EXPECTED_CATALOG_CAPABILITY_NAMES)
-    assert "Population" not in raw_names
     assert Counter(raw_names)["ShippingCost"] == 2
+    assert Counter(raw_names)["VolumeCancelled"] == 2
+    assert set(raw_names) >= EXPECTED_ACTIVE_PARAMETER_NAMES
 
 
 def test_model_parameter_review_exactly_covers_master_and_binding_decisions() -> None:
@@ -287,9 +313,9 @@ def test_model_parameter_review_exactly_covers_master_and_binding_decisions() ->
         _non_empty_string(review["reason"], field=f"{parameter_name}.reason")
         decision_counts[review["binding_decision"]] += 1
 
-    assert decision_counts == {"executable": 9, "catalog_capability": 4, "unbound": 8}
-    assert review_by_name["Population"]["binding_decision"] == "unbound"
-    assert review_by_name["Population"]["lever_codes"] == []
+    assert decision_counts == {"executable": 16, "catalog_capability": 2, "unbound": 3}
+    assert review_by_name["Population"]["binding_decision"] == "executable"
+    assert review_by_name["Population"]["lever_codes"] == ["economic_activity"]
     assert {
         name for name, review in review_by_name.items() if review["binding_decision"] == "catalog_capability"
     } == EXPECTED_CATALOG_CAPABILITY_NAMES

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
+    is_v4_model_lever_group,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -1087,6 +1088,16 @@ class ScenarioGroupService:
             event_relation = group_repository.fetch_single_active_group_event(scenario_group_id)
 
             rows = table_payload.get("rows", [])
+            scenario_service = ScenarioService()
+            requires_v4_value_ids = is_v4_model_lever_group(group)
+            group_dimension_template = (
+                scenario_service.build_group_dimension_template_by_key(
+                    group.dimension_definitions,
+                    require_catalog_value_ids=True,
+                )
+                if requires_v4_value_ids
+                else {}
+            )
             normalized_scores = (
                 {}
                 if getattr(group, "generation_strategy", None)
@@ -1106,15 +1117,31 @@ class ScenarioGroupService:
                         "status": "failure",
                         "message": f"Scenario does not belong to group: {scenario_id}",
                     }
-                if getattr(group, "dimension_definitions", None):
-                    dimension_values = {str(key): value for key, value in row["cells"].items()}
+                if requires_v4_value_ids:
+                    try:
+                        dimension_values = scenario_service.cells_to_dimension_values_with_template(
+                            group_dimension_template,
+                            row["cells"],
+                            require_complete_catalog_values=True,
+                        )
+                    except ValueError as exc:
+                        session.rollback()
+                        return {
+                            "status": "failure",
+                            "message": str(exc),
+                            "error_code": ErrorCode.INVALID_REQUEST.name,
+                        }
+                elif getattr(group, "dimension_definitions", None):
+                    dimension_values = {
+                        str(key): value for key, value in row["cells"].items()
+                    }
                 else:
                     if event_relation is None:
                         return {
                             "status": "failure",
                             "message": "Scenario group requires exactly one active Event relation",
                         }
-                    dimension_values = ScenarioService().cells_to_dimension_values(
+                    dimension_values = scenario_service.cells_to_dimension_values(
                         int(event_relation.event_type_l2_id),
                         row["cells"],
                     )
