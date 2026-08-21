@@ -199,10 +199,11 @@ def _normalize_scenario(
     metrics = row.get("metrics") or {}
     raw_id = row.get("scenario_id")
     is_new = raw_id is None
+    row_index = int(row.get("row_index") or (index + 1))
     display_order = int(row.get("display_order") or (index + 1))
-    # 신규 시나리오는 아직 DB ID가 없으므로 displayOrder 기반 음수 임시 ID를
+    # 신규 시나리오는 아직 DB ID가 없으므로 요청 row 위치 기반 음수 임시 ID를
     # 부여해 기존 review 흐름(조합 판정·중복 검사 등)을 그대로 유지한다.
-    scenario_id = -display_order if is_new else int(raw_id)
+    scenario_id = -row_index if is_new else int(raw_id)
     return {
         "scenario_id": scenario_id,
         "is_new": is_new,
@@ -274,7 +275,9 @@ def _exact_duplicate_title_pairs(
 
 def _check_exact_title_duplicates(ctx: ReviewContext) -> CheckResult:
     duplicate_pairs = _exact_duplicate_title_pairs(ctx)
-    offenders = [f"{_sid(original)} = {_sid(duplicate)}" for original, duplicate in duplicate_pairs]
+    offenders = [
+        f"'{_scenario_label(original)}' = '{_scenario_label(duplicate)}'" for original, duplicate in duplicate_pairs
+    ]
     advice = [
         f"시나리오명 '{_scenario_label(original)}'와(과) "
         f"'{_scenario_label(duplicate)}'가 동일합니다. 분기 기준의 차이가 드러나도록 "
@@ -294,7 +297,18 @@ def _check_exact_title_duplicates(ctx: ReviewContext) -> CheckResult:
 
 def _dim_label(ctx: ReviewContext, key: str) -> str:
     dimension = ctx.dim_index.get(key) or {}
-    return str(dimension.get("label") or key)
+    return str(dimension.get("label") or dimension.get("label_ko") or key)
+
+
+def _dim_value_label(ctx: ReviewContext, key: str, value: object) -> str:
+    dimension = ctx.dim_index.get(key) or {}
+    for enum_value in dimension.get("enum") or []:
+        if not isinstance(enum_value, dict):
+            continue
+        enum_id = enum_value.get("id", enum_value.get("value_id", enum_value.get("valueId")))
+        if str(enum_id) == str(value):
+            return str(enum_value.get("label") or value)
+    return str(value)
 
 
 def _used_values(ctx: ReviewContext) -> dict[str, set[object]]:
@@ -339,7 +353,10 @@ def _check_baseline_contrast_covered(ctx: ReviewContext) -> CheckResult:
         baseline_index=baseline_index,
     )
     missing_pairs = [(key, coverage.baseline_values.get(key)) for key in coverage.missing_dimensions]
-    offenders = [f"{key} (baseline='{baseline_value}')" for key, baseline_value in missing_pairs]
+    offenders = [
+        f"{_dim_label(ctx, key)} (기준값='{_dim_value_label(ctx, key, baseline_value)}')"
+        for key, baseline_value in missing_pairs
+    ]
     advice: list[str] = []
     if missing_pairs:
         example = ", ".join(
@@ -380,8 +397,12 @@ def _check_value_diversity(ctx: ReviewContext) -> CheckResult:
         "Stage3",
         "각 선택 Dim 값 다양성 ≥2",
         "PASS" if not bad else "WARN",
-        " / ".join(f"{key}={len(values)}값" for key, values in used.items()) if not bad else f"단일값 Dim {len(bad)}건",
-        bad,
+        (
+            " / ".join(f"{_dim_label(ctx, key)}={len(values)}값" for key, values in used.items())
+            if not bad
+            else f"한 가지 값만 사용한 분기 {len(bad)}건"
+        ),
+        [_dim_label(ctx, key) for key in bad],
         advice,
     )
 
@@ -502,7 +523,10 @@ def _build_similar_title_check(
         ):
             similar_pairs.append(pair)
 
-    offenders = [f"{pair.scenario_id_a} = {pair.scenario_id_b}: {pair.reason}" for pair in similar_pairs]
+    offenders = [
+        f"'{title_by_id[pair.scenario_id_a]}' = '{title_by_id[pair.scenario_id_b]}': {pair.reason}"
+        for pair in similar_pairs
+    ]
     advice = [
         f"시나리오명 '{title_by_id[pair.scenario_id_a]}'와(과) "
         f"'{title_by_id[pair.scenario_id_b]}'가 유사하게 읽힙니다 — {pair.reason} "
@@ -546,9 +570,7 @@ async def _check_compatibility(
     for scenario in ctx.scenarios:
         rendered_pairs: list[str] = []
         for key, value in scenario["dimension_values"].items():
-            dimension = ctx.dim_index.get(key) or {}
-            label = str(dimension.get("label") or dimension.get("label_ko") or key)
-            rendered_pairs.append(f"{label}='{value}'")
+            rendered_pairs.append(f"{_dim_label(ctx, key)}='{_dim_value_label(ctx, key, value)}'")
         pairs = ", ".join(rendered_pairs)
         lines.append(
             f"- {scenario['scenario_id']} [{scenario['title']}]: {pairs}\n  narrative: {scenario['narrative']}",
@@ -643,7 +665,7 @@ async def _check_compatibility(
                 f"{len(items)}건 판정 — enum 안 실행 가능한 권장 변경 없음",
             )
         else:
-            offenders = [f"{item.scenario_id}: {item.reason}" for item in incompatible]
+            offenders = [f"'{title_by_id[item.scenario_id]}' 시나리오: {item.reason}" for item in incompatible]
             advice = [_compat_advice(item, title_by_id.get(item.scenario_id)) for item in incompatible]
             compatibility_check = CheckResult(
                 "R03",
@@ -676,7 +698,7 @@ async def _check_compatibility(
                         if not ungrounded
                         else f"Event 사실 누락·모순 {len(ungrounded)}건"
                     ),
-                    [f"scenario={item.scenario_id}, event={item.event_id}: {item.reason}" for item in ungrounded],
+                    [f"'{title_by_id[item.scenario_id]}' 시나리오: {item.reason}" for item in ungrounded],
                 ),
             )
         return checks
@@ -801,7 +823,7 @@ def _check_mece(ctx: ReviewContext) -> CheckResult:
         )
         original = seen.get(key)
         if original is not None:
-            duplicates.append(f"{_sid(scenario)} = {_sid(original)}")
+            duplicates.append(f"'{_scenario_label(scenario)}' = '{_scenario_label(original)}'")
             dup_name = _scenario_label(scenario)
             origin_name = _scenario_label(original)
             advice.append(
@@ -834,16 +856,16 @@ def _check_probability_range(ctx: ReviewContext) -> CheckResult:
     for scenario in ctx.scenarios:
         score = scenario.get("probability_score")
         if score is None:
-            bad.append(f"{_sid(scenario)} (probability_score 누락)")
+            bad.append(f"'{_scenario_label(scenario)}' 시나리오 (확률 누락)")
         elif not _in_range(score, Decimal("0"), Decimal("100")):
-            bad.append(f"{_sid(scenario)} score={score}")
+            bad.append(f"'{_scenario_label(scenario)}' 시나리오 확률={score}")
         delta = scenario.get("probability_delta")
         if delta is not None and not _in_range(
             delta,
             Decimal("-100"),
             Decimal("100"),
         ):
-            bad.append(f"{_sid(scenario)} delta={delta}")
+            bad.append(f"'{_scenario_label(scenario)}' 시나리오 증감={delta}")
     return CheckResult(
         "R05",
         "Stage5",
@@ -1024,13 +1046,13 @@ async def run_review(ctx: ReviewContext, trace_context: TraceContext | None = No
         if ctx.review_scenario_ids:
             checks.extend(await _check_compatibility(ctx, trace_context=trace_context))
         for check in checks:
-            if check.check_id in {"R03", "R04", "R06", "R07"} and check.status == "WARN":
+            if check.check_id in {"R04", "R06", "R07"} and check.status == "WARN":
                 check.status = "FAIL"
         counts = Counter(check.status for check in checks)
         summary = {status: counts.get(status, 0) for status in ("PASS", "WARN", "FAIL", "INFO")}
         notable = [check for check in checks if check.status in {"FAIL", "WARN"}]
         return ReviewReport(
-            verdict="BLOCK" if summary["FAIL"] else "PASS",
+            verdict="BLOCK" if summary["FAIL"] else "REVIEW" if summary["WARN"] else "PASS",
             is_valid=not summary["FAIL"],
             reason=(
                 _build_reason(notable, _dim_label_map(ctx)) if notable else "모든 시나리오 검토 항목을 통과했습니다."

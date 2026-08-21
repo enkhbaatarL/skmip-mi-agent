@@ -5,9 +5,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TypeVar
+from uuid import uuid4
 
 from apps.common.logging.logger_config import logger
 from apps.persistence.scenario_group_operation.schema import TERMINAL_OPERATION_STATUSES
+
+
+_OperationResult = TypeVar("_OperationResult")
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,7 +233,7 @@ class ScenarioGroupOperationTaskRunner:
             raise RuntimeError(msg)
         get_scenario_group_operation_event_hub().register_owner(operation_id)
         task = asyncio.create_task(
-            self._run_with_heartbeat(scenario_group_id, operation_id, producer),
+            self.run_with_heartbeat(scenario_group_id, operation_id, producer),
             name=f"scenario-group-operation:{operation_id}",
         )
         self._tasks[operation_id] = task
@@ -244,23 +249,29 @@ class ScenarioGroupOperationTaskRunner:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
 
-    async def _run_with_heartbeat(
+    async def run_with_heartbeat(
         self,
         scenario_group_id: int,
         operation_id: str,
-        producer: Awaitable[None],
-    ) -> None:
+        operation: Awaitable[_OperationResult],
+    ) -> _OperationResult:
+        owner_task = asyncio.current_task()
         heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(scenario_group_id, operation_id),
+            self._heartbeat_loop(scenario_group_id, operation_id, owner_task),
             name=f"scenario-group-operation-heartbeat:{operation_id}",
         )
         try:
-            await producer
+            return await operation
         finally:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
 
-    async def _heartbeat_loop(self, scenario_group_id: int, operation_id: str) -> None:
+    async def _heartbeat_loop(
+        self,
+        scenario_group_id: int,
+        operation_id: str,
+        owner_task: asyncio.Task[object] | None,
+    ) -> None:
         while True:
             await self._sleep(self._heartbeat_interval_seconds)
             try:
@@ -280,7 +291,6 @@ class ScenarioGroupOperationTaskRunner:
                 continue
             if touched:
                 continue
-            owner_task = self._tasks.get(operation_id)
             if owner_task is not None and owner_task is not asyncio.current_task():
                 owner_task.cancel()
             return
@@ -384,9 +394,102 @@ class ScenarioGroupOperationRecoveryMonitor:
         return datetime.now(UTC).replace(tzinfo=None)
 
 
+class AdditionalDimensionTaskRunner:
+    """Lifespan-owned auxiliary tasks that are independent from create operation status."""
+
+    def __init__(self) -> None:
+        self._tasks: dict[int, asyncio.Task[None]] = {}
+        self._run_ids: dict[int, str] = {}
+        self._accepting = False
+
+    async def start(self) -> None:
+        self._accepting = True
+
+    def submit(self, scenario_group_id: int) -> str:
+        if scenario_group_id in self._tasks:
+            logger.info(
+                "Additional Dimension background task submit skipped | scenario_group_id={} | "
+                "reason=already_registered",
+                scenario_group_id,
+            )
+            return self._run_ids[scenario_group_id]
+        if not self._accepting:
+            self._accepting = True
+        from apps.agents.scenario_group_agent.flows.add_dimension.flow import run_additional_dimension_generation
+
+        run_id = str(uuid4())
+        task = asyncio.create_task(
+            run_additional_dimension_generation(scenario_group_id, run_id=run_id),
+            name=f"additional-dimension:{scenario_group_id}",
+        )
+        self._tasks[scenario_group_id] = task
+        self._run_ids[scenario_group_id] = run_id
+        task.add_done_callback(lambda completed: self._discard(scenario_group_id, completed))
+        logger.info(
+            "Additional Dimension background task submitted | scenario_group_id={} | run_id={}",
+            scenario_group_id,
+            run_id,
+        )
+        return run_id
+
+    async def shutdown(self) -> None:
+        self._accepting = False
+        owned_runs = [
+            (scenario_group_id, run_id, self._tasks[scenario_group_id])
+            for scenario_group_id, run_id in self._run_ids.items()
+            if scenario_group_id in self._tasks
+        ]
+        tasks = [task for _scenario_group_id, _run_id, task in owned_runs]
+        for task in tasks:
+            if not task.done():
+                task.cancel("server_shutdown")
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if owned_runs:
+            from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
+
+            service = ScenarioGroupService()
+            results = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        service.interrupt_additional_dimension_generation,
+                        scenario_group_id,
+                        run_id=run_id,
+                    )
+                    for scenario_group_id, run_id, _task in owned_runs
+                ),
+                return_exceptions=True,
+            )
+            for (scenario_group_id, run_id, _task), result in zip(owned_runs, results, strict=True):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "Additional Dimension shutdown status update failed | scenario_group_id={} | "
+                        "run_id={} | error={!r}",
+                        scenario_group_id,
+                        run_id,
+                        result,
+                    )
+        self._tasks.clear()
+        self._run_ids.clear()
+
+    def _discard(self, scenario_group_id: int, task: asyncio.Task[None]) -> None:
+        self._tasks.pop(scenario_group_id, None)
+        self._run_ids.pop(scenario_group_id, None)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Additional Dimension task escaped | scenario_group_id={} | error={!r}",
+                scenario_group_id,
+                error,
+            )
+
+
 _operation_task_runner = ScenarioGroupOperationTaskRunner()
 _operation_event_hub = ScenarioGroupOperationEventHub()
 _operation_recovery_monitor = ScenarioGroupOperationRecoveryMonitor()
+_additional_dimension_task_runner = AdditionalDimensionTaskRunner()
 
 
 def get_scenario_group_operation_task_runner() -> ScenarioGroupOperationTaskRunner:
@@ -399,3 +502,7 @@ def get_scenario_group_operation_event_hub() -> ScenarioGroupOperationEventHub:
 
 def get_scenario_group_operation_recovery_monitor() -> ScenarioGroupOperationRecoveryMonitor:
     return _operation_recovery_monitor
+
+
+def get_additional_dimension_task_runner() -> AdditionalDimensionTaskRunner:
+    return _additional_dimension_task_runner

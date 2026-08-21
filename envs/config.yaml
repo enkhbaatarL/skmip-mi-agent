@@ -48,6 +48,7 @@ create_signposts_max_concurrent_scenarios: 10
 scenario_group_operation_heartbeat_interval_seconds: 30
 scenario_group_operation_stale_after_seconds: 120
 scenario_group_operation_reaper_interval_seconds: 30
+additional_dimension_stale_after_seconds: 240
 
 # Model parameter
 model_parameter_lut_enabled: true

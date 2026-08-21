@@ -293,15 +293,12 @@ def test_v4_interaction_prompt_marks_first_path_per_event_as_primary() -> None:
         ],
     )
 
-    p1 = prompt.split("### [P1]", maxsplit=1)[1].split("### [P2]", maxsplit=1)[0]
-    p2 = prompt.split("### [P2]", maxsplit=1)[1].split("### [P3]", maxsplit=1)[0]
-    p3 = prompt.split("### [P3]", maxsplit=1)[1].split("## 이번 단계의 질문", maxsplit=1)[0]
+    p1 = prompt.split("### [E101-P1]", maxsplit=1)[1].split("### [E101-P2]", maxsplit=1)[0]
+    p2 = prompt.split("### [E101-P2]", maxsplit=1)[1].split("## Event 202", maxsplit=1)[0]
+    p3 = prompt.split("### [E202-P1]", maxsplit=1)[1].split("## Interaction 개수 목표", maxsplit=1)[0]
 
-    assert "Event 101" in p1
     assert "역할: Primary Impact" in p1
-    assert "Event 101" in p2
     assert "역할: Supporting Impact" in p2
-    assert "Event 202" in p3
     assert "역할: Primary Impact" in p3
-    assert prompt.index("[P1]") < prompt.index("[P2]") < prompt.index("[P3]")
+    assert prompt.index("[E101-P1]") < prompt.index("[E101-P2]") < prompt.index("[E202-P1]")
     assert "실제 추가 효과가 있을 때만" in prompt

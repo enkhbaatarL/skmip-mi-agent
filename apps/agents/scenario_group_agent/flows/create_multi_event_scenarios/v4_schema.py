@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import ROUND_FLOOR, Decimal
+import hashlib
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -11,6 +12,10 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.schema 
     PRESSURE_RANK,
     PressureBand,
     ScenarioDimensionValues,
+)
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_budget import (
+    interaction_count_target,
+    interaction_question_budget,
 )
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_enums import (
     StateDirection,
@@ -175,9 +180,9 @@ class V4PathUncertainty(ApiModel):
     uncertainty_id: str = Field(min_length=1)
     impact_path_ids: list[str] = Field(min_length=1)
     axis_type: UncertaintyAxis
-    subject: str = Field(min_length=1)
+    subject: str
     affected_lever_code: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
+    reason: str
     materiality: Materiality
     semantic_key: str = Field(min_length=1)
 
@@ -229,9 +234,9 @@ class V4InteractionUncertainty(ApiModel):
     interaction_id: str = Field(min_length=1)
     impact_path_ids: list[str] = Field(min_length=2)
     axis_type: UncertaintyAxis
-    subject: str = Field(min_length=1)
+    subject: str
     affected_lever_code: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
+    reason: str
     materiality: Materiality
     semantic_key: str = Field(min_length=1)
 
@@ -249,7 +254,14 @@ class V4ReadableEventImpact(ApiModel):
 
     evidence: list[str] = Field(min_length=1, max_length=3)
     analysis: str = Field(min_length=20, max_length=240)
-    lever_states: list[str] = Field(min_length=1, max_length=3)
+    lever_states: list[str] = Field(
+        min_length=1,
+        max_length=3,
+        description=(
+            "lever|role|direction|scope|timing 형식. 같은 Impact 안에서는 첫 번째 lever code가 모두 달라야 하며, "
+            "동일 Lever의 여러 역할·범위·시점은 대표 step 하나로 통합"
+        ),
+    )
     balance: BalanceWireValue
     importance: Materiality
 
@@ -258,7 +270,7 @@ class V4ReadablePathQuestion(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     impact: int = Field(ge=1, le=3)
-    question: str = Field(min_length=5, max_length=120)
+    question: str
     axis: UncertaintyAxis
     lever: str = Field(min_length=1)
 
@@ -271,7 +283,7 @@ class V4ReadableEventAnalysisDraft(ApiModel):
     event_facts: list[str] = Field(default_factory=list, max_length=3)
     decision_basis: list[str] = Field(default_factory=list, max_length=3)
     impacts: list[V4ReadableEventImpact] = Field(default_factory=list, max_length=3)
-    open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list, max_length=2)
+    open_questions: list[V4ReadablePathQuestion] = Field(default_factory=list)
     excluded_because: str | None = Field(default=None, max_length=160)
 
     @model_validator(mode="after")
@@ -304,8 +316,8 @@ class V4ReadableInteraction(ApiModel):
 class V4ReadableInteractionQuestion(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    interaction: int = Field(ge=1, le=3)
-    question: str = Field(min_length=5, max_length=120)
+    interaction: int = Field(ge=1)
+    question: str
     axis: UncertaintyAxis
     lever: str = Field(min_length=1)
 
@@ -315,8 +327,8 @@ class V4ReadableInteractionAnalysisDraft(ApiModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    interactions: list[V4ReadableInteraction] = Field(default_factory=list, max_length=3)
-    open_questions: list[V4ReadableInteractionQuestion] = Field(default_factory=list, max_length=1)
+    interactions: list[V4ReadableInteraction] = Field(default_factory=list)
+    open_questions: list[V4ReadableInteractionQuestion] = Field(default_factory=list)
 
 
 class V4EventImpactAnalysisDraft(ApiModel):
@@ -329,6 +341,7 @@ class V4EventImpactAnalysisDraft(ApiModel):
     path_uncertainties: list[V4PathUncertainty] = Field(default_factory=list)
     interactions: list[V4EventInteraction] = Field(default_factory=list)
     interaction_uncertainties: list[V4InteractionUncertainty] = Field(default_factory=list)
+    validation_warnings: list[V4ValidationWarning] = Field(default_factory=list)
 
 
 class V4EventImpactAnalysisResult(ApiModel):
@@ -362,7 +375,7 @@ class V4DimensionValueDefinitionDraft(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     value_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
+    label: str = Field(max_length=30)
     lever_states: list[V4LeverStateDraft] = Field(min_length=1)
     pressure_contribution: Literal["bullish", "balanced", "bearish"]
     assumption_rationale: str = Field(min_length=1)
@@ -372,7 +385,7 @@ class V4DimensionValueDefinition(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     value_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
+    label: str = Field(max_length=30)
     lever_states: list[V4LeverState] = Field(min_length=1)
     pressure_contribution: Literal["bullish", "balanced", "bearish"]
     assumption_rationale: str = Field(min_length=1)
@@ -382,9 +395,9 @@ class V4DimensionDefinitionDraft(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     dimension_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    rationale: str = Field(min_length=10, max_length=200)
+    label: str = Field(max_length=30)
+    description: str
+    rationale: str = Field(max_length=200)
     source_impact_path_ids: list[str] = Field(min_length=1)
     source_uncertainty_ids: list[str] = Field(min_length=1)
     primary_lever_code: str = Field(min_length=1)
@@ -409,9 +422,9 @@ class V4DimensionDefinition(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     dimension_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    rationale: str = Field(min_length=10, max_length=200)
+    label: str = Field(max_length=30)
+    description: str
+    rationale: str = Field(max_length=200)
     source_event_ids: list[int] = Field(min_length=1)
     source_impact_path_ids: list[str] = Field(min_length=1)
     source_uncertainty_ids: list[str] = Field(min_length=1)
@@ -434,7 +447,7 @@ class V4DimensionDesignDraft(ApiModel):
 class V4DimensionDesignResult(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    dimension_definitions: list[V4DimensionDefinition] = Field(min_length=3, max_length=6)
+    dimension_definitions: list[V4DimensionDefinition]
     excluded_dimensions: list[str] = Field(default_factory=list)
     validation_warnings: list[V4ValidationWarning] = Field(default_factory=list)
 
@@ -450,7 +463,7 @@ class V4PressureBreakdown(ApiModel):
 class V4ScenarioCandidateDraft(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1)
+    title: str = Field(max_length=40)
     narrative: str = Field(min_length=1)
     dimension_values: ScenarioDimensionValues
     common_impact_path_ids: list[str] = Field(min_length=1)
@@ -512,8 +525,16 @@ class V4ScenarioSynthesisResult(ApiModel):
 class V4ReadableDimensionChoice(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    label: str = Field(min_length=10, max_length=25)
-    states: list[str] = Field(min_length=1, max_length=2)
+    label: str = Field(max_length=30)
+    states: list[str] = Field(
+        min_length=1,
+        max_length=2,
+        description=(
+            "각 항목은 정확히 lever|direction|level|scope|timeWindow 형식이며 direction은 "
+            "increase, decrease, disrupt, recover, unchanged 중 하나. 첫 번째 lever는 Dimension source Lever이고 "
+            "동일 Choice 안에서 Lever code는 중복할 수 없음"
+        ),
+    )
     pressure: Literal["bullish", "balanced", "bearish"]
     why: str = Field(
         min_length=10,
@@ -529,10 +550,9 @@ class V4ReadableDimension(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
     source_questions: list[str] = Field(alias="from", min_length=1)
-    label: str = Field(min_length=10, max_length=40)
-    question: str = Field(min_length=5, max_length=120)
+    label: str = Field(max_length=30)
+    question: str
     rationale: str = Field(
-        min_length=10,
         max_length=200,
         description=(
             "question의 관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고 질문 어미만 "
@@ -566,10 +586,18 @@ class V4ReadableDimensionDesignDraft(ApiModel):
     not_used: list[str] = Field(alias="notUsed", default_factory=list)
 
 
+class V4ReadableAdditionalDimensionDesignDraft(ApiModel):
+    """Batch output for unused questions; an empty candidate list is valid."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimensions: list[V4ReadableDimension] = Field(default_factory=list)
+
+
 class V4ReadableScenario(ApiModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=20, max_length=40)
+    title: str = Field(max_length=40)
     narrative: str = Field(min_length=80, max_length=300)
     choices: list[str] = Field(min_length=3, max_length=6)
     interactions: list[str] = Field(default_factory=list, max_length=3)
@@ -606,8 +634,9 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
         min_length=1,
         max_length=600,
         description=(
-            "발생한 사건은 '이벤트', 미래 분기는 '시나리오'로 표현하고 이벤트 내용과 분기 조건을 요약한 "
-            "시나리오 그룹 설명. 영문 Event/Scenario, '입력 사실', JKM은 사용하지 않음"
+            "첫 문장은 관측된 이벤트 사실을 직접 서술하고, 둘째 문장은 검증된 충격의 지속·전달·증폭과 "
+            "대체·회복·상쇄를 중심으로 핵심 분기를 설명하는 두 문장. Dimension 이름을 나열하거나 독립 이벤트의 "
+            "상호작용을 만들지 않으며 영문 Event/Scenario, '입력 사실', JKM은 사용하지 않음"
         ),
     )
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
@@ -616,6 +645,7 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
 
 class V4GenerationResult(ApiModel):
     group_title: str = Field(min_length=1)
+    group_summary: str = Field(min_length=1, max_length=300)
     group_description: str = Field(min_length=1)
     impact_analysis: V4EventImpactAnalysisResult
     dimension_definitions: list[V4DimensionDefinition] = Field(min_length=3, max_length=6)
@@ -674,6 +704,7 @@ def expand_v4_readable_event_analysis(
     event_id: int,
     observed_at: str | None,
     fact_candidates: dict[str, str],
+    open_question_limit: int | None = None,
 ) -> V4EventImpactAnalysisDraft:
     """Validate natural-language Fact selection and hydrate server-owned v4 lineage."""
     candidates_by_text = {text: (ref, text) for ref, text in fact_candidates.items()}
@@ -742,8 +773,12 @@ def expand_v4_readable_event_analysis(
     if paths and used_fact_ids != {fact.fact_id for fact in facts}:
         raise ValueError("every selected Event Fact must support at least one Impact")
 
+    retained_questions = (
+        readable.open_questions[:open_question_limit] if open_question_limit is not None else readable.open_questions
+    )
+    removed_question_count = len(readable.open_questions) - len(retained_questions)
     uncertainties: list[V4PathUncertainty] = []
-    for index, question in enumerate(readable.open_questions, start=1):
+    for index, question in enumerate(retained_questions, start=1):
         path_id = path_id_by_number.get(question.impact)
         if path_id is None:
             raise ValueError(f"open question {index} references an unknown Impact number")
@@ -761,8 +796,8 @@ def expand_v4_readable_event_analysis(
                 subject=question.question,
                 affected_lever_code=question.lever,
                 reason=question.question,
-                materiality="medium",
-                semantic_key=f"{question.lever}:{question.axis}:{path_id}",
+                materiality=referenced_path.materiality,
+                semantic_key=f"{path_id}:{question.axis}:{question.lever}",
             ),
         )
     return V4EventImpactAnalysisDraft(
@@ -771,6 +806,21 @@ def expand_v4_readable_event_analysis(
         event_exclusions=exclusions,
         impact_paths=paths,
         path_uncertainties=uncertainties,
+        validation_warnings=(
+            [
+                V4ValidationWarning(
+                    stage="event_impact_analysis",
+                    code="EVENT_OPEN_QUESTION_LIMIT_APPLIED",
+                    message=(
+                        f"Event {event_id} openQuestions 상한 {open_question_limit}개를 적용해 "
+                        f"{removed_question_count}개를 제거했습니다."
+                    ),
+                    reference_ids=[str(event_id)],
+                ),
+            ]
+            if removed_question_count
+            else []
+        ),
     )
 
 
@@ -792,18 +842,33 @@ def v4_analysis_result_to_draft(result: V4EventImpactAnalysisResult) -> V4EventI
         path_uncertainties=result.path_uncertainties,
         interactions=result.interactions,
         interaction_uncertainties=result.interaction_uncertainties,
+        validation_warnings=result.validation_warnings,
     )
 
 
 def merge_v4_readable_interactions(
     impact_analysis: V4EventImpactAnalysisResult,
     readable: V4ReadableInteractionAnalysisDraft,
+    *,
+    event_count: int | None = None,
 ) -> V4EventImpactAnalysisDraft:
-    """Hydrate readable cross-Event decisions over rendered Path aliases."""
+    """Validate, cap, and hydrate readable cross-Event decisions deterministically."""
     base = v4_analysis_result_to_draft(impact_analysis)
     path_by_id = {path.impact_path_id: path for path in impact_analysis.impact_paths}
-    path_id_by_alias = {f"P{index}": path.impact_path_id for index, path in enumerate(impact_analysis.impact_paths, 1)}
-    interactions: list[V4EventInteraction] = []
+    event_path_counts: dict[int, int] = defaultdict(int)
+    path_id_by_alias: dict[str, str] = {}
+    for path in impact_analysis.impact_paths:
+        event_path_counts[path.event_id] += 1
+        path_id_by_alias[f"E{path.event_id}-P{event_path_counts[path.event_id]}"] = path.impact_path_id
+
+    questions_by_interaction: dict[int, list[V4ReadableInteractionQuestion]] = defaultdict(list)
+    for question_index, question in enumerate(readable.open_questions, start=1):
+        if question.interaction > len(readable.interactions):
+            raise ValueError(f"Interaction open question {question_index} references an unknown Interaction number")
+        questions_by_interaction[question.interaction].append(question)
+
+    warnings = list(base.validation_warnings)
+    cross_event_interactions: list[tuple[int, V4EventInteraction]] = []
     for index, interaction in enumerate(readable.interactions, start=1):
         if len(interaction.paths) != len(set(interaction.paths)):
             raise ValueError(f"Interaction {index} contains duplicate Path aliases")
@@ -812,29 +877,116 @@ def merge_v4_readable_interactions(
             raise ValueError(f"Interaction {index} references unknown Path aliases: {sorted(unknown_aliases)}")
         path_ids = [path_id_by_alias[alias] for alias in interaction.paths]
         event_ids = sorted({path_by_id[path_id].event_id for path_id in path_ids})
-        interactions.append(
-            V4EventInteraction(
-                interaction_id=f"i{index}",
-                event_ids=event_ids,
-                impact_path_ids=path_ids,
-                relation=interaction.relation,
-                mechanism=interaction.analysis,
+        if len(event_ids) < 2:
+            removed_question_count = len(questions_by_interaction[index])
+            warnings.append(
+                V4ValidationWarning(
+                    stage="event_impact_analysis",
+                    code="SAME_EVENT_INTERACTION_DROPPED",
+                    message=(
+                        f"원래 Interaction {index}가 Event {event_ids[0]} 내부 Path만 선택해 제거됐으며 "
+                        f"연결 질문 {removed_question_count}개도 함께 제거했습니다."
+                    ),
+                    reference_ids=[str(index), str(event_ids[0]), *interaction.paths],
+                ),
+            )
+            continue
+        cross_event_interactions.append(
+            (
+                index,
+                V4EventInteraction(
+                    interaction_id=f"source_i{index}",
+                    event_ids=event_ids,
+                    impact_path_ids=path_ids,
+                    relation=interaction.relation,
+                    mechanism=interaction.analysis,
+                ),
+            ),
+        )
+
+    selected_event_count = event_count
+    if selected_event_count is None:
+        selected_event_ids = (
+            {fact.event_id for fact in impact_analysis.event_facts}
+            | {exclusion.event_id for exclusion in impact_analysis.event_exclusions}
+            | {path.event_id for path in impact_analysis.impact_paths}
+        )
+        selected_event_count = len(selected_event_ids)
+    interaction_limit = interaction_count_target(selected_event_count)[1]
+    retained_sources = cross_event_interactions[:interaction_limit]
+    removed_sources = cross_event_interactions[interaction_limit:]
+    if removed_sources:
+        removed_question_count = sum(len(questions_by_interaction[index]) for index, _item in removed_sources)
+        warnings.append(
+            V4ValidationWarning(
+                stage="event_impact_analysis",
+                code="INTERACTION_COUNT_LIMIT_APPLIED",
+                message=(
+                    f"Event {selected_event_count}개 Interaction 상한 {interaction_limit}개를 적용해 "
+                    f"Interaction {len(removed_sources)}개와 연결 질문 {removed_question_count}개를 제거했습니다."
+                ),
+                reference_ids=[str(index) for index, _item in removed_sources],
+            ),
+        )
+
+    interactions: list[V4EventInteraction] = []
+    interaction_by_source_number: dict[int, V4EventInteraction] = {}
+    for retained_index, (source_index, interaction) in enumerate(retained_sources, start=1):
+        retained = interaction.model_copy(update={"interaction_id": f"i{retained_index}"})
+        interactions.append(retained)
+        interaction_by_source_number[source_index] = retained
+
+    cross_event_by_source_number = dict(cross_event_interactions)
+    candidate_questions: list[tuple[V4ReadableInteractionQuestion, V4EventInteraction]] = []
+    removed_retained_question_count = 0
+    seen_question_interactions: set[int] = set()
+    for question_index, question in enumerate(readable.open_questions, start=1):
+        source_interaction = cross_event_by_source_number.get(question.interaction)
+        if source_interaction is None:
+            continue
+        if source_interaction.relation != "independent":
+            allowed_levers = sorted(
+                {
+                    step.lever_code
+                    for path_id in source_interaction.impact_path_ids
+                    for step in path_by_id[path_id].lever_steps
+                },
+            )
+            if question.lever not in allowed_levers:
+                raise ValueError(
+                    f"openQuestions[{question_index}].lever must be one of Interaction {question.interaction} "
+                    f"Path Lever codes: {allowed_levers}",
+                )
+        retained_interaction = interaction_by_source_number.get(question.interaction)
+        if retained_interaction is None:
+            continue
+        if source_interaction.relation == "independent" or question.interaction in seen_question_interactions:
+            removed_retained_question_count += 1
+            continue
+        seen_question_interactions.add(question.interaction)
+        candidate_questions.append((question, retained_interaction))
+
+    question_budget = interaction_question_budget(
+        retained_interaction_count=len(interactions),
+        retained_event_question_count=len(impact_analysis.path_uncertainties),
+    )
+    retained_questions = candidate_questions[:question_budget]
+    removed_retained_question_count += len(candidate_questions) - len(retained_questions)
+    if removed_retained_question_count:
+        warnings.append(
+            V4ValidationWarning(
+                stage="event_impact_analysis",
+                code="INTERACTION_OPEN_QUESTION_LIMIT_APPLIED",
+                message=(
+                    f"Interaction별 최대 1개·전체 상한 {question_budget}개를 적용해 "
+                    f"질문 {removed_retained_question_count}개를 제거했습니다."
+                ),
+                reference_ids=[interaction.interaction_id for _question, interaction in retained_questions],
             ),
         )
 
     uncertainties: list[V4InteractionUncertainty] = []
-    for index, question in enumerate(readable.open_questions, start=1):
-        if question.interaction > len(interactions):
-            raise ValueError(f"Interaction open question {index} references an unknown Interaction number")
-        interaction = interactions[question.interaction - 1]
-        allowed_levers = sorted(
-            {step.lever_code for path_id in interaction.impact_path_ids for step in path_by_id[path_id].lever_steps},
-        )
-        if question.lever not in allowed_levers:
-            raise ValueError(
-                f"openQuestions[{index}].lever must be one of Interaction {question.interaction} "
-                f"Path Lever codes: {allowed_levers}",
-            )
+    for index, (question, interaction) in enumerate(retained_questions, start=1):
         uncertainties.append(
             V4InteractionUncertainty(
                 uncertainty_id=f"iu{index}",
@@ -844,7 +996,7 @@ def merge_v4_readable_interactions(
                 subject=question.question,
                 affected_lever_code=question.lever,
                 reason=question.question,
-                materiality="medium",
+                materiality="high",
                 semantic_key=f"{interaction.interaction_id}:{question.axis}:{question.lever}",
             ),
         )
@@ -852,12 +1004,60 @@ def merge_v4_readable_interactions(
         update={
             "interactions": interactions,
             "interaction_uncertainties": uncertainties,
+            "validation_warnings": warnings,
         },
     )
 
 
 def _normalized(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def finalize_open_question_pool(
+    analysis: V4EventImpactAnalysisResult,
+    *,
+    target_minimum: int = 7,
+) -> V4EventImpactAnalysisResult:
+    """Deduplicate the canonical uncertainty pool and warn on a soft-goal undershoot."""
+    ordered: list[V4PathUncertainty | V4InteractionUncertainty] = []
+    seen_semantic_keys: set[tuple[str, str, str]] = set()
+    seen_questions: set[str] = set()
+    for uncertainty in [*analysis.path_uncertainties, *analysis.interaction_uncertainties]:
+        source_id = (
+            uncertainty.interaction_id
+            if isinstance(uncertainty, V4InteractionUncertainty)
+            else "|".join(sorted(uncertainty.impact_path_ids))
+        )
+        semantic_key = (source_id, uncertainty.axis_type, uncertainty.affected_lever_code)
+        question_key = _normalized(uncertainty.subject)
+        if semantic_key in seen_semantic_keys or question_key in seen_questions:
+            continue
+        seen_semantic_keys.add(semantic_key)
+        seen_questions.add(question_key)
+        ordered.append(uncertainty)
+
+    selected_ids = {item.uncertainty_id for item in ordered}
+    warnings = list(analysis.validation_warnings)
+    if len(ordered) < target_minimum and not any(
+        warning.code == "OPEN_QUESTION_TARGET_UNDERSHOT" for warning in warnings
+    ):
+        warnings.append(
+            V4ValidationWarning(
+                stage="event_impact_analysis",
+                code="OPEN_QUESTION_TARGET_UNDERSHOT",
+                message=(f"의미 있는 open question이 soft goal {target_minimum}개보다 적은 {len(ordered)}개입니다."),
+                reference_ids=[item.uncertainty_id for item in ordered],
+            ),
+        )
+    return analysis.model_copy(
+        update={
+            "path_uncertainties": [item for item in analysis.path_uncertainties if item.uncertainty_id in selected_ids],
+            "interaction_uncertainties": [
+                item for item in analysis.interaction_uncertainties if item.uncertainty_id in selected_ids
+            ],
+            "validation_warnings": warnings,
+        },
+    )
 
 
 def _unique_ids(values: list[str], label: str) -> None:
@@ -968,6 +1168,94 @@ def expand_v4_readable_dimension_design(
         dimension_definitions=dimensions,
         excluded_dimensions=readable.not_used,
     )
+
+
+def expand_v4_additional_dimension_candidates(
+    readable: V4ReadableAdditionalDimensionDesignDraft,
+    *,
+    impact_analysis: V4EventImpactAnalysisResult,
+) -> list[V4DimensionDefinitionDraft]:
+    """Hydrate readable candidates with deterministic IDs while preserving item validation boundaries."""
+    uncertainties = [*impact_analysis.path_uncertainties, *impact_analysis.interaction_uncertainties]
+    uncertainty_by_alias = {f"U{index}": item for index, item in enumerate(uncertainties, start=1)}
+    candidates: list[V4DimensionDefinitionDraft] = []
+    used_sources: set[str] = set()
+    for dimension in readable.dimensions:
+        try:
+            if len(dimension.source_questions) != len(set(dimension.source_questions)):
+                continue
+            source_uncertainties = [uncertainty_by_alias[alias] for alias in dimension.source_questions]
+        except KeyError:
+            continue
+        source_ids = [item.uncertainty_id for item in source_uncertainties]
+        if used_sources.intersection(source_ids):
+            continue
+        stable_material = "|".join(sorted(source_ids))
+        stable_material += f"|{dimension.lever}|{dimension.axis}"
+        dimension_id = f"ad_{hashlib.sha256(stable_material.encode('utf-8')).hexdigest()[:12]}"
+        source_paths = list(
+            dict.fromkeys(path_id for uncertainty in source_uncertainties for path_id in uncertainty.impact_path_ids)
+        )
+        try:
+            candidate = V4DimensionDefinitionDraft(
+                dimension_id=dimension_id,
+                label=dimension.label,
+                description=dimension.question,
+                rationale=dimension.rationale,
+                source_impact_path_ids=source_paths,
+                source_uncertainty_ids=source_ids,
+                primary_lever_code=dimension.lever,
+                dimension_type=dimension.axis,
+                value_kind=_derive_dimension_value_kind(dimension),
+                unit=dimension.unit,
+                values=[
+                    V4DimensionValueDefinitionDraft(
+                        value_id=f"{dimension_id}_v{value_index}",
+                        label=choice.label,
+                        lever_states=[_parse_dimension_state(state) for state in choice.states],
+                        pressure_contribution=choice.pressure,
+                        assumption_rationale=choice.why,
+                    )
+                    for value_index, choice in enumerate(dimension.choices, start=1)
+                ],
+            )
+        except ValueError:
+            continue
+        candidates.append(candidate)
+        used_sources.update(source_ids)
+    return candidates
+
+
+def finalize_v4_additional_dimension_candidates(
+    drafts: list[V4DimensionDefinitionDraft],
+    *,
+    impact_analysis: V4EventImpactAnalysisResult,
+    impact_levers: list[ModelImpactLeverPayload],
+) -> list[V4DimensionDefinition]:
+    """Validate and hydrate candidates independently so one invalid item does not discard the batch."""
+    candidates: list[V4DimensionDefinition] = []
+    used_sources: set[str] = set()
+    for draft in drafts:
+        if used_sources.intersection(draft.source_uncertainty_ids):
+            continue
+        try:
+            design = V4DimensionDesignDraft.model_construct(
+                dimension_definitions=[draft],
+                excluded_dimensions=[],
+            )
+            result = finalize_v4_dimension_design(
+                design,
+                impact_analysis=impact_analysis,
+                impact_levers=impact_levers,
+            )
+        except ValueError:
+            continue
+        if not result.dimension_definitions:
+            continue
+        candidate = result.dimension_definitions[0]
+        candidates.append(candidate)
+        used_sources.update(candidate.source_uncertainty_ids)
+    return candidates
 
 
 def _parse_related_market(value: str) -> RelatedMarket:
@@ -1229,7 +1517,7 @@ def finalize_v4_event_impact_analysis(
         path_uncertainties=draft.path_uncertainties,
         interactions=draft.interactions,
         interaction_uncertainties=draft.interaction_uncertainties,
-        validation_warnings=[],
+        validation_warnings=draft.validation_warnings,
     )
 
 
@@ -1497,6 +1785,7 @@ def _normalize_v4_probability_scores(scenarios: list[V4ScenarioCandidate]) -> No
 def finalize_v4_generation_result(
     synthesis: V4ScenarioSynthesisResult,
     *,
+    group_summary: str,
     impact_analysis: V4EventImpactAnalysisResult,
     dimension_design: V4DimensionDesignResult,
     impact_levers: list[ModelImpactLeverPayload],
@@ -1517,6 +1806,7 @@ def finalize_v4_generation_result(
     )
     result = V4GenerationResult(
         group_title=synthesis.group_title,
+        group_summary=group_summary,
         group_description=synthesis.group_description,
         impact_analysis=impact_analysis,
         dimension_definitions=dimension_design.dimension_definitions,

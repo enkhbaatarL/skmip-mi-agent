@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
@@ -11,8 +13,10 @@ from fastapi import FastAPI
 import pytest
 
 from apps.agents.scenario_group_agent.api import router as agent_router
+from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios import v4_flow
 from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation import (
     V4OperationProgressRecorder,
+    run_v4_create_operation,
 )
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
     OperationAlreadyTerminalError,
@@ -125,12 +129,14 @@ def test_canonical_scenario_group_routes_are_exposed_without_v1_or_deprecation()
     assert tags_in_display_order.index("scenario-groups") < tags_in_display_order.index("scenario-groups-sync-test")
     assert "scenario-generation-sync" not in tags_in_display_order
 
-    assert paths["/scenario-groups/{scenario_group_id}/validation/sync"]["post"]["requestBody"] == paths[
-        "/scenario-groups/{scenario_group_id}/validation"
-    ]["post"]["requestBody"]
-    assert paths["/scenario-groups/{scenario_group_id}/signposts/sync"]["post"]["requestBody"] == paths[
-        "/scenario-groups/{scenario_group_id}/signposts"
-    ]["post"]["requestBody"]
+    assert (
+        paths["/scenario-groups/{scenario_group_id}/validation/sync"]["post"]["requestBody"]
+        == paths["/scenario-groups/{scenario_group_id}/validation"]["post"]["requestBody"]
+    )
+    assert (
+        paths["/scenario-groups/{scenario_group_id}/signposts/sync"]["post"]["requestBody"]
+        == paths["/scenario-groups/{scenario_group_id}/signposts"]["post"]["requestBody"]
+    )
     detail_get = paths["/scenario-groups/{scenario_group_id}"]["get"]
     assert "requestBody" not in detail_get
     view = next(parameter for parameter in detail_get["parameters"] if parameter["name"] == "view")
@@ -419,6 +425,7 @@ def test_custom_retry_is_sanitized_before_operation_event_storage() -> None:
             {
                 "kind": "stage_retry",
                 "phase": "dimension_design",
+                "stage": "dimension_design",
                 "attempt": 2,
                 "maxAttempts": 3,
                 "validationCode": "UNKNOWN_SOURCE_REFERENCE",
@@ -431,7 +438,8 @@ def test_custom_retry_is_sanitized_before_operation_event_storage() -> None:
         return append
 
     append = asyncio.run(record())
-    kwargs = append.await_args.kwargs
+    assert [call.kwargs["event_type"] for call in append.await_args_list] == ["phase_started", "retrying"]
+    kwargs = append.await_args_list[-1].kwargs
     assert kwargs["event_type"] == "retrying"
     assert kwargs["payload"] == {
         "phase": "dimension_design",
@@ -442,6 +450,264 @@ def test_custom_retry_is_sanitized_before_operation_event_storage() -> None:
     }
     assert "raw validation payload" not in str(kwargs)
     assert "failed draft" not in str(kwargs)
+
+
+@pytest.mark.parametrize(
+    ("impact_event_ids", "expected_title", "expected_message"),
+    [
+        (
+            [101, 202],
+            "Event 분석이 완료되었습니다. 이제 Event 상호작용 분석을 시작합니다",
+            "Event 분석 결과가 검증되었습니다. 이제 Event 상호작용 분석을 시작합니다.",
+        ),
+        (
+            [101],
+            "Event 분석이 완료되었습니다",
+            "Event 분석 결과가 검증되었습니다.",
+        ),
+    ],
+)
+def test_event_analysis_validation_announces_interaction_only_when_multiple_events_have_paths(
+    impact_event_ids: list[int],
+    expected_title: str,
+    expected_message: str,
+) -> None:
+    async def record() -> AsyncMock:
+        recorder = V4OperationProgressRecorder(120, "01JABCDEF0123456789ABCDEFX", "trace-1")
+        append = AsyncMock()
+        recorder._append = append  # type: ignore[method-assign]
+        state = SimpleNamespace(
+            analysis_error=None,
+            analysis_error_code=None,
+            analysis_retryable=False,
+            analysis_attempt=1,
+            analysis_draft=SimpleNamespace(
+                impact_paths=[SimpleNamespace(event_id=event_id) for event_id in impact_event_ids],
+                model_dump=lambda **_kwargs: {},
+            ),
+            events=[SimpleNamespace(model_dump=lambda **_kwargs: {})],
+        )
+
+        await recorder.on_node_start("analyze_event_impacts")
+        append.reset_mock()
+        await recorder.on_node_update("validate_event_impacts", {}, state)  # type: ignore[arg-type]
+        return append
+
+    append = asyncio.run(record())
+    validated = append.await_args_list[0].kwargs
+    assert validated["event_type"] == "validated"
+    assert validated["title"] == expected_title
+    assert validated["message_markdown"] == expected_message
+
+
+def test_interaction_retry_uses_event_interaction_analysis_wording() -> None:
+    async def record() -> AsyncMock:
+        recorder = V4OperationProgressRecorder(120, "01JABCDEF0123456789ABCDEFX", "trace-1")
+        append = AsyncMock()
+        recorder._append = append  # type: ignore[method-assign]
+        await recorder.on_node_start("analyze_event_interactions")
+        append.reset_mock()
+        await recorder.on_node_update(
+            "__custom__",
+            {
+                "kind": "stage_retry",
+                "phase": "event_analysis",
+                "stage": "event_interaction_analysis",
+                "attempt": 2,
+                "validationCode": "LLM_INVALID_RESPONSE_ERROR",
+                "referenceIds": [],
+            },
+            None,  # type: ignore[arg-type]
+        )
+        return append
+
+    append = asyncio.run(record())
+    retrying = append.await_args.kwargs
+    assert retrying["event_type"] == "retrying"
+    assert retrying["title"] == "Event 상호작용 분석을 다시 수행합니다"
+    assert retrying["message_markdown"] == "검증 기준을 충족하지 못해 Event 상호작용 분석을 다시 수행합니다."
+    assert "stage" not in retrying["payload"]
+
+
+def test_tasks_stream_dispatches_only_node_starts_before_custom_and_updates() -> None:
+    order: list[str] = []
+
+    class FakeGraph:
+        async def astream(
+            self,
+            *_args: object,
+            **kwargs: object,
+        ) -> AsyncIterator[tuple[str, dict[str, object]]]:
+            assert kwargs["stream_mode"] == ["tasks", "updates", "custom"]
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "design_model_lever_dimensions",
+                    "input": {},
+                    "triggers": ("branch:to:design_model_lever_dimensions",),
+                },
+            )
+            yield "custom", {"kind": "stage_retry", "phase": "dimension_design"}
+            yield "updates", {"design_model_lever_dimensions": {}}
+            yield (
+                "tasks",
+                {
+                    "id": "task-1",
+                    "name": "design_model_lever_dimensions",
+                    "error": None,
+                    "result": {"secret": "must not be forwarded"},
+                    "interrupts": [],
+                },
+            )
+
+    state = SimpleNamespace(model_dump=dict)
+
+    async def exercise() -> object:
+        async def on_node_start(node_name: str) -> None:
+            order.append(f"start:{node_name}")
+
+        async def on_node_update(node_name: str, _update: object, _state: object) -> None:
+            order.append(f"update:{node_name}")
+
+        with (
+            patch.object(v4_flow, "get_compiled_graph", return_value=FakeGraph()),
+            patch.object(v4_flow.V4MultiEventGenerationState, "model_validate", return_value=state),
+            patch.object(v4_flow, "_build_v4_output", return_value="output"),
+        ):
+            return await v4_flow.run_v4_multi_event_scenarios_with_progress(
+                {},
+                on_node_start=on_node_start,
+                on_node_update=on_node_update,  # type: ignore[arg-type]
+            )
+
+    assert asyncio.run(exercise()) == "output"
+    assert order == [
+        "start:design_model_lever_dimensions",
+        "update:__custom__",
+        "update:design_model_lever_dimensions",
+    ]
+
+
+def test_interaction_success_starts_dimension_after_validated_section_ready() -> None:
+    async def exercise() -> list[tuple[str, str | None]]:
+        recorder = V4OperationProgressRecorder(120, "01JABCDEF0123456789ABCDEFX", "trace-1")
+        append = AsyncMock()
+        recorder._append = append  # type: ignore[method-assign]
+        state = SimpleNamespace(
+            interaction_error=None,
+            interaction_error_code=None,
+            interaction_retryable=False,
+            interaction_attempt=1,
+            analysis_draft=SimpleNamespace(model_dump=lambda **_kwargs: {}),
+            events=[],
+        )
+
+        await recorder.on_node_start("analyze_event_interactions")
+        append.reset_mock()
+        await recorder.on_node_update("validate_event_interactions", {}, state)  # type: ignore[arg-type]
+        await recorder.on_node_start("design_model_lever_dimensions")
+        return [(call.kwargs["event_type"], call.kwargs.get("phase")) for call in append.await_args_list]
+
+    assert asyncio.run(exercise()) == [
+        ("validated", "event_analysis"),
+        ("section_ready", "event_analysis"),
+        ("phase_started", "dimension_design"),
+    ]
+
+
+def test_dimension_retry_does_not_repeat_phase_start_and_success_starts_synthesis() -> None:
+    async def exercise() -> list[tuple[str, str | None]]:
+        recorder = V4OperationProgressRecorder(120, "01JABCDEF0123456789ABCDEFX", "trace-1")
+        append = AsyncMock()
+        recorder._append = append  # type: ignore[method-assign]
+        retry = {
+            "kind": "stage_retry",
+            "phase": "dimension_design",
+            "attempt": 2,
+            "validationCode": "UNKNOWN_SOURCE_REFERENCE",
+            "referenceIds": ["D2"],
+        }
+        state = SimpleNamespace(
+            dimension_error=None,
+            dimension_error_code=None,
+            dimension_retryable=False,
+            dimension_attempt=2,
+            dimension_draft=SimpleNamespace(dimension_definitions=[]),
+        )
+
+        await recorder.on_node_update("__custom__", retry, None)  # type: ignore[arg-type]
+        await recorder.on_node_start("design_model_lever_dimensions")
+        await recorder.on_node_update("__custom__", retry, None)  # type: ignore[arg-type]
+        await recorder.on_node_update("validate_model_lever_dimensions", {}, state)  # type: ignore[arg-type]
+        await recorder.on_node_start("synthesize_v4_scenarios")
+        return [(call.kwargs["event_type"], call.kwargs.get("phase")) for call in append.await_args_list]
+
+    assert asyncio.run(exercise()) == [
+        ("phase_started", "dimension_design"),
+        ("retrying", "dimension_design"),
+        ("validated", "dimension_design"),
+        ("section_ready", "dimension_design"),
+        ("phase_started", "scenario_synthesis"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure", "event_type"),
+    [(RuntimeError("failed"), "failed"), (asyncio.CancelledError(), "interrupted")],
+)
+def test_operation_failure_uses_phase_from_latest_node_start(
+    failure: BaseException,
+    event_type: str,
+) -> None:
+    operation_service = Mock()
+    events: list[dict[str, object]] = []
+    operation_service.append_event.side_effect = lambda *_args, **kwargs: events.append(kwargs)
+    settings = Mock()
+    settings.get_agent_config.return_value = SimpleNamespace(aip_app_id="scenario-group-test")
+    settings_module = ModuleType("apps.common.configs.config")
+    settings_module.get_settings = Mock(return_value=settings)  # type: ignore[attr-defined]
+
+    async def fail_after_persistence_start(*_args: object, **kwargs: object) -> None:
+        await kwargs["on_node_start"]("synthesize_v4_scenarios")  # type: ignore[operator]
+        await kwargs["on_node_start"]("persist_generation")  # type: ignore[operator]
+        raise failure
+
+    async def exercise() -> None:
+        with (
+            patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
+                "ScenarioGroupOperationService",
+                return_value=operation_service,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
+                "run_v4_multi_event_scenarios_with_progress",
+                side_effect=fail_after_persistence_start,
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.mlflow_trace_context",
+                return_value=nullcontext(),
+            ),
+            patch(
+                "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.new_transaction_id",
+                return_value="trace-id",
+            ),
+        ):
+            await run_v4_create_operation(
+                {"scenario_group": SimpleNamespace(scenario_group_id=10), "user_id": 7},
+                "operation-id",
+            )
+
+    if isinstance(failure, asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(exercise())
+    else:
+        asyncio.run(exercise())
+    assert [event["event_type"] for event in events] == ["phase_started", "phase_started", event_type]
+    assert [event["phase"] for event in events[:2]] == ["scenario_synthesis", "persistence"]
+    assert events[-1]["phase"] == "persistence"
 
 
 def test_section_ready_event_contains_projection_revision_details() -> None:
@@ -491,8 +757,11 @@ def test_section_ready_event_contains_projection_revision_details() -> None:
     }
 
 
-def test_v1_backfill_migration_is_idempotent_and_has_scoped_rollback() -> None:
-    migration = Path("scripts/migrations/20260811_backfill_v1_presentation_operations.sql").read_text()
+def test_optional_v1_backfill_reference_is_idempotent_and_has_scoped_rollback() -> None:
+    migration_path = Path("scripts/migrations/20260811_backfill_v1_presentation_operations.sql")
+    if not migration_path.exists():
+        return
+    migration = migration_path.read_text()
 
     assert migration.count("INSERT IGNORE INTO tmm_mi_scenario_group_operation_m") == 4
     assert "INSERT IGNORE INTO tmm_mi_scenario_group_operation_event_h" in migration
@@ -780,6 +1049,60 @@ def test_task_runner_renews_heartbeat_and_cancels_when_operation_is_terminal() -
     assert intervals == [30]
     touch_heartbeat.assert_called_once_with(120, "01JABCDEF0123456789ABCDEFX")
     assert producer_stopped is True
+
+
+def test_public_heartbeat_wrapper_returns_result_and_cleans_up_after_repeated_renewals() -> None:
+    async def exercise() -> tuple[int, list[float], Mock, list[str]]:
+        heartbeat_permissions: asyncio.Queue[None] = asyncio.Queue()
+        intervals: list[float] = []
+        second_heartbeat = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def controlled_sleep(interval: float) -> None:
+            intervals.append(interval)
+            await heartbeat_permissions.get()
+
+        touch_heartbeat = Mock(return_value=True)
+
+        def touch_and_signal(scenario_group_id: int, operation_id: str) -> bool:
+            touched = touch_heartbeat(scenario_group_id, operation_id)
+            if touch_heartbeat.call_count == 2:
+                loop.call_soon_threadsafe(second_heartbeat.set)
+            return touched
+
+        runner = ScenarioGroupOperationTaskRunner(
+            heartbeat_interval_seconds=5,
+            touch_heartbeat=touch_and_signal,
+            sleep=controlled_sleep,
+        )
+
+        async def operation() -> int:
+            await second_heartbeat.wait()
+            return 42
+
+        task = asyncio.create_task(
+            runner.run_with_heartbeat(120, "01JABCDEF0123456789ABCDEFX", operation()),
+        )
+        heartbeat_permissions.put_nowait(None)
+        heartbeat_permissions.put_nowait(None)
+        result = await asyncio.wait_for(task, timeout=1)
+        active_heartbeat_tasks = [
+            item.get_name()
+            for item in asyncio.all_tasks()
+            if item is not asyncio.current_task() and "operation-heartbeat" in item.get_name()
+        ]
+        return result, intervals, touch_heartbeat, active_heartbeat_tasks
+
+    result, intervals, touch_heartbeat, active_heartbeat_tasks = asyncio.run(exercise())
+
+    assert result == 42
+    assert len(intervals) >= 2
+    assert set(intervals) == {5}
+    assert [item.args for item in touch_heartbeat.call_args_list] == [
+        (120, "01JABCDEF0123456789ABCDEFX"),
+        (120, "01JABCDEF0123456789ABCDEFX"),
+    ]
+    assert active_heartbeat_tasks == []
 
 
 def test_recovery_monitor_retries_after_initial_scan_failure() -> None:

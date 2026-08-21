@@ -3,6 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from apps.agents.scenario_group_agent.utils.dimension_values import (
+    find_scenario_pressure_breakdown,
+    normalize_dimension_value_aliases,
+)
+
 
 def build_v4_scenario_context(
     scenario: Mapping[str, Any],
@@ -11,12 +16,15 @@ def build_v4_scenario_context(
     generation_diagnostics: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Build prompt-only v4 Scenario context without trusting stale title matches."""
-    normalized_values = _normalize_dimension_values(
-        _mapping(_read(scenario, "dimension_values", "dimensionValues", default={})),
+    raw_dimension_values = _mapping(
+        _read(scenario, "dimension_values", "dimensionValues", default={}),
+    )
+    normalized_values = normalize_dimension_value_aliases(
+        raw_dimension_values,
         dimension_definitions,
     )
-    breakdown = _matching_pressure_breakdown(
-        normalized_values,
+    breakdown = find_scenario_pressure_breakdown(
+        raw_dimension_values,
         dimension_definitions=dimension_definitions,
         generation_diagnostics=generation_diagnostics,
     )
@@ -95,32 +103,6 @@ def _dimension_selections(
     return selections
 
 
-def _matching_pressure_breakdown(
-    normalized_values: Mapping[str, str],
-    *,
-    dimension_definitions: Sequence[Mapping[str, Any]],
-    generation_diagnostics: Mapping[str, Any],
-) -> Mapping[str, Any] | None:
-    if not normalized_values:
-        return None
-    breakdowns = _mapping_items(
-        _read(
-            generation_diagnostics,
-            "scenario_pressure_breakdowns",
-            "scenarioPressureBreakdowns",
-            default=[],
-        ),
-    )
-    for breakdown in breakdowns:
-        candidate_values = _normalize_dimension_values(
-            _mapping(_read(breakdown, "dimension_values", "dimensionValues", default={})),
-            dimension_definitions,
-        )
-        if candidate_values == normalized_values:
-            return breakdown
-    return None
-
-
 def _causal_evidence(
     breakdown: Mapping[str, Any] | None,
     *,
@@ -164,39 +146,6 @@ def _causal_evidence(
         if (interaction := interaction_by_id.get(interaction_id)) is not None
     ]
     return paths, interactions
-
-
-def _normalize_dimension_values(
-    values: Mapping[str, Any],
-    definitions: Sequence[Mapping[str, Any]],
-) -> dict[str, str]:
-    definition_by_alias: dict[str, Mapping[str, Any]] = {}
-    for definition in definitions:
-        dimension_id = _text(_read(definition, "dimension_id", "dimensionId"))
-        if not dimension_id:
-            continue
-        definition_by_alias[dimension_id] = definition
-        label = _text(_read(definition, "label"))
-        if label:
-            definition_by_alias[label] = definition
-
-    normalized: dict[str, str] = {}
-    for raw_dimension, raw_value in values.items():
-        dimension_alias = _text(raw_dimension)
-        if not dimension_alias:
-            continue
-        definition = definition_by_alias.get(dimension_alias, {})
-        dimension_id = _text(_read(definition, "dimension_id", "dimensionId")) or dimension_alias
-        value_alias = _text(raw_value)
-        canonical_value = value_alias
-        for value_definition in _mapping_items(_read(definition, "values", default=[])):
-            value_id = _text(_read(value_definition, "value_id", "valueId"))
-            value_label = _text(_read(value_definition, "label"))
-            if value_alias in {value_id, value_label}:
-                canonical_value = value_id or value_alias
-                break
-        normalized[dimension_id] = canonical_value
-    return normalized
 
 
 def _related_markets(value: object) -> list[dict[str, str]]:

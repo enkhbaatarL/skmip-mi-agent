@@ -1,21 +1,27 @@
 ---
 name: scenario-sync-pipeline
-description: MI Scenario Group Agent API 파이프라인을 실행하고 증적과 보고서를 생성한다. 사용자가 기존·단일 이벤트 create→validation→signpost→confirmation 테스트, eventTypeL2Id별 또는 최근 이벤트 sync 테스트, 신규 Multi-Event SSE create·Presentation API 테스트, v4 단독 실행, v2/v3/v4 비교, multi-event·멀티 이벤트·멀티 시나리오 테스트, 이벤트 ID·최신/오래된 순·키워드 기반 이벤트 선택, 버전별 Scenario 품질 비교, comparison_report.md 생성·형식 수정을 요청할 때 사용한다.
+description: MI Scenario Group Agent API 파이프라인을 실행하고 증적과 보고서를 생성한다. 사용자가 기존·단일 이벤트 create→validation→signpost→confirmation 테스트, 여러 이벤트를 한 create 요청에 넣는 Multi-Event 전체 파이프라인, eventTypeL2Id별 또는 최근 이벤트 sync 테스트, 신규 Multi-Event SSE create·Presentation API 테스트, v4 단독 실행, v2/v3/v4 비교, multi-event·멀티 이벤트·멀티 시나리오 테스트, 이벤트 ID·최신/오래된 순·키워드 기반 이벤트 선택, 버전별 Scenario 품질 비교, comparison_report.md 생성·형식 수정을 요청할 때 사용한다.
 ---
 
 # Scenario Sync Pipeline
 
-요청을 먼저 `기존 전체 파이프라인`, `신규 Multi-Event SSE·Presentation`,
-`Multi-Event v4 단독 실행`, `Multi-Event 버전 비교` 중 하나로 분류한다. 네 흐름을 섞지 않는다.
+요청을 먼저 `기존 단일 이벤트 전체 파이프라인`, `Multi-Event 전체 파이프라인`,
+`신규 Multi-Event SSE·Presentation`, `Multi-Event v4 단독 실행`,
+`Multi-Event 버전 비교` 중 하나로 분류한다. 다섯 흐름을 섞지 않는다.
 
 ## 요청 라우팅
 
-- 사용자가 기존 API, 단일 이벤트, 최근 이벤트 sync, event type별 테스트를 요청하면 **기존 전체 파이프라인**을 실행한다.
+- 사용자가 기존 API, 단일 이벤트, 최근 이벤트를 **각각** sync, event type별 테스트를 요청하면 **기존 단일 이벤트 전체 파이프라인**을 실행한다.
+- 사용자가 여러 Event ID를 **한 번의 create 요청**에 넣고 validation→signpost→confirmation까지 요청하거나,
+  `최신 N건 멀티 이벤트 전체 파이프라인`을 요청하면 **Multi-Event 전체 파이프라인**을 실행한다.
 - 사용자가 `SSE create`, `POST /scenario-groups`, `Presentation API`, `section_ready`,
-  신규 업무 API 테스트를 요청하면 **신규 Multi-Event SSE·Presentation**을 실행한다.
+  신규 업무 API의 create·Presentation까지만 요청하면 **신규 Multi-Event SSE·Presentation**을 실행한다.
 - 사용자가 `v4 only`, `v4 단독`, `v4만 실행`을 요청하면 **Multi-Event v4 단독 실행**을 실행한다.
-- 사용자가 `v2/v3/v4 비교`, 둘 이상의 version 비교, `multi-event`, 멀티 이벤트, 멀티 시나리오를 요청하면 **Multi-Event 버전 비교**를 실행한다.
+- 사용자가 `v2/v3/v4 비교` 또는 둘 이상의 version 비교를 명시하면 **Multi-Event 버전 비교**를 실행한다.
 - version이나 multi-event 의도가 불분명하면 어떤 흐름인지 확인한다.
+
+`--recent-events N`은 N개의 단일 이벤트 파이프라인을 각각 실행하는 옵션이다. 여러 Event를
+하나의 `miEventIds` 배열로 보내야 하는 요청에는 절대 사용하지 않는다.
 
 ## 관리자 토큰 로딩
 
@@ -41,7 +47,7 @@ soft delete가 필요한데 세 위치에서 토큰을 찾지 못하면 실행�
 알린다. 이 경우 `--no-delete-existing`으로 임의 전환하지 않는다. 사용자가 기존 그룹
 보존을 명시적으로 요청한 경우에만 `--no-delete-existing`을 사용한다.
 
-## 기존 전체 파이프라인
+## 기존 단일 이벤트 전체 파이프라인
 
 `tests/manual/test_sync_pipeline_api.py`를 사용한다. unversioned create API부터 validation, signpost, confirmation까지 기존 순서로 실행한다. v2/v3/v4 비교 실행기를 사용하지 않는다.
 
@@ -70,6 +76,9 @@ python tests/manual/test_sync_pipeline_api.py \
 ```
 
 `--recent-events N`은 `GET /events?sort=latest`로 선택하고 N이 100을 넘으면 paging한다. 기존 group이나 disabled 상태인 이벤트도 후보에서 제외하지 않는다. 기존 group은 먼저 soft delete한다. `scenarioSuggestYn=N`처럼 soft delete로 해소되지 않는 실패는 원인을 기록하고 다음 이벤트로 진행한다.
+
+이 옵션은 선택한 Event마다 create API를 한 번씩 호출한다. `최신 N건을 한 번의 Multi-Event
+create에 전달`하라는 요청에는 아래 **Multi-Event 전체 파이프라인**을 사용한다.
 
 단일 이벤트를 테스트하려면 다음처럼 실행한다.
 
@@ -110,6 +119,42 @@ python tests/manual/test_sync_pipeline_api.py \
 - 지표: `local/output/sync_pipeline_api_test/sync_pipeline_metrics.sqlite3`
 
 최종 보고에 성공 건수, 실패 이벤트와 단계·원인, soft delete/retry 수, 느린 API, SQLite와 Markdown 경로를 포함한다.
+
+## Multi-Event 전체 파이프라인
+
+여러 Event를 하나의 Scenario Group으로 묶어 create→validation→signpost→confirmation까지
+실행한다. create에는 `tests/manual/test_sse_scenario_group_api.py`를 사용해 canonical SSE와
+Presentation 계약도 함께 검증한다. 이후 같은 `scenarioGroupId`에만 후속 sync API를 순서대로
+호출한다. Event별로 create를 나누거나 `test_sync_pipeline_api.py --recent-events N`을 사용하지 않는다.
+
+### 실행 순서
+
+1. 명시 ID면 `--event-ids ...`, 최신 N건이면 `--event-count N --event-sort latest`로 SSE create를
+   정확히 한 번 실행한다. 기존 활성 그룹은 기본 정책대로 먼저 soft delete한다.
+2. create의 terminal event가 `completed.status=succeeded`인지 확인하고 `result.json`의
+   `scenarioGroupId`를 사용한다. timeout 또는 stream 오류 뒤 같은 create POST를 재시도하지 않는다.
+3. `tests/manual/build_request_bodies_from_group.py`로 현재 그룹 기반 validation body를 만들고
+   `POST /scenario-groups/{id}/validation/sync`를 호출한다.
+4. 같은 그룹에 `POST /scenario-groups/{id}/signposts/sync`를 호출한다.
+5. signpost 반영 후 그룹을 다시 조회해 confirmation body를 새로 만들고
+   `POST /scenario-groups/{id}/confirmation`을 호출한다.
+6. 최종 GET에서 입력한 모든 Event ID가 같은 그룹에 연결되고 `status=created`,
+   `stage=completed`인지 확인한다. 각 요청·응답과 최종 GET을 create batch의 `follow_up/`에 저장한다.
+
+최신 3건을 한 그룹으로 실행하는 create 예시는 다음과 같다.
+
+```bash
+python tests/manual/test_sse_scenario_group_api.py \
+  --base-url http://localhost:8000 \
+  --event-count 3 \
+  --event-sort latest \
+  --user-id 10603 \
+  --admin-token "$SCENARIO_GROUP_ADMIN_TOKEN" \
+  --timeout 1200
+```
+
+판정은 create의 SSE·Presentation 기준에 더해 validation `result=success`, signpost
+`result=success`, confirmation `status=success`와 `data.stage=completed`를 모두 요구한다.
 
 ## 신규 Multi-Event SSE·Presentation
 

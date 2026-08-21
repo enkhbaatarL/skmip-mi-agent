@@ -34,6 +34,7 @@ from apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.v4_sche
     expand_v4_readable_dimension_design,
     expand_v4_readable_event_analysis,
     expand_v4_readable_scenario_synthesis,
+    finalize_open_question_pool,
     finalize_v4_dimension_design,
     finalize_v4_event_impact_analysis,
     finalize_v4_generation_result,
@@ -51,8 +52,12 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     build_v4_event_impact_analysis_user_prompt,
     build_v4_interaction_analysis_user_prompt,
     build_v4_scenario_synthesis_user_prompt,
+    event_open_question_budgets,
 )
 from apps.agents.scenario_group_agent.schemas.base import BaseNode
+from apps.agents.scenario_group_agent.utils.scenario_group_summary import (
+    build_scenario_group_event_summary,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.tracing.context import TraceContext
 from apps.common.values.error_codes import ErrorCode
@@ -66,6 +71,7 @@ V4_EVENT_LLM_TIMEOUT_SECONDS = 180.0
 def _emit_internal_retry(
     *,
     phase: str,
+    stage: str,
     attempt: int,
     validation_code: str | None,
     reference_ids: list[str] | None = None,
@@ -80,6 +86,7 @@ def _emit_internal_retry(
         {
             "kind": "stage_retry",
             "phase": phase,
+            "stage": stage,
             "attempt": attempt,
             "maxAttempts": MAX_STAGE_ATTEMPTS,
             "validationCode": validation_code,
@@ -104,6 +111,8 @@ async def _analyze_event_with_retries(
     catalog_version: str,
     analysis_as_of: str,
     trace_context: TraceContext | None,
+    selected_event_count: int = 1,
+    open_question_budget: int | None = None,
 ) -> _EventAnalysisOutcome:
     event_id = int(event.mi_event_id)
     event_payload = event.model_dump()
@@ -122,6 +131,8 @@ async def _analyze_event_with_retries(
                             impact_levers=[lever.model_dump() for lever in impact_levers],
                             catalog_version=catalog_version,
                             analysis_as_of=analysis_as_of,
+                            selected_event_count=selected_event_count,
+                            open_question_budget=open_question_budget,
                             validation_feedback=feedback,
                         ),
                         trace_context=trace_context,
@@ -137,6 +148,7 @@ async def _analyze_event_with_retries(
                 event_id=event_id,
                 observed_at=event.occurred_at,
                 fact_candidates=fact_candidates,
+                open_question_limit=open_question_budget,
             )
             result = finalize_v4_event_impact_analysis(
                 draft,
@@ -150,6 +162,7 @@ async def _analyze_event_with_retries(
             if retryable and attempt < MAX_STAGE_ATTEMPTS:
                 _emit_internal_retry(
                     phase="event_analysis",
+                    stage="event_impact_analysis",
                     attempt=attempt + 1,
                     validation_code=error_code,
                     reference_ids=[str(event_id)],
@@ -176,6 +189,7 @@ class AnalyzeEventImpactsNode(BaseNode):
         runtime: Runtime[TraceContext] | None = None,
     ) -> dict[str, Any]:
         trace_context = runtime.context if runtime is not None else None
+        question_budgets = event_open_question_budgets(len(state.events))
         outcomes = await asyncio.gather(
             *[
                 _analyze_event_with_retries(
@@ -183,9 +197,11 @@ class AnalyzeEventImpactsNode(BaseNode):
                     impact_levers=state.impact_levers,
                     catalog_version=state.impact_catalog_version,
                     analysis_as_of=state.analysis_as_of,
+                    selected_event_count=len(state.events),
+                    open_question_budget=question_budget,
                     trace_context=trace_context,
                 )
-                for event in state.events
+                for event, question_budget in zip(state.events, question_budgets, strict=True)
             ],
         )
         attempts = max((outcome.attempts for outcome in outcomes), default=0)
@@ -206,6 +222,7 @@ class AnalyzeEventImpactsNode(BaseNode):
             event_exclusions=[item for draft in local_drafts for item in draft.event_exclusions],
             impact_paths=[path for draft in local_drafts for path in draft.impact_paths],
             path_uncertainties=[item for draft in local_drafts for item in draft.path_uncertainties],
+            validation_warnings=[item for draft in local_drafts for item in draft.validation_warnings],
         )
         return {
             "analysis_attempt": attempts,
@@ -236,6 +253,7 @@ def validate_v4_event_impacts(state: V4MultiEventGenerationState) -> dict[str, A
         if retryable and state.analysis_attempt < MAX_STAGE_ATTEMPTS:
             _emit_internal_retry(
                 phase="event_analysis",
+                stage="event_impact_analysis",
                 attempt=state.analysis_attempt + 1,
                 validation_code=error_code,
             )
@@ -279,6 +297,9 @@ class AnalyzeEventInteractionsNode(BaseNode):
                 system_prompt=V4_INTERACTION_SYSTEM_PROMPT,
                 user_prompt=build_v4_interaction_analysis_user_prompt(
                     impact_paths=[path.model_dump() for path in state.analysis_draft.impact_paths],
+                    event_question_count=len(state.analysis_draft.path_uncertainties),
+                    event_count=len(state.events),
+                    events=[event.model_dump() for event in state.events],
                     validation_feedback=state.interaction_error,
                 ),
                 trace_context=runtime.context if runtime is not None else None,
@@ -297,6 +318,7 @@ class AnalyzeEventInteractionsNode(BaseNode):
             if retryable and attempt < MAX_STAGE_ATTEMPTS:
                 _emit_internal_retry(
                     phase="event_analysis",
+                    stage="event_interaction_analysis",
                     attempt=attempt + 1,
                     validation_code=error_code,
                 )
@@ -315,11 +337,19 @@ def validate_v4_event_interactions(state: V4MultiEventGenerationState) -> dict[s
     if not isinstance(state.interaction_draft, V4ReadableInteractionAnalysisDraft):
         return {}
     try:
-        merged = merge_v4_readable_interactions(state.analysis_draft, state.interaction_draft)
+        merged = merge_v4_readable_interactions(
+            state.analysis_draft,
+            state.interaction_draft,
+            event_count=len(state.events),
+        )
         finalized = finalize_v4_event_impact_analysis(
             merged,
             event_ids=[int(event.mi_event_id) for event in state.events],
             impact_levers=state.impact_levers,
+        )
+        finalized = finalize_open_question_pool(
+            finalized,
+            target_minimum=3 if len(state.events) == 1 else 7,
         )
         return {
             "analysis_draft": finalized,
@@ -333,6 +363,7 @@ def validate_v4_event_interactions(state: V4MultiEventGenerationState) -> dict[s
         if retryable and state.interaction_attempt < MAX_STAGE_ATTEMPTS:
             _emit_internal_retry(
                 phase="event_analysis",
+                stage="event_interaction_analysis",
                 attempt=state.interaction_attempt + 1,
                 validation_code=error_code,
             )
@@ -391,6 +422,7 @@ class DesignModelLeverDimensionsNode(BaseNode):
             if retryable and attempt < MAX_STAGE_ATTEMPTS:
                 _emit_internal_retry(
                     phase="dimension_design",
+                    stage="dimension_design",
                     attempt=attempt + 1,
                     validation_code=error_code,
                 )
@@ -429,6 +461,7 @@ def validate_v4_dimensions(state: V4MultiEventGenerationState) -> dict[str, Any]
         if retryable and state.dimension_attempt < MAX_STAGE_ATTEMPTS:
             _emit_internal_retry(
                 phase="dimension_design",
+                stage="dimension_design",
                 attempt=state.dimension_attempt + 1,
                 validation_code=error_code,
             )
@@ -500,6 +533,7 @@ class SynthesizeV4ScenariosNode(BaseNode):
             if retryable and attempt < MAX_STAGE_ATTEMPTS:
                 _emit_internal_retry(
                     phase="scenario_synthesis",
+                    stage="scenario_synthesis",
                     attempt=attempt + 1,
                     validation_code=error_code,
                 )
@@ -523,6 +557,7 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
     try:
         finalized, coverage = finalize_v4_generation_result(
             state.scenario_draft,
+            group_summary=build_scenario_group_event_summary(state.events),
             impact_analysis=state.analysis_draft,
             dimension_design=state.dimension_draft,
             impact_levers=state.impact_levers,
@@ -539,6 +574,7 @@ def finalize_v4_scenarios(state: V4MultiEventGenerationState) -> dict[str, Any]:
         if retryable and state.scenario_attempt < MAX_STAGE_ATTEMPTS:
             _emit_internal_retry(
                 phase="scenario_synthesis",
+                stage="scenario_synthesis",
                 attempt=state.scenario_attempt + 1,
                 validation_code=error_code,
             )
@@ -620,6 +656,7 @@ def persist_v4_generation(state: V4MultiEventGenerationState) -> dict[str, Any]:
     saved_group, saved_scenarios = ScenarioGroupService().persist_multi_event_generation(
         scenario_group_id=state.scenario_group.scenario_group_id,
         title=finalized.group_title,
+        summary=finalized.group_summary,
         description=finalized.group_description,
         dimension_definitions=[definition.model_dump() for definition in finalized.dimension_definitions],
         generation_diagnostics=diagnostics.model_dump(),

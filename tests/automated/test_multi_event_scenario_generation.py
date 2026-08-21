@@ -2568,7 +2568,7 @@ def test_v3_compact_dimension_array_order_controls_table_headers() -> None:
     assert [header.key for header in result.table.headers] == ["zeta", "alpha"]
 
 
-def test_v3_table_resolves_free_value_id_to_user_label() -> None:
+def test_v3_table_preserves_canonical_value_id() -> None:
     group = ScenarioGroupPayload(
         scenario_group_id=10,
         api_version="v3",
@@ -2607,7 +2607,7 @@ def test_v3_table_resolves_free_value_id_to_user_label() -> None:
         ],
     )
 
-    assert result.table.rows[0].cells == {"europe_gas_pull": "3~5GW 감발·흡수 25%"}
+    assert result.table.rows[0].cells == {"europe_gas_pull": "eu_nuke_v3"}
 
 
 def test_validation_creates_pending_mapping_for_free_value() -> None:
@@ -2958,6 +2958,150 @@ def test_mapping_approval_rejects_stale_version() -> None:
     session.rollback.assert_called_once()
 
 
+def _scenario_group_model(*, summary: str | None, api_version: str = "v4") -> SimpleNamespace:
+    return SimpleNamespace(
+        scenario_group_id=99,
+        request_usr_id=7,
+        title="준비 중인 시나리오 그룹",
+        summary=summary,
+        description=None,
+        dimension_selected=[],
+        scenario_count=0,
+        status="creating",
+        stage="ready",
+        api_version=api_version,
+        generation_strategy=(
+            "multi_event_model_lever_dimensions" if api_version == "v4" else "multi_event_composite_dimensions"
+        ),
+        impact_catalog_version="v1" if api_version == "v4" else None,
+        impact_catalog_checksum="catalog-checksum" if api_version == "v4" else None,
+        template_checksum=None,
+        parameter_mapping_ready=api_version == "v4",
+        dimension_definitions=[],
+        generation_diagnostics={},
+    )
+
+
+def test_prepare_v4_group_keeps_summary_null_until_generation_completes() -> None:
+    session = Mock()
+    repository = Mock()
+    repository.insert_group.return_value = 99
+    repository.fetch_single_active_group_event.return_value = None
+    repository.fetch_by_id.return_value = _scenario_group_model(summary=None)
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
+            return_value=repository,
+        ),
+    ):
+        group = ScenarioGroupService().prepare_v4_multi_event_group(
+            events=[
+                {"mi_event_id": 101, "event_type_l2_id": 8},
+                {"mi_event_id": 202, "event_type_l2_id": 12},
+            ],
+            impact_catalog_version="v1",
+            impact_catalog_checksum="catalog-checksum",
+            user_id=7,
+        )
+
+    assert repository.insert_group.call_args.args[0]["summary"] is None
+    assert group.summary is None
+
+
+def test_persist_multi_event_generation_updates_optional_summary() -> None:
+    session = Mock()
+    group = _scenario_group_model(summary=None)
+    group_repository = Mock()
+    group_repository.fetch_by_id.return_value = group
+    group_repository.fetch_single_active_group_event.return_value = None
+    group_repository.update_group.side_effect = lambda target, payload: [
+        setattr(target, key, value) for key, value in payload.items()
+    ]
+    scenario_repository = Mock()
+    scenario_repository.fetch_models_by_group_id.return_value = []
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
+            return_value=group_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioRepository",
+            return_value=scenario_repository,
+        ),
+    ):
+        saved_group, _saved_scenarios = ScenarioGroupService().persist_multi_event_generation(
+            scenario_group_id=99,
+            title="동북아 한파와 미국 액화시설 중단",
+            summary="한파 수요와 액화시설 공급 차질의 지속·회복 경로를 비교한다.",
+            description="이벤트 사실 문장이다. 검증된 인과 분기 문장이다.",
+            dimension_definitions=[],
+            generation_diagnostics={},
+            scenarios=[],
+            user_id=7,
+        )
+
+    update = group_repository.update_group.call_args.args[1]
+    assert update["summary"] == "한파 수요와 액화시설 공급 차질의 지속·회복 경로를 비교한다."
+    assert saved_group.summary == update["summary"]
+
+
+def test_persist_multi_event_generation_preserves_summary_when_omitted() -> None:
+    session = Mock()
+    group = _scenario_group_model(summary="기존 v3 summary", api_version="v3")
+    group_repository = Mock()
+    group_repository.fetch_by_id.return_value = group
+    group_repository.fetch_single_active_group_event.return_value = None
+    group_repository.update_group.side_effect = lambda target, payload: [
+        setattr(target, key, value) for key, value in payload.items()
+    ]
+    scenario_repository = Mock()
+    scenario_repository.fetch_models_by_group_id.return_value = []
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
+
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
+            return_value=group_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioRepository",
+            return_value=scenario_repository,
+        ),
+    ):
+        saved_group, _saved_scenarios = ScenarioGroupService().persist_multi_event_generation(
+            scenario_group_id=99,
+            title="v3 생성 제목",
+            description="v3 생성 설명",
+            dimension_definitions=[],
+            generation_diagnostics={},
+            scenarios=[],
+            user_id=7,
+        )
+
+    update = group_repository.update_group.call_args.args[1]
+    assert "summary" not in update
+    assert saved_group.summary == "기존 v3 summary"
+
+
 def test_multi_event_group_has_no_fake_representative_event_and_keeps_order() -> None:
     session = Mock()
     repository = Mock()
@@ -3158,12 +3302,17 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
     session = Mock()
     group = SimpleNamespace(
         scenario_group_id=10,
+        request_usr_id=7,
         generation_strategy="multi_event_composite_dimensions",
         parameter_mapping_ready=True,
+        dimension_selected=["tightness"],
         dimension_definitions=[
             {
                 "dimension_id": "tightness",
                 "label": "수급 긴축",
+                "values": [
+                    {"value_id": "tightness_v1", "label": "사용자 승인 값"},
+                ],
             },
         ],
         event_type_l2_id=None,
@@ -3174,6 +3323,7 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
         display_order=1,
         baseline_yn="Y",
         mod_usr_logn_id=7,
+        dimension_values={"tightness": "tightness_v1"},
     )
     signpost = SimpleNamespace(
         signpost_id=1000,
@@ -3225,10 +3375,11 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
             10,
             {"title": "복수 Event 확정"},
             {
+                "headers": [{"key": "tightness", "label": "수급 긴축", "display_order": 1}],
                 "rows": [
                     {
                         "scenario_id": 100,
-                        "cells": {"tightness": "사용자 승인 값"},
+                        "cells": {"tightness": "tightness_v1"},
                         "metrics": {
                             "probability_score": 60,
                             "probability_delta": 0,
@@ -3247,9 +3398,7 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
 
     assert result["status"] == "success"
     scenario_update = scenario_repository.update_from_payload.call_args.args[1]
-    assert scenario_update["dimension_values"] == {
-        "tightness": "사용자 승인 값",
-    }
+    assert "dimension_values" not in scenario_update
     legacy_cell_mapping.assert_not_called()
     group_repository.create_confirmation_snapshot.assert_called_once()
     session.commit.assert_called_once()
@@ -3259,6 +3408,7 @@ def test_confirmation_waits_for_multi_event_mapping_approval() -> None:
     session = Mock()
     group_repository = Mock()
     group_repository.fetch_by_id.return_value = SimpleNamespace(
+        request_usr_id=7,
         generation_strategy="multi_event_source_dimensions",
         parameter_mapping_ready=False,
     )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from functools import lru_cache
 import time
 from typing import Any
@@ -26,6 +25,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation imp
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
     ScenarioGroupOperationService,
 )
+from apps.agents.scenario_group_agent.runtime import get_scenario_group_operation_task_runner
 from apps.agents.scenario_group_agent.schemas.state import ScenarioTableState
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.exceptions.custom import MIBaseError
@@ -152,25 +152,7 @@ def _validation_table_for_output(
     group_payload = group.model_dump() if isinstance(group, ScenarioGroupPayload) else group
     if group_payload.get("generation_strategy") != V4_GENERATION_STRATEGY:
         return request_table_payload
-    table = deepcopy(request_table_payload)
-    labels_by_dimension: dict[str, dict[str, str]] = {}
-    for definition in group_payload.get("dimension_definitions") or []:
-        if not isinstance(definition, dict):
-            continue
-        dimension_id = str(definition.get("dimension_id") or definition.get("dimensionId") or "")
-        labels_by_dimension[dimension_id] = {
-            str(value.get("value_id") or value.get("valueId")): str(value.get("label") or "")
-            for value in definition.get("values") or []
-            if isinstance(value, dict) and (value.get("value_id") or value.get("valueId"))
-        }
-    for row in table.get("rows") or []:
-        if not isinstance(row, dict) or not isinstance(row.get("cells"), dict):
-            continue
-        for dimension_id, raw_value in list(row["cells"].items()):
-            label = labels_by_dimension.get(str(dimension_id), {}).get(str(raw_value))
-            if label:
-                row["cells"][dimension_id] = label
-    return table
+    return request_table_payload
 
 
 @lru_cache(maxsize=1)
@@ -202,29 +184,40 @@ async def run_validate_scenarios_inline(
         request_table=request_table,
         operation_id=operation_id,
     )
-    try:
-        if operation_id is not None:
-            ScenarioGroupOperationService().start_operation(
-                scenario_group_id,
-                operation_id,
-                phase="validation",
-            )
-        with mlflow_trace_context(trace_context):
-            final_state = await get_compiled_graph().ainvoke(
-                state,
-                config=build_langgraph_config(trace_context),
-                context=trace_context,
-            )
-    except Exception as exc:
-        if operation_id is not None:
-            ScenarioGroupOperationService().fail_validation(
-                scenario_group_id=scenario_group_id,
-                operation_id=operation_id,
-                user_id=user_id,
-                error=exc,
-            )
-        raise
-    return _bg_to_output(final_state)
+
+    async def execute() -> ValidateScenariosOut:
+        try:
+            if operation_id is not None:
+                ScenarioGroupOperationService().start_operation(
+                    scenario_group_id,
+                    operation_id,
+                    phase="validation",
+                )
+            with mlflow_trace_context(trace_context):
+                final_state = await get_compiled_graph().ainvoke(
+                    state,
+                    config=build_langgraph_config(trace_context),
+                    context=trace_context,
+                )
+        except Exception as exc:
+            if operation_id is not None:
+                ScenarioGroupOperationService().fail_validation(
+                    scenario_group_id=scenario_group_id,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    error=exc,
+                )
+            raise
+        return _bg_to_output(final_state)
+
+    operation = execute()
+    if operation_id is None:
+        return await operation
+    return await get_scenario_group_operation_task_runner().run_with_heartbeat(
+        scenario_group_id,
+        operation_id,
+        operation,
+    )
 
 
 # ---------------------------------------------------------------------------

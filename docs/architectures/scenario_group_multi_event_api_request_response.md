@@ -40,8 +40,9 @@ sequenceDiagram
     API->>DB: group + operation + accepted event 저장
     API-->>Client: SSE accepted
     Note over Client: scenarioGroupId, operationId,<br/>sequence를 즉시 저장
-    API-->>Client: phase_started / retrying / validated
-    API-->>Client: section_ready
+    API-->>Client: phase_started
+    API-->>Client: retrying (검증 실패 시) / validated (성공 시)
+    API-->>Client: section_ready (검증 성공 시)
     Client->>API: GET /scenario-groups/{scenarioGroupId}/presentation?operationId=...
     API-->>Client: 공통 3-section Presentation read model
     API-->>Client: completed | failed | interrupted
@@ -111,6 +112,19 @@ Client는 `sequence` 오름차순으로 이벤트를 처리한다. `id`와 JSON�
 정상이다. Client는 고정된 이벤트 개수나 고정 순서에 의존하지 않고 `eventType`, `phase`, `sequence`를
 기준으로 처리한다.
 
+다만 다음 phase 경계 순서는 불변이다.
+
+```text
+section_ready(이전 phase)
+→ phase_started(다음 phase, phase당 한 번)
+→ retrying(검증 실패 시, 같은 phase에서 반복 가능)
+→ validated(검증 성공 시)
+→ section_ready
+```
+
+`phase_started`는 해당 phase의 첫 LangGraph node가 시작될 때 발행한다. 같은 phase의 재시도 attempt나
+후속 node마다 반복하지 않으며, `validated`는 검증이 실제로 성공한 뒤에만 발행한다.
+
 `title`과 `messageMarkdown`은 사용자 안내용이다. `messageMarkdown`을 HTML로 변환해 표시할 때는
 sanitization을 적용하고, `validationCode`, `referenceIds`, `mlflowTraceId`는 진단 정보로 취급한다.
 
@@ -140,7 +154,7 @@ GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}
 | `dimensionId` | string | Scenario table의 header/cell과 연결되는 Dimension ID |
 | `label` | string | 화면과 Scenario table header에 표시할 Dimension 이름 |
 | `description` | string | 사용자가 판단해야 할 불확실성을 질문 형태로 설명한 문장 |
-| `rationale` | string | `description`의 관측 시점·수치·시장 신호·대상·영향 경로를 빠짐없이 유지하고 질문 어미만 `...하는지에 따라`로 바꿔 이 Dimension의 선정 근거를 설명하는 10~200자의 구체적인 한국어 문장 |
+| `rationale` | string | `description`의 관측 시점·수치·시장 신호·대상·영향 경로를 유지하고 질문 어미만 `...하는지에 따라`로 바꿔 이 Dimension의 선정 근거를 설명하는 최대 200자의 구체적인 한국어 문장. 최소 길이는 강제하지 않음 |
 | `sourceEventIds` | number[] | Dimension의 근거가 된 Event ID 목록 |
 | `modelSupportStatus` | string \| null | 모델 파라미터 지원 상태 |
 | `source` | string \| null | Dimension 복원 출처. v3·v4에서는 `null`이며, v1 legacy 복원 시에만 식별 문자열을 반환 |
@@ -248,6 +262,10 @@ Presentation 응답에서 Validation·Signpost request body를 조립하는 필�
 신규 Multi-Event 생성 graph 안에서 각 단계 검증이 함께 수행되므로, Client가 생성 도중 후속 편집용
 `/scenario-groups/{scenarioGroupId}/validation` 또는
 `/scenario-groups/{scenarioGroupId}/signposts` API를 호출하지 않는다.
+
+v4 Scenario Group의 `summary`는 생성 중에는 `null`이고 완료 후 Event의 `oneLineSummary` 앞 40자를
+요청 순서대로 ` | `로 연결한 값이다. Event 요약이 없으면 `eventTitleKo`, 그마저 없으면
+`이벤트 {miEventId}`를 사용하며, 공백은 단일 공백으로 정규화하고 말줄임표는 추가하지 않는다.
 
 ### 3.6 terminal 처리
 
@@ -500,7 +518,7 @@ data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequenc
 
 id: 3
 event: validated
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":3,"eventType":"validated","phase":"event_analysis","title":"Event 분석이 완료되었습니다","messageMarkdown":"Event 분석 결과가 검증되었습니다.","snapshotRevision":0,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:52:11.760568Z","attempt":1,"maxAttempts":3}
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":3,"eventType":"validated","phase":"event_analysis","title":"Event 분석이 완료되었습니다. 이제 Event 상호작용 분석을 시작합니다","messageMarkdown":"Event 분석 결과가 검증되었습니다. 이제 Event 상호작용 분석을 시작합니다.","snapshotRevision":0,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:52:11.760568Z","attempt":1,"maxAttempts":3}
 
 id: 4
 event: section_ready
@@ -508,7 +526,7 @@ data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequenc
 
 id: 5
 event: retrying
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":5,"eventType":"retrying","phase":"event_analysis","title":"Event 분석을 다시 수행합니다","messageMarkdown":"검증 기준을 충족하지 못해 Event 분석을 다시 수행합니다.","snapshotRevision":1,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:52:24.341159Z","attempt":2,"maxAttempts":3,"referenceIds":[],"validationCode":"LLM_INVALID_RESPONSE_ERROR"}
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":5,"eventType":"retrying","phase":"event_analysis","title":"Event 상호작용 분석을 다시 수행합니다","messageMarkdown":"검증 기준을 충족하지 못해 Event 상호작용 분석을 다시 수행합니다.","snapshotRevision":1,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:52:24.341159Z","attempt":2,"maxAttempts":3,"referenceIds":[],"validationCode":"LLM_INVALID_RESPONSE_ERROR"}
 
 : keep-alive
 
@@ -533,38 +551,42 @@ event: phase_started
 data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":8,"eventType":"phase_started","phase":"dimension_design","title":"Dimension 설계을 시작했습니다","messageMarkdown":"Dimension 설계을 진행하고 있습니다.","snapshotRevision":2,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:53:44.971636Z"}
 
 id: 9
-event: validated
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":9,"eventType":"validated","phase":"dimension_design","title":"Dimension 설계이 완료되었습니다","messageMarkdown":"Dimension 설계 결과가 검증되었습니다.","snapshotRevision":2,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:53:45.115180Z","attempt":1,"maxAttempts":3}
+event: retrying
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":9,"eventType":"retrying","phase":"dimension_design","title":"Dimension 설계을 다시 수행합니다","messageMarkdown":"검증 기준을 충족하지 못해 Dimension 설계을 다시 수행합니다.","snapshotRevision":2,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:53:45.041153Z","attempt":2,"maxAttempts":3,"referenceIds":["d2"],"validationCode":"UNKNOWN_SOURCE_REFERENCE"}
 
 id: 10
-event: section_ready
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":10,"eventType":"section_ready","phase":"dimension_design","title":"Dimension 설계 화면을 갱신할 수 있습니다","messageMarkdown":"검증된 Dimension 설계 결과가 준비되었습니다.","snapshotRevision":3,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:53:45.125195Z"}
-
-: keep-alive
-
-: keep-alive
-
-: keep-alive
+event: validated
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":10,"eventType":"validated","phase":"dimension_design","title":"Dimension 설계이 완료되었습니다","messageMarkdown":"Dimension 설계 결과가 검증되었습니다.","snapshotRevision":2,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:02.115180Z","attempt":2,"maxAttempts":3}
 
 id: 11
-event: phase_started
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":11,"eventType":"phase_started","phase":"scenario_synthesis","title":"Scenario 합성을 시작했습니다","messageMarkdown":"Scenario 합성을 진행하고 있습니다.","snapshotRevision":3,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:37.970411Z"}
+event: section_ready
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":11,"eventType":"section_ready","phase":"dimension_design","title":"Dimension 설계 화면을 갱신할 수 있습니다","messageMarkdown":"검증된 Dimension 설계 결과가 준비되었습니다.","snapshotRevision":3,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:02.125195Z"}
+
+: keep-alive
+
+: keep-alive
+
+: keep-alive
 
 id: 12
-event: validated
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":12,"eventType":"validated","phase":"scenario_synthesis","title":"Scenario 합성이 완료되었습니다","messageMarkdown":"Scenario 합성 결과가 검증되었습니다.","snapshotRevision":3,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.013108Z","attempt":1,"maxAttempts":3}
+event: phase_started
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":12,"eventType":"phase_started","phase":"scenario_synthesis","title":"Scenario 합성을 시작했습니다","messageMarkdown":"Scenario 합성을 진행하고 있습니다.","snapshotRevision":3,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:37.970411Z"}
 
 id: 13
-event: section_ready
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":13,"eventType":"section_ready","phase":"scenario_synthesis","title":"Scenario 합성 화면을 갱신할 수 있습니다","messageMarkdown":"검증된 Scenario 합성 결과가 준비되었습니다.","snapshotRevision":4,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.019077Z"}
+event: validated
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":13,"eventType":"validated","phase":"scenario_synthesis","title":"Scenario 합성이 완료되었습니다","messageMarkdown":"Scenario 합성 결과가 검증되었습니다.","snapshotRevision":3,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.013108Z","attempt":1,"maxAttempts":3}
 
 id: 14
-event: phase_started
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":14,"eventType":"phase_started","phase":"persistence","title":"결과 저장을 시작했습니다","messageMarkdown":"결과 저장을 진행하고 있습니다.","snapshotRevision":4,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.073750Z"}
+event: section_ready
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":14,"eventType":"section_ready","phase":"scenario_synthesis","title":"Scenario 합성 화면을 갱신할 수 있습니다","messageMarkdown":"검증된 Scenario 합성 결과가 준비되었습니다.","snapshotRevision":4,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.019077Z"}
 
 id: 15
+event: phase_started
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":15,"eventType":"phase_started","phase":"persistence","title":"결과 저장을 시작했습니다","messageMarkdown":"결과 저장을 진행하고 있습니다.","snapshotRevision":4,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.073750Z"}
+
+id: 16
 event: completed
-data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":15,"eventType":"completed","phase":"persistence","title":"시나리오 그룹 생성이 완료되었습니다","messageMarkdown":"5개 Scenario를 생성했습니다.","snapshotRevision":5,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.088670Z","status":"succeeded"}
+data: {"operationId":"01KZQJK500D0PE7XVQHXJFMHDY","scenarioGroupId":410,"sequence":16,"eventType":"completed","phase":"persistence","title":"시나리오 그룹 생성이 완료되었습니다","messageMarkdown":"5개 Scenario를 생성했습니다.","snapshotRevision":5,"mlflowTraceId":"15743a93-5a6f-44a4-a510-ef1ea51b5b0c","createdAt":"2026-08-11T04:54:38.088670Z","status":"succeeded"}
 ```
 
 ## 8. 브라우저 구현 시 주의사항

@@ -177,6 +177,57 @@ class V4ValidationGeneratedScenariosOutput(BaseModel):
     items: list[V4ValidationGeneratedScenario] = Field(default_factory=list)
 
 
+class V4AdditionalDimensionValueSelection(BaseModel):
+    client_row_key: str
+    dimension_id: str
+    value_id: str
+
+
+class V4AdditionalDimensionValueSelectionOutput(BaseModel):
+    items: list[V4AdditionalDimensionValueSelection] = Field(default_factory=list)
+
+
+V4_ADDITIONAL_DIMENSION_VALUE_SELECTION_SYSTEM_PROMPT = """\
+당신은 v4 Multi-Event LNG Scenario의 Additional Dimension 빈 cell에 의미상 가장 적합한 value를 고릅니다.
+- 각 selection마다 제공된 allowedValues 안의 valueId를 정확히 하나 선택하십시오.
+- clientRowKey와 dimensionId를 변경하지 마십시오.
+- 모든 selection을 정확히 한 번 출력하고, 항목을 누락·추가·중복하지 마십시오.
+- 목표 pressure 방향은 서버가 이미 제한했으므로 방향을 다시 해석하거나 범위 밖 value를 만들지 마십시오.
+- Scenario 제목, 기존 cell, narrative, Event 근거, leverStates, assumptionRationale를 함께 고려하십시오.
+"""
+
+
+def build_v4_additional_dimension_value_selection_messages(
+    *,
+    selections: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    generation_diagnostics: dict[str, Any],
+) -> list[dict[str, str]]:
+    payload = {
+        "selections": selections,
+        "events": events,
+        "generationGrounding": {
+            key: generation_diagnostics.get(key)
+            for key in (
+                "event_facts",
+                "impact_paths",
+                "path_uncertainties",
+                "event_interactions",
+                "decision_basis",
+            )
+            if generation_diagnostics.get(key)
+        },
+    }
+    return [
+        {"role": "system", "content": V4_ADDITIONAL_DIMENSION_VALUE_SELECTION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": "다음 JSON의 각 selection에 대해 valueId를 선택하십시오.\n"
+            + json.dumps(payload, ensure_ascii=False, default=str),
+        },
+    ]
+
+
 V4_VALIDATION_GENERATION_SYSTEM_PROMPT = """\
 당신은 사용자가 편집한 v4 Multi-Event LNG Scenario의 DB 저장 필드를 작성합니다.
 - 입력된 clientRowKey마다 정확히 한 항목을 출력하고 키를 바꾸지 마십시오.

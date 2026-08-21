@@ -27,7 +27,18 @@ class ErrorCode(Enum):
     )
     SCENARIO_VALIDATION_STALE = (
         -1006,
-        "Validation 이후 Scenario 또는 Dimension 정의가 변경되었습니다. 화면을 새로고침한 뒤 Validation을 다시 실행해주세요.",
+        "Validation 이후 Scenario 또는 Dimension 정의가 변경되었습니다. "
+        "화면을 새로고침한 뒤 Validation을 다시 실행해주세요.",
+        409,
+    )
+    SCENARIO_DIMENSION_CANDIDATE_STALE = (
+        -1007,
+        "추가 Dimension 후보가 변경되었거나 더 이상 선택할 수 없습니다. 화면을 새로고침해주세요.",
+        409,
+    )
+    SCENARIO_CONFIRMATION_STALE = (
+        -1008,
+        "Scenario Dimension 조합이 현재 저장 상태와 다릅니다. Validation과 Signpost를 다시 실행해주세요.",
         409,
     )
 

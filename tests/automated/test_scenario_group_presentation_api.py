@@ -178,7 +178,7 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     for result in (v3, v4):
         payload = result.model_dump(mode="json", by_alias=True)
         assert set(payload["sections"]) == {"eventAnalysis", "scenarioDesign", "roleSelectionRationale"}
-        assert payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cells"] == {"d1": "상승"}
+        assert payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cells"] == {"d1": "d1_v1"}
         assert (
             payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cellEvidence"]["d1"]["valueId"]
             == "d1_v1"
@@ -346,7 +346,8 @@ def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
     diagnostics = _v4_diagnostics()
     diagnostics["scenarioPressureBreakdowns"] = [
         {
-            "title": "Scenario <img src=x onerror=alert(1)>",
+            "title": "검증 전 과거 제목",
+            "dimensionValues": {"수급 방향": "상승"},
             "pressureBreakdown": {
                 "commonImpact": "regional_price_spread 경로",
                 "valueDelta": "inventory_condition을 반영",
@@ -379,6 +380,89 @@ def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
     assert "근거: 액화설비 가용성 하락" in markdown
     assert "inventory_condition_extra" in markdown
     assert "unknown_lever" in markdown
+
+
+def test_v4_role_rationale_keeps_breakdowns_with_dimension_combinations_after_title_swap() -> None:
+    definition = _v4_definition()
+    definition["values"].append(
+        {
+            "valueId": "d1_v2",
+            "label": "하락",
+            "assumptionRationale": "하락 가정",
+            "pressureContribution": "bearish",
+            "leverStates": [],
+        }
+    )
+    group = _group("v4", [definition])
+    diagnostics = _v4_diagnostics()
+    diagnostics["scenarioPressureBreakdowns"] = [
+        {
+            "title": "상방 제목",
+            "dimensionValues": {"수급 방향": "상승"},
+            "pressureBreakdown": {"commonImpact": "상승 조합 근거"},
+        },
+        {
+            "title": "하방 제목",
+            "dimensionValues": {"d1": "d1_v2"},
+            "pressureBreakdown": {"commonImpact": "하락 조합 근거"},
+        },
+    ]
+    group["generation_diagnostics"] = diagnostics
+    ceiling = _scenario(cell="d1_v1", role="ceiling")
+    ceiling["scenario_id"] = 1
+    ceiling["title"] = "하방 제목"
+    floor = _scenario(cell="d1_v2", role="floor")
+    floor["scenario_id"] = 2
+    floor["title"] = "상방 제목"
+
+    result = build_scenario_group_presentation(
+        group=group,
+        scenarios=[ceiling, floor],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+    )
+
+    markdown = result.sections.role_selection_rationale.markdown
+    floor_section = markdown.index("### Floor")
+    assert markdown.index("상승 조합 근거") < floor_section
+    assert markdown.index("하락 조합 근거") > floor_section
+
+
+def test_v4_role_rationale_omits_stale_pressure_breakdown_for_unmatched_combination() -> None:
+    definition = _v4_definition()
+    definition["values"].append(
+        {
+            "valueId": "d1_v2",
+            "label": "하락",
+            "assumptionRationale": "하락 가정",
+            "pressureContribution": "bearish",
+            "leverStates": [],
+        }
+    )
+    group = _group("v4", [definition])
+    diagnostics = _v4_diagnostics()
+    diagnostics["scenarioPressureBreakdowns"] = [
+        {
+            "title": "Scenario <img src=x onerror=alert(1)>",
+            "dimensionValues": {"d1": "d1_v2"},
+            "pressureBreakdown": {"commonImpact": "다른 조합 근거"},
+        },
+    ]
+    group["generation_diagnostics"] = diagnostics
+
+    result = build_scenario_group_presentation(
+        group=group,
+        scenarios=[_scenario(cell="d1_v1")],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+    )
+
+    markdown = result.sections.role_selection_rationale.markdown
+    assert "Pressure 구성" not in markdown
+    assert "다른 조합 근거" not in markdown
+    assert "적용된 Dimension 근거" in markdown
 
 
 def test_running_v4_projection_moves_partial_to_ready_with_snapshot_revision() -> None:
@@ -561,7 +645,7 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
         )
 
     assert first.status_code == 200
-    assert first.json()["rendererVersion"] == "v2"
+    assert first.json()["rendererVersion"] == "v3"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""
@@ -626,7 +710,7 @@ def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
                     "scenarioId": 2056,
                     "displayOrder": 1,
                     "title": "Scenario <img src=x onerror=alert(1)>",
-                    "cells": {"d1": "상승"},
+                    "cells": {"d1": "d1_v1"},
                 },
             ],
         },
@@ -675,7 +759,7 @@ def test_follow_up_signpost_draft_always_includes_table_for_all_engine_versions(
         assert result.signpost_request_body is not None
         assert result.signpost_request_body.table is not None
         assert result.signpost_request_body.table.rows[0].scenario_id is None
-        assert result.signpost_request_body.table.rows[0].cells == {"d1": "상승"}
+        assert result.signpost_request_body.table.rows[0].cells == {"d1": "d1_v1"}
 
 
 def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selection() -> None:
@@ -706,7 +790,7 @@ def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selecti
     assert response.status_code == 200
     assert latest_response.status_code == 200
     assert response.json()["validationRequestBody"]["userId"] == 10603
-    assert response.json()["signpostRequestBody"]["table"]["rows"][0]["cells"] == {"d1": "상승"}
+    assert response.json()["signpostRequestBody"]["table"]["rows"][0]["cells"] == {"d1": "d1_v1"}
     assert load.call_args_list[0].args == (120,)
     assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
     assert load.call_args_list[1].args == (120,)

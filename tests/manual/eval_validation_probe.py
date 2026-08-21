@@ -42,7 +42,12 @@ EXPECTED = {
 }
 
 
-def mutate_table(table: dict[str, Any], mutation_id: str) -> dict[str, Any]:
+def mutate_table(
+    table: dict[str, Any],
+    mutation_id: str,
+    *,
+    additional_dimension: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Apply one V-00…V-07 mutation without changing ``table`` in place."""
     if mutation_id not in EXPECTED:
         raise ValueError(f"unknown mutation_id: {mutation_id}")
@@ -71,8 +76,13 @@ def mutate_table(table: dict[str, Any], mutation_id: str) -> dict[str, Any]:
         rows[0]["title"] = "단기 해결 이후 장기·영구 공급 중단"
         rows[0]["narrative"] = "단기 해결을 전제하지만 영구 생산 중단이 동시에 발생한다."
     elif mutation_id == "V-05":
-        optional_key = "quality_eval_optional_dimension"
-        headers.append({"key": optional_key, "label": "품질평가 선택 차원", "displayOrder": len(headers) + 1})
+        optional_key = str(
+            (additional_dimension or {}).get("dimensionId")
+            or (additional_dimension or {}).get("dimension_id")
+            or "quality_eval_optional_dimension"
+        )
+        optional_label = str((additional_dimension or {}).get("label") or "품질평가 선택 차원")
+        headers.append({"key": optional_key, "label": optional_label, "displayOrder": len(headers) + 1})
         for row in rows:
             row.setdefault("cells", {})[optional_key] = None
     elif mutation_id == "V-06":
@@ -93,7 +103,13 @@ def mutate_table(table: dict[str, Any], mutation_id: str) -> dict[str, Any]:
     return mutated
 
 
-def classify_probe_result(mutation_id: str, payload: dict[str, Any], *, http_status: int) -> tuple[str, str, str]:
+def classify_probe_result(
+    mutation_id: str,
+    payload: dict[str, Any],
+    *,
+    http_status: int,
+    autofill_dimension_id: str = "quality_eval_optional_dimension",
+) -> tuple[str, str, str]:
     """Return observed, verdict, detail using only current public API fields."""
     group = payload.get("scenarioGroup") or payload.get("scenario_group") or {}
     is_valid = payload.get("isValid", payload.get("is_valid"))
@@ -119,8 +135,7 @@ def classify_probe_result(mutation_id: str, payload: dict[str, Any], *, http_sta
         return ("rejected" if rejected else "accepted", "PASS" if rejected else "WARN", detail)
     if mutation_id == "V-05":
         table = payload.get("table") or {}
-        auto_key = "quality_eval_optional_dimension"
-        values = [((row.get("cells") or {}).get(auto_key)) for row in _rows(table)]
+        values = [((row.get("cells") or {}).get(autofill_dimension_id)) for row in _rows(table)]
         generated = bool(values) and all(value not in (None, "") for value in values)
         return _verdict(generated, "optional values generated" if generated else "optional null values remained", reason)
     if mutation_id == "V-06":
@@ -153,12 +168,37 @@ def run_probe(
 ) -> list[dict[str, str]]:
     """Call validation once per requested mutation, or produce dry-run entries."""
     results: list[dict[str, str]] = []
+    mutation_id_list = list(mutation_ids)
     with httpx.Client(timeout=timeout) as client:
-        for mutation_id in mutation_ids:
-            mutated = mutate_table(table, mutation_id)
+        additional_dimension: dict[str, Any] | None = None
+        additional_lookup_supported = False
+        if "V-05" in mutation_id_list and not dry_run:
+            response = client.get(
+                f"{base_url.rstrip('/')}/scenario-groups/{scenario_group_id}/additional-dimensions",
+            )
+            if response.is_success:
+                additional_lookup_supported = True
+                payload = response.json()
+                data = payload.get("data") or {}
+                definitions = data.get("dimensionDefinitions") or data.get("dimension_definitions") or {}
+                items = definitions.get("items") or []
+                additional_dimension = items[0] if items and isinstance(items[0], dict) else None
+        for mutation_id in mutation_id_list:
+            mutated = mutate_table(table, mutation_id, additional_dimension=additional_dimension)
             if dry_run:
                 results.append(
                     {"mutation_id": mutation_id, "expected": EXPECTED[mutation_id], "observed": "dry-run", "verdict": "SKIP", "detail": "HTTP 호출 생략"},
+                )
+                continue
+            if mutation_id == "V-05" and additional_lookup_supported and additional_dimension is None:
+                results.append(
+                    {
+                        "mutation_id": mutation_id,
+                        "expected": EXPECTED[mutation_id],
+                        "observed": "candidate-unavailable",
+                        "verdict": "SKIP",
+                        "detail": "ready Additional Dimension 후보가 없어 v4 null 자동 배정을 실행하지 않음",
+                    }
                 )
                 continue
             response = client.post(
@@ -169,7 +209,17 @@ def run_probe(
                 payload = response.json()
             except json.JSONDecodeError:
                 payload = {"reason": response.text}
-            observed, verdict, detail = classify_probe_result(mutation_id, payload, http_status=response.status_code)
+            autofill_dimension_id = str(
+                (additional_dimension or {}).get("dimensionId")
+                or (additional_dimension or {}).get("dimension_id")
+                or "quality_eval_optional_dimension"
+            )
+            observed, verdict, detail = classify_probe_result(
+                mutation_id,
+                payload,
+                http_status=response.status_code,
+                autofill_dimension_id=autofill_dimension_id,
+            )
             results.append(
                 {"mutation_id": mutation_id, "expected": EXPECTED[mutation_id], "observed": observed, "verdict": verdict, "detail": detail},
             )

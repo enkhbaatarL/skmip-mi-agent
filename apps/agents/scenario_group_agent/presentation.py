@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import html
 import re
@@ -48,6 +49,9 @@ from apps.agents.scenario_group_agent.schemas.table import (
     SignpostBasePayload,
     SignpostQueryPayload,
 )
+from apps.agents.scenario_group_agent.utils.dimension_values import (
+    find_scenario_pressure_breakdown,
+)
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
@@ -55,7 +59,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v2"
+PRESENTATION_RENDERER_VERSION = "v3"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -274,6 +278,7 @@ def _build_headers(
                     value.get("label") for value in values if isinstance(value, dict) and value.get("label")
                 ],
                 "value_labels_by_id": _value_labels_by_id(values),
+                "value_ids_by_label": _value_ids_by_unique_label(values),
             }
     else:
         event_type_l2_id = group.get("event_type_l2_id")
@@ -321,7 +326,7 @@ def _row_common_payload(
     pressure_target: str | None,
 ) -> dict[str, Any]:
     raw_values = scenario.get("dimension_values") or {}
-    cells = {key: _enum_id_to_label(key, raw_values.get(key), template_by_key.get(key)) for key in selected_keys}
+    cells = {key: _canonical_cell_value(raw_values.get(key), template_by_key.get(key)) for key in selected_keys}
     return {
         "scenario_id": int(scenario["scenario_id"]),
         "display_order": int(scenario.get("display_order") or 0),
@@ -350,22 +355,13 @@ def _pressure_target(group: dict[str, Any]) -> str | None:
     return "JKM" if group.get("api_version") in {"v2", "v3", "v4"} else None
 
 
-def _enum_id_to_label(dimension_key: str, value: Any, template: dict[str, Any] | None) -> Any:
+def _canonical_cell_value(value: Any, template: dict[str, Any] | None) -> Any:
     if value is None or not template:
         return value
-    value_text = str(value)
-    label_by_id = template.get("value_labels_by_id") or {}
-    if value_text in label_by_id:
-        return label_by_id[value_text]
-    prefix = f"{dimension_key}_v"
-    if not value_text.startswith(prefix):
-        return value
-    try:
-        index = int(value_text.removeprefix(prefix)) - 1
-    except ValueError:
-        return value
-    value_enums = template.get("value_enums") or []
-    return value_enums[index] if 0 <= index < len(value_enums) else value
+    text = str(value)
+    if text in (template.get("value_labels_by_id") or {}):
+        return text
+    return (template.get("value_ids_by_label") or {}).get(text, value)
 
 
 def _value_labels_by_id(values: Any) -> dict[str, str]:
@@ -380,6 +376,18 @@ def _value_labels_by_id(values: Any) -> dict[str, str]:
         if value_id is not None and label:
             labels[str(value_id)] = str(label)
     return labels
+
+
+def _value_ids_by_unique_label(values: Any) -> dict[str, str]:
+    candidates: dict[str, list[str]] = defaultdict(list)
+    for value in values or []:
+        if not isinstance(value, dict):
+            continue
+        value_id = value.get("value_id", value.get("valueId"))
+        label = value.get("label")
+        if value_id is not None and label:
+            candidates[str(label)].append(str(value_id))
+    return {label: ids[0] for label, ids in candidates.items() if len(ids) == 1}
 
 
 def _display_order(template: dict[str, Any] | None) -> int:
@@ -420,8 +428,18 @@ def build_scenario_group_presentation(
     if legacy:
         warnings.append("기존 v1 데이터에는 상세 생성 근거가 저장되지 않았습니다.")
 
-    definitions = _normalize_dimension_definitions(
-        raw_definitions,
+    selected_ids = {str(item) for item in group.get("dimension_selected") or []}
+    selected_raw_definitions = [
+        item
+        for item in raw_definitions
+        if isinstance(item, dict)
+        and (
+            not selected_ids
+            or str(_field(item, "dimension_id") or "") in selected_ids
+        )
+    ] if isinstance(raw_definitions, list) else raw_definitions
+    definitions = build_presentation_dimension_definitions(
+        selected_raw_definitions,
         engine_version=engine_version,
     )
     if legacy and not definitions:
@@ -462,6 +480,7 @@ def build_scenario_group_presentation(
     role_markdown, role_status, role_evidence, role_warnings = _role_rationale_markdown(
         engine_version=engine_version,
         rows=rows,
+        dimension_definitions=[definition.model_dump(by_alias=True) for definition in definitions],
         diagnostics=diagnostics,
         operation=operation,
         lever_labels=lever_labels or {},
@@ -552,7 +571,7 @@ def _camel_key(value: str) -> str:
     return head + "".join(part[:1].upper() + part[1:] for part in tail)
 
 
-def _normalize_dimension_definitions(
+def build_presentation_dimension_definitions(
     raw_definitions: Any,
     *,
     engine_version: str,
@@ -740,7 +759,7 @@ def _presentation_table(
             raw_cell = raw_cells.get(header.key)
             raw_text = "" if raw_cell is None else str(raw_cell)
             value = _match_dimension_value(definition_by_id[header.key], raw_text)
-            cells[header.key] = value.label if value is not None else raw_cell
+            cells[header.key] = value.value_id if value is not None else raw_cell
             evidence[header.key] = PresentationCellEvidence(
                 value_id=value.value_id if value is not None else raw_text,
                 value_label=value.label if value is not None else raw_text,
@@ -954,6 +973,7 @@ def _role_rationale_markdown(
     *,
     engine_version: str,
     rows: list[PresentationScenarioRow],
+    dimension_definitions: Sequence[Mapping[str, Any]],
     diagnostics: dict[str, Any],
     operation: ScenarioGroupOperationPayload | None,
     lever_labels: dict[str, str],
@@ -970,7 +990,6 @@ def _role_rationale_markdown(
         "floor": "생성된 Scenario 중 JKM 압력대가 가장 낮은 Scenario",
     }
     lever_code_pattern = _lever_code_pattern(lever_labels)
-    breakdowns = _field(diagnostics, "scenario_pressure_breakdowns", default=[]) or []
     for role in ("ceiling", "mixed", "floor"):
         row = role_rows.get(role)
         if row is None:
@@ -992,9 +1011,11 @@ def _role_rationale_markdown(
             lines.append("- Baseline: 생성된 Scenario 중 발생 가능성이 가장 높음")
         if not row.pressure_rationale:
             warnings.append(f"{role_labels[role]} Scenario에 저장된 종합 근거가 없습니다.")
-        breakdown = next(
-            (item for item in breakdowns if isinstance(item, dict) and str(_field(item, "title") or "") == row.title),
-            None,
+        breakdown = _presentation_pressure_breakdown(
+            engine_version=engine_version,
+            row=row,
+            dimension_definitions=dimension_definitions,
+            diagnostics=diagnostics,
         )
         raw_breakdown = _field(breakdown or {}, "pressure_breakdown", default={}) or {}
         if isinstance(raw_breakdown, dict) and raw_breakdown:
@@ -1021,6 +1042,26 @@ def _role_rationale_markdown(
             lines.append("- 저장된 Dimension 근거 없음")
     evidence = "limited" if engine_version == "v1" else "full"
     return "\n".join(lines).rstrip() + "\n", "ready", evidence, warnings
+
+
+def _presentation_pressure_breakdown(
+    *,
+    engine_version: str,
+    row: PresentationScenarioRow,
+    dimension_definitions: Sequence[Mapping[str, Any]],
+    diagnostics: dict[str, Any],
+) -> Mapping[str, Any] | None:
+    if engine_version == "v4":
+        return find_scenario_pressure_breakdown(
+            row.cells,
+            dimension_definitions=dimension_definitions,
+            generation_diagnostics=diagnostics,
+        )
+    breakdowns = _field(diagnostics, "scenario_pressure_breakdowns", default=[]) or []
+    return next(
+        (item for item in breakdowns if isinstance(item, dict) and str(_field(item, "title") or "") == row.title),
+        None,
+    )
 
 
 def _v4_interaction_is_ready(

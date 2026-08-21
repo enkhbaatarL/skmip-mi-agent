@@ -290,6 +290,13 @@ def test_mutations_are_pure_and_apply_the_expected_table_shape() -> None:
     assert duplicate["rows"][0]["cells"] == duplicate["rows"][1]["cells"]
     optional = mutate_table(original, "V-05")
     assert "quality_eval_optional_dimension" in {header["key"] for header in optional["headers"]}
+    v4_optional = mutate_table(
+        original,
+        "V-05",
+        additional_dimension={"dimensionId": "duration", "label": "지속 기간"},
+    )
+    assert v4_optional["headers"][-1]["key"] == "duration"
+    assert all(row["cells"]["duration"] is None for row in v4_optional["rows"])
     required_removed = mutate_table(original, "V-06")
     assert "period" not in {header["key"] for header in required_removed["headers"]}
     baseline_converged = mutate_table(original, "V-03")

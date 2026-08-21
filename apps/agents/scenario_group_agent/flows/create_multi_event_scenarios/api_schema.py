@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -108,6 +109,24 @@ class V3TemplateDimensionSelectionDiagnostic(ApiModel):
     used_in_dimension_ids: list[str] = Field(default_factory=list)
 
 
+class AdditionalDimensionGeneration(ApiModel):
+    status: Literal[
+        "not_requested",
+        "queued",
+        "running",
+        "ready",
+        "failed",
+        "interrupted",
+        "discarded",
+    ] = "not_requested"
+    source_fingerprint: str | None = None
+    source_uncertainty_ids: list[str] = Field(default_factory=list)
+    queued_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_code: str | None = None
+
+
 class GenerationDiagnostics(ApiModel):
     target_pressure_bands: list[str] = Field(
         default_factory=lambda: [
@@ -143,6 +162,10 @@ class GenerationDiagnostics(ApiModel):
     interaction_uncertainties: list[V4InteractionUncertainty] = Field(default_factory=list)
     validation_warnings: list[V4ValidationWarning] = Field(default_factory=list)
     scenario_pressure_breakdowns: list[dict[str, object]] = Field(default_factory=list)
+    additional_dimension_generation: AdditionalDimensionGeneration = Field(
+        default_factory=AdditionalDimensionGeneration,
+    )
+    additional_dimension_candidates: list[V4DimensionDefinition] = Field(default_factory=list)
 
 
 class V3GenerationDiagnostics(GenerationDiagnostics):
