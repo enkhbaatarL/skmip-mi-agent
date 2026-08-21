@@ -175,8 +175,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         invoke_compatibility = AsyncMock(return_value=compatible)
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=invoke_compatibility,
         ):
             await run_review(context)
@@ -227,8 +226,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -264,8 +262,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=incomplete),
         ):
             with self.assertRaisesRegex(
@@ -282,8 +279,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -323,8 +319,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -433,8 +428,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert context.unchanged is True
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(),
         ) as invoke:
             report = await run_review(context)
@@ -497,8 +491,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
             CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
         )
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -524,8 +517,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -556,8 +548,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -588,8 +579,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
                     similar_title_pairs=pairs,
                 )
                 with patch(
-                    "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-                    "_invoke_compatibility",
+                    "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
                     new=AsyncMock(return_value=result),
                 ):
                     with self.assertRaises(MIBaseError) as error:
@@ -606,8 +596,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -660,8 +649,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -699,15 +687,12 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
 
-        contrast_check = next(
-            check for check in report.checks if check.check_id == "R01"
-        )
+        contrast_check = next(check for check in report.checks if check.check_id == "R01")
         assert contrast_check.status == "PASS"
 
     async def test_duplicate_combination_is_warning(self) -> None:
@@ -720,8 +705,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -742,8 +726,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=incompatible),
         ):
             report = await run_review(context)
@@ -751,6 +734,35 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         assert report.verdict == "REVIEW"
         assert not report.is_valid
         assert next(check for check in report.checks if check.check_id == "R03").status == "WARN"
+
+    async def test_v4_llm_incompatibility_remains_non_blocking_warning(self) -> None:
+        context = build_context(
+            {**GROUP, "generation_strategy": "multi_event_model_lever_dimensions"},
+            ROWS,
+            PERSISTED_SCENARIOS,
+            TEMPLATE,
+        )
+        incompatible = _llm_result(
+            CompatibilityItem(
+                scenario_id=100,
+                compatible=False,
+                reason="자동 배정값과 기존 설명이 의미상 어색함",
+            ),
+            CompatibilityItem(scenario_id=101, compatible=True, reason="정상"),
+        )
+
+        with patch(
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
+            new=AsyncMock(return_value=incompatible),
+        ):
+            report = await run_review(context)
+
+        assert report.verdict == "REVIEW"
+        assert report.is_valid is True
+        compatibility = next(check for check in report.checks if check.check_id == "R03")
+        assert compatibility.status == "WARN"
+        assert compatibility.offenders == ["'short' 시나리오: 자동 배정값과 기존 설명이 의미상 어색함"]
+        assert "100" not in compatibility.offenders[0]
 
     async def test_llm_incompatibility_passes_when_only_recommendation_is_outside_template_enum(self) -> None:
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
@@ -769,8 +781,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=incompatible),
         ):
             report = await run_review(context)
@@ -785,8 +796,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         context = build_context(GROUP, ROWS, PERSISTED_SCENARIOS, TEMPLATE)
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(side_effect=RuntimeError("unavailable")),
         ):
             with self.assertRaises(MIBaseError) as error:
@@ -838,8 +848,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes."
-            "_invoke_compatibility",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_review.nodes._invoke_compatibility",
             new=AsyncMock(return_value=compatible),
         ):
             report = await run_review(context)
@@ -912,8 +921,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
         ) as invoke:
             passed, feedback, repairs = asyncio.run(
                 stage5_quick_validate(
@@ -1018,8 +1026,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
             new=AsyncMock(return_value=compat_output),
         ):
             passed, feedback, repairs = asyncio.run(
@@ -1140,8 +1147,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
             new=AsyncMock(return_value=compat_output),
         ):
             passed, feedback, repairs = asyncio.run(
@@ -1251,8 +1257,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         ]
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
             new=AsyncMock(
                 return_value=Stage4StructuredOutput(
                     narratives=[
@@ -1374,8 +1379,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
             new=AsyncMock(return_value=compat_output),
         ):
             passed, feedback, repairs = asyncio.run(
@@ -1482,8 +1486,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
             new=AsyncMock(return_value=compat_output),
         ):
             passed, feedback, repairs = asyncio.run(
@@ -1665,8 +1668,7 @@ class ScenarioGenerationQuickValidationTest(unittest.TestCase):
         )
 
         with patch(
-            "apps.agents.scenario_group_agent.subgraphs.scenario_generation."
-            "nodes._ainvoke_with_retry",
+            "apps.agents.scenario_group_agent.subgraphs.scenario_generation.nodes._ainvoke_with_retry",
         ) as invoke:
             passed, feedback, repairs = asyncio.run(
                 stage5_quick_validate(

@@ -472,6 +472,28 @@ Error Response
 
 Callback Body
 
+v4에서 ready Additional Dimension header를 새로 추가하고 기존 또는 신규 row의 해당 cell을 `null`로 보내면,
+서버는 pressure 방향을 제한한 뒤 유효 valueId를 자동 배정해 callback `table.rows[].cells`에 반환한다. 후보가
+이미 정식 정의에 승격됐더라도 현재 `dimensionSelected`에 없어 화면에서 새 header로 추가하는 경우에는 같은
+자동 배정 규칙을 적용한다. `dimensionSelected`에는 있으나 저장된 모든 Scenario에 해당 값이 아직 없는
+승격 중간 상태도 새 header로 복구한다.
+자동 배정 cell은 `checks[].checkId=V4_ADDITIONAL_DIMENSION_AUTOFILL`, `status=INFO`로 row·Dimension·valueId를
+남긴다. v4 최초 Dimension ID는 `d1`, `d2`, ...이고 Additional Dimension ID는 `ad_` prefix를 영구 유지한다.
+따라서 `ad_` Dimension은 승격 여부와 관계없이 `null`을 허용하고, `d` prefix Dimension의 `null`은 blocking이다.
+사용자가 valueId를 직접 보낸 cell은 덮어쓰지 않는다. `ad_ + null`에서 기존 저장값이 현재 pressure 방향의
+허용 후보이면 재사용하고 `V4_EXISTING_DIMENSION_VALUE_RESTORED` INFO check를 남긴다. 저장값이 없거나 방향에
+맞지 않으면 pressure 기준으로 새 value를 자동 선택한다. unknown header와 stale/unready candidate는 blocking이다.
+
+자동 배정만 일어난 기존 row는 기존 `pressureBand`와 `probabilityScore`를 보존한다. 신규 row, row 삭제,
+수동 Dimension 조합 변경이 있으면 최종 활성 Scenario의 점수를 정수 백분율 합계 100으로 정규화하며, 기존
+row의 상대 비율을 유지해 비례 조정한다. aggregate pressure의 band 순서 역전 또는 strong extreme 부호
+불일치는 blocking이다. 자동 배정 후 R03 compatibility 의미 모순은 WARN으로 반환하며 이 경우에도
+`verdict=PASS_WITH_WARNINGS`, `isValid=true`, `canProceed=true`다.
+
+callback `reason`은 화면 사용자용 문구다. 내부 저장 필드 생성 건수는 표시하지 않고, 분기와 시나리오의
+추가·삭제만 `[주요 변경]` 한 줄로 요약한다. 차단·경고 대상은 `scenarioId`, row key, Dimension/value ID가
+아니라 시나리오 제목과 Dimension/value label로 표시한다.
+
 ```json
 {
   "result": "success",
@@ -491,7 +513,7 @@ Callback Body
     }
   ],
   "generatedDetails": [],
-  "reason": "MECE and plausibility checks passed",
+  "reason": "[주요 변경] 1개의 분기 추가",
   "scenarioGroup": {
     "scenarioGroupId": 12345,
     "status": "creating",
@@ -797,17 +819,6 @@ Request Body:
 Confirmation의 header 순서와 Scenario ID 집합은 현재 활성 DB 상태와 정확히 같아야 한다.
 각 cell은 해당 Dimension의 valueId여야 하며 request/DB 조합이 다르면
 `SCENARIO_CONFIRMATION_STALE`(409)을 반환한다. Confirmation은 `dimension_values`를 갱신하지 않는다.
-
-기존 label 오염 데이터는 다음 data repair로 Scenario와 confirmation snapshot을 함께 점검한다.
-dry-run이 기본이며 `--apply`를 지정한 경우에만 변경한다. 중복 label·unknown value·definition 누락은
-자동 변경하지 않고 JSON audit report에 남긴다.
-
-```bash
-poetry run python -m scripts.migrations.20260819_canonicalize_scenario_dimension_value_ids \
-  --report local/reports/dimension_value_repair.json
-poetry run python -m scripts.migrations.20260819_canonicalize_scenario_dimension_value_ids \
-  --apply --report local/reports/dimension_value_repair_apply.json
-```
 
 Response (`ConfirmGenerationOut`)
 

@@ -37,7 +37,14 @@ class ScenarioGroupOperationPayload(ApiModel):
 
 ValidationVerdict = Literal["PASS", "PASS_WITH_WARNINGS", "BLOCK"]
 ValidationCheckStatus = Literal["PASS", "WARN", "FAIL", "INFO"]
-ValidationChangeType = Literal["NEW", "TITLE_CHANGED", "REORDERED", "COMBINATION_CHANGED"]
+ValidationChangeType = Literal[
+    "NEW",
+    "TITLE_CHANGED",
+    "REORDERED",
+    "COMBINATION_CHANGED",
+    "AUTOFILL_ONLY",
+    "PROBABILITY_RENORMALIZED",
+]
 
 
 class ValidationCheckPayload(ApiModel):

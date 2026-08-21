@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 import hashlib
 from typing import Any
 
 from langgraph.runtime import Runtime
 
+from apps.agents.scenario_group_agent.constants import AGENT_NAME
 from apps.agents.scenario_group_agent.flows.validate_scenarios.state import (
     ValidateScenariosState,
     validate_scenarios_state_update,
 )
 from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
     V4_GENERATION_STRATEGY,
+    V4AdditionalDimensionAutofillRequest,
     analyze_v4_validation_request,
+    apply_v4_additional_dimension_autofill_selections,
+    build_autofill_checks,
+    build_restoration_checks,
+    build_v4_additional_dimension_autofill_plan,
     check_counts,
+    normalize_v4_probability_scores,
     render_reason_markdown,
+    validate_v4_pressure_aggregate,
 )
 from apps.agents.scenario_group_agent.persistence.event_service import EventService
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
@@ -26,7 +36,9 @@ from apps.agents.scenario_group_agent.persistence.scenario_service import (
     ScenarioService,
 )
 from apps.agents.scenario_group_agent.prompts.scenario_validation import (
+    V4AdditionalDimensionValueSelectionOutput,
     V4ValidationGeneratedScenariosOutput,
+    build_v4_additional_dimension_value_selection_messages,
     build_v4_validation_generation_messages,
 )
 from apps.agents.scenario_group_agent.subgraphs.scenario_review.flow import (
@@ -39,6 +51,7 @@ from apps.agents.scenario_group_agent.subgraphs.scenario_review.state import (
     ScenarioReviewState,
 )
 from apps.common.exceptions.custom import MIBaseError
+from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, build_langgraph_config
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.enums import (
@@ -482,6 +495,124 @@ async def _invoke_v4_generated_fields(
     return invocation.result
 
 
+@contextmanager
+def _v4_autofill_selection_span(*, request_count: int) -> Iterator[Any | None]:
+    try:
+        from apps.common.configs.config import get_settings
+
+        settings = get_settings()
+        is_enabled = getattr(settings, "is_mlflow_tracing_enabled", None)
+        enabled = (
+            bool(is_enabled(agent_name=AGENT_NAME))
+            if callable(is_enabled)
+            else bool(getattr(settings, "mlflow_tracing_enabled", False))
+        )
+    except Exception as exc:
+        logger.warning("v4 Additional Dimension value-selection span disabled | error={!r}", exc)
+        with nullcontext(None) as span:
+            yield span
+        return
+    if not enabled:
+        with nullcontext(None) as span:
+            yield span
+        return
+    try:
+        import mlflow
+
+        manager = mlflow.start_span(
+            name="v4_additional_dimension_value_selection",
+            span_type="CHAIN",
+            attributes={"request_count": request_count, "selection_scope": "allowed_values_only"},
+        )
+        span = manager.__enter__()
+    except Exception as exc:
+        logger.warning("v4 Additional Dimension value-selection span enter failed | error={!r}", exc)
+        with nullcontext(None) as fallback_span:
+            yield fallback_span
+        return
+    try:
+        yield span
+    except BaseException as exc:
+        try:
+            manager.__exit__(type(exc), exc, exc.__traceback__)
+        except Exception as span_exc:
+            logger.warning("v4 Additional Dimension value-selection span exit failed | error={!r}", span_exc)
+        raise
+    else:
+        try:
+            manager.__exit__(None, None, None)
+        except Exception as exc:
+            logger.warning("v4 Additional Dimension value-selection span exit failed | error={!r}", exc)
+
+
+async def _invoke_v4_autofill_selections(
+    *,
+    requests: list[V4AdditionalDimensionAutofillRequest],
+    events: list[dict[str, Any]],
+    generation_diagnostics: dict[str, Any],
+    trace_context: TraceContext | None,
+) -> dict[tuple[str, str], str]:
+    from apps.common.configs.config import get_settings
+    from apps.connectors.llm.llm_client import invoke_llm_structured_output
+
+    cfg = get_settings()
+    allowed_by_key = {
+        (request.client_row_key, request.dimension_id): {
+            str(value.get("value_id") or value.get("valueId")) for value in request.allowed_values
+        }
+        for request in requests
+    }
+    messages = build_v4_additional_dimension_value_selection_messages(
+        selections=[
+            {
+                "clientRowKey": request.client_row_key,
+                "dimensionId": request.dimension_id,
+                "targetDirection": request.target_direction,
+                "existingPressureScore": request.existing_pressure_score,
+                "title": request.title,
+                "narrative": request.narrative,
+                "existingCells": request.existing_cells,
+                "allowedValues": request.allowed_values,
+            }
+            for request in requests
+        ],
+        events=events,
+        generation_diagnostics=generation_diagnostics,
+    )
+    with _v4_autofill_selection_span(request_count=len(requests)) as span:
+        invocation = await invoke_llm_structured_output(
+            V4AdditionalDimensionValueSelectionOutput,
+            messages=messages,
+            trace_context=trace_context,
+            stream=cfg.llm_stream_enabled,
+            reasoning_effort=cfg.llm_reasoning_effort,
+        )
+        items = invocation.result.items
+        actual_keys = [(item.client_row_key, item.dimension_id) for item in items]
+        if len(actual_keys) != len(set(actual_keys)) or set(actual_keys) != set(allowed_by_key):
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=(
+                    "v4 Additional Dimension value-selection 응답 key 불일치: "
+                    f"누락={sorted(set(allowed_by_key) - set(actual_keys))}, "
+                    f"여분={sorted(set(actual_keys) - set(allowed_by_key))}"
+                ),
+            )
+        selections = {key: item.value_id for key, item in zip(actual_keys, items, strict=True)}
+        invalid = [f"{key}={value_id}" for key, value_id in selections.items() if value_id not in allowed_by_key[key]]
+        if invalid:
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail=f"v4 Additional Dimension value-selection 허용 범위 위반: {invalid}",
+            )
+        if span is not None:
+            try:
+                span.set_attributes({"selection_count": len(selections), "invalid_selection_count": 0})
+            except Exception as exc:
+                logger.warning("v4 Additional Dimension value-selection span result logging failed | error={!r}", exc)
+        return selections
+
+
 def _persisted_generated_fields(scenario: dict[str, Any]) -> ValidationGeneratedFieldsPayload:
     pressure_band = scenario.get("global_pressure_band") or scenario.get("pressure_band")
     pressure_rationale = scenario.get("global_pressure_rationale") or scenario.get("pressure_rationale")
@@ -523,32 +654,61 @@ async def _run_v4_scenario_validation(
     request_table = state.request_table.model_dump() if state.request_table is not None else {}
     persisted = [_model_or_dict_dump(scenario) for scenario in state.scenarios]
     diagnostics = dict(state.generation_diagnostics or {})
+    trace_context = runtime.context if runtime is not None else None
+    stored_header_order = [str(item) for item in state.scenario_group.dimension_selected or []]
+    autofill_plan = build_v4_additional_dimension_autofill_plan(
+        request_table=request_table,
+        persisted_scenarios=persisted,
+        dimension_definitions=list(state.scenario_group.dimension_definitions or []),
+        generation_diagnostics=diagnostics,
+        stored_header_order=stored_header_order,
+    )
+    if autofill_plan.requests and not any(check.blocking for check in autofill_plan.checks):
+        selections = await _invoke_v4_autofill_selections(
+            requests=autofill_plan.requests,
+            events=[_model_or_dict_dump(event) for event in state.events],
+            generation_diagnostics=diagnostics,
+            trace_context=trace_context,
+        )
+        try:
+            apply_v4_additional_dimension_autofill_selections(autofill_plan, selections)
+        except ValueError as exc:
+            raise MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail=str(exc)) from exc
+    request_table = autofill_plan.request_table
     analysis = analyze_v4_validation_request(
         request_table=request_table,
         persisted_scenarios=persisted,
         dimension_definitions=list(state.scenario_group.dimension_definitions or []),
         generation_diagnostics=diagnostics,
-        stored_header_order=[str(item) for item in state.scenario_group.dimension_selected or []],
+        stored_header_order=stored_header_order,
+        autofilled_cells=autofill_plan.assignments,
     )
     definitions = analysis.requested_dimension_definitions
     selected_diagnostics = {
         key: value
         for key, value in diagnostics.items()
-        if key not in {
+        if key
+        not in {
             "additional_dimension_generation",
             "additionalDimensionGeneration",
             "additional_dimension_candidates",
             "additionalDimensionCandidates",
         }
     }
-    checks = list(analysis.checks)
+    checks = [
+        *autofill_plan.checks,
+        *analysis.checks,
+        *build_autofill_checks(autofill_plan.assignments),
+        *build_restoration_checks(autofill_plan.restorations),
+    ]
     generated_details: list[ValidationGeneratedDetailPayload] = []
-    trace_context = runtime.context if runtime is not None else None
 
     semantic_rows = [
-        row for row in analysis.changed_rows if row.change_type in {"NEW", "TITLE_CHANGED", "COMBINATION_CHANGED"}
+        row
+        for row in analysis.changed_rows
+        if row.change_type in {"NEW", "TITLE_CHANGED", "COMBINATION_CHANGED", "AUTOFILL_ONLY"}
     ]
-    if not analysis.blocking and semantic_rows:
+    if not any(check.blocking and check.status == "FAIL" for check in checks) and semantic_rows:
         review_state = ScenarioReviewState(
             scenario_group_id=state.scenario_group_id,
             group=state.scenario_group.model_dump(),
@@ -558,8 +718,7 @@ async def _run_v4_scenario_validation(
             requested_headers=[{"key": key} for key in analysis.canonical_headers],
             persisted_scenarios=persisted,
             template_dims=[
-                dimension.model_dump()
-                for dimension in ScenarioService().load_group_dimension_template(definitions)
+                dimension.model_dump() for dimension in ScenarioService().load_group_dimension_template(definitions)
             ],
             review_scenario_ids=[row.review_scenario_id() for row in semantic_rows],
         )
@@ -582,7 +741,9 @@ async def _run_v4_scenario_validation(
     blocking = any(check.blocking and check.status == "FAIL" for check in checks)
     change_set: ValidationScenarioChangeSetPayload | None = None
     if not blocking and not analysis.unchanged:
-        generation_targets = [row for row in analysis.changed_rows if row.change_type in {"NEW", "COMBINATION_CHANGED"}]
+        generation_targets = [
+            row for row in analysis.changed_rows if row.change_type in {"NEW", "COMBINATION_CHANGED", "AUTOFILL_ONLY"}
+        ]
         generated_by_key: dict[str, ValidationGeneratedFieldsPayload] = {}
         if generation_targets:
             generated_output = await _invoke_v4_generated_fields(
@@ -621,21 +782,71 @@ async def _run_v4_scenario_validation(
                 generated_by_key[item.client_row_key] = fields
 
         persisted_by_id = {int(item["scenario_id"]): item for item in persisted}
-        upserts: list[ValidationScenarioUpsertPayload] = []
-        for row in analysis.changed_rows:
+        fields_by_key: dict[str, ValidationGeneratedFieldsPayload] = {}
+        for row in analysis.canonical_rows:
+            if row.scenario_id is not None:
+                fields_by_key[row.client_row_key] = _persisted_generated_fields(persisted_by_id[row.scenario_id])
+        for row in generation_targets:
             generated_fields = generated_by_key.get(row.client_row_key)
             if generated_fields is None:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail=f"v4 Scenario 생성 필드가 누락되었습니다: {row.client_row_key}",
+                )
+            if row.change_type == "AUTOFILL_ONLY" and row.scenario_id is not None:
+                persisted_fields = fields_by_key[row.client_row_key]
+                generated_fields = persisted_fields.model_copy(
+                    update={
+                        "narrative": generated_fields.narrative,
+                        "pressure_rationale": generated_fields.pressure_rationale,
+                    }
+                )
+            fields_by_key[row.client_row_key] = generated_fields
+
+        normalize_probabilities = bool(analysis.deleted_scenario_ids) or any(
+            row.change_type in {"NEW", "COMBINATION_CHANGED"} for row in analysis.changed_rows
+        )
+        if normalize_probabilities:
+            normalized_scores = normalize_v4_probability_scores(
+                [fields_by_key[row.client_row_key].probability_score for row in analysis.canonical_rows]
+            )
+            for row, probability_score in zip(analysis.canonical_rows, normalized_scores, strict=True):
+                fields_by_key[row.client_row_key] = fields_by_key[row.client_row_key].model_copy(
+                    update={"probability_score": float(probability_score)}
+                )
+
+        checks.extend(
+            validate_v4_pressure_aggregate(
+                rows=analysis.canonical_rows,
+                dimension_definitions=definitions,
+                pressure_bands={
+                    row.client_row_key: fields_by_key[row.client_row_key].pressure_band
+                    for row in analysis.canonical_rows
+                },
+            )
+        )
+        blocking = any(check.blocking and check.status == "FAIL" for check in checks)
+        upserts: list[ValidationScenarioUpsertPayload] = []
+        changed_by_key = {row.client_row_key: row for row in analysis.changed_rows}
+        upsert_keys = set(changed_by_key)
+        if normalize_probabilities:
+            for row in analysis.canonical_rows:
                 if row.scenario_id is None:
-                    raise MIBaseError(
-                        ErrorCode.LLM_INVALID_RESPONSE_ERROR,
-                        detail=f"신규 Scenario 생성 필드가 누락되었습니다: {row.client_row_key}",
-                    )
-                generated_fields = _persisted_generated_fields(persisted_by_id[row.scenario_id])
+                    upsert_keys.add(row.client_row_key)
+                    continue
+                persisted_score = _persisted_generated_fields(persisted_by_id[row.scenario_id]).probability_score
+                if fields_by_key[row.client_row_key].probability_score != persisted_score:
+                    upsert_keys.add(row.client_row_key)
+        for row in analysis.canonical_rows:
+            if row.client_row_key not in upsert_keys:
+                continue
+            generated_fields = fields_by_key[row.client_row_key]
+            change_type = row.change_type or "PROBABILITY_RENORMALIZED"
             upserts.append(
                 ValidationScenarioUpsertPayload(
                     scenario_id=row.scenario_id,
                     client_row_key=row.client_row_key,
-                    change_type=row.change_type,
+                    change_type=change_type,
                     display_order=row.display_order,
                     title=row.title,
                     dimension_values=row.dimension_values,
@@ -655,19 +866,20 @@ async def _run_v4_scenario_validation(
                         related_markets=generated_fields.related_markets,
                     )
                 )
-        change_set = ValidationScenarioChangeSetPayload(
-            upserts=upserts,
-            delete_scenario_ids=analysis.deleted_scenario_ids,
-        )
+        if not blocking:
+            change_set = ValidationScenarioChangeSetPayload(
+                upserts=upserts,
+                delete_scenario_ids=analysis.deleted_scenario_ids,
+            )
 
     warning_count = sum(1 for check in checks if check.status == "WARN" and not check.blocking)
     can_proceed = not blocking
     if analysis.unchanged:
-        reason = "Create 결과와 동일하여 추가 검토 없이 통과했습니다."
+        reason = "변경된 내용이 없어 바로 진행할 수 있습니다."
         mode = "unchanged"
         review_skipped = True
     else:
-        reason = render_reason_markdown(checks, generated_count=len(generated_details))
+        reason = render_reason_markdown(checks, analysis=analysis)
         mode = "blocked" if blocking else "changed"
         review_skipped = False
     validation_result = ValidationResultPayload(

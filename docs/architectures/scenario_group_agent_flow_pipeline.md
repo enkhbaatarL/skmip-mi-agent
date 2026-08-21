@@ -848,11 +848,15 @@ Validation 성공 transaction은 Scenario Change Set 적용과 candidate의 `dim
 달라졌으면 stale conflict로 중단한다. background graph의 review node 안에서는 다음 v4 전용 순서를 수행한다.
 
 ```text
-valueId 검증 (정확한 단일 legacy label만 과도기 변환)
+ready Additional Dimension의 null cell pressure 방향 제한 및 자동 배정
+  -> 같은 방향 후보가 여러 개면 allowed valueId만 제공하는 constrained LLM 선택
+  -> valueId 검증 (정확한 단일 legacy label만 과도기 변환)
   -> Scenario 수·header/cell·enum·title·조합 결정적 검사
   -> unchanged이면 LLM 없이 PASS
-  -> title/조합 변경 및 신규 row만 semantic review
-  -> 신규·조합 변경 row만 DB 저장 필드 structured generation
+  -> 자동 배정/title/조합 변경 및 신규 row semantic review
+  -> 자동 배정 row의 narrative·pressure rationale 보완 및 신규·조합 변경 row 저장 필드 structured generation
+  -> 전체 aggregate pressure 순서·strong extreme 부호 검사
+  -> 신규·삭제·수동 조합 변경이면 활성 Scenario probabilityScore 합계를 정수 100으로 정규화
   -> 최소 scenarioChangeSet 조립
   -> operation.result_payload 저장 + stage 갱신 (같은 transaction)
 ```
@@ -861,6 +865,30 @@ canonical table은 메모리 표현이며 별도 DB table로 저장하지 않는
 삭제 ID만 저장하고 unchanged row, 전체 table, `leverState`는 저장하지 않는다. warning만 존재하면
 `PASS_WITH_WARNINGS`, `canProceed=true`이고, blocking은 operation `succeeded` 이력과 결과를 남기되
 `scenarioChangeSet=null`, `stage=scenario_created`로 처리한다.
+
+새로 추가한 ready Additional Dimension header의 cell이 `null`이면 기존 row는 저장된
+`global_pressure_band`를 `bullish|balanced|bearish`로 축약하고, 신규 row는 입력된 기존 cell의
+`pressureContribution` 합으로 목표 방향을 정한다. 같은 방향 value를 우선하며 bullish/bearish에는
+balanced까지만 fallback한다. balanced 목표에 balanced value가 없으면 기존 aggregate를 0에 가장
+가깝게 만드는 방향만 허용한다. 허용 후보가 하나이면 결정적으로 채우고, 여러 개이면 title·기존 cell·Event
+근거·`leverStates`·`assumptionRationale`를 constrained LLM에 제공한다. 응답의 누락·중복·범위 밖 valueId는
+fail-closed 처리한다. 후보가 이미 정식 정의에 포함됐어도 현재 `dimensionSelected`에 없는 새 header라면 같은
+자동 배정 규칙을 적용한다. `dimensionSelected`에는 있으나 저장된 모든 Scenario에 해당 값이 없는 승격 중간
+상태도 새 header로 복구한다. null 허용 여부는 승격 상태가 아니라 ID 계약으로 판정한다. 최초 Dimension의
+`d1`, `d2`, ...는 null을 차단하고 Additional Dimension의 `ad_` prefix는 승격 후에도 null을 허용한다.
+`ad_ + null`의 canonical 저장값이 현재 pressure 방향 후보에 포함되면 결과 안정성을 위해 재사용하고, 그렇지
+않으면 pressure 기준으로 새 value를 선택한다. 사용자의 non-null 입력은 항상 우선하며 unknown header와
+stale/unready candidate는 차단한다.
+
+자동 배정 결과는 callback table에 valueId로 반환하고 cell마다
+`V4_ADDITIONAL_DIMENSION_AUTOFILL` INFO check를 남긴다. 자동 배정만 일어난 기존 row는 저장된
+`pressureBand`, `probabilityScore`, `relatedMarkets`를 보존하고 narrative와 pressure rationale만 새
+Dimension 의미에 맞게 보완한다. 신규·삭제·수동 조합 변경이 있으면 기존 score의 상대 비율을 포함해 최종
+활성 Scenario 전체를 largest-remainder 방식의 정수 백분율 합계 100으로 정규화한다. 채운 조합의
+pressure band 순서 역전과 strong extreme 부호 불일치는 각각 blocking check다. 후속 R03 compatibility
+모순은 WARN으로 유지해 `PASS_WITH_WARNINGS`, `isValid=true`, `canProceed=true`로 진행할 수 있다.
+사용자에게 노출하는 `reason`은 내부 저장 필드 생성 건수를 제외하고 분기·시나리오 추가/삭제만
+`[주요 변경]`으로 요약한다. 차단·경고 대상은 내부 ID 대신 시나리오 제목과 Dimension/value label을 사용한다.
 
 v1~v3는 아래 optional dimension 보정·mapping·review 흐름을 유지한다.
 

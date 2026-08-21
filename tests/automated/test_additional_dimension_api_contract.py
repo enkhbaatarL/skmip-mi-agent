@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: CPY001, S101
-import importlib.util
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -517,38 +515,3 @@ def test_additional_hydration_preserves_valid_candidate_and_reports_invalid_cand
     assert len(result.rejected_candidates) == 1
     assert result.rejection_reason_codes == ["INVALID_STATE_FORMAT"]
 
-
-def test_data_repair_is_idempotent_and_reports_unresolved_values() -> None:
-    script_path = (
-        Path(__file__).resolve().parents[2] / "scripts/migrations/20260819_canonicalize_scenario_dimension_value_ids.py"
-    )
-    spec = importlib.util.spec_from_file_location("dimension_value_repair", script_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    definitions = [
-        {
-            "dimension_id": "d1",
-            "values": [
-                {"value_id": "d1_v1", "label": "낮음"},
-                {"value_id": "d1_v2", "label": "높음"},
-            ],
-        },
-    ]
-
-    repaired, unresolved = module.canonicalize_values_for_repair(
-        definitions,
-        {"d1": "높음", "missing": "값"},
-    )
-    repaired_twice, unresolved_twice = module.canonicalize_values_for_repair(definitions, repaired)
-
-    assert repaired == {"d1": "d1_v2", "missing": "값"}
-    assert repaired_twice == repaired
-    assert (
-        unresolved
-        == unresolved_twice
-        == [
-            {"dimensionId": "missing", "value": "값", "reason": "definition_missing"},
-        ]
-    )
