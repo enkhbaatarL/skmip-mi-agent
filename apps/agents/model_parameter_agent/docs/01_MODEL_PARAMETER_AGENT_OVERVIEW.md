@@ -163,7 +163,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, 공통 runtime allow-list를 Step1.5·LLM·저장보다 먼저 적용한다. 허용 후보만 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작과 proposal/confirmation의 기존 유한 숫자·정밀도 정규화, 기존 저장 데이터와 JSON shape은 그대로 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. DB DDL·master·mapping, Lever catalog/checksum, config, canonical JSON/SQL/workbook은 이 runtime 제한의 변경 대상이 아니다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. `proposedValue`는 proposal과 confirmation 모두 유한 숫자인지만 검사하고 Step3 또는 persistence에서 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. JSON numeric scalar는 별도 소수 자릿수 양자화 없이 전달하며 numeric string은 검증 경계에서 number로 변환될 수 있다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. DB DDL·master·mapping, Lever catalog/checksum, config, canonical JSON/SQL/workbook은 이 runtime 제한의 변경 대상이 아니다.
 
 ## 4. 자연어 프롬프트로 배포하기
 

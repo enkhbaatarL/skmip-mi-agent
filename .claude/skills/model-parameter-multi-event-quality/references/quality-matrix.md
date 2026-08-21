@@ -88,7 +88,7 @@ v3 필수 계약:
 - valid confirmation 성공
 - reconfirmation 성공 및 timestamp 갱신
 - custom parameter 허용 동작 유지
-- 기존 유한 숫자·정밀도 정규화 유지
+- Basecase/LUT 기준값 정밀도 정책 유지, `proposedValue` 유한 숫자 검증과 설정 기반 양자화 미적용
 
 어느 하나라도 깨지면 `FAIL`이다.
 

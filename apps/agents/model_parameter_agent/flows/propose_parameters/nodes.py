@@ -48,7 +48,7 @@ from apps.agents.model_parameter_agent.utils.lut import (
     resolve_effective_reference,
 )
 from apps.agents.model_parameter_agent.utils.lut.keys import (
-    apply_numeric_precision,
+    strict_float,
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CandidateSlotCatalog,
@@ -757,10 +757,6 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
                 cfg.model_parameter_basecase_value_max_decimal_places
             ),
             "model_parameter_basecase_value_precision_mode": (cfg.model_parameter_basecase_value_precision_mode),
-            "model_parameter_proposed_value_max_decimal_places": (
-                cfg.model_parameter_proposed_value_max_decimal_places
-            ),
-            "model_parameter_proposed_value_precision_mode": (cfg.model_parameter_proposed_value_precision_mode),
             "model_parameter_max_parameter_slots": cfg.model_parameter_max_parameter_slots,
             "model_parameter_max_value_prompt_basecase_records": (
                 cfg.model_parameter_max_value_prompt_basecase_records
@@ -3013,9 +3009,6 @@ def _sanitize_llm_adjustments(
     slots: list[dict[str, Any]],
     reference_records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    settings = get_settings()
-    max_decimal_places = settings.model_parameter_proposed_value_max_decimal_places
-    precision_mode = settings.model_parameter_proposed_value_precision_mode
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
     slot_contexts = _slot_reference_contexts(
@@ -3095,11 +3088,9 @@ def _sanitize_llm_adjustments(
                 warnings.append(warning)
                 continue
             try:
-                proposed_value = apply_numeric_precision(
+                validated_proposed_value = strict_float(
                     slot_value.proposed_value,
                     label=(f"Step3 proposedValue (candidate={adjustment.candidate_key}, slotKey={slot_key})"),
-                    max_decimal_places=max_decimal_places,
-                    mode=precision_mode,
                 )
             except MIBaseError:
                 warning = (
@@ -3110,6 +3101,12 @@ def _sanitize_llm_adjustments(
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)
                 continue
+            proposed_value = (
+                slot_value.proposed_value
+                if isinstance(slot_value.proposed_value, (int, float))
+                and not isinstance(slot_value.proposed_value, bool)
+                else validated_proposed_value
+            )
             returned_slot_keys.add(slot_key)
             value_grid.append(
                 _parameter_value_cell_from_slot_value(

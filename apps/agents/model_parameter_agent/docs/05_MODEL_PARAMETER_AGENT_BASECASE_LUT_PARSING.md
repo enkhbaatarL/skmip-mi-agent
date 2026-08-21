@@ -40,9 +40,11 @@ Basecase는 Demand·Supply·Trade workbook의 현재 모델 입력값이고, LUT
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
 | config.yaml > model_parameter_resources.lut | enabled, adapter, files, required header, key_axes, metadata_axes |
 | config.yaml > model_parameter_resources.references | runtime 보조 CSV; 독립 parameter record는 만들지 않음 |
-| 공통 설정 | 2026~2030 horizon, 숫자 정밀도, 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
+| 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도, 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
 
 envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다. adapter schema는 model-parameter-lut-adapters-v3으로 catalog hash에 포함되어 이전 cache와 분리된다.
+
+기존 `model_parameter_proposed_value_max_decimal_places`와 `model_parameter_proposed_value_precision_mode` 설정 키는 배포 설정 호환을 위해 남아 있지만 신규 proposal과 confirmation의 `proposedValue`에는 적용하지 않는다. 제안값은 유한 숫자 검증만 통과하면 설정 기반 소수 자릿수 round/trunc/ceil 없이 처리하며, numeric string은 검증 경계에서 number로 변환될 수 있다.
 
 ## 3. LUT-backed 활성 10개
 

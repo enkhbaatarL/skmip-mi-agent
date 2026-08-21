@@ -473,7 +473,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         }
 
     @core_contract
-    def test_db_payload_uses_independent_basecase_and_proposed_precision(self) -> None:
+    def test_db_payload_bounds_basecase_and_preserves_proposed_precision(self) -> None:
         from apps.agents.model_parameter_agent.persistence import (
             model_parameter_service,
         )
@@ -481,8 +481,6 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         settings = SimpleNamespace(
             model_parameter_basecase_value_max_decimal_places=2,
             model_parameter_basecase_value_precision_mode="trunc",
-            model_parameter_proposed_value_max_decimal_places=3,
-            model_parameter_proposed_value_precision_mode="ceil",
         )
         with patch.object(
             model_parameter_service,
@@ -502,7 +500,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         assert payload["values"][0] == {
             "basecaseValue": -1.23,
-            "proposedValue": -1.234,
+            "proposedValue": -1.2341,
         }
 
     def test_parameter_name_normalization_does_not_apply_code_aliases(self) -> None:
@@ -1471,7 +1469,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                                 "Route": "Hormuz",
                                 "basecaseValue": -1.23456789,
                                 "proposedValue": -2.98765999,
-                                "rationale": "음수 정밀도 제한",
+                                "rationale": "음수 제안값 보존",
                             },
                         ],
                     ),
@@ -1488,9 +1486,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert saved_payload[0]["modelTarget"]["modelFile"] == "Trade"
         assert saved_payload[0]["modelTarget"]["tableName"] == "Table1"
         assert saved_payload[0]["values"][0]["basecaseValue"] == 1.23456
-        assert saved_payload[0]["values"][0]["proposedValue"] == 2.98765
+        assert saved_payload[0]["values"][0]["proposedValue"] == 2.98765999
         assert saved_payload[0]["values"][1]["basecaseValue"] == -1.23456
-        assert saved_payload[0]["values"][1]["proposedValue"] == -2.98765
+        assert saved_payload[0]["values"][1]["proposedValue"] == -2.98765999
         assert repository_cls.return_value.create_model_param_proposal.call_args.kwargs["request_usr_id"] == 40
 
     def test_model_parameter_service_does_not_fallback_to_scenario_group_request_user(
@@ -1673,7 +1671,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         )
 
     @core_contract
-    def test_model_parameter_service_allows_reconfirming_confirmed_proposal(self) -> None:
+    def test_model_parameter_service_reconfirmation_preserves_proposed_precision(self) -> None:
         fake_session = SimpleNamespace(
             commit=Mock(),
             rollback=Mock(),
@@ -1737,11 +1735,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     "values": [
                         {
                             "basecaseValue": 0.12345,
-                            "proposedValue": 0.5,
+                            "proposedValue": 0.500009999,
                         },
                         {
                             "basecaseValue": -0.12345,
-                            "proposedValue": -0.5,
+                            "proposedValue": -0.500009999,
                         },
                     ],
                 },
@@ -1822,11 +1820,34 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
             ModelParameterService().complete_proposal_result(
                 model_param_proposal_id=901,
-                proposal_parameters=[{"parameterName": "GDP"}],
+                proposal_parameters=[
+                    {
+                        "parameterName": "GDP",
+                        "values": [
+                            {
+                                "basecaseValue": 0.123456789,
+                                "proposedValue": 0.123456789,
+                            },
+                        ],
+                    },
+                ],
             )
 
         repository.fetch_model_param_proposal_for_update.assert_called_once_with(901)
-        repository.complete_model_param_proposal.assert_called_once()
+        repository.complete_model_param_proposal.assert_called_once_with(
+            model_param_proposal_id=901,
+            proposal_parameters=[
+                {
+                    "parameterName": "GDP",
+                    "values": [
+                        {
+                            "basecaseValue": 0.12345,
+                            "proposedValue": 0.123456789,
+                        },
+                    ],
+                },
+            ],
+        )
         fake_session.commit.assert_called_once()
         fake_session.rollback.assert_not_called()
 
@@ -3779,8 +3800,6 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 model_parameter_max_parameter_slots=100,
                 model_parameter_max_value_prompt_basecase_records=100,
                 model_parameter_max_routing_candidates_per_dimension=2,
-                model_parameter_proposed_value_max_decimal_places=5,
-                model_parameter_proposed_value_precision_mode="trunc",
             ),
         )
         self._settings_patch.start()

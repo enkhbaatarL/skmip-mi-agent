@@ -189,8 +189,6 @@ def fixed_pipeline_settings() -> Iterator[SimpleNamespace]:
         model_parameter_lut_horizon_end_year=2030,
         model_parameter_basecase_value_max_decimal_places=5,
         model_parameter_basecase_value_precision_mode="trunc",
-        model_parameter_proposed_value_max_decimal_places=5,
-        model_parameter_proposed_value_precision_mode="trunc",
         llm_stream_enabled=False,
         llm_reasoning_effort="default",
     )
@@ -853,7 +851,7 @@ def test_step3_keeps_all_valid_slot_key_values_and_drops_duplicate_or_null() -> 
     assert any("slot-3" in warning and "누락" in warning for warning in warnings)
 
 
-def test_step3_truncates_proposed_values_to_at_most_five_decimal_places() -> None:
+def test_step3_preserves_proposed_value_precision_and_rejects_non_numeric() -> None:
     candidate = _candidate("PMI", "pmi")
     slots = [_slot("pmi", {"Country": "Japan", "Year": 2026, "Month": month}) for month in (1, 2, 3)]
     references = [
@@ -873,12 +871,12 @@ def test_step3_truncates_proposed_values_to_at_most_five_decimal_places() -> Non
             LLMValueCell(
                 slot_key="slot-1",
                 proposed_value=49.123456789,
-                rationale_ko="5자리 버림",
+                rationale_ko="원 정밀도 보존",
             ),
             LLMValueCell(
                 slot_key="slot-2",
                 proposed_value=50.0000001,
-                rationale_ko="정수 정규화",
+                rationale_ko="원 정밀도 보존",
             ),
             LLMValueCell(
                 slot_key="slot-3",
@@ -896,12 +894,11 @@ def test_step3_truncates_proposed_values_to_at_most_five_decimal_places() -> Non
     )
 
     proposed_values = [cell["proposed_value"] for cell in sanitized[0]["value_grid"]]
-    assert proposed_values == [49.12345, 50]
-    assert isinstance(proposed_values[1], int)
+    assert proposed_values == [49.123456789, 50.0000001]
     assert any("유한한 숫자" in warning and "slot-3" in warning for warning in warnings)
 
 
-def test_step3_uses_proposed_precision_independently(
+def test_step3_ignores_legacy_proposed_precision_settings(
     fixed_pipeline_settings: SimpleNamespace,
 ) -> None:
     fixed_pipeline_settings.model_parameter_basecase_value_max_decimal_places = 1
@@ -922,12 +919,12 @@ def test_step3_uses_proposed_precision_independently(
     ]
     adjustment = LLMValueAdjustment(
         candidate_key="gdp",
-        rationale_ko="독립 proposed 정밀도 설정",
+        rationale_ko="legacy proposed 정밀도 설정 무시",
         slot_values=[
             LLMValueCell(
                 slot_key="slot-1",
                 proposed_value=1.2341,
-                rationale_ko="3자리 ceil 적용",
+                rationale_ko="원 정밀도 보존",
             ),
         ],
     )
@@ -940,7 +937,7 @@ def test_step3_uses_proposed_precision_independently(
     )
 
     assert warnings == []
-    assert sanitized[0]["value_grid"][0]["proposed_value"] == 1.235
+    assert sanitized[0]["value_grid"][0]["proposed_value"] == 1.2341
 
 
 def test_step3_restores_canonical_effective_reference_axes_from_slot_key() -> None:

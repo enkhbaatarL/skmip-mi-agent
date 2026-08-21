@@ -39,6 +39,8 @@ ROLLBACK_SNAPSHOT_FIELDS = (
     "mod_dtm",
 )
 TERMINAL_PROPOSAL_STATUSES = {"PROPOSED", "CONFIRMED", "FAILED"}
+PRECISION_PROBE_VALUE = 0.123456789
+STEP3_PRECISION_PROBE_VALUE = 49.123456789
 
 
 class SmokeTestError(AssertionError):
@@ -100,6 +102,30 @@ def _proposal_parameter_names(parameters: list[dict[str, Any]]) -> set[str]:
         for parameter in parameters
         if str(parameter.get("parameterName") or parameter.get("parameter_name") or "").strip()
     }
+
+
+def _confirmation_parameters_with_precision_probe(
+    parameters: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    confirmation_parameters = deepcopy(parameters)
+    _require(bool(confirmation_parameters), "precision probe requires at least one parameter")
+    first_values = confirmation_parameters[0].get("values") or []
+    _require(bool(first_values), "precision probe requires at least one parameter value")
+    first_values[0]["proposedValue"] = PRECISION_PROBE_VALUE
+    return confirmation_parameters
+
+
+def _first_proposed_value(parameters: Any) -> Any:
+    if not isinstance(parameters, list) or not parameters:
+        return None
+    first_parameter = parameters[0]
+    if not isinstance(first_parameter, dict):
+        return None
+    first_values = first_parameter.get("values") or []
+    if not isinstance(first_values, list) or not first_values:
+        return None
+    first_value = first_values[0]
+    return first_value.get("proposedValue") if isinstance(first_value, dict) else None
 
 
 def _remote_readback_program(proposal_id: int) -> str:
@@ -178,6 +204,90 @@ def _remote_readback_program(proposal_id: int) -> str:
     ).strip()
 
 
+def _remote_precision_probe_program() -> str:
+    return textwrap.dedent(
+        f"""
+        import json
+
+        from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
+            _sanitize_llm_adjustments,
+        )
+        from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+            _parameter_json_payload,
+        )
+        from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
+            LLMValueAdjustment,
+            LLMValueCell,
+        )
+
+
+        axes = {{"Country": "Japan", "Year": 2026, "Month": 1}}
+        candidate = {{
+            "candidate_key": "precision-probe",
+            "canonical_parameter_name": "PMI",
+            "parameter_name": "PMI",
+            "model_file": "Demand",
+            "model_sheet": "PMIAdjustment",
+            "model_table": "table1",
+            "basecase_read_mode": "fixed_columns",
+            "basecase_column_roles": "A:Country,B:Year,C:Month,D:PMI",
+        }}
+        slot = {{
+            "candidate_key": "precision-probe",
+            "slot_axes": [
+                {{"axis_name": name, "axis_value": value}}
+                for name, value in axes.items()
+            ],
+        }}
+        reference = {{
+            "candidate_key": "precision-probe",
+            "parameter_name": "PMI",
+            "axes": axes,
+            "metadata": {{}},
+            "actual_basecase_value": None,
+            "lut_default_value": 50.0,
+            "llm_reference_value": 50.0,
+            "effective_source": "lut",
+            "basecase_reference_id": None,
+            "lut_reference_id": "precision-probe",
+            "lut_version": "precision-probe",
+            "diagnostics": [],
+        }}
+        adjustment = LLMValueAdjustment(
+            candidate_key="precision-probe",
+            rationale_ko="precision probe",
+            slot_values=[
+                LLMValueCell(
+                    slot_key="slot-1",
+                    proposed_value={STEP3_PRECISION_PROBE_VALUE!r},
+                    rationale_ko="precision probe",
+                )
+            ],
+        )
+        sanitized, warnings = _sanitize_llm_adjustments(
+            [adjustment],
+            [candidate],
+            [slot],
+            [reference],
+        )
+        step3_value = sanitized[0]["value_grid"][0]["proposed_value"]
+        persisted = _parameter_json_payload(
+            {{"values": [{{"proposedValue": {STEP3_PRECISION_PROBE_VALUE!r}}}]}},
+        )
+        print(
+            json.dumps(
+                {{
+                    "step3_proposed_value": step3_value,
+                    "persistence_proposed_value": persisted["values"][0]["proposedValue"],
+                    "warning_count": len(warnings),
+                }},
+                sort_keys=True,
+            )
+        )
+        """,
+    ).strip()
+
+
 class VmProposalReader:
     def __init__(
         self,
@@ -192,8 +302,7 @@ class VmProposalReader:
         self.key_path = key_path
         self.container = container
 
-    def fetch(self, proposal_id: int) -> dict[str, Any]:
-        program = _remote_readback_program(proposal_id)
+    def _execute_json_program(self, program: str, *, label: str) -> dict[str, Any]:
         remote_command = f"docker exec {shlex.quote(self.container)} python -c {shlex.quote(program)}"
         completed: subprocess.CompletedProcess[str] | None = None
         for attempt in range(1, 4):
@@ -219,10 +328,10 @@ class VmProposalReader:
             if attempt < 3:
                 time.sleep(float(attempt))
         if completed is None:
-            raise SmokeTestError("VM DB read-back did not run")
+            raise SmokeTestError(f"VM {label} did not run")
         if completed.returncode != 0:
             detail = completed.stderr.strip()[-2000:] or completed.stdout.strip()[-2000:]
-            raise SmokeTestError(f"VM DB read-back failed after 3 attempts: {detail}")
+            raise SmokeTestError(f"VM {label} failed after 3 attempts: {detail}")
         for line in reversed(completed.stdout.splitlines()):
             try:
                 value = json.loads(line)
@@ -230,7 +339,19 @@ class VmProposalReader:
                 continue
             if isinstance(value, dict):
                 return value
-        raise SmokeTestError("VM DB read-back did not return a JSON object")
+        raise SmokeTestError(f"VM {label} did not return a JSON object")
+
+    def fetch(self, proposal_id: int) -> dict[str, Any]:
+        return self._execute_json_program(
+            _remote_readback_program(proposal_id),
+            label="DB read-back",
+        )
+
+    def precision_probe(self) -> dict[str, Any]:
+        return self._execute_json_program(
+            _remote_precision_probe_program(),
+            label="runtime precision probe",
+        )
 
 
 def _poll_proposal(
@@ -324,6 +445,20 @@ def run_smoke_test(args: argparse.Namespace) -> dict[str, Any]:
             operations == EXPECTED_OPERATIONS,
             f"OpenAPI operation mismatch: expected={sorted(EXPECTED_OPERATIONS)}, actual={sorted(operations)}",
         )
+        runtime_precision_probe = reader.precision_probe()
+        runtime_precision_checks = {
+            "step3_no_quantization": (
+                runtime_precision_probe.get("step3_proposed_value") == STEP3_PRECISION_PROBE_VALUE
+            ),
+            "persistence_no_quantization": (
+                runtime_precision_probe.get("persistence_proposed_value") == STEP3_PRECISION_PROBE_VALUE
+            ),
+            "warning_count_zero": runtime_precision_probe.get("warning_count") == 0,
+        }
+        _require(
+            all(runtime_precision_checks.values()),
+            f"runtime precision probe failed: {runtime_precision_probe}",
+        )
         result["preflight"] = {
             "docs_http_status": docs.status_code,
             "openapi_http_status": openapi_response.status_code,
@@ -331,6 +466,11 @@ def run_smoke_test(args: argparse.Namespace) -> dict[str, Any]:
             "api_info_version": (openapi.get("info") or {}).get("version"),
             "operations": [f"{method} {path}" for method, path in sorted(operations)],
             "runtime_proposal_allowlist": sorted(EXPECTED_PROPOSAL_ALLOWLIST),
+            "runtime_precision_probe": {
+                "status": "PASS",
+                "probe_value": STEP3_PRECISION_PROBE_VALUE,
+                "checks": runtime_precision_checks,
+            },
         }
 
         sync_path = f"/model-parameters/scenarios/{args.scenario_id}/proposals/sync"
@@ -444,7 +584,8 @@ def run_smoke_test(args: argparse.Namespace) -> dict[str, Any]:
         }
         _require(all(empty_checks.values()), f"empty confirmation contract failed: {empty_checks}")
 
-        valid_payload = {"data": {"confirmationParameters": async_parameters}}
+        confirmation_parameters = _confirmation_parameters_with_precision_probe(async_parameters)
+        valid_payload = {"data": {"confirmationParameters": confirmation_parameters}}
         valid_response, valid_body, valid_elapsed = _call(
             client,
             method="POST",
@@ -459,8 +600,11 @@ def run_smoke_test(args: argparse.Namespace) -> dict[str, Any]:
             "response_id_matches": valid_data.get("modelParamProposalId") == async_id,
             "response_status_confirmed": valid_data.get("status") == "CONFIRMED",
             "db_status_confirmed": after_valid.get("status") == "CONFIRMED",
-            "confirmation_payload_matches": after_valid.get("confirmation_parameters") == async_parameters,
+            "confirmation_payload_matches": after_valid.get("confirmation_parameters") == confirmation_parameters,
             "proposal_payload_unchanged": after_valid.get("proposal_parameters") == async_parameters,
+            "proposed_precision_preserved": (
+                _first_proposed_value(after_valid.get("confirmation_parameters")) == PRECISION_PROBE_VALUE
+            ),
             "confirmed_dtm_populated": after_valid.get("confirmed_dtm") is not None,
         }
         _require(all(valid_checks.values()), f"valid confirmation contract failed: {valid_checks}")
@@ -482,8 +626,11 @@ def run_smoke_test(args: argparse.Namespace) -> dict[str, Any]:
             "response_id_matches": reconfirm_data.get("modelParamProposalId") == async_id,
             "response_status_confirmed": reconfirm_data.get("status") == "CONFIRMED",
             "db_status_confirmed": final_row.get("status") == "CONFIRMED",
-            "confirmation_payload_matches": final_row.get("confirmation_parameters") == async_parameters,
+            "confirmation_payload_matches": final_row.get("confirmation_parameters") == confirmation_parameters,
             "proposal_payload_unchanged": final_row.get("proposal_parameters") == async_parameters,
+            "proposed_precision_preserved": (
+                _first_proposed_value(final_row.get("confirmation_parameters")) == PRECISION_PROBE_VALUE
+            ),
             "confirmed_dtm_refreshed": (
                 isinstance(first_confirmed_dtm, str)
                 and isinstance(refreshed_dtm, str)
@@ -498,6 +645,7 @@ def run_smoke_test(args: argparse.Namespace) -> dict[str, Any]:
                 "operation": "POST /model-parameters/proposals/{modelParamProposalId}/confirmation",
                 "status": "PASS",
                 "model_param_proposal_id": async_id,
+                "precision_probe_value": PRECISION_PROBE_VALUE,
                 "subcases": {
                     "empty_payload_rollback": {
                         "status": "PASS",

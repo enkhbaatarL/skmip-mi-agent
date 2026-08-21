@@ -200,7 +200,7 @@ stateDiagram-v2
 
 확정 JSON은 제안 JSON과 같은 모양입니다. 사용자가 수정했다면 `proposedValue`에 수정값이 들어가며, 후속 조회에서는 확정값을 우선 사용합니다. v4 Lever provenance와 제외 reason code는 이 공개·저장 JSON shape에 새 필드로 넣지 않습니다.
 
-확정은 기존 호환성을 유지해 canonical master에 없는 custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. proposal과 confirmation의 숫자 값에는 동일한 유한 숫자·정밀도 정규화를 적용한다. v4 기능은 public payload나 parameter별 min/max·정수·단위 validator를 추가하지 않는다.
+확정은 기존 호환성을 유지해 canonical master에 없는 custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. proposal과 confirmation의 `proposedValue`는 유한 숫자인지만 검사하며 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. JSON number는 별도 소수 자릿수 양자화 없이 저장하고 numeric string은 검증 경계에서 number로 변환될 수 있다. `basecaseValue`의 기존 기준값 정밀도 정책은 유지한다. v4 기능은 public payload나 parameter별 min/max·정수·단위 validator를 추가하지 않는다.
 
 ## 6. 운영자가 기억할 점
 

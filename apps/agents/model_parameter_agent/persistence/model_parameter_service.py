@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from apps.agents.model_parameter_agent.utils.lut.keys import (
     apply_numeric_precision,
+    strict_float,
 )
 from apps.agents.model_parameter_agent.utils.lut.precision import (
     NumericPrecisionMode,
@@ -27,7 +28,6 @@ CONFIRMABLE_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED")
 PROCESSING_PROPOSAL_STATUSES = ("PROCESSING",)
 CALLBACK_READY_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED", "FAILED")
 CALLBACK_TARGET_STATUSES = {"SUCCEEDED", "FAILED", "SKIPPED"}
-PERSISTED_PARAMETER_VALUE_FIELDS = frozenset({"basecaseValue", "proposedValue"})
 ParameterValuePrecision = Mapping[str, tuple[int, NumericPrecisionMode]]
 V1_GENERATION_STRATEGY = "single_event_template_dimensions"
 V3_GENERATION_STRATEGY = "multi_event_composite_dimensions"
@@ -50,12 +50,19 @@ def _normalize_persisted_parameter_values(
     field_precision: ParameterValuePrecision,
     path: str = "parameters",
 ) -> Any:
-    """Bound stored basecase/proposed values regardless of the caller path."""
+    """Validate stored numeric values and bound only reference precision."""
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}
         for key, item in value.items():
             field_path = f"{path}.{key}"
-            if key in PERSISTED_PARAMETER_VALUE_FIELDS and item is not None:
+            if key == "proposedValue" and item is not None:
+                validated_item = strict_float(item, label=field_path)
+                normalized[key] = (
+                    item
+                    if isinstance(item, (int, float)) and not isinstance(item, bool)
+                    else validated_item
+                )
+            elif key in field_precision and item is not None:
                 max_decimal_places, precision_mode = field_precision[key]
                 normalized[key] = apply_numeric_precision(
                     item,
@@ -90,10 +97,6 @@ def _parameter_json_payload(value: Any) -> Any:
             "basecaseValue": (
                 settings.model_parameter_basecase_value_max_decimal_places,
                 settings.model_parameter_basecase_value_precision_mode,
-            ),
-            "proposedValue": (
-                settings.model_parameter_proposed_value_max_decimal_places,
-                settings.model_parameter_proposed_value_precision_mode,
             ),
         },
     )

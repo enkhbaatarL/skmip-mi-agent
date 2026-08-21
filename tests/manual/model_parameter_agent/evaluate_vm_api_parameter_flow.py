@@ -34,8 +34,8 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (  # noqa:
     partition_proposal_parameter_candidates,
 )
 from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (  # noqa: E402
-    EventTypeTarget,
     REPORT_DIR,
+    EventTypeTarget,
     _candidate_parameter_name,
     _discover_event_type_l2_ids_for_parameters,
     _discover_targets,
@@ -43,8 +43,6 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (  
     _filter_parameters_by_name,
     _format_duration,
     _format_seconds,
-    _json_pretty,
-    _json_preview,
     _parameter_name,
     _parameter_name_matches,
     _parameter_values,
@@ -719,7 +717,7 @@ def _render_quality_rows_for_parameter(
             "value가 지정된 범위나 형식으로 선정되었나",
             "N/A" if not all_values else ("PASS" if not invalid_value_rows else "FAIL"),
             f"value_rows={len(all_values)}, invalid_value_rows={invalid_value_rows[:10]}",
-            "proposedValue 누락 또는 타입 불일치는 confirmation 전에 정규화/검증 오류로 차단해야 합니다.",
+            "proposedValue 누락 또는 비유한 숫자는 confirmation 전에 차단하되 유효 숫자에는 설정 기반 양자화를 적용하지 않아야 합니다.",
         ),
     )
 

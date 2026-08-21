@@ -128,6 +128,8 @@ v1/v3에서는 가동률 조정은 LiqUtilAdjustment, 대폭·영구 생산량 o
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
+`proposedValue`는 유한 숫자인지만 검사하고 Step3와 proposal/confirmation persistence에서 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. JSON numeric scalar에는 별도 소수 자릿수 양자화를 하지 않으며 numeric string은 number로 변환될 수 있다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
+
 ## 8. 완료 판정
 
 1. canonical consistency와 LUT adapter/startup 자동화 테스트가 통과한다.

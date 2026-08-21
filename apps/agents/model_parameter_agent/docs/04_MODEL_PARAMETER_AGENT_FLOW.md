@@ -52,7 +52,7 @@ flowchart TD
     I --> J[서버 exact 검증·slot_key 발급]
     J --> K[Basecase 우선 기준값 결정]
     K --> L[Step3<br/>제안값·두 종류 근거 생성]
-    L --> M[서버 key·숫자·중복·정밀도 검증]
+    L --> M[서버 key·유한 숫자·중복 검증]
     M --> N[(PROPOSED 저장)]
     N --> O[사용자 검토·확인]
     O --> P[(CONFIRMED 저장)]
@@ -327,13 +327,13 @@ prompt는 파라미터 근거에 개별 slot 값을 나열하지 말고, slot �
 
 - 입력에 없거나 중복된 `candidate_key`와 `slot_key`를 제외한다.
 - 요청한 slot 누락, `null`, 무한대, 숫자가 아닌 제안값을 검사한다.
-- 제안값에 설정된 소수 자릿수와 정밀도 규칙을 적용한다.
+- 제안값이 유한 숫자인지 검사하되 설정 기반 소수 자릿수 round/trunc/ceil은 적용하지 않는다.
 - 서버가 보관한 좌표, Basecase/LUT reference, 모델 대상을 key로 다시 결합한다.
 - 유효한 slot이 남은 결과만 proposal JSON으로 만든다.
 
 의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. raw 후보가 없거나 runtime allow-list 필터 후 허용 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절하고 proposal row를 만들지 않는다. 따라서 excluded-only 비동기 요청은 `PROCESSING` row나 callback을 남기지 않는다. 허용 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다.
 
-숫자 검증은 proposal과 confirmation에 공통으로 적용하던 유한 숫자·정밀도 정규화를 그대로 사용한다. v4 도입으로 public JSON 필드나 parameter별 min/max, 정수 여부 또는 단위 validator를 추가하지 않는다.
+proposal과 confirmation의 `proposedValue`에는 같은 유한 숫자 검증을 적용하지만 설정 기반 소수 자릿수 정밀도 변환은 하지 않는다. JSON numeric scalar는 별도 양자화 없이 전달하고 numeric string은 number로 변환될 수 있다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지한다. public JSON 필드나 parameter별 min/max, 정수 여부 또는 단위 validator를 추가하지 않는다.
 
 동기 요청은 처리가 끝난 `PROPOSED` 결과를 바로 반환한다. 비동기 요청은 먼저 `PROCESSING`을 반환하고 백그라운드 성공 시 `PROPOSED`, 실패 시 `FAILED`로 갱신한 뒤 callback을 보낸다. 두 방식의 후보·slot·값 판단 규칙은 같다.
 
@@ -732,7 +732,7 @@ flowchart LR
 - v4 canonical master는 21행·활성 16개이고, LUT-backed 10개·Basecase-only 6개다. shared mapping은 129행·35/6/55/33이지만 v4는 이 테이블을 조회하지 않는다. runtime allow-list는 DB master·mapping, Lever catalog/checksum, config·resource, canonical JSON/SQL/workbook을 변경하지 않는다.
 - parameter master와 Lever catalog는 한 transaction으로 적용한다. catalog checksum이 바뀌면 신규 v4 Scenario를 생성하며 기존 v4 Scenario를 새 catalog로 재해석하지 않는다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.
 - 시작 시 schema validation이 필수 테이블·컬럼과 nullable 계약을 검사한다. 누락된 schema를 임의로 우회하지 않고 startup 또는 context load에서 명확히 실패시킨다.
-- confirmation의 custom parameter 허용, 기존 저장 데이터와 proposal/confirmation의 기존 유한 숫자·정밀도 정규화는 유지한다. parameter별 min/max·정수·단위 validator는 이 기능의 범위가 아니다.
+- confirmation의 custom parameter 허용과 기존 저장 데이터는 유지한다. proposal/confirmation의 `proposedValue`는 유한 숫자 검증만 수행하고 설정 기반 소수 자릿수 정밀도 변환을 적용하지 않으며, Basecase/LUT 기준값 정밀도 정책은 유지한다. parameter별 min/max·정수·단위 validator는 이 기능의 범위가 아니다.
 
 ## 관련 문서
 

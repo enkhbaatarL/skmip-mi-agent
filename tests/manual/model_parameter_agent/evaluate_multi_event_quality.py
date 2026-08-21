@@ -88,19 +88,19 @@ CONTRACT_TEST_CASES = (
         ),
     ),
     (
-        "persistence numeric precision",
+        "persistence proposed precision preservation",
         (
             "tests/automated/test_model_parameter_agent_contract.py::"
             "ModelParameterAgentContractTest::"
-            "test_db_payload_uses_independent_basecase_and_proposed_precision"
+            "test_db_payload_bounds_basecase_and_preserves_proposed_precision"
         ),
     ),
     (
-        "reconfirmation numeric precision",
+        "reconfirmation proposed precision preservation",
         (
             "tests/automated/test_model_parameter_agent_contract.py::"
             "ModelParameterAgentContractTest::"
-            "test_model_parameter_service_allows_reconfirming_confirmed_proposal"
+            "test_model_parameter_service_reconfirmation_preserves_proposed_precision"
         ),
     ),
     (
@@ -3655,7 +3655,7 @@ def render_report(
     numeric_contract_status: Verdict = max(
         (
             contract_status_by_name.get(
-                "persistence numeric precision",
+                "persistence proposed precision preservation",
                 "COVERAGE LIMIT",
             ),
             contract_status_by_name.get(
@@ -3663,7 +3663,7 @@ def render_report(
                 "COVERAGE LIMIT",
             ),
             contract_status_by_name.get(
-                "reconfirmation numeric precision",
+                "reconfirmation proposed precision preservation",
                 "COVERAGE LIMIT",
             ),
         ),
@@ -4170,7 +4170,7 @@ def render_report(
             (
                 "| scenario | empty rollback (live execute) | valid (live execute) | "
                 "reconfirm (live execute) | invalid-status (mock/unit) | "
-                "custom persistence (mock/unit) | finite/precision (mock/unit) |"
+                "custom persistence (mock/unit) | finite/preservation (mock/unit) |"
             ),
             "|---:|---|---|---|---|---|---|",
         ],

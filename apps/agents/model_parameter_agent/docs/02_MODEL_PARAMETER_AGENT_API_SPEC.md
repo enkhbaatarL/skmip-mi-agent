@@ -146,7 +146,7 @@ POST /model-parameters/proposals/42/confirmation
 
 확정할 항목은 최소 1개가 필요합니다. 이미 `CONFIRMED`인 제안을 다시 확정하면 이전 확정 내용을 새 요청으로 바꿉니다.
 
-기존 confirmation 호환성도 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 기존 `PROPOSED`/`CONFIRMED` 행이나 confirmation payload를 새로 제한하지 않는다. canonical master에 없는 custom parameter라도 현재의 공통 payload 구조 검증을 통과하면 확정할 수 있다. proposal과 confirmation의 숫자 필드는 persistence의 기존 유한 숫자·정밀도 정규화를 적용하며, public confirmation 필드나 parameter별 min/max·정수·단위 validator가 새로 추가되지는 않는다.
+기존 confirmation 호환성도 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 기존 `PROPOSED`/`CONFIRMED` 행이나 confirmation payload를 새로 제한하지 않는다. canonical master에 없는 custom parameter라도 현재의 공통 payload 구조 검증을 통과하면 확정할 수 있다. proposal과 confirmation의 `proposedValue`는 유한 숫자인지만 검사하고 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. JSON number는 별도 소수 자릿수 양자화 없이 저장되며 numeric string은 검증 경계에서 number로 변환될 수 있다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하며, public confirmation 필드나 parameter별 min/max·정수·단위 validator가 새로 추가되지는 않는다.
 
 ## 4. 오류를 받았을 때 확인할 것
 
