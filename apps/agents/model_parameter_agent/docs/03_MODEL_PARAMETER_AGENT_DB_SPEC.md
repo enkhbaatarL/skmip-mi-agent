@@ -6,10 +6,12 @@
 |---|---|
 | DB에는 무엇이 있나요? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있습니다. |
 | Agent는 어떻게 사용하나요? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장합니다. |
-| 현재 사용하는 파라미터는 몇 개인가요? | master 21개 중 v4 canonical 16개입니다. LUT-backed 10개와 Basecase-only 6개입니다. |
+| 현재 사용하는 파라미터는 몇 개인가요? | master 21개 중 v4 canonical 활성은 16개이고 LUT-backed 10개와 Basecase-only 6개입니다. 신규 proposal runtime 허용은 5개입니다. |
 | 이 문서의 범위는 무엇인가요? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명합니다. |
 
 > v4 master·Lever 판정 기준은 `model-parameter-canonical-v4`와 `model-impact-lever-canonical-v4`, v1/v3 mapping 판정 기준은 `model-parameter-canonical-v1` 파일의 `dimension_mappings` 129행입니다. 2026-08-13 snapshot의 128행은 변경 전 증적입니다.
+
+> 모든 버전의 신규 proposal runtime allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`입니다. 이 응용 계층 제한은 DB master·mapping, Lever catalog/checksum, config·resource, canonical/workbook을 변경하지 않습니다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -36,7 +38,8 @@ flowchart LR
     V -->|v4| L[선택 value의 Lever states와\nactive catalog binding 검증]
     C --> D[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
     L --> D
-    D --> E[Basecase와 LUT를 참고해\n값 제안]
+    D --> P[runtime proposal\nallow-list 5개 필터]
+    P --> E[Basecase와 LUT를 참고해\n값 제안]
     E --> F[제안 결과 저장]
     F --> G[사용자 검토·수정]
     G --> H[확정 결과 저장]
@@ -51,6 +54,7 @@ v3 context 테이블은 동적 composite dimension의 lineage를 기존 연결�
 `tmm_mi_model_param_m`에는 파라미터의 이름, 설명, 값을 넣을 모델 파일·시트·테이블, Basecase를 읽는 기준이 있습니다.
 Agent는 현재 사용 중이며 삭제되지 않은 항목만 읽습니다.
 전체 21개 중 현재 활성 항목은 다음 16개입니다. 앞의 10개는 LUT-backed이고 뒤의 6개는 Basecase-only입니다.
+아래 표는 DB/canonical과 resource capability를 설명합니다. 표의 활성 상태와 별개로 신규 proposal 허용 여부는 위 runtime allow-list를 따릅니다.
 
 | 파라미터 | 적용 대상 | 주요 좌표 | Basecase 읽기 방식 |
 |---|---|---|---|
@@ -74,7 +78,7 @@ Agent는 현재 사용 중이며 삭제되지 않은 항목만 읽습니다.
 “주요 좌표”는 값을 구별하는 주소입니다. 예를 들어 `GDP`의 `대한민국 / 2027년`과 `대한민국 / 2028년`은 서로 다른 입력 위치입니다.
 Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md)를 참고합니다.
 
-이 표의 `parameter_hint` 컬럼은 Excel을 파싱하는 설정이 아니라, LLM에 “이 값의 의미·단위·스케일과 제안 시 제약”을 알려 주는 설명입니다. routing 후보 선택, slot 선택, value 제안 단계에 같은 파라미터 설명으로 들어갑니다.
+이 표의 `parameter_hint` 컬럼은 Excel을 파싱하는 설정이 아니라, LLM에 “이 값의 의미·단위·스케일과 제안 시 제약”을 알려 주는 설명입니다. runtime allow-list를 통과한 후보의 routing, slot 선택, value 제안 단계에 같은 파라미터 설명으로 들어갑니다.
 
 ## 3. Legacy 연결표: v1/v3에서 어떤 파라미터를 검토할지 알려주는 표
 
@@ -82,9 +86,9 @@ Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PAR
 현재 연결은 129건이며 모두 `use_yn='Y'`, `del_yn='N'`입니다. 2026-08-13 v4 적용 전 snapshot은 128건·25/2/55/46으로 보존하고, 현재 공유 정보는 승인된 13개 direct/routing 복구·Population routing 1개 추가·comment 3개 현행화만 반영합니다. master, Impact Lever, Scenario/proposal, DB schema는 이 mapping rollout의 DML 대상이 아닙니다.
 연결 방법인 `mapping_method`는 다음 네 종류입니다.
 
-중요하게도 이 테이블은 **어떤 파라미터를 후보로 삼을지만** 정합니다. Excel의 몇 행·몇 열을 읽을지는 이 테이블이 아니라 앞 절의 `tmm_mi_model_param_m` Basecase 설정이 정하고, LUT CSV의 열과 계산 방식은 `config.yaml`이 정합니다.
+중요하게도 이 테이블은 **어떤 파라미터에 raw mapping으로 도달할지**를 정합니다. 최종 신규 proposal 후보는 여기서 도달한 항목과 runtime allow-list의 교집합입니다. Excel의 몇 행·몇 열을 읽을지는 이 테이블이 아니라 앞 절의 `tmm_mi_model_param_m` Basecase 설정이 정하고, LUT CSV의 열과 계산 방식은 `config.yaml`이 정합니다.
 
-| 방법 | 현재 건수 | 설명 | 제안 후보가 되나요? |
+| 방법 | 현재 건수 | 설명 | raw mapping 후보가 되나요? |
 |---|---:|---|---|
 | `direct` | 35 | 이 영향 항목이면 정해진 파라미터를 바로 사용 | 예 |
 | `routing` | 6 | 가능한 파라미터가 여럿일 수 있어 상황에 맞는 항목을 선택 | 예 |
@@ -95,7 +99,7 @@ Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PAR
 
 정적 SQL `scripts/model_parameter/apply_model_parameter_canonical_v4.sql`은 격리된 MySQL 8.0에서 첫 적용, 두 번째 semantic idempotency, 강제 precondition 실패 rollback과 post-invariant 실패 rollback을 검증합니다. 격리 재검증기는 `tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py`입니다.
 
-`direct`는 연결표가 가리키는 항목이 곧 후보입니다. 같은 영향 항목에 `routing` 후보가 여러 개면 LLM이 적합한 후보를 고르지만, 연결표에 없는 새 파라미터를 만들 수는 없습니다.
+`direct`는 연결표가 가리키는 항목이 곧 raw 후보입니다. 같은 영향 항목에 `routing` 후보가 여러 개면 allow-list 필터 후 LLM이 적합한 후보를 고르지만, 연결표에 없는 새 파라미터를 만들 수는 없습니다.
 
 연결표의 `comment` 컬럼도 prompt 지침으로 사용합니다. `direct`·`routing`이면 `mapping_comment`라는 이름으로 “이 dimension과 파라미터를 연결하고 값을 산정할 때 어떤 근거를 우선할지” 알려 줍니다. `indirect`이면 후보 선택 문구가 아니라 보조정보의 `reason`으로 들어가며, `na` comment는 prompt에 넣지 않습니다. 단계별 JSON 위치와 실제 GDP 예시는 [Flow 문서의 hint/comment 설명](04_MODEL_PARAMETER_AGENT_FLOW.md#hint-and-mapping-comment)을 참고합니다.
 
@@ -113,11 +117,11 @@ v1은 group의 대표 `event_type_l2_id`와 scenario의 dimension key를 연결�
 
 v3 group relation은 2~5개여야 하고, 각 group event는 선택된 composite dimension의 source lineage에서 적어도 한 번 참조되어야 한다. `source_event_ids`가 그룹 밖 event를 가리키거나 source ref template과 연결되는 relation이 없으면 잘못된 lineage이므로 LLM 호출 전에 요청을 실패시킨다. relation은 유효하지만 해당 `(event_type_l2_id, dim_key)` mapping이 없으면 전체 요청을 실패시키지 않고 그 source만 제외하고 경고한다.
 
-한 composite dimension이 여러 `direct`·`routing` 파라미터에 연결되면 각 후보를 모두 유지한다. 반대로 여러 composite dimension 또는 서로 다른 event type이 동일한 모델 target·parameter로 수렴하면 모든 source lineage를 보존한 하나의 parameter task로 병합한다. `direct` 자동 통과, composite dimension별 routing 최대 2개, `indirect` 보조정보와 `na` 제외 정책은 v1과 같다.
+한 composite dimension이 여러 `direct`·`routing` 파라미터에 연결되면 raw 후보를 모두 보존한 뒤 runtime allow-list 밖 항목을 제외한다. 반대로 여러 composite dimension 또는 서로 다른 event type이 동일한 모델 target·parameter로 수렴하면 모든 source lineage를 보존한 하나의 parameter task로 병합한다. 허용된 `direct` 자동 통과, composite dimension별 routing 최대 2개, `indirect` 보조정보와 `na` 제외 정책은 v1과 같다.
 
 선택 value가 정의 밖 자유 value이면 `tmm_mi_dimension_value_mapping_m`에서 같은 group·composite dimension·display value의 projection을 확인한다. `status=approved` projection만 보조 근거로 사용한다. mapping row가 없거나 pending/rejected여도 proposal은 허용하고 warning을 남긴다. group의 `parameter_mapping_ready=false`도 실행 gate가 아니다.
 
-이 역투영은 v1/v3 전용이며 공유 DB의 129개 dimension mapping을 사용한다. direct/routing이 도달하는 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only 6개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 후보 확장과 v4 후보 결정은 독립적이다.
+이 역투영은 v1/v3 전용이며 공유 DB의 129개 dimension mapping을 사용한다. direct/routing이 도달하는 raw mapping-reachable set은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 6개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
 
 ### 3.2 v4가 Lever catalog를 사용하는 방법
 
@@ -129,7 +133,7 @@ v4 loader는 Scenario, Group, `display_order`로 정렬한 Group–Event 관계,
 4. `source_event_ids`가 group event 집합의 부분집합인지 여부
 5. 각 Lever code/ID가 catalog와 일치하는지 여부
 
-active catalog는 Lever 16개, parameter binding occurrence 20개를 가지며, 비활성 parameter binding을 제외한 executable occurrence는 18개이고 고유 활성 parameter는 16개입니다. `price_only`, binding 없음, 비활성 또는 catalog unsupported는 후보에서 제외합니다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아닙니다. checksum/code/ID 불일치나 primary 누락은 proposal을 차단합니다.
+active catalog는 Lever 16개, parameter binding occurrence 20개를 가지며, 비활성 parameter binding을 제외한 executable occurrence는 18개이고 raw binding으로 도달하는 고유 활성 parameter는 16개입니다. `price_only`, binding 없음, 비활성 또는 catalog unsupported는 raw 후보에서 제외합니다. 그 뒤 runtime allow-list를 적용해 신규 proposal 후보를 5개 범위로 제한합니다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아닙니다. checksum/code/ID 불일치나 primary 누락은 proposal을 차단합니다.
 
 ## 4. 결과표: 제안부터 확정까지 남기는 표
 
@@ -201,12 +205,13 @@ stateDiagram-v2
 ## 6. 운영자가 기억할 점
 
 - 새 파라미터를 추가하려면 이름만 등록하는 것으로 끝나지 않습니다. 모델 위치, Basecase/LUT capability와 v4 Lever binding이 함께 맞아야 합니다. v1/v3 지원이 필요할 때만 별도로 legacy mapping을 변경합니다.
-- v1/v3에서는 `direct`와 `routing`만, v4에서는 executable Lever binding만 실제 제안 후보가 됩니다.
+- v1/v3의 `direct`/`routing`과 v4의 executable Lever binding은 raw 후보 소스입니다. 신규 proposal은 각 raw set에 runtime allow-list 5개를 적용한 결과만 사용합니다.
 - 같은 좌표에서는 Basecase 값이 LUT 값보다 우선합니다. DB는 어느 파일과 위치를 읽을지 정하고, 실제 참고값은 Basecase/LUT에서 얻습니다.
 - 확정은 새 결과 행을 추가하지 않고 기존 제안 행을 `CONFIRMED`로 갱신합니다. 다시 확정하면 이전 확정 내용이 최신 요청으로 바뀝니다.
 - 실패 원인은 결과표의 오류 정보에 남고, 비동기 요청은 callback 상태도 함께 확인해야 합니다.
 - v4 배포에서는 parameter master와 Lever catalog를 원자적으로 적용합니다. catalog checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성합니다.
 - Agent는 이 기능에서 DDL이나 canonical DML을 수행하지 않습니다. 시작 시 schema validation과 context 조회가 필수 테이블·컬럼·nullable 계약 누락을 명확히 차단합니다.
+- runtime allow-list는 신규 proposal 생성에만 적용하며 기존 proposal 행·confirmation·custom parameter 호환 동작을 변경하지 않습니다.
 
 ## 관련 문서
 

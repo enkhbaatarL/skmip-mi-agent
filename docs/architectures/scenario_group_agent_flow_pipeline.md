@@ -264,6 +264,10 @@ v2/v3 준비·생성 경로는 모델 영향 레버 카탈로그를 조회하지
 Path·Lever lineage 검증은 v4 경로에만 존재한다. 레버 catalog의 ORM·DTO·repository·service는
 `apps/persistence/model_impact_lever/`가 소유하고, 기존 모델 파라미터 master는 catalog binding의
 활성·지원 상태 확인에만 사용한다. Agent flow/node는 repository를 직접 호출하지 않는다.
+공용 catalog의 active parameter 16개와 executable binding은 raw capability를 나타낸다. 실제
+Model Parameter proposal 허용 범위는 Model Parameter Agent가 source matching 뒤에 적용하는 별도
+runtime allow-list인 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개다. Scenario Group
+Agent는 이 allow-list를 복제하거나 생성·검증 gate로 사용하지 않는다.
 최종 버전 선정 전에는 v2·v3·v4를 비교 가능한 독립 구현으로 유지하며 버전 간 호환
 adapter를 추가하지 않는다.
 
@@ -387,11 +391,14 @@ floor·ceiling을 생성하지 않는다. 지원 상태는 dimension 선택 우�
 Model Parameter Agent는 `generation_strategy=multi_event_model_lever_dimensions`인 그룹에서
 Scenario가 선택한 `dimensionValues`와 `dimensionDefinitions[].values[].leverStates[]`를 소비한다.
 group API version/strategy, catalog checksum, dimension/value/primary Lever, source Event 부분집합,
-Lever code/ID를 strict 검증하고 active catalog의 executable binding만 후보화한다. legacy
-dimension mapping, Event Type 또는 과거 `leverMappings` 계열을 fallback으로 사용하지 않는다.
+Lever code/ID를 strict 검증하고 active catalog의 executable binding을 raw 후보로 정규화한다. 이어
+Model Parameter Agent가 source matching 후, Step1.5·Step2·Step3 LLM과 proposal persistence 전에
+runtime proposal allow-list 5개만 남긴다. legacy dimension mapping, Event Type 또는 과거
+`leverMappings` 계열을 fallback으로 사용하지 않는다.
 catalog checksum이 바뀌면 기존 v4 Scenario proposal을 차단하며 master와 Lever catalog를 원자적으로
 적용한 뒤 신규 v4 Scenario를 생성해야 한다. public proposal/confirmation payload와 저장 JSON shape은
-변경하지 않는다.
+변경하지 않는다. 이 runtime gate는 Scenario Group 생성·validation·Signpost·confirmation 동작이나
+DB·canonical·catalog·resource config를 변경하지 않는다.
 API schema의 boolean `baseline_yn`은 persistence 경계에서 DB 계약인 `Y`/`N`으로
 변환한다.
 관측 Event에 따른 사후 확률 갱신은 v4 범위에 포함하지 않는다.

@@ -42,6 +42,7 @@ The v4 capture refuses to overwrite an existing snapshot. For any later release,
 - `envs/config.yaml`
 - `devops/k8s/configmap.yaml`
 - `apps/common/configs/config.py`
+- `apps/agents/model_parameter_agent/constants.py`
 - `apps/agents/model_parameter_agent/resources/basecase/`
 - `apps/agents/model_parameter_agent/resources/lut/`
 - `apps/agents/model_parameter_agent/utils/resource_manifest.py`
@@ -77,5 +78,7 @@ poetry run python scripts/model_parameter/sync_mapping_workbook.py --check-only
 ## Current v4 baseline (dated 2026-08-13)
 
 The current shared DB keeps the v4 master at 21 rows/16 active and the active Impact Lever catalog at 16 rows. v1/v3 use 129 shared dimension mappings: 35 direct, 6 routing, 55 indirect and 33 na. Their exact direct/routing candidate set contains GDP, PMI, PowerMix, Temperature, Population, HurricaneIntensity, LiqProdAdjustment, LiqUtilAdjustment, PipelineAdjustment and SupplyDisruption. v4 does not query this table for proposal candidates and mapping-only rollout must leave the v4 master, catalog, scenarios and proposal results unchanged.
+
+The runtime proposal boundary is narrower than those raw active sets. `MODEL_PARAMETER_PROPOSAL_ALLOWLIST` currently permits GDP, PMI, PowerMix, Temperature and LiqUtilAdjustment only. The other 11 v4 active catalog parameters—and, within the shared direct/routing set, Population, HurricaneIntensity, LiqProdAdjustment, PipelineAdjustment and SupplyDisruption—are `active-but-blocked`: retain them in DB/canonical/catalog coverage but exclude them before LLM/proposal execution. This runtime-only boundary does not change DB, config, canonical JSON/SQL, workbook, public API payloads or confirmation behavior.
 
 The dated v4 snapshot's 128 mappings and 25/2/55/46 method counts are historical pre-change evidence, not the current DB state. The v1 fixture's 129-row `dimension_mappings` is the approved shared mapping source, while its master section remains historical and must not replace the current v4 master. For any later rollout, update the runner, tests, workbook and documents together from the newly approved fixture.

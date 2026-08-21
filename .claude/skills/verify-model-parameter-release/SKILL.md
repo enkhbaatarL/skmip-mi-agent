@@ -28,10 +28,16 @@ Prove the rollout from immutable inputs through runtime behavior and DB persiste
 3. Run only the named domain suites affected by the current change. Use the verification matrix as the single source for suite membership and commands.
 4. Use `lut-runtime` and `resource-config-storage` evidence to confirm active resource startup, one classification per packaged CSV, exact catalog round-trip, disabled/reference exclusion, and YAML/ConfigMap parity.
 5. Use `agent-contract-detail` evidence for prompt compression, exact Step3 references, request-wide slot limits, and Step2/Step3 byte guards when proposal-flow code changed.
-6. Run Ruff and compile checks on changed Python files, then `git diff --check`. Do not reformat unrelated files.
-7. Fix the smallest relevant implementation, fixture, mapping, prompt, or document defect and rerun the affected phase before continuing.
+6. When the runtime proposal boundary changes, verify the allow-list from code separately from raw DB/canonical/catalog active coverage. The current allow-list is `GDP`, `PMI`, `PowerMix`, `Temperature`, and `LiqUtilAdjustment`; classify every other active candidate as `active-but-blocked` and require exclusion before LLM/proposal execution.
+7. Run Ruff and compile checks on changed Python files, then `git diff --check`. Do not reformat unrelated files.
+8. Fix the smallest relevant implementation, fixture, mapping, prompt, or document defect and rerun the affected phase before continuing.
 
 ## Phase 2: Verify static SQL in disposable MySQL
+
+For a runtime allow-list-only release with DB artifacts explicitly out of scope, skip Phase 2 and Phase 3 entirely.
+Do not run even rollback-only DML against a shared or target DB. Prove invariance with repository diff and authorized
+SELECT-only fingerprints. Run live proposal/confirmation writes in Phase 4 only when the user explicitly authorized
+those API execution rows; otherwise limit deployed checks to health/OpenAPI and non-mutating scope introspection.
 
 1. Resolve the selected canonical version before choosing a verifier. Never run a legacy verifier merely because it has the generic filename.
 2. Provision or identify a disposable MySQL 8 instance. Confirm that dropping the verifier's test tables cannot affect shared data.
@@ -58,7 +64,7 @@ Prove the rollout from immutable inputs through runtime behavior and DB persiste
 1. Run the full automated suite once on the final worktree after the core and affected-domain checks. Do not rerun unchanged local suites merely because target DB DML was applied; prove target DB state with dry-run/read-back evidence.
 2. For real proposal/confirmation coverage, read `.claude/skills/model-parameter-agent-test/SKILL.md` completely and follow it as the execution/reporting contract.
 3. Derive active parameters, event types, mappings, and candidate scenarios from the current DB. Never reuse historical scenario IDs or expected routing winners blindly.
-4. Exercise each requested/active parameter where a valid mapped scenario exists. Do not insert synthetic scenario fixtures merely to manufacture coverage; record a precise coverage limit instead.
+4. Exercise each requested runtime-allowed parameter where a valid mapped scenario exists. Report raw active, runtime-allowed, and `active-but-blocked` coverage separately; an expected blocked parameter with no LLM/proposal execution is not a coverage failure. Do not insert synthetic scenario fixtures merely to manufacture coverage; record a precise coverage limit instead.
 5. For every successful proposal, verify the stored proposal row and the required confirmation workflow: invalid empty payload rollback, valid full confirmation, DB read-back, and reconfirmation. Use an existing safe non-PROPOSED row for invalid-status testing only if one already exists.
 6. Keep proposal/confirmation evidence rows unless the user requested cleanup. Report their IDs.
 7. Capture provider-reported input/output/total tokens, per-stage and scenario elapsed time, retries, candidate/slot/value counts, Basecase/LUT source, exact effective references, and confirmation results. Never infer missing token usage.
@@ -79,9 +85,11 @@ Use this phase when the request is a v3/v4 result comparison rather than a relea
 ## Phase 5: Produce one integrated result
 
 1. Write one Markdown report under `tests/reports/model_parameter_agent/`. Extend the runner's report instead of creating competing raw and evaluated reports.
-2. Include canonical version, target environment, commit method, canonical/snapshot/workbook hashes, snapshot path, executed commands, suite별 collected/passed/failed/skipped counts, DB read-back, isolated SQL rollback evidence, active/pending parameter outcomes, catalog/slot counts, API compatibility, and all failed-attempt classifications. A final successful retry never erases an earlier `returncode != 0` attempt.
+2. Include canonical version, target environment, commit method, canonical/snapshot/workbook hashes, snapshot path, executed commands, suite별 collected/passed/failed/skipped counts, DB read-back, isolated SQL rollback evidence, raw active/runtime-allowed/`active-but-blocked` parameter outcomes, catalog/slot counts, API compatibility, and all failed-attempt classifications. A final successful retry never erases an earlier `returncode != 0` attempt.
 3. For each exercised parameter, include candidate and selected mapping, scenario/event IDs, selected slots and values, rationale, Basecase/LUT source, prompt tokens, time, retry, proposal ID, negative confirmation result, valid confirmation, reconfirmation, and DB read-back.
 4. Distinguish `FAIL` from `COVERAGE LIMIT`. Missing a suitable existing scenario is a coverage limit; broken mapping, exact-slot validation, persistence, rollback, or confirmation is a failure.
 5. Record any known review result honestly. Do not convert `EMPTY_RECOMMENDATIONS` or a routing review flag into an automatic product failure without checking the current DB-derived candidate set.
 6. Require zero execution errors, canonical/config/docs/workbook consistency, active LUT startup, Step2/Step3 count consistency, authorized DB read-back, and confirmation contracts for a full PASS.
 7. In the final response, link the report and summarize scope, pass/fail counts, DB apply/read-back, E2E coverage, confirmation results, remaining limitations, and any exact approval still needed.
+
+For a runtime allow-list-only release, DB rows, config, canonical JSON/SQL, workbook, public API payloads, and confirmation behavior are invariants rather than rollout targets. Do not apply DB DML or rewrite those artifacts to make their active counts match the five allowed proposal parameters.

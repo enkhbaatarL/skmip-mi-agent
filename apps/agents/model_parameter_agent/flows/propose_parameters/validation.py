@@ -5,7 +5,9 @@ from typing import Any, Literal, NoReturn
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.schemas.api.parameters import ProposalParameter
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    is_proposal_parameter_allowed,
     match_v4_parameter_candidates_from_rows,
+    partition_proposal_parameter_candidates,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -371,6 +373,7 @@ def _has_mapping_candidates_from_db_rows(  # noqa: C901
             parameter_rows=parameter_definitions,
             scenario_context=scenario_context,
         )
+        candidates, _ = partition_proposal_parameter_candidates(candidates)
         return bool(candidates)
     if not mapping_rules or not parameter_definitions:
         raise MIBaseError(
@@ -423,7 +426,7 @@ def _has_mapping_candidates_from_db_rows(  # noqa: C901
         parameter_name = _normalize_key(
             rule.get("canonical_parameter_name") or rule.get("parameter_name"),
         )
-        if parameter_name in parameter_names:
+        if parameter_name in parameter_names and is_proposal_parameter_allowed(parameter_name):
             return True
     return False
 
@@ -444,10 +447,14 @@ def _ensure_context_has_mapping_candidates(
                 ErrorCode.INVALID_REQUEST,
                 detail="active parameter definitions not loaded from DB for v4",
             )
-        candidates, preflight_non_inputs, _ = match_v4_parameter_candidates_from_rows(
+        raw_candidates, preflight_non_inputs, _ = match_v4_parameter_candidates_from_rows(
             parameter_rows=parameter_definitions,
             scenario_context=scenario_context,
         )
+        candidates, scope_exclusions = partition_proposal_parameter_candidates(
+            raw_candidates,
+        )
+        preflight_non_inputs = [*preflight_non_inputs, *scope_exclusions]
         has_candidates = bool(candidates)
     else:
         has_candidates = _has_mapping_candidates_from_db_rows(

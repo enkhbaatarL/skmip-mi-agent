@@ -43,7 +43,9 @@ apps/
 `scenario_group_agent`가 시나리오 생성/검증/Signpost 생성 흐름의 기준 구현입니다.
 공유 DB ORM, repository, service와 persistence DTO는 `apps.persistence`에서 소유합니다.
 
-Model Parameter Agent의 공용 master는 21행·활성 16개입니다. v1/v3는 공유 dimension mapping 129행(35 direct, 6 routing, 55 indirect, 33 na)에서 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개까지 후보로 만들 수 있습니다. v4는 이 mapping을 조회하지 않고 선택된 dimension value의 Lever state와 active Lever catalog binding으로 독립적으로 후보를 만듭니다. v4 master 21행·활성 16개, Impact Lever 16개·binding occurrence 20건, catalog와 기존 v4 Scenario/proposal 결과는 이 v1/v3 mapping 정비의 변경 대상이 아닙니다. 활성 16개 중 LUT-backed 10개는 Basecase 우선/LUT fallback을 사용하고, `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`는 검증된 Basecase exact slot에서만 실행합니다. 공개 proposal/confirmation endpoint와 payload shape은 바뀌지 않습니다.
+Model Parameter Agent의 공용 master 21행·활성 16개는 그대로입니다. 리소스 capability는 LUT-backed 10개와 Basecase-only 6개(`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`)로 유지됩니다. v1/v3 공유 dimension mapping 129행(35 direct, 6 routing, 55 indirect, 33 na)의 direct/routing이 도달하는 raw 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개입니다. v4는 이 mapping을 조회하지 않고 선택된 dimension value의 Lever state와 active Lever catalog binding으로 고유 활성 parameter 16개의 raw 후보를 독립적으로 만듭니다.
+
+모든 버전의 **신규 proposal runtime allow-list**는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개입니다. Agent는 raw matching 후 Step1.5·LLM 호출·proposal 행 생성 전에 이 범위를 적용하며, allow-list 밖의 후보만 남으면 비동기 API도 `PROCESSING` 행 없이 `INVALID_REQUEST`로 거절합니다. 이 제한은 DB master·mapping, v4 Lever catalog/checksum, Basecase/LUT 설정·resource bootstrap, canonical JSON/SQL/workbook, 기존 저장 데이터와 confirmation 계약을 변경하지 않습니다. 공개 proposal/confirmation endpoint와 payload shape도 그대로입니다.
 
 ## Key Docs
 

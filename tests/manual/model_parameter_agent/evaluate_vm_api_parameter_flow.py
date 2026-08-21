@@ -31,6 +31,7 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (  # noqa: E402
     get_parameter_knowledge_base,
     match_parameter_candidates,
+    partition_proposal_parameter_candidates,
 )
 from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (  # noqa: E402
     EventTypeTarget,
@@ -333,7 +334,11 @@ async def _evaluate_scenario_via_vm_api(
 ) -> dict[str, Any]:
     context = ModelParameterService().load_context(scenario_id)
     kb = get_parameter_knowledge_base()
-    candidates, non_inputs, mapping_warnings = match_parameter_candidates(kb, context)
+    raw_candidates, non_inputs, mapping_warnings = match_parameter_candidates(kb, context)
+    candidates, scope_exclusions = partition_proposal_parameter_candidates(
+        raw_candidates,
+    )
+    non_inputs = [*non_inputs, *scope_exclusions]
 
     api_calls: list[dict[str, Any]] = []
     proposal_payload = {"userId": user_id} if user_id is not None else {}

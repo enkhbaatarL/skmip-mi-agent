@@ -58,6 +58,7 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     ParameterKnowledgeBase,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
+    partition_proposal_parameter_candidates,
     to_compact_json,
 )
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
@@ -493,10 +494,34 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
             ErrorCode.INVALID_REQUEST,
             detail="parameter_knowledge_base is required",
         )
-    candidates, non_inputs, warnings = match_parameter_candidates(
+    raw_candidates, non_inputs, warnings = match_parameter_candidates(
         state.parameter_knowledge_base,
         state.scenario_context,
     )
+    candidates, scope_exclusions = partition_proposal_parameter_candidates(
+        raw_candidates,
+    )
+    if scope_exclusions:
+        excluded_names = sorted(
+            {
+                str(
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                    or "",
+                ).strip()
+                for candidate in scope_exclusions
+                if str(
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                    or "",
+                ).strip()
+            },
+        )
+        warnings.append(
+            "runtime proposal allow-list 밖의 parameter 후보를 제외했습니다: "
+            f"{excluded_names}",
+        )
+        non_inputs = [*non_inputs, *scope_exclusions]
     logger.info(
         "[model-parameter] selected candidate mappings | scenario_id={} candidate_count={} candidate_keys={} non_input_count={} warning_count={}",
         state.scenario_id,

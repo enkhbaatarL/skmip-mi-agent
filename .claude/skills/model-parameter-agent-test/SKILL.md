@@ -9,6 +9,8 @@ description: Run and document MI 수급모델파라미터 proposal and post-prop
 
 Run 수급모델파라미터 proposal and confirmation tests from the repository root and write markdown reports under `tests/reports/model_parameter_agent/`.
 
+The runtime proposal allow-list is defined by code and currently contains `GDP`, `PMI`, `PowerMix`, `Temperature`, and `LiqUtilAdjustment`. Keep raw DB/canonical/catalog active coverage separate: other active candidates are `active-but-blocked`, must not reach LLM/proposal execution, and are not empty-coverage failures. This boundary does not change DB, config, canonical JSON/SQL, workbook, public API payloads, or confirmation behavior.
+
 Use `poetry run` from the repo root. Do not start the API server for these tests.
 
 Before raw-graph execution, the shared test runner initializes Model Parameter resources once from
@@ -64,6 +66,8 @@ poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposa
 ```
 
 The IDs above are syntax examples only. Always select them from the current DB mapping and scenario state; do not reuse historical IDs blindly.
+
+If a requested parameter is DB/catalog-active but outside the runtime allow-list, report it as `active-but-blocked` and verify that it is excluded before LLM/proposal execution. Do not run confirmation for it because no proposal row should be created.
 
 If the user specifies both target parameters and explicit event types, keep the explicit event type scope while still rendering the report in `parameter -> event_type -> scenario` order:
 
@@ -171,7 +175,7 @@ When large text, basecase hierarchies, or cells are included, summarize them wit
 
 When the user asks to evaluate a target parameter such as GDP, PMI, PowerMix, Temperature, or LiqUtilAdjustment, include a `Parameter Quality Evaluation` section in the same markdown report. Use this fixed rubric unless the user explicitly overrides it. Render it as a table with columns `No`, `Criteria`, `Judgement`, `Evidence`, and `Improvement`. Use `PASS`, `FAIL`, `REVIEW`, or `N/A` judgements.
 
-1. **파라미터 선정**: Select parameters from the current DB mapping. Include all applicable `direct` candidates, choose at least one appropriate candidate from each applicable `routing` group, and do not select candidates outside the mapping result.
+1. **파라미터 선정**: Start from the current DB mapping, then apply the runtime allow-list. Include all applicable allowed `direct` candidates, choose at least one appropriate allowed candidate from each applicable `routing` group, do not select candidates outside the mapping result, and record mapped-but-blocked candidates as `active-but-blocked` rather than missing coverage.
 2. **Slot 선정**: Verify that Step2 received Basecase and LUT sample slots when those sources are active and available. Select scenario-relevant slots from the exact Basecase+LUT union without missing required slots or selecting an excessive range.
 3. **Value 산정**: Verify that every valid Step3 input slot received one reference sample value and returned one valid result value. The Step3 input slot count, reference sample value count, valid result value count, and final DB value count must match. Use actual Basecase first and the exact LUT default when Basecase is absent; a LUT-only cell may correctly store `basecaseValue=null`.
 4. **근거필드 산정**: Verify that parameter- and value-level rationale explains why the parameter, slot, and value were selected and remains consistent with the scenario, coordinates, reference value, and proposed value.
@@ -185,7 +189,7 @@ For criterion 3, use the valid Step3 input after exact validation and truncation
 
 For each criterion, cite concrete evidence from the same report: selected parameter names, mapping methods, scenario dimensions, sample slot/value counts, stored DB proposal row, slot coordinates, `basecaseValue`, LUT reference value when applicable, `proposedValue`, rationale, timing/retry data, and confirmation results. Aggregate these judgements at the top and repeat the evidence-based result under the owning scenario group. If a judgement is `REVIEW` or `FAIL`, add a concrete improvement direction. If a criterion is not applicable, use `N/A` and explain why.
 
-Evaluation must be driven by the current DB mapping state. Do not hardcode expected parameters, selected parameters, routing winners, or success/failure by `scenario_id`, `scenario_group_id`, or `event_type_l2_id`. If DB mapping changes, a scenario may legitimately have no mapping candidates, no validated candidates, or no final recommendations.
+Evaluation must be driven by the current DB mapping state and the allow-list exported by runtime code. Do not hardcode expected parameters, selected parameters, routing winners, or success/failure by `scenario_id`, `scenario_group_id`, or `event_type_l2_id`. If DB mapping changes, a scenario may legitimately have no allowed mapping candidates, no validated candidates, or no final recommendations.
 
 Treat `EMPTY_RECOMMENDATIONS` and `routing_result: REVIEW` as report flags, not automatic failures. Do not fix agent code solely because a historical scenario no longer selects a previously expected parameter such as `ShippingCost`; first verify that the parameter is present in the current DB-derived candidate set and that the report shows a real consistency error.
 
@@ -201,4 +205,4 @@ Only classify a run as failed when the report shows execution errors, broken can
 
 ## Final Response
 
-Report the markdown file path, scenario/event scope, `ERROR_COUNT`, group pass/fail summary, maximum elapsed scenario, confirmation success/failure summary, and any notable empty recommendations or review flags. Do not duplicate the raw API response in chat or in the markdown report; the markdown report must keep the final DB proposal row as the single source for stored proposal data.
+Report the markdown file path, scenario/event scope, `ERROR_COUNT`, group pass/fail summary, maximum elapsed scenario, confirmation success/failure summary, raw active/runtime-allowed/`active-but-blocked` coverage, and any notable empty recommendations or review flags. Do not duplicate the raw API response in chat or in the markdown report; the markdown report must keep the final DB proposal row as the single source for stored proposal data.

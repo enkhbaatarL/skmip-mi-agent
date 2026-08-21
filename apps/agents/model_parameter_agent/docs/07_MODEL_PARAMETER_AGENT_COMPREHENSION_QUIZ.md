@@ -24,14 +24,15 @@
 3. v4 응답의 `eventId`는 `null`이고 `scenarioGroupId`가 authoritative link다.
 4. Lever provenance를 public proposal JSON의 필수 필드로 추가한다.
 
-### 문제 3. Active set과 reference capability
+### 문제 3. Active set, raw reachability와 runtime allow-list
 
-현재 canonical 수치를 쓰고 다음 두 집합을 구분하시오.
+현재 수치를 쓰고 다음 집합을 서로 구분하시오.
 
-- master 전체/활성 수
+- DB/canonical master 전체/활성 수
 - v1/v3 legacy mapping 행 수와 method count
-- LUT-backed parameter 수
-- Basecase-only parameter 수와 이름
+- resource capability의 LUT-backed/Basecase-only parameter 수
+- v1/v3 raw direct/routing reachability와 v4 raw active binding 수
+- 실제 proposal runtime allow-list 수와 이름, allow-list 밖 raw active 후보의 처리
 
 ### 문제 4. v4 strict validation
 
@@ -45,7 +46,7 @@
 
 ### 문제 5. Candidate routing
 
-v4의 단일 primary binding과 primary/alternative 동시 binding을 각각 어떻게 처리하는지 설명하시오. `price_only`, binding 없음, 비활성 parameter, `unchanged` state도 함께 설명하시오.
+v4의 단일 primary binding과 primary/alternative 동시 binding을 각각 어떻게 처리하는지 설명하시오. `price_only`, binding 없음, 비활성 parameter, `unchanged` state와 raw candidate가 runtime allow-list 밖인 경우도 함께 설명하시오.
 
 ### 문제 6. Step1.5·Step2·Step3
 
@@ -75,13 +76,13 @@ Lever의 `direction`, `pressure_contribution`, domain을 숫자 부호로 직접
 
 부분 key나 인접 시설 값으로 fallback할 수 있는지도 답하시오.
 
-### 문제 9. Canonical rollout
+### 문제 9. Canonical rollout과 runtime-only 변경
 
-master와 Lever catalog를 어떻게 적용해야 하는지, checksum이 바뀐 기존 v4 Scenario를 어떻게 처리해야 하는지 설명하시오. 외부 개발 DB에서 이번 작업이 허용하는 범위도 포함하시오.
+master와 Lever catalog를 어떻게 적용해야 하는지, checksum이 바뀐 기존 v4 Scenario를 어떻게 처리해야 하는지 설명하시오. 이번 runtime allow-list 변경에서 불변이어야 하는 DB, config, canonical, workbook, confirmation 범위도 포함하시오.
 
 ### 문제 10. 실패와 저장 호환성
 
-executable candidate가 0개일 때 proposal row 처리와 오류를 설명하시오. v4 provenance·미지원 reason code가 공개 API/저장 JSON에 들어가는지도 답하시오.
+raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 경우와, 최종 허용 candidate가 0개일 때 proposal row 처리·오류를 설명하시오. v4 provenance·제외 reason code가 공개 API/저장 JSON에 들어가는지도 답하시오.
 
 ## 3. 정답과 해설
 
@@ -91,16 +92,19 @@ executable candidate가 0개일 때 proposal row 처리와 오류를 설명하�
 
 ### 정답 2
 
-**2번, 3번.** public endpoint, request/response, callback과 저장 JSON shape은 그대로다. v3/v4의 `eventId`는 `null`이며 Lever provenance는 내부 state·trace·validation warning·실패 detail에만 둔다.
+**2번, 3번.** public endpoint, request/response, callback, confirmation 동작과 저장 JSON shape은 그대로다. v3/v4의 `eventId`는 `null`이며 Lever provenance는 내부 state·trace·validation warning·실패 detail에만 둔다.
 
 ### 정답 3
 
 - master 21행·활성 16개
 - legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
-- LUT-backed 10개
+- resource LUT-backed 10개
 - Basecase-only 6개: `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`
+- v1/v3 raw direct/routing reachability 10개
+- v4 raw active catalog binding 16개
+- proposal runtime allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
 
-v1/v3 실행 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 16개 후보 범위는 Lever-native 경로이며 shared mapping을 조회하지 않는다.
+v1/v3 raw reachability는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 raw 16개 binding 범위는 Lever-native 경로이며 shared mapping을 조회하지 않는다. 이 raw capability는 proposal 허용 범위와 다르다. allow-list 밖이면 DB/canonical/catalog에서 active 또는 raw executable이어도 `active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. 따라서 v1/v3 raw 10개 중 5개, v4 raw 16개 중 11개가 현재 runtime에서 차단된다.
 
 ### 정답 4
 
@@ -108,7 +112,7 @@ v1/v3 실행 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `H
 
 ### 정답 5
 
-단일 primary는 결정적으로 선택한다. primary와 alternative가 함께 있으면 primary를 기본 우선하되 Step1.5가 applicability와 Scenario/Event/Lever 맥락을 보고 alternative 또는 양쪽을 선택할 수 있다. `price_only`, binding 없음, 비활성·unsupported parameter는 제외하며 reason code를 내부 증적에 보존한다. `unchanged`는 변화 candidate가 아니다.
+단일 primary는 결정적으로 선택한다. primary와 alternative가 함께 있으면 primary를 기본 우선하되 Step1.5가 applicability와 Scenario/Event/Lever 맥락을 보고 alternative 또는 양쪽을 선택할 수 있다. `price_only`, binding 없음, 비활성·unsupported parameter는 제외하며 reason code를 내부 증적에 보존한다. raw candidate가 active/executable이어도 runtime allow-list 밖이면 `PROPOSAL_SCOPE_EXCLUDED`로 분류해 Step1.5 LLM 전에 제외한다. `unchanged`는 변화 candidate가 아니다.
 
 ### 정답 6
 
@@ -128,11 +132,11 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 
 ### 정답 9
 
-일반 v4 master·Lever rollout은 `model-parameter-canonical-v4`와 `model-impact-lever-canonical-v4`를 하나의 transaction에서 snapshot-or-final precondition, cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. 다만 이번 외부 개발 DB 작업은 mapping-only runner로 `tmm_mi_model_param_dimension_map`만 129행으로 commit했다. DB schema, v4 master·Lever catalog·checksum, v4 Scenario/proposal 결과는 변경 전·후 동일해야 한다.
+일반 v4 master·Lever rollout은 `model-parameter-canonical-v4`와 `model-impact-lever-canonical-v4`를 하나의 transaction에서 snapshot-or-final precondition, cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. 이번 변경은 proposal 후보의 runtime allow-list만 좁히므로 DB와 DB schema, config, canonical JSON/SQL, mapping workbook, master·Lever catalog/checksum, public API payload와 confirmation workflow를 변경하거나 5개 수치에 맞춰 다시 쓰지 않는다.
 
 ### 정답 10
 
-필터 뒤 executable candidate가 0개면 `INVALID_REQUEST`로 종료하고 proposal row를 저장하지 않는다. Lever provenance와 제외 reason code는 public proposal/confirmation 또는 저장 JSON shape에 추가하지 않고 내부 request state, trace, validation warning과 실패 detail에 남긴다.
+raw active/executable candidate라도 allow-list 밖이면 `active-but-blocked`로 제외하며 LLM이나 proposal 저장으로 진행하지 않는다. 이 필터 뒤 허용 candidate가 0개면 `INVALID_REQUEST`로 종료하고 proposal row를 저장하지 않는다. Lever provenance와 `PROPOSAL_SCOPE_EXCLUDED` 같은 제외 reason code는 public proposal/confirmation 또는 저장 JSON shape에 추가하지 않고 내부 non-input state, trace와 validation warning에 남긴다. public 실패 detail은 경로에 따라 일반화된 메시지만 반환할 수 있다.
 
 ## 4. 점수 해석
 

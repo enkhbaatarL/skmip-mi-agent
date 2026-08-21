@@ -8,6 +8,10 @@ import re
 from typing import TYPE_CHECKING, Any
 import unicodedata
 
+from apps.agents.model_parameter_agent.constants import (
+    MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
+    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+)
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
     RuntimeLruCache,
     file_signature,
@@ -1397,6 +1401,36 @@ def build_llm_prompt_packet(
 
 def normalize_parameter_name(value: Any) -> str:
     return _clean_text(value)
+
+
+def is_proposal_parameter_allowed(value: Any) -> bool:
+    return normalize_parameter_name(value) in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+
+
+def partition_proposal_parameter_candidates(
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split raw mapping candidates at the runtime proposal boundary."""
+    allowed: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    for candidate in candidates:
+        parameter_name = normalize_parameter_name(
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name"),
+        )
+        if parameter_name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+            allowed.append(candidate)
+            continue
+        excluded.append(
+            {
+                **candidate,
+                "reason_code": PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+                "reason": (
+                    f"{parameter_name or 'unknown parameter'} is outside the runtime "
+                    "model-parameter proposal allow-list."
+                ),
+            },
+        )
+    return allowed, excluded
 
 
 def _mapping_rules_from_rows(

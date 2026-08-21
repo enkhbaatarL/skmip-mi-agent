@@ -2,7 +2,8 @@
 
 ## 한눈에 보기
 
-- v1/v3는 legacy DB mapping, v4는 선택 value의 Lever state와 active catalog binding으로 후보를 정규화하고 실제 Basecase/LUT 좌표 안에서 값을 제안한다.
+- v1/v3는 legacy DB mapping으로 raw 후보 10개, v4는 선택 value의 Lever state와 active catalog binding으로 raw 후보 16개에 도달할 수 있다.
+- 모든 버전은 raw matching 후 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개 runtime proposal allow-list를 Step1.5·LLM·persistence 전에 적용한다.
 - LLM 판단은 조건부 Step1.5, Step2, Step3으로 나뉘며 각 단계의 역할과 출력이 다르다.
 - Step2는 “어디를 바꿀지”, Step3는 “얼마로 바꾸고 왜 그런지”를 판단한다.
 - 최종 확인은 LLM을 다시 호출하지 않고 서버 검증 후 `CONFIRMED`로 저장한다.
@@ -33,11 +34,13 @@ flowchart TD
     V -- v1 --> C1[대표 event type과\nscenario dimension 정규화]
     V -- v3 --> C2[sourceRefs와 group relation으로\n원본 event type·dimKey 역투영]
     V -- v4 --> C3[선택 value의 Lever states와\nactive catalog 검증]
-    C1 --> C[기존 DB mapping으로 파라미터 후보 결정]
+    C1 --> C[기존 DB mapping으로\nraw 후보 결정]
     C2 --> C
-    C3 --> C4[executable Lever binding으로\n파라미터 후보 결정]
-    C --> D{routing 후보가<br/>하나라도 있는가?}
-    C4 --> D4{primary/alternative\nrouting이 필요한가?}
+    C3 --> C4[executable Lever binding으로\nraw 후보 결정]
+    C --> R1[runtime proposal\nallow-list 필터]
+    C4 --> R4[runtime proposal\nallow-list 필터]
+    R1 --> D{routing 후보가<br/>하나라도 있는가?}
+    R4 --> D4{primary/alternative\nrouting이 필요한가?}
     D -- 예 --> E[Step1.5<br/>routing 조건 검증·후보 선택]
     D -- 아니오 --> F[direct 후보 확정]
     E --> G[같은 파라미터 후보 병합]
@@ -58,7 +61,8 @@ flowchart TD
 | 단계 | 실행 주체 | 핵심 입력 | 핵심 출력 |
 |---|---|---|---|
 | 문맥 조회 | 서버 | `scenario_id` | scenario, group strategy, ordered event, dimension과 lineage/Lever provenance |
-| 후보 결정 | 서버 | v1/v3 legacy key 또는 v4 selected Lever state | direct/routing 또는 executable primary/alternative 후보 |
+| raw 후보 결정 | 서버 | v1/v3 legacy key 또는 v4 selected Lever state | direct/routing 또는 executable primary/alternative raw 후보 |
+| runtime 범위 필터 | 서버 | raw 후보, proposal allow-list 5개 | Step1.5·LLM·저장으로 전달할 후보 |
 | Step1.5 | LLM, 조건부 | legacy routing 또는 v4 primary/alternative와 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
 | reference 준비 | 서버 | 확정 후보, Basecase, LUT | 값이 존재하는 exact slot catalog |
 | Step2 | LLM | 시나리오 문맥, 파라미터별 slot catalog | `candidate_key + slot_axes` |
@@ -81,7 +85,9 @@ Basecase/LUT 파일 자체를 읽는 기준은 [Basecase·LUT 문서](./05_MODEL
 
 v4 loader는 group API version/strategy와 catalog checksum, dimension/value/primary Lever 존재, `source_event_ids`의 group event 부분집합, Lever code/ID 일치와 primary state 포함 여부를 strict 검증한다. checksum 불일치, 미등록 code, ID 불일치, primary 누락은 LLM 호출 전에 `INVALID_REQUEST`로 실패한다. catalog checksum이 바뀐 기존 v4 Scenario는 재해석하지 않고 현재 catalog로 다시 생성해야 한다.
 
-v4 selector는 executable binding만 후보화한다. `price_only`, binding 없음, 비활성 parameter와 catalog unsupported는 제외 reason을 내부 state/trace에 보존한다. `direction=unchanged`는 변화 후보가 아니라 supporting context다. parameter별 중복 후보는 dimension, 선택 value, ordered Event, Lever state와 binding provenance를 모두 보존해 하나로 병합한다.
+v4 selector는 executable binding만 raw 후보화한다. `price_only`, binding 없음, 비활성 parameter와 catalog unsupported는 제외 reason을 내부 state/trace에 보존한다. `direction=unchanged`는 변화 후보가 아니라 supporting context다. parameter별 중복 raw 후보는 dimension, 선택 value, ordered Event, Lever state와 binding provenance를 모두 보존해 하나로 병합한다.
+
+전략별 raw matching 직후 서버는 공통 runtime allow-list를 적용한다. allow-list 밖의 active parameter는 `PROPOSAL_SCOPE_EXCLUDED` 진단 근거와 warning으로 분리하고 Step1.5·Step2·Step3 prompt에 보내지 않는다. 허용 후보가 하나도 없으면 동기·비동기 모두 `INVALID_REQUEST`로 접수를 거절하고, 비동기 API도 `PROCESSING` row를 만들지 않는다.
 
 v3 adapter는 composite `scenario_dimension_key`·label·선택 value와 원본 `mapping_dimension_key`·`event_type_l2_id`를 분리한다. 또한 `source_event_ids`, `source_refs`, 선택 value의 description·derivation rationale·pressure contribution, 승인 projection과 mapping readiness를 lineage에 보존한다. 선택 value가 definition의 `valueId` 또는 label과 일치하면 해당 metadata를 사용하고, 정의에 없는 자유 value이면 raw composite value를 유지한다.
 
@@ -91,19 +97,19 @@ v3 adapter는 composite `scenario_dimension_key`·label·선택 value와 원본 
 
 | mapping 방식 | 서버 처리 |
 |---|---|
-| `direct` | 연결된 활성 파라미터를 바로 후보로 확정 |
-| `routing` 1개 이상 | 후보 개수와 관계없이 Step1.5 LLM 조건 검증 대상으로 전달 |
+| `direct` | 연결된 활성 파라미터를 raw 후보로 만든 뒤 allow-list에 있으면 확정 |
+| `routing` 1개 이상 | raw 후보에 allow-list를 적용한 뒤 남은 항목만 Step1.5 LLM 조건 검증으로 전달 |
 | `indirect` | 파라미터 후보로 만들지 않고 Step2·Step3의 보조 dimension으로 유지 |
 | `na` | 파라미터·slot·값 판단 prompt에서 제외 |
 
-이 단계에서는 Basecase 값이나 LUT 값으로 파라미터 필요성을 판단하지 않는다. v1/v3는 활성 mapping 밖, v4는 catalog binding 밖의 파라미터를 새로 만들지 않는다.
+이 단계에서는 Basecase 값이나 LUT 값으로 파라미터 필요성을 판단하지 않는다. v1/v3는 활성 mapping 밖, v4는 catalog binding 밖의 파라미터를 새로 만들지 않으며, 두 경로 모두 runtime allow-list 밖의 항목을 downstream으로 전달하지 않는다.
 
 다음 후보 확장·수렴 정책은 v1/v3 legacy 경로에서 같다.
 
-- 한 scenario/composite dimension이 여러 direct/routing 파라미터에 매핑되면 모든 후보를 유지한다.
+- 한 scenario/composite dimension이 여러 direct/routing 파라미터에 매핑되면 raw 후보를 모두 유지한 뒤 runtime allow-list를 적용한다.
 - 여러 dimension 또는 서로 다른 event type이 동일한 model file·sheet·parameter로 수렴하면 하나의 parameter task로 병합하고 모든 source dimension과 event lineage를 보존한다.
 - 같은 v3 source ref가 여러 event relation에 반복되면 후보는 중복 생성하지 않지만 관련 event ID는 모두 보존한다.
-- direct 후보는 Step1.5를 거치지 않고 자동 통과한다. routing만 composite scenario dimension 단위로 검증하며 dimension당 최대 2개를 유지한다.
+- allow-list를 통과한 direct 후보는 Step1.5를 거치지 않고 자동 통과한다. routing만 composite scenario dimension 단위로 검증하며 dimension당 최대 2개를 유지한다.
 
 v1의 기존 candidate key 형식은 유지한다. 병합된 v3/v4 parameter task는 단일 event ID에 의존하지 않는 안정적인 key를 사용한다.
 
@@ -121,7 +127,7 @@ v3/v4 event 항목에는 event ID, title, one-line summary, 제한된 핵심 정
 
 ### 3.2 Step1.5: routing 조건 검증·후보 선택
 
-Step1.5는 legacy routing 후보 또는 v4 primary/alternative 판단이 필요할 때 호출한다. v4에서 단일 primary binding은 결정적으로 통과시키며, primary와 alternative가 함께 있으면 primary를 기본 우선하되 applicability와 Scenario/Event/Lever 맥락에 따라 alternative 또는 양쪽을 선택할 수 있다. system prompt `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
+Step1.5는 runtime allow-list를 통과한 legacy routing 후보 또는 v4 primary/alternative 판단이 필요할 때만 호출한다. v4에서 허용된 단일 primary binding은 결정적으로 통과시키며, 허용된 primary와 alternative가 함께 있으면 primary를 기본 우선하되 applicability와 Scenario/Event/Lever 맥락에 따라 alternative 또는 양쪽을 선택할 수 있다. 예를 들어 `liquefaction_availability`의 raw binding에는 `LiqProdAdjustment` alternative가 남아 있지만 runtime에서 제외되므로, 신규 proposal은 허용된 `LiqUtilAdjustment` primary만 결정적으로 전달한다. system prompt `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
 
 - scenario, ordered events, 현재 dimension/value와 source 또는 Lever provenance를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
 - `parameter_hint`로 후보의 의미와 적용 제약을 이해한다.
@@ -197,6 +203,8 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
 5. Step2에는 값과 출처를 빼고 선택 가능한 좌표 catalog만 전달한다.
 
 좌표를 compact하게 묶는 상세 방식은 뒤의 [compact slot catalog](#53-compact-slot-catalog)에 설명한다.
+
+LUT-backed 10개와 Basecase-only 6개 규칙은 canonical resource capability와 startup 검증을 위해 유지한다. 현재 신규 proposal Flow의 이 단계에 도달하는 파라미터는 allow-list의 LUT-backed 5개뿐이다.
 
 ### 3.4 Step2: 적용할 exact slot 선택
 
@@ -323,7 +331,7 @@ prompt는 파라미터 근거에 개별 slot 값을 나열하지 말고, slot �
 - 서버가 보관한 좌표, Basecase/LUT reference, 모델 대상을 key로 다시 결합한다.
 - 유효한 slot이 남은 결과만 proposal JSON으로 만든다.
 
-의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. 전략별 최초 executable 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절하고 proposal row를 만들지 않는다. 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다.
+의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. raw 후보가 없거나 runtime allow-list 필터 후 허용 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절하고 proposal row를 만들지 않는다. 따라서 excluded-only 비동기 요청은 `PROCESSING` row나 callback을 남기지 않는다. 허용 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다.
 
 숫자 검증은 proposal과 confirmation에 공통으로 적용하던 유한 숫자·정밀도 정규화를 그대로 사용한다. v4 도입으로 public JSON 필드나 parameter별 min/max, 정수 여부 또는 단위 validator를 추가하지 않는다.
 
@@ -341,7 +349,7 @@ flowchart LR
     C -->|오류| E[수정할 내용 안내]
 ```
 
-확인 단계에서는 LLM을 호출하지 않는다. 사용자가 보낸 파라미터명, 모델 대상, slot 축, 기준값, 제안값과 근거의 구조를 확인한 뒤 같은 proposal 행을 `CONFIRMED`로 갱신한다. 이미 확정된 건도 유효한 전체 payload로 다시 확정할 수 있다. canonical master에 없는 custom parameter도 기존 공통 구조 검증을 통과하면 확정할 수 있으며, v4 지원은 이 public/storage 호환 동작을 바꾸지 않는다.
+확인 단계에서는 LLM을 호출하지 않는다. 사용자가 보낸 파라미터명, 모델 대상, slot 축, 기준값, 제안값과 근거의 구조를 확인한 뒤 같은 proposal 행을 `CONFIRMED`로 갱신한다. 이미 확정된 건도 유효한 전체 payload로 다시 확정할 수 있다. runtime allow-list는 신규 proposal 생성에만 적용하며 기존 저장 행이나 confirmation을 추가로 제한하지 않는다. canonical master에 없는 custom parameter도 기존 공통 구조 검증을 통과하면 확정할 수 있다.
 
 <a id="actual-test-sample"></a>
 
@@ -367,7 +375,7 @@ Value 산정의 `REVIEW`는 실행 실패가 아니다. 8개 값의 형식·방�
 | `period` | indirect | 3개월 기간을 해석하는 보조정보 |
 | `demand_impact` | na | prompt에서 제외 |
 
-이 2026-07-21 실행 시점과 2026-08-13 변경 전 snapshot에는 Population routing이 없었다. 따라서 당시에는 `routing_tasks=0`이었고 Step1.5 prompt와 LLM 호출 없이 `PMI`, `GDP`가 바로 Step2로 넘어갔다. 현재 shared mapping에는 Population routing 1건이 있으므로 같은 시나리오를 재실행할 때 인구·이민·인구전망 변화가 명시되면 v1/v3에서도 routing 검토 대상이 된다. 위 실행 결과는 역사 증적이므로 재기록하지 않는다.
+이 2026-07-21 실행 시점과 2026-08-13 변경 전 snapshot에는 Population routing이 없었다. 따라서 당시에는 `routing_tasks=0`이었고 Step1.5 prompt와 LLM 호출 없이 `PMI`, `GDP`가 바로 Step2로 넘어갔다. 현재 shared mapping에는 Population routing 1건이 있어 raw mapping-reachable set에는 포함되지만 runtime allow-list 밖이므로 Step1.5와 신규 proposal에서는 제외된다. 위 실행 결과는 역사 증적이므로 재기록하지 않는다.
 
 ### 4.2 실제 Step2 입력과 선택 결과
 
@@ -720,11 +728,11 @@ flowchart LR
 ### 5.5 호환성 경계와 배포 전제
 
 - public proposal/confirmation request·response·callback와 저장 JSON shape은 바뀌지 않는다. v3/v4는 기존 optional `eventId`를 `null`로 반환하고 `scenarioGroupId`를 authoritative 식별자로 사용한다.
-- v1/v3는 shared 129행 mapping의 direct/routing 후보 10개와 Basecase 우선/LUT fallback을 사용한다. v4에서만 Lever-native 후보 경로를 사용한다.
-- v4 canonical master는 21행·활성 16개이고, LUT-backed 10개·Basecase-only 6개다. shared mapping은 129행·35/6/55/33이지만 v4는 이 테이블을 조회하지 않는다. mapping-only rollout은 v4 master·Lever·Scenario/proposal 결과와 Basecase-only 6개의 legacy 후보 여부를 변경하지 않는다.
+- v1/v3는 shared 129행 mapping의 direct/routing으로 raw 10개에 도달하고, v4는 Lever-native executable binding으로 raw 16개에 도달할 수 있다. 두 경로 모두 runtime allow-list 5개를 적용한 뒤에만 Basecase 우선/LUT fallback과 LLM 단계로 진입한다.
+- v4 canonical master는 21행·활성 16개이고, LUT-backed 10개·Basecase-only 6개다. shared mapping은 129행·35/6/55/33이지만 v4는 이 테이블을 조회하지 않는다. runtime allow-list는 DB master·mapping, Lever catalog/checksum, config·resource, canonical JSON/SQL/workbook을 변경하지 않는다.
 - parameter master와 Lever catalog는 한 transaction으로 적용한다. catalog checksum이 바뀌면 신규 v4 Scenario를 생성하며 기존 v4 Scenario를 새 catalog로 재해석하지 않는다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.
 - 시작 시 schema validation이 필수 테이블·컬럼과 nullable 계약을 검사한다. 누락된 schema를 임의로 우회하지 않고 startup 또는 context load에서 명확히 실패시킨다.
-- confirmation의 custom parameter 허용과 proposal/confirmation의 기존 유한 숫자·정밀도 정규화는 유지한다. parameter별 min/max·정수·단위 validator는 이 기능의 범위가 아니다.
+- confirmation의 custom parameter 허용, 기존 저장 데이터와 proposal/confirmation의 기존 유한 숫자·정밀도 정규화는 유지한다. parameter별 min/max·정수·단위 validator는 이 기능의 범위가 아니다.
 
 ## 관련 문서
 

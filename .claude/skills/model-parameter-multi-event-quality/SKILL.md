@@ -26,6 +26,7 @@ Scenario API v3 composite dimension을 기존 event type/dimension mapping에 �
 - `--execute`에는 사용자의 명시적 write 승인, 고정된 Basecase/LUT resource release, LLM 연결·자격, proposal/confirmation DB write 권한이 모두 필요하다.
 - isolated automated contract hook은 mock/unit fixture만 사용하고 외부 DB·LLM을 호출하지 않는다. 이 결과는 반드시 `UNIT PASS/FAIL`로 표시하며 live DB confirmation 증적을 대체하지 않는다.
 - 이 skill은 canonical master, 129개 dimension mapping, Basecase/LUT, workbook 또는 DB schema를 수정하지 않는다.
+- 현재 runtime proposal allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`다. DB/canonical/catalog의 다른 활성 parameter는 discovery coverage에는 남기되 `active-but-blocked`로 분류하고 LLM·proposal 실행에서 제외한다. config와 confirmation 계약도 변경하지 않는다.
 
 ## 실행 절차
 
@@ -51,7 +52,7 @@ runner는 다음을 수행한다.
 - 2~5개 group-event relation의 display order 및 source event membership 검사
 - 선택 dimension의 `sourceRefs`를 relation template과 연결하고 event type 복원
 - active master와 `(event_type_l2_id, dimKey)` mapping으로 독립 eligible 후보 산출
-- active parameter별 `eligible → candidate → selected → proposed → confirmed` matrix 생성
+- raw active parameter별 `runtime-allowed | active-but-blocked` 상태와 `eligible → candidate → selected → proposed → confirmed` matrix 생성
 
 `parameter_mapping_ready=false`를 제외 조건으로 사용하지 않는다. 승인 projection은 보조 근거이고, pending/rejected/미존재 projection은 경고로 기록한다.
 
@@ -60,7 +61,7 @@ runner는 다음을 수행한다.
 - schema 또는 lineage 오류가 있으면 LLM 호출 전에 중단하고 `FAIL`로 보고한다.
 - 실제 적합 v3 scenario가 없으면 `COVERAGE LIMIT`으로 보고한다.
 - 자동 discovery는 active parameter와 convergence/expansion coverage가 늘어나는 scenario를 우선 선택한다.
-- 모든 scenario에서 active parameter 전부를 요구하지 않는다. 해당 scenario의 sourceRef로 eligible인 parameter만 필수다.
+- 모든 scenario에서 active parameter 전부를 요구하지 않는다. 해당 scenario의 sourceRef로 eligible이면서 runtime-allowed인 parameter만 실행 필수다. `active-but-blocked`는 정상 제외 증적이며 candidate/selected/proposed/confirmed 0을 기대한다.
 
 ### 3. Write 실행 승인
 
@@ -85,7 +86,7 @@ poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_qualit
 - execution error 0
 - lineage/mapping/persistence `FAIL` 0
 - Step1 expected candidate와 실제 candidate의 source occurrence 일치
-- direct 후보 생존, routing 최대 2개 정책, convergence/expansion source union
+- runtime-allowed direct 후보 생존, routing 최대 2개 정책, convergence/expansion source union; `active-but-blocked` 후보의 pre-LLM 제외와 reason code
 - proposal 및 confirmation DB read-back의 `mi_event_id=NULL`
 - prompt bytes, Step1.5/2/3 token·시간·retry; 미수집 항목은 `REVIEW`
 - Step1.5/2/3 실제 prompt packet의 ordered event, 관련 composite/indirect dimension, source lineage, 승인 projection; 필수 packet/context 누락은 `FAIL`
@@ -102,4 +103,4 @@ poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_qualit
 - mapping이 없는 유효 sourceRef 하나 때문에 전체 discovery를 실패시키지 않는다.
 - 실제 scenario 부재를 품질 실패로 만들지 않고 `COVERAGE LIMIT`으로 분리한다.
 - 보고서에는 비밀값, DB 자격증명, 전체 prompt 원문을 기록하지 않는다.
-- canonical master, dimension mapping, Basecase/LUT, workbook 또는 DB schema를 이 품질 실행에서 수정하지 않는다.
+- canonical master, dimension mapping, Basecase/LUT, config, workbook, DB schema 또는 confirmation workflow를 이 품질 실행에서 수정하지 않는다.

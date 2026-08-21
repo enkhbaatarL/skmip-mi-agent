@@ -17,6 +17,10 @@ from fastapi.routing import APIRoute
 import pytest
 
 from apps.agents.model_parameter_agent.api import router as model_parameter_router
+from apps.agents.model_parameter_agent.constants import (
+    MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
+    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+)
 from apps.agents.model_parameter_agent.flows.confirm_parameters.api_schema import (
     ConfirmParametersIn,
 )
@@ -94,6 +98,7 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
     normalize_parameter_name,
+    partition_proposal_parameter_candidates,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -786,6 +791,198 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert DEFAULT_BASECASE_DIR.parent == DEFAULT_INPUT_DIR
         assert _default_basecase_dir().name == "basecase"
 
+    def test_runtime_proposal_allowlist_is_exact(self) -> None:
+        assert MODEL_PARAMETER_PROPOSAL_ALLOWLIST == {
+            "GDP",
+            "PMI",
+            "PowerMix",
+            "Temperature",
+            "LiqUtilAdjustment",
+        }
+
+    def test_runtime_proposal_scope_partitions_raw_candidates(self) -> None:
+        allowed, excluded = partition_proposal_parameter_candidates(
+            [
+                {"canonical_parameter_name": name, "candidate_key": name}
+                for name in [
+                    "GDP",
+                    "PMI",
+                    "PowerMix",
+                    "Temperature",
+                    "LiqUtilAdjustment",
+                    "ShippingCost",
+                ]
+            ],
+        )
+
+        assert [candidate["canonical_parameter_name"] for candidate in allowed] == [
+            "GDP",
+            "PMI",
+            "PowerMix",
+            "Temperature",
+            "LiqUtilAdjustment",
+        ]
+        assert excluded == [
+            {
+                "canonical_parameter_name": "ShippingCost",
+                "candidate_key": "ShippingCost",
+                "reason_code": PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+                "reason": "ShippingCost is outside the runtime model-parameter proposal allow-list.",
+            },
+        ]
+
+    def test_select_parameter_candidates_excludes_out_of_scope_mapping(self) -> None:
+        knowledge_base = ParameterKnowledgeBase(
+            mapping_source="test",
+            basecase_dir_path="",
+            parameter_definitions={},
+            mapping_rules=[],
+            basecase_profiles={},
+        )
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.nodes.match_parameter_candidates",
+            return_value=(
+                [
+                    {
+                        "candidate_key": "shipping",
+                        "canonical_parameter_name": "ShippingCost",
+                    },
+                ],
+                [],
+                [],
+            ),
+        ):
+            selected = select_parameter_candidates(
+                ModelParameterProposalState(
+                    scenario_id=100,
+                    scenario_context={"scenario": {"scenario_id": 100}},
+                    parameter_knowledge_base=knowledge_base,
+                ),
+            )
+
+        assert selected["candidate_mappings"] == []
+        assert selected["non_input_items"][0]["reason_code"] == PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
+        assert "ShippingCost" in selected["validation_warnings"][0]
+
+    def test_mapping_precheck_applies_runtime_scope_to_v1_and_v3(self) -> None:
+        for strategy in ("single_event_template_dimensions", "multi_event_composite_dimensions"):
+            for parameter_name, expected in (("GDP", True), ("ShippingCost", False)):
+                context: dict[str, Any] = {
+                    "scenario": {
+                        "scenario_id": 100,
+                        "dimension_values": {"economic_intensity": "downside"},
+                    },
+                    "scenario_group": {
+                        "event_type_l2_id": 17,
+                        "generation_strategy": strategy,
+                    },
+                    "parameter_mapping_resources": {
+                        "mapping_rules": [
+                            {
+                                "event_type_l2_id": 17,
+                                "dimension_key": "economic_intensity",
+                                "canonical_parameter_name": parameter_name,
+                                "mapping_method": "direct",
+                            },
+                        ],
+                        "parameter_definitions": [
+                            {
+                                "canonical_parameter_name": parameter_name,
+                                "parameter_name": parameter_name,
+                                "model_file": "Demand",
+                                "model_sheet": "Demand Model Input",
+                            },
+                        ],
+                    },
+                }
+                if strategy == "multi_event_composite_dimensions":
+                    context["dimension_lineage"] = [
+                        {
+                            "mapped_sources": [
+                                {
+                                    "event_type_l2_id": 17,
+                                    "mapping_dimension_key": "economic_intensity",
+                                },
+                            ],
+                        },
+                    ]
+
+                with self.subTest(strategy=strategy, parameter_name=parameter_name):
+                    assert _has_mapping_candidates_from_db_rows(
+                        scenario_context=context,
+                    ) is expected
+
+    def test_prepare_v4_callback_applies_runtime_scope_before_processing_row(self) -> None:
+        context = {
+            "scenario": {"scenario_id": 100, "scenario_group_id": 20},
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "generation_strategy": V4_GENERATION_STRATEGY,
+            },
+            "parameter_mapping_resources": {
+                "parameter_definitions": [
+                    {
+                        "canonical_parameter_name": "GDP",
+                        "parameter_name": "GDP",
+                        "model_file": "Demand",
+                        "model_sheet": "Demand Model Input",
+                    },
+                    {
+                        "canonical_parameter_name": "ShippingCost",
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
+            },
+        }
+        matcher_target = (
+            "apps.agents.model_parameter_agent.flows.propose_parameters.validation."
+            "match_v4_parameter_candidates_from_rows"
+        )
+        with (
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+            ) as service_cls,
+            patch(
+                matcher_target,
+                return_value=([{"canonical_parameter_name": "ShippingCost"}], [], []),
+            ),
+        ):
+            service_cls.return_value.load_context.return_value = context
+
+            with self.assertRaises(MIBaseError):
+                prepare_propose_parameters_callback(100)
+
+            service_cls.return_value.create_processing_proposal.assert_not_called()
+
+        with (
+            patch(
+                "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+            ) as service_cls,
+            patch(
+                matcher_target,
+                return_value=(
+                    [
+                        {"canonical_parameter_name": "GDP"},
+                        {"canonical_parameter_name": "ShippingCost"},
+                    ],
+                    [],
+                    [],
+                ),
+            ),
+        ):
+            service_cls.return_value.load_context.return_value = context
+            service_cls.return_value.create_processing_proposal.return_value = 901
+
+            result = prepare_propose_parameters_callback(100)
+
+            assert result["model_param_proposal_id"] == 901
+            service_cls.return_value.create_processing_proposal.assert_called_once_with(
+                scenario_context=context,
+                user_id=None,
+            )
+
     @core_contract
     def test_default_knowledge_base_loads_mapping_from_db(self) -> None:
         from apps.agents.model_parameter_agent.utils import parameter_mapping as mapping_module
@@ -1145,31 +1342,31 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         scenario_context = {
             "scenario": {
                 "scenario_id": 100,
-                "title": "transport disruption",
-                "dimension_values": {"transport_disruption": "높음"},
+                "title": "economic slowdown",
+                "dimension_values": {"economic_intensity": "하락"},
             },
             "scenario_group": {"event_type_l2_id": 17, "mi_event_id": 30},
             "dimension_template": [
-                {"dim_key": "transport_disruption", "label": "운송 차질"},
+                {"dim_key": "economic_intensity", "label": "경제 강도"},
             ],
             "parameter_mapping_resources": {
                 "mapping_rules": [
                     {
                         "event_type_l2_id": 17,
-                        "dimension_key": "transport_disruption",
-                        "dimension_label": "운송 차질",
-                        "canonical_parameter_name": "ShippingCost",
+                        "dimension_key": "economic_intensity",
+                        "dimension_label": "경제 강도",
+                        "canonical_parameter_name": "GDP",
                         "mapping_method": "direct",
-                        "comment": "운송 차질은 ShippingCost에 직접 반영",
+                        "comment": "경제 강도는 GDP에 직접 반영",
                     },
                 ],
                 "parameter_definitions": [
                     {
-                        "canonical_parameter_name": "ShippingCost",
-                        "parameter_name": "ShippingCost",
-                        "parameter_hint": "운송 비용 입력값",
-                        "model_file": "Trade",
-                        "model_sheet": "ShippingCostInput",
+                        "canonical_parameter_name": "GDP",
+                        "parameter_name": "GDP",
+                        "parameter_hint": "경제 성장률 입력값",
+                        "model_file": "Demand",
+                        "model_sheet": "Demand Model Input",
                         "model_table": "Table1",
                         "semantic_axes": "Route",
                         "basecase_read_mode": "fixed_columns",
@@ -1210,8 +1407,8 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 ),
             )
 
-        assert kb.definition_for("ShippingCost") is not None
-        assert selected["candidate_mappings"][0]["canonical_parameter_name"] == "ShippingCost"
+        assert kb.definition_for("GDP") is not None
+        assert selected["candidate_mappings"][0]["canonical_parameter_name"] == "GDP"
 
     @core_contract
     def test_model_parameter_service_saves_proposal_result(self) -> None:
@@ -2991,6 +3188,49 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         assert "No model parameter mapping candidates found" in (error.exception.error_message)
         service_cls.return_value.create_processing_proposal.assert_not_called()
 
+    def test_prepare_callback_rejects_out_of_scope_mapping_before_processing_row(self) -> None:
+        scenario_context = {
+            "scenario": {
+                "scenario_id": 100,
+                "scenario_group_id": 20,
+                "dimension_values": {"transport_disruption": "Suez disruption"},
+            },
+            "scenario_group": {
+                "scenario_group_id": 20,
+                "mi_event_id": 30,
+                "event_type_l2_id": 17,
+            },
+            "event": {"mi_event_id": 30},
+            "parameter_mapping_resources": {
+                "mapping_rules": [
+                    {
+                        "event_type_l2_id": 17,
+                        "dimension_key": "transport_disruption",
+                        "canonical_parameter_name": "ShippingCost",
+                        "mapping_method": "direct",
+                    },
+                ],
+                "parameter_definitions": [
+                    {
+                        "parameter_name": "ShippingCost",
+                        "model_file": "Trade",
+                        "model_sheet": "ShippingCostInput",
+                    },
+                ],
+            },
+        }
+
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
+            service_cls.return_value.load_context.return_value = scenario_context
+
+            with self.assertRaises(MIBaseError) as error:
+                prepare_propose_parameters_callback(100)
+
+        assert "No model parameter mapping candidates found" in error.exception.error_message
+        service_cls.return_value.create_processing_proposal.assert_not_called()
+
     def test_v4_candidate_generation_failure_uses_two_line_public_message(self) -> None:
         scenario_context = {
             "scenario": {
@@ -3055,7 +3295,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             "scenario": {
                 "scenario_id": 100,
                 "scenario_group_id": 20,
-                "dimension_values": {"transport_disruption": "Suez disruption"},
+                "dimension_values": {"economic_intensity": "downside"},
             },
             "scenario_group": {
                 "scenario_group_id": 20,
@@ -3067,16 +3307,16 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "mapping_rules": [
                     {
                         "event_type_l2_id": 17,
-                        "dimension_key": "transport_disruption",
-                        "canonical_parameter_name": "ShippingCost",
+                        "dimension_key": "economic_intensity",
+                        "canonical_parameter_name": "GDP",
                         "mapping_method": "direct",
                     },
                 ],
                 "parameter_definitions": [
                     {
-                        "parameter_name": "ShippingCost",
-                        "model_file": "Trade",
-                        "model_sheet": "ShippingCostInput",
+                        "parameter_name": "GDP",
+                        "model_file": "Demand",
+                        "model_sheet": "Demand Model Input",
                     },
                 ],
             },
@@ -3106,7 +3346,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             "scenario": {
                 "scenario_id": 100,
                 "scenario_group_id": 20,
-                "dimension_values": {"transport_disruption": "Suez disruption"},
+                "dimension_values": {"economic_intensity": "downside"},
             },
             "scenario_group": {
                 "scenario_group_id": 20,
@@ -3119,16 +3359,16 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 "mapping_rules": [
                     {
                         "event_type_l2_id": 17,
-                        "dimension_key": "transport_disruption",
-                        "canonical_parameter_name": "ShippingCost",
+                        "dimension_key": "economic_intensity",
+                        "canonical_parameter_name": "GDP",
                         "mapping_method": "direct",
                     },
                 ],
                 "parameter_definitions": [
                     {
-                        "parameter_name": "ShippingCost",
-                        "model_file": "Trade",
-                        "model_sheet": "ShippingCostInput",
+                        "parameter_name": "GDP",
+                        "model_file": "Demand",
+                        "model_sheet": "Demand Model Input",
                     },
                 ],
             },

@@ -332,12 +332,20 @@ POST /scenario-groups/{scenario_group_id}/price-interpretations
 `apps/connectors/object_storage/`의 exact `HeadObject`/`GetObject`만 사용하며, 원격 실패 시 packaged
 리소스로 폴백한다. manifest의 `lut`은 `enabled`로 catalog 생성 여부를 구분하고, `references`는 독립
 parameter record를 만들지 않는 보조 CSV를 소유한다. v4 canonical master는 21행·활성 16개이며
-LUT-backed 10개와 Basecase-only 6개로 나뉜다. v1/v3는 공유 DB의 dimension mapping 129행·35/6/55/33을 사용하여 LUT-backed 10개까지 후보화한다.
+LUT-backed 10개와 Basecase-only 6개로 나뉜다. 이는 resource와 catalog의 capability 범위다.
+v1/v3 공유 DB dimension mapping 129행·35/6/55/33의 direct/routing이 도달하는 raw parameter는
+10개이고, v4 active Lever binding이 도달하는 raw parameter는 16개다. 실제 runtime proposal은 두
+경로 모두 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용한다.
 정확한 v4 DB matrix는 `scripts/model_parameter/model-parameter-canonical-v4.json`과
 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, 사람이 읽는 명세는
 `resources/Model_Parameter_Base_Case_Mapping.md`와
 `resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx`가
 소유한다. workbook의 129행 dimension mapping은 현재 v1/v3 정보를 표시하며 v4 Lever 후보 소스가 아니다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
+
+제안 Flow는 버전별 source matching으로 raw 후보를 만든 직후, Step1.5·그 밖의 LLM 호출과 proposal
+persistence 전에 Model Parameter Agent 전용 runtime allow-list gate를 적용한다. 이 gate는 DB row,
+canonical fixture, Lever catalog, `config.yaml` 또는 startup resource preload 범위를 줄이지 않는다.
+Scenario Group Agent를 포함한 다른 Agent의 생성·검증 동작과 기존 confirmation 계약도 바꾸지 않는다.
 
 제안 Flow는 전체 LUT record를 서버 cache/index에 유지한다. Step2 prompt에는 동일 기간을 공유하는 leaf를
 `period_groups`로 묶고 Country→Plant→Train 고정축을 `fixed_axis_hierarchy`로 중첩하며, Step3에는 exact
@@ -357,8 +365,10 @@ v4 `multi_event_model_lever_dimensions`는 Scenario, Group, ordered Group–Even
 shared legacy 129행
 mapping, 과거 `lever_mappings` 계열을 조회하거나 fallback으로 사용하지 않는다. group API version/strategy,
 catalog checksum, dimension/value/primary Lever, source Event 부분집합과 Lever code/ID를 strict 검증하고
-executable binding을 parameter별 provenance와 함께 병합한다. v4 proposal도 `mi_event_id=NULL`이며 public
-proposal/confirmation payload와 저장 JSON shape은 바뀌지 않는다.
+executable binding을 provenance가 있는 raw source 후보로 정규화한다. runtime allow-list를 통과한
+후보만 parameter별로 병합한다. v4 proposal도 `mi_event_id=NULL`이며 public proposal/confirmation
+payload와 저장 JSON shape은 바뀌지 않는다. raw capability에 속하더라도 runtime allow-list 밖이면
+Step1.5와 값 제안으로 전달하지 않는다.
 
 ```text
 POST /model-parameters/scenarios/{scenario_id}/proposals
@@ -368,6 +378,7 @@ POST /model-parameters/scenarios/{scenario_id}/proposals
   - prepare_propose_parameters_callback()
   - run_propose_parameters_background()
 → flows/propose_parameters/nodes.py
+  - source matching 후 runtime proposal allow-list gate (5개)
 → utils/basecase.py
 → utils/lut/ + utils/resource_runtime.py
 → config.yaml:model_parameter_resources
@@ -382,6 +393,7 @@ POST /model-parameters/scenarios/{scenario_id}/proposals/sync
 → flows/propose_parameters/api_schema.py
 → flows/propose_parameters/flow.py
 → flows/propose_parameters/nodes.py
+  - source matching 후 runtime proposal allow-list gate (5개)
 → utils/basecase.py
 → utils/lut/ + utils/resource_runtime.py
 → config.yaml:model_parameter_resources

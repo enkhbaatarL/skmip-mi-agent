@@ -8,8 +8,10 @@
 - reference capability: LUT-backed 10개, Basecase-only 6개
 - v4 impact Lever: 16개, binding occurrence 20개, effective executable occurrence 18개/고유 활성 parameter 16개
 - v1/v3 shared legacy dimension mapping: 129행 (direct 35, routing 6, indirect 55, na 33), 최대 후보 10개
-- 본 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
+- runtime proposal allow-list: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개; 그 밖의 DB/canonical/catalog 활성 후보는 `active-but-blocked`로 분류하고 LLM·proposal 입력 전에 제외
+- 기존 v1/v3 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
+- runtime allow-list 적용은 proposal 후보 경계만 변경하며 DB, config, canonical JSON/SQL, workbook과 confirmation 동작은 변경하지 않음
 - audit user/version: `model-parameter-canonical-v4`, impact catalog version `v4`
 
 ## 최종 master
@@ -154,7 +156,7 @@ v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding�
 | `contract_volume` | VolumeCancelled primary; PNG Contract Volume alternative |
 | `trade_restriction` | RemainingUnrestrictedAmount primary; VolumeCancelled alternative |
 
-세 `price_only` Lever는 binding이 없다. CDD/HDD binding을 포함하면 catalog binding occurrence는 20개이며, 비활성 master binding을 제외한 effective executable occurrence는 18개, 고유 활성 parameter는 16개다. single primary는 결정적으로 선택하고 primary/alternative가 함께 있으면 applicability와 Scenario/Event/Lever 맥락을 Step1.5에서 판단한다.
+세 `price_only` Lever는 binding이 없다. CDD/HDD binding을 포함하면 catalog binding occurrence는 20개이며, 비활성 master binding을 제외한 effective executable occurrence는 18개, 고유 활성 parameter는 16개다. 이 수치는 canonical/catalog capability 기준으로 유지한다. 현재 runtime은 이 중 allow-list 5개만 proposal 후보로 허용하고 나머지 활성 11개는 `active-but-blocked`로 기록해 제외한다. allow-list를 통과한 single primary는 결정적으로 선택하고, 통과한 primary/alternative가 함께 남으면 applicability와 Scenario/Event/Lever 맥락을 Step1.5에서 판단한다.
 
 ### 보류와 보조 resource
 
@@ -174,6 +176,7 @@ v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding�
 
 - 현재 shared mapping은 129행이고 method count는 direct 35, routing 6, indirect 55, na 33이다. 모두 `use_yn='Y'`, `del_yn='N'`이다.
 - direct/routing으로 도달하는 후보는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다.
+- 이 10개 중 runtime proposal 허용 5개는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`이며, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `PipelineAdjustment`, `SupplyDisruption`은 mapping-active지만 `active-but-blocked`다.
 - 아래 128행·25/2/55/46 설명과 표는 2026-08-13 변경 전 snapshot 증적이다. 현재 DB 상태로 사용하지 않는다.
 
 ### 변경 전 증적
@@ -213,7 +216,7 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 | 충돌                                             | 최종 선택                                                        | 근거와 반영 위치                                                                                                         |
 | ---------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| v1 mapping 후보는 LUT-backed 10개                            | v4 master 21행·활성 16행                                         | v1/v3 shared mapping은 129행·10개 후보로 정비하고, v4는 master·Lever-native 16개 범위를 독립 유지 |
+| v1 mapping 후보는 LUT-backed 10개                            | v4 master 21행·활성 16행, runtime proposal allow-list 5개           | DB/canonical/catalog 수치는 유지하고 제안 실행만 5개로 제한; 나머지 활성 후보는 `active-but-blocked`로 구분 |
 | 초안의 header/data start/column role과 현재 DB 값이 다름 | 기존 활성 5개는 검증된 DB 값을 유지; 나머지는 실제 workbook 구조와 최종 LUT 계산으로 정규화 | canonical JSON의 21행 전체 basecase_*가 read-back 기준                                                                   |
 | Coal/Gas futures를 활성으로 표시                      | enabled=false 및 use_yn=N                                     | 2026년 이후 strip이 제공되기 전 과거값 이월 금지                                                                                  |
 | ElectrificationRate 활성 여부                      | use_yn=N, LUT spec 없음                                        | 유효 Basecase/LUT/승인 mapping 부재                                                                                     |
@@ -225,7 +228,10 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 
 
-## 적용과 검증
+## 기존 v1/v3 mapping rollout의 적용과 검증
+
+아래 DB 명령은 기존 mapping rollout 절차다. 이번 runtime allow-list-only v0.2.4에서는 실행하지 않으며,
+DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인한다.
 
 1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
 2. 승인된 외부 개발 DB에는 같은 runner의 `--apply`로 mapping-only transaction을 commit한다. 적용 후 master 21행·활성 16개, Impact Lever 16개·hydrated checksum, v4 Scenario/proposal 결과 invariant hash가 변경 전과 같은지 확인한다.
