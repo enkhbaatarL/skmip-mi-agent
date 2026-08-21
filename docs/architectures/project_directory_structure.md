@@ -297,7 +297,7 @@ GET /scenario-groups/{scenario_group_id}/additional-dimensions
 
 POST /scenario-groups create persistence 완료
 → persistence/scenario_group_service.py (additional generation queued)
-→ runtime.py (독립 auxiliary task runner 및 startup recovery)
+→ runtime.py (startup recovery 없는 독립 auxiliary task runner)
 → flows/add_dimension/flow.py
 
 DELETE /scenario-groups/{scenario_group_id}

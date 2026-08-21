@@ -113,11 +113,21 @@ GET은 저장된 후보만 읽으며 LLM 호출, background enqueue, 정식 Dime
 `ready`이면서 후보가 0개인 경우도 정상 응답이다. 내부 source path/question/Lever lineage는
 응답에 노출하지 않는다.
 
+단, `queued`가 `queued_at` 기준으로 또는 `running`이 `started_at`(없으면 `queued_at`) 기준으로 설정값
+`additional_dimension_stale_after_seconds`(기본 240초) 이상 지속되면 DB를 갱신하지 않고 해당 GET 응답만
+`generationStatus=interrupted`, `dimensionDefinitions.status=unavailable`, 빈 `items`,
+`errorCode=STALE_TIMEOUT`으로 투영한다. timestamp가 없거나 파싱할 수 없으면 저장 상태를 그대로 반환하며,
+`ready`와 다른 terminal 상태는 stale 판정하지 않는다. 최상위 `status`는 계속 `success`다.
+
 unused question이 없거나 LLM이 명시적으로 빈 `dimensions`를 반환한 경우는 `ready + 빈 items`다. LLM이
 후보를 반환한 경우에는 item 단위로 검증해 일부 유효 후보를 보존하고 재시도하지 않는다. 반환 후보가 모두
 탈락한 batch만 탈락 reason feedback과 1초·2초 backoff로 최대 3회 시도한다. 세 번 모두 전부 탈락하면
 `generationStatus=failed`, `dimensionDefinitions.status=unavailable`,
 `errorCode=ADDITIONAL_DIMENSION_CANDIDATES_INVALID`를 반환한다. 공개 response shape은 변경하지 않는다.
+서버 재시작 시 `queued|running` 작업을 조회·갱신하거나 재등록·재실행하지 않는다. 실제 background가 늦게
+완료되어 같은 `run_id`로 DB를 `ready`로 바꾸면 다음 GET은 후보를 정상 반환하므로, 이 조회 전용 상태에는
+`interrupted → ready` 전이가 가능하다. `failed|interrupted` 작업은 자동 재실행하지 않으며 내부 `run_id`는
+API 응답에 노출하지 않는다.
 
 | HTTP | 조건 |
 | --- | --- |

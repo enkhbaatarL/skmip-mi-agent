@@ -72,33 +72,6 @@ async def create_v4_scenarios_sync(
                 prepared,
                 trace_context=trace_context,
             )
-        if output.data is not None:
-            scenario_group_id = int(prepared["scenario_group"].scenario_group_id)
-            generation_payload = await asyncio.to_thread(
-                ScenarioGroupService().queue_additional_dimension_generation,
-                scenario_group_id,
-                user_id=int(prepared["user_id"]),
-            )
-            generation = AdditionalDimensionGeneration.model_validate(generation_payload)
-            output.data.generation_diagnostics.additional_dimension_generation = generation
-            logger.info(
-                "[SYNC][v4] Additional Dimension generation queued | scenario_group_id={} | "
-                "generation_status={} | source_count={}",
-                scenario_group_id,
-                generation.status,
-                len(generation.source_uncertainty_ids),
-            )
-            if generation.status == "queued":
-                from apps.agents.scenario_group_agent.runtime import get_additional_dimension_task_runner
-
-                get_additional_dimension_task_runner().submit(scenario_group_id)
-            else:
-                logger.info(
-                    "[SYNC][v4] Additional Dimension generation completed without background task | "
-                    "scenario_group_id={} | generation_status={} | candidate_count=0",
-                    scenario_group_id,
-                    generation.status,
-                )
     except Exception as exc:
         logger.error(
             "[SYNC][v4 create_scenarios] FAILED | group_id={} | error={!r}",
@@ -106,10 +79,87 @@ async def create_v4_scenarios_sync(
             exc,
         )
         return VersionedCreateScenariosOut(status="error", message=str(exc))
-    else:
-        if output.data is not None:
-            output.data.usage = get_accumulated_usage()
-        return output
+
+    if output.data is not None:
+        scenario_group_id = int(prepared["scenario_group"].scenario_group_id)
+        group_service = ScenarioGroupService()
+        try:
+            generation_payload = await asyncio.to_thread(
+                group_service.queue_additional_dimension_generation,
+                scenario_group_id,
+                user_id=int(prepared["user_id"]),
+            )
+        except Exception as exc:
+            generation_payload = {
+                "status": "failed",
+                "error_code": "ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+            }
+            try:
+                generation_payload = await asyncio.to_thread(
+                    group_service.fail_additional_dimension_enqueue,
+                    scenario_group_id,
+                    user_id=int(prepared["user_id"]),
+                    error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+                )
+            except Exception as status_exc:
+                logger.error(
+                    "[SYNC][v4] Additional Dimension enqueue failure status update failed | "
+                    "scenario_group_id={} | error={!r}",
+                    scenario_group_id,
+                    status_exc,
+                )
+            logger.error(
+                "[SYNC][v4] Additional Dimension enqueue failed without failing create response | "
+                "scenario_group_id={} | error_code=ADDITIONAL_DIMENSION_ENQUEUE_FAILED | error={!r}",
+                scenario_group_id,
+                exc,
+            )
+        generation = AdditionalDimensionGeneration.model_validate(generation_payload)
+        output.data.generation_diagnostics.additional_dimension_generation = generation
+        logger.info(
+            "[SYNC][v4] Additional Dimension generation lifecycle recorded | scenario_group_id={} | "
+            "generation_status={} | source_count={}",
+            scenario_group_id,
+            generation.status,
+            len(generation.source_uncertainty_ids),
+        )
+        if generation.status == "queued":
+            from apps.agents.scenario_group_agent.runtime import get_additional_dimension_task_runner
+
+            try:
+                get_additional_dimension_task_runner().submit(scenario_group_id)
+            except Exception as exc:
+                try:
+                    await asyncio.to_thread(
+                        group_service.fail_additional_dimension_enqueue,
+                        scenario_group_id,
+                        user_id=int(prepared["user_id"]),
+                        error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+                    )
+                except Exception as status_exc:
+                    logger.error(
+                        "[SYNC][v4] Additional Dimension submit failure status update failed | "
+                        "scenario_group_id={} | error={!r}",
+                        scenario_group_id,
+                        status_exc,
+                    )
+                generation.status = "failed"
+                generation.error_code = "ADDITIONAL_DIMENSION_ENQUEUE_FAILED"
+                logger.error(
+                    "[SYNC][v4] Additional Dimension task submit failed without failing create response | "
+                    "scenario_group_id={} | error_code=ADDITIONAL_DIMENSION_ENQUEUE_FAILED | error={!r}",
+                    scenario_group_id,
+                    exc,
+                )
+        else:
+            logger.info(
+                "[SYNC][v4] Additional Dimension generation completed without background task | "
+                "scenario_group_id={} | generation_status={} | candidate_count=0",
+                scenario_group_id,
+                generation.status,
+            )
+        output.data.usage = get_accumulated_usage()
+    return output
 
 
 async def _create_multi_event_scenarios_sync(

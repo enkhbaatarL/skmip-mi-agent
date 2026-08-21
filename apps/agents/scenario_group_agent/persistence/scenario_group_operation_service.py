@@ -345,6 +345,58 @@ class ScenarioGroupOperationService:
                 result_payload.requested_dimension_definitions = target_definitions
                 result_payload.promoted_dimension_ids = promoted_ids
 
+                updated_diagnostics: dict[str, Any] | None = None
+                if promoted_ids:
+                    used_sources = {
+                        str(source_id)
+                        for definition in target_definitions
+                        for source_id in (
+                            definition.get("source_uncertainty_ids")
+                            or definition.get("sourceUncertaintyIds")
+                            or []
+                        )
+                    }
+                    remaining_candidates = [
+                        item
+                        for item in candidates
+                        if isinstance(item, dict)
+                        and str(item.get("dimension_id") or item.get("dimensionId") or "") not in promoted_ids
+                        and not used_sources.intersection(
+                            {
+                                str(source_id)
+                                for source_id in (
+                                    item.get("source_uncertainty_ids")
+                                    or item.get("sourceUncertaintyIds")
+                                    or []
+                                )
+                            },
+                        )
+                    ]
+                    remaining_uncertainties, remaining_fingerprint = (
+                        ScenarioGroupService._additional_dimension_source_from_payload(
+                            diagnostics=diagnostics,
+                            definitions=target_definitions,
+                        )
+                    )
+                    generation = dict(generation)
+                    generation.pop("sourceFingerprint", None)
+                    generation.pop("sourceUncertaintyIds", None)
+                    generation["source_fingerprint"] = remaining_fingerprint
+                    generation["source_uncertainty_ids"] = [
+                        str(
+                            ScenarioGroupService._diagnostic_field(
+                                item,
+                                "uncertainty_id",
+                                "uncertaintyId",
+                            ),
+                        )
+                        for item in remaining_uncertainties
+                    ]
+                    ScenarioGroupService._store_additional_generation(diagnostics, generation)
+                    diagnostics.pop("additionalDimensionCandidates", None)
+                    diagnostics["additional_dimension_candidates"] = remaining_candidates
+                    updated_diagnostics = diagnostics
+
                 change_set = result_payload.scenario_change_set
                 new_id_map: dict[str, int] = {}
                 if result_payload.mode == "changed" and change_set is not None:
@@ -402,15 +454,15 @@ class ScenarioGroupOperationService:
                     target_definitions,
                     user_id=user_id,
                 )
-                group_repository.update_group(
-                    group,
-                    {
-                        "dimension_definitions": target_definitions,
-                        "dimension_selected": requested_ids,
-                        "scenario_count": len(active_scenarios),
-                        "mod_usr_logn_id": user_id,
-                    },
-                )
+                group_update = {
+                    "dimension_definitions": target_definitions,
+                    "dimension_selected": requested_ids,
+                    "scenario_count": len(active_scenarios),
+                    "mod_usr_logn_id": user_id,
+                }
+                if updated_diagnostics is not None:
+                    group_update["generation_diagnostics"] = updated_diagnostics
+                group_repository.update_group(group, group_update)
                 session.flush()
                 for scenario in active_scenarios:
                     session.refresh(scenario)

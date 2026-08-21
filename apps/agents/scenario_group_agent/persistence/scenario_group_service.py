@@ -102,8 +102,18 @@ class ScenarioGroupService:
 
     @classmethod
     def _additional_dimension_source(cls, group: MiScenarioGroupModel) -> tuple[list[dict[str, Any]], str]:
-        diagnostics = dict(group.generation_diagnostics or {})
-        definitions = [item for item in (group.dimension_definitions or []) if isinstance(item, dict)]
+        return cls._additional_dimension_source_from_payload(
+            diagnostics=dict(group.generation_diagnostics or {}),
+            definitions=[item for item in (group.dimension_definitions or []) if isinstance(item, dict)],
+        )
+
+    @classmethod
+    def _additional_dimension_source_from_payload(
+        cls,
+        *,
+        diagnostics: dict[str, Any],
+        definitions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str]:
         used_ids = {
             str(source_id)
             for definition in definitions
@@ -144,6 +154,11 @@ class ScenarioGroupService:
     ) -> None:
         diagnostics.pop("additionalDimensionGeneration", None)
         diagnostics["additional_dimension_generation"] = generation
+
+    @classmethod
+    def _additional_generation_run_id(cls, generation: dict[str, Any]) -> str | None:
+        value = cls._diagnostic_field(generation, "run_id", "runId")
+        return str(value) if value else None
 
     def queue_additional_dimension_generation(self, scenario_group_id: int, *, user_id: int) -> dict[str, Any]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
@@ -247,7 +262,10 @@ class ScenarioGroupService:
             if not source_ids or stored_fingerprint != source_fingerprint:
                 raise MIBaseError(
                     ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
-                    detail="Manual Additional Dimension requeue requires unused questions and the current source fingerprint",
+                    detail=(
+                        "Manual Additional Dimension requeue requires unused questions and "
+                        "the current source fingerprint"
+                    ),
                 )
 
             generation.update(
@@ -259,6 +277,8 @@ class ScenarioGroupService:
                 completed_at=None,
                 error_code=None,
             )
+            for key in ("run_id", "runId", "heartbeat_at", "heartbeatAt"):
+                generation.pop(key, None)
             self._store_additional_generation(diagnostics, generation)
             diagnostics.pop("additionalDimensionCandidates", None)
             diagnostics["additional_dimension_candidates"] = []
@@ -271,7 +291,12 @@ class ScenarioGroupService:
         finally:
             session.close()
 
-    def start_additional_dimension_generation(self, scenario_group_id: int) -> dict[str, Any] | None:
+    def start_additional_dimension_generation(
+        self,
+        scenario_group_id: int,
+        *,
+        run_id: str,
+    ) -> dict[str, Any] | None:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
         session = get_sync_session()
@@ -293,7 +318,7 @@ class ScenarioGroupService:
             if generation.get("status") == "ready" or not source_fingerprint:
                 return None
             generation["source_fingerprint"] = source_fingerprint
-            if generation.get("status") not in {"queued", "running"}:
+            if generation.get("status") != "queued":
                 return None
             _uncertainties, current_fingerprint = self._additional_dimension_source(group)
             if not self._is_additional_dimension_stage_eligible(group) or current_fingerprint != source_fingerprint:
@@ -310,12 +335,20 @@ class ScenarioGroupService:
                 repository.update_group(group, {"generation_diagnostics": diagnostics})
                 session.commit()
                 return None
-            generation.update(status="running", started_at=datetime.now(UTC).isoformat(), error_code=None)
+            now = datetime.now(UTC).isoformat()
+            generation.update(
+                status="running",
+                run_id=run_id,
+                started_at=now,
+                completed_at=None,
+                error_code=None,
+            )
             self._store_additional_generation(diagnostics, generation)
             repository.update_group(group, {"generation_diagnostics": diagnostics})
             session.commit()
             return {
                 "source_fingerprint": generation["source_fingerprint"],
+                "run_id": run_id,
                 "generation_diagnostics": diagnostics,
                 "dimension_definitions": list(group.dimension_definitions or []),
             }
@@ -330,6 +363,7 @@ class ScenarioGroupService:
         scenario_group_id: int,
         *,
         source_fingerprint: str,
+        run_id: str,
         candidates: list[dict[str, Any]],
     ) -> bool:
         from apps.common.configs.database.sync_database.connection import get_sync_session
@@ -350,11 +384,11 @@ class ScenarioGroupService:
                 or {}
             )
             stored_fingerprint = generation.get("source_fingerprint", generation.get("sourceFingerprint"))
-            if stored_fingerprint != source_fingerprint:
+            if stored_fingerprint != source_fingerprint or self._additional_generation_run_id(generation) != run_id:
                 return False
             if generation.get("status") == "ready":
                 return True
-            if generation.get("status") not in {"queued", "running"}:
+            if generation.get("status") != "running":
                 return False
             now = datetime.now(UTC).isoformat()
             _uncertainties, current_fingerprint = self._additional_dimension_source(group)
@@ -387,6 +421,7 @@ class ScenarioGroupService:
         scenario_group_id: int,
         *,
         source_fingerprint: str,
+        run_id: str,
         error_code: str,
         interrupted: bool = False,
     ) -> None:
@@ -408,7 +443,11 @@ class ScenarioGroupService:
                 or {}
             )
             stored_fingerprint = generation.get("source_fingerprint", generation.get("sourceFingerprint"))
-            if stored_fingerprint != source_fingerprint or generation.get("status") not in {"queued", "running"}:
+            if (
+                stored_fingerprint != source_fingerprint
+                or self._additional_generation_run_id(generation) != run_id
+                or generation.get("status") != "running"
+            ):
                 return
             generation.update(
                 status="interrupted" if interrupted else "failed",
@@ -424,7 +463,105 @@ class ScenarioGroupService:
         finally:
             session.close()
 
-    def interrupt_additional_dimension_generation(self, scenario_group_id: int) -> None:
+    def fail_additional_dimension_enqueue(
+        self,
+        scenario_group_id: int,
+        *,
+        user_id: int,
+        error_code: str = "ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    ) -> dict[str, Any]:
+        """Best-effort terminal state used when the auxiliary queue boundary fails."""
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioGroupRepository(session=session)
+            group = repository.fetch_by_id(scenario_group_id, for_update=True)
+            if group is None:
+                raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail=f"Scenario group not found: {scenario_group_id}")
+            uncertainties, source_fingerprint = self._additional_dimension_source(group)
+            now = datetime.now(UTC).isoformat()
+            generation = {
+                "status": "failed",
+                "source_fingerprint": source_fingerprint,
+                "source_uncertainty_ids": [
+                    str(self._diagnostic_field(item, "uncertainty_id", "uncertaintyId")) for item in uncertainties
+                ],
+                "queued_at": now,
+                "started_at": None,
+                "completed_at": now,
+                "error_code": error_code,
+            }
+            diagnostics = dict(group.generation_diagnostics or {})
+            self._store_additional_generation(diagnostics, generation)
+            diagnostics.pop("additionalDimensionCandidates", None)
+            diagnostics["additional_dimension_candidates"] = []
+            repository.update_group(
+                group,
+                {"generation_diagnostics": diagnostics, "mod_usr_logn_id": user_id},
+            )
+            session.commit()
+            return generation
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def fail_additional_dimension_claim(
+        self,
+        scenario_group_id: int,
+        *,
+        run_id: str,
+        error_code: str = "ADDITIONAL_DIMENSION_CLAIM_FAILED",
+    ) -> None:
+        """Best-effort terminal state used when the initial queued-row claim fails."""
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            repository = ScenarioGroupRepository(session=session)
+            group = repository.fetch_by_id(scenario_group_id, for_update=True)
+            if group is None:
+                return
+            diagnostics = dict(group.generation_diagnostics or {})
+            generation = dict(
+                self._diagnostic_field(
+                    diagnostics,
+                    "additional_dimension_generation",
+                    "additionalDimensionGeneration",
+                )
+                or {}
+            )
+            status = generation.get("status")
+            stored_run_id = self._additional_generation_run_id(generation)
+            if status == "running" and stored_run_id != run_id:
+                return
+            if status == "queued" and stored_run_id not in {None, run_id}:
+                return
+            if status not in {"queued", "running"}:
+                return
+            generation.update(
+                status="failed",
+                completed_at=datetime.now(UTC).isoformat(),
+                error_code=error_code,
+            )
+            self._store_additional_generation(diagnostics, generation)
+            repository.update_group(group, {"generation_diagnostics": diagnostics})
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def interrupt_additional_dimension_generation(
+        self,
+        scenario_group_id: int,
+        *,
+        run_id: str,
+        source_fingerprint: str | None = None,
+    ) -> None:
         """Mark a registered auxiliary job interrupted even if cancellation raced with startup."""
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
@@ -443,7 +580,12 @@ class ScenarioGroupService:
                 )
                 or {}
             )
-            if generation.get("status") not in {"queued", "running"}:
+            stored_fingerprint = generation.get("source_fingerprint", generation.get("sourceFingerprint"))
+            if (
+                generation.get("status") != "running"
+                or self._additional_generation_run_id(generation) != run_id
+                or (source_fingerprint is not None and stored_fingerprint != source_fingerprint)
+            ):
                 return
             generation.update(
                 status="interrupted",
@@ -456,29 +598,6 @@ class ScenarioGroupService:
         except Exception:
             session.rollback()
             raise
-        finally:
-            session.close()
-
-    def list_recoverable_additional_dimension_group_ids(self, *, limit: int = 50) -> list[int]:
-        from apps.common.configs.database.sync_database.connection import get_sync_session
-
-        session = get_sync_session()
-        try:
-            groups = ScenarioGroupRepository(session=session).fetch_v4_scenario_created_groups(limit=limit)
-            recoverable: list[int] = []
-            for group in groups:
-                diagnostics = dict(group.generation_diagnostics or {})
-                generation = (
-                    self._diagnostic_field(
-                        diagnostics,
-                        "additional_dimension_generation",
-                        "additionalDimensionGeneration",
-                    )
-                    or {}
-                )
-                if generation.get("status") in {"queued", "running"}:
-                    recoverable.append(int(group.scenario_group_id))
-            return recoverable
         finally:
             session.close()
 

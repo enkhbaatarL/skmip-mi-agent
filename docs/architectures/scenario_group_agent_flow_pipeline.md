@@ -87,14 +87,25 @@ source fingerprint를 `additional_dimension_generation=queued`로 저장한다. 
 `completed` event를 기록한 뒤 task를 제출하고, sync 경로는 같은 lifecycle을 응답
 `generationDiagnostics.additionalDimensionGeneration`에 반영한 뒤 task를 제출하고 create 응답을 반환한다.
 별도 lifespan-owned `AdditionalDimensionTaskRunner`가 create operation과 독립적으로 질문 전체를 batch
-structured LLM 호출로 후보화한다. unused question이 없거나 LLM이 명시적으로 `dimensions=[]`를 반환하면
+structured LLM 호출로 후보화한다. task submit 시 내부 `run_id`를 만들고 최초 claim에서만
+`queued → running`으로 전환하면서 `run_id`, `started_at`을 저장한다. `running` 재claim은 허용하지 않는다.
+unused question이 없거나 LLM이 명시적으로
+`dimensions=[]`를 반환하면
 `ready + []`로 완료한다. 일부 후보만 hydrate/검증을 통과하면 유효 후보를 즉시 저장하고 재시도하지 않는다.
 후보를 하나 이상 반환했지만 모두 탈락한 경우에만 reason code를 validation feedback으로 전달해 1초·2초
 backoff로 최대 3회 시도한다. 세 번 모두 전부 탈락하면 `failed`와
 `ADDITIONAL_DIMENSION_CANDIDATES_INVALID`를 저장한다. 결과와 lifecycle
 (`queued|running|ready|failed|interrupted|discarded`)은 `generation_diagnostics`의 additional key만 merge한다.
-서버 시작 시 `scenario_created` v4 그룹의 queued/running 작업을 제한 개수만 재등록하고, shutdown 취소는
-`interrupted`로 남긴다. LLM 호출 동안 Scenario Group row lock은 유지하지 않는다.
+Additional Dimension runner는 서버 시작 시 DB recovery query, heartbeat, 주기적 reaper를 실행하지 않고
+새 task 접수만 활성화한다. GET은 `queued`의 `queued_at`, `running`의 `started_at`(없으면 `queued_at`)이
+기본 240초 이상 지속됐을 때 DB를 변경하지 않고 해당 응답만
+`interrupted/unavailable/STALE_TIMEOUT`으로 투영한다. timestamp가 없거나 파싱할 수 없으면 저장 상태를
+그대로 반환하며 `ready`를 포함한 terminal 상태는 stale 판정하지 않는다. 같은 `run_id`의 background가
+나중에 완료되어 DB에 `ready`를 저장하면 다음 GET부터 후보를 정상 반환하므로 조회 응답에서는
+`interrupted → ready`가 가능하다. complete, fail, shutdown interrupt는 source fingerprint와 `run_id`, 현재
+status로 fencing한다. graceful shutdown은 owner task를 취소한 뒤 같은 `run_id`의 `running` 작업만
+`interrupted/SERVER_SHUTDOWN`으로 남긴다. `run_id`는 내부 diagnostics에만 저장하고 GET/SSE/sync 공개
+응답에는 노출하지 않는다. LLM 호출 동안 Scenario Group row lock은 유지하지 않는다.
 
 Additional Dimension task는 submit, start, complete를 INFO로 기록하고 후보 일부 탈락은 WARN, 실패·shutdown
 interrupt는 ERROR로 기록한다. 완료/탈락 로그에는 입력·유효·탈락 개수와 reason code를 남긴다. structured

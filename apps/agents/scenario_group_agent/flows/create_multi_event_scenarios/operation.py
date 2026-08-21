@@ -275,11 +275,40 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
         if output.data is None:
             msg = "v4 operation output is empty"
             raise RuntimeError(msg)
-        generation = await asyncio.to_thread(
-            ScenarioGroupService().queue_additional_dimension_generation,
-            scenario_group_id,
-            user_id=int(prepared["user_id"]),
-        )
+        group_service = ScenarioGroupService()
+        try:
+            generation = await asyncio.to_thread(
+                group_service.queue_additional_dimension_generation,
+                scenario_group_id,
+                user_id=int(prepared["user_id"]),
+            )
+        except Exception as exc:
+            generation = {
+                "status": "failed",
+                "error_code": "ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+            }
+            try:
+                generation = await asyncio.to_thread(
+                    group_service.fail_additional_dimension_enqueue,
+                    scenario_group_id,
+                    user_id=int(prepared["user_id"]),
+                    error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+                )
+            except Exception as status_exc:
+                logger.error(
+                    "Additional Dimension enqueue failure status update failed | group_id={} | "
+                    "operation_id={} | error={!r}",
+                    scenario_group_id,
+                    operation_id,
+                    status_exc,
+                )
+            logger.error(
+                "Additional Dimension enqueue failed without failing create operation | group_id={} | "
+                "operation_id={} | error_code=ADDITIONAL_DIMENSION_ENQUEUE_FAILED | error={!r}",
+                scenario_group_id,
+                operation_id,
+                exc,
+            )
         presentation = {
             "schemaVersion": "v1",
             **output.data.model_dump(mode="json", by_alias=True),
@@ -303,7 +332,31 @@ async def run_v4_create_operation(prepared: dict[str, Any], operation_id: str) -
         if generation.get("status") == "queued":
             from apps.agents.scenario_group_agent.runtime import get_additional_dimension_task_runner
 
-            get_additional_dimension_task_runner().submit(scenario_group_id)
+            try:
+                get_additional_dimension_task_runner().submit(scenario_group_id)
+            except Exception as exc:
+                try:
+                    await asyncio.to_thread(
+                        group_service.fail_additional_dimension_enqueue,
+                        scenario_group_id,
+                        user_id=int(prepared["user_id"]),
+                        error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+                    )
+                except Exception as status_exc:
+                    logger.error(
+                        "Additional Dimension submit failure status update failed | group_id={} | "
+                        "operation_id={} | error={!r}",
+                        scenario_group_id,
+                        operation_id,
+                        status_exc,
+                    )
+                logger.error(
+                    "Additional Dimension task submit failed without failing create operation | group_id={} | "
+                    "operation_id={} | error_code=ADDITIONAL_DIMENSION_ENQUEUE_FAILED | error={!r}",
+                    scenario_group_id,
+                    operation_id,
+                    exc,
+                )
     except asyncio.CancelledError:
         await asyncio.shield(
             asyncio.to_thread(

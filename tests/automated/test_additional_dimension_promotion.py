@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from apps.agents.scenario_group_agent.flows.add_dimension.flow import get_additional_dimensions
 from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
     dimension_definition_fingerprint,
     scenario_fingerprint,
@@ -65,16 +66,20 @@ CANDIDATE_DEFINITION = {
 }
 
 
-def _uncertainty(subject: str = "공급 변화는 얼마나 지속되는가?") -> dict[str, Any]:
+def _uncertainty(
+    subject: str = "공급 변화는 얼마나 지속되는가?",
+    *,
+    uncertainty_id: str = "u2",
+) -> dict[str, Any]:
     return {
-        "uncertainty_id": "u2",
-        "impact_path_ids": ["p2"],
+        "uncertainty_id": uncertainty_id,
+        "impact_path_ids": [f"p-{uncertainty_id}"],
         "axis_type": "duration",
         "subject": subject,
         "affected_lever_code": "supply",
         "reason": subject,
         "materiality": "high",
-        "semantic_key": "p2:duration:supply",
+        "semantic_key": f"p-{uncertainty_id}:duration:supply",
     }
 
 
@@ -291,6 +296,10 @@ def test_validation_atomically_promotes_locked_candidate_definition() -> None:
     assert group.dimension_definitions[1] == CANDIDATE_DEFINITION
     assert group.dimension_definitions[1]["label"] != "operation payload 변조값"
     assert scenario.dimension_values == {"d1": "d1_v1", "ad_duration": "ad_duration_v2"}
+    assert group.generation_diagnostics["additional_dimension_candidates"] == []
+    _unused, current_fingerprint = ScenarioGroupService._additional_dimension_source(group)
+    assert group.generation_diagnostics["additional_dimension_generation"]["source_fingerprint"] == current_fingerprint
+    assert group.generation_diagnostics["additional_dimension_generation"]["source_uncertainty_ids"] == []
     stored = ValidationOperationResultPayload.model_validate(operation.result_payload)
     assert stored.application is not None
     assert stored.requested_dimension_definitions[1] == CANDIDATE_DEFINITION
@@ -299,6 +308,157 @@ def test_validation_atomically_promotes_locked_candidate_definition() -> None:
         "for_update": True,
     }
     session.commit.assert_called_once_with()
+    session.rollback.assert_not_called()
+
+
+def test_two_candidates_from_distinct_sources_can_be_promoted_sequentially() -> None:
+    (
+        first_result,
+        group,
+        scenario,
+        _operation,
+        session,
+        operation_repository,
+        group_repository,
+        scenario_repository,
+        signpost_repository,
+    ) = _fixture()
+    second_candidate = deepcopy(CANDIDATE_DEFINITION)
+    second_candidate.update(
+        dimension_id="ad_scope",
+        label="공급 영향 범위",
+        description="공급 영향은 어디까지 확산되는가?",
+        rationale="범위 분기",
+        source_uncertainty_ids=["u3"],
+    )
+    second_candidate["values"] = [
+        {**item, "value_id": str(item["value_id"]).replace("ad_duration", "ad_scope")}
+        for item in second_candidate["values"]
+    ]
+    group.generation_diagnostics["path_uncertainties"].append(
+        _uncertainty("공급 영향은 어디까지 확산되는가?", uncertainty_id="u3"),
+    )
+    group.generation_diagnostics["additional_dimension_candidates"].append(second_candidate)
+    _unused, initial_fingerprint = ScenarioGroupService._additional_dimension_source(group)
+    group.generation_diagnostics["additional_dimension_generation"]["source_fingerprint"] = initial_fingerprint
+    first_result.candidate_source_fingerprint = initial_fingerprint
+
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "apps.common.configs.database.sync_database.connection": _connection_module(
+                    session,
+                ),
+            },
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupOperationRepository",
+            return_value=operation_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioGroupRepository",
+            return_value=group_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "ScenarioRepository",
+            return_value=scenario_repository,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_operation_service."
+            "SignpostRepository",
+            return_value=signpost_repository,
+        ),
+        patch.object(ScenarioService, "_apply_v4_baseline_and_roles"),
+    ):
+        service = ScenarioGroupOperationService()
+        service.complete_validation(
+            scenario_group_id=10,
+            operation_id="validation-op",
+            result_payload=first_result,
+            user_id=7,
+        )
+
+        generation = group.generation_diagnostics["additional_dimension_generation"]
+        assert generation["source_uncertainty_ids"] == ["u3"]
+        assert group.generation_diagnostics["additional_dimension_candidates"] == [second_candidate]
+        with patch.object(
+            ScenarioGroupService,
+            "load_additional_dimensions",
+            return_value={
+                "generation": generation,
+                "candidates": group.generation_diagnostics["additional_dimension_candidates"],
+                "dimension_selected": group.dimension_selected,
+                "dimension_definitions": group.dimension_definitions,
+                "updated_at": None,
+            },
+        ):
+            get_result = get_additional_dimensions(10)
+        assert get_result.data is not None
+        assert [item.dimension_id for item in get_result.data.dimension_definitions.items] == ["ad_scope"]
+
+        second_target_definitions = [*deepcopy(group.dimension_definitions), deepcopy(second_candidate)]
+        second_result = ValidationOperationResultPayload(
+            mode="changed",
+            base_scenario_fingerprint=scenario_fingerprint([_scenario_dict(scenario)]),
+            base_dimension_definition_fingerprint=dimension_definition_fingerprint(group.dimension_definitions),
+            dimension_definition_fingerprint=dimension_definition_fingerprint(second_target_definitions),
+            requested_dimension_ids=["d1", "ad_duration", "ad_scope"],
+            requested_dimension_definitions=deepcopy(second_target_definitions),
+            promoted_dimension_ids=["ad_scope"],
+            candidate_source_fingerprint=generation["source_fingerprint"],
+            validation_result=ValidationResultPayload(
+                verdict="PASS",
+                is_valid=True,
+                can_proceed=True,
+                reason_markdown="두 번째 승격 가능",
+            ),
+            scenario_change_set=ValidationScenarioChangeSetPayload(
+                upserts=[
+                    ValidationScenarioUpsertPayload(
+                        scenario_id=1,
+                        client_row_key="scenario:1",
+                        change_type="COMBINATION_CHANGED",
+                        display_order=1,
+                        title="기존 Scenario",
+                        dimension_values={
+                            "d1": "d1_v1",
+                            "ad_duration": "ad_duration_v2",
+                            "ad_scope": "ad_scope_v1",
+                        },
+                        generated_fields=ValidationGeneratedFieldsPayload(
+                            narrative="두 후보 Dimension을 반영한 narrative",
+                            probability_score=100,
+                            probability_delta=0,
+                            pressure_band="bullish",
+                            pressure_rationale="장기 공급 변화와 영향 범위",
+                            related_markets=[],
+                        ),
+                    ),
+                ],
+            ),
+        )
+        operation_repository.fetch_by_id.return_value = SimpleNamespace(
+            operation_id="validation-op-2",
+            operation_type="validation",
+            status="running",
+            result_payload=None,
+        )
+        scenario_repository.fetch_models_by_group_id.side_effect = [[scenario], [scenario]]
+        service.complete_validation(
+            scenario_group_id=10,
+            operation_id="validation-op-2",
+            result_payload=second_result,
+            user_id=7,
+        )
+
+    assert group.dimension_selected == ["d1", "ad_duration", "ad_scope"]
+    assert group.generation_diagnostics["additional_dimension_candidates"] == []
+    assert group.generation_diagnostics["additional_dimension_generation"]["source_uncertainty_ids"] == []
+    assert session.commit.call_count == 2
     session.rollback.assert_not_called()
 
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
-from datetime import UTC, datetime
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -114,6 +115,32 @@ def _hydration_result(
     )
 
 
+def _candidate() -> dict[str, Any]:
+    return {
+        "dimension_id": "ad_1",
+        "label": "지속성",
+        "description": "공급 확대는 얼마나 지속되는가?",
+        "rationale": "공급 분기 기준",
+        "source_event_ids": [101],
+        "source_impact_path_ids": ["p1"],
+        "source_uncertainty_ids": ["u1"],
+        "primary_lever_code": "supply",
+        "primary_impact_lever_id": 1,
+        "dimension_type": "duration",
+        "value_kind": "temporal",
+        "model_support_status": "full",
+        "values": [
+            {
+                "value_id": "ad_1_v1",
+                "label": "단기",
+                "assumption_rationale": "단기 종료 가정",
+                "pressure_contribution": "balanced",
+                "lever_states": [],
+            },
+        ],
+    }
+
+
 @contextmanager
 def _service_fixture(
     group: SimpleNamespace,
@@ -150,15 +177,17 @@ def test_additional_generation_lifecycle_is_idempotent_and_persists_candidates()
     with _service_fixture(group) as (session, repository):
         queued = service.queue_additional_dimension_generation(10, user_id=7)
         queued_again = service.queue_additional_dimension_generation(10, user_id=7)
-        started = service.start_additional_dimension_generation(10)
+        started = service.start_additional_dimension_generation(10, run_id="run-1")
         completed = service.complete_additional_dimension_generation(
             10,
             source_fingerprint=queued["source_fingerprint"],
+            run_id="run-1",
             candidates=candidates,
         )
         completed_again = service.complete_additional_dimension_generation(
             10,
             source_fingerprint=queued["source_fingerprint"],
+            run_id="run-1",
             candidates=[{"dimension_id": "must_not_overwrite"}],
         )
 
@@ -181,7 +210,7 @@ def test_additional_generation_without_unused_questions_is_ready_without_start()
 
     with _service_fixture(group) as (_session, _repository):
         generation = service.queue_additional_dimension_generation(10, user_id=7)
-        started = service.start_additional_dimension_generation(10)
+        started = service.start_additional_dimension_generation(10, run_id="run-1")
 
     assert generation["status"] == "ready"
     assert generation["source_uncertainty_ids"] == []
@@ -195,10 +224,11 @@ def test_manual_requeue_requires_v4_ready_empty_candidates_and_unused_questions(
 
     with _service_fixture(group) as (session, repository):
         ready = service.queue_additional_dimension_generation(10, user_id=7)
-        assert service.start_additional_dimension_generation(10) is not None
+        assert service.start_additional_dimension_generation(10, run_id="run-1") is not None
         service.complete_additional_dimension_generation(
             10,
             source_fingerprint=ready["source_fingerprint"],
+            run_id="run-1",
             candidates=[],
         )
         requeued = service.requeue_empty_ready_additional_dimension_generation(10)
@@ -220,9 +250,9 @@ def test_additional_shutdown_interrupt_is_idempotent() -> None:
 
     with _service_fixture(group):
         service.queue_additional_dimension_generation(10, user_id=7)
-        assert service.start_additional_dimension_generation(10) is not None
-        service.interrupt_additional_dimension_generation(10)
-        service.interrupt_additional_dimension_generation(10)
+        assert service.start_additional_dimension_generation(10, run_id="run-1") is not None
+        service.interrupt_additional_dimension_generation(10, run_id="run-1")
+        service.interrupt_additional_dimension_generation(10, run_id="run-1")
 
     generation = group.generation_diagnostics["additional_dimension_generation"]
     assert generation["status"] == "interrupted"
@@ -250,11 +280,12 @@ def test_additional_result_is_discarded_when_locked_source_is_stale(
 
     with _service_fixture(group):
         queued = service.queue_additional_dimension_generation(10, user_id=7)
-        assert service.start_additional_dimension_generation(10) is not None
+        assert service.start_additional_dimension_generation(10, run_id="run-1") is not None
         mutation(group)
         stored = service.complete_additional_dimension_generation(
             10,
             source_fingerprint=queued["source_fingerprint"],
+            run_id="run-1",
             candidates=[{"dimension_id": "ad_stale"}],
         )
 
@@ -342,6 +373,217 @@ def test_additional_get_is_read_only_and_hides_internal_lineage() -> None:
     assert "valueKind" not in item
 
 
+@pytest.mark.parametrize("status", ["queued", "running"])
+@pytest.mark.parametrize(
+    ("age_seconds", "expected_status", "expected_definition_status", "expected_error"),
+    [
+        (239.999, None, "pending", None),
+        (240.0, "interrupted", "unavailable", "STALE_TIMEOUT"),
+        (300.0, "interrupted", "unavailable", "STALE_TIMEOUT"),
+    ],
+)
+def test_additional_get_projects_stale_active_generation_at_configured_boundary(
+    status: str,
+    age_seconds: float,
+    expected_status: str | None,
+    expected_definition_status: str,
+    expected_error: str | None,
+) -> None:
+    now = datetime(2026, 8, 21, 0, 10, tzinfo=UTC)
+    timestamp_key = "queued_at" if status == "queued" else "started_at"
+    generation = {
+        "status": status,
+        timestamp_key: (now - timedelta(seconds=age_seconds)).isoformat(),
+    }
+    payload = {
+        "generation": generation,
+        "candidates": [],
+        "dimension_selected": [],
+        "dimension_definitions": [],
+        "updated_at": None,
+    }
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService.load_additional_dimensions",
+            return_value=payload,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._get_additional_dimension_stale_after_seconds",
+            return_value=240,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._utc_now",
+            return_value=now,
+        ),
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.status == "success"
+    assert output.data is not None
+    assert output.data.generation_status == (expected_status or status)
+    assert output.data.dimension_definitions.status == expected_definition_status
+    assert output.data.dimension_definitions.items == []
+    assert output.data.error_code == expected_error
+    assert generation["status"] == status
+
+
+def test_additional_get_running_stale_falls_back_to_queued_at_when_started_at_is_missing() -> None:
+    now = datetime(2026, 8, 21, 0, 10, tzinfo=UTC)
+    payload = {
+        "generation": {
+            "status": "running",
+            "queuedAt": (now - timedelta(seconds=240)).isoformat(),
+        },
+        "candidates": [],
+        "dimension_selected": [],
+        "dimension_definitions": [],
+        "updated_at": None,
+    }
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService.load_additional_dimensions",
+            return_value=payload,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._get_additional_dimension_stale_after_seconds",
+            return_value=240,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._utc_now",
+            return_value=now,
+        ),
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.data is not None
+    assert output.data.generation_status == "interrupted"
+    assert output.data.error_code == "STALE_TIMEOUT"
+
+
+@pytest.mark.parametrize(
+    "generation",
+    [
+        {"status": "queued"},
+        {"status": "queued", "queued_at": "not-a-timestamp"},
+        {"status": "running"},
+        {
+            "status": "running",
+            "started_at": "not-a-timestamp",
+            "queued_at": "2020-01-01T00:00:00+00:00",
+        },
+    ],
+)
+def test_additional_get_preserves_active_status_when_timestamp_is_missing_or_invalid(
+    generation: dict[str, Any],
+) -> None:
+    payload = {
+        "generation": generation,
+        "candidates": [],
+        "dimension_selected": [],
+        "dimension_definitions": [],
+        "updated_at": None,
+    }
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService.load_additional_dimensions",
+            return_value=payload,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._get_additional_dimension_stale_after_seconds",
+            return_value=240,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._utc_now",
+            return_value=datetime(2026, 8, 21, 0, 10, tzinfo=UTC),
+        ),
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.data is not None
+    assert output.data.generation_status == generation["status"]
+    assert output.data.dimension_definitions.status == "pending"
+    assert output.data.error_code is None
+
+
+def test_additional_get_does_not_project_old_ready_generation_as_stale() -> None:
+    payload = {
+        "generation": {
+            "status": "ready",
+            "queued_at": "2020-01-01T00:00:00+00:00",
+            "started_at": "2020-01-01T00:01:00+00:00",
+        },
+        "candidates": [_candidate()],
+        "dimension_selected": [],
+        "dimension_definitions": [],
+        "updated_at": None,
+    }
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService.load_additional_dimensions",
+            return_value=payload,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._get_additional_dimension_stale_after_seconds",
+            return_value=240,
+        ),
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.data is not None
+    assert output.data.generation_status == "ready"
+    assert output.data.dimension_definitions.status == "ready"
+    assert output.data.available_count == 1
+    assert output.data.dimension_definitions.items[0].dimension_id == "ad_1"
+
+
+def test_stale_running_get_can_be_followed_by_same_run_completion() -> None:
+    group = _group()
+    service = ScenarioGroupService()
+    now = datetime(2026, 8, 21, 0, 10, tzinfo=UTC)
+
+    with (
+        _service_fixture(group) as (session, repository),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._get_additional_dimension_stale_after_seconds",
+            return_value=240,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._utc_now",
+            return_value=now,
+        ),
+    ):
+        queued = service.queue_additional_dimension_generation(10, user_id=7)
+        assert service.start_additional_dimension_generation(10, run_id="run-slow") is not None
+        generation = group.generation_diagnostics["additional_dimension_generation"]
+        generation["started_at"] = (now - timedelta(seconds=240)).isoformat()
+        original_generation = deepcopy(generation)
+        update_count = repository.update_group.call_count
+        commit_count = session.commit.call_count
+
+        stale_output = get_additional_dimensions(10)
+
+        assert generation == original_generation
+        assert repository.update_group.call_count == update_count
+        assert session.commit.call_count == commit_count
+        completed = service.complete_additional_dimension_generation(
+            10,
+            source_fingerprint=queued["source_fingerprint"],
+            run_id="run-slow",
+            candidates=[_candidate()],
+        )
+        ready_output = get_additional_dimensions(10)
+
+    assert stale_output.data is not None
+    assert stale_output.data.generation_status == "interrupted"
+    assert stale_output.data.dimension_definitions.status == "unavailable"
+    assert stale_output.data.error_code == "STALE_TIMEOUT"
+    assert completed is True
+    assert ready_output.data is not None
+    assert ready_output.data.generation_status == "ready"
+    assert ready_output.data.available_count == 1
+    assert ready_output.data.dimension_definitions.items[0].dimension_id == "ad_1"
+
+
 def test_additional_flow_uses_one_batch_call_and_empty_pool_skips_llm() -> None:
     service = Mock()
     service.start_additional_dimension_generation.return_value = {
@@ -425,8 +667,8 @@ def test_additional_flow_uses_one_batch_call_and_empty_pool_skips_llm() -> None:
             logger,
         ),
     ):
-        asyncio.run(run_additional_dimension_generation(10))
-        asyncio.run(run_additional_dimension_generation(10))
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-2"))
 
     invoke.assert_awaited_once()
     llm_trace_context = invoke.await_args.kwargs["trace_context"]
@@ -530,12 +772,13 @@ def test_additional_flow_preserves_partial_success_without_retry() -> None:
         ),
     ):
         catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
-        asyncio.run(run_additional_dimension_generation(10))
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
     invoke.assert_awaited_once()
     service.complete_additional_dimension_generation.assert_called_once_with(
         10,
         source_fingerprint="sha256:source",
+        run_id="run-1",
         candidates=[{"dimension_id": "ad_valid"}],
     )
     service.fail_additional_dimension_generation.assert_not_called()
@@ -626,7 +869,7 @@ def test_additional_flow_retries_all_invalid_batch_then_saves_valid_second_respo
         ),
     ):
         catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
-        asyncio.run(run_additional_dimension_generation(10))
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
     assert invoke.await_count == 2
     sleep.assert_awaited_once_with(1.0)
@@ -715,7 +958,7 @@ def test_additional_flow_marks_failed_after_three_all_invalid_batches() -> None:
         ),
     ):
         catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
-        asyncio.run(run_additional_dimension_generation(10))
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
     assert invoke.await_count == 3
     assert [call.args[0] for call in sleep.await_args_list] == [1.0, 2.0]
@@ -723,6 +966,7 @@ def test_additional_flow_marks_failed_after_three_all_invalid_batches() -> None:
     service.fail_additional_dimension_generation.assert_called_once_with(
         10,
         source_fingerprint="sha256:source",
+        run_id="run-1",
         error_code=ADDITIONAL_DIMENSION_CANDIDATES_INVALID,
     )
 
@@ -873,7 +1117,7 @@ def test_additional_flow_records_interrupted_on_cancellation() -> None:
     ):
 
         async def exercise() -> None:
-            task = asyncio.create_task(run_additional_dimension_generation(10))
+            task = asyncio.create_task(run_additional_dimension_generation(10, run_id="run-1"))
             await asyncio.wait_for(entered.wait(), timeout=1)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -884,6 +1128,7 @@ def test_additional_flow_records_interrupted_on_cancellation() -> None:
     service.fail_additional_dimension_generation.assert_called_once_with(
         10,
         source_fingerprint="sha256:source",
+        run_id="run-1",
         error_code="SERVER_SHUTDOWN",
         interrupted=True,
     )
@@ -957,36 +1202,175 @@ def test_v4_sync_queues_and_submits_additional_dimension_generation() -> None:
     assert generation.source_uncertainty_ids == ["u1"]
 
 
-def test_additional_runner_performs_bounded_startup_recovery() -> None:
-    runner = AdditionalDimensionTaskRunner()
+def test_v4_sync_keeps_main_result_successful_when_additional_enqueue_fails() -> None:
+    group_service = Mock()
+    group_service.queue_additional_dimension_generation.side_effect = RuntimeError("queue database failure")
+    group_service.fail_additional_dimension_enqueue.return_value = {
+        "status": "failed",
+        "source_fingerprint": "sha256:source",
+        "source_uncertainty_ids": ["u1"],
+        "error_code": "ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    }
+    output = SimpleNamespace(
+        data=SimpleNamespace(
+            generation_diagnostics=SimpleNamespace(additional_dimension_generation=None),
+            usage=None,
+        ),
+    )
+    settings_module = ModuleType("apps.common.configs.config")
+    settings_module.get_settings = Mock(  # type: ignore[attr-defined]
+        return_value=SimpleNamespace(
+            get_agent_config=lambda _agent_name: SimpleNamespace(aip_app_id="scenario-group-test"),
+        ),
+    )
+    prepared = {
+        "scenario_group": SimpleNamespace(scenario_group_id=10),
+        "user_id": 7,
+    }
+    runner = Mock()
     with (
-        patch.object(
-            ScenarioGroupService,
-            "list_recoverable_additional_dimension_group_ids",
-            return_value=[10, 11],
-        ) as recover,
-        patch.object(runner, "submit") as submit,
+        patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync."
+            "prepare_v4_multi_event_scenarios",
+            return_value=prepared,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync."
+            "run_v4_multi_event_scenarios_inline",
+            new=AsyncMock(return_value=output),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync.ScenarioGroupService",
+            return_value=group_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync.mlflow_trace_context",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.runtime.get_additional_dimension_task_runner",
+            return_value=runner,
+        ),
     ):
-        asyncio.run(runner.start(recovery_limit=2))
+        result = asyncio.run(
+            create_v4_scenarios_sync(
+                V4MultiEventCreateScenariosSyncIn(mi_event_ids=[101], user_id=7),
+            ),
+        )
 
-    recover.assert_called_once_with(limit=2)
-    assert [call.args[0] for call in submit.call_args_list] == [10, 11]
+    assert result is output
+    assert result.data.generation_diagnostics.additional_dimension_generation.status == "failed"
+    assert (
+        result.data.generation_diagnostics.additional_dimension_generation.error_code
+        == "ADDITIONAL_DIMENSION_ENQUEUE_FAILED"
+    )
+    group_service.fail_additional_dimension_enqueue.assert_called_once_with(
+        10,
+        user_id=7,
+        error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    )
+    runner.submit.assert_not_called()
+
+
+def test_v4_sync_keeps_main_result_successful_when_task_submit_fails() -> None:
+    group_service = Mock()
+    group_service.queue_additional_dimension_generation.return_value = {
+        "status": "queued",
+        "source_fingerprint": "sha256:source",
+        "source_uncertainty_ids": ["u1"],
+    }
+    group_service.fail_additional_dimension_enqueue.return_value = {
+        "status": "failed",
+        "source_fingerprint": "sha256:source",
+        "source_uncertainty_ids": ["u1"],
+        "error_code": "ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    }
+    output = SimpleNamespace(
+        data=SimpleNamespace(
+            generation_diagnostics=SimpleNamespace(additional_dimension_generation=None),
+            usage=None,
+        ),
+    )
+    settings_module = ModuleType("apps.common.configs.config")
+    settings_module.get_settings = Mock(  # type: ignore[attr-defined]
+        return_value=SimpleNamespace(
+            get_agent_config=lambda _agent_name: SimpleNamespace(aip_app_id="scenario-group-test"),
+        ),
+    )
+    prepared = {
+        "scenario_group": SimpleNamespace(scenario_group_id=10),
+        "user_id": 7,
+    }
+    runner = Mock()
+    runner.submit.side_effect = RuntimeError("event loop unavailable")
+    with (
+        patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync."
+            "prepare_v4_multi_event_scenarios",
+            return_value=prepared,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync."
+            "run_v4_multi_event_scenarios_inline",
+            new=AsyncMock(return_value=output),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync.ScenarioGroupService",
+            return_value=group_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.versioned_scenario_generation_sync.mlflow_trace_context",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.runtime.get_additional_dimension_task_runner",
+            return_value=runner,
+        ),
+    ):
+        result = asyncio.run(
+            create_v4_scenarios_sync(
+                V4MultiEventCreateScenariosSyncIn(mi_event_ids=[101], user_id=7),
+            ),
+        )
+
+    assert result is output
+    generation = result.data.generation_diagnostics.additional_dimension_generation
+    assert generation.status == "failed"
+    assert generation.error_code == "ADDITIONAL_DIMENSION_ENQUEUE_FAILED"
+    group_service.fail_additional_dimension_enqueue.assert_called_once_with(
+        10,
+        user_id=7,
+        error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    )
+
+
+def test_additional_runner_start_only_enables_task_acceptance() -> None:
+    runner = AdditionalDimensionTaskRunner()
+
+    with (
+        patch("apps.agents.scenario_group_agent.runtime.asyncio.create_task") as create_task,
+        patch("apps.agents.scenario_group_agent.runtime.asyncio.to_thread", new=AsyncMock()) as to_thread,
+    ):
+        asyncio.run(runner.start())
+
+    assert not hasattr(runner, "_heartbeat_tasks")
+    assert not hasattr(runner, "_reaper_task")
+    create_task.assert_not_called()
+    to_thread.assert_not_awaited()
 
 
 def test_additional_runner_shutdown_finalizes_registered_jobs() -> None:
     runner = AdditionalDimensionTaskRunner()
     entered = asyncio.Event()
 
-    async def running_job(_scenario_group_id: int) -> None:
+    async def running_job(_scenario_group_id: int, *, run_id: str) -> None:
+        assert run_id
         entered.set()
         await asyncio.Event().wait()
 
     with (
-        patch.object(
-            ScenarioGroupService,
-            "list_recoverable_additional_dimension_group_ids",
-            return_value=[],
-        ),
         patch(
             "apps.agents.scenario_group_agent.flows.add_dimension.flow.run_additional_dimension_generation",
             side_effect=running_job,
@@ -999,13 +1383,176 @@ def test_additional_runner_shutdown_finalizes_registered_jobs() -> None:
 
         async def exercise() -> None:
             await runner.start()
+            submitted_run_id = runner.submit(10)
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await runner.shutdown()
+            assert submitted_run_id
+
+        asyncio.run(exercise())
+
+    assert interrupt.call_count == 1
+    assert interrupt.call_args.args == (10,)
+    assert interrupt.call_args.kwargs["run_id"]
+
+
+def test_graceful_shutdown_stops_owner_before_fenced_interrupt() -> None:
+    order: list[str] = []
+    runner = AdditionalDimensionTaskRunner()
+    entered = asyncio.Event()
+
+    async def running_job(_scenario_group_id: int, *, run_id: str) -> None:
+        assert run_id
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            order.append("owner_stopped")
+
+    def interrupt(_scenario_group_id: int, *, run_id: str) -> None:
+        assert run_id
+        order.append("db_interrupted")
+
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.run_additional_dimension_generation",
+            side_effect=running_job,
+        ),
+        patch.object(
+            ScenarioGroupService,
+            "interrupt_additional_dimension_generation",
+            side_effect=interrupt,
+        ),
+    ):
+
+        async def exercise() -> None:
             runner.submit(10)
             await asyncio.wait_for(entered.wait(), timeout=1)
             await runner.shutdown()
 
         asyncio.run(exercise())
 
-    interrupt.assert_called_once_with(10)
+    assert order == ["owner_stopped", "db_interrupted"]
+
+
+def test_claim_is_single_owner_and_records_run_id() -> None:
+    group = _group()
+    service = ScenarioGroupService()
+
+    with _service_fixture(group) as (session, repository):
+        queued = service.queue_additional_dimension_generation(10, user_id=7)
+        first = service.start_additional_dimension_generation(10, run_id="run-1")
+        second = service.start_additional_dimension_generation(10, run_id="run-2")
+
+    generation = group.generation_diagnostics["additional_dimension_generation"]
+    assert first is not None
+    assert first["run_id"] == "run-1"
+    assert second is None
+    assert generation["status"] == "running"
+    assert generation["source_fingerprint"] == queued["source_fingerprint"]
+    assert generation["run_id"] == "run-1"
+    assert generation["started_at"]
+    assert "heartbeat_at" not in generation
+    assert repository.update_group.call_count == 2
+    assert session.commit.call_count == 2
+
+
+def test_old_run_cannot_overwrite_replacement_with_same_source_fingerprint() -> None:
+    group = _group()
+    service = ScenarioGroupService()
+
+    with _service_fixture(group):
+        old = service.queue_additional_dimension_generation(10, user_id=7)
+        assert service.start_additional_dimension_generation(10, run_id="run-old") is not None
+        generation = group.generation_diagnostics["additional_dimension_generation"]
+        generation["run_id"] = "run-new"
+
+        late_complete = service.complete_additional_dimension_generation(
+            10,
+            source_fingerprint=old["source_fingerprint"],
+            run_id="run-old",
+            candidates=[{"dimension_id": "late"}],
+        )
+        service.fail_additional_dimension_generation(
+            10,
+            source_fingerprint=old["source_fingerprint"],
+            run_id="run-old",
+            error_code="LATE_FAILURE",
+        )
+
+    generation = group.generation_diagnostics["additional_dimension_generation"]
+    assert late_complete is False
+    assert generation["status"] == "running"
+    assert generation["run_id"] == "run-new"
+    assert group.generation_diagnostics["additional_dimension_candidates"] == []
+
+
+def test_additional_flow_claim_failure_is_contained_and_marks_auxiliary_failed() -> None:
+    service = Mock()
+    service.start_additional_dimension_generation.side_effect = RuntimeError("database unavailable")
+
+    with patch(
+        "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService",
+        return_value=service,
+    ):
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
+
+    service.fail_additional_dimension_claim.assert_called_once_with(
+        10,
+        run_id="run-1",
+        error_code="ADDITIONAL_DIMENSION_CLAIM_FAILED",
+    )
+    service.complete_additional_dimension_generation.assert_not_called()
+    service.fail_additional_dimension_generation.assert_not_called()
+
+
+def test_claim_and_failure_status_errors_leave_job_for_stale_get_projection_without_llm() -> None:
+    failed_service = Mock()
+    failed_service.start_additional_dimension_generation.side_effect = RuntimeError("claim failed")
+    failed_service.fail_additional_dimension_claim.side_effect = RuntimeError("status failed")
+    invoke = AsyncMock()
+
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService",
+            return_value=failed_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.invoke_stage_structured_output",
+            invoke,
+        ),
+    ):
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-failed-claim"))
+
+    invoke.assert_not_awaited()
+    group = _group(
+        diagnostics={
+            "additional_dimension_generation": {
+                "status": "queued",
+                "source_fingerprint": "sha256:source",
+                "queued_at": "2026-08-21T00:00:00+00:00",
+            },
+        },
+    )
+    original = deepcopy(group.generation_diagnostics)
+    with (
+        _service_fixture(group) as (session, repository),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._get_additional_dimension_stale_after_seconds",
+            return_value=240,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow._utc_now",
+            return_value=datetime(2026, 8, 21, 0, 4, tzinfo=UTC),
+        ),
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.data is not None
+    assert output.data.generation_status == "interrupted"
+    assert output.data.error_code == "STALE_TIMEOUT"
+    assert group.generation_diagnostics == original
+    repository.update_group.assert_not_called()
+    session.commit.assert_not_called()
 
 
 def test_create_operation_records_completed_before_auxiliary_submit() -> None:
@@ -1084,3 +1631,159 @@ def test_create_operation_records_completed_before_auxiliary_submit() -> None:
         )
 
     assert order == ["event:phase_started", "queue", "event:completed", "submit"]
+
+
+def test_create_operation_keeps_completed_status_when_auxiliary_submit_fails() -> None:
+    operation_service = Mock()
+    group_service = Mock()
+    group_service.queue_additional_dimension_generation.return_value = {
+        "status": "queued",
+        "source_fingerprint": "sha256:source",
+        "source_uncertainty_ids": ["u1"],
+    }
+    runner = Mock()
+    runner.submit.side_effect = RuntimeError("event loop unavailable")
+    output = SimpleNamespace(
+        data=SimpleNamespace(
+            table=SimpleNamespace(rows=[object()]),
+            model_dump=lambda **_kwargs: {
+                "scenarioGroup": {"scenarioGroupId": 10},
+                "table": {"headers": [], "rows": []},
+                "generationDiagnostics": {},
+            },
+        ),
+    )
+    settings_module = ModuleType("apps.common.configs.config")
+    settings_module.get_settings = Mock(  # type: ignore[attr-defined]
+        return_value=SimpleNamespace(
+            get_agent_config=lambda _agent_name: SimpleNamespace(aip_app_id="scenario-group-test"),
+        ),
+    )
+
+    with (
+        patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
+            "ScenarioGroupOperationService",
+            return_value=operation_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.ScenarioGroupService",
+            return_value=group_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
+            "run_v4_multi_event_scenarios_with_progress",
+            new=AsyncMock(return_value=output),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.mlflow_trace_context",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.new_transaction_id",
+            return_value="trace-id",
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.runtime.get_additional_dimension_task_runner",
+            return_value=runner,
+        ),
+    ):
+        asyncio.run(
+            run_v4_create_operation(
+                {
+                    "scenario_group": SimpleNamespace(scenario_group_id=10),
+                    "user_id": 7,
+                },
+                "operation-id",
+            ),
+        )
+
+    completed = operation_service.append_event.call_args.kwargs
+    assert completed["event_type"] == "completed"
+    assert completed["status"] == "succeeded"
+    group_service.fail_additional_dimension_enqueue.assert_called_once_with(
+        10,
+        user_id=7,
+        error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    )
+
+
+def test_create_operation_keeps_completed_status_when_additional_enqueue_fails() -> None:
+    operation_service = Mock()
+    events: list[str] = []
+    operation_service.append_event.side_effect = lambda _group_id, _operation_id, **kwargs: events.append(
+        str(kwargs["event_type"]),
+    )
+    group_service = Mock()
+    group_service.queue_additional_dimension_generation.side_effect = RuntimeError("queue database failure")
+    group_service.fail_additional_dimension_enqueue.return_value = {
+        "status": "failed",
+        "source_fingerprint": "sha256:source",
+        "source_uncertainty_ids": ["u1"],
+        "error_code": "ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    }
+    output = SimpleNamespace(
+        data=SimpleNamespace(
+            table=SimpleNamespace(rows=[object()]),
+            model_dump=lambda **_kwargs: {
+                "scenarioGroup": {"scenarioGroupId": 10},
+                "table": {"headers": [], "rows": []},
+                "generationDiagnostics": {},
+            },
+        ),
+    )
+    settings_module = ModuleType("apps.common.configs.config")
+    settings_module.get_settings = Mock(  # type: ignore[attr-defined]
+        return_value=SimpleNamespace(
+            get_agent_config=lambda _agent_name: SimpleNamespace(aip_app_id="scenario-group-test"),
+        ),
+    )
+
+    with (
+        patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
+            "ScenarioGroupOperationService",
+            return_value=operation_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.ScenarioGroupService",
+            return_value=group_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation."
+            "run_v4_multi_event_scenarios_with_progress",
+            new=AsyncMock(return_value=output),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.mlflow_trace_context",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.create_multi_event_scenarios.operation.new_transaction_id",
+            return_value="trace-id",
+        ),
+    ):
+        asyncio.run(
+            run_v4_create_operation(
+                {
+                    "scenario_group": SimpleNamespace(scenario_group_id=10),
+                    "user_id": 7,
+                },
+                "operation-id",
+            ),
+        )
+
+    assert events == ["completed"]
+    completed = operation_service.append_event.call_args.kwargs
+    assert completed["status"] == "succeeded"
+    assert (
+        completed["presentation_snapshot"]["generationDiagnostics"]["additionalDimensionGeneration"]["errorCode"]
+        == "ADDITIONAL_DIMENSION_ENQUEUE_FAILED"
+    )
+    group_service.fail_additional_dimension_enqueue.assert_called_once_with(
+        10,
+        user_id=7,
+        error_code="ADDITIONAL_DIMENSION_ENQUEUE_FAILED",
+    )

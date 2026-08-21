@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 # ruff: noqa: CPY001
 from apps.agents.scenario_group_agent.constants import (
@@ -44,6 +46,7 @@ from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 
 MAX_ADDITIONAL_DIMENSION_ATTEMPTS = 3
 ADDITIONAL_DIMENSION_CANDIDATES_INVALID = "ADDITIONAL_DIMENSION_CANDIDATES_INVALID"
+ADDITIONAL_DIMENSION_STALE_TIMEOUT = "STALE_TIMEOUT"
 
 
 @contextmanager
@@ -201,12 +204,40 @@ async def _generate_candidates_with_retries(
     return hydration_result
 
 
-async def run_additional_dimension_generation(scenario_group_id: int) -> None:
+async def run_additional_dimension_generation(
+    scenario_group_id: int,
+    *,
+    run_id: str | None = None,
+) -> None:
+    active_run_id = run_id or str(uuid4())
     service = ScenarioGroupService()
-    started = await asyncio.to_thread(
-        service.start_additional_dimension_generation,
-        scenario_group_id,
-    )
+    try:
+        started = await asyncio.to_thread(
+            service.start_additional_dimension_generation,
+            scenario_group_id,
+            run_id=active_run_id,
+        )
+    except Exception as exc:
+        try:
+            await asyncio.to_thread(
+                service.fail_additional_dimension_claim,
+                scenario_group_id,
+                run_id=active_run_id,
+                error_code="ADDITIONAL_DIMENSION_CLAIM_FAILED",
+            )
+        except Exception as status_exc:
+            logger.error(
+                "Additional Dimension claim failure status update failed | scenario_group_id={} | error={!r}",
+                scenario_group_id,
+                status_exc,
+            )
+        logger.error(
+            "Additional Dimension initial claim failed | scenario_group_id={} | "
+            "error_code=ADDITIONAL_DIMENSION_CLAIM_FAILED | error={!r}",
+            scenario_group_id,
+            exc,
+        )
+        return
     if started is None:
         logger.info(
             "Additional Dimension generation skipped | scenario_group_id={} | reason=not_runnable",
@@ -246,6 +277,7 @@ async def run_additional_dimension_generation(scenario_group_id: int) -> None:
                     service.complete_additional_dimension_generation,
                     scenario_group_id,
                     source_fingerprint=source_fingerprint,
+                    run_id=active_run_id,
                     candidates=[],
                 )
                 logger.info(
@@ -274,6 +306,7 @@ async def run_additional_dimension_generation(scenario_group_id: int) -> None:
                     service.fail_additional_dimension_generation,
                     scenario_group_id,
                     source_fingerprint=source_fingerprint,
+                    run_id=active_run_id,
                     error_code=ADDITIONAL_DIMENSION_CANDIDATES_INVALID,
                 )
                 logger.error(
@@ -296,6 +329,7 @@ async def run_additional_dimension_generation(scenario_group_id: int) -> None:
                 service.complete_additional_dimension_generation,
                 scenario_group_id,
                 source_fingerprint=source_fingerprint,
+                run_id=active_run_id,
                 candidates=[item.model_dump() for item in candidates],
             )
             logger.info(
@@ -318,6 +352,7 @@ async def run_additional_dimension_generation(scenario_group_id: int) -> None:
                 service.fail_additional_dimension_generation,
                 scenario_group_id,
                 source_fingerprint=source_fingerprint,
+                run_id=active_run_id,
                 error_code="SERVER_SHUTDOWN",
                 interrupted=True,
             ),
@@ -337,6 +372,7 @@ async def run_additional_dimension_generation(scenario_group_id: int) -> None:
                 service.fail_additional_dimension_generation,
                 scenario_group_id,
                 source_fingerprint=source_fingerprint,
+                run_id=active_run_id,
                 error_code="ADDITIONAL_DIMENSION_GENERATION_FAILED",
             )
         except Exception as status_exc:
@@ -360,10 +396,72 @@ async def run_additional_dimension_generation(scenario_group_id: int) -> None:
         )
 
 
+def _generation_field(generation: dict[str, Any], snake_key: str, camel_key: str) -> object:
+    return generation.get(snake_key, generation.get(camel_key))
+
+
+def _parse_generation_timestamp(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif value:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    return parsed.replace(tzinfo=parsed.tzinfo or UTC).astimezone(UTC)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _active_generation_timestamp(generation: dict[str, Any]) -> datetime | None:
+    status = str(generation.get("status") or "not_requested")
+    if status == "queued":
+        raw_timestamp = _generation_field(generation, "queued_at", "queuedAt")
+    elif status == "running":
+        raw_timestamp = _generation_field(generation, "started_at", "startedAt")
+        if raw_timestamp is None or raw_timestamp == "":
+            raw_timestamp = _generation_field(generation, "queued_at", "queuedAt")
+    else:
+        return None
+    return _parse_generation_timestamp(raw_timestamp)
+
+
+def _get_additional_dimension_stale_after_seconds() -> float:
+    from apps.common.configs.config import get_settings
+
+    return get_settings().additional_dimension_stale_after_seconds
+
+
+def _is_stale_generation(
+    generation: dict[str, Any],
+    *,
+    stale_after_seconds: float,
+    now: datetime,
+) -> bool:
+    timestamp = _active_generation_timestamp(generation)
+    if timestamp is None:
+        return False
+    normalized_now = now.replace(tzinfo=now.tzinfo or UTC).astimezone(UTC)
+    return (normalized_now - timestamp).total_seconds() >= stale_after_seconds
+
+
 def get_additional_dimensions(scenario_group_id: int) -> AdditionalDimensionsOut:
     payload = ScenarioGroupService().load_additional_dimensions(scenario_group_id)
     generation = payload["generation"]
     status = str(generation.get("status") or "not_requested")
+    stale = False
+    if _active_generation_timestamp(generation) is not None:
+        stale = _is_stale_generation(
+            generation,
+            stale_after_seconds=_get_additional_dimension_stale_after_seconds(),
+            now=_utc_now(),
+        )
+    if stale:
+        status = "interrupted"
     candidates = filter_available_candidates(
         payload["candidates"],
         dimension_selected=payload["dimension_selected"],
@@ -389,6 +487,10 @@ def get_additional_dimensions(scenario_group_id: int) -> AdditionalDimensionsOut
             dimension_definitions={"status": presentation_status, "items": items},
             available_count=len(items),
             updated_at=payload.get("updated_at"),
-            error_code=generation.get("error_code") or generation.get("errorCode"),
+            error_code=(
+                ADDITIONAL_DIMENSION_STALE_TIMEOUT
+                if stale
+                else generation.get("error_code") or generation.get("errorCode")
+            ),
         ),
     )
