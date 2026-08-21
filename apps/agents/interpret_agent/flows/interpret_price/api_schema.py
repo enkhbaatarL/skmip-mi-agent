@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from apps.agents.interpret_agent.schemas.base import ApiModel
+from apps.agents.interpret_agent.utils.plain_text import to_plain_text
 from apps.common.values.response import CallBackBody
 
 
@@ -37,24 +38,24 @@ class ScenarioComparisonOut(ApiModel):
     """
 
     scenario_id: str
-    identity: str = Field(
-        description="한 줄 정체성(시나리오 헤드라인 문장)"
-    )
-    driver_phase: str = Field(
-        description="동인 및 국면(Driver Phase). 여러 feature 움직임과 지역·수렴 시점을 종합"
-    )
-    price_character: str = Field(
-        description="가격 특성(Price Character). 지역별 반응과 정상화 시점을 포함"
-    )
-    summary: str = Field(
-        description="시나리오 요약. 신뢰도(데이터 품질)와 실무 대응을 포함한 서술 한 단락"
-    )
+    identity: str = Field(description="한 줄 정체성(시나리오 헤드라인 문장)")
+    driver_phase: str = Field(description="동인 및 국면(Driver Phase). 여러 feature 움직임과 지역·수렴 시점을 종합")
+    price_character: str = Field(description="가격 특성(Price Character). 지역별 반응과 정상화 시점을 포함")
+    summary: str = Field(description="시나리오 요약. 신뢰도(데이터 품질)와 실무 대응을 포함한 서술 한 단락")
+
+    @field_validator("identity", "driver_phase", "price_character", "summary")
+    @classmethod
+    def normalize_plain_text(cls, value: str) -> str:
+        return to_plain_text(value)
 
 
 class GroupSynthesisOut(ApiModel):
-    overall_message: str = Field(
-        default="", description="그룹 전체를 아우르는 종합 메시지 한 단락"
-    )
+    overall_message: str = Field(default="", description="그룹 전체를 아우르는 종합 메시지 한 단락")
+
+    @field_validator("overall_message")
+    @classmethod
+    def normalize_plain_text(cls, value: str) -> str:
+        return to_plain_text(value)
 
 
 class PriceInterpretationMetaOut(ApiModel):
@@ -108,6 +109,11 @@ class PriceInterpretationCallbackItem(ApiModel):
     scenario_id: int = Field(description="대상 시나리오 ID")
     content: str = Field(description="제목과 항목별 해석을 개행으로 구분한 일반 텍스트")
 
+    @field_validator("content")
+    @classmethod
+    def normalize_plain_text(cls, value: str) -> str:
+        return to_plain_text(value)
+
 
 class PriceInterpretationCallbackOut(CallBackBody):
     """가격전망 해석 비동기 콜백 payload.
@@ -120,6 +126,11 @@ class PriceInterpretationCallbackOut(CallBackBody):
         default=None,
         description="시나리오별 가격전망 해석 목록",
     )
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_failure_reason(cls, value: str | None) -> str | None:
+        return to_plain_text(value) if value is not None else None
 
     @model_validator(mode="after")
     def validate_result_payload(self) -> Self:

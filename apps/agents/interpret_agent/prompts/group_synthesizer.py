@@ -12,14 +12,15 @@ from pydantic import BaseModel, Field
 
 
 class GroupSynthesisLLMOutput(BaseModel):
-    overall_message: str = Field(description="그룹 전체 종합 메시지 한 단락")
+    overall_message: str = Field(description="Markdown/HTML 서식 없는 일반 텍스트 그룹 종합 메시지 한 단락")
 
 
 SYSTEM_PROMPT = (
     "당신은 LNG 시장 시나리오 그룹 종합 애널리스트입니다. 각 시나리오의 정체성과 "
     "가격 성격, 신뢰도(모두 MI Base 대비)를 종합해 그룹 단위 결론·제언을 작성합니다. "
     "현업 실무자가 한 번에 이해할 수 있도록, 기계적인 수치 나열이나 어색한 번역투를 피하고 "
-    "자연스럽고 매끄러운 문장으로 씁니다."
+    "자연스럽고 매끄러운 문장으로 씁니다. 출력 값은 서식 없는 일반 텍스트로 작성하며 "
+    "Markdown, HTML, 굵게·기울임·코드 서식을 사용하지 않습니다."
 )
 
 
@@ -37,9 +38,11 @@ def build_user_prompt(scenarios_brief: list[dict]) -> str:
 - 과도한 수치 나열은 피하고 판단·행동 중심으로 서술한다. 값을 인용할 때는 자리수를 살려 쓰고,
   억지 반올림으로 '+0.0'처럼 의미가 사라지는 표기는 쓰지 않으며, 변화가 사실상 없으면 '거의 변화 없음'으로 표현한다.
 - 전문용어는 꼭 필요할 때만 쓰고, 현업이 바로 이해할 수 있는 쉬운 표현을 우선한다.
+- overall_message는 일반 텍스트로만 작성한다. 문단 구분용 개행과 '■ ' 문자는 허용하지만,
+  Markdown/HTML 제목·링크·목록·강조·코드 서식과 **, __, backtick, #, <strong>, <b> 표식은 금지한다.
 
 [분량 제한 — 반드시 준수]
 - 전체 공백 포함 600자 이내. 도입 1문장 + 시나리오별 '■' 문단(각 2~3문장)으로 구성한다.
 
 [출력 JSON 필드] overall_message (여러 문단을 개행으로 구분한 하나의 문자열)
-순수 JSON 객체만 반환하세요."""
+필드 값에는 서식 문법을 넣지 말고, 순수 JSON 객체만 반환하세요."""
