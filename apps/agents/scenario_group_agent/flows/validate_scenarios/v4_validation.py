@@ -86,6 +86,7 @@ def dimension_definition_fingerprint(definitions: list[dict[str, Any]]) -> str:
 class CanonicalScenarioRow:
     scenario_id: int | None
     client_row_key: str
+    row_index: int
     display_order: int
     title: str
     dimension_values: dict[str, str]
@@ -93,11 +94,12 @@ class CanonicalScenarioRow:
     autofilled_dimension_values: dict[str, str] = field(default_factory=dict)
 
     def review_scenario_id(self) -> int:
-        return self.scenario_id if self.scenario_id is not None else -self.display_order
+        return self.scenario_id if self.scenario_id is not None else -self.row_index
 
     def as_review_row(self) -> dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
+            "row_index": self.row_index,
             "display_order": self.display_order,
             "title": self.title,
             "cells": dict(self.dimension_values),
@@ -304,8 +306,7 @@ def _pressure_contribution(value: dict[str, Any]) -> str | None:
 def _row_key(raw_row: dict[str, Any], index: int) -> tuple[int | None, str]:
     raw_id = _get(raw_row, "scenario_id", "scenarioId")
     scenario_id = int(raw_id) if raw_id is not None else None
-    display_order = int(_get(raw_row, "display_order", "displayOrder") or index)
-    return scenario_id, f"scenario:{scenario_id}" if scenario_id is not None else f"new:{display_order}"
+    return scenario_id, f"scenario:{scenario_id}" if scenario_id is not None else f"new:{index}"
 
 
 def _collapsed_pressure_direction(pressure_band: object) -> str | None:
@@ -849,6 +850,7 @@ def analyze_v4_validation_request(  # noqa: C901
         row = CanonicalScenarioRow(
             scenario_id=scenario_id,
             client_row_key=client_row_key,
+            row_index=index,
             display_order=display_order,
             title=title,
             dimension_values=canonical_cells,

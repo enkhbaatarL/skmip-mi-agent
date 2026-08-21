@@ -5,9 +5,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TypeVar
 
 from apps.common.logging.logger_config import logger
 from apps.persistence.scenario_group_operation.schema import TERMINAL_OPERATION_STATUSES
+
+
+_OperationResult = TypeVar("_OperationResult")
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,7 +232,7 @@ class ScenarioGroupOperationTaskRunner:
             raise RuntimeError(msg)
         get_scenario_group_operation_event_hub().register_owner(operation_id)
         task = asyncio.create_task(
-            self._run_with_heartbeat(scenario_group_id, operation_id, producer),
+            self.run_with_heartbeat(scenario_group_id, operation_id, producer),
             name=f"scenario-group-operation:{operation_id}",
         )
         self._tasks[operation_id] = task
@@ -244,23 +248,29 @@ class ScenarioGroupOperationTaskRunner:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
 
-    async def _run_with_heartbeat(
+    async def run_with_heartbeat(
         self,
         scenario_group_id: int,
         operation_id: str,
-        producer: Awaitable[None],
-    ) -> None:
+        operation: Awaitable[_OperationResult],
+    ) -> _OperationResult:
+        owner_task = asyncio.current_task()
         heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(scenario_group_id, operation_id),
+            self._heartbeat_loop(scenario_group_id, operation_id, owner_task),
             name=f"scenario-group-operation-heartbeat:{operation_id}",
         )
         try:
-            await producer
+            return await operation
         finally:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
 
-    async def _heartbeat_loop(self, scenario_group_id: int, operation_id: str) -> None:
+    async def _heartbeat_loop(
+        self,
+        scenario_group_id: int,
+        operation_id: str,
+        owner_task: asyncio.Task[object] | None,
+    ) -> None:
         while True:
             await self._sleep(self._heartbeat_interval_seconds)
             try:
@@ -280,7 +290,6 @@ class ScenarioGroupOperationTaskRunner:
                 continue
             if touched:
                 continue
-            owner_task = self._tasks.get(operation_id)
             if owner_task is not None and owner_task is not asyncio.current_task():
                 owner_task.cancel()
             return

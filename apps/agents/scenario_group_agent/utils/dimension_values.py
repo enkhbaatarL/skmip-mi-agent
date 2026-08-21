@@ -126,3 +126,89 @@ def canonicalize_persisted_dimension_values(
         raw_values,
         allow_label_compatibility=allow_label_compatibility,
     )
+
+
+def normalize_dimension_value_aliases(
+    values: Mapping[str, Any],
+    dimension_definitions: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    """Normalize known Dimension/value IDs and unique labels without rejecting legacy data."""
+    definitions_by_id: dict[str, Mapping[str, Any]] = {}
+    dimension_ids_by_label: dict[str, list[str]] = {}
+    for definition in dimension_definitions:
+        dimension_id = str(_field(definition, "dimension_id", "dimensionId") or "").strip()
+        if not dimension_id:
+            continue
+        definitions_by_id[dimension_id] = definition
+        label = str(definition.get("label") or "").strip()
+        if label:
+            dimension_ids_by_label.setdefault(label, []).append(dimension_id)
+    dimension_id_by_alias = {label: ids[0] for label, ids in dimension_ids_by_label.items() if len(ids) == 1}
+
+    normalized: dict[str, str] = {}
+    for raw_dimension, raw_value in values.items():
+        dimension_alias = str(raw_dimension or "").strip()
+        if not dimension_alias:
+            continue
+        dimension_id = (
+            dimension_alias
+            if dimension_alias in definitions_by_id
+            else dimension_id_by_alias.get(dimension_alias, dimension_alias)
+        )
+        definition = definitions_by_id.get(dimension_id)
+        value_alias = str(raw_value or "").strip()
+        canonical_value = value_alias
+        if definition is not None:
+            value_ids: set[str] = set()
+            value_ids_by_label: dict[str, list[str]] = {}
+            for raw_definition_value in definition.get("values") or []:
+                if not isinstance(raw_definition_value, Mapping):
+                    continue
+                value_id = str(_field(raw_definition_value, "value_id", "valueId") or "").strip()
+                value_label = str(raw_definition_value.get("label") or "").strip()
+                if not value_id:
+                    continue
+                value_ids.add(value_id)
+                if value_label:
+                    value_ids_by_label.setdefault(value_label, []).append(value_id)
+            if value_alias not in value_ids:
+                compatible_ids = value_ids_by_label.get(value_alias, [])
+                if len(compatible_ids) == 1:
+                    canonical_value = compatible_ids[0]
+        normalized[dimension_id] = canonical_value
+    return normalized
+
+
+def find_scenario_pressure_breakdown(
+    scenario_dimension_values: Mapping[str, Any],
+    *,
+    dimension_definitions: Sequence[Mapping[str, Any]],
+    generation_diagnostics: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    """Find a diagnostics breakdown by its complete canonical Dimension/value combination."""
+    normalized_values = normalize_dimension_value_aliases(
+        scenario_dimension_values,
+        dimension_definitions,
+    )
+    if not normalized_values:
+        return None
+    raw_breakdowns = _field(
+        generation_diagnostics,
+        "scenario_pressure_breakdowns",
+        "scenarioPressureBreakdowns",
+    )
+    if not isinstance(raw_breakdowns, (list, tuple)):
+        return None
+    for breakdown in raw_breakdowns:
+        if not isinstance(breakdown, Mapping):
+            continue
+        raw_candidate_values = _field(breakdown, "dimension_values", "dimensionValues")
+        if not isinstance(raw_candidate_values, Mapping):
+            continue
+        candidate_values = normalize_dimension_value_aliases(
+            raw_candidate_values,
+            dimension_definitions,
+        )
+        if candidate_values == normalized_values:
+            return breakdown
+    return None

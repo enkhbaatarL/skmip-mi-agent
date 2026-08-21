@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import html
 import re
@@ -48,6 +49,9 @@ from apps.agents.scenario_group_agent.schemas.table import (
     SignpostBasePayload,
     SignpostQueryPayload,
 )
+from apps.agents.scenario_group_agent.utils.dimension_values import (
+    find_scenario_pressure_breakdown,
+)
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario_group.schema import (
     ScenarioGroupPayload,
@@ -55,7 +59,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v2"
+PRESENTATION_RENDERER_VERSION = "v3"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -476,6 +480,7 @@ def build_scenario_group_presentation(
     role_markdown, role_status, role_evidence, role_warnings = _role_rationale_markdown(
         engine_version=engine_version,
         rows=rows,
+        dimension_definitions=[definition.model_dump(by_alias=True) for definition in definitions],
         diagnostics=diagnostics,
         operation=operation,
         lever_labels=lever_labels or {},
@@ -968,6 +973,7 @@ def _role_rationale_markdown(
     *,
     engine_version: str,
     rows: list[PresentationScenarioRow],
+    dimension_definitions: Sequence[Mapping[str, Any]],
     diagnostics: dict[str, Any],
     operation: ScenarioGroupOperationPayload | None,
     lever_labels: dict[str, str],
@@ -984,7 +990,6 @@ def _role_rationale_markdown(
         "floor": "생성된 Scenario 중 JKM 압력대가 가장 낮은 Scenario",
     }
     lever_code_pattern = _lever_code_pattern(lever_labels)
-    breakdowns = _field(diagnostics, "scenario_pressure_breakdowns", default=[]) or []
     for role in ("ceiling", "mixed", "floor"):
         row = role_rows.get(role)
         if row is None:
@@ -1006,9 +1011,11 @@ def _role_rationale_markdown(
             lines.append("- Baseline: 생성된 Scenario 중 발생 가능성이 가장 높음")
         if not row.pressure_rationale:
             warnings.append(f"{role_labels[role]} Scenario에 저장된 종합 근거가 없습니다.")
-        breakdown = next(
-            (item for item in breakdowns if isinstance(item, dict) and str(_field(item, "title") or "") == row.title),
-            None,
+        breakdown = _presentation_pressure_breakdown(
+            engine_version=engine_version,
+            row=row,
+            dimension_definitions=dimension_definitions,
+            diagnostics=diagnostics,
         )
         raw_breakdown = _field(breakdown or {}, "pressure_breakdown", default={}) or {}
         if isinstance(raw_breakdown, dict) and raw_breakdown:
@@ -1035,6 +1042,26 @@ def _role_rationale_markdown(
             lines.append("- 저장된 Dimension 근거 없음")
     evidence = "limited" if engine_version == "v1" else "full"
     return "\n".join(lines).rstrip() + "\n", "ready", evidence, warnings
+
+
+def _presentation_pressure_breakdown(
+    *,
+    engine_version: str,
+    row: PresentationScenarioRow,
+    dimension_definitions: Sequence[Mapping[str, Any]],
+    diagnostics: dict[str, Any],
+) -> Mapping[str, Any] | None:
+    if engine_version == "v4":
+        return find_scenario_pressure_breakdown(
+            row.cells,
+            dimension_definitions=dimension_definitions,
+            generation_diagnostics=diagnostics,
+        )
+    breakdowns = _field(diagnostics, "scenario_pressure_breakdowns", default=[]) or []
+    return next(
+        (item for item in breakdowns if isinstance(item, dict) and str(_field(item, "title") or "") == row.title),
+        None,
+    )
 
 
 def _v4_interaction_is_ready(

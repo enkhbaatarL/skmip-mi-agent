@@ -24,6 +24,7 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_operation_servi
 )
 from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
+from apps.agents.scenario_group_agent.runtime import get_scenario_group_operation_task_runner
 from apps.agents.scenario_group_agent.schemas.endpoint import CreateSignpostsOut
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -166,36 +167,47 @@ async def run_create_signposts_inline(
         operation_id=operation_id,
         signpost_target_scenario_ids=signpost_target_scenario_ids or [],
     )
-    try:
-        if operation_id is not None:
-            ScenarioGroupOperationService().start_operation(
-                scenario_group_id,
-                operation_id,
-                phase="signpost",
-            )
-        with mlflow_trace_context(trace_context):
-            final_state = await get_compiled_graph().ainvoke(
-                state,
-                config=build_langgraph_config(trace_context),
-                context=trace_context,
-            )
-        if operation_id is not None:
-            ScenarioGroupOperationService().complete_operation(
-                scenario_group_id=scenario_group_id,
-                operation_id=operation_id,
-                phase="signpost",
-                message_markdown="Signpost 생성을 완료했습니다.",
-            )
-    except Exception as exc:
-        if operation_id is not None:
-            ScenarioGroupOperationService().fail_signpost(
-                scenario_group_id=scenario_group_id,
-                operation_id=operation_id,
-                user_id=user_id,
-                error=exc,
-            )
-        raise
-    return _bg_to_output(final_state)
+
+    async def execute() -> CreateSignpostsOut:
+        try:
+            if operation_id is not None:
+                ScenarioGroupOperationService().start_operation(
+                    scenario_group_id,
+                    operation_id,
+                    phase="signpost",
+                )
+            with mlflow_trace_context(trace_context):
+                final_state = await get_compiled_graph().ainvoke(
+                    state,
+                    config=build_langgraph_config(trace_context),
+                    context=trace_context,
+                )
+            if operation_id is not None:
+                ScenarioGroupOperationService().complete_operation(
+                    scenario_group_id=scenario_group_id,
+                    operation_id=operation_id,
+                    phase="signpost",
+                    message_markdown="Signpost 생성을 완료했습니다.",
+                )
+        except Exception as exc:
+            if operation_id is not None:
+                ScenarioGroupOperationService().fail_signpost(
+                    scenario_group_id=scenario_group_id,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    error=exc,
+                )
+            raise
+        return _bg_to_output(final_state)
+
+    operation = execute()
+    if operation_id is None:
+        return await operation
+    return await get_scenario_group_operation_task_runner().run_with_heartbeat(
+        scenario_group_id,
+        operation_id,
+        operation,
+    )
 
 
 # ---------------------------------------------------------------------------

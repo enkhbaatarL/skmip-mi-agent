@@ -8,6 +8,7 @@ Keep it short and treat linked docs as the source of truth for details.
 - Current runtime Agent: `apps/agents/scenario_group_agent/`
 - FastAPI entrypoint: `main.py`
 - Python conventions: `.claude/rules/python-conventions.md`
+- DB migration source of truth: sibling `skmip-mi-agent-mgmt` repository
 
 ## Read This First
 
@@ -37,6 +38,7 @@ If the task touches one of these areas, read the linked document before changing
 
 - Automated tests live in `tests/automated/`.
 - Manual/local API scripts live in `tests/manual/`.
+- Migration SQL under this repository is optional reference material. Tests must not require those files to exist.
 
 ## Editing Guidance
 
@@ -52,4 +54,6 @@ If the task touches one of these areas, read the linked document before changing
 - Start each review comment with brief context: what the current code appears intended to do, then explain the issue in that context.
 - Include file/line references, why the issue matters, and the expected fix direction whenever possible.
 - Avoid style preferences or broad refactor suggestions unless they directly affect the safety of the current change.
+- Do not report a missing migration file in this repository as a review issue. DB migrations are managed in
+  `skmip-mi-agent-mgmt`; SQL checked into this repository is optional reference material only.
 - If there are no issues, say so clearly and mention remaining risks or checks that were not run.

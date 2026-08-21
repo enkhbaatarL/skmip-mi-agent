@@ -25,6 +25,7 @@ from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation imp
 from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
     ScenarioGroupOperationService,
 )
+from apps.agents.scenario_group_agent.runtime import get_scenario_group_operation_task_runner
 from apps.agents.scenario_group_agent.schemas.state import ScenarioTableState
 from apps.agents.scenario_group_agent.schemas.table import ScenarioTable
 from apps.common.exceptions.custom import MIBaseError
@@ -183,29 +184,40 @@ async def run_validate_scenarios_inline(
         request_table=request_table,
         operation_id=operation_id,
     )
-    try:
-        if operation_id is not None:
-            ScenarioGroupOperationService().start_operation(
-                scenario_group_id,
-                operation_id,
-                phase="validation",
-            )
-        with mlflow_trace_context(trace_context):
-            final_state = await get_compiled_graph().ainvoke(
-                state,
-                config=build_langgraph_config(trace_context),
-                context=trace_context,
-            )
-    except Exception as exc:
-        if operation_id is not None:
-            ScenarioGroupOperationService().fail_validation(
-                scenario_group_id=scenario_group_id,
-                operation_id=operation_id,
-                user_id=user_id,
-                error=exc,
-            )
-        raise
-    return _bg_to_output(final_state)
+
+    async def execute() -> ValidateScenariosOut:
+        try:
+            if operation_id is not None:
+                ScenarioGroupOperationService().start_operation(
+                    scenario_group_id,
+                    operation_id,
+                    phase="validation",
+                )
+            with mlflow_trace_context(trace_context):
+                final_state = await get_compiled_graph().ainvoke(
+                    state,
+                    config=build_langgraph_config(trace_context),
+                    context=trace_context,
+                )
+        except Exception as exc:
+            if operation_id is not None:
+                ScenarioGroupOperationService().fail_validation(
+                    scenario_group_id=scenario_group_id,
+                    operation_id=operation_id,
+                    user_id=user_id,
+                    error=exc,
+                )
+            raise
+        return _bg_to_output(final_state)
+
+    operation = execute()
+    if operation_id is None:
+        return await operation
+    return await get_scenario_group_operation_task_runner().run_with_heartbeat(
+        scenario_group_id,
+        operation_id,
+        operation,
+    )
 
 
 # ---------------------------------------------------------------------------

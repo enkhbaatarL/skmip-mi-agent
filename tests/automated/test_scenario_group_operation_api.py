@@ -129,12 +129,14 @@ def test_canonical_scenario_group_routes_are_exposed_without_v1_or_deprecation()
     assert tags_in_display_order.index("scenario-groups") < tags_in_display_order.index("scenario-groups-sync-test")
     assert "scenario-generation-sync" not in tags_in_display_order
 
-    assert paths["/scenario-groups/{scenario_group_id}/validation/sync"]["post"]["requestBody"] == paths[
-        "/scenario-groups/{scenario_group_id}/validation"
-    ]["post"]["requestBody"]
-    assert paths["/scenario-groups/{scenario_group_id}/signposts/sync"]["post"]["requestBody"] == paths[
-        "/scenario-groups/{scenario_group_id}/signposts"
-    ]["post"]["requestBody"]
+    assert (
+        paths["/scenario-groups/{scenario_group_id}/validation/sync"]["post"]["requestBody"]
+        == paths["/scenario-groups/{scenario_group_id}/validation"]["post"]["requestBody"]
+    )
+    assert (
+        paths["/scenario-groups/{scenario_group_id}/signposts/sync"]["post"]["requestBody"]
+        == paths["/scenario-groups/{scenario_group_id}/signposts"]["post"]["requestBody"]
+    )
     detail_get = paths["/scenario-groups/{scenario_group_id}"]["get"]
     assert "requestBody" not in detail_get
     view = next(parameter for parameter in detail_get["parameters"] if parameter["name"] == "view")
@@ -755,8 +757,11 @@ def test_section_ready_event_contains_projection_revision_details() -> None:
     }
 
 
-def test_v1_backfill_migration_is_idempotent_and_has_scoped_rollback() -> None:
-    migration = Path("scripts/migrations/20260811_backfill_v1_presentation_operations.sql").read_text()
+def test_optional_v1_backfill_reference_is_idempotent_and_has_scoped_rollback() -> None:
+    migration_path = Path("scripts/migrations/20260811_backfill_v1_presentation_operations.sql")
+    if not migration_path.exists():
+        return
+    migration = migration_path.read_text()
 
     assert migration.count("INSERT IGNORE INTO tmm_mi_scenario_group_operation_m") == 4
     assert "INSERT IGNORE INTO tmm_mi_scenario_group_operation_event_h" in migration
@@ -1044,6 +1049,60 @@ def test_task_runner_renews_heartbeat_and_cancels_when_operation_is_terminal() -
     assert intervals == [30]
     touch_heartbeat.assert_called_once_with(120, "01JABCDEF0123456789ABCDEFX")
     assert producer_stopped is True
+
+
+def test_public_heartbeat_wrapper_returns_result_and_cleans_up_after_repeated_renewals() -> None:
+    async def exercise() -> tuple[int, list[float], Mock, list[str]]:
+        heartbeat_permissions: asyncio.Queue[None] = asyncio.Queue()
+        intervals: list[float] = []
+        second_heartbeat = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def controlled_sleep(interval: float) -> None:
+            intervals.append(interval)
+            await heartbeat_permissions.get()
+
+        touch_heartbeat = Mock(return_value=True)
+
+        def touch_and_signal(scenario_group_id: int, operation_id: str) -> bool:
+            touched = touch_heartbeat(scenario_group_id, operation_id)
+            if touch_heartbeat.call_count == 2:
+                loop.call_soon_threadsafe(second_heartbeat.set)
+            return touched
+
+        runner = ScenarioGroupOperationTaskRunner(
+            heartbeat_interval_seconds=5,
+            touch_heartbeat=touch_and_signal,
+            sleep=controlled_sleep,
+        )
+
+        async def operation() -> int:
+            await second_heartbeat.wait()
+            return 42
+
+        task = asyncio.create_task(
+            runner.run_with_heartbeat(120, "01JABCDEF0123456789ABCDEFX", operation()),
+        )
+        heartbeat_permissions.put_nowait(None)
+        heartbeat_permissions.put_nowait(None)
+        result = await asyncio.wait_for(task, timeout=1)
+        active_heartbeat_tasks = [
+            item.get_name()
+            for item in asyncio.all_tasks()
+            if item is not asyncio.current_task() and "operation-heartbeat" in item.get_name()
+        ]
+        return result, intervals, touch_heartbeat, active_heartbeat_tasks
+
+    result, intervals, touch_heartbeat, active_heartbeat_tasks = asyncio.run(exercise())
+
+    assert result == 42
+    assert len(intervals) >= 2
+    assert set(intervals) == {5}
+    assert [item.args for item in touch_heartbeat.call_args_list] == [
+        (120, "01JABCDEF0123456789ABCDEFX"),
+        (120, "01JABCDEF0123456789ABCDEFX"),
+    ]
+    assert active_heartbeat_tasks == []
 
 
 def test_recovery_monitor_retries_after_initial_scan_failure() -> None:

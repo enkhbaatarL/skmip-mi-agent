@@ -199,10 +199,11 @@ def _normalize_scenario(
     metrics = row.get("metrics") or {}
     raw_id = row.get("scenario_id")
     is_new = raw_id is None
+    row_index = int(row.get("row_index") or (index + 1))
     display_order = int(row.get("display_order") or (index + 1))
-    # 신규 시나리오는 아직 DB ID가 없으므로 displayOrder 기반 음수 임시 ID를
+    # 신규 시나리오는 아직 DB ID가 없으므로 요청 row 위치 기반 음수 임시 ID를
     # 부여해 기존 review 흐름(조합 판정·중복 검사 등)을 그대로 유지한다.
-    scenario_id = -display_order if is_new else int(raw_id)
+    scenario_id = -row_index if is_new else int(raw_id)
     return {
         "scenario_id": scenario_id,
         "is_new": is_new,

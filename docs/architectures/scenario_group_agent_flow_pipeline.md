@@ -49,6 +49,12 @@ SSE consumer가 끊겨도 producer는 계속 실행된다. worker shutdown에서
 때는 `SKIP LOCKED`로 한 worker만 처리한다. 최초 recovery scan이 일시적으로 실패해도 startup은 계속하고
 다음 주기에 재시도한다. 서버 재시작 후 LangGraph 재개는 아직 지원하지 않는다.
 
+v4 Validation과 Signpost operation도 canonical `BackgroundTasks`와 sync API가 공통 inline 실행 함수를
+사용하며, 이 함수의 graph 실행 전체를 같은 heartbeat runner로 감싼다. Validation은 terminal 결과 저장까지,
+Signpost는 graph 실행과 `complete_operation()`까지 active heartbeat를 유지한다. heartbeat 갱신 중 DB 오류는
+다음 주기에 재시도하고, operation이 이미 terminal이면 실행 중인 owner task를 취소한다. operation이 없는
+v1~v3 실행은 기존 callback 실행 수명을 유지한다.
+
 operation owner worker에서는 event DB commit 이후 process-local EventHub가 subscriber queue를
 깨운다. 다른 worker로 재연결한 경우에는 operation별 shared tail watcher가 master row의
 `latestSequence`만 1초부터 최대 5초까지 adaptive polling한다. sequence가 증가했을 때만 각
@@ -865,6 +871,11 @@ canonical table은 메모리 표현이며 별도 DB table로 저장하지 않는
 삭제 ID만 저장하고 unchanged row, 전체 table, `leverState`는 저장하지 않는다. warning만 존재하면
 `PASS_WITH_WARNINGS`, `canProceed=true`이고, blocking은 operation `succeeded` 이력과 결과를 남기되
 `scenarioChangeSet=null`, `stage=scenario_created`로 처리한다.
+
+신규 Scenario의 내부 `clientRowKey`는 `displayOrder`가 아니라 validation 요청 `rows` 배열의 1-based 위치로
+`new:<rowIndex>`를 만든다. review의 음수 임시 ID도 `-rowIndex`를 사용한다. `displayOrder`는 표시·저장 순서일
+뿐이므로 서로 다른 신규 row가 같은 값을 보내도 autofill, generated field, Change Set과 신규 DB ID map에서
+서로 다른 row로 유지된다.
 
 새로 추가한 ready Additional Dimension header의 cell이 `null`이면 기존 row는 저장된
 `global_pressure_band`를 `bullish|balanced|bearish`로 축약하고, 신규 row는 입력된 기존 cell의

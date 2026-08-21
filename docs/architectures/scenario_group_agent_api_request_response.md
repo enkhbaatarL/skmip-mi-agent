@@ -148,6 +148,12 @@ Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 �
 미제공 상태로 표시한다. 현재 Template은 저장된 `templateChecksum`과 canonical checksum이 일치할
 때만 v1 Dimension 복원에 사용한다.
 
+v4 `scenarioPressureBreakdowns`는 Scenario 제목이 아니라 Dimension ID/value ID의 전체 조합으로
+`roleSelectionRationale`에 연결한다. 과거 label 기반 diagnostics도 현재 definition의 canonical ID로
+정규화한 뒤 비교한다. 제목만 변경하거나 서로 교환해도 같은 조합의 Pressure 구성을 유지하며, 조합이
+변경됐거나 신규 Scenario에 대응하는 breakdown이 없으면 제목 fallback 없이 Pressure 구성만 생략하고
+저장된 Scenario 종합 근거와 cell evidence는 그대로 표시한다.
+
 응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각과 현재 Lever label
 mapping으로 만든다.
 같은 값을 `If-None-Match`로 보내면 304를 반환한다. v4 진행 중 projection은 Event impact 검증 시
@@ -171,6 +177,8 @@ producer는 기본 30초마다 operation heartbeat를 갱신한다. lifespan rec
 `queued`/`running` operation을 원자적으로 `interrupted` 처리한다. 이 경우 `lastError.code`는
 `STALE_HEARTBEAT`, event payload의 `reason`은 `stale_heartbeat`이며, 기존 operation 조회와 SSE가
 terminal 상태를 그대로 전달한다. recovery scan 오류는 startup을 막지 않고 다음 주기에 재시도한다.
+v4 Validation과 Signpost callback 작업 및 동일 inline 함수를 사용하는 sync API도 operation이 active인
+동안 같은 heartbeat를 유지한다. Signpost는 terminal 완료 저장까지 heartbeat 범위에 포함한다.
 
 `POST /scenario-groups`의 중복 판정은 요청 순서와 무관한 Event ID 조합 및 engine version 기준이다.
 동일 조합의 active operation은 같은 사용자에게 HTTP 409
@@ -547,6 +555,10 @@ v4에서 변경 없는 요청은 `reviewSkipped=true`, `verdict=PASS`로 LLM 없
 `isValid=true`, `canProceed=true`, `stage=scenario_validated`이며 다음 버튼을 활성화할 수 있다. blocking
 검사는 `isValid=false`, `canProceed=false`, `stage=scenario_created`로 완료된다. Validation 실행 자체가
 정상 종료한 blocking 판정도 operation status는 `succeeded`다.
+
+신규 Scenario의 내부 `clientRowKey`는 요청 `table.rows`의 1-based 배열 위치를 사용한
+`new:<rowIndex>`다. `displayOrder`는 표시·저장 순서이므로 신규 row 사이에서 중복돼도 내부 key나 review
+임시 ID를 공유하지 않는다. 일반적인 `displayOrder == rowIndex` 요청에서는 기존 key 문자열과 동일하다.
 
 내부 Validation 결과와 최소 `scenarioChangeSet`은 최신 validation operation의 nullable
 `result_payload`에 저장한다. `generationDiagnostics`, operation 조회 응답, Scenario Group 상세 및

@@ -84,11 +84,13 @@ DEFINITIONS = [
 ]
 
 
-def test_result_payload_has_orm_column_and_deployment_migration() -> None:
+def test_result_payload_has_orm_column_and_optional_reference_migration() -> None:
     assert MiScenarioGroupOperationModel.__table__.c.result_payload.nullable is True
 
     repository_root = Path(__file__).resolve().parents[2]
     migration = repository_root / "scripts/migrations/20260814_add_scenario_group_operation_result_payload.sql"
+    if not migration.exists():
+        return
     migration_sql = migration.read_text(encoding="utf-8")
     assert "ALTER TABLE `tmm_mi_scenario_group_operation_m`" in migration_sql
     assert "ADD COLUMN `result_payload` JSON NULL" in migration_sql
@@ -670,6 +672,129 @@ def test_new_row_autofill_direction_is_inferred_from_existing_dimension_values()
     assert plan.request_table["rows"][3]["cells"]["ad_duration"] == "duration_bullish"
 
 
+def test_new_rows_with_duplicate_display_order_use_distinct_row_index_keys_and_review_ids() -> None:
+    scenarios = _scenarios()[:2]
+    table = _table()
+    table["rows"] = table["rows"][:2]
+    table["rows"].extend(
+        [
+            {
+                "scenario_id": None,
+                "display_order": 9,
+                "title": "신규 하방",
+                "cells": {"demand": "demand_low", "supply": "supply_high"},
+            },
+            {
+                "scenario_id": None,
+                "display_order": 9,
+                "title": "신규 균형",
+                "cells": {"demand": "demand_low", "supply": "supply_low"},
+            },
+        ]
+    )
+
+    analysis = analyze_v4_validation_request(
+        request_table=table,
+        persisted_scenarios=scenarios,
+        dimension_definitions=DEFINITIONS,
+        generation_diagnostics={},
+        stored_header_order=["demand", "supply"],
+    )
+
+    new_rows = [row for row in analysis.canonical_rows if row.scenario_id is None]
+    assert [row.client_row_key for row in new_rows] == ["new:3", "new:4"]
+    assert [row.review_scenario_id() for row in new_rows] == [-3, -4]
+    assert [row.display_order for row in new_rows] == [9, 9]
+
+
+def test_duplicate_display_order_new_rows_preserve_generated_fields_and_change_set_keys() -> None:
+    scenarios = _scenarios()[:2]
+    table = _table()
+    table["rows"] = table["rows"][:2]
+    table["rows"].extend(
+        [
+            {
+                "scenario_id": None,
+                "display_order": 9,
+                "title": "신규 하방",
+                "cells": {"demand": "demand_low", "supply": "supply_high"},
+            },
+            {
+                "scenario_id": None,
+                "display_order": 9,
+                "title": "신규 균형",
+                "cells": {"demand": "demand_low", "supply": "supply_low"},
+            },
+        ]
+    )
+    state = ValidateScenariosState(
+        scenario_group_id=10,
+        user_id=101,
+        operation_id="validation-op",
+        scenario_group=ScenarioGroupPayload(
+            scenario_group_id=10,
+            request_usr_id=101,
+            dimension_selected=["demand", "supply"],
+            generation_strategy="multi_event_model_lever_dimensions",
+            api_version="v4",
+            dimension_definitions=DEFINITIONS,
+        ),
+        scenarios=[ScenarioPayload.model_validate(item) for item in scenarios],
+        request_table=table,
+    )
+    report = ReviewReport(
+        verdict="PASS",
+        is_valid=True,
+        reason="통과",
+        summary={"PASS": 1, "WARN": 0, "FAIL": 0, "INFO": 0},
+        checks=[],
+    )
+    review_subgraph = SimpleNamespace(ainvoke=AsyncMock(return_value=ScenarioReviewState(report=report)))
+    generated = V4ValidationGeneratedScenariosOutput(
+        items=[
+            V4ValidationGeneratedScenario(
+                client_row_key="new:3",
+                narrative="신규 하방 narrative",
+                probability_score=10,
+                pressure_band="strong_bearish",
+                pressure_rationale="수요 약세와 공급 우위",
+                related_markets=[],
+            ),
+            V4ValidationGeneratedScenario(
+                client_row_key="new:4",
+                narrative="신규 균형 narrative",
+                probability_score=10,
+                pressure_band="balanced",
+                pressure_rationale="수요와 공급 기여 상쇄",
+                related_markets=[],
+            ),
+        ]
+    )
+
+    with (
+        patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes.get_scenario_review_subgraph",
+            return_value=review_subgraph,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.validate_scenarios.nodes._invoke_v4_generated_fields",
+            new=AsyncMock(return_value=generated),
+        ),
+    ):
+        result = asyncio.run(_run_v4_scenario_validation(state, runtime=None))
+
+    review_state = review_subgraph.ainvoke.await_args.args[0]
+    operation_result = ValidationOperationResultPayload.model_validate(result["operation_result"])
+    change_set = operation_result.scenario_change_set
+    assert review_state.review_scenario_ids == [-3, -4]
+    assert change_set is not None
+    assert [item.client_row_key for item in change_set.upserts if item.scenario_id is None] == ["new:3", "new:4"]
+    assert [item.client_row_key for item in operation_result.validation_result.generated_details] == [
+        "new:3",
+        "new:4",
+    ]
+
+
 def test_directional_autofill_falls_back_only_to_balanced_not_opposite() -> None:
     neutral_only = _directional_candidate()
     neutral_only["values"] = [neutral_only["values"][1], neutral_only["values"][0]]
@@ -1195,6 +1320,22 @@ def test_signpost_applies_changed_validation_and_records_application() -> None:
                     related_markets=[],
                 ),
             ),
+            ValidationScenarioUpsertPayload(
+                scenario_id=None,
+                client_row_key="new:5",
+                change_type="NEW",
+                display_order=4,
+                title="신규 하방",
+                dimension_values={"demand": "demand_low", "supply": "supply_high"},
+                generated_fields=ValidationGeneratedFieldsPayload(
+                    narrative="신규 하방 narrative",
+                    probability_score=10,
+                    probability_delta=0,
+                    pressure_band="strong_bearish",
+                    pressure_rationale="낮은 수요 우세",
+                    related_markets=[],
+                ),
+            ),
         ],
         delete_scenario_ids=[3],
     )
@@ -1222,29 +1363,49 @@ def test_signpost_applies_changed_validation_and_records_application() -> None:
         return SimpleNamespace(**deepcopy(item))
 
     current_models = [model(item) for item in _scenarios()]
-    new_model = model(
-        {
-            "scenario_id": 4,
-            "scenario_group_id": 10,
-            "display_order": 4,
-            "title": "신규 약상방",
-            "narrative": "신규 narrative",
-            "dimension_values": {"demand": "demand_low", "supply": "supply_low"},
-            "probability_score": 10,
-            "probability_delta": 0,
-            "baseline_yn": "N",
-            "global_pressure_band": "bullish",
-            "scenario_role": None,
-            "global_pressure_rationale": "낮은 공급 우세",
-            "related_markets": [],
-            "status": "creating",
-        }
-    )
-    active_models = [current_models[0], current_models[1], new_model]
+    new_models = [
+        model(
+            {
+                "scenario_id": scenario_id,
+                "scenario_group_id": 10,
+                "display_order": 4,
+                "title": title,
+                "narrative": narrative,
+                "dimension_values": dimension_values,
+                "probability_score": 10,
+                "probability_delta": 0,
+                "baseline_yn": "N",
+                "global_pressure_band": pressure_band,
+                "scenario_role": None,
+                "global_pressure_rationale": pressure_rationale,
+                "related_markets": [],
+                "status": "creating",
+            }
+        )
+        for scenario_id, title, narrative, dimension_values, pressure_band, pressure_rationale in (
+            (
+                4,
+                "신규 약상방",
+                "신규 narrative",
+                {"demand": "demand_low", "supply": "supply_low"},
+                "bullish",
+                "낮은 공급 우세",
+            ),
+            (
+                5,
+                "신규 하방",
+                "신규 하방 narrative",
+                {"demand": "demand_low", "supply": "supply_high"},
+                "strong_bearish",
+                "낮은 수요 우세",
+            ),
+        )
+    ]
+    active_models = [current_models[0], current_models[1], *new_models]
     session = Mock()
     scenario_repository = Mock()
     scenario_repository.fetch_models_by_group_id.side_effect = [current_models, active_models]
-    scenario_repository.insert_scenario.return_value = 4
+    scenario_repository.insert_scenario.side_effect = [4, 5]
 
     def update_from_payload(target: SimpleNamespace, payload: dict[str, object]) -> None:
         for key, value in payload.items():
@@ -1326,14 +1487,14 @@ def test_signpost_applies_changed_validation_and_records_application() -> None:
     ):
         accepted = ScenarioService().accept_validation_change_set(scenario_group_id=10, user_id=101)
 
-    assert accepted["signpost_target_scenario_ids"] == [1, 4]
+    assert accepted["signpost_target_scenario_ids"] == [1, 4, 5]
     scenario_repository.update_from_payload.assert_called_once()
-    scenario_repository.insert_scenario.assert_called_once()
+    assert scenario_repository.insert_scenario.call_count == 2
     scenario_repository.soft_delete_by_ids.assert_called_once_with([3], user_id=101)
     signpost_repository.soft_delete_by_scenario_ids.assert_called_once_with([1, 3], user_id=101)
     stored = ValidationOperationResultPayload.model_validate(validation_operation.result_payload)
     assert stored.application is not None
-    assert stored.application.new_scenario_id_map == {"new:4": 4}
+    assert stored.application.new_scenario_id_map == {"new:4": 4, "new:5": 5}
     assert signpost_operation.result_payload["validationOperationId"] == "validation-op"
 
 

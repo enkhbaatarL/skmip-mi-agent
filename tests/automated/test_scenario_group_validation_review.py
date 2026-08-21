@@ -821,12 +821,12 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
 
         new_scenario = context.scenarios[1]
-        assert new_scenario["scenario_id"] == -3
+        assert new_scenario["scenario_id"] == -2
         assert new_scenario["is_new"] is True
         assert new_scenario["display_order"] == 3
 
     async def test_new_scenario_label_is_user_friendly(self) -> None:
-        # 제목이 없는 신규 시나리오는 음수 ID 대신 '{displayOrder}번째 시나리오'로 노출.
+        # 제목이 없는 신규 시나리오는 음수 rowIndex ID 대신 '{displayOrder}번째 시나리오'로 노출.
         rows = [
             dict(ROWS[0]),
             {
@@ -844,7 +844,7 @@ class ScenarioGroupValidationReviewTest(unittest.IsolatedAsyncioTestCase):
         context = build_context(GROUP, rows, PERSISTED_SCENARIOS, TEMPLATE)
         compatible = _llm_result(
             CompatibilityItem(scenario_id=100, compatible=True, reason="정상"),
-            CompatibilityItem(scenario_id=-3, compatible=True, reason="정상"),
+            CompatibilityItem(scenario_id=-2, compatible=True, reason="정상"),
         )
 
         with patch(
