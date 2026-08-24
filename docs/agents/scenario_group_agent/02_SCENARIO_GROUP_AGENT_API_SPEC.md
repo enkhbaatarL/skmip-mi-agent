@@ -162,12 +162,26 @@ GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}
 각 section의 status는 `pending | partial | ready | unavailable`, evidence level은
 `full | limited | none`다. 아직 준비되지 않은 배열과 문자열도 shape을 유지한다.
 
+`hide_price_pressure=true`이면 `roleSelectionRationale`은 `null`이고 Role Markdown을 생성하지 않는다.
+같은 설정이 활성화되면 `scenarioDesign.scenarioTable.rows[]`의 `scenarioRole`, `pressureTarget`,
+`pressureBand`, `pressureRationale`도 `null`로 마스킹한다. Dimension definition value와 cell evidence의
+`pressureContribution`은 계산 증적이므로 유지한다. 설정이 비활성화된 Role Markdown은 `분기 기준 설명`,
+`분기별 선택 값 설명`, `분기 상세 설명`, `이벤트 간 상호작용 효과` 표현을 사용하고 Dimension 식별자 대신
+header `displayOrder`를 표시한다.
+
 `scenarioDesign`은 Dimension definition과 Scenario table을 제공한다. v4 cell은
 `{dimensionId: valueId}`이고 표시 label은 definition에서 해석한다. `sourceEventIds`는 Event 근거,
 Dimension `rationale`은 선정 근거, value `rationale`은 미래 상태와 JKM 영향 가정이다.
 
-모든 200 응답은 `ETag`를 반환한다. 같은 URL에 `If-None-Match`를 보내고 내용이 같으면 body 없는 304를
-반환한다. `section_ready`의 revision이 증가할 때 조회하되 `completed` 뒤에는 최종 조회를 한 번 더 한다.
+모든 200 응답은 `ETag`를 반환한다. ETag에는 renderer version, operation ID, snapshot revision,
+Scenario Group 수정 시각, 현재 Lever label mapping과 `hide_price_pressure` 값이 반영된다. 같은 URL에
+`If-None-Match`를 보내고 내용이 같으면 body 없는 304를 반환한다. `section_ready`의 revision이 증가할 때
+조회하되 `completed` 뒤에는 최종 조회를 한 번 더 한다.
+
+`GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만드는 Validation·Signpost 초기 body의
+row는 `scenarioId`, `displayOrder`, `title`, `cells`만 포함한다. `scenarioRole`, `pressureTarget`,
+`pressureBand`, `pressureRationale`은 값이 `null`이어도 두 request 계약에서 허용하지 않으며 전송하면
+HTTP 422로 거부한다.
 
 ### Additional Dimension
 

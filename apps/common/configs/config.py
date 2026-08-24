@@ -241,6 +241,7 @@ class Settings(BaseSettings):
     scenario_group_operation_stale_after_seconds: float = Field(default=120.0, gt=0)
     scenario_group_operation_reaper_interval_seconds: float = Field(default=30.0, gt=0)
     additional_dimension_stale_after_seconds: float = Field(default=240.0, gt=0)
+    hide_price_pressure: bool = True
 
     @model_validator(mode="after")
     def validate_scenario_group_operation_timing(self) -> Settings:

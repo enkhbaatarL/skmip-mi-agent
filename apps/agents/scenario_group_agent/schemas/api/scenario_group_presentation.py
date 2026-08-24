@@ -96,7 +96,7 @@ class PresentationScenarioDesign(ApiModel):
 class PresentationSections(ApiModel):
     event_analysis: PresentationMarkdownSection
     scenario_design: PresentationScenarioDesign
-    role_selection_rationale: PresentationMarkdownSection
+    role_selection_rationale: PresentationMarkdownSection | None
 
 
 class ScenarioGroupPresentationOut(ApiModel):

@@ -48,6 +48,7 @@ data:
     scenario_group_operation_stale_after_seconds: 120
     scenario_group_operation_reaper_interval_seconds: 30
     additional_dimension_stale_after_seconds: 240
+    hide_price_pressure: true
 
     agents:
       scenario_group_agent:

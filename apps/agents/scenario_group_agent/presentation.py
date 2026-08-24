@@ -59,7 +59,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v3"
+PRESENTATION_RENDERER_VERSION = "v4"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -399,6 +399,7 @@ def _display_order(template: dict[str, Any] | None) -> int:
 
 def build_scenario_group_presentation(
     *,
+    hide_price_pressure: bool,
     group: dict[str, Any],
     scenarios: list[dict[str, Any]],
     signposts: list[dict[str, Any]],
@@ -457,6 +458,7 @@ def build_scenario_group_presentation(
         scenarios=scenarios,
         definitions=definitions,
         engine_version=engine_version,
+        hide_price_pressure=hide_price_pressure,
     )
     warnings.extend(cell_warnings)
     dimension_status = "ready" if definitions else _nonready_status(operation)
@@ -477,15 +479,23 @@ def build_scenario_group_presentation(
         diagnostics=diagnostics,
         operation=operation,
     )
-    role_markdown, role_status, role_evidence, role_warnings = _role_rationale_markdown(
-        engine_version=engine_version,
-        rows=rows,
-        dimension_definitions=[definition.model_dump(by_alias=True) for definition in definitions],
-        diagnostics=diagnostics,
-        operation=operation,
-        lever_labels=lever_labels or {},
-    )
-    warnings.extend(role_warnings)
+    role_section: PresentationMarkdownSection | None = None
+    if not hide_price_pressure:
+        role_markdown, role_status, role_evidence, role_warnings = _role_rationale_markdown(
+            engine_version=engine_version,
+            headers=headers,
+            rows=rows,
+            dimension_definitions=[definition.model_dump(by_alias=True) for definition in definitions],
+            diagnostics=diagnostics,
+            operation=operation,
+            lever_labels=lever_labels or {},
+        )
+        warnings.extend(role_warnings)
+        role_section = PresentationMarkdownSection(
+            status=role_status,
+            evidence_level=role_evidence,
+            markdown=role_markdown,
+        )
     operation_out = (
         PresentationOperation(
             operation_id=operation.operation_id,
@@ -523,11 +533,7 @@ def build_scenario_group_presentation(
                     rows=rows,
                 ),
             ),
-            role_selection_rationale=PresentationMarkdownSection(
-                status=role_status,
-                evidence_level=role_evidence,
-                markdown=role_markdown,
-            ),
+            role_selection_rationale=role_section,
         ),
     )
 
@@ -743,6 +749,7 @@ def _presentation_table(
     scenarios: list[dict[str, Any]],
     definitions: list[PresentationDimensionDefinition],
     engine_version: str,
+    hide_price_pressure: bool,
 ) -> tuple[list[PresentationScenarioHeader], list[PresentationScenarioRow], list[str]]:
     headers = [
         PresentationScenarioHeader(key=definition.dimension_id, label=definition.label, display_order=index)
@@ -778,17 +785,34 @@ def _presentation_table(
                 display_order=int(scenario.get("display_order", scenario.get("displayOrder")) or 0),
                 title=str(scenario.get("title") or ""),
                 narrative=_optional_text(scenario.get("narrative")),
-                scenario_role=_optional_text(scenario.get("scenario_role", scenario.get("scenarioRole"))),
+                scenario_role=(
+                    None
+                    if hide_price_pressure
+                    else _optional_text(scenario.get("scenario_role", scenario.get("scenarioRole")))
+                ),
                 baseline_yn=_optional_text(scenario.get("baseline_yn", scenario.get("baselineYn"))),
-                pressure_target="JKM" if engine_version in {"v2", "v3", "v4"} else None,
-                pressure_band=_optional_text(
-                    scenario.get("global_pressure_band", scenario.get("pressure_band", scenario.get("pressureBand")))
+                pressure_target=(
+                    None if hide_price_pressure else ("JKM" if engine_version in {"v2", "v3", "v4"} else None)
+                ),
+                pressure_band=(
+                    None
+                    if hide_price_pressure
+                    else _optional_text(
+                        scenario.get(
+                            "global_pressure_band",
+                            scenario.get("pressure_band", scenario.get("pressureBand")),
+                        )
+                    )
                 ),
                 probability_score=float(probability) if probability is not None else None,
-                pressure_rationale=_optional_text(
-                    scenario.get(
-                        "global_pressure_rationale",
-                        scenario.get("pressure_rationale", scenario.get("pressureRationale")),
+                pressure_rationale=(
+                    None
+                    if hide_price_pressure
+                    else _optional_text(
+                        scenario.get(
+                            "global_pressure_rationale",
+                            scenario.get("pressure_rationale", scenario.get("pressureRationale")),
+                        )
                     )
                 ),
                 cells=cells,
@@ -972,6 +996,7 @@ def _v4_event_markdown(events: list[dict[str, Any]], diagnostics: dict[str, Any]
 def _role_rationale_markdown(
     *,
     engine_version: str,
+    headers: Sequence[PresentationScenarioHeader],
     rows: list[PresentationScenarioRow],
     dimension_definitions: Sequence[Mapping[str, Any]],
     diagnostics: dict[str, Any],
@@ -990,6 +1015,7 @@ def _role_rationale_markdown(
         "floor": "생성된 Scenario 중 JKM 압력대가 가장 낮은 Scenario",
     }
     lever_code_pattern = _lever_code_pattern(lever_labels)
+    display_order_by_dimension_id = {header.key: header.display_order for header in headers}
     for role in ("ceiling", "mixed", "floor"):
         row = role_rows.get(role)
         if row is None:
@@ -1019,21 +1045,21 @@ def _role_rationale_markdown(
         )
         raw_breakdown = _field(breakdown or {}, "pressure_breakdown", default={}) or {}
         if isinstance(raw_breakdown, dict) and raw_breakdown:
-            lines.extend(["", "#### Pressure 구성"])
+            lines.extend(["", "#### 분기 기준 설명"])
             for key, label in (
                 ("common_impact", "공통 영향"),
-                ("value_delta", "Dimension 값 차이"),
-                ("interaction_effect", "상호작용 효과"),
+                ("value_delta", "분기 상세 설명"),
+                ("interaction_effect", "이벤트 간 상호작용 효과"),
             ):
                 value = _field(raw_breakdown, key)
                 if value:
                     lines.append(f"- {label}: {_escape_lever_labels(value, lever_labels, lever_code_pattern)}")
-        lines.extend(["", "#### 적용된 Dimension 근거"])
+        lines.extend(["", "#### 분기별 선택 값 설명"])
         if row.cell_evidence:
             for dimension_id, cell in row.cell_evidence.items():
                 lines.extend(
                     [
-                        f"- {_escape(dimension_id)} — {_escape(cell.value_label)}",
+                        f"- {display_order_by_dimension_id.get(dimension_id, '')} — {_escape(cell.value_label)}",
                         f"  - 근거: {_escape_lever_labels(cell.rationale, lever_labels, lever_code_pattern)}",
                         f"  - 압력 기여: {_display_enum(cell.pressure_contribution)}",
                     ]

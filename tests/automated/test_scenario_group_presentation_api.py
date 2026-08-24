@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
+import yaml
 
 from apps.agents.scenario_group_agent.api import router as agent_router
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import ScenarioGroupService
@@ -12,6 +16,7 @@ from apps.agents.scenario_group_agent.presentation import (
     build_presentation_follow_up_request_bodies,
     build_scenario_group_presentation,
 )
+from apps.common.configs.config import Settings
 from apps.persistence.event.schema import EventPayload
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
@@ -161,6 +166,7 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     v4_group["generation_diagnostics"] = _v4_diagnostics()
 
     v3 = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=v3_group,
         scenarios=[_scenario(cell="d1_v1")],
         signposts=[],
@@ -168,6 +174,7 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
         operation=None,
     )
     v4 = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=v4_group,
         scenarios=[_scenario(cell="상승")],
         signposts=[],
@@ -178,10 +185,14 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     for result in (v3, v4):
         payload = result.model_dump(mode="json", by_alias=True)
         assert set(payload["sections"]) == {"eventAnalysis", "scenarioDesign", "roleSelectionRationale"}
-        assert payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cells"] == {"d1": "d1_v1"}
+        row = payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]
+        assert row["cells"] == {"d1": "d1_v1"}
+        assert row["scenarioRole"] == "ceiling"
+        assert row["pressureTarget"] == "JKM"
+        assert row["pressureBand"] == "strong_bullish"
+        assert row["pressureRationale"] == "stored rationale <script>"
         assert (
-            payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]["cellEvidence"]["d1"]["valueId"]
-            == "d1_v1"
+            row["cellEvidence"]["d1"]["valueId"] == "d1_v1"
         )
 
     assert v3.sections.scenario_design.dimension_definitions.items[0].values[0].rationale == (
@@ -274,6 +285,7 @@ def test_v4_value_description_is_derived_from_valid_lever_states() -> None:
     group["generation_diagnostics"] = _v4_diagnostics()
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[_scenario(cell="d1_v2")],
         signposts=[],
@@ -302,6 +314,7 @@ def test_historical_v4_dimension_without_rationale_remains_null() -> None:
     group["generation_diagnostics"] = _v4_diagnostics()
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[_scenario(cell="d1_v1")],
         signposts=[],
@@ -323,9 +336,9 @@ def test_v4_markdown_is_deterministic_escaped_and_reports_missing_mixed() -> Non
         "operation": None,
     }
 
-    first = build_scenario_group_presentation(**kwargs).model_dump_json(by_alias=True)
-    second = build_scenario_group_presentation(**kwargs).model_dump_json(by_alias=True)
-    result = build_scenario_group_presentation(**kwargs)
+    first = build_scenario_group_presentation(**kwargs, hide_price_pressure=False).model_dump_json(by_alias=True)
+    second = build_scenario_group_presentation(**kwargs, hide_price_pressure=False).model_dump_json(by_alias=True)
+    result = build_scenario_group_presentation(**kwargs, hide_price_pressure=False)
 
     assert first == second
     assert "<script>" not in result.sections.event_analysis.markdown
@@ -335,6 +348,39 @@ def test_v4_markdown_is_deterministic_escaped_and_reports_missing_mixed() -> Non
     assert result.sections.role_selection_rationale.markdown.index("### Ceiling") < (
         result.sections.role_selection_rationale.markdown.index("### Mixed")
     )
+
+
+def test_hidden_price_pressure_masks_role_section_and_scenario_row_fields() -> None:
+    group = _group("v4", [_v4_definition()])
+    group["generation_diagnostics"] = _v4_diagnostics()
+
+    with patch(
+        "apps.agents.scenario_group_agent.presentation._role_rationale_markdown",
+    ) as role_renderer:
+        result = build_scenario_group_presentation(
+            hide_price_pressure=True,
+            group=group,
+            scenarios=[_scenario(cell="d1_v1")],
+            signposts=[],
+            events=[_event(101)],
+            operation=None,
+        )
+
+    payload = result.model_dump(mode="json", by_alias=True)
+    row = payload["sections"]["scenarioDesign"]["scenarioTable"]["rows"][0]
+    assert payload["sections"]["roleSelectionRationale"] is None
+    assert {field: row[field] for field in ("scenarioRole", "pressureTarget", "pressureBand", "pressureRationale")} == {
+        "scenarioRole": None,
+        "pressureTarget": None,
+        "pressureBand": None,
+        "pressureRationale": None,
+    }
+    assert row["cellEvidence"]["d1"]["pressureContribution"] == "bullish"
+    assert (
+        payload["sections"]["scenarioDesign"]["dimensionDefinitions"]["items"][0]["values"][0]["pressureContribution"]
+        == "bullish"
+    )
+    role_renderer.assert_not_called()
 
 
 def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
@@ -351,6 +397,7 @@ def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
             "pressureBreakdown": {
                 "commonImpact": "regional_price_spread 경로",
                 "valueDelta": "inventory_condition을 반영",
+                "interactionEffect": "regional_price_spread와 inventory_condition이 함께 작동",
             },
         },
     ]
@@ -361,6 +408,7 @@ def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
     )
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[scenario],
         signposts=[],
@@ -375,8 +423,13 @@ def test_v4_role_rationale_uses_current_lever_display_labels() -> None:
 
     markdown = result.sections.role_selection_rationale.markdown
     assert "재고 여건을 통해 지역 가격 스프레드 경로" in markdown
+    assert "#### 분기 기준 설명" in markdown
     assert "공통 영향: 지역 가격 스프레드 경로" in markdown
-    assert "Dimension 값 차이: 재고 여건을 반영" in markdown
+    assert "분기 상세 설명: 재고 여건을 반영" in markdown
+    assert "이벤트 간 상호작용 효과: 지역 가격 스프레드와 재고 여건이 함께 작동" in markdown
+    assert "#### 분기별 선택 값 설명" in markdown
+    assert "- 1 — 상승" in markdown
+    assert "- d1 — 상승" not in markdown
     assert "근거: 액화설비 가용성 하락" in markdown
     assert "inventory_condition_extra" in markdown
     assert "unknown_lever" in markdown
@@ -416,6 +469,7 @@ def test_v4_role_rationale_keeps_breakdowns_with_dimension_combinations_after_ti
     floor["title"] = "상방 제목"
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[ceiling, floor],
         signposts=[],
@@ -452,6 +506,7 @@ def test_v4_role_rationale_omits_stale_pressure_breakdown_for_unmatched_combinat
     group["generation_diagnostics"] = diagnostics
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[_scenario(cell="d1_v1")],
         signposts=[],
@@ -460,9 +515,9 @@ def test_v4_role_rationale_omits_stale_pressure_breakdown_for_unmatched_combinat
     )
 
     markdown = result.sections.role_selection_rationale.markdown
-    assert "Pressure 구성" not in markdown
+    assert "분기 기준 설명" not in markdown
     assert "다른 조합 근거" not in markdown
-    assert "적용된 Dimension 근거" in markdown
+    assert "분기별 선택 값 설명" in markdown
 
 
 def test_running_v4_projection_moves_partial_to_ready_with_snapshot_revision() -> None:
@@ -485,6 +540,7 @@ def test_running_v4_projection_moves_partial_to_ready_with_snapshot_revision() -
     group = _group("v4", [])
 
     partial = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[],
         signposts=[],
@@ -492,6 +548,7 @@ def test_running_v4_projection_moves_partial_to_ready_with_snapshot_revision() -
         operation=_operation(revision=1, presentation_snapshot=analysis_snapshot),
     )
     ready = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[],
         signposts=[],
@@ -519,6 +576,7 @@ def test_v1_observed_fallback_does_not_invent_role_pressure_or_rationale() -> No
     scenario["global_pressure_rationale"] = None
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[scenario],
         signposts=[],
@@ -558,6 +616,7 @@ def test_v1_stored_value_description_is_not_promoted_to_generated_rationale() ->
     )
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[_scenario(cell="short", role="")],
         signposts=[],
@@ -577,6 +636,7 @@ def test_v1_confirmation_snapshot_precedes_current_template_and_observed_values(
     scenario["dimension_values"] = {"duration": "현재 값"}
 
     result = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[scenario],
         signposts=[],
@@ -645,7 +705,7 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
         )
 
     assert first.status_code == 200
-    assert first.json()["rendererVersion"] == "v3"
+    assert first.json()["rendererVersion"] == "v4"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""
@@ -683,10 +743,89 @@ def test_presentation_etag_changes_with_lever_display_labels() -> None:
     assert second.headers["etag"] != first.headers["etag"]
 
 
+def test_presentation_etag_changes_when_hide_price_pressure_changes() -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    operation = _operation(status="succeeded", revision=4)
+    context = {
+        "group": _group("v4", [_v4_definition()]),
+        "scenarios": [_scenario(cell="d1_v1")],
+        "signposts": [],
+        "events": [_event(101)],
+        "operation": operation,
+        "lever_labels": {},
+        "legacy_template_dimensions": [],
+        "legacy_snapshot_dimension_values": [],
+    }
+    context["group"]["generation_diagnostics"] = _v4_diagnostics()
+
+    with (
+        patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context),
+        patch(
+            "apps.agents.scenario_group_agent.routers.scenario_groups.get_settings",
+            side_effect=[
+                SimpleNamespace(hide_price_pressure=False),
+                SimpleNamespace(hide_price_pressure=True),
+            ],
+        ),
+    ):
+        client = TestClient(app)
+        visible = client.get("/scenario-groups/120/presentation")
+        hidden = client.get(
+            "/scenario-groups/120/presentation",
+            headers={"If-None-Match": visible.headers["etag"]},
+        )
+
+    assert visible.status_code == 200
+    assert visible.json()["sections"]["roleSelectionRationale"] is not None
+    assert hidden.status_code == 200
+    assert hidden.json()["sections"]["roleSelectionRationale"] is None
+    assert hidden.headers["etag"] != visible.headers["etag"]
+
+
+@pytest.mark.parametrize("endpoint", ["validation", "signposts"])
+@pytest.mark.parametrize("field", ["scenarioRole", "pressureTarget", "pressureBand", "pressureRationale"])
+@pytest.mark.parametrize("value", [None, "pressure-value"])
+def test_follow_up_apis_reject_pressure_fields(endpoint: str, field: str, value: str | None) -> None:
+    app = FastAPI()
+    app.include_router(agent_router)
+    payload = {
+        "userId": 10603,
+        "table": {
+            "headers": [{"key": "d1", "label": "수급 방향", "displayOrder": 1}],
+            "rows": [
+                {
+                    "scenarioId": 2056,
+                    "displayOrder": 1,
+                    "title": "Scenario",
+                    "cells": {"d1": "d1_v1"},
+                    field: value,
+                },
+            ],
+        },
+    }
+
+    response = TestClient(app).post(f"/scenario-groups/120/{endpoint}", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_hide_price_pressure_defaults_and_deployment_yaml_values_are_true() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    app_config = yaml.safe_load((repo_root / "envs" / "config.yaml").read_text(encoding="utf-8"))
+    configmap = yaml.safe_load((repo_root / "devops" / "k8s" / "configmap.yaml").read_text(encoding="utf-8"))
+    mounted_config = yaml.safe_load(configmap["data"]["config.yaml"])
+
+    assert Settings.model_fields["hide_price_pressure"].default is True
+    assert app_config["hide_price_pressure"] is True
+    assert mounted_config["hide_price_pressure"] is True
+
+
 def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
     group = _group("v4", [_v4_definition()])
     group["generation_diagnostics"] = _v4_diagnostics()
     presentation = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=group,
         scenarios=[_scenario(cell="d1_v1")],
         signposts=[],
@@ -721,6 +860,7 @@ def test_follow_up_request_bodies_project_only_editable_table_fields() -> None:
 
 def test_follow_up_request_bodies_are_null_until_scenario_table_is_ready() -> None:
     presentation = build_scenario_group_presentation(
+        hide_price_pressure=False,
         group=_group("v4", []),
         scenarios=[],
         signposts=[],
@@ -746,6 +886,7 @@ def test_follow_up_signpost_draft_always_includes_table_for_all_engine_versions(
 
     for version in ("v1", "v2", "v3", "v4"):
         presentation = build_scenario_group_presentation(
+            hide_price_pressure=False,
             group=_group(version, [definition]),
             scenarios=[_scenario(cell="d1_v1")],
             signposts=[],
@@ -777,7 +918,17 @@ def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selecti
     }
     context["group"]["generation_diagnostics"] = _v4_diagnostics()
 
-    with patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context) as load:
+    with (
+        patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context) as load,
+        patch(
+            "apps.agents.scenario_group_agent.routers.scenario_generation_sync.get_settings",
+            return_value=SimpleNamespace(hide_price_pressure=False),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.routers.scenario_generation_sync.build_scenario_group_presentation",
+            wraps=build_scenario_group_presentation,
+        ) as build_presentation,
+    ):
         response = TestClient(app).get(
             "/scenario-groups/120/presentation/follow-up-request-bodies",
             params={"userId": 10603, "operationId": operation.operation_id},
@@ -795,6 +946,7 @@ def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selecti
     assert load.call_args_list[0].kwargs == {"operation_id": operation.operation_id}
     assert load.call_args_list[1].args == (120,)
     assert load.call_args_list[1].kwargs == {"operation_id": None}
+    assert [call.kwargs["hide_price_pressure"] for call in build_presentation.call_args_list] == [False, False]
 
 
 def test_scenario_group_table_view_returns_metadata_and_labeled_dimension_keys() -> None:
