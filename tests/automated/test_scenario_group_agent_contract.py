@@ -738,7 +738,6 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
             mi_event_id=20,
             event_type_l2_id=30,
         )
-        group_repository.create_confirmation_snapshot.return_value = 500
         group_repository.model_to_dict.return_value = {
             "scenario_group_id": 10,
             "mi_event_id": 20,

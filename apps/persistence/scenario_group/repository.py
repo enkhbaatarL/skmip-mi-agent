@@ -9,9 +9,6 @@ from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.scenario_group.models import (
     MiScenarioGroupEventModel,
     MiScenarioGroupModel,
-    MiScenarioSnapModel,
-    MiSignpostSnapModel,
-    MiSnapshotModel,
 )
 from apps.persistence.signpost.models import MiSignpostModel
 
@@ -264,45 +261,7 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             .scalars()
             .all()
         )
-        snapshot_ids = list(
-            self.session.execute(
-                select(MiSnapshotModel.snapshot_id).where(
-                    MiSnapshotModel.scenario_group_id == scenario_group_id,
-                )
-            )
-            .scalars()
-            .all()
-        )
-        scenario_snap_ids = (
-            list(
-                self.session.execute(
-                    select(MiScenarioSnapModel.scenario_snap_id).where(
-                        MiScenarioSnapModel.snapshot_id.in_(snapshot_ids),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if snapshot_ids
-            else []
-        )
-
         counts = {
-            "tmm_mi_signpost_snap_m": self._delete_count(
-                delete(MiSignpostSnapModel).where(MiSignpostSnapModel.snapshot_id.in_(snapshot_ids))
-            )
-            if snapshot_ids
-            else 0,
-            "tmm_mi_scenario_snap_m": self._delete_count(
-                delete(MiScenarioSnapModel).where(MiScenarioSnapModel.scenario_snap_id.in_(scenario_snap_ids))
-            )
-            if scenario_snap_ids
-            else 0,
-            "tmm_mi_snapshot_m": self._delete_count(
-                delete(MiSnapshotModel).where(MiSnapshotModel.snapshot_id.in_(snapshot_ids))
-            )
-            if snapshot_ids
-            else 0,
             "tmm_mi_signpost_m": self._delete_count(
                 delete(MiSignpostModel).where(MiSignpostModel.scenario_id.in_(scenario_ids))
             )
@@ -323,115 +282,6 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
     def _delete_count(self, stmt: Any) -> int:
         result = self.session.execute(stmt)
         return int(result.rowcount or 0)
-
-    def create_confirmation_snapshot(
-        self,
-        scenario_group_id: int,
-        scenarios: list[MiScenarioModel],
-        signposts_by_scenario_id: dict[int, list[MiSignpostModel]],
-        stage_no: int = 2,
-        phase_code: str = "AFTER",
-    ) -> int:
-        existing = (
-            self.session.execute(
-                select(MiSnapshotModel).where(
-                    MiSnapshotModel.scenario_group_id == scenario_group_id,
-                    MiSnapshotModel.stage_no == stage_no,
-                    MiSnapshotModel.phase_code == phase_code,
-                    MiSnapshotModel.del_yn == "N",
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if existing is not None:
-            return int(existing.snapshot_id)
-
-        snapshot = MiSnapshotModel(
-            scenario_group_id=scenario_group_id,
-            stage_no=stage_no,
-            phase_code=phase_code,
-        )
-        self.session.add(snapshot)
-        self.session.flush()
-
-        scenario_snap_ids: dict[int, int] = {}
-        for scenario in scenarios:
-            scenario_snap = MiScenarioSnapModel(
-                snapshot_id=snapshot.snapshot_id,
-                src_scenario_id=scenario.scenario_id,
-                dimension_values=self._to_snapshot_dimension_values(scenario.dimension_values),
-                probability_score=scenario.probability_score,
-                baseline_yn=scenario.baseline_yn,
-                global_pressure_band=scenario.global_pressure_band,
-                scenario_role=scenario.scenario_role,
-                global_pressure_rationale=scenario.global_pressure_rationale,
-                related_markets=scenario.related_markets or [],
-            )
-            self.session.add(scenario_snap)
-            self.session.flush()
-            scenario_snap_ids[int(scenario.scenario_id)] = int(scenario_snap.scenario_snap_id)
-
-        for scenario in scenarios:
-            scenario_snap_id = scenario_snap_ids[int(scenario.scenario_id)]
-            for signpost in signposts_by_scenario_id.get(int(scenario.scenario_id), []):
-                self.session.add(
-                    MiSignpostSnapModel(
-                        snapshot_id=snapshot.snapshot_id,
-                        scenario_snap_id=scenario_snap_id,
-                        src_signpost_id=signpost.signpost_id,
-                        label=signpost.label,
-                        probability_direction_code=signpost.probability_direction_code,
-                        probability_impact_score=signpost.probability_impact_score,
-                    )
-                )
-
-        self.session.flush()
-        return int(snapshot.snapshot_id)
-
-    def fetch_latest_confirmation_dimension_values(self, scenario_group_id: int) -> list[list[dict[str, Any]]]:
-        snapshot = (
-            self.session.execute(
-                select(MiSnapshotModel)
-                .where(
-                    MiSnapshotModel.scenario_group_id == scenario_group_id,
-                    MiSnapshotModel.stage_no == 2,
-                    MiSnapshotModel.phase_code == "AFTER",
-                    MiSnapshotModel.del_yn == "N",
-                )
-                .order_by(MiSnapshotModel.crt_dtm.desc(), MiSnapshotModel.snapshot_id.desc())
-                .limit(1)
-            )
-            .scalars()
-            .first()
-        )
-        if snapshot is None:
-            return []
-        rows = (
-            self.session.execute(
-                select(MiScenarioSnapModel)
-                .where(MiScenarioSnapModel.snapshot_id == snapshot.snapshot_id)
-                .order_by(MiScenarioSnapModel.scenario_snap_id)
-            )
-            .scalars()
-            .all()
-        )
-        return [
-            [item for item in (row.dimension_values or []) if isinstance(item, dict) and item.get("dim_key")]
-            for row in rows
-        ]
-
-    @staticmethod
-    def _to_snapshot_dimension_values(raw_dimension_values: Any) -> list[dict[str, Any]]:
-        if isinstance(raw_dimension_values, list):
-            return [item for item in raw_dimension_values if isinstance(item, dict) and item.get("dim_key")]
-        if isinstance(raw_dimension_values, dict):
-            return [
-                {"dim_key": str(dim_key), "value": value}
-                for dim_key, value in raw_dimension_values.items()
-                if str(dim_key).strip()
-            ]
-        return []
 
     def model_to_dict(self, group: MiScenarioGroupModel, *, include_del_yn: bool = False) -> dict[str, Any]:
         event_relation = self.fetch_single_active_group_event(int(group.scenario_group_id))

@@ -4,7 +4,7 @@
 
 이 문서는 Scenario Group Agent가 읽고 쓰는 table의 관계와 업무상 중요한 컬럼을 설명한다. 실제 column type,
 index, constraint mapping은 `apps/persistence/<domain>/models.py`가 런타임 정본이다. DB migration의 정본은
-별도 `skmip-mi-agent-mgmt` 저장소의 Alembic이며, 현재 Scenario 관련 기준 revision은 0022다.
+별도 `skmip-mi-agent-mgmt` 저장소의 Alembic이며, 현재 Scenario 관련 기준 revision은 0026이다.
 
 Agent flow나 node에서 SQL을 직접 실행하지 않는다.
 
@@ -25,9 +25,6 @@ erDiagram
     SCENARIO ||--o{ SIGNPOST : has
     SCENARIO_GROUP ||--o{ OPERATION : runs
     OPERATION ||--o{ OPERATION_EVENT : emits
-    SCENARIO_GROUP ||--o{ SNAPSHOT : confirms
-    SNAPSHOT ||--o{ SCENARIO_SNAP : freezes
-    SCENARIO_SNAP ||--o{ SIGNPOST_SNAP : freezes
     MODEL_IMPACT_LEVER }o--o{ SCENARIO_GROUP : grounds_v4
 ```
 
@@ -155,18 +152,7 @@ operation별 append-only SSE history다. `(operation_id, sequence)`는 유일하
 Scenario Group, create operation, 첫 `accepted` event는 같은 transaction으로 생성한다. 검증된 중간 projection과
 `section_ready`도 같은 transaction에서 revision을 맞춘다.
 
-## 5. Confirmation snapshot
-
-| Table | 역할 |
-| --- | --- |
-| `tmm_mi_snapshot_m` | Group의 확정 단계 snapshot master |
-| `tmm_mi_scenario_snap_m` | Scenario 조합·확률·role·pressure 동결 |
-| `tmm_mi_signpost_snap_m` | Signpost label·strength·impact·keyword 동결 |
-
-Confirmation은 request와 현재 DB의 Scenario ID, header 순서, Dimension/Value 조합이 같은지 확인한 뒤
-snapshot을 만든다. stale request가 현재 Dimension 조합을 덮어쓰지 못하게 한다.
-
-## 6. Dimension value mapping
+## 5. Dimension value mapping
 
 `tmm_mi_dimension_value_mapping_m`은 legacy v2/v3 자유값을 model parameter source에 연결하는 proposal과
 승인 상태를 저장한다. 주요 값은 `dimension_value_id`, `dimension_id`, `display_value`,
@@ -190,7 +176,7 @@ v4 closed enum Dimension과 `leverStates`는 이 자유값 mapping을 생성 경
 - Presentation 중간 갱신: operation projection + revision + `section_ready`
 - create 완료: Group/Scenario 일괄 저장 후 operation terminal event
 - Signpost prepare: Validation fingerprint 재검사 + Change Set 적용 + operation 생성
-- Confirmation: stale 검사 + 변경 적용 + snapshot 생성
+- Confirmation: stale 검사 + Scenario·Signpost 변경 적용 + Group·Scenario 상태 변경
 - soft delete: active operation 부재와 소유권 확인 후 Group 상태 변경
 
 긴 LLM 호출 동안 DB row lock을 유지하지 않는다. prepare와 최종 apply에서 fingerprint 또는 row lock으로

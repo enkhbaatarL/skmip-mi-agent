@@ -3331,7 +3331,6 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
     )
     group_repository = Mock()
     group_repository.fetch_by_id.return_value = group
-    group_repository.create_confirmation_snapshot.return_value = 500
     group_repository.model_to_dict.return_value = {
         "scenario_group_id": 10,
         "status": "created",
@@ -3400,7 +3399,6 @@ def test_confirmation_uses_stored_multi_event_dimensions() -> None:
     scenario_update = scenario_repository.update_from_payload.call_args.args[1]
     assert "dimension_values" not in scenario_update
     legacy_cell_mapping.assert_not_called()
-    group_repository.create_confirmation_snapshot.assert_called_once()
     session.commit.assert_called_once()
 
 

@@ -107,8 +107,8 @@ async def delete_signposts(
     description=(
         "로컬 개발 환경에서 테스트 데이터를 정리하기 위한 API입니다. "
         "운영 또는 일반 업무 플로우에서는 사용하지 마세요. "
-        "시나리오 그룹과 하위 시나리오/signpost를 `del_yn='Y'`로 soft delete하며, "
-        "snapshot 계열 테이블은 보존합니다. Swagger Authorize를 사용하거나 "
+        "시나리오 그룹과 하위 시나리오/signpost를 `del_yn='Y'`로 soft delete합니다. "
+        "Swagger Authorize를 사용하거나 "
         "`Authorization: Bearer <token>` 헤더에 "
         "`scenario_group_admin_bearer_tokens`에 등록된 토큰을 전달해야 합니다."
     ),
@@ -133,7 +133,7 @@ async def delete_scenario_group(
     description=(
         "로컬 개발 환경에서 테스트 데이터를 물리 삭제하기 위한 API입니다. "
         "운영 또는 일반 업무 플로우에서는 사용하지 마세요. "
-        "`confirm=true`가 필요하며, snapshot/signpost/scenario/scenario group 관련 "
+        "`confirm=true`가 필요하며, signpost/scenario/scenario group 관련 "
         "테이블을 FK 순서에 맞춰 hard delete합니다. Swagger Authorize를 사용하거나 "
         "`Authorization: Bearer <token>` 헤더에 "
         "`scenario_group_admin_bearer_tokens`에 등록된 토큰을 전달해야 합니다."

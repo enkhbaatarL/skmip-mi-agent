@@ -19,7 +19,6 @@ class ConfirmGenerationState(BaseFlowState):
     signposts: list[SignpostPayload] = Field(default_factory=list)
     request_scenario_group: ConfirmScenarioGroupState | None = None
     request_table: ScenarioTableState | None = None
-    snapshot_id: int | None = None
     confirmed: bool = False
 
 
