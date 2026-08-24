@@ -1,142 +1,240 @@
-# Scenario Group Agent 개요
+# Scenario Group Agent 처음 이해하기
 
-## 한눈에 보기
+## 이 Agent는 무엇을 하나요?
 
-Scenario Group Agent는 MI Event 1~5개를 근거로 LNG 시장 Scenario Group을 만들고, 사용자가 편집한
-Scenario를 검증한 뒤 Scenario별 Signpost를 생성한다. 현재 신규 생성의 정본은 v4
-`multi_event_model_lever_dimensions` 방식이다.
+Scenario Group Agent는 하나 이상의 시장 이벤트를 보고, 앞으로 상황이 어떻게 달라질 수 있는지를 몇 가지
+경우로 나누어 보여주는 프로그램이다.
 
-```text
-Event 선택
-  → v4 Scenario Group 생성
-  → Scenario 검토·편집
-  → Validation
-  → Signpost 생성
-  → Confirmation
-```
+예를 들어 다음 뉴스가 들어왔다고 생각해 보자.
 
-FastAPI 진입점은 저장소 루트의 `main.py`다. Agent router는
-`apps/agents/scenario_group_agent/api.py`에서 조립한다.
+> 주요 LNG 생산시설의 가동이 중단됐고 복구 시점은 아직 정해지지 않았다.
 
-## 문서 읽기 순서
+Agent는 이 뉴스를 그대로 요약하는 데서 끝나지 않는다. 앞으로의 결과를 바꿀 질문을 찾는다.
 
-| 순서 | 문서 | 대상 |
-| ---: | --- | --- |
-| 1 | 이 문서 | PL, 신규 담당자, 협업 Agent 개발자 |
-| 2 | [API Spec](02_SCENARIO_GROUP_AGENT_API_SPEC.md) | Client·Platform·API 개발자 |
-| 3 | [v4 Flow](03_SCENARIO_GROUP_AGENT_FLOW.md) | Scenario Agent 개발자 |
-| 4 | [DB Spec](04_SCENARIO_GROUP_AGENT_DB_SPEC.md) | Agent·DB·운영 담당자 |
-| 5 | [테스트와 품질 평가](05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md) | 개발·QA·품질 담당자 |
+- 생산시설이 언제 복구되는가?
+- 다른 지역의 공급으로 부족분을 채울 수 있는가?
+- 높은 가격 때문에 수요가 줄어드는가?
 
-공통 package 경계는 [Project Directory Structure](../../architectures/project_directory_structure.md),
-Python 구현 규칙은 [Python conventions](../../../.claude/rules/python-conventions.md)를 먼저 따른다.
+그런 다음 질문별 답을 조합해 다음과 같은 미래 상황을 만든다.
 
-## 책임과 경계
+- 빠른 복구와 대체 공급 확보
+- 복구 지연이지만 수요 감소로 충격 완화
+- 장기 중단과 대체 공급 부족
 
-Scenario Group Agent가 소유하는 책임은 다음과 같다.
+이렇게 만든 여러 미래 상황을 한 묶음으로 보여주는 것이 Scenario Group이다.
 
-- Event와 Model Impact Lever를 근거로 v4 Dimension과 Scenario를 생성한다.
-- Scenario Group 생성 작업의 operation, SSE event, Presentation projection을 관리한다.
-- 사용자가 편집한 Scenario table을 검증하고 통과 가능한 Change Set을 만든다.
-- 최신 Validation 결과를 적용하고 Scenario별 Signpost를 생성한다.
-- Scenario Group 조회, soft delete, Confirmation API를 제공한다.
-
-다음 책임은 다른 영역에 있다.
-
-- ORM과 table 단위 query: `apps/persistence/<domain>/`
-- 공통 설정·예외·runtime 기반: `apps/common/`
-- callback, LLM, MLflow 등 외부 연동: `apps/connectors/`
-- Model Parameter proposal 계산: `apps/agents/model_parameter_agent/`
-- 가격 해석: `apps/agents/interpret_agent/`
-
-## Package 지도
+## 결과를 만드는 전체 순서
 
 ```text
-apps/agents/scenario_group_agent/
-├── api.py
-├── routers/
-│   ├── scenario_groups.py
-│   ├── scenario_group_stream.py
-│   ├── scenario_generation_sync.py
-│   ├── multi_event_scenario_group_sync.py
-│   └── events.py
-├── flows/
-│   ├── create_multi_event_scenarios/
-│   ├── add_dimension/
-│   ├── validate_scenarios/
-│   ├── create_signposts/
-│   └── confirm_generation/
-├── subgraphs/
-├── persistence/
-├── schemas/
-├── prompts/
-├── presentation.py
-└── runtime.py
+1. 분석할 Event를 고른다
+   ↓
+2. Agent가 여러 미래 Scenario를 만든다
+   ↓
+3. 사용자가 Scenario를 읽고 필요하면 수정한다
+   ↓
+4. Agent가 수정한 내용에 모순이나 중복이 없는지 검사한다
+   ↓
+5. 각 Scenario가 현실화되고 있음을 알려 줄 Signpost를 만든다
+   ↓
+6. 사용자가 최종 결과를 확정한다
 ```
 
-| 위치 | 확인할 내용 |
+각 단계는 서로 다른 목적을 가진다. Scenario 생성이 성공했다고 검사가 끝난 것도 아니고, Signpost가 만들어졌다고
+최종 확정된 것도 아니다.
+
+## 먼저 알아둘 용어
+
+### Event
+
+Scenario 분석의 출발점이 되는 뉴스나 시장 사건이다. 생산시설 중단, 제재, 수요 전망 변경, 이상기후 등이
+예가 될 수 있다. 한 번에 Event 1~5개를 함께 분석할 수 있다.
+
+### Dimension
+
+미래를 나누는 핵심 질문 또는 판단 기준이다. 위 예시의 `생산시설 복구 시점`, `대체 공급 가능성`이
+Dimension이다.
+
+각 Dimension에는 선택할 수 있는 값이 있다.
+
+```text
+Dimension: 생산시설 복구 시점
+값 1: 2주 안에 복구
+값 2: 1~2개월 뒤 복구
+값 3: 장기 중단
+```
+
+### Scenario
+
+여러 Dimension 값을 한 개씩 골라 만든 하나의 미래 상황이다. 제목뿐 아니라 어떤 조건이 결합되었는지,
+왜 그런 시장 결과가 예상되는지를 함께 가진다.
+
+### Scenario Group
+
+같은 Event를 바탕으로 만든 Scenario 여러 개의 묶음이다. 현재 방식에서는 보통 Scenario 3~5개를 만든다.
+
+### Baseline
+
+여러 Scenario 중 현재 정보로 보았을 때 가장 가능성이 높다고 판단한 대표 Scenario다. 한 Group에는 정확히
+하나만 둔다.
+
+### JKM 가격 압력
+
+JKM은 아시아 LNG 가격을 나타내는 대표 지표다. Agent는 정확한 미래 가격을 예측하지 않는다. 대신 각
+Scenario가 JKM 가격을 올리는 쪽인지, 내리는 쪽인지, 그 압력이 얼마나 강한지를 표시한다.
+
+### Signpost
+
+어떤 Scenario가 실제로 벌어지고 있는지 판단하기 위해 앞으로 관찰할 신호다.
+
+예를 들어 `빠른 복구` Scenario의 Signpost는 다음과 같을 수 있다.
+
+- 운영사가 재가동 일정을 공식 발표한다.
+- 실제 생산량이 중단 전 수준에 가까워진다.
+
+Signpost는 Scenario 설명을 반복하는 문장이 아니라 뉴스, 수치, 공식 발표 등으로 확인할 수 있어야 한다.
+
+### Validation
+
+사용자가 Scenario 표를 수정한 뒤 내용에 문제가 없는지 검사하는 단계다. 중복 Scenario, 빠진 값, 서로
+양립하기 어려운 조건 등을 확인한다. 경고만 있는 경우에는 계속 진행할 수 있고, 심각한 문제가 있으면 수정 후
+다시 검사해야 한다.
+
+### Confirmation
+
+Scenario와 Signpost를 더 이상 초안이 아닌 최종 결과로 확정하는 단계다.
+
+## Model Impact Lever는 왜 필요한가요?
+
+Event에서 가격 결과로 바로 뛰어가면 근거가 약한 Scenario가 만들어질 수 있다. 그래서 Agent는 Event가 LNG
+시장에 영향을 주는 경로를 중간에 확인한다.
+
+예를 들면 다음과 같다.
+
+```text
+생산시설 중단
+  → 공급 가능한 LNG 물량 감소
+  → 아시아로 들어오는 물량 경쟁 증가
+  → JKM 상승 압력
+```
+
+Model Impact Lever는 `생산량`, `수요`, `운송`, `재고`처럼 Event와 시장 결과를 연결할 때 참고하는 영향 경로
+목록이다. Agent는 이 목록을 이용해 어떤 불확실성을 Scenario의 Dimension으로 만들지 판단한다.
+
+처음 문서를 읽는 사람은 Lever의 DB 구조까지 알 필요는 없다. 우선 `Event가 시장에 영향을 미치는 과정을
+빠뜨리지 않기 위한 중간 연결고리`라고 이해하면 된다.
+
+## v4는 무엇인가요?
+
+v4는 현재 사용하는 네 번째 Scenario 생성 방식의 이름이다.
+
+v4는 다음 정보를 함께 사용한다.
+
+- 선택한 Event에 실제로 적혀 있는 사실
+- Event끼리 서로 영향을 키우거나 줄이는 관계
+- LNG 시장에 영향을 전달하는 Model Impact Lever
+- 아직 결과가 정해지지 않은 핵심 질문
+
+이 정보를 이용해 Dimension 3~6개와 Scenario 3~5개를 만든다. v2와 v3는 이전 생성 방식을 비교하거나 과거
+데이터를 확인할 때만 사용한다. 새로운 기능이나 품질 개선은 v4를 기준으로 이해하면 된다.
+
+## 사용자는 단계별로 무엇을 보나요?
+
+### 1. 생성 중
+
+Scenario 생성은 시간이 오래 걸릴 수 있다. 화면은 다음과 같은 진행 상황을 순서대로 받는다.
+
+- 요청을 접수했음
+- Event를 분석하고 있음
+- 미래를 나눌 Dimension을 설계하고 있음
+- Scenario를 만들고 있음
+- 결과를 저장하고 있음
+- 생성이 완료되었거나 실패했음
+
+화면 연결이 잠시 끊겨도 서버의 생성 작업은 계속될 수 있다. 화면은 작업 번호를 이용해 현재 상태를 다시
+확인하고, 놓친 진행 메시지를 이어서 받을 수 있다.
+
+### 2. 생성 완료 후
+
+사용자는 다음 내용을 본다.
+
+- 선택한 Event와 주요 영향 분석
+- Scenario를 나누는 Dimension과 선택값
+- Scenario별 제목, 설명, 확률, Baseline 여부
+- Scenario별 JKM 가격 압력과 판단 근거
+- 대표 Scenario를 선택한 이유
+
+Agent는 처음 선택하지 않은 질문을 Additional Dimension 후보로 제안할 수도 있다. 사용자는 필요할 때 이
+후보를 Scenario 표에 추가하고 다시 Validation을 실행한다.
+
+### 3. 수정과 Validation
+
+사용자는 Scenario 제목이나 Dimension 값 조합을 수정하거나 Scenario를 추가·삭제할 수 있다. Validation은
+수정 결과가 다음 단계로 진행 가능한지 알려 준다.
+
+| 결과 | 사용자 의미 |
 | --- | --- |
-| `routers/` | endpoint, 즉시 응답, background/stream transport |
-| `flows/*/flow.py` | prepare, graph 조립, inline/background 실행 |
-| `flows/*/nodes.py` | 단계별 state 변경과 검증·저장 호출 |
-| `prompts/` | LLM 입력과 structured output 계약 |
-| `persistence/` | 여러 repository를 조합하는 Agent 유스케이스 |
-| `presentation.py` | 상세·Presentation·후속 요청 body read model |
-| `runtime.py` | create producer, EventHub, heartbeat, recovery |
+| 통과 | Signpost 생성으로 진행 가능 |
+| 경고와 함께 통과 | 경고를 읽고 그대로 진행하거나 다시 수정 가능 |
+| 차단 | 표시된 문제를 수정한 뒤 다시 검사해야 함 |
 
-## v4 핵심 결정
+### 4. Signpost와 최종 확정
 
-- 생성 입력은 중복 없는 양의 정수 `miEventIds` 1~5개와 `userId`다.
-- canonical 생성 API는 `POST /scenario-groups`이며 응답 transport는 SSE다.
-- Event Type Template이 아니라 Event 사실과 `tmm_mi_model_impact_lever_m` catalog로 Dimension을 설계한다.
-- 최종 Dimension은 3~6개, Scenario는 3~5개다.
-- Scenario 가격 결과는 절대 가격이 아니라 JKM 기준 `pressureBand`와 근거다.
-- `probabilityScore`는 서버가 정수 백분율 합계 100으로 정규화하고 baseline은 정확히 하나다.
-- Event lineage는 Scenario Group master의 대표 Event 컬럼이 아니라
-  `tmm_mi_scenario_group_event_m` 관계가 정본이다.
-- create POST는 멱등하지 않다. timeout이나 stream 오류 뒤 동일 POST를 자동 재시도하지 않는다.
-- v2/v3는 비교와 과거 데이터 호환을 위한 경로다. 신규 생성·문서·개선의 기본 판단은 v4를 따른다.
+Validation을 통과하면 Agent가 각 Scenario의 Signpost를 만든다. 사용자가 Scenario와 Signpost를 최종 확인한
+뒤 Confirmation을 실행하면 전체 작업이 완료된다.
 
-## 실행 수명과 상태
+## 진행 상태를 읽는 법
 
-canonical create는 Scenario Group, operation, `accepted` event를 한 transaction으로 저장한 뒤 lifespan task
-runner에서 producer를 실행한다. SSE 연결이 끊겨도 producer는 계속되며 operation 조회와 재연결 stream으로
-복구한다.
+시스템 내부에는 현재 단계를 나타내는 영문 값이 저장된다.
 
-Validation과 Signpost는 즉시 접수 응답 후 FastAPI background task에서 처리하고 callback을 전송한다.
-v4에서는 두 작업도 operation과 heartbeat를 기록한다. Confirmation은 동기 처리한다.
-
-Scenario Group의 주요 stage는 다음 순서다.
-
-```text
-ready → scenario_created → scenario_validated → signpost_created → completed
-```
-
-Validation blocking 결과는 `scenario_created`에 남는다. Validation 실행 자체가 정상 종료됐더라도 콘텐츠가
-차단될 수 있으므로 HTTP 성공, operation 성공, `canProceed`를 구분해서 확인한다.
-
-## Source of truth
-
-| 궁금한 내용 | 우선 확인 위치 |
+| 시스템 값 | 사람이 이해할 의미 |
 | --- | --- |
-| 등록 endpoint | `api.py`, `routers/*.py` |
-| request/response 필드 | flow `api_schema.py`, `schemas/api/`, `schemas/endpoint.py` |
-| v4 생성 graph | `flows/create_multi_event_scenarios/v4_flow.py`, `v4_nodes.py` |
-| Validation 규칙 | `flows/validate_scenarios/v4_validation.py` |
-| Signpost context·graph | `flows/create_signposts/`, `subgraphs/signpost_generation/` |
-| DB table·column mapping | `apps/persistence/*/models.py` |
-| DB query | `apps/persistence/*/repository.py` |
-| 화면 read model | `presentation.py`, `schemas/api/scenario_group_presentation.py` |
-| 실행·품질 검증 | `tests/manual/`, `.claude/skills/scenario-*` |
+| `ready` | 생성 시작 전 준비 상태 |
+| `scenario_created` | Scenario 생성 완료 또는 Validation 수정 필요 |
+| `scenario_validated` | Validation 통과 |
+| `signpost_created` | Signpost 생성 완료 |
+| `completed` | 사용자가 최종 확정함 |
 
-문서와 코드가 다르면 코드를 먼저 확인하고, 의도된 변경이라면 같은 변경에서 문서를 갱신한다.
+`scenario_created`는 생성 성공 뒤에도, Validation에서 차단된 뒤에도 나타날 수 있다. 따라서 상태값만 보지
+말고 Validation 결과의 설명을 함께 확인한다.
 
-## 인수인계 체크리스트
+## 개발 문서에서 자주 나오는 기술 용어
 
-- 변경하려는 endpoint가 운영, 테스트, deprecated 중 어디에 속하는지 확인한다.
-- create 변경은 SSE event, Presentation snapshot, operation recovery까지 함께 검토한다.
-- Validation 변경은 `checks`, Change Set, fingerprint, Signpost 적용 시점을 함께 검토한다.
-- DB 접근은 Agent service와 공유 repository 경계를 지킨다.
-- callback body 변경은 Platform 수신 계약과 sync 응답을 함께 확인한다.
-- 기능 성공과 생성 품질을 분리해 테스트한다.
-- 운영 토큰, MLflow 계정, 개인 메모는 `local/` 또는 `*.local`에만 둔다.
+| 용어 | 쉬운 설명 |
+| --- | --- |
+| API | 화면이나 다른 시스템이 Agent에게 일을 요청하는 통로 |
+| endpoint | API 통로 하나의 주소와 기능 |
+| canonical API | 같은 목적의 API가 여러 개일 때 현재 표준으로 사용하는 API |
+| SSE | 서버가 긴 작업의 진행 메시지를 같은 연결로 계속 보내는 방식 |
+| callback | Agent 작업이 끝난 뒤 다른 시스템에 최종 결과를 다시 보내는 요청 |
+| operation | 생성·검증 같은 긴 작업 한 번을 추적하기 위한 실행 기록 |
+| Presentation | DB 내용을 화면에서 바로 쓰기 좋은 모양으로 정리한 조회 결과 |
+| sync API | 개발·테스트를 위해 요청 하나에서 작업 완료까지 기다리는 API |
+
+현재 표준 생성 API는 `POST /scenario-groups`다. 문서에서 `canonical 생성 API`라고 쓰면 이 주소를 뜻한다.
+처음 읽을 때는 주소를 외울 필요 없이 `화면에서 실제 Scenario 생성을 요청할 때 쓰는 현재 표준 통로`라고
+이해하면 된다.
+
+## 더 자세히 알고 싶다면
+
+| 궁금한 것 | 다음 문서 |
+| --- | --- |
+| 화면이나 다른 시스템이 무엇을 보내고 받는지 | [API Spec](02_SCENARIO_GROUP_AGENT_API_SPEC.md) |
+| Agent가 내부적으로 어떤 순서로 생각하고 저장하는지 | [v4 Flow](03_SCENARIO_GROUP_AGENT_FLOW.md) |
+| 어떤 DB table에 무엇이 저장되는지 | [DB Spec](04_SCENARIO_GROUP_AGENT_DB_SPEC.md) |
+| 자연어로 테스트를 요청하고 결과를 읽는 방법 | [테스트와 품질 평가](05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md) |
+| 공통 프로젝트 폴더와 코드 배치 원칙 | [Project Directory Structure](../../architectures/project_directory_structure.md) |
+
+## 코드를 맡은 사람이 처음 볼 위치
+
+개념을 이해한 뒤 실제 코드를 찾을 때는 다음 순서가 가장 빠르다.
+
+1. `main.py`: Scenario Group Agent 서버가 시작되는 곳
+2. `apps/agents/scenario_group_agent/api.py`: 사용하는 API 묶음을 등록하는 곳
+3. `apps/agents/scenario_group_agent/routers/`: API 요청을 받는 곳
+4. `apps/agents/scenario_group_agent/flows/`: 생성, Validation, Signpost의 처리 순서
+5. `apps/agents/scenario_group_agent/prompts/`: AI 모델에 전달하는 지시문
+6. `apps/agents/scenario_group_agent/persistence/`: Scenario 업무에 필요한 DB 처리를 묶은 곳
+7. `apps/persistence/`: 실제 DB table과 조회 코드
+
+코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md)와
+[Python conventions](../../../.claude/rules/python-conventions.md)를 함께 확인한다.
