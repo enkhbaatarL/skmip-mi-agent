@@ -11,8 +11,9 @@ description: MI Scenario Group Agent의 create/validation/signpost sync 결과�
 
 작업 전에 필요한 문서를 읽는다.
 
-- API body, callback, stage 전이를 변경하거나 해석할 때: `docs/architectures/scenario_group_agent_api_request_response.md`
-- graph, shared state, generation pipeline, validation flow를 변경하거나 해석할 때: `docs/architectures/scenario_group_agent_flow_pipeline.md`
+- API body, callback, stage 전이를 변경하거나 해석할 때: `docs/agents/scenario_group_agent/02_SCENARIO_GROUP_AGENT_API_SPEC.md`
+- graph, shared state, generation pipeline, validation flow를 변경하거나 해석할 때: `docs/agents/scenario_group_agent/03_SCENARIO_GROUP_AGENT_FLOW.md`
+- DB table, JSON column, 관계와 transaction을 변경하거나 해석할 때: `docs/agents/scenario_group_agent/04_SCENARIO_GROUP_AGENT_DB_SPEC.md`
 - 파일 배치, package boundary, endpoint-flow mapping을 변경할 때: `docs/architectures/project_directory_structure.md`
 - Python 코드 작성/수정 시: `.claude/rules/python-conventions.md`
 - 세부 평가 설계 확인이 필요할 때: `local/plan/15_evaluation_scenarios_claude.md`
