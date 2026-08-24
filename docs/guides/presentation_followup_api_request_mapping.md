@@ -236,4 +236,4 @@ Signpost body에 table을 포함하지만, v4 Signpost 서버 흐름은 최신 V
 - Validation / Signpost router:
   [`routers/scenario_groups.py`](../../apps/agents/scenario_group_agent/routers/scenario_groups.py)
 - 후속 flow 설명:
-  [`scenario_group_agent_flow_pipeline.md`](../architectures/scenario_group_agent_flow_pipeline.md)
+  [`03_SCENARIO_GROUP_AGENT_FLOW.md`](../agents/scenario_group_agent/03_SCENARIO_GROUP_AGENT_FLOW.md)

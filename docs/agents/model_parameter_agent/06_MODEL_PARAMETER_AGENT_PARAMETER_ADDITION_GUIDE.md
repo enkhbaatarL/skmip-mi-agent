@@ -27,7 +27,7 @@
 | 결정할 내용 | 기준 자료 | 사용하는 항목 |
 |---|---|---|
 | Event type·dimension·mapping method·comment | [Notion Event Dimension Parameter Mapping](https://app.notion.com/p/cfcee86c3fac4763963d960c9d0851a7?v=357bca8c30074d4c843b552846e9f58c&source=copy_link) | `이벤트타입LV2`, `dimension`, `맵핑방식`, `comment(맵핑방식)`, `파라미터사용유무` |
-| 모델 위치·단위·Basecase/LUT 의미 | [mapping Excel의 모델파트 Sheet](../resources/mapping/260702_시나리오가정_MI수급모델_input_매핑_모델파트수정_v0.4.xlsx) | `Parameter Excel Mapping (모델파트)` 8행 |
+| 모델 위치·단위·Basecase/LUT 의미 | [mapping Excel의 모델파트 Sheet](../../../apps/agents/model_parameter_agent/resources/mapping/260702_시나리오가정_MI수급모델_input_매핑_모델파트수정_v0.4.xlsx) | `Parameter Excel Mapping (모델파트)` 8행 |
 | 실제 LUT header·값·기간 | packaged `apps/agents/model_parameter_agent/resources/lut/BCLiquefaction.csv`와 조사 원본 `~/수급모델파라미터/data/LUT/supply/supply_bc/BCLiquefaction.csv` | Train, Year, Month, 생산능력, 이용률 |
 | 현재 활성 상태와 runtime 제약 | 현재 DB, `config.yaml`, Agent 코드 | `use_yn`, 실제 mapping, 지원 adapter, horizon, Object Storage manifest |
 

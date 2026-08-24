@@ -16,10 +16,14 @@ If the task touches one of these areas, read the linked document before changing
 
 - Directory structure, file ownership, endpoint-flow mapping, or package boundaries:
   `docs/architectures/project_directory_structure.md`
-- Scenario Group Agent runnable graph assembly, shared state, flow node chains, or generation pipeline logic:
-  `docs/architectures/scenario_group_agent_flow_pipeline.md`
+- Scenario Group Agent v4 runnable graph, shared state, flow node chains, or generation pipeline logic:
+  `docs/agents/scenario_group_agent/03_SCENARIO_GROUP_AGENT_FLOW.md`
 - Scenario Group Agent API bodies, callback behavior, and status/stage transitions:
-  `docs/architectures/scenario_group_agent_api_request_response.md`
+  `docs/agents/scenario_group_agent/02_SCENARIO_GROUP_AGENT_API_SPEC.md`
+- Scenario Group Agent tables, JSON columns, relationships, or transaction boundaries:
+  `docs/agents/scenario_group_agent/04_SCENARIO_GROUP_AGENT_DB_SPEC.md`
+- Scenario Group Agent manual pipeline or quality evaluation:
+  `docs/agents/scenario_group_agent/05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md`
 - Python style, settings access, typing, async patterns, Pydantic, or exception handling:
   `.claude/rules/python-conventions.md`
 
@@ -44,7 +48,7 @@ If the task touches one of these areas, read the linked document before changing
 
 - Keep changes scoped to the requested behavior.
 - Do not revive removed Agent packages such as `mi_agent`, `scenario_agent`, `event_flow_agent`, or `signpost_flow_agent`.
-- Update architecture docs when changing package ownership, flow boundaries, or endpoint-to-flow mapping.
+- Update common architecture and the owning Agent docs when changing package ownership, flow boundaries, or endpoint-to-flow mapping.
 
 ## Github Code Review Guideline
 
