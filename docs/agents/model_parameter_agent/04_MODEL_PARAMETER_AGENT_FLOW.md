@@ -472,7 +472,8 @@ LLM은 8개 입력 slot 모두에 값과 근거를 반환했고 서버 검증을
 | 같은 값으로 재확정 | 확정 시각 갱신 — PASS |
 | `PROCESSING` 시험 row 확정 시도 | `INVALID_REQUEST`, row 변경 없음 — PASS |
 
-전체 시나리오·prompt 발췌·값·근거는 [공식 실행 리포트](../../../../tests/reports/model_parameter_agent/model_parameter_single_scenario_595_20260721_222450.md)에서 확인할 수 있다.
+전체 시나리오·prompt 발췌·값·근거는 실행 환경에 생성된
+`tests/reports/model_parameter_agent/model_parameter_single_scenario_595_20260721_222450.md`에서 확인할 수 있다.
 
 ## 5. 부가 설명
 

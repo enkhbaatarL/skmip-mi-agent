@@ -76,7 +76,7 @@ Basecase와 LUT는 파라미터 후보를 새로 결정하지 않는다. DB mapp
 
 ## 3. Parameter Agent 디렉토리 구조
 
-[루트 README](../../../../README.md)의 구조 설명 방식과 현재 파일 배치를 기준으로 핵심 경로만 나타내면 다음과 같다.
+[루트 README](../../../README.md)의 구조 설명 방식과 현재 파일 배치를 기준으로 핵심 경로만 나타내면 다음과 같다.
 
 ```text
 skmip-mi-agent/
@@ -100,9 +100,9 @@ skmip-mi-agent/
 │   │   │   ├── basecase/                  # packaged Basecase
 │   │   │   ├── lut/                       # packaged LUT
 │   │   │   └── mapping/                   # 업무 mapping 원본
-│   │   └── docs/                          # 현재 설명 문서
 │   ├── connectors/object_storage/         # S3 호환 Object Storage 연결
 │   └── persistence/model_parameter/       # 공용 ORM·repository·DTO
+├── docs/agents/model_parameter_agent/      # 공식 인수인계·Agent 문서
 ├── envs/config.yaml                       # 로컬 실행·resource 설정
 ├── devops/k8s/configmap.yaml              # 배포 환경 설정
 └── tests/
@@ -121,17 +121,17 @@ VM 배포와 내부망 소스 반입은 목적과 기준 소스가 다르므로 
 
 > `Model Parameter Agent v0.3.0을 외부 데모 VM에 배포해줘.`
 
-[`mi-vm-deploy`](../../../../.claude/skills/mi-vm-deploy/SKILL.md)가 현재 로컬 작업트리를 Model Parameter Agent image로 빌드해 ACR에 push한다. Push가 성공한 경우에만 외부 VM의 image 설정을 변경하고 container를 재생성한 뒤 상태와 시작 로그를 확인한다. `v0.3.0`은 image tag이며 Git tag checkout을 뜻하지 않고, 로컬 미커밋 변경도 image에 포함될 수 있다.
+[`mi-vm-deploy`](../../../.claude/skills/mi-vm-deploy/SKILL.md)가 현재 로컬 작업트리를 Model Parameter Agent image로 빌드해 ACR에 push한다. Push가 성공한 경우에만 외부 VM의 image 설정을 변경하고 container를 재생성한 뒤 상태와 시작 로그를 확인한다. `v0.3.0`은 image tag이며 Git tag checkout을 뜻하지 않고, 로컬 미커밋 변경도 image에 포함될 수 있다.
 
 ### 4.2 내부망 소스 반입
 
 > `v0.3.0 기준으로 소스 반입 파일 만들어줘.`
 
-[`mi-source-banib`](../../../../.claude/skills/mi-source-banib/SKILL.md)가 `origin/main`의 merge 결과를 기준으로 release tag와 release note를 준비하고, 해당 tag 기준의 저장소 Git 이력과 내부 반입 script를 하나의 bundle로 만든다. 로컬 미커밋 변경은 포함되지 않으며, 자동 수행 범위는 외부 환경의 bundle 생성까지다.
+[`mi-source-banib`](../../../.claude/skills/mi-source-banib/SKILL.md)가 `origin/main`의 merge 결과를 기준으로 release tag와 release note를 준비하고, 해당 tag 기준의 저장소 Git 이력과 내부 반입 script를 하나의 bundle로 만든다. 로컬 미커밋 변경은 포함되지 않으며, 자동 수행 범위는 외부 환경의 bundle 생성까지다.
 
 ## 5. 자연어 프롬프트로 테스트하기
 
-실제 scenario 테스트는 [`model-parameter-agent-test`](../../../../.claude/skills/model-parameter-agent-test/SKILL.md)를 사용한다.
+실제 scenario 테스트는 [`model-parameter-agent-test`](../../../.claude/skills/model-parameter-agent-test/SKILL.md)를 사용한다.
 
 ### 대표 동작 예시
 
