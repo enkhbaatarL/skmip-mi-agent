@@ -66,6 +66,7 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
     ScenarioGroupAcceptedData,
     ScenarioGroupAcceptedOut,
 )
+from apps.common.configs.config import get_settings
 
 
 router = APIRouter(tags=["scenario-groups"])
@@ -211,6 +212,7 @@ async def get_scenario_group_presentation(
     operation = context["operation"]
     updated_at = context["group"].get("updated_at")
     lever_labels = context.get("lever_labels", {})
+    hide_price_pressure = get_settings().hide_price_pressure
     etag_material = "|".join(
         [
             PRESENTATION_RENDERER_VERSION,
@@ -218,13 +220,17 @@ async def get_scenario_group_presentation(
             str(operation.snapshot_revision if operation is not None else 0),
             updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at or ""),
             json.dumps(lever_labels, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            str(hide_price_pressure),
         ]
     )
     etag = f'"{hashlib.sha256(etag_material.encode("utf-8")).hexdigest()}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
-    return build_scenario_group_presentation(**context)
+    return build_scenario_group_presentation(
+        **context,
+        hide_price_pressure=hide_price_pressure,
+    )
 
 
 @router.post(

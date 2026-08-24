@@ -26,6 +26,7 @@ from apps.agents.scenario_group_agent.schemas.endpoint import (
     CreateSignpostsIn,
     CreateSignpostsSyncOut,
 )
+from apps.common.configs.config import get_settings
 from apps.common.logging.logger_config import logger
 from apps.common.runtime.usage_context import get_accumulated_usage, reset_usage
 
@@ -47,7 +48,11 @@ async def get_presentation_follow_up_request_bodies(
         scenario_group_id,
         operation_id=operation_id,
     )
-    presentation = build_scenario_group_presentation(**context)
+    hide_price_pressure = get_settings().hide_price_pressure
+    presentation = build_scenario_group_presentation(
+        **context,
+        hide_price_pressure=hide_price_pressure,
+    )
     return build_presentation_follow_up_request_bodies(presentation, user_id=user_id)
 
 

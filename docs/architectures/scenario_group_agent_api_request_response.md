@@ -1,6 +1,6 @@
 # Scenario Group Agent API Request/Response
 
-> 버전: v10
+> 버전: v11
 
 ## API surface 기준
 
@@ -139,9 +139,16 @@ API 응답에 노출하지 않는다.
 `GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}`는 화면이 직접 사용하는
 read model이다. `operationId`가 없으면 최신 operation을 선택하며, 다른 Scenario Group의 operation은
 404로 처리한다. 응답은 엔진 버전과 무관하게 `eventAnalysis`, `scenarioDesign`,
-`roleSelectionRationale` 세 section을 항상 포함한다. 각 section은
+`roleSelectionRationale` 세 key를 항상 포함한다. `hide_price_pressure=true`이면
+`roleSelectionRationale` 값은 `null`이고 Role Markdown을 생성하지 않는다. 나머지 section은
 `pending | partial | ready | unavailable` 상태와 `full | limited | none` 근거 수준을 명시하며,
 아직 준비되지 않은 문자열과 배열도 빈 값으로 유지한다.
+
+같은 설정이 활성화되면 `scenarioDesign.scenarioTable.rows[]`의 `scenarioRole`, `pressureTarget`,
+`pressureBand`, `pressureRationale`도 `null`로 마스킹한다. Dimension definition value와 cell evidence의
+`pressureContribution`은 계산 증적이므로 유지한다. 설정이 비활성화된 Role Markdown은
+`분기 기준 설명`, `분기별 선택 값 설명`, `분기 상세 설명`, `이벤트 간 상호작용 효과` 표현을 사용하고,
+Dimension 식별자 대신 header `displayOrder`를 표시한다.
 
 Markdown의 생성 근거는 저장된 Event, Dimension, Scenario, generation diagnostics로 한정한다.
 v4 `roleSelectionRationale`의 사용자 표시 문구는 현재 모델 영향 Lever master의 `lever_code → label`을
@@ -160,12 +167,12 @@ Scenario cell은 value ID, value label 순서로 Dimension value와 연결해 �
 
 v4 `scenarioPressureBreakdowns`는 Scenario 제목이 아니라 Dimension ID/value ID의 전체 조합으로
 `roleSelectionRationale`에 연결한다. 과거 label 기반 diagnostics도 현재 definition의 canonical ID로
-정규화한 뒤 비교한다. 제목만 변경하거나 서로 교환해도 같은 조합의 Pressure 구성을 유지하며, 조합이
-변경됐거나 신규 Scenario에 대응하는 breakdown이 없으면 제목 fallback 없이 Pressure 구성만 생략하고
+정규화한 뒤 비교한다. 제목만 변경하거나 서로 교환해도 같은 조합의 분기 기준 설명을 유지하며, 조합이
+변경됐거나 신규 Scenario에 대응하는 breakdown이 없으면 제목 fallback 없이 분기 기준 설명만 생략하고
 저장된 Scenario 종합 근거와 cell evidence는 그대로 표시한다.
 
-응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각과 현재 Lever label
-mapping으로 만든다.
+응답 `ETag`는 renderer version, operation ID, snapshot revision, Scenario Group 수정 시각, 현재 Lever label
+mapping과 `hide_price_pressure` 값으로 만든다.
 같은 값을 `If-None-Match`로 보내면 304를 반환한다. v4 진행 중 projection은 Event impact 검증 시
 `eventAnalysis=partial`, interaction 검증 시 `eventAnalysis=ready`, Dimension 검증 시
 `scenarioDesign=partial`로 갱신한다. `section_ready.details`는 변경 가능한 section 상태와 새
@@ -283,6 +290,9 @@ Presentation table로 Validation과 Signpost의 초기 request body를 만드는
 `scenarioTable.status=ready`이면 두 body 모두 `userId`와 최소 table 필드만 반환한다. 모든 버전에서
 Signpost body에도 table을 포함하지만 v4 Signpost는 최신 Validation Change Set을 적용하므로 이 table을 사용하지 않는다.
 table이 아직 준비되지 않았으면 HTTP 200에 `ready=false`, 두 body는 `null`로 반환한다.
+생성되는 두 request body의 row는 `scenarioId`, `displayOrder`, `title`, `cells`만 포함한다.
+`scenarioRole`, `pressureTarget`, `pressureBand`, `pressureRationale`은 값이 `null`이어도 Validation과
+Signpost request 계약에서 허용하지 않으며 전송하면 HTTP 422로 거부한다.
 
 이 응답은 committed Presentation 기준의 초기 초안이다. 화면의 미저장 편집값이나 v1~v3 Validation callback에서
 보정된 table은 자동 반영하지 않으므로 실제 후속 호출 전에 호출자가 최신 table로 교체해야 한다.
@@ -873,6 +883,7 @@ Response (`ConfirmGenerationOut`)
 
 | 버전 | 수정내용 | 수정날짜 | 배포여부 (버전) |
 | --- | --- | --- | --- |
+| v11 | Presentation의 Role/Pressure 노출을 `hide_price_pressure` 설정으로 제어하고 ETag 및 후속 요청 계약에 반영 | 26/08/21 | - |
 | v10 | Validation, Signpost 생성, Confirmation을 canonical `/scenario-groups/{scenarioGroupId}/...` 경로로 이관하고 `/v1` prefix 및 deprecated 표기를 제거 | 26/08/11 | - |
 | v2 | Req/Res body table 추가<br>`summary`, `description` 필수값을 `Y -> N`으로 변경(nullable 반영)<br>Signpost의 `probabilityDirectionCode`, `probabilityImpactScore` 필수값을 `Y -> N`으로 변경(nullable 반영)<br>예시 JSON 3곳에서 `feasibilityScore` 제거<br>Validation 요청의 `user_id` 표기 정리<br>Confirmation response의 `stage`는 `completed`로 반영된 상태 유지 | 26/06/10 | 외부망 배포<br>(v0.0.1) |
 | v3 | Request Body의 user_id 를 string -> number(int) 타입으로 변경<br>confirmation API 에서 안쓰는 파라미터 삭제(scenarioGroupId, eventId 등) | 26/06/11 | 외부망 배포<br>(v0.0.2) |

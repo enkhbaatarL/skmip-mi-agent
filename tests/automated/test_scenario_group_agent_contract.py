@@ -316,6 +316,12 @@ class ScenarioGroupAgentContractTest(unittest.TestCase):
         assert "probability_score" not in payload
         assert "impact_jkm" not in payload
         assert "baseline_yn" not in payload
+        assert "scenario_role" not in payload
+        assert "pressure_target" not in payload
+        assert "pressure_band" not in payload
+        assert "pressure_rationale" not in payload
+        assert "global_pressure_band" not in payload
+        assert "global_pressure_rationale" not in payload
 
     def test_new_signpost_row_details_are_generated_from_flow_helper_outputs(self) -> None:
         generated = types.SimpleNamespace(
