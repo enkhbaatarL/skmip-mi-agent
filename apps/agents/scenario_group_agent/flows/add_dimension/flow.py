@@ -147,7 +147,7 @@ def _candidate_validation_feedback(result: AdditionalDimensionHydrationResult) -
         f"{item.reason_code} - {item.detail}"
         for item in result.rejected_candidates
     ]
-    return "Additional Dimension 후보가 모두 검증에서 탈락했습니다. " + " | ".join(details)
+    return "Additional Dimension 후보 일부 또는 전체가 검증에서 탈락했습니다. " + " | ".join(details)
 
 
 async def _generate_candidates_with_retries(
@@ -198,7 +198,7 @@ async def _generate_candidates_with_retries(
                 rejected_count,
                 reason_codes,
             )
-        if hydration_result.input_candidate_count == 0 or hydration_result.valid_candidates:
+        if hydration_result.input_candidate_count == 0 or not hydration_result.rejected_candidates:
             return hydration_result
         validation_feedback = _candidate_validation_feedback(hydration_result)
     return hydration_result

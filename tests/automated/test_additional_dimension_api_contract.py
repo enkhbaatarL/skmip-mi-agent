@@ -93,7 +93,7 @@ def _catalog(question_count: int) -> list[ModelImpactLeverPayload]:
 def _candidate(source: str, lever: str, *, states: list[list[str]] | None = None) -> dict[str, object]:
     choice_states = states or [
         [f"{lever}|increase|확대|시장|단기"],
-        [f"{lever}|unchanged|현 수준|시장|단기"],
+        [f"{lever}|decrease|축소|시장|단기"],
     ]
     return {
         "from": [source],
@@ -110,10 +110,10 @@ def _candidate(source: str, lever: str, *, states: list[list[str]] | None = None
                 "why": "관측 사실을 기반으로 미래 상태가 확대되어 JKM 압력이 커지는 가정",
             },
             {
-                "label": "유지",
+                "label": "축소",
                 "states": choice_states[1],
-                "pressure": "balanced",
-                "why": "관측 사실을 기반으로 미래 상태가 유지되어 JKM 압력이 제한되는 가정",
+                "pressure": "bearish",
+                "why": "관측 사실을 기반으로 미래 상태가 축소되어 JKM 압력이 낮아지는 가정",
             },
         ],
     }
@@ -498,6 +498,53 @@ def test_additional_prompt_and_schema_define_the_state_wire_contract() -> None:
     assert "states와 why는 초기 Dimension 생성 규칙을 그대로 따릅니다" not in prompt
     assert "Group 441" in V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT
     assert "Group 441" in prompt
+    for coverage_example in (
+        "bearish / bullish",
+        "bearish / balanced / bullish",
+        "bearish / balanced / bullish / bullish",
+    ):
+        assert coverage_example in prompt
+    assert "strong_bearish" in prompt
+    assert "Scenario 합산 pressure band" in prompt
+
+
+@pytest.mark.parametrize(
+    "choices",
+    [
+        [
+            ("상승 1", "increase", "bullish"),
+            ("상승 2", "disrupt", "bullish"),
+        ],
+        [
+            ("하락", "decrease", "bearish"),
+            ("상승 1", "increase", "bullish"),
+            ("상승 2", "disrupt", "bullish"),
+        ],
+    ],
+)
+def test_additional_candidate_requires_pressure_coverage(
+    choices: list[tuple[str, str, str]],
+) -> None:
+    candidate = _candidate("U1", "lever_1")
+    candidate["choices"] = [
+        {
+            "label": label,
+            "states": [f"lever_1|{direction}|상태 {index}|시장|단기"],
+            "pressure": pressure,
+            "why": f"관측 사실을 기반으로 미래 상태 {index}가 나타나 JKM 압력이 달라지는 가정",
+        }
+        for index, (label, direction, pressure) in enumerate(choices, start=1)
+    ]
+    readable = V4ReadableAdditionalDimensionDesignDraft.model_validate({"dimensions": [candidate]})
+
+    result = hydrate_additional_dimension_candidates(
+        readable,
+        impact_analysis=_analysis(1),
+        impact_levers=_catalog(1),
+    )
+
+    assert result.valid_candidates == []
+    assert [item.reason_code for item in result.rejected_candidates] == ["INSUFFICIENT_PRESSURE_COVERAGE"]
 
 
 def test_group_441_natural_language_states_are_classified_per_candidate() -> None:

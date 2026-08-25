@@ -70,6 +70,9 @@ V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT = (
 후보 수를 맞추지 말고 의미 있는 질문만 사용하며, 변환할 후보가 없으면 빈 dimensions 배열을 반환하십시오.
 새 Fact, Path, Interaction 또는 Lever를 만들지 말고 하나의 열린 질문을 여러 후보에 중복 사용하지 마십시오.
 각 후보는 화면용 이름, 원본 질문, 최대 200자의 구체적인 선정 근거와 비교 가능한 선택지 2~4개를 가집니다.
+Choice의 pressure는 Dimension value의 `bearish`, `balanced`, `bullish`만 사용하십시오. Choice가 2개면
+`bearish / bullish`, 3개면 `bearish / balanced / bullish`, 4개면 세 방향을 모두 포함하고 그중 의미상 필요한
+한 방향을 추가하십시오. `strong_bearish`와 `strong_bullish`는 Scenario 합산 pressure band이므로 쓰지 마십시오.
 각 Choice의 states 항목은 정확히 `lever|direction|level|scope|timeWindow` 다섯 부분으로 작성하십시오.
 direction은 {StateDirection.prompt_values()} 중 하나만 사용하십시오. 첫 번째 state의 lever는 반드시 Dimension의
 source Lever와 같아야 하며, 한 Choice 안에서 같은 Lever code를 두 번 사용하지 마십시오.
@@ -534,7 +537,8 @@ def build_v4_additional_dimension_user_prompt(
     feedback = _feedback(
         "Additional Dimension 후보",
         validation_feedback,
-        "탈락 reason code별로 states wire 형식, source alias, Lever lineage와 Value 중복을 모두 수정하십시오.",
+        "탈락 reason code별로 states wire 형식, source alias, Lever lineage, Value 중복과 pressure coverage를 "
+        "모두 수정하십시오.",
     )
     return (
         "## 목적\n"
@@ -560,6 +564,11 @@ def build_v4_additional_dimension_user_prompt(
         "결과가 구분되는 이유를 설명합니다. 최소 글자 수는 강제하지 않습니다.\n"
         "- Choice label은 비교 가능한 하나의 시장·운영 상태를 30자 이내로 작성합니다.\n"
         "- lever와 axis는 source 질문의 값을 그대로 사용하고 Choice는 2~4개를 만듭니다.\n"
+        "- pressure coverage 예시: Choice 2개는 `bearish / bullish`, 3개는 `bearish / balanced / bullish`, "
+        "4개는 `bearish / balanced / bullish / bullish`처럼 세 방향을 모두 포함하고 의미상 필요한 한 방향을 "
+        "추가합니다.\n"
+        "- pressure는 `bearish`, `balanced`, `bullish`만 사용합니다. `strong_bearish`와 `strong_bullish`는 "
+        "Scenario 합산 pressure band이며 Dimension value에 사용하지 않습니다.\n"
         "- 각 Choice의 states 항목은 정확히 `lever|direction|level|scope|timeWindow` 형식입니다. 다섯 부분을 `|`로 "
         "구분하고 빈 부분을 만들지 않습니다.\n"
         f"- direction은 {StateDirection.prompt_values()} 중 하나만 사용합니다.\n"

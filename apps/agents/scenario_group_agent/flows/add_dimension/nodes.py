@@ -26,6 +26,7 @@ AdditionalDimensionRejectionReason = Literal[
     "INVALID_STATE_FORMAT",
     "LEVER_LINEAGE_ERROR",
     "DUPLICATE_VALUE",
+    "INSUFFICIENT_PRESSURE_COVERAGE",
 ]
 
 
@@ -255,6 +256,20 @@ def _prevalidate_additional_dimension_candidate(  # noqa: C901
                 f"Choice {choice_index} repeats another Value state",
             )
         value_signatures.add(signature)
+
+    contributions = {choice.pressure for choice in dimension.choices}
+    required_contributions = (
+        {"bearish", "bullish"} if len(dimension.choices) == 2 else {"bearish", "balanced", "bullish"}
+    )
+    missing_contributions = sorted(required_contributions - contributions)
+    if missing_contributions:
+        return _candidate_rejection(
+            candidate_index,
+            source_aliases,
+            "INSUFFICIENT_PRESSURE_COVERAGE",
+            f"{len(dimension.choices)} Choices must cover {sorted(required_contributions)}; "
+            f"missing {missing_contributions}",
+        )
     return None
 
 

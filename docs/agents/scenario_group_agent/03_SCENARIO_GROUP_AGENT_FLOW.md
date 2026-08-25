@@ -223,6 +223,15 @@ TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 �
 `completed`를 기록한 뒤 unused open question이 있으면 create operation과 독립적인 Additional Dimension
 task를 queue한다.
 
+Additional Dimension 후보도 value별 `pressureContribution`으로 `bearish`, `balanced`, `bullish`만 사용한다.
+Choice가 2개면 bearish·bullish를 모두 포함하고, 3~4개면 bearish·balanced·bullish를 모두 포함해야 한다.
+`strong_bearish`, `strong_bullish`는 Dimension value가 아니라 Scenario contribution 합산 결과인
+`pressureBand`에서만 사용한다. 서버는 후보별 lineage, state 형식, 중복과 함께 이 coverage를 검증한다.
+한 후보라도 탈락하면 validation feedback을 포함해 전체 응답을 최초 호출 포함 최대 3회 다시 생성한다. 마지막
+시도에도 일부 후보가 탈락하면 유효 후보만 저장하고, 후보가 하나 이상 생성됐지만 전부 탈락한 경우에만
+`ADDITIONAL_DIMENSION_CANDIDATES_INVALID`로 보조 생성을 실패 처리한다. 의미적으로 만들 후보가 없어 반환한
+빈 목록은 정상 완료다.
+
 ### 재시도와 복구
 
 각 LLM 단계는 최초 호출 포함 최대 3회 시도하며 1초·2초 backoff를 적용한다. schema/structured-output,
@@ -284,7 +293,8 @@ ready 후보를 새 header로 추가하고 `ad_` Dimension cell을 `null`로 보
 - unknown header, stale 또는 준비되지 않은 후보는 blocking이다.
 - 자동 배정은 `V4_ADDITIONAL_DIMENSION_AUTOFILL` 또는 복원 INFO check로 남긴다.
 
-bullish·bearish target은 각 빈 Dimension에서 같은 방향 contribution을 우선하고 없으면 balanced만 허용한다.
+bullish·bearish target은 각 빈 Dimension에서 `목표 방향 → balanced → 반대 방향` 순서로 사용 가능한
+contribution을 반드시 선택한다. 이 fallback은 새 후보뿐 아니라 기존에 저장된 단일 방향 후보에도 적용한다.
 balanced target은 row의 모든 빈 Dimension contribution 조합을 한 번에 비교한다. 최종 합계 절댓값, 기존
 점수와의 차이, 저장값 재사용 수, header 순서 순으로 동률을 해소한다. 선택 contribution 안에 value가 여러 개일
 때만 constrained LLM이 의미적으로 적합한 value를 고르며 허용 범위 밖 응답은 실패 처리한다. autofill-only

@@ -896,7 +896,7 @@ def test_duplicate_display_order_new_rows_preserve_generated_fields_and_change_s
     ]
 
 
-def test_directional_autofill_falls_back_only_to_balanced_not_opposite() -> None:
+def test_directional_autofill_falls_back_to_balanced_then_opposite() -> None:
     neutral_only = _directional_candidate()
     neutral_only["values"] = [neutral_only["values"][1], neutral_only["values"][0]]
     plan = build_v4_additional_dimension_autofill_plan(
@@ -910,15 +910,104 @@ def test_directional_autofill_falls_back_only_to_balanced_not_opposite() -> None
 
     opposite_only = _directional_candidate()
     opposite_only["values"] = [opposite_only["values"][0]]
-    blocked = build_v4_additional_dimension_autofill_plan(
+    fallback = build_v4_additional_dimension_autofill_plan(
         request_table=_table_with_null_additional(),
         persisted_scenarios=_scenarios(),
         dimension_definitions=DEFINITIONS,
         generation_diagnostics=_additional_diagnostics(opposite_only),
         stored_header_order=["demand", "supply"],
     )
-    assert blocked.request_table["rows"][0]["cells"]["ad_duration"] is None
-    assert any(check.blocking for check in blocked.checks)
+    assert [row["cells"]["ad_duration"] for row in fallback.request_table["rows"]] == [
+        "duration_bearish",
+        "duration_bearish",
+        "duration_bearish",
+    ]
+    assert fallback.checks == []
+
+
+def test_bearish_scenario_uses_bullish_only_legacy_candidate_as_opposite_fallback() -> None:
+    bullish_only = _directional_candidate()
+    bullish_only["values"] = [bullish_only["values"][2]]
+
+    plan = build_v4_additional_dimension_autofill_plan(
+        request_table=_table_with_null_additional(),
+        persisted_scenarios=_scenarios(),
+        dimension_definitions=DEFINITIONS,
+        generation_diagnostics=_additional_diagnostics(bullish_only),
+        stored_header_order=["demand", "supply"],
+    )
+
+    assert plan.request_table["rows"][2]["cells"]["ad_duration"] == "duration_bullish"
+    assert plan.checks == []
+
+
+def test_opposite_fallback_with_multiple_values_restricts_constrained_llm_scope() -> None:
+    bearish_only = _directional_candidate()
+    bearish_alternative = deepcopy(bearish_only["values"][0])
+    bearish_alternative.update(
+        {
+            "value_id": "duration_bearish_alt",
+            "label": "즉시 종료",
+            "assumption_rationale": "충격이 즉시 해소되는 가정",
+        }
+    )
+    bearish_only["values"] = [bearish_only["values"][0], bearish_alternative]
+
+    plan = build_v4_additional_dimension_autofill_plan(
+        request_table=_table_with_null_additional(),
+        persisted_scenarios=_scenarios(),
+        dimension_definitions=DEFINITIONS,
+        generation_diagnostics=_additional_diagnostics(bearish_only),
+        stored_header_order=["demand", "supply"],
+    )
+
+    bullish_request = next(item for item in plan.requests if item.client_row_key == "scenario:1")
+    assert bullish_request.target_direction == "bearish"
+    assert {value["value_id"] for value in bullish_request.allowed_values} == {
+        "duration_bearish",
+        "duration_bearish_alt",
+    }
+
+
+def test_group_454_shape_fills_all_four_null_cells_with_single_direction_legacy_candidate() -> None:
+    bullish_only = _directional_candidate()
+    bullish_only["values"] = [bullish_only["values"][2]]
+    persisted = [
+        {
+            "scenario_id": index,
+            "title": f"Scenario {index}",
+            "global_pressure_band": pressure_band,
+            "dimension_values": {},
+        }
+        for index, pressure_band in enumerate(
+            ("strong_bullish", "bullish", "bearish", "strong_bearish"),
+            start=1,
+        )
+    ]
+    request_table = {
+        "headers": [{"key": "ad_duration", "label": "지속 기간", "display_order": 1}],
+        "rows": [
+            {
+                "scenario_id": scenario["scenario_id"],
+                "display_order": index,
+                "title": scenario["title"],
+                "cells": {"ad_duration": None},
+            }
+            for index, scenario in enumerate(persisted, start=1)
+        ],
+    }
+
+    plan = build_v4_additional_dimension_autofill_plan(
+        request_table=request_table,
+        persisted_scenarios=persisted,
+        dimension_definitions=[],
+        generation_diagnostics=_additional_diagnostics(bullish_only),
+        stored_header_order=[],
+    )
+
+    assert [row["cells"]["ad_duration"] for row in plan.request_table["rows"]] == ["duration_bullish"] * 4
+    assert plan.requests == []
+    assert plan.checks == []
 
 
 def test_probability_normalization_is_integer_and_exactly_one_hundred() -> None:

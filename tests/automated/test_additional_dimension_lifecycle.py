@@ -686,7 +686,7 @@ def test_additional_flow_uses_one_batch_call_and_empty_pool_skips_llm() -> None:
     )
 
 
-def test_additional_flow_preserves_partial_success_without_retry() -> None:
+def test_additional_flow_retries_partial_success_and_saves_valid_candidates_after_last_attempt() -> None:
     service = Mock()
     service.start_additional_dimension_generation.return_value = {
         "source_fingerprint": "sha256:source",
@@ -725,6 +725,8 @@ def test_additional_flow_preserves_partial_success_without_retry() -> None:
         reason_code="INVALID_STATE_FORMAT",
     )
     invoke = AsyncMock(return_value=V4ReadableAdditionalDimensionDesignDraft(dimensions=[]))
+    sleep = AsyncMock()
+    prompt_builder = Mock(return_value="batch prompt")
     logger = Mock()
     settings_module = ModuleType("apps.common.configs.config")
     settings_module.get_settings = Mock(  # type: ignore[attr-defined]
@@ -748,7 +750,7 @@ def test_additional_flow_preserves_partial_success_without_retry() -> None:
         ) as catalog_service,
         patch(
             "apps.agents.scenario_group_agent.flows.add_dimension.flow.build_v4_additional_dimension_user_prompt",
-            return_value="batch prompt",
+            prompt_builder,
         ),
         patch(
             "apps.agents.scenario_group_agent.flows.add_dimension.flow.invoke_stage_structured_output",
@@ -757,6 +759,10 @@ def test_additional_flow_preserves_partial_success_without_retry() -> None:
         patch(
             "apps.agents.scenario_group_agent.flows.add_dimension.flow.hydrate_additional_dimension_candidates",
             return_value=hydration,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.asyncio.sleep",
+            sleep,
         ),
         patch(
             "apps.agents.scenario_group_agent.flows.add_dimension.flow.mlflow_trace_context",
@@ -774,7 +780,9 @@ def test_additional_flow_preserves_partial_success_without_retry() -> None:
         catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
         asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
-    invoke.assert_awaited_once()
+    assert invoke.await_count == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [1.0, 2.0]
+    assert "INVALID_STATE_FORMAT" in prompt_builder.call_args_list[1].kwargs["validation_feedback"]
     service.complete_additional_dimension_generation.assert_called_once_with(
         10,
         source_fingerprint="sha256:source",

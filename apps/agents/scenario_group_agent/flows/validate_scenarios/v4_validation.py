@@ -408,12 +408,14 @@ def _select_autofill_contributions(
     for definition in definitions:
         values_by_contribution = _values_by_contribution(definition)
         if target_direction in {"bullish", "bearish"}:
-            options = (
-                [target_direction]
-                if values_by_contribution.get(target_direction)
-                else ["balanced"]
-                if values_by_contribution.get("balanced")
-                else []
+            opposite_direction = "bearish" if target_direction == "bullish" else "bullish"
+            options = next(
+                (
+                    [contribution]
+                    for contribution in (target_direction, "balanced", opposite_direction)
+                    if values_by_contribution.get(contribution)
+                ),
+                [],
             )
         else:
             options = sorted(values_by_contribution, key=PRESSURE_CONTRIBUTION_ORDER.__getitem__)
@@ -441,8 +443,7 @@ def _select_autofill_contributions(
             for stored_contribution, contribution in zip(stored_contributions, combination, strict=True)
         )
         header_order_tiebreak = tuple(
-            options.index(contribution)
-            for options, contribution in zip(option_sets, combination, strict=True)
+            options.index(contribution) for options, contribution in zip(option_sets, combination, strict=True)
         )
         return (
             abs(existing_pressure_score + added_score),
@@ -522,8 +523,7 @@ def build_v4_additional_dimension_autofill_plan(  # noqa: C901
         empty_dimension_ids = [
             dimension_id
             for dimension_id in autofill_ids
-            if (raw_value := cells.get(dimension_id)) is None
-            or (isinstance(raw_value, str) and not raw_value.strip())
+            if (raw_value := cells.get(dimension_id)) is None or (isinstance(raw_value, str) and not raw_value.strip())
         ]
         persisted_cells = _get(persisted, "dimension_values", "dimensionValues") if persisted is not None else None
         persisted_cells = persisted_cells if isinstance(persisted_cells, dict) else {}

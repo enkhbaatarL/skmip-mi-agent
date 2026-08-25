@@ -438,6 +438,12 @@ definition이 있어도 `items=[]`, `availableCount=0`을 유지한다. 실행 �
 없는 Scenario Group은 404, v1~v3 또는 다른 생성 전략의 group은 400이다. 현재 GET 계약에는 status/stage에
 따른 별도 409가 없다.
 
+Additional 후보의 `pressureContribution` enum과 JSON 구조는 Create Dimension과 같다. Choice가 2개면
+bearish·bullish, 3~4개면 bearish·balanced·bullish coverage가 필수다. 후보별 서버 검증에서 하나라도 탈락하면
+validation feedback으로 전체 생성을 최대 3회 시도하고, 마지막 시도의 유효 후보만 저장한다. 마지막에도 전부
+탈락했을 때만 `ADDITIONAL_DIMENSION_CANDIDATES_INVALID`가 되며, 의미 있는 후보가 없어 빈 목록을 반환한 경우는
+`ready`인 정상 결과다.
+
 ## 3. Validation
 
 ```http
@@ -495,8 +501,8 @@ Dimension cell은 `null`일 때 허용 방향 안에서 자동 배정할 수 있
 `null`은 차단한다. callback table은 canonical `valueId`를 반환한다.
 
 `pressureContribution`은 Dimension마다 다른 정밀 가중치가 아니라 `bearish=-1`, `balanced=0`,
-`bullish=+1`인 동일 가중 ordinal 지표다. bullish·bearish Scenario의 빈 Additional Dimension은 같은 방향
-value를 사용하고 같은 방향이 없을 때만 balanced를 허용한다. balanced Scenario는 row의 모든 빈 Additional
+`bullish=+1`인 동일 가중 ordinal 지표다. bullish·bearish Scenario의 빈 Additional Dimension은
+`목표 방향 → balanced → 반대 방향` 순서로 사용 가능한 value를 선택한다. balanced Scenario는 row의 모든 빈 Additional
 Dimension contribution 조합을 함께 비교해 최종 합계의 절댓값이 가장 작은 조합을 선택한다. 자동 배정만 발생한
 기존 Scenario의 `pressureBand`와 확률은 유지하며, 최종 aggregate ordering과 strong extreme 부호 검사는 계속
 적용한다.
