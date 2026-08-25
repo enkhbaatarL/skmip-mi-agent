@@ -70,6 +70,28 @@ Content-Type: application/json
 요청 검증, Event 조회, 중복·소유권 확인이 실패하면 SSE가 아닌 JSON 오류를 반환한다. Client는 body를
 읽기 전에 status와 `Content-Type`을 확인한다.
 
+### Client 권장 호출 순서
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+
+    Client->>API: POST /scenario-groups
+    API-->>Client: accepted
+    Note over Client: group·operation ID와 sequence 저장
+    API-->>Client: phase_started / retrying / validated
+    API-->>Client: section_ready
+    Client->>API: GET /presentation?operationId=...
+    API-->>Client: 갱신된 read model
+    API-->>Client: completed | failed | interrupted
+    Client->>API: completed이면 최종 Presentation 조회
+```
+
+`accepted`는 Scenario Group, operation, 첫 event가 같은 transaction으로 저장된 뒤 전달된다. Client는
+`scenarioGroupId`, `operationId`, 마지막으로 연속 처리한 `sequence`, 요청의 `miEventIds`와 `userId`를
+복구 가능한 상태에 저장한다. `section_ready`는 상세 payload가 아니라 Presentation 재조회 신호다.
+
 ### SSE 계약
 
 ```text
@@ -82,6 +104,19 @@ data: {JSON}
 `messageMarkdown`, `snapshotRevision`, `mlflowTraceId`, `createdAt`을 공통으로 가진다. SSE `id`, JSON
 `sequence`, `event`, `eventType`은 서로 일치해야 한다.
 
+| 공통 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `operationId` | string | operation 식별자 |
+| `scenarioGroupId` | number | Scenario Group ID |
+| `sequence` | number | operation 안에서 1부터 증가하는 event 순번 |
+| `eventType` | string | SSE `event` 값과 동일 |
+| `phase` | string \| null | 현재 생성 phase |
+| `title` | string | 사용자 표시용 제목 |
+| `messageMarkdown` | string | 사용자 표시용 Markdown 메시지 |
+| `snapshotRevision` | number | Presentation snapshot revision |
+| `mlflowTraceId` | string \| null | 운영 추적용 trace ID |
+| `createdAt` | string \| null | UTC ISO-8601 생성 시각 |
+
 | eventType | 의미 | Client 처리 |
 | --- | --- | --- |
 | `accepted` | 생성 접수와 식별자 확정 | group·operation ID와 sequence 저장 |
@@ -93,8 +128,20 @@ data: {JSON}
 | `failed` | 생성 실패 | `lastError` 확인 |
 | `interrupted` | producer 중단 | 자동 재개하지 않음 |
 
+| eventType | 추가 필드 |
+| --- | --- |
+| `accepted` | `status`, `engineVersion`, `operationType` |
+| `retrying` | `attempt`, `maxAttempts`, `referenceIds`, `validationCode` |
+| `validated` | `attempt`, `maxAttempts` |
+| `completed` | `status=succeeded` |
+| `failed` | `status=failed`, `errorCode` |
+| `interrupted` | `status=interrupted` |
+
 terminal event는 `completed`, `failed`, `interrupted`뿐이다. 성공은 `completed.status=succeeded`다.
-keep-alive는 `: keep-alive` comment이며 업무 event나 sequence로 계산하지 않는다.
+진행 event가 없을 때 서버는 기본 15초마다 `: keep-alive` comment를 보낼 수 있다. keep-alive는 `id`,
+`event`, `data`가 없으며 업무 event나 sequence로 계산하지 않는다. `title`과 `messageMarkdown`은 사용자
+안내용이고, Markdown을 HTML로 변환할 때는 sanitization을 적용한다. `validationCode`, `referenceIds`,
+`mlflowTraceId`는 진단 정보로 취급한다.
 
 현재 create phase는 `event_analysis`, `dimension_design`, `scenario_synthesis`, `persistence`다.
 같은 phase에서 Event 영향과 Interaction처럼 검증 경계가 여러 번 생길 수 있으므로 event 개수에 의존하지 않는다.
@@ -110,7 +157,13 @@ Last-Event-ID: 7
 ```
 
 서버는 8번부터 DB 이력을 replay하고 실행 중이면 live-tail을 계속한다. `Last-Event-ID`가 없으면 0이며,
-음수·비정수는 400이다. sequence gap이 보이면 마지막 연속 sequence로 다시 연결한다.
+음수·비정수는 400이다. Client는 다음 순서로 replay를 처리한다.
+
+1. 마지막으로 성공 처리한 연속 `sequence`를 저장한다.
+2. 수신한 `sequence <= lastSequence`이면 replay 중복으로 보고 무시한다.
+3. 다음 연속 sequence이면 처리한 뒤 `lastSequence`를 갱신한다.
+4. gap이 보이면 현재 event를 건너뛰지 않고 마지막 연속 sequence로 다시 연결한다.
+5. terminal event를 처리하면 재연결을 중단한다.
 
 현재 상태만 확인하려면 다음 polling API를 사용한다.
 
@@ -118,8 +171,40 @@ Last-Event-ID: 7
 GET /scenario-groups/{scenarioGroupId}/operations/{operationId}
 ```
 
+핵심 응답 필드는 다음과 같다.
+
+```json
+{
+  "scenarioGroupId": 410,
+  "operation": {
+    "operationId": "01KZQJK500D0PE7XVQHXJFMHDY",
+    "operationType": "create",
+    "engineVersion": "v4",
+    "status": "running",
+    "currentPhase": "event_analysis",
+    "snapshotRevision": 1,
+    "latestSequence": 4,
+    "lastError": null
+  },
+  "lastEvent": {
+    "sequence": 4,
+    "eventType": "section_ready"
+  },
+  "lastError": null
+}
+```
+
 operation status는 `queued | running | succeeded | failed | interrupted`다. `queued|running`이면 stream을
 재연결하고, `succeeded`이면 Presentation을 조회하며, 실패·중단이면 `lastError`를 표시한다.
+
+페이지 새로고침 뒤 로컬 식별자가 있으면 polling으로 상태를 확인한 후 재연결하거나 최종 화면을 연다. 식별자가
+없으면 목록 또는 상세 응답의 `activeOperation`과 `latestOperation`으로 복원한다. 마지막 sequence를 모르면
+`Last-Event-ID: 0`으로 전체 이력을 replay하고 Client에서 중복을 제거한다.
+
+최초 POST의 `accepted`를 파싱하기 전에 연결이 끊겨 식별자를 모르는 경우에는 먼저 목록에서 active operation을
+찾는다. 찾을 수 없을 때만 동일한 `miEventIds`, `userId`로 한 번 다시 요청한다. 첫 요청이 접수된 상태라면
+409 `SCENARIO_GROUP_OPERATION_CONFLICT`, 이미 성공했다면 400 `SCENARIO_GROUP_ALREADY_CREATED` 응답의
+기존 식별자로 복구하고, 실제 접수되지 않았다면 새 operation이 생성된다. 무제한 자동 재시도는 하지 않는다.
 
 ### 중복 요청
 
@@ -132,8 +217,9 @@ operation status는 `queued | running | succeeded | failed | interrupted`다. `q
 | soft delete됨 | 새 그룹 생성 허용 | 새 그룹 생성 허용 |
 
 오류 `data`에는 `error_code`, `error_name`, 가능한 `scenarioGroupId`, `operationId`가 포함된다. Client는
-`message` 문자열이 아니라 HTTP status와 `error_name`으로 분기한다. create POST는 멱등하지 않으므로 timeout
-뒤 자동 재시도하지 말고 operation·목록·DB 증적을 먼저 확인한다.
+`message` 문자열이 아니라 HTTP status와 `error_name`으로 분기한다. create POST는 멱등 API가 아니므로
+일반 timeout 뒤에는 자동 재시도하지 않고 operation·목록 증적을 먼저 확인한다. 식별자를 받기 전 연결이 끊긴
+경우에만 앞의 제한된 복구 절차를 사용한다.
 
 ## 2. 조회와 Presentation
 
@@ -155,6 +241,17 @@ GET /scenario-groups/{scenarioGroupId}/presentation?operationId={operationId}
 `operationId`를 생략하면 최신 operation을 선택한다. 응답은 engine version과 관계없이 다음 세 section을
 가진다.
 
+| 최상위 필드 | 설명 |
+| --- | --- |
+| `schemaVersion` | Presentation response schema version |
+| `rendererVersion` | renderer와 ETag 무효화에 사용하는 version |
+| `scenarioGroupId` | Scenario Group ID |
+| `engineVersion` | 생성 엔진 version |
+| `legacy` | legacy 데이터 복원 여부 |
+| `warnings` | 제한된 근거 또는 복원 관련 안내 |
+| `operation` | 선택한 operation의 status, phase, sequence, snapshot revision |
+| `sections` | 화면에 표시할 공통 3-section read model |
+
 - `sections.eventAnalysis`
 - `sections.scenarioDesign`
 - `sections.roleSelectionRationale`
@@ -173,31 +270,158 @@ header `displayOrder`를 표시한다.
 `{dimensionId: valueId}`이고 표시 label은 definition에서 해석한다. `sourceEventIds`는 Event 근거,
 Dimension `rationale`은 선정 근거, value `rationale`은 미래 상태와 JKM 영향 가정이다.
 
+`engineVersion=v4`의 Dimension definition 계약은 다음과 같다. schema는 legacy 호환 때문에 일부 필드를
+nullable로 두지만 v4 생성 결과의 `rationale`은 문자열이고 `source`는 `null`이다.
+
+| `dimensionDefinitions.items[]` 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `dimensionId` | string | header와 cell을 연결하는 canonical Dimension ID |
+| `label` | string | 화면과 Scenario table header에 표시할 이름 |
+| `description` | string \| null | 사용자가 판단할 불확실성을 설명하는 질문 |
+| `rationale` | string \| null | 이 Dimension이 Scenario와 JKM 결과를 구분하는 이유 |
+| `sourceEventIds` | number[] | 근거가 된 Event ID 목록 |
+| `modelSupportStatus` | string \| null | 모델 파라미터 지원 상태 |
+| `source` | string \| null | legacy Dimension 정의 복원 방식. v4에서는 `null` |
+| `values` | object[] | 선택 가능한 값과 값별 근거·압력 기여 |
+
+| `values[]` 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `valueId` | string | cell에 저장·전달하는 canonical value ID |
+| `label` | string | 화면 표시값 |
+| `description` | string \| null | 미래 상태 설명 |
+| `rationale` | string | 해당 상태가 JKM에 미치는 영향의 근거 |
+| `pressureContribution` | string \| null | `bearish`, `balanced`, `bullish` 방향 기여 |
+| `leverStates` | object[] | Lever별 방향·수준·범위·기간 증적 |
+
+Scenario table row와 cell 증적은 다음 shape을 사용한다.
+
+| 경로 | 타입 | 설명 |
+| --- | --- | --- |
+| `scenarioTable.headers[]` | object[] | `key`, `label`, `displayOrder` |
+| `scenarioTable.rows[].scenarioId` | number \| null | 저장 Scenario ID. 신규 row는 `null` 가능 |
+| `scenarioTable.rows[].displayOrder` | number | 화면 표시 순서 |
+| `scenarioTable.rows[].title` | string | Scenario 제목 |
+| `scenarioTable.rows[].narrative` | string \| null | Scenario 설명 |
+| `scenarioTable.rows[].scenarioRole` | string \| null | `ceiling`, `mixed`, `floor` 역할 |
+| `scenarioTable.rows[].baselineYn` | string \| null | baseline 여부 |
+| `scenarioTable.rows[].pressureTarget` | `JKM` \| null | 압력 대상 |
+| `scenarioTable.rows[].pressureBand` | string \| null | JKM 압력 구간 |
+| `scenarioTable.rows[].probabilityScore` | number \| null | 0~100 확률 점수 |
+| `scenarioTable.rows[].pressureRationale` | string \| null | 최종 압력 근거 |
+| `scenarioTable.rows[].cells` | object | `{dimensionId: valueId}` canonical 선택값 |
+| `scenarioTable.rows[].cellEvidence` | object | Dimension별 선택값 label·근거·압력 기여·증적 수준 |
+
+```json
+{
+  "cells": {"d1": "d1_v1"},
+  "cellEvidence": {
+    "d1": {
+      "valueId": "d1_v1",
+      "valueLabel": "전망 하향만 기대에 반영",
+      "rationale": "실물 소비 감소가 확인되지 않으면 하락 압력은 제한적이다.",
+      "pressureContribution": "balanced",
+      "evidenceLevel": "full"
+    }
+  }
+}
+```
+
+Dimension header의 canonical 순서는 `scenarioGroup.dimensionSelected` 배열 위치다. table/query/callback과
+Presentation의 Dimension definition·header는 이 배열 순서를 보존하고 응답 `displayOrder`를 `1..N`으로 다시
+부여한다. 요청 `headers[].displayOrder`와 Template definition의 `displayOrder`는 저장 순서를 바꾸지 않는다.
+
 v1 Scenario row와 cell은 `tmm_mi_scenario_m.dimension_values`를 정본으로 사용한다. Dimension 정의는
 Group에 저장된 정의, checksum이 일치하는 template, Scenario master에서 관찰한 key/value 순으로 구성한다.
 template은 label·description·전체 enum을 보완할 뿐 Scenario별 선택값을 덮어쓰지 않는다.
+
+| legacy `source` 값 | 의미 |
+| --- | --- |
+| `legacy_template_checksum_match` | 저장 checksum과 일치하는 Dimension template에서 정의 보완 |
+| `legacy_observed` | 저장 Scenario의 Dimension key/value에서 제한적으로 복원 |
+
+Group에 저장된 Dimension 정의를 그대로 사용한 경우에는 legacy group이어도 `source=null`이다. `source`는
+Event 근거가 아니며 Event lineage는 `sourceEventIds`로 확인한다.
 
 모든 200 응답은 `ETag`를 반환한다. ETag에는 renderer version, operation ID, snapshot revision,
 Scenario Group 수정 시각, 현재 Lever label mapping과 `hide_price_pressure` 값이 반영된다. 같은 URL에
 `If-None-Match`를 보내고 내용이 같으면 body 없는 304를 반환한다. `section_ready`의 revision이 증가할 때
 조회하되 `completed` 뒤에는 최종 조회를 한 번 더 한다.
 
-현재 renderer version은 `v5`다. v1 Presentation의 confirmation snapshot 의존성을 제거한 변경으로 기존
+현재 renderer version은 `v6`다. `dimensionSelected`를 Presentation 순서의 정본으로 통일한 변경으로 기존
 renderer version의 ETag는 더 이상 304 조건을 충족하지 않는다.
 
-`GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만드는 Validation·Signpost 초기 body의
-row는 `scenarioId`, `displayOrder`, `title`, `cells`만 포함한다. `scenarioRole`, `pressureTarget`,
-`pressureBand`, `pressureRationale`은 값이 `null`이어도 두 request 계약에서 허용하지 않으며 전송하면
-HTTP 422로 거부한다.
+### Presentation에서 후속 API로 매핑
+
+v4 Validation에는 Presentation의 다음 편집 가능 필드만 전달한다.
+
+| Presentation 원천 | Validation request |
+| --- | --- |
+| `scenarioTable.headers[].key` | `table.headers[].key` |
+| `scenarioTable.headers[].label` | `table.headers[].label` |
+| `scenarioTable.headers[].displayOrder` | `table.headers[].displayOrder` |
+| `scenarioTable.rows[].scenarioId` | `table.rows[].scenarioId` |
+| `scenarioTable.rows[].displayOrder` | `table.rows[].displayOrder` |
+| `scenarioTable.rows[].title` | `table.rows[].title` |
+| `scenarioTable.rows[].cells` | `table.rows[].cells` |
+
+`operation`, `eventAnalysis`, `roleSelectionRationale`, Dimension definition, section status·evidence level,
+`narrative`, `scenarioRole`, `baselineYn`, `pressureTarget`, `pressureBand`, `probabilityScore`,
+`pressureRationale`, `cellEvidence`는 화면·근거용이므로 Validation request에 복사하지 않는다. 금지 필드를
+row에 포함하면 값이 `null`이어도 HTTP 422다.
+
+v4 Signpost request는 `{ "userId": 10603 }`만 보내는 것이 canonical이다. schema의 optional `table`과
+QA용 `GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만드는 generic Signpost body는
+호환·테스트용이며, v4 flow는 request table을 사용하지 않는다.
 
 ### Additional Dimension
 
 `GET /scenario-groups/{id}/additional-dimensions`는 v4 group에서만 사용한다. GET은 저장된 후보만 읽고 LLM을
-호출하거나 정식 Dimension을 변경하지 않는다.
+호출하거나 정식 Dimension을 변경하지 않는다. query parameter와 request body는 없다. Create 완료와 후보 생성
+완료 시점이 다를 수 있으므로 Client가 이 API로 상태와 결과를 조회한다.
+
+```json
+{
+  "status": "success",
+  "message": "성공",
+  "data": {
+    "scenarioGroupId": 12345,
+    "generationStatus": "ready",
+    "dimensionDefinitions": {
+      "status": "ready",
+      "items": []
+    },
+    "availableCount": 0,
+    "updatedAt": "2026-08-19T10:00:20Z",
+    "errorCode": null
+  }
+}
+```
+
+| 응답 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `data.scenarioGroupId` | number | Scenario Group ID |
+| `data.generationStatus` | string | background 후보 생성 상태 |
+| `data.dimensionDefinitions.status` | string | 화면용 후보 목록 상태 |
+| `data.dimensionDefinitions.items` | object[] | 아직 선택되지 않은 Dimension 후보 |
+| `data.availableCount` | number | 반환한 후보 개수 |
+| `data.updatedAt` | string \| null | 상태 또는 후보의 마지막 갱신 시각 |
+| `data.errorCode` | string \| null | 실패·중단 시 안정적인 오류 코드 |
 
 `generationStatus`는 `not_requested | queued | running | ready | failed | interrupted | discarded`다.
-`queued|running`은 `pending`, 실패·중단·미요청은 `unavailable`, 완료는 `ready`다. `ready`이면서 후보가
-0개인 것도 정상이다. v1~v3 group은 400, 없는 group은 404다.
+
+| `generationStatus` | `dimensionDefinitions.status` | Client 처리 |
+| --- | --- | --- |
+| `queued`, `running` | `pending` | 일정 간격 뒤 다시 조회 |
+| `ready` | `ready` | `items`를 표시하고 polling 종료 |
+| `not_requested`, `failed`, `interrupted`, `discarded` | `unavailable` | 후보 영역을 비활성화하고 polling 종료 |
+
+`ready`이면서 `items=[]`, `availableCount=0`인 것은 추가 후보가 없는 정상 완료다. 후보 생성 자체의
+실패·중단도 Scenario Group을 조회할 수 있으면 HTTP 200으로 반환하고 `generationStatus`, optional
+`errorCode`로 구분하며 내부 LLM 오류 원문은 노출하지 않는다. 실행 중 상태가 stale timeout을 넘으면 조회 시
+`interrupted`와 안정적인 timeout error code로 투영한다.
+
+없는 Scenario Group은 404, v1~v3 또는 다른 생성 전략의 group은 400이다. 현재 GET 계약에는 status/stage에
+따른 별도 409가 없다.
 
 ## 3. Validation
 
@@ -254,6 +478,13 @@ Scenario 수는 2~7개다.
 Create 결과와 수정 가능한 필드가 같으면 `reviewSkipped=true`로 LLM review를 건너뛴다. `ad_` Additional
 Dimension cell은 `null`일 때 허용 방향 안에서 자동 배정할 수 있지만 최초 `d1`, `d2` 계열 Dimension의
 `null`은 차단한다. callback table은 canonical `valueId`를 반환한다.
+
+`pressureContribution`은 Dimension마다 다른 정밀 가중치가 아니라 `bearish=-1`, `balanced=0`,
+`bullish=+1`인 동일 가중 ordinal 지표다. bullish·bearish Scenario의 빈 Additional Dimension은 같은 방향
+value를 사용하고 같은 방향이 없을 때만 balanced를 허용한다. balanced Scenario는 row의 모든 빈 Additional
+Dimension contribution 조합을 함께 비교해 최종 합계의 절댓값이 가장 작은 조합을 선택한다. 자동 배정만 발생한
+기존 Scenario의 `pressureBand`와 확률은 유지하며, 최종 aggregate ordering과 strong extreme 부호 검사는 계속
+적용한다.
 
 Validation이 blocking 결론을 정상 반환한 경우에도 operation은 `succeeded`일 수 있다. 다음 단계 활성화는
 operation status가 아니라 `canProceed`로 결정한다.
@@ -333,6 +564,10 @@ Validation과 Signpost background flow는 다음 설정으로 callback URL을 �
 성공·콘텐츠 차단 callback은 `result=success`, 실행 오류는 `result=failure`와 `reason`을 사용한다.
 callback 전송 실패는 Agent 작업 결과와 별도 장애다. 로그에서 graph 실패와 callback delivery 실패를 구분한다.
 비밀값과 OAuth2 token은 문서·로그·report에 기록하지 않는다.
+
+operation terminal commit 직후 heartbeat가 실행되어도 `succeeded|failed`는 정상 종료로 처리해 owner task를
+취소하지 않는다. `interrupted` 또는 operation 누락일 때만 owner task를 취소하므로 terminal 결과 변환과 성공·실패
+callback 전송은 끝까지 진행된다.
 
 공통 domain/API 오류는 보통 다음 shape이다.
 

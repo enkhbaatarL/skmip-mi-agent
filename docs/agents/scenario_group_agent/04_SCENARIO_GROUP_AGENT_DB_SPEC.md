@@ -19,6 +19,8 @@ flow / node
 
 ```mermaid
 erDiagram
+    %% Cardinality: || = exactly one, o{ / }o = zero or more
+    %% Relationship labels such as selected_as, has, and contains describe domain meaning only.
     MI_EVENT ||--o{ SCENARIO_GROUP_EVENT : selected_as
     SCENARIO_GROUP ||--o{ SCENARIO_GROUP_EVENT : has
     SCENARIO_GROUP ||--o{ SCENARIO : contains
@@ -27,6 +29,25 @@ erDiagram
     OPERATION ||--o{ OPERATION_EVENT : emits
     MODEL_IMPACT_LEVER }o--o{ SCENARIO_GROUP : grounds_v4
 ```
+
+### 관계 기호와 이름
+
+| 표기 | 의미 |
+| --- | --- |
+| `||` | 정확히 1개이며 필수 |
+| `o|`, `|o` | 0개 또는 1개 |
+| `|{`, `}|` | 1개 이상 |
+| `o{`, `}o` | 0개 이상 |
+| `||--o{` | 왼쪽 1개에 오른쪽 0개 이상이 연결되는 1:N 관계 |
+| `}o--o{` | 양쪽 모두 0개 이상 연결될 수 있는 선택적 N:M 관계 |
+
+관계 이름은 Mermaid나 DB가 해석하는 제약 키워드가 아니라 업무 의미를 설명하는 label이다. `selected_as`는
+Event가 Scenario Group 생성 대상으로 선택된 관계, `has`는 상위 개체가 하위 개체를 가지는 관계,
+`contains`는 Group이 Scenario를 구성요소로 포함하는 관계를 뜻한다. 필수 여부와 개수는 관계 이름이 아니라
+위 기호로 읽으며, 실제 FK, null 허용 여부, 삭제 동작은 ORM과 migration 정의를 따른다.
+
+`MI_EVENT`와 `SCENARIO_GROUP`은 `SCENARIO_GROUP_EVENT` 연결 table을 통해 N:M 관계를 구성한다. 즉 하나의
+Event가 여러 Group에 선택될 수 있고, 하나의 Group도 여러 Event를 선택할 수 있다.
 
 ## 1. 입력 정본
 
