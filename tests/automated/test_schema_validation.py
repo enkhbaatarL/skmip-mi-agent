@@ -5,6 +5,7 @@ import unittest
 from sqlalchemy import Boolean, Column, Integer, MetaData, String, Table, create_engine, text
 from sqlalchemy.dialects.mysql import TINYINT
 
+from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import (
     SchemaMismatchError,
     _types_match,
@@ -119,6 +120,17 @@ class SchemaValidationTest(unittest.TestCase):
             any("items: unexpected columns ['legacy_name']" in warning for warning in result.warnings)
         )
         self.assertFalse(any("unexpected columns" in error for error in result.errors))
+
+    def test_application_schema_does_not_require_confirmation_snapshot_tables(self) -> None:
+        application_table_names = {table.name for table in APPLICATION_TABLES}
+
+        self.assertTrue(
+            {
+                "tmm_mi_snapshot_m",
+                "tmm_mi_scenario_snap_m",
+                "tmm_mi_signpost_snap_m",
+            }.isdisjoint(application_table_names)
+        )
 
 
 if __name__ == "__main__":

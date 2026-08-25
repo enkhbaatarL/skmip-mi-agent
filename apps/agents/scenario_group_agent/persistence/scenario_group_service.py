@@ -56,7 +56,6 @@ class ScenarioGroupPresentationData(ScenarioGroupDetailData):
     operation: ScenarioGroupOperationPayload | None
     lever_labels: dict[str, str]
     legacy_template_dimensions: list[dict[str, Any]]
-    legacy_snapshot_dimension_values: list[dict[str, Any]]
 
 
 def _normalize_probability_scores_to_100(
@@ -933,10 +932,6 @@ class ScenarioGroupService:
                 ModelImpactLeverService().load_display_labels() if str(group.get("api_version") or "v1") == "v4" else {}
             ),
             "legacy_template_dimensions": self._load_trusted_legacy_template_dimensions(group),
-            "legacy_snapshot_dimension_values": self._load_legacy_snapshot_dimension_values(
-                scenario_group_id,
-                group,
-            ),
         }
 
     @staticmethod
@@ -954,24 +949,6 @@ class ScenarioGroupService:
         if str(template.get("template_checksum") or "") != stored_checksum:
             return []
         return [item for item in template.get("template_json") or [] if isinstance(item, dict)]
-
-    @staticmethod
-    def _load_legacy_snapshot_dimension_values(
-        scenario_group_id: int,
-        group: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        if str(group.get("api_version") or "v1") != "v1":
-            return []
-        from apps.common.configs.database.sync_database.connection import get_sync_session
-
-        session = get_sync_session()
-        try:
-            rows = ScenarioGroupRepository(session=session).fetch_latest_confirmation_dimension_values(
-                scenario_group_id,
-            )
-            return [item for row in rows for item in row]
-        finally:
-            session.close()
 
     def approve_dimension_mappings(
         self,
@@ -1766,88 +1743,12 @@ class ScenarioGroupService:
             if not signposts:
                 return {"status": "failure", "message": "No signposts to confirm"}
 
-            signposts_by_scenario_id: dict[int, list] = {}
-            for signpost in signposts:
-                signposts_by_scenario_id.setdefault(int(signpost.scenario_id), []).append(signpost)
-            snapshot_id = group_repository.create_confirmation_snapshot(
-                scenario_group_id=scenario_group_id,
-                scenarios=scenarios,
-                signposts_by_scenario_id=signposts_by_scenario_id,
-            )
-            group_repository.update_group(
-                group,
-                {
-                    "status": ScenarioGroupStatus.CREATED.value,
-                    "stage": ScenarioGroupStage.COMPLETED.value,
-                },
-            )
             session.commit()
             return {
                 "status": "success",
-                "snapshot_id": snapshot_id,
                 "scenario_count": len(scenarios),
                 "signpost_count": len(signposts),
                 "group": group_repository.model_to_dict(group),
-            }
-        except IntegrityError as exc:
-            session.rollback()
-            return {
-                "status": "failure",
-                "message": f"DB constraint violation: {exc}",
-            }
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
-    def create_confirmation_snapshot(self, scenario_group_id: int) -> dict[str, Any]:
-        from apps.common.configs.database.sync_database.connection import (
-            get_sync_session,
-        )
-
-        session = get_sync_session()
-        try:
-            group_repository = ScenarioGroupRepository(session=session)
-            scenario_repository = ScenarioRepository(session=session)
-            signpost_repository = SignpostRepository(session=session)
-
-            group = group_repository.fetch_by_id(scenario_group_id)
-            if group is None:
-                return {"status": "failure", "message": "Scenario group not found"}
-
-            scenarios = scenario_repository.fetch_models_by_group_id(scenario_group_id)
-            if not scenarios:
-                return {"status": "failure", "message": "No scenarios to confirm"}
-
-            signposts = signpost_repository.fetch_models_by_scenario_ids([int(s.scenario_id) for s in scenarios])
-            if not signposts:
-                return {"status": "failure", "message": "No signposts to confirm"}
-
-            signposts_by_scenario_id: dict[int, list] = {}
-            for signpost in signposts:
-                signposts_by_scenario_id.setdefault(int(signpost.scenario_id), []).append(signpost)
-
-            snapshot_id = group_repository.create_confirmation_snapshot(
-                scenario_group_id=scenario_group_id,
-                scenarios=scenarios,
-                signposts_by_scenario_id=signposts_by_scenario_id,
-            )
-            group_repository.update_scenario_count(scenario_group_id, len(scenarios))
-            scenario_repository.update_status(scenario_group_id, ScenarioStatus.CREATED.value)
-            group_repository.update_group(
-                group,
-                {
-                    "status": ScenarioGroupStatus.CREATED.value,
-                    "stage": ScenarioGroupStage.COMPLETED.value,
-                },
-            )
-            session.commit()
-            return {
-                "status": "success",
-                "snapshot_id": snapshot_id,
-                "scenario_count": len(scenarios),
-                "signpost_count": len(signposts),
             }
         except IntegrityError as exc:
             session.rollback()

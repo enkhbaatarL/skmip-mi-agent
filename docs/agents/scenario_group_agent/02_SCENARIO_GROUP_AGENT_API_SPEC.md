@@ -173,10 +173,17 @@ header `displayOrder`를 표시한다.
 `{dimensionId: valueId}`이고 표시 label은 definition에서 해석한다. `sourceEventIds`는 Event 근거,
 Dimension `rationale`은 선정 근거, value `rationale`은 미래 상태와 JKM 영향 가정이다.
 
+v1 Scenario row와 cell은 `tmm_mi_scenario_m.dimension_values`를 정본으로 사용한다. Dimension 정의는
+Group에 저장된 정의, checksum이 일치하는 template, Scenario master에서 관찰한 key/value 순으로 구성한다.
+template은 label·description·전체 enum을 보완할 뿐 Scenario별 선택값을 덮어쓰지 않는다.
+
 모든 200 응답은 `ETag`를 반환한다. ETag에는 renderer version, operation ID, snapshot revision,
 Scenario Group 수정 시각, 현재 Lever label mapping과 `hide_price_pressure` 값이 반영된다. 같은 URL에
 `If-None-Match`를 보내고 내용이 같으면 body 없는 304를 반환한다. `section_ready`의 revision이 증가할 때
 조회하되 `completed` 뒤에는 최종 조회를 한 번 더 한다.
+
+현재 renderer version은 `v5`다. v1 Presentation의 confirmation snapshot 의존성을 제거한 변경으로 기존
+renderer version의 ETag는 더 이상 304 조건을 충족하지 않는다.
 
 `GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만드는 Validation·Signpost 초기 body의
 row는 `scenarioId`, `displayOrder`, `title`, `cells`만 포함한다. `scenarioRole`, `pressureTarget`,
@@ -307,7 +314,8 @@ fingerprint와 `canProceed=true`를 확인해 Change Set을 먼저 적용한다.
 header 순서, 활성 Scenario ID 집합, `{dimensionId: valueId}` 조합이 DB와 같아야 한다. 불일치는 409
 `SCENARIO_CONFIRMATION_STALE`이며 Confirmation이 Dimension 조합을 덮어쓰지 않는다.
 
-성공하면 `status=created`, `stage=completed`가 되고 Scenario·Signpost snapshot을 저장한다.
+성공하면 Scenario·Signpost 편집 내용과 함께 `status=created`, `stage=completed`를 한 transaction에서
+commit한다.
 
 `DELETE /scenario-groups/{id}`는 body의 `userId`로 소유권을 확인하고 soft delete한다. active
 `queued|running` operation이 있으면 409다. Signpost soft delete와 hard delete는 로컬 개발 전용이며

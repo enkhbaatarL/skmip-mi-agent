@@ -238,7 +238,8 @@ Scenario·Signpost 주요 품질 문제, trace에서 확인한 원인과 증적�
 
 ## 가장 중요한 요청 구분
 
-`최신 Event 3건을 테스트`라는 문장은 두 가지로 해석될 수 있다.
+복수 Event를 생성부터 Confirmation까지 테스트하라는 요청은 기본적으로 여러 Event를 한 Group으로
+묶는 Multi-Event 전체 파이프라인으로 해석한다.
 
 ### Event 3건을 각각 따로 테스트
 
@@ -248,7 +249,7 @@ Event B → Scenario Group B
 Event C → Scenario Group C
 ```
 
-이 경우 다음처럼 요청한다.
+Event별로 Group을 나눠야 한다면 `각각`, `개별`, `Event마다 별도 Group`을 명시한다.
 
 > 외부 demo VM에서 최신 Event 3건을 각각 Scenario 생성부터 Validation, Signpost, Confirmation까지 테스트해줘.
 
@@ -258,12 +259,18 @@ Event C → Scenario Group C
 Event A + Event B + Event C → Scenario Group 1개
 ```
 
-이 경우 `한 번의 create`, `한 Group`, `여러 Event를 묶어서` 중 하나를 명시한다.
+다음처럼 명시할 수도 있지만, 생성부터 Confirmation까지의 복수 Event 요청에서는 생략해도 이 방식이
+기본값이다.
 
 > 외부 demo VM에서 최신 Event 3건을 한 번의 create 요청에 넣어 하나의 Scenario Group으로 만들고,
 > Validation, Signpost, Confirmation까지 테스트해줘.
 
-이 구분이 없으면 Skill이 어느 방식을 원하는지 물을 수 있다.
+따라서 다음처럼만 요청해도 같은 방식으로 실행한다.
+
+> 외부 demo VM에서 최신 Event 3건을 Scenario 생성부터 Confirmation까지 테스트해줘.
+
+이 요청은 Event 3건을 한 `miEventIds` 배열로 보내 create를 한 번 호출하고, 생성된 같은 Group에
+Validation, Signpost, Confirmation을 각각 한 번씩 호출한다. Event별 파이프라인 3회로 나누지 않는다.
 
 ## `scenario-sync-pipeline` 요청 예시
 
@@ -571,7 +578,7 @@ pipeline batch 안에 다음 파일이 추가된다.
 
 다음 정보가 결과를 크게 바꾸면 Skill이 실행 전에 확인한다.
 
-- 여러 Event를 각각 테스트할지 한 Group으로 묶을지 불분명한 경우
+- 복수 Event create-only 요청에서 v4 단독·버전 비교·SSE 화면 확인 중 범위가 불분명한 경우
 - v2·v3·v4 비교에서 품질검사를 포함할지 정하지 않은 경우
 - 실행 환경이나 Event 선택 조건이 없는 경우
 - 기존 Group을 삭제해야 하지만 관리자 토큰을 찾지 못한 경우

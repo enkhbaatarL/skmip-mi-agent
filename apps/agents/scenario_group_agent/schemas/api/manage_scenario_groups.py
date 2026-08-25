@@ -79,9 +79,6 @@ class HardDeleteScenarioGroupIn(ApiModel):
 
 
 class HardDeleteScenarioGroupOut(ApiModel):
-    tmm_mi_signpost_snap_m: int = Field(default=0, alias="tmm_mi_signpost_snap_m")
-    tmm_mi_scenario_snap_m: int = Field(default=0, alias="tmm_mi_scenario_snap_m")
-    tmm_mi_snapshot_m: int = Field(default=0, alias="tmm_mi_snapshot_m")
     tmm_mi_signpost_m: int = Field(default=0, alias="tmm_mi_signpost_m")
     tmm_mi_scenario_m: int = Field(default=0, alias="tmm_mi_scenario_m")
     tmm_mi_scenario_group_m: int = Field(default=0, alias="tmm_mi_scenario_group_m")

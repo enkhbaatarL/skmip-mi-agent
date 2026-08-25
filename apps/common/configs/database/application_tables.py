@@ -22,9 +22,6 @@ from apps.persistence.scenario.models import (
 from apps.persistence.scenario_group.models import (
     MiScenarioGroupEventModel,
     MiScenarioGroupModel,
-    MiScenarioSnapModel,
-    MiSignpostSnapModel,
-    MiSnapshotModel,
 )
 from apps.persistence.scenario_group_operation.models import (
     MiScenarioGroupOperationEventModel,
@@ -47,9 +44,6 @@ APPLICATION_TABLES: tuple[Table, ...] = (
     MiDimensionValueMappingModel.__table__,
     MiModelImpactLeverModel.__table__,
     MiSignpostModel.__table__,
-    MiSnapshotModel.__table__,
-    MiScenarioSnapModel.__table__,
-    MiSignpostSnapModel.__table__,
 )
 
 MODEL_PARAMETER_TABLES: tuple[Table, ...] = (

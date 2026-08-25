@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -597,6 +599,46 @@ def test_v1_observed_fallback_does_not_invent_role_pressure_or_rationale() -> No
     assert result.sections.role_selection_rationale.markdown == ""
 
 
+def test_v1_dimension_definitions_do_not_use_operation_projection() -> None:
+    group = _group("v1", [])
+    group["dimension_selected"] = ["duration"]
+    scenario = _scenario(cell="unused", role="")
+    scenario["dimension_values"] = {"duration": "현재 값"}
+    operation = _operation(
+        presentation_snapshot={
+            "dimensionDefinitions": [
+                {
+                    "dimensionId": "duration",
+                    "label": "Operation projection",
+                    "values": [{"valueId": "operation", "label": "Operation 값"}],
+                },
+            ],
+        }
+    )
+
+    result = build_scenario_group_presentation(
+        hide_price_pressure=False,
+        group=group,
+        scenarios=[scenario],
+        signposts=[],
+        events=[_event(101, "legacy event")],
+        operation=operation,
+        legacy_template_dimensions=[
+            {
+                "dim_key": "duration",
+                "label": "기간",
+                "value_enums": ["Template 값"],
+            },
+        ],
+    )
+
+    definition = result.sections.scenario_design.dimension_definitions.items[0]
+    row = result.sections.scenario_design.scenario_table.rows[0]
+    assert definition.label == "기간"
+    assert definition.source == "legacy_template_checksum_match"
+    assert row.cells == {"duration": "현재 값"}
+
+
 def test_v1_stored_value_description_is_not_promoted_to_generated_rationale() -> None:
     group = _group(
         "v1",
@@ -629,7 +671,7 @@ def test_v1_stored_value_description_is_not_promoted_to_generated_rationale() ->
     assert value.rationale == ""
 
 
-def test_v1_confirmation_snapshot_precedes_current_template_and_observed_values() -> None:
+def test_v1_template_definitions_do_not_override_scenario_master_cells() -> None:
     group = _group("v1", [])
     group["dimension_selected"] = ["duration"]
     scenario = _scenario(cell="unused", role="")
@@ -642,7 +684,6 @@ def test_v1_confirmation_snapshot_precedes_current_template_and_observed_values(
         signposts=[],
         events=[_event(101, "legacy event")],
         operation=None,
-        legacy_snapshot_dimension_values=[{"dim_key": "duration", "value": "확정 당시 값"}],
         legacy_template_dimensions=[
             {
                 "dim_key": "duration",
@@ -653,8 +694,10 @@ def test_v1_confirmation_snapshot_precedes_current_template_and_observed_values(
     )
 
     definition = result.sections.scenario_design.dimension_definitions.items[0]
-    assert definition.source == "legacy_confirmation_snapshot"
-    assert [value.label for value in definition.values] == ["확정 당시 값"]
+    row = result.sections.scenario_design.scenario_table.rows[0]
+    assert definition.source == "legacy_template_checksum_match"
+    assert [value.label for value in definition.values] == ["Template 값"]
+    assert row.cells == {"duration": "현재 값"}
 
 
 def test_v1_current_template_is_used_only_when_checksum_matches() -> None:
@@ -694,6 +737,22 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
 
     with patch.object(ScenarioGroupService, "load_presentation_detail", return_value=context) as load:
         client = TestClient(app)
+        old_etag_material = "|".join(
+            [
+                "v4",
+                operation.operation_id,
+                str(operation.snapshot_revision),
+                "",
+                json.dumps(context["lever_labels"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                "False",
+            ]
+        )
+        old_etag = f'"{hashlib.sha256(old_etag_material.encode("utf-8")).hexdigest()}"'
+        changed_renderer = client.get(
+            "/scenario-groups/120/presentation",
+            params={"operationId": operation.operation_id},
+            headers={"If-None-Match": old_etag},
+        )
         first = client.get(
             "/scenario-groups/120/presentation",
             params={"operationId": operation.operation_id},
@@ -704,8 +763,10 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
             headers={"If-None-Match": first.headers["etag"]},
         )
 
+    assert changed_renderer.status_code == 200
+    assert changed_renderer.headers["etag"] != old_etag
     assert first.status_code == 200
-    assert first.json()["rendererVersion"] == "v4"
+    assert first.json()["rendererVersion"] == "v5"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""
@@ -725,7 +786,6 @@ def test_presentation_etag_changes_with_lever_display_labels() -> None:
         "operation": operation,
         "lever_labels": {"inventory_condition": "재고 여건"},
         "legacy_template_dimensions": [],
-        "legacy_snapshot_dimension_values": [],
     }
     context["group"]["generation_diagnostics"] = _v4_diagnostics()
 
@@ -755,7 +815,6 @@ def test_presentation_etag_changes_when_hide_price_pressure_changes() -> None:
         "operation": operation,
         "lever_labels": {},
         "legacy_template_dimensions": [],
-        "legacy_snapshot_dimension_values": [],
     }
     context["group"]["generation_diagnostics"] = _v4_diagnostics()
 
@@ -914,7 +973,6 @@ def test_follow_up_request_bodies_endpoint_reuses_presentation_operation_selecti
         "events": [_event(101)],
         "operation": operation,
         "legacy_template_dimensions": [],
-        "legacy_snapshot_dimension_values": [],
     }
     context["group"]["generation_diagnostics"] = _v4_diagnostics()
 

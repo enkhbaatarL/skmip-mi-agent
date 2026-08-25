@@ -59,7 +59,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v4"
+PRESENTATION_RENDERER_VERSION = "v5"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -407,7 +407,6 @@ def build_scenario_group_presentation(
     operation: ScenarioGroupOperationPayload | None,
     lever_labels: dict[str, str] | None = None,
     legacy_template_dimensions: list[dict[str, Any]] | None = None,
-    legacy_snapshot_dimension_values: list[dict[str, Any]] | None = None,
 ) -> ScenarioGroupPresentationOut:
     """Build the screen read model only from committed, validated data."""
     del signposts  # Presentation v1 does not render Signposts.
@@ -420,11 +419,13 @@ def build_scenario_group_presentation(
         "generationDiagnostics",
         "generation_diagnostics",
     )
-    raw_definitions = group.get("dimension_definitions") or _presentation_source(
-        snapshot,
-        "dimensionDefinitions",
-        "dimension_definitions",
-    )
+    raw_definitions = group.get("dimension_definitions") or []
+    if not raw_definitions and not legacy:
+        raw_definitions = _presentation_source(
+            snapshot,
+            "dimensionDefinitions",
+            "dimension_definitions",
+        )
     warnings: list[str] = []
     if legacy:
         warnings.append("기존 v1 데이터에는 상세 생성 근거가 저장되지 않았습니다.")
@@ -448,7 +449,6 @@ def build_scenario_group_presentation(
             group=group,
             scenarios=scenarios,
             trusted_template_dimensions=legacy_template_dimensions or [],
-            snapshot_dimension_values=legacy_snapshot_dimension_values or [],
         )
         if any(definition.source == "legacy_observed" for definition in definitions):
             warnings.append("Dimension 정의를 저장된 Scenario 관찰값에서 제한적으로 복원했습니다.")
@@ -671,7 +671,6 @@ def _legacy_dimension_definitions(
     group: dict[str, Any],
     scenarios: list[dict[str, Any]],
     trusted_template_dimensions: list[dict[str, Any]],
-    snapshot_dimension_values: list[dict[str, Any]],
 ) -> list[PresentationDimensionDefinition]:
     selected = [str(item) for item in group.get("dimension_selected") or []]
     observed_by_key: dict[str, list[str]] = defaultdict(list)
@@ -680,14 +679,8 @@ def _legacy_dimension_definitions(
             text = str(value)
             if text not in observed_by_key[str(key)]:
                 observed_by_key[str(key)].append(text)
-    snapshot_by_key: dict[str, list[str]] = defaultdict(list)
-    for item in snapshot_dimension_values:
-        key = str(item.get("dim_key") or item.get("dimKey") or "").strip()
-        value = item.get("value")
-        if key and value is not None and str(value) not in snapshot_by_key[key]:
-            snapshot_by_key[key].append(str(value))
     if not selected:
-        selected = list(snapshot_by_key) or list(observed_by_key)
+        selected = list(observed_by_key)
     template_by_key = {
         str(_field(item, "dim_key")): item
         for item in trusted_template_dimensions
@@ -695,19 +688,6 @@ def _legacy_dimension_definitions(
     }
     definitions: list[PresentationDimensionDefinition] = []
     for key in selected:
-        if key in snapshot_by_key:
-            definitions.append(
-                PresentationDimensionDefinition(
-                    dimension_id=key,
-                    label=key,
-                    source="legacy_confirmation_snapshot",
-                    values=[
-                        PresentationDimensionValue(value_id=value, label=value)
-                        for value in snapshot_by_key.get(key, [])
-                    ],
-                )
-            )
-            continue
         template = template_by_key.get(key)
         if template is not None:
             raw_values = _field(template, "value_enums", default=[]) or []
