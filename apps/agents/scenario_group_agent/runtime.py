@@ -9,7 +9,10 @@ from typing import TypeVar
 from uuid import uuid4
 
 from apps.common.logging.logger_config import logger
-from apps.persistence.scenario_group_operation.schema import TERMINAL_OPERATION_STATUSES
+from apps.persistence.scenario_group_operation.schema import (
+    TERMINAL_OPERATION_STATUSES,
+    OperationHeartbeatState,
+)
 
 
 _OperationResult = TypeVar("_OperationResult")
@@ -209,7 +212,7 @@ class ScenarioGroupOperationTaskRunner:
         self,
         *,
         heartbeat_interval_seconds: float = 30.0,
-        touch_heartbeat: Callable[[int, str], bool] | None = None,
+        touch_heartbeat: Callable[[int, str], OperationHeartbeatState] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -275,7 +278,7 @@ class ScenarioGroupOperationTaskRunner:
         while True:
             await self._sleep(self._heartbeat_interval_seconds)
             try:
-                touched = await asyncio.to_thread(
+                heartbeat_state = await asyncio.to_thread(
                     self._touch_heartbeat,
                     scenario_group_id,
                     operation_id,
@@ -289,14 +292,16 @@ class ScenarioGroupOperationTaskRunner:
                     exc,
                 )
                 continue
-            if touched:
+            if heartbeat_state in {"queued", "running"}:
                 continue
+            if heartbeat_state in {"succeeded", "failed"}:
+                return
             if owner_task is not None and owner_task is not asyncio.current_task():
                 owner_task.cancel()
             return
 
     @staticmethod
-    def _touch_active_heartbeat(scenario_group_id: int, operation_id: str) -> bool:
+    def _touch_active_heartbeat(scenario_group_id: int, operation_id: str) -> OperationHeartbeatState:
         from apps.agents.scenario_group_agent.persistence.scenario_group_operation_service import (
             ScenarioGroupOperationService,
         )

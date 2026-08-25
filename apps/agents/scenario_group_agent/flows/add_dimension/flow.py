@@ -147,7 +147,7 @@ def _candidate_validation_feedback(result: AdditionalDimensionHydrationResult) -
         f"{item.reason_code} - {item.detail}"
         for item in result.rejected_candidates
     ]
-    return "Additional Dimension 후보가 모두 검증에서 탈락했습니다. " + " | ".join(details)
+    return "Additional Dimension 후보 일부 또는 전체가 검증에서 탈락했습니다. " + " | ".join(details)
 
 
 async def _generate_candidates_with_retries(
@@ -198,7 +198,7 @@ async def _generate_candidates_with_retries(
                 rejected_count,
                 reason_codes,
             )
-        if hydration_result.input_candidate_count == 0 or hydration_result.valid_candidates:
+        if hydration_result.input_candidate_count == 0 or not hydration_result.rejected_candidates:
             return hydration_result
         validation_feedback = _candidate_validation_feedback(hydration_result)
     return hydration_result
@@ -400,6 +400,22 @@ def _generation_field(generation: dict[str, Any], snake_key: str, camel_key: str
     return generation.get(snake_key, generation.get(camel_key))
 
 
+def _merge_dimension_definitions(
+    stored_definitions: list[dict[str, Any]],
+    available_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for definition in [*stored_definitions, *available_candidates]:
+        dimension_id = str(_generation_field(definition, "dimension_id", "dimensionId") or "").strip()
+        if dimension_id in seen_ids:
+            continue
+        if dimension_id:
+            seen_ids.add(dimension_id)
+        merged.append(definition)
+    return merged
+
+
 def _parse_generation_timestamp(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -469,7 +485,8 @@ def get_additional_dimensions(scenario_group_id: int) -> AdditionalDimensionsOut
     )
     if status == "ready":
         presentation_status = "ready"
-        items = build_presentation_dimension_definitions(candidates, engine_version="v4")
+        definitions = _merge_dimension_definitions(payload["dimension_definitions"], candidates)
+        items = build_presentation_dimension_definitions(definitions, engine_version="v4")
         message = "성공"
     elif status in {"queued", "running"}:
         presentation_status = "pending"

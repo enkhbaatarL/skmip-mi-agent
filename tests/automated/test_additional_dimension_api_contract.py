@@ -93,7 +93,7 @@ def _catalog(question_count: int) -> list[ModelImpactLeverPayload]:
 def _candidate(source: str, lever: str, *, states: list[list[str]] | None = None) -> dict[str, object]:
     choice_states = states or [
         [f"{lever}|increase|확대|시장|단기"],
-        [f"{lever}|unchanged|현 수준|시장|단기"],
+        [f"{lever}|decrease|축소|시장|단기"],
     ]
     return {
         "from": [source],
@@ -110,10 +110,35 @@ def _candidate(source: str, lever: str, *, states: list[list[str]] | None = None
                 "why": "관측 사실을 기반으로 미래 상태가 확대되어 JKM 압력이 커지는 가정",
             },
             {
-                "label": "유지",
+                "label": "축소",
                 "states": choice_states[1],
-                "pressure": "balanced",
-                "why": "관측 사실을 기반으로 미래 상태가 유지되어 JKM 압력이 제한되는 가정",
+                "pressure": "bearish",
+                "why": "관측 사실을 기반으로 미래 상태가 축소되어 JKM 압력이 낮아지는 가정",
+            },
+        ],
+    }
+
+
+def _stored_dimension(
+    dimension_id: str,
+    source_uncertainty_id: str,
+    *,
+    label: str | None = None,
+) -> dict[str, object]:
+    return {
+        "dimension_id": dimension_id,
+        "label": label or f"{dimension_id} Dimension",
+        "description": f"{dimension_id} 질문",
+        "rationale": f"{dimension_id} 분기 근거",
+        "source_event_ids": [101],
+        "source_uncertainty_ids": [source_uncertainty_id],
+        "values": [
+            {
+                "value_id": f"{dimension_id}_v1",
+                "label": "낮음",
+                "assumption_rationale": "낮은 상태 가정",
+                "pressure_contribution": "balanced",
+                "lever_states": [],
             },
         ],
     }
@@ -153,7 +178,7 @@ def test_additional_dimension_get_pending_contract() -> None:
         "generation": {"status": "running"},
         "candidates": [],
         "dimension_selected": ["d1"],
-        "dimension_definitions": [],
+        "dimension_definitions": [_stored_dimension("d1", "u1")],
         "updated_at": None,
     }
     with patch(
@@ -165,6 +190,7 @@ def test_additional_dimension_get_pending_contract() -> None:
     assert output.data is not None
     assert output.data.generation_status == "running"
     assert output.data.dimension_definitions.status == "pending"
+    assert output.data.dimension_definitions.items == []
     assert output.data.available_count == 0
 
 
@@ -179,8 +205,8 @@ def test_additional_dimension_get_unavailable_contract(generation_status: str) -
             "error_code": "STABLE_ERROR" if generation_status != "not_requested" else None,
         },
         "candidates": [],
-        "dimension_selected": [],
-        "dimension_definitions": [],
+        "dimension_selected": ["d1"],
+        "dimension_definitions": [_stored_dimension("d1", "u1")],
         "updated_at": None,
     }
     with patch(
@@ -197,12 +223,15 @@ def test_additional_dimension_get_unavailable_contract(generation_status: str) -
     assert output.data.error_code == ("STABLE_ERROR" if generation_status != "not_requested" else None)
 
 
-def test_additional_dimension_get_ready_empty_is_not_an_error() -> None:
+def test_additional_dimension_get_ready_returns_definitions_without_candidates() -> None:
     payload = {
         "generation": {"status": "ready"},
         "candidates": [],
-        "dimension_selected": [],
-        "dimension_definitions": [],
+        "dimension_selected": ["d1", "d2"],
+        "dimension_definitions": [
+            _stored_dimension("d1", "u1"),
+            _stored_dimension("d2", "u2"),
+        ],
         "updated_at": None,
     }
     with patch(
@@ -215,7 +244,37 @@ def test_additional_dimension_get_ready_empty_is_not_an_error() -> None:
     assert output.data is not None
     assert output.data.generation_status == "ready"
     assert output.data.dimension_definitions.status == "ready"
-    assert output.data.available_count == 0
+    assert [item.dimension_id for item in output.data.dimension_definitions.items] == ["d1", "d2"]
+    assert output.data.available_count == 2
+
+
+def test_additional_dimension_get_ready_merges_filters_and_deduplicates_definitions() -> None:
+    payload = {
+        "generation": {"status": "ready"},
+        "candidates": [
+            _stored_dimension("ad_selected", "u3"),
+            _stored_dimension("ad_same_source", "u1"),
+            _stored_dimension("d2", "u4", label="중복 후보"),
+            _stored_dimension("ad_available", "u5"),
+        ],
+        "dimension_selected": ["d1", "ad_selected"],
+        "dimension_definitions": [
+            _stored_dimension("d1", "u1"),
+            _stored_dimension("d2", "u2", label="DB definition"),
+        ],
+        "updated_at": None,
+    }
+    with patch(
+        "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService.load_additional_dimensions",
+        return_value=payload,
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.data is not None
+    items = output.data.dimension_definitions.items
+    assert [item.dimension_id for item in items] == ["d1", "d2", "ad_available"]
+    assert items[1].label == "DB definition"
+    assert output.data.available_count == len(items) == 3
 
 
 def test_dimension_value_catalog_accepts_ids_and_unique_legacy_labels() -> None:
@@ -439,6 +498,53 @@ def test_additional_prompt_and_schema_define_the_state_wire_contract() -> None:
     assert "states와 why는 초기 Dimension 생성 규칙을 그대로 따릅니다" not in prompt
     assert "Group 441" in V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT
     assert "Group 441" in prompt
+    for coverage_example in (
+        "bearish / bullish",
+        "bearish / balanced / bullish",
+        "bearish / balanced / bullish / bullish",
+    ):
+        assert coverage_example in prompt
+    assert "strong_bearish" in prompt
+    assert "Scenario 합산 pressure band" in prompt
+
+
+@pytest.mark.parametrize(
+    "choices",
+    [
+        [
+            ("상승 1", "increase", "bullish"),
+            ("상승 2", "disrupt", "bullish"),
+        ],
+        [
+            ("하락", "decrease", "bearish"),
+            ("상승 1", "increase", "bullish"),
+            ("상승 2", "disrupt", "bullish"),
+        ],
+    ],
+)
+def test_additional_candidate_requires_pressure_coverage(
+    choices: list[tuple[str, str, str]],
+) -> None:
+    candidate = _candidate("U1", "lever_1")
+    candidate["choices"] = [
+        {
+            "label": label,
+            "states": [f"lever_1|{direction}|상태 {index}|시장|단기"],
+            "pressure": pressure,
+            "why": f"관측 사실을 기반으로 미래 상태 {index}가 나타나 JKM 압력이 달라지는 가정",
+        }
+        for index, (label, direction, pressure) in enumerate(choices, start=1)
+    ]
+    readable = V4ReadableAdditionalDimensionDesignDraft.model_validate({"dimensions": [candidate]})
+
+    result = hydrate_additional_dimension_candidates(
+        readable,
+        impact_analysis=_analysis(1),
+        impact_levers=_catalog(1),
+    )
+
+    assert result.valid_candidates == []
+    assert [item.reason_code for item in result.rejected_candidates] == ["INSUFFICIENT_PRESSURE_COVERAGE"]
 
 
 def test_group_441_natural_language_states_are_classified_per_candidate() -> None:
@@ -514,4 +620,3 @@ def test_additional_hydration_preserves_valid_candidate_and_reports_invalid_cand
     assert len(result.valid_candidates) == 1
     assert len(result.rejected_candidates) == 1
     assert result.rejection_reason_codes == ["INVALID_STATE_FORMAT"]
-

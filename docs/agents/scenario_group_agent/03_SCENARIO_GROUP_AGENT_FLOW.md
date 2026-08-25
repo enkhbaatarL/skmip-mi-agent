@@ -2,15 +2,93 @@
 
 ## 범위
 
-이 문서는 현재 기준인 v4의 다음 세 업무 흐름만 설명한다.
+이 문서는 현재 기준인 v4 운영 API의 전체 수명주기와 다음 세 내부 업무 흐름을 설명한다.
 
 - Create Scenario Group
 - Validate Scenarios
 - Create Signposts
 
-v2/v3 비교 구현, 과거 v1 생성 flow, Confirmation 상세는 범위에서 제외한다. API 계약은
+Confirmation은 운영 API 호출 관계와 동기 처리 특성까지만 다루며 내부 graph 상세는 범위에서 제외한다.
+v2/v3 비교 구현과 과거 v1 생성 flow도 범위에서 제외한다. API 계약은
 [API Spec](02_SCENARIO_GROUP_AGENT_API_SPEC.md), 저장 구조는 [DB Spec](04_SCENARIO_GROUP_AGENT_DB_SPEC.md)을
 참고한다.
+
+## 운영 API 전체 수명주기
+
+```mermaid
+sequenceDiagram
+    participant PB as Platform Backend
+    participant API as Scenario Group Agent API
+    participant BG as Background Task
+
+    PB->>API: POST /scenario-groups
+    API->>API: Group·create operation·accepted event 저장
+    API->>BG: create producer 등록
+    API-->>PB: SSE accepted
+    BG->>BG: v4 graph 실행·heartbeat 갱신
+    BG->>API: 진행 event·snapshot을 DB에 저장
+    API-->>PB: SSE 진행 event
+    BG->>API: completed event·최종 snapshot 저장
+    API-->>PB: SSE completed
+    BG->>BG: completed 기록 후 Additional Dimension task 제출
+    Note over BG: 제출 후 create operation과 독립적으로 후보 생성·상태 저장
+
+    PB->>API: POST /scenario-groups/{id}/validation
+    API->>API: 요청 검증·validation operation 접수
+    API->>BG: FastAPI background task 등록
+    API-->>PB: 즉시 접수 응답
+    BG->>BG: 검증 graph 실행·결과 저장
+    BG-->>PB: Validation 완료 callback
+
+    PB->>API: POST /scenario-groups/{id}/signposts
+    API->>API: 선행 Validation 확인·signpost operation 접수
+    API->>BG: FastAPI background task 등록
+    API-->>PB: 즉시 접수 응답
+    BG->>BG: Signpost 생성·저장
+    BG-->>PB: Signpost 완료 callback
+
+    PB->>API: POST /scenario-groups/{id}/confirmation
+    API->>API: Confirmation 동기 검증·저장
+    API-->>PB: 확정 결과 직접 응답
+```
+
+SSE consumer와 create producer의 수명은 분리된다. 연결이 끊겨도 producer는 계속 실행되며, 재연결은
+`GET /scenario-groups/{id}/operations/{operationId}/stream`과 `Last-Event-ID`를 사용해 DB에 저장된 operation
+event를 replay한 뒤 live-tail한다. Additional Dimension은 SSE 진행 중 병렬 생성되는 단계가 아니다. create
+`completed` event를 저장한 뒤 제출되며, 실패해도 이미 성공한 create operation을 실패로 바꾸지 않는 독립 보조
+작업이다.
+
+## Background 실행과 운영 확인
+
+외부 메시지 브로커나 영속 task queue는 사용하지 않는다. task queue·registry·subscriber·monitor loop는 현재
+프로세스 메모리에만 있고, operation과 Additional Dimension의 업무 상태·결과 및 SSE event는 DB에 저장된다.
+
+runtime singleton 객체는 모듈 import 시 이미 프로세스 메모리에 생성된다. FastAPI startup에서는 대부분 실제
+task를 만들지 않고 요청을 받을 수 있도록 상태값이나 현재 asyncio event loop 참조만 설정한다. 실제 실행 task는
+업무 요청이나 SSE 구독이 발생할 때 필요한 만큼 생성된다. 예외적으로 recovery monitor는 startup부터 주기 task를
+계속 실행한다.
+
+| 구성요소 | FastAPI startup 시 | 실제 task 생성 시점 |
+| --- | --- | --- |
+| `ScenarioGroupOperationTaskRunner` | `_accepting=true`로 설정하고 heartbeat 주기를 저장한다. | Create 접수 시 producer task를 등록하고 해당 operation의 heartbeat task를 생성한다. Validation·Signpost는 FastAPI background task 안에서 heartbeat wrapper task만 사용한다. |
+| FastAPI `BackgroundTasks` | 별도 상주 task나 공용 registry를 만들지 않는다. | Validation·Signpost 요청 처리 중 callable을 등록하고 response 전송 뒤 실행한다. `BackgroundTasks` 자체가 상주 asyncio task를 생성하는 것은 아니며, 실행 중 operation heartbeat용 asyncio task가 별도로 생성된다. |
+| `AdditionalDimensionTaskRunner` | `_accepting=true`로 설정한다. | create `completed` 저장 후 후보 생성이 제출될 때 Scenario Group별 task를 생성한다. |
+| `ScenarioGroupOperationEventHub` | 현재 asyncio event loop 참조를 저장하고 `_stopping=false`로 설정한다. subscriber queue나 watcher는 아직 없다. | SSE 구독 시 subscriber queue를 만들고, 타 worker 소유 operation이면 adaptive DB polling watcher task를 생성한다. owner worker 알림에는 별도 상시 task를 만들지 않는다. |
+| `ScenarioGroupOperationRecoveryMonitor` | stale scan을 즉시 한 번 실행하고 기본 30초 주기의 monitor task를 생성한다. | startup에서 생성한 하나의 task가 shutdown까지 `sleep → stale scan`을 반복한다. |
+
+| 구성요소 | 역할 | 저장 상태 | 장애·재시작 동작 | 운영 확인 방법 |
+| --- | --- | --- | --- | --- |
+| `ScenarioGroupOperationTaskRunner` | SSE consumer와 독립된 create producer 수명을 소유하고 기본 30초마다 heartbeat를 갱신한다. Validation·Signpost 실행도 같은 heartbeat wrapper를 사용한다. | 실행 task registry는 process-local이고 operation 상태·heartbeat·event는 DB에 저장된다. | shutdown 시 소유 task를 취소한다. create graph는 자동 재개하지 않으며 취소 시 `interrupted`, 비정상 종료 후 stale이면 recovery monitor가 `interrupted`로 전환한다. | Create는 SSE, `GET /scenario-groups/{id}/operations/{operationId}`, Presentation, DB operation event로 확인한다. Validation·Signpost는 같은 operation polling API의 상태도 함께 확인한다. |
+| FastAPI `BackgroundTasks` | Validation·Signpost 접수 응답을 보낸 뒤 graph 실행, 결과 저장, Platform Backend callback을 수행한다. | 등록된 background task 자체는 process-local이고 업무 operation·결과는 DB에 저장된다. | 프로세스 종료 뒤 task나 callback을 자동 replay하지 않는다. 남은 active operation은 stale recovery 대상이 될 수 있다. | operation 상태와 callback 전송 로그·HTTP 응답을 함께 확인한다. |
+| `AdditionalDimensionTaskRunner` | create `completed` 뒤 후보 생성을 제출하고 Scenario Group별 process-local 중복 실행을 막는다. | task registry와 run ID registry는 process-local이고 generation status와 후보는 DB에 저장된다. | create 성공과 독립적으로 실패할 수 있다. shutdown 시 소유 run을 `interrupted` 처리하며 자동 재개하지 않는다. 비정상 종료로 DB에 active 상태가 남으면 조회 시 기본 240초 stale timeout을 기준으로 `interrupted`로 관찰된다. | `GET /scenario-groups/{id}/additional-dimensions`의 `generationStatus`, `errorCode`, 저장 Dimension·후보 통합 목록을 확인한다. |
+| `ScenarioGroupOperationEventHub` | owner worker에서는 process-local 알림으로 subscriber를 깨우고, 다른 worker에서는 operation별 adaptive DB polling으로 새 sequence를 감지한다. | subscriber·owner·watcher registry는 process-local이고 replay 원본 event는 DB에 저장된다. | worker 간 메모리를 공유하지 않는다. 재시작·타 worker 연결은 DB event replay와 polling으로 이어가며 terminal 뒤 watcher를 종료한다. | SSE sequence, 재연결 replay, operation의 `latestSequence`, DB operation event를 대조한다. |
+| `ScenarioGroupOperationRecoveryMonitor` | 시작 시 한 번, 이후 기본 30초마다 scan하여 heartbeat가 기본 120초 이상 stale인 active operation을 찾는다. | monitor loop는 process-local이고 `interrupted` 상태와 terminal event는 DB에 저장된다. | 서버 재시작 시 create graph를 재개하지 않고 stale operation을 `interrupted`로 정리한다. recovery scan 자체가 실패하면 다음 주기에 재시도한다. | operation polling/SSE의 `interrupted`, `lastError`, recovery 구조화 로그를 확인한다. |
+
+공통 원인 분석에는 operation·group ID가 포함된 구조화 로그와 MLflow trace를 사용한다. Validation·Signpost
+callback 전송 실패는 Agent 업무 결과와 별도의 delivery 장애로 판단하며, callback HTTP 응답과
+`CALLBACK_FAILED` 로그를 함께 확인한다. OAuth2 인증 요청이 401일 때만 token을 갱신해 한 번 재시도하고,
+그 밖의 오류나 재시도 실패는 추가 자동 재시도하지 않는다. canonical `POST /scenario-groups`의 Create는 SSE로
+완료를 알리고, Confirmation은 결과를 동기 응답하므로 두 API 모두 callback이 없다.
 
 ## 공통 실행 원칙
 
@@ -30,12 +108,13 @@ flowchart LR
     A[POST /scenario-groups] --> B[prepare_v4_multi_event_scenarios]
     B --> C[Group + operation + accepted 저장]
     C --> D[Lifespan task runner]
-    D --> E[v4 LangGraph]
-    E --> F[operation event append]
+    D --> E[v4 LangGraph 실행]
+    E -. node 진행 callback .-> F[진행 operation event 저장]
     F --> G[SSE replay / live-tail]
     E --> H[Scenario 일괄 저장]
-    H --> I[completed]
-    I --> J[Additional Dimension task queue]
+    H --> I[completed event + 최종 snapshot 저장]
+    I --> G
+    I --> J[Additional Dimension process-local task 제출]
 ```
 
 prepare transaction은 다음을 함께 처리한다.
@@ -72,11 +151,34 @@ flowchart TD
 사실 문장은 서버가 입력 후보와 대조하고 `factId`, `eventId`, Path ID, Lever ID를 부여한다. 한 Event의
 재시도는 성공한 다른 Event 결과를 다시 만들지 않는다.
 
+Event open question은 요청 Event 순서대로 다음 목표·상한을 적용한다. Interaction open question은
+Interaction별 최대 1개, 전체 최대 2개이며, Event와 Interaction open question을 합친 최종 상한은 10개다.
+
+| 이벤트 수 | Event 분석 Open Question 배정 | Event 합계 | Interaction 분석 최대 | 최종 최대 |
+| ---: | --- | ---: | ---: | ---: |
+| 1개 | `[3]` | 3개 | 0개 | 3개 |
+| 2개 | `[3, 3]` | 6개 | 1개 | 7개 |
+| 3개 | `[3, 3, 2]` | 8개 | 2개 | 10개 |
+| 4개 | `[2, 2, 2, 2]` | 8개 | 2개 | 10개 |
+| 5개 | `[2, 2, 2, 1, 1]` | 8개 | 2개 | 10개 |
+
 #### 2. Event interaction 분석
 
 Event가 둘 이상이고 서로 다른 Event의 유효 Path가 있을 때만 interaction LLM을 호출한다. 독립 Event에
 임의의 상호작용을 만들지 않는다. 서버는 서로 다른 Event Path 참조, ID 고유성, 질문 budget을 검증하고
 동일 Event Path만 참조한 interaction은 warning과 함께 제거한다.
+
+| 이벤트 수 | Interaction 최대 개수 | Interaction Open Question 최대 개수 |
+| ---: | ---: | ---: |
+| 1개 | 0개 | 0개 |
+| 2개 | 1개 | 1개 |
+| 3개 | 2개 | 2개 |
+| 4개 | 3개 | 2개 |
+| 5개 | 3개 | 2개 |
+
+Interaction open question 전체 상한은 `min(2, 유효 Interaction 수, 10 - Event open question 수)`로
+계산한다. 각 Interaction에는 최대 1개만 허용하고 `independent` Interaction에는 만들지 않는다. 의미 있는
+Interaction이나 질문이 없으면 실제 생성 수는 표의 최대치보다 적을 수 있다.
 
 #### 3. Dimension 설계
 
@@ -87,6 +189,9 @@ Event가 둘 이상이고 서로 다른 Event의 유효 Path가 있을 때만 in
 - `sourceEventIds`, Path·uncertainty lineage
 - `primaryLeverCode`, `primaryImpactLeverId`, `modelSupportStatus`
 - 2~4개 value와 `leverStates`, `pressureContribution`, `assumptionRationale`
+
+`pressureContribution`은 모든 Dimension에 동일하게 `bearish=-1`, `balanced=0`, `bullish=+1`로 계산하는
+ordinal 지표이며 Dimension별 별도 weight를 두지 않는다.
 
 LLM은 ID나 source lineage를 만들지 않는다. 서버가 catalog와 검증된 uncertainty를 기준으로 hydrate한다.
 지원 상태는 실행 가능성 진단 정보이며 중요한 미지원·price-only 불확실성을 Dimension에서 제거하는 필터가 아니다.
@@ -118,13 +223,24 @@ TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 �
 `completed`를 기록한 뒤 unused open question이 있으면 create operation과 독립적인 Additional Dimension
 task를 queue한다.
 
+Additional Dimension 후보도 value별 `pressureContribution`으로 `bearish`, `balanced`, `bullish`만 사용한다.
+Choice가 2개면 bearish·bullish를 모두 포함하고, 3~4개면 bearish·balanced·bullish를 모두 포함해야 한다.
+`strong_bearish`, `strong_bullish`는 Dimension value가 아니라 Scenario contribution 합산 결과인
+`pressureBand`에서만 사용한다. 서버는 후보별 lineage, state 형식, 중복과 함께 이 coverage를 검증한다.
+한 후보라도 탈락하면 validation feedback을 포함해 전체 응답을 최초 호출 포함 최대 3회 다시 생성한다. 마지막
+시도에도 일부 후보가 탈락하면 유효 후보만 저장하고, 후보가 하나 이상 생성됐지만 전부 탈락한 경우에만
+`ADDITIONAL_DIMENSION_CANDIDATES_INVALID`로 보조 생성을 실패 처리한다. 의미적으로 만들 후보가 없어 반환한
+빈 목록은 정상 완료다.
+
 ### 재시도와 복구
 
 각 LLM 단계는 최초 호출 포함 최대 3회 시도하며 1초·2초 backoff를 적용한다. schema/structured-output,
 timeout, connection, 명시된 retryable HTTP 오류만 재시도한다. 검증을 통과한 앞 단계 결과는 재사용한다.
 
-producer는 기본 30초마다 heartbeat를 갱신한다. heartbeat가 기본 120초 이상 stale인 active operation은
-recovery monitor가 `interrupted`로 전환한다. 서버 재시작 후 graph 자체를 재개하지는 않는다.
+producer는 기본 30초마다 heartbeat를 갱신한다. 갱신 시 `queued|running`이면 계속 실행하고,
+`succeeded|failed`이면 owner를 취소하지 않고 heartbeat만 종료한다. `interrupted` 또는 operation 누락일 때만
+owner를 취소한다. heartbeat가 기본 120초 이상 stale인 active operation은 recovery monitor가 `interrupted`로
+전환한다. 서버 재시작 후 graph 자체를 재개하지는 않는다.
 
 SSE consumer와 producer 수명은 분리된다. owner worker는 process-local EventHub로 subscriber를 깨우고,
 다른 worker는 operation별 adaptive DB watcher로 새 sequence를 감지한다.
@@ -176,6 +292,14 @@ ready 후보를 새 header로 추가하고 `ad_` Dimension cell을 `null`로 보
 - 최초 `d1`, `d2`, ... Dimension의 null은 blocking이다.
 - unknown header, stale 또는 준비되지 않은 후보는 blocking이다.
 - 자동 배정은 `V4_ADDITIONAL_DIMENSION_AUTOFILL` 또는 복원 INFO check로 남긴다.
+
+bullish·bearish target은 각 빈 Dimension에서 `목표 방향 → balanced → 반대 방향` 순서로 사용 가능한
+contribution을 반드시 선택한다. 이 fallback은 새 후보뿐 아니라 기존에 저장된 단일 방향 후보에도 적용한다.
+balanced target은 row의 모든 빈 Dimension contribution 조합을 한 번에 비교한다. 최종 합계 절댓값, 기존
+점수와의 차이, 저장값 재사용 수, header 순서 순으로 동률을 해소한다. 선택 contribution 안에 value가 여러 개일
+때만 constrained LLM이 의미적으로 적합한 value를 고르며 허용 범위 밖 응답은 실패 처리한다. autofill-only
+Scenario는 기존 `pressureBand`와 확률을 보존하고 전체 row의 pressure ordering·strong extreme 부호 검사는
+마지막에 다시 적용한다.
 
 ### 판정
 

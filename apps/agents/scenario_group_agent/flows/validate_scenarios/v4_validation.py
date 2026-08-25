@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 import hashlib
+from itertools import product
 import json
 import re
 from typing import Any
@@ -12,6 +13,7 @@ import unicodedata
 
 from apps.agents.scenario_group_agent.flows.add_dimension.nodes import filter_available_candidates
 from apps.agents.scenario_group_agent.utils.dimension_values import (
+    DimensionValueCatalog,
     build_dimension_value_catalog,
     canonicalize_dimension_value,
 )
@@ -19,6 +21,7 @@ from apps.persistence.scenario_group_operation.schema import ValidationCheckPayl
 
 
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
+PRESSURE_CONTRIBUTION_ORDER = {"bearish": 0, "balanced": 1, "bullish": 2}
 
 
 def _get(payload: dict[str, Any], snake_key: str, camel_key: str) -> object:
@@ -358,37 +361,101 @@ def _canonical_contribution_score(
     return score, True
 
 
-def _allowed_autofill_values(
+def _values_by_contribution(definition: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    values_by_contribution: dict[str, list[dict[str, Any]]] = {}
+    for value in definition.get("values") or []:
+        if not isinstance(value, dict) or not _value_id(value):
+            continue
+        contribution = _pressure_contribution(value)
+        if contribution is not None:
+            values_by_contribution.setdefault(contribution, []).append(value)
+    return values_by_contribution
+
+
+def _stored_contribution(
     *,
+    dimension_id: str,
     definition: dict[str, Any],
+    persisted_cells: dict[str, Any],
+    catalog: DimensionValueCatalog,
+) -> str | None:
+    try:
+        stored_value_id = canonicalize_dimension_value(
+            catalog,
+            dimension_id,
+            persisted_cells.get(dimension_id),
+            allow_label_compatibility=True,
+        )
+    except ValueError:
+        return None
+    for value in definition.get("values") or []:
+        if isinstance(value, dict) and _value_id(value) == stored_value_id:
+            return _pressure_contribution(value)
+    return None
+
+
+def _select_autofill_contributions(
+    *,
+    definitions: list[dict[str, Any]],
     target_direction: str,
     existing_pressure_score: int,
-) -> list[dict[str, Any]]:
-    values = [
-        value
-        for value in definition.get("values") or []
-        if isinstance(value, dict) and _value_id(value) and _pressure_contribution(value) is not None
-    ]
-    same_direction = [value for value in values if _pressure_contribution(value) == target_direction]
-    if same_direction:
-        return same_direction
-    if target_direction in {"bullish", "bearish"}:
-        return [value for value in values if _pressure_contribution(value) == "balanced"]
+    persisted_cells: dict[str, Any],
+    catalog: DimensionValueCatalog,
+) -> list[str] | None:
+    """Choose all empty-cell contribution directions as one row-level decision."""
+    option_sets: list[list[str]] = []
+    stored_contributions: list[str | None] = []
+    for definition in definitions:
+        values_by_contribution = _values_by_contribution(definition)
+        if target_direction in {"bullish", "bearish"}:
+            opposite_direction = "bearish" if target_direction == "bullish" else "bullish"
+            options = next(
+                (
+                    [contribution]
+                    for contribution in (target_direction, "balanced", opposite_direction)
+                    if values_by_contribution.get(contribution)
+                ),
+                [],
+            )
+        else:
+            options = sorted(values_by_contribution, key=PRESSURE_CONTRIBUTION_ORDER.__getitem__)
+        if not options:
+            return None
+        option_sets.append(options)
+        stored_contributions.append(
+            _stored_contribution(
+                dimension_id=_definition_id(definition),
+                definition=definition,
+                persisted_cells=persisted_cells,
+                catalog=catalog,
+            )
+        )
+
+    if target_direction != "balanced":
+        return [options[0] for options in option_sets]
 
     contribution_score = {"bullish": 1, "balanced": 0, "bearish": -1}
-    if not values:
-        return []
-    minimum_distance = min(
-        abs(existing_pressure_score + contribution_score[str(_pressure_contribution(value))]) for value in values
-    )
-    return [
-        value
-        for value in values
-        if abs(existing_pressure_score + contribution_score[str(_pressure_contribution(value))]) == minimum_distance
-    ]
+
+    def combination_key(combination: tuple[str, ...]) -> tuple[int, int, int, tuple[int, ...]]:
+        added_score = sum(contribution_score[contribution] for contribution in combination)
+        reuse_count = sum(
+            stored_contribution == contribution
+            for stored_contribution, contribution in zip(stored_contributions, combination, strict=True)
+        )
+        header_order_tiebreak = tuple(
+            options.index(contribution) for options, contribution in zip(option_sets, combination, strict=True)
+        )
+        return (
+            abs(existing_pressure_score + added_score),
+            abs(added_score),
+            -reuse_count,
+            header_order_tiebreak,
+        )
+
+    return list(min(product(*option_sets), key=combination_key))
 
 
-def build_v4_additional_dimension_autofill_plan(
+def build_v4_additional_dimension_autofill_plan(  # noqa: C901
     *,
     request_table: dict[str, Any],
     persisted_scenarios: list[dict[str, Any]],
@@ -453,13 +520,28 @@ def build_v4_additional_dimension_autofill_plan(
             if existing_score < 0
             else "balanced"
         )
-        for dimension_id in autofill_ids:
-            raw_value = cells.get(dimension_id)
-            if raw_value is not None and (not isinstance(raw_value, str) or raw_value.strip()):
-                continue
+        empty_dimension_ids = [
+            dimension_id
+            for dimension_id in autofill_ids
+            if (raw_value := cells.get(dimension_id)) is None or (isinstance(raw_value, str) and not raw_value.strip())
+        ]
+        persisted_cells = _get(persisted, "dimension_values", "dimensionValues") if persisted is not None else None
+        persisted_cells = persisted_cells if isinstance(persisted_cells, dict) else {}
+        selected_contributions = (
+            _select_autofill_contributions(
+                definitions=[autofill_by_id[dimension_id] for dimension_id in empty_dimension_ids],
+                target_direction=target_direction,
+                existing_pressure_score=existing_score,
+                persisted_cells=persisted_cells,
+                catalog=effective_catalog,
+            )
+            if contribution_valid and target_direction is not None
+            else None
+        )
+        for empty_index, dimension_id in enumerate(empty_dimension_ids):
             definition = autofill_by_id[dimension_id]
             dimension_label = _definition_label(definition, dimension_id)
-            if not contribution_valid or target_direction is None:
+            if selected_contributions is None:
                 plan.checks.append(
                     _check(
                         "V4_ADDITIONAL_DIMENSION_AUTOFILL",
@@ -470,11 +552,8 @@ def build_v4_additional_dimension_autofill_plan(
                     )
                 )
                 continue
-            allowed_values = _allowed_autofill_values(
-                definition=definition,
-                target_direction=target_direction,
-                existing_pressure_score=existing_score,
-            )
+            selected_contribution = selected_contributions[empty_index]
+            allowed_values = _values_by_contribution(definition).get(selected_contribution, [])
             if not allowed_values:
                 plan.checks.append(
                     _check(
@@ -486,12 +565,11 @@ def build_v4_additional_dimension_autofill_plan(
                     )
                 )
                 continue
-            persisted_cells = _get(persisted, "dimension_values", "dimensionValues") if persisted is not None else None
             try:
                 stored_value_id = canonicalize_dimension_value(
                     effective_catalog,
                     dimension_id,
-                    persisted_cells.get(dimension_id) if isinstance(persisted_cells, dict) else None,
+                    persisted_cells.get(dimension_id),
                     allow_label_compatibility=True,
                 )
             except ValueError:
@@ -512,7 +590,7 @@ def build_v4_additional_dimension_autofill_plan(
                     client_row_key=client_row_key,
                     scenario_id=scenario_id,
                     dimension_id=dimension_id,
-                    target_direction=target_direction,
+                    target_direction=selected_contribution,
                     existing_pressure_score=existing_score,
                     allowed_values=deepcopy(allowed_values),
                     title=title,

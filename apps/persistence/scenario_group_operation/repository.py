@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select
 
 from apps.common.configs.database.sync_database.base import BaseSyncSQLRepository
 from apps.persistence.scenario_group_operation.models import (
@@ -177,19 +177,14 @@ class ScenarioGroupOperationRepository(BaseSyncSQLRepository):
         operation_id: str,
         *,
         now: datetime,
-    ) -> bool:
-        stmt = (
-            update(MiScenarioGroupOperationModel)
-            .where(
-                MiScenarioGroupOperationModel.scenario_group_id == scenario_group_id,
-                MiScenarioGroupOperationModel.operation_id == operation_id,
-                MiScenarioGroupOperationModel.status.in_(("queued", "running")),
-                MiScenarioGroupOperationModel.del_yn == "N",
-            )
-            .values(heartbeat_at=now)
-        )
-        result = self.session.execute(stmt)
-        return bool(result.rowcount)
+    ) -> str | None:
+        operation = self.fetch_by_id(scenario_group_id, operation_id, for_update=True)
+        if operation is None:
+            return None
+        status = str(operation.status)
+        if status in {"queued", "running"}:
+            operation.heartbeat_at = now
+        return status
 
     def list_events_after(
         self,

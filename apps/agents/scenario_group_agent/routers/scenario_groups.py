@@ -168,7 +168,7 @@ async def list_scenario_groups(
 @router.get(
     "/scenario-groups/{scenario_group_id}/additional-dimensions",
     response_model=AdditionalDimensionsOut,
-    summary="미선택 Additional Dimension 후보 조회",
+    summary="저장 Dimension 및 Additional 후보 조회",
 )
 async def list_additional_dimensions(scenario_group_id: int) -> AdditionalDimensionsOut:
     return get_additional_dimensions(scenario_group_id)

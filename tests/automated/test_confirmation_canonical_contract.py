@@ -109,6 +109,47 @@ def test_confirmation_rejects_changed_dimension_values_without_any_write() -> No
     session.rollback.assert_called_once_with()
 
 
+def test_confirmation_rejects_stale_header_order_even_when_display_orders_claim_canonical_order() -> None:
+    session, groups, scenarios, signposts, _unused = _repositories()
+    groups.fetch_by_id.return_value.dimension_selected = ["b", "a"]
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": _connection_module(session)},
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioGroupRepository",
+            return_value=groups,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.ScenarioRepository",
+            return_value=scenarios,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service.SignpostRepository",
+            return_value=signposts,
+        ),
+        pytest.raises(MIBaseError) as error,
+    ):
+        ScenarioGroupService().apply_confirmation(
+            10,
+            {"title": "확정 제목"},
+            {
+                "headers": [
+                    {"key": "a", "display_order": 2},
+                    {"key": "b", "display_order": 1},
+                ],
+                "rows": [{"scenario_id": 100, "cells": {"a": "a1", "b": "b1"}}],
+            },
+            user_id=7,
+        )
+
+    assert error.value.error_code is ErrorCode.SCENARIO_CONFIRMATION_STALE
+    assert "header" in error.value.error_message
+    scenarios.update_from_payload.assert_not_called()
+    session.commit.assert_not_called()
+
+
 def test_confirmation_owner_mismatch_fails_before_loading_scenarios() -> None:
     session, groups, scenarios, signposts, _unused = _repositories(owner=8)
     with (

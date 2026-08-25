@@ -35,13 +35,22 @@ async def main() -> None:
     )
     await run_additional_dimension_generation(TARGET_SCENARIO_GROUP_ID)
     output = await asyncio.to_thread(get_additional_dimensions, TARGET_SCENARIO_GROUP_ID)
-    if output.data is None or output.data.generation_status != "ready" or output.data.available_count <= 0:
+    loaded = await asyncio.to_thread(service.load_additional_dimensions, TARGET_SCENARIO_GROUP_ID)
+    stored_definition_ids = {
+        str(item.get("dimension_id") or item.get("dimensionId")) for item in loaded["dimension_definitions"]
+    }
+    returned_candidate_ids = {
+        item.dimension_id
+        for item in (output.data.dimension_definitions.items if output.data is not None else [])
+        if item.dimension_id not in stored_definition_ids
+    }
+    if output.data is None or output.data.generation_status != "ready" or not returned_candidate_ids:
         message = "Group 441 Additional Dimension regeneration did not produce an available candidate"
         raise RuntimeError(message)
     logger.info(
-        "Group 441 Additional Dimension regeneration verified | scenario_group_id={} | available_count={}",
+        "Group 441 Additional Dimension regeneration verified | scenario_group_id={} | candidate_count={}",
         TARGET_SCENARIO_GROUP_ID,
-        output.data.available_count,
+        len(returned_candidate_ids),
     )
 
 

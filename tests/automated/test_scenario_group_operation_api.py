@@ -298,11 +298,24 @@ def test_stale_recovery_rechecks_heartbeat_after_lock() -> None:
     session.commit.assert_called_once_with()
 
 
-@pytest.mark.parametrize("touched", [True, False])
-def test_touch_active_heartbeat_commits_conditional_update(touched: bool) -> None:
+@pytest.mark.parametrize(
+    ("repository_status", "expected_state"),
+    [
+        ("queued", "queued"),
+        ("running", "running"),
+        ("succeeded", "succeeded"),
+        ("failed", "failed"),
+        ("interrupted", "interrupted"),
+        (None, "missing"),
+    ],
+)
+def test_touch_active_heartbeat_returns_internal_operation_state(
+    repository_status: str | None,
+    expected_state: str,
+) -> None:
     session = Mock()
     repository = Mock()
-    repository.touch_active_heartbeat.return_value = touched
+    repository.touch_active_heartbeat.return_value = repository_status
     connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
     connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
 
@@ -322,7 +335,7 @@ def test_touch_active_heartbeat_commits_conditional_update(touched: bool) -> Non
             "01JABCDEF0123456789ABCDEFX",
         )
 
-    assert result is touched
+    assert result == expected_state
     repository.touch_active_heartbeat.assert_called_once()
     assert repository.touch_active_heartbeat.call_args.args == (120, "01JABCDEF0123456789ABCDEFX")
     session.commit.assert_called_once_with()
@@ -1014,7 +1027,8 @@ def test_sse_disconnect_does_not_cancel_registered_producer() -> None:
     assert asyncio.run(exercise())
 
 
-def test_task_runner_renews_heartbeat_and_cancels_when_operation_is_terminal() -> None:
+@pytest.mark.parametrize("heartbeat_state", ["interrupted", "missing"])
+def test_task_runner_cancels_owner_when_operation_is_interrupted_or_missing(heartbeat_state: str) -> None:
     async def exercise() -> tuple[list[float], Mock, bool]:
         heartbeat_permissions: asyncio.Queue[None] = asyncio.Queue()
         intervals: list[float] = []
@@ -1024,7 +1038,7 @@ def test_task_runner_renews_heartbeat_and_cancels_when_operation_is_terminal() -
             intervals.append(interval)
             await heartbeat_permissions.get()
 
-        touch_heartbeat = Mock(return_value=False)
+        touch_heartbeat = Mock(return_value=heartbeat_state)
         runner = ScenarioGroupOperationTaskRunner(
             heartbeat_interval_seconds=30,
             touch_heartbeat=touch_heartbeat,
@@ -1051,6 +1065,50 @@ def test_task_runner_renews_heartbeat_and_cancels_when_operation_is_terminal() -
     assert producer_stopped is True
 
 
+@pytest.mark.parametrize("heartbeat_state", ["succeeded", "failed"])
+def test_task_runner_stops_only_heartbeat_after_normal_terminal_commit(heartbeat_state: str) -> None:
+    async def exercise() -> tuple[str, Mock, bool]:
+        heartbeat_permissions: asyncio.Queue[None] = asyncio.Queue()
+        heartbeat_observed = asyncio.Event()
+        owner_finished = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        async def controlled_sleep(_interval: float) -> None:
+            await heartbeat_permissions.get()
+
+        touch_heartbeat = Mock(return_value=heartbeat_state)
+
+        def touch_and_signal(scenario_group_id: int, operation_id: str) -> str:
+            state = touch_heartbeat(scenario_group_id, operation_id)
+            loop.call_soon_threadsafe(heartbeat_observed.set)
+            return state
+
+        runner = ScenarioGroupOperationTaskRunner(
+            heartbeat_interval_seconds=30,
+            touch_heartbeat=touch_and_signal,
+            sleep=controlled_sleep,
+        )
+
+        async def operation() -> str:
+            heartbeat_permissions.put_nowait(None)
+            await heartbeat_observed.wait()
+            await asyncio.sleep(0)
+            owner_finished.set()
+            return "callback-payload"
+
+        result = await asyncio.wait_for(
+            runner.run_with_heartbeat(120, "01JABCDEF0123456789ABCDEFX", operation()),
+            timeout=1,
+        )
+        return result, touch_heartbeat, owner_finished.is_set()
+
+    result, touch_heartbeat, owner_finished = asyncio.run(exercise())
+
+    assert result == "callback-payload"
+    touch_heartbeat.assert_called_once_with(120, "01JABCDEF0123456789ABCDEFX")
+    assert owner_finished is True
+
+
 def test_public_heartbeat_wrapper_returns_result_and_cleans_up_after_repeated_renewals() -> None:
     async def exercise() -> tuple[int, list[float], Mock, list[str]]:
         heartbeat_permissions: asyncio.Queue[None] = asyncio.Queue()
@@ -1062,7 +1120,7 @@ def test_public_heartbeat_wrapper_returns_result_and_cleans_up_after_repeated_re
             intervals.append(interval)
             await heartbeat_permissions.get()
 
-        touch_heartbeat = Mock(return_value=True)
+        touch_heartbeat = Mock(return_value="running")
 
         def touch_and_signal(scenario_group_id: int, operation_id: str) -> bool:
             touched = touch_heartbeat(scenario_group_id, operation_id)

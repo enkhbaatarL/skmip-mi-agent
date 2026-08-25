@@ -20,6 +20,7 @@ from apps.persistence.scenario_group_operation.repository import ScenarioGroupOp
 from apps.persistence.scenario_group_operation.schema import (
     TERMINAL_EVENT_TYPES,
     TERMINAL_OPERATION_STATUSES,
+    OperationHeartbeatState,
     ScenarioGroupOperationEventPayload,
     ScenarioGroupOperationInternalPayload,
     ScenarioGroupOperationPayload,
@@ -675,18 +676,20 @@ class ScenarioGroupOperationService:
         finally:
             session.close()
 
-    def touch_active_heartbeat(self, scenario_group_id: int, operation_id: str) -> bool:
+    def touch_active_heartbeat(self, scenario_group_id: int, operation_id: str) -> OperationHeartbeatState:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
         session = get_sync_session()
         try:
-            touched = ScenarioGroupOperationRepository(session=session).touch_active_heartbeat(
+            status = ScenarioGroupOperationRepository(session=session).touch_active_heartbeat(
                 scenario_group_id,
                 operation_id,
                 now=_db_now(),
             )
             session.commit()
-            return touched
+            if status in {"queued", "running", "succeeded", "failed", "interrupted"}:
+                return status
+            return "missing"
         except Exception:
             session.rollback()
             raise

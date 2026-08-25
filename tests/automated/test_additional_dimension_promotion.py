@@ -398,7 +398,11 @@ def test_two_candidates_from_distinct_sources_can_be_promoted_sequentially() -> 
         ):
             get_result = get_additional_dimensions(10)
         assert get_result.data is not None
-        assert [item.dimension_id for item in get_result.data.dimension_definitions.items] == ["ad_scope"]
+        assert [item.dimension_id for item in get_result.data.dimension_definitions.items] == [
+            "d1",
+            "ad_duration",
+            "ad_scope",
+        ]
 
         second_target_definitions = [*deepcopy(group.dimension_definitions), deepcopy(second_candidate)]
         second_result = ValidationOperationResultPayload(
