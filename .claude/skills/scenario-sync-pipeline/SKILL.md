@@ -11,17 +11,24 @@ description: MI Scenario Group Agent API 파이프라인을 실행하고 증적�
 
 ## 요청 라우팅
 
-- 사용자가 기존 API, 단일 이벤트, 최근 이벤트를 **각각** sync, event type별 테스트를 요청하면 **기존 단일 이벤트 전체 파이프라인**을 실행한다.
-- 사용자가 여러 Event ID를 **한 번의 create 요청**에 넣고 validation→signpost→confirmation까지 요청하거나,
-  `최신 N건 멀티 이벤트 전체 파이프라인`을 요청하면 **Multi-Event 전체 파이프라인**을 실행한다.
+- 사용자가 단일 Event를 요청하거나, 복수 Event를 `각각`, `개별`, `Event마다 별도 Group`으로
+  sync하라고 명시하거나, event type별 대표 테스트를 요청하면 **기존 단일 이벤트 전체 파이프라인**을 실행한다.
+- 사용자가 복수 Event 또는 `Event N개`와 create→validation→signpost→confirmation 범위를 함께 요청하면,
+  묶는 방법을 따로 쓰지 않았어도 **Multi-Event 전체 파이프라인**을 기본으로 실행한다. 예를 들어
+  `event 3개 테스트를 create scenario부터 confirmation까지 해줘`는 Event 3개를 한 번의 create
+  요청에 넣는다는 뜻이다.
+- 사용자가 여러 Event ID를 **한 번의 create 요청**에 넣으라고 하거나,
+  `최신 N건 멀티 이벤트 전체 파이프라인`을 요청한 경우도 **Multi-Event 전체 파이프라인**을 실행한다.
 - 사용자가 `SSE create`, `POST /scenario-groups`, `Presentation API`, `section_ready`,
   신규 업무 API의 create·Presentation까지만 요청하면 **신규 Multi-Event SSE·Presentation**을 실행한다.
 - 사용자가 `v4 only`, `v4 단독`, `v4만 실행`을 요청하면 **Multi-Event v4 단독 실행**을 실행한다.
 - 사용자가 `v2/v3/v4 비교` 또는 둘 이상의 version 비교를 명시하면 **Multi-Event 버전 비교**를 실행한다.
-- version이나 multi-event 의도가 불분명하면 어떤 흐름인지 확인한다.
+- version 비교 여부나 create-only/SSE-only 범위가 불분명하면 어떤 흐름인지 확인한다. 복수 Event의
+  전체 파이프라인 요청은 묶는 방법을 다시 묻지 않고 위 기본값을 적용한다.
 
-`--recent-events N`은 N개의 단일 이벤트 파이프라인을 각각 실행하는 옵션이다. 여러 Event를
-하나의 `miEventIds` 배열로 보내야 하는 요청에는 절대 사용하지 않는다.
+`--recent-events N`은 사용자가 `각각`, `개별`, `Event마다 별도 Group`을 명시한 경우에만 N개의
+단일 이벤트 파이프라인을 실행하는 옵션이다. 복수 Event의 전체 파이프라인 요청에는 절대 사용하지
+않고, Event ID 전체를 하나의 `miEventIds` 배열로 보낸다.
 
 ## 관리자 토큰 로딩
 
@@ -63,7 +70,7 @@ soft delete가 필요한데 세 위치에서 토큰을 찾지 못하면 실행�
 
 ### 실행
 
-최근 N개를 테스트하려면 다음처럼 실행한다.
+최근 N개를 **각각 별도 Group으로** 테스트하라고 명시한 경우 다음처럼 실행한다.
 
 ```bash
 python tests/manual/test_sync_pipeline_api.py \
@@ -77,8 +84,9 @@ python tests/manual/test_sync_pipeline_api.py \
 
 `--recent-events N`은 `GET /events?sort=latest`로 선택하고 N이 100을 넘으면 paging한다. 기존 group이나 disabled 상태인 이벤트도 후보에서 제외하지 않는다. 기존 group은 먼저 soft delete한다. `scenarioSuggestYn=N`처럼 soft delete로 해소되지 않는 실패는 원인을 기록하고 다음 이벤트로 진행한다.
 
-이 옵션은 선택한 Event마다 create API를 한 번씩 호출한다. `최신 N건을 한 번의 Multi-Event
-create에 전달`하라는 요청에는 아래 **Multi-Event 전체 파이프라인**을 사용한다.
+이 옵션은 선택한 Event마다 create API를 한 번씩 호출한다. 사용자가 분리 실행을 명시하지 않은
+`Event N개를 create부터 confirmation까지 테스트` 요청에는 아래 **Multi-Event 전체 파이프라인**을
+사용한다.
 
 단일 이벤트를 테스트하려면 다음처럼 실행한다.
 
@@ -127,10 +135,19 @@ python tests/manual/test_sync_pipeline_api.py \
 Presentation 계약도 함께 검증한다. 이후 같은 `scenarioGroupId`에만 후속 sync API를 순서대로
 호출한다. Event별로 create를 나누거나 `test_sync_pipeline_api.py --recent-events N`을 사용하지 않는다.
 
+복수 Event 전체 파이프라인의 불변 조건은 다음과 같다.
+
+- 선택한 모든 Event ID를 한 요청 body의 `miEventIds` 배열에 넣는다.
+- `POST /scenario-groups`는 정확히 한 번만 호출하고 Scenario Group도 하나만 생성한다.
+- validation, signpost, confirmation은 create 응답의 동일한 `scenarioGroupId`에 각각 한 번씩 호출한다.
+- Event별 outer loop를 만들지 않는다. `Event 1 전체 완료 → Event 2 전체 완료` 방식은 사용자가
+  `각각` 또는 `개별` 실행을 명시한 경우에만 허용한다.
+
 ### 실행 순서
 
 1. 명시 ID면 `--event-ids ...`, 최신 N건이면 `--event-count N --event-sort latest`로 SSE create를
-   정확히 한 번 실행한다. 기존 활성 그룹은 기본 정책대로 먼저 soft delete한다.
+   정확히 한 번 실행한다. create 직전 선택된 ID 전체와 request body의 `miEventIds`가 동일한지
+   확인한다. 기존 활성 그룹은 기본 정책대로 먼저 soft delete한다.
 2. create의 terminal event가 `completed.status=succeeded`인지 확인하고 `result.json`의
    `scenarioGroupId`를 사용한다. timeout 또는 stream 오류 뒤 같은 create POST를 재시도하지 않는다.
 3. `tests/manual/build_request_bodies_from_group.py`로 현재 그룹 기반 validation body를 만들고
