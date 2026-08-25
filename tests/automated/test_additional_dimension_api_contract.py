@@ -119,6 +119,31 @@ def _candidate(source: str, lever: str, *, states: list[list[str]] | None = None
     }
 
 
+def _stored_dimension(
+    dimension_id: str,
+    source_uncertainty_id: str,
+    *,
+    label: str | None = None,
+) -> dict[str, object]:
+    return {
+        "dimension_id": dimension_id,
+        "label": label or f"{dimension_id} Dimension",
+        "description": f"{dimension_id} 질문",
+        "rationale": f"{dimension_id} 분기 근거",
+        "source_event_ids": [101],
+        "source_uncertainty_ids": [source_uncertainty_id],
+        "values": [
+            {
+                "value_id": f"{dimension_id}_v1",
+                "label": "낮음",
+                "assumption_rationale": "낮은 상태 가정",
+                "pressure_contribution": "balanced",
+                "lever_states": [],
+            },
+        ],
+    }
+
+
 def test_open_question_pool_warns_on_soft_minimum_without_capping_maximum() -> None:
     undershot = finalize_open_question_pool(_analysis(3))
     preserved = finalize_open_question_pool(_analysis(12))
@@ -153,7 +178,7 @@ def test_additional_dimension_get_pending_contract() -> None:
         "generation": {"status": "running"},
         "candidates": [],
         "dimension_selected": ["d1"],
-        "dimension_definitions": [],
+        "dimension_definitions": [_stored_dimension("d1", "u1")],
         "updated_at": None,
     }
     with patch(
@@ -165,6 +190,7 @@ def test_additional_dimension_get_pending_contract() -> None:
     assert output.data is not None
     assert output.data.generation_status == "running"
     assert output.data.dimension_definitions.status == "pending"
+    assert output.data.dimension_definitions.items == []
     assert output.data.available_count == 0
 
 
@@ -179,8 +205,8 @@ def test_additional_dimension_get_unavailable_contract(generation_status: str) -
             "error_code": "STABLE_ERROR" if generation_status != "not_requested" else None,
         },
         "candidates": [],
-        "dimension_selected": [],
-        "dimension_definitions": [],
+        "dimension_selected": ["d1"],
+        "dimension_definitions": [_stored_dimension("d1", "u1")],
         "updated_at": None,
     }
     with patch(
@@ -197,12 +223,15 @@ def test_additional_dimension_get_unavailable_contract(generation_status: str) -
     assert output.data.error_code == ("STABLE_ERROR" if generation_status != "not_requested" else None)
 
 
-def test_additional_dimension_get_ready_empty_is_not_an_error() -> None:
+def test_additional_dimension_get_ready_returns_definitions_without_candidates() -> None:
     payload = {
         "generation": {"status": "ready"},
         "candidates": [],
-        "dimension_selected": [],
-        "dimension_definitions": [],
+        "dimension_selected": ["d1", "d2"],
+        "dimension_definitions": [
+            _stored_dimension("d1", "u1"),
+            _stored_dimension("d2", "u2"),
+        ],
         "updated_at": None,
     }
     with patch(
@@ -215,7 +244,37 @@ def test_additional_dimension_get_ready_empty_is_not_an_error() -> None:
     assert output.data is not None
     assert output.data.generation_status == "ready"
     assert output.data.dimension_definitions.status == "ready"
-    assert output.data.available_count == 0
+    assert [item.dimension_id for item in output.data.dimension_definitions.items] == ["d1", "d2"]
+    assert output.data.available_count == 2
+
+
+def test_additional_dimension_get_ready_merges_filters_and_deduplicates_definitions() -> None:
+    payload = {
+        "generation": {"status": "ready"},
+        "candidates": [
+            _stored_dimension("ad_selected", "u3"),
+            _stored_dimension("ad_same_source", "u1"),
+            _stored_dimension("d2", "u4", label="중복 후보"),
+            _stored_dimension("ad_available", "u5"),
+        ],
+        "dimension_selected": ["d1", "ad_selected"],
+        "dimension_definitions": [
+            _stored_dimension("d1", "u1"),
+            _stored_dimension("d2", "u2", label="DB definition"),
+        ],
+        "updated_at": None,
+    }
+    with patch(
+        "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService.load_additional_dimensions",
+        return_value=payload,
+    ):
+        output = get_additional_dimensions(10)
+
+    assert output.data is not None
+    items = output.data.dimension_definitions.items
+    assert [item.dimension_id for item in items] == ["d1", "d2", "ad_available"]
+    assert items[1].label == "DB definition"
+    assert output.data.available_count == len(items) == 3
 
 
 def test_dimension_value_catalog_accepts_ids_and_unique_legacy_labels() -> None:
@@ -514,4 +573,3 @@ def test_additional_hydration_preserves_valid_candidate_and_reports_invalid_cand
     assert len(result.valid_candidates) == 1
     assert len(result.rejected_candidates) == 1
     assert result.rejection_reason_codes == ["INVALID_STATE_FORMAT"]
-

@@ -182,7 +182,21 @@ def run_probe(
                 data = payload.get("data") or {}
                 definitions = data.get("dimensionDefinitions") or data.get("dimension_definitions") or {}
                 items = definitions.get("items") or []
-                additional_dimension = items[0] if items and isinstance(items[0], dict) else None
+                current_dimension_ids = {
+                    str(header.get("key") or "")
+                    for header in (table.get("headers") or [])
+                    if isinstance(header, dict)
+                }
+                additional_dimension = next(
+                    (
+                        item
+                        for item in items
+                        if isinstance(item, dict)
+                        and str(item.get("dimensionId") or item.get("dimension_id") or "")
+                        not in current_dimension_ids
+                    ),
+                    None,
+                )
         for mutation_id in mutation_id_list:
             mutated = mutate_table(table, mutation_id, additional_dimension=additional_dimension)
             if dry_run:
