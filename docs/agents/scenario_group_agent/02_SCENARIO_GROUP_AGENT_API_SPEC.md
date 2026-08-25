@@ -19,7 +19,7 @@
 | `GET` | `/scenario-groups` | Scenario Group 목록 |
 | `GET` | `/scenario-groups/{id}` | 업무 상세 또는 table view |
 | `GET` | `/scenario-groups/{id}/presentation` | 화면 전용 read model |
-| `GET` | `/scenario-groups/{id}/additional-dimensions` | v4 Additional Dimension 후보 |
+| `GET` | `/scenario-groups/{id}/additional-dimensions` | v4 저장 Dimension과 Additional 후보 |
 | `GET` | `/scenario-groups/{id}/operations/{operationId}` | operation polling |
 | `GET` | `/scenario-groups/{id}/operations/{operationId}/stream` | SSE replay·재연결 |
 | `POST` | `/scenario-groups/{id}/validation` | Scenario table 검증 접수 |
@@ -375,9 +375,10 @@ QA용 `GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만�
 
 ### Additional Dimension
 
-`GET /scenario-groups/{id}/additional-dimensions`는 v4 group에서만 사용한다. GET은 저장된 후보만 읽고 LLM을
-호출하거나 정식 Dimension을 변경하지 않는다. query parameter와 request body는 없다. Create 완료와 후보 생성
-완료 시점이 다를 수 있으므로 Client가 이 API로 상태와 결과를 조회한다.
+`GET /scenario-groups/{id}/additional-dimensions`는 v4 group에서만 사용한다. GET은 Group에 저장된 전체
+Dimension definition과 저장된 Additional Dimension 후보를 읽고 LLM을 호출하거나 정식 Dimension을 변경하지
+않는다. query parameter와 request body는 없다. Create 완료와 후보 생성 완료 시점이 다를 수 있으므로 Client가
+이 API로 상태와 결과를 조회한다.
 
 ```json
 {
@@ -388,9 +389,20 @@ QA용 `GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만�
     "generationStatus": "ready",
     "dimensionDefinitions": {
       "status": "ready",
-      "items": []
+      "items": [
+        {
+          "dimensionId": "d1",
+          "label": "공급 복구 시점",
+          "description": "공급은 언제 복구되는가?",
+          "rationale": "복구 시점이 Scenario와 JKM 압력을 구분한다.",
+          "sourceEventIds": [101],
+          "modelSupportStatus": "full",
+          "source": null,
+          "values": []
+        }
+      ]
     },
-    "availableCount": 0,
+    "availableCount": 1,
     "updatedAt": "2026-08-19T10:00:20Z",
     "errorCode": null
   }
@@ -401,9 +413,9 @@ QA용 `GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만�
 | --- | --- | --- |
 | `data.scenarioGroupId` | number | Scenario Group ID |
 | `data.generationStatus` | string | background 후보 생성 상태 |
-| `data.dimensionDefinitions.status` | string | 화면용 후보 목록 상태 |
-| `data.dimensionDefinitions.items` | object[] | 아직 선택되지 않은 Dimension 후보 |
-| `data.availableCount` | number | 반환한 후보 개수 |
+| `data.dimensionDefinitions.status` | string | 화면용 전체 Dimension 목록 상태 |
+| `data.dimensionDefinitions.items` | object[] | 저장 순서의 DB Dimension definition과 필터링된 Additional Dimension 후보 |
+| `data.availableCount` | number | 병합·중복 제거 후 반환한 전체 Dimension 개수 |
 | `data.updatedAt` | string \| null | 상태 또는 후보의 마지막 갱신 시각 |
 | `data.errorCode` | string \| null | 실패·중단 시 안정적인 오류 코드 |
 
@@ -412,12 +424,15 @@ QA용 `GET /scenario-groups/{id}/presentation/follow-up-request-bodies`가 만�
 | `generationStatus` | `dimensionDefinitions.status` | Client 처리 |
 | --- | --- | --- |
 | `queued`, `running` | `pending` | 일정 간격 뒤 다시 조회 |
-| `ready` | `ready` | `items`를 표시하고 polling 종료 |
+| `ready` | `ready` | 저장된 Dimension 뒤에 Additional 후보가 이어진 `items`를 표시하고 polling 종료 |
 | `not_requested`, `failed`, `interrupted`, `discarded` | `unavailable` | 후보 영역을 비활성화하고 polling 종료 |
 
-`ready`이면서 `items=[]`, `availableCount=0`인 것은 추가 후보가 없는 정상 완료다. 후보 생성 자체의
-실패·중단도 Scenario Group을 조회할 수 있으면 HTTP 200으로 반환하고 `generationStatus`, optional
-`errorCode`로 구분하며 내부 LLM 오류 원문은 노출하지 않는다. 실행 중 상태가 stale timeout을 넘으면 조회 시
+`ready`에서는 DB Dimension definition을 저장 순서대로 먼저 배치하고, 이미 선택됐거나 기존 definition과 같은
+원천을 사용하는 후보를 제외한 뒤 `dimensionId` 중복을 제거해 Additional 후보를 이어 붙인다. 중복 시 DB
+definition이 우선한다. 후보가 없어도 DB definition은 반환하며, 양쪽 모두 없으면 `items=[]`,
+`availableCount=0`인 정상 완료다. 후보 생성 자체의 실패·중단도 Scenario Group을 조회할 수 있으면 HTTP 200으로
+반환하고 `generationStatus`, optional `errorCode`로 구분하며 내부 LLM 오류 원문은 노출하지 않는다. 이 경우 DB
+definition이 있어도 `items=[]`, `availableCount=0`을 유지한다. 실행 중 상태가 stale timeout을 넘으면 조회 시
 `interrupted`와 안정적인 timeout error code로 투영한다.
 
 없는 Scenario Group은 404, v1~v3 또는 다른 생성 전략의 group은 400이다. 현재 GET 계약에는 status/stage에
