@@ -10,6 +10,7 @@ from apps.persistence.schema_base import ApiModel
 
 OperationType = Literal["create", "validation", "signpost", "confirmation"]
 OperationStatus = Literal["queued", "running", "succeeded", "failed", "interrupted"]
+OperationHeartbeatState = Literal["queued", "running", "succeeded", "failed", "interrupted", "missing"]
 TERMINAL_OPERATION_STATUSES = frozenset({"succeeded", "failed", "interrupted"})
 TERMINAL_EVENT_TYPES = frozenset({"completed", "failed", "interrupted"})
 

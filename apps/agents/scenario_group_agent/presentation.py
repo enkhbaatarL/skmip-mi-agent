@@ -59,7 +59,7 @@ from apps.persistence.scenario_group.schema import (
 from apps.persistence.scenario_group_operation.schema import ScenarioGroupOperationPayload
 
 
-PRESENTATION_RENDERER_VERSION = "v5"
+PRESENTATION_RENDERER_VERSION = "v6"
 
 
 def build_presentation_follow_up_request_bodies(
@@ -293,12 +293,6 @@ def _build_headers(
             str(item.get("dim_key")): item for item in template_json if isinstance(item, dict) and item.get("dim_key")
         }
     selected_keys = [str(key) for key in group.get("dimension_selected") or []]
-    selected_keys.sort(
-        key=lambda key: (
-            _display_order(template_by_key.get(key)),
-            key,
-        )
-    )
     headers = [
         ScenarioHeader(
             key=key,
@@ -390,13 +384,6 @@ def _value_ids_by_unique_label(values: Any) -> dict[str, str]:
     return {label: ids[0] for label, ids in candidates.items() if len(ids) == 1}
 
 
-def _display_order(template: dict[str, Any] | None) -> int:
-    try:
-        return int((template or {}).get("display_order", 999999))
-    except (TypeError, ValueError):
-        return 999999
-
-
 def build_scenario_group_presentation(
     *,
     hide_price_pressure: bool,
@@ -430,16 +417,20 @@ def build_scenario_group_presentation(
     if legacy:
         warnings.append("기존 v1 데이터에는 상세 생성 근거가 저장되지 않았습니다.")
 
-    selected_ids = {str(item) for item in group.get("dimension_selected") or []}
-    selected_raw_definitions = [
-        item
-        for item in raw_definitions
-        if isinstance(item, dict)
-        and (
-            not selected_ids
-            or str(_field(item, "dimension_id") or "") in selected_ids
-        )
-    ] if isinstance(raw_definitions, list) else raw_definitions
+    selected_order = [str(item) for item in group.get("dimension_selected") or []]
+    if isinstance(raw_definitions, list) and selected_order:
+        raw_definition_by_id = {
+            str(_field(item, "dimension_id") or ""): item
+            for item in raw_definitions
+            if isinstance(item, dict) and _field(item, "dimension_id")
+        }
+        selected_raw_definitions: Any = [
+            raw_definition_by_id[dimension_id]
+            for dimension_id in selected_order
+            if dimension_id in raw_definition_by_id
+        ]
+    else:
+        selected_raw_definitions = raw_definitions
     definitions = build_presentation_dimension_definitions(
         selected_raw_definitions,
         engine_version=engine_version,

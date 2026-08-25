@@ -17,6 +17,7 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_service import 
 from apps.agents.scenario_group_agent.presentation import (
     build_presentation_follow_up_request_bodies,
     build_scenario_group_presentation,
+    build_scenario_group_table_data,
 )
 from apps.common.configs.config import Settings
 from apps.persistence.event.schema import EventPayload
@@ -207,6 +208,42 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
     assert v4.sections.scenario_design.dimension_definitions.items[0].values[0].lever_states == [
         {"leverCode": "weather_demand"},
     ]
+
+
+def test_saved_dimension_selected_order_controls_table_callback_and_presentation() -> None:
+    definitions = [
+        {
+            "dimension_id": "a",
+            "label": "A",
+            "display_order": 1,
+            "values": [{"value_id": "a1", "label": "A1"}],
+        },
+        {
+            "dimension_id": "b",
+            "label": "B",
+            "display_order": 2,
+            "values": [{"value_id": "b1", "label": "B1"}],
+        },
+    ]
+    group = _group("v3", definitions)
+    group["dimension_selected"] = ["b", "a"]
+    scenario = _scenario(cell="unused")
+    scenario["dimension_values"] = {"a": "a1", "b": "b1"}
+
+    table_data = build_scenario_group_table_data(group, [scenario])
+    presentation = build_scenario_group_presentation(
+        hide_price_pressure=False,
+        group=group,
+        scenarios=[scenario],
+        signposts=[],
+        events=[_event(101)],
+        operation=None,
+    )
+
+    assert [(header.key, header.display_order) for header in table_data.table.headers] == [("b", 1), ("a", 2)]
+    design = presentation.sections.scenario_design
+    assert [item.dimension_id for item in design.dimension_definitions.items] == ["b", "a"]
+    assert [(header.key, header.display_order) for header in design.scenario_table.headers] == [("b", 1), ("a", 2)]
 
 
 def test_v4_value_description_is_derived_from_valid_lever_states() -> None:
@@ -766,7 +803,7 @@ def test_presentation_endpoint_selects_operation_and_returns_etag_304() -> None:
     assert changed_renderer.status_code == 200
     assert changed_renderer.headers["etag"] != old_etag
     assert first.status_code == 200
-    assert first.json()["rendererVersion"] == "v5"
+    assert first.json()["rendererVersion"] == "v6"
     assert first.json()["operation"]["operationId"] == operation.operation_id
     assert second.status_code == 304
     assert second.content == b""

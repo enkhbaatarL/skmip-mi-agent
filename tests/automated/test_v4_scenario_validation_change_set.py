@@ -298,6 +298,107 @@ def test_additional_dimension_nulls_are_deterministically_filled_by_existing_pre
     assert [row.change_type for row in analysis.canonical_rows] == ["AUTOFILL_ONLY"] * 3
 
 
+def test_balanced_autofill_optimizes_all_empty_dimensions_as_one_row() -> None:
+    base_definition = {
+        "dimension_id": "base",
+        "values": [{"value_id": "base_up", "label": "상방", "pressure_contribution": "bullish"}],
+    }
+    additional_definitions = [
+        {
+            "dimension_id": dimension_id,
+            "label": dimension_id,
+            "values": [
+                {"value_id": f"{dimension_id}_down", "label": "하방", "pressure_contribution": "bearish"},
+                {"value_id": f"{dimension_id}_flat", "label": "중립", "pressure_contribution": "balanced"},
+            ],
+        }
+        for dimension_id in ("ad_first", "ad_second")
+    ]
+    plan = build_v4_additional_dimension_autofill_plan(
+        request_table={
+            "headers": [{"key": key} for key in ("base", "ad_first", "ad_second")],
+            "rows": [
+                {
+                    "scenario_id": 1,
+                    "title": "균형",
+                    "cells": {"base": "base_up", "ad_first": None, "ad_second": None},
+                }
+            ],
+        },
+        persisted_scenarios=[
+            {
+                "scenario_id": 1,
+                "global_pressure_band": "balanced",
+                "dimension_values": {"base": "base_up"},
+            }
+        ],
+        dimension_definitions=[base_definition],
+        generation_diagnostics={
+            "additional_dimension_generation": {"status": "ready"},
+            "additional_dimension_candidates": additional_definitions,
+        },
+        stored_header_order=["base"],
+    )
+
+    assert plan.request_table["rows"][0]["cells"] == {
+        "base": "base_up",
+        "ad_first": "ad_first_down",
+        "ad_second": "ad_second_flat",
+    }
+
+
+def test_balanced_autofill_tie_prefers_more_stored_value_reuse() -> None:
+    definitions = [
+        {
+            "dimension_id": "base",
+            "values": [{"value_id": "base_up", "pressure_contribution": "bullish"}],
+        },
+        *[
+            {
+                "dimension_id": dimension_id,
+                "values": [
+                    {"value_id": f"{dimension_id}_down", "pressure_contribution": "bearish"},
+                    {"value_id": f"{dimension_id}_flat", "pressure_contribution": "balanced"},
+                ],
+            }
+            for dimension_id in ("ad_first", "ad_second")
+        ],
+    ]
+    plan = build_v4_additional_dimension_autofill_plan(
+        request_table={
+            "headers": [{"key": key} for key in ("base", "ad_first", "ad_second")],
+            "rows": [
+                {
+                    "scenario_id": 1,
+                    "title": "균형",
+                    "cells": {"base": "base_up", "ad_first": None, "ad_second": None},
+                }
+            ],
+        },
+        persisted_scenarios=[
+            {
+                "scenario_id": 1,
+                "global_pressure_band": "balanced",
+                "dimension_values": {
+                    "base": "base_up",
+                    "ad_first": "ad_first_flat",
+                    "ad_second": "ad_second_down",
+                },
+            }
+        ],
+        dimension_definitions=definitions,
+        generation_diagnostics={},
+        stored_header_order=["base", "ad_first", "ad_second"],
+    )
+
+    assert plan.request_table["rows"][0]["cells"] == {
+        "base": "base_up",
+        "ad_first": "ad_first_flat",
+        "ad_second": "ad_second_down",
+    }
+    assert set(plan.restorations) == {("scenario:1", "ad_first"), ("scenario:1", "ad_second")}
+
+
 def test_formal_but_unselected_new_dimension_nulls_are_autofilled() -> None:
     formal_definitions = [*DEFINITIONS, _directional_candidate()]
     table = _table_with_null_additional()
