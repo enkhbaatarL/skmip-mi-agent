@@ -16,7 +16,6 @@ import yaml
 
 os.environ.setdefault("METADATA_DB_PORT", "3306")
 
-import interpret as interpret_entrypoint  # noqa: E402
 from apps.agents.interpret_agent.constants import AGENT_NAME  # noqa: E402
 from apps.agents.interpret_agent.flows.interpret_price import flow, nodes  # noqa: E402
 from apps.agents.interpret_agent.flows.interpret_price.api_schema import (  # noqa: E402
@@ -37,6 +36,7 @@ from apps.common.tracing.context import (  # noqa: E402
     build_langgraph_config,
     get_current_langchain_callbacks,
 )
+import interpret as interpret_entrypoint  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -160,13 +160,13 @@ class InterpretFlowTracingTest(unittest.IsolatedAsyncioTestCase):
             output_schema = kwargs["output_schema"]
             if output_schema is nodes.si_prompt.ScenarioComparisonLLMOutput:
                 result = output_schema(
-                    identity="identity",
-                    driver_phase="driver",
-                    price_character="price",
-                    summary="summary",
+                    identity="**identity**",
+                    driver_phase="## __driver__",
+                    price_character="<strong>price</strong>",
+                    summary="`summary`",
                 )
             else:
-                result = output_schema(overall_message="overall")
+                result = output_schema(overall_message="**overall**")
             return SimpleNamespace(result=result)
 
         scenario_ids = ("101", "102")
@@ -176,17 +176,11 @@ class InterpretFlowTracingTest(unittest.IsolatedAsyncioTestCase):
             scenario_ids=list(scenario_ids),
             scenario_features={
                 "MI Base": ScenarioFeatures(scenario_id="MI Base"),
-                **{
-                    scenario_id: ScenarioFeatures(scenario_id=scenario_id)
-                    for scenario_id in scenario_ids
-                },
+                **{scenario_id: ScenarioFeatures(scenario_id=scenario_id) for scenario_id in scenario_ids},
             },
             scenario_prices={
                 "MI Base": ScenarioPrices(scenario_id="MI Base"),
-                **{
-                    scenario_id: ScenarioPrices(scenario_id=scenario_id)
-                    for scenario_id in scenario_ids
-                },
+                **{scenario_id: ScenarioPrices(scenario_id=scenario_id) for scenario_id in scenario_ids},
             },
         )
         config = build_langgraph_config(trace_context)
@@ -219,13 +213,16 @@ class InterpretFlowTracingTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(final_state["result"].scenarios), 2)
+        for scenario in final_state["result"].scenarios:
+            self.assertEqual(scenario.identity, "identity")
+            self.assertEqual(scenario.driver_phase, "driver")
+            self.assertEqual(scenario.price_character, "price")
+            self.assertEqual(scenario.summary, "summary")
+        self.assertEqual(final_state["result"].synthesis.overall_message, "overall")
         self.assertEqual(len(calls), 3)
         self.assertTrue(all(call_trace_context is trace_context for call_trace_context, _, _ in calls))
         self.assertTrue(
-            all(
-                callback_handler in getattr(call_callbacks, "handlers", [])
-                for _, call_callbacks, _ in calls
-            ),
+            all(callback_handler in getattr(call_callbacks, "handlers", []) for _, call_callbacks, _ in calls),
         )
         self.assertTrue(all(stream for _, _, stream in calls))
 

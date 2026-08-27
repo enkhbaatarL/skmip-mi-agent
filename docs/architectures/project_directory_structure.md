@@ -106,4 +106,4 @@ router / flow / node
 | --- | --- | --- |
 | Scenario Group Agent | `main.py` | [`docs/agents/scenario_group_agent/`](../agents/scenario_group_agent/01_SCENARIO_GROUP_AGENT_OVERVIEW.md) |
 | Model Parameter Agent | `model_param.py` | [`docs/agents/model_parameter_agent/`](../agents/model_parameter_agent/01_MODEL_PARAMETER_AGENT_OVERVIEW.md) |
-| Interpret Agent | `interpret.py` | 문서 추가 시 `docs/agents/interpret_agent/` 사용 |
+| Interpret Agent | `interpret.py` | [`docs/agents/interpret_agent/`](../agents/interpret_agent/01_INTERPRET_AGENT_OVERVIEW.md) |

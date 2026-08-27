@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import unittest
 from types import SimpleNamespace
+import unittest
 from unittest.mock import AsyncMock, patch
 
 from apps.agents.interpret_agent.flows.interpret_price import flow
@@ -63,6 +63,26 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(preview_path, interpret_paths)
         self.assertIn(async_path, interpret_paths)
 
+    def test_callback_content_is_plain_text_even_when_input_contains_formatting(self) -> None:
+        interpretation = ScenarioComparisonOut(
+            scenario_id="315",
+            identity="**공급 충격**",
+            driver_phase="## __동인__",
+            price_character="<strong>가격</strong>",
+            summary="`대응`",
+        )
+
+        content = flow._format_interpretation_content(interpretation)
+
+        self.assertEqual(
+            content,
+            "공급 충격\n동인 및 국면\n동인\n가격 특성\n가격\n시나리오 요약\n대응",
+        )
+        self.assertNotIn("**", content)
+        self.assertNotIn("__", content)
+        self.assertNotIn("`", content)
+        self.assertNotIn("<strong", content)
+
     async def test_success_callback_matches_backend_contract(self) -> None:
         send_callback = AsyncMock()
         with (
@@ -114,7 +134,7 @@ class InterpretCallbackContractTest(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 flow,
                 "run_interpret_price",
-                new=AsyncMock(side_effect=RuntimeError("inference timeout")),
+                new=AsyncMock(side_effect=RuntimeError("**inference timeout**")),
             ),
             patch.object(
                 flow,

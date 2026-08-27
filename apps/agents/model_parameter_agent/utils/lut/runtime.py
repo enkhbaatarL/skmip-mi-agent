@@ -7,6 +7,7 @@ from pathlib import Path
 from apps.agents.model_parameter_agent.utils.lut.adapters import (
     ADAPTER_SCHEMA_VERSION,
     FileSnapshot,
+    validate_file_structure,
 )
 from apps.agents.model_parameter_agent.utils.lut.catalog import LutCatalog, build_lut_catalog
 from apps.agents.model_parameter_agent.utils.lut.models import ReferenceLoadPolicy, domain_error
@@ -161,9 +162,14 @@ def get_lut_catalog(
                 file_spec.relative_path,
                 _read_snapshot(file_spec.resolved_path),
             )
+    for file_spec in active_registry.references.values():
+        snapshots.setdefault(
+            file_spec.relative_path,
+            _read_snapshot(file_spec.resolved_path),
+        )
     file_identity = tuple((relative_path, snapshot.sha256) for relative_path, snapshot in sorted(snapshots.items()))
     cache_key = (
-        "lut-catalog-v2",
+        "lut-catalog-v3",
         active_registry.config_path,
         active_registry.lut_root,
         active_registry.schema_hash,
@@ -175,6 +181,21 @@ def get_lut_catalog(
     )
 
     def build() -> LutCatalog:
+        for spec in active_registry.specs.values():
+            if spec.enabled:
+                continue
+            for file_spec in spec.files.values():
+                validate_file_structure(
+                    file_spec,
+                    snapshots[file_spec.relative_path],
+                    policy,
+                )
+        for file_spec in active_registry.references.values():
+            validate_file_structure(
+                file_spec,
+                snapshots[file_spec.relative_path],
+                policy,
+            )
         return build_lut_catalog(
             active_registry,
             policy,

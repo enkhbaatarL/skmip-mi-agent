@@ -8,6 +8,10 @@ import re
 from typing import TYPE_CHECKING, Any
 import unicodedata
 
+from apps.agents.model_parameter_agent.constants import (
+    MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
+    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+)
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
     RuntimeLruCache,
     file_signature,
@@ -45,9 +49,7 @@ BASECASE_AXIS_LABELS = {
 }
 BASECASE_TIME_LABELS = {"year", "month", "period"}
 BASECASE_BAD_VALUES = {"#ref!", "#n/a", "#value!", "#div/0!"}
-PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD = (
-    "_preserve_basecase_axes_without_value"
-)
+PRESERVE_BASECASE_AXES_WITHOUT_VALUE_FIELD = "_preserve_basecase_axes_without_value"
 BASECASE_SPEC_COLUMNS = {
     "basecase_read_mode",
     "basecase_header_row",
@@ -251,6 +253,7 @@ def _parameter_knowledge_base_cache_key(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
+    allow_empty_mapping_rows: bool = False,
 ) -> tuple[Any, ...]:
     basecase_dir = Path(basecase_dir_path).expanduser().resolve(strict=False)
     return (
@@ -259,6 +262,7 @@ def _parameter_knowledge_base_cache_key(
         str(basecase_dir),
         stable_digest(mapping_rows),
         stable_digest(parameter_rows),
+        allow_empty_mapping_rows,
         _basecase_workbook_signatures(basecase_dir),
     )
 
@@ -273,10 +277,7 @@ def _candidate_basecase_records_cache_key(
         file_signature(Path(profile.workbook_path)),
         profile.sheet_name,
         stable_digest(
-            {
-                field_name: candidate.get(field_name)
-                for field_name in CANDIDATE_BASECASE_CACHE_FIELDS
-            },
+            {field_name: candidate.get(field_name) for field_name in CANDIDATE_BASECASE_CACHE_FIELDS},
         ),
     )
 
@@ -295,9 +296,7 @@ def _copy_records_for_candidate(
 ) -> list[dict[str, Any]]:
     candidate_key = str(candidate.get("candidate_key") or "")
     parameter_name = str(
-        candidate.get("canonical_parameter_name")
-        or candidate.get("parameter_name")
-        or "",
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
     )
     copied_records: list[dict[str, Any]] = []
     for record in records:
@@ -327,6 +326,7 @@ def get_parameter_knowledge_base_from_resources(
     mapping_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
     basecase_dir_path: str | None = None,
+    allow_empty_mapping_rows: bool = False,
 ) -> ParameterKnowledgeBase:
     basecase_dir = _resolve_basecase_dir(basecase_dir_path)
     return _build_parameter_knowledge_base_from_rows(
@@ -334,6 +334,7 @@ def get_parameter_knowledge_base_from_resources(
         parameter_rows=parameter_rows,
         mapping_source=DB_MAPPING_SOURCE,
         basecase_dir_path=str(basecase_dir),
+        allow_empty_mapping_rows=allow_empty_mapping_rows,
     )
 
 
@@ -345,11 +346,7 @@ def preload_basecase_runtime_cache(
 ) -> BasecaseRuntimeCacheSummary:
     kb = get_parameter_knowledge_base(basecase_dir_path)
     candidates = _basecase_preload_candidates(kb)
-    warnings = [
-        warning
-        for profile in kb.basecase_profiles.values()
-        for warning in profile.warnings
-    ]
+    warnings = [warning for profile in kb.basecase_profiles.values() for warning in profile.warnings]
     record_count = 0
 
     if preload_records:
@@ -369,8 +366,7 @@ def preload_basecase_runtime_cache(
                 candidate_key = str(candidate.get("candidate_key") or "")
                 if profile is None or not profile.sheet_exists:
                     warnings.append(
-                        "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
-                        f"candidate_key={candidate_key}",
+                        f"매핑된 basecase workbook/sheet를 찾지 못했습니다: candidate_key={candidate_key}",
                     )
                     continue
                 try:
@@ -395,11 +391,7 @@ def preload_basecase_runtime_cache(
                     continue
                 record_count += len(candidate_records)
 
-    sheet_available_count = sum(
-        1
-        for profile in kb.basecase_profiles.values()
-        if profile.sheet_exists
-    )
+    sheet_available_count = sum(1 for profile in kb.basecase_profiles.values() if profile.sheet_exists)
     return BasecaseRuntimeCacheSummary(
         parameter_count=len(kb.parameter_definitions),
         profile_count=len(kb.basecase_profiles),
@@ -416,32 +408,36 @@ def _basecase_preload_candidates(kb: ParameterKnowledgeBase) -> list[dict[str, A
         canonical = normalize_parameter_name(
             definition.canonical_parameter_name or definition.parameter_name,
         )
-        candidates.append({
-            "candidate_key": "|".join([
-                "startup",
-                _normalize_for_key(canonical),
-                _normalize_for_key(definition.model_file),
-                _normalize_for_key(definition.model_sheet),
-            ]),
-            "model_file": definition.model_file,
-            "model_sheet": definition.model_sheet,
-            "model_table": definition.model_table,
-            "parameter_name": definition.parameter_name,
-            "canonical_parameter_name": canonical,
-            "parameter_hint": definition.parameter_hint,
-            "semantic_axes": definition.semantic_axes,
-            "basecase_read_mode": definition.basecase_read_mode,
-            "basecase_header_row": definition.basecase_header_row,
-            "basecase_data_start_row": definition.basecase_data_start_row,
-            "basecase_column_roles": definition.basecase_column_roles,
-            "basecase_row_filter": definition.basecase_row_filter,
-            "basecase_year_row": definition.basecase_year_row,
-            "basecase_month_row": definition.basecase_month_row,
-            "basecase_period_row": definition.basecase_period_row,
-            "basecase_value_start_col": definition.basecase_value_start_col,
-            "basecase_value_end_col": definition.basecase_value_end_col,
-            "basecase_stop_rule": definition.basecase_stop_rule,
-        })
+        candidates.append(
+            {
+                "candidate_key": "|".join(
+                    [
+                        "startup",
+                        _normalize_for_key(canonical),
+                        _normalize_for_key(definition.model_file),
+                        _normalize_for_key(definition.model_sheet),
+                    ]
+                ),
+                "model_file": definition.model_file,
+                "model_sheet": definition.model_sheet,
+                "model_table": definition.model_table,
+                "parameter_name": definition.parameter_name,
+                "canonical_parameter_name": canonical,
+                "parameter_hint": definition.parameter_hint,
+                "semantic_axes": definition.semantic_axes,
+                "basecase_read_mode": definition.basecase_read_mode,
+                "basecase_header_row": definition.basecase_header_row,
+                "basecase_data_start_row": definition.basecase_data_start_row,
+                "basecase_column_roles": definition.basecase_column_roles,
+                "basecase_row_filter": definition.basecase_row_filter,
+                "basecase_year_row": definition.basecase_year_row,
+                "basecase_month_row": definition.basecase_month_row,
+                "basecase_period_row": definition.basecase_period_row,
+                "basecase_value_start_col": definition.basecase_value_start_col,
+                "basecase_value_end_col": definition.basecase_value_end_col,
+                "basecase_stop_rule": definition.basecase_stop_rule,
+            }
+        )
     return candidates
 
 
@@ -463,12 +459,14 @@ def _build_parameter_knowledge_base_from_rows(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
+    allow_empty_mapping_rows: bool = False,
 ) -> ParameterKnowledgeBase:
     cache_key = _parameter_knowledge_base_cache_key(
         mapping_rows=mapping_rows,
         parameter_rows=parameter_rows,
         mapping_source=mapping_source,
         basecase_dir_path=basecase_dir_path,
+        allow_empty_mapping_rows=allow_empty_mapping_rows,
     )
     return _PARAMETER_KB_CACHE.get_or_build(
         cache_key,
@@ -477,6 +475,7 @@ def _build_parameter_knowledge_base_from_rows(
             parameter_rows=parameter_rows,
             mapping_source=mapping_source,
             basecase_dir_path=basecase_dir_path,
+            allow_empty_mapping_rows=allow_empty_mapping_rows,
         ),
     )
 
@@ -487,11 +486,13 @@ def _build_parameter_knowledge_base_from_rows_uncached(
     parameter_rows: list[dict[str, Any]],
     mapping_source: str,
     basecase_dir_path: str,
+    allow_empty_mapping_rows: bool = False,
 ) -> ParameterKnowledgeBase:
     workbook_loader = _require_workbook_loader()
     mapping_rules = _mapping_rules_from_rows(
         mapping_rows,
         source_name="tmm_mi_model_param_dimension_map",
+        allow_empty=allow_empty_mapping_rows,
     )
     parameter_definitions = _parameter_definitions_from_rows(
         parameter_rows,
@@ -520,10 +521,21 @@ def _load_db_mapping_resources() -> tuple[list[dict[str, Any]], list[dict[str, A
     return ModelParameterService().load_parameter_mapping_resources()
 
 
-def match_parameter_candidates(
+def match_parameter_candidates(  # noqa: C901
     kb: ParameterKnowledgeBase,
     scenario_context: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    generation_strategy = str(
+        (scenario_context.get("scenario_group") or {}).get(
+            "generation_strategy",
+        )
+        or "single_event_template_dimensions",
+    )
+    if generation_strategy == "multi_event_composite_dimensions":
+        return _match_v3_parameter_candidates(kb, scenario_context)
+    if generation_strategy == "multi_event_model_lever_dimensions":
+        return _match_v4_parameter_candidates(kb, scenario_context)
+
     scenario = scenario_context.get("scenario") or {}
     event_type = scenario_context.get("event_type") or {}
     event_type_l2_id = _resolve_event_type_l2_id(scenario_context)
@@ -540,10 +552,7 @@ def match_parameter_candidates(
         return [], [], warnings
 
     scenario_dimension_keys = set(dimension_values)
-    unsupported_dimension_values = (
-        raw_dimension_values is not None
-        and not isinstance(raw_dimension_values, dict)
-    )
+    unsupported_dimension_values = raw_dimension_values is not None and not isinstance(raw_dimension_values, dict)
     if not scenario_dimension_keys and unsupported_dimension_values:
         warnings.append(
             "scenario.dimension_values가 JSON object가 아니어서 DB dimension-parameter 매핑을 수행하지 않았습니다.",
@@ -554,9 +563,9 @@ def match_parameter_candidates(
         return [], [], warnings
 
     event_rules = [
-        rule for rule in kb.mapping_rules
-        if rule.event_type_l2_id == event_type_l2_id
-        and rule.dimension_key in scenario_dimension_keys
+        rule
+        for rule in kb.mapping_rules
+        if rule.event_type_l2_id == event_type_l2_id and rule.dimension_key in scenario_dimension_keys
     ]
 
     mapped_dimension_keys = {rule.dimension_key for rule in event_rules}
@@ -578,12 +587,7 @@ def match_parameter_candidates(
 
         canonical = normalize_parameter_name(rule.canonical_parameter_name)
         definition = kb.definition_for(canonical)
-        has_model_target = bool(
-            definition
-            and definition.model_file
-            and definition.model_sheet
-            and canonical
-        )
+        has_model_target = bool(definition and definition.model_file and definition.model_sheet and canonical)
         if rule.mapping_method not in {"direct", "routing"} or not has_model_target:
             reason = rule.comment or "수급모델 input parameter 직접 대상이 아닙니다."
             if rule.mapping_method in {"direct", "routing"} and not has_model_target:
@@ -592,65 +596,613 @@ def match_parameter_candidates(
                     f"{canonical or '-'} target 정보가 없어 후보에서 제외했습니다. "
                     f"{reason}"
                 )
-            non_inputs.append({
-                "source_dimension_id": source_key,
-                "source_dimension_label": source_label or rule.dimension_label,
-                "source_dimension_value": source_value,
-                "mapping_method": rule.mapping_method,
-                "reason": reason,
-            })
+            non_inputs.append(
+                {
+                    "source_dimension_id": source_key,
+                    "source_dimension_label": source_label or rule.dimension_label,
+                    "source_dimension_value": source_value,
+                    "mapping_method": rule.mapping_method,
+                    "reason": reason,
+                }
+            )
             continue
 
         model_file = definition.model_file
         model_sheet = definition.model_sheet
         model_table = definition.model_table
-        candidate_key = "|".join([
-            str(rule.event_type_l2_id),
-            _normalize_for_key(rule.dimension_key),
-            _normalize_for_key(canonical),
-            _normalize_for_key(model_file or ""),
-            _normalize_for_key(model_sheet or ""),
-        ])
+        candidate_key = "|".join(
+            [
+                str(rule.event_type_l2_id),
+                _normalize_for_key(rule.dimension_key),
+                _normalize_for_key(canonical),
+                _normalize_for_key(model_file or ""),
+                _normalize_for_key(model_sheet or ""),
+            ]
+        )
         if candidate_key in seen:
             continue
         seen.add(candidate_key)
 
         profile = kb.profile_for(model_file, model_sheet)
-        candidates.append({
-            "candidate_key": candidate_key,
-            "event_type_l2_id": rule.event_type_l2_id,
-            "level_2_code": _clean_text(event_type.get("level_2_code")),
-            "event_label": _clean_text(event_type.get("level_2_label")),
-            "source_dimension_id": source_key,
-            "dimension_key": rule.dimension_key,
-            "source_dimension_label": source_label or rule.dimension_label,
-            "source_dimension_value": source_value,
-            "mapping_method": rule.mapping_method,
-            "model_file": model_file,
-            "model_sheet": model_sheet,
-            "model_table": model_table,
-            "parameter_name": definition.parameter_name,
-            "canonical_parameter_name": canonical,
-            "parameter_hint": definition.parameter_hint,
-            "semantic_axes": definition.semantic_axes,
-            "mapping_comment": rule.comment,
-            "basecase_read_mode": definition.basecase_read_mode,
-            "basecase_header_row": definition.basecase_header_row,
-            "basecase_data_start_row": definition.basecase_data_start_row,
-            "basecase_column_roles": definition.basecase_column_roles,
-            "basecase_row_filter": definition.basecase_row_filter,
-            "basecase_year_row": definition.basecase_year_row,
-            "basecase_month_row": definition.basecase_month_row,
-            "basecase_period_row": definition.basecase_period_row,
-            "basecase_value_start_col": definition.basecase_value_start_col,
-            "basecase_value_end_col": definition.basecase_value_end_col,
-            "basecase_stop_rule": definition.basecase_stop_rule,
-            "basecase_available": bool(profile and profile.sheet_exists),
-        })
+        candidates.append(
+            {
+                "candidate_key": candidate_key,
+                "event_type_l2_id": rule.event_type_l2_id,
+                "level_2_code": _clean_text(event_type.get("level_2_code")),
+                "event_label": _clean_text(event_type.get("level_2_label")),
+                "source_dimension_id": source_key,
+                "dimension_key": rule.dimension_key,
+                "source_dimension_label": source_label or rule.dimension_label,
+                "source_dimension_value": source_value,
+                "mapping_method": rule.mapping_method,
+                "model_file": model_file,
+                "model_sheet": model_sheet,
+                "model_table": model_table,
+                "parameter_name": definition.parameter_name,
+                "canonical_parameter_name": canonical,
+                "parameter_hint": definition.parameter_hint,
+                "semantic_axes": definition.semantic_axes,
+                "mapping_comment": rule.comment,
+                "basecase_read_mode": definition.basecase_read_mode,
+                "basecase_header_row": definition.basecase_header_row,
+                "basecase_data_start_row": definition.basecase_data_start_row,
+                "basecase_column_roles": definition.basecase_column_roles,
+                "basecase_row_filter": definition.basecase_row_filter,
+                "basecase_year_row": definition.basecase_year_row,
+                "basecase_month_row": definition.basecase_month_row,
+                "basecase_period_row": definition.basecase_period_row,
+                "basecase_value_start_col": definition.basecase_value_start_col,
+                "basecase_value_end_col": definition.basecase_value_end_col,
+                "basecase_stop_rule": definition.basecase_stop_rule,
+                "basecase_available": bool(profile and profile.sheet_exists),
+            }
+        )
 
     if not candidates:
         warnings.append(
             "DB dimension-parameter 매핑 기준 직접 또는 라우팅 parameter 후보를 찾지 못했습니다.",
+        )
+    return candidates, non_inputs, warnings
+
+
+def _v4_source_payload(
+    lineage: dict[str, Any],
+    lever_state: dict[str, Any],
+    *,
+    mapping_method: str,
+    mapping_comment: str | None,
+) -> dict[str, Any]:
+    lever_provenance = {
+        "scenario_dimension_key": lineage.get("scenario_dimension_key"),
+        "scenario_dimension_value_id": lineage.get(
+            "scenario_dimension_value_id",
+        ),
+        "source_event_ids": list(lineage.get("source_event_ids") or []),
+        "source_impact_path_ids": list(
+            lineage.get("source_impact_path_ids") or [],
+        ),
+        "source_uncertainty_ids": list(
+            lineage.get("source_uncertainty_ids") or [],
+        ),
+        "lever_code": lever_state.get("lever_code"),
+        "impact_lever_id": lever_state.get("impact_lever_id"),
+        "lever_label": lever_state.get("lever_label"),
+        "lever_domain": lever_state.get("lever_domain"),
+        "direction": lever_state.get("direction"),
+        "level": lever_state.get("level"),
+        "scope": lever_state.get("scope"),
+        "time_window": lever_state.get("time_window"),
+        "is_primary_lever": bool(lever_state.get("is_primary_lever")),
+    }
+    return {
+        "scenario_dimension_key": lineage.get("scenario_dimension_key"),
+        "dimension_key": lineage.get("scenario_dimension_key"),
+        "source_dimension_id": lineage.get("scenario_dimension_key"),
+        "source_dimension_label": lineage.get("scenario_dimension_label"),
+        "source_dimension_description": lineage.get(
+            "scenario_dimension_description",
+        ),
+        "source_dimension_rationale": lineage.get(
+            "scenario_dimension_rationale",
+        ),
+        "source_dimension_value": lineage.get("scenario_dimension_value"),
+        "source_dimension_value_id": lineage.get(
+            "scenario_dimension_value_id",
+        ),
+        "source_dimension_value_label": lineage.get(
+            "scenario_dimension_value_label",
+        ),
+        "derivation_rationale": lineage.get("assumption_rationale"),
+        "pressure_contribution": lineage.get("pressure_contribution"),
+        "source_event_ids": list(lineage.get("source_event_ids") or []),
+        "source_impact_path_ids": list(
+            lineage.get("source_impact_path_ids") or [],
+        ),
+        "source_uncertainty_ids": list(
+            lineage.get("source_uncertainty_ids") or [],
+        ),
+        "primary_lever_code": lineage.get("primary_lever_code"),
+        "primary_impact_lever_id": lineage.get("primary_impact_lever_id"),
+        "model_support_status": lineage.get("model_support_status"),
+        "lever_code": lever_state.get("lever_code"),
+        "impact_lever_id": lever_state.get("impact_lever_id"),
+        "lever_label": lever_state.get("lever_label"),
+        "lever_description": lever_state.get("lever_description"),
+        "lever_domain": lever_state.get("lever_domain"),
+        "lever_applicability_hint": lever_state.get(
+            "lever_applicability_hint",
+        ),
+        "direction": lever_state.get("direction"),
+        "level": lever_state.get("level"),
+        "scope": lever_state.get("scope"),
+        "time_window": lever_state.get("time_window"),
+        "is_primary_lever": bool(lever_state.get("is_primary_lever")),
+        "lever_provenance": [lever_provenance],
+        "mapping_method": mapping_method,
+        "mapping_comment": mapping_comment,
+    }
+
+
+def _v4_definition_fields(
+    definition: ParameterDefinition,
+    *,
+    basecase_available: bool,
+) -> dict[str, Any]:
+    return {
+        "model_file": definition.model_file,
+        "model_sheet": definition.model_sheet,
+        "model_table": definition.model_table,
+        "parameter_name": definition.parameter_name,
+        "canonical_parameter_name": definition.canonical_parameter_name,
+        "parameter_hint": definition.parameter_hint,
+        "semantic_axes": definition.semantic_axes,
+        "basecase_read_mode": definition.basecase_read_mode,
+        "basecase_header_row": definition.basecase_header_row,
+        "basecase_data_start_row": definition.basecase_data_start_row,
+        "basecase_column_roles": definition.basecase_column_roles,
+        "basecase_row_filter": definition.basecase_row_filter,
+        "basecase_year_row": definition.basecase_year_row,
+        "basecase_month_row": definition.basecase_month_row,
+        "basecase_period_row": definition.basecase_period_row,
+        "basecase_value_start_col": definition.basecase_value_start_col,
+        "basecase_value_end_col": definition.basecase_value_end_col,
+        "basecase_stop_rule": definition.basecase_stop_rule,
+        "basecase_available": basecase_available,
+    }
+
+
+def _v4_candidate_key(
+    *,
+    dimension_key: object,
+    lever_code: object,
+    parameter_name: object,
+    model_file: object,
+    model_sheet: object,
+) -> str:
+    return "|".join(
+        [
+            "v4-lever",
+            _normalize_for_key(dimension_key),
+            _normalize_for_key(lever_code),
+            _normalize_for_key(parameter_name),
+            _normalize_for_key(model_file),
+            _normalize_for_key(model_sheet),
+        ],
+    )
+
+
+def _match_v4_parameter_candidates(  # noqa: C901
+    kb: ParameterKnowledgeBase,
+    scenario_context: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    lineage_items = [item for item in scenario_context.get("dimension_lineage") or [] if isinstance(item, dict)]
+    warnings: list[str] = []
+    if not lineage_items:
+        warnings.append(
+            "v4 selected-value Lever lineage가 없어 model parameter 후보를 생성하지 않았습니다.",
+        )
+        return [], [], warnings
+
+    candidates: list[dict[str, Any]] = []
+    non_inputs: list[dict[str, Any]] = []
+    seen_candidate_keys: set[str] = set()
+    for lineage in lineage_items:
+        for lever_state in lineage.get("lever_states") or []:
+            if not isinstance(lever_state, dict):
+                continue
+            direction = _clean_text(lever_state.get("direction")).lower()
+            domain = _clean_text(lever_state.get("lever_domain")).lower()
+            raw_bindings = [
+                binding for binding in lever_state.get("parameter_bindings") or [] if isinstance(binding, dict)
+            ]
+            common_payload = _v4_source_payload(
+                lineage,
+                lever_state,
+                mapping_method="excluded",
+                mapping_comment=None,
+            )
+            if direction == "unchanged":
+                non_inputs.append(
+                    {
+                        **common_payload,
+                        "mapping_method": "indirect",
+                        "reason_code": "UNCHANGED_LEVER_STATE",
+                        "reason": (
+                            "direction=unchanged Lever state는 변화 후보가 아니라 supporting context로 사용합니다."
+                        ),
+                    },
+                )
+                continue
+            if domain == "price_only":
+                non_inputs.append(
+                    {
+                        **common_payload,
+                        "reason_code": "PRICE_ONLY",
+                        "reason": "price_only Lever는 수급모델 input 후보에서 제외합니다.",
+                    },
+                )
+                continue
+            if not raw_bindings:
+                non_inputs.append(
+                    {
+                        **common_payload,
+                        "reason_code": "NO_PARAMETER_BINDING",
+                        "reason": "활성 Lever catalog에 model parameter binding이 없습니다.",
+                    },
+                )
+                continue
+
+            executable_bindings = [binding for binding in raw_bindings if binding.get("support_status") == "executable"]
+            for binding in raw_bindings:
+                parameter_name = normalize_parameter_name(
+                    binding.get("parameter_name"),
+                )
+                if binding.get("support_status") != "executable":
+                    non_inputs.append(
+                        {
+                            **common_payload,
+                            "parameter_name": parameter_name or None,
+                            "binding_role": binding.get("role"),
+                            "binding_applicability": binding.get(
+                                "applicability",
+                            ),
+                            "reason_code": (binding.get("unsupported_reason_code") or "CATALOG_MARKED_UNSUPPORTED"),
+                            "reason": ("Lever binding이 현재 master/catalog에서 실행 가능하지 않습니다."),
+                        },
+                    )
+                    continue
+
+                definition = kb.definition_for(parameter_name)
+                if definition is None or not definition.model_file or not definition.model_sheet:
+                    non_inputs.append(
+                        {
+                            **common_payload,
+                            "parameter_name": parameter_name or None,
+                            "binding_role": binding.get("role"),
+                            "binding_applicability": binding.get(
+                                "applicability",
+                            ),
+                            "reason_code": "ACTIVE_PARAMETER_DEFINITION_MISSING",
+                            "reason": ("실행 가능한 binding의 active parameter target 정의가 없습니다."),
+                        },
+                    )
+                    continue
+
+                mapping_method = "direct" if len(executable_bindings) == 1 else "routing"
+                source_payload = _v4_source_payload(
+                    lineage,
+                    lever_state,
+                    mapping_method=mapping_method,
+                    mapping_comment=_clean_text(
+                        binding.get("applicability"),
+                    ),
+                )
+                binding_provenance = {
+                    "lever_code": lever_state.get("lever_code"),
+                    "impact_lever_id": lever_state.get("impact_lever_id"),
+                    "parameter_name": parameter_name,
+                    "role": binding.get("role") or "primary",
+                    "applicability": binding.get("applicability") or "",
+                    "support_status": "executable",
+                }
+                candidate_key = _v4_candidate_key(
+                    dimension_key=lineage.get("scenario_dimension_key"),
+                    lever_code=lever_state.get("lever_code"),
+                    parameter_name=parameter_name,
+                    model_file=definition.model_file,
+                    model_sheet=definition.model_sheet,
+                )
+                if candidate_key in seen_candidate_keys:
+                    continue
+                seen_candidate_keys.add(candidate_key)
+                profile = kb.profile_for(
+                    definition.model_file,
+                    definition.model_sheet,
+                )
+                candidates.append(
+                    {
+                        "candidate_key": candidate_key,
+                        "mapping_strategy": "v4",
+                        **source_payload,
+                        "binding_role": binding.get("role") or "primary",
+                        "binding_applicability": binding.get(
+                            "applicability",
+                        )
+                        or "",
+                        "binding_support_status": "executable",
+                        "binding_provenance": [binding_provenance],
+                        **_v4_definition_fields(
+                            definition,
+                            basecase_available=bool(
+                                profile and profile.sheet_exists,
+                            ),
+                        ),
+                    },
+                )
+
+    if not candidates:
+        reason_codes = sorted(
+            {str(item.get("reason_code") or "") for item in non_inputs if str(item.get("reason_code") or "")},
+        )
+        warnings.append(
+            "v4 selected-value Lever lineage에서 실행 후보를 찾지 못했습니다: "
+            + (", ".join(reason_codes) or "NO_EXECUTABLE_BINDING"),
+        )
+    return candidates, non_inputs, warnings
+
+
+def match_v4_parameter_candidates_from_rows(
+    *,
+    parameter_rows: list[dict[str, Any]],
+    scenario_context: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Run the production v4 matcher without loading Basecase workbooks.
+
+    Callback acceptance only needs to know whether the selected Lever lineage can
+    reach an active model target. Basecase availability is evaluated later by the
+    graph, so this lightweight knowledge base deliberately omits profiles while
+    sharing the exact candidate/exclusion predicate with graph execution.
+    """
+    parameter_definitions = _parameter_definitions_from_rows(
+        parameter_rows,
+        source_name="tmm_mi_model_param_m",
+    )
+    knowledge_base = ParameterKnowledgeBase(
+        mapping_source=DB_MAPPING_SOURCE,
+        basecase_dir_path="",
+        parameter_definitions=parameter_definitions,
+        mapping_rules=[],
+        basecase_profiles={},
+    )
+    return _match_v4_parameter_candidates(knowledge_base, scenario_context)
+
+
+def _v3_event_type_context(
+    scenario_context: dict[str, Any],
+    event_type_l2_id: int,
+) -> dict[str, Any]:
+    for event in scenario_context.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        if _coerce_int(event.get("event_type_l2_id")) != event_type_l2_id:
+            continue
+        event_type = event.get("event_type")
+        return event_type if isinstance(event_type, dict) else {}
+    return {}
+
+
+def _v3_source_payload(
+    lineage: dict[str, Any],
+    mapped_source: dict[str, Any],
+    *,
+    mapping_method: str,
+    mapping_comment: str | None,
+) -> dict[str, Any]:
+    return {
+        "scenario_dimension_key": lineage.get("scenario_dimension_key"),
+        "dimension_key": lineage.get("scenario_dimension_key"),
+        "mapping_dimension_key": mapped_source.get("mapping_dimension_key"),
+        "source_dimension_id": lineage.get("scenario_dimension_key"),
+        "source_dimension_label": lineage.get("scenario_dimension_label"),
+        "source_dimension_description": lineage.get(
+            "scenario_dimension_description",
+        ),
+        "source_dimension_rationale": lineage.get(
+            "scenario_dimension_rationale",
+        ),
+        "source_dimension_value": lineage.get("scenario_dimension_value"),
+        "source_dimension_value_id": lineage.get(
+            "scenario_dimension_value_id",
+        ),
+        "source_dimension_value_label": lineage.get(
+            "scenario_dimension_value_label",
+        ),
+        "value_description": lineage.get("value_description"),
+        "derivation_rationale": lineage.get("derivation_rationale"),
+        "pressure_contribution": lineage.get("pressure_contribution"),
+        "event_type_l2_id": mapped_source.get("event_type_l2_id"),
+        "scenario_dimension_template_id": mapped_source.get(
+            "scenario_dimension_template_id",
+        ),
+        "source_event_ids": list(mapped_source.get("source_event_ids") or []),
+        "source_refs": [dict(mapped_source.get("source_ref") or {})],
+        "approved_source_projections": list(
+            lineage.get("approved_source_projections") or [],
+        ),
+        "parameter_mapping_ready": bool(
+            lineage.get("parameter_mapping_ready"),
+        ),
+        "is_free_value": bool(lineage.get("is_free_value")),
+        "mapping_method": mapping_method,
+        "mapping_comment": mapping_comment,
+    }
+
+
+def _v3_candidate_key(
+    *,
+    lineage: dict[str, Any],
+    mapped_source: dict[str, Any],
+    canonical_parameter_name: str,
+    model_file: str,
+    model_sheet: str,
+) -> str:
+    return "|".join(
+        [
+            "v3-source",
+            _normalize_for_key(lineage.get("scenario_dimension_key")),
+            _normalize_for_key(
+                mapped_source.get("scenario_dimension_template_id"),
+            ),
+            _normalize_for_key(mapped_source.get("event_type_l2_id")),
+            _normalize_for_key(mapped_source.get("mapping_dimension_key")),
+            _normalize_for_key(canonical_parameter_name),
+            _normalize_for_key(model_file),
+            _normalize_for_key(model_sheet),
+        ],
+    )
+
+
+def _match_v3_parameter_candidates(  # noqa: C901
+    kb: ParameterKnowledgeBase,
+    scenario_context: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    raw_lineage = scenario_context.get("dimension_lineage") or []
+    lineage_items = [item for item in raw_lineage if isinstance(item, dict)]
+    warnings: list[str] = []
+    if not lineage_items:
+        warnings.append(
+            "v3 composite dimension lineage가 없어 DB dimension-parameter 매핑을 수행하지 않았습니다.",
+        )
+        return [], [], warnings
+
+    candidates: list[dict[str, Any]] = []
+    non_inputs: list[dict[str, Any]] = []
+    seen_candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for lineage in lineage_items:
+        mapped_sources = [item for item in lineage.get("mapped_sources") or [] if isinstance(item, dict)]
+        for mapped_source in mapped_sources:
+            event_type_l2_id = _coerce_int(
+                mapped_source.get("event_type_l2_id"),
+            )
+            mapping_dimension_key = _clean_text(
+                mapped_source.get("mapping_dimension_key"),
+            )
+            if event_type_l2_id is None or not mapping_dimension_key:
+                warnings.append(
+                    "v3 source lineage의 event type 또는 mapping dimension이 비어 있어 제외했습니다: "
+                    f"dimension={lineage.get('scenario_dimension_key')}",
+                )
+                continue
+            source_rules = [
+                rule
+                for rule in kb.mapping_rules
+                if rule.event_type_l2_id == event_type_l2_id and rule.dimension_key == mapping_dimension_key
+            ]
+            if not source_rules:
+                warnings.append(
+                    "v3 sourceRef에 대응하는 DB dimension-parameter 매핑이 없어 source를 제외했습니다: "
+                    f"event_type_l2_id={event_type_l2_id}, "
+                    f"dimension_key={mapping_dimension_key}, "
+                    f"scenario_dimension={lineage.get('scenario_dimension_key')}",
+                )
+                continue
+
+            event_type = _v3_event_type_context(
+                scenario_context,
+                event_type_l2_id,
+            )
+            for rule in source_rules:
+                canonical = normalize_parameter_name(
+                    rule.canonical_parameter_name,
+                )
+                definition = kb.definition_for(canonical)
+                has_model_target = bool(definition and definition.model_file and definition.model_sheet and canonical)
+                source_payload = _v3_source_payload(
+                    lineage,
+                    mapped_source,
+                    mapping_method=rule.mapping_method,
+                    mapping_comment=rule.comment,
+                )
+                if rule.mapping_method not in {"direct", "routing"} or not has_model_target:
+                    reason = rule.comment or "수급모델 input parameter 직접 대상이 아닙니다."
+                    if rule.mapping_method in {"direct", "routing"} and not has_model_target:
+                        reason = (
+                            "tmm_mi_model_param_m에 parameter_name="
+                            f"{canonical or '-'} target 정보가 없어 후보에서 제외했습니다. "
+                            f"{reason}"
+                        )
+                    non_inputs.append(
+                        {
+                            **source_payload,
+                            "reason": reason,
+                        },
+                    )
+                    continue
+
+                model_file = definition.model_file
+                model_sheet = definition.model_sheet
+                dedupe_key = (
+                    lineage.get("scenario_dimension_key"),
+                    mapped_source.get("scenario_dimension_template_id"),
+                    event_type_l2_id,
+                    mapping_dimension_key,
+                    canonical,
+                    model_file,
+                    model_sheet,
+                    rule.mapping_method,
+                )
+                existing = seen_candidates.get(dedupe_key)
+                if existing is not None:
+                    existing["source_event_ids"] = list(
+                        dict.fromkeys(
+                            [
+                                *(existing.get("source_event_ids") or []),
+                                *(mapped_source.get("source_event_ids") or []),
+                            ],
+                        ),
+                    )
+                    continue
+
+                profile = kb.profile_for(model_file, model_sheet)
+                candidate = {
+                    "candidate_key": _v3_candidate_key(
+                        lineage=lineage,
+                        mapped_source=mapped_source,
+                        canonical_parameter_name=canonical,
+                        model_file=model_file,
+                        model_sheet=model_sheet,
+                    ),
+                    "mapping_strategy": "v3",
+                    "event_type_l2_id": event_type_l2_id,
+                    "level_2_code": _clean_text(event_type.get("level_2_code")),
+                    "event_label": _clean_text(event_type.get("level_2_label")),
+                    **source_payload,
+                    "model_file": model_file,
+                    "model_sheet": model_sheet,
+                    "model_table": definition.model_table,
+                    "parameter_name": definition.parameter_name,
+                    "canonical_parameter_name": canonical,
+                    "parameter_hint": definition.parameter_hint,
+                    "semantic_axes": definition.semantic_axes,
+                    "basecase_read_mode": definition.basecase_read_mode,
+                    "basecase_header_row": definition.basecase_header_row,
+                    "basecase_data_start_row": definition.basecase_data_start_row,
+                    "basecase_column_roles": definition.basecase_column_roles,
+                    "basecase_row_filter": definition.basecase_row_filter,
+                    "basecase_year_row": definition.basecase_year_row,
+                    "basecase_month_row": definition.basecase_month_row,
+                    "basecase_period_row": definition.basecase_period_row,
+                    "basecase_value_start_col": definition.basecase_value_start_col,
+                    "basecase_value_end_col": definition.basecase_value_end_col,
+                    "basecase_stop_rule": definition.basecase_stop_rule,
+                    "basecase_available": bool(profile and profile.sheet_exists),
+                }
+                seen_candidates[dedupe_key] = candidate
+                candidates.append(candidate)
+
+    if not candidates:
+        warnings.append(
+            "v3 sourceRef 역투영 결과 직접 또는 라우팅 parameter 후보를 찾지 못했습니다.",
         )
     return candidates, non_inputs, warnings
 
@@ -687,8 +1239,7 @@ def build_basecase_records(
             candidate_key = str(candidate.get("candidate_key") or "")
             if profile is None or not profile.sheet_exists:
                 warnings.append(
-                    "매핑된 basecase workbook/sheet를 찾지 못했습니다: "
-                    f"candidate_key={candidate_key}",
+                    f"매핑된 basecase workbook/sheet를 찾지 못했습니다: candidate_key={candidate_key}",
                 )
                 continue
             try:
@@ -701,18 +1252,56 @@ def build_basecase_records(
                 )
             except Exception as exc:
                 warnings.append(
-                    "basecase record 추출 중 오류가 발생했습니다: "
-                    f"candidate_key={candidate_key}, error={exc}",
+                    f"basecase record 추출 중 오류가 발생했습니다: candidate_key={candidate_key}, error={exc}",
                 )
                 continue
+            candidate_records, missing_key_axes = _filter_incomplete_registered_records(
+                candidate_records,
+                candidate=candidate,
+                registry=registry,
+            )
+            if missing_key_axes:
+                warnings.append(
+                    "등록된 LUT exact key와 호환되지 않는 basecase record를 제외했습니다: "
+                    f"candidate_key={candidate_key}, missing_key_axes={list(missing_key_axes)}; "
+                    "검증된 LUT reference만 사용합니다.",
+                )
             if not candidate_records:
                 warnings.append(
-                    "basecase record를 추출하지 못했습니다: "
-                    f"candidate_key={candidate_key}, sheet={profile.sheet_name}",
+                    f"basecase record를 추출하지 못했습니다: candidate_key={candidate_key}, sheet={profile.sheet_name}",
                 )
                 continue
             records.extend(candidate_records)
     return records, warnings
+
+
+def _filter_incomplete_registered_records(
+    records: list[dict[str, Any]],
+    *,
+    candidate: dict[str, Any],
+    registry: ParameterSpecRegistry,
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    """Exclude workbook rows that cannot form the registered exact business key."""
+    parameter_name = str(
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+    ).strip()
+    spec = registry.get(parameter_name)
+    if spec is None:
+        return records, ()
+
+    compatible: list[dict[str, Any]] = []
+    missing_axes: set[str] = set()
+    for record in records:
+        raw_axes = record.get("axes")
+        if not isinstance(raw_axes, dict):
+            missing_axes.update(spec.key_axes)
+            continue
+        missing = tuple(axis_name for axis_name in spec.key_axes if axis_name not in raw_axes)
+        if missing:
+            missing_axes.update(missing)
+            continue
+        compatible.append(record)
+    return compatible, tuple(axis_name for axis_name in spec.key_axes if axis_name in missing_axes)
 
 
 def _cached_extract_basecase_records(
@@ -754,9 +1343,7 @@ def _candidate_with_basecase_metadata_policy(
     registry: ParameterSpecRegistry,
 ) -> dict[str, Any]:
     parameter_name = str(
-        candidate.get("canonical_parameter_name")
-        or candidate.get("parameter_name")
-        or "",
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
     ).strip()
     spec = registry.get(parameter_name)
     return {
@@ -816,10 +1403,41 @@ def normalize_parameter_name(value: Any) -> str:
     return _clean_text(value)
 
 
+def is_proposal_parameter_allowed(value: Any) -> bool:
+    return normalize_parameter_name(value) in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+
+
+def partition_proposal_parameter_candidates(
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split raw mapping candidates at the runtime proposal boundary."""
+    allowed: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    for candidate in candidates:
+        parameter_name = normalize_parameter_name(
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name"),
+        )
+        if parameter_name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+            allowed.append(candidate)
+            continue
+        excluded.append(
+            {
+                **candidate,
+                "reason_code": PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+                "reason": (
+                    f"{parameter_name or 'unknown parameter'} is outside the runtime "
+                    "model-parameter proposal allow-list."
+                ),
+            },
+        )
+    return allowed, excluded
+
+
 def _mapping_rules_from_rows(
     rows: list[dict[str, Any]],
     *,
     source_name: str,
+    allow_empty: bool = False,
 ) -> list[MappingRule]:
     rules: list[MappingRule] = []
     for row_map in rows:
@@ -841,11 +1459,12 @@ def _mapping_rules_from_rows(
                 canonical_parameter_name=canonical,
                 mapping_method=_normalize_mapping_method(
                     row_map.get("mapping_method"),
-                ) or "unknown",
+                )
+                or "unknown",
                 comment=_none_if_dash(row_map.get("comment")),
             ),
         )
-    if not rules:
+    if not rules and not allow_empty:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail=f"{source_name} active mapping rows not found",
@@ -896,7 +1515,7 @@ def _parameter_definitions_from_rows(
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail=f"{source_name} active parameter rows not found",
-    )
+        )
     return definitions
 
 
@@ -1061,31 +1680,28 @@ def _append_matrix_records_for_row(
             axis_value = descriptor.get(axis_name)
             if _is_meaningful_cell(axis_value):
                 axes[axis_name] = axis_value
-        records.append({
-            "candidate_key": str(candidate.get("candidate_key") or ""),
-            "model_file": profile.model_file,
-            "sheet_name": profile.sheet_name,
-            "parameter_name": str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
-            ),
-            "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
-            "axes": axes,
-            "value_name": block.value_name,
-            "value": value,
-            "source_row": row_idx,
-            "source_col": col_idx,
-        })
+        records.append(
+            {
+                "candidate_key": str(candidate.get("candidate_key") or ""),
+                "model_file": profile.model_file,
+                "sheet_name": profile.sheet_name,
+                "parameter_name": str(
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                ),
+                "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
+                "axes": axes,
+                "value_name": block.value_name,
+                "value": value,
+                "source_row": row_idx,
+                "source_col": col_idx,
+            }
+        )
 
     for col_idx, descriptor in block.time_descriptors.items():
         value = _value_at(values, col_idx)
         time_values = _valid_basecase_time_values(descriptor)
         if not _is_record_value(value):
-            if (
-                _preserves_basecase_axes_without_value(candidate)
-                and time_values is not None
-            ):
+            if _preserves_basecase_axes_without_value(candidate) and time_values is not None:
                 axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
             continue
         if time_values is not None:
@@ -1107,11 +1723,7 @@ def _extract_fixed_column_records(
 ) -> list[dict[str, Any]]:
     _ = scenario_context
     records: list[dict[str, Any]] = []
-    axis_columns = {
-        col_idx: role
-        for col_idx, role in spec.column_roles.items()
-        if col_idx != spec.value_col
-    }
+    axis_columns = {col_idx: role for col_idx, role in spec.column_roles.items() if col_idx != spec.value_col}
     read_columns = set(spec.column_roles) | set(spec.row_filter)
     max_col = max(read_columns, default=0)
     row_iter_kwargs: dict[str, Any] = {
@@ -1126,10 +1738,7 @@ def _extract_fixed_column_records(
 
     for row_idx, row in enumerate(ws.iter_rows(**row_iter_kwargs), start=spec.data_start_row):
         row_values = [_cell_to_json(value) for value in row]
-        values = {
-            col_idx: _value_at(row_values, col_idx)
-            for col_idx in read_columns
-        }
+        values = {col_idx: _value_at(row_values, col_idx) for col_idx in read_columns}
         if _fixed_columns_should_stop(values, axis_columns, spec.stop_rule):
             break
         if not _row_matches_filter(values, spec.row_filter):
@@ -1147,22 +1756,22 @@ def _extract_fixed_column_records(
         if not axes:
             continue
 
-        records.append({
-            "candidate_key": str(candidate.get("candidate_key") or ""),
-            "model_file": profile.model_file,
-            "sheet_name": profile.sheet_name,
-            "parameter_name": str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
-            ),
-            "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{spec.value_col}",
-            "axes": axes,
-            "value_name": spec.value_name,
-            "value": value,
-            "source_row": row_idx,
-            "source_col": spec.value_col,
-        })
+        records.append(
+            {
+                "candidate_key": str(candidate.get("candidate_key") or ""),
+                "model_file": profile.model_file,
+                "sheet_name": profile.sheet_name,
+                "parameter_name": str(
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                ),
+                "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{spec.value_col}",
+                "axes": axes,
+                "value_name": spec.value_name,
+                "value": value,
+                "source_row": row_idx,
+                "source_col": spec.value_col,
+            }
+        )
 
     return records
 
@@ -1204,10 +1813,7 @@ def _extract_matrix_time_column_records(
 
     for row_idx, row in enumerate(ws.iter_rows(**row_iter_kwargs), start=spec.data_start_row):
         row_values = [_cell_to_json(value) for value in row]
-        axis_values = {
-            col_idx: _value_at(row_values, col_idx)
-            for col_idx in spec.axis_columns
-        }
+        axis_values = {col_idx: _value_at(row_values, col_idx) for col_idx in spec.axis_columns}
         if _fixed_columns_should_stop(axis_values, spec.axis_columns, spec.stop_rule):
             break
 
@@ -1228,31 +1834,28 @@ def _extract_matrix_time_column_records(
                 axis_value = descriptor.get(axis_name)
                 if _is_meaningful_cell(axis_value):
                     record_axes[axis_name] = axis_value
-            records.append({
-                "candidate_key": str(candidate.get("candidate_key") or ""),
-                "model_file": profile.model_file,
-                "sheet_name": profile.sheet_name,
-                "parameter_name": str(
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                    or "",
-                ),
-                "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
-                "axes": record_axes,
-                "value_name": spec.value_name,
-                "value": value,
-                "source_row": row_idx,
-                "source_col": col_idx,
-            })
+            records.append(
+                {
+                    "candidate_key": str(candidate.get("candidate_key") or ""),
+                    "model_file": profile.model_file,
+                    "sheet_name": profile.sheet_name,
+                    "parameter_name": str(
+                        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                    ),
+                    "reference_id": f"{profile.model_file}:{profile.sheet_name}:R{row_idx}C{col_idx}",
+                    "axes": record_axes,
+                    "value_name": spec.value_name,
+                    "value": value,
+                    "source_row": row_idx,
+                    "source_col": col_idx,
+                }
+            )
 
         for col_idx, descriptor in time_descriptors.items():
             value = _value_at(row_values, col_idx)
             time_values = _valid_basecase_time_values(descriptor)
             if not _is_record_value(value):
-                if (
-                    _preserves_basecase_axes_without_value(candidate)
-                    and time_values is not None
-                ):
+                if _preserves_basecase_axes_without_value(candidate) and time_values is not None:
                     axis_only_by_year.setdefault(time_values[0], (col_idx, descriptor))
                 continue
             if time_values is not None:
@@ -1308,9 +1911,7 @@ def basecase_value_field_name_from_candidate(candidate: dict[str, Any]) -> str:
         if spec is not None:
             return spec.value_name
     return _clean_text(
-        candidate.get("parameter_name")
-        or candidate.get("canonical_parameter_name")
-        or "",
+        candidate.get("parameter_name") or candidate.get("canonical_parameter_name") or "",
     )
 
 
@@ -1319,25 +1920,31 @@ def basecase_slot_axis_names_from_candidate(candidate: dict[str, Any]) -> list[s
     if read_mode == "fixed_columns":
         spec = _fixed_column_spec_from_candidate(candidate)
         if spec is not None:
-            return [
-                role
-                for col_idx, role in spec.column_roles.items()
-                if col_idx != spec.value_col
-            ]
+            return [role for col_idx, role in spec.column_roles.items() if col_idx != spec.value_col]
 
     axes: list[str] = []
     if read_mode == "matrix_time_columns":
         spec = _matrix_time_column_spec_from_candidate(candidate)
         if spec is not None:
             axes.extend(spec.axis_columns.values())
+            configured_time_axes = {
+                "Year": spec.year_row,
+                "Month": spec.month_row,
+                "Period": spec.period_row,
+            }
         else:
             axes.extend(
                 _parse_column_roles(
                     _clean_text(candidate.get("basecase_column_roles")),
                 ).values(),
             )
-        for axis_name in ("Year", "Month", "Period"):
-            if axis_name not in axes:
+            configured_time_axes = {
+                "Year": _int_or_none(candidate.get("basecase_year_row")),
+                "Month": _int_or_none(candidate.get("basecase_month_row")),
+                "Period": _int_or_none(candidate.get("basecase_period_row")),
+            }
+        for axis_name, row_number in configured_time_axes.items():
+            if row_number is not None and axis_name not in axes:
                 axes.append(axis_name)
         return axes
 
@@ -1395,11 +2002,7 @@ def _build_matrix_time_descriptors(
     month_row: int | None,
     period_row: int | None,
 ) -> dict[int, dict[str, Any]]:
-    row_indexes = {
-        row_idx
-        for row_idx in (year_row, month_row, period_row)
-        if row_idx is not None
-    }
+    row_indexes = {row_idx for row_idx in (year_row, month_row, period_row) if row_idx is not None}
     if not row_indexes:
         return {}
 
@@ -1503,8 +2106,7 @@ def _detect_basecase_matrix_blocks(
             candidate_label_cols = [
                 col_idx
                 for col_idx in time_label_columns
-                if start_col < col_idx < next_start
-                and time_label_columns[col_idx].get("year") is not None
+                if start_col < col_idx < next_start and time_label_columns[col_idx].get("year") is not None
             ]
             if not candidate_label_cols:
                 continue
@@ -1800,10 +2402,7 @@ def _none_if_dash(value: Any) -> str | None:
 
 
 def _model_table_from_row(row_map: dict[str, Any]) -> str | None:
-    return (
-        _none_if_dash(row_map.get("model_table"))
-        or _none_if_dash(row_map.get("table_name"))
-    )
+    return _none_if_dash(row_map.get("model_table")) or _none_if_dash(row_map.get("table_name"))
 
 
 def _normalize_unicode(value: str) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
@@ -12,6 +13,7 @@ from tests.manual.model_parameter_agent import evaluate_proposals as proposal_ev
 from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
     EventTypeTarget,
     _build_parameter_scenario_targets,
+    _confirmation_ok,
     _discover_parameter_scenario_targets,
     _discover_targets,
     _failed_scenario_detail_lines,
@@ -22,6 +24,8 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
     _proposal_value_table_lines,
     _records_for_target,
     _render_report,
+    _run_confirmation_workflow,
+    _run_invalid_status_confirmation,
     _scenario_result_summary,
     _scenario_result_table_lines,
     _scenario_token_summary,
@@ -131,8 +135,14 @@ def test_scenario_result_summary_covers_success_timing_and_mapping_failure() -> 
         "final_response": {
             "data": {"proposalParameters": [{"parameterName": "GDP"}]},
         },
+        "confirmation": {
+            "status": "PASS",
+            "invalid_status": {"status": "N/A"},
+        },
     }
-    assert _scenario_result_summary(record=success_record) == "PASS · proposal 생성 및 검증 완료"
+    assert _scenario_result_summary(record=success_record) == (
+        "PASS · proposal/confirmation 및 DB read-back 완료"
+    )
 
     slow_record = {**success_record, "elapsed_seconds": 181.0}
     assert _scenario_result_summary(record=slow_record).startswith(
@@ -143,6 +153,34 @@ def test_scenario_result_summary_covers_success_timing_and_mapping_failure() -> 
         "error": "No model parameter mapping candidates found for scenario_id=619",
     }
     assert _scenario_result_summary(error=mapping_error) == "FAIL · 매핑 후보 없음"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "파라미터로 반영할 변경 항목이 없습니다.\n"
+            "이벤트와 시나리오 분기값을 확인했지만, 수급모델에 반영할 변경 항목이 없습니다.",
+            "FAIL · 변경 항목 없음",
+        ),
+        (
+            "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n"
+            "액화설비 가동률과 생산량 파라미터는 확인했지만, 해당 설비와 적용 기간에 대응하는 "
+            "모델 입력 위치가 없습니다.",
+            "FAIL · 모델 입력 위치 없음",
+        ),
+        (
+            "적용할 파라미터 값을 생성하지 못했습니다.\n"
+            "관련 파라미터와 모델 입력 위치는 확인했지만, 유효한 적용 수치를 생성하지 못했습니다.",
+            "FAIL · 적용값 생성 실패",
+        ),
+    ],
+)
+def test_scenario_result_summary_classifies_v4_semantic_failure_messages(
+    message: str,
+    expected: str,
+) -> None:
+    assert _scenario_result_summary(error={"error": message}) == expected
 
 
 def test_scenario_result_table_includes_failed_execution() -> None:
@@ -614,6 +652,10 @@ def test_explicit_parameter_status_requires_target_candidate_and_selection() -> 
             },
             "mapping_ok": True,
             "selected_ok": True,
+            "confirmation": {
+                "status": "PASS",
+                "invalid_status": {"status": "N/A"},
+            },
         }
 
     assert _group_status(
@@ -631,6 +673,152 @@ def test_explicit_parameter_status_requires_target_candidate_and_selection() -> 
         [record(expected_parameter="PMI", selected_parameter="GDP")],
         [],
     )
+
+
+def test_group_status_requires_confirmation_success() -> None:
+    target = EventTypeTarget(21, "국가별 경기", 60, "국가별 경기", (305,), "GDP")
+    record = {
+        "target": target,
+        "scenario_id": 305,
+        "expected_candidates": [{"canonical_parameter_name": "GDP"}],
+        "result": {
+            "parameter_adjustments": [
+                {"parameter_name": "GDP", "selected": True},
+            ],
+        },
+        "mapping_ok": True,
+        "selected_ok": True,
+        "confirmation": {
+            "status": "FAIL",
+            "invalid_status": {"status": "N/A"},
+        },
+    }
+
+    assert not _confirmation_ok(record)
+    assert not _group_status(target, [record], [])
+
+
+def test_confirmation_workflow_verifies_rollback_confirm_and_reconfirm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.common.exceptions.custom import MIBaseError
+    from apps.common.values.error_codes import ErrorCode
+
+    proposal_parameters = [{"parameterName": "GDP", "values": [{"proposedValue": 1.0}]}]
+    row = {
+        "model_param_proposal_id": 901,
+        "request_usr_id": 55,
+        "status": "PROPOSED",
+        "proposal_parameters": deepcopy(proposal_parameters),
+        "confirmation_parameters": None,
+        "confirmed_dtm": None,
+        "mod_usr_logn_id": "40",
+        "mod_dtm": datetime(2026, 8, 7, 9, 0, 0, tzinfo=UTC),
+    }
+    confirmation_count = 0
+
+    async def fake_invoke(payload: dict[str, object]) -> dict[str, object]:
+        nonlocal confirmation_count
+        parameters = payload["data"]["confirmationParameters"]  # type: ignore[index]
+        if not parameters:
+            raise MIBaseError(ErrorCode.INVALID_REQUEST, detail="empty")
+        confirmation_count += 1
+        row["status"] = "CONFIRMED"
+        row["confirmation_parameters"] = deepcopy(parameters)
+        row["confirmed_dtm"] = datetime(
+            2026,
+            8,
+            7,
+            9,
+            0,
+            confirmation_count,
+            tzinfo=UTC,
+        )
+        row["mod_usr_logn_id"] = str(payload["userId"])
+        return {
+            "status": "success",
+            "data": {"modelParamProposalId": 901, "status": "CONFIRMED"},
+        }
+
+    monkeypatch.setattr(
+        "tests.manual.model_parameter_agent.evaluate_event_type_proposals._invoke_confirmation",
+        fake_invoke,
+    )
+    monkeypatch.setattr(
+        "tests.manual.model_parameter_agent.evaluate_event_type_proposals._fetch_proposal_db_row",
+        lambda _proposal_id: deepcopy(row),
+    )
+
+    result, confirmed_row = asyncio.run(_run_confirmation_workflow(deepcopy(row)))
+
+    assert result["status"] == "PASS"
+    assert result["invalid_payload"]["rollback_verified"] is True
+    assert result["valid_confirmation"]["status"] == "PASS"
+    assert result["reconfirmation"]["status"] == "PASS"
+    assert confirmation_count == 2
+    assert confirmed_row["status"] == "CONFIRMED"
+    assert confirmed_row["confirmation_parameters"] == proposal_parameters
+
+
+def test_invalid_status_confirmation_uses_existing_failed_row_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.common.exceptions.custom import MIBaseError
+    from apps.common.values.error_codes import ErrorCode
+
+    proposal_parameters = [{"parameterName": "GDP", "values": [{"proposedValue": 1.0}]}]
+    failed_row = {
+        "model_param_proposal_id": 777,
+        "request_usr_id": 10,
+        "status": "FAILED",
+        "proposal_parameters": [],
+        "confirmation_parameters": None,
+        "confirmed_dtm": None,
+        "mod_usr_logn_id": "10",
+        "mod_dtm": datetime(2026, 8, 7, 9, 0, 0, tzinfo=UTC),
+    }
+
+    async def reject_failed(_payload: dict[str, object]) -> dict[str, object]:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                "Model parameter proposal must be PROPOSED or CONFIRMED before "
+                "confirmation: model_param_proposal_id=777, status=FAILED"
+            ),
+        )
+
+    monkeypatch.setattr(
+        "tests.manual.model_parameter_agent.evaluate_event_type_proposals._find_safe_failed_proposal_id",
+        lambda _excluded_ids: 777,
+    )
+    monkeypatch.setattr(
+        "tests.manual.model_parameter_agent.evaluate_event_type_proposals._fetch_proposal_db_row",
+        lambda _proposal_id: deepcopy(failed_row),
+    )
+    monkeypatch.setattr(
+        "tests.manual.model_parameter_agent.evaluate_event_type_proposals._invoke_confirmation",
+        reject_failed,
+    )
+
+    result = asyncio.run(
+        _run_invalid_status_confirmation(
+            [
+                {
+                    "confirmation": {"status": "PASS"},
+                    "proposal_db_row": {
+                        "model_param_proposal_id": 901,
+                        "request_usr_id": 55,
+                        "proposal_parameters": proposal_parameters,
+                    },
+                },
+            ],
+        ),
+    )
+
+    assert result["status"] == "PASS"
+    assert result["model_param_proposal_id"] == 777
+    assert result["tested_status"] == "FAILED"
+    assert result["rollback_verified"] is True
 
 
 def test_lut_summary_line_is_compact() -> None:

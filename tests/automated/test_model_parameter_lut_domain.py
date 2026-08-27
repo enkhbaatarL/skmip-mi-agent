@@ -34,11 +34,18 @@ from apps.common.values.error_codes import ErrorCode
 
 EXPECTED_COUNTS = {
     "GDP": 815,
-    "PMI": 5040,
+    "PMI": 5460,
     "PowerMix": 4200,
     "Temperature": 5040,
+    "Population": 845,
+    "HurricaneIntensity": 60,
+    "LiqProdAdjustment": 19366,
     "LiqUtilAdjustment": 19366,
+    "PipelineAdjustment": 360,
+    "SupplyDisruption": 4908,
 }
+
+DISABLED_PARAMETERS = {"Coal Futures Price", "Gas Futures Price"}
 
 
 def _write(path: Path, content: str) -> Path:
@@ -84,16 +91,17 @@ def test_default_catalog_matches_final_record_counts(
     registry, catalog = real_domain
     assert {
         parameter_name: len(catalog.records_for_parameter(parameter_name)) for parameter_name in registry.specs
-    } == EXPECTED_COUNTS
+    } == {**EXPECTED_COUNTS, **dict.fromkeys(DISABLED_PARAMETERS, 0)}
+    assert set(registry.enabled_specs) == set(EXPECTED_COUNTS)
     assert {record.axes["Year"] for record in catalog.records_for_parameter("GDP")} == set(
         range(2026, 2031),
     )
     assert len({record.axes["Country"] for record in catalog.records_for_parameter("GDP")}) == 163
-    assert len({record.axes["Country"] for record in catalog.records_for_parameter("PMI")}) == 84
-    assert "Other Africa" not in {record.axes["Country"] for record in catalog.records_for_parameter("PMI")}
+    assert len({record.axes["Country"] for record in catalog.records_for_parameter("PMI")}) == 91
+    assert "Other Africa" in {record.axes["Country"] for record in catalog.records_for_parameter("PMI")}
     referenced_names = {path.name for path in registry.referenced_paths}
-    assert "Demand_Model_Input_PMIInput_value_based_t1.csv" not in referenced_names
-    assert "Demand_Model_LUT_General_value_based_t6.csv" not in referenced_names
+    assert "Demand_Model_Input_PMIInput_value_based_t1.csv" in referenced_names
+    assert "Demand_Model_LUT_General_value_based_t6.csv" in referenced_names
 
 
 def test_exact_gdp_temperature_and_liq_transforms(
@@ -141,6 +149,64 @@ def test_exact_gdp_temperature_and_liq_transforms(
     assert qatar_t12.metadata["Nameplate Capacity (MTPA)"] == 7.8
 
 
+def test_exact_new_parameter_transforms(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    _, catalog = real_domain
+
+    population = catalog.lookup("Population", {"Country": "China", "Year": 2026})
+    assert population is not None
+    assert population.value == 1400888.91666
+    assert population.diagnostics == ("unit=thousand_people",)
+
+    hurricane = catalog.lookup("HurricaneIntensity", {"Year": 2026, "Month": 1})
+    assert hurricane is not None
+    assert hurricane.value == 0
+    assert "hurricane_baseline=no_hurricane" in hurricane.diagnostics
+    assert "validated_impacted_plant_count=16" in hurricane.diagnostics
+
+    production = catalog.lookup(
+        "LiqProdAdjustment",
+        {
+            "Country": "Australia",
+            "LNG Plant": "Australia Pacific LNG",
+            "LNG Plant Train": "Australia Pacific LNG T1",
+            "Year": 2026,
+            "Month": 1,
+        },
+    )
+    assert production is not None
+    assert production.value == 0.37478
+    assert production.metadata["Nameplate Capacity (MTPA)"] == 4.5
+    assert production.diagnostics == ("production_transform=capacity_mtpm_x_utilisation",)
+
+    pipeline_axes = {
+        "Pipeline Name": "Power of Siberia 1 (Yakutia-Khabarovsk-Vladivostok Pipeline)",
+        "From Country": "Russia",
+        "To Country": "China",
+        "Year": 2026,
+    }
+    for month in (1, 12):
+        pipeline = catalog.lookup("PipelineAdjustment", {**pipeline_axes, "Month": month})
+        assert pipeline is not None
+        assert pipeline.value == 38
+        assert pipeline.diagnostics == ("annual_capacity_expanded_to_month",)
+
+    supply = catalog.lookup(
+        "SupplyDisruption",
+        {"Country": "Mexico", "Year": 2026, "Month": 12},
+    )
+    assert supply is not None
+    assert supply.value == 1.81221
+    assert "seasonality_policy=raw_not_renormalized" in supply.diagnostics
+    assert "aggregated_production_rows=37" in supply.diagnostics
+
+    pmi = catalog.lookup("PMI", {"Country": "Other Africa", "Year": 2026, "Month": 1})
+    assert pmi is not None
+    assert pmi.value == 50
+    assert "pmi_reference_country=Iran" in pmi.diagnostics
+
+
 def test_disabled_startup_validates_yaml_without_opening_missing_csv(tmp_path: Path) -> None:
     config = _write(
         tmp_path / "config" / "test_lut_config.yaml",
@@ -162,6 +228,81 @@ def test_disabled_startup_validates_yaml_without_opening_missing_csv(tmp_path: P
             config_path=config,
             lut_root=tmp_path,
         )
+
+
+def test_active_lut_requires_every_year_in_configured_horizon(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        _tabular_config("values.csv", metadata_axes="[Tag]"),
+    )
+    _write(
+        tmp_path / "values.csv",
+        "Country,Year,Tag,Value\nA,2026,x,1\nA,2027,x,2\n",
+    )
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    with pytest.raises(MIBaseError, match=r"complete configured horizon.*missing_years=\[2028\]"):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2028), registry=registry)
+
+
+def test_disabled_parameter_is_structurally_validated_but_not_cataloged(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        _tabular_config("pending.csv", metadata_axes="[Tag]").replace(
+            "TestParameter:\n",
+            "TestParameter:\n  enabled: false\n",
+        ),
+    )
+    pending = _write(tmp_path / "pending.csv", "Country,Year,Tag\nA,2025,x\n")
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    assert not registry.specs["TestParameter"].enabled
+    with pytest.raises(MIBaseError, match="missing required headers"):
+        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+
+    _write(pending, "Country,Year,Tag,Value\nA,2025,x,1\n")
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    assert catalog.records == ()
+    assert catalog.records_for_parameter("TestParameter") == ()
+
+
+def test_auxiliary_reference_is_header_validated_but_not_cataloged(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        """\
+basecase: {}
+lut:
+  TestParameter:
+    adapter: tabular
+    layout: row
+    files:
+      values:
+        path: values.csv
+        axis_columns: {Country: Country, Year: Year}
+        value_column: Value
+    key_axes: [Country, Year]
+references:
+  countries:
+    path: countries.csv
+    required_columns: [Country, Region]
+""",
+    )
+    _write(tmp_path / "values.csv", "Country,Year,Value\nA,2026,1\n")
+    countries = _write(tmp_path / "countries.csv", "Country\nA\n")
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    assert set(registry.references) == {"countries"}
+    with pytest.raises(MIBaseError, match="missing required headers"):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+
+    _write(countries, "Country,Region\nA,Asia\n")
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+    assert len(catalog.records) == 1
+    assert catalog.records[0].parameter_name == "TestParameter"
 
 
 def test_reference_load_policy_rejects_reversed_horizon() -> None:
@@ -289,7 +430,8 @@ def test_identical_duplicate_dedupes_but_value_or_metadata_conflict_fails(
     _write(values, "Country,Year,Tag,Value\nA,2026,x,1\nA,2026,x,1\n")
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    policy = ReferenceLoadPolicy(2026, 2026)
+    catalog = get_lut_catalog(policy, registry=registry)
     assert len(catalog.records) == 1
     assert len(catalog.diagnostics) == 1
     assert "deduped identical" in catalog.diagnostics[0]
@@ -298,13 +440,13 @@ def test_identical_duplicate_dedupes_but_value_or_metadata_conflict_fails(
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     with pytest.raises(MIBaseError, match="conflicting duplicate"):
-        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+        get_lut_catalog(policy, registry=registry)
 
     _write(values, "Country,Year,Tag,Value\nA,2026,x,1\nA,2026,y,1\n")
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
     with pytest.raises(MIBaseError, match="conflicting duplicate"):
-        get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+        get_lut_catalog(policy, registry=registry)
 
 
 def test_catalog_is_deeply_immutable_and_cache_is_thread_safe() -> None:
@@ -335,11 +477,12 @@ def test_catalog_version_and_warm_cache_identity_follow_csv_content(tmp_path: Pa
     values = _write(tmp_path / "values.csv", "Country,Year,Tag,Value\nA,2026,x,1\n")
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    first = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
-    assert get_lut_catalog(ReferenceLoadPolicy(), registry=registry) is first
+    policy = ReferenceLoadPolicy(2026, 2026)
+    first = get_lut_catalog(policy, registry=registry)
+    assert get_lut_catalog(policy, registry=registry) is first
 
     _write(values, "Country,Year,Tag,Value\nA,2026,x,20\n")
-    second = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    second = get_lut_catalog(policy, registry=registry)
     assert second is not first
     assert second.version != first.version
     assert second.records[0].value == 20
@@ -359,7 +502,7 @@ def test_basecase_and_lut_values_use_bounded_precision(
     )
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
     assert catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == 1.23456
     integer_lut_value = catalog.lookup("TestParameter", {"Country": "B", "Year": 2026}).value
     assert integer_lut_value == 8
@@ -493,13 +636,23 @@ def test_reference_load_policy_applies_configured_precision_to_lut(tmp_path: Pat
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
 
     truncate_catalog = get_lut_catalog(
-        ReferenceLoadPolicy(value_max_decimal_places=3, value_precision_mode="trunc"),
+        ReferenceLoadPolicy(
+            2026,
+            2026,
+            value_max_decimal_places=3,
+            value_precision_mode="trunc",
+        ),
         registry=registry,
     )
     assert truncate_catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == -1.234
 
     round_catalog = get_lut_catalog(
-        ReferenceLoadPolicy(value_max_decimal_places=3, value_precision_mode="round"),
+        ReferenceLoadPolicy(
+            2026,
+            2026,
+            value_max_decimal_places=3,
+            value_precision_mode="round",
+        ),
         registry=registry,
     )
     assert round_catalog.lookup("TestParameter", {"Country": "A", "Year": 2026}).value == -1.235
@@ -512,10 +665,11 @@ def test_metadata_axes_enable_non_time_basecase_metadata_fallback(tmp_path: Path
     )
     _write(
         tmp_path / "values.csv",
-        "Country,Year,Tag,Value\nA,2027,lut-tag,1.0\n",
+        "Country,Year,Tag,Value\nA,2026,lut-tag,0.5\nA,2027,lut-tag,1.0\n",
     )
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    policy = ReferenceLoadPolicy(2026, 2027)
+    catalog = get_lut_catalog(policy, registry=registry)
     candidate = {
         "candidate_key": "custom",
         "canonical_parameter_name": "TestParameter",
@@ -532,6 +686,7 @@ def test_metadata_axes_enable_non_time_basecase_metadata_fallback(tmp_path: Path
             },
         ],
         [candidate],
+        policy=policy,
         registry=registry,
     )
 
@@ -913,7 +1068,9 @@ GDP:
     )
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2028), registry=registry)
+    with pytest.raises(MIBaseError, match=r"missing_years=\[2027, 2028\]"):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2028), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
     assert len(catalog.records) == 1
     assert any("deduped_identical_lut_source_key" in diagnostic for diagnostic in catalog.diagnostics)
     assert catalog.lookup("GDP", {"Country": "A", "Year": 2026}).value == pytest.approx(0.1)
@@ -966,8 +1123,245 @@ LiqUtilAdjustment:
         writer.writerows(rows)
     clear_lut_runtime_cache()
     registry = get_parameter_spec_registry(config, lut_root=tmp_path)
-    catalog = get_lut_catalog(ReferenceLoadPolicy(), registry=registry)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
     assert len(catalog.records) == 1
     assert catalog.records[0].axes["LNG Plant Train"] == "T2"
     assert catalog.records[0].metadata["Nameplate Capacity (MTPA)"] == 12
     assert isinstance(catalog.records[0].metadata["Nameplate Capacity (MTPA)"], int)
+
+
+def test_liq_prod_adapter_excludes_closed_and_multiplies_capacity_by_utilisation(
+    tmp_path: Path,
+) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        """\
+LiqProdAdjustment:
+  adapter: liq_prod
+  files:
+    values:
+      path: liq.csv
+      required_columns:
+        - Country
+        - Plant Name
+        - Plant Train
+        - Year
+        - Month
+        - Period
+        - Infra Life Cycle
+        - LNG train capacity (Million tonnes LNG per month)
+        - LNG plant utilisation %
+  key_axes: [Country, LNG Plant, LNG Plant Train, Year, Month]
+  metadata_axes: [Period, Life Cycle Category, Nameplate Capacity (MTPA)]
+""",
+    )
+    _write(
+        tmp_path / "liq.csv",
+        "Country,Plant Name,Plant Train,Year,Month,Period,Infra Life Cycle,"
+        "LNG train capacity (Million tonnes LNG per month),LNG plant utilisation %\n"
+        "A,P,T1,2026,1,1,Closed,99,1\n"
+        "A,P,T2,2026,1,2,Operational,1.25,0.4\n",
+    )
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+    assert len(catalog.records) == 1
+    assert catalog.records[0].axes["LNG Plant Train"] == "T2"
+    assert catalog.records[0].value == 0.5
+    assert catalog.records[0].metadata["Nameplate Capacity (MTPA)"] == 15
+
+
+def test_hurricane_adapter_validates_all_declared_numeric_fields(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        """\
+HurricaneIntensity:
+  adapter: hurricane_intensity
+  files:
+    intensity:
+      path: intensity.csv
+      required_columns:
+        - Intensity
+        - Pre-hurricane upstream production shut-in duration (No. of weeks in a month)
+        - Pre-hurricane upstream production shut-in volume (% of total monthly volume)
+        - During and post-hurricane upstream production shut-in duration (No. of weeks in a month)
+        - During and post-hurricane upstream production shut-in volume (% of total monthly volume)
+        - Net impact (Monthly upstream production decrease by %)
+    plants:
+      path: plants.csv
+      required_columns:
+        - Liquefaction plants impacted by a hurricane in GoM
+        - Impacted by hurricane?
+  key_axes: [Year, Month]
+""",
+    )
+    header = [
+        "Intensity",
+        "Pre-hurricane upstream production shut-in duration (No. of weeks in a month)",
+        "Pre-hurricane upstream production shut-in volume (% of total monthly volume)",
+        "During and post-hurricane upstream production shut-in duration (No. of weeks in a month)",
+        "During and post-hurricane upstream production shut-in volume (% of total monthly volume)",
+        "Net impact (Monthly upstream production decrease by %)",
+    ]
+    valid_rows = [
+        [1, "0 weeks", 0, "0 weeks", 0, 0],
+        [2, "0 weeks", 0, "1 week", 0.2, 0.05],
+        [3, "1 week", 0.5, "2 weeks", 0.5, 0.375],
+        [4, "1 week", 0.9, "3 weeks", 0.9, 0.9],
+    ]
+    _write(
+        tmp_path / "plants.csv",
+        "Liquefaction plants impacted by a hurricane in GoM,Impacted by hurricane?\nPlant A,Yes\n",
+    )
+    invalid_cases = (
+        (1, "", "week"),
+        (2, 1.1, "between 0 and 1"),
+        (3, "six weeks", "finite number"),
+        (4, -0.1, "between 0 and 1"),
+    )
+    for column_index, invalid_value, expected_message in invalid_cases:
+        rows = [list(row) for row in valid_rows]
+        rows[0][column_index] = invalid_value
+        with (tmp_path / "intensity.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(header)
+            writer.writerows(rows)
+        clear_lut_runtime_cache()
+        registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+        with pytest.raises(MIBaseError, match=expected_message):
+            get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+
+
+def test_pmi_adapter_requires_complete_exact_reference_country_join(tmp_path: Path) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        """\
+PMI:
+  adapter: pmi_reference
+  files:
+    references:
+      path: references.csv
+      required_columns:
+        - Selection of PMI Reference Country_Demand Location_Country
+        - Selection of PMI Reference Country_Reference Country_Country
+        - Selection of PMI Reference Country_Base Case Reference Country_Country
+    values:
+      path: values.csv
+      required_columns:
+        - Base Case PMI Input (do not change)_Country
+        - Base Case PMI Input (do not change)_Month
+        - Base Case PMI Input (do not change)_{year}.0
+  key_axes: [Country, Year, Month]
+""",
+    )
+    reference_header = (
+        "Selection of PMI Reference Country_Demand Location_Country,"
+        "Selection of PMI Reference Country_Reference Country_Country,"
+        "Selection of PMI Reference Country_Base Case Reference Country_Country\n"
+    )
+    references = _write(tmp_path / "references.csv", reference_header + "Demand,Missing,Missing\n")
+    values_header = (
+        "Base Case PMI Input (do not change)_Country,"
+        "Base Case PMI Input (do not change)_Month,"
+        "Base Case PMI Input (do not change)_2026.0\n"
+    )
+    _write(
+        tmp_path / "values.csv",
+        values_header + "".join(f"Reference,{month},50\n" for month in range(1, 13)),
+    )
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    with pytest.raises(MIBaseError, match="join is missing an exact value"):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+
+    _write(references, reference_header + "Demand,Reference,Reference\n")
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+    assert len(catalog.records) == 12
+    january = catalog.lookup("PMI", {"Country": "Demand", "Year": 2026, "Month": 1})
+    assert january is not None
+    assert january.value == 50
+    assert january.diagnostics == ("pmi_reference_country=Reference",)
+
+
+def test_supply_disruption_aggregates_signed_rows_without_renormalizing_seasonality(
+    tmp_path: Path,
+) -> None:
+    config = _write(
+        tmp_path / "config.yaml",
+        """\
+SupplyDisruption:
+  adapter: supply_disruption
+  files:
+    production:
+      path: production.csv
+      required_columns:
+        - Year
+        - Life Cycle Category
+        - Country
+        - Province/Basin
+        - Oil and gas detail
+        - Base case supply (Bcm)
+    seasonality:
+      path: seasonality.csv
+      required_columns: [Year, Month, Period, Province, PNG/LNG, Seasonality]
+  key_axes: [Country, Year, Month]
+""",
+    )
+    production = _write(
+        tmp_path / "production.csv",
+        "Year,Life Cycle Category,Country,Province/Basin,Oil and gas detail,Base case supply (Bcm)\n"
+        "2026,Operational,Mexico,GoM,Feed gas to LNG,10\n"
+        "2026,Operational,Mexico,GoM,Feed gas to LNG,-2\n"
+        "2026,cLoSeD,Mexico,GoM,Feed gas to LNG,1000\n",
+    )
+    seasonality_header = "Year,Month,Period,Province,PNG/LNG,Seasonality\n"
+    seasonality_rows = "".join(
+        f"2026,{month},{month},GoM,Feed gas to LNG,{0.25 if month == 1 else 0.1}\n" for month in range(1, 13)
+    )
+    seasonality = _write(tmp_path / "seasonality.csv", seasonality_header + seasonality_rows)
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    catalog = get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+    assert len(catalog.records) == 12
+    january = catalog.lookup(
+        "SupplyDisruption",
+        {"Country": "Mexico", "Year": 2026, "Month": 1},
+    )
+    assert january is not None
+    assert january.value == 2
+    assert january.diagnostics == (
+        "seasonality_policy=raw_not_renormalized",
+        "aggregated_production_rows=2",
+    )
+
+    _write(seasonality, seasonality_header + seasonality_rows.rsplit("\n", 2)[0] + "\n")
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    with pytest.raises(MIBaseError, match="join is missing exact rows"):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+
+    _write(
+        seasonality,
+        seasonality_header + seasonality_rows.replace("2026,1,1,", "2026,1,,", 1),
+    )
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    with pytest.raises(MIBaseError, match=r"Period.*finite number"):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)
+
+    _write(seasonality, seasonality_header + seasonality_rows)
+    _write(
+        production,
+        "Year,Life Cycle Category,Country,Province/Basin,Oil and gas detail,Base case supply (Bcm)\n"
+        "2026,Operational,Mexico,GoM,Feed gas to LNG,1\n"
+        "2026,Operational,Mexico,GoM,Feed gas to LNG,-2\n",
+    )
+    clear_lut_runtime_cache()
+    registry = get_parameter_spec_registry(config, lut_root=tmp_path)
+    with pytest.raises(
+        MIBaseError,
+        match="aggregated monthly supply must be non-negative",
+    ):
+        get_lut_catalog(ReferenceLoadPolicy(2026, 2026), registry=registry)

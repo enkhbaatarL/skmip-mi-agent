@@ -15,7 +15,19 @@ from apps.agents.model_parameter_agent.utils.lut.models import domain_error
 from apps.common.utils.yaml_utils import normalize_yaml_text
 
 
-AdapterName = Literal["tabular", "gdp_growth", "temperature_degree_days", "liq_util"]
+AdapterName = Literal[
+    "tabular",
+    "futures_price",
+    "gdp_growth",
+    "hurricane_intensity",
+    "liq_prod",
+    "liq_util",
+    "pipeline",
+    "pmi_reference",
+    "population",
+    "supply_disruption",
+    "temperature_degree_days",
+]
 LayoutName = Literal["row", "year_columns"]
 
 PACKAGE_DIR = Path(__file__).resolve().parents[2]
@@ -84,6 +96,7 @@ class _LutFileSpecModel(BaseModel):
 class _ParameterLutSpecModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    enabled: bool = True
     adapter: AdapterName
     layout: LayoutName | None = None
     files: dict[str, _LutFileSpecModel]
@@ -153,9 +166,16 @@ class _ParameterLutSpecModel(BaseModel):
             raise ValueError(msg)
 
         required_roles = {
+            "futures_price": {"values"},
             "gdp_growth": {"values"},
+            "hurricane_intensity": {"intensity", "plants"},
+            "liq_prod": {"values"},
             "temperature_degree_days": {"hdd", "cdd"},
             "liq_util": {"values"},
+            "pipeline": {"values"},
+            "pmi_reference": {"references", "values"},
+            "population": {"values"},
+            "supply_disruption": {"production", "seasonality"},
         }
         expected_roles = required_roles.get(self.adapter)
         if expected_roles is not None and set(self.files) != expected_roles:
@@ -188,6 +208,7 @@ class LutFileSpec:
 @dataclass(frozen=True, slots=True)
 class ParameterLutSpec:
     parameter_name: str
+    enabled: bool
     adapter: AdapterName
     layout: LayoutName | None
     files: Mapping[str, LutFileSpec]
@@ -200,6 +221,7 @@ class ParameterSpecRegistry:
     config_path: Path
     lut_root: Path
     specs: Mapping[str, ParameterLutSpec]
+    references: Mapping[str, LutFileSpec]
     canonical_yaml: bytes
     schema_hash: str
 
@@ -210,6 +232,12 @@ class ParameterSpecRegistry:
         return self.get(parameter_name) is not None
 
     @property
+    def enabled_specs(self) -> Mapping[str, ParameterLutSpec]:
+        return MappingProxyType(
+            {parameter_name: spec for parameter_name, spec in self.specs.items() if spec.enabled},
+        )
+
+    @property
     def referenced_paths(self) -> tuple[Path, ...]:
         return tuple(
             sorted(
@@ -217,7 +245,8 @@ class ParameterSpecRegistry:
                     file_spec.resolved_path
                     for parameter_spec in self.specs.values()
                     for file_spec in parameter_spec.files.values()
-                },
+                }
+                | {file_spec.resolved_path for file_spec in self.references.values()},
                 key=str,
             ),
         )
@@ -266,11 +295,17 @@ def load_parameter_spec_registry(  # noqa: C901
             msg = "config model_parameter_resources must be a non-empty mapping"
             raise domain_error(msg)
 
+    raw_reference_document: dict[str, object] = {}
     if {"basecase", "lut"}.issubset(raw_document):
         raw_lut_document = raw_document.get("lut")
         if not isinstance(raw_lut_document, dict) or not raw_lut_document:
             msg = "model parameter resource manifest lut must be a non-empty parameter mapping"
             raise domain_error(msg)
+        raw_references = raw_document.get("references", {})
+        if not isinstance(raw_references, dict):
+            msg = "model parameter resource manifest references must be a mapping"
+            raise domain_error(msg)
+        raw_reference_document = raw_references
     else:
         # 기존 LUT-only YAML 호출과 테스트를 계속 지원한다.
         raw_lut_document = raw_document
@@ -320,6 +355,7 @@ def load_parameter_spec_registry(  # noqa: C901
             )
         specs[parameter_name] = ParameterLutSpec(
             parameter_name=parameter_name,
+            enabled=parsed.enabled,
             adapter=parsed.adapter,
             layout=parsed.layout,
             files=MappingProxyType(files),
@@ -327,9 +363,52 @@ def load_parameter_spec_registry(  # noqa: C901
             metadata_axes=parsed.metadata_axes,
         )
 
+    parsed_references: dict[str, _LutFileSpecModel] = {}
+    references: dict[str, LutFileSpec] = {}
+    for raw_reference_name, raw_file_spec in raw_reference_document.items():
+        reference_name = str(raw_reference_name or "").strip()
+        if not reference_name or reference_name != raw_reference_name:
+            msg = f"invalid model parameter reference name: {raw_reference_name!r}"
+            raise domain_error(msg)
+        if not isinstance(raw_file_spec, dict):
+            msg = f"invalid model parameter reference for {reference_name}: mapping is required"
+            raise domain_error(msg)
+        semantic_file_spec = {key: value for key, value in raw_file_spec.items() if key != "object_storage_path"}
+        try:
+            parsed_reference = _LutFileSpecModel.model_validate(semantic_file_spec)
+        except ValidationError as exc:
+            msg = f"invalid model parameter reference for {reference_name}: {exc}"
+            raise domain_error(msg) from exc
+        if parsed_reference.axis_columns or parsed_reference.value_column or parsed_reference.year_value_column:
+            msg = f"model parameter reference {reference_name} supports required_columns only"
+            raise domain_error(msg)
+        if not parsed_reference.required_columns:
+            msg = f"model parameter reference {reference_name} requires required_columns"
+            raise domain_error(msg)
+        relative_path, resolved_path = _safe_relative_path(
+            parsed_reference.path,
+            lut_root=lut_root,
+        )
+        parsed_references[reference_name] = parsed_reference
+        references[reference_name] = LutFileSpec(
+            role=reference_name,
+            relative_path=relative_path,
+            resolved_path=resolved_path,
+            required_columns=parsed_reference.required_columns,
+            axis_columns=MappingProxyType({}),
+            value_column=None,
+            year_value_column=None,
+        )
+
     canonical_payload = {
-        parameter_name: parsed_models[parameter_name].model_dump(mode="json")
-        for parameter_name in sorted(parsed_models)
+        "lut": {
+            parameter_name: parsed_models[parameter_name].model_dump(mode="json")
+            for parameter_name in sorted(parsed_models)
+        },
+        "references": {
+            reference_name: parsed_references[reference_name].model_dump(mode="json")
+            for reference_name in sorted(parsed_references)
+        },
     }
     canonical_yaml = json.dumps(
         canonical_payload,
@@ -341,6 +420,7 @@ def load_parameter_spec_registry(  # noqa: C901
         config_path=config_path.resolve(),
         lut_root=lut_root.resolve(),
         specs=MappingProxyType(specs),
+        references=MappingProxyType(references),
         canonical_yaml=canonical_yaml,
         schema_hash=hashlib.sha256(canonical_yaml).hexdigest(),
     )

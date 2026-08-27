@@ -108,6 +108,18 @@ class EventRepository(BaseSyncSQLRepository):
             return None
         return self._event_to_pipeline_dict(event)
 
+    def fetch_event_core_by_id(self, mi_event_id: int) -> dict[str, Any] | None:
+        """Load Event evidence without joining the legacy Event Type catalog."""
+        stmt = (
+            select(MiEventModel)
+            .options(joinedload(MiEventModel.record_maps))
+            .where(MiEventModel.mi_event_id == mi_event_id, MiEventModel.del_yn == "N")
+        )
+        event = self.session.execute(stmt).scalars().unique().one_or_none()
+        if event is None:
+            return None
+        return self._event_to_core_pipeline_dict(event)
+
     def fetch_event_detail_by_id(self, mi_event_id: int) -> dict[str, Any] | None:
         stmt = (
             select(MiEventModel)
@@ -224,6 +236,33 @@ class EventRepository(BaseSyncSQLRepository):
                 "level_2_code": l2.level_2_code if l2 else "",
                 "level_2_label": l2.level_2_label if l2 else "",
             },
+            "language": "ko",
+            "occurred_at": event.occurred_at.isoformat() if event.occurred_at else "",
+            "tags": [str(item).strip() for item in self._parse_json_list(event.tags_json, wrapper_key="tags") if item],
+        }
+
+    def _event_to_core_pipeline_dict(self, event: MiEventModel) -> dict[str, Any]:
+        """Serialize Event evidence without dereferencing its Event Type relationship."""
+        source_record_ids = [int(record.mi_record_id) for record in event.record_maps if record.mi_record_id]
+        return {
+            "mi_event_id": str(event.mi_event_id),
+            "event_title_ko": event.event_title or "",
+            "one_line_summary": event.one_line_summary or "",
+            "key_bullets": [
+                str(item).strip()
+                for item in self._parse_json_list(event.key_bullets_json, wrapper_key="bullets")
+                if item
+            ],
+            "detail_analysis": event.detail_analysis or "",
+            "source_mi_record_ids": source_record_ids,
+            "created_at": event.crt_dtm.isoformat() if event.crt_dtm else "",
+            "updated_at": event.mod_dtm.isoformat() if event.mod_dtm else "",
+            "latest_record_first_created": (
+                event.latest_record_first_created.isoformat() if event.latest_record_first_created else ""
+            ),
+            "oldest_record_first_created": (
+                event.oldest_record_first_created.isoformat() if event.oldest_record_first_created else ""
+            ),
             "language": "ko",
             "occurred_at": event.occurred_at.isoformat() if event.occurred_at else "",
             "tags": [str(item).strip() for item in self._parse_json_list(event.tags_json, wrapper_key="tags") if item],

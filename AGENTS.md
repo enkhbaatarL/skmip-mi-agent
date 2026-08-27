@@ -26,6 +26,10 @@ If the task touches one of these areas, read the linked document before changing
   `docs/agents/scenario_group_agent/05_SCENARIO_GROUP_AGENT_TEST_AND_QUALITY.md`
 - Python style, settings access, typing, async patterns, Pydantic, or exception handling:
   `.claude/rules/python-conventions.md`
+- Model Parameter canonical DB/LUT/config/Excel/docs implementation:
+  `.claude/skills/rollout-model-parameters/SKILL.md`
+- Model Parameter release, DB safety, proposal/confirmation, or integrated verification:
+  `.claude/skills/verify-model-parameter-release/SKILL.md`
 
 ## Core Rules
 

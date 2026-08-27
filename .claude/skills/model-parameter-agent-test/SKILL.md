@@ -7,7 +7,9 @@ description: Run and document MI 수급모델파라미터 proposal and post-prop
 
 ## Overview
 
-Run 수급모델파라미터 proposal and confirmation tests from `/Users/messiah/skg-mi/skmip-mi-agent` and write markdown reports under `tests/reports/model_parameter_agent/`.
+Run 수급모델파라미터 proposal and confirmation tests from the repository root and write markdown reports under `tests/reports/model_parameter_agent/`.
+
+The runtime proposal allow-list is defined by code and currently contains `GDP`, `PMI`, `PowerMix`, `Temperature`, and `LiqUtilAdjustment`. Keep raw DB/canonical/catalog active coverage separate: other active candidates are `active-but-blocked`, must not reach LLM/proposal execution, and are not empty-coverage failures. This boundary does not change DB, config, canonical JSON/SQL, workbook, public API payloads, or confirmation behavior.
 
 Use `poetry run` from the repo root. Do not start the API server for these tests.
 
@@ -17,6 +19,12 @@ Before raw-graph execution, the shared test runner initializes Model Parameter r
 - `enabled: false`: use packaged `resources/basecase` and `resources/lut` without accessing `local_root`.
 - `enabled: true`: reuse a valid `<local_root>/current`; only sync from Object Storage when current is absent or invalid.
 - Keep the selected release fixed for the lifetime of the test process. Do not initialize resources per scenario.
+
+Before a real scenario run, require the `core-smoke` suite from
+[`verification-matrix.md`](../verify-model-parameter-release/references/verification-matrix.md) to pass on the same
+worktree and config. A result from the same unchanged worktree may be reused. If proposal/confirmation, runner, or
+report code changed, also run the affected named domain suite from that matrix. Scenario-only testing does not require
+the full release suite; release acceptance remains the responsibility of `verify-model-parameter-release`.
 
 ## Request Mapping
 
@@ -31,13 +39,13 @@ If the user provides a scenario title instead of an id, resolve the `scenario_id
 For `모든 이벤트타입에 해당하는 시나리오그룹 1개씩 테스트해줘`, run one scenario group per event type and two scenarios per group:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --all-event-types --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --all-event-types --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1
 ```
 
 For `폭염/한파 이벤트타입에 해당하는 시나리오 테스트해줘`, include event_type_l2_id `6` (겨울 한파) and `7` (여름 폭염). Treat the typo `폭엄` as `폭염`. By default, test all existing groups/scenarios for these two event types:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --event-type-l2-ids 6 7 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --event-type-l2-ids 6 7 --concurrency 4 --retries 1
 ```
 
 If the user explicitly says `1개씩`, `샘플`, or asks for a quick check, add `--groups-per-event 1 --scenarios-per-group 2`.
@@ -45,7 +53,7 @@ If the user explicitly says `1개씩`, `샘플`, or asks for a quick check, add 
 If the user specifies one or more target parameters such as `GDP`, `PMI`, `PowerMix`, `Temperature`, or `LiqUtilAdjustment`, use parameter mode. The script resolves event types where the parameter is a current DB `direct` or `routing` mapping candidate, then writes the report body in `parameter -> event_type -> scenario` order:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1
 ```
 
 If the user asks for exactly one scenario group and multiple scenarios **per target parameter**, resolve one current DB group per parameter first and pass the selected scenario IDs explicitly. Separate multiple IDs with commas. All IDs for one parameter must belong to the same group, and do not reuse a scenario ID across parameters:
@@ -54,15 +62,17 @@ If the user asks for exactly one scenario group and multiple scenarios **per tar
 poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py \
   --target-parameters GDP PMI PowerMix Temperature LiqUtilAdjustment \
   --parameter-scenarios GDP=1132,1133 PMI=1131,1136 PowerMix=867,868 Temperature=1043,1046 LiqUtilAdjustment=1031,1032 \
-  --concurrency 4 --retries 1 --max-candidates 30
+  --concurrency 4 --retries 1
 ```
 
 The IDs above are syntax examples only. Always select them from the current DB mapping and scenario state; do not reuse historical IDs blindly.
 
+If a requested parameter is DB/catalog-active but outside the runtime allow-list, report it as `active-but-blocked` and verify that it is excluded before LLM/proposal execution. Do not run confirmation for it because no proposal row should be created.
+
 If the user specifies both target parameters and explicit event types, keep the explicit event type scope while still rendering the report in `parameter -> event_type -> scenario` order:
 
 ```bash
-poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP PMI --event-type-l2-ids 1 2 4 --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1 --max-candidates 30
+poetry run python tests/manual/model_parameter_agent/evaluate_event_type_proposals.py --target-parameters GDP PMI --event-type-l2-ids 1 2 4 --groups-per-event 1 --scenarios-per-group 2 --concurrency 4 --retries 1
 ```
 
 ## Required Confirmation Workflow
@@ -88,7 +98,10 @@ Treat any failed valid-confirmation call, mismatched stored payload, missing con
 
 Use the report path printed as `REPORT` or `REPORT_IN_PROGRESS`. Event-type evaluation updates the markdown as scenarios finish, so the partial report can be inspected while the run continues.
 
-Write one integrated markdown report per user test request. If an automated script already created a markdown report, append any parameter-specific quality evaluation, findings, and improvement plan to that same file instead of creating a second markdown file. Do not split "raw execution result" and "quality evaluation" into separate report files unless the user explicitly asks for separate files.
+Write one integrated markdown report per user test request. If a manual evaluation runner such as
+`evaluate_event_type_proposals.py` already created a markdown report, append any parameter-specific quality evaluation,
+findings, and improvement plan to that same file instead of creating a second markdown file. Do not split "raw execution
+result" and "quality evaluation" into separate report files unless the user explicitly asks for separate files.
 
 Put an `종합 평가` section at the top of the report, immediately after the title and compact execution metadata. It must summarize total execution/error counts, aggregate judgements for the seven criteria, review/failure flags, confirmation status, and the maximum elapsed scenario as compact timing evidence. Do not leave the aggregate evaluation only at the end of the report.
 
@@ -162,7 +175,7 @@ When large text, basecase hierarchies, or cells are included, summarize them wit
 
 When the user asks to evaluate a target parameter such as GDP, PMI, PowerMix, Temperature, or LiqUtilAdjustment, include a `Parameter Quality Evaluation` section in the same markdown report. Use this fixed rubric unless the user explicitly overrides it. Render it as a table with columns `No`, `Criteria`, `Judgement`, `Evidence`, and `Improvement`. Use `PASS`, `FAIL`, `REVIEW`, or `N/A` judgements.
 
-1. **파라미터 선정**: Select parameters from the current DB mapping. Include all applicable `direct` candidates, choose at least one appropriate candidate from each applicable `routing` group, and do not select candidates outside the mapping result.
+1. **파라미터 선정**: Start from the current DB mapping, then apply the runtime allow-list. Include all applicable allowed `direct` candidates, choose at least one appropriate allowed candidate from each applicable `routing` group, do not select candidates outside the mapping result, and record mapped-but-blocked candidates as `active-but-blocked` rather than missing coverage.
 2. **Slot 선정**: Verify that Step2 received Basecase and LUT sample slots when those sources are active and available. Select scenario-relevant slots from the exact Basecase+LUT union without missing required slots or selecting an excessive range.
 3. **Value 산정**: Verify that every valid Step3 input slot received one reference sample value and returned one valid result value. The Step3 input slot count, reference sample value count, valid result value count, and final DB value count must match. Use actual Basecase first and the exact LUT default when Basecase is absent; a LUT-only cell may correctly store `basecaseValue=null`.
 4. **근거필드 산정**: Verify that parameter- and value-level rationale explains why the parameter, slot, and value were selected and remains consistent with the scenario, coordinates, reference value, and proposed value.
@@ -172,11 +185,11 @@ When the user asks to evaluate a target parameter such as GDP, PMI, PowerMix, Te
 
 For criterion 2, report Basecase sample slot, LUT sample slot, union slot, selected slot, and exact validation counts. A missing source is not a failure when the source is disabled or unavailable for that parameter; explain it as `N/A` evidence.
 
-For criterion 3, use the valid Step3 input after exact validation and truncation as the comparison baseline. Treat any missing reference sample value, missing result value, or mismatch with the final DB value count as `FAIL`. Use `REVIEW` when all values are present but their range, direction, magnitude, or rationale needs human review.
+For criterion 3, use the valid Step3 input after exact and finite-number validation as the comparison baseline. Require each JSON numeric `proposedValue` to keep the same numeric value through proposal and confirmation persistence without configured round/trunc/ceil quantization; numeric strings may be coerced to numbers at validation. Treat any missing reference sample value, missing result value, or mismatch with the final DB value count as `FAIL`. Use `REVIEW` when all values are present but their range, direction, magnitude, or rationale needs human review.
 
 For each criterion, cite concrete evidence from the same report: selected parameter names, mapping methods, scenario dimensions, sample slot/value counts, stored DB proposal row, slot coordinates, `basecaseValue`, LUT reference value when applicable, `proposedValue`, rationale, timing/retry data, and confirmation results. Aggregate these judgements at the top and repeat the evidence-based result under the owning scenario group. If a judgement is `REVIEW` or `FAIL`, add a concrete improvement direction. If a criterion is not applicable, use `N/A` and explain why.
 
-Evaluation must be driven by the current DB mapping state. Do not hardcode expected parameters, selected parameters, routing winners, or success/failure by `scenario_id`, `scenario_group_id`, or `event_type_l2_id`. If DB mapping changes, a scenario may legitimately have no mapping candidates, no validated candidates, or no final recommendations.
+Evaluation must be driven by the current DB mapping state and the allow-list exported by runtime code. Do not hardcode expected parameters, selected parameters, routing winners, or success/failure by `scenario_id`, `scenario_group_id`, or `event_type_l2_id`. If DB mapping changes, a scenario may legitimately have no allowed mapping candidates, no validated candidates, or no final recommendations.
 
 Treat `EMPTY_RECOMMENDATIONS` and `routing_result: REVIEW` as report flags, not automatic failures. Do not fix agent code solely because a historical scenario no longer selects a previously expected parameter such as `ShippingCost`; first verify that the parameter is present in the current DB-derived candidate set and that the report shows a real consistency error.
 
@@ -192,4 +205,4 @@ Only classify a run as failed when the report shows execution errors, broken can
 
 ## Final Response
 
-Report the markdown file path, scenario/event scope, `ERROR_COUNT`, group pass/fail summary, maximum elapsed scenario, confirmation success/failure summary, and any notable empty recommendations or review flags. Do not duplicate the raw API response in chat or in the markdown report; the markdown report must keep the final DB proposal row as the single source for stored proposal data.
+Report the markdown file path, scenario/event scope, `ERROR_COUNT`, group pass/fail summary, maximum elapsed scenario, confirmation success/failure summary, raw active/runtime-allowed/`active-but-blocked` coverage, and any notable empty recommendations or review flags. Do not duplicate the raw API response in chat or in the markdown report; the markdown report must keep the final DB proposal row as the single source for stored proposal data.

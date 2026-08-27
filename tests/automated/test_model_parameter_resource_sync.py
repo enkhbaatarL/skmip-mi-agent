@@ -37,11 +37,26 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
     clear_model_parameter_resource_runtime,
     get_model_parameter_resource_paths,
 )
-from apps.common.exceptions.custom import MIBaseError
 from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.connectors.object_storage import DownloadedObject, ObjectMetadata, S3ObjectStorageClient
 from model_param import _config_debug_json
+
+
+ENABLED_LUT_PARAMETERS = {
+    "GDP",
+    "PMI",
+    "PowerMix",
+    "Temperature",
+    "Population",
+    "HurricaneIntensity",
+    "LiqProdAdjustment",
+    "LiqUtilAdjustment",
+    "PipelineAdjustment",
+    "SupplyDisruption",
+}
+DISABLED_LUT_PARAMETERS = {"Coal Futures Price", "Gas Futures Price"}
 
 
 def _manifest_document() -> dict[str, object]:
@@ -59,13 +74,18 @@ def _manifest_with_object_paths(*, prefix: str) -> ModelParameterResourceManifes
         raw_file["object_storage_path"] = f"{prefix}/remote-{role}.binary"
     lut = document["lut"]
     assert isinstance(lut, dict)
-    for parameter_name, raw_spec in lut.items():
+    for raw_spec in lut.values():
         assert isinstance(raw_spec, dict)
         files = raw_spec["files"]
         assert isinstance(files, dict)
-        for role, raw_file in files.items():
+        for raw_file in files.values():
             assert isinstance(raw_file, dict)
-            raw_file["object_storage_path"] = f"{prefix}/remote-{parameter_name}-{role}.data"
+            raw_file["object_storage_path"] = f"{prefix}/{raw_file['path']}"
+    references = document["references"]
+    assert isinstance(references, dict)
+    for raw_file in references.values():
+        assert isinstance(raw_file, dict)
+        raw_file["object_storage_path"] = f"{prefix}/{raw_file['path']}"
     return load_model_parameter_resource_manifest(
         document,
         source_path=CONFIG_FILE_PATH,
@@ -97,21 +117,17 @@ def test_integrated_manifest_declares_expected_resources() -> None:
         source_path=CONFIG_FILE_PATH,
     )
     assert set(integrated.basecase_files) == {"demand", "supply", "trade"}
-    assert {
-        role: resource.object_storage_path
-        for role, resource in integrated.basecase_files.items()
-    } == {
+    assert {role: resource.object_storage_path for role, resource in integrated.basecase_files.items()} == {
         "demand": "fundamental_model_artifact/input_template/복호화_(Base) Demand Model_Input.xlsm",
         "supply": "fundamental_model_artifact/input_template/복호화_(Base) Supply Model_Input.xlsm",
         "trade": "fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm",
     }
-    assert set(integrated.lut_registry.specs) == {
-        "GDP",
-        "PMI",
-        "PowerMix",
-        "Temperature",
-        "LiqUtilAdjustment",
-    }
+    assert set(integrated.lut_registry.specs) == ENABLED_LUT_PARAMETERS | DISABLED_LUT_PARAMETERS
+    assert set(integrated.lut_registry.enabled_specs) == ENABLED_LUT_PARAMETERS
+    assert {
+        parameter_name for parameter_name, spec in integrated.lut_registry.specs.items() if not spec.enabled
+    } == DISABLED_LUT_PARAMETERS
+    assert set(integrated.lut_registry.references) == {"demand_general_country_list"}
 
 
 def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
@@ -120,6 +136,44 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
     embedded_config = yaml.safe_load(configmap["data"]["config.yaml"])
 
     assert embedded_config["model_parameter_resources"] == get_settings().model_parameter_resources
+    for setting_name in (
+        "model_parameter_max_total_selected_slots",
+        "model_parameter_max_step2_prompt_bytes",
+        "model_parameter_max_step3_prompt_bytes",
+    ):
+        assert embedded_config[setting_name] == getattr(get_settings(), setting_name)
+
+
+def test_every_packaged_lut_csv_has_exactly_one_active_pending_or_reference_class() -> None:
+    integrated = load_model_parameter_resource_manifest(
+        get_settings().model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
+    active_paths = {
+        file_spec.relative_path
+        for parameter_name in ENABLED_LUT_PARAMETERS
+        for file_spec in integrated.lut_registry.specs[parameter_name].files.values()
+    }
+    pending_paths = {
+        file_spec.relative_path
+        for parameter_name in DISABLED_LUT_PARAMETERS
+        for file_spec in integrated.lut_registry.specs[parameter_name].files.values()
+    }
+    reference_paths = {file_spec.relative_path for file_spec in integrated.lut_registry.references.values()}
+    packaged_paths = {path.name for path in integrated.lut_registry.lut_root.glob("*.csv") if path.is_file()}
+
+    assert active_paths.isdisjoint(pending_paths)
+    assert active_paths.isdisjoint(reference_paths)
+    assert pending_paths.isdisjoint(reference_paths)
+    assert active_paths | pending_paths | reference_paths == packaged_paths
+    assert len(packaged_paths) == 14
+
+    selected_targets = {
+        resource_file.relative_path
+        for resource_file in integrated.selected_files(lut_enabled=True)
+        if resource_file.area == "lut"
+    }
+    assert selected_targets == packaged_paths
 
 
 def test_debug_config_snapshot_includes_all_settings_and_redacts_secrets() -> None:

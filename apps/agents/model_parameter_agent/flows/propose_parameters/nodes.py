@@ -10,6 +10,9 @@ from langchain_core.runnables.config import RunnableConfig
 from langgraph.runtime import Runtime
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    _raise_v4_semantic_empty_if_applicable,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -45,7 +48,7 @@ from apps.agents.model_parameter_agent.utils.lut import (
     resolve_effective_reference,
 )
 from apps.agents.model_parameter_agent.utils.lut.keys import (
-    apply_numeric_precision,
+    strict_float,
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CandidateSlotCatalog,
@@ -55,6 +58,7 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     ParameterKnowledgeBase,
     get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
+    partition_proposal_parameter_candidates,
     to_compact_json,
 )
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
@@ -69,6 +73,8 @@ from apps.common.values.error_codes import ErrorCode
 
 TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
 HARD_MAX_PARAMETER_SLOTS = 100
+DEFAULT_MAX_TOTAL_SELECTED_SLOTS = 300
+DEFAULT_MAX_PROMPT_BYTES = 262_144
 
 
 def _debug_stage_payload(
@@ -96,6 +102,7 @@ def _scenario_event_debug_summary(
     scenario = context.get("scenario") or {}
     scenario_group = context.get("scenario_group") or {}
     event = context.get("event") or {}
+    events = context.get("events") or []
     return {
         "scenario": {
             "scenario_id": scenario.get("scenario_id") or scenario_id,
@@ -105,16 +112,27 @@ def _scenario_event_debug_summary(
         },
         "event": {
             "mi_event_id": event.get("mi_event_id") or scenario_group.get("mi_event_id"),
-            "event_type_l2_id": (
-                event.get("event_type_l2_id")
-                or scenario_group.get("event_type_l2_id")
-            ),
-            "title": (
-                event.get("event_title")
-                or event.get("event_title_ko")
-                or event.get("title")
-            ),
+            "event_type_l2_id": (event.get("event_type_l2_id") or scenario_group.get("event_type_l2_id")),
+            "title": (event.get("event_title") or event.get("event_title_ko") or event.get("title")),
         },
+        "events": [
+            {
+                "mi_event_id": item.get("mi_event_id"),
+                "event_type_l2_id": item.get("event_type_l2_id"),
+                "scenario_dimension_template_id": item.get(
+                    "scenario_dimension_template_id",
+                ),
+                "title": (item.get("event_title") or item.get("event_title_ko") or item.get("title")),
+            }
+            for item in events
+            if isinstance(item, dict)
+        ],
+        "generation_strategy": scenario_group.get("generation_strategy"),
+        "parameter_mapping_ready": scenario_group.get(
+            "parameter_mapping_ready",
+        ),
+        "dimension_lineage_count": len(context.get("dimension_lineage") or []),
+        "validation_warnings": context.get("validation_warnings") or [],
     }
 
 
@@ -124,9 +142,7 @@ def _parameter_names(
     names: list[str] = []
     for candidate in candidates:
         name = str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         ).strip()
         if name and name not in names:
             names.append(name)
@@ -140,9 +156,7 @@ def _parameter_selection_summary(
     seen: set[tuple[str, str]] = set()
     for candidate in candidates:
         parameter_name = str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         ).strip()
         raw_mapping_method = str(candidate.get("mapping_method") or "").lower()
         mapping_method = "route" if raw_mapping_method == "routing" else raw_mapping_method
@@ -165,9 +179,7 @@ def _slot_debug_summary(
 ) -> list[dict[str, Any]]:
     parameter_by_candidate = {
         str(candidate.get("candidate_key") or ""): str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         )
         for candidate in candidates
     }
@@ -220,43 +232,168 @@ def _available_periods_for_prompt(
             months = months_by_year.setdefault(year, [])
             if month not in months:
                 months.append(month)
-        return [
-            {"Year": year, "Months": sorted(months)}
-            for year, months in sorted(months_by_year.items())
-        ]
+        return [{"Year": year, "Months": sorted(months)} for year, months in sorted(months_by_year.items())]
     return periods
+
+
+def _fixed_axis_hierarchy_for_prompt(
+    candidate: CandidateSlotCatalog,
+    period_group_ids_by_leaf: list[str],
+) -> list[dict[str, Any]]:
+    if not candidate.non_time_axes:
+        return [{"period_group_id": period_group_ids_by_leaf[0]}] if period_group_ids_by_leaf else []
+
+    hierarchy: dict[tuple[str, str], dict[str, Any]] = {}
+    for leaf, period_group_id in zip(
+        candidate.leaves,
+        period_group_ids_by_leaf,
+        strict=True,
+    ):
+        level = hierarchy
+        terminal: dict[str, Any] | None = None
+        for axis_name in candidate.non_time_axes:
+            axis_value = leaf.axes[axis_name]
+            value_key = (type(axis_value).__name__, to_compact_json(axis_value))
+            terminal = level.setdefault(
+                value_key,
+                {
+                    "axis_value": axis_value,
+                    "children": {},
+                },
+            )
+            level = terminal["children"]
+        if terminal is not None:
+            terminal["period_group_id"] = period_group_id
+
+    def serialize_level(
+        nodes_by_value: dict[tuple[str, str], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        serialized: list[dict[str, Any]] = []
+        for value_key in sorted(nodes_by_value):
+            node = nodes_by_value[value_key]
+            item: dict[str, Any] = {"axis_value": node["axis_value"]}
+            children = serialize_level(node["children"])
+            if children:
+                item["children"] = children
+            else:
+                item["period_group_id"] = node["period_group_id"]
+            serialized.append(item)
+        return serialized
+
+    return serialize_level(hierarchy)
 
 
 def _candidate_slot_catalog_for_prompt(
     candidate: CandidateSlotCatalog,
 ) -> dict[str, Any]:
-    leaves: list[dict[str, Any]] = []
+    period_groups: list[dict[str, Any]] = []
+    period_group_id_by_payload: dict[str, str] = {}
+    period_group_ids_by_leaf: list[str] = []
     for leaf in candidate.leaves:
         periods = [dict(period.values) for period in leaf.available_periods]
-        leaves.append(
-            {
-                "fixed_axes": dict(leaf.axes),
-                "available_periods": _available_periods_for_prompt(
-                    candidate,
-                    periods,
-                ),
-            },
-        )
+        prompt_periods = _available_periods_for_prompt(candidate, periods)
+        period_payload_key = to_compact_json(prompt_periods)
+        period_group_id = period_group_id_by_payload.get(period_payload_key)
+        if period_group_id is None:
+            period_group_id = f"period-group-{len(period_groups) + 1}"
+            period_group_id_by_payload[period_payload_key] = period_group_id
+            period_groups.append(
+                {
+                    "period_group_id": period_group_id,
+                    "available_periods": prompt_periods,
+                },
+            )
+        period_group_ids_by_leaf.append(period_group_id)
+
     return {
         "candidate_key": candidate.candidate_key,
         "parameter_name": candidate.parameter_name,
         "key_axes": list(candidate.key_axes),
         "fixed_axis_names": list(candidate.non_time_axes),
         "time_axis_names": list(candidate.time_axes),
-        "leaves": leaves,
+        "period_groups": period_groups,
+        "fixed_axis_hierarchy": _fixed_axis_hierarchy_for_prompt(
+            candidate,
+            period_group_ids_by_leaf,
+        ),
     }
 
 
 def _slot_catalog_for_prompt(slot_catalog: SlotCatalog) -> list[dict[str, Any]]:
-    return [
-        _candidate_slot_catalog_for_prompt(candidate)
-        for candidate in slot_catalog.candidates
-    ]
+    return [_candidate_slot_catalog_for_prompt(candidate) for candidate in slot_catalog.candidates]
+
+
+def _configured_positive_int(
+    settings: object,
+    field_name: str,
+    default: int,
+) -> int:
+    raw_value = getattr(settings, field_name, default)
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < 1:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=f"{field_name} must be a positive integer: value={raw_value!r}",
+        )
+    return raw_value
+
+
+def _prompt_parameter_bytes(
+    packet: dict[str, Any],
+    *,
+    task_field: str,
+) -> dict[str, int]:
+    bytes_by_parameter: dict[str, int] = {}
+    for task in packet.get(task_field) or []:
+        parameter = task.get("parameter") or {}
+        parameter_name = str(
+            parameter.get("parameter_name") or parameter.get("candidate_key") or task.get("dimension_key") or "unknown",
+        )
+        task_bytes = len(to_compact_json(task).encode("utf-8"))
+        bytes_by_parameter[parameter_name] = bytes_by_parameter.get(parameter_name, 0) + task_bytes
+    return {parameter_name: bytes_by_parameter[parameter_name] for parameter_name in sorted(bytes_by_parameter)}
+
+
+def _guard_prompt_bytes(
+    packet: dict[str, Any],
+    *,
+    step: str,
+    task_field: str,
+    limit: int,
+) -> tuple[str, int, dict[str, int]]:
+    compact_json = to_compact_json(packet)
+    actual_bytes = len(compact_json.encode("utf-8"))
+    parameter_bytes = _prompt_parameter_bytes(packet, task_field=task_field)
+    if actual_bytes > limit:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(
+                f"{step} compact prompt exceeds configured byte limit: "
+                f"actual_bytes={actual_bytes}, limit_bytes={limit}, "
+                f"parameter_bytes={to_compact_json(parameter_bytes)}"
+            ),
+        )
+    return compact_json, actual_bytes, parameter_bytes
+
+
+def _guard_total_selected_slots(
+    slots: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    *,
+    stage: str,
+    limit: int,
+) -> None:
+    selected_slots = _selected_parameter_slots(slots)
+    if len(selected_slots) <= limit:
+        return
+    raise MIBaseError(
+        ErrorCode.INVALID_REQUEST,
+        detail=(
+            f"{stage} selected slots exceed the request total limit before Step3: "
+            f"actual_slots={len(selected_slots)}, limit_slots={limit}, "
+            "parameter_slots="
+            f"{to_compact_json(_slot_counts_by_parameter(selected_slots, candidates))}"
+        ),
+    )
 
 
 def _effective_reference_to_state(
@@ -298,7 +435,14 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
         state.scenario_id,
         _scenario_event_debug_summary(context, state.scenario_id),
     )
-    return {"scenario_context": context, "parameter_knowledge_base": kb}
+    return {
+        "scenario_context": context,
+        "parameter_knowledge_base": kb,
+        "validation_warnings": [
+            *state.validation_warnings,
+            *(context.get("validation_warnings") or []),
+        ],
+    }
 
 
 def _knowledge_base_from_context(
@@ -308,7 +452,11 @@ def _knowledge_base_from_context(
     resources = context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
     parameter_definitions = resources.get("parameter_definitions") or []
-    if not mapping_rules or not parameter_definitions:
+    strategy = str(
+        (context.get("scenario_group") or {}).get("generation_strategy") or "",
+    )
+    is_v4 = strategy == "multi_event_model_lever_dimensions"
+    if not parameter_definitions or (not mapping_rules and not is_v4):
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail="parameter mapping resources not loaded from DB",
@@ -318,6 +466,7 @@ def _knowledge_base_from_context(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
         basecase_dir_path=str(resource_paths.basecase_dir),
+        allow_empty_mapping_rows=is_v4,
     )
 
 
@@ -345,10 +494,34 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
             ErrorCode.INVALID_REQUEST,
             detail="parameter_knowledge_base is required",
         )
-    candidates, non_inputs, warnings = match_parameter_candidates(
+    raw_candidates, non_inputs, warnings = match_parameter_candidates(
         state.parameter_knowledge_base,
         state.scenario_context,
     )
+    candidates, scope_exclusions = partition_proposal_parameter_candidates(
+        raw_candidates,
+    )
+    if scope_exclusions:
+        excluded_names = sorted(
+            {
+                str(
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                    or "",
+                ).strip()
+                for candidate in scope_exclusions
+                if str(
+                    candidate.get("canonical_parameter_name")
+                    or candidate.get("parameter_name")
+                    or "",
+                ).strip()
+            },
+        )
+        warnings.append(
+            "runtime proposal allow-list 밖의 parameter 후보를 제외했습니다: "
+            f"{excluded_names}",
+        )
+        non_inputs = [*non_inputs, *scope_exclusions]
     logger.info(
         "[model-parameter] selected candidate mappings | scenario_id={} candidate_count={} candidate_keys={} non_input_count={} warning_count={}",
         state.scenario_id,
@@ -389,10 +562,18 @@ async def validate_parameter_candidates(
                 "selected_parameters": [],
             },
         )
+        _raise_v4_semantic_empty_if_applicable(
+            stage="candidate_generation",
+            scenario_context=state.scenario_context,
+            non_input_items=state.non_input_items,
+        )
         return output
 
-    deterministic_candidates, routing_tasks = _partition_candidate_validation_work(
+    validation_candidates = _merge_v3_routing_candidates_for_validation(
         state.candidate_mappings,
+    )
+    deterministic_candidates, routing_tasks = _partition_candidate_validation_work(
+        validation_candidates,
     )
     selected_routing_candidates: list[dict[str, Any]] = []
     validation_warnings: list[str] = []
@@ -400,25 +581,33 @@ async def validate_parameter_candidates(
     llm_call: dict[str, Any] | None = None
 
     if routing_tasks:
+        max_routing_candidates_per_dimension = get_settings().model_parameter_max_routing_candidates_per_dimension
         packet = _build_candidate_validation_prompt_packet(
             state.scenario_context or {},
             routing_tasks,
+            state.non_input_items,
+        )
+        prompt_limit_bytes = _configured_positive_int(
+            get_settings(),
+            "model_parameter_max_step2_prompt_bytes",
+            DEFAULT_MAX_PROMPT_BYTES,
+        )
+        packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
+            packet,
+            step="Step1.5",
+            task_field="routing_tasks",
+            limit=prompt_limit_bytes,
         )
         messages = [
             {
                 "role": "system",
                 "content": CANDIDATE_VALIDATION_SYSTEM.format(
-                    max_routing_candidates_per_dimension=(
-                        get_settings().model_parameter_max_routing_candidates_per_dimension
-                    ),
+                    max_routing_candidates_per_dimension=max_routing_candidates_per_dimension,
                 ),
             },
             {
                 "role": "user",
-                "content": (
-                    "아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n"
-                    f"{to_compact_json(packet)}"
-                ),
+                "content": (f"아래 JSON만 근거로 Step1.5 수급모델 routing 후보를 선택하십시오.\n{packet_json}"),
             },
         ]
 
@@ -439,6 +628,9 @@ async def validate_parameter_candidates(
                 elapsed_seconds=time.perf_counter() - llm_started,
                 usage=usage,
                 success=True,
+                prompt_bytes=prompt_bytes,
+                prompt_limit_bytes=prompt_limit_bytes,
+                parameter_bytes=parameter_bytes,
             )
         except Exception as exc:
             logger.warning(
@@ -451,6 +643,7 @@ async def validate_parameter_candidates(
         selected_routing_candidates, validation_warnings = _sanitize_routing_decisions(
             llm_payload.routing_decisions,
             routing_tasks,
+            max_candidates_per_dimension=max_routing_candidates_per_dimension,
         )
 
     selected_candidate_keys = {
@@ -459,7 +652,7 @@ async def validate_parameter_candidates(
     }
     candidates = [
         candidate
-        for candidate in state.candidate_mappings
+        for candidate in validation_candidates
         if str(candidate.get("candidate_key") or "") in selected_candidate_keys
     ]
     merged_candidates, merge_warnings = _merge_candidates_by_parameter(candidates)
@@ -495,6 +688,13 @@ async def validate_parameter_candidates(
             "selected_parameters": _parameter_names(merged_candidates),
         },
     )
+    if not merged_candidates:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step1_5",
+            scenario_context=state.scenario_context,
+            candidates=state.candidate_mappings,
+            non_input_items=state.non_input_items,
+        )
     return output
 
 
@@ -508,9 +708,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
     policy = ReferenceLoadPolicy(
         start_year=cfg.model_parameter_lut_horizon_start_year,
         end_year=cfg.model_parameter_lut_horizon_end_year,
-        value_max_decimal_places=(
-            cfg.model_parameter_basecase_value_max_decimal_places
-        ),
+        value_max_decimal_places=(cfg.model_parameter_basecase_value_max_decimal_places),
         value_precision_mode=cfg.model_parameter_basecase_value_precision_mode,
     )
     resource_paths = get_model_parameter_resource_paths()
@@ -521,11 +719,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.scenario_context or {},
         registry=registry,
     )
-    lut_catalog = (
-        get_lut_catalog(policy, registry=registry)
-        if cfg.model_parameter_lut_enabled
-        else None
-    )
+    lut_catalog = get_lut_catalog(policy, registry=registry) if cfg.model_parameter_lut_enabled else None
     basecase_index = build_basecase_index(
         records,
         state.candidate_mappings,
@@ -562,18 +756,25 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_basecase_value_max_decimal_places": (
                 cfg.model_parameter_basecase_value_max_decimal_places
             ),
-            "model_parameter_basecase_value_precision_mode": (
-                cfg.model_parameter_basecase_value_precision_mode
-            ),
-            "model_parameter_proposed_value_max_decimal_places": (
-                cfg.model_parameter_proposed_value_max_decimal_places
-            ),
-            "model_parameter_proposed_value_precision_mode": (
-                cfg.model_parameter_proposed_value_precision_mode
-            ),
+            "model_parameter_basecase_value_precision_mode": (cfg.model_parameter_basecase_value_precision_mode),
             "model_parameter_max_parameter_slots": cfg.model_parameter_max_parameter_slots,
             "model_parameter_max_value_prompt_basecase_records": (
                 cfg.model_parameter_max_value_prompt_basecase_records
+            ),
+            "model_parameter_max_total_selected_slots": _configured_positive_int(
+                cfg,
+                "model_parameter_max_total_selected_slots",
+                DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+            ),
+            "model_parameter_max_step2_prompt_bytes": _configured_positive_int(
+                cfg,
+                "model_parameter_max_step2_prompt_bytes",
+                DEFAULT_MAX_PROMPT_BYTES,
+            ),
+            "model_parameter_max_step3_prompt_bytes": _configured_positive_int(
+                cfg,
+                "model_parameter_max_step3_prompt_bytes",
+                DEFAULT_MAX_PROMPT_BYTES,
             ),
             "llm_stream_enabled": cfg.llm_stream_enabled,
             "llm_reasoning_effort": cfg.llm_reasoning_effort,
@@ -680,9 +881,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
 
         candidate_count = counts_by_candidate.get(candidate_key, 0) + 1
         if candidate_count > step3_slot_limit:
-            truncated_slot_counts[candidate_key] = (
-                truncated_slot_counts.get(candidate_key, 0) + 1
-            )
+            truncated_slot_counts[candidate_key] = truncated_slot_counts.get(candidate_key, 0) + 1
             continue
         counts_by_candidate[candidate_key] = candidate_count
         canonical_axes = dict(reference.axes)
@@ -708,6 +907,18 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         )
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
+
+    total_slot_limit = _configured_positive_int(
+        cfg,
+        "model_parameter_max_total_selected_slots",
+        DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+    )
+    _guard_total_selected_slots(
+        valid_slots,
+        state.candidate_mappings,
+        stage="Step2 exact",
+        limit=total_slot_limit,
+    )
 
     valid_candidate_keys = set(counts_by_candidate)
     slot_candidate_mappings = [
@@ -747,8 +958,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
 def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[str, Any]:
     if not state.candidate_mappings:
         reason = (
-            "Step1/Step1.5 candidate 결과가 없어 Step2 slot proposal 및 "
-            "Step3 value proposal LLM 호출을 생략했습니다."
+            "Step1/Step1.5 candidate 결과가 없어 Step2 slot proposal 및 Step3 value proposal LLM 호출을 생략했습니다."
         )
     else:
         reason = "Step2 selected slot이 없어 Step3 value proposal LLM 호출을 생략했습니다."
@@ -758,6 +968,13 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
         len(state.candidate_mappings),
         reason,
     )
+    if state.candidate_mappings:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step2",
+            scenario_context=state.scenario_context,
+            candidates=state.candidate_mappings,
+            non_input_items=state.non_input_items,
+        )
     output = {
         "parameter_adjustments": _unselected_adjustments_for_missing_slots(
             state.candidate_mappings,
@@ -778,12 +995,15 @@ async def propose_parameter_values(
         candidate
         for candidate in state.candidate_mappings
         if str(candidate.get("candidate_key") or "")
-        in {
-            str(slot.get("candidate_key") or "")
-            for slot in _selected_parameter_slots(state.parameter_slots)
-        }
+        in {str(slot.get("candidate_key") or "") for slot in _selected_parameter_slots(state.parameter_slots)}
     ]
     if not value_candidates:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step2",
+            scenario_context=state.scenario_context,
+            candidates=state.candidate_mappings,
+            non_input_items=state.non_input_items,
+        )
         output = {
             "parameter_adjustments": [],
             "validation_warnings": [
@@ -797,6 +1017,18 @@ async def propose_parameter_values(
     if not selected_slots:
         return finalize_empty_parameter_values(state)
 
+    cfg = get_settings()
+    _guard_total_selected_slots(
+        selected_slots,
+        value_candidates,
+        stage="Step3 input",
+        limit=_configured_positive_int(
+            cfg,
+            "model_parameter_max_total_selected_slots",
+            DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+        ),
+    )
+
     value_references = state.effective_references
     packet = _build_value_proposal_prompt_packet(
         state.scenario_context or {},
@@ -805,14 +1037,30 @@ async def propose_parameter_values(
         value_references,
         state.non_input_items,
     )
+    prompt_limit_bytes = _configured_positive_int(
+        cfg,
+        "model_parameter_max_step3_prompt_bytes",
+        DEFAULT_MAX_PROMPT_BYTES,
+    )
+    packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
+        packet,
+        step="Step3",
+        task_field="parameter_value_tasks",
+        limit=prompt_limit_bytes,
+    )
+    logger.info(
+        "[model-parameter] built compact value prompt | scenario_id={} "
+        "candidate_count={} prompt_bytes={} parameter_bytes={}",
+        state.scenario_id,
+        len(packet["parameter_value_tasks"]),
+        prompt_bytes,
+        parameter_bytes,
+    )
     messages = [
         {"role": "system", "content": VALUE_PROPOSAL_SYSTEM},
         {
             "role": "user",
-            "content": (
-                "아래 JSON만 근거로 Step3 수급모델 parameter slot 값을 제안하십시오.\n"
-                f"{to_compact_json(packet)}"
-            ),
+            "content": (f"아래 JSON만 근거로 Step3 수급모델 parameter slot 값을 제안하십시오.\n{packet_json}"),
         },
     ]
 
@@ -833,6 +1081,9 @@ async def propose_parameter_values(
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
         )
     except Exception as exc:
         logger.warning(
@@ -871,6 +1122,13 @@ async def propose_parameter_values(
         state.scenario_id,
         {"slot_values": _adjustment_debug_summary(adjustments)},
     )
+    if not selected_adjustments:
+        _raise_v4_semantic_empty_if_applicable(
+            stage="step3",
+            scenario_context=state.scenario_context,
+            candidates=value_candidates,
+            non_input_items=state.non_input_items,
+        )
     return output
 
 
@@ -899,24 +1157,34 @@ async def propose_parameter_slots(
         slot_catalog,
         state.non_input_items,
     )
+    cfg = get_settings()
+    prompt_limit_bytes = _configured_positive_int(
+        cfg,
+        "model_parameter_max_step2_prompt_bytes",
+        DEFAULT_MAX_PROMPT_BYTES,
+    )
+    packet_json, prompt_bytes, parameter_bytes = _guard_prompt_bytes(
+        packet,
+        step="Step2",
+        task_field="parameter_slot_tasks",
+        limit=prompt_limit_bytes,
+    )
     logger.info(
         "[model-parameter] built compact slot catalog prompt | scenario_id={} "
-        "candidate_count={} leaf_count={}",
+        "candidate_count={} period_group_count={} prompt_bytes={} parameter_bytes={}",
         state.scenario_id,
         len(packet["parameter_slot_tasks"]),
         sum(
-            len((task.get("slot_catalog") or {}).get("leaves") or [])
-            for task in packet["parameter_slot_tasks"]
+            len((task.get("slot_catalog") or {}).get("period_groups") or []) for task in packet["parameter_slot_tasks"]
         ),
+        prompt_bytes,
+        parameter_bytes,
     )
     messages = [
         {"role": "system", "content": SLOT_PROPOSAL_SYSTEM},
         {
             "role": "user",
-            "content": (
-                "아래 JSON만 근거로 Step2 수급모델 parameter slot 축을 제안하십시오.\n"
-                f"{to_compact_json(packet)}"
-            ),
+            "content": (f"아래 JSON만 근거로 Step2 수급모델 parameter slot 축을 제안하십시오.\n{packet_json}"),
         },
     ]
 
@@ -937,6 +1205,9 @@ async def propose_parameter_slots(
             elapsed_seconds=time.perf_counter() - llm_started,
             usage=usage,
             success=True,
+            prompt_bytes=prompt_bytes,
+            prompt_limit_bytes=prompt_limit_bytes,
+            parameter_bytes=parameter_bytes,
         )
     except Exception as exc:
         logger.warning(
@@ -989,6 +1260,9 @@ def _llm_call_trace(
     usage: dict[str, Any] | None,
     success: bool,
     error: str | None = None,
+    prompt_bytes: int | None = None,
+    prompt_limit_bytes: int | None = None,
+    parameter_bytes: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     trace: dict[str, Any] = {
         "step": step,
@@ -998,6 +1272,12 @@ def _llm_call_trace(
     }
     if usage is not None:
         trace["usage"] = usage
+    if prompt_bytes is not None:
+        trace["prompt_bytes"] = prompt_bytes
+    if prompt_limit_bytes is not None:
+        trace["prompt_limit_bytes"] = prompt_limit_bytes
+    if parameter_bytes is not None:
+        trace["parameter_bytes"] = parameter_bytes
     if error:
         trace["error"] = error
     logger.info(
@@ -1017,7 +1297,7 @@ def _slot_counts_by_parameter(
 ) -> dict[str, int]:
     parameter_by_candidate = {
         str(candidate.get("candidate_key") or ""): str(
-            candidate.get("parameter_name") or "unknown",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "unknown",
         )
         for candidate in candidates
     }
@@ -1122,9 +1402,7 @@ def _allowed_slot_axes_field_names(candidate: dict[str, Any]) -> list[str]:
         return axis_names
 
     value_field_name = str(
-        candidate.get("canonical_parameter_name")
-        or candidate.get("parameter_name")
-        or "",
+        candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
     )
     value_field_key = _field_key(value_field_name)
     axis_names: list[str] = []
@@ -1143,30 +1421,74 @@ def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "candidate_key": candidate.get("candidate_key"),
         "dimension_key": (
-            candidate.get("dimension_key")
+            candidate.get("scenario_dimension_key")
+            or candidate.get("dimension_key")
             or candidate.get("source_dimension_id")
         ),
+        "scenario_dimension_key": candidate.get("scenario_dimension_key"),
+        "mapping_dimension_key": candidate.get("mapping_dimension_key"),
         "source_dimension_id": candidate.get("source_dimension_id"),
         "source_dimension_label": candidate.get("source_dimension_label"),
+        "source_dimension_description": candidate.get(
+            "source_dimension_description",
+        ),
+        "source_dimension_rationale": candidate.get(
+            "source_dimension_rationale",
+        ),
         "source_dimension_value": candidate.get("source_dimension_value"),
+        "source_dimension_value_id": candidate.get(
+            "source_dimension_value_id",
+        ),
+        "source_dimension_value_label": candidate.get(
+            "source_dimension_value_label",
+        ),
+        "value_description": candidate.get("value_description"),
+        "derivation_rationale": candidate.get("derivation_rationale"),
+        "pressure_contribution": candidate.get("pressure_contribution"),
+        "source_impact_path_ids": candidate.get("source_impact_path_ids"),
+        "source_uncertainty_ids": candidate.get("source_uncertainty_ids"),
+        "primary_lever_code": candidate.get("primary_lever_code"),
+        "primary_impact_lever_id": candidate.get(
+            "primary_impact_lever_id",
+        ),
+        "lever_code": candidate.get("lever_code"),
+        "impact_lever_id": candidate.get("impact_lever_id"),
+        "lever_label": candidate.get("lever_label"),
+        "lever_description": candidate.get("lever_description"),
+        "lever_domain": candidate.get("lever_domain"),
+        "lever_applicability_hint": candidate.get(
+            "lever_applicability_hint",
+        ),
+        "lever_direction": candidate.get("direction"),
+        "lever_level": candidate.get("level"),
+        "lever_scope": candidate.get("scope"),
+        "lever_time_window": candidate.get("time_window"),
+        "is_primary_lever": candidate.get("is_primary_lever"),
+        "binding_role": candidate.get("binding_role"),
+        "binding_applicability": candidate.get("binding_applicability"),
+        "binding_provenance": candidate.get("binding_provenance"),
+        "lever_provenance": candidate.get("lever_provenance"),
+        "event_type_l2_id": candidate.get("event_type_l2_id"),
+        "scenario_dimension_template_id": candidate.get(
+            "scenario_dimension_template_id",
+        ),
+        "source_event_ids": candidate.get("source_event_ids"),
+        "source_refs": candidate.get("source_refs"),
+        "approved_source_projections": candidate.get(
+            "approved_source_projections",
+        ),
+        "parameter_mapping_ready": candidate.get("parameter_mapping_ready"),
+        "is_free_value": candidate.get("is_free_value"),
         "mapping_method": candidate.get("mapping_method"),
         "mapping_comment": candidate.get("mapping_comment"),
     }
-    return {
-        key: value
-        for key, value in payload.items()
-        if value is not None
-    }
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 def _source_dimensions_for_prompt(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     raw = candidate.get("source_dimensions")
     if isinstance(raw, list) and raw:
-        return [
-            item
-            for item in raw
-            if isinstance(item, dict)
-        ]
+        return [item for item in raw if isinstance(item, dict)]
     return [_source_dimension_for_prompt(candidate)]
 
 
@@ -1212,13 +1534,33 @@ def _allowed_prompt_dimension_keys(
 
 
 def _supporting_dimension_for_prompt(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "source_dimension_id": item.get("source_dimension_id"),
+        "scenario_dimension_key": item.get("scenario_dimension_key"),
+        "mapping_dimension_key": item.get("mapping_dimension_key"),
         "source_dimension_label": item.get("source_dimension_label"),
         "source_dimension_value": item.get("source_dimension_value"),
+        "value_description": item.get("value_description"),
+        "derivation_rationale": item.get("derivation_rationale"),
+        "pressure_contribution": item.get("pressure_contribution"),
+        "lever_code": item.get("lever_code"),
+        "impact_lever_id": item.get("impact_lever_id"),
+        "lever_domain": item.get("lever_domain"),
+        "lever_direction": item.get("direction"),
+        "lever_level": item.get("level"),
+        "lever_scope": item.get("scope"),
+        "lever_time_window": item.get("time_window"),
+        "reason_code": item.get("reason_code"),
+        "event_type_l2_id": item.get("event_type_l2_id"),
+        "source_event_ids": item.get("source_event_ids"),
+        "source_refs": item.get("source_refs"),
+        "approved_source_projections": item.get(
+            "approved_source_projections",
+        ),
         "mapping_method": item.get("mapping_method"),
         "reason": item.get("reason"),
     }
+    return _drop_none_or_empty(payload)
 
 
 def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
@@ -1226,15 +1568,16 @@ def _candidate_group_key(candidate: dict[str, Any]) -> tuple[str, str, str]:
         str(candidate.get("model_file") or ""),
         str(candidate.get("model_sheet") or ""),
         str(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name")
-            or "",
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
         ),
     )
 
 
 def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
-    event_type_l2_id = candidate.get("event_type_l2_id")
+    event_type_l2_id: Any = candidate.get("event_type_l2_id")
+    mapping_strategy = str(candidate.get("mapping_strategy") or "").lower()
+    if mapping_strategy in {"v3", "v4"}:
+        event_type_l2_id = mapping_strategy
     parts = [
         "parameter",
         _field_key(event_type_l2_id),
@@ -1243,14 +1586,13 @@ def _parameter_candidate_key(candidate: dict[str, Any]) -> str:
     ]
     parts.append(
         _field_key(
-            candidate.get("canonical_parameter_name")
-            or candidate.get("parameter_name"),
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name"),
         ),
     )
     return "|".join(parts)
 
 
-def _merge_candidates_by_parameter(
+def _merge_candidates_by_parameter(  # noqa: C901
     candidates: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -1261,11 +1603,16 @@ def _merge_candidates_by_parameter(
     for group_candidates in groups.values():
         if len(group_candidates) == 1:
             candidate = dict(group_candidates[0])
-            candidate["merged_candidate_keys"] = (
-                candidate.get("merged_candidate_keys")
-                or [candidate.get("candidate_key")]
-            )
+            original_candidate_key = candidate.get("candidate_key")
+            candidate["merged_candidate_keys"] = candidate.get(
+                "merged_candidate_keys",
+            ) or [original_candidate_key]
             candidate["source_dimensions"] = _source_dimensions_for_prompt(candidate)
+            if str(candidate.get("mapping_strategy") or "").lower() in {
+                "v3",
+                "v4",
+            }:
+                candidate["candidate_key"] = _parameter_candidate_key(candidate)
             merged_candidates.append(candidate)
             continue
 
@@ -1274,22 +1621,50 @@ def _merge_candidates_by_parameter(
         source_dimensions: list[dict[str, Any]] = []
         mapping_methods: list[str] = []
         mapping_comments: list[str] = []
+        source_event_ids: list[int] = []
+        source_refs: list[dict[str, Any]] = []
+        approved_source_projections: list[dict[str, Any]] = []
+        lever_provenance: list[dict[str, Any]] = []
+        binding_provenance: list[dict[str, Any]] = []
+        source_impact_path_ids: list[str] = []
+        source_uncertainty_ids: list[str] = []
         for candidate in group_candidates:
-            for candidate_key in (
-                candidate.get("merged_candidate_keys")
-                or [candidate.get("candidate_key")]
-            ):
+            for candidate_key in candidate.get("merged_candidate_keys") or [candidate.get("candidate_key")]:
                 _append_unique_text(merged_candidate_keys, candidate_key)
             for source_dimension in _source_dimensions_for_prompt(candidate):
                 _append_unique_source_dimension(source_dimensions, source_dimension)
             _append_unique_text(mapping_methods, candidate.get("mapping_method"))
             _append_unique_text(mapping_comments, candidate.get("mapping_comment"))
+            for event_id in candidate.get("source_event_ids") or []:
+                if event_id not in source_event_ids:
+                    source_event_ids.append(event_id)
+            for source_ref in candidate.get("source_refs") or []:
+                if isinstance(source_ref, dict):
+                    _append_unique_source_dimension(source_refs, source_ref)
+            for projection in candidate.get("approved_source_projections") or []:
+                if isinstance(projection, dict):
+                    _append_unique_source_dimension(
+                        approved_source_projections,
+                        projection,
+                    )
+            for provenance in candidate.get("lever_provenance") or []:
+                if isinstance(provenance, dict):
+                    _append_unique_source_dimension(
+                        lever_provenance,
+                        provenance,
+                    )
+            for provenance in candidate.get("binding_provenance") or []:
+                if isinstance(provenance, dict):
+                    _append_unique_source_dimension(
+                        binding_provenance,
+                        provenance,
+                    )
+            for impact_path_id in candidate.get("source_impact_path_ids") or []:
+                _append_unique_text(source_impact_path_ids, impact_path_id)
+            for uncertainty_id in candidate.get("source_uncertainty_ids") or []:
+                _append_unique_text(source_uncertainty_ids, uncertainty_id)
 
-        merged_method = (
-            mapping_methods[0]
-            if len(mapping_methods) == 1
-            else "merged"
-        )
+        merged_method = mapping_methods[0] if len(mapping_methods) == 1 else "merged"
         base.update(
             {
                 "candidate_key": _parameter_candidate_key(base),
@@ -1301,6 +1676,13 @@ def _merge_candidates_by_parameter(
                 "dimension_key": None,
                 "mapping_method": merged_method,
                 "mapping_comment": " ".join(mapping_comments),
+                "source_event_ids": source_event_ids,
+                "source_refs": source_refs,
+                "approved_source_projections": approved_source_projections,
+                "lever_provenance": lever_provenance,
+                "binding_provenance": binding_provenance,
+                "source_impact_path_ids": source_impact_path_ids,
+                "source_uncertainty_ids": source_uncertainty_ids,
             },
         )
         merged_candidates.append(base)
@@ -1312,14 +1694,50 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
     return _drop_none_or_empty(
         {
             "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": (
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-            ),
+            "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "scenario_dimension_key": candidate.get(
+                "scenario_dimension_key",
+            ),
+            "mapping_dimension_key": candidate.get(
+                "mapping_dimension_key",
+            ),
+            "event_type_l2_id": candidate.get("event_type_l2_id"),
+            "source_event_ids": candidate.get("source_event_ids"),
+            "source_refs": candidate.get("source_refs"),
+            "approved_source_projections": candidate.get(
+                "approved_source_projections",
+            ),
+            "source_dimensions": _source_dimensions_for_prompt(candidate),
             "mapping_comment": candidate.get("mapping_comment"),
+            "lever_code": candidate.get("lever_code"),
+            "impact_lever_id": candidate.get("impact_lever_id"),
+            "lever_domain": candidate.get("lever_domain"),
+            "lever_direction": candidate.get("direction"),
+            "lever_level": candidate.get("level"),
+            "lever_scope": candidate.get("scope"),
+            "lever_time_window": candidate.get("time_window"),
+            "binding_role": candidate.get("binding_role"),
+            "binding_applicability": candidate.get("binding_applicability"),
+            "binding_provenance": candidate.get("binding_provenance"),
+            "lever_provenance": candidate.get("lever_provenance"),
         },
+    )
+
+
+def _v4_routing_task_key(candidate: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            "v4",
+            _field_key(
+                candidate.get("scenario_dimension_key")
+                or candidate.get("dimension_key")
+                or candidate.get("source_dimension_id"),
+            ),
+            _field_key(candidate.get("source_dimension_value_id")),
+            _field_key(candidate.get("lever_code")),
+        ],
     )
 
 
@@ -1337,22 +1755,92 @@ def _partition_candidate_validation_work(
 
     routing_tasks: list[dict[str, Any]] = []
     for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
-        if len(group_candidates) == 1:
-            deterministic.extend(group_candidates)
-            continue
         first = group_candidates[0]
+        first_source = _source_dimensions_for_prompt(first)[0]
+        is_v4 = str(first.get("mapping_strategy") or "").lower() == "v4"
         routing_tasks.append(
             {
                 "dimension_key": (
-                    first.get("dimension_key")
-                    or first.get("source_dimension_id")
+                    _v4_routing_task_key(first)
+                    if is_v4
+                    else (
+                        first.get("scenario_dimension_key")
+                        or first.get("dimension_key")
+                        or first.get("source_dimension_id")
+                    )
                 ),
-                "dimension_label": first.get("source_dimension_label"),
-                "dimension_value": first.get("source_dimension_value"),
+                "scenario_dimension_key": first.get(
+                    "scenario_dimension_key",
+                ),
+                "dimension_label": (first.get("source_dimension_label") or first_source.get("source_dimension_label")),
+                "dimension_value": (first.get("source_dimension_value") or first_source.get("source_dimension_value")),
+                "lever_code": first.get("lever_code"),
+                "is_v4": is_v4,
                 "candidates": group_candidates,
             },
         )
     return deterministic, routing_tasks
+
+
+def _merge_v3_routing_candidates_for_validation(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse one composite dimension's converged routing sources.
+
+    Step1.5 decides whether a parameter is relevant to a composite dimension,
+    not whether an arbitrary one of that parameter's sourceRefs survives. Keep
+    v1 and direct candidates untouched, while exposing one routing choice with
+    the complete source/event union for each v3 dimension and model target.
+    """
+    routing_groups: dict[
+        tuple[str, tuple[str, str, str]],
+        list[dict[str, Any]],
+    ] = {}
+    for candidate in candidates:
+        if (
+            str(candidate.get("mapping_strategy") or "").lower() == "v3"
+            and str(candidate.get("mapping_method") or "").lower() == "routing"
+        ):
+            composite_key = str(
+                candidate.get("scenario_dimension_key")
+                or candidate.get("dimension_key")
+                or candidate.get("source_dimension_id")
+                or "",
+            )
+            routing_groups.setdefault(
+                (composite_key, _candidate_group_key(candidate)),
+                [],
+            ).append(candidate)
+
+    prepared: list[dict[str, Any]] = []
+    emitted_groups: set[tuple[str, tuple[str, str, str]]] = set()
+    for candidate in candidates:
+        if not (
+            str(candidate.get("mapping_strategy") or "").lower() == "v3"
+            and str(candidate.get("mapping_method") or "").lower() == "routing"
+        ):
+            prepared.append(candidate)
+            continue
+        composite_key = str(
+            candidate.get("scenario_dimension_key")
+            or candidate.get("dimension_key")
+            or candidate.get("source_dimension_id")
+            or "",
+        )
+        group_key = (composite_key, _candidate_group_key(candidate))
+        if group_key in emitted_groups:
+            continue
+        emitted_groups.add(group_key)
+        group_candidates = routing_groups[group_key]
+        if len(group_candidates) == 1:
+            prepared.append(candidate)
+            continue
+        merged, _ = _merge_candidates_by_parameter(group_candidates)
+        merged_candidate = merged[0]
+        merged_candidate["candidate_key"] = min(str(item.get("candidate_key") or "") for item in group_candidates)
+        merged_candidate["scenario_dimension_key"] = composite_key
+        prepared.append(merged_candidate)
+    return prepared
 
 
 def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
@@ -1361,10 +1849,14 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
             "dimension_key": task.get("dimension_key"),
             "dimension_label": task.get("dimension_label"),
             "dimension_value": task.get("dimension_value"),
-            "candidates": [
-                _routing_candidate_prompt_payload(candidate)
-                for candidate in task.get("candidates") or []
-            ],
+            "scenario_dimension_key": task.get("scenario_dimension_key"),
+            "lever_code": task.get("lever_code"),
+            "default_selection_rule": (
+                "primary binding을 기본 선택하고 applicability 근거가 있으면 alternative 또는 둘 다 선택"
+                if task.get("is_v4")
+                else None
+            ),
+            "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in task.get("candidates") or []],
         },
     )
 
@@ -1372,21 +1864,21 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
 def _build_candidate_validation_prompt_packet(
     scenario_context: dict[str, Any],
     routing_tasks: list[dict[str, Any]],
+    non_input_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    allowed_dimension_keys = {
-        str(task.get("dimension_key") or "")
-        for task in routing_tasks
-        if str(task.get("dimension_key") or "")
-    }
+    routing_candidates = [
+        candidate for task in routing_tasks for candidate in task.get("candidates") or [] if isinstance(candidate, dict)
+    ]
+    allowed_dimension_keys = _allowed_prompt_dimension_keys(
+        routing_candidates,
+        non_input_items,
+    )
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
             allowed_dimension_keys=allowed_dimension_keys,
         ),
-        "routing_tasks": [
-            _routing_task_for_prompt(task)
-            for task in routing_tasks
-        ],
+        "routing_tasks": [_routing_task_for_prompt(task) for task in routing_tasks],
     }
 
 
@@ -1397,6 +1889,11 @@ def _build_slot_proposal_prompt_packet(
     non_input_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     cfg = get_settings()
+    max_total_selected_slots = _configured_positive_int(
+        cfg,
+        "model_parameter_max_total_selected_slots",
+        DEFAULT_MAX_TOTAL_SELECTED_SLOTS,
+    )
     return {
         "scenario_brief": _scenario_brief_for_value_prompt(
             scenario_context,
@@ -1411,7 +1908,10 @@ def _build_slot_proposal_prompt_packet(
                 cfg.model_parameter_max_parameter_slots,
                 HARD_MAX_PARAMETER_SLOTS,
             ),
-            "applicationScope": "independent_per_parameter_task",
+            "maxTotalSelectedSlots": max_total_selected_slots,
+            "applicationScope": (
+                "maxParameterSlots applies per parameter task; maxTotalSelectedSlots applies to the whole request"
+            ),
             "priority": [
                 "scenario/event/dimension과 직접 관련되고 task slot_catalog에 exact 존재하는 slot",
                 "LUT-only를 포함하되 active source에 실제 존재하는 slot",
@@ -1441,11 +1941,7 @@ def _filter_dimension_values(
 ) -> Any:
     if allowed_dimension_keys is None or not isinstance(dimension_values, dict):
         return dimension_values
-    return {
-        key: value
-        for key, value in dimension_values.items()
-        if str(key) in allowed_dimension_keys
-    }
+    return {key: value for key, value in dimension_values.items() if str(key) in allowed_dimension_keys}
 
 
 def _filter_dimension_selected(
@@ -1456,11 +1952,7 @@ def _filter_dimension_selected(
         return dimension_selected
 
     if isinstance(dimension_selected, str):
-        return [
-            item
-            for item in re.findall(r"[A-Za-z0-9_]+", dimension_selected)
-            if item in allowed_dimension_keys
-        ]
+        return [item for item in re.findall(r"[A-Za-z0-9_]+", dimension_selected) if item in allowed_dimension_keys]
 
     if not isinstance(dimension_selected, list):
         return dimension_selected
@@ -1468,7 +1960,13 @@ def _filter_dimension_selected(
     filtered: list[Any] = []
     for item in dimension_selected:
         if isinstance(item, dict):
-            key = item.get("dim_key") or item.get("dimension_key") or item.get("key")
+            key = (
+                item.get("dim_key")
+                or item.get("dimension_key")
+                or item.get("dimension_id")
+                or item.get("dimensionId")
+                or item.get("key")
+            )
             if key is not None and str(key) in allowed_dimension_keys:
                 filtered.append(item)
             continue
@@ -1488,10 +1986,85 @@ def _filter_dimension_template(
     for item in dimension_template:
         if not isinstance(item, dict):
             continue
-        key = item.get("dim_key") or item.get("dimension_key") or item.get("key")
+        key = (
+            item.get("dim_key")
+            or item.get("dimension_key")
+            or item.get("dimension_id")
+            or item.get("dimensionId")
+            or item.get("key")
+        )
         if key is not None and str(key) in allowed_dimension_keys:
             filtered.append(item)
     return filtered
+
+
+def _filter_v4_selected_dimension_values(
+    dimension_template: object,
+    dimension_values: object,
+) -> list[dict[str, Any]]:
+    if not isinstance(dimension_template, list) or not isinstance(
+        dimension_values,
+        dict,
+    ):
+        return []
+
+    selected_value_by_dimension = {
+        str(dimension_key): str(value_id).strip() for dimension_key, value_id in dimension_values.items()
+    }
+    selected_definitions: list[dict[str, Any]] = []
+    for item in dimension_template:
+        if not isinstance(item, dict):
+            continue
+        dimension_key = (
+            item.get("dim_key")
+            or item.get("dimension_key")
+            or item.get("dimension_id")
+            or item.get("dimensionId")
+            or item.get("key")
+        )
+        selected_value_id = selected_value_by_dimension.get(
+            str(dimension_key),
+        )
+        values = item.get("values")
+        if selected_value_id is None or not isinstance(values, list):
+            continue
+        selected_definition = dict(item)
+        selected_definition["values"] = [
+            value
+            for value in values
+            if isinstance(value, dict)
+            and str(value.get("value_id") or value.get("valueId") or "").strip() == selected_value_id
+        ]
+        selected_definitions.append(selected_definition)
+    return selected_definitions
+
+
+def _bounded_v3_event_brief(event: dict[str, Any]) -> dict[str, Any]:
+    event_type = event.get("event_type")
+    event_type = event_type if isinstance(event_type, dict) else {}
+    bullets = event.get("key_bullets")
+    tags = event.get("tags")
+    detail = str(event.get("detail_analysis") or "")[:1200]
+    return _drop_none_or_empty(
+        {
+            "event_id": event.get("mi_event_id"),
+            "display_order": event.get("display_order"),
+            "event_type_l2_id": event.get("event_type_l2_id"),
+            "event_type": _drop_none_or_empty(
+                {
+                    "level_1_code": event_type.get("level_1_code"),
+                    "level_1_label": event_type.get("level_1_label"),
+                    "level_2_code": event_type.get("level_2_code"),
+                    "level_2_label": event_type.get("level_2_label"),
+                },
+            ),
+            "title": (event.get("event_title_ko") or event.get("event_title") or event.get("title")),
+            "one_line_summary": event.get("one_line_summary"),
+            "key_bullets": bullets[:5] if isinstance(bullets, list) else [],
+            "tags": tags[:8] if isinstance(tags, list) else [],
+            "detail_excerpt": detail,
+        },
+    )
 
 
 def _scenario_brief_for_value_prompt(
@@ -1503,6 +2076,13 @@ def _scenario_brief_for_value_prompt(
     scenario_group = scenario_context.get("scenario_group") or {}
     dimension_template = scenario_context.get("dimension_template") or []
     event = scenario_context.get("event") or {}
+    events = scenario_context.get("events") or []
+    generation_strategy = str(
+        scenario_group.get("generation_strategy") or "",
+    )
+    is_v3 = generation_strategy == "multi_event_composite_dimensions"
+    is_v4 = generation_strategy == "multi_event_model_lever_dimensions"
+    is_multi_event = is_v3 or is_v4
     impact = scenario.get("impact") or {}
     filtered_dimension_values = _filter_dimension_values(
         scenario.get("dimension_values"),
@@ -1512,6 +2092,11 @@ def _scenario_brief_for_value_prompt(
         dimension_template,
         allowed_dimension_keys,
     )
+    if is_v4:
+        filtered_dimension_template = _filter_v4_selected_dimension_values(
+            filtered_dimension_template,
+            filtered_dimension_values,
+        )
     scenario_group_brief = _drop_none_or_empty(
         {
             "title": scenario_group.get("title"),
@@ -1521,6 +2106,10 @@ def _scenario_brief_for_value_prompt(
                 scenario_group.get("dimension_selected"),
                 allowed_dimension_keys,
             ),
+            "api_version": scenario_group.get("api_version") if is_multi_event else None,
+            "generation_strategy": (scenario_group.get("generation_strategy") if is_multi_event else None),
+            "parameter_mapping_ready": (scenario_group.get("parameter_mapping_ready") if is_v3 else None),
+            "impact_catalog_version": (scenario_group.get("impact_catalog_version") if is_v4 else None),
         },
     )
     scenario_detail = _drop_none_or_empty(
@@ -1547,7 +2136,7 @@ def _scenario_brief_for_value_prompt(
             "tag_json": event.get("tags"),
         },
     )
-    brief = {
+    brief: dict[str, Any] = {
         "scenario_id": scenario.get("scenario_id"),
         "title": scenario.get("title"),
         "selected_dimensions": _selected_dimensions_for_value_prompt(
@@ -1557,8 +2146,11 @@ def _scenario_brief_for_value_prompt(
         "scenario_group": scenario_group_brief,
         "scenario": scenario_detail,
         "dimension_template": dimension_template_brief,
-        "event": event_brief,
     }
+    if is_multi_event:
+        brief["events"] = [_bounded_v3_event_brief(item) for item in events if isinstance(item, dict)]
+    else:
+        brief["event"] = event_brief
     return _drop_none_or_empty(brief)
 
 
@@ -1568,6 +2160,64 @@ def _selected_dimensions_for_value_prompt(
     allowed_dimension_keys: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     scenario = scenario_context.get("scenario") or {}
+    scenario_group = scenario_context.get("scenario_group") or {}
+    generation_strategy = str(
+        scenario_group.get("generation_strategy") or "",
+    )
+    if generation_strategy in {
+        "multi_event_composite_dimensions",
+        "multi_event_model_lever_dimensions",
+    }:
+        is_v4 = generation_strategy == "multi_event_model_lever_dimensions"
+        selected: list[dict[str, Any]] = []
+        for item in scenario_context.get("dimension_lineage") or []:
+            if not isinstance(item, dict):
+                continue
+            dimension_key = str(item.get("scenario_dimension_key") or "")
+            if allowed_dimension_keys is not None and dimension_key not in allowed_dimension_keys:
+                continue
+            selected.append(
+                _drop_none_or_empty(
+                    {
+                        "dimension_key": dimension_key,
+                        "dimension_label": item.get("scenario_dimension_label"),
+                        "dimension_value": item.get("scenario_dimension_value"),
+                        "dimension_value_id": item.get(
+                            "scenario_dimension_value_id",
+                        ),
+                        "dimension_value_label": item.get(
+                            "scenario_dimension_value_label",
+                        ),
+                        "description": item.get("value_description"),
+                        "derivation_rationale": item.get(
+                            "assumption_rationale" if is_v4 else "derivation_rationale",
+                        ),
+                        "pressure_contribution": item.get(
+                            "pressure_contribution",
+                        ),
+                        "source_event_ids": item.get("source_event_ids"),
+                        "source_refs": item.get("source_refs"),
+                        "approved_source_projections": item.get(
+                            "approved_source_projections",
+                        ),
+                        "source_impact_path_ids": item.get(
+                            "source_impact_path_ids",
+                        ),
+                        "source_uncertainty_ids": item.get(
+                            "source_uncertainty_ids",
+                        ),
+                        "primary_lever_code": item.get(
+                            "primary_lever_code",
+                        ),
+                        "primary_impact_lever_id": item.get(
+                            "primary_impact_lever_id",
+                        ),
+                        "lever_states": item.get("lever_states") if is_v4 else None,
+                    },
+                ),
+            )
+        return selected
+
     dimension_values = _filter_dimension_values(
         scenario.get("dimension_values") or {},
         allowed_dimension_keys,
@@ -1579,9 +2229,9 @@ def _selected_dimensions_for_value_prompt(
     for item in scenario_context.get("dimension_template") or []:
         if not isinstance(item, dict):
             continue
-        key = item.get("dim_key")
+        key = item.get("dim_key") or item.get("dimension_id") or item.get("dimensionId")
         if key:
-            label_by_key[str(key)] = item.get("label")
+            label_by_key[str(key)] = item.get("label") or item.get("label_ko")
 
     selected: list[dict[str, Any]] = []
     for key, value in dimension_values.items():
@@ -1598,22 +2248,33 @@ def _selected_dimensions_for_value_prompt(
 
 
 def _drop_none_or_empty(value: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: item
-        for key, item in value.items()
-        if item is not None and item != "" and item != [] and item != {}
-    }
+    return {key: item for key, item in value.items() if item is not None and item != "" and item != [] and item != {}}
 
 
 def _source_dimension_for_value_task(item: dict[str, Any]) -> dict[str, Any]:
     return _drop_none_or_empty(
         {
             "dimension_key": (
-                item.get("dimension_key")
-                or item.get("source_dimension_id")
+                item.get("scenario_dimension_key") or item.get("dimension_key") or item.get("source_dimension_id")
             ),
+            "scenario_dimension_key": item.get("scenario_dimension_key"),
+            "mapping_dimension_key": item.get("mapping_dimension_key"),
             "dimension_label": item.get("source_dimension_label"),
             "dimension_value": item.get("source_dimension_value"),
+            "dimension_value_id": item.get("source_dimension_value_id"),
+            "dimension_value_label": item.get(
+                "source_dimension_value_label",
+            ),
+            "value_description": item.get("value_description"),
+            "derivation_rationale": item.get("derivation_rationale"),
+            "pressure_contribution": item.get("pressure_contribution"),
+            "event_type_l2_id": item.get("event_type_l2_id"),
+            "source_event_ids": item.get("source_event_ids"),
+            "source_refs": item.get("source_refs"),
+            "approved_source_projections": item.get(
+                "approved_source_projections",
+            ),
+            "parameter_mapping_ready": item.get("parameter_mapping_ready"),
             "mapping_method": item.get("mapping_method"),
             "mapping_comment": item.get("mapping_comment"),
         },
@@ -1645,9 +2306,20 @@ def _supporting_dimension_for_value_task(
 
     return _drop_none_or_empty(
         {
-            "dimension_key": item.get("source_dimension_id"),
+            "dimension_key": (item.get("scenario_dimension_key") or item.get("source_dimension_id")),
+            "scenario_dimension_key": item.get("scenario_dimension_key"),
+            "mapping_dimension_key": item.get("mapping_dimension_key"),
             "dimension_label": item.get("source_dimension_label"),
             "dimension_value": item.get("source_dimension_value"),
+            "value_description": item.get("value_description"),
+            "derivation_rationale": item.get("derivation_rationale"),
+            "pressure_contribution": item.get("pressure_contribution"),
+            "event_type_l2_id": item.get("event_type_l2_id"),
+            "source_event_ids": item.get("source_event_ids"),
+            "source_refs": item.get("source_refs"),
+            "approved_source_projections": item.get(
+                "approved_source_projections",
+            ),
             "mapping_method": item.get("mapping_method"),
             "usage_policy": _supporting_dimension_usage_policy(item, candidate),
             "reason": item.get("reason"),
@@ -1728,9 +2400,7 @@ def _slot_for_value_task(
         "slot_key": slot_key,
         "coordinates": dict(reference.get("axes") or _coordinates_for_selected_slot(slot)),
         "reference_value": (
-            reference.get("llm_reference_value")
-            if "llm_reference_value" in reference
-            else reference.get("value")
+            reference.get("llm_reference_value") if "llm_reference_value" in reference else reference.get("value")
         ),
     }
 
@@ -1752,16 +2422,13 @@ def _parameter_prompt_payload(
     return _drop_none_or_empty(
         {
             "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": (
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-            ),
+            "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "lever_provenance": candidate.get("lever_provenance"),
+            "binding_provenance": candidate.get("binding_provenance"),
             "allowed_slot_axes_field_names": (
-                allowed_slot_axes
-                if allowed_slot_axes is not None
-                else _allowed_slot_axes_field_names(candidate)
+                allowed_slot_axes if allowed_slot_axes is not None else _allowed_slot_axes_field_names(candidate)
             ),
         },
     )
@@ -1778,9 +2445,7 @@ def _build_parameter_slot_tasks(
     )
     catalog_by_key = {
         str(candidate_catalog.get("candidate_key") or ""): {
-            key: value
-            for key, value in candidate_catalog.items()
-            if key != "candidate_key"
+            key: value for key, value in candidate_catalog.items() if key != "candidate_key"
         }
         for candidate_catalog in slot_catalog
     }
@@ -1791,14 +2456,12 @@ def _build_parameter_slot_tasks(
         candidate_catalog = catalog_by_key.get(
             candidate_key,
             {
-                "parameter_name": (
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                ),
+                "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
                 "key_axes": _allowed_slot_axes_field_names(candidate),
                 "fixed_axis_names": [],
                 "time_axis_names": [],
-                "leaves": [],
+                "period_groups": [],
+                "fixed_axis_hierarchy": [],
             },
         )
         task = {
@@ -2028,30 +2691,20 @@ def _build_basecase_slot_options(records: list[dict[str, Any]]) -> list[dict[str
                 values.setdefault(_normalize_axis_value(display_value), display_value)
 
     for candidate_key, option in options.items():
-        non_time_axes = [
-            axis_name
-            for axis_name in option["axis_names"]
-            if not _is_time_slot_axis(axis_name)
-        ]
+        non_time_axes = [axis_name for axis_name in option["axis_names"] if not _is_time_slot_axis(axis_name)]
         option["slot_hierarchy_axes"] = non_time_axes
         root = hierarchy_roots_by_candidate.setdefault(candidate_key, {})
         for record in records:
             if str(record.get("candidate_key") or "") != candidate_key:
                 continue
             axes = record.get("axes") or {}
-            path = [
-                axes.get(axis_name)
-                for axis_name in non_time_axes
-            ]
+            path = [axes.get(axis_name) for axis_name in non_time_axes]
             if path and all(value not in (None, "") for value in path):
                 _add_hierarchy_path(root, path)
         option["slot_hierarchy"] = _hierarchy_for_prompt(root)
         axis_values = axis_values_by_candidate.get(candidate_key) or {}
         option["axis_values"] = {
-            axis_name: [
-                value
-                for _, value in sorted(values.items(), key=lambda item: str(item[1]))
-            ]
+            axis_name: [value for _, value in sorted(values.items(), key=lambda item: str(item[1]))]
             for axis_name, values in axis_values.items()
         }
     return list(options.values())
@@ -2064,22 +2717,49 @@ def _routing_groups_by_dimension(
     for candidate in candidates:
         if str(candidate.get("mapping_method") or "").lower() != "routing":
             continue
-        group_key = (
-            candidate.get("event_type_l2_id"),
-            str(candidate.get("dimension_key") or candidate.get("source_dimension_id") or ""),
+        mapping_strategy = str(
+            candidate.get("mapping_strategy") or "",
+        ).lower()
+        dimension_key = str(
+            candidate.get("scenario_dimension_key")
+            or candidate.get("dimension_key")
+            or candidate.get("source_dimension_id")
+            or "",
         )
+        if mapping_strategy == "v4":
+            group_key = ("v4", _v4_routing_task_key(candidate))
+        else:
+            group_key = (
+                "v3" if mapping_strategy == "v3" else candidate.get("event_type_l2_id"),
+                dimension_key,
+            )
         routing_groups.setdefault(group_key, []).append(candidate)
     return routing_groups
 
 
-def _sanitize_routing_decisions(
+def _v4_default_primary_candidate_keys(
+    task: dict[str, Any],
+    *,
+    limit: int,
+) -> list[str]:
+    if not task.get("is_v4"):
+        return []
+    keys = [
+        str(candidate.get("candidate_key") or "")
+        for candidate in task.get("candidates") or []
+        if str(candidate.get("binding_role") or "primary").lower() == "primary"
+        and str(candidate.get("candidate_key") or "")
+    ]
+    return keys[:limit]
+
+
+def _sanitize_routing_decisions(  # noqa: C901
     decisions: list[RoutingDecision],
     routing_tasks: list[dict[str, Any]],
+    *,
+    max_candidates_per_dimension: int,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    task_by_dimension = {
-        str(task.get("dimension_key") or ""): task
-        for task in routing_tasks
-    }
+    task_by_dimension = {str(task.get("dimension_key") or ""): task for task in routing_tasks}
     selected_keys: set[str] = set()
     returned_dimensions: set[str] = set()
     warnings: list[str] = []
@@ -2088,35 +2768,77 @@ def _sanitize_routing_decisions(
         dimension_key = str(decision.dimension_key or "")
         task = task_by_dimension.get(dimension_key)
         if task is None:
+            warning = f"LLM이 알 수 없는 dimension_key를 routing_decisions에 반환해 제외했습니다: {dimension_key}"
+            logger.warning("[model-parameter] {}", warning)
+            warnings.append(warning)
+            continue
+        if dimension_key in returned_dimensions:
             warning = (
-                "LLM이 알 수 없는 dimension_key를 routing_decisions에 반환해 제외했습니다: "
-                f"{dimension_key}"
+                "LLM routing_decisions에 중복 dimension task가 있어 후속 응답을 제외했습니다: "
+                f"dimension={dimension_key}"
             )
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
         returned_dimensions.add(dimension_key)
-        allowed_keys = {
-            str(candidate.get("candidate_key") or "")
-            for candidate in task.get("candidates") or []
-        }
+        allowed_keys = {str(candidate.get("candidate_key") or "") for candidate in task.get("candidates") or []}
+        selected_dimension_keys: set[str] = set()
         for raw_candidate_key in decision.selected_candidate_keys:
             candidate_key = str(raw_candidate_key or "")
-            if candidate_key in allowed_keys:
-                selected_keys.add(candidate_key)
+            if candidate_key not in allowed_keys:
+                warning = (
+                    "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
+                    f"dimension={dimension_key}, candidate={candidate_key}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
                 continue
-            warning = (
-                "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
-                f"dimension={dimension_key}, candidate={candidate_key}"
+            if candidate_key in selected_dimension_keys:
+                continue
+            if len(selected_dimension_keys) >= max_candidates_per_dimension:
+                warning = (
+                    "LLM routing_decisions가 dimension별 선택 상한을 초과해 후속 후보를 제외했습니다: "
+                    f"dimension={dimension_key}, limit={max_candidates_per_dimension}, "
+                    f"candidate={candidate_key}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
+            selected_dimension_keys.add(candidate_key)
+            selected_keys.add(candidate_key)
+        if not selected_dimension_keys:
+            default_keys = _v4_default_primary_candidate_keys(
+                task,
+                limit=max_candidates_per_dimension,
             )
-            logger.warning("[model-parameter] {}", warning)
-            warnings.append(warning)
+            if default_keys:
+                selected_keys.update(default_keys)
+                warnings.append(
+                    "v4 routing 응답이 비어 primary binding 기본값을 적용했습니다: "
+                    f"task={dimension_key}, candidates={default_keys}",
+                )
 
     missing_dimensions = sorted(set(task_by_dimension) - returned_dimensions)
-    if missing_dimensions:
+    missing_v4_defaults: list[str] = []
+    for dimension_key in missing_dimensions:
+        default_keys = _v4_default_primary_candidate_keys(
+            task_by_dimension[dimension_key],
+            limit=max_candidates_per_dimension,
+        )
+        if default_keys:
+            selected_keys.update(default_keys)
+            missing_v4_defaults.append(dimension_key)
+    missing_without_default = sorted(
+        set(missing_dimensions) - set(missing_v4_defaults),
+    )
+    if missing_v4_defaults:
+        warnings.append(
+            f"v4 routing task 응답 누락에 primary binding 기본값을 적용했습니다: {missing_v4_defaults}",
+        )
+    if missing_without_default:
         warning = (
             "LLM routing_decisions에 누락된 dimension task가 있어 해당 routing 후보를 제외했습니다: "
-            f"{missing_dimensions}"
+            f"{missing_without_default}"
         )
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
@@ -2139,10 +2861,7 @@ def _sanitize_llm_slots(
     warnings: list[str] = []
     for slot in slots:
         if slot.candidate_key not in candidate_by_key:
-            warning = (
-                "LLM이 알 수 없는 candidate_key를 반환해 slot을 제외했습니다: "
-                f"{slot.candidate_key}"
-            )
+            warning = f"LLM이 알 수 없는 candidate_key를 반환해 slot을 제외했습니다: {slot.candidate_key}"
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
@@ -2280,11 +2999,7 @@ def _parameter_value_cell_from_slot_value(
         lut_value=lut_value,
         proposed_value=proposed_value,
         rationale_ko=slot_value.rationale_ko,
-        basecase_reference_ids=(
-            [str(basecase_reference_id)]
-            if basecase_reference_id is not None
-            else []
-        ),
+        basecase_reference_ids=([str(basecase_reference_id)] if basecase_reference_id is not None else []),
     )
 
 
@@ -2294,9 +3009,6 @@ def _sanitize_llm_adjustments(
     slots: list[dict[str, Any]],
     reference_records: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    settings = get_settings()
-    max_decimal_places = settings.model_parameter_proposed_value_max_decimal_places
-    precision_mode = settings.model_parameter_proposed_value_precision_mode
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
     slot_contexts = _slot_reference_contexts(
@@ -2317,8 +3029,7 @@ def _sanitize_llm_adjustments(
     }
     for duplicate_candidate_key in sorted(duplicate_candidate_keys):
         warning = (
-            "LLM Step3 응답에 동일 candidate_key의 adjustment가 중복되어 "
-            f"모두 제외했습니다: {duplicate_candidate_key}"
+            f"LLM Step3 응답에 동일 candidate_key의 adjustment가 중복되어 모두 제외했습니다: {duplicate_candidate_key}"
         )
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
@@ -2329,10 +3040,7 @@ def _sanitize_llm_adjustments(
             continue
         candidate = candidate_by_key.get(adjustment.candidate_key)
         if candidate is None:
-            warning = (
-                "LLM이 알 수 없는 candidate_key를 반환해 제외했습니다: "
-                f"{adjustment.candidate_key}"
-            )
+            warning = f"LLM이 알 수 없는 candidate_key를 반환해 제외했습니다: {adjustment.candidate_key}"
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
@@ -2380,14 +3088,9 @@ def _sanitize_llm_adjustments(
                 warnings.append(warning)
                 continue
             try:
-                proposed_value = apply_numeric_precision(
+                validated_proposed_value = strict_float(
                     slot_value.proposed_value,
-                    label=(
-                        "Step3 proposedValue "
-                        f"(candidate={adjustment.candidate_key}, slotKey={slot_key})"
-                    ),
-                    max_decimal_places=max_decimal_places,
-                    mode=precision_mode,
+                    label=(f"Step3 proposedValue (candidate={adjustment.candidate_key}, slotKey={slot_key})"),
                 )
             except MIBaseError:
                 warning = (
@@ -2398,6 +3101,12 @@ def _sanitize_llm_adjustments(
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)
                 continue
+            proposed_value = (
+                slot_value.proposed_value
+                if isinstance(slot_value.proposed_value, (int, float))
+                and not isinstance(slot_value.proposed_value, bool)
+                else validated_proposed_value
+            )
             returned_slot_keys.add(slot_key)
             value_grid.append(
                 _parameter_value_cell_from_slot_value(
@@ -2418,28 +3127,25 @@ def _sanitize_llm_adjustments(
             warnings.append(warning)
 
         if not value_grid:
-            warning = (
-                "Step3 응답에 유효한 slot 값이 없어 parameter를 제외했습니다: "
-                f"{adjustment.candidate_key}"
-            )
+            warning = f"Step3 응답에 유효한 slot 값이 없어 parameter를 제외했습니다: {adjustment.candidate_key}"
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
             continue
 
-        sanitized.append(ParameterAdjustment(
-            candidate_key=adjustment.candidate_key,
-            model_file=str(candidate.get("model_file") or ""),
-            model_sheet=str(candidate.get("model_sheet") or ""),
-            parameter_name=str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
-            ),
-            selected=True,
-            slot_axes=slot_axes,
-            value_grid=value_grid,
-            parameter_selection_rationale_ko=adjustment.rationale_ko,
-        ).model_dump())
+        sanitized.append(
+            ParameterAdjustment(
+                candidate_key=adjustment.candidate_key,
+                model_file=str(candidate.get("model_file") or ""),
+                model_sheet=str(candidate.get("model_sheet") or ""),
+                parameter_name=str(
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+                ),
+                selected=True,
+                slot_axes=slot_axes,
+                value_grid=value_grid,
+                parameter_selection_rationale_ko=adjustment.rationale_ko,
+            ).model_dump()
+        )
 
     missing_candidate_keys = sorted(
         set(candidate_by_key) - processed_candidate_keys - duplicate_candidate_keys,
@@ -2505,10 +3211,7 @@ def _nearest_current_or_future_month(months: list[int]) -> tuple[int, int] | Non
     if not months:
         return None
     current_year, current_month = _current_year_month()
-    candidates = [
-        (current_year if month >= current_month else current_year + 1, month)
-        for month in months
-    ]
+    candidates = [(current_year if month >= current_month else current_year + 1, month) for month in months]
     return min(candidates)
 
 
@@ -2527,20 +3230,29 @@ def _scenario_period_text(dimensions: dict[str, Any], scenario_context: dict[str
 def _event_period_text(scenario_context: dict[str, Any]) -> str:
     group = scenario_context.get("scenario_group") or {}
     event = scenario_context.get("event") or {}
-    return "\n".join(
-        str(item or "")
-        for item in (
-            group.get("title"),
-            group.get("summary"),
-            group.get("description"),
-            event.get("occurred_at"),
-            event.get("latest_record_first_created"),
-            event.get("oldest_record_first_created"),
-            event.get("event_title_ko"),
-            event.get("one_line_summary"),
-            event.get("detail_analysis"),
+    event_items: list[Any] = [
+        group.get("title"),
+        group.get("summary"),
+        group.get("description"),
+        event.get("occurred_at"),
+        event.get("latest_record_first_created"),
+        event.get("oldest_record_first_created"),
+        event.get("event_title_ko"),
+        event.get("one_line_summary"),
+        event.get("detail_analysis"),
+    ]
+    for group_event in scenario_context.get("events") or []:
+        if not isinstance(group_event, dict):
+            continue
+        event_items.extend(
+            [
+                group_event.get("occurred_at"),
+                group_event.get("event_title_ko"),
+                group_event.get("one_line_summary"),
+                group_event.get("detail_analysis"),
+            ],
         )
-    )
+    return "\n".join(str(item or "") for item in event_items)
 
 
 def _period_start_year_month(
@@ -2558,17 +3270,13 @@ def _period_start_year_month(
         return (*event_explicit, "event에 명시된 연월")
 
     scenario_month = (
-        _nearest_current_or_future_month(_month_only_candidates(scenario_text))
-        if scenario_explicit is None
-        else None
+        _nearest_current_or_future_month(_month_only_candidates(scenario_text)) if scenario_explicit is None else None
     )
     if scenario_month is not None:
         return (*scenario_month, "scenario에 명시된 월-only를 현재 이후 연월로 변환")
 
     event_month = (
-        _nearest_current_or_future_month(_month_only_candidates(event_text))
-        if event_explicit is None
-        else None
+        _nearest_current_or_future_month(_month_only_candidates(event_text)) if event_explicit is None else None
     )
     if event_month is not None:
         return (*event_month, "event에 명시된 월-only를 현재 이후 연월로 변환")
@@ -2587,9 +3295,7 @@ def _unselected_adjustments_for_missing_slots(
             model_file=str(candidate.get("model_file") or ""),
             model_sheet=str(candidate.get("model_sheet") or ""),
             parameter_name=str(
-                candidate.get("canonical_parameter_name")
-                or candidate.get("parameter_name")
-                or "",
+                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
             ),
             selected=False,
             slot_axes=[],

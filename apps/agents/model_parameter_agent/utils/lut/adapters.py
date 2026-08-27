@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 import csv
 from dataclasses import dataclass
+from datetime import datetime
 import io
 
 from apps.agents.model_parameter_agent.utils.lut.keys import (
@@ -28,11 +29,44 @@ from apps.agents.model_parameter_agent.utils.lut.registry import (
 )
 
 
-ADAPTER_SCHEMA_VERSION = "model-parameter-lut-adapters-v2"
+ADAPTER_SCHEMA_VERSION = "model-parameter-lut-adapters-v3"
 TEMPERATURE_BASE = 18.0
 DEGREE_DAY_DIVISOR = 30.0
 MTPM_TO_MTPA = 12.0
 LUT_NAMEPLATE_MAX_DECIMAL_PLACES = 2
+
+GDP_POPULATION_COUNTRY_COLUMN = "RE Base Case GDP and Population Data_Country"
+GDP_POPULATION_YEAR_COLUMN = "RE Base Case GDP and Population Data_Year"
+GDP_VALUE_COLUMN = "RE Base Case GDP and Population Data_GDP"
+POPULATION_VALUE_COLUMN = "RE Base Case GDP and Population Data_Population (thousands)"
+
+PMI_DEMAND_COUNTRY_COLUMN = "Selection of PMI Reference Country_Demand Location_Country"
+PMI_REFERENCE_COUNTRY_COLUMN = "Selection of PMI Reference Country_Reference Country_Country"
+PMI_BASE_REFERENCE_COUNTRY_COLUMN = "Selection of PMI Reference Country_Base Case Reference Country_Country"
+PMI_VALUE_COUNTRY_COLUMN = "Base Case PMI Input (do not change)_Country"
+PMI_VALUE_MONTH_COLUMN = "Base Case PMI Input (do not change)_Month"
+PMI_VALUE_YEAR_PREFIX = "Base Case PMI Input (do not change)_"
+
+FUTURES_DATE_COLUMN = "Futures pricing_Date"
+FUTURES_MARKET_COLUMNS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "Coal Futures Price": (
+        ("Europe", "Futures pricing_Rotterdam Coal"),
+        ("Asia", "Futures pricing_Newcastle Coal"),
+    ),
+    "Gas Futures Price": (
+        ("Europe", "Futures pricing_TTF"),
+        ("Asia", "Futures pricing_JKM"),
+    ),
+}
+
+HURRICANE_PRE_DURATION_COLUMN = "Pre-hurricane upstream production shut-in duration (No. of weeks in a month)"
+HURRICANE_PRE_VOLUME_COLUMN = "Pre-hurricane upstream production shut-in volume (% of total monthly volume)"
+HURRICANE_POST_DURATION_COLUMN = (
+    "During and post-hurricane upstream production shut-in duration (No. of weeks in a month)"
+)
+HURRICANE_POST_VOLUME_COLUMN = (
+    "During and post-hurricane upstream production shut-in volume (% of total monthly volume)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +82,27 @@ def _expanded_column(template: str, year: int) -> str:
     except (KeyError, ValueError) as exc:
         msg = f"invalid LUT year column template {template!r}: {exc}"
         raise domain_error(msg) from exc
+
+
+def _hurricane_duration_weeks(value: object, *, label: str) -> float:
+    text = str(value or "").strip()
+    parts = text.split()
+    if len(parts) != 2 or parts[1].casefold() not in {"week", "weeks"}:
+        msg = f"{label} must use '<number> week(s)' format: {value!r}"
+        raise domain_error(msg)
+    weeks = strict_float(parts[0], label=label)
+    if not 0 <= weeks <= 5:
+        msg = f"{label} must be between 0 and 5 weeks: {value!r}"
+        raise domain_error(msg)
+    return weeks
+
+
+def _fraction(value: object, *, label: str) -> float:
+    fraction = strict_float(value, label=label)
+    if not 0 <= fraction <= 1:
+        msg = f"{label} must be between 0 and 1: {value!r}"
+        raise domain_error(msg)
+    return fraction
 
 
 def _required_headers(file_spec: LutFileSpec, policy: ReferenceLoadPolicy) -> set[str]:
@@ -97,6 +152,15 @@ def _read_rows(
             )
         rows.append((reader.line_num, row))
     return rows
+
+
+def validate_file_structure(
+    file_spec: LutFileSpec,
+    snapshot: FileSnapshot,
+    policy: ReferenceLoadPolicy,
+) -> None:
+    """Validate UTF-8 CSV shape and configured headers without building catalog records."""
+    _read_rows(file_spec, snapshot, policy)
 
 
 def _reference_id(file_spec: LutFileSpec, line_number: int) -> str:
@@ -227,9 +291,9 @@ def _gdp_growth_records(
         raise domain_error(msg)
     file_spec = spec.files["values"]
     rows = _read_rows(file_spec, snapshots["values"], policy)
-    country_column = "RE Base Case GDP and Population Data_Country"
-    year_column = "RE Base Case GDP and Population Data_Year"
-    value_column = "RE Base Case GDP and Population Data_GDP"
+    country_column = GDP_POPULATION_COUNTRY_COLUMN
+    year_column = GDP_POPULATION_YEAR_COLUMN
+    value_column = GDP_VALUE_COLUMN
     values: dict[CanonicalKey, float] = {}
     references: dict[CanonicalKey, str] = {}
     duplicate_keys: set[CanonicalKey] = set()
@@ -266,6 +330,179 @@ def _gdp_growth_records(
                     diagnostics=tuple(diagnostics),
                 ),
             )
+    return records
+
+
+def _futures_price_records(
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    if spec.key_axes != ("Month-Year", "Region"):
+        msg = "futures_price adapter key_axes must be [Month-Year, Region]"
+        raise domain_error(msg)
+    market_columns = FUTURES_MARKET_COLUMNS.get(spec.parameter_name)
+    if market_columns is None:
+        msg = f"futures_price adapter does not support parameter: {spec.parameter_name}"
+        raise domain_error(msg)
+    file_spec = spec.files["values"]
+    rows = _read_rows(file_spec, snapshots["values"], policy)
+    records: list[LutRecord] = []
+    for line_number, row in rows:
+        raw_date = str(row[FUTURES_DATE_COLUMN] or "").strip()
+        try:
+            month = datetime.fromisoformat(raw_date)
+        except ValueError as exc:
+            msg = f"invalid futures month in {file_spec.relative_path}:{line_number}: {raw_date!r}"
+            raise domain_error(msg) from exc
+        if month.day != 1:
+            msg = f"futures month must use the first day in {file_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if not policy.contains_year(month.year):
+            continue
+        month_year = month.strftime("%b %Y")
+        for region, value_column in market_columns:
+            records.append(
+                _record(
+                    spec,
+                    policy=policy,
+                    axes={"Month-Year": month_year, "Region": region},
+                    value=strict_float(
+                        row[value_column],
+                        label=f"{file_spec.relative_path}:{line_number}:{value_column}",
+                    ),
+                    metadata=None,
+                    reference_id=f"{_reference_id(file_spec, line_number)}:region:{region}",
+                ),
+            )
+    return records
+
+
+def _pmi_reference_records(  # noqa: C901
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    if spec.key_axes != ("Country", "Year", "Month"):
+        msg = "pmi_reference adapter key_axes must be [Country, Year, Month]"
+        raise domain_error(msg)
+
+    reference_spec = spec.files["references"]
+    reference_rows = _read_rows(reference_spec, snapshots["references"], policy)
+    demand_to_reference: dict[str, str] = {}
+    demand_reference_ids: dict[str, str] = {}
+    for line_number, row in reference_rows:
+        demand_country = str(canonical_axis_value("Country", row[PMI_DEMAND_COUNTRY_COLUMN]))
+        reference_country = str(canonical_axis_value("Country", row[PMI_REFERENCE_COUNTRY_COLUMN]))
+        base_reference_country = str(canonical_axis_value("Country", row[PMI_BASE_REFERENCE_COUNTRY_COLUMN]))
+        if reference_country != base_reference_country:
+            msg = (
+                "PMI reference-country columns disagree in "
+                f"{reference_spec.relative_path}:{line_number}: "
+                f"reference={reference_country!r}, base_reference={base_reference_country!r}"
+            )
+            raise domain_error(msg)
+        previous = demand_to_reference.get(demand_country)
+        if previous is not None and previous != reference_country:
+            msg = f"conflicting PMI demand-country mapping: {demand_country!r}"
+            raise domain_error(msg)
+        demand_to_reference[demand_country] = reference_country
+        demand_reference_ids.setdefault(demand_country, _reference_id(reference_spec, line_number))
+
+    value_spec = spec.files["values"]
+    value_rows = _read_rows(value_spec, snapshots["values"], policy)
+    values: dict[CanonicalKey, float] = {}
+    value_reference_ids: dict[CanonicalKey, str] = {}
+    duplicate_keys: set[CanonicalKey] = set()
+    for line_number, row in value_rows:
+        reference_country = canonical_axis_value("Country", row[PMI_VALUE_COUNTRY_COLUMN])
+        month = strict_int(
+            row[PMI_VALUE_MONTH_COLUMN],
+            label=f"{value_spec.relative_path}:{line_number}:{PMI_VALUE_MONTH_COLUMN}",
+        )
+        if not 1 <= month <= 12:
+            msg = f"Month must be between 1 and 12: {value_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        for year in policy.years:
+            value_column = f"{PMI_VALUE_YEAR_PREFIX}{year}.0"
+            value = strict_float(
+                row[value_column],
+                label=f"{value_spec.relative_path}:{line_number}:{value_column}",
+            )
+            key = (reference_country, year, month)
+            if _put_exact_source_value(values, key, value, label=value_spec.relative_path):
+                duplicate_keys.add(key)
+            value_reference_ids.setdefault(key, f"{_reference_id(value_spec, line_number)}:year:{year}")
+
+    records: list[LutRecord] = []
+    for demand_country, reference_country in sorted(demand_to_reference.items()):
+        for year in policy.years:
+            for month in range(1, 13):
+                source_key = (reference_country, year, month)
+                value = values.get(source_key)
+                if value is None:
+                    msg = (
+                        "PMI reference-country join is missing an exact value: "
+                        f"demand_country={demand_country!r}, reference_country={reference_country!r}, "
+                        f"year={year}, month={month}"
+                    )
+                    raise domain_error(msg)
+                diagnostics = [f"pmi_reference_country={reference_country}"]
+                if source_key in duplicate_keys:
+                    diagnostics.append(
+                        f"deduped_identical_lut_source_key={value_spec.relative_path}:{source_key!r}",
+                    )
+                records.append(
+                    _record(
+                        spec,
+                        policy=policy,
+                        axes={"Country": demand_country, "Year": year, "Month": month},
+                        value=value,
+                        metadata=None,
+                        reference_id=(f"{demand_reference_ids[demand_country]}|{value_reference_ids[source_key]}"),
+                        diagnostics=tuple(diagnostics),
+                    ),
+                )
+    return records
+
+
+def _population_records(
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    if spec.key_axes != ("Country", "Year"):
+        msg = "population adapter key_axes must be [Country, Year]"
+        raise domain_error(msg)
+    file_spec = spec.files["values"]
+    rows = _read_rows(file_spec, snapshots["values"], policy)
+    records: list[LutRecord] = []
+    for line_number, row in rows:
+        country = canonical_axis_value("Country", row[GDP_POPULATION_COUNTRY_COLUMN])
+        year = strict_int(
+            row[GDP_POPULATION_YEAR_COLUMN],
+            label=f"{file_spec.relative_path}:{line_number}:{GDP_POPULATION_YEAR_COLUMN}",
+        )
+        population = strict_float(
+            row[POPULATION_VALUE_COLUMN],
+            label=f"{file_spec.relative_path}:{line_number}:{POPULATION_VALUE_COLUMN}",
+        )
+        if population < 0:
+            msg = f"Population must be non-negative: {file_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if not policy.contains_year(year):
+            continue
+        records.append(
+            _record(
+                spec,
+                policy=policy,
+                axes={"Country": country, "Year": year},
+                value=population,
+                metadata=None,
+                reference_id=_reference_id(file_spec, line_number),
+                diagnostics=("unit=thousand_people",),
+            ),
+        )
     return records
 
 
@@ -355,6 +592,106 @@ def _temperature_records(
     return records
 
 
+def _hurricane_intensity_records(  # noqa: C901
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    if spec.key_axes != ("Year", "Month"):
+        msg = "hurricane_intensity adapter key_axes must be [Year, Month]"
+        raise domain_error(msg)
+
+    intensity_spec = spec.files["intensity"]
+    intensity_rows = _read_rows(intensity_spec, snapshots["intensity"], policy)
+    impacts_by_intensity: dict[int, float] = {}
+    for line_number, row in intensity_rows:
+        label_prefix = f"{intensity_spec.relative_path}:{line_number}"
+        intensity = strict_int(
+            row["Intensity"],
+            label=f"{label_prefix}:Intensity",
+        )
+        _hurricane_duration_weeks(
+            row[HURRICANE_PRE_DURATION_COLUMN],
+            label=f"{label_prefix}:{HURRICANE_PRE_DURATION_COLUMN}",
+        )
+        _fraction(
+            row[HURRICANE_PRE_VOLUME_COLUMN],
+            label=f"{label_prefix}:{HURRICANE_PRE_VOLUME_COLUMN}",
+        )
+        _hurricane_duration_weeks(
+            row[HURRICANE_POST_DURATION_COLUMN],
+            label=f"{label_prefix}:{HURRICANE_POST_DURATION_COLUMN}",
+        )
+        _fraction(
+            row[HURRICANE_POST_VOLUME_COLUMN],
+            label=f"{label_prefix}:{HURRICANE_POST_VOLUME_COLUMN}",
+        )
+        impact = strict_float(
+            row["Net impact (Monthly upstream production decrease by %)"],
+            label=f"{label_prefix}:Net impact",
+        )
+        if intensity not in {1, 2, 3, 4}:
+            msg = f"Hurricane intensity must be one of 1,2,3,4: {intensity_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if not 0 <= impact <= 1:
+            msg = f"Hurricane net impact must be between 0 and 1: {intensity_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        previous = impacts_by_intensity.get(intensity)
+        if previous is not None and previous != impact:
+            msg = f"conflicting hurricane intensity impact: intensity={intensity}"
+            raise domain_error(msg)
+        impacts_by_intensity[intensity] = impact
+    if set(impacts_by_intensity) != {1, 2, 3, 4}:
+        missing = sorted({1, 2, 3, 4} - set(impacts_by_intensity))
+        msg = f"Hurricane intensity table is incomplete: missing={missing}"
+        raise domain_error(msg)
+
+    plants_spec = spec.files["plants"]
+    plant_rows = _read_rows(plants_spec, snapshots["plants"], policy)
+    impacted_by_plant: dict[str, bool] = {}
+    for line_number, row in plant_rows:
+        plant = str(
+            canonical_axis_value(
+                "LNG Plant",
+                row["Liquefaction plants impacted by a hurricane in GoM"],
+            ),
+        )
+        raw_impacted = str(row["Impacted by hurricane?"] or "").strip().casefold()
+        if raw_impacted not in {"yes", "no"}:
+            msg = f"Impacted by hurricane? must be Yes or No: {plants_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        impacted = raw_impacted == "yes"
+        previous = impacted_by_plant.get(plant)
+        if previous is not None and previous != impacted:
+            msg = f"conflicting hurricane plant classification: {plant!r}"
+            raise domain_error(msg)
+        impacted_by_plant[plant] = impacted
+    impacted_count = sum(impacted_by_plant.values())
+    if impacted_count == 0:
+        msg = "Hurricane plant table has no impacted facilities"
+        raise domain_error(msg)
+
+    validation_reference = f"lut:{intensity_spec.relative_path}+{plants_spec.relative_path}:no-hurricane-baseline"
+    diagnostics = (
+        "hurricane_baseline=no_hurricane",
+        f"validated_intensity_count={len(impacts_by_intensity)}",
+        f"validated_impacted_plant_count={impacted_count}",
+    )
+    return [
+        _record(
+            spec,
+            policy=policy,
+            axes={"Year": year, "Month": month},
+            value=0,
+            metadata=None,
+            reference_id=validation_reference,
+            diagnostics=diagnostics,
+        )
+        for year in policy.years
+        for month in range(1, 13)
+    ]
+
+
 def _liq_util_records(
     spec: ParameterLutSpec,
     policy: ReferenceLoadPolicy,
@@ -422,6 +759,231 @@ def _liq_util_records(
     return records
 
 
+def _liq_prod_records(
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    expected_key_axes = ("Country", "LNG Plant", "LNG Plant Train", "Year", "Month")
+    expected_metadata_axes = ("Period", "Life Cycle Category", "Nameplate Capacity (MTPA)")
+    if spec.key_axes != expected_key_axes or spec.metadata_axes != expected_metadata_axes:
+        msg = "liq_prod adapter requires the canonical business key and authoritative metadata axes"
+        raise domain_error(msg)
+    file_spec = spec.files["values"]
+    rows = _read_rows(file_spec, snapshots["values"], policy)
+    records: list[LutRecord] = []
+    for line_number, row in rows:
+        year = strict_int(row["Year"], label=f"{file_spec.relative_path}:{line_number}:Year")
+        month = strict_int(row["Month"], label=f"{file_spec.relative_path}:{line_number}:Month")
+        if not 1 <= month <= 12:
+            msg = f"Month must be between 1 and 12: {file_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        life_cycle = str(row["Infra Life Cycle"] or "").strip()
+        if not life_cycle:
+            msg = f"Infra Life Cycle must not be empty: {file_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if life_cycle.casefold() == "closed":
+            continue
+        if not policy.contains_year(year):
+            continue
+        capacity_mtpm = strict_float(
+            row["LNG train capacity (Million tonnes LNG per month)"],
+            label=f"{file_spec.relative_path}:{line_number}:capacity",
+        )
+        utilisation = strict_float(
+            row["LNG plant utilisation %"],
+            label=f"{file_spec.relative_path}:{line_number}:utilisation",
+        )
+        if capacity_mtpm < 0 or utilisation < 0:
+            msg = f"LiqProd capacity and utilisation must be non-negative: {file_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        axes = {
+            "Country": canonical_axis_value("Country", row["Country"]),
+            "LNG Plant": canonical_axis_value("LNG Plant", row["Plant Name"]),
+            "LNG Plant Train": canonical_axis_value("LNG Plant Train", row["Plant Train"]),
+            "Year": year,
+            "Month": month,
+        }
+        period = strict_int(row["Period"], label=f"{file_spec.relative_path}:{line_number}:Period")
+        records.append(
+            _record(
+                spec,
+                policy=policy,
+                axes=axes,
+                value=capacity_mtpm * utilisation,
+                metadata={
+                    "Period": period,
+                    "Life Cycle Category": life_cycle,
+                    "Nameplate Capacity (MTPA)": truncate_numeric_value(
+                        capacity_mtpm * MTPM_TO_MTPA,
+                        label=f"{file_spec.relative_path}:{line_number}:nameplate capacity",
+                        max_decimal_places=LUT_NAMEPLATE_MAX_DECIMAL_PLACES,
+                    ),
+                },
+                reference_id=_reference_id(file_spec, line_number),
+                diagnostics=("production_transform=capacity_mtpm_x_utilisation",),
+            ),
+        )
+    return records
+
+
+def _pipeline_records(
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    expected_key_axes = ("Pipeline Name", "From Country", "To Country", "Year", "Month")
+    if spec.key_axes != expected_key_axes:
+        msg = "pipeline adapter requires [Pipeline Name, From Country, To Country, Year, Month]"
+        raise domain_error(msg)
+    file_spec = spec.files["values"]
+    rows = _read_rows(file_spec, snapshots["values"], policy)
+    records: list[LutRecord] = []
+    for line_number, row in rows:
+        year = strict_int(row["Year"], label=f"{file_spec.relative_path}:{line_number}:Year")
+        capacity = strict_float(
+            row["Pipeline capacity (Bcm)"],
+            label=f"{file_spec.relative_path}:{line_number}:Pipeline capacity (Bcm)",
+        )
+        if capacity < 0:
+            msg = f"Pipeline capacity must be non-negative: {file_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if not policy.contains_year(year):
+            continue
+        fixed_axes = {
+            "Pipeline Name": canonical_axis_value("Pipeline Name", row["Major pipeline"]),
+            "From Country": canonical_axis_value("From Country", row["From country"]),
+            "To Country": canonical_axis_value("To Country", row["To country"]),
+            "Year": year,
+        }
+        records.extend(
+            [
+                _record(
+                    spec,
+                    policy=policy,
+                    axes={**fixed_axes, "Month": month},
+                    value=capacity,
+                    metadata=None,
+                    reference_id=f"{_reference_id(file_spec, line_number)}:month:{month}",
+                    diagnostics=("annual_capacity_expanded_to_month",),
+                )
+                for month in range(1, 13)
+            ],
+        )
+    return records
+
+
+def _supply_disruption_records(  # noqa: C901
+    spec: ParameterLutSpec,
+    policy: ReferenceLoadPolicy,
+    snapshots: Mapping[str, FileSnapshot],
+) -> list[LutRecord]:
+    if spec.key_axes != ("Country", "Year", "Month"):
+        msg = "supply_disruption adapter key_axes must be [Country, Year, Month]"
+        raise domain_error(msg)
+
+    seasonality_spec = spec.files["seasonality"]
+    seasonality_rows = _read_rows(seasonality_spec, snapshots["seasonality"], policy)
+    seasonality: dict[tuple[int, int, str, str], float] = {}
+    seasonality_references: dict[tuple[int, int, str, str], str] = {}
+    for line_number, row in seasonality_rows:
+        year = strict_int(row["Year"], label=f"{seasonality_spec.relative_path}:{line_number}:Year")
+        month = strict_int(row["Month"], label=f"{seasonality_spec.relative_path}:{line_number}:Month")
+        period = strict_int(
+            row["Period"],
+            label=f"{seasonality_spec.relative_path}:{line_number}:Period",
+        )
+        if not 1 <= month <= 12:
+            msg = f"Month must be between 1 and 12: {seasonality_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if period < 0:
+            msg = f"Period must be non-negative: {seasonality_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if not policy.contains_year(year):
+            continue
+        province = str(canonical_axis_value("Province", row["Province"]))
+        supply_type = str(canonical_axis_value("PNG/LNG", row["PNG/LNG"]))
+        coefficient = strict_float(
+            row["Seasonality"],
+            label=f"{seasonality_spec.relative_path}:{line_number}:Seasonality",
+        )
+        if coefficient < 0:
+            msg = f"Seasonality must be non-negative: {seasonality_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        key = (year, month, province, supply_type)
+        previous = seasonality.get(key)
+        if previous is not None and previous != coefficient:
+            msg = f"conflicting duplicate SeasonalityLogic exact key: {key!r}"
+            raise domain_error(msg)
+        seasonality[key] = coefficient
+        seasonality_references.setdefault(key, _reference_id(seasonality_spec, line_number))
+
+    production_spec = spec.files["production"]
+    production_rows = _read_rows(production_spec, snapshots["production"], policy)
+    totals: dict[tuple[str, int, int], float] = {}
+    source_counts: dict[tuple[str, int, int], int] = {}
+    first_references: dict[tuple[str, int, int], str] = {}
+    missing_joins: list[str] = []
+    for line_number, row in production_rows:
+        year = strict_int(row["Year"], label=f"{production_spec.relative_path}:{line_number}:Year")
+        life_cycle = str(row["Life Cycle Category"] or "").strip()
+        if not life_cycle:
+            msg = f"Life Cycle Category must not be empty: {production_spec.relative_path}:{line_number}"
+            raise domain_error(msg)
+        if life_cycle.casefold() == "closed" or not policy.contains_year(year):
+            continue
+        country = str(canonical_axis_value("Country", row["Country"]))
+        province = str(canonical_axis_value("Province", row["Province/Basin"]))
+        supply_type = str(canonical_axis_value("PNG/LNG", row["Oil and gas detail"]))
+        annual_supply = strict_float(
+            row["Base case supply (Bcm)"],
+            label=f"{production_spec.relative_path}:{line_number}:Base case supply (Bcm)",
+        )
+        for month in range(1, 13):
+            seasonality_key = (year, month, province, supply_type)
+            coefficient = seasonality.get(seasonality_key)
+            if coefficient is None:
+                if len(missing_joins) < 10:
+                    missing_joins.append(
+                        f"year={year}, month={month}, province={province!r}, type={supply_type!r}",
+                    )
+                continue
+            output_key = (country, year, month)
+            totals[output_key] = totals.get(output_key, 0.0) + annual_supply * coefficient
+            source_counts[output_key] = source_counts.get(output_key, 0) + 1
+            first_references.setdefault(
+                output_key,
+                f"{_reference_id(production_spec, line_number)}|{seasonality_references[seasonality_key]}",
+            )
+    if missing_joins:
+        msg = "SupplyDisruption production/seasonality join is missing exact rows: " + "; ".join(missing_joins)
+        raise domain_error(msg)
+
+    for output_key, total in sorted(totals.items()):
+        if total < 0:
+            msg = (
+                "SupplyDisruption aggregated monthly supply must be non-negative: "
+                f"key={output_key!r}, value={total}"
+            )
+            raise domain_error(msg)
+
+    return [
+        _record(
+            spec,
+            policy=policy,
+            axes={"Country": country, "Year": year, "Month": month},
+            value=totals[(country, year, month)],
+            metadata=None,
+            reference_id=first_references[(country, year, month)],
+            diagnostics=(
+                "seasonality_policy=raw_not_renormalized",
+                f"aggregated_production_rows={source_counts[(country, year, month)]}",
+            ),
+        )
+        for country, year, month in sorted(totals)
+    ]
+
+
 Adapter = Callable[
     [ParameterLutSpec, ReferenceLoadPolicy, Mapping[str, FileSnapshot]],
     list[LutRecord],
@@ -429,9 +991,16 @@ Adapter = Callable[
 
 ADAPTERS: Mapping[str, Adapter] = {
     "tabular": _tabular_records,
+    "futures_price": _futures_price_records,
     "gdp_growth": _gdp_growth_records,
+    "hurricane_intensity": _hurricane_intensity_records,
+    "liq_prod": _liq_prod_records,
     "temperature_degree_days": _temperature_records,
     "liq_util": _liq_util_records,
+    "pipeline": _pipeline_records,
+    "pmi_reference": _pmi_reference_records,
+    "population": _population_records,
+    "supply_disruption": _supply_disruption_records,
 }
 
 

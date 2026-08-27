@@ -6,16 +6,23 @@
 소비할 때 다음 두 가지를 판단하기 위한 구현 가이드다.
 
 - 어떤 DB 데이터와 함수를 조합해 **선택된 Scenario의 lever**를 찾는가
-- 찾은 lever를 **실행 가능한 model parameter 후보**로 어떤 방향으로 매핑하는가
+- 찾은 lever를 raw model parameter evidence로 매핑한 뒤 **runtime proposal 허용 후보**로 어떻게 좁히는가
 
 Scenario 생성·저장 계약은 Scenario Group Agent가 소유하고, parameter 후보 선정,
 값 산정, proposal 저장 및 confirmation은 Model Parameter Agent가 소유한다. 이
-문서는 handoff 계약만 정의하며 Model Parameter Agent 구현이나 DB migration을
-포함하지 않는다.
+문서는 두 Agent가 현재 공유하는 v4 handoff 실행 계약을 정의한다. runtime DDL은 이
+경로에서 수행하지 않는다.
 
 대상은 `generation_strategy = 'multi_event_model_lever_dimensions'`인 신규 v4
-Scenario Group이다. v1/v2/v3 데이터에는 기존 매핑 경로를 사용하고, v4 로직을
-소급 적용하지 않는다.
+Scenario Group이다. v1/v3 Model Parameter proposal에는 공유 DB의 129행 mapping 경로를
+사용하고 v4 로직을 소급 적용하지 않는다.
+
+v1/v3 mapping의 현재 method count는 direct 35, routing 6, indirect 55, na 33이며 direct/routing이
+도달하는 raw capability는 LUT-backed 10개다. v4는 이 테이블을 조회하거나 fallback으로 사용하지
+않으며 active Lever binding으로 raw parameter 16개에 도달할 수 있다. 실제 runtime proposal은 버전과
+무관하게 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용한다. 이 제한은
+Model Parameter Agent가 source matching 후, Step1.5·값 제안 LLM과 persistence 전에 적용한다.
+DB·canonical·config를 바꾸지 않으며 Scenario Group Agent나 confirmation 동작에도 적용하지 않는다.
 
 ## 2. 결론: 어디를 정본으로 볼 것인가
 
@@ -38,7 +45,7 @@ Event 소유권과 provenance는
 > value의 `lever_states`만 후보로 사용한다. `primary_lever_code`는 그 dimension의
 > 주된 인과축이며 누락 검증과 우선순위 결정에 사용한다.
 
-## 3. 권장 조회 함수
+## 3. 공용 조회 service
 
 가능하면 ORM을 flow/node에서 직접 조합하지 말고 Model Parameter 소유 service에서
 아래 repository/service를 호출한다.
@@ -50,8 +57,9 @@ Event 소유권과 provenance는
 | Group–Event 관계 | `ScenarioGroupRepository.fetch_group_events(scenario_group_id)` | 활성 관계 전체, `display_order` 순 |
 | 활성 lever catalog | `ModelImpactLeverService.load_active_catalog()` | payload 목록, catalog version, checksum |
 
-`ModelImpactLeverService.load_active_catalog()`는 현재
-`apps/agents/scenario_group_agent/persistence/model_impact_lever_service.py`에 있다.
+`ModelImpactLeverService.load_active_catalog()`의 공용 구현은
+`apps/persistence/model_impact_lever/service.py`에 있다. Scenario/Model Parameter
+Agent는 이 service를 공유하며 flow/node가 repository를 직접 호출하지 않는다.
 이 함수는 다음 검증까지 수행하므로 단순 catalog row 조회보다 안전하다.
 
 - `use_yn = 'Y'`, `del_yn = 'N'`인 lever만 로드
@@ -60,12 +68,8 @@ Event 소유권과 provenance는
   `known_unsupported / INACTIVE_MODEL_PARAMETER`로 보정
 - DB PK를 제외한 catalog checksum 계산
 
-Model Parameter Agent가 이 함수를 그대로 호출하는 것은 가장 짧은 연동 경로다.
-다만 Agent 간 소유 경계를 엄격히 유지하려면 같은 검증을 공용 persistence service로
-옮기거나, Model Parameter 소유 adapter가
-`ModelImpactLeverRepository.fetch_active_impact_levers()`와
-`fetch_parameter_definitions_by_names()`를 감싸도록 한다. flow/node에서 repository를
-직접 호출하는 구조는 만들지 않는다.
+Scenario Group Agent의 기존 service 경로는 호환 wrapper 역할만 하며 catalog hydration,
+master 활성 검증과 checksum 계산의 소유권은 공용 persistence service에 있다.
 
 ## 4. 저장 데이터의 현재 형태
 
@@ -157,7 +161,7 @@ Scenario에서 후보가 0개가 된다.
 `impact_lever_id`만으로 연결하지 않는다. 저장된 ID는 동일 code를 가리키는지 확인하는
 무결성 검사용이다.
 
-권장 검증은 다음과 같다.
+필수 검증은 다음과 같다.
 
 - `lever_state.impact_lever_id`가 현재 catalog의 같은 `lever_code` ID와 일치하는가
 - `primary_impact_lever_id`가 `primary_lever_code`의 현재 ID와 일치하는가
@@ -165,9 +169,8 @@ Scenario에서 후보가 0개가 된다.
   `load_active_catalog()` checksum과 일치하는가
 
 checksum이 다르면 과거 Scenario의 의미를 새 catalog로 조용히 재해석하지 않는다.
-proposal 생성을 중단하고 재생성 또는 운영자 검토 대상으로 보내는 strict 정책을
-권장한다. version은 진단 정보로 함께 남기되, 실제 내용 동일성은 checksum으로
-판단한다.
+proposal 생성을 중단하고 재생성 또는 운영자 검토 대상으로 보낸다. version은 진단
+정보로 함께 남기되, 실제 내용 동일성은 checksum으로 판단한다.
 
 catalog에 없는 code나 ID 불일치는 후보 없음으로 숨기지 말고 저장 계약/카탈로그
 무결성 오류로 처리한다.
@@ -181,11 +184,50 @@ catalog에 없는 code나 ID 불일치는 후보 없음으로 숨기지 말고 �
 | `domain = 'price_only'` | 직접 model input을 만들지 않고 가격 영향 context로 보존 |
 | binding 없음 | `NO_PARAMETER_BINDING` 미지원 context로 보존 |
 | `support_status = 'known_unsupported'` | 후보를 만들지 않고 reason code를 보존 |
-| `support_status = 'executable'` | `parameter_name`을 proposal 후보로 전달 |
+| `support_status = 'executable'` | `parameter_name`을 raw candidate evidence로 전달 |
 
 binding의 `role = 'primary'`는 기본 우선 후보, `alternative`는 적용 조건에 따른
-대체 후보로 사용한다. 둘 다 `executable`이면 후보가 될 수 있지만, 동일 조건에서
-무작위로 선택하지 말고 `primary`를 우선하는 결정 규칙을 둔다.
+대체 후보로 사용한다. 둘 다 `executable`이면 raw 후보가 될 수 있지만, runtime allow-list를
+통과한 후보만 routing 대상으로 사용한다. 통과 후보를 동일 조건에서 무작위로 선택하지 않는다.
+단일 primary는 결정적으로 선택한다. primary와 alternative가 함께 통과하면 primary를 기본
+우선하고 Step1.5에 applicability와 Scenario/Event/Lever 맥락을 제공해 alternative 또는 양쪽
+선택을 허용한다.
+
+v4 canonical은 active Lever 16개, binding occurrence 20개다. 비활성 CDD/HDD
+binding을 제외한 effective executable occurrence는 18개이고 고유 활성 parameter는
+16개다. 이 수치는 catalog의 raw capability이며 runtime proposal 범위가 아니다. LUT-backed 10개는
+Basecase 우선/LUT fallback capability를 가지고,
+`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`,
+`RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`는 검증된 Basecase
+exact slot capability만 가진다.
+
+숫자를 쉽게 풀면 다음과 같다.
+
+- `20건`: Lever catalog에 적힌 “Lever → parameter 연결선”을 중복 포함해 모두 센 수다.
+- `18건`: 그중 현재 꺼져 있는 CDD와 HDD 연결선 2개를 실행 대상에서 뺀 수다.
+- `16개`: ShippingCost와 VolumeCancelled처럼 둘 이상의 Lever에서 다시 등장하는 이름을
+  하나로 합친 raw 고유 parameter 수다.
+
+즉 “파라미터 20개를 제안한다”는 뜻이 아니라, **연결선은 20개이고 그중 유효한 연결선은
+18개이며, catalog에서 도달 가능한 서로 다른 활성 파라미터가 16개**라는 뜻이다.
+
+raw 후보를 만든 뒤 Model Parameter Agent는 다음 runtime proposal allow-list를 적용한다.
+
+```text
+GDP
+PMI
+PowerMix
+Temperature
+LiqUtilAdjustment
+```
+
+allow-list 밖의 executable binding은 DB나 catalog에서 비활성으로 바꾸지 않고 proposal 경로에서만
+제외하며 내부 non-input evidence에는 `PROPOSAL_SCOPE_EXCLUDED` reason code를 남긴다. 따라서
+`Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `PipelineAdjustment`,
+`SupplyDisruption`과 Basecase-only 6개는 raw capability와 startup 검증 대상으로 남지만 현재
+Step1.5·Step2·Step3 및 proposal persistence에는 진입하지 않는다. v1/v3의 raw mapping 10개에도
+같은 gate를 적용한다. confirmation은 기존 proposal과 custom parameter 호환을 위해 이 gate의 대상이
+아니다.
 
 동일 `parameter_name`이 여러 dimension 또는 lever에서 나오면 proposal parameter는
 하나로 중복 제거하되 다음 provenance는 합쳐서 보존한다.
@@ -229,9 +271,9 @@ bearish  -> -delta
 5. `pressure_contribution`과 lever `domain`은 결과의 정합성 확인 및 설명 근거로
    사용하며 직접 부호 변환식으로 사용하지 않는다.
 
-`direction = 'unchanged'`는 기본적으로 변화량 후보가 아니라 지지 context다. 단,
-해당 parameter mapper에 unchanged를 명시적으로 표현하는 규칙이 있으면 그 규칙을
-우선한다.
+`direction = 'unchanged'`는 변화 후보가 아니라 supporting context다. unchanged state만
+남거나, 변화가 있는 raw candidate가 모두 runtime allow-list 밖이라 최종 candidate가 0개면
+proposal row를 저장하지 않고 `INVALID_REQUEST`로 종료한다.
 
 ## 9. 구현 의사코드
 
@@ -257,6 +299,10 @@ definition_by_id = {
     item["dimension_id"]: item
     for item in group.dimension_definitions
 }
+require_equal_sets(
+    scenario.dimension_values.keys(),
+    definition_by_id.keys(),
+)
 
 for dimension_id, selected_value_id in scenario.dimension_values.items():
     definition = definition_by_id[dimension_id]
@@ -282,7 +328,18 @@ for dimension_id, selected_value_id in scenario.dimension_values.items():
             )
         )
 
-parameter_candidates = merge_by_parameter_name(candidate_evidence)
+proposal_source_candidates = filter_by_runtime_proposal_allow_list(
+    candidate_evidence,
+    allowed={
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "LiqUtilAdjustment",
+    },
+)
+parameter_candidates = merge_by_parameter_name(proposal_source_candidates)
+# 이 다음에만 Step1.5/Step2/Step3와 proposal persistence를 수행한다.
 ```
 
 ## 10. 사용하면 안 되는 데이터와 패턴
@@ -294,14 +351,16 @@ parameter_candidates = merge_by_parameter_name(candidate_evidence)
 - `tmm_mi_dimension_value_mapping_m`을 v4 lever 선택의 입력 정본으로 사용
 - `impact_lever_id`만으로 catalog join
 - `pressure_contribution`을 model parameter의 증감 부호로 직접 변환
+- runtime proposal allow-list를 건너뛰고 raw binding을 Step1.5·값 제안 또는 persistence로 전달
+- 이 Model Parameter 전용 allow-list를 Scenario Group 생성·검증이나 confirmation gate로 재사용
 
 `tmm_mi_dimension_value_mapping_m`은 기존 proposal/승인 매핑 workflow의 결과
 데이터다. 현재 Scenario가 어떤 v4 lever state를 선택했는지는
 `dimension_values + dimension_definitions` 조합으로 판단해야 한다.
 
-## 11. 최소 검증 시나리오
+## 11. 최소 회귀 계약
 
-담당 구현에서는 최소한 다음 회귀 테스트를 추가한다.
+v4 handoff 구현은 최소한 다음 회귀를 계속 만족해야 한다.
 
 - 신규 v4 fixture에 과거 `lever_mappings`가 없어도 후보가 생성되는지
 - 선택되지 않은 value의 lever가 후보에 섞이지 않는지
@@ -310,6 +369,10 @@ parameter_candidates = merge_by_parameter_name(candidate_evidence)
 - multi-event Group의 모든 관계와 `source_event_ids` provenance가 보존되는지
 - price-only, binding 없음, inactive parameter, catalog unsupported가 각각 후보에서
   제외되고 reason이 남는지
+- raw v4 binding 16개와 v1/v3 reachable 10개를 유지하면서 runtime proposal에는 정확히
+  `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는지
+- allow-list 밖의 executable binding만 있는 요청은 Step1.5·값 제안 LLM과 persistence 전에
+  종료되는지
 - 동일 parameter가 여러 lever에서 나올 때 parameter는 중복되지 않고 provenance는
   합쳐지는지
 - catalog checksum 변경 시 기존 Scenario를 조용히 재해석하지 않는지
@@ -318,3 +381,189 @@ parameter_candidates = merge_by_parameter_name(candidate_evidence)
 이 계약을 따르면 신규 v4 Scenario의 lever 선택 의미는 Scenario Group Agent에
 남고, Model Parameter Agent는 catalog와 자체 값 결정 규칙을 이용해 실행 가능성 및
 구체적인 parameter 값을 책임질 수 있다.
+
+catalog checksum이 바뀌면 parameter master와 Lever catalog를 한 transaction으로
+적용한 뒤 신규 v4 Scenario를 생성한다. 기존 v4 Scenario를 새 catalog로 조용히
+재해석하지 않는다. 이 변경은 public proposal/confirmation endpoint·payload와 저장
+JSON shape을 변경하지 않으며 provenance와 미지원 진단은 내부 state, trace,
+validation warning 또는 실패 detail에만 둔다. runtime allow-list 적용도 DB·canonical·Lever
+catalog·resource config와 startup validation을 변경하지 않으며, Scenario Group Agent를 포함한
+다른 Agent와 confirmation flow는 기존 동작을 유지한다.
+
+## 12. Model Parameter v4 LLM 입출력 예시
+
+예를 들어 사용자가 “Angola LNG가 2026년 8월에도 저가동”인 기존 분기를 선택했다고
+가정한다. 실제 prompt는 Event·Scenario·전체 provenance와 압축된 slot catalog를 더
+포함하지만 핵심은 다음 세 단계다.
+
+### Step 1.5 이전: runtime allow-list 적용과 후보 선택
+
+catalog의 raw binding은 다음 두 개다.
+
+```json
+{
+  "leverCode": "liquefaction_availability",
+  "state": {"direction": "decrease", "scope": "Angola LNG", "timeWindow": "2026-08"},
+  "candidates": [
+    {"parameterName": "LiqUtilAdjustment", "role": "primary", "applicability": "기존 Train의 단기·부분 저가동"},
+    {"parameterName": "LiqProdAdjustment", "role": "alternative", "applicability": "대폭·영구 생산손실 또는 신규 Train ramp-up"}
+  ]
+}
+```
+
+runtime gate를 통과하면 `LiqProdAdjustment`는 현재 proposal 허용 범위 밖이므로 다음 후보만 남는다.
+
+```text
+runtime proposal candidates: LiqUtilAdjustment
+```
+
+단일 primary만 남으므로 서버가 결정적으로 선택해 Step1.5 LLM을 생략한다.
+
+### Step 2: 값을 보지 않고 exact slot 선택
+
+```json
+{
+  "parameterName": "LiqUtilAdjustment",
+  "availableAxes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+  "scenarioScope": "Angola LNG / 2026-08"
+}
+```
+
+```json
+{
+  "slotAxes": {
+    "Country": "Angola",
+    "LNG Plant": "Angola LNG",
+    "LNG Plant Train": "Angola LNG T1",
+    "Year": 2026,
+    "Month": 8
+  }
+}
+```
+
+### Step 3: 검증된 기준값을 보고 최종 절대값 산정
+
+```json
+{
+  "parameterName": "LiqUtilAdjustment",
+  "referenceValue": 0.90738,
+  "parameterHint": "0~1 범위의 월평균 최종 가동률",
+  "leverProvenance": [{"direction": "decrease", "level": "material", "scope": "Angola LNG"}]
+}
+```
+
+```json
+{
+  "proposedValue": 0.45,
+  "rationaleKo": "기준 가동률에서 월 전반의 저가동과 제한적 회복을 반영한 최종 절대값입니다."
+}
+```
+
+`direction=decrease`를 단순히 음수로 바꾸지 않는다. 이 parameter가 “가동률 최종값”이라는
+hint, 단위·범위와 기준값을 함께 해석해 `0.45`를 만든다.
+
+## 13. 기존 v4 그룹에 Scenario 한 행을 수동 추가하는 계약
+
+### 13.1 가장 중요한 결론
+
+분기를 새로 만들지 않는다면 새 Scenario 행에 Lever JSON을 만들거나 저장하지 않는다.
+
+```text
+Scenario.dimension_values의 value_id
+→ Group.dimension_definitions의 기존 value
+→ 그 value에 이미 저장된 lever_states
+→ active Lever catalog의 parameter_bindings
+→ Model Parameter runtime proposal allow-list
+→ Model Parameter 후보
+```
+
+Model Parameter Agent는 새 행의 제목이나 Event Type을 보고 Lever를 다시 추론하지 않는다.
+선택한 기존 value에 필요한 Lever가 없다면 per-Scenario 임시 Lever를 붙이지 말고, 올바른
+catalog로 Scenario Group 전체를 재생성해야 한다.
+
+### 13.2 사람이 보내는 값과 DB에 저장할 값
+
+사람은 기존 table의 모든 Dimension에 대해 한 분기씩 선택하고 이름을 입력한다.
+
+```json
+{
+  "scenarioId": null,
+  "title": "정비 연장과 높은 재고의 상쇄",
+  "cells": {
+    "facility_recovery": "저가동 지속",
+    "europe_inventory": "높은 재고"
+  }
+}
+```
+
+Scenario service는 표시 label을 기존 value의 유일한 `value_id`로 결정적으로 변환해 다음처럼
+저장한다. 직접 SQL로 넣는 경우에는 처음부터 이 ID 형태를 써야 한다.
+
+```json
+{
+  "dimension_values": {
+    "facility_recovery": "delayed_recovery",
+    "europe_inventory": "high_inventory"
+  }
+}
+```
+
+다음 equality를 저장 전과 Model Parameter handoff에서 모두 지켜야 한다.
+
+```text
+list(table.headers[].key)는 중복이 없어야 하고
+set(table.headers[].key)
+==
+set(group.dimension_definitions[].dimension_id)
+
+set(new_scenario.dimension_values.keys())
+==
+set(group.dimension_definitions[].dimension_id)
+```
+
+존재하지 않는 label/ID, 중복 label로 모호한 입력, value ID가 누락·중복된 Group 정의,
+일부 Dimension/header 누락, 중복·미등록 header와 새 cell key는 실패시킨다.
+같은 Dimension 조합을 가진 기존 Scenario도 중복 생성하지 않는다. Signpost sync 요청은 누락된
+기존 row를 삭제 대상으로 보기 때문에 새 행만 보내지 말고 현재 활성 row 전체와 새 행을 함께
+보내야 한다.
+
+### 13.3 LLM과 서버가 각각 만들어야 하는 것
+
+기존 분기 선택은 사람이 고정하며 LLM이 다른 값으로 바꾸지 않는다.
+
+| 책임 | 생성·검증 항목 |
+|---|---|
+| 기존 Group 데이터 | v4 API version/strategy, ordered Event 관계, catalog version/checksum, Dimension/Value, source lineage, primary Lever와 각 value의 `lever_states` |
+| 신규 행용 Scenario LLM | 선택값을 바꾸지 않은 narrative와 probability/likelihood; 완전한 v4 품질이 필요하면 pressure band·rationale, related market 설명도 생성 |
+| Scenario 서버 | label→value ID 변환, 모든 Dimension exact 선택, 중복 조합·scenario 수·display order 검증, baseline/role 재계산, Scenario insert와 group count 갱신 |
+| Signpost LLM | 신규·수정 Scenario에 대한 관측 가능한 Signpost 3~6개와 strength·근거·검색 keyword |
+| Model Parameter Agent | 선택 value에서 Lever를 추출하고 runtime allow-list 5개로 제한한 뒤 parameter routing, exact slot 선택, 기준값 기반 최종 절대값과 근거 생성 |
+
+Model Parameter proposal의 최소 실행 조건에는 pressure band·role이 직접 포함되지 않지만, 공식 v4
+Scenario 화면·비교·품질 계약을 완성하려면 이를 비워 둔 채 “정상 완료”로 간주하지 않는다.
+Scenario를 이미 confirmation한 그룹에 추가했다면 기존 validation, Signpost와 confirmation
+snapshot은 새 행을 포함하지 않으므로 해당 lifecycle을 다시 수행한다.
+
+### 13.4 Scenario Agent 개발자 구현 순서
+
+1. Group을 잠그고 `api_version=v4`, strategy, active catalog version/checksum을 확인한다.
+2. 활성 Group–Event 관계 1~5개를 `display_order` 순으로 읽고 source Event 부분집합을 확인한다.
+3. table header가 기존 Dimension 전체와 exact set이고 중복이 없는지 확인한다.
+4. 사람의 cells를 기존 Dimension/Value에 exact lookup한다. label은 유일할 때만 ID로 바꾼다.
+5. 모든 Dimension key가 정확히 한 번 있고 기존 Scenario와 조합이 겹치지 않는지 확인한다.
+6. Model Parameter Agent가 소유한 production matcher를 non-mutating preflight로 호출해 선택 state 중
+   runtime allow-list를 통과한 변화 후보와 exact Basecase/LUT slot이 하나 이상 있는지 확인한다. 없으면
+   저장 성공과 proposal 가능을 혼동하지 않도록 명확한 coverage 오류를 반환한다. Scenario Group
+   Agent 내부에 allow-list를 복제하거나 자체 생성·validation 규칙으로 사용하지 않는다.
+7. LLM에는 고정된 선택값, ordered Event, 기존 value rationale/Lever context를 주고 narrative와
+   Scenario-level 품질 필드만 생성하게 한다. 숫자 catalog ID나 새 Lever를 만들게 하지 않는다.
+8. 서버가 role/baseline/order를 재계산하고 Scenario insert와 `scenario_count` 갱신을 한 transaction으로
+   처리한다.
+9. validation → Signpost 재생성 → confirmation snapshot을 다시 수행한 뒤 Model Parameter proposal을
+   호출한다.
+
+한 문장으로 요약하면 다음과 같다.
+
+> v4의 새 Scenario 행은 기존 Dimension의 `value_id`를 모두 선택하고, Lever 의미는 Group의 해당
+> value에 이미 있어야 한다. LLM은 고정 선택을 설명하는 Scenario 콘텐츠를 만들고, 서버는 catalog
+> code/ID·Event lineage·checksum·전체 key set을 검증해야 한다.

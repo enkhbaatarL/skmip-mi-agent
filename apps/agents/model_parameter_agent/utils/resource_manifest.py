@@ -22,7 +22,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
 PACKAGE_BASECASE_DIR = PACKAGE_RESOURCE_DIR / "basecase"
 PACKAGE_LUT_ROOT = PACKAGE_RESOURCE_DIR / "lut"
-MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 1
+MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 2
 REQUIRED_BASECASE_ROLES = frozenset({"demand", "supply", "trade"})
 
 
@@ -63,6 +63,7 @@ class ModelParameterResourceManifest:
     schema_version: int
     basecase_files: Mapping[str, ManifestResourceFile]
     lut_files: tuple[ManifestResourceFile, ...]
+    reference_files: tuple[ManifestResourceFile, ...]
     lut_registry: ParameterSpecRegistry
     canonical_yaml: bytes
     semantic_schema_hash: str
@@ -71,6 +72,7 @@ class ModelParameterResourceManifest:
         selected = [*self.basecase_files.values()]
         if lut_enabled:
             selected.extend(self.lut_files)
+            selected.extend(self.reference_files)
         return tuple(selected)
 
     def download_plan(
@@ -219,6 +221,37 @@ def _lut_files(
     return tuple(files)
 
 
+def _reference_files(
+    raw_references: object,
+    *,
+    registry: ParameterSpecRegistry,
+) -> tuple[ManifestResourceFile, ...]:
+    if not isinstance(raw_references, dict):
+        msg = "manifest references must be a mapping"
+        raise _manifest_error(msg)
+    if set(raw_references) != set(registry.references):
+        missing = sorted(set(registry.references) - set(raw_references))
+        unknown = sorted(set(raw_references) - set(registry.references))
+        msg = f"manifest references are invalid: missing={missing}, unknown={unknown}"
+        raise _manifest_error(msg)
+
+    files: list[ManifestResourceFile] = []
+    for reference_name, file_spec in registry.references.items():
+        raw_file = raw_references.get(reference_name)
+        if not isinstance(raw_file, dict):
+            msg = f"references.{reference_name} must be a mapping"
+            raise _manifest_error(msg)
+        files.append(
+            ManifestResourceFile(
+                area="lut",
+                logical_name=f"references.{reference_name}",
+                relative_path=file_spec.relative_path,
+                object_storage_path=raw_file.get("object_storage_path"),
+            ),
+        )
+    return tuple(files)
+
+
 def _semantic_schema_hash(
     *,
     basecase_files: Mapping[str, ManifestResourceFile],
@@ -250,7 +283,7 @@ def load_model_parameter_resource_manifest(
         msg = "model_parameter_resources must be a mapping"
         raise _manifest_error(msg)
     document = dict(raw_document)
-    unknown_fields = sorted(set(document) - {"basecase", "lut"})
+    unknown_fields = sorted(set(document) - {"basecase", "lut", "references"})
     if unknown_fields:
         msg = f"model_parameter_resources contains unknown fields: {unknown_fields}"
         raise _manifest_error(msg)
@@ -264,11 +297,13 @@ def load_model_parameter_resource_manifest(
     basecase_files = _basecase_files(document.get("basecase"))
     registry = load_parameter_spec_registry(path, lut_root=root, yaml_bytes=canonical_yaml)
     lut_files = _lut_files(document.get("lut"), registry=registry)
+    reference_files = _reference_files(document.get("references", {}), registry=registry)
     return ModelParameterResourceManifest(
         source_path=path,
         schema_version=MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
         basecase_files=basecase_files,
         lut_files=lut_files,
+        reference_files=reference_files,
         lut_registry=registry,
         canonical_yaml=canonical_yaml,
         semantic_schema_hash=_semantic_schema_hash(

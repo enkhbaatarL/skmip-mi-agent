@@ -16,7 +16,8 @@ Agent 하나에만 해당하는 구현, API, DB, 테스트 설명은 `docs/agent
 | Agent | 시작 문서 | 주요 내용 |
 | --- | --- | --- |
 | Scenario Group Agent | [개요](docs/agents/scenario_group_agent/01_SCENARIO_GROUP_AGENT_OVERVIEW.md) | v4 API, create·validation·signpost flow, DB, 테스트·품질 평가 |
-| Model Parameter Agent | [개요](docs/agents/model_parameter_agent/01_MODEL_PARAMETER_AGENT_OVERVIEW.md) | API, DB, proposal flow, Basecase·LUT, 파라미터 추가, 이해도 퀴즈 |
+| Model Parameter Agent | [개요](docs/agents/model_parameter_agent/01_MODEL_PARAMETER_AGENT_OVERVIEW.md) | API, DB, proposal·confirmation flow, Basecase·LUT, 파라미터 추가, 테스트·품질 평가 |
+| Interpret Agent | [개요](docs/agents/interpret_agent/01_INTERPRET_AGENT_OVERVIEW.md) | preview·비동기 가격 해석 flow, callback, DB, 테스트·품질 평가 |
 
 Agent별 문서는 번호 순서대로 읽는다. 신규 Agent도 `docs/agents/<agent_name>/` 아래에 개요를 시작으로
 공식 문서를 모은다.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Parameter Release Verification"
+  short_description: "Verify DB safety, runtime flow, tests, and release evidence"
+  default_prompt: "Use $verify-model-parameter-release to verify the Model Parameter rollout, database safety, proposal and confirmation flow, and integrated report."

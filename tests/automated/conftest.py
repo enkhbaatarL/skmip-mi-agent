@@ -23,6 +23,13 @@ from apps.common.utils.yaml_utils import normalize_yaml_text
 DEFAULT_CONFIG_FILE = Path(__file__).resolve().parents[2] / "envs" / "config.yaml"
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "model_parameter_core: fast, DB/LLM-independent Model Parameter contract smoke gate",
+    )
+
+
 def _load_model_parameter_resources() -> tuple[Path, dict[str, object]]:
     config_path = (
         Path(

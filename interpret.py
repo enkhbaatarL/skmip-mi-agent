@@ -8,10 +8,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# from apps.agents.model_parameter_agent.api import router as model_parameter_router
 from apps.agents.interpret_agent.api import router as interpret_router
 from apps.agents.interpret_agent.constants import AGENT_NAME
-from apps.agents.scenario_group_agent.api import router as scenario_group_router
 from apps.common.configs.database.application_tables import APPLICATION_TABLES
 from apps.common.configs.database.schema_validation import validate_schema
 from apps.common.configs.database.sync_database.connection import get_sync_engine
@@ -44,9 +42,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await get_token_manager().get_token()
             logger.info("Callback OAuth2 token pre-fetched successfully")
         except Exception:
-            logger.exception(
-                "Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token"
-            )
+            logger.exception("Callback OAuth2 token pre-fetch failed, continuing startup without pre-fetched token")
     else:
         logger.error("callback_oauth2_token_url not configured, skipping token pre-fetch")
 

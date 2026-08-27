@@ -55,6 +55,8 @@ def build_lut_catalog(
     all_diagnostics: list[str] = []
     by_parameter: dict[str, Mapping[CanonicalKey, LutRecord]] = {}
     for parameter_name, spec in registry.specs.items():
+        if not spec.enabled:
+            continue
         role_snapshots = {role: snapshots_by_path[file_spec.relative_path] for role, file_spec in spec.files.items()}
         loaded = load_parameter_records(spec, policy, role_snapshots)
         if not loaded:
@@ -62,6 +64,15 @@ def build_lut_catalog(
             raise domain_error(
                 msg,
             )
+        if "Year" in spec.key_axes:
+            produced_years = {int(record.axes["Year"]) for record in loaded if record.axes.get("Year") is not None}
+            missing_years = sorted(set(policy.years) - produced_years)
+            if missing_years:
+                msg = (
+                    "registered LUT parameter does not cover the complete configured horizon: "
+                    f"parameter={parameter_name}, missing_years={missing_years}"
+                )
+                raise domain_error(msg)
         unique: dict[CanonicalKey, LutRecord] = {}
         for record in loaded:
             all_diagnostics.extend(
