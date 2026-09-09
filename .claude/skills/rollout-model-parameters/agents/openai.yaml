@@ -1,4 +1,4 @@
 interface:
-  display_name: "Model Parameter Rollout"
-  short_description: "Roll out canonical DB, LUT, config, workbook, and docs"
-  default_prompt: "Use $rollout-model-parameters to implement a canonical Model Parameter change across DB, LUT, configuration, workbook, tests, and documentation."
+  display_name: "Model Parameter v4 Rollout"
+  short_description: "Roll out v4 canonical, Lever, resources, and docs"
+  default_prompt: "Use $rollout-model-parameters to implement a canonical v4 Model Parameter and Impact Lever change with protected legacy mappings."

@@ -1,82 +1,85 @@
-# Model Parameter release verification matrix
-Run commands from the repository root. Derive future expectations from the selected canonical fixture rather than copying the dated v1 counts below.
+# v4 Model Parameter release verification matrix
 
-## Version-aware release route
+Run commands from the repository root. This matrix covers only the v4 canonical release and its v4 multi-event live E2E route.
 
-Resolve the selected Model Parameter canonical before running any DB command. Generic v1 filenames are legacy paths, not fallbacks for newer releases.
+## Release route
 
-| Canonical | Target DB runner | Disposable static-SQL verifier | Static SQL | Legacy mapping policy |
-|---|---|---|---|---|
-| historical `model-parameter-canonical-v4` release replay | `scripts/model_parameter/apply_model_parameter_v4.py` against its dated 128-row snapshot-compatible state only | `tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py` | `scripts/model_parameter/apply_model_parameter_canonical_v4.sql` | Immutable 128-row release replay; do not run this dated target runner as post-maintenance acceptance on the current 129-row DB |
-| v1/v3 shared mapping only | `scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py` | focused runner/unit verification | not required for this minimal Python-runner rollout | v1 fixture `dimension_mappings` owns the 129-row target; current v4 master/Lever must match and remain unchanged |
-| full legacy `model-parameter-canonical-v1` maintenance | `scripts/model_parameter/apply_canonical.py` | `tests/manual/model_parameter_agent/verify_canonical_sql_mysql.py` | `scripts/model_parameter/apply_model_parameter_canonical_v1.sql` | Historical full-master path; do not use for mapping-only rollout |
-| Later version | Explicit compatible version runner required | Explicit compatible version verifier required | Matching versioned SQL required | Derive from its approved snapshot; never fall back to v1 |
+| Scope | Route | Blocking guard |
+|---|---|---|
+| Local artifacts and runtime | Safe automated environment and workbook check below | Must pass completely before target-DB DML |
+| Incoming resource staging | Read-only inventory of `apps/agents/model_parameter_agent/new_resources/` | Never a runtime root; absent LUT is valid, claimed release files must be explicitly promoted |
+| Disposable static SQL | `tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py` | Optional unless the matching v4 SQL artifact is in release scope; disposable MySQL 8 only |
+| Target DB | `scripts/model_parameter/apply_model_parameter_v4.py` | Explicit dry-run authority; snapshot-compatible baseline only |
+| Target DB commit | Same runner with `--apply`, or explicitly selected matching v4 SQL procedure | Separate explicit commit authority; exactly one commit path |
+| Live E2E | `.claude/skills/model-parameter-multi-event-quality/SKILL.md` | v4 multi-event only; separate proposal/confirmation and LLM authority |
 
-## Safe local test environment
+If the canonical, snapshot, or live baseline does not match this v4 route, stop and report the missing version-aware runner. Do not fall back to another canonical generation or generic filename.
 
-Automated Model Parameter suites must not use the target DB, Object Storage, or an LLM provider. The committed
-`tests/automated/.env.example` contains dummy DB settings and disables remote resource storage so
-`Settings` can be imported without loading deployment credentials. Use it only for automated suites; real proposal and
-target DB commands use their separately authorized environment.
+## Safe local environment
 
-## Named non-mutating suites
+Automated suites must not use the target DB, Object Storage, or an LLM provider. The committed `tests/automated/.env.example` supplies dummy DB settings and disables remote resource storage. Use it only for automated suites; separately authorized target DB and live E2E commands use their intended environment.
 
-Start with the curated core contract gate. It covers public API/graph wiring, DB-derived mapping, representative
-Basecase parsing, Step1.5/Step2/Step3 contracts, output/persistence, confirmation, and callback failure behavior. Record
-the collected count from the run instead of hard-coding a historical total.
+Before tests, inventory `new_resources/` without changing it. Ignore `.DS_Store` and `~$*`. Record `NOT PRESENT` when `new_resources/lut/` has no LUT; when it does, record source digests and normalized-name collisions with canonical `resources/lut/`. Tests and manifests must continue to read canonical `resources/` only. A release that claims a staged LUT but has not explicitly promoted and declared it is `FAIL`; unrelated future staging is reported as pending and left untouched.
+
+### Core gate
 
 ```bash
 poetry run dotenv -f tests/automated/.env.example run --override \
   pytest -q -m model_parameter_core \
-  tests/automated/test_model_parameter_agent_contract.py
+  tests/automated/test_model_parameter_agent_contract.py \
+  tests/automated/test_model_parameter_multi_event_quality.py \
+  tests/automated/test_model_parameter_runner_common.py
 ```
 
-Then run the domain suites affected by the change:
+Record the runtime collected count; do not hard-code a historical total.
+
+### Affected v4 domain suites
 
 | Suite | Run when | Membership |
 |---|---|---|
-| `agent-contract-detail` | API, graph, prompt, Basecase parser, persistence, confirmation, callback | `test_model_parameter_agent_contract.py` without marker filtering |
-| `canonical-workbook` | canonical JSON/SQL/Excel/docs or active parameter set | workbook `--check-only` + `test_model_parameter_canonical_consistency.py` |
+| `agent-contract-detail` | API, graph, prompt, persistence, confirmation, callback | `test_model_parameter_agent_contract.py` without marker filtering; `test_model_parameter_runner_common.py` |
+| `canonical-workbook` | v4 canonical JSON/SQL, workbook/docs, or active set | workbook `--check-only` and `test_model_parameter_canonical_consistency.py` |
 | `lut-runtime` | LUT adapter, catalog, exact reference, prompt guard | `test_model_parameter_lut_domain.py`, `test_model_parameter_lut_pipeline.py` |
 | `resource-config-storage` | resource manifest, YAML/ConfigMap, Object Storage/cache | `test_model_parameter_resource_sync.py` |
-| `report-runner` | manual runner or integrated report contract | `test_model_parameter_report_scope.py` |
-| `v3-input-export` | scenario proposal XLSM export or calcChain handling | `test_model_parameter_v3_input_export.py` |
-| `v3-multi-event` | v3 lineage, nullable event, v3 proposal, quality evaluation | `test_model_parameter_multi_event_contract.py`, `test_model_parameter_v3_proposal.py`, `test_model_parameter_nullable_event_consumers.py`, `test_model_parameter_multi_event_quality.py` |
-| `impact-lever` | Model Impact Lever canonical/service behavior | `test_model_impact_lever_canonical.py`, `test_model_impact_lever_service.py` |
-| `v3-v4-engine-comparison` | confirmed-input export, proposal comparison, LNG engine report or campaign contract | `test_model_parameter_confirmed_input_export.py`, `test_model_parameter_v3_v4_comparison.py`, `test_model_parameter_v3_v4_engine_report.py` |
+| `impact-lever` | v4 Impact Lever canonical/service behavior | `test_model_impact_lever_canonical.py`, `test_model_impact_lever_service.py` |
+| `v4-proposal` | v4 candidate, proposal, or Lever-to-parameter behavior | `test_model_parameter_v4_proposal.py` |
+| `v4-basecase` | v4 Basecase interpretation | `test_model_parameter_v4_basecase.py` |
+| `v4-multi-event` | v4 multi-event selection, ordered Event cardinality, lineage, boundary, or persistence | `test_v4_multi_event_model_lever_scenarios.py`, `test_model_parameter_multi_event_quality.py` |
+| `report-runner` | v4 quality runner, shared write workflow, or integrated report contract | `test_model_parameter_multi_event_quality.py`, `test_model_parameter_runner_common.py`, `test_model_parameter_report_scope.py` |
 
-Use the same safe environment prefix for every pytest command. Examples:
+Use the safe environment prefix for every pytest command. Example:
 
 ```bash
-poetry run dotenv -f tests/automated/.env.example run --override \
-  pytest -q tests/automated/test_model_parameter_agent_contract.py
-
 poetry run python scripts/model_parameter/sync_mapping_workbook.py --check-only
 poetry run dotenv -f tests/automated/.env.example run --override \
   pytest -q \
   tests/automated/test_model_parameter_canonical_consistency.py \
-  tests/automated/test_model_parameter_lut_domain.py \
-  tests/automated/test_model_parameter_lut_pipeline.py \
-  tests/automated/test_model_parameter_resource_sync.py
+  tests/automated/test_model_impact_lever_canonical.py \
+  tests/automated/test_model_impact_lever_service.py \
+  tests/automated/test_model_parameter_v4_proposal.py \
+  tests/automated/test_model_parameter_v4_basecase.py \
+  tests/automated/test_v4_multi_event_model_lever_scenarios.py \
+  tests/automated/test_model_parameter_multi_event_quality.py \
+  tests/automated/test_model_parameter_runner_common.py \
+  tests/automated/test_model_parameter_report_scope.py
 ```
 
-After the core and affected-domain checks pass, run the full automated suite once on the final worktree:
+### Full pre-DML regression gate
+
+Run this once on the final worktree before any target-DB dry-run or commit:
 
 ```bash
 poetry run dotenv -f tests/automated/.env.example run --override \
-  pytest -q tests/automated
+  pytest -q tests/automated \
+  --ignore=tests/automated/test_model_parameter_multi_event_mysql.py
 git diff --check
 ```
 
-`test_model_parameter_multi_event_mysql.py` is not part of the non-mutating suites. Run it only through the disposable
-MySQL gate with its explicit opt-in environment. Run Ruff/compile checks only over changed Python paths. Use
-`git diff --name-only` to build the reviewed file set; do not format unrelated dirty files.
+`test_model_parameter_multi_event_mysql.py` is opt-in and is not part of the non-mutating gate. Run it only with its explicit integration environment against a separately confirmed disposable MySQL database. Never let inherited target/shared DB settings satisfy that opt-in.
 
-## Disposable MySQL static-SQL check
+## Optional disposable MySQL static-SQL check
 
-The selected verifier drops and recreates its test tables. Confirm the host is disposable in addition to satisfying the verifier's DB-name regex.
-
-For v4, verify master, legacy dimension mapping, Impact Lever and active scenario template with the v4 snapshot:
+Skip this section, without failing acceptance, when the matching v4 static SQL artifact is outside the release scope. When it is in scope, the verifier drops and recreates test tables, so both the server and database must be disposable and owned by the run.
 
 ```bash
 poetry run python tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py \
@@ -84,107 +87,84 @@ poetry run python tests/manual/model_parameter_agent/verify_model_parameter_v4_s
   --port <disposable-port> \
   --user <test-user> \
   --password <test-only-password> \
-  --database model_parameter_v4_sql_verify_<run-id>
+  --database model_parameter_v4_sql_verify_<run_id>
 ```
 
-Require first apply, semantic idempotency, master/Impact-Lever precondition rollback, post-invariant rollback, and exact preservation of the historical 128-row seed. This verifier is a disposable historical release replay, not evidence that the dated v4 target runner accepts the current 129-row DB.
+The database name must match `model_parameter_v4_sql_verify(?:_[a-z0-9_]+)?`, but the name guard does not prove that the host is disposable. Never use target/shared credentials or point the verifier at the target DB.
 
-For legacy v1 maintenance only:
-
-```bash
-poetry run python tests/manual/model_parameter_agent/verify_canonical_sql_mysql.py \
-  --host 127.0.0.1 \
-  --port <disposable-port> \
-  --user <test-user> \
-  --password <test-only-password> \
-  --database model_parameter_sql_verify_<run-id>
-```
-
-Capture:
+Require and capture:
 
 - MySQL server version;
-- first and second apply PASS;
+- first apply and second semantic-idempotent apply;
+- master and Impact Lever precondition rollback;
+- post-DML invariant rollback;
+- exact snapshot mapping preservation;
 - semantic digest equality excluding only `mod_dtm`;
-- exact digest equality before/after forced precondition failure;
-- exact digest equality before/after forced post-DML invariant failure;
+- exact whole-table failure-path digests;
 - teardown completion.
 
-Never use production/shared credentials in command history. Prefer ephemeral test credentials or a protected environment-specific wrapper.
+## Target DB transaction gate
 
-## Target DB transaction checks
+The target runner performs DML and locks before rollback even without `--apply`. Do not run either command until the exact target identity, snapshot provenance, lock window, and corresponding authority are recorded.
 
-Default dry-run performs DML and invariant/read-back checks inside a transaction and then rolls back. The following v4 command is retained for the dated 128-row release state only; do not run it as current post-maintenance acceptance after the shared mapping becomes 129 rows:
+The dated v4 runner is valid only for its snapshot-compatible baseline. Any live-state mismatch is a blocker, not a reason to weaken its guard or choose another runner.
+
+Dry-run, after explicit dry-run authority:
 
 ```bash
 poetry run python scripts/model_parameter/apply_model_parameter_v4.py
 ```
 
-Commit v4 only after target/diff authorization:
+Commit, only after the dry-run passes and separate explicit commit authority is recorded:
 
 ```bash
 poetry run python scripts/model_parameter/apply_model_parameter_v4.py --apply
 ```
 
-The dated v4 runner may update only the 21-row parameter master and 16-row Impact Lever catalog, but its precondition intentionally pins the 128-row snapshot. A future master/Lever rollout from the current 129-row state requires a new snapshot and versioned runner rather than weakening this historical guard.
+Use the matching v4 static SQL procedure only as an explicitly selected alternative commit path. Never execute both target commit paths. After commit, perform full read-back and, while dry-run authority remains valid, rerun the command without `--apply` to verify the final state.
 
-For the approved v1/v3 mapping-only rollout, dry-run and commit with `scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`. Require 129 rows, method counts 35/6/55/33, the exact ten-candidate set, no FK/template/natural-key violation, and exact preservation of v4 master, Impact Lever catalog and hydrated checksum. Run the same command again without `--apply` after commit, then compare SELECT-only v4 runtime/persistence fingerprints with `tests/manual/model_parameter_agent/capture_v4_mapping_invariance.py`.
+Required target evidence:
 
-For legacy v1 maintenance only:
+- exact v4 master and Impact Lever identities and domain columns;
+- active names and binding counts;
+- mapping and scenario-template invariance required by the snapshot;
+- FK, orphan, duplicate-natural-key, and creation-audit checks;
+- hydrated catalog checksum;
+- before/intended/after digests and post-apply dry-run result;
+- preserved immutable pre-apply snapshot.
 
-```bash
-poetry run python scripts/model_parameter/apply_canonical.py
-```
+## v4 multi-event live E2E gate
 
-The legacy runner accepts explicit v1-compatible files:
+Read and follow `.claude/skills/model-parameter-multi-event-quality/SKILL.md`; do not duplicate its execution and report contract here.
 
-```bash
-poetry run python scripts/model_parameter/apply_canonical.py \
-  --canonical <canonical-json> \
-  --snapshot <pre-apply-snapshot>
-```
-
-Commit legacy v1 only after target/diff authorization:
+Start with SELECT-only discovery:
 
 ```bash
-poetry run python scripts/model_parameter/apply_canonical.py --apply
+poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_quality.py
 ```
 
-Then rerun the target DB dry-run and read-back. Do not present a local mocked unit-suite rerun as proof of the applied DB
-state. Use the matching versioned static MySQL procedure as an alternative commit path, never as an additional target-DB test.
+Accept only dynamically discovered `api_version=v4`, `generation_strategy=multi_event_model_lever_dimensions` evidence with 1–5 ordered Events. The route name does not impose a two-Event minimum. If the runner cannot select and prove that route, report a tooling blocker or `COVERAGE LIMIT`; do not substitute another generation strategy or another API version.
 
-## Real proposal and confirmation checks
-
-Use `.claude/skills/model-parameter-agent-test/SKILL.md` and its maintained runners:
-
-- `tests/manual/model_parameter_agent/evaluate_event_type_proposals.py`
-- `.claude/skills/model-parameter-agent-test/scripts/run_single_scenario_report.py`
-
-Select scenarios dynamically from the current DB mapping. Do not duplicate that skill's command and report contract here.
-
-For v3/v4 LNG engine comparisons, additionally follow
-`references/v3-v4-lng-comparison.md` and the nested
-`tests/lng_model/skills/evaluate-lng-price-tags/SKILL.md`. Run the comparison suite before executing external workbooks:
+Execute only after separate explicit authority for proposal/confirmation writes and external LLM usage:
 
 ```bash
-poetry run dotenv -f tests/automated/.env.example run --override \
-  pytest -q \
-  tests/automated/test_model_parameter_confirmed_input_export.py \
-  tests/automated/test_model_parameter_v3_v4_comparison.py \
-  tests/automated/test_model_parameter_v3_v4_engine_report.py
+poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_quality.py \
+  --scenario-group-id <v4-group-id> \
+  --execute
 ```
+
+Also establish the fixed Basecase/LUT release and authority for any remote cache write. Require dynamic DB-derived candidates, catalog-pinned Lever lineage, proposal persistence, empty-confirm rollback, valid full confirmation, reconfirmation, DB read-back, IDs, exact slots/values, provider token usage, timing, and retry evidence.
 
 ## Acceptance evidence
 
 | Area | Required evidence |
 |---|---|
-| Canonical | Full fixture comparison; version, snapshot, active set, counts, audit rules |
-| Config/resources | YAML/ConfigMap parity; one classification per CSV; active startup and exact catalog slots |
-| Runtime | Compression round-trip; exact effective Step3 reference; slot/byte guards before LLM |
-| Workbook/docs | Current workbook matches fixture; archive is historical; docs contain no stale active state or unverified claims |
-| Static SQL | Selected version/verifier, two applies, semantic idempotency, precondition rollback, post-invariant rollback, teardown; v4 also proves transaction-entry mapping preservation |
-| Target DB | Version-aware dry-run, authorized single commit path, full read-back, post-apply dry-run; mapping-only rollout proves v4 master/Lever/checksum invariance |
-| E2E | DB-derived candidates, proposal persistence, empty-confirm rollback, confirm, reconfirm, IDs/tokens/timing |
-| Regression | `core-smoke`, affected named domain suites, then one final full `tests/automated` run; suite별 counts |
+| Pre-DML regression | Workbook check, `core-smoke`, affected v4 suites, final full automated run, Ruff/compile for changed Python, `git diff --check` |
+| Incoming staging | `new_resources/` inventory, ignored-artifact list, staged LUT digests/collisions, and explicit `NOT PRESENT` or pending/promoted classification |
+| Canonical/resources | v4 fixture and snapshot hashes, YAML/ConfigMap parity, one classification per CSV, active startup, exact catalog slots |
+| Static SQL | Required only when the matching v4 SQL artifact is in scope; otherwise record an explicit skip reason |
+| Target DB | Required only when authorized and in scope: dry-run authority/result, separate commit authority/path, full read-back, post-apply dry-run |
+| Live E2E | v4 multi-event discovery; when separately authorized, proposal/confirmation/LLM results and retained evidence-row IDs |
+| Coverage | Distinguish `FAIL`, `COVERAGE LIMIT`, `NOT RUN`, and authority/capability blockers |
 
-## Current shared mapping baseline
-As of 2026-08-13, v1/v3 share 129 mappings with 35 direct / 6 routing / 55 indirect / 33 na and an exact ten-parameter direct/routing candidate set. The shared v4 master remains 21 rows/16 active and v4 continues to use only the Impact Lever catalog. The completed 2026-08-07 baseline reported 60,420 LUT records; keep that number historical unless resource validation is rerun.
+Never claim full DB or E2E PASS for a phase that was unauthorized, unavailable, or exercised a different API/canonical route.

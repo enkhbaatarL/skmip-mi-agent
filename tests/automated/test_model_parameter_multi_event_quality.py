@@ -1,1935 +1,1490 @@
 # Copyright (c) 2026 SK Innovation E&S.
-# ruff: noqa: S101, S105, SLF001
+# ruff: noqa: S101, SLF001
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
-from types import SimpleNamespace
+from pathlib import Path
+import subprocess
+from typing import Any
 
 import pytest
 
-from tests.manual.model_parameter_agent import (
-    evaluate_multi_event_quality as quality_runner,
+from apps.agents.model_parameter_agent.constants import (
+    MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
+    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
 )
-from tests.manual.model_parameter_agent.evaluate_multi_event_quality import (
-    ContractCaseEvidence,
-    ContractEvidence,
-    CoverageRow,
-    ProjectionResult,
-    ScenarioEvidence,
-    SchemaPreflight,
-    build_coverage_matrix,
-    build_parameter_quality_rows,
-    build_parser,
-    build_performance_rows,
-    build_prompt_grounding_rows,
-    capture_execute_prompt_packets,
-    execute_targets,
-    project_expected_mappings,
-    render_report,
-    run_automated_contract_preflight,
-    schema_preflight,
-    select_quality_targets,
+from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
+    _merge_candidates_by_parameter,
 )
-from tests.manual.model_parameter_agent.runner_common import serialize_proposal_row
+from tests.manual.model_parameter_agent import evaluate_multi_event_quality as runner
 
 
-def _parameter_definition(
+pytestmark = pytest.mark.model_parameter_core
+
+CATALOG_VERSION = "v4-test"
+CATALOG_CHECKSUM = "a" * 64
+
+
+def _binding(parameter_name: str) -> dict[str, Any]:
+    return {
+        "parameter_name": parameter_name,
+        "role": "primary",
+        "applicability": f"Use {parameter_name} when the Lever is selected.",
+        "support_status": "executable",
+        "unsupported_reason_code": None,
+    }
+
+
+def _lever(
+    impact_lever_id: int,
+    lever_code: str,
     parameter_name: str,
-    model_file: str = "Demand",
-) -> dict[str, object]:
+    *,
+    domain: str,
+) -> dict[str, Any]:
+    return {
+        "impact_lever_id": impact_lever_id,
+        "lever_code": lever_code,
+        "domain": domain,
+        "label": lever_code,
+        "description": f"{lever_code} description",
+        "applicability_hint": f"{lever_code} hint",
+        "parameter_bindings": [_binding(parameter_name)],
+        "catalog_version": CATALOG_VERSION,
+    }
+
+
+def _lever_state(
+    lever: dict[str, Any],
+    *,
+    is_primary: bool = False,
+) -> dict[str, Any]:
+    return {
+        "lever_code": lever["lever_code"],
+        "impact_lever_id": lever["impact_lever_id"],
+        "direction": "increase",
+        "level": "high",
+        "scope": "global",
+        "time_window": "2027-2028",
+        "is_primary_lever": is_primary,
+        "lever_domain": lever["domain"],
+        "lever_label": lever["label"],
+        "lever_description": lever["description"],
+        "lever_applicability_hint": lever["applicability_hint"],
+        "parameter_bindings": deepcopy(lever["parameter_bindings"]),
+    }
+
+
+def _definition(
+    parameter_name: str,
+    *,
+    model_file: str,
+    model_sheet: str,
+) -> dict[str, Any]:
     return {
         "canonical_parameter_name": parameter_name,
         "parameter_name": parameter_name,
+        "parameter_hint": f"{parameter_name} input",
         "model_file": model_file,
-        "model_sheet": f"{parameter_name}Adjustment",
+        "model_sheet": model_sheet,
+        "model_table": "InputTable",
+        "semantic_axes": "Country, Year",
     }
 
 
-def _relations() -> list[dict[str, int]]:
-    return [
+def _context(*, event_count: int = 2) -> dict[str, Any]:
+    gdp_lever = _lever(101, "economic_activity", "GDP", domain="demand")
+    shipping_lever = _lever(102, "shipping_cost", "ShippingCost", domain="trade")
+    events = [
         {
-            "mi_event_id": 101,
-            "event_type_l2_id": 10,
-            "scenario_dimension_template_id": 1001,
-            "display_order": 1,
-        },
-        {
-            "mi_event_id": 102,
-            "event_type_l2_id": 20,
-            "scenario_dimension_template_id": 2001,
-            "display_order": 2,
-        },
+            "mi_event_id": 100 + index,
+            "display_order": index,
+            "event_title_ko": f"event-{index}",
+        }
+        for index in range(1, event_count + 1)
     ]
-
-
-def _definitions() -> list[dict[str, object]]:
-    return [
-        {
-            "dimensionId": "composite_pressure",
-            "sourceEventIds": [101, 102],
-            "sourceRefs": [
-                {"scenarioDimensionTemplateId": 1001, "dimKey": "demand"},
-                {"scenarioDimensionTemplateId": 2001, "dimKey": "supply"},
+    source_event_ids = [events[0]["mi_event_id"]] if events else []
+    return {
+        "scenario": {
+            "scenario_id": 501,
+            "scenario_group_id": 41,
+            "title": "v4 scenario",
+            "dimension_values": {"market_pressure": "high"},
+        },
+        "scenario_group": {
+            "scenario_group_id": 41,
+            "title": "v4 group",
+            "api_version": runner.V4_API_VERSION,
+            "generation_strategy": runner.V4_STRATEGY,
+            "impact_catalog_version": CATALOG_VERSION,
+            "impact_catalog_checksum": CATALOG_CHECKSUM,
+        },
+        "event": {},
+        "events": events,
+        "event_type": {},
+        "dimension_template": [],
+        "dimension_value_mappings": [],
+        "dimension_lineage": [
+            {
+                "scenario_dimension_key": "market_pressure",
+                "scenario_dimension_label": "Market pressure",
+                "scenario_dimension_value": "high",
+                "scenario_dimension_value_id": "high",
+                "source_event_ids": source_event_ids,
+                "primary_lever_code": gdp_lever["lever_code"],
+                "primary_impact_lever_id": gdp_lever["impact_lever_id"],
+                "lever_states": [
+                    _lever_state(gdp_lever, is_primary=True),
+                    _lever_state(shipping_lever),
+                ],
+            },
+        ],
+        "impact_levers": [gdp_lever, shipping_lever],
+        "impact_catalog_version": CATALOG_VERSION,
+        "impact_catalog_checksum": CATALOG_CHECKSUM,
+        "model_support_issues": [],
+        "candidate_exclusion_reason_codes": [],
+        "executable_binding_occurrences": 2,
+        "validation_warnings": [],
+        "parameter_mapping_resources": {
+            "mapping_rules": [],
+            "parameter_definitions": [
+                _definition("GDP", model_file="Demand", model_sheet="Input"),
+                _definition(
+                    "ShippingCost",
+                    model_file="Trade",
+                    model_sheet="ShippingInput",
+                ),
             ],
         },
-    ]
-
-
-def _mapping_rules() -> list[dict[str, object]]:
-    return [
-        {
-            "event_type_l2_id": 10,
-            "dimension_key": "demand",
-            "canonical_parameter_name": "GDP",
-            "mapping_method": "direct",
-        },
-        {
-            "event_type_l2_id": 10,
-            "dimension_key": "demand",
-            "canonical_parameter_name": "PMI",
-            "mapping_method": "routing",
-        },
-        {
-            "event_type_l2_id": 20,
-            "dimension_key": "supply",
-            "canonical_parameter_name": "GDP",
-            "mapping_method": "direct",
-        },
-    ]
-
-
-_PRESSURE_PROJECTION = {
-    "sourceEventId": 101,
-    "value": "high",
-    "rationale": "수요·공급 복합 압력",
-}
-_DURATION_PROJECTION = {
-    "sourceEventId": 102,
-    "value": "long",
-    "rationale": "공급 충격 지속 기간",
-}
-
-
-def _projection() -> ProjectionResult:
-    return project_expected_mappings(
-        dimension_definitions=_definitions(),
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=_relations(),
-        mapping_rules=_mapping_rules(),
-        parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-    )
-
-
-def _evidence(
-    *,
-    scenario_id: int = 501,
-    occurrences: tuple[dict[str, object], ...] | None = None,
-) -> ScenarioEvidence:
-    projection = _projection()
-    return ScenarioEvidence(
-        scenario_group_id=50,
-        scenario_id=scenario_id,
-        group_title="multi-event group",
-        scenario_title="composite scenario",
-        parameter_mapping_ready=False,
-        relation_count=2,
-        group_event_ids=(101, 102),
-        ordered_events=(
-            {
-                "display_order": 1,
-                "mi_event_id": 101,
-                "event_type_l2_id": 10,
-                "scenario_dimension_template_id": 1001,
-                "title": "수요 충격",
-                "one_line_summary": "수요가 빠르게 증가한다.",
-                "key_bullets": ["강한 상방 압력"],
-                "tags": ["demand"],
-                "detail_excerpt": "단기간 수요 급증이 복합 압력에 기여한다.",
-            },
-            {
-                "display_order": 2,
-                "mi_event_id": 102,
-                "event_type_l2_id": 20,
-                "scenario_dimension_template_id": 2001,
-                "title": "공급 충격",
-                "one_line_summary": "공급이 감소한다.",
-                "key_bullets": ["강한 하방 압력"],
-                "tags": ["supply"],
-                "detail_excerpt": "중기 공급 감소가 복합 압력과 충돌한다.",
-            },
-        ),
-        occurrences=occurrences if occurrences is not None else projection.occurrences,
-        dimension_values={
-            "composite_pressure": "high",
-            "composite_duration": "long",
-            "composite_unrelated": "ignored",
-        },
-        projection_statuses=(
-            "composite_pressure=approved",
-            "composite_duration=approved",
-            "composite_unrelated=missing",
-        ),
-        dimension_source_event_ids={
-            "composite_pressure": (101, 102),
-            "composite_duration": (102,),
-            "composite_unrelated": (101,),
-        },
-        dimension_source_refs={
-            "composite_pressure": (
-                {
-                    "scenario_dimension_template_id": 1001,
-                    "dim_key": "demand",
-                },
-                {
-                    "scenario_dimension_template_id": 2001,
-                    "dim_key": "supply",
-                },
-            ),
-            "composite_duration": (
-                {
-                    "scenario_dimension_template_id": 2001,
-                    "dim_key": "duration",
-                },
-            ),
-            "composite_unrelated": (
-                {
-                    "scenario_dimension_template_id": 1001,
-                    "dim_key": "unrelated",
-                },
-            ),
-        },
-        approved_source_projections={
-            "composite_pressure": (_PRESSURE_PROJECTION,),
-            "composite_duration": (_DURATION_PROJECTION,),
-        },
-    )
-
-
-def _runtime_candidate(occurrence: dict[str, object]) -> dict[str, object]:
-    return {
-        **occurrence,
-        "canonical_parameter_name": occurrence["parameter_name"],
-        "source_dimension_id": occurrence["scenario_dimension_key"],
-        "mapping_strategy": "v3",
-        "source_refs": [
-            {
-                "scenario_dimension_template_id": occurrence["scenario_dimension_template_id"],
-                "dim_key": occurrence["mapping_dimension_key"],
-            },
-        ],
-        "approved_source_projections": [_PRESSURE_PROJECTION],
     }
 
 
-def _runtime_task_key(
-    parameter_name: str,
-    *,
-    model_file: str = "Demand",
-    model_sheet: str | None = None,
-) -> str:
-    from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
-        _parameter_candidate_key,
-    )
-
-    return _parameter_candidate_key(
-        {
-            "mapping_strategy": "v3",
-            "canonical_parameter_name": parameter_name,
-            "model_file": model_file,
-            "model_sheet": model_sheet or f"{parameter_name}Adjustment",
-        },
-    )
+def _evidence(*, event_count: int = 2) -> runner.ScenarioEvidence:
+    evidence = runner.build_v4_scenario_evidence(501, _context(event_count=event_count))
+    assert evidence.errors == ()
+    return evidence
 
 
-def _proposal_parameter(
-    parameter_name: str,
-    *,
-    include_lut: bool = False,
-) -> dict[str, object]:
-    value = {
-        "Year": 2026,
-        "basecaseValue": 1.0,
-        "proposedValue": 1.1,
-        "rationale": "복합 압력의 방향과 강도를 단일 값으로 반영했다.",
-    }
-    if include_lut:
-        value["lutValue"] = 0.9
+def _proposal_parameter(parameter_name: str = "GDP") -> dict[str, Any]:
     return {
         "parameterName": parameter_name,
         "modelTarget": {
-            "modelFile": "Demand",
-            "modelSheet": f"{parameter_name}Adjustment",
-            "slotAxesFieldNames": ["Year"],
+            "modelFile": "Demand" if parameter_name == "GDP" else "Trade",
+            "modelSheet": "Input" if parameter_name == "GDP" else "ShippingInput",
+            "tableName": "InputTable",
+            "valueFieldNames": [parameter_name],
+            "slotAxesFieldNames": ["Country", "Year"],
         },
-        "rationale": "두 이벤트와 composite pressure를 함께 고려했다.",
-        "values": [value],
+        "rationale": "test",
+        "values": [
+            {
+                "Country": "Korea",
+                "Year": 2027,
+                "basecaseValue": 1.0,
+                "proposedValue": 1.1,
+                "rationale": "test",
+            },
+        ],
     }
 
 
-def _execution_context(target: ScenarioEvidence) -> dict[str, object]:
-    lineage = [
-        {
-            "scenario_dimension_key": dimension_key,
-            "scenario_dimension_label": dimension_key,
-            "scenario_dimension_value": target.dimension_values[dimension_key],
-            "source_event_ids": list(
-                target.dimension_source_event_ids.get(dimension_key) or (),
+def _execution_record(evidence: runner.ScenarioEvidence) -> dict[str, Any]:
+    merged_candidates, warnings = _merge_candidates_by_parameter(
+        [dict(item) for item in evidence.runtime_candidates],
+    )
+    assert warnings == []
+    merged = merged_candidates[0]
+    proposal_parameters = [_proposal_parameter()]
+    return {
+        "scenario_id": evidence.scenario_id,
+        "context": {
+            "scenario": {
+                "scenario_id": evidence.scenario_id,
+                "scenario_group_id": evidence.scenario_group_id,
+            },
+            "scenario_group": {
+                "scenario_group_id": evidence.scenario_group_id,
+                "api_version": evidence.api_version,
+                "generation_strategy": evidence.generation_strategy,
+                "impact_catalog_version": evidence.stored_catalog_version,
+                "impact_catalog_checksum": evidence.stored_catalog_checksum,
+            },
+            "events": deepcopy(list(evidence.ordered_events)),
+            "dimension_lineage": deepcopy(list(evidence.dimension_lineage)),
+            "impact_catalog_version": evidence.active_catalog_version,
+            "impact_catalog_checksum": evidence.active_catalog_checksum,
+        },
+        "rule_candidates": [dict(item) for item in evidence.raw_candidates],
+        "expected_candidates": merged_candidates,
+        "prompt_grounding_evidence": {
+            "ordered_event_ids": list(evidence.ordered_event_ids),
+            "runtime_raw_candidate_keys": sorted(
+                item["candidate_key"] for item in evidence.runtime_candidates
             ),
-            "source_refs": [dict(item) for item in target.dimension_source_refs.get(dimension_key) or ()],
-            "approved_source_projections": [
-                dict(item) for item in target.approved_source_projections.get(dimension_key) or ()
-            ],
-        }
-        for dimension_key in target.dimension_values
-    ]
-    return {
-        "scenario": {
-            "scenario_id": target.scenario_id,
-            "title": target.scenario_title,
-            "dimension_values": dict(target.dimension_values),
+            "selected_candidate_keys": sorted(
+                item["candidate_key"] for item in merged_candidates
+            ),
         },
-        "scenario_group": {
-            "title": target.group_title,
-            "api_version": "v3",
-            "generation_strategy": "multi_event_composite_dimensions",
-            "parameter_mapping_ready": target.parameter_mapping_ready,
-            "dimension_selected": list(target.dimension_values),
-        },
-        "dimension_template": [{"dimension_id": key, "label": key} for key in target.dimension_values],
-        "dimension_lineage": lineage,
-        "events": [
-            {
-                "mi_event_id": event["mi_event_id"],
-                "event_type_l2_id": event["event_type_l2_id"],
-                "event_title_ko": event["title"],
-                "one_line_summary": event["one_line_summary"],
-                "key_bullets": list(event["key_bullets"]),
-                "tags": list(event["tags"]),
-                "detail_analysis": event["detail_excerpt"],
-            }
-            for event in target.ordered_events
-        ],
-    }
-
-
-def _indirect_dimension() -> dict[str, object]:
-    return {
-        "source_dimension_id": "composite_duration",
-        "scenario_dimension_key": "composite_duration",
-        "mapping_dimension_key": "duration",
-        "source_dimension_label": "지속 기간",
-        "source_dimension_value": "long",
-        "source_event_ids": [102],
-        "source_refs": [
-            {
-                "scenario_dimension_template_id": 2001,
-                "dim_key": "duration",
-            },
-        ],
-        "approved_source_projections": [_DURATION_PROJECTION],
-        "mapping_method": "indirect",
-        "reason": "모든 parameter의 기간 근거",
-    }
-
-
-def _successful_execution(
-    target: ScenarioEvidence,
-    *,
-    selected_candidates: list[dict[str, object]] | None = None,
-) -> dict[str, object]:
-    candidates = [_runtime_candidate(item) for item in target.occurrences]
-    selected_sources = candidates if selected_candidates is None else selected_candidates
-    selected_by_parameter: dict[str, list[dict[str, object]]] = {}
-    for candidate in selected_sources:
-        selected_by_parameter.setdefault(
-            str(candidate["canonical_parameter_name"]),
-            [],
-        ).append(candidate)
-    selected: list[dict[str, object]] = []
-    for parameter_name, sources in selected_by_parameter.items():
-        merged = dict(sources[0])
-        merged["candidate_key"] = _runtime_task_key(parameter_name)
-        merged["source_dimensions"] = [dict(source) for source in sources]
-        methods = {str(source["mapping_method"]) for source in sources}
-        merged["mapping_method"] = next(iter(methods)) if len(methods) == 1 else "merged"
-        selected.append(merged)
-    parameter_names = sorted(
-        {str(candidate["canonical_parameter_name"]) for candidate in selected},
-    )
-    candidate_keys = {parameter_name: _runtime_task_key(parameter_name) for parameter_name in parameter_names}
-    api_proposed = [_proposal_parameter(parameter_name, include_lut=True) for parameter_name in parameter_names]
-    stored_proposed = [_proposal_parameter(parameter_name) for parameter_name in parameter_names]
-    slots = [
-        {
-            "candidate_key": candidate_key,
-            "slot_key": f"{parameter_name}-2026",
-            "slot_axes": [{"axis_name": "Year", "axis_value": 2026}],
-        }
-        for parameter_name, candidate_key in candidate_keys.items()
-    ]
-    slot_catalog = [
-        {
-            "candidate_key": candidate_key,
-            "parameter_name": parameter_name,
-            "key_axes": ["Year"],
-            "fixed_axis_names": [],
-            "time_axis_names": ["Year"],
-            "period_groups": [
-                {
-                    "period_group_id": "period-group-1",
-                    "available_periods": [{"Year": 2026}],
-                },
-            ],
-            "fixed_axis_hierarchy": [
-                {"period_group_id": "period-group-1"},
-            ],
-        }
-        for parameter_name, candidate_key in candidate_keys.items()
-    ]
-    references = [
-        {
-            "candidate_key": candidate_key,
-            "slot_key": f"{parameter_name}-2026",
-            "axes": {"Year": 2026},
-            "actual_basecase_value": 1.0,
-            "lut_default_value": 0.9,
-            "llm_reference_value": 1.0,
-            "effective_source": "basecase",
-            "basecase_reference_id": f"basecase:{parameter_name}:2026",
-            "lut_reference_id": f"lut:{parameter_name}:2026",
-        }
-        for parameter_name, candidate_key in candidate_keys.items()
-    ]
-    adjustments = [
-        {
-            "candidate_key": candidate_key,
-            "parameter_name": parameter_name,
-            "parameter_selection_rationale_ko": ("연결된 이벤트와 composite dimension 근거를 함께 반영했다."),
-            "value_grid": [
-                {
-                    "coordinates": {"Year": 2026},
-                    "basecase_value": 1.0,
-                    "lut_value": 0.9,
-                    "proposed_value": 1.1,
-                    "rationale_ko": "복합 압력의 방향과 강도를 반영했다.",
-                },
-            ],
-        }
-        for parameter_name, candidate_key in candidate_keys.items()
-    ]
-    indirect_items = [_indirect_dimension()]
-    execution: dict[str, object] = {
-        "attempts": 1,
-        "elapsed_seconds": 10.0,
-        "context": _execution_context(target),
-        "rule_candidates": candidates,
-        "expected_candidates": selected,
-        "non_input_items": indirect_items,
-        "parameter_slots": slots,
-        "slot_catalog": slot_catalog,
-        "effective_references": references,
         "result": {
-            "parameter_adjustments": adjustments,
-            "non_input_items": indirect_items,
+            "parameter_adjustments": [
+                {
+                    "candidate_key": merged["candidate_key"],
+                    "model_file": merged["model_file"],
+                    "model_sheet": merged["model_sheet"],
+                    "parameter_name": "GDP",
+                    "selected": True,
+                    "parameter_selection_rationale_ko": "test",
+                    "value_grid": [
+                        {
+                            "coordinates": {"Country": "Korea", "Year": 2027},
+                            "basecase_value": 1.0,
+                            "proposed_value": 1.1,
+                            "rationale_ko": "test",
+                        },
+                    ],
+                },
+            ],
+            "non_input_items": [dict(item) for item in evidence.blocked_candidates],
+            "validation_warnings": [],
         },
-        "step_summary": {
-            "selected_slot_count": len(slots),
-            "value_reference_record_count": len(references),
-            "value_cell_count": len(adjustments),
-            "proposal_parameter_count": len(api_proposed),
-        },
-        "final_response": {
-            "data": {
-                "scenarioGroupId": target.scenario_group_id,
-                "eventId": None,
-                "proposalParameters": deepcopy(api_proposed),
-            },
-        },
-        "proposal_db_row": {
-            "scenario_group_id": target.scenario_group_id,
-            "mi_event_id": None,
-            "proposal_parameters": deepcopy(stored_proposed),
-            "confirmation_parameters": deepcopy(stored_proposed),
-        },
-        "confirmation": {
-            "status": "PASS",
-            "invalid_payload": {"status": "PASS"},
-            "valid_confirmation": {"status": "PASS"},
-            "reconfirmation": {"status": "PASS"},
-        },
-    }
-    execution["prompt_packets"] = capture_execute_prompt_packets(execution)
-    return execution
-
-
-def _llm_call(step: str) -> dict[str, object]:
-    return {
-        "step": step,
-        "success": True,
-        "prompt_bytes": 100,
-        "prompt_limit_bytes": 1000,
-        "elapsed_seconds": 1.5,
-        "internal_retry_count": 0,
-        "usage": {
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-            "total_tokens": 15,
-        },
-    }
-
-
-def test_actual_prompt_grounding_passes_with_completed_graph_packet_evidence() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-
-    rows = build_prompt_grounding_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert [row.step for row in rows] == ["Step1.5", "Step2", "Step3"]
-    assert {row.verdict for row in rows} == {"PASS"}
-    assert all(row.event_ids == (101, 102) for row in rows)
-    assert all(row.dimension_keys == ("composite_duration", "composite_pressure") for row in rows)
-    assert all("composite_unrelated" not in row.dimension_keys for row in rows)
-
-
-def test_actual_prompt_grounding_fails_missing_step_context() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    prompt_packets = execution["prompt_packets"]
-    assert isinstance(prompt_packets, dict)
-    step2 = prompt_packets["Step2"]
-    assert isinstance(step2, dict)
-    del step2["scenario_brief"]
-
-    rows = build_prompt_grounding_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    step2_row = next(row for row in rows if row.step == "Step2")
-
-    assert step2_row.verdict == "FAIL"
-    assert "scenario_brief 누락" in step2_row.evidence
-
-
-def test_actual_prompt_grounding_fails_lineage_projection_mismatch() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    prompt_packets = execution["prompt_packets"]
-    assert isinstance(prompt_packets, dict)
-    step3 = prompt_packets["Step3"]
-    assert isinstance(step3, dict)
-    brief = step3["scenario_brief"]
-    assert isinstance(brief, dict)
-    brief["events"] = list(reversed(brief["events"]))
-    pressure = next(item for item in brief["selected_dimensions"] if item["dimension_key"] == "composite_pressure")
-    pressure["source_event_ids"] = [999]
-    pressure["approved_source_projections"] = [{"value": "wrong"}]
-
-    rows = build_prompt_grounding_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    step3_row = next(row for row in rows if row.step == "Step3")
-
-    assert step3_row.verdict == "FAIL"
-    assert "display order event ID 불일치" in step3_row.evidence
-    assert "source event lineage 불일치" in step3_row.evidence
-    assert "승인 projection 불일치/누락" in step3_row.evidence
-
-
-def test_discovery_event_excerpt_matches_production_raw_slice() -> None:
-    detail = "D" * 1400
-
-    events, errors = quality_runner._bounded_event_evidence(
-        relation_rows=[
+        "parameter_slots": [
             {
-                "display_order": 1,
-                "mi_event_id": 101,
-                "event_type_l2_id": 10,
-                "scenario_dimension_template_id": 1001,
+                "candidate_key": merged["candidate_key"],
+                "slot_key": "slot-1",
+                "selected": True,
+                "slot_axes": [
+                    {"axis_name": "Country", "axis_value": "Korea"},
+                    {"axis_name": "Year", "axis_value": 2027},
+                ],
             },
         ],
-        event_records={
-            101: {
-                "event_type_l2_id": 10,
-                "event_title_ko": "긴 본문 이벤트",
-                "detail_analysis": detail,
-            },
-        },
-    )
-
-    assert errors == []
-    assert events[0]["detail_excerpt"] == detail[:1200]
-    assert not events[0]["detail_excerpt"].endswith("…")
-
-
-def test_projection_preserves_convergence_expansion_and_event_lineage() -> None:
-    result = _projection()
-
-    assert result.errors == ()
-    assert len(result.occurrences) == 3
-    assert [item["parameter_name"] for item in result.occurrences].count("GDP") == 2
-    assert {item["parameter_name"] for item in result.occurrences} == {"GDP", "PMI"}
-    assert {event_id for item in result.occurrences for event_id in item["source_event_ids"]} == {101, 102}
-    assert {item["candidate_key"] for item in result.occurrences} == {
-        "parameter|v3|demand|gdpadjustment|gdp",
-        "parameter|v3|demand|pmiadjustment|pmi",
-    }
-
-
-def test_stable_task_key_matches_production_normalization() -> None:
-    expected = "parameter|v3|demandmodelxlsx|gdpadjustment|gdp"
-
-    assert (
-        quality_runner._stable_task_key(
-            "GDP %",
-            "Demand.Model.xlsx",
-            "GDP Adjustment (%)",
-        )
-        == expected
-    )
-    assert (
-        _runtime_task_key(
-            "GDP %",
-            model_file="Demand.Model.xlsx",
-            model_sheet="GDP Adjustment (%)",
-        )
-        == expected
-    )
-
-
-def test_projection_fails_orphan_event_before_execution() -> None:
-    definitions = _definitions()
-    definitions[0]["sourceEventIds"] = [101, 999]
-
-    result = project_expected_mappings(
-        dimension_definitions=definitions,
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=_relations(),
-        mapping_rules=_mapping_rules(),
-        parameter_definitions=[_parameter_definition("GDP")],
-    )
-
-    assert any("group relation에 없습니다" in error for error in result.errors)
-    assert result.occurrences == ()
-
-
-def test_projection_warns_and_excludes_unmapped_valid_source() -> None:
-    result = project_expected_mappings(
-        dimension_definitions=_definitions(),
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=_relations(),
-        mapping_rules=[_mapping_rules()[0]],
-        parameter_definitions=[_parameter_definition("GDP")],
-    )
-
-    assert result.errors == ()
-    assert len(result.occurrences) == 1
-    assert any("활성 DB mapping이 없어 제외" in warning for warning in result.warnings)
-
-
-@pytest.mark.parametrize("mode", ["missing", "duplicate"])
-def test_projection_fails_missing_or_duplicate_display_order(mode: str) -> None:
-    relations: list[dict[str, object]] = [dict(item) for item in _relations()]
-    if mode == "missing":
-        relations[0].pop("display_order")
-    else:
-        relations[1]["display_order"] = 1
-
-    result = project_expected_mappings(
-        dimension_definitions=_definitions(),
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=relations,
-        mapping_rules=_mapping_rules(),
-        parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-    )
-
-    assert any("display_order" in error for error in result.errors)
-
-
-def test_scenario_evidence_loads_bounded_ordered_event_core_info() -> None:
-    group = SimpleNamespace(
-        scenario_group_id=50,
-        title="group",
-        parameter_mapping_ready=False,
-        dimension_definitions=_definitions(),
-    )
-    scenario = SimpleNamespace(
-        scenario_id=501,
-        title="scenario",
-        dimension_values={"composite_pressure": "high"},
-    )
-    event_records = {
-        event_id: {
-            "mi_event_id": event_id,
-            "event_type_l2_id": event_type_id,
-            "event_title_ko": "T" * 600,
-            "one_line_summary": "S" * 400,
-            "key_bullets": [f"bullet-{index}" for index in range(8)],
-            "tags": [f"tag-{index}" for index in range(12)],
-            "detail_analysis": "D" * 1400,
-        }
-        for event_id, event_type_id in ((101, 10), (102, 20))
-    }
-
-    evidence = quality_runner._build_scenario_evidence(
-        group=group,
-        scenario=scenario,
-        relations=_relations(),
-        dimension_mappings=[],
-        mapping_rules=_mapping_rules(),
-        parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        event_records=event_records,
-    )
-
-    assert [event["display_order"] for event in evidence.ordered_events] == [1, 2]
-    assert all(len(event["title"]) <= 500 for event in evidence.ordered_events)
-    assert all(len(event["one_line_summary"]) <= 300 for event in evidence.ordered_events)
-    assert all(len(event["key_bullets"]) == 5 for event in evidence.ordered_events)
-    assert all(len(event["tags"]) == 8 for event in evidence.ordered_events)
-    assert all(len(event["detail_excerpt"]) <= 1200 for event in evidence.ordered_events)
-
-
-def test_dynamic_selection_does_not_gate_mapping_ready_false() -> None:
-    gdp_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "GDP")
-    gdp_only = _evidence(scenario_id=501, occurrences=gdp_occurrences)
-    all_parameters = _evidence(scenario_id=502)
-
-    selected, skipped = select_quality_targets(
-        [gdp_only, all_parameters],
-        max_scenarios=1,
-        explicit_scope=False,
-    )
-
-    assert selected == [all_parameters]
-    assert selected[0].parameter_mapping_ready is False
-    assert skipped == [gdp_only]
-    assert skipped[0].selection_skip_reason == ("max_scenarios=1 cap으로 미선택; unique eligible occurrence=0")
-
-
-def test_selection_cap_reports_all_discovered_unique_eligible_coverage() -> None:
-    projection = _projection()
-    gdp_only = _evidence(
-        scenario_id=501,
-        occurrences=tuple(item for item in projection.occurrences if item["parameter_name"] == "GDP"),
-    )
-    pmi_only = _evidence(
-        scenario_id=502,
-        occurrences=tuple(item for item in projection.occurrences if item["parameter_name"] == "PMI"),
-    )
-    duplicate_pmi = deepcopy(pmi_only)
-    duplicate_pmi.scenario_id = 503
-    discovered = [gdp_only, pmi_only, duplicate_pmi]
-
-    selected, skipped = select_quality_targets(
-        discovered,
-        max_scenarios=1,
-        explicit_scope=False,
-    )
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=selected,
-        discovered_targets=discovered,
-        executions={},
-        execute=False,
-    )
-    by_name = {row.parameter_name: row for row in rows}
-
-    assert selected == [gdp_only]
-    assert skipped == [pmi_only, duplicate_pmi]
-    assert all(
-        target.selection_skip_reason == "max_scenarios=1 cap으로 미선택; unique eligible occurrence=1"
-        for target in skipped
-    )
-    assert issues == []
-    assert by_name["GDP"].eligible == 2
-    assert by_name["PMI"].eligible == 1
-    assert by_name["PMI"].candidate is None
-    assert by_name["PMI"].verdict == "COVERAGE LIMIT"
-    assert "discovered eligible=1, selected eligible=0, skipped unique=1" in by_name["PMI"].evidence
-    assert "max_scenarios=1 cap으로 미선택" in by_name["PMI"].evidence
-
-
-def test_dynamic_selection_keeps_invalid_lineage_as_fail_evidence() -> None:
-    invalid = ScenarioEvidence(
-        scenario_group_id=51,
-        scenario_id=503,
-        group_title="invalid group",
-        scenario_title="invalid scenario",
-        parameter_mapping_ready=False,
-        relation_count=2,
-        group_event_ids=(101, 102),
-        errors=("orphan sourceRef",),
-    )
-
-    selected, skipped = select_quality_targets(
-        [_evidence(), invalid],
-        max_scenarios=1,
-        explicit_scope=False,
-    )
-
-    assert invalid in selected
-    assert invalid not in skipped
-    report = render_report(
-        started_at=datetime.now(UTC),
-        finished_at=datetime.now(UTC),
-        execute=False,
-        preflight=SchemaPreflight("PASS", ("schema ok",)),
-        selected_targets=selected,
-        skipped_targets=skipped,
-        discovery_messages=[],
-        active_parameter_definitions=[_parameter_definition("GDP")],
-        coverage_rows=[],
-        executions={},
-        integrity_issues=[],
-    )
-    assert "- 판정: **FAIL**" in report
-
-
-def test_explicit_selection_is_not_capped_by_discovery_limit() -> None:
-    first = _evidence(scenario_id=501)
-    second = _evidence(scenario_id=502)
-
-    selected, skipped = select_quality_targets(
-        [first, second],
-        max_scenarios=1,
-        explicit_scope=True,
-    )
-
-    assert selected == [first, second]
-    assert skipped == []
-
-
-def test_schema_preflight_requires_dimension_value_display_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    models = (
-        quality_runner.MiScenarioGroupModel,
-        quality_runner.MiScenarioGroupEventModel,
-        quality_runner.MiDimensionValueMappingModel,
-        quality_runner.MiScenarioModel,
-        quality_runner.MiModelParamProposalModel,
-        quality_runner.MiModelParamModel,
-        quality_runner.MiModelParamDimensionMapModel,
-    )
-    columns_by_table = {
-        model.__tablename__: [
-            {"name": column.name, "nullable": column.nullable}
-            for column in model.__table__.columns
-            if not (model is quality_runner.MiDimensionValueMappingModel and column.name == "display_value")
-        ]
-        for model in models
-    }
-    inspector = SimpleNamespace(
-        get_table_names=lambda: list(columns_by_table),
-        get_columns=lambda table_name: columns_by_table[table_name],
-    )
-    monkeypatch.setattr(quality_runner, "inspect", lambda _bind: inspector)
-
-    preflight = schema_preflight(
-        SimpleNamespace(get_bind=lambda: object()),
-    )
-
-    assert preflight.verdict == "FAIL"
-    assert any(
-        quality_runner.MiDimensionValueMappingModel.__tablename__ in message and "display_value" in message
-        for message in preflight.messages
-    )
-
-
-def test_execute_targets_globally_blocks_writes_on_any_lineage_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalid = _evidence(scenario_id=502)
-    invalid.errors = ("orphan sourceRef",)
-    called: list[int] = []
-
-    async def fake_execute(scenario_id: int) -> dict[str, object]:
-        called.append(scenario_id)
-        return {}
-
-    monkeypatch.setattr(
-        quality_runner,
-        "execute_proposal_and_confirmation",
-        fake_execute,
-    )
-
-    executions = asyncio.run(
-        execute_targets([_evidence(scenario_id=501), invalid], retries=0),
-    )
-
-    assert called == []
-    assert set(executions) == {501, 502}
-    assert all(record["attempts"] == 0 for record in executions.values())
-    assert all("all graph/write calls blocked" in record["error"] for record in executions.values())
-
-
-def test_read_only_matrix_marks_only_eligible_rows_as_unexecuted_coverage_limit() -> None:
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-            _parameter_definition("Temperature"),
-        ],
-        targets=[_evidence()],
-        executions={},
-        execute=False,
-    )
-    by_name = {row.parameter_name: row for row in rows}
-
-    assert issues == []
-    assert by_name["GDP"].eligible == 2
-    assert by_name["GDP"].candidate is None
-    assert by_name["GDP"].verdict == "COVERAGE LIMIT"
-    assert by_name["Temperature"].eligible == 0
-    assert "적합한 sourceRef가 없음" in by_name["Temperature"].evidence
-
-
-def test_executed_matrix_reaches_pass_with_nullable_v3_persistence() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={501: execution},
-        execute=True,
-    )
-
-    assert issues == []
-    by_name = {row.parameter_name: row for row in rows}
-    assert by_name["GDP"].verdict == "REVIEW"
-    assert by_name["PMI"].verdict == "REVIEW"
-    assert {row.proposed for row in rows} == {1}
-    assert {row.confirmed for row in rows} == {1}
-
-
-def test_executed_matrix_fails_when_candidate_loses_source_lineage() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    candidates = execution["rule_candidates"]
-    assert isinstance(candidates, list)
-    candidates[0] = {**candidates[0], "source_event_ids": []}
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={501: execution},
-        execute=True,
-    )
-
-    assert any(row.verdict == "FAIL" for row in rows)
-    assert any("candidate mismatch" in issue for issue in issues)
-
-
-def test_executed_matrix_requires_explicit_null_api_event_id() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    response_data = execution["final_response"]
-    assert isinstance(response_data, dict)
-    data = response_data["data"]
-    assert isinstance(data, dict)
-    del data["eventId"]
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={501: execution},
-        execute=True,
-    )
-
-    assert {row.verdict for row in rows} == {"FAIL"}
-    assert any("API eventId" in issue for issue in issues)
-
-
-def test_projection_fails_relation_event_unused_by_every_definition() -> None:
-    relations = [
-        *_relations(),
-        {
-            "mi_event_id": 103,
-            "event_type_l2_id": 30,
-            "scenario_dimension_template_id": 3001,
-            "display_order": 3,
-        },
-    ]
-
-    result = project_expected_mappings(
-        dimension_definitions=_definitions(),
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=relations,
-        mapping_rules=_mapping_rules(),
-        parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-    )
-
-    assert any("어떤 dimensionDefinition/sourceRef에도 연결되지" in error for error in result.errors)
-
-
-def test_quality_rows_validate_exact_slots_basecase_and_convergence_review() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    by_name = {row.parameter_name: row for row in rows}
-
-    assert by_name["PMI"].verdict == "REVIEW"
-    assert by_name["PMI"].selected_slot_count == 1
-    assert by_name["PMI"].exact_slot_count == 1
-    assert by_name["PMI"].reference_sources == ("basecase",)
-    assert by_name["GDP"].verdict == "REVIEW"
-    assert by_name["GDP"].source_count == 2
-    assert "방향·강도·기간·대상" in by_name["GDP"].manual_review
-
-
-def test_quality_rows_fail_explicit_rationale_direction_conflict() -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    conflict = "source event와 모순되는 방향 역전"
-    adjustment = execution["result"]["parameter_adjustments"][0]
-    adjustment["parameter_selection_rationale_ko"] = conflict
-    adjustment["value_grid"][0]["rationale_ko"] = conflict
-    api_parameter = execution["final_response"]["data"]["proposalParameters"][0]
-    proposal_parameter = execution["proposal_db_row"]["proposal_parameters"][0]
-    confirmed_parameter = execution["proposal_db_row"]["confirmation_parameters"][0]
-    for parameter in (api_parameter, proposal_parameter, confirmed_parameter):
-        parameter["rationale"] = conflict
-        parameter["values"][0]["rationale"] = conflict
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert rows[0].verdict == "FAIL"
-    assert "방향 역전" in rows[0].evidence
-
-
-@pytest.mark.parametrize(
-    ("field_name", "replacement"),
-    [
-        ("Year", 2099),
-        ("proposedValue", 999.0),
-        ("basecaseValue", 999.0),
-        ("lutValue", 999.0),
-    ],
-)
-def test_quality_rows_fail_step3_to_final_value_signature_divergence(
-    field_name: str,
-    replacement: float,
-) -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    response = execution["final_response"]
-    proposal_row = execution["proposal_db_row"]
-    assert isinstance(response, dict)
-    assert isinstance(proposal_row, dict)
-    api_parameter = response["data"]["proposalParameters"][0]
-    stored_parameters = [
-        proposal_row["proposal_parameters"][0],
-        proposal_row["confirmation_parameters"][0],
-    ]
-    api_parameter["values"][0][field_name] = replacement
-    if field_name != "lutValue":
-        for parameter in stored_parameters:
-            parameter["values"][0][field_name] = replacement
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert rows[0].verdict == "FAIL"
-    assert "signature" in rows[0].evidence
-
-
-def test_quality_rows_allow_single_lut_fallback_when_basecase_is_absent() -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    references = execution["effective_references"]
-    assert isinstance(references, list)
-    reference = references[0]
-    assert isinstance(reference, dict)
-    reference.update(
-        {
-            "actual_basecase_value": None,
-            "llm_reference_value": 0.9,
-            "effective_source": "lut",
-            "basecase_reference_id": None,
-        },
-    )
-    adjustments = execution["result"]
-    assert isinstance(adjustments, dict)
-    adjustments["parameter_adjustments"][0]["value_grid"][0]["basecase_value"] = None
-    response = execution["final_response"]
-    assert isinstance(response, dict)
-    response["data"]["proposalParameters"][0]["values"][0]["basecaseValue"] = None
-    proposal_row = execution["proposal_db_row"]
-    assert isinstance(proposal_row, dict)
-    proposal_row["proposal_parameters"][0]["values"][0]["basecaseValue"] = None
-    proposal_row["confirmation_parameters"][0]["values"][0]["basecaseValue"] = None
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert len(rows) == 1
-    assert rows[0].verdict == "REVIEW"
-    assert rows[0].reference_sources == ("lut",)
-
-
-def test_quality_rows_allow_output_enrichment_with_dependent_slot_axes() -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    execution["effective_references"][0]["metadata"] = {
-        "Country": "Angola",
-    }
-    adjustment = execution["result"]["parameter_adjustments"][0]
-    adjustment["value_grid"][0]["coordinates"]["Country"] = "Angola"
-    response_parameter = execution["final_response"]["data"]["proposalParameters"][0]
-    stored_parameter = execution["proposal_db_row"]["proposal_parameters"][0]
-    confirmed_parameter = execution["proposal_db_row"]["confirmation_parameters"][0]
-    for parameter in (
-        response_parameter,
-        stored_parameter,
-        confirmed_parameter,
-    ):
-        parameter["modelTarget"]["slotAxesFieldNames"] = ["Country", "Year"]
-        parameter["values"][0]["Country"] = "Angola"
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert rows[0].verdict == "REVIEW"
-    assert "coordinates" not in rows[0].evidence
-    assert "signature" not in rows[0].evidence
-
-
-def test_quality_rows_fail_reference_metadata_mismatch() -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    execution["effective_references"][0]["metadata"] = {
-        "Country": "Nigeria",
-    }
-    adjustment = execution["result"]["parameter_adjustments"][0]
-    adjustment["value_grid"][0]["coordinates"]["Country"] = "Angola"
-    response_parameter = execution["final_response"]["data"]["proposalParameters"][0]
-    stored_parameter = execution["proposal_db_row"]["proposal_parameters"][0]
-    confirmed_parameter = execution["proposal_db_row"]["confirmation_parameters"][0]
-    for parameter in (
-        response_parameter,
-        stored_parameter,
-        confirmed_parameter,
-    ):
-        parameter["modelTarget"]["slotAxesFieldNames"] = ["Country", "Year"]
-        parameter["values"][0]["Country"] = "Angola"
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert rows[0].verdict == "FAIL"
-    assert "reference axes+metadata" in rows[0].evidence
-
-
-def test_quality_rows_fail_missing_reference_and_value_rationale() -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    execution["effective_references"] = []
-    response = execution["final_response"]
-    assert isinstance(response, dict)
-    data = response["data"]
-    assert isinstance(data, dict)
-    parameters = data["proposalParameters"]
-    assert isinstance(parameters, list)
-    values = parameters[0]["values"]
-    assert isinstance(values, list)
-    values[0]["rationale"] = ""
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert rows[0].verdict == "FAIL"
-    assert "value 수 불일치" in rows[0].evidence
-    assert "value rationale 비어 있음" in rows[0].evidence
-
-
-def test_quality_rows_fail_duplicate_slot_axis_as_non_exact() -> None:
-    pmi_occurrences = tuple(item for item in _projection().occurrences if item["parameter_name"] == "PMI")
-    target = _evidence(occurrences=pmi_occurrences)
-    execution = _successful_execution(target)
-    slots = execution["parameter_slots"]
-    assert isinstance(slots, list)
-    slot_axes = slots[0]["slot_axes"]
-    assert isinstance(slot_axes, list)
-    slot_axes.append({"axis_name": "Year", "axis_value": 2026})
-
-    rows = build_parameter_quality_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert rows[0].verdict == "FAIL"
-    assert "exact slot 불일치" in rows[0].evidence
-
-
-def test_executed_matrix_fails_api_db_value_divergence() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    proposal_row = execution["proposal_db_row"]
-    assert isinstance(proposal_row, dict)
-    db_parameters = proposal_row["proposal_parameters"]
-    assert isinstance(db_parameters, list)
-    db_values = db_parameters[0]["values"]
-    assert isinstance(db_values, list)
-    db_values[0]["proposedValue"] = 2.1
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert any(row.verdict == "FAIL" for row in rows)
-    assert any("API proposal values와 DB proposal read-back" in issue for issue in issues)
-
-
-def test_executed_matrix_fails_confirmation_db_value_divergence() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    proposal_row = execution["proposal_db_row"]
-    assert isinstance(proposal_row, dict)
-    confirmation_parameters = proposal_row["confirmation_parameters"]
-    assert isinstance(confirmation_parameters, list)
-    confirmation_values = confirmation_parameters[0]["values"]
-    assert isinstance(confirmation_values, list)
-    confirmation_values[0]["proposedValue"] = 2.1
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert any(row.verdict == "FAIL" for row in rows)
-    assert any("confirmation read-back" in issue for issue in issues)
-
-
-def test_executed_matrix_fails_mapping_outside_active_candidate() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    candidates = execution["rule_candidates"]
-    assert isinstance(candidates, list)
-    candidates.append(
-        {
-            **_runtime_candidate(target.occurrences[0]),
-            "candidate_key": _runtime_task_key("Temperature"),
-            "canonical_parameter_name": "Temperature",
-            "parameter_name": "Temperature",
-            "model_sheet": "TemperatureAdjustment",
-        },
-    )
-    extra_parameter = _proposal_parameter("Temperature")
-    response = execution["final_response"]
-    assert isinstance(response, dict)
-    response_data = response["data"]
-    assert isinstance(response_data, dict)
-    response_parameters = response_data["proposalParameters"]
-    assert isinstance(response_parameters, list)
-    response_parameters.append(deepcopy(extra_parameter))
-    proposal_row = execution["proposal_db_row"]
-    assert isinstance(proposal_row, dict)
-    proposal_parameters = proposal_row["proposal_parameters"]
-    confirmation_parameters = proposal_row["confirmation_parameters"]
-    assert isinstance(proposal_parameters, list)
-    assert isinstance(confirmation_parameters, list)
-    proposal_parameters.append(deepcopy(extra_parameter))
-    confirmation_parameters.append(deepcopy(extra_parameter))
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-            _parameter_definition("Temperature"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    by_name = {row.parameter_name: row for row in rows}
-
-    assert by_name["Temperature"].verdict == "FAIL"
-    assert any("mapping 밖 candidate" in issue for issue in issues)
-    assert any("mapping 밖 proposal target" in issue for issue in issues)
-    assert any("mapping 밖 confirmation target" in issue for issue in issues)
-
-
-def test_mapping_outside_proposal_only_marks_active_parameter_row_fail() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    response = execution["final_response"]
-    proposal_row = execution["proposal_db_row"]
-    step_summary = execution["step_summary"]
-    assert isinstance(response, dict)
-    assert isinstance(proposal_row, dict)
-    assert isinstance(step_summary, dict)
-    response["data"]["proposalParameters"].append(
-        _proposal_parameter("Temperature", include_lut=True),
-    )
-    proposal_row["proposal_parameters"].append(
-        _proposal_parameter("Temperature"),
-    )
-    proposal_row["confirmation_parameters"].append(
-        _proposal_parameter("Temperature"),
-    )
-    step_summary["proposal_parameter_count"] = 3
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-            _parameter_definition("Temperature"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    temperature = next(row for row in rows if row.parameter_name == "Temperature")
-
-    assert temperature.verdict == "FAIL"
-    assert temperature.eligible == 0
-    assert temperature.candidate == 0
-    assert temperature.proposed == 1
-    assert temperature.confirmed == 1
-    assert any("mapping 밖 proposal target" in issue for issue in issues)
-
-
-def test_executed_matrix_fails_unstable_v3_task_identity() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    candidates = execution["expected_candidates"]
-    assert isinstance(candidates, list)
-    for candidate in candidates:
-        if candidate["canonical_parameter_name"] == "GDP":
-            candidate["candidate_key"] = "v3-source|unstable"
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert any(row.parameter_name == "GDP" and row.verdict == "FAIL" for row in rows)
-    assert any("task identity" in issue for issue in issues)
-
-
-def test_executed_matrix_allows_source_occurrence_keys_before_merge() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    candidates = execution["rule_candidates"]
-    assert isinstance(candidates, list)
-    for index, candidate in enumerate(candidates):
-        candidate["candidate_key"] = f"v3-source|occurrence-{index}"
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert not any("task identity" in issue for issue in issues)
-    assert {row.verdict for row in rows} == {"REVIEW"}
-
-
-def test_executed_matrix_fails_unmerged_selected_parameter_tasks() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    selected = execution["expected_candidates"]
-    assert isinstance(selected, list)
-    gdp = next(candidate for candidate in selected if candidate["canonical_parameter_name"] == "GDP")
-    selected.append(deepcopy(gdp))
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert any(row.parameter_name == "GDP" and row.verdict == "FAIL" for row in rows)
-    assert any("task가 1개로 병합되지 않음" in issue for issue in issues)
-
-
-def test_routing_partial_source_union_is_fail_and_zero_selection_is_review() -> None:
-    mapping_rules = [
-        *_mapping_rules(),
-        {
-            "event_type_l2_id": 20,
-            "dimension_key": "supply",
-            "canonical_parameter_name": "PMI",
-            "mapping_method": "routing",
-        },
-    ]
-    projection = project_expected_mappings(
-        dimension_definitions=_definitions(),
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=_relations(),
-        mapping_rules=mapping_rules,
-        parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-    )
-    target = _evidence(occurrences=projection.occurrences)
-    all_candidates = [_runtime_candidate(item) for item in target.occurrences]
-    selected_partial = [
-        candidate
-        for candidate in all_candidates
-        if candidate["canonical_parameter_name"] != "PMI" or candidate["event_type_l2_id"] == 10
-    ]
-    partial_execution = _successful_execution(
-        target,
-        selected_candidates=selected_partial,
-    )
-    partial_execution["rule_candidates"] = all_candidates
-
-    partial_rows, partial_issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: partial_execution},
-        execute=True,
-    )
-    partial_pmi = next(row for row in partial_rows if row.parameter_name == "PMI")
-    assert partial_pmi.verdict == "FAIL"
-    assert any("routing selected source union 누락" in issue for issue in partial_issues)
-
-    selected_none = [candidate for candidate in all_candidates if candidate["canonical_parameter_name"] != "PMI"]
-    none_execution = _successful_execution(
-        target,
-        selected_candidates=selected_none,
-    )
-    none_execution["rule_candidates"] = all_candidates
-    none_rows, _ = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        targets=[target],
-        executions={target.scenario_id: none_execution},
-        execute=True,
-    )
-    none_pmi = next(row for row in none_rows if row.parameter_name == "PMI")
-    assert none_pmi.verdict == "REVIEW"
-    assert "routing 후보 미선택" in none_pmi.evidence
-
-
-def test_selected_routing_targets_per_composite_dimension_respect_configured_max() -> None:
-    route_names = ["RouteA", "RouteB", "RouteC"]
-    mapping_rules = [
-        _mapping_rules()[0],
-        _mapping_rules()[2],
-        *[
+        "slot_catalog": [
             {
-                "event_type_l2_id": 10,
-                "dimension_key": "demand",
-                "canonical_parameter_name": parameter_name,
-                "mapping_method": "routing",
-            }
-            for parameter_name in route_names
-        ],
-    ]
-    projection = project_expected_mappings(
-        dimension_definitions=_definitions(),
-        scenario_dimension_values={"composite_pressure": "high"},
-        relations=_relations(),
-        mapping_rules=mapping_rules,
-        parameter_definitions=[
-            _parameter_definition("GDP"),
-            *[_parameter_definition(name) for name in route_names],
-        ],
-    )
-    target = _evidence(occurrences=projection.occurrences)
-    execution = _successful_execution(target)
-
-    rows, issues = build_coverage_matrix(
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            *[_parameter_definition(name) for name in route_names],
-        ],
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-        routing_limit=2,
-    )
-
-    by_name = {row.parameter_name: row for row in rows}
-    assert all(by_name[name].verdict == "FAIL" for name in route_names)
-    assert any("configured max=2" in issue for issue in issues)
-
-
-def test_performance_rows_capture_each_step_and_guard() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    execution["llm_calls"] = [
-        _llm_call("Step1.5 routing selection"),
-        _llm_call("Step2 slot proposal"),
-        _llm_call("Step3 value proposal"),
-    ]
-
-    rows = build_performance_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-
-    assert [row.step for row in rows] == ["Step1.5", "Step2", "Step3"]
-    assert {row.verdict for row in rows} == {"PASS"}
-    assert {row.prompt_bytes for row in rows} == {100}
-    assert {row.total_tokens for row in rows} == {15}
-    assert {row.prompt_limit_bytes for row in rows} == {(1000,)}
-
-
-def test_performance_rows_review_missing_retry_and_elapsed_evidence() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    calls = [
-        _llm_call("Step1.5 routing selection"),
-        _llm_call("Step2 slot proposal"),
-        _llm_call("Step3 value proposal"),
-    ]
-    del calls[0]["internal_retry_count"]
-    del calls[1]["elapsed_seconds"]
-    execution["llm_calls"] = calls
-    execution.pop("elapsed_seconds")
-
-    rows = build_performance_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    by_step = {row.step: row for row in rows}
-
-    assert by_step["Step1.5"].verdict == "REVIEW"
-    assert "internal retry 미수집" in by_step["Step1.5"].evidence
-    assert by_step["Step2"].verdict == "REVIEW"
-    assert "prompt/token/time/guard 증적 일부 미수집" in by_step["Step2"].evidence
-    assert all("scenario 전체 elapsed 미수집" in row.evidence for row in rows)
-
-    missing_execution_rows = build_performance_rows(
-        targets=[target],
-        executions={},
-        execute=True,
-    )
-    assert {row.verdict for row in missing_execution_rows} == {"REVIEW"}
-    assert all("scenario 전체 elapsed 미수집" in row.evidence for row in missing_execution_rows)
-
-
-def test_performance_rows_fail_configured_prompt_guard() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    step2_call = _llm_call("Step2 slot proposal")
-    step2_call["prompt_bytes"] = 1001
-    execution["llm_calls"] = [
-        _llm_call("Step1.5 routing selection"),
-        step2_call,
-        _llm_call("Step3 value proposal"),
-    ]
-
-    rows = build_performance_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    step2 = next(row for row in rows if row.step == "Step2")
-
-    assert step2.verdict == "FAIL"
-    assert "prompt byte guard 초과" in step2.evidence
-
-
-def test_positive_internal_retry_is_review_and_attempt_trace_is_rendered() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-    step1 = _llm_call("Step1.5 routing selection")
-    step2 = _llm_call("Step2 slot proposal")
-    step3 = _llm_call("Step3 value proposal")
-    step2["internal_retry_count"] = 1
-    execution["llm_calls"] = [step1, step2, step3]
-    execution["attempts"] = 2
-    execution["elapsed_seconds"] = 12.5
-    execution["attempt_traces"] = [
-        {
-            "attempt": 1,
-            "status": "FAIL",
-            "elapsed_seconds": 2.0,
-            "llm_calls": [step1],
-            "error": "TimeoutError: details redacted",
-        },
-        {
-            "attempt": 2,
-            "status": "PASS",
-            "elapsed_seconds": 10.5,
-            "llm_calls": [step2, step3],
-        },
-    ]
-
-    performance_rows = build_performance_rows(
-        targets=[target],
-        executions={target.scenario_id: execution},
-        execute=True,
-    )
-    step2_row = next(row for row in performance_rows if row.step == "Step2")
-    assert step2_row.verdict == "REVIEW"
-    assert "internal retry 1회" in step2_row.evidence
-
-    report = render_report(
-        started_at=datetime.now(UTC),
-        finished_at=datetime.now(UTC),
-        execute=True,
-        preflight=SchemaPreflight("PASS", ("schema ok",)),
-        selected_targets=[target],
-        skipped_targets=[],
-        discovery_messages=[],
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        coverage_rows=[],
-        executions={target.scenario_id: execution},
-        integrity_issues=[],
-    )
-
-    assert "### Scenario overall 및 attempt trace" in report
-    assert "| 501 | 12.500s | 1 | FAIL | 2.000s |" in report
-    assert "| 501 | 12.500s | 2 | PASS | 10.500s |" in report
-    assert "복합 압력의 방향과 강도를 단일 값으로 반영했다." in report
-
-
-def test_execute_report_contains_bounded_stage_input_output_evidence() -> None:
-    target = _evidence()
-    execution = _successful_execution(target)
-
-    report = render_report(
-        started_at=datetime.now(UTC),
-        finished_at=datetime.now(UTC),
-        execute=True,
-        preflight=SchemaPreflight("PASS", ("schema ok",)),
-        selected_targets=[target],
-        skipped_targets=[],
-        discovery_messages=[],
-        active_parameter_definitions=[
-            _parameter_definition("GDP"),
-            _parameter_definition("PMI"),
-        ],
-        coverage_rows=[],
-        executions={target.scenario_id: execution},
-        integrity_issues=[],
-    )
-
-    assert "## 단계별 LLM 입출력 증적" in report
-    assert "production과 동일한 packet builder로 사후 재구성" in report
-    assert "<details><summary>Step1.5 입력/출력</summary>" in report
-    assert "<details><summary>Step2 입력/출력</summary>" in report
-    assert "<details><summary>Step3 입력/출력</summary>" in report
-    assert '"routing_tasks"' in report
-    assert '"parameter_slot_tasks"' in report
-    assert '"parameter_value_tasks"' in report
-    assert '"selected_candidates"' in report
-    assert '"selected_slots"' in report
-    assert '"parameter_adjustments"' in report
-    assert '"api_event_id": null' in report
-
-
-def test_nullable_proposal_serializer_keeps_event_id_none() -> None:
-    now = datetime.now(UTC)
-    proposal = SimpleNamespace(
-        model_param_proposal_id=9001,
-        scenario_id=501,
-        scenario_group_id=50,
-        mi_event_id=None,
-        request_usr_id=None,
-        status="PROPOSED",
-        callback_status="SKIPPED",
-        proposal_completed_dtm=now,
-        callback_sent_dtm=None,
-        confirmed_dtm=None,
-        error_code=None,
-        error_message=None,
-        proposal_parameters=[_proposal_parameter("GDP")],
-        confirmation_parameters=None,
-        mod_usr_logn_id="system",
-        mod_dtm=now,
-    )
-
-    serialized = serialize_proposal_row(proposal)
-
-    assert serialized["mi_event_id"] is None
-    assert serialized["scenario_group_id"] == 50
-
-
-@pytest.mark.parametrize(
-    ("field_name", "invalid_value"),
-    [
-        ("basecaseValue", float("nan")),
-        ("basecaseValue", float("inf")),
-        ("proposedValue", float("-inf")),
-    ],
-)
-def test_persistence_contract_rejects_non_finite_numeric_values(
-    field_name: str,
-    invalid_value: float,
-) -> None:
-    from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
-        _parameter_json_payload,
-    )
-
-    with pytest.raises(Exception, match="finite number"):
-        _parameter_json_payload(
-            {
-                "values": [
+                "candidate_key": merged["candidate_key"],
+                "parameter_name": "GDP",
+                "key_axes": ["Country", "Year"],
+                "fixed_axis_names": ["Country"],
+                "time_axis_names": ["Year"],
+                "period_groups": [
                     {
-                        "basecaseValue": 1.0,
-                        "proposedValue": 1.1,
-                        field_name: invalid_value,
+                        "period_group_id": "period-group-1",
+                        "available_periods": [{"Year": 2027}],
+                    },
+                ],
+                "fixed_axis_hierarchy": [
+                    {
+                        "axis_value": "Korea",
+                        "period_group_id": "period-group-1",
                     },
                 ],
             },
+        ],
+        "slot_candidate_mappings": [deepcopy(merged)],
+        "effective_references": [
+            {
+                "candidate_key": merged["candidate_key"],
+                "slot_key": "slot-1",
+                "axes": {"Country": "Korea", "Year": 2027},
+                "actual_basecase_value": 1.0,
+                "lut_default_value": None,
+                "llm_reference_value": 1.0,
+                "effective_source": "basecase",
+                "basecase_reference_id": "basecase:gdp:1",
+            },
+        ],
+        "step_summary": {
+            "parameter_status": "PASS",
+            "slot_status": "PASS",
+            "basecase_status": "PASS",
+            "value_status": "PASS",
+            "validated_candidate_count": 1,
+            "selected_parameter_count": 1,
+            "proposal_parameter_count": 1,
+            "selected_slot_count": 1,
+            "value_reference_record_count": 1,
+            "value_cell_count": 1,
+            "value_cell_with_basecase_count": 1,
+        },
+        "final_response": {
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 9001,
+                "scenarioId": evidence.scenario_id,
+                "scenarioGroupId": evidence.scenario_group_id,
+                "eventId": None,
+                "proposalParameters": deepcopy(proposal_parameters),
+            },
+        },
+        "proposal_db_row": {
+            "model_param_proposal_id": 9001,
+            "scenario_id": evidence.scenario_id,
+            "scenario_group_id": evidence.scenario_group_id,
+            "mi_event_id": None,
+            "status": "CONFIRMED",
+            "proposal_parameters": deepcopy(proposal_parameters),
+            "confirmation_parameters": deepcopy(proposal_parameters),
+        },
+        "confirmation": {"status": "PASS"},
+        "execution_attempt_count": 1,
+        "elapsed_seconds": 2.5,
+        "llm_calls": [
+            {
+                "step": "Step1.5",
+                "retry_count": 0,
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
+            },
+        ],
+    }
+
+
+def _args(report_path: Path, *, execute: bool = False) -> argparse.Namespace:
+    return runner.build_parser().parse_args(
+        [
+            *(
+                ["--execute", "--scenario-id", "501"]
+                if execute
+                else []
+            ),
+            "--report-path",
+            str(report_path),
+        ],
+    )
+
+
+def test_parser_defaults_to_read_only_and_has_no_retry_option() -> None:
+    args = runner.build_parser().parse_args([])
+
+    assert args.execute is False
+    assert args.limit == runner.DEFAULT_DISCOVERY_LIMIT
+    with pytest.raises(SystemExit):
+        runner.build_parser().parse_args(["--retries", "2"])
+
+
+@pytest.mark.parametrize("event_count", [1, 5])
+def test_v4_evidence_accepts_ordered_one_to_five_events(event_count: int) -> None:
+    evidence = _evidence(event_count=event_count)
+
+    assert len(evidence.ordered_event_ids) == event_count
+    assert evidence.api_version == "v4"
+    assert evidence.generation_strategy == runner.V4_STRATEGY
+
+
+@pytest.mark.parametrize("event_count", [0, 6])
+def test_v4_evidence_rejects_event_count_outside_one_to_five(
+    event_count: int,
+) -> None:
+    evidence = runner.build_v4_scenario_evidence(
+        501,
+        _context(event_count=event_count),
+    )
+
+    assert any("ordered event count" in message for message in evidence.errors)
+
+
+def test_v4_evidence_requires_exact_one_to_n_display_order() -> None:
+    context = _context()
+    context["events"][1]["display_order"] = 3
+
+    evidence = runner.build_v4_scenario_evidence(501, context)
+
+    assert any("exact 1..N" in message for message in evidence.errors)
+
+
+def test_v4_evidence_rejects_loaded_context_for_another_scenario() -> None:
+    context = _context()
+    context["scenario"]["scenario_id"] = 999
+
+    evidence = runner.build_v4_scenario_evidence(501, context)
+
+    assert evidence.scenario_id == 501
+    assert any("scenario_id mismatch" in message for message in evidence.errors)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("api_version", "v3"),
+        ("generation_strategy", "multi_event_composite_dimensions"),
+    ],
+)
+def test_v4_evidence_rejects_legacy_identity(field: str, value: str) -> None:
+    context = _context()
+    context["scenario_group"][field] = value
+
+    evidence = runner.build_v4_scenario_evidence(501, context)
+
+    assert any("mismatch" in message for message in evidence.errors)
+
+
+def test_v4_evidence_rejects_catalog_checksum_drift() -> None:
+    context = _context()
+    context["scenario_group"]["impact_catalog_checksum"] = "b" * 64
+
+    evidence = runner.build_v4_scenario_evidence(501, context)
+
+    assert any("catalog checksum mismatch" in message for message in evidence.errors)
+
+
+def test_v4_evidence_rejects_hydrated_binding_drift() -> None:
+    context = _context()
+    context["dimension_lineage"][0]["lever_states"][0]["parameter_bindings"][0][
+        "applicability"
+    ] = "stale binding"
+
+    evidence = runner.build_v4_scenario_evidence(501, context)
+
+    assert any("catalog-pinned binding mismatch" in message for message in evidence.errors)
+
+
+def test_v4_evidence_rejects_primary_lever_state_drift() -> None:
+    context = _context()
+    context["dimension_lineage"][0]["primary_impact_lever_id"] = 999
+
+    evidence = runner.build_v4_scenario_evidence(501, context)
+
+    assert any("primary Lever ID mismatch" in message for message in evidence.errors)
+
+
+def test_partition_requires_unique_raw_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = dict(_evidence().runtime_candidates[0])
+    monkeypatch.setattr(
+        runner,
+        "match_v4_parameter_candidates_from_rows",
+        lambda **kwargs: ([candidate, dict(candidate)], [], []),
+    )
+
+    evidence = runner.build_v4_scenario_evidence(501, _context())
+
+    assert any("raw candidate key가 중복" in message for message in evidence.errors)
+
+
+def test_production_allowlist_partitions_active_but_blocked_parameter() -> None:
+    evidence = _evidence()
+
+    assert {_parameter["parameter_name"] for _parameter in evidence.runtime_candidates} == {
+        "GDP",
+    }
+    assert {_parameter["parameter_name"] for _parameter in evidence.blocked_candidates} == {
+        "ShippingCost",
+    }
+    assert all(
+        item["reason_code"] == PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
+        for item in evidence.blocked_candidates
+    )
+    assert "GDP" in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+    assert "ShippingCost" not in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+
+
+def test_read_only_coverage_exposes_runtime_partition_before_selection() -> None:
+    evidence = _evidence()
+
+    rows = {
+        row.parameter_name: row
+        for row in runner.build_coverage_rows(evidence, None, None)
+    }
+
+    assert rows["GDP"].raw == 1
+    assert rows["GDP"].runtime == 1
+    assert rows["GDP"].selected is None
+    assert rows["GDP"].verdict == "COVERAGE LIMIT"
+    assert rows["ShippingCost"].raw == 1
+    assert rows["ShippingCost"].runtime == 0
+    assert rows["ShippingCost"].verdict == "PASS"
+
+
+def test_clean_execution_uses_merged_lineage_and_passes() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "PASS"
+    assert record["expected_candidates"][0]["candidate_key"].startswith("parameter|v4|")
+    assert set(record["expected_candidates"][0]["merged_candidate_keys"]) == {
+        evidence.runtime_candidates[0]["candidate_key"],
+    }
+
+
+def test_graph_v4_raw_trace_must_match_independent_raw_oracle() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["rule_candidates"] = []
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("raw oracle key" in message for message in assessment.failures)
+
+
+def test_unexpected_merged_raw_lineage_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["expected_candidates"][0]["merged_candidate_keys"].append(
+        evidence.blocked_candidates[0]["candidate_key"],
+    )
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("merged_candidate_keys" in message for message in assessment.failures)
+
+
+def test_merged_raw_key_must_stay_bound_to_its_independent_target() -> None:
+    evidence = _evidence()
+    gdp = dict(evidence.runtime_candidates[0])
+    pmi = deepcopy(gdp)
+    pmi["candidate_key"] = pmi["candidate_key"].replace("|gdp|", "|pmi|")
+    pmi["canonical_parameter_name"] = "PMI"
+    pmi["parameter_name"] = "PMI"
+    pmi["model_sheet"] = "PMIInput"
+    evidence.runtime_candidates = (gdp, pmi)
+    evidence.raw_candidates = (gdp, pmi, *evidence.blocked_candidates)
+    record = _execution_record(evidence)
+    record["expected_candidates"][0]["merged_candidate_keys"].append(
+        pmi["candidate_key"],
+    )
+    record["expected_candidates"] = record["expected_candidates"][:1]
+    record["prompt_grounding_evidence"]["selected_candidate_keys"] = [
+        record["expected_candidates"][0]["candidate_key"],
+    ]
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("key→parameter/model target" in message for message in assessment.failures)
+
+
+@pytest.mark.parametrize("layer", ["raw", "runtime"])
+def test_graph_trace_candidate_key_duplicate_is_fail(layer: str) -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    field_name = "rule_candidates" if layer == "raw" else "expected_candidates"
+    record[field_name].append(deepcopy(record[field_name][0]))
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("candidate_key가 중복" in message for message in assessment.failures)
+
+
+def test_partial_routing_lineage_loss_is_review() -> None:
+    evidence = _evidence()
+    gdp = dict(evidence.runtime_candidates[0])
+    gdp["mapping_method"] = "routing"
+    pmi = deepcopy(gdp)
+    pmi["candidate_key"] = pmi["candidate_key"].replace("|gdp|", "|pmi|")
+    pmi["canonical_parameter_name"] = "PMI"
+    pmi["parameter_name"] = "PMI"
+    evidence.runtime_candidates = (gdp, pmi)
+    evidence.raw_candidates = (gdp, pmi, *evidence.blocked_candidates)
+    record = _execution_record(evidence)
+    record["rule_candidates"] = [dict(item) for item in evidence.raw_candidates]
+    record["expected_candidates"] = [
+        item
+        for item in record["expected_candidates"]
+        if item["parameter_name"] == "GDP"
+    ]
+    record["prompt_grounding_evidence"]["selected_candidate_keys"] = [
+        record["expected_candidates"][0]["candidate_key"],
+    ]
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "REVIEW"
+    assert any("routing raw lineage" in message for message in assessment.reviews)
+    evidence.parameter_definitions = (
+        *evidence.parameter_definitions,
+        _definition("PMI", model_file="Demand", model_sheet="Input"),
+    )
+    rows = {
+        row.parameter_name: row
+        for row in runner.build_coverage_rows(evidence, record, assessment)
+    }
+    assert rows["PMI"].runtime == 1
+    assert rows["PMI"].selected == 0
+    assert rows["PMI"].verdict == "REVIEW"
+
+
+def test_lut_only_reference_is_valid_and_api_lut_value_is_response_only() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    cell = record["result"]["parameter_adjustments"][0]["value_grid"][0]
+    cell["basecase_value"] = None
+    cell["lut_value"] = 0.9
+    reference = record["effective_references"][0]
+    reference["actual_basecase_value"] = None
+    reference["lut_default_value"] = 0.9
+    reference["llm_reference_value"] = 0.9
+    reference["effective_source"] = "lut"
+    record["step_summary"]["value_cell_with_basecase_count"] = 0
+    api_value = record["final_response"]["data"]["proposalParameters"][0]["values"][0]
+    api_value["basecaseValue"] = None
+    api_value["lutValue"] = 0.9
+    for field_name in ("proposal_parameters", "confirmation_parameters"):
+        record["proposal_db_row"][field_name][0]["values"][0]["basecaseValue"] = None
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "PASS"
+
+
+@pytest.mark.parametrize("layer", ["runtime", "selected", "proposed", "confirmed"])
+def test_blocked_parameter_leakage_is_mandatory_fail(layer: str) -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    blocked = dict(evidence.blocked_candidates[0])
+    if layer == "runtime":
+        merged, _ = _merge_candidates_by_parameter([blocked])
+        record["runtime_candidates"] = [*record["expected_candidates"], *merged]
+    elif layer == "selected":
+        record["result"]["parameter_adjustments"].append(
+            {
+                "candidate_key": "parameter|v4|trade|shippinginput|shippingcost",
+                "model_file": "Trade",
+                "model_sheet": "ShippingInput",
+                "parameter_name": "ShippingCost",
+                "selected": True,
+            },
+        )
+    elif layer == "proposed":
+        record["final_response"]["data"]["proposalParameters"].append(
+            _proposal_parameter("ShippingCost"),
+        )
+    else:
+        record["proposal_db_row"]["confirmation_parameters"].append(
+            _proposal_parameter("ShippingCost"),
         )
 
+    assessment = runner.assess_execution(evidence, record)
 
-def test_automated_contract_preflight_records_actual_case_results(
+    assert assessment.verdict == "FAIL"
+    assert any("active-but-blocked" in message for message in assessment.failures)
+
+
+@pytest.mark.parametrize(
+    "layer",
+    ["parameter_slots", "slot_candidate_mappings", "effective_references"],
+)
+def test_blocked_parameter_leakage_in_step2_or_step3_is_fail(layer: str) -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    blocked_merged, _ = _merge_candidates_by_parameter(
+        [dict(evidence.blocked_candidates[0])],
+    )
+    blocked = blocked_merged[0]
+    if layer == "parameter_slots":
+        record[layer].append(
+            {
+                "candidate_key": blocked["candidate_key"],
+                "slot_key": "slot-blocked",
+                "selected": True,
+            },
+        )
+    elif layer == "slot_candidate_mappings":
+        record[layer] = [blocked]
+    else:
+        record[layer].append(
+            {
+                "candidate_key": blocked["candidate_key"],
+                "slot_key": "slot-blocked",
+                "parameter_name": "ShippingCost",
+                "llm_reference_value": 1.0,
+                "effective_source": "basecase",
+                "actual_basecase_value": 1.0,
+            },
+        )
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any(layer in message for message in assessment.failures)
+
+
+def test_missing_blocked_exclusion_reason_is_mandatory_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["result"]["non_input_items"] = []
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("exclusion reason" in message for message in assessment.failures)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "wrong_reason"])
+def test_matcher_non_input_identity_and_reason_must_survive_graph(
+    mutation: str,
+) -> None:
+    evidence = _evidence()
+    matcher_non_input = {
+        "scenario_dimension_key": "market_pressure",
+        "source_dimension_value_id": "high",
+        "source_event_ids": [101],
+        "lever_code": "weather_risk",
+        "impact_lever_id": 999,
+        "direction": "unchanged",
+        "reason_code": "UNCHANGED_LEVER_STATE",
+    }
+    evidence.matcher_non_inputs = (matcher_non_input,)
+    record = _execution_record(evidence)
+    graph_item = dict(matcher_non_input)
+    record["result"]["non_input_items"].append(graph_item)
+    if mutation == "missing":
+        record["result"]["non_input_items"].remove(graph_item)
+    else:
+        graph_item["reason_code"] = "NO_PARAMETER_BINDING"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("identity/reason multiset" in message for message in assessment.failures)
+
+
+def test_step_summary_or_slot_value_count_drift_is_mandatory_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["step_summary"]["value_cell_count"] = 2
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("value_cell_count" in message for message in assessment.failures)
+
+
+def test_slot_reference_adjustment_coordinate_drift_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["effective_references"][0]["axes"]["Country"] = "China"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("reference axes" in message for message in assessment.failures)
+
+
+def test_selected_slot_must_belong_to_exact_slot_catalog() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["parameter_slots"][0]["slot_axes"][0]["axis_value"] = "Japan"
+    record["effective_references"][0]["axes"]["Country"] = "Japan"
+    record["result"]["parameter_adjustments"][0]["value_grid"][0]["coordinates"][
+        "Country"
+    ] = "Japan"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("slot_catalog exact union" in message for message in assessment.failures)
+
+
+def test_basecase_value_must_take_precedence_over_lut_default() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    reference = record["effective_references"][0]
+    reference["lut_default_value"] = 0.9
+    reference["llm_reference_value"] = 0.9
+    reference["effective_source"] = "lut"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("Basecase-over-LUT" in message for message in assessment.failures)
+
+
+def test_value_cell_reference_value_mismatch_is_fail_even_if_api_db_match() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["result"]["parameter_adjustments"][0]["value_grid"][0][
+        "basecase_value"
+    ] = 999.0
+    record["final_response"]["data"]["proposalParameters"][0]["values"][0][
+        "basecaseValue"
+    ] = 999.0
+    for field_name in ("proposal_parameters", "confirmation_parameters"):
+        record["proposal_db_row"][field_name][0]["values"][0][
+            "basecaseValue"
+        ] = 999.0
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("value cell basecase_value" in message for message in assessment.failures)
+
+
+def test_non_finite_step3_value_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["result"]["parameter_adjustments"][0]["value_grid"][0][
+        "proposed_value"
+    ] = float("nan")
+    record["final_response"]["data"]["proposalParameters"][0]["values"][0][
+        "proposedValue"
+    ] = float("nan")
+    for field_name in ("proposal_parameters", "confirmation_parameters"):
+        record["proposal_db_row"][field_name][0]["values"][0][
+            "proposedValue"
+        ] = float("nan")
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("finite numeric" in message for message in assessment.failures)
+
+
+def test_api_db_model_target_or_value_payload_drift_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["proposal_db_row"]["proposal_parameters"][0]["modelTarget"][
+        "modelFile"
+    ] = "WrongModel"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("target/value payload" in message for message in assessment.failures)
+
+
+def test_post_merge_model_table_must_stay_inside_independent_runtime_target() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["expected_candidates"][0]["model_table"] = "WrongTable"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("candidate target" in message for message in assessment.failures)
+
+
+def test_post_merge_candidate_requires_raw_lineage_even_for_allowed_target() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["expected_candidates"][0]["merged_candidate_keys"] = []
+    record["expected_candidates"][0]["source_event_ids"] = []
+    record["expected_candidates"][0]["lever_provenance"] = []
+    record["expected_candidates"][0]["binding_provenance"] = []
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("merged_candidate_keys가 비어" in message for message in assessment.failures)
+
+
+def test_same_target_raw_lineage_cannot_split_into_multiple_runtime_tasks() -> None:
+    context = _context()
+    context["impact_levers"][1]["parameter_bindings"] = [_binding("GDP")]
+    context["dimension_lineage"][0]["lever_states"][1][
+        "parameter_bindings"
+    ] = [_binding("GDP")]
+    evidence = runner.build_v4_scenario_evidence(501, context)
+    assert evidence.errors == ()
+    assert len(evidence.runtime_candidates) == 2
+    record = _execution_record(evidence)
+    merged = record["expected_candidates"][0]
+    raw_keys = [item["candidate_key"] for item in evidence.runtime_candidates]
+    first = deepcopy(merged)
+    first["merged_candidate_keys"] = [raw_keys[0]]
+    second = deepcopy(merged)
+    second["candidate_key"] = f"{merged['candidate_key']}|split"
+    second["merged_candidate_keys"] = [raw_keys[1]]
+    record["expected_candidates"] = [first, second]
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("여러 task로 분할" in message for message in assessment.failures)
+
+
+def test_db_payload_must_not_persist_response_only_lut_value() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    for field_name in ("proposal_parameters", "confirmation_parameters"):
+        record["proposal_db_row"][field_name][0]["values"][0]["lutValue"] = 0.9
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("DB proposal payload" in message for message in assessment.failures)
+    assert any("DB confirmation payload" in message for message in assessment.failures)
+
+
+def test_adjustment_to_production_presentation_drift_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["result"]["parameter_adjustments"][0]["value_grid"][0][
+        "proposed_value"
+    ] = 9.9
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("production presentation" in message for message in assessment.failures)
+
+
+def test_api_non_success_status_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["final_response"]["status"] = "error"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("response status" in message for message in assessment.failures)
+
+
+def test_missing_token_and_retry_observability_is_review() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["llm_calls"] = [{"step": "Step1.5"}]
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "REVIEW"
+    assert any("retry count" in message for message in assessment.reviews)
+    assert any("token usage" in message for message in assessment.reviews)
+
+
+def test_missing_prompt_grounding_packet_is_review() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record.pop("prompt_grounding_evidence")
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "REVIEW"
+    assert any("prompt grounding packet" in message for message in assessment.reviews)
+
+
+def test_numeric_string_proposed_value_is_fail() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    record["result"]["parameter_adjustments"][0]["value_grid"][0][
+        "proposed_value"
+    ] = "1.1"
+    record["final_response"]["data"]["proposalParameters"][0]["values"][0][
+        "proposedValue"
+    ] = "1.1"
+    for field_name in ("proposal_parameters", "confirmation_parameters"):
+        record["proposal_db_row"][field_name][0]["values"][0][
+            "proposedValue"
+        ] = "1.1"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("finite numeric" in message for message in assessment.failures)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_message"),
+    [
+        ("api_event", "API eventId"),
+        ("db_event", "DB mi_event_id"),
+        ("db_group", "DB scenario_group_id"),
+        ("confirmation", "confirmation workflow"),
+    ],
+)
+def test_v4_persistence_contract_break_is_fail(
+    mutation: str,
+    expected_message: str,
+) -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    if mutation == "api_event":
+        record["final_response"]["data"]["eventId"] = 101
+    elif mutation == "db_event":
+        record["proposal_db_row"]["mi_event_id"] = 101
+    elif mutation == "db_group":
+        record["proposal_db_row"]["scenario_group_id"] = 999
+    else:
+        record["confirmation"]["status"] = "FAIL"
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any(expected_message in message for message in assessment.failures)
+
+
+def test_execute_targets_never_retries_after_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    evidence = _evidence()
+    calls: list[int] = []
+
+    async def fail_once(scenario_id: int) -> dict[str, Any]:
+        calls.append(scenario_id)
+        message = "write failed"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(runner, "execute_proposal_and_confirmation", fail_once)
+
+    records = asyncio.run(runner.execute_targets([evidence]))
+
+    assert calls == [evidence.scenario_id]
+    assert records[evidence.scenario_id]["execution_attempt_count"] == 1
+    assert "write failed" in records[evidence.scenario_id]["error"]
+
+
+def test_execute_targets_preserves_attached_partial_write_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    commands: list[list[str]] = []
+    evidence = _evidence()
 
-    def fake_run(command: list[str], **_: object) -> SimpleNamespace:
-        commands.append(command)
-        return SimpleNamespace(returncode=0)
+    async def fail_after_proposal(scenario_id: int) -> dict[str, Any]:
+        message = "confirmation fetch failed"
+        error = RuntimeError(message)
+        error._model_parameter_runner_record = {  # type: ignore[attr-defined]
+            "failed_stage": "confirmation DB read-back",
+            "final_response": {
+                "data": {"modelParamProposalId": 9001},
+            },
+            "proposal_db_row": {"model_param_proposal_id": 9001},
+        }
+        raise error
 
-    monkeypatch.setattr(quality_runner.subprocess, "run", fake_run)
-
-    evidence = run_automated_contract_preflight(timeout_seconds=1)
-
-    assert evidence.verdict == "PASS"
-    assert len(evidence.cases) == len(quality_runner.CONTRACT_TEST_CASES)
-    assert {case.verdict for case in evidence.cases} == {"PASS"}
-    assert all("no:cacheprovider" in command for command in commands)
-    assert all(command[-1] == case.node_id for command, case in zip(commands, evidence.cases, strict=True))
-
-
-def test_report_redacts_sensitive_exception_output() -> None:
-    target = _evidence()
-    target.ordered_events[0]["title"] = "api_key=event-secret"
-    target.dimension_values["composite_pressure"] = "password=dimension-secret"
-    secret = "mysql://user:super-secret@db.local/schema?token=abc123"
-    execution = _successful_execution(target)
-    execution.update(
-        {
-            "error": f"ConnectionError: {secret} password=hunter2",
-            "attempts": 1,
-            "elapsed_seconds": 0.2,
-            "attempt_traces": [
-                {
-                    "attempt": 1,
-                    "status": "FAIL",
-                    "elapsed_seconds": 0.2,
-                    "error": f"Authorization=BearerSecret {secret}",
-                },
-            ],
-        },
+    monkeypatch.setattr(
+        runner,
+        "execute_proposal_and_confirmation",
+        fail_after_proposal,
     )
-    api_parameter = execution["final_response"]["data"]["proposalParameters"][0]
-    api_parameter["rationale"] = "authorization=proposal-secret"
-    api_parameter["values"][0]["SecretAxis"] = "token=coordinate-secret"
-    api_parameter["values"][0]["rationale"] = "secret=value-secret"
 
-    report = render_report(
+    records = asyncio.run(runner.execute_targets([evidence]))
+    record = records[evidence.scenario_id]
+
+    assert record["final_response"]["data"]["modelParamProposalId"] == 9001
+    assert record["proposal_db_row"]["model_param_proposal_id"] == 9001
+    assert record["failed_stage"] == "confirmation DB read-back"
+
+
+def test_core_smoke_failure_is_fail() -> None:
+    def fail_command(
+        *args: object,
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args[0], returncode=2, stdout="failed", stderr="")
+
+    result = runner.run_core_smoke(run_command=fail_command)
+
+    assert result.status == "FAIL"
+    assert result.return_code == 2
+
+
+def test_schema_connection_error_is_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_connection() -> object:
+        message = "password=hunter2 token=secret-token"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(runner, "get_sync_session", fail_connection)
+
+    result = runner._schema_preflight()
+
+    assert result.verdict == "FAIL"
+    assert "hunter2" not in result.errors[0]
+    assert "secret-token" not in result.errors[0]
+    assert "<redacted>" in result.errors[0]
+
+
+def test_discovery_selection_looks_past_first_non_usable_scenario() -> None:
+    usable = _evidence()
+    usable.scenario_id = 502
+    no_runtime = deepcopy(usable)
+    no_runtime.scenario_id = 501
+    no_runtime.raw_candidates = ()
+    no_runtime.runtime_candidates = ()
+    no_runtime.blocked_candidates = ()
+
+    selected = runner.select_discovery_evidences([no_runtime, usable], limit=1)
+
+    assert [item.scenario_id for item in selected] == [502]
+
+
+def test_read_only_without_suitable_v4_scenario_is_coverage_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(runner, "_discover_scenario_ids", lambda args: ([], []))
+
+    result = asyncio.run(
+        runner.run_campaign(_args(tmp_path / "read-only.md")),
+    )
+
+    assert result.verdict == "COVERAGE LIMIT"
+    assert result.exit_code == 0
+
+
+def test_unscoped_execute_fails_before_db_or_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    preflight_called = False
+    execution_called = False
+
+    def forbidden_preflight() -> runner.SchemaPreflight:
+        nonlocal preflight_called
+        preflight_called = True
+        return runner.SchemaPreflight(verdict="PASS")
+
+    async def forbidden_execution(
+        evidences: list[runner.ScenarioEvidence],
+    ) -> dict[int, dict[str, Any]]:
+        nonlocal execution_called
+        execution_called = True
+        return {}
+
+    monkeypatch.setattr(runner, "_schema_preflight", forbidden_preflight)
+    monkeypatch.setattr(runner, "execute_targets", forbidden_execution)
+    args = runner.build_parser().parse_args(
+        ["--execute", "--report-path", str(tmp_path / "unscoped.md")],
+    )
+
+    result = asyncio.run(runner.run_campaign(args))
+
+    assert result.verdict == "FAIL"
+    assert preflight_called is False
+    assert execution_called is False
+    assert any("명시 범위가 필수" in message for message in result.scope_errors)
+
+
+def test_existing_report_is_not_overwritten_and_fails_before_db_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    preflight_called = False
+
+    def forbidden_preflight() -> runner.SchemaPreflight:
+        nonlocal preflight_called
+        preflight_called = True
+        return runner.SchemaPreflight(verdict="PASS")
+
+    report_path = tmp_path / "existing-report.md"
+    report_path.write_text("retain this report", encoding="utf-8")
+    monkeypatch.setattr(runner, "_schema_preflight", forbidden_preflight)
+    args = runner.build_parser().parse_args(
+        ["--report-path", str(report_path)],
+    )
+
+    with pytest.raises(FileExistsError):
+        asyncio.run(runner.run_campaign(args))
+
+    assert preflight_called is False
+    assert report_path.read_text(encoding="utf-8") == "retain this report"
+
+
+def test_explicit_nonmatching_scenario_is_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_discover_scenario_ids",
+        lambda args: ([], ["requested scenario is not v4"]),
+    )
+
+    args = runner.build_parser().parse_args(
+        [
+            "--scenario-id",
+            "999",
+            "--report-path",
+            str(tmp_path / "explicit-miss.md"),
+        ],
+    )
+    result = asyncio.run(runner.run_campaign(args))
+
+    assert result.verdict == "FAIL"
+    assert result.exit_code == 1
+
+
+def test_explicit_group_scope_rejects_redirected_loaded_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence()
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(runner, "_discover_scenario_ids", lambda args: ([501], []))
+    monkeypatch.setattr(
+        runner,
+        "_load_scenario_evidences",
+        lambda ids: ([evidence], []),
+    )
+    args = runner.build_parser().parse_args(
+        [
+            "--scenario-group-id",
+            "999",
+            "--execute",
+            "--report-path",
+            str(tmp_path / "redirected-group.md"),
+        ],
+    )
+
+    result = asyncio.run(runner.run_campaign(args))
+
+    assert result.verdict == "FAIL"
+    assert result.executions == {}
+    assert any("명시 범위와 불일치" in message for message in result.scope_errors)
+
+
+def test_auto_discovery_preserves_context_load_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence()
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_discover_scenario_ids",
+        lambda args: ([501, 502], []),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_load_scenario_evidences",
+        lambda ids: ([evidence], ["scenario_id=502 catalog checksum mismatch"]),
+    )
+
+    result = asyncio.run(
+        runner.run_campaign(_args(tmp_path / "context-errors.md")),
+    )
+
+    assert result.verdict == "FAIL"
+    assert any("scenario_id=502" in message for message in result.scope_errors)
+
+
+def test_failed_core_smoke_blocks_all_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence()
+    execution_called = False
+
+    async def forbidden_execution(
+        evidences: list[runner.ScenarioEvidence],
+    ) -> dict[int, dict[str, Any]]:
+        nonlocal execution_called
+        execution_called = True
+        return {}
+
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(runner, "_discover_scenario_ids", lambda args: ([501], []))
+    monkeypatch.setattr(
+        runner,
+        "_load_scenario_evidences",
+        lambda ids: ([evidence], []),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_core_smoke",
+        lambda timeout: runner.CoreSmokeEvidence(
+            status="FAIL",
+            message="core failed",
+        ),
+    )
+    monkeypatch.setattr(runner, "execute_targets", forbidden_execution)
+
+    result = asyncio.run(
+        runner.run_campaign(_args(tmp_path / "blocked.md", execute=True)),
+    )
+
+    assert result.verdict == "FAIL"
+    assert execution_called is False
+
+
+def test_missing_eligible_execution_record_is_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence()
+
+    async def missing_execution(
+        evidences: list[runner.ScenarioEvidence],
+    ) -> dict[int, dict[str, Any]]:
+        return {}
+
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(runner, "_discover_scenario_ids", lambda args: ([501], []))
+    monkeypatch.setattr(
+        runner,
+        "_load_scenario_evidences",
+        lambda ids: ([evidence], []),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_core_smoke",
+        lambda timeout: runner.CoreSmokeEvidence(status="PASS"),
+    )
+    monkeypatch.setattr(runner, "execute_targets", missing_execution)
+
+    result = asyncio.run(
+        runner.run_campaign(_args(tmp_path / "missing.md", execute=True)),
+    )
+
+    assert result.verdict == "FAIL"
+    assert any("execution record 누락" in message for message in result.scope_errors)
+
+
+def test_coverage_row_fail_is_included_in_overall_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+
+    async def one_execution(
+        evidences: list[runner.ScenarioEvidence],
+    ) -> dict[int, dict[str, Any]]:
+        return {evidence.scenario_id: record}
+
+    coverage_failure = runner.CoverageRow(
+        scenario_id=evidence.scenario_id,
+        parameter_name="GDP",
+        classification="runtime-allowed",
+        raw=1,
+        runtime=0,
+        selected=0,
+        proposed=0,
+        confirmed=0,
+        exclusion_reason="",
+        verdict="FAIL",
+        evidence="forced coverage failure",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_schema_preflight",
+        lambda: runner.SchemaPreflight(verdict="PASS"),
+    )
+    monkeypatch.setattr(runner, "_discover_scenario_ids", lambda args: ([501], []))
+    monkeypatch.setattr(
+        runner,
+        "_load_scenario_evidences",
+        lambda ids: ([evidence], []),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_core_smoke",
+        lambda timeout: runner.CoreSmokeEvidence(status="PASS"),
+    )
+    monkeypatch.setattr(runner, "execute_targets", one_execution)
+    monkeypatch.setattr(
+        runner,
+        "build_coverage_rows",
+        lambda evidence, record, assessment: [coverage_failure],
+    )
+
+    result = asyncio.run(
+        runner.run_campaign(_args(tmp_path / "coverage-fail.md", execute=True)),
+    )
+
+    assert result.verdict == "FAIL"
+
+
+@pytest.mark.parametrize(
+    ("verdict", "exit_code"),
+    [
+        ("PASS", 0),
+        ("REVIEW", 0),
+        ("COVERAGE LIMIT", 0),
+        ("FAIL", 1),
+    ],
+)
+def test_cli_exit_code_only_fails_for_mandatory_fail(
+    verdict: runner.Verdict,
+    exit_code: int,
+    tmp_path: Path,
+) -> None:
+    result = runner.CampaignResult(
+        verdict=verdict,
+        report_path=tmp_path / "report.md",
+        preflight=runner.SchemaPreflight(verdict="PASS"),
+        core_smoke=runner.CoreSmokeEvidence(status="NOT RUN"),
+        evidences=(),
+        executions={},
+        assessments=(),
+    )
+
+    assert result.exit_code == exit_code
+
+
+def test_report_contains_v4_catalog_and_allowlist_boundary() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    assessment = runner.assess_execution(evidence, record)
+
+    report = runner.render_report(
         started_at=datetime.now(UTC),
         finished_at=datetime.now(UTC),
         execute=True,
-        preflight=SchemaPreflight("PASS", ("schema ok",)),
-        selected_targets=[target],
-        skipped_targets=[],
-        discovery_messages=[],
-        active_parameter_definitions=[_parameter_definition("GDP")],
-        coverage_rows=[
-            CoverageRow("GDP", 2, 0, 0, 0, 0, "FAIL", "execution error"),
-        ],
-        executions={target.scenario_id: execution},
-        integrity_issues=[],
+        verdict=assessment.verdict,
+        preflight=runner.SchemaPreflight(verdict="PASS"),
+        core_smoke=runner.CoreSmokeEvidence(status="PASS"),
+        evidences=[evidence],
+        executions={evidence.scenario_id: record},
+        assessments=[assessment],
+        scope_errors=[],
     )
 
-    assert "super-secret" not in report
-    assert "hunter2" not in report
-    assert "abc123" not in report
-    assert "event-secret" not in report
-    assert "dimension-secret" not in report
-    assert "proposal-secret" not in report
-    assert "coordinate-secret" not in report
-    assert "value-secret" not in report
-    assert "[URL REDACTED]" in report
+    assert "v4 Multi-Event" in report
+    assert "Catalog-pinned selected Lever evidence" in report
+    assert "active-but-blocked" in report
+    assert PROPOSAL_SCOPE_EXCLUDED_REASON_CODE in report
+    assert "9001" in report
+    assert "Prompt tokens" in report
+    assert "120" in report
 
 
-def test_cli_defaults_to_read_only_discovery() -> None:
-    args = build_parser().parse_args([])
+def test_report_retains_partial_proposal_id_and_failed_stage() -> None:
+    evidence = _evidence()
+    record = {
+        "scenario_id": evidence.scenario_id,
+        "model_param_proposal_id": 9002,
+        "failed_stage": "proposal DB read-back",
+        "execution_attempt_count": 1,
+        "error": "read-back failed",
+    }
+    assessment = runner.assess_execution(evidence, record)
 
-    assert args.execute is False
-    assert args.scenario_group_id is None
-    assert args.scenario_id is None
-    assert args.max_scenarios == 5
-
-
-def test_integrated_markdown_report_contains_matrix_verdict_contract() -> None:
-    target = _evidence()
-    rows = [
-        CoverageRow("GDP", 2, None, None, None, None, "COVERAGE LIMIT", "read-only"),
-        CoverageRow("PMI", 1, 1, 0, 0, 0, "REVIEW", "routing 검토"),
-        CoverageRow("Temperature", 1, 0, 0, 0, 0, "FAIL", "candidate 누락"),
-        CoverageRow("PowerMix", 1, 1, 1, 1, 1, "PASS", "일치"),
-    ]
-    now = datetime.now(UTC)
-    contract_evidence = ContractEvidence(
-        verdict="PASS",
-        cases=tuple(
-            ContractCaseEvidence(name, node_id, "PASS", "isolated test passed")
-            for name, node_id in quality_runner.CONTRACT_TEST_CASES
-        ),
-        elapsed_seconds=1.25,
-        evidence="all passed",
-    )
-
-    report = render_report(
-        started_at=now,
-        finished_at=now,
-        execute=False,
-        preflight=SchemaPreflight("PASS", ("schema ok",)),
-        selected_targets=[target],
-        skipped_targets=[],
-        discovery_messages=[],
-        active_parameter_definitions=[_parameter_definition(row.parameter_name) for row in rows],
-        coverage_rows=rows,
-        executions={},
-        integrity_issues=[],
-        contract_evidence=contract_evidence,
-    )
-
-    assert "# Model Parameter v3 Multi-Event Quality Report" in report
-    assert "eligible | candidate | selected | proposed | confirmed" in report
-    assert "## Slot/reference/value/rationale 계약" in report
-    assert "## 성능 및 관측성" in report
-    assert "## Confirmation regression evidence" in report
-    assert "## Ordered event grounding evidence" in report
-    assert "## 단계별 LLM 입출력 증적" in report
-    assert "수요 충격" in report
-    assert "composite_pressure" in report
-    assert "### Proposed value grounding 수동 검토" in report
-    assert all(case.node_id in report for case in contract_evidence.cases)
-    assert "invalid-status workflow no-mutation" in report
-    assert "UNIT PASS" in report
-    for verdict in ("PASS", "REVIEW", "FAIL", "COVERAGE LIMIT"):
-        assert verdict in report
-
-
-def test_integrated_report_fails_180_second_performance_contract() -> None:
-    target = _evidence()
-    now = datetime.now(UTC)
-    execution = _successful_execution(target)
-    execution["elapsed_seconds"] = 181.0
-    execution["llm_calls"] = [
-        _llm_call("Step1.5 routing selection"),
-        _llm_call("Step2 slot proposal"),
-        _llm_call("Step3 value proposal"),
-    ]
-    report = render_report(
-        started_at=now,
-        finished_at=now,
+    report = runner.render_report(
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
         execute=True,
-        preflight=SchemaPreflight("PASS", ("schema ok",)),
-        selected_targets=[target],
-        skipped_targets=[],
-        discovery_messages=[],
-        active_parameter_definitions=[_parameter_definition("GDP")],
-        coverage_rows=[
-            CoverageRow("GDP", 2, 2, 2, 1, 1, "PASS", "일치"),
-        ],
-        executions={501: execution},
-        integrity_issues=[],
+        verdict=assessment.verdict,
+        preflight=runner.SchemaPreflight(verdict="PASS"),
+        core_smoke=runner.CoreSmokeEvidence(status="PASS"),
+        evidences=[evidence],
+        executions={evidence.scenario_id: record},
+        assessments=[assessment],
+        scope_errors=[],
     )
 
-    assert "- 판정: **FAIL**" in report
-    assert "| 501 | Step1.5 | 1 | 100 / 1000 | 10/5/15 | 1.500s | 0 | 0 | FAIL |" in report
-    assert "scenario 전체 180초 초과" in report
+    assert "9002" in report
+    assert "proposal DB read-back" in report
+    assert "failed_stage=proposal DB read-back" in report

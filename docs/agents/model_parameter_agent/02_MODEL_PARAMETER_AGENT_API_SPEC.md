@@ -1,5 +1,9 @@
 # Model Parameter Agent API Spec
 
+> 현재 핵심 Skill과 release 판정은 `api_version=v4`,
+> `generation_strategy=multi_event_model_lever_dimensions`만 실행한다. v1/v3 항목은 기존 API 호환과
+> 저장 데이터 해석을 위한 참고 계약이다.
+
 ## 기준
 
 | 목적 | 사용할 API |
@@ -198,6 +202,12 @@ HTTP `422`는 path/body 타입 오류나 잘못된 JSON처럼 FastAPI 요청 검
 
 v4에서 처리 결과가 의미상 비어 있는 경우의 `message`는 `유형 분류 1줄 + 개행 + 상세 사유 1줄`로 고정한다. 상세 사유는 1자 이상 300자 이하이며, Scenario/Event ID, `candidateKey`·`slotKey` 같은 내부 키와 재실행을 권하는 표현을 포함하지 않는다. `INVALID_REQUEST(-202)`, HTTP `400`, callback/DB 상태 및 payload 구조는 바뀌지 않는다.
 
+Step2 실패 상세는 한 가지 원인을 추측하지 않는다. 서버가 보유한 catalog 후보 수, LLM 원본·형식 검증 후·exact
+검증 후 slot 수를 이용해 `등록 위치 미준비`, `시나리오에서 위치 선택 불가`, `위치 형식 불일치`,
+`등록 좌표 불일치`를 구분한다. 위치 선택이 0건이면 선택된 Lever의 구조화된 `scope`와 `timeWindow`를
+참고해 대상 또는 시점 중 무엇을 더 구체적으로 확인하면 좋은지 안내한다. 이 진단 수치는 내부 state와 trace에만
+남고 public API나 callback에는 새 필드로 추가되지 않는다.
+
 | 실패 케이스 | HTTP | `data.error_code` | `data.error_name` | `message` |
 |---|---:|---:|---|---|
 | scenario 또는 scenario group을 찾지 못함 | `404` | `-201` | `ENTITY_NOT_FOUND` | `요청한 리소스를 찾을 수 없습니다 - Scenario context not found: scenario_id={scenario_id}` |
@@ -230,7 +240,7 @@ v4는 선택된 dimension value의 `lever_states`만 읽는다. `price_only`, bi
 ```json
 {
   "status": "error",
-  "message": "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터는 확인했지만, 해당 설비와 적용 기간에 대응하는 모델 입력 위치가 없습니다.",
+  "message": "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했고 대상 범위와 대략적인 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 확정하지 못했습니다. 적용 연도·월(또는 시작·종료 기간)이 명확한지 확인해 주세요.",
   "data": {
     "modelParamProposalId": 42,
     "scenarioId": 100,
@@ -272,7 +282,10 @@ runtime allow-list에서 모두 제외된 요청은 background를 시작하지 �
 | v4 catalog checksum/code/ID 또는 primary Lever 검증 실패 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - {구체적인 catalog/Lever 검증 사유}` |
 | v4 후보 생성에서 의미상 변경 항목이 없음 | 없음 | `INVALID_REQUEST` | `파라미터로 반영할 변경 항목이 없습니다.\n이벤트와 시나리오 분기값을 확인했지만, 현재 활성화된 수급모델 파라미터와 연결되는 변경 항목이 없습니다.` |
 | v4 Step1.5에서 적용 조건을 충족하는 후보가 없음 | 없음 | `INVALID_REQUEST` | `파라미터로 반영할 변경 항목이 없습니다.\nGDP·PMI 파라미터 후보는 확인했지만, 시나리오·이벤트 근거와 파라미터 적용 조건을 함께 충족하는 항목을 확정하지 못했습니다.` |
-| v4 Step2에서 유효한 모델 입력 위치가 없음 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터는 확인했지만, 해당 설비와 적용 기간에 대응하는 모델 입력 위치가 없습니다.` |
+| v4 Step2 catalog에 선택 가능한 위치가 없음 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했지만, 현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다. 모델 기준정보의 대상·기간 범위를 확인해 주세요.` |
+| v4 Step2에서 대상 범위와 대략적인 시점은 있으나 위치를 선택하지 못함 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했고 대상 범위와 대략적인 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 확정하지 못했습니다. 적용 연도·월(또는 시작·종료 기간)이 명확한지 확인해 주세요.` |
+| v4 Step2 제안 위치가 입력 형식 검증에서 모두 제외됨 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했지만, 제안된 위치 정보가 모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다. 동일한 문제가 계속되면 담당자에게 확인해 주세요.` |
+| v4 Step2 제안 위치가 exact 등록 좌표와 모두 불일치함 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했지만, 제안된 대상·기간 조합이 현재 등록된 모델 입력 위치와 일치하지 않았습니다. 국가·설비·트레인과 적용 연도·월(또는 시작·종료 기간)이 모델 기준 범위에 포함되는지 확인해 주세요.` |
 | v4 Step3에서 유효한 적용값이 없음 | 없음 | `INVALID_REQUEST` | `적용할 파라미터 값을 생성하지 못했습니다.\n액화설비 가동률 파라미터와 모델 입력 위치는 확인했지만, 시나리오·이벤트 근거와 기준값에 부합하는 유효한 적용 수치를 생성하지 못했습니다.` |
 | v1/v3 최종 유효 proposal parameter가 없음 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - No valid model parameter proposal parameters generated for scenario_id={scenario_id}`. 뒤에 최근 validation warning이 최대 3개 붙을 수 있음 |
 | Model Parameter 리소스 runtime이 등록되지 않음 | 없음 | `RUNTIME_REGISTRY_NOT_READY` | `[RUNTIME_REGISTRY_NOT_READY] Runtime Registry 준비 안됨 - model parameter resource runtime has not been registered` |

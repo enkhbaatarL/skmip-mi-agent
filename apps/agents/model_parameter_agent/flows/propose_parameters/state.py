@@ -25,6 +25,7 @@ class ModelParameterProposalOutputState(BaseModel):
     lut_version: str | None = None
 
     parameter_slots: list[dict[str, Any]] = Field(default_factory=list)
+    slot_selection_diagnostics: dict[str, int] = Field(default_factory=dict)
     parameter_adjustments: list[dict[str, Any]] = Field(default_factory=list)
     validation_warnings: list[str] = Field(default_factory=list)
     llm_usage: dict[str, Any] | None = None

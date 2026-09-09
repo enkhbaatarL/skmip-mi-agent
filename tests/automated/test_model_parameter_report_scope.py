@@ -301,6 +301,13 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
             "scenario_group_id": 105,
             "title": "단기 고가동 뒤 빠르게 정상화",
         },
+        "scenario_group": {
+            "generation_strategy": "multi_event_model_lever_dimensions",
+        },
+        "parameter_mapping_resources": {
+            "mapping_rules": [],
+            "parameter_definitions": [{"parameter_name": "LiqUtilAdjustment"}],
+        },
     }
     candidate = {
         "candidate_key": "liq",
@@ -346,11 +353,17 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
     def raise_output_error(_state: object) -> None:
         raise RuntimeError("No valid model parameter proposal parameters generated")
 
+    knowledge_base_args: dict[str, object] = {}
+
+    def fake_knowledge_base(**kwargs: object) -> object:
+        knowledge_base_args.update(kwargs)
+        return object()
+
     monkeypatch.setattr(proposal_evaluation, "ModelParameterService", FakeService)
     monkeypatch.setattr(
         proposal_evaluation,
-        "get_parameter_knowledge_base",
-        lambda _basecase_dir=None: object(),
+        "get_parameter_knowledge_base_from_resources",
+        fake_knowledge_base,
     )
     monkeypatch.setattr(
         proposal_evaluation,
@@ -375,6 +388,11 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
     assert trace["step_summary"]["validated_candidate_count"] == 1
     assert trace["step_summary"]["selected_slot_count"] == 0
     assert trace["llm_calls"][0]["usage"]["total_tokens"] == 110
+    assert knowledge_base_args["mapping_rows"] == []
+    assert knowledge_base_args["parameter_rows"] == [
+        {"parameter_name": "LiqUtilAdjustment"},
+    ]
+    assert knowledge_base_args["allow_empty_mapping_rows"] is True
 
 
 def test_scenario_token_summary_sums_all_recorded_llm_calls() -> None:

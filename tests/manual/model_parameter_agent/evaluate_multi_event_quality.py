@@ -1,13 +1,19 @@
 # Copyright (c) 2026 SK Innovation E&S.
-# ruff: noqa: ANN401, C901, E402, PERF401, S603, T201
+# ruff: noqa: ANN401, C901, E402, T201
+
+"""Evidence-bound quality runner for v4 Model Parameter scenarios.
+
+The default mode only reads metadata and writes a Markdown report. ``--execute``
+is the sole path that invokes the existing proposal/confirmation workflow.
+"""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 import math
@@ -23,6 +29,7 @@ from typing import Any, Literal
 ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
 DEFAULT_APP_CONFIG = ROOT_DIR / "envs" / "config.yaml"
 DEFAULT_DOTENV = ROOT_DIR / "envs" / ".env"
 if DEFAULT_DOTENV.exists():
@@ -32,85 +39,62 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 
-from apps.common.configs.config import get_settings
+from apps.agents.model_parameter_agent.constants import (
+    MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
+    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+)
+from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+    ModelParameterService,
+)
+from apps.agents.model_parameter_agent.presentation import (
+    _proposal_parameters_from_state,
+)
+from apps.agents.model_parameter_agent.utils.parameter_mapping import (
+    match_v4_parameter_candidates_from_rows,
+    partition_proposal_parameter_candidates,
+)
 from apps.common.configs.database.sync_database.connection import get_sync_session
-from apps.persistence.event.repository import EventRepository
+from apps.persistence.model_impact_lever.models import MiModelImpactLeverModel
 from apps.persistence.model_parameter.models import (
-    MiModelParamDimensionMapModel,
     MiModelParamModel,
     MiModelParamProposalModel,
 )
-from apps.persistence.model_parameter.repository import ModelParameterRepository
-from apps.persistence.scenario.models import (
-    MiDimensionValueMappingModel,
-    MiScenarioModel,
-)
-from apps.persistence.scenario.repository import ScenarioRepository
+from apps.persistence.scenario.models import MiScenarioModel
 from apps.persistence.scenario_group.models import (
     MiScenarioGroupEventModel,
     MiScenarioGroupModel,
 )
-from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 from tests.manual.model_parameter_agent.runner_common import (
     execute_proposal_and_confirmation,
     json_safe,
+    runner_record_from_exception,
 )
 
 
-V3_API_VERSION = "v3"
-V3_STRATEGY = "multi_event_composite_dimensions"
+V4_API_VERSION = "v4"
+V4_STRATEGY = "multi_event_model_lever_dimensions"
+MIN_EVENT_COUNT = 1
+MAX_EVENT_COUNT = 5
+DEFAULT_DISCOVERY_LIMIT = 5
+DISCOVERY_SCAN_MULTIPLIER = 10
+MAX_DISCOVERY_SCAN = 100
+DEFAULT_CORE_SMOKE_TIMEOUT_SECONDS = 180
+MAX_EXECUTION_SECONDS = 180.0
 REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
-DEFAULT_ROUTING_LIMIT = 2
-CONTRACT_TEST_CASES = (
-    (
-        "invalid-status service rollback",
-        (
-            "tests/automated/test_model_parameter_agent_contract.py::"
-            "ModelParameterAgentContractTest::"
-            "test_model_parameter_service_rejects_processing_confirmation_without_status_change"
-        ),
-    ),
-    (
-        "invalid-status workflow no-mutation",
-        (
-            "tests/automated/test_model_parameter_report_scope.py::"
-            "test_invalid_status_confirmation_uses_existing_failed_row_without_mutation"
-        ),
-    ),
-    (
-        "custom parameter service persistence",
-        (
-            "tests/automated/test_model_parameter_agent_contract.py::"
-            "ModelParameterAgentLLMTest::"
-            "test_model_parameter_service_persists_unknown_parameter_metadata"
-        ),
-    ),
-    (
-        "persistence proposed precision preservation",
-        (
-            "tests/automated/test_model_parameter_agent_contract.py::"
-            "ModelParameterAgentContractTest::"
-            "test_db_payload_bounds_basecase_and_preserves_proposed_precision"
-        ),
-    ),
-    (
-        "reconfirmation proposed precision preservation",
-        (
-            "tests/automated/test_model_parameter_agent_contract.py::"
-            "ModelParameterAgentContractTest::"
-            "test_model_parameter_service_reconfirmation_preserves_proposed_precision"
-        ),
-    ),
-    (
-        "persistence finite numeric",
-        (
-            "tests/automated/test_model_parameter_multi_event_quality.py::"
-            "test_persistence_contract_rejects_non_finite_numeric_values"
-        ),
-    ),
+CORE_SMOKE_COMMAND = (
+    sys.executable,
+    "-m",
+    "pytest",
+    "-q",
+    "-m",
+    "model_parameter_core",
+    "tests/automated/test_model_parameter_agent_contract.py",
+    "tests/automated/test_model_parameter_multi_event_quality.py",
+    "tests/automated/test_model_parameter_runner_common.py",
 )
+
 Verdict = Literal["PASS", "REVIEW", "FAIL", "COVERAGE LIMIT"]
 _VERDICT_PRIORITY: dict[Verdict, int] = {
     "COVERAGE LIMIT": 0,
@@ -121,10 +105,20 @@ _VERDICT_PRIORITY: dict[Verdict, int] = {
 
 
 @dataclass(frozen=True)
-class ProjectionResult:
-    occurrences: tuple[dict[str, Any], ...] = ()
-    warnings: tuple[str, ...] = ()
+class SchemaPreflight:
+    verdict: Verdict
+    checks: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CoreSmokeEvidence:
+    status: Literal["NOT RUN", "PASS", "FAIL"]
+    command: tuple[str, ...] = CORE_SMOKE_COMMAND
+    return_code: int | None = None
+    elapsed_seconds: float | None = None
+    output_tail: str = ""
+    message: str = ""
 
 
 @dataclass
@@ -133,584 +127,559 @@ class ScenarioEvidence:
     scenario_id: int
     group_title: str
     scenario_title: str
-    parameter_mapping_ready: bool
-    relation_count: int
-    group_event_ids: tuple[int, ...]
+    api_version: str
+    generation_strategy: str
     ordered_events: tuple[dict[str, Any], ...] = ()
-    occurrences: tuple[dict[str, Any], ...] = ()
+    stored_catalog_version: str = ""
+    stored_catalog_checksum: str = ""
+    active_catalog_version: str = ""
+    active_catalog_checksum: str = ""
+    dimension_lineage: tuple[dict[str, Any], ...] = ()
+    impact_levers: tuple[dict[str, Any], ...] = ()
+    parameter_definitions: tuple[dict[str, Any], ...] = ()
+    raw_candidates: tuple[dict[str, Any], ...] = ()
+    runtime_candidates: tuple[dict[str, Any], ...] = ()
+    blocked_candidates: tuple[dict[str, Any], ...] = ()
+    matcher_non_inputs: tuple[dict[str, Any], ...] = ()
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
-    dimension_values: dict[str, Any] = field(default_factory=dict)
-    projection_statuses: tuple[str, ...] = ()
-    dimension_source_event_ids: dict[str, tuple[int, ...]] = field(
-        default_factory=dict,
-    )
-    dimension_source_refs: dict[str, tuple[dict[str, Any], ...]] = field(
-        default_factory=dict,
-    )
-    approved_source_projections: dict[
-        str,
-        tuple[dict[str, Any], ...],
-    ] = field(default_factory=dict)
-    selection_skip_reason: str | None = None
 
     @property
-    def eligible_parameters(self) -> set[str]:
-        return {str(item.get("parameter_name") or "") for item in self.occurrences if item.get("parameter_name")}
+    def ordered_event_ids(self) -> tuple[int, ...]:
+        return tuple(
+            event_id
+            for event in self.ordered_events
+            if (event_id := _int_or_none(event.get("mi_event_id"))) is not None
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionAssessment:
+    scenario_id: int
+    verdict: Verdict
+    failures: tuple[str, ...] = ()
+    reviews: tuple[str, ...] = ()
+    raw_candidate_keys: tuple[str, ...] = ()
+    runtime_candidate_keys: tuple[str, ...] = ()
+    selected_parameter_names: tuple[str, ...] = ()
+    proposed_parameter_names: tuple[str, ...] = ()
+    confirmed_parameter_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class CoverageRow:
+    scenario_id: int
     parameter_name: str
-    eligible: int
-    candidate: int | None
+    classification: Literal["runtime-allowed", "active-but-blocked"]
+    raw: int
+    runtime: int | None
     selected: int | None
     proposed: int | None
     confirmed: int | None
+    exclusion_reason: str
     verdict: Verdict
     evidence: str
 
 
 @dataclass(frozen=True)
-class ParameterQualityRow:
-    scenario_id: int
-    parameter_name: str
-    candidate_keys: tuple[str, ...]
-    selected_slot_count: int
-    exact_slot_count: int
-    reference_count: int
-    step3_value_count: int
-    api_value_count: int
-    db_value_count: int
-    confirmed_value_count: int
-    reference_sources: tuple[str, ...]
-    source_count: int
+class CampaignResult:
     verdict: Verdict
-    evidence: str
-    manual_review: str
+    report_path: Path
+    preflight: SchemaPreflight
+    core_smoke: CoreSmokeEvidence
+    evidences: tuple[ScenarioEvidence, ...]
+    executions: Mapping[int, dict[str, Any]]
+    assessments: tuple[ExecutionAssessment, ...]
+    scope_errors: tuple[str, ...] = ()
+
+    @property
+    def exit_code(self) -> int:
+        return 1 if self.verdict == "FAIL" else 0
 
 
-@dataclass(frozen=True)
-class PerformanceRow:
-    scenario_id: int
-    step: str
-    call_count: int
-    prompt_bytes: int | None
-    prompt_limit_bytes: tuple[int, ...]
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    elapsed_seconds: float | None
-    outer_retry_count: int
-    internal_retry_count: int | None
-    verdict: Verdict
-    evidence: str
-
-
-@dataclass(frozen=True)
-class PromptGroundingRow:
-    scenario_id: int
-    step: str
-    event_ids: tuple[int, ...]
-    dimension_keys: tuple[str, ...]
-    verdict: Verdict
-    evidence: str
-
-
-@dataclass(frozen=True)
-class SchemaPreflight:
-    verdict: Verdict
-    messages: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class ContractCaseEvidence:
-    name: str
-    node_id: str
-    verdict: Verdict
-    evidence: str
-
-
-@dataclass(frozen=True)
-class ContractEvidence:
-    verdict: Verdict
-    cases: tuple[ContractCaseEvidence, ...]
-    elapsed_seconds: float | None
-    evidence: str
-
-
-def _value(value: Any, *names: str, default: Any = None) -> Any:
-    if isinstance(value, Mapping):
-        for name in names:
-            if name in value:
-                return value[name]
-        return default
-    for name in names:
-        if hasattr(value, name):
-            return getattr(value, name)
-    return default
+def _text(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def _int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
     try:
-        return int(value)
+        return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
 
 
-def _clean(value: Any) -> str:
-    return str(value or "").strip()
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
-def _bounded_text(value: Any, *, limit: int) -> str:
-    text = _clean(value).replace("\x00", "")
-    return text if len(text) <= limit else text[: max(0, limit - 1)] + "…"
+def _mapping_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
-def _safe_exception_text(exc: BaseException) -> str:
-    """Return stable error evidence without exception details or credentials."""
-    return f"{type(exc).__name__}: details redacted"
+def _candidate_key(item: Mapping[str, Any]) -> str:
+    return _text(item.get("candidate_key") or item.get("candidateKey"))
 
 
-def _redact_report_text(value: Any, *, limit: int | None = None) -> str:
-    text = _clean(value).replace("\x00", "")
-    if limit is not None and len(text) > limit:
-        text = text[: max(0, limit - 1)] + "…"
-    text = re.sub(
-        r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+",
-        r"\1 [REDACTED]",
-        text,
-    )
-    text = re.sub(
-        r"(?i)([\"']?\b(?:password|passwd|pwd|token|secret|api[_-]?key|authorization)"
-        r"\b[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;|}]+)",
-        r"\1[REDACTED]",
-        text,
-    )
-    return re.sub(
-        r"(?i)\b[a-z][a-z0-9+.-]*://[^\s]+",
-        "[URL REDACTED]",
-        text,
+def _parameter_name(item: Mapping[str, Any]) -> str:
+    return _text(
+        item.get("canonical_parameter_name")
+        or item.get("canonicalParameterName")
+        or item.get("parameter_name")
+        or item.get("parameterName"),
     )
 
 
-def _redact_error_text(value: Any) -> str:
-    text = _redact_report_text(value, limit=500)
-    return text or "unknown error"
+def _parameter_names(value: Any) -> set[str]:
+    return {
+        name
+        for item in _mapping_items(value)
+        if (name := _parameter_name(item))
+    }
 
 
-def _dimension_values(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, Mapping):
-        return {str(key): value for key, value in raw.items() if str(key).strip()}
-    if isinstance(raw, list):
-        return {
-            str(item.get("dim_key") or item.get("dimensionId")): item.get("value")
-            for item in raw
-            if isinstance(item, Mapping) and (item.get("dim_key") or item.get("dimensionId"))
-        }
-    return {}
+def _proposal_value_count(value: Any) -> int:
+    return sum(
+        len(item.get("values") or [])
+        for item in _mapping_items(value)
+        if isinstance(item.get("values") or [], list)
+    )
 
 
-def _target_signature(
+_PROPOSAL_KEY_ALIASES = {
+    "parameterName": "parameter_name",
+    "modelTarget": "model_target",
+    "modelFile": "model_file",
+    "modelSheet": "model_sheet",
+    "tableName": "table_name",
+    "valueFieldNames": "value_field_names",
+    "slotAxesFieldNames": "slot_axes_field_names",
+    "basecaseValue": "basecase_value",
+    "proposedValue": "proposed_value",
+    "rationaleKo": "rationale_ko",
+}
+_REDACTION_PATTERNS = (
+    re.compile(
+        r"(?i)(password|passwd|pwd|token|api[_-]?key|authorization|secret)"
+        r"(\s*[=:]\s*)([^\s,;]+)",
+    ),
+    re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^:/@\s]+):([^@\s]+)@"),
+    re.compile(r"(?i)(bearer\s+)([a-z0-9._~+/-]+=*)"),
+)
+
+
+def _normalize_proposal_payload(
+    value: Any,
     *,
-    parameter_name: Any,
-    model_file: Any,
-    model_sheet: Any,
-) -> tuple[str, str, str]:
-    return (_clean(parameter_name), _clean(model_file), _clean(model_sheet))
+    drop_lut_value: bool,
+) -> Any:
+    safe_value = json_safe(value)
+    if isinstance(safe_value, Mapping):
+        normalized: dict[str, Any] = {}
+        for raw_key, raw_item in safe_value.items():
+            key = _PROPOSAL_KEY_ALIASES.get(str(raw_key), str(raw_key))
+            if drop_lut_value and key in {"lutValue", "lut_value"}:
+                continue
+            normalized[key] = _normalize_proposal_payload(
+                raw_item,
+                drop_lut_value=drop_lut_value,
+            )
+        return normalized
+    if isinstance(safe_value, list):
+        return [
+            _normalize_proposal_payload(
+                item,
+                drop_lut_value=drop_lut_value,
+            )
+            for item in safe_value
+        ]
+    return safe_value
 
 
-def _stable_task_key(parameter_name: str, model_file: str, model_sheet: str) -> str:
-    def normalize(value: Any) -> str:
-        return re.sub(
-            r"[^0-9a-zA-Z가-힣]+",
-            "",
-            str(value or ""),
-        ).lower()
+def _proposal_payload_multiset(
+    value: Any,
+    *,
+    drop_lut_value: bool = False,
+) -> tuple[str, ...]:
+    normalized_items: list[str] = []
+    for raw_item in _mapping_items(value):
+        item = _normalize_proposal_payload(
+            raw_item,
+            drop_lut_value=drop_lut_value,
+        )
+        values = item.get("values") if isinstance(item, dict) else None
+        if isinstance(values, list):
+            item["values"] = sorted(
+                values,
+                key=lambda entry: json.dumps(
+                    entry,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ),
+            )
+        normalized_items.append(
+            json.dumps(
+                item,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+        )
+    return tuple(sorted(normalized_items))
 
+
+def _contains_lut_value(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            str(key) in {"lutValue", "lut_value"}
+            or _contains_lut_value(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_contains_lut_value(item) for item in value)
+    return False
+
+
+def _redact(value: Any) -> str:
+    text = str(value)
+    for pattern in _REDACTION_PATTERNS:
+        text = (
+            pattern.sub(r"\1\2<redacted>", text)
+            if pattern.groups == 3
+            else pattern.sub(r"\1<redacted>", text)
+        )
+    return text
+
+
+def _candidate_keys(value: Any) -> set[str]:
+    return {
+        key
+        for item in _mapping_items(value)
+        if (key := _candidate_key(item))
+    }
+
+
+def _basic_target_signature(item: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (
+        _parameter_name(item).casefold(),
+        _text(item.get("model_file") or item.get("modelFile")).casefold(),
+        _text(item.get("model_sheet") or item.get("modelSheet")).casefold(),
+    )
+
+
+def _target_signature(item: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        *_basic_target_signature(item),
+        _text(
+            item.get("model_table")
+            or item.get("modelTable")
+            or item.get("table_name")
+            or item.get("tableName"),
+        ).casefold(),
+    )
+
+
+def _merged_raw_keys(value: Any) -> set[str]:
+    keys: set[str] = set()
+    for item in _mapping_items(value):
+        merged_keys = item.get("merged_candidate_keys") or item.get(
+            "mergedCandidateKeys",
+        )
+        if isinstance(merged_keys, Sequence) and not isinstance(
+            merged_keys,
+            str | bytes,
+        ):
+            keys.update(_text(key) for key in merged_keys if _text(key))
+            continue
+        candidate_key = _candidate_key(item)
+        if candidate_key.startswith("v4-lever|"):
+            keys.add(candidate_key)
+    return keys
+
+
+def _field_key(value: Any) -> str:
+    return re.sub(r"[^0-9a-zA-Z가-힣]+", "", _text(value)).lower()
+
+
+def _parameter_candidate_key(item: Mapping[str, Any]) -> str:
     return "|".join(
         (
             "parameter",
-            "v3",
-            normalize(model_file),
-            normalize(model_sheet),
-            normalize(parameter_name),
+            "v4",
+            _field_key(item.get("model_file") or item.get("modelFile")),
+            _field_key(item.get("model_sheet") or item.get("modelSheet")),
+            _field_key(_parameter_name(item)),
         ),
     )
 
 
-def _normalized_relations(
-    relations: Sequence[Any],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    normalized: list[dict[str, Any]] = []
-    errors: list[str] = []
-    seen_event_ids: set[int] = set()
-    seen_display_orders: set[int] = set()
-    for relation in relations:
-        event_id = _int_or_none(_value(relation, "mi_event_id", "miEventId"))
-        event_type_l2_id = _int_or_none(
-            _value(relation, "event_type_l2_id", "eventTypeL2Id"),
-        )
-        template_id = _int_or_none(
-            _value(
-                relation,
-                "scenario_dimension_template_id",
-                "scenarioDimensionTemplateId",
-            ),
-        )
-        if event_id is None or event_type_l2_id is None:
-            errors.append("group-event relation의 event ID 또는 event type이 비어 있습니다.")
-            continue
-        if event_id in seen_event_ids:
-            errors.append(f"group-event relation에 중복 event ID가 있습니다: {event_id}")
-            continue
-        seen_event_ids.add(event_id)
-        display_order = _int_or_none(
-            _value(relation, "display_order", "displayOrder"),
-        )
-        if display_order is None or display_order <= 0:
-            errors.append(
-                f"group-event relation의 display_order가 비어 있거나 유효하지 않습니다: event_id={event_id}",
-            )
-            display_order = 0
-        elif display_order in seen_display_orders:
-            errors.append(
-                f"group-event relation에 중복 display_order가 있습니다: display_order={display_order}",
-            )
-        seen_display_orders.add(display_order)
-        normalized.append(
-            {
-                "mi_event_id": event_id,
-                "event_type_l2_id": event_type_l2_id,
-                "scenario_dimension_template_id": template_id,
-                "display_order": display_order,
-            },
-        )
-    normalized.sort(key=lambda item: (item["display_order"], item["mi_event_id"]))
-    return normalized, errors
-
-
-def project_expected_mappings(
-    *,
-    dimension_definitions: Sequence[Any],
-    scenario_dimension_values: Any,
-    relations: Sequence[Any],
-    mapping_rules: Sequence[Mapping[str, Any]],
-    parameter_definitions: Sequence[Mapping[str, Any]],
-) -> ProjectionResult:
-    """Independently project v3 sourceRefs into canonical DB mappings.
-
-    This deliberately does not call the production context adapter or matcher. It
-    is the quality runner's independent oracle for lineage and mapping coverage.
-    A source with no active mapping is a warning; malformed or orphan lineage is
-    an error and must prevent execute mode for that scenario.
-    """
-    relation_rows, relation_errors = _normalized_relations(relations)
-    errors = list(relation_errors)
-    warnings: list[str] = []
-    group_event_ids = {item["mi_event_id"] for item in relation_rows}
-    relations_by_template: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for relation in relation_rows:
-        template_id = relation["scenario_dimension_template_id"]
-        if template_id is not None:
-            relations_by_template[template_id].append(relation)
-
-    definitions: dict[str, Any] = {}
-    for raw_definition in dimension_definitions:
-        dimension_id = _clean(
-            _value(raw_definition, "dimension_id", "dimensionId"),
-        )
-        if not dimension_id:
-            errors.append("dimensionDefinitions 항목에 dimensionId가 없습니다.")
-            continue
-        if dimension_id in definitions:
-            errors.append(f"dimensionDefinitions에 중복 dimensionId가 있습니다: {dimension_id}")
-            continue
-        definitions[dimension_id] = raw_definition
-
-    relation_event_ids_covered_by_definitions: set[int] = set()
-    for dimension_id, definition in definitions.items():
-        raw_event_ids = _value(
-            definition,
-            "source_event_ids",
-            "sourceEventIds",
-        )
-        definition_event_ids = {
-            event_id for raw_event_id in raw_event_ids or [] if (event_id := _int_or_none(raw_event_id)) is not None
-        }
-        raw_refs = _value(definition, "source_refs", "sourceRefs")
-        definition_template_ids = {
-            template_id
-            for raw_ref in raw_refs or []
-            if isinstance(raw_ref, Mapping)
-            and (
-                template_id := _int_or_none(
-                    _value(
-                        raw_ref,
-                        "scenario_dimension_template_id",
-                        "scenarioDimensionTemplateId",
-                    ),
-                )
-            )
-            is not None
-        }
-        for relation in relation_rows:
-            if (
-                relation["mi_event_id"] in definition_event_ids
-                and relation["scenario_dimension_template_id"] in definition_template_ids
-            ):
-                relation_event_ids_covered_by_definitions.add(
-                    relation["mi_event_id"],
-                )
-        if definition_event_ids and not definition_template_ids:
-            errors.append(
-                f"dimensionDefinition source event에 sourceRef가 없습니다: dimension={dimension_id}",
-            )
-    orphan_relation_event_ids = sorted(
-        group_event_ids - relation_event_ids_covered_by_definitions,
+def _coordinate_signature(value: Any) -> str:
+    coordinates = _mapping(value)
+    return json.dumps(
+        json_safe(coordinates),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
     )
-    if orphan_relation_event_ids:
-        errors.append(
-            "group relation event가 어떤 dimensionDefinition/sourceRef에도 연결되지 않습니다: "
-            f"event_ids={orphan_relation_event_ids}",
+
+
+def _slot_coordinates(slot: Mapping[str, Any]) -> dict[str, Any]:
+    direct = slot.get("coordinates")
+    if isinstance(direct, Mapping):
+        return dict(direct)
+    coordinates: dict[str, Any] = {}
+    for axis in _mapping_items(slot.get("slot_axes") or slot.get("slotAxes")):
+        axis_name = _text(axis.get("axis_name") or axis.get("axisName"))
+        if axis_name:
+            coordinates[axis_name] = axis.get("axis_value", axis.get("axisValue"))
+    return coordinates
+
+
+def _period_coordinates(value: Any) -> list[dict[str, Any]]:
+    periods: list[dict[str, Any]] = []
+    for raw_period in _mapping_items(value):
+        months = raw_period.get("Months")
+        if "Year" in raw_period and isinstance(months, list):
+            periods.extend(
+                {"Year": raw_period["Year"], "Month": month}
+                for month in months
+            )
+        else:
+            periods.append(dict(raw_period))
+    return periods
+
+
+def _catalog_coordinate_signatures(catalog: Mapping[str, Any]) -> set[str]:
+    coordinates: list[dict[str, Any]] = []
+    for leaf in _mapping_items(catalog.get("leaves")):
+        fixed_axes = _mapping(leaf.get("fixed_axes") or leaf.get("fixedAxes"))
+        periods = _period_coordinates(
+            leaf.get("available_periods") or leaf.get("availablePeriods"),
         )
+        coordinates.extend(
+            {**fixed_axes, **period} for period in periods or [{}]
+        )
+    if coordinates:
+        return {_coordinate_signature(item) for item in coordinates}
 
-    dimension_values = _dimension_values(scenario_dimension_values)
-    if not dimension_values:
-        errors.append("scenario.dimension_values가 비어 있거나 JSON object가 아닙니다.")
-
-    definition_by_parameter = {
-        _clean(
-            definition.get("canonical_parameter_name") or definition.get("parameter_name"),
-        ): definition
-        for definition in parameter_definitions
-        if _clean(
-            definition.get("canonical_parameter_name") or definition.get("parameter_name"),
+    period_groups = {
+        _text(group.get("period_group_id") or group.get("periodGroupId")): (
+            _period_coordinates(
+                group.get("available_periods")
+                or group.get("availablePeriods"),
+            )
+        )
+        for group in _mapping_items(
+            catalog.get("period_groups") or catalog.get("periodGroups"),
         )
     }
-    rules_by_source: dict[tuple[int, str], list[Mapping[str, Any]]] = defaultdict(list)
-    for rule in mapping_rules:
-        event_type_l2_id = _int_or_none(rule.get("event_type_l2_id"))
-        dimension_key = _clean(rule.get("dimension_key"))
-        if event_type_l2_id is not None and dimension_key:
-            rules_by_source[(event_type_l2_id, dimension_key)].append(rule)
+    fixed_axis_names = [
+        _text(axis_name)
+        for axis_name in catalog.get("fixed_axis_names")
+        or catalog.get("fixedAxisNames")
+        or []
+        if _text(axis_name)
+    ]
 
-    occurrences_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for composite_key in dimension_values:
-        definition = definitions.get(composite_key)
-        if definition is None:
-            warnings.append(
-                f"dimensionDefinitions에 없는 자유 dimension value를 mapping에서 제외했습니다: {composite_key}",
+    def walk(
+        nodes: Any,
+        depth: int,
+        fixed_axes: Mapping[str, Any],
+    ) -> None:
+        for node in _mapping_items(nodes):
+            next_axes = dict(fixed_axes)
+            if depth < len(fixed_axis_names) and "axis_value" in node:
+                next_axes[fixed_axis_names[depth]] = node.get("axis_value")
+            elif depth < len(fixed_axis_names) and "axisValue" in node:
+                next_axes[fixed_axis_names[depth]] = node.get("axisValue")
+            children = node.get("children")
+            if children:
+                walk(children, depth + 1, next_axes)
+            period_group_id = _text(
+                node.get("period_group_id") or node.get("periodGroupId"),
             )
-            continue
+            if period_group_id:
+                coordinates.extend(
+                    {**next_axes, **period}
+                    for period in period_groups.get(period_group_id, [])
+                )
 
-        raw_source_event_ids = _value(
-            definition,
-            "source_event_ids",
-            "sourceEventIds",
-        )
-        if not isinstance(raw_source_event_ids, list) or not raw_source_event_ids:
-            errors.append(f"sourceEventIds가 비어 있습니다: dimension={composite_key}")
-            continue
-        source_event_ids: list[int] = []
-        malformed_event_id = False
-        for raw_event_id in raw_source_event_ids:
-            event_id = _int_or_none(raw_event_id)
-            if event_id is None:
-                malformed_event_id = True
-                break
-            source_event_ids.append(event_id)
-        if malformed_event_id:
-            errors.append(f"sourceEventIds에 정수가 아닌 값이 있습니다: dimension={composite_key}")
-            continue
-        if len(set(source_event_ids)) != len(source_event_ids):
-            errors.append(f"sourceEventIds가 중복되었습니다: dimension={composite_key}")
-            continue
-        orphan_ids = sorted(set(source_event_ids) - group_event_ids)
-        if orphan_ids:
-            errors.append(
-                f"sourceEventIds가 group relation에 없습니다: dimension={composite_key}, event_ids={orphan_ids}",
+    walk(
+        catalog.get("fixed_axis_hierarchy")
+        or catalog.get("fixedAxisHierarchy"),
+        0,
+        {},
+    )
+    return {_coordinate_signature(item) for item in coordinates}
+
+
+def _reference_coordinates(reference: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        **_mapping(reference.get("axes")),
+        **_mapping(reference.get("metadata")),
+    }
+
+
+def _same_scalar(left: Any, right: Any) -> bool:
+    return json_safe(left) == json_safe(right)
+
+
+def _blocked_layer_hits(
+    value: Any,
+    blocked_candidates: Sequence[Mapping[str, Any]],
+) -> set[str]:
+    blocked_names = {
+        _parameter_name(item) for item in blocked_candidates if _parameter_name(item)
+    }
+    blocked_targets = {_basic_target_signature(item) for item in blocked_candidates}
+    blocked_keys = {
+        key
+        for item in blocked_candidates
+        for key in (_candidate_key(item), _parameter_candidate_key(item))
+        if key
+    }
+    hits: set[str] = set()
+    for item in _mapping_items(value):
+        name = _parameter_name(item)
+        candidate_key = _candidate_key(item)
+        target = _basic_target_signature(item)
+        if (
+            name in blocked_names
+            or candidate_key in blocked_keys
+            or (name and target in blocked_targets)
+        ):
+            hits.add(name or candidate_key or str(target))
+    return hits
+
+
+def _non_input_signature(item: Mapping[str, Any]) -> tuple[str, ...]:
+    """Identify an excluded v4 occurrence together with its exact reason code."""
+    return (
+        _candidate_key(item),
+        _text(
+            item.get("scenario_dimension_key")
+            or item.get("dimension_key")
+            or item.get("source_dimension_id"),
+        ),
+        _text(
+            item.get("source_dimension_value_id")
+            or item.get("source_dimension_value"),
+        ),
+        _text(item.get("lever_code")),
+        _text(item.get("impact_lever_id")),
+        _parameter_name(item),
+        _text(item.get("binding_role")),
+        json.dumps(
+            json_safe(item.get("source_event_ids") or []),
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        _text(item.get("reason_code") or item.get("reasonCode")),
+    )
+
+
+def _canonical_mapping_multiset(value: Any) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            json.dumps(
+                json_safe(item),
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
             )
-            continue
-
-        raw_refs = _value(definition, "source_refs", "sourceRefs")
-        if not isinstance(raw_refs, list) or not raw_refs:
-            errors.append(f"sourceRefs가 비어 있습니다: dimension={composite_key}")
-            continue
-        seen_refs: set[tuple[int, str]] = set()
-        covered_event_ids: set[int] = set()
-        for raw_ref in raw_refs:
-            if not isinstance(raw_ref, Mapping):
-                errors.append(f"sourceRef가 object가 아닙니다: dimension={composite_key}")
-                continue
-            template_id = _int_or_none(
-                _value(
-                    raw_ref,
-                    "scenario_dimension_template_id",
-                    "scenarioDimensionTemplateId",
-                ),
-            )
-            mapping_dimension_key = _clean(
-                _value(raw_ref, "dim_key", "dimKey"),
-            )
-            if template_id is None or not mapping_dimension_key:
-                errors.append(
-                    f"sourceRef의 template ID 또는 dimKey가 비어 있습니다: dimension={composite_key}",
-                )
-                continue
-            ref_key = (template_id, mapping_dimension_key)
-            if ref_key in seen_refs:
-                errors.append(
-                    "sourceRef가 중복되었습니다: "
-                    f"dimension={composite_key}, template={template_id}, "
-                    f"dimKey={mapping_dimension_key}",
-                )
-                continue
-            seen_refs.add(ref_key)
-            matching_relations = [
-                relation
-                for relation in relations_by_template.get(template_id, [])
-                if relation["mi_event_id"] in source_event_ids
-            ]
-            if not matching_relations:
-                errors.append(
-                    "sourceRef가 group relation template과 연결되지 않습니다: "
-                    f"dimension={composite_key}, template={template_id}, "
-                    f"dimKey={mapping_dimension_key}",
-                )
-                continue
-            covered_event_ids.update(relation["mi_event_id"] for relation in matching_relations)
-
-            relations_by_event_type: dict[int, list[int]] = defaultdict(list)
-            for relation in matching_relations:
-                relations_by_event_type[relation["event_type_l2_id"]].append(
-                    relation["mi_event_id"],
-                )
-            for event_type_l2_id, matched_event_ids in relations_by_event_type.items():
-                source_rules = rules_by_source.get(
-                    (event_type_l2_id, mapping_dimension_key),
-                    [],
-                )
-                if not source_rules:
-                    warnings.append(
-                        "sourceRef에 활성 DB mapping이 없어 제외했습니다: "
-                        f"event_type_l2_id={event_type_l2_id}, "
-                        f"dimKey={mapping_dimension_key}, composite={composite_key}",
-                    )
-                    continue
-                for rule in source_rules:
-                    mapping_method = _clean(rule.get("mapping_method"))
-                    if mapping_method not in {"direct", "routing"}:
-                        continue
-                    parameter_name = _clean(
-                        rule.get("canonical_parameter_name"),
-                    )
-                    parameter_definition = definition_by_parameter.get(parameter_name)
-                    if parameter_definition is None:
-                        warnings.append(
-                            "mapping의 parameter가 active master에 없어 제외했습니다: "
-                            f"parameter={parameter_name or '<empty>'}",
-                        )
-                        continue
-                    model_file = _clean(parameter_definition.get("model_file"))
-                    model_sheet = _clean(parameter_definition.get("model_sheet"))
-                    occurrence_key = (
-                        composite_key,
-                        template_id,
-                        mapping_dimension_key,
-                        event_type_l2_id,
-                        parameter_name,
-                        model_file,
-                        model_sheet,
-                        mapping_method,
-                    )
-                    occurrence = occurrences_by_key.setdefault(
-                        occurrence_key,
-                        {
-                            "scenario_dimension_key": composite_key,
-                            "scenario_dimension_value": dimension_values[composite_key],
-                            "scenario_dimension_template_id": template_id,
-                            "mapping_dimension_key": mapping_dimension_key,
-                            "event_type_l2_id": event_type_l2_id,
-                            "source_event_ids": [],
-                            "mapping_method": mapping_method,
-                            "parameter_name": parameter_name,
-                            "model_file": model_file,
-                            "model_sheet": model_sheet,
-                            "candidate_key": _stable_task_key(
-                                parameter_name,
-                                model_file,
-                                model_sheet,
-                            ),
-                        },
-                    )
-                    occurrence["source_event_ids"] = sorted(
-                        set(occurrence["source_event_ids"]) | set(matched_event_ids),
-                    )
-
-        uncovered_ids = sorted(set(source_event_ids) - covered_event_ids)
-        if uncovered_ids:
-            errors.append(
-                "sourceEventIds가 sourceRefs로 완전히 연결되지 않았습니다: "
-                f"dimension={composite_key}, event_ids={uncovered_ids}",
-            )
-
-    occurrences = sorted(
-        occurrences_by_key.values(),
-        key=lambda item: (
-            item["parameter_name"],
-            item["scenario_dimension_key"],
-            item["event_type_l2_id"],
-            item["mapping_dimension_key"],
+            for item in _mapping_items(value)
         ),
     )
-    return ProjectionResult(
-        occurrences=tuple(occurrences),
-        warnings=tuple(dict.fromkeys(warnings)),
-        errors=tuple(dict.fromkeys(errors)),
+
+
+def _lineage_signature(item: Mapping[str, Any]) -> str:
+    states = [
+        {
+                "lever_code": state.get("lever_code") or state.get("leverCode"),
+                "impact_lever_id": state.get("impact_lever_id")
+                or state.get("impactLeverId"),
+                "direction": state.get("direction"),
+                "level": state.get("level"),
+                "scope": state.get("scope"),
+                "time_window": state.get("time_window") or state.get("timeWindow"),
+                "lever_domain": state.get("lever_domain") or state.get("leverDomain"),
+                "is_primary_lever": state.get("is_primary_lever")
+                if "is_primary_lever" in state
+                else state.get("isPrimaryLever"),
+                "parameter_bindings": _canonical_mapping_multiset(
+                    state.get("parameter_bindings") or state.get("parameterBindings"),
+                ),
+        }
+        for state in _mapping_items(item.get("lever_states"))
+    ]
+    payload = {
+        "dimension_key": item.get("scenario_dimension_key")
+        or item.get("dimension_key"),
+        "dimension_value": item.get("scenario_dimension_value"),
+        "dimension_value_id": item.get("scenario_dimension_value_id"),
+        "source_event_ids": json_safe(item.get("source_event_ids") or []),
+        "primary_lever_code": item.get("primary_lever_code"),
+        "primary_impact_lever_id": item.get("primary_impact_lever_id"),
+        "lever_states": states,
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _combine_verdicts(verdicts: Sequence[Verdict]) -> Verdict:
+    if not verdicts:
+        return "COVERAGE LIMIT"
+    return max(verdicts, key=_VERDICT_PRIORITY.__getitem__)
+
+
+def _dedupe(messages: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(message for message in messages if message))
+
+
+def _binding_signature(value: Any) -> tuple[tuple[str, str, str, str, str], ...]:
+    return tuple(
+        (
+            _text(binding.get("parameter_name") or binding.get("parameterName")),
+            _text(binding.get("role") or "primary"),
+            _text(binding.get("applicability")),
+            _text(binding.get("support_status") or binding.get("supportStatus")),
+            _text(
+                binding.get("unsupported_reason_code")
+                or binding.get("unsupportedReasonCode"),
+            ),
+        )
+        for binding in _mapping_items(value)
     )
 
 
-def schema_preflight(session: Any) -> SchemaPreflight:
-    required_columns = {
+def _schema_preflight() -> SchemaPreflight:
+    contracts: dict[str, set[str]] = {
         MiScenarioGroupModel.__tablename__: {
             "scenario_group_id",
-            "mi_event_id",
-            "event_type_l2_id",
             "api_version",
             "generation_strategy",
-            "parameter_mapping_ready",
             "dimension_definitions",
+            "impact_catalog_version",
+            "impact_catalog_checksum",
         },
         MiScenarioGroupEventModel.__tablename__: {
             "scenario_group_id",
             "mi_event_id",
-            "event_type_l2_id",
-            "scenario_dimension_template_id",
             "display_order",
-        },
-        MiDimensionValueMappingModel.__tablename__: {
-            "scenario_group_id",
-            "dimension_value_id",
-            "dimension_id",
-            "display_value",
-            "source_projections",
-            "status",
         },
         MiScenarioModel.__tablename__: {
             "scenario_id",
             "scenario_group_id",
             "dimension_values",
         },
-        MiModelParamProposalModel.__tablename__: {
-            "scenario_id",
-            "scenario_group_id",
-            "mi_event_id",
-            "proposal_parameters",
-            "confirmation_parameters",
-        },
+        # The execute path inserts and then ORM-loads this row.  Validate the
+        # complete mapped shape before any LLM or write instead of discovering
+        # an old schema after a proposal has already been attempted.
+        MiModelParamProposalModel.__tablename__: set(
+            MiModelParamProposalModel.__table__.columns.keys(),
+        ),
         MiModelParamModel.__tablename__: {
             "parameter_name",
             "model_file",
@@ -718,2882 +687,1465 @@ def schema_preflight(session: Any) -> SchemaPreflight:
             "use_yn",
             "del_yn",
         },
-        MiModelParamDimensionMapModel.__tablename__: {
-            "event_type_l2_id",
-            "dimension_key",
-            "mapping_method",
-            "model_param_id",
+        MiModelImpactLeverModel.__tablename__: {
+            "impact_lever_id",
+            "lever_code",
+            "parameter_bindings",
+            "catalog_version",
             "use_yn",
             "del_yn",
         },
     }
-    messages: list[str] = []
-    try:
-        db_inspector = inspect(session.get_bind())
-        table_names = set(db_inspector.get_table_names())
-        for table_name, expected_columns in required_columns.items():
-            if table_name not in table_names:
-                messages.append(f"필수 테이블이 없습니다: {table_name}")
-                continue
-            columns = {str(column["name"]): column for column in db_inspector.get_columns(table_name)}
-            missing_columns = sorted(expected_columns - set(columns))
-            if missing_columns:
-                messages.append(
-                    f"필수 컬럼이 없습니다: {table_name}.{missing_columns}",
-                )
-        proposal_columns = {
-            str(column["name"]): column
-            for column in db_inspector.get_columns(
-                MiModelParamProposalModel.__tablename__,
-            )
-        }
-        event_column = proposal_columns.get("mi_event_id")
-        if event_column is not None and not bool(event_column.get("nullable")):
-            messages.append(
-                "proposal mi_event_id가 nullable이 아닙니다: nullable migration 필요",
-            )
-    except Exception as exc:
-        messages.append(
-            f"DB schema preflight 실행 실패: {_safe_exception_text(exc)}",
-        )
-    return SchemaPreflight(
-        verdict="FAIL" if messages else "PASS",
-        messages=tuple(messages or ["필수 v3/proposal schema와 nullable 계약을 확인했습니다."]),
-    )
-
-
-def run_automated_contract_preflight(
-    *,
-    timeout_seconds: float = 90.0,
-) -> ContractEvidence:
-    """Run isolated, non-mutating regression cases and retain actual outcomes."""
-    started = time.perf_counter()
-    cases: list[ContractCaseEvidence] = []
-    contract_env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    for name, node_id in CONTRACT_TEST_CASES:
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pytest",
-                    "-q",
-                    "-p",
-                    "no:cacheprovider",
-                    node_id,
-                ],
-                cwd=str(ROOT_DIR),
-                env=contract_env,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            cases.append(
-                ContractCaseEvidence(
-                    name=name,
-                    node_id=node_id,
-                    verdict="FAIL",
-                    evidence=f"pytest timeout ({timeout_seconds:.0f}s); output redacted",
-                ),
-            )
-            continue
-        except OSError as exc:
-            cases.append(
-                ContractCaseEvidence(
-                    name=name,
-                    node_id=node_id,
-                    verdict="FAIL",
-                    evidence=_safe_exception_text(exc),
-                ),
-            )
-            continue
-        cases.append(
-            ContractCaseEvidence(
-                name=name,
-                node_id=node_id,
-                verdict="PASS" if result.returncode == 0 else "FAIL",
-                evidence=(
-                    "isolated mock/unit contract passed (not live DB evidence)"
-                    if result.returncode == 0
-                    else f"pytest exit_code={result.returncode}; output redacted"
-                ),
-            ),
-        )
-    verdict: Verdict = "FAIL" if any(case.verdict == "FAIL" for case in cases) else "PASS"
-    return ContractEvidence(
-        verdict=verdict,
-        cases=tuple(cases),
-        elapsed_seconds=time.perf_counter() - started,
-        evidence=(
-            "all isolated mock/unit contracts passed"
-            if verdict == "PASS"
-            else "one or more isolated automated contracts failed"
-        ),
-    )
-
-
-def _group_is_v3(group: Any) -> bool:
-    return (
-        _clean(_value(group, "api_version")) == V3_API_VERSION
-        and _clean(_value(group, "generation_strategy")) == V3_STRATEGY
-    )
-
-
-def _bounded_event_evidence(
-    *,
-    relation_rows: Sequence[Mapping[str, Any]],
-    event_records: Mapping[int, Mapping[str, Any]] | None,
-) -> tuple[tuple[dict[str, Any], ...], list[str]]:
-    if event_records is None:
-        return (), []
-    events: list[dict[str, Any]] = []
+    checks: list[str] = []
     errors: list[str] = []
-    for relation in relation_rows:
-        event_id = int(relation["mi_event_id"])
-        event = event_records.get(event_id)
-        if event is None:
-            errors.append(
-                f"group-event relation이 존재하지 않는 event를 참조합니다: event_id={event_id}",
-            )
-            continue
-        actual_event_type = _int_or_none(
-            _value(event, "event_type_l2_id", "eventTypeL2Id"),
-        )
-        relation_event_type = int(relation["event_type_l2_id"])
-        if actual_event_type != relation_event_type:
-            errors.append(
-                "group-event relation과 event의 event type이 다릅니다: "
-                f"event_id={event_id}, relation={relation_event_type}, actual={actual_event_type}",
-            )
-        raw_bullets = _value(event, "key_bullets", "keyBullets", default=[])
-        raw_tags = _value(event, "tags", default=[])
-        events.append(
-            {
-                "display_order": int(relation["display_order"]),
-                "mi_event_id": event_id,
-                "event_type_l2_id": relation_event_type,
-                "scenario_dimension_template_id": relation.get(
-                    "scenario_dimension_template_id",
-                ),
-                "title": _bounded_text(
-                    _value(
-                        event,
-                        "event_title_ko",
-                        "event_title",
-                        "title",
-                    ),
-                    limit=500,
-                ),
-                "one_line_summary": _bounded_text(
-                    _value(event, "one_line_summary", "oneLineSummary"),
-                    limit=300,
-                ),
-                "key_bullets": [
-                    _bounded_text(item, limit=300)
-                    for item in (raw_bullets if isinstance(raw_bullets, list) else [])[:5]
-                ],
-                "tags": [
-                    _bounded_text(item, limit=100) for item in (raw_tags if isinstance(raw_tags, list) else [])[:8]
-                ],
-                "detail_excerpt": str(
-                    _value(
-                        event,
-                        "detail_analysis",
-                        "detailAnalysis",
-                        default="",
+    session = None
+    try:
+        session = get_sync_session()
+        inspector = inspect(session.get_bind())
+        existing_tables = set(inspector.get_table_names())
+        for table_name, required_columns in contracts.items():
+            if table_name not in existing_tables:
+                errors.append(f"필수 테이블 누락: {table_name}")
+                continue
+            columns = {
+                str(column.get("name")): column
+                for column in inspector.get_columns(table_name)
+            }
+            missing = sorted(required_columns - set(columns))
+            if missing:
+                errors.append(f"필수 컬럼 누락: {table_name}.{','.join(missing)}")
+            else:
+                checks.append(f"{table_name}: required columns present")
+            if table_name == MiModelParamProposalModel.__tablename__:
+                event_column = columns.get("mi_event_id") or {}
+                if event_column.get("nullable") is not True:
+                    errors.append(
+                        "proposal.mi_event_id가 nullable이 아님: v4 persistence 불가",
                     )
-                    or "",
-                )[:1200],
-            },
+                else:
+                    checks.append("proposal.mi_event_id: nullable")
+    except Exception as exc:
+        errors.append(f"schema preflight 실행 실패: {_redact(repr(exc))}")
+    finally:
+        if session is not None:
+            session.close()
+    return SchemaPreflight(
+        verdict="FAIL" if errors else "PASS",
+        checks=tuple(checks),
+        errors=_dedupe(errors),
+    )
+
+
+def _discover_scenario_ids(args: argparse.Namespace) -> tuple[list[int], list[str]]:
+    session = None
+    errors: list[str] = []
+    try:
+        session = get_sync_session()
+        statement = (
+            select(MiScenarioModel.scenario_id)
+            .join(
+                MiScenarioGroupModel,
+                MiScenarioGroupModel.scenario_group_id
+                == MiScenarioModel.scenario_group_id,
+            )
+            .where(
+                MiScenarioModel.del_yn == "N",
+                MiScenarioGroupModel.del_yn == "N",
+                MiScenarioGroupModel.api_version == V4_API_VERSION,
+                MiScenarioGroupModel.generation_strategy == V4_STRATEGY,
+            )
+            .order_by(
+                MiScenarioGroupModel.scenario_group_id.desc(),
+                MiScenarioModel.display_order,
+                MiScenarioModel.scenario_id,
+            )
         )
-    return tuple(events), errors
+        if args.scenario_id is not None:
+            statement = statement.where(
+                MiScenarioModel.scenario_id == args.scenario_id,
+            )
+        elif args.scenario_group_id is not None:
+            statement = statement.where(
+                MiScenarioGroupModel.scenario_group_id
+                == args.scenario_group_id,
+            )
+        else:
+            scan_limit = min(
+                max(args.limit * DISCOVERY_SCAN_MULTIPLIER, args.limit),
+                MAX_DISCOVERY_SCAN,
+            )
+            statement = statement.limit(scan_limit)
+        scenario_ids = [int(value) for value in session.scalars(statement).all()]
+    except Exception as exc:
+        scenario_ids = []
+        errors.append(f"v4 scenario discovery 실패: {_redact(repr(exc))}")
+    finally:
+        if session is not None:
+            session.close()
+
+    if not scenario_ids and not errors:
+        if args.scenario_id is not None:
+            errors.append(
+                f"요청 scenario_id={args.scenario_id}가 v4 {V4_STRATEGY} 범위에 없음",
+            )
+        elif args.scenario_group_id is not None:
+            errors.append(
+                "요청 scenario_group_id="
+                f"{args.scenario_group_id}에 v4 실행 대상 scenario가 없음",
+            )
+    return scenario_ids, errors
 
 
-def _build_scenario_evidence(
-    *,
-    group: Any,
-    scenario: Any,
-    relations: Sequence[Any],
-    dimension_mappings: Sequence[Any],
-    mapping_rules: Sequence[Mapping[str, Any]],
-    parameter_definitions: Sequence[Mapping[str, Any]],
-    event_records: Mapping[int, Mapping[str, Any]] | None = None,
+def build_v4_scenario_evidence(
+    scenario_id: int,
+    context: Mapping[str, Any],
 ) -> ScenarioEvidence:
-    relation_rows, relation_errors = _normalized_relations(relations)
-    projection = project_expected_mappings(
-        dimension_definitions=_value(group, "dimension_definitions", default=[]) or [],
-        scenario_dimension_values=_value(scenario, "dimension_values", default={}),
-        relations=relations,
-        mapping_rules=mapping_rules,
-        parameter_definitions=parameter_definitions,
-    )
-    relation_count = len(relation_rows)
-    errors = [*projection.errors]
-    if relation_count < 2 or relation_count > 5:
-        errors.append(
-            f"v3 group-event relation 수가 2~5 경계를 벗어났습니다: {relation_count}",
-        )
-    errors.extend(relation_errors)
-    ordered_events, event_errors = _bounded_event_evidence(
-        relation_rows=relation_rows,
-        event_records=event_records,
-    )
-    errors.extend(event_errors)
-    dimension_values = _dimension_values(
-        _value(scenario, "dimension_values", default={}),
-    )
-    dimension_source_event_ids: dict[str, tuple[int, ...]] = {}
-    dimension_source_refs: dict[str, tuple[dict[str, Any], ...]] = {}
-    for raw_definition in (
-        _value(
-            group,
-            "dimension_definitions",
-            default=[],
-        )
-        or []
-    ):
-        if not isinstance(raw_definition, Mapping):
-            continue
-        dimension_key = _clean(
-            _value(raw_definition, "dimension_id", "dimensionId"),
-        )
-        if dimension_key not in dimension_values:
-            continue
-        source_event_ids = tuple(
-            event_id
-            for raw_event_id in (
-                _value(
-                    raw_definition,
-                    "source_event_ids",
-                    "sourceEventIds",
-                    default=[],
-                )
-                or []
-            )
-            if (event_id := _int_or_none(raw_event_id)) is not None
-        )
-        source_refs: list[dict[str, Any]] = []
-        for raw_ref in (
-            _value(
-                raw_definition,
-                "source_refs",
-                "sourceRefs",
-                default=[],
-            )
-            or []
-        ):
-            if not isinstance(raw_ref, Mapping):
-                continue
-            template_id = _int_or_none(
-                _value(
-                    raw_ref,
-                    "scenario_dimension_template_id",
-                    "scenarioDimensionTemplateId",
-                ),
-            )
-            dim_key = _clean(_value(raw_ref, "dim_key", "dimKey"))
-            if template_id is None or not dim_key:
-                continue
-            source_refs.append(
-                {
-                    "scenario_dimension_template_id": template_id,
-                    "dim_key": dim_key,
-                },
-            )
-        dimension_source_event_ids[dimension_key] = source_event_ids
-        dimension_source_refs[dimension_key] = tuple(source_refs)
+    """Validate a loaded v4 context and independently derive proposal boundaries."""
+    scenario = _mapping(context.get("scenario"))
+    group = _mapping(context.get("scenario_group"))
+    context_scenario_id = _int_or_none(scenario.get("scenario_id"))
+    resolved_scenario_id = scenario_id
+    group_id = _int_or_none(group.get("scenario_group_id")) or 0
+    api_version = _text(group.get("api_version"))
+    strategy = _text(group.get("generation_strategy"))
+    events = _mapping_items(context.get("events"))
+    lineage = _mapping_items(context.get("dimension_lineage"))
+    impact_levers = _mapping_items(context.get("impact_levers"))
+    resources = _mapping(context.get("parameter_mapping_resources"))
+    definitions = _mapping_items(resources.get("parameter_definitions"))
+    errors: list[str] = []
+    warnings = [
+        _text(item)
+        for item in context.get("validation_warnings") or []
+        if _text(item)
+    ]
 
-    projection_statuses: list[str] = []
-    projection_warnings: list[str] = []
-    approved_source_projections: dict[
-        str,
-        tuple[dict[str, Any], ...],
-    ] = {}
-    for dimension_key, selected_value in dimension_values.items():
-        matching = [
-            mapping
-            for mapping in dimension_mappings
-            if _clean(_value(mapping, "dimension_id", "dimensionId")) == dimension_key
-            and _clean(
-                _value(
-                    mapping,
-                    "display_value",
-                    "displayValue",
-                    "dimension_value_id",
-                    "dimensionValueId",
-                ),
-            )
-            == _clean(selected_value)
-        ]
-        if not matching:
-            projection_statuses.append(f"{dimension_key}=missing")
-            projection_warnings.append(
-                "선택 dimension value에 승인 projection이 없어 raw composite value를 사용합니다: "
-                f"dimension={dimension_key}",
-            )
+    if scenario_id <= 0:
+        errors.append(f"requested scenario_id가 positive integer가 아님: {scenario_id}")
+    if context_scenario_id is None or context_scenario_id <= 0:
+        errors.append("loaded context scenario_id가 누락되거나 유효하지 않음")
+    elif context_scenario_id != scenario_id:
+        errors.append(
+            "loaded context scenario_id mismatch: "
+            f"requested={scenario_id}, actual={context_scenario_id}",
+        )
+    if group_id <= 0:
+        errors.append("loaded context scenario_group_id가 누락되거나 유효하지 않음")
+    if api_version != V4_API_VERSION:
+        errors.append(
+            f"api_version mismatch: expected={V4_API_VERSION}, actual={api_version or '-'}",
+        )
+    if strategy != V4_STRATEGY:
+        errors.append(
+            f"generation_strategy mismatch: expected={V4_STRATEGY}, actual={strategy or '-'}",
+        )
+    if not MIN_EVENT_COUNT <= len(events) <= MAX_EVENT_COUNT:
+        errors.append(
+            f"ordered event count must be {MIN_EVENT_COUNT}..{MAX_EVENT_COUNT}: {len(events)}",
+        )
+    event_ids = [_int_or_none(event.get("mi_event_id")) for event in events]
+    if any(event_id is None for event_id in event_ids):
+        errors.append("ordered event에 mi_event_id가 누락됨")
+    clean_event_ids = [event_id for event_id in event_ids if event_id is not None]
+    if len(clean_event_ids) != len(set(clean_event_ids)):
+        errors.append("ordered event에 중복 mi_event_id가 있음")
+    display_orders = [_int_or_none(event.get("display_order")) for event in events]
+    if any(order is None for order in display_orders):
+        errors.append("ordered event에 display_order가 누락됨")
+    elif display_orders != list(range(1, len(events) + 1)):
+        errors.append("ordered event display_order가 exact 1..N 순서가 아님")
+
+    stored_version = _text(group.get("impact_catalog_version"))
+    stored_checksum = _text(group.get("impact_catalog_checksum"))
+    active_version = _text(context.get("impact_catalog_version"))
+    active_checksum = _text(context.get("impact_catalog_checksum"))
+    if not stored_version or not stored_checksum:
+        errors.append("scenario group의 impact catalog pin(version/checksum)이 누락됨")
+    if not active_version or not active_checksum:
+        errors.append("active impact catalog version/checksum 증적이 누락됨")
+    if stored_version != active_version:
+        errors.append(
+            f"impact catalog version mismatch: stored={stored_version or '-'}, active={active_version or '-'}",
+        )
+    if stored_checksum != active_checksum:
+        errors.append(
+            f"impact catalog checksum mismatch: stored={stored_checksum or '-'}, active={active_checksum or '-'}",
+        )
+
+    catalog_by_code: dict[str, dict[str, Any]] = {}
+    for lever in impact_levers:
+        lever_code = _text(lever.get("lever_code") or lever.get("leverCode"))
+        if not lever_code:
+            errors.append("active catalog Lever에 lever_code가 누락됨")
             continue
-        statuses = sorted(
-            {_clean(_value(mapping, "status")) or "unknown" for mapping in matching},
+        if lever_code in catalog_by_code:
+            errors.append(f"active catalog Lever code 중복: {lever_code}")
+            continue
+        catalog_by_code[lever_code] = lever
+        lever_version = _text(
+            lever.get("catalog_version") or lever.get("catalogVersion"),
         )
-        projection_statuses.extend(f"{dimension_key}={status}" for status in statuses)
-        approved_source_projections[dimension_key] = tuple(
-            json_safe(dict(projection))
-            for mapping in matching
-            if _clean(_value(mapping, "status")) == "approved"
-            for projection in (
-                _value(
-                    mapping,
-                    "source_projections",
-                    "sourceProjections",
-                    default=[],
+        if lever_version != active_version:
+            errors.append(
+                f"Lever catalog version mismatch: {lever_code}={lever_version or '-'}",
+            )
+
+    seen_dimensions: set[str] = set()
+    group_event_id_set = set(clean_event_ids)
+    for item in lineage:
+        dimension_key = _text(
+            item.get("scenario_dimension_key")
+            or item.get("scenarioDimensionKey"),
+        )
+        if not dimension_key:
+            errors.append("dimension lineage key가 누락됨")
+        elif dimension_key in seen_dimensions:
+            errors.append(f"dimension lineage key 중복: {dimension_key}")
+        seen_dimensions.add(dimension_key)
+
+        source_ids = [
+            _int_or_none(value)
+            for value in item.get("source_event_ids")
+            or item.get("sourceEventIds")
+            or []
+        ]
+        if not source_ids or any(value is None for value in source_ids):
+            errors.append(f"dimension={dimension_key or '-'} source_event_ids가 유효하지 않음")
+        else:
+            integer_source_ids = [value for value in source_ids if value is not None]
+            if len(integer_source_ids) != len(set(integer_source_ids)):
+                errors.append(f"dimension={dimension_key} source_event_ids 중복")
+            outside = sorted(set(integer_source_ids) - group_event_id_set)
+            if outside:
+                errors.append(
+                    f"dimension={dimension_key} source_event_ids가 group 밖을 참조: {outside}",
                 )
-                or []
+
+        states = _mapping_items(item.get("lever_states") or item.get("leverStates"))
+        if not states:
+            errors.append(f"dimension={dimension_key or '-'} selected lever_states가 없음")
+        seen_lever_codes: set[str] = set()
+        for state in states:
+            lever_code = _text(state.get("lever_code") or state.get("leverCode"))
+            if not lever_code:
+                errors.append(f"dimension={dimension_key or '-'} Lever code 누락")
+                continue
+            if lever_code in seen_lever_codes:
+                errors.append(f"dimension={dimension_key} Lever state 중복: {lever_code}")
+            seen_lever_codes.add(lever_code)
+            catalog_lever = catalog_by_code.get(lever_code)
+            if catalog_lever is None:
+                errors.append(
+                    f"dimension={dimension_key} Lever가 active catalog에 없음: {lever_code}",
+                )
+                continue
+            state_id = _int_or_none(
+                state.get("impact_lever_id") or state.get("impactLeverId"),
             )
-            if isinstance(projection, Mapping)
-        )
-        if "approved" not in statuses:
-            projection_warnings.append(
-                "선택 dimension value projection이 승인 상태가 아니어서 보조 근거에서 제외됩니다: "
-                f"dimension={dimension_key}, statuses={statuses}",
+            catalog_id = _int_or_none(
+                catalog_lever.get("impact_lever_id")
+                or catalog_lever.get("impactLeverId"),
             )
-    if not bool(_value(group, "parameter_mapping_ready", default=False)):
-        projection_warnings.append(
-            "parameter_mapping_ready=false이지만 proposal eligibility gate로 사용하지 않습니다.",
+            if state_id != catalog_id:
+                errors.append(
+                    f"dimension={dimension_key} Lever ID mismatch: {lever_code} stored={state_id}, active={catalog_id}",
+                )
+            state_domain = _text(
+                state.get("lever_domain") or state.get("leverDomain"),
+            )
+            catalog_domain = _text(catalog_lever.get("domain"))
+            if state_domain != catalog_domain:
+                errors.append(
+                    f"dimension={dimension_key} Lever domain mismatch: {lever_code}",
+                )
+            state_bindings = _binding_signature(
+                state.get("parameter_bindings") or state.get("parameterBindings"),
+            )
+            catalog_bindings = _binding_signature(
+                catalog_lever.get("parameter_bindings")
+                or catalog_lever.get("parameterBindings"),
+            )
+            if state_bindings != catalog_bindings:
+                errors.append(
+                    f"dimension={dimension_key} catalog-pinned binding mismatch: {lever_code}",
+                )
+
+        primary_lever_code = _text(
+            item.get("primary_lever_code") or item.get("primaryLeverCode"),
         )
+        primary_lever_id = _int_or_none(
+            item.get("primary_impact_lever_id")
+            or item.get("primaryImpactLeverId"),
+        )
+        primary_catalog = catalog_by_code.get(primary_lever_code)
+        primary_states = [
+            state
+            for state in states
+            if _text(state.get("lever_code") or state.get("leverCode"))
+            == primary_lever_code
+        ]
+        if not primary_lever_code or primary_catalog is None:
+            errors.append(
+                f"dimension={dimension_key or '-'} primary Lever가 active catalog에 없음",
+            )
+        elif primary_lever_id != _int_or_none(
+            primary_catalog.get("impact_lever_id")
+            or primary_catalog.get("impactLeverId"),
+        ):
+            errors.append(f"dimension={dimension_key} primary Lever ID mismatch")
+        if len(primary_states) != 1:
+            errors.append(
+                f"dimension={dimension_key} primary Lever state가 정확히 1개가 아님",
+            )
+        elif (
+            _int_or_none(
+                primary_states[0].get("impact_lever_id")
+                or primary_states[0].get("impactLeverId"),
+            )
+            != primary_lever_id
+            or primary_states[0].get("is_primary_lever") is not True
+        ):
+            errors.append(
+                f"dimension={dimension_key} primary Lever state code/ID/flag mismatch",
+            )
+        flagged_primary_codes = {
+            _text(state.get("lever_code") or state.get("leverCode"))
+            for state in states
+            if state.get("is_primary_lever") is True
+        }
+        if flagged_primary_codes != {primary_lever_code}:
+            errors.append(
+                f"dimension={dimension_key} primary Lever flag set mismatch: {sorted(flagged_primary_codes)}",
+            )
+
+    if not lineage:
+        errors.append("selected dimension_lineage가 없음")
+    if not definitions:
+        errors.append("active model parameter definition이 없음")
+
+    raw_candidates: list[dict[str, Any]] = []
+    runtime_candidates: list[dict[str, Any]] = []
+    blocked_candidates: list[dict[str, Any]] = []
+    matcher_non_inputs: list[dict[str, Any]] = []
+    if definitions and lineage:
+        try:
+            raw_candidates, matcher_non_inputs, matcher_warnings = (
+                match_v4_parameter_candidates_from_rows(
+                    parameter_rows=definitions,
+                    scenario_context=dict(context),
+                )
+            )
+            runtime_candidates, blocked_candidates = (
+                partition_proposal_parameter_candidates(raw_candidates)
+            )
+            warnings.extend(_text(item) for item in matcher_warnings if _text(item))
+        except Exception as exc:
+            errors.append(f"v4 candidate derivation 실패: {_redact(repr(exc))}")
+
+    raw_keys = [_candidate_key(candidate) for candidate in raw_candidates]
+    runtime_keys = [_candidate_key(candidate) for candidate in runtime_candidates]
+    blocked_keys = [_candidate_key(candidate) for candidate in blocked_candidates]
+    if any(not key for key in raw_keys):
+        errors.append("raw candidate key가 누락됨")
+    if len(raw_keys) != len(set(raw_keys)):
+        errors.append("raw candidate key가 중복됨")
+    if len(runtime_keys) != len(set(runtime_keys)):
+        errors.append("runtime candidate key가 중복됨")
+    if len(blocked_keys) != len(set(blocked_keys)):
+        errors.append("blocked candidate key가 중복됨")
+    if set(runtime_keys) & set(blocked_keys):
+        errors.append("runtime/blocked candidate partition이 disjoint가 아님")
+    if set(runtime_keys) | set(blocked_keys) != set(raw_keys):
+        errors.append("runtime/blocked candidate partition union이 raw와 불일치")
+
+    for candidate in runtime_candidates:
+        name = _parameter_name(candidate)
+        if name not in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+            errors.append(f"runtime allowlist 밖 후보가 허용됨: {name or '-'}")
+    for candidate in blocked_candidates:
+        name = _parameter_name(candidate)
+        if name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+            errors.append(f"runtime allowlist 후보가 차단됨: {name}")
+        if candidate.get("reason_code") != PROPOSAL_SCOPE_EXCLUDED_REASON_CODE:
+            errors.append(
+                f"blocked candidate reason code 누락/불일치: {name or '-'}",
+            )
 
     return ScenarioEvidence(
-        scenario_group_id=int(_value(group, "scenario_group_id")),
-        scenario_id=int(_value(scenario, "scenario_id")),
-        group_title=_clean(_value(group, "title")),
-        scenario_title=_clean(_value(scenario, "title")),
-        parameter_mapping_ready=bool(
-            _value(group, "parameter_mapping_ready", default=False),
-        ),
-        relation_count=relation_count,
-        group_event_ids=tuple(item["mi_event_id"] for item in relation_rows),
-        ordered_events=ordered_events,
-        occurrences=projection.occurrences,
-        warnings=tuple(
-            dict.fromkeys([*projection.warnings, *projection_warnings]),
-        ),
-        errors=tuple(dict.fromkeys(errors)),
-        dimension_values=dimension_values,
-        projection_statuses=tuple(projection_statuses),
-        dimension_source_event_ids=dimension_source_event_ids,
-        dimension_source_refs=dimension_source_refs,
-        approved_source_projections=approved_source_projections,
+        scenario_group_id=group_id,
+        scenario_id=resolved_scenario_id,
+        group_title=_text(group.get("title")),
+        scenario_title=_text(scenario.get("title")),
+        api_version=api_version,
+        generation_strategy=strategy,
+        ordered_events=tuple(events),
+        stored_catalog_version=stored_version,
+        stored_catalog_checksum=stored_checksum,
+        active_catalog_version=active_version,
+        active_catalog_checksum=active_checksum,
+        dimension_lineage=tuple(lineage),
+        impact_levers=tuple(impact_levers),
+        parameter_definitions=tuple(definitions),
+        raw_candidates=tuple(raw_candidates),
+        runtime_candidates=tuple(runtime_candidates),
+        blocked_candidates=tuple(blocked_candidates),
+        matcher_non_inputs=tuple(matcher_non_inputs),
+        warnings=_dedupe(warnings),
+        errors=_dedupe(errors),
     )
 
 
-def discover_v3_scenarios(
-    session: Any,
-    *,
-    scenario_group_id: int | None = None,
-    scenario_id: int | None = None,
-) -> tuple[list[ScenarioEvidence], list[dict[str, Any]], list[str]]:
-    group_repository = ScenarioGroupRepository(session=session)
-    scenario_repository = ScenarioRepository(session=session)
-    event_repository = EventRepository(session=session)
-    parameter_repository = ModelParameterRepository(session=session)
-    mapping_rules, parameter_definitions = parameter_repository.fetch_parameter_mapping_resources()
-
-    discovery_messages: list[str] = []
-    if scenario_id is not None:
-        scenario = scenario_repository.fetch_model_by_id(scenario_id)
-        if scenario is None:
-            return [], parameter_definitions, [f"scenario를 찾을 수 없습니다: {scenario_id}"]
-        group = group_repository.fetch_by_id(int(scenario.scenario_group_id))
-        groups = [group] if group is not None else []
-        scenarios_by_group = {int(scenario.scenario_group_id): [scenario]}
-    elif scenario_group_id is not None:
-        group = group_repository.fetch_by_id(scenario_group_id)
-        groups = [group] if group is not None else []
-        scenarios_by_group = {
-            scenario_group_id: scenario_repository.fetch_models_by_group_id(
-                scenario_group_id,
-            ),
-        }
-    else:
-        groups = [group for group in group_repository.list_for_backoffice(sort="latest") if _group_is_v3(group)]
-        scenarios_by_group = {
-            int(group.scenario_group_id): scenario_repository.fetch_models_by_group_id(
-                int(group.scenario_group_id),
-            )
-            for group in groups
-        }
-
-    if not groups:
-        if scenario_id is not None or scenario_group_id is not None:
-            discovery_messages.append("지정한 scenario/group을 찾지 못했습니다.")
-        else:
-            discovery_messages.append("실제 v3 multi-event scenario group이 없습니다.")
-        return [], parameter_definitions, discovery_messages
-
+def _load_scenario_evidences(
+    scenario_ids: Sequence[int],
+) -> tuple[list[ScenarioEvidence], list[str]]:
     evidences: list[ScenarioEvidence] = []
-    for group in groups:
-        if not _group_is_v3(group):
-            discovery_messages.append(
-                "지정 대상이 v3 multi_event_composite_dimensions가 아닙니다: "
-                f"scenario_group_id={group.scenario_group_id}",
+    errors: list[str] = []
+    service = ModelParameterService()
+    for scenario_id in scenario_ids:
+        try:
+            context = service.load_context(scenario_id)
+            evidences.append(build_v4_scenario_evidence(scenario_id, context))
+        except Exception as exc:
+            errors.append(
+                f"scenario_id={scenario_id} context load 실패: {_redact(repr(exc))}",
             )
-            continue
-        group_id = int(group.scenario_group_id)
-        relations = group_repository.fetch_group_events(group_id)
-        event_records: dict[int, Mapping[str, Any]] = {}
-        for relation in relations:
-            event_id = _int_or_none(_value(relation, "mi_event_id", "miEventId"))
-            if event_id is None:
-                continue
-            event = event_repository.fetch_event_by_id(event_id)
-            if isinstance(event, Mapping):
-                event_records[event_id] = event
-        dimension_mappings = scenario_repository.fetch_mappings_by_group_id(
-            group_id,
-        )
-        scenarios = scenarios_by_group.get(group_id) or []
-        if not scenarios:
-            discovery_messages.append(
-                f"group에 활성 scenario가 없습니다: scenario_group_id={group_id}",
-            )
-            continue
-        for scenario in scenarios:
-            evidences.append(
-                _build_scenario_evidence(
-                    group=group,
-                    scenario=scenario,
-                    relations=relations,
-                    dimension_mappings=dimension_mappings,
-                    mapping_rules=mapping_rules,
-                    parameter_definitions=parameter_definitions,
-                    event_records=event_records,
-                ),
-            )
-    return evidences, parameter_definitions, discovery_messages
+    return evidences, errors
 
 
-def _coverage_features(target: ScenarioEvidence) -> set[str]:
-    features = {f"parameter:{name}" for name in target.eligible_parameters}
-    dimensions_by_parameter: dict[str, set[str]] = defaultdict(set)
-    event_types_by_parameter: dict[str, set[int]] = defaultdict(set)
-    parameters_by_dimension: dict[str, set[str]] = defaultdict(set)
-    for occurrence in target.occurrences:
-        parameter_name = str(occurrence["parameter_name"])
-        dimension_key = str(occurrence["scenario_dimension_key"])
-        dimensions_by_parameter[parameter_name].add(dimension_key)
-        event_types_by_parameter[parameter_name].add(
-            int(occurrence["event_type_l2_id"]),
-        )
-        parameters_by_dimension[dimension_key].add(parameter_name)
-    features.update(
-        f"convergence:{parameter_name}"
-        for parameter_name, dimensions in dimensions_by_parameter.items()
-        if len(dimensions) > 1 or len(event_types_by_parameter[parameter_name]) > 1
-    )
-    features.update(
-        f"expansion:{dimension_key}"
-        for dimension_key, parameters in parameters_by_dimension.items()
-        if len(parameters) > 1
-    )
-    return features
-
-
-def select_quality_targets(
-    candidates: Sequence[ScenarioEvidence],
-    *,
-    max_scenarios: int,
-    explicit_scope: bool,
-) -> tuple[list[ScenarioEvidence], list[ScenarioEvidence]]:
-    ordered = sorted(
-        candidates,
-        key=lambda item: (item.scenario_group_id, item.scenario_id),
-    )
-    for item in ordered:
-        item.selection_skip_reason = None
-    if explicit_scope:
-        return ordered, []
-
-    valid = [item for item in ordered if not item.errors]
-    invalid = [item for item in ordered if item.errors]
-    selected: list[ScenarioEvidence] = []
+def select_discovery_evidences(
+    evidences: Sequence[ScenarioEvidence],
+    limit: int,
+) -> list[ScenarioEvidence]:
+    """Greedily retain usable and diverse coverage from the bounded scan set."""
+    valid = [evidence for evidence in evidences if not evidence.errors]
+    if not valid:
+        return list(evidences[:limit])
     remaining = list(valid)
-    covered_features: set[str] = set()
-    while remaining and len(selected) < max_scenarios:
-        ranked = sorted(
+    selected: list[ScenarioEvidence] = []
+    covered_targets: set[tuple[str, str, str, str]] = set()
+    while remaining and len(selected) < limit:
+        best = max(
             remaining,
-            key=lambda item: (
-                len(_coverage_features(item) - covered_features),
-                len(item.occurrences),
-                item.scenario_group_id,
-                item.scenario_id,
-            ),
-            reverse=True,
-        )
-        best = ranked[0]
-        new_features = _coverage_features(best) - covered_features
-        if selected and not new_features:
-            break
-        selected.append(best)
-        covered_features.update(_coverage_features(best))
-        remaining.remove(best)
-    selected_occurrence_keys = {key for target in selected for key in _expected_occurrence_keys(target.occurrences)}
-    cap_reached = bool(remaining) and len(selected) >= max_scenarios
-    for item in remaining:
-        unique_eligible_count = len(
-            _expected_occurrence_keys(item.occurrences) - selected_occurrence_keys,
-        )
-        if cap_reached:
-            reason = f"max_scenarios={max_scenarios} cap으로 미선택"
-        else:
-            reason = "coverage feature가 기선택 대상과 중복되어 미선택"
-        item.selection_skip_reason = f"{reason}; unique eligible occurrence={unique_eligible_count}"
-    # Invalid discovered lineage must remain selected FAIL evidence instead of
-    # disappearing behind automatic coverage selection.
-    return [*selected, *invalid], remaining
-
-
-def _parameter_name(item: Mapping[str, Any]) -> str:
-    return _clean(
-        item.get("canonical_parameter_name") or item.get("parameter_name") or item.get("parameterName"),
-    )
-
-
-def _model_target(item: Mapping[str, Any]) -> tuple[str, str]:
-    target = item.get("modelTarget") or item.get("model_target") or {}
-    if not isinstance(target, Mapping):
-        target = {}
-    return (
-        _clean(item.get("model_file") or target.get("modelFile") or target.get("model_file")),
-        _clean(item.get("model_sheet") or target.get("modelSheet") or target.get("model_sheet")),
-    )
-
-
-def _actual_occurrence_keys(items: Iterable[Any]) -> set[tuple[Any, ...]]:
-    keys: set[tuple[Any, ...]] = set()
-    for raw_item in items:
-        if not isinstance(raw_item, Mapping):
-            continue
-        parameter_name = _parameter_name(raw_item)
-        model_file, model_sheet = _model_target(raw_item)
-        raw_sources = raw_item.get("sources") or raw_item.get("source_dimensions") or raw_item.get("sourceDimensions")
-        sources = (
-            [item for item in raw_sources if isinstance(item, Mapping)] if isinstance(raw_sources, list) else [raw_item]
-        )
-        for source in sources:
-            composite_key = _clean(
-                source.get("scenario_dimension_key")
-                or source.get("source_dimension_id")
-                or source.get("dimension_key"),
-            )
-            template_id = _int_or_none(
-                source.get("scenario_dimension_template_id") or source.get("scenarioDimensionTemplateId"),
-            )
-            mapping_dimension_key = _clean(
-                source.get("mapping_dimension_key") or source.get("mappingDimensionKey"),
-            )
-            event_type_l2_id = _int_or_none(
-                source.get("event_type_l2_id") or source.get("eventTypeL2Id"),
-            )
-            mapping_method = _clean(
-                source.get("mapping_method") or raw_item.get("mapping_method"),
-            )
-            source_event_ids = source.get("source_event_ids") or source.get("sourceEventIds") or [None]
-            if not isinstance(source_event_ids, list):
-                source_event_ids = [source_event_ids]
-            for source_event_id in source_event_ids or [None]:
-                keys.add(
-                    (
-                        composite_key,
-                        template_id,
-                        mapping_dimension_key,
-                        event_type_l2_id,
-                        _int_or_none(source_event_id),
-                        parameter_name,
-                        model_file,
-                        model_sheet,
-                        mapping_method,
-                    ),
-                )
-    return keys
-
-
-def _expected_occurrence_keys(
-    occurrences: Iterable[Mapping[str, Any]],
-) -> set[tuple[Any, ...]]:
-    keys: set[tuple[Any, ...]] = set()
-    for occurrence in occurrences:
-        for source_event_id in occurrence.get("source_event_ids") or [None]:
-            keys.add(
-                (
-                    _clean(occurrence.get("scenario_dimension_key")),
-                    _int_or_none(occurrence.get("scenario_dimension_template_id")),
-                    _clean(occurrence.get("mapping_dimension_key")),
-                    _int_or_none(occurrence.get("event_type_l2_id")),
-                    _int_or_none(source_event_id),
-                    _clean(occurrence.get("parameter_name")),
-                    _clean(occurrence.get("model_file")),
-                    _clean(occurrence.get("model_sheet")),
-                    _clean(occurrence.get("mapping_method")),
-                ),
-            )
-    return keys
-
-
-def _selected_routing_targets_by_dimension(
-    items: Iterable[Any],
-) -> dict[str, set[tuple[str, str, str]]]:
-    targets_by_dimension: dict[str, set[tuple[str, str, str]]] = defaultdict(set)
-    for key in _actual_occurrence_keys(items):
-        if key[-1] != "routing" or not _clean(key[0]):
-            continue
-        targets_by_dimension[_clean(key[0])].add(
-            (_clean(key[5]), _clean(key[6]), _clean(key[7])),
-        )
-    return targets_by_dimension
-
-
-def _routing_limit_from_settings() -> int:
-    try:
-        value = int(
-            get_settings().model_parameter_max_routing_candidates_per_dimension,
-        )
-    except (AttributeError, TypeError, ValueError):
-        return DEFAULT_ROUTING_LIMIT
-    return max(1, value)
-
-
-def _parameter_targets(items: Iterable[Any]) -> set[tuple[str, str, str]]:
-    targets: set[tuple[str, str, str]] = set()
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
-        parameter_name = _parameter_name(item)
-        model_file, model_sheet = _model_target(item)
-        if parameter_name:
-            targets.add(
-                _target_signature(
-                    parameter_name=parameter_name,
-                    model_file=model_file,
-                    model_sheet=model_sheet,
-                ),
-            )
-    return targets
-
-
-def _final_proposal_parameters(record: Mapping[str, Any]) -> list[dict[str, Any]]:
-    data = (record.get("final_response") or {}).get("data") or {}
-    parameters = data.get("proposalParameters") or data.get("proposal_parameters") or []
-    return [item for item in parameters if isinstance(item, dict)]
-
-
-def _confirmed_parameters(record: Mapping[str, Any]) -> list[dict[str, Any]]:
-    row = record.get("proposal_db_row") or {}
-    parameters = row.get("confirmation_parameters") or []
-    return [item for item in parameters if isinstance(item, dict)]
-
-
-def _definition_target(definition: Mapping[str, Any]) -> tuple[str, str, str]:
-    return _target_signature(
-        parameter_name=(definition.get("canonical_parameter_name") or definition.get("parameter_name")),
-        model_file=definition.get("model_file"),
-        model_sheet=definition.get("model_sheet"),
-    )
-
-
-def _quality_axis_value(axis_name: str, value: Any) -> Any:
-    if value is None or isinstance(value, bool):
-        return value
-    if axis_name.lower() in {"year", "month", "period"}:
-        parsed = _int_or_none(value)
-        if parsed is not None:
-            return parsed
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
-def _quality_coordinates(raw: Mapping[str, Any]) -> dict[str, Any]:
-    coordinates: dict[str, Any] = {}
-    raw_axes = raw.get("slot_axes") or raw.get("slotAxes")
-    if isinstance(raw_axes, list):
-        for axis in raw_axes:
-            if not isinstance(axis, Mapping):
-                continue
-            axis_name = _clean(axis.get("axis_name") or axis.get("axisName"))
-            if axis_name:
-                coordinates[axis_name] = _quality_axis_value(
-                    axis_name,
-                    axis.get("axis_value") if "axis_value" in axis else axis.get("axisValue"),
-                )
-        return coordinates
-    raw_coordinates = raw.get("coordinates") or raw.get("axes") or {}
-    if not isinstance(raw_coordinates, Mapping):
-        return {}
-    return {
-        str(axis_name): _quality_axis_value(str(axis_name), axis_value)
-        for axis_name, axis_value in raw_coordinates.items()
-    }
-
-
-def _quality_reference_coordinates(
-    reference: Mapping[str, Any],
-) -> dict[str, Any]:
-    coordinates = _quality_coordinates(reference)
-    metadata = reference.get("metadata") or {}
-    if isinstance(metadata, Mapping):
-        coordinates.update(
-            {
-                str(axis_name): _quality_axis_value(
-                    str(axis_name),
-                    axis_value,
-                )
-                for axis_name, axis_value in metadata.items()
-            },
-        )
-    return coordinates
-
-
-def _coordinates_contain(
-    coordinates: Mapping[str, Any],
-    expected: Mapping[str, Any],
-) -> bool:
-    return all(
-        axis_name in coordinates and _quality_values_equal(coordinates[axis_name], axis_value)
-        for axis_name, axis_value in expected.items()
-    )
-
-
-def _quality_coordinate_key(coordinates: Mapping[str, Any]) -> str:
-    normalized = {
-        str(axis_name): _quality_axis_value(str(axis_name), axis_value)
-        for axis_name, axis_value in sorted(coordinates.items())
-    }
-    return json.dumps(normalized, ensure_ascii=False, sort_keys=True, default=str)
-
-
-def _quality_values_equal(left: Any, right: Any) -> bool:
-    if isinstance(left, bool) or isinstance(right, bool):
-        return left is right
-    try:
-        return float(left) == float(right)
-    except (TypeError, ValueError):
-        return left == right
-
-
-def _period_group_matches(
-    period_group: Mapping[str, Any],
-    *,
-    time_axes: Sequence[str],
-    coordinates: Mapping[str, Any],
-) -> bool:
-    expected = {axis_name: coordinates.get(axis_name) for axis_name in time_axes}
-    periods = period_group.get("available_periods") or []
-    for period in periods:
-        if not isinstance(period, Mapping):
-            continue
-        if tuple(time_axes) == ("Year", "Month") and "Months" in period:
-            if not _quality_values_equal(period.get("Year"), expected.get("Year")):
-                continue
-            return any(_quality_values_equal(month, expected.get("Month")) for month in period.get("Months") or [])
-        if all(_quality_values_equal(period.get(axis_name), expected.get(axis_name)) for axis_name in time_axes):
-            return True
-    return not time_axes and any(not period for period in periods)
-
-
-def _slot_is_in_exact_catalog(
-    slot: Mapping[str, Any],
-    slot_catalog: Sequence[Any],
-) -> bool:
-    candidate_key = _clean(slot.get("candidate_key") or slot.get("candidateKey"))
-    raw_axes = slot.get("slot_axes") or slot.get("slotAxes")
-    if isinstance(raw_axes, list):
-        axis_names = [
-            _clean(axis.get("axis_name") or axis.get("axisName")) for axis in raw_axes if isinstance(axis, Mapping)
-        ]
-        if not axis_names or len(axis_names) != len(set(axis_names)):
-            return False
-    coordinates = _quality_coordinates(slot)
-    catalog = next(
-        (
-            item
-            for item in slot_catalog
-            if isinstance(item, Mapping)
-            and _clean(item.get("candidate_key") or item.get("candidateKey")) == candidate_key
-        ),
-        None,
-    )
-    if catalog is None:
-        return False
-    key_axes = [str(item) for item in catalog.get("key_axes") or catalog.get("keyAxes") or []]
-    if set(coordinates) != set(key_axes):
-        return False
-    fixed_axes = [str(item) for item in catalog.get("fixed_axis_names") or catalog.get("fixedAxisNames") or []]
-    time_axes = [str(item) for item in catalog.get("time_axis_names") or catalog.get("timeAxisNames") or []]
-    nodes = catalog.get("fixed_axis_hierarchy") or catalog.get("fixedAxisHierarchy") or []
-    terminal: Mapping[str, Any] | None = None
-    for axis_name in fixed_axes:
-        terminal = next(
-            (
-                node
-                for node in nodes
-                if isinstance(node, Mapping)
-                and _quality_values_equal(node.get("axis_value"), coordinates.get(axis_name))
-            ),
-            None,
-        )
-        if terminal is None:
-            return False
-        nodes = terminal.get("children") or []
-    if not fixed_axes:
-        terminal = next(
-            (node for node in nodes if isinstance(node, Mapping)),
-            None,
-        )
-    period_group_id = _clean((terminal or {}).get("period_group_id"))
-    period_group = next(
-        (
-            group
-            for group in catalog.get("period_groups") or catalog.get("periodGroups") or []
-            if isinstance(group, Mapping)
-            and _clean(group.get("period_group_id") or group.get("periodGroupId")) == period_group_id
-        ),
-        None,
-    )
-    return period_group is not None and _period_group_matches(
-        period_group,
-        time_axes=time_axes,
-        coordinates=coordinates,
-    )
-
-
-def _matching_parameter_items(
-    items: Iterable[Any],
-    parameter_target: tuple[str, str, str],
-) -> list[dict[str, Any]]:
-    return [
-        dict(item)
-        for item in items
-        if isinstance(item, Mapping)
-        and _target_signature(
-            parameter_name=_parameter_name(item),
-            model_file=_model_target(item)[0],
-            model_sheet=_model_target(item)[1],
-        )
-        == parameter_target
-    ]
-
-
-def _parameter_values(items: Iterable[Any]) -> list[dict[str, Any]]:
-    return [
-        dict(value)
-        for item in items
-        if isinstance(item, Mapping)
-        for value in item.get("values") or []
-        if isinstance(value, Mapping)
-    ]
-
-
-def _quality_scalar(value: Any) -> Any:
-    if value is None or isinstance(value, bool):
-        return value
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return json_safe(value)
-    if not math.isfinite(number):
-        return f"NON_FINITE:{value!s}"
-    return int(number) if number.is_integer() else number
-
-
-def _quality_signature(items: Sequence[Mapping[str, Any]]) -> str:
-    normalized = [json_safe(dict(item)) for item in items]
-    return json.dumps(
-        sorted(
-            normalized,
-            key=lambda item: json.dumps(
-                item,
-                ensure_ascii=False,
-                sort_keys=True,
-                default=str,
-            ),
-        ),
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    )
-
-
-def _parameter_envelope_signature(items: Sequence[Mapping[str, Any]]) -> str:
-    return _quality_signature(
-        [{key: value for key, value in item.items() if key != "values"} for item in items],
-    )
-
-
-def _final_value_signatures(
-    items: Sequence[Mapping[str, Any]],
-    *,
-    include_lut_reference: bool,
-) -> str:
-    signatures: list[dict[str, Any]] = []
-    value_fields = {
-        "basecaseValue",
-        "basecase_value",
-        "lutValue",
-        "lut_value",
-        "proposedValue",
-        "proposed_value",
-        "rationale",
-    }
-    for parameter in items:
-        target = parameter.get("modelTarget") or parameter.get("model_target") or {}
-        raw_axes = (
-            target.get("slotAxesFieldNames") or target.get("slot_axes_field_names") or []
-            if isinstance(target, Mapping)
-            else []
-        )
-        for value in parameter.get("values") or []:
-            if not isinstance(value, Mapping):
-                continue
-            axis_names = [str(axis) for axis in raw_axes] or sorted(
-                str(key) for key in value if str(key) not in value_fields
-            )
-            basecase = value.get("basecaseValue", value.get("basecase_value"))
-            lut = value.get("lutValue", value.get("lut_value"))
-            signature = {
-                "coordinates": _quality_coordinate_key(
+            key=lambda evidence: (
+                len(
                     {
-                        axis_name: _quality_axis_value(
-                            axis_name,
-                            value.get(axis_name),
-                        )
-                        for axis_name in axis_names
-                    },
+                        _target_signature(candidate)
+                        for candidate in evidence.runtime_candidates
+                    }
+                    - covered_targets,
                 ),
-                "basecase": _quality_scalar(basecase),
-                "proposed": _quality_scalar(
-                    value.get("proposedValue", value.get("proposed_value")),
-                ),
-            }
-            if include_lut_reference:
-                signature["lut"] = _quality_scalar(lut)
-                signature["reference"] = _quality_scalar(
-                    basecase if basecase is not None else lut,
-                )
-            signatures.append(signature)
-    return _quality_signature(signatures)
-
-
-def _step3_value_signatures(
-    *,
-    adjustments: Sequence[Mapping[str, Any]],
-    references: Sequence[Mapping[str, Any]],
-    include_lut_reference: bool,
-) -> str:
-    references_by_candidate: dict[str, list[Mapping[str, Any]]] = {}
-    for reference in references:
-        references_by_candidate.setdefault(
-            _clean(reference.get("candidate_key") or reference.get("candidateKey")),
-            [],
-        ).append(reference)
-    signatures: list[dict[str, Any]] = []
-    for adjustment in adjustments:
-        candidate_key = _clean(
-            adjustment.get("candidate_key") or adjustment.get("candidateKey"),
+                len(evidence.runtime_candidates),
+                len(evidence.raw_candidates),
+                -evidences.index(evidence),
+            ),
         )
-        for cell in adjustment.get("value_grid") or adjustment.get("valueGrid") or []:
-            if not isinstance(cell, Mapping):
-                continue
-            proposed = cell.get("proposed_value", cell.get("proposedValue"))
-            if proposed is None:
-                continue
-            coordinates = _quality_coordinates(cell)
-            coordinate_key = _quality_coordinate_key(coordinates)
-            reference = next(
-                (
-                    item
-                    for item in references_by_candidate.get(candidate_key, [])
-                    if _coordinates_contain(
-                        coordinates,
-                        _quality_coordinates(item),
-                    )
-                ),
-                {},
-            )
-            basecase = cell.get("basecase_value", cell.get("basecaseValue"))
-            lut = cell.get("lut_value", cell.get("lutValue"))
-            signature = {
-                "coordinates": coordinate_key,
-                "basecase": _quality_scalar(basecase),
-                "proposed": _quality_scalar(proposed),
-            }
-            if include_lut_reference:
-                signature["lut"] = _quality_scalar(lut)
-                signature["reference"] = _quality_scalar(
-                    reference.get(
-                        "llm_reference_value",
-                        reference.get("llmReferenceValue"),
-                    ),
-                )
-            signatures.append(signature)
-    return _quality_signature(signatures)
+        selected.append(best)
+        covered_targets.update(
+            _target_signature(candidate) for candidate in best.runtime_candidates
+        )
+        remaining.remove(best)
+    return selected
 
 
-def _reference_contract_issues(reference: Mapping[str, Any]) -> list[str]:
-    issues: list[str] = []
-    source = _clean(reference.get("effective_source") or reference.get("effectiveSource"))
-    llm_value = (
-        reference.get("llm_reference_value")
-        if "llm_reference_value" in reference
-        else reference.get("llmReferenceValue")
-    )
-    basecase_value = (
-        reference.get("actual_basecase_value")
-        if "actual_basecase_value" in reference
-        else reference.get("actualBasecaseValue")
-    )
-    lut_value = (
-        reference.get("lut_default_value") if "lut_default_value" in reference else reference.get("lutDefaultValue")
-    )
-    if source == "basecase":
-        if basecase_value is None or not _quality_values_equal(llm_value, basecase_value):
-            issues.append("Basecase 우선 reference 값 불일치")
-        if not _clean(
-            reference.get("basecase_reference_id") or reference.get("basecaseReferenceId"),
-        ):
-            issues.append("Basecase reference ID 누락")
-    elif source == "lut":
-        if basecase_value is not None:
-            issues.append("Basecase 값이 있는데 LUT fallback을 선택함")
-        if lut_value is None or not _quality_values_equal(llm_value, lut_value):
-            issues.append("LUT fallback reference 값 불일치")
-        if not _clean(
-            reference.get("lut_reference_id") or reference.get("lutReferenceId"),
-        ):
-            issues.append("LUT reference ID 누락")
-    else:
-        issues.append(f"effective reference source가 단일 basecase/lut가 아님: {source or '<empty>'}")
-    return issues
-
-
-def _candidate_quality_row(
+def run_core_smoke(
+    timeout_seconds: int = DEFAULT_CORE_SMOKE_TIMEOUT_SECONDS,
     *,
-    target: ScenarioEvidence,
-    parameter_target: tuple[str, str, str],
-    candidates: Sequence[Mapping[str, Any]],
-    execution: Mapping[str, Any],
-) -> ParameterQualityRow:
-    candidate_keys = tuple(
-        sorted(
-            {
-                _clean(candidate.get("candidate_key") or candidate.get("candidateKey"))
-                for candidate in candidates
-                if _clean(candidate.get("candidate_key") or candidate.get("candidateKey"))
-            },
+    run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> CoreSmokeEvidence:
+    """Run the DB/LLM-independent production contract gate in an isolated env."""
+    from dotenv import dotenv_values
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            str(key): str(value)
+            for key, value in dotenv_values(
+                ROOT_DIR / "tests" / "automated" / ".env.example",
+            ).items()
+            if key and value is not None
+        },
+    )
+    started = time.perf_counter()
+    try:
+        completed = run_command(
+            CORE_SMOKE_COMMAND,
+            cwd=ROOT_DIR,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except Exception as exc:
+        return CoreSmokeEvidence(
+            status="FAIL",
+            elapsed_seconds=time.perf_counter() - started,
+            message=f"core smoke 실행 실패: {_redact(repr(exc))}",
+        )
+    output = "\n".join(
+        part.strip()
+        for part in (completed.stdout, completed.stderr)
+        if part and part.strip()
+    )
+    return CoreSmokeEvidence(
+        status="PASS" if completed.returncode == 0 else "FAIL",
+        return_code=completed.returncode,
+        elapsed_seconds=time.perf_counter() - started,
+        output_tail=_redact("\n".join(output.splitlines()[-20:])),
+        message=(
+            "model_parameter_core passed"
+            if completed.returncode == 0
+            else "model_parameter_core failed; live writes blocked"
         ),
     )
-    slots = [
-        dict(slot)
-        for slot in execution.get("parameter_slots") or []
-        if isinstance(slot, Mapping)
-        and _clean(slot.get("candidate_key") or slot.get("candidateKey")) in candidate_keys
-        and slot.get("selected", True) is not False
-    ]
-    catalog = execution.get("slot_catalog") or []
-    exact_slots = [slot for slot in slots if _slot_is_in_exact_catalog(slot, catalog)]
-    references = [
-        dict(reference)
-        for reference in execution.get("effective_references") or []
-        if isinstance(reference, Mapping)
-        and _clean(reference.get("candidate_key") or reference.get("candidateKey")) in candidate_keys
-    ]
-    adjustments = [
-        dict(adjustment)
-        for adjustment in (execution.get("result") or {}).get("parameter_adjustments") or []
-        if isinstance(adjustment, Mapping)
-        and _clean(adjustment.get("candidate_key") or adjustment.get("candidateKey")) in candidate_keys
-        and adjustment.get("selected", True) is not False
-    ]
-    result_cells = [
-        dict(cell)
-        for adjustment in adjustments
-        for cell in adjustment.get("value_grid") or adjustment.get("valueGrid") or []
-        if isinstance(cell, Mapping) and cell.get("proposed_value", cell.get("proposedValue")) is not None
-    ]
-    api_parameters = _matching_parameter_items(
-        _final_proposal_parameters(execution),
-        parameter_target,
-    )
-    db_parameters = _matching_parameter_items(
-        (execution.get("proposal_db_row") or {}).get("proposal_parameters") or [],
-        parameter_target,
-    )
-    confirmed_parameters = _matching_parameter_items(
-        (execution.get("proposal_db_row") or {}).get("confirmation_parameters") or [],
-        parameter_target,
-    )
-    api_values = _parameter_values(api_parameters)
-    db_values = _parameter_values(db_parameters)
-    confirmed_values = _parameter_values(confirmed_parameters)
+
+
+async def execute_targets(
+    evidences: Sequence[ScenarioEvidence],
+) -> dict[int, dict[str, Any]]:
+    """Execute each eligible scenario once; never retry a write-producing flow."""
+    records: dict[int, dict[str, Any]] = {}
+    for evidence in evidences:
+        if evidence.errors or not evidence.runtime_candidates:
+            continue
+        started = time.perf_counter()
+        try:
+            record = await execute_proposal_and_confirmation(evidence.scenario_id)
+            record["execution_attempt_count"] = 1
+            record["elapsed_seconds"] = time.perf_counter() - started
+            records[evidence.scenario_id] = record
+        except Exception as exc:
+            partial_record = runner_record_from_exception(exc)
+            failure_trace = getattr(exc, "_model_parameter_failure_trace", None)
+            if isinstance(failure_trace, Mapping):
+                partial_record = {**dict(failure_trace), **partial_record}
+            records[evidence.scenario_id] = {
+                **partial_record,
+                "scenario_id": evidence.scenario_id,
+                "execution_attempt_count": 1,
+                "elapsed_seconds": time.perf_counter() - started,
+                "error": _redact(repr(exc)),
+                "failed_stage": _redact(
+                    partial_record.get("failed_stage")
+                    or getattr(exc, "failed_stage", "")
+                    or "proposal/confirmation workflow",
+                ),
+            }
+    return records
+
+
+def assess_execution(
+    evidence: ScenarioEvidence,
+    record: Mapping[str, Any],
+) -> ExecutionAssessment:
     failures: list[str] = []
     reviews: list[str] = []
-
-    if not slots:
-        failures.append("Step2 selected slot 없음")
-    if len(exact_slots) != len(slots):
+    if record.get("error"):
+        failed_stage = _text(record.get("failed_stage")) or "unknown"
         failures.append(
-            f"Step2 exact slot 불일치={len(slots) - len(exact_slots)}",
+            "proposal/confirmation execution error"
+            f" (failed_stage={failed_stage}): {record['error']}",
         )
-    slot_keys = {
-        (
-            _clean(slot.get("candidate_key") or slot.get("candidateKey")),
-            _clean(slot.get("slot_key") or slot.get("slotKey")),
-            _quality_coordinate_key(_quality_coordinates(slot)),
-        )
-        for slot in slots
-    }
-    reference_keys = {
-        (
-            _clean(reference.get("candidate_key") or reference.get("candidateKey")),
-            _clean(reference.get("slot_key") or reference.get("slotKey")),
-            _quality_coordinate_key(_quality_coordinates(reference)),
-        )
-        for reference in references
-    }
-    if reference_keys != slot_keys:
-        failures.append(
-            "Step2 slot과 effective reference의 candidate/slot/coordinates가 일치하지 않음",
-        )
-    if len(slot_keys) != len(slots):
-        failures.append("Step2 selected slot candidate/slot/coordinates 중복")
-    if len(reference_keys) != len(references):
-        failures.append("effective reference candidate/slot/coordinates 중복")
-    for reference in references:
-        failures.extend(_reference_contract_issues(reference))
 
-    unmatched_result_coordinates = [
-        _quality_coordinates(cell)
-        for cell in result_cells
-        if not any(
-            _coordinates_contain(
-                _quality_coordinates(cell),
-                _quality_coordinates(slot),
-            )
-            for slot in slots
-        )
-    ]
-    unmatched_slot_coordinates = [
-        _quality_coordinates(slot)
-        for slot in slots
-        if not any(
-            _coordinates_contain(
-                _quality_coordinates(cell),
-                _quality_coordinates(slot),
-            )
-            for cell in result_cells
-        )
-    ]
-    if unmatched_result_coordinates or unmatched_slot_coordinates:
-        failures.append("Step3 result coordinates가 input slot과 일치하지 않음")
-    for cell in result_cells:
-        cell_coordinates = _quality_coordinates(cell)
-        matching_references = [
-            reference
-            for reference in references
-            if _coordinates_contain(
-                cell_coordinates,
-                _quality_coordinates(reference),
-            )
-        ]
-        if len(matching_references) != 1:
-            failures.append(
-                "Step3 result cell과 effective reference를 단일 매칭하지 못함",
-            )
-            continue
-        if cell_coordinates != _quality_reference_coordinates(
-            matching_references[0],
-        ):
-            failures.append(
-                "Step3 coordinates가 reference axes+metadata와 일치하지 않음",
-            )
-    counts = (
-        len(slots),
-        len(references),
-        len(result_cells),
-        len(api_values),
-        len(db_values),
-        len(confirmed_values),
-    )
-    if not counts[0] or len(set(counts)) != 1:
-        failures.append(
-            "Step3 input/reference/result/final DB value 수 불일치: "
-            f"slot={counts[0]}, reference={counts[1]}, result={counts[2]}, "
-            f"api={counts[3]}, db={counts[4]}, confirmed={counts[5]}",
-        )
-    result_axis_sets = {frozenset(_quality_coordinates(cell)) for cell in result_cells}
-    for parameter in api_parameters:
-        model_target = parameter.get("modelTarget") or parameter.get(
-            "model_target",
-        )
-        api_axis_names = (
-            model_target.get("slotAxesFieldNames") or model_target.get("slot_axes_field_names") or []
-            if isinstance(model_target, Mapping)
-            else []
-        )
-        if result_axis_sets and (
-            len(result_axis_sets) != 1
-            or frozenset(str(item) for item in api_axis_names) != next(iter(result_axis_sets))
-        ):
-            failures.append(
-                "API slotAxesFieldNames가 Step3 axes+metadata와 일치하지 않음",
-            )
-    step3_api_signature = _step3_value_signatures(
-        adjustments=adjustments,
-        references=references,
-        include_lut_reference=True,
-    )
-    step3_persistent_signature = _step3_value_signatures(
-        adjustments=adjustments,
-        references=references,
-        include_lut_reference=False,
-    )
-    api_signature = _final_value_signatures(
-        api_parameters,
-        include_lut_reference=True,
-    )
-    api_persistent_signature = _final_value_signatures(
-        api_parameters,
-        include_lut_reference=False,
-    )
-    db_signature = _final_value_signatures(
-        db_parameters,
-        include_lut_reference=False,
-    )
-    confirmation_signature = _final_value_signatures(
-        confirmed_parameters,
-        include_lut_reference=False,
-    )
-    if step3_api_signature != api_signature:
-        failures.append(
-            "Step3 coordinates/proposed/basecase/reference signature와 API 값이 다름",
-        )
-    if step3_persistent_signature != api_persistent_signature:
-        failures.append(
-            "Step3 persistent value signature와 API 값이 다름",
-        )
-    if step3_persistent_signature != db_signature:
-        failures.append(
-            "Step3 persistent value signature와 DB proposal read-back이 다름",
-        )
-    if step3_persistent_signature != confirmation_signature:
-        failures.append(
-            "Step3 persistent value signature와 confirmation read-back이 다름",
-        )
-    if api_parameters and db_parameters and api_persistent_signature != db_signature:
-        failures.append("API proposal values와 DB proposal read-back이 다름")
-    if db_parameters and confirmed_parameters and db_signature != confirmation_signature:
-        failures.append("DB proposal values와 confirmation read-back이 다름")
-    if (
-        api_parameters
-        and db_parameters
-        and _parameter_envelope_signature(api_parameters) != _parameter_envelope_signature(db_parameters)
-    ):
-        failures.append("API와 DB proposal parameter envelope가 다름")
-    if (
-        db_parameters
-        and confirmed_parameters
-        and _parameter_envelope_signature(db_parameters) != _parameter_envelope_signature(confirmed_parameters)
-    ):
-        failures.append("DB proposal과 confirmation parameter envelope가 다름")
-
-    summary = execution.get("step_summary") or {}
-    all_slots = [
-        slot
-        for slot in execution.get("parameter_slots") or []
-        if isinstance(slot, Mapping) and slot.get("selected", True) is not False
-    ]
-    all_cells = [
-        cell
-        for adjustment in (execution.get("result") or {}).get("parameter_adjustments") or []
-        if isinstance(adjustment, Mapping) and adjustment.get("selected", True) is not False
-        for cell in adjustment.get("value_grid") or adjustment.get("valueGrid") or []
-        if isinstance(cell, Mapping)
-    ]
-    summary_contract = {
-        "selected_slot_count": len(all_slots),
-        "value_reference_record_count": len(execution.get("effective_references") or []),
-        "value_cell_count": len(all_cells),
-        "proposal_parameter_count": len(_final_proposal_parameters(execution)),
-    }
-    for field_name, actual_count in summary_contract.items():
-        if _int_or_none(summary.get(field_name)) != actual_count:
-            failures.append(
-                f"step_summary.{field_name}={summary.get(field_name)!r}, actual={actual_count}",
-            )
-
-    if any(
-        not _clean(
-            adjustment.get("parameter_selection_rationale_ko") or adjustment.get("parameterSelectionRationaleKo"),
-        )
-        for adjustment in adjustments
-    ):
-        failures.append("merged parameter selection rationale 비어 있음")
-    if any(not _clean(cell.get("rationale_ko") or cell.get("rationale")) for cell in result_cells):
-        failures.append("Step3 value rationale 비어 있음")
-    if len(api_parameters) != 1 or any(not _clean(parameter.get("rationale")) for parameter in api_parameters):
-        failures.append("final merged parameter rationale 비어 있거나 parameter가 중복됨")
-    if any(not _clean(value.get("rationale")) for value in api_values):
-        failures.append("final proposal value rationale 비어 있음")
-
-    source_keys = (
-        set().union(
-            *(_actual_occurrence_keys([candidate]) for candidate in candidates),
-        )
-        if candidates
-        else set()
-    )
-    source_count = len(source_keys)
-    rationale_texts = [
-        *(
-            _clean(
-                adjustment.get("parameter_selection_rationale_ko") or adjustment.get("parameterSelectionRationaleKo"),
-            )
-            for adjustment in adjustments
-        ),
-        *(_clean(cell.get("rationale_ko") or cell.get("rationale")) for cell in result_cells),
-        *(_clean(parameter.get("rationale")) for parameter in api_parameters),
-        *(_clean(value.get("rationale")) for value in api_values),
-    ]
-    explicit_conflict_markers = (
-        "방향 역전",
-        "근거 불일치",
-        "source event와 모순",
-        "이벤트와 모순",
-        "dimension과 모순",
-        "contradict",
-        "opposite direction",
-    )
-    if any(marker in rationale.lower() for rationale in rationale_texts for marker in explicit_conflict_markers):
-        failures.append("rationale에 명시적인 방향 역전 또는 source 근거 모순이 있음")
-
-    manual_review = "rationale의 event/dimension 방향·강도·기간·대상 정합성 수동 검토 필요"
-    reviews.append("rationale 의미 품질을 기계적으로 확정할 수 없음")
-    if source_count > 1:
-        manual_review = "다중 source의 방향·강도·기간·대상 충돌을 하나의 최종값으로 종합했는지 rationale 수동 검토 필요"
-        reviews.append("다중 source 충돌 종합 근거를 기계적으로 확정할 수 없음")
-
-    if failures:
-        verdict: Verdict = "FAIL"
-        evidence = "; ".join(dict.fromkeys(failures))
-    elif reviews:
-        verdict = "REVIEW"
-        evidence = "; ".join(dict.fromkeys(reviews))
+    execution_context = _mapping(record.get("context"))
+    if not execution_context:
+        reviews.append("execution context grounding trace 미수집")
     else:
-        verdict = "PASS"
-        evidence = "exact slot/reference/value/rationale 구조 계약 일치"
-    return ParameterQualityRow(
-        scenario_id=target.scenario_id,
-        parameter_name=parameter_target[0],
-        candidate_keys=candidate_keys,
-        selected_slot_count=len(slots),
-        exact_slot_count=len(exact_slots),
-        reference_count=len(references),
-        step3_value_count=len(result_cells),
-        api_value_count=len(api_values),
-        db_value_count=len(db_values),
-        confirmed_value_count=len(confirmed_values),
-        reference_sources=tuple(
+        context_scenario = _mapping(execution_context.get("scenario"))
+        context_group = _mapping(execution_context.get("scenario_group"))
+        if _int_or_none(context_scenario.get("scenario_id")) != evidence.scenario_id:
+            failures.append("execution context scenario_id가 discovery evidence와 불일치")
+        if (
+            _int_or_none(context_group.get("scenario_group_id"))
+            != evidence.scenario_group_id
+        ):
+            failures.append("execution context scenario_group_id가 discovery evidence와 불일치")
+        context_events = _mapping_items(execution_context.get("events"))
+        expected_event_order = tuple(
+            (
+                _int_or_none(item.get("mi_event_id")),
+                _int_or_none(item.get("display_order")),
+            )
+            for item in evidence.ordered_events
+        )
+        actual_event_order = tuple(
+            (
+                _int_or_none(item.get("mi_event_id")),
+                _int_or_none(item.get("display_order")),
+            )
+            for item in context_events
+        )
+        if actual_event_order != expected_event_order:
+            failures.append("execution context ordered Event가 discovery evidence와 불일치")
+        context_catalog = (
+            _text(context_group.get("impact_catalog_version")),
+            _text(context_group.get("impact_catalog_checksum")),
+            _text(execution_context.get("impact_catalog_version")),
+            _text(execution_context.get("impact_catalog_checksum")),
+        )
+        evidence_catalog = (
+            evidence.stored_catalog_version,
+            evidence.stored_catalog_checksum,
+            evidence.active_catalog_version,
+            evidence.active_catalog_checksum,
+        )
+        if context_catalog != evidence_catalog:
+            failures.append("execution context catalog version/checksum pin 불일치")
+        actual_lineage = tuple(
             sorted(
-                {
-                    _clean(reference.get("effective_source") or reference.get("effectiveSource"))
-                    for reference in references
-                },
+                _lineage_signature(item)
+                for item in _mapping_items(execution_context.get("dimension_lineage"))
             ),
-        ),
-        source_count=source_count,
-        verdict=verdict,
-        evidence=evidence,
-        manual_review=manual_review,
+        )
+        expected_lineage = tuple(
+            sorted(_lineage_signature(item) for item in evidence.dimension_lineage),
+        )
+        if actual_lineage != expected_lineage:
+            failures.append("execution context selected Dimension/Lever lineage 불일치")
+
+    expected_runtime_keys = _candidate_keys(evidence.runtime_candidates)
+    expected_blocked_keys = _candidate_keys(evidence.blocked_candidates)
+    actual_raw_items = _mapping_items(record.get("rule_candidates"))
+    actual_raw_keys = _candidate_keys(actual_raw_items)
+    actual_runtime_source = (
+        record.get("runtime_candidates")
+        if "runtime_candidates" in record
+        else record.get("expected_candidates")
     )
-
-
-def build_parameter_quality_rows(
-    *,
-    targets: Sequence[ScenarioEvidence],
-    executions: Mapping[int, Mapping[str, Any]],
-    execute: bool,
-) -> list[ParameterQualityRow]:
-    if not execute:
-        return []
-    rows: list[ParameterQualityRow] = []
-    for target in targets:
-        execution = executions.get(target.scenario_id) or {}
-        if execution.get("error"):
-            continue
-        candidates = [item for item in execution.get("expected_candidates") or [] if isinstance(item, Mapping)]
-        candidates_by_target: dict[tuple[str, str, str], list[Mapping[str, Any]]] = defaultdict(list)
-        for candidate in candidates:
-            parameter_target = _target_signature(
-                parameter_name=_parameter_name(candidate),
-                model_file=_model_target(candidate)[0],
-                model_sheet=_model_target(candidate)[1],
-            )
-            candidates_by_target[parameter_target].append(candidate)
-        rows.extend(
-            _candidate_quality_row(
-                target=target,
-                parameter_target=parameter_target,
-                candidates=parameter_candidates,
-                execution=execution,
-            )
-            for parameter_target, parameter_candidates in sorted(
-                candidates_by_target.items(),
-            )
+    actual_runtime_items = _mapping_items(actual_runtime_source)
+    actual_runtime_keys = _candidate_keys(actual_runtime_items)
+    actual_raw_key_list = [_candidate_key(candidate) for candidate in actual_raw_items]
+    actual_runtime_key_list = [
+        _candidate_key(candidate) for candidate in actual_runtime_items
+    ]
+    if any(not key for key in actual_raw_key_list):
+        failures.append("graph rule_candidates candidate_key가 누락됨")
+    if len(actual_raw_key_list) != len(set(actual_raw_key_list)):
+        failures.append("graph rule_candidates candidate_key가 중복됨")
+    if any(not key for key in actual_runtime_key_list):
+        failures.append("post-Step1.5 candidate_key가 누락됨")
+    if len(actual_runtime_key_list) != len(set(actual_runtime_key_list)):
+        failures.append("post-Step1.5 candidate_key가 중복됨")
+    expected_raw_by_key = {
+        _candidate_key(candidate): _target_signature(candidate)
+        for candidate in evidence.raw_candidates
+    }
+    actual_raw_by_key = {
+        _candidate_key(candidate): _target_signature(candidate)
+        for candidate in actual_raw_items
+    }
+    if set(actual_raw_by_key) != set(expected_raw_by_key):
+        failures.append(
+            "graph v4 raw trace과 independent raw oracle key 불일치: "
+            f"missing={sorted(set(expected_raw_by_key) - set(actual_raw_by_key))}, "
+            f"unexpected={sorted(set(actual_raw_by_key) - set(expected_raw_by_key))}",
         )
-    return rows
-
-
-def build_coverage_matrix(
-    *,
-    active_parameter_definitions: Sequence[Mapping[str, Any]],
-    targets: Sequence[ScenarioEvidence],
-    executions: Mapping[int, Mapping[str, Any]],
-    execute: bool,
-    routing_limit: int | None = None,
-    discovered_targets: Sequence[ScenarioEvidence] | None = None,
-) -> tuple[list[CoverageRow], list[str]]:
-    rows: list[CoverageRow] = []
-    integrity_issues: list[str] = []
-    quality_rows = build_parameter_quality_rows(
-        targets=targets,
-        executions=executions,
-        execute=execute,
+    mismatched_raw_targets = sorted(
+        key
+        for key in set(expected_raw_by_key) & set(actual_raw_by_key)
+        if expected_raw_by_key[key] != actual_raw_by_key[key]
     )
-    quality_by_scenario_parameter = {(row.scenario_id, row.parameter_name): row for row in quality_rows}
-    discovery_scope = targets if discovered_targets is None else discovered_targets
-    valid_discovered_targets = [target for target in discovery_scope if not target.errors]
-    selected_scenario_ids = {target.scenario_id for target in targets}
-    effective_routing_limit = routing_limit or _routing_limit_from_settings()
-    routing_limit_failures: dict[tuple[int, tuple[str, str, str]], str] = {}
-    for target in targets:
-        execution = executions.get(target.scenario_id) or {}
-        if not execute or execution.get("error"):
-            continue
-        expected_all = _expected_occurrence_keys(target.occurrences)
-        actual_all = _actual_occurrence_keys(
-            execution.get("rule_candidates") or [],
+    if mismatched_raw_targets:
+        failures.append(
+            "graph v4 raw trace의 canonical parameter/model target 불일치: "
+            f"{mismatched_raw_targets}",
         )
-        extra_occurrences = actual_all - expected_all
-        if extra_occurrences:
-            integrity_issues.append(
-                f"scenario {target.scenario_id}: mapping 밖 candidate occurrence={len(extra_occurrences)}",
-            )
-        selected_all = _actual_occurrence_keys(
-            execution.get("expected_candidates") or [],
+    expected_runtime_targets = {
+        _target_signature(candidate) for candidate in evidence.runtime_candidates
+    }
+    actual_runtime_target_list = [
+        _target_signature(candidate) for candidate in actual_runtime_items
+    ]
+    actual_runtime_targets = set(actual_runtime_target_list)
+    if len(actual_runtime_target_list) != len(actual_runtime_targets):
+        failures.append("post-Step1.5 runtime target가 여러 task로 분할됨")
+    unexpected_runtime_targets = actual_runtime_targets - expected_runtime_targets
+    if unexpected_runtime_targets:
+        failures.append(
+            "runtime candidate target가 allowlist/independent 경계 밖임: "
+            f"{sorted(unexpected_runtime_targets)}",
         )
-        selected_extra_occurrences = selected_all - expected_all
-        if selected_extra_occurrences:
-            integrity_issues.append(
-                f"scenario {target.scenario_id}: mapping 밖 selected occurrence={len(selected_extra_occurrences)}",
+    represented_raw_keys = _merged_raw_keys(actual_runtime_items)
+    unexpected_merged_lineage = represented_raw_keys - expected_runtime_keys
+    if unexpected_merged_lineage:
+        failures.append(
+            "merged_candidate_keys가 independent runtime raw 경계 밖임: "
+            f"{sorted(unexpected_merged_lineage)}",
+        )
+    expected_runtime_by_key = {
+        _candidate_key(candidate): candidate
+        for candidate in evidence.runtime_candidates
+    }
+    merged_key_counts: Counter[str] = Counter()
+    for candidate in actual_runtime_items:
+        candidate_target = _target_signature(candidate)
+        if _candidate_key(candidate) != _parameter_candidate_key(candidate):
+            failures.append(
+                "post-Step1.5 candidate_key가 canonical parameter key와 불일치: "
+                f"{_candidate_key(candidate)}",
             )
-        expected_parameter_targets = _parameter_targets(target.occurrences)
-        proposal_extra_targets = _parameter_targets(_final_proposal_parameters(execution)) - expected_parameter_targets
-        if proposal_extra_targets:
-            integrity_issues.append(
-                f"scenario {target.scenario_id}: mapping 밖 proposal target={sorted(proposal_extra_targets)}",
-            )
-        confirmation_extra_targets = _parameter_targets(_confirmed_parameters(execution)) - expected_parameter_targets
-        if confirmation_extra_targets:
-            integrity_issues.append(
-                f"scenario {target.scenario_id}: mapping 밖 confirmation target={sorted(confirmation_extra_targets)}",
-            )
-        for dimension_key, selected_targets in _selected_routing_targets_by_dimension(
-            execution.get("expected_candidates") or [],
-        ).items():
-            if len(selected_targets) <= effective_routing_limit:
-                continue
-            message = (
-                f"scenario {target.scenario_id} composite dimension={dimension_key} "
-                f"routing selected target={len(selected_targets)}가 configured max="
-                f"{effective_routing_limit}를 초과함"
-            )
-            integrity_issues.append(message)
-            for selected_target in selected_targets:
-                routing_limit_failures[(target.scenario_id, selected_target)] = message
-    definitions = sorted(
-        active_parameter_definitions,
-        key=lambda item: _definition_target(item),
-    )
-    for definition in definitions:
-        parameter_target = _definition_target(definition)
-        parameter_name = parameter_target[0]
-        discovered_eligible_targets = [
-            target
-            for target in valid_discovered_targets
-            if any(
-                _target_signature(
-                    parameter_name=occurrence.get("parameter_name"),
-                    model_file=occurrence.get("model_file"),
-                    model_sheet=occurrence.get("model_sheet"),
-                )
-                == parameter_target
-                for occurrence in target.occurrences
-            )
+        merged_keys = [
+            _text(key)
+            for key in candidate.get("merged_candidate_keys") or []
+            if _text(key)
         ]
-        eligible_targets = [
-            target
-            for target in targets
-            if not target.errors
-            if any(
-                _target_signature(
-                    parameter_name=occurrence.get("parameter_name"),
-                    model_file=occurrence.get("model_file"),
-                    model_sheet=occurrence.get("model_sheet"),
-                )
-                == parameter_target
-                for occurrence in target.occurrences
+        if not merged_keys:
+            failures.append(
+                "post-Step1.5 candidate의 merged_candidate_keys가 비어 있음: "
+                f"{_candidate_key(candidate)}",
             )
+        merged_key_counts.update(merged_keys)
+        source_candidates = [
+            expected_runtime_by_key[key]
+            for key in merged_keys
+            if key in expected_runtime_by_key
         ]
-        discovered_expected_occurrences = [
-            occurrence
-            for target in discovered_eligible_targets
-            for occurrence in target.occurrences
-            if _target_signature(
-                parameter_name=occurrence.get("parameter_name"),
-                model_file=occurrence.get("model_file"),
-                model_sheet=occurrence.get("model_sheet"),
-            )
-            == parameter_target
+        mismatched_keys = [
+            key
+            for key in merged_keys
+            if key in expected_runtime_by_key
+            and _target_signature(expected_runtime_by_key[key]) != candidate_target
         ]
-        selected_expected_occurrences = [
-            occurrence
-            for target in eligible_targets
-            for occurrence in target.occurrences
-            if _target_signature(
-                parameter_name=occurrence.get("parameter_name"),
-                model_file=occurrence.get("model_file"),
-                model_sheet=occurrence.get("model_sheet"),
+        if mismatched_keys:
+            failures.append(
+                "merged raw key→parameter/model target 결합 불일치: "
+                f"{sorted(mismatched_keys)}",
             )
-            == parameter_target
-        ]
-        discovered_expected_keys = _expected_occurrence_keys(
-            discovered_expected_occurrences,
-        )
-        selected_expected_keys = _expected_occurrence_keys(
-            selected_expected_occurrences,
-        )
-        eligible_count = len(discovered_expected_keys)
-        skipped_unique_count = len(
-            discovered_expected_keys - selected_expected_keys,
-        )
-        skipped_coverage_notes: list[str] = []
-        for target in discovered_eligible_targets:
-            if target.scenario_id in selected_scenario_ids:
-                continue
-            target_keys = _expected_occurrence_keys(
-                occurrence
-                for occurrence in target.occurrences
-                if _target_signature(
-                    parameter_name=occurrence.get("parameter_name"),
-                    model_file=occurrence.get("model_file"),
-                    model_sheet=occurrence.get("model_sheet"),
-                )
-                == parameter_target
+        expected_source_events: list[Any] = []
+        for source_candidate in source_candidates:
+            for event_id in source_candidate.get("source_event_ids") or []:
+                if event_id not in expected_source_events:
+                    expected_source_events.append(event_id)
+        if json_safe(candidate.get("source_event_ids") or []) != json_safe(
+            expected_source_events,
+        ):
+            failures.append(
+                f"post-Step1.5 source_event_ids lineage 불일치: {_candidate_key(candidate)}",
             )
-            target_unique_count = len(target_keys - selected_expected_keys)
-            if not target_unique_count:
-                continue
-            skipped_coverage_notes.append(
-                f"scenario {target.scenario_id}: "
-                f"{target.selection_skip_reason or 'selection scope에서 미선택'}; "
-                f"parameter unique eligible occurrence={target_unique_count}",
-            )
-        skipped_coverage_evidence = (
-            f"discovered eligible={eligible_count}, "
-            f"selected eligible={len(selected_expected_keys)}, "
-            f"skipped unique={skipped_unique_count}; " + "; ".join(skipped_coverage_notes)
-        )
-        if eligible_count == 0:
-            unexpected_candidate_count = sum(
-                len(
-                    _actual_occurrence_keys(
-                        _matching_parameter_items(
-                            (executions.get(target.scenario_id) or {}).get(
-                                "rule_candidates",
-                            )
-                            or [],
-                            parameter_target,
-                        ),
-                    ),
-                )
-                for target in targets
-            )
-            unexpected_selected_count = sum(
-                len(
-                    _actual_occurrence_keys(
-                        _matching_parameter_items(
-                            (executions.get(target.scenario_id) or {}).get(
-                                "expected_candidates",
-                            )
-                            or [],
-                            parameter_target,
-                        ),
-                    ),
-                )
-                for target in targets
-            )
-            unexpected_proposed_count = sum(
-                len(
-                    _matching_parameter_items(
-                        _final_proposal_parameters(
-                            executions.get(target.scenario_id) or {},
-                        ),
-                        parameter_target,
-                    ),
-                )
-                for target in targets
-            )
-            unexpected_confirmed_count = sum(
-                len(
-                    _matching_parameter_items(
-                        _confirmed_parameters(
-                            executions.get(target.scenario_id) or {},
-                        ),
-                        parameter_target,
-                    ),
-                )
-                for target in targets
-            )
-            if execute and any(
-                (
-                    unexpected_candidate_count,
-                    unexpected_selected_count,
-                    unexpected_proposed_count,
-                    unexpected_confirmed_count,
-                ),
-            ):
-                message = (
-                    "eligible sourceRef 없이 mapping 밖 chain이 생성됨: "
-                    f"candidate={unexpected_candidate_count}, "
-                    f"selected={unexpected_selected_count}, "
-                    f"proposed={unexpected_proposed_count}, "
-                    f"confirmed={unexpected_confirmed_count}"
-                )
-                rows.append(
-                    CoverageRow(
-                        parameter_name=parameter_name,
-                        eligible=0,
-                        candidate=unexpected_candidate_count,
-                        selected=unexpected_selected_count,
-                        proposed=unexpected_proposed_count,
-                        confirmed=unexpected_confirmed_count,
-                        verdict="FAIL",
-                        evidence=message,
-                    ),
-                )
-                integrity_issues.append(f"{parameter_name}: {message}")
-                continue
-            rows.append(
-                CoverageRow(
-                    parameter_name=parameter_name,
-                    eligible=0,
-                    candidate=None,
-                    selected=None,
-                    proposed=None,
-                    confirmed=None,
-                    verdict="COVERAGE LIMIT",
-                    evidence="실행 범위에 적합한 sourceRef가 없음",
-                ),
-            )
-            continue
-        if not execute:
-            evidence = "read-only discovery; --execute 미지정"
-            if skipped_unique_count:
-                evidence = f"{evidence}; {skipped_coverage_evidence}"
-            rows.append(
-                CoverageRow(
-                    parameter_name=parameter_name,
-                    eligible=eligible_count,
-                    candidate=None,
-                    selected=None,
-                    proposed=None,
-                    confirmed=None,
-                    verdict="COVERAGE LIMIT",
-                    evidence=evidence,
-                ),
-            )
-            continue
-        if not eligible_targets:
-            rows.append(
-                CoverageRow(
-                    parameter_name=parameter_name,
-                    eligible=eligible_count,
-                    candidate=None,
-                    selected=None,
-                    proposed=None,
-                    confirmed=None,
-                    verdict="COVERAGE LIMIT",
-                    evidence=(
-                        f"discovery selection limit으로 eligible scenario를 실행하지 못함; {skipped_coverage_evidence}"
-                    ),
-                ),
-            )
-            continue
-
-        candidate_count = 0
-        selected_count = 0
-        proposed_count = 0
-        confirmed_count = 0
-        row_failures: list[str] = []
-        row_reviews: list[str] = []
-        for target in eligible_targets:
-            execution = executions.get(target.scenario_id) or {}
-            if execution.get("error"):
-                row_failures.append(
-                    f"scenario {target.scenario_id} execution error",
-                )
-                continue
-            routing_limit_failure = routing_limit_failures.get(
-                (target.scenario_id, parameter_target),
-            )
-            if routing_limit_failure:
-                row_failures.append(routing_limit_failure)
-            expected_for_scenario = [
+        for field_name in ("lever_provenance", "binding_provenance"):
+            expected_provenance = [
                 item
-                for item in target.occurrences
-                if _target_signature(
-                    parameter_name=item.get("parameter_name"),
-                    model_file=item.get("model_file"),
-                    model_sheet=item.get("model_sheet"),
-                )
-                == parameter_target
+                for source_candidate in source_candidates
+                for item in _mapping_items(source_candidate.get(field_name))
             ]
-            expected_keys = _expected_occurrence_keys(expected_for_scenario)
-            expected_direct = {key for key in expected_keys if key[-1] == "direct"}
-            expected_routing = {key for key in expected_keys if key[-1] == "routing"}
-            candidate_items = _matching_parameter_items(
-                execution.get("rule_candidates") or [],
-                parameter_target,
+            actual_provenance = tuple(
+                sorted(set(_canonical_mapping_multiset(candidate.get(field_name)))),
             )
-            selected_items = _matching_parameter_items(
-                execution.get("expected_candidates") or [],
-                parameter_target,
+            expected_provenance_signatures = tuple(
+                sorted(set(_canonical_mapping_multiset(expected_provenance))),
             )
-            candidate_keys = {key for key in _actual_occurrence_keys(candidate_items) if key[5:8] == parameter_target}
-            selected_keys = {
-                key
-                for key in _actual_occurrence_keys(
-                    execution.get("expected_candidates") or [],
+            if actual_provenance != expected_provenance_signatures:
+                failures.append(
+                    f"post-Step1.5 {field_name} lineage 불일치: "
+                    f"{_candidate_key(candidate)}",
                 )
-                if key[5:8] == parameter_target
-            }
-            candidate_count += len(candidate_keys)
-            selected_count += len(selected_keys)
-            if candidate_keys != expected_keys:
-                row_failures.append(
-                    f"scenario {target.scenario_id} candidate mismatch "
-                    f"(missing={len(expected_keys - candidate_keys)}, "
-                    f"extra={len(candidate_keys - expected_keys)})",
+    duplicated_merged_keys = sorted(
+        key for key, count in merged_key_counts.items() if count > 1
+    )
+    if duplicated_merged_keys:
+        failures.append(
+            f"merged raw lineage key가 여러 runtime target에 중복 연결됨: {duplicated_merged_keys}",
+        )
+    direct_raw_keys = {
+        _candidate_key(candidate)
+        for candidate in evidence.runtime_candidates
+        if _text(candidate.get("mapping_method")) == "direct"
+    }
+    missing_direct = direct_raw_keys - represented_raw_keys
+    if missing_direct:
+        failures.append(
+            "runtime-allowed direct raw lineage가 selection에서 누락: "
+            f"{sorted(missing_direct)}",
+        )
+    routing_raw_keys = expected_runtime_keys - direct_raw_keys
+    missing_routing_raw_keys = routing_raw_keys - represented_raw_keys
+    if missing_routing_raw_keys:
+        reviews.append(
+            "routing raw lineage 일부/전체가 선택되지 않아 의미 검토 필요: "
+            f"{sorted(missing_routing_raw_keys)}",
+        )
+
+    prompt_grounding = _mapping(record.get("prompt_grounding_evidence"))
+    if not prompt_grounding:
+        reviews.append("Step1.5/2/3 prompt grounding packet 증적 미수집")
+    else:
+        if tuple(prompt_grounding.get("ordered_event_ids") or []) != (
+            evidence.ordered_event_ids
+        ):
+            failures.append("prompt grounding ordered Event 불일치")
+        if set(prompt_grounding.get("runtime_raw_candidate_keys") or []) != (
+            expected_runtime_keys
+        ):
+            failures.append("prompt grounding runtime raw candidate lineage 불일치")
+        if set(prompt_grounding.get("selected_candidate_keys") or []) != (
+            actual_runtime_keys
+        ):
+            failures.append("prompt grounding selected candidate lineage 불일치")
+
+    result = _mapping(record.get("result"))
+    adjustments = _mapping_items(result.get("parameter_adjustments"))
+    selected_items = [item for item in adjustments if item.get("selected", True)]
+    parameter_slots = _mapping_items(record.get("parameter_slots"))
+    slot_candidate_mappings = _mapping_items(record.get("slot_candidate_mappings"))
+    effective_references = _mapping_items(record.get("effective_references"))
+    selected_names = _parameter_names(selected_items)
+    runtime_by_candidate_key = {
+        _candidate_key(candidate): candidate for candidate in actual_runtime_items
+    }
+    for layer, items in (
+        ("selected adjustment", selected_items),
+        ("slot candidate mapping", slot_candidate_mappings),
+    ):
+        for item in items:
+            candidate_key = _candidate_key(item)
+            runtime_candidate = runtime_by_candidate_key.get(candidate_key)
+            if runtime_candidate is None:
+                failures.append(f"{layer} candidate_key가 runtime 후보에 없음: {candidate_key}")
+            elif _basic_target_signature(item) != _basic_target_signature(
+                runtime_candidate,
+            ):
+                failures.append(
+                    f"{layer} key→parameter/model target 결합 불일치: {candidate_key}",
                 )
-            expected_task_key = _stable_task_key(
-                parameter_target[0],
-                parameter_target[1],
-                parameter_target[2],
+    for layer, items in (
+        ("parameter slot", parameter_slots),
+        ("effective reference", effective_references),
+    ):
+        unknown_keys = sorted(
+            {
+                _candidate_key(item)
+                for item in items
+                if _candidate_key(item) not in runtime_by_candidate_key
+            },
+        )
+        if unknown_keys:
+            failures.append(f"{layer} candidate_key가 runtime 후보에 없음: {unknown_keys}")
+    expected_selected_targets = {
+        _basic_target_signature(candidate)
+        for candidate in evidence.runtime_candidates
+    }
+    unexpected_selected_targets = {
+        _basic_target_signature(item) for item in selected_items
+    } - expected_selected_targets
+    if unexpected_selected_targets:
+        failures.append(
+            "selected candidate target가 runtime 경계 밖임: "
+            f"{sorted(unexpected_selected_targets)}",
+        )
+
+    response_data = _mapping(_mapping(record.get("final_response")).get("data"))
+    proposed_items = _mapping_items(
+        response_data.get("proposalParameters")
+        or response_data.get("proposal_parameters"),
+    )
+    proposed_names = _parameter_names(proposed_items)
+    try:
+        presentation_items = [
+            item.model_dump(mode="json", by_alias=True)
+            for item in _proposal_parameters_from_state(
+                {
+                    "parameter_adjustments": adjustments,
+                    "candidate_mappings": actual_runtime_items,
+                },
+                include_lut_value=False,
             )
-            selected_task_keys = {
-                _clean(item.get("candidate_key") or item.get("candidateKey"))
-                for item in selected_items
-                if _clean(item.get("candidate_key") or item.get("candidateKey"))
-            }
-            if selected_keys and selected_task_keys != {expected_task_key}:
-                row_failures.append(
-                    f"scenario {target.scenario_id} selected v3 parameter task identity 불일치: "
-                    f"expected={expected_task_key}, actual={sorted(selected_task_keys)}",
-                )
-            if selected_keys and len(selected_items) != 1:
-                row_failures.append(
-                    f"scenario {target.scenario_id} selected parameter task가 1개로 병합되지 않음: "
-                    f"actual={len(selected_items)}",
-                )
-            if not expected_direct.issubset(selected_keys):
-                row_failures.append(
-                    f"scenario {target.scenario_id} direct selected 누락",
-                )
-            selected_extra = selected_keys - expected_keys
-            if selected_extra:
-                row_failures.append(
-                    f"scenario {target.scenario_id} mapping 밖 selected={len(selected_extra)}",
-                )
-            selected_routing = selected_keys & expected_routing
-            if expected_routing and not selected_routing:
-                row_reviews.append(
-                    f"scenario {target.scenario_id} routing 후보 미선택",
-                )
-            elif selected_routing and selected_routing != expected_routing:
-                row_failures.append(
-                    f"scenario {target.scenario_id} routing selected source union 누락 "
-                    f"(missing={len(expected_routing - selected_routing)})",
-                )
+        ]
+    except Exception as exc:
+        presentation_items = []
+        failures.append(
+            "production presentation projection 실패: "
+            f"{_redact(repr(exc))}",
+        )
+    if _proposal_payload_multiset(
+        presentation_items,
+        drop_lut_value=True,
+    ) != _proposal_payload_multiset(
+        proposed_items,
+        drop_lut_value=True,
+    ):
+        failures.append(
+            "selected adjustment→production presentation→API target/value payload 불일치",
+        )
+    proposal_row = _mapping(record.get("proposal_db_row"))
+    db_proposal_names = _parameter_names(proposal_row.get("proposal_parameters"))
+    confirmed_names = _parameter_names(proposal_row.get("confirmation_parameters"))
 
-            proposed_targets = _parameter_targets(_final_proposal_parameters(execution))
-            confirmed_targets = _parameter_targets(_confirmed_parameters(execution))
-            if parameter_target in proposed_targets:
-                proposed_count += 1
-            if parameter_target in confirmed_targets:
-                confirmed_count += 1
-            selected_for_parameter = bool(selected_keys)
-            if selected_for_parameter and parameter_target not in proposed_targets:
-                row_failures.append(
-                    f"scenario {target.scenario_id} selected→proposed 누락",
-                )
-            if parameter_target in proposed_targets and parameter_target not in confirmed_targets:
-                row_failures.append(
-                    f"scenario {target.scenario_id} proposed→confirmed 누락",
-                )
+    allowed_names = {
+        _parameter_name(candidate)
+        for candidate in evidence.runtime_candidates
+        if _parameter_name(candidate)
+    }
+    blocked_names = {
+        _parameter_name(candidate)
+        for candidate in evidence.blocked_candidates
+        if _parameter_name(candidate)
+    }
+    for layer, names in (
+        ("runtime", _parameter_names(actual_runtime_items)),
+        ("adjustment", _parameter_names(adjustments)),
+        ("proposed", proposed_names),
+        ("DB proposal", db_proposal_names),
+        ("confirmed", confirmed_names),
+    ):
+        leaked = names & blocked_names
+        if leaked:
+            failures.append(f"active-but-blocked parameter가 {layer}에 누출: {sorted(leaked)}")
+        unknown = names - allowed_names
+        if unknown:
+            failures.append(f"{layer} parameter가 runtime allowlist 후보 밖임: {sorted(unknown)}")
+    for layer, items in (
+        ("parameter_slots", parameter_slots),
+        ("slot_candidate_mappings", slot_candidate_mappings),
+        ("effective_references", effective_references),
+    ):
+        hits = _blocked_layer_hits(items, evidence.blocked_candidates)
+        if hits:
+            failures.append(
+                f"active-but-blocked parameter가 {layer}에 누출: {sorted(hits)}",
+            )
 
-            proposal_row = execution.get("proposal_db_row") or {}
-            response_data = (execution.get("final_response") or {}).get("data") or {}
-            if "eventId" not in response_data or response_data.get("eventId") is not None:
-                row_failures.append(
-                    f"scenario {target.scenario_id} API eventId가 명시적 null이 아님",
-                )
-            if _int_or_none(response_data.get("scenarioGroupId")) != target.scenario_group_id:
-                row_failures.append(
-                    f"scenario {target.scenario_id} API scenarioGroupId 불일치",
-                )
-            if proposal_row.get("mi_event_id", object()) is not None:
-                row_failures.append(
-                    f"scenario {target.scenario_id} proposal.mi_event_id가 NULL이 아님",
-                )
-            if _int_or_none(proposal_row.get("scenario_group_id")) != target.scenario_group_id:
-                row_failures.append(
-                    f"scenario {target.scenario_id} proposal group link 불일치",
-                )
-            if (execution.get("confirmation") or {}).get("status") != "PASS":
-                row_failures.append(
-                    f"scenario {target.scenario_id} confirmation contract 실패",
-                )
-            if selected_for_parameter:
-                quality = quality_by_scenario_parameter.get(
-                    (target.scenario_id, parameter_name),
-                )
-                if quality is None:
-                    row_failures.append(
-                        f"scenario {target.scenario_id} slot/reference/value 증적 누락",
-                    )
-                elif quality.verdict == "FAIL":
-                    row_failures.append(
-                        f"scenario {target.scenario_id} value contract FAIL: {quality.evidence}",
-                    )
-                elif quality.verdict == "REVIEW":
-                    row_reviews.append(
-                        f"scenario {target.scenario_id} value contract REVIEW: {quality.evidence}",
-                    )
+    actual_non_inputs = _mapping_items(result.get("non_input_items"))
+    expected_non_input_counts = Counter(
+        _non_input_signature(item)
+        for item in (*evidence.matcher_non_inputs, *evidence.blocked_candidates)
+    )
+    actual_non_input_counts = Counter(
+        _non_input_signature(item) for item in actual_non_inputs
+    )
+    if actual_non_input_counts != expected_non_input_counts:
+        missing_non_inputs = sorted(
+            (expected_non_input_counts - actual_non_input_counts).elements(),
+        )
+        unexpected_non_inputs = sorted(
+            (actual_non_input_counts - expected_non_input_counts).elements(),
+        )
+        failures.append(
+            "graph non_input_items identity/reason multiset 불일치: "
+            f"missing={missing_non_inputs}, unexpected={unexpected_non_inputs}",
+        )
+    actual_reason_by_key = {
+        _candidate_key(item): _text(item.get("reason_code") or item.get("reasonCode"))
+        for item in actual_non_inputs
+        if _candidate_key(item)
+    }
+    for blocked_key in expected_blocked_keys:
+        reason = actual_reason_by_key.get(blocked_key)
+        if reason != PROPOSAL_SCOPE_EXCLUDED_REASON_CODE:
+            failures.append(
+                "blocked candidate exclusion reason 누락/불일치: "
+                f"candidate_key={blocked_key}, reason={reason or '-'}",
+            )
 
-        if row_failures:
-            verdict: Verdict = "FAIL"
-            evidence = "; ".join(dict.fromkeys(row_failures))
-            integrity_issues.extend(f"{parameter_name}: {item}" for item in row_failures)
-        elif row_reviews:
-            verdict = "REVIEW"
-            evidence = "; ".join(dict.fromkeys(row_reviews))
+    if selected_names != proposed_names:
+        failures.append(
+            f"selected→proposed parameter 불일치: selected={sorted(selected_names)}, proposed={sorted(proposed_names)}",
+        )
+    if proposed_names != db_proposal_names:
+        failures.append(
+            f"API→DB proposal parameter 불일치: api={sorted(proposed_names)}, db={sorted(db_proposal_names)}",
+        )
+    if _contains_lut_value(proposal_row.get("proposal_parameters")):
+        failures.append("DB proposal payload에 response-only lutValue가 누출됨")
+    if _contains_lut_value(proposal_row.get("confirmation_parameters")):
+        failures.append("DB confirmation payload에 response-only lutValue가 누출됨")
+    if _proposal_payload_multiset(
+        proposed_items,
+        drop_lut_value=True,
+    ) != _proposal_payload_multiset(
+        proposal_row.get("proposal_parameters"),
+    ):
+        failures.append(
+            "API→DB proposal target/value payload 불일치(lutValue는 비교 제외)",
+        )
+    if db_proposal_names != confirmed_names:
+        failures.append(
+            "proposal→confirmation parameter 불일치: "
+            f"proposal={sorted(db_proposal_names)}, confirmed={sorted(confirmed_names)}",
+        )
+
+    selected_slots = [item for item in parameter_slots if item.get("selected", True)]
+    slot_catalog = _mapping_items(record.get("slot_catalog"))
+    step_summary = _mapping(record.get("step_summary"))
+    status_contracts = {
+        "parameter_status": _text(step_summary.get("parameter_status")),
+        "slot_status": _text(step_summary.get("slot_status")),
+        "basecase_status": _text(step_summary.get("basecase_status")),
+        "value_status": _text(step_summary.get("value_status")),
+    }
+    for status_name, status in status_contracts.items():
+        if status == "REVIEW":
+            reviews.append(f"step_summary {status_name}=REVIEW")
+        elif status != "PASS":
+            failures.append(
+                f"step_summary {status_name}가 PASS가 아님: {status or 'missing'}",
+            )
+
+    selected_value_cells = [
+        cell
+        for adjustment in selected_items
+        for cell in _mapping_items(adjustment.get("value_grid"))
+    ]
+    actual_counts = {
+        "validated_candidate_count": len(actual_runtime_items),
+        "selected_parameter_count": len(selected_items),
+        "proposal_parameter_count": len(proposed_items),
+        "selected_slot_count": len(selected_slots),
+        "value_reference_record_count": len(effective_references),
+        "value_cell_count": len(selected_value_cells),
+        "value_cell_with_basecase_count": sum(
+            cell.get("basecase_value") is not None
+            for cell in selected_value_cells
+        ),
+    }
+    for count_name, actual_count in actual_counts.items():
+        summary_count = _int_or_none(step_summary.get(count_name))
+        if summary_count != actual_count:
+            failures.append(
+                f"step_summary {count_name} 불일치: summary={summary_count}, actual={actual_count}",
+            )
+
+    if not slot_catalog:
+        failures.append("Step2 slot_catalog이 비어 있음")
+    if not selected_slots:
+        failures.append("Step2 selected slot이 비어 있음")
+    selected_slot_keys = {
+        (
+            _candidate_key(slot),
+            _text(slot.get("slot_key") or slot.get("slotKey")),
+        )
+        for slot in selected_slots
+    }
+    reference_slot_keys = {
+        (
+            _candidate_key(reference),
+            _text(reference.get("slot_key") or reference.get("slotKey")),
+        )
+        for reference in effective_references
+    }
+    if any(not candidate_key or not slot_key for candidate_key, slot_key in selected_slot_keys):
+        failures.append("Step2 selected slot candidate_key/slot_key가 누락됨")
+    if len(reference_slot_keys) != len(effective_references):
+        failures.append("Step3 effective reference candidate/slot key가 누락 또는 중복")
+    if selected_slot_keys != reference_slot_keys:
+        failures.append(
+            "Step2 selected slot과 Step3 effective reference key 집합이 불일치",
+        )
+    slot_links = [
+        (
+            _candidate_key(slot),
+            _text(slot.get("slot_key") or slot.get("slotKey")),
+        )
+        for slot in selected_slots
+    ]
+    reference_links = [
+        (
+            _candidate_key(reference),
+            _text(reference.get("slot_key") or reference.get("slotKey")),
+        )
+        for reference in effective_references
+    ]
+    if len(slot_links) != len(set(slot_links)):
+        failures.append("Step2 selected slot candidate/slot key가 중복됨")
+    slot_by_link = dict(zip(slot_links, selected_slots, strict=True))
+    reference_by_link = dict(zip(reference_links, effective_references, strict=True))
+    coordinate_mismatch_links = [
+        link
+        for link in set(slot_by_link) & set(reference_by_link)
+        if _coordinate_signature(_slot_coordinates(slot_by_link[link]))
+        != _coordinate_signature(reference_by_link[link].get("axes"))
+    ]
+    failures.extend(
+        f"Step2 slot→effective reference axes 불일치: {link}"
+        for link in coordinate_mismatch_links
+    )
+
+    catalog_by_key = {
+        _candidate_key(catalog): catalog for catalog in slot_catalog
+    }
+    if len(catalog_by_key) != len(slot_catalog):
+        failures.append("Step2 slot_catalog candidate_key가 누락 또는 중복됨")
+    for slot in selected_slots:
+        candidate_key = _candidate_key(slot)
+        catalog = catalog_by_key.get(candidate_key)
+        if catalog is None:
+            failures.append(
+                f"Step2 selected slot candidate가 slot_catalog에 없음: {candidate_key}",
+            )
+            continue
+        allowed_coordinates = _catalog_coordinate_signatures(catalog)
+        slot_signature = _coordinate_signature(_slot_coordinates(slot))
+        if not allowed_coordinates:
+            failures.append(
+                f"slot_catalog exact coordinate 증적이 비어 있음: {candidate_key}",
+            )
+        elif slot_signature not in allowed_coordinates:
+            failures.append(
+                f"Step2 selected slot이 slot_catalog exact union 밖임: {candidate_key}",
+            )
+
+    reference_coordinate_counts = Counter(
+        (
+            _candidate_key(reference),
+            _coordinate_signature(_reference_coordinates(reference)),
+        )
+        for reference in effective_references
+    )
+    adjustment_coordinate_counts = Counter(
+        (
+            _candidate_key(adjustment),
+            _coordinate_signature(cell.get("coordinates")),
+        )
+        for adjustment in selected_items
+        for cell in _mapping_items(adjustment.get("value_grid"))
+    )
+    if reference_coordinate_counts != adjustment_coordinate_counts:
+        failures.append(
+            "effective reference→Step3 adjustment candidate/coordinate multiset 불일치",
+        )
+    reference_by_coordinate: dict[tuple[str, str], dict[str, Any]] = {}
+    for reference in effective_references:
+        coordinate_key = (
+            _candidate_key(reference),
+            _coordinate_signature(_reference_coordinates(reference)),
+        )
+        if coordinate_key in reference_by_coordinate:
+            failures.append(
+                "effective reference candidate/coordinate가 중복됨: "
+                f"{coordinate_key[0]}",
+            )
+        reference_by_coordinate[coordinate_key] = reference
+    for adjustment in selected_items:
+        candidate_key = _candidate_key(adjustment)
+        for cell in _mapping_items(adjustment.get("value_grid")):
+            coordinate_key = (
+                candidate_key,
+                _coordinate_signature(cell.get("coordinates")),
+            )
+            reference = reference_by_coordinate.get(coordinate_key)
+            if reference is None:
+                continue
+            if not _same_scalar(
+                cell.get("basecase_value"),
+                reference.get("actual_basecase_value"),
+            ):
+                failures.append(
+                    "effective reference→value cell basecase_value 불일치: "
+                    f"{candidate_key}",
+                )
+            if not _same_scalar(
+                cell.get("lut_value"),
+                reference.get("lut_default_value"),
+            ):
+                failures.append(
+                    "effective reference→value cell lut_value 불일치: "
+                    f"{candidate_key}",
+                )
+            proposed_value = cell.get("proposed_value")
+            try:
+                proposed_number = float(proposed_value)
+            except (TypeError, ValueError):
+                proposed_number = math.nan
+            if (
+                isinstance(proposed_value, bool)
+                or not isinstance(proposed_value, int | float)
+                or not math.isfinite(proposed_number)
+            ):
+                failures.append(
+                    f"Step3 proposed_value가 finite numeric이 아님: {candidate_key}",
+                )
+    for reference in effective_references:
+        effective_source = _text(reference.get("effective_source"))
+        llm_reference_value = reference.get("llm_reference_value")
+        actual_basecase_value = reference.get("actual_basecase_value")
+        lut_default_value = reference.get("lut_default_value")
+        if llm_reference_value is None:
+            failures.append("Step3 effective reference에 llm_reference_value가 누락됨")
+        if actual_basecase_value is not None:
+            if effective_source != "basecase" or not _same_scalar(
+                llm_reference_value,
+                actual_basecase_value,
+            ):
+                failures.append(
+                    "Basecase-over-LUT precedence/llm_reference_value 계약 불일치",
+                )
+        elif lut_default_value is not None:
+            if effective_source != "lut" or not _same_scalar(
+                llm_reference_value,
+                lut_default_value,
+            ):
+                failures.append(
+                    "LUT fallback source/llm_reference_value 계약 불일치",
+                )
         else:
-            verdict = "PASS"
-            evidence = "eligible chain과 nullable persistence가 일치함"
-        if skipped_unique_count:
-            evidence = f"{evidence}; {skipped_coverage_evidence}"
-            if verdict == "PASS":
-                verdict = "COVERAGE LIMIT"
+            failures.append("effective reference에 Basecase/LUT value가 모두 없음")
+
+    adjustment_value_count = len(selected_value_cells)
+    api_value_count = _proposal_value_count(proposed_items)
+    db_value_count = _proposal_value_count(proposal_row.get("proposal_parameters"))
+    confirmed_value_count = _proposal_value_count(
+        proposal_row.get("confirmation_parameters"),
+    )
+    value_counts = {
+        adjustment_value_count,
+        api_value_count,
+        db_value_count,
+        confirmed_value_count,
+    }
+    if len(value_counts) != 1 or adjustment_value_count != len(selected_slots):
+        failures.append(
+            "Step2 slot→Step3 adjustment→API/DB/confirmation value count 불일치: "
+            f"slots={len(selected_slots)}, adjustment={adjustment_value_count}, "
+            f"api={api_value_count}, db={db_value_count}, confirmed={confirmed_value_count}",
+        )
+    if any(
+        cell.get("basecase_value") is None and cell.get("lut_value") is None
+        for cell in selected_value_cells
+    ):
+        failures.append("Step3 value cell에 basecase/LUT reference value가 모두 누락됨")
+
+    response_group_id = _int_or_none(
+        response_data.get("scenarioGroupId")
+        or response_data.get("scenario_group_id"),
+    )
+    if response_group_id != evidence.scenario_group_id:
+        failures.append(
+            f"API scenarioGroupId mismatch: {response_group_id} != {evidence.scenario_group_id}",
+        )
+    if _text(_mapping(record.get("final_response")).get("status")) != "success":
+        failures.append("proposal API response status가 success가 아님")
+    response_scenario_id = _int_or_none(
+        response_data.get("scenarioId") or response_data.get("scenario_id"),
+    )
+    if response_scenario_id != evidence.scenario_id:
+        failures.append(
+            f"API scenarioId mismatch: {response_scenario_id} != {evidence.scenario_id}",
+        )
+    response_proposal_id = _int_or_none(
+        response_data.get("modelParamProposalId")
+        or response_data.get("model_param_proposal_id"),
+    )
+    db_proposal_id = _int_or_none(proposal_row.get("model_param_proposal_id"))
+    if response_proposal_id is None or response_proposal_id != db_proposal_id:
+        failures.append(
+            "API→DB modelParamProposalId 불일치: "
+            f"api={response_proposal_id}, db={db_proposal_id}",
+        )
+    if (
+        "eventId" not in response_data
+        and "event_id" not in response_data
+    ) or (response_data.get("eventId") or response_data.get("event_id")) is not None:
+        failures.append("v4 API eventId가 명시적 null이 아님")
+    if _int_or_none(proposal_row.get("scenario_group_id")) != evidence.scenario_group_id:
+        failures.append("proposal DB scenario_group_id가 실행 group과 불일치")
+    if _int_or_none(proposal_row.get("scenario_id")) != evidence.scenario_id:
+        failures.append("proposal DB scenario_id가 실행 scenario와 불일치")
+    if proposal_row.get("mi_event_id") is not None:
+        failures.append("v4 proposal DB mi_event_id가 NULL이 아님")
+    if _text(proposal_row.get("status")) != "CONFIRMED":
+        failures.append("proposal DB status가 CONFIRMED가 아님")
+    if _mapping(record.get("confirmation")).get("status") != "PASS":
+        failures.append("shared confirmation workflow가 PASS가 아님")
+    if proposal_row.get("proposal_parameters") != proposal_row.get(
+        "confirmation_parameters",
+    ):
+        failures.append("confirmation이 proposal payload를 그대로 보존하지 않음")
+
+    attempts = _int_or_none(record.get("execution_attempt_count"))
+    if attempts != 1:
+        failures.append(f"write-producing workflow attempt는 1이어야 함: {attempts}")
+    elapsed = record.get("elapsed_seconds")
+    if isinstance(elapsed, int | float):
+        if float(elapsed) > MAX_EXECUTION_SECONDS:
+            failures.append(f"scenario execution이 {MAX_EXECUTION_SECONDS:.0f}초 초과: {elapsed}")
+    else:
+        reviews.append("scenario elapsed_seconds 미수집")
+    llm_calls = _mapping_items(record.get("llm_calls"))
+    if not llm_calls:
+        reviews.append("LLM token/step 관측성 미수집")
+    else:
+        retry_values: list[int] = []
+        retry_evidence_missing = False
+        token_evidence_missing = False
+        for call in llm_calls:
+            raw_retry = (
+                call.get("retry_count")
+                if "retry_count" in call
+                else call.get("internal_retry_count")
+            )
+            retry_count = _int_or_none(raw_retry)
+            if retry_count is None:
+                retry_evidence_missing = True
+            else:
+                retry_values.append(retry_count)
+            usage = _mapping(call.get("usage"))
+            if any(
+                _int_or_none(usage.get(field_name)) is None
+                for field_name in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                )
+            ):
+                token_evidence_missing = True
+        if retry_evidence_missing:
+            reviews.append("LLM retry count 관측성 미수집")
+        if any(value > 0 for value in retry_values):
+            reviews.append("내부 LLM retry 발생")
+        if token_evidence_missing:
+            reviews.append("LLM token usage 관측성 미수집")
+
+    verdict: Verdict = "FAIL" if failures else "REVIEW" if reviews else "PASS"
+    return ExecutionAssessment(
+        scenario_id=evidence.scenario_id,
+        verdict=verdict,
+        failures=_dedupe(failures),
+        reviews=_dedupe(reviews),
+        raw_candidate_keys=tuple(sorted(actual_raw_keys)),
+        runtime_candidate_keys=tuple(sorted(actual_runtime_keys)),
+        selected_parameter_names=tuple(sorted(selected_names)),
+        proposed_parameter_names=tuple(sorted(proposed_names)),
+        confirmed_parameter_names=tuple(sorted(confirmed_names)),
+    )
+
+
+def build_coverage_rows(
+    evidence: ScenarioEvidence,
+    record: Mapping[str, Any] | None,
+    assessment: ExecutionAssessment | None,
+) -> list[CoverageRow]:
+    active_names = sorted(
+        {
+            _parameter_name(definition)
+            for definition in evidence.parameter_definitions
+            if _parameter_name(definition)
+        },
+    )
+    selected_candidate_items = (
+        _mapping_items(
+            record.get("runtime_candidates")
+            if "runtime_candidates" in record
+            else record.get("expected_candidates"),
+        )
+        if record is not None
+        else []
+    )
+    response_data = _mapping(_mapping((record or {}).get("final_response")).get("data"))
+    proposed_items = _mapping_items(
+        response_data.get("proposalParameters")
+        or response_data.get("proposal_parameters"),
+    )
+    confirmed_items = _mapping_items(
+        _mapping((record or {}).get("proposal_db_row")).get(
+            "confirmation_parameters",
+        ),
+    )
+    actual_non_inputs = _mapping_items(
+        _mapping((record or {}).get("result")).get("non_input_items"),
+    )
+    rows: list[CoverageRow] = []
+    for name in active_names:
+        classification: Literal["runtime-allowed", "active-but-blocked"] = (
+            "runtime-allowed"
+            if name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+            else "active-but-blocked"
+        )
+        raw = sum(_parameter_name(item) == name for item in evidence.raw_candidates)
+        runtime = sum(
+            _parameter_name(item) == name
+            for item in evidence.runtime_candidates
+        )
+        selected = (
+            sum(
+                _parameter_name(item) == name
+                for item in selected_candidate_items
+            )
+            if record is not None
+            else None
+        )
+        proposed = (
+            sum(_parameter_name(item) == name for item in proposed_items)
+            if record is not None
+            else None
+        )
+        confirmed = (
+            sum(_parameter_name(item) == name for item in confirmed_items)
+            if record is not None
+            else None
+        )
+        if raw == 0:
+            verdict: Verdict = "COVERAGE LIMIT"
+            message = "selected Lever binding occurrence 없음"
+        elif classification == "active-but-blocked":
+            expected_keys = {
+                _candidate_key(item)
+                for item in evidence.blocked_candidates
+                if _parameter_name(item) == name
+            }
+            actual_reasons = {
+                _candidate_key(item): _text(item.get("reason_code"))
+                for item in actual_non_inputs
+                if _parameter_name(item) == name
+            }
+            if record is None:
+                verdict = "PASS"
+                message = "production partition에서 active-but-blocked + reason code 확인"
+            elif (
+                runtime == 0
+                and selected == 0
+                and proposed == 0
+                and confirmed == 0
+                and all(
+                    actual_reasons.get(key) == PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
+                    for key in expected_keys
+                )
+            ):
+                verdict = "PASS"
+                message = "pre-LLM 차단 및 exact reason code 확인"
+            else:
+                verdict = "FAIL"
+                message = "blocked leakage 또는 exclusion reason 누락"
+        elif record is None:
+            verdict = "COVERAGE LIMIT"
+            message = "read-only: execution chain 미실행"
+        elif assessment is not None and assessment.verdict == "FAIL":
+            verdict = "FAIL"
+            message = "scenario mandatory execution contract 실패"
+        elif runtime and selected and proposed and confirmed:
+            verdict = assessment.verdict if assessment is not None else "PASS"
+            message = "eligible→runtime→selected→proposed→confirmed 연결"
+        else:
+            verdict = "REVIEW"
+            message = "routing 미선택 또는 실행 chain 일부 미관측"
         rows.append(
             CoverageRow(
-                parameter_name=parameter_name,
-                eligible=eligible_count,
-                candidate=candidate_count,
-                selected=selected_count,
-                proposed=proposed_count,
-                confirmed=confirmed_count,
+                scenario_id=evidence.scenario_id,
+                parameter_name=name,
+                classification=classification,
+                raw=raw,
+                runtime=runtime,
+                selected=selected,
+                proposed=proposed,
+                confirmed=confirmed,
+                exclusion_reason=(
+                    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
+                    if classification == "active-but-blocked" and raw
+                    else ""
+                ),
                 verdict=verdict,
-                evidence=evidence,
+                evidence=message,
             ),
         )
-    return rows, integrity_issues
-
-
-def _overall_verdict(
-    *,
-    preflight: SchemaPreflight,
-    targets: Sequence[ScenarioEvidence],
-    coverage_rows: Sequence[CoverageRow],
-    execution_errors: Sequence[str],
-    additional_verdicts: Sequence[Verdict] = (),
-) -> Verdict:
-    if preflight.verdict == "FAIL" or execution_errors or any(target.errors for target in targets):
-        return "FAIL"
-    verdicts = [row.verdict for row in coverage_rows] + list(additional_verdicts)
-    if not verdicts:
-        return "COVERAGE LIMIT"
-    return max(verdicts, key=lambda item: _VERDICT_PRIORITY[item])
+    return rows
 
 
 def _md(value: Any) -> str:
-    text = _redact_report_text(value if value is not None else "-")
-    return text.replace("|", "\\|").replace("\n", " ")
+    if value is None:
+        return "N/A"
+    return str(value).replace("|", "\\|").replace("\n", " ")
 
 
-def _count_text(value: int | None) -> str:
-    return "NOT RUN" if value is None else str(value)
-
-
-def _unit_contract_status(verdict: Verdict) -> str:
-    return f"UNIT {verdict}"
-
-
-def _llm_metrics(execution: Mapping[str, Any]) -> dict[str, Any]:
-    calls = [item for item in execution.get("llm_calls") or [] if isinstance(item, Mapping)]
-    total_tokens = 0
-    usage_complete = bool(calls)
-    prompt_bytes = 0
-    prompt_bytes_captured = False
-    prompt_guard_exceeded = False
-    internal_retry_captured = bool(calls)
-    call_elapsed_captured = bool(calls)
-    for call in calls:
-        usage = call.get("usage") or {}
-        raw_total = usage.get("total_tokens") if isinstance(usage, Mapping) else None
-        if raw_total is None:
-            usage_complete = False
-        else:
-            total_tokens += int(raw_total)
-        raw_prompt_bytes = call.get("prompt_bytes")
-        if raw_prompt_bytes is not None:
-            prompt_bytes += int(raw_prompt_bytes)
-            prompt_bytes_captured = True
-            raw_limit = call.get("prompt_limit_bytes")
-            if raw_limit is not None and int(raw_prompt_bytes) > int(raw_limit):
-                prompt_guard_exceeded = True
-        if not any(
-            field_name in call
-            for field_name in (
-                "internal_retry_count",
-                "retry_count",
-                "retries",
-            )
-        ):
-            internal_retry_captured = False
-        if call.get("elapsed_seconds") is None:
-            call_elapsed_captured = False
-    return {
-        "call_count": len(calls),
-        "total_tokens": total_tokens if usage_complete else None,
-        "prompt_bytes": prompt_bytes if prompt_bytes_captured else None,
-        "prompt_guard_exceeded": prompt_guard_exceeded,
-        "internal_retry_captured": internal_retry_captured,
-        "call_elapsed_captured": call_elapsed_captured,
-    }
-
-
-def _quality_step_name(call: Mapping[str, Any]) -> str | None:
-    step = _clean(call.get("step")).lower()
-    if "step1.5" in step:
-        return "Step1.5"
-    if "step2" in step:
-        return "Step2"
-    if "step3" in step:
-        return "Step3"
-    return None
-
-
-def capture_execute_prompt_packets(
-    execution: Mapping[str, Any],
-) -> dict[str, dict[str, Any]]:
-    """Rebuild the exact prompt packets from the completed graph state.
-
-    The capture runs only after a real graph execution and calls the same packet
-    builders used immediately before each connector invocation. Keeping the
-    packets in the manual execution record lets the quality evaluator compare
-    actual stage input with its independently discovered DB lineage.
-    """
-    from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
-        _build_candidate_validation_prompt_packet,
-        _build_slot_proposal_prompt_packet,
-        _build_value_proposal_prompt_packet,
-        _merge_v3_routing_candidates_for_validation,
-        _partition_candidate_validation_work,
-    )
-
-    context = execution.get("context")
-    if not isinstance(context, Mapping):
-        msg = "completed execution has no scenario context for prompt capture"
-        raise TypeError(msg)
-    scenario_context = dict(context)
-    rule_candidates = [dict(item) for item in execution.get("rule_candidates") or [] if isinstance(item, Mapping)]
-    selected_candidates = [
-        dict(item) for item in execution.get("expected_candidates") or [] if isinstance(item, Mapping)
-    ]
-    result = execution.get("result") or {}
-    raw_non_inputs = (
-        result.get("non_input_items")
-        if isinstance(result, Mapping) and result.get("non_input_items") is not None
-        else execution.get("non_input_items")
-    )
-    non_input_items = [dict(item) for item in raw_non_inputs or [] if isinstance(item, Mapping)]
-    packets: dict[str, dict[str, Any]] = {}
-
-    validation_candidates = _merge_v3_routing_candidates_for_validation(
-        rule_candidates,
-    )
-    _, routing_tasks = _partition_candidate_validation_work(
-        validation_candidates,
-    )
-    if routing_tasks:
-        packets["Step1.5"] = json_safe(
-            _build_candidate_validation_prompt_packet(
-                scenario_context,
-                routing_tasks,
-                non_input_items,
-            ),
-        )
-
-    if selected_candidates:
-        packets["Step2"] = json_safe(
-            _build_slot_proposal_prompt_packet(
-                scenario_context,
-                selected_candidates,
-                [dict(item) for item in execution.get("slot_catalog") or [] if isinstance(item, Mapping)],
-                non_input_items,
-            ),
-        )
-
-    selected_candidate_keys = {
-        _clean(slot.get("candidate_key") or slot.get("candidateKey"))
-        for slot in execution.get("parameter_slots") or []
-        if isinstance(slot, Mapping) and slot.get("selected", True) is not False
-    }
-    value_candidates = [
-        dict(item) for item in execution.get("slot_candidate_mappings") or [] if isinstance(item, Mapping)
-    ] or [
-        candidate
-        for candidate in selected_candidates
-        if _clean(candidate.get("candidate_key") or candidate.get("candidateKey")) in selected_candidate_keys
-    ]
-    if value_candidates and selected_candidate_keys:
-        packets["Step3"] = json_safe(
-            _build_value_proposal_prompt_packet(
-                scenario_context,
-                value_candidates,
-                [dict(item) for item in execution.get("parameter_slots") or [] if isinstance(item, Mapping)],
-                [dict(item) for item in execution.get("effective_references") or [] if isinstance(item, Mapping)],
-                non_input_items,
-            ),
-        )
-    return packets
-
-
-def _prompt_dimension_key(item: Mapping[str, Any]) -> str:
-    return _clean(
-        item.get("scenario_dimension_key") or item.get("dimension_key") or item.get("source_dimension_id"),
-    )
-
-
-def _prompt_source_dimensions(item: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    raw = item.get("source_dimensions")
-    if isinstance(raw, list) and raw:
-        return [value for value in raw if isinstance(value, Mapping)]
-    return [item]
-
-
-def _prompt_lineage_expectations(
-    items: Sequence[Mapping[str, Any]],
-) -> dict[str, dict[str, set[Any]]]:
-    expected: dict[str, dict[str, set[Any]]] = {}
-    for item in items:
-        for source in _prompt_source_dimensions(item):
-            dimension_key = _prompt_dimension_key(source)
-            if not dimension_key:
-                continue
-            lineage = expected.setdefault(
-                dimension_key,
-                {"events": set(), "refs": set(), "projections": set()},
-            )
-            lineage["events"].update(
-                event_id
-                for raw_event_id in source.get("source_event_ids") or []
-                if (event_id := _int_or_none(raw_event_id)) is not None
-            )
-            lineage["refs"].update(
-                (
-                    template_id,
-                    dim_key,
-                )
-                for raw_ref in source.get("source_refs") or []
-                if isinstance(raw_ref, Mapping)
-                and (
-                    template_id := _int_or_none(
-                        raw_ref.get("scenario_dimension_template_id") or raw_ref.get("scenarioDimensionTemplateId"),
-                    )
-                )
-                is not None
-                and (
-                    dim_key := _clean(
-                        raw_ref.get("dim_key") or raw_ref.get("dimKey"),
-                    )
-                )
-            )
-            lineage["projections"].update(
-                json.dumps(
-                    json_safe(dict(projection)),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                )
-                for projection in source.get("approved_source_projections") or []
-                if isinstance(projection, Mapping)
-            )
-    return expected
-
-
-def _merge_prompt_expectations(
-    *expectations: Mapping[str, Mapping[str, set[Any]]],
-) -> dict[str, dict[str, set[Any]]]:
-    merged: dict[str, dict[str, set[Any]]] = {}
-    for expectation in expectations:
-        for dimension_key, lineage in expectation.items():
-            target = merged.setdefault(
-                dimension_key,
-                {"events": set(), "refs": set(), "projections": set()},
-            )
-            for field_name in ("events", "refs", "projections"):
-                target[field_name].update(lineage.get(field_name) or set())
-    return merged
-
-
-def _discovered_prompt_expectations(
-    target: ScenarioEvidence,
-    *,
-    dimension_keys: set[str],
-    fallback: Mapping[str, Mapping[str, set[Any]]],
-) -> dict[str, dict[str, set[Any]]]:
-    expected: dict[str, dict[str, set[Any]]] = {}
-    for dimension_key in dimension_keys:
-        fallback_lineage = fallback.get(dimension_key) or {}
-        discovered_events = target.dimension_source_event_ids.get(
-            dimension_key,
-        )
-        discovered_refs = target.dimension_source_refs.get(dimension_key)
-        discovered_projections = target.approved_source_projections.get(
-            dimension_key,
-        )
-        expected[dimension_key] = {
-            "events": set(
-                discovered_events if discovered_events is not None else fallback_lineage.get("events") or set(),
-            ),
-            "refs": {
-                (
-                    _int_or_none(
-                        raw_ref.get("scenario_dimension_template_id") or raw_ref.get("scenarioDimensionTemplateId"),
-                    ),
-                    _clean(raw_ref.get("dim_key") or raw_ref.get("dimKey")),
-                )
-                for raw_ref in (discovered_refs if discovered_refs is not None else ())
-                if isinstance(raw_ref, Mapping)
-            }
-            if discovered_refs is not None
-            else set(fallback_lineage.get("refs") or set()),
-            "projections": {
-                json.dumps(
-                    json_safe(dict(projection)),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                )
-                for projection in (discovered_projections if discovered_projections is not None else ())
-                if isinstance(projection, Mapping)
-            }
-            if discovered_projections is not None
-            else set(fallback_lineage.get("projections") or set()),
-        }
-    return expected
-
-
-def _validate_prompt_events(
-    target: ScenarioEvidence,
-    scenario_brief: Mapping[str, Any],
-) -> tuple[list[str], list[str], tuple[int, ...]]:
-    failures: list[str] = []
-    reviews: list[str] = []
-    raw_events = scenario_brief.get("events")
-    if not isinstance(raw_events, list):
-        return ["scenario_brief.events 배열 누락"], reviews, ()
-    events = [event for event in raw_events if isinstance(event, Mapping)]
-    actual_event_ids = tuple(
-        event_id
-        for event in events
-        if (event_id := _int_or_none(event.get("event_id") or event.get("mi_event_id"))) is not None
-    )
-    if actual_event_ids != target.group_event_ids:
-        failures.append(
-            f"group display order event ID 불일치: expected={target.group_event_ids}, actual={actual_event_ids}",
-        )
-    if len(events) != len(target.group_event_ids):
-        failures.append(
-            f"connected event 수 불일치: expected={len(target.group_event_ids)}, actual={len(events)}",
-        )
-    expected_by_id = {
-        int(event["mi_event_id"]): event
-        for event in target.ordered_events
-        if _int_or_none(event.get("mi_event_id")) is not None
-    }
-    if not expected_by_id:
-        reviews.append("DB event 본문 discovery 증적이 없어 packet 내용 exact 비교 불가")
-    for event in events:
-        event_id = _int_or_none(event.get("event_id") or event.get("mi_event_id"))
-        if event_id is None:
-            failures.append("prompt event ID 누락")
-            continue
-        if event_id not in target.group_event_ids:
-            failures.append(f"group 밖 prompt event ID={event_id}")
-        expected = expected_by_id.get(event_id)
-        actual_event_type = _int_or_none(
-            event.get("event_type_l2_id") or event.get("eventTypeL2Id"),
-        )
-        if expected is not None and actual_event_type != int(expected["event_type_l2_id"]):
-            failures.append(f"event {event_id} event type 불일치")
-        title = _clean(event.get("title"))
-        if not title:
-            failures.append(f"event {event_id} title 누락")
-        elif expected is not None and title != _clean(expected.get("title")):
-            failures.append(f"event {event_id} title 불일치")
-        summary = _clean(event.get("one_line_summary") or event.get("oneLineSummary"))
-        if expected is not None and summary != _clean(expected.get("one_line_summary")):
-            failures.append(f"event {event_id} one-line summary 불일치")
-        bullets = event.get("key_bullets") or event.get("keyBullets") or []
-        tags = event.get("tags") or []
-        detail = _clean(event.get("detail_excerpt") or event.get("detailExcerpt"))
-        if not isinstance(bullets, list) or len(bullets) > 5:
-            failures.append(f"event {event_id} key bullet 5개 제한 위반")
-        if not isinstance(tags, list) or len(tags) > 8:
-            failures.append(f"event {event_id} tag 8개 제한 위반")
-        if len(detail) > 1200:
-            failures.append(f"event {event_id} detail excerpt 1,200자 제한 위반")
-        if expected is not None:
-            if list(bullets) != list(expected.get("key_bullets") or []):
-                failures.append(f"event {event_id} key bullet 불일치")
-            if list(tags) != list(expected.get("tags") or []):
-                failures.append(f"event {event_id} tag 불일치")
-            if detail != _clean(expected.get("detail_excerpt")):
-                failures.append(f"event {event_id} detail excerpt 불일치")
-    return failures, reviews, actual_event_ids
-
-
-def _validate_prompt_dimension_items(
-    *,
-    label: str,
-    items: Sequence[Mapping[str, Any]],
-    expected: Mapping[str, Mapping[str, set[Any]]],
-    exact_keys: bool,
-) -> list[str]:
-    failures: list[str] = []
-    actual = _prompt_lineage_expectations(items)
-    actual_keys = set(actual)
-    expected_keys = set(expected)
-    missing_keys = sorted(expected_keys - actual_keys)
-    extra_keys = sorted(actual_keys - expected_keys)
-    if missing_keys:
-        failures.append(f"{label} dimension 누락={missing_keys}")
-    if exact_keys and extra_keys:
-        failures.append(f"{label} 무관 dimension 포함={extra_keys}")
-    for dimension_key in sorted(expected_keys & actual_keys):
-        actual_lineage = actual[dimension_key]
-        expected_lineage = expected[dimension_key]
-        expected_events = expected_lineage.get("events") or set()
-        if not actual_lineage["events"]:
-            failures.append(f"{label} {dimension_key} source event lineage 누락")
-        elif expected_events and actual_lineage["events"] != expected_events:
-            failures.append(
-                f"{label} {dimension_key} source event lineage 불일치: "
-                f"expected={sorted(expected_events)}, actual={sorted(actual_lineage['events'])}",
-            )
-        expected_refs = expected_lineage.get("refs") or set()
-        if expected_refs and actual_lineage["refs"] != expected_refs:
-            failures.append(f"{label} {dimension_key} sourceRef lineage 불일치")
-        expected_projections = expected_lineage.get("projections") or set()
-        if expected_projections and actual_lineage["projections"] != expected_projections:
-            failures.append(f"{label} {dimension_key} 승인 projection 불일치/누락")
-    return failures
-
-
-def _stage_prompt_candidates(
-    step_name: str,
-    execution: Mapping[str, Any],
-) -> list[Mapping[str, Any]]:
-    if step_name == "Step1.5":
-        return [
-            item
-            for item in execution.get("rule_candidates") or []
-            if isinstance(item, Mapping) and _clean(item.get("mapping_method")) == "routing"
-        ]
-    if step_name == "Step2":
-        return [item for item in execution.get("expected_candidates") or [] if isinstance(item, Mapping)]
-    selected_candidate_keys = {
-        _clean(slot.get("candidate_key") or slot.get("candidateKey"))
-        for slot in execution.get("parameter_slots") or []
-        if isinstance(slot, Mapping) and slot.get("selected", True) is not False
-    }
-    return [
-        item
-        for item in execution.get("slot_candidate_mappings") or execution.get("expected_candidates") or []
-        if isinstance(item, Mapping)
-        and _clean(item.get("candidate_key") or item.get("candidateKey")) in selected_candidate_keys
-    ]
-
-
-def _stage_prompt_task_dimensions(
-    step_name: str,
-    packet: Mapping[str, Any],
-) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
-    selection: list[Mapping[str, Any]] = []
-    supporting: list[Mapping[str, Any]] = []
-    if step_name == "Step1.5":
-        for task in packet.get("routing_tasks") or []:
-            if not isinstance(task, Mapping):
-                continue
-            for candidate in task.get("candidates") or []:
-                if not isinstance(candidate, Mapping):
-                    continue
-                selection.extend(_prompt_source_dimensions(candidate))
-        return selection, supporting
-    task_field = "parameter_slot_tasks" if step_name == "Step2" else "parameter_value_tasks"
-    for task in packet.get(task_field) or []:
-        if not isinstance(task, Mapping):
-            continue
-        selection.extend(item for item in task.get("selection_dimensions") or [] if isinstance(item, Mapping))
-        supporting.extend(item for item in task.get("supporting_dimensions") or [] if isinstance(item, Mapping))
-    return selection, supporting
-
-
-def build_prompt_grounding_rows(
-    *,
-    targets: Sequence[ScenarioEvidence],
-    executions: Mapping[int, Mapping[str, Any]],
-    execute: bool,
-) -> list[PromptGroundingRow]:
-    if not execute:
-        return []
-    rows: list[PromptGroundingRow] = []
-    for target in targets:
-        execution = executions.get(target.scenario_id) or {}
-        raw_packets = execution.get("prompt_packets")
-        packets = raw_packets if isinstance(raw_packets, Mapping) else {}
-        raw_result = execution.get("result") or {}
-        raw_non_inputs = (
-            raw_result.get("non_input_items")
-            if isinstance(raw_result, Mapping) and raw_result.get("non_input_items") is not None
-            else execution.get("non_input_items")
-        )
-        indirect_items = [
-            item
-            for item in raw_non_inputs or []
-            if isinstance(item, Mapping) and _clean(item.get("mapping_method")) == "indirect"
-        ]
-        indirect_expectations = _prompt_lineage_expectations(indirect_items)
-        for step_name in ("Step1.5", "Step2", "Step3"):
-            stage_candidates = _stage_prompt_candidates(
-                step_name,
-                execution,
-            )
-            expected_stage = bool(stage_candidates)
-            packet = packets.get(step_name)
-            if not expected_stage and packet is None:
-                rows.append(
-                    PromptGroundingRow(
-                        scenario_id=target.scenario_id,
-                        step=step_name,
-                        event_ids=(),
-                        dimension_keys=(),
-                        verdict="PASS",
-                        evidence="해당 단계 prompt packet 불필요로 skip",
-                    ),
-                )
-                continue
-            failures: list[str] = []
-            reviews: list[str] = []
-            if execution.get("prompt_packet_capture_error"):
-                failures.append(
-                    "actual prompt packet capture 실패: "
-                    f"{_redact_error_text(execution['prompt_packet_capture_error'])}",
-                )
-            if not isinstance(packet, Mapping):
-                failures.append("실행된 단계의 actual prompt packet 증적 누락")
-                rows.append(
-                    PromptGroundingRow(
-                        scenario_id=target.scenario_id,
-                        step=step_name,
-                        event_ids=(),
-                        dimension_keys=(),
-                        verdict="FAIL",
-                        evidence="; ".join(dict.fromkeys(failures)),
-                    ),
-                )
-                continue
-            if not expected_stage:
-                reviews.append("실행 대상이 아닌 단계에 prompt packet 증적이 존재함")
-            scenario_brief = packet.get("scenario_brief")
-            if not isinstance(scenario_brief, Mapping):
-                failures.append("actual prompt packet scenario_brief 누락")
-                event_ids: tuple[int, ...] = ()
-                actual_dimension_keys: tuple[str, ...] = ()
-            else:
-                event_failures, event_reviews, event_ids = _validate_prompt_events(
-                    target,
-                    scenario_brief,
-                )
-                failures.extend(event_failures)
-                reviews.extend(event_reviews)
-                candidate_expectations = _prompt_lineage_expectations(
-                    stage_candidates,
-                )
-                relevant_keys = set(candidate_expectations) | set(
-                    indirect_expectations,
-                )
-                combined_expectations = _merge_prompt_expectations(
-                    candidate_expectations,
-                    indirect_expectations,
-                )
-                scenario_expectations = _discovered_prompt_expectations(
-                    target,
-                    dimension_keys=relevant_keys,
-                    fallback=combined_expectations,
-                )
-                selected_dimensions = [
-                    item for item in scenario_brief.get("selected_dimensions") or [] if isinstance(item, Mapping)
-                ]
-                failures.extend(
-                    _validate_prompt_dimension_items(
-                        label="scenario_brief.selected_dimensions",
-                        items=selected_dimensions,
-                        expected=scenario_expectations,
-                        exact_keys=True,
-                    ),
-                )
-                actual_dimension_keys = tuple(
-                    sorted(
-                        {_prompt_dimension_key(item) for item in selected_dimensions if _prompt_dimension_key(item)},
-                    ),
-                )
-                brief_scenario = scenario_brief.get("scenario") or {}
-                dimension_values = (
-                    brief_scenario.get("dimension_values") if isinstance(brief_scenario, Mapping) else None
-                )
-                actual_value_keys = (
-                    {_clean(key) for key in dimension_values} if isinstance(dimension_values, Mapping) else set()
-                )
-                if actual_value_keys != relevant_keys:
-                    failures.append(
-                        "scenario_brief scenario dimension filter 불일치: "
-                        f"expected={sorted(relevant_keys)}, actual={sorted(actual_value_keys)}",
-                    )
-
-                selection_dimensions, supporting_dimensions = _stage_prompt_task_dimensions(
-                    step_name,
-                    packet,
-                )
-                failures.extend(
-                    _validate_prompt_dimension_items(
-                        label=f"{step_name} task selection",
-                        items=selection_dimensions,
-                        expected=candidate_expectations,
-                        exact_keys=True,
-                    ),
-                )
-                if step_name != "Step1.5":
-                    failures.extend(
-                        _validate_prompt_dimension_items(
-                            label=f"{step_name} task supporting",
-                            items=supporting_dimensions,
-                            expected=indirect_expectations,
-                            exact_keys=True,
-                        ),
-                    )
-            if failures:
-                verdict: Verdict = "FAIL"
-                evidence = "; ".join(dict.fromkeys(failures))
-            elif reviews:
-                verdict = "REVIEW"
-                evidence = "; ".join(dict.fromkeys(reviews))
-            else:
-                verdict = "PASS"
-                evidence = (
-                    "actual prompt packet의 ordered event, 관련 composite/indirect dimension, "
-                    "source lineage, 승인 projection이 discovery와 일치함"
-                )
-            rows.append(
-                PromptGroundingRow(
-                    scenario_id=target.scenario_id,
-                    step=step_name,
-                    event_ids=event_ids,
-                    dimension_keys=actual_dimension_keys,
-                    verdict=verdict,
-                    evidence=evidence,
-                ),
-            )
-    return rows
-
-
-def _sum_call_field(
-    calls: Sequence[Mapping[str, Any]],
-    *,
-    field_name: str,
-    usage: bool = False,
-) -> int | None:
-    values: list[int] = []
-    for call in calls:
-        source = (call.get("usage") or {}) if usage else call
-        if not isinstance(source, Mapping) or source.get(field_name) is None:
-            return None
-        values.append(int(source[field_name]))
-    return sum(values) if values else None
-
-
-def _internal_retry_count(calls: Sequence[Mapping[str, Any]]) -> int | None:
-    counts: list[int] = []
-    for call in calls:
-        raw = next(
-            (
-                call[field_name]
-                for field_name in (
-                    "internal_retry_count",
-                    "retry_count",
-                    "retries",
-                )
-                if field_name in call
-            ),
-            None,
-        )
-        if raw is None:
-            return None
-        counts.append(int(raw))
-    return sum(counts) if counts else None
-
-
-def build_performance_rows(
-    *,
-    targets: Sequence[ScenarioEvidence],
-    executions: Mapping[int, Mapping[str, Any]],
-    execute: bool,
-) -> list[PerformanceRow]:
-    if not execute:
-        return []
-    rows: list[PerformanceRow] = []
-    for target in targets:
-        execution = executions.get(target.scenario_id) or {}
-        all_calls = [call for call in execution.get("llm_calls") or [] if isinstance(call, Mapping)]
-        calls_by_step: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
-        for call in all_calls:
-            step_name = _quality_step_name(call)
-            if step_name is not None:
-                calls_by_step[step_name].append(call)
-        expected = {
-            "Step1.5": any(
-                _clean(candidate.get("mapping_method")) == "routing"
-                for candidate in execution.get("rule_candidates") or []
-                if isinstance(candidate, Mapping)
-            ),
-            "Step2": bool(execution.get("expected_candidates")),
-            "Step3": bool(execution.get("parameter_slots")),
-        }
-        raw_attempts = execution.get("attempts")
-        outer_retry_count = max(0, int(raw_attempts or 0) - 1)
-        total_elapsed = execution.get("elapsed_seconds")
-        for step_name in ("Step1.5", "Step2", "Step3"):
-            calls = calls_by_step.get(step_name) or []
-            prompt_bytes = _sum_call_field(calls, field_name="prompt_bytes")
-            limits = tuple(
-                sorted(
-                    {int(call["prompt_limit_bytes"]) for call in calls if call.get("prompt_limit_bytes") is not None},
-                ),
-            )
-            prompt_tokens = _sum_call_field(
-                calls,
-                field_name="prompt_tokens",
-                usage=True,
-            )
-            completion_tokens = _sum_call_field(
-                calls,
-                field_name="completion_tokens",
-                usage=True,
-            )
-            total_tokens = _sum_call_field(
-                calls,
-                field_name="total_tokens",
-                usage=True,
-            )
-            elapsed_values = [
-                float(call["elapsed_seconds"]) for call in calls if call.get("elapsed_seconds") is not None
-            ]
-            elapsed_seconds = sum(elapsed_values) if len(elapsed_values) == len(calls) and calls else None
-            internal_retry_count = _internal_retry_count(calls)
-            failures: list[str] = []
-            reviews: list[str] = []
-            if execution.get("error"):
-                failures.append("scenario execution error")
-            if not calls and expected[step_name]:
-                failures.append("필수 LLM call 증적 없음")
-            if calls and any(call.get("success") is False for call in calls):
-                failures.append("실패 LLM call 포함")
-            if calls and (
-                prompt_bytes is None
-                or len(limits) != 1
-                or prompt_tokens is None
-                or completion_tokens is None
-                or total_tokens is None
-                or elapsed_seconds is None
-            ):
-                reviews.append("prompt/token/time/guard 증적 일부 미수집")
-            if (
-                calls
-                and prompt_bytes is not None
-                and limits
-                and any(
-                    int(call.get("prompt_bytes") or 0) > int(call.get("prompt_limit_bytes") or limits[0])
-                    for call in calls
-                )
-            ):
-                failures.append("configured prompt byte guard 초과")
-            if calls and internal_retry_count is None:
-                reviews.append("internal retry 미수집")
-            elif internal_retry_count:
-                reviews.append(f"internal retry {internal_retry_count}회")
-            if calls and raw_attempts is None:
-                reviews.append("outer retry 미수집")
-            if outer_retry_count:
-                reviews.append(f"outer retry {outer_retry_count}회")
-            if isinstance(total_elapsed, int | float) and total_elapsed > 180:
-                failures.append(f"scenario 전체 180초 초과 ({total_elapsed:.3f}s)")
-            elif not isinstance(total_elapsed, int | float):
-                reviews.append("scenario 전체 elapsed 미수집")
-            if not calls and not expected[step_name] and not failures and not reviews:
-                verdict: Verdict = "PASS"
-                evidence = "해당 단계 LLM call 불필요로 skip"
-            elif failures:
-                verdict = "FAIL"
-                evidence = "; ".join(dict.fromkeys(failures))
-            elif reviews:
-                verdict = "REVIEW"
-                evidence = "; ".join(dict.fromkeys(reviews))
-            else:
-                verdict = "PASS"
-                evidence = "prompt bytes/token/time/retry 증적 일치"
-            rows.append(
-                PerformanceRow(
-                    scenario_id=target.scenario_id,
-                    step=step_name,
-                    call_count=len(calls),
-                    prompt_bytes=prompt_bytes,
-                    prompt_limit_bytes=limits,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=total_tokens,
-                    elapsed_seconds=elapsed_seconds,
-                    outer_retry_count=outer_retry_count,
-                    internal_retry_count=internal_retry_count,
-                    verdict=verdict,
-                    evidence=evidence,
-                ),
-            )
-    return rows
-
-
-def _performance_verdict(execution: Mapping[str, Any]) -> Verdict:
-    metrics = _llm_metrics(execution)
-    elapsed = execution.get("elapsed_seconds")
-    attempts = int(execution.get("attempts") or 0)
-    if (
-        execution.get("error")
-        or (isinstance(elapsed, int | float) and elapsed > 180)
-        or metrics["prompt_guard_exceeded"]
-    ):
-        return "FAIL"
-    if (
-        attempts > 1
-        or metrics["prompt_bytes"] is None
-        or metrics["total_tokens"] is None
-        or not metrics["internal_retry_captured"]
-        or not metrics["call_elapsed_captured"]
-        or not isinstance(elapsed, int | float)
-    ):
-        return "REVIEW"
-    return "PASS"
-
-
-def _bounded_stage_evidence(
-    value: Any,
-    *,
-    depth: int = 0,
-    max_depth: int = 6,
-    list_limit: int = 8,
-    mapping_limit: int = 30,
-    text_limit: int = 500,
-) -> Any:
-    """Bound stage evidence without storing complete prompts or large catalogs."""
-    if depth >= max_depth:
-        if isinstance(value, Mapping):
-            return {"summary": f"mapping({len(value)}) omitted at depth {depth}"}
-        if isinstance(value, list | tuple):
-            return [f"{len(value)} items omitted at depth {depth}"]
-    if isinstance(value, Mapping):
-        items = list(value.items())
-        bounded = {
-            str(key): _bounded_stage_evidence(
-                item,
-                depth=depth + 1,
-                max_depth=max_depth,
-                list_limit=list_limit,
-                mapping_limit=mapping_limit,
-                text_limit=text_limit,
-            )
-            for key, item in items[:mapping_limit]
-        }
-        if len(items) > mapping_limit:
-            bounded["_omitted_fields"] = len(items) - mapping_limit
-        return bounded
-    if isinstance(value, list | tuple):
-        bounded_items = [
-            _bounded_stage_evidence(
-                item,
-                depth=depth + 1,
-                max_depth=max_depth,
-                list_limit=list_limit,
-                mapping_limit=mapping_limit,
-                text_limit=text_limit,
-            )
-            for item in value[:list_limit]
-        ]
-        if len(value) > list_limit:
-            bounded_items.append({"_omitted_items": len(value) - list_limit})
-        return bounded_items
-    if isinstance(value, str) and len(value) > text_limit:
-        return {
-            "text_chars": len(value),
-            "excerpt": value[:text_limit],
-        }
-    return json_safe(value)
-
-
-def _stage_output_evidence(
-    step_name: str,
-    execution: Mapping[str, Any],
-) -> dict[str, Any]:
-    result = execution.get("result") or {}
-    warnings = (result.get("validation_warnings") if isinstance(result, Mapping) else []) or []
-    if step_name == "Step1.5":
-        return {
-            "selected_candidates": execution.get("expected_candidates") or [],
-            "routing_status": execution.get("routing_status"),
-            "routing_messages": execution.get("routing_messages") or [],
-            "validation_warnings": warnings,
-        }
-    if step_name == "Step2":
-        return {
-            "selected_slots": [
-                slot
-                for slot in execution.get("parameter_slots") or []
-                if isinstance(slot, Mapping) and slot.get("selected", True) is not False
-            ],
-            "validation_warnings": warnings,
-        }
-    proposal_row = execution.get("proposal_db_row") or {}
-    final_response = execution.get("final_response") or {}
-    response_data = (final_response.get("data") if isinstance(final_response, Mapping) else {}) or {}
-    return {
-        "parameter_adjustments": (result.get("parameter_adjustments") if isinstance(result, Mapping) else []) or [],
-        "validation_warnings": warnings,
-        "persistence_read_back": {
-            "model_param_proposal_id": proposal_row.get(
-                "model_param_proposal_id",
-            ),
-            "scenario_id": proposal_row.get("scenario_id"),
-            "scenario_group_id": proposal_row.get("scenario_group_id"),
-            "mi_event_id": proposal_row.get("mi_event_id"),
-            "status": proposal_row.get("status"),
-            "proposal_parameter_count": len(
-                proposal_row.get("proposal_parameters") or [],
-            ),
-            "confirmation_parameter_count": len(
-                proposal_row.get("confirmation_parameters") or [],
-            ),
-            "api_event_id": response_data.get("eventId"),
-            "api_scenario_group_id": response_data.get("scenarioGroupId"),
-        },
-    }
-
-
-def _render_stage_io_appendix(
-    *,
-    selected_targets: Sequence[ScenarioEvidence],
-    executions: Mapping[int, Mapping[str, Any]],
-    execute: bool,
-) -> list[str]:
-    lines = [
-        "",
-        "## 단계별 LLM 입출력 증적",
-        "",
-        (
-            "입력은 완료된 graph state에서 production과 동일한 packet builder로 사후 재구성한 "
-            "sanitized 요약이며 provider wire payload 원문이 아닙니다. 출력은 graph의 정규화 결과와 "
-            "DB read-back 요약입니다. 비밀값과 전체 prompt 원문은 기록하지 않습니다."
-        ),
-    ]
-    if not execute:
-        lines.extend(["", "- `--execute` 미지정으로 단계별 입출력 증적 없음"])
-        return lines
-    for target in selected_targets:
-        execution = executions.get(target.scenario_id) or {}
-        packets = execution.get("prompt_packets") or {}
-        lines.extend(["", f"### Scenario {target.scenario_id}", ""])
-        for step_name in ("Step1.5", "Step2", "Step3"):
-            packet = packets.get(step_name) if isinstance(packets, Mapping) else None
-            if not isinstance(packet, Mapping):
-                lines.append(
-                    f"- `{step_name}`: LLM 호출 불필요로 skip되었거나 packet 증적이 없습니다.",
-                )
-                continue
-            input_json = json.dumps(
-                _bounded_stage_evidence(packet),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-                default=str,
-            )
-            output_json = json.dumps(
-                _bounded_stage_evidence(
-                    _stage_output_evidence(step_name, execution),
-                ),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-                default=str,
-            )
-            lines.extend(
-                [
-                    f"<details><summary>{step_name} 입력/출력</summary>",
-                    "",
-                    "입력 packet 요약:",
-                    "",
-                    "```json",
-                    _redact_report_text(input_json),
-                    "```",
-                    "",
-                    "출력 요약:",
-                    "",
-                    "```json",
-                    _redact_report_text(output_json),
-                    "```",
-                    "",
-                    "</details>",
-                    "",
-                ],
-            )
-    return lines
+def _count(value: int | None) -> str:
+    return "N/A" if value is None else str(value)
 
 
 def render_report(
@@ -3601,892 +2153,460 @@ def render_report(
     started_at: datetime,
     finished_at: datetime,
     execute: bool,
+    verdict: Verdict,
     preflight: SchemaPreflight,
-    selected_targets: Sequence[ScenarioEvidence],
-    skipped_targets: Sequence[ScenarioEvidence],
-    discovery_messages: Sequence[str],
-    active_parameter_definitions: Sequence[Mapping[str, Any]],
-    coverage_rows: Sequence[CoverageRow],
-    executions: Mapping[int, Mapping[str, Any]],
-    integrity_issues: Sequence[str],
-    contract_evidence: ContractEvidence | None = None,
+    core_smoke: CoreSmokeEvidence,
+    evidences: Sequence[ScenarioEvidence],
+    executions: Mapping[int, dict[str, Any]],
+    assessments: Sequence[ExecutionAssessment],
+    scope_errors: Sequence[str],
 ) -> str:
-    execution_errors = [
-        f"scenario {scenario_id}: {_redact_error_text(record.get('error'))}"
-        for scenario_id, record in executions.items()
-        if record.get("error")
-    ]
-    parameter_quality_rows = build_parameter_quality_rows(
-        targets=selected_targets,
-        executions=executions,
-        execute=execute,
-    )
-    performance_rows = build_performance_rows(
-        targets=selected_targets,
-        executions=executions,
-        execute=execute,
-    )
-    performance_verdicts = [row.verdict for row in performance_rows]
-    prompt_grounding_rows = build_prompt_grounding_rows(
-        targets=selected_targets,
-        executions=executions,
-        execute=execute,
-    )
-    prompt_grounding_verdicts = [row.verdict for row in prompt_grounding_rows]
-    contract_failure_verdicts: list[Verdict] = (
-        [contract_evidence.verdict] if contract_evidence is not None and contract_evidence.verdict != "PASS" else []
-    )
-    contract_status_by_name = {
-        case.name: case.verdict for case in (contract_evidence.cases if contract_evidence is not None else ())
-    }
-    invalid_status_contract: Verdict = max(
-        (
-            contract_status_by_name.get(
-                "invalid-status service rollback",
-                "COVERAGE LIMIT",
-            ),
-            contract_status_by_name.get(
-                "invalid-status workflow no-mutation",
-                "COVERAGE LIMIT",
-            ),
-        ),
-        key=lambda item: _VERDICT_PRIORITY[item],
-    )
-    numeric_contract_status: Verdict = max(
-        (
-            contract_status_by_name.get(
-                "persistence proposed precision preservation",
-                "COVERAGE LIMIT",
-            ),
-            contract_status_by_name.get(
-                "persistence finite numeric",
-                "COVERAGE LIMIT",
-            ),
-            contract_status_by_name.get(
-                "reconfirmation proposed precision preservation",
-                "COVERAGE LIMIT",
-            ),
-        ),
-        key=lambda item: _VERDICT_PRIORITY[item],
-    )
-    custom_parameter_contract = _unit_contract_status(
-        contract_status_by_name.get(
-            "custom parameter service persistence",
-            "COVERAGE LIMIT",
-        ),
-    )
-    overall = _overall_verdict(
-        preflight=preflight,
-        targets=selected_targets,
-        coverage_rows=coverage_rows,
-        execution_errors=[
-            *execution_errors,
-            *integrity_issues,
-            *("performance contract FAIL" for verdict in performance_verdicts if verdict == "FAIL"),
-            *("actual prompt grounding contract FAIL" for verdict in prompt_grounding_verdicts if verdict == "FAIL"),
-        ],
-        additional_verdicts=[
-            *performance_verdicts,
-            *prompt_grounding_verdicts,
-            *contract_failure_verdicts,
-        ],
-    )
+    assessment_by_id = {item.scenario_id: item for item in assessments}
     lines = [
-        "# Model Parameter v3 Multi-Event Quality Report",
+        "# v4 Multi-Event Model Parameter Quality Report",
         "",
-        f"- 판정: **{overall}**",
-        f"- 모드: {'EXECUTE (proposal/confirmation write)' if execute else 'READ-ONLY DISCOVERY'}",
         f"- 시작: {started_at.isoformat(timespec='seconds')}",
         f"- 종료: {finished_at.isoformat(timespec='seconds')}",
-        f"- active parameter: {len(active_parameter_definitions)}개 (DB runtime 조회)",
-        "- `parameter_mapping_ready=false`는 실행 gate로 사용하지 않음",
+        f"- 모드: {'EXECUTE (write)' if execute else 'READ-ONLY'}",
+        f"- 종합 판정: **{verdict}**",
+        f"- 대상 계약: `api_version={V4_API_VERSION}`, `generation_strategy={V4_STRATEGY}`",
+        "- ordered event 경계: 1~5개",
+        "- runtime allowlist: " + ", ".join(sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST)),
+        f"- blocked reason code: `{PROPOSAL_SCOPE_EXCLUDED_REASON_CODE}`",
         "",
-        "## Schema preflight",
+        "## Preflight / automated gate",
         "",
-        f"- 판정: {preflight.verdict}",
-        *[f"- {_md(message)}" for message in preflight.messages],
-        "",
-        "## Automated mock/unit contract preflight",
-        "",
-        "- 아래 결과는 외부 DB·LLM을 사용하지 않은 격리 회귀이며 live 실행 증적을 대체하지 않습니다.",
+        "| Gate | Verdict | Evidence |",
+        "|---|---|---|",
+        f"| DB schema | {preflight.verdict} | {_md('; '.join(preflight.errors or preflight.checks))} |",
         (
-            f"- 판정: {contract_evidence.verdict}"
-            if contract_evidence is not None
-            else "- 판정: COVERAGE LIMIT (hook 증적 미제공)"
-        ),
-        (
-            f"- 소요시간: {contract_evidence.elapsed_seconds:.3f}s"
-            if contract_evidence is not None and contract_evidence.elapsed_seconds is not None
-            else "- 소요시간: N/A"
+            f"| model_parameter_core | {core_smoke.status} | "
+            f"rc={_md(core_smoke.return_code)}, elapsed={_md(core_smoke.elapsed_seconds)}, "
+            f"{_md(core_smoke.message)} |"
         ),
         "",
-        "| contract | node | 판정 | 증적 |",
-        "|---|---|---|---|",
+        "## Target / catalog pin",
+        "",
+        "| Scenario | Group | API/strategy | Ordered events | Catalog stored → active | Verdict |",
+        "|---:|---:|---|---|---|---|",
     ]
-    if contract_evidence is not None:
-        for case in contract_evidence.cases:
-            lines.append(
-                f"| {_md(case.name)} | `{_md(case.node_id)}` | {case.verdict} | {_md(case.evidence)} |",
-            )
-    else:
-        lines.append("| - | - | COVERAGE LIMIT | automated hook 미실행 |")
-    lines.extend(
-        [
-            "",
-            "## 선택 대상",
-            "",
-            "| group | scenario | events | mapping ready | eligible parameters | lineage |",
-            "|---:|---:|---:|---|---|---|",
-        ],
-    )
-    if selected_targets:
-        for target in selected_targets:
-            lineage = "FAIL: " + "; ".join(target.errors) if target.errors else "PASS"
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(target.scenario_group_id),
-                        str(target.scenario_id),
-                        str(target.relation_count),
-                        str(target.parameter_mapping_ready).lower(),
-                        _md(", ".join(sorted(target.eligible_parameters)) or "없음"),
-                        _md(lineage),
-                    ],
-                )
-                + " |",
-            )
-    else:
-        lines.append("| - | - | - | - | 없음 | COVERAGE LIMIT |")
+    for evidence in evidences:
+        assessment = assessment_by_id.get(evidence.scenario_id)
+        row_verdict: Verdict = (
+            "FAIL"
+            if evidence.errors
+            else assessment.verdict
+            if assessment is not None
+            else "COVERAGE LIMIT"
+        )
+        lines.append(
+            "| "
+            f"{evidence.scenario_id} | {evidence.scenario_group_id} | "
+            f"{_md(evidence.api_version)}/{_md(evidence.generation_strategy)} | "
+            f"{_md(evidence.ordered_event_ids)} | "
+            f"{_md(evidence.stored_catalog_version)}:{_md(evidence.stored_catalog_checksum[:12])} → "
+            f"{_md(evidence.active_catalog_version)}:{_md(evidence.active_catalog_checksum[:12])} | "
+            f"{row_verdict} |",
+        )
+    if not evidences:
+        lines.append("| - | - | - | - | - | COVERAGE LIMIT |")
 
     lines.extend(
         [
             "",
-            "## Ordered event grounding evidence",
+            "## Catalog-pinned selected Lever evidence",
             "",
-            ("이벤트 핵심 정보는 title 500자, summary 300자, bullet 5개, tag 8개, detail 1,200자로 제한해 표시합니다."),
-            "",
-            ("| scenario | order | event/type/template | title | summary | key bullets | tags | detail excerpt |"),
-            "|---:|---:|---|---|---|---|---|---|",
-        ],
-    )
-    event_count = 0
-    for target in selected_targets:
-        for event in target.ordered_events:
-            event_count += 1
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(target.scenario_id),
-                        str(event.get("display_order") or "-"),
-                        _md(
-                            f"{event.get('mi_event_id')}/"
-                            f"{event.get('event_type_l2_id')}/"
-                            f"{event.get('scenario_dimension_template_id')}",
-                        ),
-                        _md(event.get("title")),
-                        _md(event.get("one_line_summary")),
-                        _md(" / ".join(event.get("key_bullets") or [])),
-                        _md(", ".join(event.get("tags") or [])),
-                        _md(event.get("detail_excerpt")),
-                    ],
-                )
-                + " |",
-            )
-    if event_count == 0:
-        lines.append("| - | - | - | - | - | - | - | COVERAGE LIMIT |")
-
-    lines.extend(
-        [
-            "",
-            "## Actual Step1.5/2/3 prompt grounding contract",
-            "",
-            (
-                "Discovery 표가 아니라 완료된 graph state에서 production과 동일한 packet builder로 "
-                "재구성한 실제 단계 입력을 판정합니다. 필수 packet 또는 scenario_brief가 없으면 FAIL입니다."
-            ),
-            "",
-            "| scenario | step | ordered event IDs | relevant dimensions | 판정 | 증적 |",
+            "| Scenario | Dimension | Source events | Lever | Direction/domain | Bindings |",
             "|---:|---|---|---|---|---|",
         ],
     )
-    if prompt_grounding_rows:
-        for row in prompt_grounding_rows:
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(row.scenario_id),
-                        row.step,
-                        _md(",".join(map(str, row.event_ids)) or "-"),
-                        _md(",".join(row.dimension_keys) or "-"),
-                        row.verdict,
-                        _md(row.evidence),
-                    ],
-                )
-                + " |",
-            )
-    else:
-        lines.append(
-            "| - | Step1.5/2/3 | - | - | COVERAGE LIMIT | --execute 미지정 |",
-        )
-
-    lines.extend(
-        _render_stage_io_appendix(
-            selected_targets=selected_targets,
-            executions=executions,
-            execute=execute,
-        ),
-    )
-
-    lines.extend(
-        [
-            "",
-            "## Scenario dimension grounding",
-            "",
-            "| scenario | dimension | selected value | projection status |",
-            "|---:|---|---|---|",
-        ],
-    )
-    dimension_count = 0
-    for target in selected_targets:
-        for dimension_key, selected_value in target.dimension_values.items():
-            dimension_count += 1
-            statuses = [status for status in target.projection_statuses if status.startswith(f"{dimension_key}=")]
-            lines.append(
-                f"| {target.scenario_id} | {_md(dimension_key)} | "
-                f"{_md(selected_value)} | {_md(', '.join(statuses) or 'raw')} |",
-            )
-    if dimension_count == 0:
-        lines.append("| - | - | - | COVERAGE LIMIT |")
-
-    lines.extend(
-        [
-            "",
-            "## Active parameter coverage",
-            "",
-            (
-                "`eligible`은 sourceRef와 DB mapping을 독립 역투영한 occurrence 수입니다. "
-                "`candidate`는 Step1, `selected`는 Step1.5 결과입니다."
-            ),
-            "",
-            "| parameter | eligible | candidate | selected | proposed | confirmed | 판정 | 증적 |",
-            "|---|---:|---:|---:|---:|---:|---|---|",
-        ],
-    )
-    for row in coverage_rows:
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    _md(row.parameter_name),
-                    str(row.eligible),
-                    _count_text(row.candidate),
-                    _count_text(row.selected),
-                    _count_text(row.proposed),
-                    _count_text(row.confirmed),
-                    row.verdict,
-                    _md(row.evidence),
-                ],
-            )
-            + " |",
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Lineage 및 expected mapping",
-            "",
-            (
-                "| scenario | composite dimension | source template/dim | event type | "
-                "source events | method | parameter task |"
-            ),
-            "|---:|---|---|---:|---|---|---|",
-        ],
-    )
-    occurrence_count = 0
-    for target in selected_targets:
-        for occurrence in target.occurrences:
-            occurrence_count += 1
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(target.scenario_id),
-                        _md(occurrence["scenario_dimension_key"]),
-                        _md(
-                            f"{occurrence['scenario_dimension_template_id']}/{occurrence['mapping_dimension_key']}",
-                        ),
-                        str(occurrence["event_type_l2_id"]),
-                        _md(",".join(map(str, occurrence["source_event_ids"]))),
-                        _md(occurrence["mapping_method"]),
-                        _md(occurrence["candidate_key"]),
-                    ],
-                )
-                + " |",
-            )
-    if occurrence_count == 0:
-        lines.append("| - | - | - | - | - | - | 없음 |")
-
-    lines.extend(
-        [
-            "",
-            "## Slot/reference/value/rationale 계약",
-            "",
-            (
-                "| scenario | parameter | selected/exact slots | references | "
-                "Step3/API/DB/confirmed values | source | source count | 판정 | 증적 |"
-            ),
-            "|---:|---|---:|---:|---|---|---:|---|---|",
-        ],
-    )
-    if parameter_quality_rows:
-        for row in parameter_quality_rows:
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(row.scenario_id),
-                        _md(row.parameter_name),
-                        f"{row.selected_slot_count}/{row.exact_slot_count}",
-                        str(row.reference_count),
-                        (
-                            f"{row.step3_value_count}/{row.api_value_count}/"
-                            f"{row.db_value_count}/{row.confirmed_value_count}"
-                        ),
-                        _md(",".join(row.reference_sources) or "-"),
-                        str(row.source_count),
-                        row.verdict,
-                        _md(row.evidence),
-                    ],
-                )
-                + " |",
-            )
-    else:
-        lines.append("| - | - | NOT RUN | NOT RUN | NOT RUN | - | - | COVERAGE LIMIT | --execute 미지정 |")
-
-    lines.extend(
-        [
-            "",
-            "### Rationale 의미 품질 수동 검토",
-            "",
-            "| scenario | parameter | source count | 판정 | 수동 검토 항목 |",
-            "|---:|---|---:|---|---|",
-        ],
-    )
-    manual_rows = list(parameter_quality_rows)
-    if manual_rows:
-        for row in manual_rows:
-            lines.append(
-                f"| {row.scenario_id} | {_md(row.parameter_name)} | {row.source_count} | "
-                f"{row.verdict} | {_md(row.manual_review)} |",
-            )
-    else:
-        lines.append("| - | - | - | COVERAGE LIMIT | 검토 대상 실행 증적 없음 |")
-
-    lines.extend(
-        [
-            "",
-            "### Proposed value grounding 수동 검토",
-            "",
-            (
-                "| scenario | parameter | coordinates | basecase | LUT | proposed | "
-                "parameter rationale | value rationale |"
-            ),
-            "|---:|---|---|---:|---:|---:|---|---|",
-        ],
-    )
-    proposed_value_count = 0
-    for target in selected_targets:
-        execution = executions.get(target.scenario_id) or {}
-        for parameter in _final_proposal_parameters(execution):
-            parameter_name = _parameter_name(parameter)
-            parameter_rationale = _bounded_text(
-                parameter.get("rationale"),
-                limit=600,
-            )
-            for value in parameter.get("values") or []:
-                if not isinstance(value, Mapping):
-                    continue
-                proposed_value_count += 1
-                coordinates = {
-                    str(key): item
-                    for key, item in value.items()
-                    if str(key)
-                    not in {
-                        "basecaseValue",
-                        "basecase_value",
-                        "lutValue",
-                        "lut_value",
-                        "proposedValue",
-                        "proposed_value",
-                        "rationale",
-                    }
-                }
+    for evidence in evidences:
+        for lineage in evidence.dimension_lineage:
+            for state in _mapping_items(lineage.get("lever_states")):
+                bindings = [
+                    f"{signature[0]}:{signature[3] or '-'}"
+                    for signature in _binding_signature(state.get("parameter_bindings"))
+                ]
                 lines.append(
                     "| "
-                    + " | ".join(
-                        [
-                            str(target.scenario_id),
-                            _md(parameter_name),
-                            _md(
-                                json.dumps(
-                                    coordinates,
-                                    ensure_ascii=False,
-                                    sort_keys=True,
-                                    default=str,
-                                ),
-                            ),
-                            _md(value.get("basecaseValue", value.get("basecase_value"))),
-                            _md(value.get("lutValue", value.get("lut_value"))),
-                            _md(value.get("proposedValue", value.get("proposed_value"))),
-                            _md(parameter_rationale),
-                            _md(_bounded_text(value.get("rationale"), limit=600)),
-                        ],
-                    )
-                    + " |",
+                    f"{evidence.scenario_id} | {_md(lineage.get('scenario_dimension_key'))} | "
+                    f"{_md(lineage.get('source_event_ids'))} | {_md(state.get('lever_code'))} "
+                    f"(id={_md(state.get('impact_lever_id'))}) | "
+                    f"{_md(state.get('direction'))}/{_md(state.get('lever_domain'))} | "
+                    f"{_md(', '.join(bindings) or '-')} |",
                 )
-    if proposed_value_count == 0:
-        lines.append("| - | - | - | - | - | - | - | COVERAGE LIMIT |")
+    if not any(evidence.dimension_lineage for evidence in evidences):
+        lines.append("| - | - | - | - | - | - |")
 
-    lines.extend(
-        [
-            "",
-            "## 성능 및 관측성",
-            "",
-            (
-                "| scenario | step | calls | prompt bytes / configured guard | "
-                "prompt/completion/total tokens | elapsed | outer retry | internal retry | 판정 | 증적 |"
-            ),
-            "|---:|---|---:|---|---|---:|---:|---:|---|---|",
-        ],
-    )
-    if performance_rows:
-        for row in performance_rows:
-            limits = ",".join(map(str, row.prompt_limit_bytes)) or "N/A"
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(row.scenario_id),
-                        row.step,
-                        str(row.call_count),
-                        f"{row.prompt_bytes if row.prompt_bytes is not None else 'N/A'} / {limits}",
-                        (
-                            f"{row.prompt_tokens if row.prompt_tokens is not None else 'N/A'}/"
-                            f"{row.completion_tokens if row.completion_tokens is not None else 'N/A'}/"
-                            f"{row.total_tokens if row.total_tokens is not None else 'N/A'}"
-                        ),
-                        (f"{row.elapsed_seconds:.3f}s" if row.elapsed_seconds is not None else "N/A"),
-                        str(row.outer_retry_count),
-                        (str(row.internal_retry_count) if row.internal_retry_count is not None else "N/A"),
-                        row.verdict,
-                        _md(row.evidence),
-                    ],
-                )
-                + " |",
-            )
-    else:
-        lines.append(
-            "| - | Step1.5/2/3 | NOT RUN | N/A | N/A | N/A | N/A | N/A | COVERAGE LIMIT | --execute 미지정 |",
+    coverage_rows = [
+        row
+        for evidence in evidences
+        for row in build_coverage_rows(
+            evidence,
+            executions.get(evidence.scenario_id),
+            assessment_by_id.get(evidence.scenario_id),
         )
+    ]
+    lines.extend(
+        [
+            "",
+            "## Active parameter boundary matrix",
+            "",
+            (
+                "| Scenario | Parameter | Classification | Raw | Runtime | Selected | "
+                "Proposed | Confirmed | Reason | Verdict | Evidence |"
+            ),
+            "|---:|---|---|---:|---:|---:|---:|---:|---|---|---|",
+        ],
+    )
+    lines.extend(
+        [
+            "| "
+            f"{row.scenario_id} | {_md(row.parameter_name)} | {row.classification} | "
+            f"{row.raw} | {_count(row.runtime)} | {_count(row.selected)} | "
+            f"{_count(row.proposed)} | {_count(row.confirmed)} | "
+            f"{_md(row.exclusion_reason or '-')} | {row.verdict} | {_md(row.evidence)} |"
+            for row in coverage_rows
+        ],
+    )
+    if not coverage_rows:
+        lines.append("| - | - | - | - | - | - | - | - | - | COVERAGE LIMIT | 대상 없음 |")
 
     lines.extend(
         [
             "",
-            "### Scenario overall 및 attempt trace",
+            "## Persistence / confirmation / observability",
             "",
             (
-                "| scenario | overall elapsed | attempt | status | attempt elapsed | "
-                "LLM calls | total tokens | prompt bytes | error |"
+                "| Scenario | Proposal ID | Failed stage | Attempt | API eventId | DB event ID | DB group | "
+                "Confirmation | Elapsed(s) | LLM calls | Verdict |"
             ),
-            "|---:|---:|---:|---|---:|---:|---:|---:|---|",
+            "|---:|---:|---|---:|---|---|---:|---|---:|---:|---|",
         ],
     )
-    attempt_row_count = 0
-    for target in selected_targets:
-        execution = executions.get(target.scenario_id) or {}
-        overall_elapsed = execution.get("elapsed_seconds")
-        attempt_traces = [trace for trace in execution.get("attempt_traces") or [] if isinstance(trace, Mapping)]
-        if not attempt_traces:
-            attempt_row_count += 1
+    for evidence in evidences:
+        record = executions.get(evidence.scenario_id)
+        if record is None:
             lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(target.scenario_id),
-                        (f"{float(overall_elapsed):.3f}s" if isinstance(overall_elapsed, int | float) else "N/A"),
-                        "-",
-                        "NOT RUN",
-                        "N/A",
-                        "0",
-                        "N/A",
-                        "N/A",
-                        _md(_redact_error_text(execution.get("error"))) if execution.get("error") else "-",
-                    ],
-                )
-                + " |",
+                f"| {evidence.scenario_id} | N/A | N/A | N/A | N/A | N/A | "
+                "N/A | NOT RUN | N/A | N/A | COVERAGE LIMIT |",
             )
             continue
-        for trace in attempt_traces:
-            attempt_row_count += 1
-            calls = [call for call in trace.get("llm_calls") or [] if isinstance(call, Mapping)]
-            total_tokens = _sum_call_field(
-                calls,
-                field_name="total_tokens",
-                usage=True,
+        response_data = _mapping(_mapping(record.get("final_response")).get("data"))
+        proposal_row = _mapping(record.get("proposal_db_row"))
+        proposal_identifier = proposal_row.get("model_param_proposal_id")
+        if proposal_identifier is None:
+            proposal_identifier = record.get("model_param_proposal_id")
+        if proposal_identifier is None:
+            proposal_identifier = response_data.get(
+                "modelParamProposalId",
+                response_data.get("model_param_proposal_id"),
             )
-            prompt_bytes = _sum_call_field(
-                calls,
-                field_name="prompt_bytes",
-            )
-            attempt_elapsed = trace.get("elapsed_seconds")
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(target.scenario_id),
-                        (f"{float(overall_elapsed):.3f}s" if isinstance(overall_elapsed, int | float) else "N/A"),
-                        str(trace.get("attempt") or "-"),
-                        _md(trace.get("status") or "UNKNOWN"),
-                        (f"{float(attempt_elapsed):.3f}s" if isinstance(attempt_elapsed, int | float) else "N/A"),
-                        str(len(calls)),
-                        str(total_tokens) if total_tokens is not None else "N/A",
-                        str(prompt_bytes) if prompt_bytes is not None else "N/A",
-                        (_md(_redact_error_text(trace.get("error"))) if trace.get("error") else "-"),
-                    ],
-                )
-                + " |",
-            )
-    if attempt_row_count == 0:
-        lines.append("| - | N/A | - | NOT RUN | N/A | 0 | N/A | N/A | - |")
-
-    lines.extend(
-        [
-            "",
-            "## Confirmation regression evidence",
-            "",
-            (
-                "| scenario | empty rollback (live execute) | valid (live execute) | "
-                "reconfirm (live execute) | invalid-status (mock/unit) | "
-                "custom persistence (mock/unit) | finite/preservation (mock/unit) |"
-            ),
-            "|---:|---|---|---|---|---|---|",
-        ],
-    )
-    if selected_targets:
-        for target in selected_targets:
-            confirmation = (executions.get(target.scenario_id) or {}).get("confirmation") or {}
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(target.scenario_id),
-                        _md(
-                            (confirmation.get("invalid_payload") or {}).get("status") or "NOT RUN",
-                        ),
-                        _md(
-                            (confirmation.get("valid_confirmation") or {}).get("status") or "NOT RUN",
-                        ),
-                        _md(
-                            (confirmation.get("reconfirmation") or {}).get("status") or "NOT RUN",
-                        ),
-                        _unit_contract_status(invalid_status_contract),
-                        custom_parameter_contract,
-                        _unit_contract_status(numeric_contract_status),
-                    ],
-                )
-                + " |",
-            )
-    else:
+        assessment = assessment_by_id.get(evidence.scenario_id)
         lines.append(
-            "| - | NOT RUN | NOT RUN | NOT RUN | "
-            f"{_unit_contract_status(invalid_status_contract)} | "
-            f"{custom_parameter_contract} | "
-            f"{_unit_contract_status(numeric_contract_status)} |",
+            "| "
+            f"{evidence.scenario_id} | {_md(proposal_identifier)} | "
+            f"{_md(record.get('failed_stage'))} | "
+            f"{_md(record.get('execution_attempt_count'))} | "
+            f"{_md(response_data.get('eventId', response_data.get('event_id')))} | "
+            f"{_md(proposal_row.get('mi_event_id'))} | {_md(proposal_row.get('scenario_group_id'))} | "
+            f"{_md(_mapping(record.get('confirmation')).get('status'))} | "
+            f"{_md(record.get('elapsed_seconds'))} | {len(_mapping_items(record.get('llm_calls')))} | "
+            f"{assessment.verdict if assessment else 'FAIL'} |",
         )
 
-    notes = [
-        *discovery_messages,
-        *(
-            f"skipped scenario {target.scenario_id}: "
-            + (
-                "; ".join(target.errors)
-                if target.errors
-                else target.selection_skip_reason or "selection scope에서 미선택"
-            )
-            for target in skipped_targets
-        ),
-        *(f"scenario {target.scenario_id}: {warning}" for target in selected_targets for warning in target.warnings),
-        *integrity_issues,
-        *execution_errors,
-    ]
-    lines.extend(["", "## 경고 및 제한", ""])
-    if notes:
-        lines.extend(f"- {_md(note)}" for note in dict.fromkeys(notes))
-    else:
-        lines.append("- 없음")
     lines.extend(
         [
             "",
-            "## 판정 해석",
+            "## LLM token / retry evidence",
             "",
-            "- `PASS`: 실행된 eligible chain과 lineage/persistence 계약이 일치함.",
-            "- `REVIEW`: 형식은 유효하나 routing 선택, 재시도, prompt 관측성 또는 값 근거의 수동 검토가 필요함.",
-            "- `FAIL`: lineage, mapping, slot/persistence/confirmation 또는 실행 계약 위반.",
-            "- `COVERAGE LIMIT`: 실제 적합 scenario가 없거나 read-only 모드라 후속 단계를 실행하지 않음.",
+            "| Scenario | Step | Prompt tokens | Completion tokens | Total tokens | Internal retry |",
+            "|---:|---|---:|---:|---:|---:|",
         ],
     )
-    return "\n".join(lines) + "\n"
+    llm_row_count = 0
+    for scenario_id, record in executions.items():
+        for call in _mapping_items(record.get("llm_calls")):
+            usage = _mapping(call.get("usage"))
+            retry_count = (
+                call.get("retry_count")
+                if "retry_count" in call
+                else call.get("internal_retry_count")
+            )
+            lines.append(
+                "| "
+                f"{scenario_id} | {_md(call.get('step'))} | "
+                f"{_md(usage.get('prompt_tokens'))} | "
+                f"{_md(usage.get('completion_tokens'))} | "
+                f"{_md(usage.get('total_tokens'))} | {_md(retry_count)} |",
+            )
+            llm_row_count += 1
+    if not llm_row_count:
+        lines.append("| - | - | N/A | N/A | N/A | N/A |")
 
-
-async def execute_targets(
-    targets: Sequence[ScenarioEvidence],
-    *,
-    retries: int,
-) -> dict[int, dict[str, Any]]:
-    executions: dict[int, dict[str, Any]] = {}
-    if any(target.errors for target in targets):
-        blocked_ids = [target.scenario_id for target in targets if target.errors]
-        message = f"global lineage preflight failed; all graph/write calls blocked: invalid_scenario_ids={blocked_ids}"
-        return {
-            target.scenario_id: {
-                "error": message,
-                "attempts": 0,
-                "attempt_traces": [],
-                "elapsed_seconds": 0.0,
-                "llm_calls": [],
-            }
-            for target in targets
-        }
-    for target in targets:
-        started = time.perf_counter()
-        attempt_traces: list[dict[str, Any]] = []
-        for attempt_index in range(retries + 1):
-            attempt_started = time.perf_counter()
-            try:
-                record = await execute_proposal_and_confirmation(target.scenario_id)
-                try:
-                    record["prompt_packets"] = capture_execute_prompt_packets(
-                        record,
-                    )
-                except Exception as prompt_capture_exc:
-                    record["prompt_packets"] = {}
-                    record["prompt_packet_capture_error"] = _safe_exception_text(
-                        prompt_capture_exc,
-                    )
-                attempt_llm_calls = [
-                    {
-                        **dict(call),
-                        "outer_attempt": attempt_index + 1,
-                    }
-                    for call in record.get("llm_calls") or []
-                    if isinstance(call, Mapping)
-                ]
-                attempt_traces.append(
-                    {
-                        "attempt": attempt_index + 1,
-                        "elapsed_seconds": time.perf_counter() - attempt_started,
-                        "status": "PASS",
-                        "llm_calls": json_safe(attempt_llm_calls),
-                    },
-                )
-                record["attempts"] = attempt_index + 1
-                record["attempt_traces"] = attempt_traces
-                record["elapsed_seconds"] = time.perf_counter() - started
-                record["llm_calls"] = [
-                    call for attempt_trace in attempt_traces for call in attempt_trace.get("llm_calls") or []
-                ]
-                executions[target.scenario_id] = record
-                break
-            except Exception as exc:
-                trace: dict[str, Any] = {
-                    "attempt": attempt_index + 1,
-                    "elapsed_seconds": time.perf_counter() - attempt_started,
-                    "status": "FAIL",
-                    "error": _safe_exception_text(exc),
-                }
-                failure_trace = getattr(exc, "_model_parameter_failure_trace", None)
-                if isinstance(failure_trace, dict):
-                    trace.update(json_safe(failure_trace))
-                    trace["error"] = _safe_exception_text(exc)
-                    trace["llm_calls"] = [
-                        {
-                            **dict(call),
-                            "outer_attempt": attempt_index + 1,
-                        }
-                        for call in trace.get("llm_calls") or []
-                        if isinstance(call, Mapping)
-                    ]
-                attempt_traces.append(trace)
-                if attempt_index < retries:
-                    await asyncio.sleep(2.0 * (attempt_index + 1))
-                    continue
-                executions[target.scenario_id] = {
-                    "error": _safe_exception_text(exc),
-                    "attempts": attempt_index + 1,
-                    "attempt_traces": attempt_traces,
-                    "elapsed_seconds": time.perf_counter() - started,
-                    "llm_calls": [
-                        call for attempt_trace in attempt_traces for call in attempt_trace.get("llm_calls") or []
-                    ],
-                }
-    return executions
+    all_errors = [*scope_errors, *preflight.errors]
+    all_warnings: list[str] = []
+    for evidence in evidences:
+        all_errors.extend(
+            f"scenario_id={evidence.scenario_id}: {message}"
+            for message in evidence.errors
+        )
+        all_warnings.extend(
+            f"scenario_id={evidence.scenario_id}: {message}"
+            for message in evidence.warnings
+        )
+    for assessment in assessments:
+        all_errors.extend(
+            f"scenario_id={assessment.scenario_id}: {message}"
+            for message in assessment.failures
+        )
+        all_warnings.extend(
+            f"scenario_id={assessment.scenario_id}: {message}"
+            for message in assessment.reviews
+        )
+    if core_smoke.status == "FAIL":
+        all_errors.append(core_smoke.message)
+    lines.extend(["", "## Errors / review items", ""])
+    if all_errors:
+        lines.extend(f"- FAIL: {_md(message)}" for message in _dedupe(all_errors))
+    if all_warnings:
+        lines.extend(f"- REVIEW: {_md(message)}" for message in _dedupe(all_warnings))
+    if not all_errors and not all_warnings:
+        lines.append("- 없음")
+    if core_smoke.output_tail:
+        lines.extend(
+            [
+                "",
+                "### Automated gate output tail",
+                "",
+                "```text",
+                core_smoke.output_tail,
+                "```",
+            ],
+        )
+    lines.extend(
+        [
+            "",
+            "## Safety notes",
+            "",
+            "- 기본 모드는 DB read-only이며 graph/callback/confirmation을 호출하지 않는다.",
+            "- `--execute`도 scenario별 write-producing workflow를 한 번만 호출하며 자동 retry하지 않는다.",
+            "- `COVERAGE LIMIT`와 `REVIEW`는 CLI 성공(0), mandatory `FAIL`은 CLI 실패(1)다.",
+            "",
+        ],
+    )
+    return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Discover and optionally execute v3 multi-event Model Parameter "
-            "quality evaluation. The default mode is read-only."
-        ),
+        description="Evaluate v4 multi-event Model Parameter quality evidence.",
     )
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument("--scenario-group-id", type=int)
     scope.add_argument("--scenario-id", type=int)
-    parser.add_argument(
-        "--max-scenarios",
-        type=int,
-        default=5,
-        help="Maximum scenarios selected by dynamic coverage discovery (default: 5).",
-    )
+    parser.add_argument("--limit", type=int, default=DEFAULT_DISCOVERY_LIMIT)
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Opt in to real graph execution, proposal persistence, and confirmation writes.",
+        help="Run one proposal+confirmation write workflow per eligible scenario.",
     )
+    parser.add_argument("--report-path", type=Path)
     parser.add_argument(
-        "--retries",
+        "--core-smoke-timeout",
         type=int,
-        default=0,
-        help="Outer retries per scenario in execute mode (default: 0).",
-    )
-    parser.add_argument(
-        "--report-path",
-        type=Path,
-        help="Integrated Markdown output path.",
+        default=DEFAULT_CORE_SMOKE_TIMEOUT_SECONDS,
     )
     return parser
 
 
-async def run(args: argparse.Namespace) -> tuple[Path, Verdict]:
-    started_at = datetime.now(UTC)
-    contract_evidence = await asyncio.to_thread(
-        run_automated_contract_preflight,
-    )
-    session = get_sync_session()
-    try:
-        preflight = schema_preflight(session)
-        if preflight.verdict == "PASS":
-            discovered, parameter_definitions, discovery_messages = discover_v3_scenarios(
-                session,
-                scenario_group_id=args.scenario_group_id,
-                scenario_id=args.scenario_id,
-            )
-        else:
-            discovered = []
-            parameter_definitions = []
-            discovery_messages = ["schema preflight 실패로 discovery를 중단했습니다."]
-    finally:
-        session.close()
+def _report_path(value: Path | None, started_at: datetime) -> Path:
+    if value is not None:
+        return value.expanduser().resolve()
+    timestamp = started_at.strftime("%Y%m%d_%H%M%S_%f")
+    return REPORT_DIR / f"model_parameter_v4_multi_event_quality_{timestamp}.md"
 
-    explicit_scope = args.scenario_group_id is not None or args.scenario_id is not None
-    selected_targets, skipped_targets = select_quality_targets(
-        discovered,
-        max_scenarios=max(1, args.max_scenarios),
-        explicit_scope=explicit_scope,
-    )
-    if args.execute and contract_evidence.verdict != "PASS":
-        executions = {
-            target.scenario_id: {
-                "error": "automated contract preflight failed; all graph/write calls blocked",
-                "attempts": 0,
-                "attempt_traces": [],
-                "elapsed_seconds": 0.0,
-                "llm_calls": [],
-            }
-            for target in selected_targets
-        }
-    elif args.execute:
-        executions = await execute_targets(
-            selected_targets,
-            retries=max(0, args.retries),
+
+def _reserve_report_path(report_path: Path, started_at: datetime) -> None:
+    """Fail before DB work if the required report cannot be created."""
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("x", encoding="utf-8") as report_file:
+        report_file.write(
+            "# v4 Multi-Event Model Parameter Quality Report\n\n"
+            f"- 상태: RUNNING\n- 시작: {started_at.isoformat(timespec='seconds')}\n",
         )
-    else:
-        executions = {}
-    coverage_rows, integrity_issues = build_coverage_matrix(
-        active_parameter_definitions=parameter_definitions,
-        targets=selected_targets,
-        executions=executions,
-        execute=args.execute,
-        discovered_targets=discovered,
+
+
+async def run_campaign(args: argparse.Namespace) -> CampaignResult:
+    started_at = datetime.now(UTC)
+    report_path = _report_path(args.report_path, started_at)
+    _reserve_report_path(report_path, started_at)
+    scope_errors: list[str] = []
+    evidences: list[ScenarioEvidence] = []
+    executions: dict[int, dict[str, Any]] = {}
+    assessments: list[ExecutionAssessment] = []
+
+    if args.limit < 1:
+        scope_errors.append("--limit은 1 이상이어야 함")
+    if args.core_smoke_timeout < 1:
+        scope_errors.append("--core-smoke-timeout은 1 이상이어야 함")
+    if (
+        args.execute
+        and args.scenario_id is None
+        and args.scenario_group_id is None
+    ):
+        scope_errors.append(
+            "--execute는 --scenario-id 또는 --scenario-group-id 명시 범위가 필수임",
+        )
+    preflight = (
+        SchemaPreflight(
+            verdict="COVERAGE LIMIT",
+            checks=("argument safety gate에서 DB preflight 미실행",),
+        )
+        if scope_errors
+        else _schema_preflight()
     )
+    core_smoke = CoreSmokeEvidence(
+        status="NOT RUN",
+        message="argument/preflight gate or read-only mode",
+    )
+    if preflight.verdict != "FAIL" and not scope_errors:
+        scenario_ids, discovery_errors = _discover_scenario_ids(args)
+        scope_errors.extend(discovery_errors)
+        loaded_evidences, context_errors = _load_scenario_evidences(scenario_ids)
+        scope_errors.extend(context_errors)
+        if args.scenario_group_id is not None:
+            mismatched_group_ids = sorted(
+                {
+                    evidence.scenario_group_id
+                    for evidence in loaded_evidences
+                    if evidence.scenario_group_id != args.scenario_group_id
+                },
+            )
+            if mismatched_group_ids:
+                scope_errors.append(
+                    "loaded evidence scenario_group_id가 명시 범위와 불일치: "
+                    f"requested={args.scenario_group_id}, actual={mismatched_group_ids}",
+                )
+        scope_errors.extend(
+            f"scanned scenario_id={evidence.scenario_id}: {message}"
+            for evidence in loaded_evidences
+            for message in evidence.errors
+        )
+        if args.scenario_id is not None or args.scenario_group_id is not None:
+            evidences = loaded_evidences
+        else:
+            evidences = select_discovery_evidences(loaded_evidences, args.limit)
+            if scenario_ids and not evidences:
+                scope_errors.extend(context_errors or ["v4 discovery target context를 load하지 못함"])
+
+    evidence_failures = any(evidence.errors for evidence in evidences)
+    if args.execute and preflight.verdict != "FAIL" and not scope_errors and not evidence_failures:
+        core_smoke = run_core_smoke(args.core_smoke_timeout)
+        if core_smoke.status == "PASS":
+            executions = await execute_targets(evidences)
+            eligible_ids = {
+                evidence.scenario_id
+                for evidence in evidences
+                if evidence.runtime_candidates and not evidence.errors
+            }
+            missing_execution_ids = sorted(eligible_ids - set(executions))
+            unexpected_execution_ids = sorted(set(executions) - eligible_ids)
+            if missing_execution_ids:
+                scope_errors.append(
+                    "eligible execute target의 execution record 누락: "
+                    f"{missing_execution_ids}",
+                )
+            if unexpected_execution_ids:
+                scope_errors.append(
+                    "eligible 범위 밖 execution record 발생: "
+                    f"{unexpected_execution_ids}",
+                )
+            assessments = [
+                assess_execution(evidence, executions[evidence.scenario_id])
+                for evidence in evidences
+                if evidence.scenario_id in executions
+            ]
+
+    verdicts: list[Verdict] = []
+    if (
+        preflight.verdict == "FAIL"
+        or scope_errors
+        or evidence_failures
+        or core_smoke.status == "FAIL"
+    ):
+        verdicts.append("FAIL")
+    if not evidences:
+        verdicts.append("FAIL" if scope_errors else "COVERAGE LIMIT")
+    elif not args.execute or (
+        not executions
+        and not (scope_errors or evidence_failures or core_smoke.status == "FAIL")
+    ):
+        verdicts.append("COVERAGE LIMIT")
+    verdicts.extend(assessment.verdict for assessment in assessments)
+    assessment_by_id = {item.scenario_id: item for item in assessments}
+    verdicts.extend(
+        row.verdict
+        for evidence in evidences
+        for row in build_coverage_rows(
+            evidence,
+            executions.get(evidence.scenario_id),
+            assessment_by_id.get(evidence.scenario_id),
+        )
+        if row.verdict in {"FAIL", "REVIEW"}
+    )
+    verdict = _combine_verdicts(verdicts)
+
     finished_at = datetime.now(UTC)
-    report = render_report(
-        started_at=started_at,
-        finished_at=finished_at,
-        execute=args.execute,
+    report_path.write_text(
+        render_report(
+            started_at=started_at,
+            finished_at=finished_at,
+            execute=args.execute,
+            verdict=verdict,
+            preflight=preflight,
+            core_smoke=core_smoke,
+            evidences=evidences,
+            executions=executions,
+            assessments=assessments,
+            scope_errors=scope_errors,
+        ),
+        encoding="utf-8",
+    )
+    return CampaignResult(
+        verdict=verdict,
+        report_path=report_path,
         preflight=preflight,
-        selected_targets=selected_targets,
-        skipped_targets=skipped_targets,
-        discovery_messages=discovery_messages,
-        active_parameter_definitions=parameter_definitions,
-        coverage_rows=coverage_rows,
+        core_smoke=core_smoke,
+        evidences=tuple(evidences),
         executions=executions,
-        integrity_issues=integrity_issues,
-        contract_evidence=contract_evidence,
+        assessments=tuple(assessments),
+        scope_errors=_dedupe(scope_errors),
     )
-    report_path = args.report_path
-    if report_path is None:
-        REPORT_DIR.mkdir(parents=True, exist_ok=True)
-        report_path = REPORT_DIR / (f"model_parameter_multi_event_quality_{started_at.strftime('%Y%m%d_%H%M%S')}.md")
-    else:
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(report, encoding="utf-8")
-    execution_errors = [
-        *(_redact_error_text(record.get("error")) for record in executions.values() if record.get("error")),
-        *integrity_issues,
-    ]
-    performance_rows = build_performance_rows(
-        targets=selected_targets,
-        executions=executions,
-        execute=args.execute,
-    )
-    execution_errors.extend(
-        f"scenario {row.scenario_id} {row.step} performance contract FAIL"
-        for row in performance_rows
-        if row.verdict == "FAIL"
-    )
-    prompt_grounding_rows = build_prompt_grounding_rows(
-        targets=selected_targets,
-        executions=executions,
-        execute=args.execute,
-    )
-    execution_errors.extend(
-        f"scenario {row.scenario_id} {row.step} actual prompt grounding contract FAIL"
-        for row in prompt_grounding_rows
-        if row.verdict == "FAIL"
-    )
-    overall = _overall_verdict(
-        preflight=preflight,
-        targets=selected_targets,
-        coverage_rows=coverage_rows,
-        execution_errors=execution_errors,
-        additional_verdicts=[
-            *[row.verdict for row in performance_rows],
-            *[row.verdict for row in prompt_grounding_rows],
-            *([contract_evidence.verdict] if contract_evidence.verdict != "PASS" else []),
-        ],
-    )
-    return report_path, overall
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report_path, verdict = asyncio.run(run(args))
-    print(json.dumps({"report": str(report_path), "verdict": verdict}, ensure_ascii=False))
-    return 1 if verdict == "FAIL" else 0
+    try:
+        result = asyncio.run(run_campaign(args))
+    except Exception as exc:
+        print(
+            f"FAIL: v4 multi-event quality runner crashed: {_redact(repr(exc))}",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "verdict": result.verdict,
+                "report_path": str(result.report_path),
+                "scenario_count": len(result.evidences),
+                "execution_count": len(result.executions),
+            },
+            ensure_ascii=False,
+        ),
+    )
+    return result.exit_code
 
 
 if __name__ == "__main__":

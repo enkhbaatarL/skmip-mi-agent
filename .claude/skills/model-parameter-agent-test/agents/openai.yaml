@@ -1,4 +1,0 @@
-interface:
-  display_name: "Model Parameter Agent Test"
-  short_description: "Test MI parameter proposals and confirmation contracts"
-  default_prompt: "Use $model-parameter-agent-test to test scenario 289, confirm every successful proposal, verify confirmation success and rollback cases, and write one integrated Markdown report."

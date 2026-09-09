@@ -1,5 +1,9 @@
 # Model Parameter Agent 처음 이해하기
 
+> 현재 핵심 Skill과 release 판정 범위는 Scenario API `v4`
+> `multi_event_model_lever_dimensions`뿐이다. 아래 v1/v3 설명은 저장소에 남아 있는 호환 코드와
+> 과거 데이터 해석용이며 현재 실행 경로로 선택하지 않는다.
+
 ## 이 Agent는 무엇을 하나요?
 
 Model Parameter Agent는 Scenario에서 일어난 시장 변화를 Demand·Supply·Trade 모델이 실제로 읽을 수 있는

@@ -1,71 +1,72 @@
 ---
 name: model-parameter-multi-event-quality
-description: MI Model Parameter Agent의 Scenario API v3 multi_event_composite_dimensions 그룹을 동적으로 발견하고 sourceRef lineage, DB mapping 후보, parameter 병합·확장, proposal/confirmation persistence, token·시간 증적을 통합 평가한다. 사용자가 v3 멀티 이벤트 모델 파라미터 품질 테스트, multi-event proposal/confirmation 검증, active parameter coverage 보고서, sourceRef mapping 품질 진단을 요청할 때 사용한다. 단일 이벤트 scenario-only 테스트에는 model-parameter-agent-test를 사용한다.
+description: MI Model Parameter Agent의 Scenario API v4 multi_event_model_lever_dimensions 그룹을 동적으로 발견하고 ordered Event, catalog version/checksum, selected Lever state와 hydrated parameter binding, runtime allowlist 경계, proposal/confirmation persistence를 통합 평가한다. v4 멀티 이벤트 모델 파라미터 품질 테스트, catalog-pinned Lever 검증, active-but-blocked leakage 진단, active parameter coverage 보고서 요청에 사용한다.
 ---
 
-# Model Parameter Multi-Event Quality
+# Model Parameter v4 Multi-Event Quality
 
-Scenario API v3 composite dimension을 기존 event type/dimension mapping에 역투영한 결과와 실제 Model Parameter proposal flow를 독립적으로 비교한다. 기본 실행은 DB read-only discovery이며, 명시적 승인 뒤에만 실제 LLM·proposal·confirmation write를 수행한다.
+Scenario API v4의 선택 Dimension/Lever lineage를 active impact Lever catalog와 대조하고, 운영 matcher와 runtime allowlist 경계를 거친 실제 Model Parameter proposal flow를 평가한다. 기본 실행은 DB read-only discovery다. `--execute`는 사용자가 실제 DB write를 승인한 경우에만 사용한다.
 
 ## 필수 참조
 
-작업을 시작하기 전에 다음을 읽는다.
+작업 전에 다음을 읽는다.
 
-1. `references/quality-matrix.md`: v3 판정 기준과 보고서 증적 계약
-2. `.claude/skills/model-parameter-agent-test/SKILL.md`: 공통 proposal/confirmation 실행 및 rollback 계약
-3. release acceptance까지 요청받은 경우 `.claude/skills/verify-model-parameter-release/SKILL.md`: workbook, 전체 회귀, DB 안전 검증 절차
+1. `references/quality-matrix.md`: v4 판정 기준과 보고서 증적 계약
+2. `tests/manual/model_parameter_agent/runner_common.py`: 공유 proposal/confirmation 실행·DB read-back 계약
+3. release acceptance가 범위에 있으면 `.claude/skills/verify-model-parameter-release/SKILL.md`
 
-이 skill에서 기존 두 skill의 명령과 절차를 복제하지 않는다.
+공통 workflow나 release 검증 절차를 이 skill에 복제하지 않는다.
 
 ## 실행 전제조건
 
-- repository root에서 Poetry와 runner가 같은 Python interpreter 및 설치된 `pytest`를 사용해야 한다.
-- `envs/.env`와 `APP_CONFIG`가 현재 환경에 유효해야 한다. 설정 placeholder가 남아 있으면 automated contract collection도 `FAIL`이다.
-- discovery DB에 대한 read 권한과 연결이 있어야 하며, v3 group-event/dimension 관계 schema와 proposal `mi_event_id` nullable migration이 먼저 적용되어 있어야 한다.
-- 실제 적합한 v3 scenario가 없으면 결함으로 간주하지 않고 `COVERAGE LIMIT`으로 보고한다.
-- `--execute`에는 사용자의 명시적 write 승인, 고정된 Basecase/LUT resource release, LLM 연결·자격, proposal/confirmation DB write 권한이 모두 필요하다.
-- isolated automated contract hook은 mock/unit fixture만 사용하고 외부 DB·LLM을 호출하지 않는다. 이 결과는 반드시 `UNIT PASS/FAIL`로 표시하며 live DB confirmation 증적을 대체하지 않는다.
-- 이 skill은 canonical master, 129개 dimension mapping, Basecase/LUT, workbook 또는 DB schema를 수정하지 않는다.
-- 현재 runtime proposal allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`다. DB/canonical/catalog의 다른 활성 parameter는 discovery coverage에는 남기되 `active-but-blocked`로 분류하고 LLM·proposal 실행에서 제외한다. config와 confirmation 계약도 변경하지 않는다.
+- runner와 automated test는 같은 Python 환경을 사용한다.
+- `envs/.env`와 `APP_CONFIG`가 현재 환경에 유효해야 한다.
+- discovery DB에 read 권한이 있고 v4 group/scenario/group-event, active impact Lever/master, proposal schema가 적용되어 있어야 한다.
+- proposal `mi_event_id`는 nullable이어야 한다.
+- 적합한 실제 v4 scenario가 없으면 결함이 아니라 `COVERAGE LIMIT`이다.
+- `--execute`에는 사용자의 명시적 write 승인, 고정된 Basecase/LUT release, LLM 자격, proposal/confirmation write 권한이 필요하다.
+- runtime은 승인·승격된 `resources/`만 사용하며 staging 경로인 `new_resources/`를 자동 로드하지 않는다. staging LUT가 없는 것은 정상이고, 파일이 있으면 release 식별과 승격 검증 전 live execute를 금지한다.
+- 이 skill은 canonical master, impact Lever catalog, Basecase/LUT, config, workbook, DB schema를 수정하지 않는다.
+
+운영 proposal 경계는 코드의 `MODEL_PARAMETER_PROPOSAL_ALLOWLIST`를 source of truth로 사용한다. runner에 이름 목록을 복제하지 않는다. active master에 있으나 allowlist 밖인 parameter는 `active-but-blocked`로 유지하고, `PROPOSAL_SCOPE_EXCLUDED` 증적과 함께 LLM 이전에 제외한다.
 
 ## 실행 절차
 
 ### 1. Read-only discovery
 
-먼저 실제 DB를 변경하지 않는 discovery를 실행한다.
-
 ```bash
 poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_quality.py
 ```
 
-범위를 고정할 때는 둘 중 하나만 사용한다.
+명시 범위는 둘 중 하나만 지정한다.
 
 ```bash
 poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_quality.py --scenario-group-id 123
 poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_quality.py --scenario-id 456
 ```
 
-runner는 다음을 수행한다.
+runner는 다음을 검증한다.
 
-- 필수 v3 테이블·컬럼과 proposal `mi_event_id` nullable 계약 preflight
-- `api_version=v3`, `generation_strategy=multi_event_composite_dimensions` group 동적 발견
-- 2~5개 group-event relation의 display order 및 source event membership 검사
-- 선택 dimension의 `sourceRefs`를 relation template과 연결하고 event type 복원
-- active master와 `(event_type_l2_id, dimKey)` mapping으로 독립 eligible 후보 산출
-- raw active parameter별 `runtime-allowed | active-but-blocked` 상태와 `eligible → candidate → selected → proposed → confirmed` matrix 생성
+- 필수 테이블/컬럼과 proposal `mi_event_id` nullable 계약
+- `api_version=v4`, `generation_strategy=multi_event_model_lever_dimensions` 대상만 discovery
+- exact `display_order=1..N`으로 정렬된 1~5개 Event, 중복 및 Dimension `source_event_ids` membership
+- scenario group에 저장된 impact catalog version/checksum과 active catalog의 정확한 일치
+- 선택 Dimension의 primary Lever code/ID/flag, `lever_states` code/ID/domain과 active catalog의 hydrated `parameter_bindings` 일치
+- active master 기반 운영 v4 matcher의 raw 후보와 운영 partition 함수의 `runtime-allowed | active-but-blocked` 분리
+- raw/runtime/blocked key 고유성과 disjoint/union 불변식, graph v4 raw trace의 key·canonical target 일치, Step1.5 target별 단일 canonical task와 non-empty merged lineage
+- active parameter별 `raw → runtime → selected → proposed → confirmed` matrix
 
-`parameter_mapping_ready=false`를 제외 조건으로 사용하지 않는다. 승인 projection은 보조 근거이고, pending/rejected/미존재 projection은 경고로 기록한다.
+v3 `sourceRefs`, legacy `(event_type_l2_id, dimKey)` mapping, projection 상태는 v4 판정 근거로 사용하지 않는다.
 
-### 2. Discovery 결과 판정
+### 2. Discovery gate
 
-- schema 또는 lineage 오류가 있으면 LLM 호출 전에 중단하고 `FAIL`로 보고한다.
-- 실제 적합 v3 scenario가 없으면 `COVERAGE LIMIT`으로 보고한다.
-- 자동 discovery는 active parameter와 convergence/expansion coverage가 늘어나는 scenario를 우선 선택한다.
-- 모든 scenario에서 active parameter 전부를 요구하지 않는다. 해당 scenario의 sourceRef로 eligible이면서 runtime-allowed인 parameter만 실행 필수다. `active-but-blocked`는 정상 제외 증적이며 candidate/selected/proposed/confirmed 0을 기대한다.
+- schema, ordered Event, catalog pin, selected Lever/binding lineage 오류는 `FAIL`이며 실행을 막는다.
+- 명시한 scenario/group이 v4 대상이 아니거나 없으면 `FAIL`이다.
+- 자동 discovery에서 대상이 없으면 `COVERAGE LIMIT`이다.
+- `runtime-allowed` raw 후보가 없는 scenario는 정상적으로 실행을 건너뛰고 coverage 한계로 기록한다.
+- `active-but-blocked` 후보 자체는 오류가 아니다. runtime/selected/proposed/confirmed 누출 또는 exact reason 누락이 오류다.
 
-### 3. Write 실행 승인
-
-실제 proposal/confirmation은 DB row를 생성·변경하므로 사용자에게 실행 승인을 받은 경우에만 `--execute`를 사용한다.
+### 3. Write 실행
 
 ```bash
 poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_quality.py \
@@ -73,34 +74,47 @@ poetry run python tests/manual/model_parameter_agent/evaluate_multi_event_qualit
   --execute
 ```
 
-`--execute`는 기존 Model Parameter raw graph와 기존 confirmation workflow를 재사용한다. v3 proposal은 `mi_event_id=NULL`, `scenario_group_id` authoritative link여야 한다. empty confirmation rollback, valid confirmation, reconfirmation은 `model-parameter-agent-test`의 계약대로 판정한다.
+`--execute`는 먼저 다음 DB/LLM 독립 smoke gate를 실행한다.
 
-필요할 때만 `--retries N`을 사용한다. retry가 발생하면 성공하더라도 `REVIEW` 증적으로 남기며, 각 attempt의 trace·token·시간을 보존한다.
+```bash
+python -m pytest -q -m model_parameter_core \
+  tests/automated/test_model_parameter_agent_contract.py \
+  tests/automated/test_model_parameter_multi_event_quality.py \
+  tests/automated/test_model_parameter_runner_common.py
+```
 
-### 4. 통합 보고서 검토
+`--execute`는 반드시 `--scenario-id` 또는 `--scenario-group-id`로 write 범위를 명시해야 하며, 미지정 시 DB preflight 전에 `FAIL`한다. smoke 실패 시 proposal/confirmation을 하나도 실행하지 않고 `FAIL`한다. 통과하면 `runner_common.execute_proposal_and_confirmation()`을 scenario마다 정확히 한 번 호출한다. 자동 retry 옵션은 제공하지 않는다. 실패 후 재실행이 필요하면 기존 proposal ID와 실패 증적을 먼저 보존하고 사용자가 별도 실행한다.
 
-기본 보고서는 `tests/reports/model_parameter_agent/model_parameter_multi_event_quality_<timestamp>.md`에 생성된다. `--report-path`로 위치를 지정할 수 있다.
+v4 persistence의 authoritative link는 `scenario_group_id`이며 API `eventId=null`, DB `mi_event_id=NULL`이어야 한다. empty payload rollback, valid confirmation, reconfirmation, payload 보존은 공유 workflow 결과를 그대로 판정한다.
 
-반드시 다음을 확인한다.
+### 4. 보고서와 CLI 결과
 
-- execution error 0
-- lineage/mapping/persistence `FAIL` 0
-- Step1 expected candidate와 실제 candidate의 source occurrence 일치
-- runtime-allowed direct 후보 생존, routing 최대 2개 정책, convergence/expansion source union; `active-but-blocked` 후보의 pre-LLM 제외와 reason code
-- proposal 및 confirmation DB read-back의 `mi_event_id=NULL`
-- prompt bytes, Step1.5/2/3 token·시간·retry; 미수집 항목은 `REVIEW`
-- Step1.5/2/3 실제 prompt packet의 ordered event, 관련 composite/indirect dimension, source lineage, 승인 projection; 필수 packet/context 누락은 `FAIL`
-- rationale이 연결 event와 dimension의 방향·강도·기간·대상 충돌을 설명하는지 수동 검토
+기본 보고서는 `tests/reports/model_parameter_agent/model_parameter_v4_multi_event_quality_<timestamp_microseconds>.md`에 생성된다. `--report-path`를 지정할 수 있다. runner는 DB 작업 전에 보고서 파일을 exclusive-create하며, 같은 경로가 이미 있으면 기존 파일을 덮어쓰지 않고 중단한다.
+
+보고서 필수 항목:
+
+- schema와 `model_parameter_core` gate
+- ordered Event와 stored→active catalog version/checksum
+- selected Dimension별 source Event, Lever code/ID/direction/domain, hydrated binding
+- active parameter boundary matrix와 blocked exact reason
+- proposal/API/DB/confirmation 연결, partial proposal ID/failed stage, elapsed/token/retry 관측성
+- execution error와 review/coverage limit
+
+CLI exit는 mandatory `FAIL`만 1이다. `PASS`, `REVIEW`, `COVERAGE LIMIT`는 0이다.
 
 ## Release gate
 
-사용자가 release acceptance도 요청하면 먼저 이 skill의 v3 보고서에서 필수 `FAIL`이 0인지 확인한 뒤 `verify-model-parameter-release`를 사용한다. mapping workbook, canonical fixture, 전체 `tests/automated`, MySQL idempotency/rollback 등은 release verification skill의 절차를 그대로 따른다.
+release acceptance까지 요청받으면 이 보고서의 mandatory `FAIL`이 0인지 먼저 확인한 뒤 `verify-model-parameter-release`를 사용한다. canonical fixture, LUT startup/guard, YAML/Kubernetes parity, Excel/archive, 전체 regressions, transactional DB 및 static SQL idempotency/rollback은 release skill 범위다.
 
 ## 안전 규칙
 
-- 기본 discovery 단계에서 graph, callback, confirmation 함수를 호출하지 않는다.
-- 잘못된 source event, orphan template, malformed sourceRef를 mapping 부재 경고로 낮추지 않는다.
-- mapping이 없는 유효 sourceRef 하나 때문에 전체 discovery를 실패시키지 않는다.
-- 실제 scenario 부재를 품질 실패로 만들지 않고 `COVERAGE LIMIT`으로 분리한다.
-- 보고서에는 비밀값, DB 자격증명, 전체 prompt 원문을 기록하지 않는다.
-- canonical master, dimension mapping, Basecase/LUT, config, workbook, DB schema 또는 confirmation workflow를 이 품질 실행에서 수정하지 않는다.
+- 기본 모드에서 graph, callback, confirmation을 호출하지 않는다.
+- `--execute` 전 preflight 또는 automated gate 실패가 하나라도 있으면 모든 live write를 막는다.
+- unscoped read-only discovery만 허용하고 unscoped `--execute`는 DB 접속 전에 차단한다.
+- 기존 보고서 경로는 덮어쓰지 않으며 보고서 예약 실패도 DB 접속 전에 차단한다.
+- write-producing workflow를 자동 retry하지 않는다.
+- catalog checksum, Lever ID/binding, group Event membership 오류를 경고로 낮추지 않는다.
+- valid but unmapped/non-executable catalog state는 reason code와 함께 coverage 증적으로 보존한다.
+- 보고서에 비밀값, DB 자격증명, 전체 prompt 원문을 기록하지 않는다.
+- 이 품질 실행에서 production config, catalog, master, Basecase/LUT, workbook, schema, confirmation workflow를 변경하지 않는다.
+- `new_resources/`의 user-owned staging 파일을 수정하거나 runtime source로 간주하지 않는다.

@@ -1,4 +1,4 @@
 interface:
   display_name: "Model Parameter Multi-Event Quality"
-  short_description: "Assess v3 multi-event mapping and proposal quality"
-  default_prompt: "Use $model-parameter-multi-event-quality to discover v3 scenarios and evaluate source lineage, proposal, and confirmation quality."
+  short_description: "Assess v4 Lever-boundary and proposal quality"
+  default_prompt: "Use $model-parameter-multi-event-quality to discover v4 model-lever scenarios and evaluate ordered Events, catalog-pinned Lever bindings, runtime allowlist boundaries, proposal, and confirmation quality through the shared runner contract."

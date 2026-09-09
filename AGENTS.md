@@ -28,6 +28,8 @@ If the task touches one of these areas, read the linked document before changing
   `.claude/rules/python-conventions.md`
 - Model Parameter canonical DB/LUT/config/Excel/docs implementation:
   `.claude/skills/rollout-model-parameters/SKILL.md`
+- Model Parameter v4 multi-event discovery and live proposal/confirmation quality:
+  `.claude/skills/model-parameter-multi-event-quality/SKILL.md`
 - Model Parameter release, DB safety, proposal/confirmation, or integrated verification:
   `.claude/skills/verify-model-parameter-release/SKILL.md`
 

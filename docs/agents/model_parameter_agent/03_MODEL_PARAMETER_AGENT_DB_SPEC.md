@@ -1,5 +1,8 @@
 # Model Parameter Agent DB Spec
 
+> 현재 핵심 Skill은 v4 multi-event 경로만 검증한다. v1/v3 table·mapping 설명은 기존 row와 호환
+> 코드를 해석하기 위한 참고이며 v4 rollout target이나 fallback이 아니다.
+
 ## 기준
 
 | 질문 | 답 |

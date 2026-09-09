@@ -1,4 +1,0 @@
-interface:
-  display_name: "Model Parameter V3/V4 LNG Campaign"
-  short_description: "Compare many v3/v4 LNG cases with preserved evidence"
-  default_prompt: "Use $compare-model-parameter-v3-v4-lng to plan and run a multi-pair v3/v4 LNG price-tag alignment campaign with reusable evidence and reports."

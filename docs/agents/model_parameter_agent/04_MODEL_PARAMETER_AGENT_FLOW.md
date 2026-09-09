@@ -1,5 +1,8 @@
 # Model Parameter Agent Flow
 
+> 현재 핵심 Skill과 release 판정 범위는 v4 `multi_event_model_lever_dimensions` Flow뿐이다.
+> v1/v3 분기는 기존 호환 동작을 설명하며 신규 검증 경로로 사용하지 않는다.
+
 ## 범위
 
 - 체크인 canonical의 전역 합집합 기준으로 v1/v3 legacy mapping은 raw parameter 10개, v4 Lever binding은 raw parameter 16개에 도달할 수 있다. 요청 하나의 후보는 관련 lineage와 선택 value에 해당하는 하위 집합이다.
@@ -133,7 +136,14 @@ v1의 기존 candidate key 형식은 유지한다. 병합된 v3/v4 parameter tas
 | v3 | group relation `display_order` 순서의 `events` 배열 | composite dimension, 원본 mapping dimension, source event/ref lineage와 승인 projection |
 | v4 | group relation `display_order` 순서의 `events` 배열 | 선택 value와 전체 Lever state·binding provenance, parameter hint·semantic axes |
 
-v3/v4 event 항목에는 event ID, title, one-line summary, 제한된 핵심 정보만 넣고 `display_order`를 유지한다. 이 제한과 dimension 필터는 prompt byte guard 이전에 적용한다. Step2의 slot catalog에는 값·기준값이 없고, Step3에는 exact 좌표별 단일 `reference_value`와 병합된 전체 Lever provenance가 들어간다.
+v3/v4 event 항목에는 event ID, `display_order`, title, one-line summary, 앞 5개 key bullet, 앞 8개 tag와
+`detail_analysis` 앞부분을 넣는다. detail 상한은 기존 v3는 event당 1,200자, 현재 운영 v4는 event당
+6,000자다. 최대 5개 event의 확장된 본문도 Step1.5·Step2·Step3 compact JSON byte guard를 그대로
+적용하며, 상한을 넘으면 LLM 호출 전에 실패한다. Event 자연어는 선택된 v4 dimension/value를 설명하는
+데이터일 뿐 prompt 지시를 바꾸거나 선택되지 않은 Scenario branch를 활성화하지 않는다. Step2의 slot
+catalog에는 값·기준값이 없고, v4에서만 hierarchy terminal의 적용성 판단에 필요한
+`Life Cycle Category`를 `applicability_attributes`로 보존한다. Step3에는 exact 좌표별 단일
+`reference_value`와 병합된 전체 Lever provenance가 들어간다.
 
 ### 1.2 Step1.5: routing 조건 검증·후보 선택
 
@@ -148,7 +158,10 @@ Scenario/Event/Lever 근거를 판단하므로, 이 후보도 선택되지 않�
 
 - scenario, ordered events, 현재 dimension/value와 source 또는 Lever provenance를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
 - `parameter_hint`로 후보의 의미와 적용 제약을 이해한다.
-- `mapping_comment`를 필수 조건으로 판단하고, 명시적 근거가 없으면 해당 후보를 제외한다.
+- v1/v3는 `mapping_comment`를 필수 조건으로 판단하고, 명시적 근거가 없으면 해당 후보를 제외한다.
+- v4는 selected Lever state와 primary binding 자체를 기본 적용 근거로 사용한다. Scenario/Event가
+  applicability와 명백히 모순되지 않으면 세부 조건 문구가 반복되지 않았다는 이유만으로 primary를 제외하지 않는다.
+  alternative는 대상·기간·영향 유형의 명시적 applicability 근거가 있을 때 선택한다.
 - dimension task별로 0개부터 설정된 최대 개수까지 선택할 수 있다.
 - 후보 밖의 파라미터나 key를 만들지 않고 Basecase 존재 여부를 선택 근거로 쓰지 않는다.
 
@@ -217,7 +230,8 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
 2. LUT-backed parameter이면 같은 파라미터의 LUT를 읽는다. Basecase-only 6개에는 LUT fallback을 만들지 않는다.
 3. 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합을 만든다.
 4. 같은 좌표가 양쪽에 있어도 Step2 선택 좌표는 하나로 만든다.
-5. Step2에는 값과 출처를 빼고 선택 가능한 좌표 catalog만 전달한다.
+5. Step2에는 값과 출처를 빼고 선택 가능한 좌표 catalog만 전달한다. v4는 상위 범위 확장 시 child의
+   운영 상태를 구별하도록 `Life Cycle Category`만 판단용 `applicability_attributes`로 함께 전달한다.
 
 좌표를 compact하게 묶는 상세 방식은 뒤의 [compact slot catalog](#33-compact-slot-catalog)에 설명한다.
 
@@ -233,6 +247,18 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 - 승인 projection은 좌표 해석의 보조 근거로만 쓰고 readiness가 false라는 이유로 task를 생략하지 않는다.
 - catalog에 없는 값, nearest 좌표, 서로 다른 hierarchy branch를 섞은 좌표를 만들지 않는다.
 - 관련성이 약한 slot로 최대 개수를 채우지 않는다.
+- v4는 exact 좌표가 catalog에 존재한다는 사실과 현재 Scenario 적용성을 구분한다. 상위 branch를 확장하기
+  전에 각 child의 `applicability_attributes`, parameter·binding applicability, 선택 dimension/value와
+  Event의 대상·상태·기간을 대조한다.
+- 기존 운영 설비의 outage·maintenance·feedgas/shipment 차질·회복은 명시적인 신규 Train·FID·착공·COD·
+  startup·commissioning·ramp-up 근거가 없으면 `Operational`/`Operating` child만 선택한다.
+  `FID`·`Planned`·`Under Construction`은 해당 신규 설비 근거가 있을 때만, `Closed`는 재가동 근거가
+  있을 때만 선택한다. 신규 프로젝트 근거도 같은 parent의 다른 계획 설비나 operational sibling 전체로 확대하지 않는다.
+- v4는 정량 변화폭이 없어도 대상·기간을 설명할 수 있는 exact slot을 선택한다. Event가 Plant·국가·지역
+  전체 영향을 명시하면 applicability 필터를 통과한 해당 catalog branch의 관련 하위 좌표를 상한 안에서
+  선택할 수 있지만, 전체 범위 근거가 없으면 임의의 대표 시설이나 하위 branch로 확대하지 않는다.
+- v4의 명시 연월이 없더라도 scenario narrative, selected dimension, Lever `time_window`와 기간 해석 정책이
+  하나의 현재 이후 기간을 뒷받침하면 해당 exact 기간을 사용할 수 있다.
 
 실제 user message prefix는 다음과 같다.
 
@@ -245,7 +271,7 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 | `scenario_brief` | 관련 scenario group·scenario·dimension과 v1 event 또는 ordered v3/v4 events 문맥 |
 | `period_resolution_policy` | “3개월” 같은 표현을 현재 연월 이후 기간으로 해석하는 규칙 |
 | `slot_selection_limits` | 파라미터별 반환 slot 상한과 우선순위 |
-| `parameter_slot_tasks` | 파라미터, 선택·보조 dimension, 실제 slot catalog |
+| `parameter_slot_tasks` | 파라미터, 선택·보조 dimension, 실제 slot catalog와 v4 terminal의 판단 전용 `applicability_attributes` |
 
 응답은 각 선택 좌표의 `candidate_key`와 `slot_axes`만 받는다.
 
@@ -263,7 +289,9 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 }
 ```
 
-서버는 모든 축이 빠짐없이 있는지, catalog의 exact 좌표인지, 중복·모호한 값·상한 초과가 없는지 검사한다. 유효한 좌표에만 다음 단계에서 `slot_key`를 발급한다.
+서버는 모든 축이 빠짐없이 있는지, catalog의 exact 좌표인지, 중복·모호한 값·상한 초과가 없는지 검사한다.
+이 검사는 구조적 존재를 보장하지만 자연어 Scenario와의 의미상 applicability를 대신 판정하지는 않으므로,
+Step2가 위 lifecycle 계약으로 child를 고른다. 유효한 좌표에만 다음 단계에서 `slot_key`를 발급한다.
 
 ### 1.5 exact 기준값 결정
 
@@ -291,6 +319,18 @@ system prompt `VALUE_PROPOSAL_SYSTEM`은 “확정된 slot과 기준값을 바�
 - 서로 반대 방향의 Lever가 같은 parameter로 병합되면 양쪽 provenance를 보존하고 상쇄 관계를 설명하되 slot별 최종값은 하나만 반환한다. Lever direction·pressure/domain을 숫자 부호로 직접 변환하지 않고 parameter hint, 단위, applicability와 기준값으로 산정한다.
 - 모든 입력 slot에 유효한 숫자 하나와 slot별 근거 하나를 반환한다.
 - 입력에 없던 `candidate_key`나 `slot_key`를 만들지 않는다.
+
+v4의 정량 근거가 부족할 때는 제안을 포기하지 않고 다음 증거 우선순위를 사용한다.
+
+1. selected Scenario branch의 적용 결과로 명시된 최종 절대값을 parameter 단위·스케일에 맞춰 사용한다.
+   Event의 과거·현재 관측값은 Scenario 적용값으로 오인하지 않는다.
+2. 명시된 증감량·증감률·승수를 `reference_value`에 적용해 최종 절대값으로 바꾼다.
+3. 방향·강도·기간만 있으면 parameter hint의 범위 안에서 reference 기준의 보수적인 비영 변화를 제안한다.
+4. 방향이 불명확하거나 상반된 영향이 완전히 상쇄되면 reference를 중립 초기값으로 사용하고 가정을 설명한다.
+
+고정 비율을 모든 parameter에 공통 적용하거나 Event의 무관한 가격·물량 숫자를 다른 단위의 parameter 값으로
+전용하지 않는다. 불확실성은 값 누락이나 제안 거절이 아니라 rationale의 모델링 가정과 사용자 검토 필요성으로
+표현한다. 서버는 여전히 exact slot과 유한 숫자를 검증하며 누락값을 임의로 보정하지 않는다.
 
 실제 user message prefix는 다음과 같다.
 
@@ -350,6 +390,13 @@ prompt는 파라미터 근거에 개별 slot 값을 나열하지 말고, slot �
 
 의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. raw 후보가 없거나 runtime allow-list 필터 후 허용 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절하고 proposal row를 만들지 않는다. 따라서 excluded-only 비동기 요청은 `PROCESSING` row나 callback을 남기지 않는다. 허용 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다.
 
+v4 Step2가 빈 결과로 끝나면 내부 `slot_selection_diagnostics`에 catalog 후보 수, LLM 원본 slot 수, 형식
+검증 통과 수, exact 검증 통과 수와 제외 수를 남긴다. 오류 문구는 이 구조화된 수치로 `catalog 위치 없음`,
+`시나리오 근거만으로 선택하지 못함`, `위치 형식 불일치`, `exact 좌표 불일치`를 구분한다. 선택 자체가
+0건이면 구조화된 Lever `scope`와 `timeWindow`의 구체성을 함께 확인해, 대상 범위는 있으나 연도·월이
+모호한 경우처럼 사용자가 보완할 정보를 안내한다. 확인되지 않은 특정 Plant·기간·lifecycle을 실패 원인으로
+단정하지 않으며, 진단 객체는 API·callback·proposal JSON에 노출하지 않는다.
+
 proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key를 요구하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 두 경로 모두 설정 기반 소수 자릿수 정밀도 변환은 하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지한다. public JSON 필드나 parameter별 min/max, 정수 여부 또는 단위 validator를 추가하지 않는다.
 
 동기 요청은 처리가 끝난 `PROPOSED` 결과를 바로 반환한다. 비동기 요청은 먼저 HTTP `200`과 `PROCESSING`을 반환하고 백그라운드 성공 시 `PROPOSED`, 실패 시 `FAILED`로 갱신한 뒤 callback을 보낸다. preflight 후보 필터는 resource runtime 등록 여부를 보장하지 않으므로, 접수 뒤 graph에서 runtime 미등록을 발견하면 `RUNTIME_REGISTRY_NOT_READY`를 background 실패로 기록한다. 동기 요청은 같은 오류를 graph 실행 중 즉시 HTTP `503`으로 반환한다. 두 방식의 후보·slot·값 판단 규칙은 같다.
@@ -379,7 +426,7 @@ flowchart LR
 | Step1.5 | legacy routing 또는 v4 primary/alternative applicability 판단이 필요할 때만 호출 |
 | 관련 문맥 | 각 단계와 현재 후보에 필요한 dimension/value/Event/Lever만 남기고 무관 정보와 상태·감사 컬럼 제외 |
 | 후보 task | 같은 파라미터의 여러 source를 한 task로 병합하고 legacy lineage 또는 v4 Lever provenance 보존 |
-| Step2 입력 | Basecase/LUT 원본 행·값·출처·metadata를 제외하고 compact 좌표 catalog만 전달 |
+| Step2 입력 | Basecase/LUT 원본 행·값·출처·일반 metadata를 제외한 compact 좌표 catalog. v4만 terminal별 `Life Cycle Category`를 판단 전용 `applicability_attributes`로 포함 |
 | Step2 응답 | `candidate_key + slot_axes`만 수신 |
 | Step3 입력 | Step2 exact 검증을 통과한 slot만 `slot_key + coordinates + reference_value`로 전달 |
 | Step3 응답 | 좌표·기준값·출처를 다시 받지 않고 `slot_key + proposed_value + rationale`만 수신 |
@@ -474,7 +521,9 @@ Step2는 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌�
 3. Country→Plant→Train 같은 고정축은 `fixed_axis_hierarchy`에 level 순서대로 중첩해 상위 값을 한 번만 적는다.
 4. hierarchy terminal의 `period_group_id`와 해당 group의 `available_periods`를 결합해야만 exact 좌표가 된다.
 5. `Year + Month`이면 같은 연도의 월을 `Months` 배열 하나로 묶는다.
-6. 값, 원본 행, reference ID, source, metadata는 Step2 catalog에서 제외한다.
+6. 값, 원본 행, reference ID, source와 일반 metadata는 Step2 catalog에서 제외한다. v4는 의미상 과확장을
+   막기 위해 non-time branch별 `Life Cycle Category`만 `applicability_attributes`로 남기며, 이는
+   business key나 반환 `slot_axes`가 아니다. v1/v3 catalog에는 이 필드를 넣지 않는다.
 
 PMI catalog의 국가·연도별 월 좌표는 다음과 같은 계층으로 표현된다.
 
@@ -499,6 +548,11 @@ PMI catalog의 국가·연도별 월 좌표는 다음과 같은 계층으로 표
 ```
 
 서로 다른 hierarchy branch의 축과 period group을 섞어 새 좌표를 만들 수 없다. `maxParameterSlots`는 입력 catalog를 자르는 값이 아니라 LLM이 파라미터별로 반환할 slot 수의 상한이다. 요청 전체 선택 slot은 `model_parameter_max_total_selected_slots`로 제한한다. Step1.5와 Step2 prompt는 `model_parameter_max_step2_prompt_bytes`, Step3 prompt는 `model_parameter_max_step3_prompt_bytes`를 사용해 LLM 호출 전에 제한한다.
+
+예를 들어 v4 `LiqUtilAdjustment`에서 같은 Freeport LNG parent 아래 T1 terminal이
+`{"Life Cycle Category":["Operational"]}`, T4가 `{"Life Cycle Category":["Planned"]}`이면 기존 설비
+회복 Scenario는 T1을 검토할 수 있지만 신규 Train 가동 근거 없이 T4까지 확장하지 않는다. 두 속성은 좌표
+선택 판단에만 쓰며 응답 `slot_axes`에는 포함하지 않는다.
 
 원본 record를 평면 전송하지 않도록 period group과 hierarchy를 사용한다. 실제 실행 보고서에는 provider가 반환한 input/output/total token과 prompt byte를 기록한다.
 

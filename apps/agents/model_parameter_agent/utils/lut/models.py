@@ -133,6 +133,9 @@ class SlotPeriod:
 class SlotLeaf:
     axes: Mapping[str, CanonicalValue]
     available_periods: tuple[SlotPeriod, ...]
+    applicability_attributes: Mapping[str, tuple[CanonicalValue, ...]] = field(
+        default_factory=freeze_mapping,
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,6 +22,7 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalKey,
     CanonicalValue,
     EffectiveReference,
+    LutRecord,
     ReferenceLoadPolicy,
     SlotCatalog,
     SlotLeaf,
@@ -34,6 +35,7 @@ from apps.agents.model_parameter_agent.utils.lut.runtime import get_parameter_sp
 
 
 TEMPORAL_METADATA_AXES = frozenset({"Period"})
+SLOT_APPLICABILITY_METADATA_AXES = frozenset({"Life Cycle Category"})
 
 
 def _parameter_name(candidate: Mapping[str, Any]) -> str:
@@ -192,6 +194,24 @@ def _sort_key(values: tuple[CanonicalValue, ...]) -> tuple[str, ...]:
     return tuple(f"{type(value).__name__}:{value}" for value in values)
 
 
+def _leaf_applicability_values(
+    records: Sequence[BasecaseReference | LutRecord],
+    non_time_axes: tuple[str, ...],
+) -> dict[tuple[CanonicalValue, ...], dict[str, set[CanonicalValue]]]:
+    values_by_leaf: dict[
+        tuple[CanonicalValue, ...],
+        dict[str, set[CanonicalValue]],
+    ] = defaultdict(lambda: defaultdict(set))
+    for record in records:
+        leaf_key = tuple(record.axes[axis_name] for axis_name in non_time_axes)
+        for axis_name in SLOT_APPLICABILITY_METADATA_AXES:
+            axis_value = record.metadata.get(axis_name)
+            if axis_value is None or (isinstance(axis_value, str) and not axis_value.strip()):
+                continue
+            values_by_leaf[leaf_key][axis_name].add(axis_value)
+    return values_by_leaf
+
+
 def _lookup_basecase_by_non_time_axes(
     candidate_key: str,
     axes: Mapping[str, Any],
@@ -225,13 +245,17 @@ def build_slot_catalog(
     by_candidate: dict[str, CandidateSlotCatalog] = {}
     for candidate_key, parameter_name in basecase_index.candidate_parameters.items():
         key_axes = basecase_index.candidate_key_axes[candidate_key]
+        time_axes = tuple(axis_name for axis_name in key_axes if axis_name in TIME_AXES)
+        non_time_axes = tuple(axis_name for axis_name in key_axes if axis_name not in TIME_AXES)
+        basecase_records = basecase_index.records_for_candidate(candidate_key)
         # Value-less Basecase rows remain indexed for metadata fallback, but they
         # become selectable only when the exact LUT coordinate supplies a value.
         union_axes: dict[CanonicalKey, Mapping[str, CanonicalValue]] = {
             record.canonical_key: record.axes
-            for record in basecase_index.records_for_candidate(candidate_key)
+            for record in basecase_records
             if record.value is not None
         }
+        lut_records: tuple[LutRecord, ...] = ()
         if lut_catalog is not None:
             spec = lut_catalog.registry.get(parameter_name)
             if spec is not None:
@@ -240,11 +264,18 @@ def build_slot_catalog(
                     raise domain_error(
                         msg,
                     )
-                for record in lut_catalog.records_for_parameter(parameter_name):
+                lut_records = lut_catalog.records_for_parameter(parameter_name)
+                for record in lut_records:
                     union_axes.setdefault(record.canonical_key, record.axes)
 
-        time_axes = tuple(axis_name for axis_name in key_axes if axis_name in TIME_AXES)
-        non_time_axes = tuple(axis_name for axis_name in key_axes if axis_name not in TIME_AXES)
+        basecase_applicability = _leaf_applicability_values(
+            basecase_records,
+            non_time_axes,
+        )
+        lut_applicability = _leaf_applicability_values(
+            lut_records,
+            non_time_axes,
+        )
         periods_by_leaf: dict[
             tuple[CanonicalValue, ...],
             set[tuple[int, ...]],
@@ -263,7 +294,27 @@ def build_slot_catalog(
                 )
                 for period in sorted(periods_by_leaf[leaf_key])
             )
-            leaves.append(SlotLeaf(axes=leaf_axes, available_periods=periods))
+            basecase_values = basecase_applicability.get(leaf_key) or {}
+            lut_values = lut_applicability.get(leaf_key) or {}
+            applicability_attributes = {
+                axis_name: tuple(
+                    sorted(
+                        basecase_values.get(axis_name) or lut_values.get(axis_name) or (),
+                        key=lambda value: _sort_key((value,)),
+                    ),
+                )
+                for axis_name in sorted(SLOT_APPLICABILITY_METADATA_AXES)
+                if basecase_values.get(axis_name) or lut_values.get(axis_name)
+            }
+            leaves.append(
+                SlotLeaf(
+                    axes=leaf_axes,
+                    available_periods=periods,
+                    applicability_attributes=freeze_mapping(
+                        applicability_attributes,
+                    ),
+                ),
+            )
         candidate_catalog = CandidateSlotCatalog(
             candidate_key=candidate_key,
             parameter_name=parameter_name,

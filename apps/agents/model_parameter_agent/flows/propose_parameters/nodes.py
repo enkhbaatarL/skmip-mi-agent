@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 import json
 import re
@@ -12,6 +13,7 @@ from langgraph.runtime import Runtime
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
 from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
     _raise_v4_semantic_empty_if_applicable,
+    _selectable_slot_catalog_candidate_count,
 )
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
@@ -52,6 +54,7 @@ from apps.agents.model_parameter_agent.utils.lut.keys import (
 )
 from apps.agents.model_parameter_agent.utils.lut.models import (
     CandidateSlotCatalog,
+    CanonicalValue,
     SlotCatalog,
 )
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
@@ -75,6 +78,8 @@ TIME_SLOT_AXIS_NAMES = {"Year", "Month", "Period"}
 HARD_MAX_PARAMETER_SLOTS = 100
 DEFAULT_MAX_TOTAL_SELECTED_SLOTS = 300
 DEFAULT_MAX_PROMPT_BYTES = 262_144
+V3_EVENT_DETAIL_MAX_CHARS = 1_200
+V4_EVENT_DETAIL_MAX_CHARS = 6_000
 
 
 def _debug_stage_payload(
@@ -236,12 +241,45 @@ def _available_periods_for_prompt(
     return periods
 
 
+def _attach_applicability_attributes_for_prompt(
+    target: dict[str, Any],
+    attributes: Mapping[str, tuple[CanonicalValue, ...]],
+    *,
+    include: bool,
+) -> None:
+    if not include or not attributes:
+        return
+    target["applicability_attributes"] = {
+        str(axis_name): list(axis_values)
+        for axis_name, axis_values in attributes.items()
+    }
+
+
+def _copy_applicability_attributes_for_prompt(
+    target: dict[str, Any],
+    source: dict[str, Any],
+) -> None:
+    attributes = source.get("applicability_attributes")
+    if attributes:
+        target["applicability_attributes"] = attributes
+
+
 def _fixed_axis_hierarchy_for_prompt(
     candidate: CandidateSlotCatalog,
     period_group_ids_by_leaf: list[str],
+    *,
+    include_applicability_attributes: bool = False,
 ) -> list[dict[str, Any]]:
     if not candidate.non_time_axes:
-        return [{"period_group_id": period_group_ids_by_leaf[0]}] if period_group_ids_by_leaf else []
+        if not period_group_ids_by_leaf:
+            return []
+        terminal: dict[str, Any] = {"period_group_id": period_group_ids_by_leaf[0]}
+        _attach_applicability_attributes_for_prompt(
+            terminal,
+            candidate.leaves[0].applicability_attributes,
+            include=include_applicability_attributes,
+        )
+        return [terminal]
 
     hierarchy: dict[tuple[str, str], dict[str, Any]] = {}
     for leaf, period_group_id in zip(
@@ -264,6 +302,11 @@ def _fixed_axis_hierarchy_for_prompt(
             level = terminal["children"]
         if terminal is not None:
             terminal["period_group_id"] = period_group_id
+            _attach_applicability_attributes_for_prompt(
+                terminal,
+                leaf.applicability_attributes,
+                include=include_applicability_attributes,
+            )
 
     def serialize_level(
         nodes_by_value: dict[tuple[str, str], dict[str, Any]],
@@ -277,6 +320,7 @@ def _fixed_axis_hierarchy_for_prompt(
                 item["children"] = children
             else:
                 item["period_group_id"] = node["period_group_id"]
+                _copy_applicability_attributes_for_prompt(item, node)
             serialized.append(item)
         return serialized
 
@@ -285,6 +329,8 @@ def _fixed_axis_hierarchy_for_prompt(
 
 def _candidate_slot_catalog_for_prompt(
     candidate: CandidateSlotCatalog,
+    *,
+    include_applicability_attributes: bool = False,
 ) -> dict[str, Any]:
     period_groups: list[dict[str, Any]] = []
     period_group_id_by_payload: dict[str, str] = {}
@@ -315,12 +361,36 @@ def _candidate_slot_catalog_for_prompt(
         "fixed_axis_hierarchy": _fixed_axis_hierarchy_for_prompt(
             candidate,
             period_group_ids_by_leaf,
+            include_applicability_attributes=include_applicability_attributes,
         ),
     }
 
 
-def _slot_catalog_for_prompt(slot_catalog: SlotCatalog) -> list[dict[str, Any]]:
-    return [_candidate_slot_catalog_for_prompt(candidate) for candidate in slot_catalog.candidates]
+def _slot_catalog_for_prompt(
+    slot_catalog: SlotCatalog,
+    *,
+    include_applicability_attributes: bool = False,
+) -> list[dict[str, Any]]:
+    return [
+        _candidate_slot_catalog_for_prompt(
+            candidate,
+            include_applicability_attributes=include_applicability_attributes,
+        )
+        for candidate in slot_catalog.candidates
+    ]
+
+
+def _slot_catalog_for_context(
+    slot_catalog: SlotCatalog,
+    scenario_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    generation_strategy = str(
+        (scenario_context.get("scenario_group") or {}).get("generation_strategy") or "",
+    )
+    return _slot_catalog_for_prompt(
+        slot_catalog,
+        include_applicability_attributes=(generation_strategy == "multi_event_model_lever_dimensions"),
+    )
 
 
 def _configured_positive_int(
@@ -742,7 +812,10 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         sum(len(candidate.leaves) for candidate in slot_catalog.candidates),
         len(warnings),
     )
-    prompt_slot_catalog = _slot_catalog_for_prompt(slot_catalog)
+    prompt_slot_catalog = _slot_catalog_for_context(
+        slot_catalog,
+        state.scenario_context or {},
+    )
     output = {
         "basecase_index": basecase_index,
         "slot_catalog": prompt_slot_catalog,
@@ -950,6 +1023,23 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         "parameter_slots": valid_slots,
         "slot_candidate_mappings": slot_candidate_mappings,
         "effective_references": effective_references,
+        "slot_selection_diagnostics": {
+            **state.slot_selection_diagnostics,
+            "catalog_candidate_count": state.slot_selection_diagnostics.get(
+                "catalog_candidate_count",
+                _selectable_slot_catalog_candidate_count(state.slot_catalog),
+            ),
+            "raw_slot_count": state.slot_selection_diagnostics.get(
+                "raw_slot_count",
+                len(state.parameter_slots),
+            ),
+            "sanitized_slot_count": state.slot_selection_diagnostics.get(
+                "sanitized_slot_count",
+                len(state.parameter_slots),
+            ),
+            "exact_slot_count": len(valid_slots),
+            "rejected_exact_slot_count": rejected_exact_slot_count,
+        },
         "validation_warnings": warnings,
     }
     return output
@@ -974,6 +1064,8 @@ def finalize_empty_parameter_values(state: ModelParameterProposalState) -> dict[
             scenario_context=state.scenario_context,
             candidates=state.candidate_mappings,
             non_input_items=state.non_input_items,
+            slot_catalog=state.slot_catalog,
+            slot_selection_diagnostics=state.slot_selection_diagnostics,
         )
     output = {
         "parameter_adjustments": _unselected_adjustments_for_missing_slots(
@@ -1003,6 +1095,8 @@ async def propose_parameter_values(
             scenario_context=state.scenario_context,
             candidates=state.candidate_mappings,
             non_input_items=state.non_input_items,
+            slot_catalog=state.slot_catalog,
+            slot_selection_diagnostics=state.slot_selection_diagnostics,
         )
         output = {
             "parameter_adjustments": [],
@@ -1231,6 +1325,13 @@ async def propose_parameter_slots(
     )
     output = {
         "parameter_slots": slots,
+        "slot_selection_diagnostics": {
+            "catalog_candidate_count": _selectable_slot_catalog_candidate_count(
+                slot_catalog,
+            ),
+            "raw_slot_count": len(llm_payload.parameter_slots),
+            "sanitized_slot_count": len(slots),
+        },
         "non_input_items": state.non_input_items,
         "validation_warnings": [
             *state.validation_warnings,
@@ -2039,12 +2140,16 @@ def _filter_v4_selected_dimension_values(
     return selected_definitions
 
 
-def _bounded_v3_event_brief(event: dict[str, Any]) -> dict[str, Any]:
+def _bounded_multi_event_brief(
+    event: dict[str, Any],
+    *,
+    detail_max_chars: int,
+) -> dict[str, Any]:
     event_type = event.get("event_type")
     event_type = event_type if isinstance(event_type, dict) else {}
     bullets = event.get("key_bullets")
     tags = event.get("tags")
-    detail = str(event.get("detail_analysis") or "")[:1200]
+    detail = str(event.get("detail_analysis") or "")[:detail_max_chars]
     return _drop_none_or_empty(
         {
             "event_id": event.get("mi_event_id"),
@@ -2148,7 +2253,15 @@ def _scenario_brief_for_value_prompt(
         "dimension_template": dimension_template_brief,
     }
     if is_multi_event:
-        brief["events"] = [_bounded_v3_event_brief(item) for item in events if isinstance(item, dict)]
+        detail_max_chars = V4_EVENT_DETAIL_MAX_CHARS if is_v4 else V3_EVENT_DETAIL_MAX_CHARS
+        brief["events"] = [
+            _bounded_multi_event_brief(
+                item,
+                detail_max_chars=detail_max_chars,
+            )
+            for item in events
+            if isinstance(item, dict)
+        ]
     else:
         brief["event"] = event_brief
     return _drop_none_or_empty(brief)

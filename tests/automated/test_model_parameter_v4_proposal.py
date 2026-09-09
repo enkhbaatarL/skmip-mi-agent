@@ -27,6 +27,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _merge_candidates_by_parameter,
     _partition_candidate_validation_work,
     _sanitize_routing_decisions,
+    _scenario_brief_for_value_prompt,
 )
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
@@ -427,7 +428,6 @@ def test_v4_context_uses_only_selected_value_lever_states_and_ordered_events() -
     assert context["event_type"] == {}
     assert context["dimension_value_mappings"] == []
     assert len(context["dimension_lineage"]) == 1
-
     lineage = context["dimension_lineage"][0]
     assert lineage["scenario_dimension_value_id"] == "high"
     assert [state["lever_code"] for state in lineage["lever_states"]] == [
@@ -446,6 +446,29 @@ def test_v4_context_uses_only_selected_value_lever_states_and_ordered_events() -
     assert context["candidate_exclusion_reason_codes"] == [
         "INACTIVE_MODEL_PARAMETER",
     ]
+
+
+def test_v4_event_brief_keeps_larger_detail_excerpt() -> None:
+    context = _load_context(selected_value_id="high")
+    context["events"] = [
+        {
+            "mi_event_id": 100 + index,
+            "display_order": index,
+            "event_title_ko": f"Event {index}",
+            "one_line_summary": f"Summary {index}",
+            "key_bullets": [f"bullet-{item}" for item in range(7)],
+            "tags": [f"tag-{item}" for item in range(10)],
+            "detail_analysis": str(index) * 7_000,
+        }
+        for index in range(1, 6)
+    ]
+
+    brief = _scenario_brief_for_value_prompt(context)
+
+    assert [event["event_id"] for event in brief["events"]] == [101, 102, 103, 104, 105]
+    assert all(len(event["detail_excerpt"]) == 6_000 for event in brief["events"])
+    assert all(len(event["key_bullets"]) == 5 for event in brief["events"])
+    assert all(len(event["tags"]) == 8 for event in brief["events"])
 
 
 def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active_catalog() -> None:

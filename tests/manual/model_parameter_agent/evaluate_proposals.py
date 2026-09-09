@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import time
 from typing import Any
+from unittest.mock import patch
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -25,6 +26,9 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
+from apps.agents.model_parameter_agent.flows.propose_parameters import (
+    flow as proposal_flow,
+)
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
     build_graph,
     to_output,
@@ -40,7 +44,7 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
 from apps.agents.model_parameter_agent.utils.basecase import build_basecase_records
 from apps.agents.model_parameter_agent.utils.lut import ReferenceLoadPolicy
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
-    get_parameter_knowledge_base,
+    get_parameter_knowledge_base_from_resources,
     match_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.utils.resource_bootstrap import (
@@ -880,6 +884,33 @@ def _attach_failure_trace(exc: BaseException, trace: dict[str, Any]) -> None:
         return
 
 
+def _serialize_output_with_persistence_trace(
+    raw_state: dict[str, Any],
+    failure_trace: dict[str, Any],
+) -> dict[str, Any]:
+    """Retain a committed proposal ID if response construction later fails."""
+    service_type = proposal_flow.ModelParameterService
+    original_save = service_type.save_proposal_result
+
+    def traced_save(
+        service: object,
+        *args: object,
+        **kwargs: object,
+    ) -> int:
+        model_param_proposal_id = original_save(service, *args, **kwargs)
+        failure_trace["model_param_proposal_id"] = model_param_proposal_id
+        failure_trace["proposal_persisted"] = True
+        return model_param_proposal_id
+
+    # to_output() is synchronous, including persistence and response assembly,
+    # so this scoped patch cannot yield to another asyncio task.
+    with patch.object(service_type, "save_proposal_result", traced_save):
+        return to_output(raw_state).model_dump(
+            by_alias=True,
+            exclude_none=False,
+        )
+
+
 async def _evaluate_scenario(
     scenario_id: int,
 ) -> dict[str, Any]:
@@ -891,7 +922,20 @@ async def _evaluate_scenario(
         failure_trace["context"] = context
 
         failed_stage = "Step1 parameter candidate matching"
-        kb = get_parameter_knowledge_base(str(resource_paths.basecase_dir))
+        mapping_resources = context.get("parameter_mapping_resources") or {}
+        mapping_rows = mapping_resources.get("mapping_rules") or []
+        parameter_rows = mapping_resources.get("parameter_definitions") or []
+        generation_strategy = str(
+            (context.get("scenario_group") or {}).get("generation_strategy") or "",
+        )
+        kb = get_parameter_knowledge_base_from_resources(
+            mapping_rows=mapping_rows,
+            parameter_rows=parameter_rows,
+            basecase_dir_path=str(resource_paths.basecase_dir),
+            allow_empty_mapping_rows=(
+                generation_strategy == "multi_event_model_lever_dimensions"
+            ),
+        )
         candidates, non_inputs, mapping_warnings = match_parameter_candidates(
             kb,
             context,
@@ -997,10 +1041,10 @@ async def _evaluate_scenario(
 
         failed_stage = "output validation/persistence"
         # Match the public API serializer: optional fields remain present so a
-        # v3 proposal records the compatibility contract as eventId=null.
-        final_response = to_output(raw_state).model_dump(
-            by_alias=True,
-            exclude_none=False,
+        # v4 group proposal records the compatibility field as eventId=null.
+        final_response = _serialize_output_with_persistence_trace(
+            raw_state,
+            failure_trace,
         )
         record["final_response"] = final_response
         record["step_summary"] = _build_step_summary(

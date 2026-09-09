@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, NoReturn
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
@@ -45,6 +46,53 @@ V4SemanticEmptyStage = Literal[
     "step2",
     "step3",
 ]
+V4Step2FailureKind = Literal[
+    "catalog_unavailable",
+    "selection_empty",
+    "selection_invalid",
+    "exact_mismatch",
+    "unknown",
+]
+
+_V4_UNSPECIFIED_CONTEXT_VALUES = frozenset(
+    {
+        "-",
+        "n/a",
+        "na",
+        "none",
+        "unknown",
+        "미상",
+        "미정",
+        "불명",
+    },
+)
+_V4_GENERIC_SCOPE_VALUES = frozenset(
+    {
+        "all",
+        "facility",
+        "global",
+        "global lng market",
+        "local",
+        "market",
+        "plant",
+        "region",
+        "regional",
+        "관련 시장",
+        "관련 시장 범위",
+        "글로벌",
+        "글로벌 lng 시장",
+        "설비",
+        "시장",
+        "전 세계",
+        "전세계",
+        "지역",
+    },
+)
+_V4_SPECIFIC_TIME_PATTERN = re.compile(
+    r"(?:\b20\d{2}\b|\bq[1-4]\b|\d+\s*(?:일|주|개월|달|년|days?|weeks?|months?|years?)|"
+    r"\d{1,2}\s*월|상반기|하반기|올해|내년|다음\s*달|이번\s*달)",
+    re.IGNORECASE,
+)
 
 
 class ModelParameterSemanticEmptyError(MIBaseError):
@@ -138,11 +186,230 @@ def _public_parameter_scope(candidates: list[dict[str, Any]]) -> str | None:
     return "·".join(labels) + suffix
 
 
+def _normalized_context_text(value: Any) -> str | None:
+    text = " ".join(str(value or "").split())
+    if not text or text.casefold() in _V4_UNSPECIFIED_CONTEXT_VALUES:
+        return None
+    return text
+
+
+def _candidate_context_values(
+    candidates: list[dict[str, Any]],
+    *field_names: str,
+) -> list[str]:
+    values: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        sources = [candidate]
+        for collection_name in ("source_dimensions", "lever_provenance"):
+            sources.extend(
+                item
+                for item in candidate.get(collection_name) or []
+                if isinstance(item, dict)
+            )
+        for source in sources:
+            for field_name in field_names:
+                text = _normalized_context_text(source.get(field_name))
+                if text and text not in values:
+                    values.append(text)
+    return values
+
+
+def _has_specific_scope_context(candidates: list[dict[str, Any]]) -> bool:
+    return any(
+        value.casefold() not in _V4_GENERIC_SCOPE_VALUES
+        for value in _candidate_context_values(candidates, "scope", "lever_scope")
+    )
+
+
+def _time_context_status(candidates: list[dict[str, Any]]) -> tuple[bool, bool]:
+    values = _candidate_context_values(
+        candidates,
+        "time_window",
+        "lever_time_window",
+    )
+    return bool(values), any(_V4_SPECIFIC_TIME_PATTERN.search(value) for value in values)
+
+
+def _selectable_slot_catalog_candidate_count(
+    slot_catalog: list[dict[str, Any]],
+) -> int:
+    return sum(
+        1
+        for item in slot_catalog
+        if isinstance(item, dict)
+        and bool(item.get("fixed_axis_hierarchy") or item.get("leaves"))
+    )
+
+
+def _diagnostic_count(
+    diagnostics: dict[str, int],
+    field_name: str,
+) -> int | None:
+    value = diagnostics.get(field_name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _step2_failure_kind(
+    *,
+    slot_catalog: list[dict[str, Any]],
+    diagnostics: dict[str, int],
+) -> V4Step2FailureKind:
+    catalog_count = _diagnostic_count(
+        diagnostics,
+        "catalog_candidate_count",
+    )
+    catalog_observed = catalog_count is not None or bool(slot_catalog)
+    if catalog_count is None:
+        catalog_count = _selectable_slot_catalog_candidate_count(slot_catalog)
+    if catalog_observed and catalog_count == 0:
+        return "catalog_unavailable"
+
+    raw_slot_count = _diagnostic_count(diagnostics, "raw_slot_count")
+    sanitized_slot_count = _diagnostic_count(
+        diagnostics,
+        "sanitized_slot_count",
+    )
+    exact_slot_count = _diagnostic_count(diagnostics, "exact_slot_count")
+    if raw_slot_count == 0:
+        return "selection_empty"
+    if raw_slot_count is not None and sanitized_slot_count == 0:
+        return "selection_invalid"
+    if sanitized_slot_count is not None and sanitized_slot_count > 0 and exact_slot_count == 0:
+        return "exact_mismatch"
+    return "unknown"
+
+
+def _public_fixed_axis_label(axis_name: str) -> str:
+    normalized = axis_name.casefold()
+    if "train" in normalized:
+        return "트레인"
+    if "plant" in normalized or "facility" in normalized or "terminal" in normalized:
+        return "설비"
+    if "country" in normalized:
+        return "국가"
+    if "region" in normalized:
+        return "지역"
+    if "generation" in normalized or "fuel" in normalized:
+        return "발전원"
+    return "세부 대상"
+
+
+def _step2_axis_guidance(
+    slot_catalog: list[dict[str, Any]],
+) -> tuple[str, str]:
+    fixed_axis_labels: list[str] = []
+    time_axis_names: set[str] = set()
+    for item in slot_catalog:
+        if not isinstance(item, dict):
+            continue
+        for axis_name in item.get("fixed_axis_names") or []:
+            label = _public_fixed_axis_label(str(axis_name))
+            if label not in fixed_axis_labels:
+                fixed_axis_labels.append(label)
+        time_axis_names.update(
+            str(axis_name).casefold()
+            for axis_name in item.get("time_axis_names") or []
+        )
+
+    target_hint = "적용 대상"
+    if fixed_axis_labels:
+        target_hint = "·".join(fixed_axis_labels[:3])
+
+    if {"year", "month"} <= time_axis_names:
+        time_hint = "적용 연도·월(또는 시작·종료 기간)"
+    elif "year" in time_axis_names:
+        time_hint = "적용 연도"
+    elif "month" in time_axis_names:
+        time_hint = "적용 월"
+    elif "period" in time_axis_names:
+        time_hint = "적용 기간"
+    else:
+        time_hint = "적용 시점"
+    return target_hint, time_hint
+
+
+def _v4_step2_empty_detail(
+    *,
+    subject: str,
+    candidates: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
+    diagnostics: dict[str, int],
+) -> str:
+    failure_kind = _step2_failure_kind(
+        slot_catalog=slot_catalog,
+        diagnostics=diagnostics,
+    )
+    target_hint, time_hint = _step2_axis_guidance(slot_catalog)
+    if failure_kind == "catalog_unavailable":
+        return (
+            f"{subject} 확인했지만, 현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다. "
+            "모델 기준정보의 대상·기간 범위를 확인해 주세요."
+        )
+    if failure_kind == "selection_invalid":
+        return (
+            f"{subject} 확인했지만, 제안된 위치 정보가 모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다. "
+            "동일한 문제가 계속되면 담당자에게 확인해 주세요."
+        )
+    if failure_kind == "exact_mismatch":
+        return (
+            f"{subject} 확인했지만, 제안된 대상·기간 조합이 현재 등록된 모델 입력 위치와 일치하지 않았습니다. "
+            f"{target_hint}과 {time_hint}이 모델 기준 범위에 포함되는지 확인해 주세요."
+        )
+    if failure_kind == "selection_empty":
+        has_specific_scope = _has_specific_scope_context(candidates)
+        has_time_context, has_specific_time = _time_context_status(candidates)
+        if has_specific_scope and not has_specific_time:
+            known_time = "와 대략적인 기간" if has_time_context else ""
+            return (
+                f"{subject} 확인했고 대상 범위{known_time} 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 "
+                f"적용할 곳을 확정하지 못했습니다. {time_hint}이 명확한지 확인해 주세요."
+            )
+        if has_specific_time and not has_specific_scope:
+            return (
+                f"{subject} 확인했고 적용 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 "
+                f"확정하지 못했습니다. {target_hint}이 명확한지 확인해 주세요."
+            )
+        if has_specific_scope and has_specific_time:
+            return (
+                f"{subject} 확인했고 대상 범위와 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 "
+                f"확정하지 못했습니다. {target_hint}과 {time_hint}이 모델 기준 범위와 맞는지 확인해 주세요."
+            )
+        return (
+            f"{subject} 확인했지만, 등록된 위치 중 자동으로 적용할 곳을 확정하지 못했습니다. "
+            f"{target_hint}과 {time_hint}이 명확한지 확인해 주세요."
+        )
+    return (
+        f"{subject} 확인했지만, 현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다. "
+        f"{target_hint}과 {time_hint}을 확인해 주세요."
+    )
+
+
+def _public_scope_subject(
+    *,
+    parameter_scope: str | None,
+    lever_scope: str | None,
+    parameter_suffix: str,
+    lever_suffix: str,
+    default: str,
+) -> str:
+    if parameter_scope:
+        return f"{parameter_scope}{parameter_suffix}"
+    if lever_scope:
+        return f"{lever_scope}{lever_suffix}"
+    return default
+
+
 def _v4_semantic_empty_detail(
     *,
     stage: V4SemanticEmptyStage,
     candidates: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
+    slot_selection_diagnostics: dict[str, int],
 ) -> tuple[str, str]:
     lever_scope = _public_lever_scope(candidates or non_input_items)
     parameter_scope = _public_parameter_scope(candidates)
@@ -160,34 +427,42 @@ def _v4_semantic_empty_detail(
             "이벤트와 시나리오 분기값을 확인했지만, 현재 활성화된 수급모델 파라미터와 연결되는 변경 항목이 없습니다.",
         )
     if stage == "step1_5":
-        if parameter_scope:
-            subject = f"{parameter_scope} 파라미터 후보는"
-        elif lever_scope:
-            subject = f"{lever_scope} 관련 파라미터 후보는"
-        else:
-            subject = "수급모델 파라미터 후보는"
+        subject = _public_scope_subject(
+            parameter_scope=parameter_scope,
+            lever_scope=lever_scope,
+            parameter_suffix=" 파라미터 후보는",
+            lever_suffix=" 관련 파라미터 후보는",
+            default="수급모델 파라미터 후보는",
+        )
         return (
             V4_NO_CHANGE_TITLE,
             f"{subject} 확인했지만, 시나리오·이벤트 근거와 파라미터 적용 조건을 함께 "
             "충족하는 항목을 확정하지 못했습니다.",
         )
     if stage == "step2":
-        if parameter_scope:
-            subject = f"{parameter_scope} 파라미터는"
-        elif lever_scope:
-            subject = f"{lever_scope} 관련 파라미터는"
-        else:
-            subject = "관련 파라미터는"
+        subject = _public_scope_subject(
+            parameter_scope=parameter_scope,
+            lever_scope=lever_scope,
+            parameter_suffix=" 파라미터 후보는",
+            lever_suffix=" 관련 파라미터 후보는",
+            default="관련 파라미터 후보는",
+        )
         return (
             V4_NO_MODEL_INPUT_TITLE,
-            f"{subject} 확인했지만, 해당 대상과 적용 기간에 대응하는 모델 입력 위치가 없습니다.",
+            _v4_step2_empty_detail(
+                subject=subject,
+                candidates=candidates,
+                slot_catalog=slot_catalog,
+                diagnostics=slot_selection_diagnostics,
+            ),
         )
-    if parameter_scope:
-        subject = f"{parameter_scope} 파라미터와"
-    elif lever_scope:
-        subject = f"{lever_scope} 관련 파라미터와"
-    else:
-        subject = "관련 파라미터와"
+    subject = _public_scope_subject(
+        parameter_scope=parameter_scope,
+        lever_scope=lever_scope,
+        parameter_suffix=" 파라미터와",
+        lever_suffix=" 관련 파라미터와",
+        default="관련 파라미터와",
+    )
     return (
         V4_NO_PARAMETER_VALUE_TITLE,
         f"{subject} 모델 입력 위치는 확인했지만, 시나리오·이벤트 근거와 기준값에 부합하는 "
@@ -201,6 +476,8 @@ def _raise_v4_semantic_empty_if_applicable(
     scenario_context: dict[str, Any] | None,
     candidates: list[dict[str, Any]] | None = None,
     non_input_items: list[dict[str, Any]] | None = None,
+    slot_catalog: list[dict[str, Any]] | None = None,
+    slot_selection_diagnostics: dict[str, int] | None = None,
 ) -> None:
     if not _is_v4_scenario_context(scenario_context):
         return
@@ -217,6 +494,8 @@ def _raise_v4_semantic_empty_if_applicable(
         stage=stage,
         candidates=candidates or [],
         non_input_items=non_input_items or [],
+        slot_catalog=slot_catalog or [],
+        slot_selection_diagnostics=slot_selection_diagnostics or {},
     )
     raise ModelParameterSemanticEmptyError(title=title, detail=detail)
 
@@ -291,6 +570,8 @@ def _raise_no_proposal_parameters(
         scenario_context=_scenario_context_from_state(data),
         candidates=data.get("slot_candidate_mappings") or data.get("candidate_mappings") or [],
         non_input_items=data.get("non_input_items") or [],
+        slot_catalog=data.get("slot_catalog") or [],
+        slot_selection_diagnostics=data.get("slot_selection_diagnostics") or {},
     )
     scenario_id = _scenario_id_from_state(data)
     detail = f"No valid model parameter proposal parameters generated for scenario_id={scenario_id}"

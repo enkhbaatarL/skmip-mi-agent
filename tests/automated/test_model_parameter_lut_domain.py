@@ -1008,6 +1008,16 @@ def test_liq_metadata_uses_basecase_non_time_axes_before_lut_metadata(
     effective = resolve_effective_reference("liq", target_axes, basecase_index, catalog)
 
     assert slot_catalog.contains("liq", target_axes)
+    candidate_catalog = slot_catalog.for_candidate("liq")
+    assert candidate_catalog is not None
+    target_leaf = next(
+        leaf
+        for leaf in candidate_catalog.leaves
+        if all(leaf.axes[axis_name] == target_axes[axis_name] for axis_name in candidate_catalog.non_time_axes)
+    )
+    assert target_leaf.applicability_attributes == {
+        "Life Cycle Category": ("Under Construction",),
+    }
     assert effective is not None
     assert effective.actual_basecase_value is None
     assert effective.lut_default_value == lut_record.value

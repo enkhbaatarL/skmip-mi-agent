@@ -1,5 +1,8 @@
 # Basecase와 LUT를 읽고 사용하는 방법
 
+> 현재 핵심 Skill은 v4 multi-event proposal에 사용되는 Basecase/LUT와 Impact Lever binding만
+> release 대상으로 판정한다. legacy mapping 수치는 비변경 증적일 뿐 v4 resource 선택 기준이 아니다.
+
 ## 1. 기준 범위
 
 체크인 v4 canonical 기준선은 master 21행 중 활성 16개이며, resource capability는 LUT-backed 10개와
@@ -95,7 +98,10 @@ Basecase slot을 모두 강제하는 것은 아니다. 현재 runtime proposal a
 7. Basecase-only parameter는 Basecase가 없으면 slot을 제외한다.
 8. Basecase와 LUT가 모두 없으면 그 slot은 제외한다.
 
-Step2에는 값·source·원본 record를 보내지 않는다. 동일 기간을 period_groups로 묶고 Country→Plant→Train 고정축을 fixed_axis_hierarchy로 중첩한다. Step3에는 exact 검증된 slot의 좌표와 단일 effective reference만 전달한다.
+Step2에는 값·source·원본 record를 보내지 않는다. 동일 기간을 period_groups로 묶고
+Country→Plant→Train 고정축을 fixed_axis_hierarchy로 중첩한다. v4에는 상위 branch 과확장을 막기 위해
+non-time leaf별 `Life Cycle Category`만 판단 전용 `applicability_attributes`로 추가하며 v1/v3와 반환
+`slot_axes`에는 넣지 않는다. Step3에는 exact 검증된 slot의 좌표와 단일 effective reference만 전달한다.
 
 ## 7. 검증 규칙
 

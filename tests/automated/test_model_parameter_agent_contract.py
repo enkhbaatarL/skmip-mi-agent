@@ -4487,6 +4487,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_slots(state)
 
         assert result["parameter_slots"][0]["candidate_key"] == "c1"
+        assert result["slot_selection_diagnostics"] == {
+            "catalog_candidate_count": 1,
+            "raw_slot_count": 1,
+            "sanitized_slot_count": 1,
+        }
         assert "rationale_ko" not in result["parameter_slots"][0]
         assert "rationale_ko" not in LLMSlotProposal.model_json_schema()["properties"]
         assert captured_contents
@@ -4766,6 +4771,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "model_sheet": "LiqUtilAdjustment",
             "parameter_name": "LiqUtilAdjustment",
             "canonical_parameter_name": "LiqUtilAdjustment",
+            "scope": "Freeport LNG",
+            "time_window": "단기",
         }
         production_candidate = {
             **utilization_candidate,
@@ -4785,7 +4792,38 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "events": [{"mi_event_id": 101}],
             },
             candidate_mappings=[utilization_candidate, production_candidate],
+            slot_catalog=[
+                {
+                    "candidate_key": "candidate_key-internal",
+                    "fixed_axis_names": [
+                        "Country",
+                        "LNG Plant",
+                        "LNG Plant Train",
+                    ],
+                    "time_axis_names": ["Year", "Month"],
+                    "fixed_axis_hierarchy": [
+                        {
+                            "axis_value": "United States",
+                            "period_group_id": "period-group-1",
+                        },
+                    ],
+                    "period_groups": [
+                        {
+                            "period_group_id": "period-group-1",
+                            "available_periods": [
+                                {"Year": 2026, "Months": [1]},
+                            ],
+                        },
+                    ],
+                },
+            ],
             parameter_slots=[],
+            slot_selection_diagnostics={
+                "catalog_candidate_count": 1,
+                "raw_slot_count": 0,
+                "sanitized_slot_count": 0,
+                "exact_slot_count": 0,
+            },
         )
 
         with self.assertRaises(MIBaseError) as error:
@@ -4796,7 +4834,142 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
         assert "액화설비 가동률과 생산량 파라미터" in error.exception.error_message
-        assert "대상과 적용 기간" in error.exception.error_message
+        assert "대상 범위와 대략적인 기간 정보도 확인" in error.exception.error_message
+        assert "적용 연도·월" in error.exception.error_message
+        assert "명확한지 확인해 주세요" in error.exception.error_message
+        assert "구체적이지 않아" not in error.exception.error_message
+
+    def test_v4_step2_empty_slots_explain_missing_catalog_positions(self) -> None:
+        candidate = {
+            "candidate_key": "internal-candidate",
+            "mapping_strategy": "v4",
+            "parameter_name": "Temperature",
+            "canonical_parameter_name": "Temperature",
+        }
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario_group": {
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+            },
+            candidate_mappings=[candidate],
+            slot_selection_diagnostics={
+                "catalog_candidate_count": 0,
+                "raw_slot_count": 0,
+                "sanitized_slot_count": 0,
+                "exact_slot_count": 0,
+            },
+        )
+
+        with self.assertRaises(MIBaseError) as error:
+            finalize_empty_parameter_values(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_MODEL_INPUT_TITLE,
+        )
+        assert "현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다" in (
+            error.exception.error_message
+        )
+        assert "모델 기준정보의 대상·기간 범위" in error.exception.error_message
+
+    def test_v4_step2_empty_slots_explain_invalid_proposed_location_shape(self) -> None:
+        candidate = {
+            "candidate_key": "internal-candidate",
+            "mapping_strategy": "v4",
+            "parameter_name": "GDP",
+            "canonical_parameter_name": "GDP",
+        }
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario_group": {
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+            },
+            candidate_mappings=[candidate],
+            slot_catalog=[
+                {
+                    "fixed_axis_names": ["Country"],
+                    "time_axis_names": ["Year"],
+                    "fixed_axis_hierarchy": [
+                        {
+                            "axis_value": "Japan",
+                            "period_group_id": "period-group-1",
+                        },
+                    ],
+                },
+            ],
+            slot_selection_diagnostics={
+                "catalog_candidate_count": 1,
+                "raw_slot_count": 1,
+                "sanitized_slot_count": 0,
+                "exact_slot_count": 0,
+            },
+        )
+
+        with self.assertRaises(MIBaseError) as error:
+            finalize_empty_parameter_values(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_MODEL_INPUT_TITLE,
+        )
+        assert "모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다" in error.exception.error_message
+        assert "담당자에게 확인" in error.exception.error_message
+
+    def test_v4_step2_empty_slots_explain_exact_location_mismatch(self) -> None:
+        candidate = {
+            "candidate_key": "internal-candidate",
+            "mapping_strategy": "v4",
+            "parameter_name": "LiqUtilAdjustment",
+            "canonical_parameter_name": "LiqUtilAdjustment",
+        }
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario_group": {
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+            },
+            candidate_mappings=[candidate],
+            slot_catalog=[
+                {
+                    "fixed_axis_names": [
+                        "Country",
+                        "LNG Plant",
+                        "LNG Plant Train",
+                    ],
+                    "time_axis_names": ["Year", "Month"],
+                    "fixed_axis_hierarchy": [
+                        {
+                            "axis_value": "United States",
+                            "period_group_id": "period-group-1",
+                        },
+                    ],
+                },
+            ],
+            slot_selection_diagnostics={
+                "catalog_candidate_count": 1,
+                "raw_slot_count": 1,
+                "sanitized_slot_count": 1,
+                "exact_slot_count": 0,
+                "rejected_exact_slot_count": 1,
+            },
+        )
+
+        with self.assertRaises(MIBaseError) as error:
+            finalize_empty_parameter_values(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_MODEL_INPUT_TITLE,
+        )
+        assert "제안된 대상·기간 조합" in error.exception.error_message
+        assert "현재 등록된 모델 입력 위치와 일치하지 않았습니다" in error.exception.error_message
+        assert "국가·설비·트레인" in error.exception.error_message
+        assert "적용 연도·월" in error.exception.error_message
 
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:
         candidate = {
@@ -5581,13 +5754,44 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     },
                     "events": [{"mi_event_id": 101}],
                 },
-                candidates=[{"lever_label": "액화시설 가용성"}],
+                candidates=[
+                    {
+                        "lever_label": "액화시설 가용성",
+                        "parameter_name": "LiqUtilAdjustment",
+                        "scope": "Freeport LNG",
+                        "time_window": "단기",
+                    },
+                ],
+                slot_catalog=[
+                    {
+                        "fixed_axis_names": [
+                            "Country",
+                            "LNG Plant",
+                            "LNG Plant Train",
+                        ],
+                        "time_axis_names": ["Year", "Month"],
+                        "fixed_axis_hierarchy": [
+                            {
+                                "axis_value": "United States",
+                                "period_group_id": "period-group-1",
+                            },
+                        ],
+                    },
+                ],
+                slot_selection_diagnostics={
+                    "catalog_candidate_count": 1,
+                    "raw_slot_count": 0,
+                    "sanitized_slot_count": 0,
+                    "exact_slot_count": 0,
+                },
             )
         semantic_error = caught.value
         _assert_v4_semantic_empty_error(
             semantic_error,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
+        assert "대상 범위와 대략적인 기간 정보도 확인" in semantic_error.error_message
+        assert "적용 연도·월" in semantic_error.error_message
 
         class FakeGraph:
             async def ainvoke(self, state: ModelParameterProposalState, **kwargs: object) -> dict[str, object]:
