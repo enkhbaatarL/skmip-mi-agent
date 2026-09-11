@@ -56,6 +56,7 @@ class ScenarioGroupPresentationData(ScenarioGroupDetailData):
     operation: ScenarioGroupOperationPayload | None
     lever_labels: dict[str, str]
     legacy_template_dimensions: list[dict[str, Any]]
+    current_template_dimensions: list[dict[str, Any]]
 
 
 def _normalize_probability_scores_to_100(
@@ -932,6 +933,7 @@ class ScenarioGroupService:
                 ModelImpactLeverService().load_display_labels() if str(group.get("api_version") or "v1") == "v4" else {}
             ),
             "legacy_template_dimensions": self._load_trusted_legacy_template_dimensions(group),
+            "current_template_dimensions": self._load_current_template_dimensions(group),
         }
 
     @staticmethod
@@ -949,6 +951,19 @@ class ScenarioGroupService:
         if str(template.get("template_checksum") or "") != stored_checksum:
             return []
         return [item for item in template.get("template_json") or [] if isinstance(item, dict)]
+
+    @staticmethod
+    def _load_current_template_dimensions(group: dict[str, Any]) -> list[dict[str, Any]]:
+        if str(group.get("api_version") or "v1") != "v1":
+            return []
+        event_type_l2_id = group.get("event_type_l2_id")
+        if event_type_l2_id is None:
+            return []
+        try:
+            template_json = ScenarioService()._load_template_json_from_db(int(event_type_l2_id))
+        except (KeyError, ValueError):
+            return []
+        return [item for item in template_json if isinstance(item, dict)]
 
     def approve_dimension_mappings(
         self,

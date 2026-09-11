@@ -394,6 +394,7 @@ def build_scenario_group_presentation(
     operation: ScenarioGroupOperationPayload | None,
     lever_labels: dict[str, str] | None = None,
     legacy_template_dimensions: list[dict[str, Any]] | None = None,
+    current_template_dimensions: list[dict[str, Any]] | None = None,
 ) -> ScenarioGroupPresentationOut:
     """Build the screen read model only from committed, validated data."""
     del signposts  # Presentation v1 does not render Signposts.
@@ -440,6 +441,7 @@ def build_scenario_group_presentation(
             group=group,
             scenarios=scenarios,
             trusted_template_dimensions=legacy_template_dimensions or [],
+            current_template_dimensions=current_template_dimensions or [],
         )
         if any(definition.source == "legacy_observed" for definition in definitions):
             warnings.append("Dimension 정의를 저장된 Scenario 관찰값에서 제한적으로 복원했습니다.")
@@ -657,11 +659,20 @@ def _v4_value_description(raw_states: Any) -> str | None:
     return " ".join(sentences) or None
 
 
+def _current_legacy_template_labels(current_template_dimensions: list[dict[str, Any]]) -> dict[str, str]:
+    return {
+        str(_field(item, "dim_key")): str(_field(item, "label") or _field(item, "dim_key"))
+        for item in current_template_dimensions
+        if isinstance(item, dict) and _field(item, "dim_key") and _field(item, "label")
+    }
+
+
 def _legacy_dimension_definitions(
     *,
     group: dict[str, Any],
     scenarios: list[dict[str, Any]],
     trusted_template_dimensions: list[dict[str, Any]],
+    current_template_dimensions: list[dict[str, Any]],
 ) -> list[PresentationDimensionDefinition]:
     selected = [str(item) for item in group.get("dimension_selected") or []]
     observed_by_key: dict[str, list[str]] = defaultdict(list)
@@ -677,6 +688,7 @@ def _legacy_dimension_definitions(
         for item in trusted_template_dimensions
         if isinstance(item, dict) and _field(item, "dim_key")
     }
+    current_labels_by_key = _current_legacy_template_labels(current_template_dimensions)
     definitions: list[PresentationDimensionDefinition] = []
     for key in selected:
         template = template_by_key.get(key)
@@ -704,8 +716,8 @@ def _legacy_dimension_definitions(
         definitions.append(
             PresentationDimensionDefinition(
                 dimension_id=key,
-                label=key,
-                source="legacy_observed",
+                label=current_labels_by_key.get(key, key),
+                source=("legacy_template_current_label" if key in current_labels_by_key else "legacy_observed"),
                 values=[
                     PresentationDimensionValue(value_id=value, label=value) for value in observed_by_key.get(key, [])
                 ],
