@@ -3,11 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from apps.agents.model_parameter_agent.utils.lut.registry import ParameterSpecRegistry
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
+
+
+if TYPE_CHECKING:
+    from apps.agents.model_parameter_agent.utils.workbook_contract import (
+        ModelParameterWorkbookContract,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +28,8 @@ class ModelParameterResourcePaths:
     resource_config_fingerprint: str | None = None
     resource_fingerprint: str | None = None
     fallback_reason: str | None = None
+    workbook_contract_path: Path | None = None
+    workbook_contract: ModelParameterWorkbookContract | None = None
 
 
 _RUNTIME_LOCK = threading.Lock()
@@ -49,6 +57,12 @@ def register_model_parameter_resource_paths(paths: ModelParameterResourcePaths) 
         resource_config_fingerprint=paths.resource_config_fingerprint,
         resource_fingerprint=paths.resource_fingerprint,
         fallback_reason=paths.fallback_reason,
+        workbook_contract_path=(
+            paths.workbook_contract_path.resolve(strict=True)
+            if paths.workbook_contract_path is not None
+            else None
+        ),
+        workbook_contract=paths.workbook_contract,
     )
     with _RUNTIME_LOCK:
         if _ACTIVE_RESOURCE_PATHS is not None and resolved != _ACTIVE_RESOURCE_PATHS:

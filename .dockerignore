@@ -1,0 +1,2 @@
+# Incoming Model Parameter resources are user-owned staging, never image input.
+apps/agents/model_parameter_agent/new_resources/

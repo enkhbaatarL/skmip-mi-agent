@@ -1,6 +1,8 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
-# ruff: noqa: ASYNC240, S101, S106
+# ruff: noqa: ASYNC240, S101, S105, S106
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -57,6 +59,7 @@ ENABLED_LUT_PARAMETERS = {
     "SupplyDisruption",
 }
 DISABLED_LUT_PARAMETERS = {"Coal Futures Price", "Gas Futures Price"}
+STAGING_RESOURCE_PATH = "apps/agents/model_parameter_agent/new_resources/"
 
 
 def _manifest_document() -> dict[str, object]:
@@ -116,6 +119,12 @@ def test_integrated_manifest_declares_expected_resources() -> None:
         get_settings().model_parameter_resources,
         source_path=CONFIG_FILE_PATH,
     )
+    assert integrated.schema_version == 3
+    assert integrated.workbook_contract.release_id == "new-bc-v1"
+    assert integrated.workbook_contract.public_api_unchanged is True
+    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v1.json"
+    assert len(integrated.workbook_contract_schema_hash) == 64
+    assert len(integrated.semantic_schema_hash) == 64
     assert set(integrated.basecase_files) == {"demand", "supply", "trade"}
     assert {role: resource.object_storage_path for role, resource in integrated.basecase_files.items()} == {
         "demand": "fundamental_model_artifact/input_template/복호화_(Base) Demand Model_Input.xlsm",
@@ -142,6 +151,22 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
         "model_parameter_max_step3_prompt_bytes",
     ):
         assert embedded_config[setting_name] == getattr(get_settings(), setting_name)
+
+
+@pytest.mark.parametrize("dockerfile_name", ["Dockerfile", "Dockerfile.model_param"])
+def test_docker_build_context_excludes_incoming_staging(dockerfile_name: str) -> None:
+    repository_root = CONFIG_FILE_PATH.parents[1]
+    dockerfile_specific_ignore = repository_root / f"{dockerfile_name}.dockerignore"
+    effective_ignore = (
+        dockerfile_specific_ignore if dockerfile_specific_ignore.is_file() else repository_root / ".dockerignore"
+    )
+    patterns = {
+        line.strip()
+        for line in effective_ignore.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert STAGING_RESOURCE_PATH in patterns
 
 
 def test_every_packaged_lut_csv_has_exactly_one_active_pending_or_reference_class() -> None:
@@ -276,9 +301,38 @@ def test_storage_disabled_requires_no_network_or_writable_runtime(tmp_path: Path
         assert paths.source == "packaged"
         assert paths.basecase_dir.is_dir()
         assert paths.lut_root.is_dir()
+        assert paths.workbook_contract == manifest.workbook_contract
+        assert paths.workbook_contract_path == manifest.workbook_contract_path
 
     asyncio.run(exercise())
     assert not local_root.exists()
+
+
+def test_resource_startup_rejects_horizon_outside_workbook_contract(
+    tmp_path: Path,
+) -> None:
+    storage = SimpleNamespace(
+        enabled=False,
+        local_root=str(tmp_path / "must-not-be-created"),
+    )
+    manifest = load_model_parameter_resource_manifest(
+        get_settings().model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
+
+    async def exercise() -> None:
+        with pytest.raises(
+            MIBaseError,
+            match="LUT horizon must match the new-bc-v1 workbook contract",
+        ):
+            await resolve_model_parameter_resources(
+                storage,
+                manifest=manifest,
+                lut_enabled=True,
+                lut_policy=ReferenceLoadPolicy(start_year=2027, end_year=2030),
+            )
+
+    asyncio.run(exercise())
 
 
 def test_storage_disabled_runtime_uses_packaged_without_local_root(tmp_path: Path) -> None:

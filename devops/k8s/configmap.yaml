@@ -122,6 +122,9 @@ data:
           path: Trade Model_Input.xlsm
           object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
+      workbook_contract:
+        path: contracts/model-parameter-workbook-contract-v1.json
+
       lut:
         Coal Futures Price:
           enabled: false

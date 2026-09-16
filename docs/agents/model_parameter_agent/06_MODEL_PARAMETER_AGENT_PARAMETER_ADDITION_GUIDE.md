@@ -11,6 +11,9 @@
 - v4 Lever 16개, binding occurrence 20개, effective executable occurrence 18개, 전역 고유 활성 raw parameter 16개
 - legacy dimension mapping 129행은 v4가 읽거나 변경하지 않는 보호 대상 invariant다.
 - 신규 proposal runtime allow-list 5개: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment
+- 이 5개의 v4 `multi_event_model_lever_dimensions` 기준값은 `read_only_proposal` contract
+  `model-parameter-workbook-contract-v1.json`과 `resources/basecase_v4/new-bc-v1/`을 사용한다. v1/v3는 기존
+  `resources/basecase/`를 유지한다.
 - source matching 뒤 Step1.5·Step2·Step3 LLM과 proposal persistence 전에 allow-list gate를 적용한다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
 - DB에 적용할 canonical 목표값은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, 사람이 읽는 표는 `resources/Model_Parameter_Base_Case_Mapping.md`를 따른다.
@@ -32,6 +35,8 @@
 5. 신규 proposal을 허용할 parameter인지 별도 승인하고 runtime allow-list 변경 범위와 회귀 테스트를 확정한다.
 6. 동일 Lever의 primary/alternative가 raw 후보가 되는 것이 의도인지 확인한다. allow-list gate를 통과한 후보 안에서만 Step1.5가 applicability와 Scenario/Event/Lever 맥락으로 primary, alternative 또는 양쪽을 선택할 수 있다.
 7. 대규모 시설 catalog가 slot·prompt byte 상한 안에 들어오는지 측정한다.
+8. v4 workbook contract 대상이면 authoritative source와 write target을 분리하고, digest·sheet·header·range,
+   expected record 수, exact-key 오류 차단, fallback·evidence·atomic 정책을 함께 확정한다.
 
 자료가 부족하면 master `use_yn=N`, binding 미등록 또는 LUT `enabled=false`로 두며 과거값을 임의 이월하지 않는다. Basecase-only는 검증된 exact Basecase slot이 없으면 executable하지 않다.
 
@@ -62,7 +67,7 @@ workbook은 다음 명령으로 v4 canonical·config·archive와 보호 대상 l
 
     poetry run python scripts/model_parameter/sync_mapping_workbook.py --check-only
 
-## 4. LUT와 resource manifest 변경
+## 4. LUT와 v4 workbook resource 변경
 
 `apps/agents/model_parameter_agent/new_resources/`는 신규 Basecase/LUT를 받는 staging 경로다. 현재처럼
 `new_resources/lut/`가 없거나 LUT가 아직 들어오지 않은 상태는 정상이다. runtime과 manifest는 이 경로를
@@ -81,7 +86,35 @@ envs/config.yaml과 devops/k8s/configmap.yaml을 같이 수정한다.
 
 adapter는 필수 header, horizon, 숫자 형식, 빈 값, exact-key 충돌, join 누락, 시설 상태와 정밀도 정책을 검증해야 한다. 모든 packaged CSV가 활성·보류·reference 중 하나로 분류되어야 한다.
 
-runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다. v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. Basecase 누락·파싱 오류·0건은 현재 runtime 정책에 따라 warning으로 남기며, 활성 16개 capability 전체는 자동화·release acceptance에서 별도로 검증한다.
+runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다.
+v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. 기존 v1/v3 Basecase
+preload의 누락·파싱 오류·0건은 warning으로 남기며, 활성 16개 capability 전체는 자동화·release
+acceptance에서 별도로 검증한다. v4 `new-bc-v1` startup은 contract schema/path와 contract에 고정된
+Workbook path/digest만 경량 검증한다. sheet·header·range·변환·고정 record count는 최초 exact v4 materialization에서
+fail closed하고 성공 결과를 process cache한다.
+
+### `new-bc-v1` 계약을 변경하거나 확장할 때
+
+현재 다섯 allow-list Parameter의 v4-only reference는
+`resources/contracts/model-parameter-workbook-contract-v1.json`과
+`resources/basecase_v4/new-bc-v1/`에 versioned release로 둔다. 기존 `resources/basecase/` 파일을 덮어쓰거나
+`new_resources/`를 runtime path로 연결하지 않는다.
+
+- 계약 capability는 writer/engine 승인 전까지 `read_only_proposal`로 유지한다.
+- authoritative source와 기존 DB write target, key/metadata axes, 단위·absolute-value 의미를 분리해 선언한다.
+- 신규 source가 정상적으로 없는 exact key에만 기존 LUT fallback을 허용한다. non-finite·cached error·상충
+  duplicate key는 명시적으로 차단해 LUT로 복구하지 않는다.
+- PowerMix는 authoritative raw source fraction의 원본 정밀도를 보존하고 재정규화하지 않는다. Country/Year별
+  승인된 10-member 완전성·중복·유한성·0~1·합 1로 atomic 검증하며, Basecase/LUT 결합 effective vector와
+  Step3 proposed vector에도 합 1과 `1e-6` 허용오차를 다시 적용한다.
+- LiqUtilAdjustment는 한 Lever provenance 안에서 exact Plant와 exact Train 둘 모두, slot과 일치하는
+  Year/Month, Group에 실제로 연결된 source Event와 직접 운영 근거가 있어야 하며, 음수만 차단하고
+  1 초과값을 보존한다. lifecycle 공란은 exact record를 제외하지 않고 metadata/applicability에서만 생략한다.
+- contract schema/hash 또는 workbook digest가 달라지면 같은 release ID를 재사용하지 않고 version을 올린다.
+
+현재 고정 source 회귀 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
+LiqUtilAdjustment 23,820이다. 변경 release에서는 새 digest와 실제 count를 함께 검토하되, count를 맞추기 위해
+invalid key를 임의 보간하거나 nearest/fuzzy fallback하지 않는다.
 
 ## 5. LiqProdAdjustment 적용 사례
 
@@ -140,7 +173,7 @@ resource release에서 준비된 LUT record는 서버 cache/index에 보관한�
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
-proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
+proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
 
 ## 8. 완료 판정
 
@@ -149,9 +182,11 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 3. 체크인 기준선의 master 21행·활성 16개와 Lever 16개·binding 20/18/16을 확인하고, DB 적용 작업이면 같은 값과 hydrated checksum을 read-back한다.
 4. v4 canonical JSON·SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
 5. resource capability 기준으로 LUT-backed 10개의 selectable LUT slot과 Basecase-only 6개의 검증된 exact Basecase slot을 확인한다. 별도로 신규 proposal 결과는 GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment 5개만 허용하고 나머지 활성 11개는 `PROPOSAL_SCOPE_EXCLUDED`, 비활성 5개는 후보 없음으로 검증한다.
-6. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
-7. 실제 리포트에 parameter, candidate, slot, effective reference, proposal, token, 시간·retry와 confirmation ID를 남긴다.
+6. v4 `new-bc-v1` contract의 세 workbook digest·header와 815/5,040/4,200/5,040/23,820 record를 확인하고,
+   invalid exact-key LUT 차단, PowerMix atomic vector와 LiqUtil evidence/1 초과 보존 회귀를 통과한다.
+7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
+8. 실제 리포트에 parameter, candidate, slot, effective reference, proposal, token, 시간·retry와 confirmation ID를 남긴다.
 
-검증 전후 DB/config/canonical/workbook fingerprint가 같아야 하며, runtime proposal 제한 때문에 이 산출물을 갱신하지 않는다.
+검증 전후 DB·canonical·catalog와 기존 v1/v3 Basecase·업무용 mapping workbook fingerprint가 같아야 한다. 별도로 추가한 v4 contract/config path와 `new-bc-v1` workbook은 선언된 digest·header·record count와 일치해야 한다.
 
 catalog checksum이 바뀌면 master와 Lever catalog를 원자적으로 적용한 뒤 신규 v4 Scenario를 생성한다. 기존 v4 Scenario를 새 catalog로 조용히 재해석하지 않는다. Coal/Gas Futures는 실제 2026년 이후 strip이 제공될 때, ElectrificationRate는 국가·연·Drive Train LUT와 승인 binding·capability가 준비될 때 같은 절차로 활성화한다.

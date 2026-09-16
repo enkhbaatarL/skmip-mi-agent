@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Literal, NoReturn
 
 from apps.agents.model_parameter_agent.flows.propose_parameters.state import ModelParameterProposalState
@@ -9,6 +8,10 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     is_proposal_parameter_allowed,
     match_v4_parameter_candidates_from_rows,
     partition_proposal_parameter_candidates,
+)
+from apps.agents.model_parameter_agent.utils.proposal_policy import (
+    has_specific_time_evidence,
+    is_v4_contract_context,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -51,6 +54,7 @@ V4Step2FailureKind = Literal[
     "selection_empty",
     "selection_invalid",
     "exact_mismatch",
+    "policy_excluded",
     "unknown",
 ]
 
@@ -88,13 +92,6 @@ _V4_GENERIC_SCOPE_VALUES = frozenset(
         "지역",
     },
 )
-_V4_SPECIFIC_TIME_PATTERN = re.compile(
-    r"(?:\b20\d{2}\b|\bq[1-4]\b|\d+\s*(?:일|주|개월|달|년|days?|weeks?|months?|years?)|"
-    r"\d{1,2}\s*월|상반기|하반기|올해|내년|다음\s*달|이번\s*달)",
-    re.IGNORECASE,
-)
-
-
 class ModelParameterSemanticEmptyError(MIBaseError):
     """V4의 의미상 빈 결과를 현업용 두 줄 메시지로 전달합니다."""
 
@@ -120,8 +117,7 @@ def _scenario_context_from_state(
 
 
 def _is_v4_scenario_context(scenario_context: dict[str, Any] | None) -> bool:
-    scenario_group = (scenario_context or {}).get("scenario_group") or {}
-    return str(scenario_group.get("generation_strategy") or "") == V4_GENERATION_STRATEGY
+    return is_v4_contract_context(scenario_context)
 
 
 def _public_lever_scope(items: list[dict[str, Any]]) -> str | None:
@@ -229,7 +225,7 @@ def _time_context_status(candidates: list[dict[str, Any]]) -> tuple[bool, bool]:
         "time_window",
         "lever_time_window",
     )
-    return bool(values), any(_V4_SPECIFIC_TIME_PATTERN.search(value) for value in values)
+    return bool(values), any(has_specific_time_evidence(value) for value in values)
 
 
 def _selectable_slot_catalog_candidate_count(
@@ -278,6 +274,18 @@ def _step2_failure_kind(
         return "selection_empty"
     if raw_slot_count is not None and sanitized_slot_count == 0:
         return "selection_invalid"
+    policy_excluded_slot_count = _diagnostic_count(
+        diagnostics,
+        "policy_excluded_slot_count",
+    )
+    if (
+        sanitized_slot_count is not None
+        and sanitized_slot_count > 0
+        and exact_slot_count == 0
+        and policy_excluded_slot_count is not None
+        and policy_excluded_slot_count > 0
+    ):
+        return "policy_excluded"
     if sanitized_slot_count is not None and sanitized_slot_count > 0 and exact_slot_count == 0:
         return "exact_mismatch"
     return "unknown"
@@ -353,6 +361,11 @@ def _v4_step2_empty_detail(
         return (
             f"{subject} 확인했지만, 제안된 위치 정보가 모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다. "
             "동일한 문제가 계속되면 담당자에게 확인해 주세요."
+        )
+    if failure_kind == "policy_excluded":
+        return (
+            f"{subject} 확인했지만, 현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다. "
+            f"{target_hint}과 {time_hint}을 확인해 주세요."
         )
     if failure_kind == "exact_mismatch":
         return (
@@ -644,7 +657,7 @@ def _has_mapping_candidates_from_db_rows(  # noqa: C901
     parameter_definitions = resources.get("parameter_definitions") or []
     scenario_group = scenario_context.get("scenario_group") or {}
     strategy = str(scenario_group.get("generation_strategy") or "")
-    if strategy == V4_GENERATION_STRATEGY:
+    if _is_v4_scenario_context(scenario_context):
         if not parameter_definitions:
             raise MIBaseError(
                 ErrorCode.INVALID_REQUEST,
@@ -656,6 +669,11 @@ def _has_mapping_candidates_from_db_rows(  # noqa: C901
         )
         candidates, _ = partition_proposal_parameter_candidates(candidates)
         return bool(candidates)
+    if strategy == V4_GENERATION_STRATEGY:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="multi_event_model_lever_dimensions requires scenario_group.api_version=v4",
+        )
     if not mapping_rules or not parameter_definitions:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
@@ -720,7 +738,7 @@ def _ensure_context_has_mapping_candidates(
     scenario_group = scenario_context.get("scenario_group") or {}
     strategy = str(scenario_group.get("generation_strategy") or "")
     preflight_non_inputs: list[dict[str, Any]] = []
-    if strategy == V4_GENERATION_STRATEGY:
+    if _is_v4_scenario_context(scenario_context):
         resources = scenario_context.get("parameter_mapping_resources") or {}
         parameter_definitions = resources.get("parameter_definitions") or []
         if not parameter_definitions:
@@ -737,6 +755,11 @@ def _ensure_context_has_mapping_candidates(
         )
         preflight_non_inputs = [*preflight_non_inputs, *scope_exclusions]
         has_candidates = bool(candidates)
+    elif strategy == V4_GENERATION_STRATEGY:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="multi_event_model_lever_dimensions requires scenario_group.api_version=v4",
+        )
     else:
         has_candidates = _has_mapping_candidates_from_db_rows(
             scenario_context=scenario_context,

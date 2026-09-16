@@ -83,6 +83,7 @@ backoffice/frontend/*.tsbuildinfo
 backoffice/frontend/vite.config.js
 backoffice/frontend/vite.config.d.ts
 apps/agents/model_parameter_agent/reports/
+apps/agents/model_parameter_agent/new_resources/
 tests/reports/
 release-artifacts/
 skmip-mi-agent_*_linux-amd64.tar.gz

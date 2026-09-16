@@ -476,6 +476,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
     scenario = SimpleNamespace(scenario_id=501, scenario_group_id=701)
     group = SimpleNamespace(
         scenario_group_id=701,
+        api_version="v4",
         generation_strategy=V4_STRATEGY,
     )
     parameter_definitions = [
@@ -1134,6 +1135,7 @@ def test_v4_proposal_persistence_and_presentation_keep_event_id_null() -> None:
         "scenario_group": {
             "scenario_group_id": 701,
             "mi_event_id": 101,
+            "api_version": "v4",
             "generation_strategy": V4_STRATEGY,
         },
         "event": {"mi_event_id": 101},

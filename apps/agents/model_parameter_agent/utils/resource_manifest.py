@@ -14,6 +14,11 @@ from apps.agents.model_parameter_agent.utils.lut.registry import (
     ParameterSpecRegistry,
     load_parameter_spec_registry,
 )
+from apps.agents.model_parameter_agent.utils.workbook_contract import (
+    ModelParameterWorkbookContract,
+    load_workbook_contract,
+    workbook_contract_schema_hash,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -22,7 +27,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
 PACKAGE_BASECASE_DIR = PACKAGE_RESOURCE_DIR / "basecase"
 PACKAGE_LUT_ROOT = PACKAGE_RESOURCE_DIR / "lut"
-MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 2
+MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 3
 REQUIRED_BASECASE_ROLES = frozenset({"demand", "supply", "trade"})
 
 
@@ -65,6 +70,9 @@ class ModelParameterResourceManifest:
     lut_files: tuple[ManifestResourceFile, ...]
     reference_files: tuple[ManifestResourceFile, ...]
     lut_registry: ParameterSpecRegistry
+    workbook_contract_path: Path
+    workbook_contract: ModelParameterWorkbookContract
+    workbook_contract_schema_hash: str
     canonical_yaml: bytes
     semantic_schema_hash: str
 
@@ -252,15 +260,40 @@ def _reference_files(
     return tuple(files)
 
 
+def _workbook_contract(
+    raw_contract: object,
+) -> tuple[Path, ModelParameterWorkbookContract]:
+    if not isinstance(raw_contract, dict):
+        msg = "manifest workbook_contract must be a mapping"
+        raise _manifest_error(msg)
+    unknown_fields = sorted(set(raw_contract) - {"path"})
+    if unknown_fields:
+        msg = f"workbook_contract contains unknown fields: {unknown_fields}"
+        raise _manifest_error(msg)
+    relative_path = _safe_relative_path(
+        raw_contract.get("path"),
+        label="workbook_contract",
+    )
+    contract_path = (PACKAGE_RESOURCE_DIR / relative_path).resolve()
+    if not contract_path.is_relative_to(PACKAGE_RESOURCE_DIR.resolve()):
+        msg = f"workbook contract path escapes package resources: {relative_path}"
+        raise _manifest_error(msg)
+    return contract_path, load_workbook_contract(contract_path)
+
+
 def _semantic_schema_hash(
     *,
     basecase_files: Mapping[str, ManifestResourceFile],
     registry: ParameterSpecRegistry,
+    workbook_contract: ModelParameterWorkbookContract,
 ) -> str:
     payload = {
         "schema_version": MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
         "basecase": {role: resource_file.relative_path for role, resource_file in sorted(basecase_files.items())},
         "lut_schema_hash": registry.schema_hash,
+        "workbook_contract_schema_hash": workbook_contract_schema_hash(
+            workbook_contract,
+        ),
     }
     canonical = json.dumps(
         payload,
@@ -283,7 +316,9 @@ def load_model_parameter_resource_manifest(
         msg = "model_parameter_resources must be a mapping"
         raise _manifest_error(msg)
     document = dict(raw_document)
-    unknown_fields = sorted(set(document) - {"basecase", "lut", "references"})
+    unknown_fields = sorted(
+        set(document) - {"basecase", "lut", "references", "workbook_contract"},
+    )
     if unknown_fields:
         msg = f"model_parameter_resources contains unknown fields: {unknown_fields}"
         raise _manifest_error(msg)
@@ -298,6 +333,9 @@ def load_model_parameter_resource_manifest(
     registry = load_parameter_spec_registry(path, lut_root=root, yaml_bytes=canonical_yaml)
     lut_files = _lut_files(document.get("lut"), registry=registry)
     reference_files = _reference_files(document.get("references", {}), registry=registry)
+    workbook_contract_path, workbook_contract = _workbook_contract(
+        document.get("workbook_contract"),
+    )
     return ModelParameterResourceManifest(
         source_path=path,
         schema_version=MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
@@ -305,10 +343,16 @@ def load_model_parameter_resource_manifest(
         lut_files=lut_files,
         reference_files=reference_files,
         lut_registry=registry,
+        workbook_contract_path=workbook_contract_path,
+        workbook_contract=workbook_contract,
+        workbook_contract_schema_hash=workbook_contract_schema_hash(
+            workbook_contract,
+        ),
         canonical_yaml=canonical_yaml,
         semantic_schema_hash=_semantic_schema_hash(
             basecase_files=basecase_files,
             registry=registry,
+            workbook_contract=workbook_contract,
         ),
     )
 

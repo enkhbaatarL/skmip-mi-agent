@@ -17,6 +17,10 @@ from apps.agents.model_parameter_agent.utils.runtime_cache import (
     file_signature,
     stable_digest,
 )
+from apps.agents.model_parameter_agent.utils.workbook_contract import (
+    load_workbook_contract,
+    validate_candidate_write_target,
+)
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 
@@ -311,6 +315,12 @@ def clear_parameter_mapping_runtime_cache() -> None:
     _PARAMETER_KB_CACHE.clear()
     _BASECASE_RECORD_CACHE.clear()
 
+    from apps.agents.model_parameter_agent.utils.workbook_reference import (
+        clear_workbook_reference_cache,
+    )
+
+    clear_workbook_reference_cache()
+
 
 def get_parameter_knowledge_base(
     basecase_dir_path: str | None = None,
@@ -525,16 +535,22 @@ def match_parameter_candidates(  # noqa: C901
     kb: ParameterKnowledgeBase,
     scenario_context: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    scenario_group = scenario_context.get("scenario_group") or {}
     generation_strategy = str(
-        (scenario_context.get("scenario_group") or {}).get(
-            "generation_strategy",
-        )
-        or "single_event_template_dimensions",
+        scenario_group.get("generation_strategy") or "single_event_template_dimensions",
     )
     if generation_strategy == "multi_event_composite_dimensions":
         return _match_v3_parameter_candidates(kb, scenario_context)
-    if generation_strategy == "multi_event_model_lever_dimensions":
+    if (
+        generation_strategy == "multi_event_model_lever_dimensions"
+        and str(scenario_group.get("api_version") or "") == "v4"
+    ):
         return _match_v4_parameter_candidates(kb, scenario_context)
+    if generation_strategy == "multi_event_model_lever_dimensions":
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="multi_event_model_lever_dimensions requires scenario_group.api_version=v4",
+        )
 
     scenario = scenario_context.get("scenario") or {}
     event_type = scenario_context.get("event_type") or {}
@@ -1230,6 +1246,83 @@ def build_basecase_records(
 
         registry = get_parameter_spec_registry()
 
+    scenario_group = scenario_context.get("scenario_group") or {}
+    if (
+        str(scenario_group.get("api_version") or "") == "v4"
+        and str(scenario_group.get("generation_strategy") or "") == "multi_event_model_lever_dimensions"
+    ):
+        from apps.agents.model_parameter_agent.utils.resource_runtime import (
+            get_registered_model_parameter_resource_paths,
+        )
+        from apps.agents.model_parameter_agent.utils.workbook_reference import (
+            extract_workbook_references,
+        )
+
+        resource_paths = get_registered_model_parameter_resource_paths()
+        contract = (
+            resource_paths.workbook_contract
+            if resource_paths is not None and resource_paths.workbook_contract is not None
+            else load_workbook_contract()
+        )
+        bundle = extract_workbook_references(contract)
+        records: list[dict[str, Any]] = []
+        for candidate in candidates:
+            parameter_contract = validate_candidate_write_target(contract, candidate)
+            parameter_name = str(
+                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+            ).strip()
+            registry_spec = registry.get(parameter_name)
+            if registry_spec is None:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=f"Workbook contract parameter has no registered exact-key schema: {parameter_name}",
+                )
+            target = parameter_contract.write_target
+            if registry_spec.key_axes != target.key_axes or registry_spec.metadata_axes != target.metadata_axes:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=(
+                        "Workbook write target and LUT registry axes differ: "
+                        f"parameter={parameter_name}, target_keys={target.key_axes}, "
+                        f"registry_keys={registry_spec.key_axes}, "
+                        f"target_metadata={target.metadata_axes}, "
+                        f"registry_metadata={registry_spec.metadata_axes}"
+                    ),
+                )
+            candidate_key = str(candidate.get("candidate_key") or "").strip()
+            if not candidate_key:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=f"Workbook contract candidate_key is required: {parameter_name}",
+                )
+            records.extend(
+                {
+                    "candidate_key": candidate_key,
+                    "parameter_name": parameter_name,
+                    "reference_id": reference.reference_id,
+                    "axes": {
+                        **dict(reference.axes),
+                        **dict(reference.metadata),
+                    },
+                    "value": reference.value,
+                    # PowerMix is validated as a raw atomic vector by the
+                    # immutable workbook reader.  Five-decimal truncation can
+                    # break an otherwise valid sum-to-one vector, so retain
+                    # source precision until the proposal is produced.
+                    "_preserve_reference_precision": parameter_name == "PowerMix",
+                    # One source train has no lifecycle label.  This source-only
+                    # field is omitted without weakening any other metadata axis
+                    # or the strict legacy record path.
+                    **(
+                        {"_allow_missing_metadata_axes": ("Life Cycle Category",)}
+                        if parameter_name == "LiqUtilAdjustment"
+                        else {}
+                    ),
+                }
+                for reference in bundle.records_for(parameter_name)
+            )
+        return records, list(bundle.warnings)
+
     workbook_loader = _require_workbook_loader()
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -1273,6 +1366,59 @@ def build_basecase_records(
                 continue
             records.extend(candidate_records)
     return records, warnings
+
+
+def build_authoritative_blocked_keys(
+    candidates: list[dict[str, Any]],
+    scenario_context: dict[str, Any],
+) -> dict[str, frozenset[tuple[Any, ...]]]:
+    """Return exact v4 source keys that must not fall back to the LUT.
+
+    A missing or conflicting cell in the immutable authoritative workbook is a
+    negative fact for that exact coordinate.  Keeping these keys separate from
+    ordinary records preserves the existing ``build_basecase_records`` return
+    shape while allowing the slot catalog to suppress an otherwise matching
+    legacy LUT value.
+    """
+
+    scenario_group = scenario_context.get("scenario_group") or {}
+    if not (
+        str(scenario_group.get("api_version") or "") == "v4"
+        and str(scenario_group.get("generation_strategy") or "") == "multi_event_model_lever_dimensions"
+    ):
+        return {}
+
+    from apps.agents.model_parameter_agent.utils.resource_runtime import (
+        get_registered_model_parameter_resource_paths,
+    )
+    from apps.agents.model_parameter_agent.utils.workbook_reference import (
+        extract_workbook_references,
+    )
+
+    resource_paths = get_registered_model_parameter_resource_paths()
+    contract = (
+        resource_paths.workbook_contract
+        if resource_paths is not None and resource_paths.workbook_contract is not None
+        else load_workbook_contract()
+    )
+    bundle = extract_workbook_references(contract)
+    blocked_by_candidate: dict[str, frozenset[tuple[Any, ...]]] = {}
+    for candidate in candidates:
+        validate_candidate_write_target(contract, candidate)
+        candidate_key = str(candidate.get("candidate_key") or "").strip()
+        parameter_name = str(
+            candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+        ).strip()
+        if not candidate_key:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"Workbook contract candidate_key is required: {parameter_name}",
+            )
+        blocked_by_candidate[candidate_key] = bundle.blocked_keys_by_parameter.get(
+            parameter_name,
+            frozenset(),
+        )
+    return blocked_by_candidate
 
 
 def _filter_incomplete_registered_records(

@@ -106,6 +106,9 @@ class BasecaseIndex:
         repr=False,
         compare=False,
     )
+    blocked_exact_keys_by_candidate: Mapping[str, frozenset[CanonicalKey]] = field(
+        default_factory=freeze_mapping,
+    )
 
     def lookup(
         self,

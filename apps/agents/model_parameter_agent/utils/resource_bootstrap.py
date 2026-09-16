@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +41,9 @@ from apps.agents.model_parameter_agent.utils.resource_runtime import (
     get_model_parameter_resource_paths,
     get_registered_model_parameter_resource_paths,
     register_model_parameter_resource_paths,
+)
+from apps.agents.model_parameter_agent.utils.workbook_contract import (
+    validate_workbook_hashes,
 )
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
@@ -124,6 +129,20 @@ class _ProcessFileLock(AbstractAsyncContextManager[None]):
 
 def _bootstrap_error(detail: str) -> MIBaseError:
     return MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY, detail=detail)
+
+
+def _validate_contract_horizon(
+    manifest: ModelParameterResourceManifest,
+    lut_policy: ReferenceLoadPolicy,
+) -> None:
+    contract_horizon = manifest.workbook_contract.horizon
+    if lut_policy.start_year != contract_horizon.start_year or lut_policy.end_year != contract_horizon.end_year:
+        msg = (
+            "Model Parameter LUT horizon must match the new-bc-v1 workbook contract: "
+            f"configured={lut_policy.start_year}..{lut_policy.end_year}, "
+            f"contract={contract_horizon.start_year}..{contract_horizon.end_year}"
+        )
+        raise _bootstrap_error(msg)
 
 
 def _safe_reason(exc: Exception) -> str:
@@ -228,10 +247,15 @@ async def _validate_resource_set(
     lut_enabled: bool,
     lut_policy: ReferenceLoadPolicy,
 ) -> None:
+    _validate_contract_horizon(manifest, lut_policy)
     await asyncio.to_thread(
         _validate_basecase_workbooks,
         manifest,
         basecase_dir=basecase_dir,
+    )
+    await asyncio.to_thread(
+        validate_workbook_hashes,
+        manifest.workbook_contract,
     )
     registry = await asyncio.to_thread(
         load_parameter_spec_registry,
@@ -429,6 +453,8 @@ def _paths_from_release(
         resource_config_fingerprint=str(payload["resource_config_fingerprint"]),
         resource_fingerprint=(str(payload["resource_fingerprint"]) if payload.get("resource_fingerprint") else None),
         fallback_reason=(str(payload["fallback_reason"]) if payload.get("fallback_reason") else None),
+        workbook_contract_path=manifest.workbook_contract_path,
+        workbook_contract=manifest.workbook_contract,
     )
 
 
@@ -626,7 +652,12 @@ async def resolve_model_parameter_resources(
     client_factory: Callable[[ModelParameterResourceStorageConfig], ObjectStorageReader] = _create_client,
 ) -> ModelParameterResourcePaths:
     """원격 리소스 세트를 원자적으로 선택하고 worker가 고정해 사용할 경로를 반환한다."""
+    _validate_contract_horizon(manifest, lut_policy)
     if not storage.enabled:
+        await asyncio.to_thread(
+            validate_workbook_hashes,
+            manifest.workbook_contract,
+        )
         return ModelParameterResourcePaths(
             source="packaged",
             root=PACKAGE_BASECASE_DIR.parent,
@@ -635,6 +666,8 @@ async def resolve_model_parameter_resources(
             resource_config_path=manifest.source_path,
             lut_registry=manifest.lut_registry,
             semantic_schema_hash=manifest.semantic_schema_hash,
+            workbook_contract_path=manifest.workbook_contract_path,
+            workbook_contract=manifest.workbook_contract,
         )
 
     local_root = Path(storage.local_root).expanduser().resolve()  # noqa: ASYNC240
@@ -677,6 +710,10 @@ async def resolve_model_parameter_resources(
         )
         if current is not None:
             release_root, payload = current
+            await asyncio.to_thread(
+                validate_workbook_hashes,
+                manifest.workbook_contract,
+            )
             logger.info(
                 "Model Parameter resource current reused | source={} fingerprint={}",
                 payload["source"],

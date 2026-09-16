@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 import json
+import math
 import os
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
@@ -204,6 +205,35 @@ def test_prompt_and_request_limit_settings_have_safe_defaults() -> None:
     assert Settings.model_fields["model_parameter_max_step3_prompt_bytes"].default == 262_144
 
 
+def test_v4_power_mix_lut_fallback_preserves_raw_vector_precision(
+    real_domain: tuple[ParameterSpecRegistry, LutCatalog],
+) -> None:
+    registry, legacy_catalog = real_domain
+    policy = ReferenceLoadPolicy()
+    v4_catalog = get_lut_catalog(
+        policy,
+        registry=registry,
+        preserve_value_precision_parameters=frozenset({"PowerMix"}),
+    )
+
+    def group_sums(catalog: LutCatalog) -> dict[tuple[str, int], list[float]]:
+        groups: dict[tuple[str, int], list[float]] = {}
+        for record in catalog.records_for_parameter("PowerMix"):
+            group = (str(record.axes["Country"]), int(record.axes["Year"]))
+            groups.setdefault(group, []).append(float(record.value))
+        return groups
+
+    v4_groups = group_sums(v4_catalog)
+    legacy_groups = group_sums(legacy_catalog)
+    assert len(v4_groups) == 420
+    assert all(
+        len(values) == 10 and math.isclose(math.fsum(values), 1.0, rel_tol=0.0, abs_tol=1e-6)
+        for values in v4_groups.values()
+    )
+    assert any(not math.isclose(math.fsum(values), 1.0, rel_tol=0.0, abs_tol=1e-6) for values in legacy_groups.values())
+    assert v4_catalog.version != legacy_catalog.version
+
+
 def test_step2_prompt_explains_period_group_hierarchy_contract() -> None:
     assert "fixed_axis_names" in SLOT_PROPOSAL_SYSTEM
     assert "fixed_axis_hierarchy" in SLOT_PROPOSAL_SYSTEM
@@ -213,9 +243,7 @@ def test_step2_prompt_explains_period_group_hierarchy_contract() -> None:
     assert "상위 branch 아래의 관련 exact 하위 좌표" in SLOT_PROPOSAL_SYSTEM
     assert "서로 동등한 여러 대상·기간 중 하나를 무작위로 고르지는 마십시오" in SLOT_PROPOSAL_SYSTEM
     assert "scenario/event/dimension에 적용 가능한 exact 좌표가 1개 이상" in SLOT_PROPOSAL_SYSTEM
-    assert "exact 좌표가 존재한다는 사실만으로 현재 Scenario의 적용 대상이 되는 것은 아닙니다" in (
-        SLOT_PROPOSAL_SYSTEM
-    )
+    assert "exact 좌표가 존재한다는 사실만으로 현재 Scenario의 적용 대상이 되는 것은 아닙니다" in (SLOT_PROPOSAL_SYSTEM)
     assert "각 하위 branch의 applicability_attributes" in SLOT_PROPOSAL_SYSTEM
     assert "Category=Operational 또는 Operating" in SLOT_PROPOSAL_SYSTEM
     assert "FID·Planned·Under Construction" in SLOT_PROPOSAL_SYSTEM
@@ -430,6 +458,7 @@ def test_real_liq_util_period_groups_and_hierarchy_reduce_step2_bytes() -> None:
         slot_catalog,
         {
             "scenario_group": {
+                "api_version": "v4",
                 "generation_strategy": "multi_event_model_lever_dimensions",
             },
         },

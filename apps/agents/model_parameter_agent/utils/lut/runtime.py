@@ -122,6 +122,7 @@ def _catalog_version(
     registry: ParameterSpecRegistry,
     policy: ReferenceLoadPolicy,
     snapshots: dict[str, FileSnapshot],
+    preserve_value_precision_parameters: frozenset[str],
 ) -> str:
     digest = hashlib.sha256()
     digest.update(ADAPTER_SCHEMA_VERSION.encode("utf-8"))
@@ -133,6 +134,9 @@ def _catalog_version(
                 "end_year": policy.end_year,
                 "value_max_decimal_places": policy.value_max_decimal_places,
                 "value_precision_mode": policy.value_precision_mode,
+                "preserve_value_precision_parameters": sorted(
+                    preserve_value_precision_parameters,
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -150,6 +154,7 @@ def get_lut_catalog(
     registry: ParameterSpecRegistry | None = None,
     config_path: Path | str | None = None,
     lut_root: Path | str | None = None,
+    preserve_value_precision_parameters: frozenset[str] = frozenset(),
 ) -> LutCatalog:
     active_registry = registry or get_parameter_spec_registry(
         config_path,
@@ -177,6 +182,7 @@ def get_lut_catalog(
         policy.end_year,
         policy.value_max_decimal_places,
         policy.value_precision_mode,
+        tuple(sorted(preserve_value_precision_parameters)),
         file_identity,
     )
 
@@ -200,7 +206,13 @@ def get_lut_catalog(
             active_registry,
             policy,
             snapshots,
-            version=_catalog_version(active_registry, policy, snapshots),
+            version=_catalog_version(
+                active_registry,
+                policy,
+                snapshots,
+                preserve_value_precision_parameters,
+            ),
+            preserve_value_precision_parameters=preserve_value_precision_parameters,
         )
 
     return _CATALOG_CACHE.get_or_build(

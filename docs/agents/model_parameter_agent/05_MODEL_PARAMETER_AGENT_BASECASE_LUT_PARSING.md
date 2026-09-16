@@ -18,9 +18,40 @@ Basecase-only 6개의 exact slot을 모두 검증해 0건이면 기동을 실패
 기준으로 KB/preload 대상은 도달 가능한 10개 정의이며, Basecase preload의 누락·파싱 오류·0건은 warning을
 남기고 계속한다. 공개 API payload와 confirmation 동작은 바뀌지 않는다.
 
-Basecase는 Demand·Supply·Trade workbook의 현재 모델 입력값이고, LUT는 Basecase가 없는 exact slot의 기준값을 제공한다. 둘 다 후보 파라미터를 새로 만들지는 않는다.
+Basecase는 Demand·Supply·Trade workbook의 모델 입력값이고, LUT는 Basecase가 없는 exact slot의 기준값을
+제공한다. 둘 다 후보 파라미터를 새로 만들지는 않는다. 다만 정확히 v4
+`multi_event_model_lever_dimensions`인 요청은 아래 `new-bc-v1` 계약의 authoritative reference를
+Basecase로 사용하고, v1/v3는 기존 `resources/basecase/`와 DB `basecase_*` 파서를 그대로 사용한다.
 
-### 1.1 S3 호환 Object Storage에서 파일을 준비하는 구조
+### 1.1 v4 `new-bc-v1` read-only proposal 계약
+
+계약 파일은
+`apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json`, 고정된
+세 workbook은 `resources/basecase_v4/new-bc-v1/` 아래에 있다. 기존
+`resources/basecase/{Demand,Supply,Trade} Model_Input.xlsm`을 교체하지 않으므로 v1/v3 Basecase 파싱은
+영향받지 않는다. `new_resources/`는 incoming staging일 뿐 runtime이 탐색하지 않는다.
+
+계약의 capability는 `read_only_proposal`이다. read-only는 Workbook/reference 경계이며 기존 proposal
+persistence를 비활성화한다는 뜻이 아니다. startup은 contract schema/path와 contract에 고정된
+Workbook path/digest만 경량 검증한다. 최초 exact v4 기준값 조회가 authoritative source를 materialize할 때
+sheet·header·range·변환과 아래 2026~2030 record 수를 전체 검증하고 결과를 process cache한다.
+
+| Parameter | authoritative source | exact key·변환 | record 수 |
+|---|---|---|---:|
+| `GDP` | Demand `BCInput` Q:U | Country, Year; GDP level의 전년 대비 성장률 | 815 |
+| `PMI` | Demand `PMIInput` V:AL | Country, Year, Month; Base Case year columns | 5,040 |
+| `PowerMix` | Demand `BCInput` Z:AF | Country, Year, Energy Source; 월별 반복 annual 값이 모두 같을 때 dedupe | 4,200 |
+| `Temperature` | Demand `WeatherInput` EI:EY | Country, Year, Month; Base Case year columns | 5,040 |
+| `LiqUtilAdjustment` | Supply `BCLiquefaction` B:N | Country, LNG Plant, LNG Plant Train, Year, Month; Period/lifecycle/nameplate는 metadata이며 lifecycle 공란은 허용 | 23,820 |
+
+기존 adjustment write target에서 관찰된 GDP/PMI/PowerMix/Temperature/LiqUtilAdjustment 좌표 수
+93/48/57/150/33,348은 위 authoritative count가 아니며, source slot whitelist로 사용하지 않는다.
+GDP는 2026년 값을 만들기 위해 2025년 level도 읽는다. LiqUtil의 `Plant Name`/`Plant Train`은 canonical
+축 이름으로 바꾸고, I열의 월간 million tonnes를 12배 해 `Nameplate Capacity (MTPA)` metadata로 만든다.
+DB의 model target은 write-target identity 검증과 공개 응답 조립에 계속 사용하며 reference source로 다시
+읽지 않는다.
+
+### 1.2 S3 호환 Object Storage에서 파일을 준비하는 구조
 
 애플리케이션 시작 시 APP_CONFIG의 model_parameter_resources를 읽어 다음 순서로 immutable resource release를 준비한다.
 
@@ -43,11 +74,15 @@ Basecase는 Demand·Supply·Trade workbook의 현재 모델 입력값이고, LUT
 | tmm_mi_model_param_m | parameter 이름·hint, 모델 target, Basecase Sheet·행·열 규칙 |
 | runtime proposal allow-list | raw source matching 뒤 실제 신규 proposal에 전달할 5개 parameter |
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
+| config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v1` repo-side contract path |
 | config.yaml > model_parameter_resources.lut | enabled, adapter, files, required header, key_axes, metadata_axes |
 | config.yaml > model_parameter_resources.references | runtime 보조 CSV; 독립 parameter record는 만들지 않음 |
-| 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도, 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
+| 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도(v4 PowerMix raw fraction 제외), 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
 
-envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다. adapter schema는 model-parameter-lut-adapters-v3으로 catalog hash에 포함되어 이전 cache와 분리된다.
+envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다.
+resource schema v3의 semantic hash에는 workbook contract hash와 고정 digest가 포함된다. Workbook reference
+cache는 contract hash와 실제 파일 signature를 포함해 다른 release를 재사용하지 않는다. 기존 LUT adapter
+schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checksum은 각각 별도 authority다.
 
 기존 `model_parameter_proposed_value_max_decimal_places`와 `model_parameter_proposed_value_precision_mode` 설정 키는 배포 설정 호환을 위해 남아 있지만 신규 proposal과 confirmation의 `proposedValue`에는 적용하지 않는다. proposal Step3 값은 유한 숫자여야 한다. Confirmation은 `proposedValue` key를 요구하지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 하지 않는다.
 
@@ -62,7 +97,7 @@ envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 �
 | Population | population | Country, Year | Population (thousands) 절대값 |
 | HurricaneIntensity | hurricane_intensity | Year, Month | 강도표·GoM 영향 시설을 검증하고 무허리케인 기준 0 |
 | LiqProdAdjustment | liq_prod | Country, LNG Plant, LNG Plant Train, Year, Month | 월 생산능력 × 이용률 |
-| LiqUtilAdjustment | liq_util | Country, LNG Plant, LNG Plant Train, Year, Month | 월 이용률 0~1 |
+| LiqUtilAdjustment | liq_util | Country, LNG Plant, LNG Plant Train, Year, Month | 0 이상의 월 이용률; 관측된 1 초과값도 보존 |
 | PipelineAdjustment | pipeline | Pipeline Name, From Country, To Country, Year, Month | 연간 capacity를 12개월로 확장 |
 | SupplyDisruption | supply_disruption | Country, Year, Month | 연간 공급량 × 원본 월 계수 후 Country별 합산 |
 
@@ -91,17 +126,34 @@ Basecase slot을 모두 강제하는 것은 아니다. 현재 runtime proposal a
 
 1. v1/v3는 direct/routing mapping, v4는 선택 value의 executable Lever binding과 활성 master로 raw 후보를 만든다.
 2. source matching 직후 runtime proposal allow-list 5개만 남긴다.
-3. gate를 통과한 후보에 한해 master의 basecase_* 규칙으로 workbook record를 읽고 config adapter로 LUT record를 읽는다.
+3. v4 contract context는 `new-bc-v1` authoritative record를, v1/v3는 기존 master `basecase_*` record를 읽는다.
 4. key_axes 전체가 같은 exact slot끼리만 결합한다. nearest·부분 key·서로 다른 시설의 축 조합은 금지한다.
-5. 같은 slot에 Basecase 값이 있으면 그것을 effective reference로 쓴다.
-6. LUT-backed parameter는 Basecase가 없고 LUT만 있으면 LUT를 쓰며 저장되는 `basecaseValue`는 `null`이다.
-7. Basecase-only parameter는 Basecase가 없으면 slot을 제외한다.
-8. Basecase와 LUT가 모두 없으면 그 slot은 제외한다.
+5. 같은 slot에 authoritative Basecase 값이 있으면 그것을 effective reference로 쓴다.
+6. authoritative source에 exact key가 정상적으로 없을 때만 기존 LUT의 동일 exact key를 fallback으로 쓴다.
+7. source cached-value 오류, non-finite 값이나 상충 duplicate로 차단된 exact key는 slot union에서 빼며,
+   LUT에 같은 key가 있어도 되살리지 않는다.
+8. Basecase-only parameter는 Basecase가 없으면 slot을 제외하고, 양쪽에 값이 없으면 해당 slot을 제외한다.
 
 Step2에는 값·source·원본 record를 보내지 않는다. 동일 기간을 period_groups로 묶고
 Country→Plant→Train 고정축을 fixed_axis_hierarchy로 중첩한다. v4에는 상위 branch 과확장을 막기 위해
-non-time leaf별 `Life Cycle Category`만 판단 전용 `applicability_attributes`로 추가하며 v1/v3와 반환
-`slot_axes`에는 넣지 않는다. Step3에는 exact 검증된 slot의 좌표와 단일 effective reference만 전달한다.
+non-time leaf별 값이 있는 `Life Cycle Category`만 판단 전용 `applicability_attributes`로 추가하며 v1/v3와
+반환 `slot_axes`에는 넣지 않는다. lifecycle 공란은 exact key/value가 유효한 record를 제외하지 않고 해당
+metadata와 applicability만 생략한다. Step3에는 exact 검증된 slot의 좌표와 단일 effective reference만 전달한다.
+
+PowerMix는 authoritative materialization에서 월별 반복 annual row가 일치할 때만 dedupe하고, 각
+`(Country, Year)` raw source group의 승인된 10-member 완전성·중복·유한성·0~1 범위·합 1을 atomic하게
+검증한다. source fraction은 기존 Basecase 5자리 정밀도 변환을 건너뛰어 원본 정밀도를 보존하고 재정규화하지
+않는다. 유효한 source group에서 Step2가 고른 한 member를 seed로 다음 10개 member 전체를 결정론적으로
+확장한다: `Liquids`, `Hydro`, `Solar`, `Wind`, `Bioenergy`, `Gas`, `Coal`, `Nuclear`, `Geothermal`,
+`Other`. Basecase 우선·동일 exact LUT fallback을 적용한 effective vector와 Step3의 10개 proposed value도
+완전성·중복·0~1 범위와 합이 절대오차 `1e-6` 이내에서 1인지 다시 검증한다. source·effective exact 검증·
+slot limit 또는 Step3 응답에서 하나라도 실패하면 vector 전체를 제외한다.
+
+LiqUtilAdjustment는 하나의 같은 v4 Lever provenance에서 액화설비 운영 변화 방향, exact Plant와 exact
+Train 둘 모두, slot Year/Month와 일치하는 구체적 `time_window`, `source_event_ids`로 Group의 실제
+Event에 연결된 직접 근거가 모두 확인된 slot만 Step3로 보낸다. 부족하면
+`ABSTAINED_INSUFFICIENT_EVIDENCE`로 내부 진단하고 숫자를 생성하지 않는다. 값은 음수만 차단하며 1 초과
+관측·제안값을 clamp하거나 거부하지 않는다.
 
 ## 7. 검증 규칙
 
@@ -112,6 +164,12 @@ runtime은 resource manifest와 활성 LUT catalog의 파일·header·adapter �
 LUT-backed 10개다. Basecase workbook 누락, 개별 parser 오류 또는 preload record 0건은 warning에 남기고
 기동을 계속한다. 따라서 “활성 16개 또는 Basecase-only 6개의 모든 exact slot이 1개 이상이어야 startup
 성공”이라고 해석하면 안 된다.
+
+이 warning 정책은 기존 v1/v3 Basecase preload에 대한 설명이다. v4 `new-bc-v1` 계약 파일·Workbook 경로
+누락 또는 digest 불일치는 startup에서 fail closed한다. sheet·header·range·변환과
+위 다섯 source의 고정 record 수 불일치는 최초 exact v4 materialization에서 fail closed하며, 성공 결과는
+contract hash와 실제 파일 signature를 key로 process cache한다. 구조는 맞지만 개별 source cell이 잘못된
+경우에는 계산 가능한 exact key만 남기고 오류 key는 차단해 내부 warning을 남긴다.
 
 자동화·release acceptance에서는 runtime보다 넓은 체크인 기준선을 별도로 검증한다.
 
@@ -127,6 +185,6 @@ byte 상한을 넘으면 LLM을 호출하지 않고 actual/limit byte와 paramet
 반환한다. catalog 크기와 token은 resource release와 선택 후보에 따라 달라지므로 실행마다 측정하고, 테스트
 보고서에는 provider가 반환한 input/output/total token과 실행시간을 기록한다.
 
-정확한 파일명·header·object key는 `envs/config.yaml`, v4 master·Lever binding·공식은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다. `resources/Model_Parameter_Base_Case_Mapping.md`는 이를 통합해 설명한다.
+LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v1`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v1.json`이 기준이다. v4 master·Lever binding·공식은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다. `resources/Model_Parameter_Base_Case_Mapping.md`는 이를 통합해 설명한다.
 
-runtime proposal 제한을 위해 이 DB·canonical·config·workbook을 축소하거나 다시 생성하지 않는다.
+runtime proposal 제한을 위해 DB·canonical·기존 v1/v3 Basecase·업무용 mapping workbook을 축소하거나 다시 생성하지 않는다. v4 신규 기준값은 별도 versioned contract/workbook resource로만 materialize한다.

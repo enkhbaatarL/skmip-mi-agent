@@ -302,6 +302,7 @@ def test_evaluate_scenario_preserves_partial_trace_on_output_failure(
             "title": "단기 고가동 뒤 빠르게 정상화",
         },
         "scenario_group": {
+            "api_version": "v4",
             "generation_strategy": "multi_event_model_lever_dimensions",
         },
         "parameter_mapping_resources": {

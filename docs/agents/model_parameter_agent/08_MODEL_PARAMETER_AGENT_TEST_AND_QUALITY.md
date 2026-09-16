@@ -54,27 +54,47 @@ rollout을 승인하지 않는다.
 - executable Impact Lever binding에서 raw candidate를 만든다.
 - production `MODEL_PARAMETER_PROPOSAL_ALLOWLIST`를 코드에서 읽어 `runtime-allowed`와
   `active-but-blocked`를 나눈다.
-- blocked candidate는 Step1.5·Step2·Step3·proposal·Confirmation에 도달하면 안 되며
+- blocked candidate는 Step1.5·Step2·Step3·신규 proposal과 그 결과에서 파생된 Confirmation에 도달하면 안 되며
   `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 한다.
 - `unchanged`, `price_only`, binding 없음과 catalog상 unsupported 상태를 서로 다른 reason code로 보존한다.
 
 ### Slot, 값과 저장
 
+- 정확히 v4 전략인 요청은 `resources/basecase_v4/new-bc-v1/`과 versioned contract를 사용하고, v1/v3는
+  기존 `resources/basecase/`를 계속 사용해야 한다. startup은 contract schema/path와 Workbook path/digest만 검증하며
+  최초 exact v4 materialization이 sheet/header/range/count를 검증하고 process cache해야 한다.
+- v4 authoritative 2026~2030 record 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
+  LiqUtilAdjustment 23,820이어야 한다. legacy adjustment target 관찰치 93/48/57/150/33,348은
+  authoritative count나 slot whitelist로 평가하지 않는다.
 - v4 ordered Event의 `detail_analysis`는 event당 앞 6,000자까지 Step1.5·Step2·Step3 brief에 포함되고,
   5개 Event와 현재 runtime allow-list catalog를 합친 compact Step2 packet이 byte guard 안인지 자동화로 확인한다.
 - Step2 slot은 exact Basecase+LUT union 안에 있어야 한다.
-- v4 Step2 compact catalog는 값·reference 없이 terminal별 `Life Cycle Category`를 판단 전용
+- v4 Step2 compact catalog는 값·reference 없이 terminal별 값이 있는 `Life Cycle Category`를 판단 전용
   `applicability_attributes`로 보존하며, v1/v3와 반환 `slot_axes`에는 이 속성이 없어야 한다.
 - 운영 설비 차질·회복 Scenario가 명시적인 신규 프로젝트 근거 없이 `FID`·`Planned`·`Under Construction`
   child를 선택하거나, 신규 프로젝트 하나의 근거를 같은 parent의 다른 child 전체로 넓히면 `FAIL`이다.
   여러 Event가 운영·신규 프로젝트 근거를 실제로 함께 제공해 경계가 불명확한 경우만 `REVIEW`로 판정한다.
 - 같은 exact slot은 Basecase를 우선하고 LUT를 fallback으로 하나만 사용한다.
+- PowerMix raw authoritative source fraction은 기존 5자리 정밀도 변환 없이 보존하고 재정규화하지 않는다.
+  Country/Year별 승인된 10-member raw vector, Basecase/LUT 결합 effective vector와 Step3 proposed vector
+  각각에서 완전성·중복·유한성·0~1 범위·합 1±`1e-6`을 atomic하게 통과해야 한다. partial group이
+  Step3나 persistence에 남으면 `FAIL`이다. Step2 seed의 3축 중복·누락·추가, 비정수 Year 또는 미승인
+  Energy Source가 atomic expansion으로 가려져도 `FAIL`이다.
+- LiqUtilAdjustment는 하나의 같은 Lever provenance 안에 exact Plant와 exact Train 둘 모두, slot
+  Year/Month와 일치하는 time window, Group의 실제 linked source Event와 직접 운영 근거가 있어야 한다.
+  부족하면 Step3 전에 `ABSTAINED_INSUFFICIENT_EVIDENCE`로 제외하고, 1 초과 유효값은 보존한다. lifecycle
+  metadata 공란은 exact record를 버리지 않고 applicability에서만 생략해야 한다. 절대 분기·반기와
+  교차연도 범위는 연속 월 구간, 상대 기간은 현재 연월 기준의 유한 범위여야 하며 연도 없는 분기·반기를
+  일치로 처리하면 `FAIL`이다. 올해/내년 분기의 월 범위를 무시하거나 범위 밖 월·분기·반기, 역전 연도 범위,
+  음수·소수 개월을 bare year/양의 기간으로 보정해도 `FAIL`이다.
 - Step3 input/reference/result와 최종 DB value 수가 일치해야 한다.
 - `proposedValue`는 유한 숫자인 최종 절대값이어야 한다.
 - 정량 근거가 부족한 v4 Scenario는 reference 기준의 보수적 모델링 가정을 사용하되, 명확한 방향이면 비영
   변화, 상쇄·불명확이면 설명된 no-change인지 검토한다. parameter 단위·범위 위반과 무관한 Event 숫자 전용은
   `FAIL`, 근거가 약한 크기는 `REVIEW`로 판정한다.
 - v4 proposal은 `scenario_group_id`를 authoritative link로 쓰고 `mi_event_id=NULL`이어야 한다.
+- endpoint, request/response/callback 필드와 proposal/confirmation 저장 JSON shape에 신규 resource·policy
+  필드가 추가되면 `FAIL`이다.
 - 빈 Confirmation rollback, 정상 full-payload Confirmation, DB read-back과 reconfirmation을 확인한다.
 
 ### 관측성과 판정

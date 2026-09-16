@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
 
@@ -50,6 +50,7 @@ def build_lut_catalog(
     snapshots_by_path: Mapping[str, FileSnapshot],
     *,
     version: str,
+    preserve_value_precision_parameters: frozenset[str] = frozenset(),
 ) -> LutCatalog:
     all_records: list[LutRecord] = []
     all_diagnostics: list[str] = []
@@ -58,7 +59,12 @@ def build_lut_catalog(
         if not spec.enabled:
             continue
         role_snapshots = {role: snapshots_by_path[file_spec.relative_path] for role, file_spec in spec.files.items()}
-        loaded = load_parameter_records(spec, policy, role_snapshots)
+        parameter_policy = (
+            replace(policy, value_max_decimal_places=-1)
+            if parameter_name in preserve_value_precision_parameters
+            else policy
+        )
+        loaded = load_parameter_records(spec, parameter_policy, role_snapshots)
         if not loaded:
             msg = f"registered LUT parameter produced no records in the configured horizon: {parameter_name}"
             raise domain_error(

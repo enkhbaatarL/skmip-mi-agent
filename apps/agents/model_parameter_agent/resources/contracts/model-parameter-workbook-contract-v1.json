@@ -1,0 +1,415 @@
+{
+  "schema_version": 1,
+  "release_id": "new-bc-v1",
+  "capability": "read_only_proposal",
+  "api_version": "v4",
+  "generation_strategy": "multi_event_model_lever_dimensions",
+  "public_api_unchanged": true,
+  "horizon": {
+    "start_year": 2026,
+    "end_year": 2030
+  },
+  "resource_directory": "basecase_v4/new-bc-v1",
+  "workbooks": {
+    "demand": {
+      "filename": "Demand Model_Input.xlsm",
+      "sha256": "84172001c4338961bb29f0c53e026dce0d9200dfc953f9d3ae20ce93d6d57d5d"
+    },
+    "supply": {
+      "filename": "Supply Model_Input.xlsm",
+      "sha256": "b7ad13d49726cd9e881016cf1cc3d511ab47be65cc87cba038a5da7de857fa7f"
+    },
+    "trade": {
+      "filename": "Trade Model_Input.xlsm",
+      "sha256": "e3ef772df507f05193fe6f4e517e438b5f0ed9daa810a14a127e6f8a3d5e4e54"
+    }
+  },
+  "parameters": {
+    "GDP": {
+      "proposal_policy": {
+        "mode": "auto",
+        "may_abstain": false,
+        "evidence_required": []
+      },
+      "reference_source": {
+        "workbook_role": "demand",
+        "sheet": "BCInput",
+        "range": "Q:U",
+        "parser": "gdp_growth_from_levels",
+        "header_row": 3,
+        "data_start_row": 4,
+        "columns": {
+          "Year": "Q",
+          "Country": "T",
+          "GDP": "U"
+        },
+        "key_axes": [
+          "Country",
+          "Year"
+        ],
+        "metadata_axes": [],
+        "value_field": "GDP Growth",
+        "reference_unit": "fraction",
+        "value_semantics": "year_over_year_growth",
+        "expected_record_count": 815
+      },
+      "write_target": {
+        "workbook_role": "demand",
+        "sheet": "GDPPopulationAdjustment",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 6,
+        "data_start_row": 12,
+        "columns": {
+          "Year": "B",
+          "Country": "C",
+          "% change (+/-)": "F"
+        },
+        "key_axes": [
+          "Country",
+          "Year"
+        ],
+        "metadata_axes": [],
+        "value_field": "% change (+/-)",
+        "write_unit": "fraction",
+        "value_semantics": "absolute_final_value",
+        "observed_record_count": 93
+      },
+      "constraints": {
+        "minimum": null,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": false
+      }
+    },
+    "PMI": {
+      "proposal_policy": {
+        "mode": "auto",
+        "may_abstain": false,
+        "evidence_required": []
+      },
+      "reference_source": {
+        "workbook_role": "demand",
+        "sheet": "PMIInput",
+        "range": "V:AL",
+        "parser": "year_columns",
+        "header_row": 8,
+        "data_start_row": 9,
+        "columns": {
+          "Continent": "V",
+          "Region": "W",
+          "Country": "X",
+          "Month": "Y"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [
+          "Continent",
+          "Region"
+        ],
+        "value_field": "PMI",
+        "reference_unit": "index",
+        "value_semantics": "absolute_final_value",
+        "expected_record_count": 5040
+      },
+      "write_target": {
+        "workbook_role": "demand",
+        "sheet": "PMIAdjustment",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 6,
+        "data_start_row": 13,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Country": "D",
+          "PMI": "F"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "PMI",
+        "write_unit": "index",
+        "value_semantics": "absolute_final_value",
+        "observed_record_count": 48
+      },
+      "constraints": {
+        "minimum": null,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": false
+      }
+    },
+    "PowerMix": {
+      "proposal_policy": {
+        "mode": "auto",
+        "may_abstain": false,
+        "evidence_required": []
+      },
+      "reference_source": {
+        "workbook_role": "demand",
+        "sheet": "BCInput",
+        "range": "Z:AF",
+        "parser": "annual_deduplicated_rows",
+        "header_row": 3,
+        "data_start_row": 4,
+        "columns": {
+          "Country": "Z",
+          "Year": "AA",
+          "Month": "AB",
+          "Energy Source Use": "AC",
+          "Yearly Power Mix": "AE"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Energy Source"
+        ],
+        "metadata_axes": [],
+        "value_field": "Yearly Power Mix",
+        "reference_unit": "fraction",
+        "value_semantics": "absolute_final_share",
+        "expected_record_count": 4200
+      },
+      "write_target": {
+        "workbook_role": "demand",
+        "sheet": "PowerMixAdjustment",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 6,
+        "data_start_row": 12,
+        "columns": {
+          "Year": "B",
+          "Country": "C",
+          "Energy Source": "D",
+          "% Power Mix": "F"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Energy Source"
+        ],
+        "metadata_axes": [],
+        "value_field": "% Power Mix",
+        "write_unit": "fraction",
+        "value_semantics": "absolute_final_share",
+        "observed_record_count": 57
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "atomic_group_axes": [
+          "Country",
+          "Year"
+        ],
+        "vector_axis": "Energy Source",
+        "vector_members": [
+          "Liquids",
+          "Hydro",
+          "Solar",
+          "Wind",
+          "Bioenergy",
+          "Gas",
+          "Coal",
+          "Nuclear",
+          "Geothermal",
+          "Other"
+        ],
+        "sum": 1.0,
+        "sum_tolerance": 0.000001,
+        "require_complete_vector": true,
+        "direct_evidence_required": false
+      }
+    },
+    "Temperature": {
+      "proposal_policy": {
+        "mode": "auto",
+        "may_abstain": false,
+        "evidence_required": []
+      },
+      "reference_source": {
+        "workbook_role": "demand",
+        "sheet": "WeatherInput",
+        "range": "EI:EY",
+        "parser": "year_columns",
+        "header_row": 8,
+        "data_start_row": 9,
+        "columns": {
+          "Continent": "EI",
+          "Region": "EJ",
+          "Country": "EK",
+          "Month": "EL"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [
+          "Continent",
+          "Region"
+        ],
+        "value_field": "Temperature",
+        "reference_unit": "degC",
+        "value_semantics": "absolute_final_value",
+        "expected_record_count": 5040
+      },
+      "write_target": {
+        "workbook_role": "demand",
+        "sheet": "WeatherAdjustment",
+        "table": "table2",
+        "layout": "fixed_columns",
+        "header_row": 6,
+        "data_start_row": 12,
+        "columns": {
+          "Year": "K",
+          "Month": "L",
+          "Country": "M",
+          "Temperature (°C)": "O"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "Temperature (°C)",
+        "write_unit": "degC",
+        "value_semantics": "absolute_final_value",
+        "observed_record_count": 150
+      },
+      "constraints": {
+        "minimum": null,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": false
+      }
+    },
+    "LiqUtilAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": [
+          "Plant",
+          "Train",
+          "YearMonth",
+          "DirectOperationalDisruption"
+        ]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCLiquefaction",
+        "range": "B:N",
+        "parser": "fixed_rows",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Period": "D",
+          "Country": "E",
+          "Plant Name": "F",
+          "Plant Train": "G",
+          "Infra Life Cycle": "H",
+          "Monthly Capacity (MTPM)": "I",
+          "LNG plant utilisation %": "N"
+        },
+        "column_headers": {
+          "Monthly Capacity (MTPM)": "LNG train capacity (Million tonnes LNG per month)"
+        },
+        "transforms": {
+          "Nameplate Capacity (MTPA)": {
+            "source_field": "Monthly Capacity (MTPM)",
+            "operation": "multiply",
+            "factor": 12.0,
+            "provenance": "BCLiquefaction!I monthly million tonnes LNG multiplied by 12"
+          }
+        },
+        "key_axes": [
+          "Country",
+          "LNG Plant",
+          "LNG Plant Train",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [
+          "Period",
+          "Life Cycle Category",
+          "Nameplate Capacity (MTPA)"
+        ],
+        "value_field": "LNG plant utilisation %",
+        "reference_unit": "fraction",
+        "value_semantics": "absolute_final_utilization",
+        "expected_record_count": 23820
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "LiqUtilAdjustment",
+        "table": "table1",
+        "layout": "matrix_time_columns",
+        "header_row": 10,
+        "data_start_row": 11,
+        "columns": {
+          "Country": "B",
+          "LNG Plant": "C",
+          "LNG Plant Train": "D",
+          "Life Cycle Category": "E",
+          "Nameplate Capacity (MTPA)": "F",
+          "value_start": "G",
+          "value_end": "DA",
+          "year_row": "7",
+          "month_row": "8",
+          "period_row": "9"
+        },
+        "key_axes": [
+          "Country",
+          "LNG Plant",
+          "LNG Plant Train",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [
+          "Period",
+          "Life Cycle Category",
+          "Nameplate Capacity (MTPA)"
+        ],
+        "value_field": "Utilization Rate",
+        "write_unit": "fraction",
+        "value_semantics": "absolute_final_utilization",
+        "observed_record_count": 33348
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    }
+  }
+}

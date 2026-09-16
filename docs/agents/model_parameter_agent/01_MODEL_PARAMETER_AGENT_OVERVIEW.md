@@ -68,7 +68,8 @@ Agent는 모델 Excel을 직접 수정하거나 Demand→Supply→Trade→Output
 ### Basecase
 
 Demand·Supply·Trade workbook에 들어 있는 현재 모델 입력값이다. 같은 exact slot에 Basecase가 있으면
-LUT보다 우선하는 기준값이 된다.
+LUT보다 우선하는 기준값이 된다. 정확히 v4 `multi_event_model_lever_dimensions`인 요청은 versioned
+`new-bc-v1` workbook의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
 
 ### LUT
 
@@ -106,6 +107,36 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 v1은 scenario group의 대표 event type과 scenario dimension key를 mapping에 대입한다. `generation_strategy=multi_event_composite_dimensions`인 v3는 `dimensionDefinitions[].sourceRefs`로 원본 `(event_type_l2_id, dimKey)`를 복원해 공유 legacy 129개 mapping을 재사용한다. `generation_strategy=multi_event_model_lever_dimensions`인 v4는 이 mapping, Event Type, 과거 `lever_mappings` 계열을 조회하거나 fallback으로 사용하지 않는다. 선택된 value의 `lever_states`와 active Lever catalog를 엄격히 검증한 뒤 executable binding으로 raw 후보를 만든다.
 
 모든 버전의 신규 proposal은 raw 후보 생성 후 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개 runtime allow-list를 공통으로 적용한다. 제한은 Step1.5·LLM 호출·proposal 행 생성 전에 적용한다. 체크인 canonical에 활성으로 남은 나머지 11개와 그 resource capability는 삭제하지 않지만 신규 proposal로는 제안하지 않는다.
+
+### v4 `new-bc-v1` read-only reference
+
+다섯 allow-list Parameter의 v4 proposal은
+`resources/contracts/model-parameter-workbook-contract-v1.json`이 고정한
+`resources/basecase_v4/new-bc-v1/` Demand·Supply·Trade workbook을 기준값 authority로 사용한다. capability는
+`read_only_proposal`이며, 여기서 read-only는 Workbook/reference에 대한 경계다. workbook을 수정하거나
+Formula/Query를 재계산하거나 model engine을 실행하지 않되 기존 proposal persistence는 유지한다.
+기존 `resources/basecase/`는 그대로 남아 v1/v3 동작을 보존한다.
+
+| Parameter | authoritative source | 2026~2030 record 수 |
+|---|---|---:|
+| `GDP` | Demand `BCInput` Q:U의 level을 전년 대비 성장률로 변환 | 815 |
+| `PMI` | Demand `PMIInput` V:AL Base Case block | 5,040 |
+| `PowerMix` | Demand `BCInput` Z:AF annual mix | 4,200 |
+| `Temperature` | Demand `WeatherInput` EI:EY Base Case block | 5,040 |
+| `LiqUtilAdjustment` | Supply `BCLiquefaction` B:N utilization | 23,820 |
+
+같은 exact key의 신규 Basecase가 우선하고 정상적으로 없을 때만 기존 LUT exact key를 사용한다. cached-value
+오류, non-finite 값이나 상충 duplicate로 차단된 key는 LUT로 fallback하지 않는다. PowerMix는 raw source와
+Basecase/LUT 결합 effective reference, Step3 각각에서 Country/Year별 10개 Energy Source를 하나의 atomic
+vector로 검증한다. raw source fraction에는 기존 5자리 정밀도 변환이나 재정규화를 적용하지 않는다.
+LiqUtilAdjustment는 하나의 selected Lever provenance 안에 exact Plant와 exact Train 둘 모두, slot과
+일치하는 구체 기간, Group에 실제로 연결된 source Event와 직접 운영 근거가 있을 때만 제안한다. LiqUtil
+값은 음수만 차단하며 정상 관측된 1 초과값을 보존한다. lifecycle metadata 공란은 exact record를 버리는
+사유가 아니며 Step2 판단용 applicability에서만 생략한다.
+
+이 overlay는 DB schema와 master/catalog/mapping data, model target, v4 Parameter master·Impact Lever binding/catalog checksum,
+legacy mapping을 변경하지 않는다. 공개 proposal/confirmation endpoint·request/response field·status/action
+enum·callback shape와 proposal/confirmation persistence JSON shape도 그대로 유지한다.
 
 v4 master와 Lever의 저장소 판정 기준은 [parameter canonical](../../../scripts/model_parameter/model-parameter-canonical-v4.json)과 [Lever canonical](../../../scripts/model_parameter/model-impact-lever-canonical-v4.json)이다. v1/v3 체크인 목표 mapping은 [v1 canonical](../../../scripts/model_parameter/model-parameter-canonical-v1.json)의 `dimension_mappings` 129행이 기준이며, 해당 fixture의 master 활성 10개 정의를 v4 master 기준선에 덮어쓰지 않는다. 사람이 읽는 설명은 [canonical mapping 문서](../../../apps/agents/model_parameter_agent/resources/Model_Parameter_Base_Case_Mapping.md), 업무용 표는 [v4 canonical workbook](../../../apps/agents/model_parameter_agent/resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx)이다. workbook은 v4 master·Lever와 v1/v3 mapping 129행의 체크인 기준선을 함께 보여 준다. 2026-08-13 v4 적용 전 snapshot의 128행·25/2/55/46은 변경 전 증적이며, 어느 수치도 live DB를 조회한 결과로 간주하지 않는다.
 
@@ -217,9 +248,14 @@ skmip-mi-agent/
 │   │   ├── utils/
 │   │   │   ├── basecase.py                # Basecase 읽기
 │   │   │   ├── lut/                       # LUT adapter·catalog·결합
+│   │   │   ├── workbook_contract.py       # v4 versioned workbook 계약
+│   │   │   ├── workbook_reference.py      # authoritative source adapter
+│   │   │   ├── proposal_policy.py         # v4 evidence·atomic 검증
 │   │   │   └── resource_*.py              # 파일 준비·runtime 경로
 │   │   ├── resources/
-│   │   │   ├── basecase/                  # packaged Basecase
+│   │   │   ├── basecase/                  # v1/v3 호환 packaged Basecase
+│   │   │   ├── basecase_v4/new-bc-v1/     # v4 read-only proposal workbook
+│   │   │   ├── contracts/                 # workbook contract
 │   │   │   ├── lut/                       # packaged LUT
 │   │   │   └── mapping/                   # canonical Excel과 이전본 archive
 │   ├── connectors/object_storage/         # S3 호환 Object Storage 연결
@@ -237,7 +273,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, 공통 runtime allow-list를 Step1.5·LLM·저장보다 먼저 적용한다. 허용 후보만 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. DB DDL·master·mapping, Lever catalog/checksum, config, canonical JSON/SQL/workbook은 이 runtime 제한의 변경 대상이 아니다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v1`은 versioned contract/workbook resource와 그 경로를 가리키는 manifest/config만 추가한다. DB DDL·master·mapping, Lever catalog/checksum, canonical JSON/SQL·업무용 mapping workbook과 writer/recalculation/engine은 변경하지 않는다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md),
 [Python conventions](../../../.claude/rules/python-conventions.md)와

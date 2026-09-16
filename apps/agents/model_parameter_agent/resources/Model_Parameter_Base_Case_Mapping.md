@@ -11,8 +11,39 @@
 - runtime proposal allow-list: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개; 그 밖의 DB/canonical/catalog 활성 후보는 `active-but-blocked`로 분류하고 LLM·proposal 입력 전에 제외
 - 기존 v1/v3 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
-- runtime allow-list 적용은 proposal 후보 경계만 변경하며 DB, config, canonical JSON/SQL, workbook과 confirmation 동작은 변경하지 않음
+- `new-bc-v1`은 별도 versioned workbook/contract resource를 추가하지만 DB master·mapping, canonical JSON/SQL·업무용
+  mapping workbook과 confirmation 동작은 변경하지 않음
 - audit user/version: `model-parameter-canonical-v4`, impact catalog version `v4`
+
+## v4 `new-bc-v1` read-only proposal overlay
+
+이 overlay는 정확히 `api_version=v4`, `generation_strategy=multi_event_model_lever_dimensions`인 신규
+proposal에만 적용한다. `read_only`는 Workbook/reference capability이며 기존 proposal persistence를
+비활성화한다는 뜻이 아니다. 계약은
+`resources/contracts/model-parameter-workbook-contract-v1.json`, workbook release는
+`resources/basecase_v4/new-bc-v1/`이다. 기존 `resources/basecase/`와 v1/v3 parser는 유지한다.
+
+| Parameter | authoritative source | exact key·변환 | 2026~2030 records |
+|---|---|---|---:|
+| GDP | Demand `BCInput` Q:U | Country, Year; GDP level에서 전년 대비 성장률 | 815 |
+| PMI | Demand `PMIInput` V:AL | Country, Year, Month | 5,040 |
+| PowerMix | Demand `BCInput` Z:AF | Country, Year, Energy Source; 동일 annual 월 반복만 dedupe | 4,200 |
+| Temperature | Demand `WeatherInput` EI:EY | Country, Year, Month | 5,040 |
+| LiqUtilAdjustment | Supply `BCLiquefaction` B:N | Country, LNG Plant, LNG Plant Train, Year, Month | 23,820 |
+
+정상적인 source 부재에만 기존 LUT same-exact-key fallback을 허용한다. source cached error, non-finite 값,
+상충 duplicate는 해당 exact key를 차단하므로 LUT로 되살리지 않는다. PowerMix는
+`Liquids/Hydro/Solar/Wind/Bioenergy/Gas/Coal/Nuclear/Geothermal/Other` 10개를 Country/Year atomic
+vector로 다룬다. raw source fraction에는 기존 5자리 정밀도 변환이나 재정규화를 적용하지 않으며,
+raw source·Basecase/LUT 결합 effective reference·Step3 제안 각각에 각 값 0~1, 합 1±`1e-6`을 요구한다.
+LiqUtilAdjustment는 하나의 Lever provenance 안에 exact Plant와 exact Train 둘 모두, slot과 일치하는
+구체 기간, Group에 실제로 연결된 source Event와 직접 운영 근거가 있을 때만 Step3로 보내고 음수만
+차단하며 1 초과값을 보존한다. `Life Cycle Category` 공란은 exact record를 제외하지 않고 metadata와
+Step2 판단용 applicability에서만 생략한다.
+
+아래 master 표의 `parameter_hint`와 model target은 DB canonical을 그대로 설명한다. `new-bc-v1`은 reference와
+v4 proposal 정책만 overlay하며 DB 값을 수정하지 않는다. 공개 API/persistence shape, Impact Lever
+binding/catalog checksum, legacy mapping, workbook writer·Formula/Query recalc·model engine도 변경하지 않는다.
 
 ## 최종 master
 
@@ -230,8 +261,9 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 ## 기존 v1/v3 mapping rollout의 적용과 검증
 
-아래 DB 명령은 기존 mapping rollout 절차다. 이번 runtime allow-list-only v0.2.4에서는 실행하지 않으며,
-DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인한다.
+아래 DB 명령은 기존 mapping rollout 절차다. 역사적 runtime allow-list-only v0.2.4에서는 실행하지 않았으며,
+당시 DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인했다. 현재
+`new-bc-v1` overlay도 DB rollout을 수행하지 않지만 versioned contract/workbook과 manifest/config path는 추가한다.
 
 1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
 2. 승인된 외부 개발 DB에는 같은 runner의 `--apply`로 mapping-only transaction을 commit한다. 적용 후 master 21행·활성 16개, Impact Lever 16개·hydrated checksum, v4 Scenario/proposal 결과 invariant hash가 변경 전과 같은지 확인한다.

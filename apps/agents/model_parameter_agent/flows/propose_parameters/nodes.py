@@ -38,6 +38,7 @@ from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
 )
 from apps.agents.model_parameter_agent.utils.basecase import (
     basecase_slot_axis_names_from_candidate,
+    build_authoritative_blocked_keys,
     build_basecase_records,
 )
 from apps.agents.model_parameter_agent.utils.lut import (
@@ -63,6 +64,18 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     match_parameter_candidates,
     partition_proposal_parameter_candidates,
     to_compact_json,
+)
+from apps.agents.model_parameter_agent.utils.proposal_policy import (
+    ABSTAINED_INSUFFICIENT_EVIDENCE,
+    LIQ_UTIL_PARAMETER,
+    POWER_MIX_ENERGY_SOURCES,
+    POWER_MIX_PARAMETER,
+    POWER_MIX_SUM_TOLERANCE,
+    evaluate_liq_util_evidence,
+    expand_power_mix_atomic_slots,
+    is_v4_contract_context,
+    parameter_name,
+    validate_power_mix_atomic_values,
 )
 from apps.agents.model_parameter_agent.utils.resource_runtime import (
     get_model_parameter_resource_paths,
@@ -250,8 +263,7 @@ def _attach_applicability_attributes_for_prompt(
     if not include or not attributes:
         return
     target["applicability_attributes"] = {
-        str(axis_name): list(axis_values)
-        for axis_name, axis_values in attributes.items()
+        str(axis_name): list(axis_values) for axis_name, axis_values in attributes.items()
     }
 
 
@@ -384,12 +396,9 @@ def _slot_catalog_for_context(
     slot_catalog: SlotCatalog,
     scenario_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    generation_strategy = str(
-        (scenario_context.get("scenario_group") or {}).get("generation_strategy") or "",
-    )
     return _slot_catalog_for_prompt(
         slot_catalog,
-        include_applicability_attributes=(generation_strategy == "multi_event_model_lever_dimensions"),
+        include_applicability_attributes=is_v4_contract_context(scenario_context),
     )
 
 
@@ -522,10 +531,7 @@ def _knowledge_base_from_context(
     resources = context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
     parameter_definitions = resources.get("parameter_definitions") or []
-    strategy = str(
-        (context.get("scenario_group") or {}).get("generation_strategy") or "",
-    )
-    is_v4 = strategy == "multi_event_model_lever_dimensions"
+    is_v4 = is_v4_contract_context(context)
     if not parameter_definitions or (not mapping_rules and not is_v4):
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
@@ -575,21 +581,16 @@ def select_parameter_candidates(state: ModelParameterProposalState) -> dict[str,
         excluded_names = sorted(
             {
                 str(
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                    or "",
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
                 ).strip()
                 for candidate in scope_exclusions
                 if str(
-                    candidate.get("canonical_parameter_name")
-                    or candidate.get("parameter_name")
-                    or "",
+                    candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
                 ).strip()
             },
         )
         warnings.append(
-            "runtime proposal allow-list 밖의 parameter 후보를 제외했습니다: "
-            f"{excluded_names}",
+            f"runtime proposal allow-list 밖의 parameter 후보를 제외했습니다: {excluded_names}",
         )
         non_inputs = [*non_inputs, *scope_exclusions]
     logger.info(
@@ -789,12 +790,27 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.scenario_context or {},
         registry=registry,
     )
-    lut_catalog = get_lut_catalog(policy, registry=registry) if cfg.model_parameter_lut_enabled else None
+    blocked_exact_keys_by_candidate = build_authoritative_blocked_keys(
+        state.candidate_mappings,
+        state.scenario_context or {},
+    )
+    lut_catalog = (
+        get_lut_catalog(
+            policy,
+            registry=registry,
+            preserve_value_precision_parameters=(
+                frozenset({POWER_MIX_PARAMETER}) if is_v4_contract_context(state.scenario_context) else frozenset()
+            ),
+        )
+        if cfg.model_parameter_lut_enabled
+        else None
+    )
     basecase_index = build_basecase_index(
         records,
         state.candidate_mappings,
         policy=policy,
         registry=registry,
+        blocked_exact_keys_by_candidate=blocked_exact_keys_by_candidate,
     )
     slot_catalog = build_slot_catalog(basecase_index, lut_catalog)
     counts_by_candidate: dict[str, int] = {}
@@ -874,21 +890,60 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     resource_paths = get_model_parameter_resource_paths()
     registry = resource_paths.lut_registry
     lut_catalog = (
-        get_lut_catalog(policy, registry=registry)
+        get_lut_catalog(
+            policy,
+            registry=registry,
+            preserve_value_precision_parameters=(
+                frozenset({POWER_MIX_PARAMETER}) if is_v4_contract_context(state.scenario_context) else frozenset()
+            ),
+        )
         if bool(state.resolved_config.get("model_parameter_lut_enabled"))
         else None
     )
     effective_references: list[dict[str, Any]] = []
     valid_slots: list[dict[str, Any]] = []
     warnings = list(state.validation_warnings)
+    selected_slots = list(state.parameter_slots)
+    if is_v4_contract_context(state.scenario_context):
+        selected_slots, power_mix_warnings = expand_power_mix_atomic_slots(
+            selected_slots,
+            state.candidate_mappings,
+            state.basecase_index,
+            lut_catalog,
+        )
+        warnings.extend(power_mix_warnings)
     counts_by_candidate: dict[str, int] = {}
     rejected_exact_slot_count = 0
+    policy_excluded_slot_count = 0
     seen_selected_keys: set[tuple[str, str]] = set()
     truncated_slot_counts: dict[str, int] = {}
+    truncated_atomic_groups: set[str] = set()
+    reserved_atomic_groups: set[str] = set()
+    liq_evidence_failures: dict[str, set[str]] = {}
+    liq_evidence_failure_counts: dict[str, int] = {}
 
-    for raw_slot in state.parameter_slots:
+    candidate_by_key = {str(candidate.get("candidate_key") or ""): candidate for candidate in state.candidate_mappings}
+    for raw_slot in selected_slots:
         slot = dict(raw_slot)
         candidate_key = str(slot.get("candidate_key") or "")
+        atomic_group_key = str(slot.get("_atomic_group_key") or "")
+        if atomic_group_key in truncated_atomic_groups:
+            continue
+        if atomic_group_key and atomic_group_key not in reserved_atomic_groups:
+            try:
+                atomic_group_size = int(slot.get("_atomic_group_size"))
+            except (TypeError, ValueError):
+                atomic_group_size = 0
+            if (
+                atomic_group_size <= 0
+                or counts_by_candidate.get(candidate_key, 0) + atomic_group_size > step3_slot_limit
+            ):
+                truncated_atomic_groups.add(atomic_group_key)
+                truncated_slot_counts[candidate_key] = truncated_slot_counts.get(candidate_key, 0) + max(
+                    atomic_group_size, 1
+                )
+                continue
+            reserved_atomic_groups.add(atomic_group_key)
         coordinates = _coordinates_for_selected_slot(slot)
         expected_axes = state.basecase_index.candidate_key_axes.get(candidate_key)
         provided_axis_names = [
@@ -937,6 +992,28 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
             warnings.append(warning)
             continue
 
+        candidate = candidate_by_key.get(candidate_key) or {}
+        if is_v4_contract_context(state.scenario_context) and parameter_name(candidate) == LIQ_UTIL_PARAMETER:
+            canonical_slot = {
+                **slot,
+                "slot_axes": [
+                    {"axis_name": axis_name, "axis_value": axis_value}
+                    for axis_name, axis_value in reference.axes.items()
+                ],
+            }
+            evidence = evaluate_liq_util_evidence(
+                candidate,
+                canonical_slot,
+                state.scenario_context,
+            )
+            if not evidence.allowed:
+                policy_excluded_slot_count += 1
+                liq_evidence_failures.setdefault(candidate_key, set()).update(
+                    evidence.missing_components,
+                )
+                liq_evidence_failure_counts[candidate_key] = liq_evidence_failure_counts.get(candidate_key, 0) + 1
+                continue
+
         selected_key = (
             candidate_key,
             _canonical_coordinate_key(dict(reference.axes)),
@@ -981,6 +1058,43 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         logger.warning("[model-parameter] {}", warning)
         warnings.append(warning)
 
+    power_mix_groups: dict[str, list[int]] = {}
+    power_mix_group_sizes: dict[str, int] = {}
+    for index, slot in enumerate(valid_slots):
+        group_key = str(slot.get("_atomic_group_key") or "")
+        if not group_key:
+            continue
+        power_mix_groups.setdefault(group_key, []).append(index)
+        try:
+            power_mix_group_sizes[group_key] = int(slot.get("_atomic_group_size"))
+        except (TypeError, ValueError):
+            power_mix_group_sizes[group_key] = 0
+    incomplete_group_indexes: set[int] = set()
+    for group_key, indexes in power_mix_groups.items():
+        if len(indexes) == power_mix_group_sizes.get(group_key):
+            continue
+        incomplete_group_indexes.update(indexes)
+        warnings.append(
+            f"PowerMix exact/limit 검증에서 일부 member가 제외되어 atomic group 전체를 제외했습니다: group={group_key}",
+        )
+    if incomplete_group_indexes:
+        policy_excluded_slot_count += len(incomplete_group_indexes)
+        valid_slots = [slot for index, slot in enumerate(valid_slots) if index not in incomplete_group_indexes]
+        effective_references = [
+            reference for index, reference in enumerate(effective_references) if index not in incomplete_group_indexes
+        ]
+
+    counts_by_candidate = {}
+    for slot, reference in zip(valid_slots, effective_references, strict=True):
+        candidate_key = str(slot.get("candidate_key") or "")
+        candidate_count = counts_by_candidate.get(candidate_key, 0) + 1
+        counts_by_candidate[candidate_key] = candidate_count
+        slot_key = f"slot-{candidate_count}"
+        slot["slot_key"] = slot_key
+        slot.pop("_atomic_group_key", None)
+        slot.pop("_atomic_group_size", None)
+        reference["slot_key"] = slot_key
+
     total_slot_limit = _configured_positive_int(
         cfg,
         "model_parameter_max_total_selected_slots",
@@ -1009,6 +1123,30 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         for candidate in state.candidate_mappings
         if str(candidate.get("candidate_key") or "") not in valid_candidate_keys
     ]
+    evidence_non_inputs: list[dict[str, Any]] = []
+    for candidate_key, missing_components in sorted(liq_evidence_failures.items()):
+        candidate = candidate_by_key.get(candidate_key) or {}
+        warning = (
+            f"{ABSTAINED_INSUFFICIENT_EVIDENCE}: candidate={candidate_key}, "
+            f"excluded_slots={liq_evidence_failure_counts.get(candidate_key, 0)}, "
+            f"missing={sorted(missing_components)}"
+        )
+        logger.info("[model-parameter] {}", warning)
+        warnings.append(warning)
+        evidence_non_inputs.append(
+            {
+                "candidate_key": candidate_key,
+                "parameter_name": parameter_name(candidate),
+                "mapping_method": candidate.get("mapping_method"),
+                "lever_code": candidate.get("lever_code"),
+                "lever_label": candidate.get("lever_label"),
+                "source_event_ids": candidate.get("source_event_ids") or [],
+                "excluded_slot_count": liq_evidence_failure_counts.get(candidate_key, 0),
+                "partial_candidate": candidate_key in valid_candidate_keys,
+                "reason_code": ABSTAINED_INSUFFICIENT_EVIDENCE,
+                "reason": warning,
+            },
+        )
     logger.info(
         "[model-parameter] resolved exact selected references | scenario_id={} "
         "selected_reference_count={} counts_by_candidate={} rejected_slot_count={} "
@@ -1039,7 +1177,13 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
             ),
             "exact_slot_count": len(valid_slots),
             "rejected_exact_slot_count": rejected_exact_slot_count,
+            **(
+                {"policy_excluded_slot_count": policy_excluded_slot_count}
+                if is_v4_contract_context(state.scenario_context)
+                else {}
+            ),
         },
+        "non_input_items": [*state.non_input_items, *evidence_non_inputs],
         "validation_warnings": warnings,
     }
     return output
@@ -1192,6 +1336,7 @@ async def propose_parameter_values(
         value_candidates,
         state.parameter_slots,
         value_references,
+        scenario_context=state.scenario_context,
     )
     selected_adjustments = [adjustment for adjustment in adjustments if adjustment.get("selected", True)]
     logger.info(
@@ -2602,6 +2747,8 @@ def _build_parameter_value_tasks(
     parameter_slots: list[dict[str, Any]],
     basecase_records: list[dict[str, Any]],
     non_input_items: list[dict[str, Any]],
+    *,
+    v4_contract_context: bool = False,
 ) -> list[dict[str, Any]]:
     slot_contexts = _slot_reference_contexts(parameter_slots, basecase_records)
 
@@ -2627,6 +2774,16 @@ def _build_parameter_value_tasks(
                 for slot_key, context in candidate_slot_contexts.items()
             ],
         }
+        if v4_contract_context and parameter_name(candidate) == POWER_MIX_PARAMETER:
+            task["proposal_constraints"] = {
+                "atomic_group_axes": ["Country", "Year"],
+                "member_axis": "Energy Source",
+                "required_members": list(POWER_MIX_ENERGY_SOURCES),
+                "value_range": {"min": 0, "max": 1},
+                "target_sum": 1,
+                "absolute_tolerance": POWER_MIX_SUM_TOLERANCE,
+                "partial_group_allowed": False,
+            }
         tasks.append(_drop_none_or_empty(task))
     return tasks
 
@@ -2651,6 +2808,7 @@ def _build_value_proposal_prompt_packet(
             parameter_slots,
             basecase_records,
             non_input_items,
+            v4_contract_context=is_v4_contract_context(scenario_context),
         ),
     }
 
@@ -3121,7 +3279,10 @@ def _sanitize_llm_adjustments(
     candidates: list[dict[str, Any]],
     slots: list[dict[str, Any]],
     reference_records: list[dict[str, Any]],
+    *,
+    scenario_context: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
+    v4_contract_context = is_v4_contract_context(scenario_context)
     candidate_by_key = {str(candidate["candidate_key"]): candidate for candidate in candidates}
     slots_by_key = _group_selected_slots_by_candidate(slots)
     slot_contexts = _slot_reference_contexts(
@@ -3172,6 +3333,9 @@ def _sanitize_llm_adjustments(
 
         expected_contexts = slot_contexts.get(adjustment.candidate_key) or {}
         returned_slot_keys: set[str] = set()
+        invalid_slot_keys: set[str] = set()
+        proposed_values_by_slot_key: dict[str, float] = {}
+        value_cells_by_slot_key: dict[str, ParameterValueCell] = {}
         value_grid: list[ParameterValueCell] = []
         for slot_value in adjustment.slot_values:
             slot_key = str(slot_value.slot_key or "").strip()
@@ -3185,6 +3349,7 @@ def _sanitize_llm_adjustments(
                 warnings.append(warning)
                 continue
             if slot_key in returned_slot_keys:
+                invalid_slot_keys.add(slot_key)
                 warning = (
                     "Step3 응답이 동일 slotKey를 중복 반환해 후속 값을 제외했습니다: "
                     f"candidate={adjustment.candidate_key}, slotKey={slot_key}"
@@ -3193,6 +3358,7 @@ def _sanitize_llm_adjustments(
                 warnings.append(warning)
                 continue
             if slot_value.proposed_value is None:
+                invalid_slot_keys.add(slot_key)
                 warning = (
                     "Step3 응답의 proposedValue가 null이라 제외했습니다: "
                     f"candidate={adjustment.candidate_key}, slotKey={slot_key}"
@@ -3206,8 +3372,19 @@ def _sanitize_llm_adjustments(
                     label=(f"Step3 proposedValue (candidate={adjustment.candidate_key}, slotKey={slot_key})"),
                 )
             except MIBaseError:
+                invalid_slot_keys.add(slot_key)
                 warning = (
                     "Step3 응답의 proposedValue가 유한한 숫자가 아니라 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                    f"value={slot_value.proposed_value!r}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
+            if v4_contract_context and parameter_name(candidate) == LIQ_UTIL_PARAMETER and validated_proposed_value < 0:
+                invalid_slot_keys.add(slot_key)
+                warning = (
+                    "Step3 LiqUtilAdjustment proposedValue가 음수라 제외했습니다: "
                     f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
                     f"value={slot_value.proposed_value!r}"
                 )
@@ -3221,13 +3398,14 @@ def _sanitize_llm_adjustments(
                 else validated_proposed_value
             )
             returned_slot_keys.add(slot_key)
-            value_grid.append(
-                _parameter_value_cell_from_slot_value(
-                    slot_value,
-                    context["reference"],
-                    proposed_value=proposed_value,
-                ),
+            value_cell = _parameter_value_cell_from_slot_value(
+                slot_value,
+                context["reference"],
+                proposed_value=proposed_value,
             )
+            proposed_values_by_slot_key[slot_key] = validated_proposed_value
+            value_cells_by_slot_key[slot_key] = value_cell
+            value_grid.append(value_cell)
 
         missing_slot_keys = sorted(set(expected_contexts) - returned_slot_keys)
         if missing_slot_keys:
@@ -3238,6 +3416,19 @@ def _sanitize_llm_adjustments(
             )
             logger.warning("[model-parameter] {}", warning)
             warnings.append(warning)
+
+        if v4_contract_context and parameter_name(candidate) == POWER_MIX_PARAMETER:
+            atomic_validation = validate_power_mix_atomic_values(
+                expected_contexts,
+                proposed_values_by_slot_key,
+                invalid_slot_keys=invalid_slot_keys,
+            )
+            warnings.extend(atomic_validation.warnings)
+            value_grid = [
+                value_cells_by_slot_key[slot_key]
+                for slot_key in expected_contexts
+                if slot_key in atomic_validation.valid_slot_keys and slot_key in value_cells_by_slot_key
+            ]
 
         if not value_grid:
             warning = f"Step3 응답에 유효한 slot 값이 없어 parameter를 제외했습니다: {adjustment.candidate_key}"

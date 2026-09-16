@@ -915,6 +915,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             "scenario": {"scenario_id": 100, "scenario_group_id": 20},
             "scenario_group": {
                 "scenario_group_id": 20,
+                "api_version": "v4",
                 "generation_strategy": V4_GENERATION_STRATEGY,
             },
             "parameter_mapping_resources": {
@@ -3262,6 +3263,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             },
             "scenario_group": {
                 "scenario_group_id": 701,
+                "api_version": "v4",
                 "generation_strategy": V4_GENERATION_STRATEGY,
             },
             "events": [
@@ -3972,6 +3974,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "scenario": {"scenario_id": 501, "scenario_group_id": 701},
                 "scenario_group": {
                     "scenario_group_id": 701,
+                    "api_version": "v4",
                     "generation_strategy": V4_GENERATION_STRATEGY,
                 },
                 "events": [{"mi_event_id": 101}],
@@ -4787,6 +4790,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "scenario": {"scenario_id": 501, "scenario_group_id": 701},
                 "scenario_group": {
                     "scenario_group_id": 701,
+                    "api_version": "v4",
                     "generation_strategy": V4_GENERATION_STRATEGY,
                 },
                 "events": [{"mi_event_id": 101}],
@@ -4850,6 +4854,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_id=501,
             scenario_context={
                 "scenario_group": {
+                    "api_version": "v4",
                     "generation_strategy": V4_GENERATION_STRATEGY,
                 },
             },
@@ -4885,6 +4890,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_id=501,
             scenario_context={
                 "scenario_group": {
+                    "api_version": "v4",
                     "generation_strategy": V4_GENERATION_STRATEGY,
                 },
             },
@@ -4930,6 +4936,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             scenario_id=501,
             scenario_context={
                 "scenario_group": {
+                    "api_version": "v4",
                     "generation_strategy": V4_GENERATION_STRATEGY,
                 },
             },
@@ -4970,6 +4977,50 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "현재 등록된 모델 입력 위치와 일치하지 않았습니다" in error.exception.error_message
         assert "국가·설비·트레인" in error.exception.error_message
         assert "적용 연도·월" in error.exception.error_message
+
+    def test_v4_step2_evidence_exclusion_is_not_reported_as_exact_mismatch(self) -> None:
+        candidate = {
+            "candidate_key": "internal-candidate",
+            "mapping_strategy": "v4",
+            "parameter_name": "LiqUtilAdjustment",
+            "canonical_parameter_name": "LiqUtilAdjustment",
+        }
+        state = ModelParameterProposalState(
+            scenario_id=501,
+            scenario_context={
+                "scenario_group": {
+                    "api_version": "v4",
+                    "generation_strategy": V4_GENERATION_STRATEGY,
+                },
+            },
+            candidate_mappings=[candidate],
+            slot_catalog=[
+                {
+                    "fixed_axis_names": ["Country", "LNG Plant", "LNG Plant Train"],
+                    "time_axis_names": ["Year", "Month"],
+                },
+            ],
+            slot_selection_diagnostics={
+                "catalog_candidate_count": 1,
+                "raw_slot_count": 1,
+                "sanitized_slot_count": 1,
+                "exact_slot_count": 0,
+                "rejected_exact_slot_count": 0,
+                "policy_excluded_slot_count": 1,
+            },
+        )
+
+        with self.assertRaises(MIBaseError) as error:
+            finalize_empty_parameter_values(state)
+
+        _assert_v4_semantic_empty_error(
+            error.exception,
+            expected_title=V4_NO_MODEL_INPUT_TITLE,
+        )
+        assert "현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다" in (
+            error.exception.error_message
+        )
+        assert "등록된 모델 입력 위치와 일치하지 않았습니다" not in error.exception.error_message
 
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:
         candidate = {
@@ -5122,6 +5173,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "scenario": {"scenario_id": 501, "scenario_group_id": 701},
                 "scenario_group": {
                     "scenario_group_id": 701,
+                    "api_version": "v4",
                     "generation_strategy": V4_GENERATION_STRATEGY,
                 },
                 "events": [{"mi_event_id": 101}],
@@ -5750,6 +5802,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     "scenario": {"scenario_id": 501, "scenario_group_id": 701},
                     "scenario_group": {
                         "scenario_group_id": 701,
+                        "api_version": "v4",
                         "generation_strategy": V4_GENERATION_STRATEGY,
                     },
                     "events": [{"mi_event_id": 101}],

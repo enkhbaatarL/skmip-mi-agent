@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
@@ -95,6 +95,7 @@ def build_basecase_index(  # noqa: C901
     *,
     policy: ReferenceLoadPolicy | None = None,
     registry: ParameterSpecRegistry | None = None,
+    blocked_exact_keys_by_candidate: Mapping[str, Iterable[CanonicalKey]] | None = None,
 ) -> BasecaseIndex:
     active_policy = policy or ReferenceLoadPolicy()
     active_registry = registry or get_parameter_spec_registry()
@@ -102,6 +103,17 @@ def build_basecase_index(  # noqa: C901
     if len(candidate_by_key) != len(candidates):
         msg = "candidate_key values must be unique"
         raise domain_error(msg)
+
+    raw_blocked_keys: dict[str, Iterable[CanonicalKey]] = {}
+    for raw_candidate_key, candidate_blocked_keys in (blocked_exact_keys_by_candidate or {}).items():
+        candidate_key = str(raw_candidate_key or "").strip()
+        if candidate_key not in candidate_by_key:
+            msg = f"blocked exact keys reference an unknown candidate_key: {candidate_key!r}"
+            raise domain_error(msg)
+        if candidate_key in raw_blocked_keys:
+            msg = f"blocked exact key candidate_key values must be unique: {candidate_key!r}"
+            raise domain_error(msg)
+        raw_blocked_keys[candidate_key] = candidate_blocked_keys
 
     raw_by_candidate: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for raw_record in basecase_records:
@@ -114,6 +126,7 @@ def build_basecase_index(  # noqa: C901
     candidate_parameters: dict[str, str] = {}
     candidate_key_axes: dict[str, tuple[str, ...]] = {}
     candidate_metadata_axes: dict[str, tuple[str, ...]] = {}
+    blocked_keys: dict[str, frozenset[CanonicalKey]] = {}
     mutable_index: dict[str, dict[CanonicalKey, BasecaseReference]] = {}
     all_records: list[BasecaseReference] = []
 
@@ -127,6 +140,17 @@ def build_basecase_index(  # noqa: C901
         candidate_parameters[candidate_key] = parameter_name
         candidate_key_axes[candidate_key] = key_axes
         candidate_metadata_axes[candidate_key] = metadata_axes
+        normalized_blocked_keys: set[CanonicalKey] = set()
+        for raw_blocked_key in raw_blocked_keys.get(candidate_key, ()):
+            if not isinstance(raw_blocked_key, tuple) or len(raw_blocked_key) != len(key_axes):
+                msg = (
+                    "blocked exact key must be a canonical-key tuple matching the candidate axes: "
+                    f"candidate={candidate_key}, axes={key_axes!r}, key={raw_blocked_key!r}"
+                )
+                raise domain_error(msg)
+            blocked_axes = dict(zip(key_axes, raw_blocked_key, strict=True))
+            normalized_blocked_keys.add(canonical_key_from_axes(blocked_axes, key_axes))
+        blocked_keys[candidate_key] = frozenset(normalized_blocked_keys)
         by_key: dict[CanonicalKey, BasecaseReference] = {}
 
         for raw_record in raw_by_candidate.get(candidate_key, []):
@@ -138,9 +162,37 @@ def build_basecase_index(  # noqa: C901
             year = axes.get("Year")
             if isinstance(year, int) and not active_policy.contains_year(year):
                 continue
-            metadata = {
-                axis_name: canonical_axis_value(axis_name, raw_axes.get(axis_name)) for axis_name in metadata_axes
-            }
+            raw_allowed_missing_metadata_axes = raw_record.get(
+                "_allow_missing_metadata_axes",
+            )
+            if raw_allowed_missing_metadata_axes is None:
+                allowed_missing_metadata_axes: frozenset[str] = frozenset()
+            elif isinstance(
+                raw_allowed_missing_metadata_axes,
+                list | tuple | set | frozenset,
+            ):
+                allowed_missing_metadata_axes = frozenset(
+                    str(axis_name) for axis_name in raw_allowed_missing_metadata_axes
+                )
+            else:
+                msg = f"allowed missing metadata axes must be a collection: candidate={candidate_key}"
+                raise domain_error(msg)
+            unknown_allowed_axes = allowed_missing_metadata_axes - set(metadata_axes)
+            if unknown_allowed_axes:
+                msg = (
+                    "allowed missing metadata axes are not registered metadata axes: "
+                    f"candidate={candidate_key}, axes={sorted(unknown_allowed_axes)}"
+                )
+                raise domain_error(msg)
+            metadata: dict[str, CanonicalValue] = {}
+            for axis_name in metadata_axes:
+                raw_metadata_value = raw_axes.get(axis_name)
+                if axis_name in allowed_missing_metadata_axes and (
+                    raw_metadata_value is None
+                    or (isinstance(raw_metadata_value, str) and not raw_metadata_value.strip())
+                ):
+                    continue
+                metadata[axis_name] = canonical_axis_value(axis_name, raw_metadata_value)
             canonical_key = canonical_key_from_axes(axes, key_axes)
             reference_id = str(raw_record.get("reference_id") or "").strip()
             if not reference_id:
@@ -156,7 +208,11 @@ def build_basecase_index(  # noqa: C901
                     apply_numeric_precision(
                         raw_value,
                         label=f"basecase value for {candidate_key}:{reference_id}",
-                        max_decimal_places=active_policy.value_max_decimal_places,
+                        max_decimal_places=(
+                            -1
+                            if raw_record.get("_preserve_reference_precision") is True
+                            else active_policy.value_max_decimal_places
+                        ),
                         mode=active_policy.value_precision_mode,
                     )
                     if raw_value is not None
@@ -187,6 +243,7 @@ def build_basecase_index(  # noqa: C901
         candidate_key_axes=MappingProxyType(candidate_key_axes),
         candidate_metadata_axes=MappingProxyType(candidate_metadata_axes),
         _by_candidate=immutable_index,
+        blocked_exact_keys_by_candidate=MappingProxyType(blocked_keys),
     )
 
 
@@ -228,9 +285,7 @@ def _lookup_basecase_by_non_time_axes(
 
 def _stable_metadata(metadata: Mapping[str, CanonicalValue]) -> dict[str, CanonicalValue]:
     return {
-        axis_name: axis_value
-        for axis_name, axis_value in metadata.items()
-        if axis_name not in TEMPORAL_METADATA_AXES
+        axis_name: axis_value for axis_name, axis_value in metadata.items() if axis_name not in TEMPORAL_METADATA_AXES
     }
 
 
@@ -247,13 +302,19 @@ def build_slot_catalog(
         key_axes = basecase_index.candidate_key_axes[candidate_key]
         time_axes = tuple(axis_name for axis_name in key_axes if axis_name in TIME_AXES)
         non_time_axes = tuple(axis_name for axis_name in key_axes if axis_name not in TIME_AXES)
-        basecase_records = basecase_index.records_for_candidate(candidate_key)
+        blocked_exact_keys = basecase_index.blocked_exact_keys_by_candidate.get(
+            candidate_key,
+            frozenset(),
+        )
+        basecase_records = tuple(
+            record
+            for record in basecase_index.records_for_candidate(candidate_key)
+            if record.canonical_key not in blocked_exact_keys
+        )
         # Value-less Basecase rows remain indexed for metadata fallback, but they
         # become selectable only when the exact LUT coordinate supplies a value.
         union_axes: dict[CanonicalKey, Mapping[str, CanonicalValue]] = {
-            record.canonical_key: record.axes
-            for record in basecase_records
-            if record.value is not None
+            record.canonical_key: record.axes for record in basecase_records if record.value is not None
         }
         lut_records: tuple[LutRecord, ...] = ()
         if lut_catalog is not None:
@@ -264,7 +325,11 @@ def build_slot_catalog(
                     raise domain_error(
                         msg,
                     )
-                lut_records = lut_catalog.records_for_parameter(parameter_name)
+                lut_records = tuple(
+                    record
+                    for record in lut_catalog.records_for_parameter(parameter_name)
+                    if record.canonical_key not in blocked_exact_keys
+                )
                 for record in lut_records:
                     union_axes.setdefault(record.canonical_key, record.axes)
 
@@ -346,12 +411,14 @@ def resolve_effective_reference(  # noqa: C901
         msg = f"unknown candidate_key: {candidate_key}"
         raise domain_error(msg)
     canonical_key = canonical_key_from_axes(axes, key_axes)
+    if canonical_key in basecase_index.blocked_exact_keys_by_candidate.get(
+        candidate_key,
+        frozenset(),
+    ):
+        return None
     basecase = basecase_index.lookup(candidate_key, axes)
     basecase_metadata_source = basecase
-    if (
-        basecase_metadata_source is None
-        and basecase_index.candidate_metadata_axes.get(candidate_key)
-    ):
+    if basecase_metadata_source is None and basecase_index.candidate_metadata_axes.get(candidate_key):
         basecase_metadata_source = _lookup_basecase_by_non_time_axes(
             candidate_key,
             axes,
@@ -406,9 +473,7 @@ def resolve_effective_reference(  # noqa: C901
         lut_default_value=lut_record.value if lut_record is not None else None,
         llm_reference_value=value_source.value,
         effective_source=effective_source,
-        basecase_reference_id=(
-            basecase_metadata_source.reference_id if basecase_metadata_source is not None else None
-        ),
+        basecase_reference_id=(basecase_metadata_source.reference_id if basecase_metadata_source is not None else None),
         lut_reference_id=lut_record.reference_id if lut_record is not None else None,
         lut_version=lut_version,
         diagnostics=tuple(diagnostics),
