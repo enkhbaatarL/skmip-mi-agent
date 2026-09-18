@@ -70,8 +70,14 @@ Event Type 관계가 필요하다.
 | `tmm_mi_scenario_dimension_template_m` | legacy v1~v3 Event Type별 Dimension Template |
 | `tmm_mi_model_impact_lever_m` | v4 LNG 영향 Lever catalog와 model parameter binding |
 
-v4는 `lever_code`, domain, 설명, 적용 기준, `parameter_bindings`, catalog version을 사용한다. binding이 없으면
-입력 계약 오류이고, inactive·catalog 미지원·price-only 상태는 진단 정보로 구분한다.
+v4는 `lever_code`, domain, 설명, 적용 기준, `parameter_bindings`, catalog version을 사용한다. 0030 이후 identity는
+`(catalog_version, lever_code)`이며 domain index와 parent self-FK도 catalog version을 함께 사용한다. v4 create는
+`catalog_version='v4'`, `use_yn='Y'`, `del_yn='N'`을 명시적으로 조회하고 그 checksum을 Group에 pin한다.
+binding이 없는 `route_disruption`, `trade_restriction`과 `price_only` Lever는 유효한 설명용 catalog row이며 모델
+Parameter 후보를 만들지 않는다. unknown Parameter binding이나 version 혼합은 계약 오류로 fail-close한다.
+Additional Dimension 생성과 Presentation label enrichment도 Group의 `impact_catalog_version`과
+`impact_catalog_checksum`을 한 쌍으로 검증한다. 같은 `v4` 문자열이라도 checksum이 다르면 현재 catalog 의미를
+과거 Group에 소급하지 않는다.
 
 ## 2. Scenario Group
 

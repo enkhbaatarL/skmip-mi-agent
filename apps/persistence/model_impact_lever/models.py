@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import CheckConstraint, Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKeyConstraint, Index, UniqueConstraint
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,8 +14,30 @@ from apps.persistence.scenario_group.models import BIN, TABLE_ARGS, AuditColumns
 class MiModelImpactLeverModel(AuditColumnsMixin, ORMBase):
     __tablename__ = "tmm_mi_model_impact_lever_m"
     __table_args__ = (
-        UniqueConstraint("lever_code", name="uk_tmm_mi_model_impact_lever_m_01"),
-        Index("idx_tmm_mi_model_impact_lever_m_01", "domain", "lever_code"),
+        UniqueConstraint(
+            "catalog_version",
+            "lever_code",
+            name="uk_tmm_mi_model_impact_lever_m_01",
+        ),
+        Index(
+            "idx_tmm_mi_model_impact_lever_m_01",
+            "catalog_version",
+            "domain",
+            "lever_code",
+        ),
+        Index(
+            "idx_tmm_mi_model_impact_lever_m_02",
+            "catalog_version",
+            "parent_lever_code",
+        ),
+        ForeignKeyConstraint(
+            ["catalog_version", "parent_lever_code"],
+            [
+                "tmm_mi_model_impact_lever_m.catalog_version",
+                "tmm_mi_model_impact_lever_m.lever_code",
+            ],
+            name="fk_tmm_mi_model_impact_lever_m_02",
+        ),
         CheckConstraint("use_yn IN ('Y','N')", name="ck_tmm_mi_model_impact_lever_m_02"),
         CheckConstraint("del_yn IN ('Y','N')", name="ck_tmm_mi_model_impact_lever_m_03"),
         CheckConstraint(

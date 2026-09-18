@@ -9,7 +9,7 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 저장소 기준선의 파라미터는 몇 개인가? | 체크인 canonical master 21개 중 활성은 16개이고 LUT-backed 10개와 Basecase-only 6개다. 신규 proposal runtime 허용은 5개다. live DB 값은 별도 read-back이 필요하다. |
+| 저장소 기준선의 파라미터는 몇 개인가? | 0030 fixture master 21개 중 활성은 14개이고 LUT-backed 활성 10개와 Basecase-only 활성 4개다. 신규 proposal runtime 허용은 5개다. live DB 값은 별도 read-back이 필요하다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
@@ -56,7 +56,7 @@ v3 context 테이블은 동적 composite dimension의 lineage를 기존 연결�
 
 `tmm_mi_model_param_m`에는 파라미터의 이름, 설명, 값을 넣을 모델 파일·시트·테이블, Basecase를 읽는 기준이 있다.
 Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
-체크인 canonical 21개 중 활성 기준선은 다음 16개다. 앞의 10개는 LUT-backed이고 뒤의 6개는 Basecase-only다.
+0030 fixture 21개 중 활성 기준선은 다음 14개다. 앞의 10개는 LUT-backed이고 뒤의 4개는 Basecase-only다.
 아래 표는 canonical과 resource capability 기준선을 설명한다. 표의 활성 상태와 별개로 신규 proposal 허용 여부는 위 runtime allow-list를 따르며, 실제 DB 적용 여부는 read-back으로 확인한다.
 
 | 파라미터 | 적용 대상 | 주요 좌표 | Basecase 읽기 방식 |
@@ -74,9 +74,11 @@ Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
 | `User-Adjusted Gas Demand` | Demand / DemandOutputOverwrite | 국가, 연도, 월, 수요 하위부문 | Basecase exact slot만 사용 |
 | `RegasAdjustment` | Supply / RegasAdjustment | 지역 계층, 재기화 Plant, 연도, 월 | Basecase exact slot만 사용 |
 | `PNG Contract Volume` | Trade / MidstreamContractInput | 연도, From·To 국가 | Basecase exact slot만 사용 |
-| `RemainingUnrestrictedAmount` | Trade / TradeRestrictionInput | 연도, From·To 국가 | Basecase exact slot만 사용 |
 | `ShippingCost` | Trade / ShippingCostInput | 연도 | Basecase exact slot만 사용 |
-| `VolumeCancelled` | Trade / TradeRestrictionInput | 연도, From·To 국가 | Basecase exact slot만 사용 |
+
+`RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0030에서 master 비활성이고 active v4 binding도 없다.
+과거 Basecase 좌표가 있더라도 future restriction/취소 입력 계약과 forward canonical release 전에는 executable
+capability로 보지 않는다.
 
 “주요 좌표”는 값을 구별하는 주소다. 예를 들어 `GDP`의 `대한민국 / 2027년`과 `대한민국 / 2028년`은 서로 다른 입력 위치다.
 Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md)를 참고한다.
@@ -98,7 +100,14 @@ Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PAR
 | `indirect` | 55 | 값을 직접 바꾸지는 않지만 판단에 참고할 배경 정보 | 아니요 |
 | `na` | 33 | 모델 입력 파라미터와 직접 연결되지 않는 항목 | 아니요 |
 
-정확한 master는 `scripts/model_parameter/model-parameter-canonical-v4.json`, v4 Lever catalog는 `scripts/model_parameter/model-impact-lever-canonical-v4.json`이 저장소 판정 기준이다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중 `dimension_mappings`만 정본으로 사용한다. mapping-only runner `scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`는 live v4 master·Lever가 canonical와 일치하는지 먼저 검증하고 mapping 테이블만 129행으로 적용하도록 설계되어 있다. 기존 `apply_model_parameter_v4.py`는 변경 전 128행 snapshot을 고정한 역사적 release runner이므로 129행 DB의 사후 판정에는 사용하지 않는다. v4 무영향은 SELECT-only fingerprint 비교로 검증하고, 이후 master/Lever 변경은 새 snapshot과 versioned runner로 진행한다.
+0030 이후 현재 master/runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0030.json`, v4 Lever
+fixture는 `scripts/model_parameter/model-impact-lever-canonical-v4-0030.json`이다. DB migration 정본은 sibling
+`skmip-mi-agent-mgmt` revision `a378b54ef997`이며, active catalog는 `v4`, checksum은 `835e6f2d…be51`이다.
+기존 이름의 두 canonical과 `apply_model_parameter_v4.py`/정적 SQL은 0029 역사 릴리스 증적으로 보존하며 0030
+적용에 재사용하지 않는다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중
+`dimension_mappings`만 정본으로 사용한다. parameter 0030 successor에 상속된 128행 mapping payload는 0029
+역사 재현용이며 runtime mapping authority가 아니다. 0030은 기존 Lever ID 1~16을 `v0/inactive`, ID 17~34를
+`v4/active`로 보존하므로 ORM과 조회는 `(catalog_version, lever_code)`를 identity로 사용한다.
 
 정적 SQL `scripts/model_parameter/apply_model_parameter_canonical_v4.sql`은 격리된 MySQL 8.0에서 첫 적용, 두 번째 semantic idempotency, 강제 precondition 실패 rollback과 post-invariant 실패 rollback을 검증한다. 격리 재검증기는 `tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py`다.
 
@@ -124,7 +133,7 @@ v3 group relation은 2~5개여야 하고, 각 group event는 선택된 composite
 
 선택 value가 정의 밖 자유 value이면 `tmm_mi_dimension_value_mapping_m`에서 같은 group·composite dimension·display value의 projection을 확인한다. `status=approved` projection만 보조 근거로 사용한다. mapping row가 없거나 pending/rejected여도 proposal은 허용하고 warning을 남긴다. group의 `parameter_mapping_ready=false`도 실행 gate가 아니다.
 
-이 역투영은 v1/v3 전용이며 live DB의 dimension mapping을 사용한다. 체크인 129행 기준선에서 direct/routing이 도달하는 전역 raw mapping-reachable 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 요청 하나에서는 관련 lineage에 연결된 하위 집합만 raw 후보가 된다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 6개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
+이 역투영은 v1/v3 전용이며 live DB의 dimension mapping을 사용한다. 체크인 129행 기준선에서 direct/routing이 도달하는 전역 raw mapping-reachable 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 요청 하나에서는 관련 lineage에 연결된 하위 집합만 raw 후보가 된다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
 
 ### 3.2 v4가 Lever catalog를 사용하는 방법
 
@@ -136,7 +145,12 @@ v4 loader는 Scenario, Group, `display_order`로 정렬한 Group–Event 관계,
 4. `source_event_ids`가 group event 집합의 부분집합인지 여부
 5. 각 Lever code/ID가 catalog와 일치하는지 여부
 
-체크인 active catalog 기준선은 Lever 16개, parameter binding occurrence 20개를 가지며, 비활성 parameter binding을 제외한 executable occurrence는 18개이고 raw binding으로 도달하는 고유 활성 parameter의 전역 합집합은 16개다. 요청 하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. `price_only`, binding 없음, 비활성 또는 catalog unsupported는 raw 후보에서 제외한다. 그 뒤 runtime allow-list를 적용해 신규 proposal 후보를 5개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다. checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다.
+0030 active catalog 기준선은 Lever 18개, raw parameter binding occurrence 16개를 가지며, 비활성
+CDD/HDD binding을 제외한 effective executable occurrence와 고유 활성 Parameter는 각각 14개다. 요청
+하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. `price_only`, binding 없음,
+비활성 또는 catalog unsupported는 raw 후보에서 제외한다. 그 뒤 runtime allow-list를 적용해 신규 proposal
+후보를 5개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
+version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다.
 
 ## 4. 결과표: 제안부터 확정까지 남기는 표
 

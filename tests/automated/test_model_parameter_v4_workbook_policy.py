@@ -104,12 +104,12 @@ def _liq_candidate(*, source_event_ids: list[int] | None = None) -> dict[str, An
     candidate.update(
         {
             "source_event_ids": source_event_ids or [101],
-            "lever_code": "liquefaction_availability",
+            "lever_code": "liquefaction_utilization",
             "lever_provenance": [
                 {
                     "scenario_dimension_key": "freeport_outage",
                     "source_event_ids": source_event_ids or [101],
-                    "lever_code": "liquefaction_availability",
+                    "lever_code": "liquefaction_utilization",
                     "direction": "decrease",
                     "scope": "Freeport LNG / Freeport LNG T1",
                     "time_window": "2027 Q2",

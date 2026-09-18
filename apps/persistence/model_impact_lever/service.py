@@ -35,8 +35,18 @@ def resolve_binding_support(
 
 def _hydrate_catalog(
     repository: ModelImpactLeverRepository,
+    *,
+    catalog_version: str,
 ) -> tuple[list[ModelImpactLeverPayload], str, str]:
-    raw_levers = repository.fetch_active_impact_levers()
+    requested_version = catalog_version.strip()
+    if not requested_version:
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail="Model impact lever catalog version is required",
+        )
+    raw_levers = repository.fetch_active_impact_levers(
+        catalog_version=requested_version,
+    )
     parameter_names = [
         str(binding.get("parameter_name") or "")
         for lever in raw_levers
@@ -89,14 +99,17 @@ def _hydrate_catalog(
     if not versions:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
-            detail="Active model impact lever catalog is empty",
+            detail=(f"Active model impact lever catalog is empty: catalogVersion={requested_version}"),
         )
-    if len(versions) != 1:
+    if versions != [requested_version]:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
-            detail=f"Active model impact lever catalog has mixed versions: {versions}",
+            detail=(
+                "Active model impact lever catalog does not match the requested version: "
+                f"requested={requested_version}, actual={versions}"
+            ),
         )
-    version = versions[0]
+    version = requested_version
     checksum_payload = [lever.model_dump(mode="json", exclude={"impact_lever_id"}) for lever in hydrated]
     checksum = hashlib.sha256(
         json.dumps(
@@ -115,10 +128,15 @@ class ModelImpactLeverService:
     def __init__(self, *, session: Session | None = None) -> None:
         self._session = session
 
-    def load_active_catalog(self) -> tuple[list[ModelImpactLeverPayload], str, str]:
+    def load_active_catalog(
+        self,
+        *,
+        catalog_version: str,
+    ) -> tuple[list[ModelImpactLeverPayload], str, str]:
         if self._session is not None:
             return _hydrate_catalog(
                 ModelImpactLeverRepository(session=self._session),
+                catalog_version=catalog_version,
             )
 
         from apps.common.configs.database.sync_database.connection import (
@@ -127,7 +145,10 @@ class ModelImpactLeverService:
 
         session = get_sync_session()
         try:
-            return _hydrate_catalog(ModelImpactLeverRepository(session=session))
+            return _hydrate_catalog(
+                ModelImpactLeverRepository(session=session),
+                catalog_version=catalog_version,
+            )
         finally:
             session.close()
 

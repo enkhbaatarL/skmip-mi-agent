@@ -1,8 +1,18 @@
 # Model Parameter Base Case Mapping
 
-## 기준과 범위
+> 역사 릴리스 문서: 아래 표와 260813 workbook은 0029의 16-Lever/16-active-Parameter 기준선이다.
+> 0030 현재 runtime 계약은 `model-parameter-canonical-v4-0030.json`과
+> `model-impact-lever-canonical-v4-0030.json`(active Lever 18, active/effective Parameter 14,
+> checksum `835e6f2d…be51`)을 따른다. 이 문서의 역사 표를 0030 DB 적용 입력으로 사용하지 않는다.
 
-이 문서는 v4 master·Impact Lever와 v1/v3 shared dimension mapping을 함께 설명하는 사람이 읽는 canonical 명세다. v4 DB 값의 기계 판정 기준은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping의 기계 판정 기준은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중 `dimension_mappings`다. `scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json`의 128행 mapping은 2026-08-13 변경 전 증적으로 보존한다.
+## 기준과 범위 (0029 역사 기준)
+
+아래 내용은 0029 당시 v4 master·Impact Lever와 v1/v3 shared dimension mapping을 함께 설명하는 역사
+canonical 명세다. 0029 DB 값의 기계 판정 기준은 `scripts/model_parameter/model-parameter-canonical-v4.json`과
+`scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping의 기계 판정 기준은
+`scripts/model_parameter/model-parameter-canonical-v1.json` 중 `dimension_mappings`다.
+`scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json`의 128행 mapping은
+2026-08-13 변경 전 증적으로 보존한다.
 
 - master: 21행, 활성 16행
 - reference capability: LUT-backed 10개, Basecase-only 6개
@@ -187,7 +197,7 @@ v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding�
 | `contract_volume` | VolumeCancelled primary; PNG Contract Volume alternative |
 | `trade_restriction` | RemainingUnrestrictedAmount primary; VolumeCancelled alternative |
 
-세 `price_only` Lever는 binding이 없다. CDD/HDD binding을 포함하면 catalog binding occurrence는 20개이며, 비활성 master binding을 제외한 effective executable occurrence는 18개, 고유 활성 parameter는 16개다. 이 수치는 canonical/catalog capability 기준으로 유지한다. 현재 runtime은 이 중 allow-list 5개만 proposal 후보로 허용하고 나머지 활성 11개는 `active-but-blocked`로 기록해 제외한다. allow-list를 통과한 single primary는 결정적으로 선택하고, 통과한 primary/alternative가 함께 남으면 applicability와 Scenario/Event/Lever 맥락을 Step1.5에서 판단한다.
+세 `price_only` Lever는 binding이 없다. CDD/HDD binding을 포함하면 catalog binding occurrence는 20개이며, 비활성 master binding을 제외한 effective executable occurrence는 18개, 고유 활성 parameter는 16개다. 이 수치는 0029 canonical/catalog capability 기준이다. 0029 당시 runtime은 이 중 allow-list 5개만 proposal 후보로 허용하고 나머지 활성 11개는 `active-but-blocked`로 기록해 제외했다. allow-list를 통과한 single primary는 결정적으로 선택하고, 통과한 primary/alternative가 함께 남으면 applicability와 Scenario/Event/Lever 맥락을 Step1.5에서 판단한다.
 
 ### 보류와 보조 resource
 
@@ -247,7 +257,7 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 | 충돌                                             | 최종 선택                                                        | 근거와 반영 위치                                                                                                         |
 | ---------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| v1 mapping 후보는 LUT-backed 10개                            | v4 master 21행·활성 16행, runtime proposal allow-list 5개           | DB/canonical/catalog 수치는 유지하고 제안 실행만 5개로 제한; 나머지 활성 후보는 `active-but-blocked`로 구분 |
+| v1 mapping 후보는 LUT-backed 10개                            | 0029 v4 master 21행·활성 16행, runtime proposal allow-list 5개      | 0029 DB/canonical/catalog 수치는 유지하고 제안 실행만 5개로 제한; 나머지 활성 후보는 `active-but-blocked`로 구분 |
 | 초안의 header/data start/column role과 현재 DB 값이 다름 | 기존 활성 5개는 검증된 DB 값을 유지; 나머지는 실제 workbook 구조와 최종 LUT 계산으로 정규화 | canonical JSON의 21행 전체 basecase_*가 read-back 기준                                                                   |
 | Coal/Gas futures를 활성으로 표시                      | enabled=false 및 use_yn=N                                     | 2026년 이후 strip이 제공되기 전 과거값 이월 금지                                                                                  |
 | ElectrificationRate 활성 여부                      | use_yn=N, LUT spec 없음                                        | 유효 Basecase/LUT/승인 mapping 부재                                                                                     |
@@ -271,6 +281,6 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 4. `poetry run python scripts/model_parameter/sync_mapping_workbook.py --check-only`로 legacy mapping Excel과 JSON·config·archive의 정합성을 확인한다.
 5. 역사적 v4 release replay는 `poetry run python tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py`로 격리 MySQL 8의 128행 snapshot에서만 검증한다. 현재 129행 외부 DB의 사후 판정에는 dated v4 runner/SQL을 사용하지 않는다.
 
-현재 업무용 Excel은 `resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx`다. parameter 21행·활성 16개, Lever binding과 v1/v3 shared legacy mapping 129행을 함께 보여 준다. 기계 판정은 v4 master·Lever JSON과 v1 mapping JSON의 `dimension_mappings`를 분리해 사용한다.
+0029 업무용 Excel은 `resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx`다. parameter 21행·활성 16개, Lever binding과 v1/v3 shared legacy mapping 129행을 함께 보여 준다. 0029 재현 시에는 v4 master·Lever JSON과 v1 mapping JSON의 `dimension_mappings`를 분리해 사용한다.
 
 이전 `260625_...xlsx`, `260702_...v0.4.xlsx`, `260807_...canonical-v1.xlsx`는 `resources/mapping/archive/`의 역사 자료다. 실제 v4 SQL 검증 결과와 외부 DB rollback digest는 실행한 명령·환경·hash와 함께 통합 release report에 기록하며, 이 문서 자체는 아직 수행하지 않은 DB 적용이나 검증 통과를 주장하지 않는다.

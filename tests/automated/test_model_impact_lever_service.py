@@ -25,9 +25,10 @@ from apps.persistence.model_impact_lever.service import (
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-MODEL_PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
-IMPACT_LEVER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
+MODEL_PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4-0030.json"
+IMPACT_LEVER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4-0030.json"
 BindingSupportResolver = Callable[..., tuple[str, str | None]]
+EXPECTED_0030_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -55,12 +56,14 @@ def _repository_from_v4_canonical() -> SimpleNamespace:
         key=lambda row: (str(row["domain"]), str(row["lever_code"])),
     )
     return SimpleNamespace(
-        fetch_active_impact_levers=lambda: ordered_levers,
+        fetch_active_impact_levers=lambda *, catalog_version: [
+            row for row in ordered_levers if row["catalog_version"] == catalog_version
+        ],
         fetch_parameter_definitions_by_names=lambda _names: definitions,
     )
 
 
-def test_display_labels_use_lightweight_catalog_query_and_close_session() -> None:
+def test_display_labels_require_matching_catalog_pin_and_close_session() -> None:
     session = MagicMock()
     labels = {
         "inventory_condition": "재고 여건",
@@ -74,11 +77,46 @@ def test_display_labels_use_lightweight_catalog_query_and_close_session() -> Non
             {"apps.common.configs.database.sync_database.connection": connection_module},
         ),
         patch.object(ModelImpactLeverRepository, "fetch_display_labels", return_value=labels) as fetch,
+        patch(
+            "apps.agents.scenario_group_agent.persistence.model_impact_lever_service."
+            "SharedModelImpactLeverService.load_active_catalog",
+            return_value=([], "v4", EXPECTED_0030_CHECKSUM),
+        ) as load_catalog,
     ):
-        result = ScenarioModelImpactLeverService().load_display_labels()
+        result = ScenarioModelImpactLeverService().load_display_labels(
+            catalog_version="v4",
+            catalog_checksum=EXPECTED_0030_CHECKSUM,
+        )
 
     assert result == labels
-    fetch.assert_called_once_with()
+    load_catalog.assert_called_once_with(catalog_version="v4")
+    fetch.assert_called_once_with(catalog_version="v4")
+    session.close.assert_called_once_with()
+
+
+def test_display_labels_skip_enrichment_when_catalog_checksum_is_stale() -> None:
+    session = MagicMock()
+    connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
+    connection_module.get_sync_session = MagicMock(return_value=session)
+    with (
+        patch.dict(
+            sys.modules,
+            {"apps.common.configs.database.sync_database.connection": connection_module},
+        ),
+        patch.object(ModelImpactLeverRepository, "fetch_display_labels") as fetch,
+        patch(
+            "apps.agents.scenario_group_agent.persistence.model_impact_lever_service."
+            "SharedModelImpactLeverService.load_active_catalog",
+            return_value=([], "v4", EXPECTED_0030_CHECKSUM),
+        ),
+    ):
+        result = ScenarioModelImpactLeverService().load_display_labels(
+            catalog_version="v4",
+            catalog_checksum="a4af2e5bbb90f3a76e9e0aab3a16091015898031a97a271ebcf35ca67f4dc6cd",
+        )
+
+    assert result == {}
+    fetch.assert_not_called()
     session.close.assert_called_once_with()
 
 
@@ -117,11 +155,12 @@ def test_catalog_marked_unsupported_remains_distinguishable(
     ) == ("known_unsupported", "CATALOG_MARKED_UNSUPPORTED")
 
 
-def test_v4_catalog_hydration_has_20_raw_18_effective_and_16_unique_names() -> None:
+def test_v4_catalog_hydration_matches_0030_counts_and_checksum() -> None:
     expected = _load_json(IMPACT_LEVER_CANONICAL_PATH)
 
     catalog, version, checksum = _hydrate_catalog(
         _repository_from_v4_canonical(),
+        catalog_version="v4",
     )
 
     bindings = [binding for lever in catalog for binding in lever.parameter_bindings]
@@ -133,12 +172,13 @@ def test_v4_catalog_hydration_has_20_raw_18_effective_and_16_unique_names() -> N
         if binding.support_status == "known_unsupported"
     }
 
-    assert len(catalog) == 16
+    assert len(catalog) == 18
     assert version == "v4"
-    assert checksum == expected["hydrated_catalog_checksum"]
-    assert len(bindings) == 20
-    assert statuses == {"executable": 18, "known_unsupported": 2}
-    assert len(executable_names) == 16
+    assert expected["hydrated_catalog_checksum"] == EXPECTED_0030_CHECKSUM
+    assert checksum == EXPECTED_0030_CHECKSUM
+    assert len(bindings) == 16
+    assert statuses == {"executable": 14, "known_unsupported": 2}
+    assert len(executable_names) == 14
     assert executable_names == set(expected["active_parameter_names"])
     assert unsupported == {
         "CDD": "INACTIVE_MODEL_PARAMETER",
@@ -148,11 +188,11 @@ def test_v4_catalog_hydration_has_20_raw_18_effective_and_16_unique_names() -> N
 
 def test_catalog_hydration_rejects_mixed_active_versions() -> None:
     repository = _repository_from_v4_canonical()
-    levers = repository.fetch_active_impact_levers()
+    levers = repository.fetch_active_impact_levers(catalog_version="v4")
     levers[0] = {**levers[0], "catalog_version": "v3"}
-    repository.fetch_active_impact_levers = lambda: levers
+    repository.fetch_active_impact_levers = lambda *, catalog_version: levers
 
     with pytest.raises(MIBaseError) as caught:
-        _hydrate_catalog(repository)
+        _hydrate_catalog(repository, catalog_version="v4")
 
-    assert "mixed versions" in caught.value.error_message
+    assert "does not match the requested version" in caught.value.error_message

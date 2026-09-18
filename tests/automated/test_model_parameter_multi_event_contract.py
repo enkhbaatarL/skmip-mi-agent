@@ -99,6 +99,39 @@ def test_scenario_group_payload_and_serializer_preserve_optional_event_ids() -> 
     assert serialized["mi_event_id"] is None
     assert serialized["event_type_l2_id"] is None
     assert serialized["generation_strategy"] == "multi_event_composite_dimensions"
+    assert serialized["impact_catalog_version"] is None
+    assert serialized["impact_catalog_checksum"] is None
+
+
+def test_scenario_group_serializer_preserves_v4_impact_catalog_pin() -> None:
+    group = SimpleNamespace(
+        scenario_group_id=21,
+        request_usr_id=40,
+        title="v4 group",
+        summary="summary",
+        description="description",
+        dimension_selected=["d1"],
+        scenario_count=1,
+        status="creating",
+        stage="scenario_created",
+        api_version="v4",
+        generation_strategy="multi_event_model_lever_dimensions",
+        impact_catalog_version="v4",
+        impact_catalog_checksum="835e6f2d",
+        template_checksum=None,
+        parameter_mapping_ready=False,
+        dimension_definitions=[],
+        generation_diagnostics={},
+        del_yn="N",
+        mod_dtm=None,
+    )
+    repository = ScenarioGroupRepository(session=Mock())
+    repository.fetch_single_active_group_event = Mock(return_value=None)
+
+    serialized = repository.model_to_dict(group)
+
+    assert serialized["impact_catalog_version"] == "v4"
+    assert serialized["impact_catalog_checksum"] == "835e6f2d"
 
 
 def test_group_event_query_preserves_display_order_contract() -> None:

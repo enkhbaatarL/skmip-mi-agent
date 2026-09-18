@@ -478,6 +478,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
         scenario_group_id=701,
         api_version="v4",
         generation_strategy=V4_STRATEGY,
+        impact_catalog_version=CATALOG_VERSION,
     )
     parameter_definitions = [
         {
@@ -531,7 +532,9 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
     model_parameter_repository.fetch_parameter_mapping_resources.assert_not_called()
     model_parameter_repository.fetch_model_parameter_definitions.assert_called_once_with()
     impact_lever_service_cls.assert_called_once_with(session=session)
-    impact_lever_service_cls.return_value.load_active_catalog.assert_called_once_with()
+    impact_lever_service_cls.return_value.load_active_catalog.assert_called_once_with(
+        catalog_version=CATALOG_VERSION,
+    )
     load_v4_context.assert_called_once_with(
         scenario=scenario,
         group=group,

@@ -299,6 +299,8 @@ class ScenarioGroupRepository(BaseSyncSQLRepository):
             "stage": group.stage,
             "api_version": group.api_version or "v1",
             "generation_strategy": (group.generation_strategy or "single_event_template_dimensions"),
+            "impact_catalog_version": group.impact_catalog_version,
+            "impact_catalog_checksum": group.impact_catalog_checksum,
             "template_checksum": group.template_checksum,
             "parameter_mapping_ready": bool(group.parameter_mapping_ready),
             "dimension_definitions": group.dimension_definitions or [],

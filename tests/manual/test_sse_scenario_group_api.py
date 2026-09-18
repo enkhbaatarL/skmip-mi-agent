@@ -199,7 +199,15 @@ def validate_presentation(  # noqa: C901
 
     sections = _required_dict(payload, "sections")
     event_analysis = _validate_markdown_section(sections, "eventAnalysis")
-    role_rationale = _validate_markdown_section(sections, "roleSelectionRationale")
+    if "roleSelectionRationale" not in sections:
+        msg = "Presentation sections must contain roleSelectionRationale"
+        raise ValueError(msg)
+    role_rationale_payload = sections["roleSelectionRationale"]
+    role_rationale = (
+        None
+        if role_rationale_payload is None
+        else _validate_markdown_section(sections, "roleSelectionRationale")
+    )
     scenario_design = _required_dict(sections, "scenarioDesign")
     _validate_status_and_evidence(scenario_design, "scenarioDesign")
     definitions = _required_dict(scenario_design, "dimensionDefinitions")
@@ -217,8 +225,9 @@ def validate_presentation(  # noqa: C901
         "scenarioDesign": scenario_design.get("status"),
         "dimensionDefinitions": definitions.get("status"),
         "scenarioTable": table.get("status"),
-        "roleSelectionRationale": role_rationale.get("status"),
     }
+    if role_rationale is not None:
+        final_statuses["roleSelectionRationale"] = role_rationale.get("status")
     not_ready = {name: status for name, status in final_statuses.items() if status != "ready"}
     if not_ready:
         msg = f"Final Presentation sections must be ready: {not_ready}"

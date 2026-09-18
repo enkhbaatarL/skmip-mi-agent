@@ -151,7 +151,7 @@ def _database_evidence() -> tuple[dict[str, Any], list[int]]:
         }
         impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService(
             session=session,
-        ).load_active_catalog()
+        ).load_active_catalog(catalog_version="v4")
         catalog_projection = [lever.model_dump(mode="json") for lever in impact_levers]
         scenario_ids = [int(row["scenario_id"]) for row in scenario_rows]
         return (
@@ -257,9 +257,7 @@ def capture() -> dict[str, Any]:
     return {
         "evidence_version": "model-parameter-v4-mapping-invariance-v1",
         "captured_at_utc": datetime.now(UTC).isoformat(),
-        "v4_invariants": {
-            key: value for key, value in database.items() if key != "shared_mapping_observation"
-        }
+        "v4_invariants": {key: value for key, value in database.items() if key != "shared_mapping_observation"}
         | {"runtime": runtime},
         "shared_mapping_observation": database["shared_mapping_observation"],
     }

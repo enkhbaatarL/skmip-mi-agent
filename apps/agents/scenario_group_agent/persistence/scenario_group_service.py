@@ -350,6 +350,8 @@ class ScenarioGroupService:
                 "run_id": run_id,
                 "generation_diagnostics": diagnostics,
                 "dimension_definitions": list(group.dimension_definitions or []),
+                "impact_catalog_version": str(group.impact_catalog_version or ""),
+                "impact_catalog_checksum": str(group.impact_catalog_checksum or ""),
             }
         except Exception:
             session.rollback()
@@ -929,7 +931,12 @@ class ScenarioGroupService:
             "events": EventService().load_events(event_ids) if event_ids else [],
             "operation": operation,
             "lever_labels": (
-                ModelImpactLeverService().load_display_labels() if str(group.get("api_version") or "v1") == "v4" else {}
+                ModelImpactLeverService().load_display_labels(
+                    catalog_version=str(group.get("impact_catalog_version") or ""),
+                    catalog_checksum=str(group.get("impact_catalog_checksum") or ""),
+                )
+                if str(group.get("api_version") or "v1") == "v4"
+                else {}
             ),
             "legacy_template_dimensions": self._load_trusted_legacy_template_dimensions(group),
         }

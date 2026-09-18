@@ -45,6 +45,8 @@ def _group(version: str, definitions: list[dict[str, object]]) -> dict[str, obje
         "dimension_selected": ["d1"],
         "dimension_definitions": definitions,
         "generation_diagnostics": {},
+        "impact_catalog_version": "v4" if version == "v4" else None,
+        "impact_catalog_checksum": "checksum-v4" if version == "v4" else None,
         "updated_at": datetime(2026, 8, 11, tzinfo=UTC),
     }
 
@@ -194,9 +196,7 @@ def test_v3_and_v4_values_and_cell_forms_share_the_presentation_contract() -> No
         assert row["pressureTarget"] == "JKM"
         assert row["pressureBand"] == "strong_bullish"
         assert row["pressureRationale"] == "stored rationale <script>"
-        assert (
-            row["cellEvidence"]["d1"]["valueId"] == "d1_v1"
-        )
+        assert row["cellEvidence"]["d1"]["valueId"] == "d1_v1"
 
     assert v3.sections.scenario_design.dimension_definitions.items[0].values[0].rationale == (
         "legacy description fallback"
@@ -1120,4 +1120,7 @@ def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> N
     assert result["lever_labels"] == {"inventory_condition": "재고 여건"}
     get_latest.assert_called_once_with(120)
     get_operation.assert_not_called()
-    load_display_labels.assert_called_once_with()
+    load_display_labels.assert_called_once_with(
+        catalog_version="v4",
+        catalog_checksum="checksum-v4",
+    )

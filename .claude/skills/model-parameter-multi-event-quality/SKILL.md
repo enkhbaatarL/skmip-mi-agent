@@ -102,6 +102,33 @@ v4 persistence의 authoritative link는 `scenario_group_id`이며 API `eventId=n
 
 CLI exit는 mandatory `FAIL`만 1이다. `PASS`, `REVIEW`, `COVERAGE LIMIT`는 0이다.
 
+### 5. Proposal-only uncovered campaign
+
+Confirmation 없이 proposal row만 제한 실행해야 하면 quality runner의 `--execute`를 사용하지 않고 별도
+uncovered-only runner를 사용한다. 기본은 read-only이며 capability release와 Group 또는 Scenario 범위를
+명시한다.
+
+```bash
+python tests/manual/model_parameter_agent/run_proposal_only.py \
+  --scenario-group-id 123 \
+  --capability-release v4-proposal-capability-v1
+```
+
+명시적인 proposal write 승인 후에만 같은 명령에 `--execute`를 추가한다. 이 runner는 비삭제 proposal 전체
+이력에서 `PROPOSED`/`CONFIRMED` Scenario를 skip하고, `PROCESSING`이 하나라도 있으면 campaign 전체를
+hard-stop한다. lifecycle/capability skip Scenario도 history guard 범위에서 제외하지 않는다. `FAILED` 이력만
+있거나 이력이 없는 실행 가능 Scenario만 대상으로 하며 write 직전에 resource/context/catalog/input fingerprint와
+proposal history를 다시 판정한다. `v4-proposal-capability-v1`은 0030 full checksum, 기존 5종 allow-list와
+`new-bc-v1` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다. 각 write
+직전에는 현재 Scenario뿐 아니라 명시 cohort 전체의 in-flight 상태를 다시 확인한다. Confirmation, callback,
+outer retry와 uncovered guard 우회는 제공하지 않는다.
+
+read-only는 resource runtime을 bootstrap하지 않는다. `--execute`는 Scenario DB 조회 전에 resource runtime을
+고정하고 실제 파일 hash와 등록된 source/schema/fingerprint를 증적한 뒤 0030 proposal schema를 검사한다. graph가
+사용한 context는 persistence 직전에 frozen preflight context와 다시 비교한다. execute 증적의 runtime/schema가
+미등록이거나 승인된 release contract와 다르면 fail-closed한다. DB uniqueness가 도입되기 전 write pilot은 같은
+cohort에 대한 다른 runner/public proposal 요청이 없도록 운영 singleton을 별도로 보장한다.
+
 ## Release gate
 
 release acceptance까지 요청받으면 이 보고서의 mandatory `FAIL`이 0인지 먼저 확인한 뒤 `verify-model-parameter-release`를 사용한다. canonical fixture, LUT startup/guard, YAML/Kubernetes parity, Excel/archive, 전체 regressions, transactional DB 및 static SQL idempotency/rollback은 release skill 범위다.

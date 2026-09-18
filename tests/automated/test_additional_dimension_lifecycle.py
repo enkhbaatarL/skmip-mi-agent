@@ -19,6 +19,7 @@ from apps.agents.scenario_group_agent.constants import (
 )
 from apps.agents.scenario_group_agent.flows.add_dimension.flow import (
     ADDITIONAL_DIMENSION_CANDIDATES_INVALID,
+    ADDITIONAL_DIMENSION_CATALOG_PIN_STALE,
     _additional_dimension_attempt_span,
     _record_attempt_result,
     get_additional_dimensions,
@@ -75,6 +76,8 @@ def _group(
         scenario_group_id=10,
         api_version=api_version,
         generation_strategy="multi_event_model_lever_dimensions",
+        impact_catalog_version="v4",
+        impact_catalog_checksum="checksum",
         status=status,
         stage=stage,
         generation_diagnostics=diagnostics
@@ -194,6 +197,8 @@ def test_additional_generation_lifecycle_is_idempotent_and_persists_candidates()
     assert queued["status"] == "queued"
     assert queued_again == queued
     assert started is not None
+    assert started["impact_catalog_version"] == "v4"
+    assert started["impact_catalog_checksum"] == "checksum"
     assert group.generation_diagnostics["additional_dimension_generation"]["status"] == "ready"
     assert group.generation_diagnostics["additional_dimension_candidates"] == candidates
     assert completed is True
@@ -590,6 +595,8 @@ def test_additional_flow_uses_one_batch_call_and_empty_pool_skips_llm() -> None:
         "source_fingerprint": "sha256:source",
         "generation_diagnostics": {},
         "dimension_definitions": [],
+        "impact_catalog_version": "v4",
+        "impact_catalog_checksum": "checksum",
     }
     one_question = V4EventImpactAnalysisResult.model_validate(
         {
@@ -617,7 +624,7 @@ def test_additional_flow_uses_one_batch_call_and_empty_pool_skips_llm() -> None:
     )
     invoke = AsyncMock(return_value=V4ReadableAdditionalDimensionDesignDraft(dimensions=[]))
     catalog_service = Mock()
-    catalog_service.load_active_catalog.return_value = ([], "v1", "checksum")
+    catalog_service.load_active_catalog.return_value = ([], "v4", "checksum")
     logger = Mock()
     trace_contexts: list[TraceContext] = []
     settings_module = ModuleType("apps.common.configs.config")
@@ -680,9 +687,73 @@ def test_additional_flow_uses_one_batch_call_and_empty_pool_skips_llm() -> None:
     info_templates = [call.args[0] for call in logger.info.call_args_list]
     assert any("generation started" in template for template in info_templates)
     assert any("generation completed" in template for template in info_templates)
+    catalog_service.load_active_catalog.assert_called_once_with(catalog_version="v4")
     assert service.complete_additional_dimension_generation.call_count == 2
     assert all(
         call.kwargs["candidates"] == [] for call in service.complete_additional_dimension_generation.call_args_list
+    )
+
+
+def test_additional_flow_rejects_stale_catalog_pin_before_llm() -> None:
+    service = Mock()
+    service.start_additional_dimension_generation.return_value = {
+        "source_fingerprint": "sha256:source",
+        "generation_diagnostics": {},
+        "dimension_definitions": [],
+        "impact_catalog_version": "v4",
+        "impact_catalog_checksum": "stale-checksum",
+    }
+    impact_analysis = SimpleNamespace(
+        path_uncertainties=[object()],
+        interaction_uncertainties=[],
+    )
+    catalog_service = Mock()
+    catalog_service.load_active_catalog.return_value = ([], "v4", "current-checksum")
+    invoke = AsyncMock()
+    settings_module = ModuleType("apps.common.configs.config")
+    settings_module.get_settings = Mock(  # type: ignore[attr-defined]
+        return_value=SimpleNamespace(
+            get_agent_config=lambda _agent_name: SimpleNamespace(aip_app_id="scenario-group-test"),
+        ),
+    )
+
+    with (
+        patch.dict(sys.modules, {"apps.common.configs.config": settings_module}),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ScenarioGroupService",
+            return_value=service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.build_unused_impact_analysis",
+            return_value=impact_analysis,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.ModelImpactLeverService",
+            return_value=catalog_service,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.invoke_stage_structured_output",
+            invoke,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.mlflow_trace_context",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.flows.add_dimension.flow.new_transaction_id",
+            return_value="trace-stale-pin",
+        ),
+    ):
+        asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
+
+    catalog_service.load_active_catalog.assert_called_once_with(catalog_version="v4")
+    invoke.assert_not_awaited()
+    service.complete_additional_dimension_generation.assert_not_called()
+    service.fail_additional_dimension_generation.assert_called_once_with(
+        10,
+        source_fingerprint="sha256:source",
+        run_id="run-1",
+        error_code=ADDITIONAL_DIMENSION_CATALOG_PIN_STALE,
     )
 
 
@@ -692,6 +763,8 @@ def test_additional_flow_retries_partial_success_and_saves_valid_candidates_afte
         "source_fingerprint": "sha256:source",
         "generation_diagnostics": {},
         "dimension_definitions": [],
+        "impact_catalog_version": "v4",
+        "impact_catalog_checksum": "checksum",
     }
     one_question = V4EventImpactAnalysisResult.model_validate(
         {
@@ -777,7 +850,7 @@ def test_additional_flow_retries_partial_success_and_saves_valid_candidates_afte
             logger,
         ),
     ):
-        catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
+        catalog_service.return_value.load_active_catalog.return_value = ([], "v4", "checksum")
         asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
     assert invoke.await_count == 3
@@ -799,6 +872,8 @@ def test_additional_flow_retries_all_invalid_batch_then_saves_valid_second_respo
         "source_fingerprint": "sha256:source",
         "generation_diagnostics": {},
         "dimension_definitions": [],
+        "impact_catalog_version": "v4",
+        "impact_catalog_checksum": "checksum",
     }
     one_question = V4EventImpactAnalysisResult.model_validate(
         {
@@ -876,7 +951,7 @@ def test_additional_flow_retries_all_invalid_batch_then_saves_valid_second_respo
             return_value="trace-retry",
         ),
     ):
-        catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
+        catalog_service.return_value.load_active_catalog.return_value = ([], "v4", "checksum")
         asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
     assert invoke.await_count == 2
@@ -892,6 +967,8 @@ def test_additional_flow_marks_failed_after_three_all_invalid_batches() -> None:
         "source_fingerprint": "sha256:source",
         "generation_diagnostics": {},
         "dimension_definitions": [],
+        "impact_catalog_version": "v4",
+        "impact_catalog_checksum": "checksum",
     }
     one_question = V4EventImpactAnalysisResult.model_validate(
         {
@@ -965,7 +1042,7 @@ def test_additional_flow_marks_failed_after_three_all_invalid_batches() -> None:
             return_value="trace-invalid",
         ),
     ):
-        catalog_service.return_value.load_active_catalog.return_value = ([], "v1", "checksum")
+        catalog_service.return_value.load_active_catalog.return_value = ([], "v4", "checksum")
         asyncio.run(run_additional_dimension_generation(10, run_id="run-1"))
 
     assert invoke.await_count == 3
@@ -1048,6 +1125,8 @@ def test_additional_flow_records_interrupted_on_cancellation() -> None:
         "source_fingerprint": "sha256:source",
         "generation_diagnostics": {},
         "dimension_definitions": [],
+        "impact_catalog_version": "v4",
+        "impact_catalog_checksum": "checksum",
     }
     one_question = V4EventImpactAnalysisResult.model_validate(
         {
@@ -1080,7 +1159,7 @@ def test_additional_flow_records_interrupted_on_cancellation() -> None:
         await asyncio.Event().wait()
 
     catalog_service = Mock()
-    catalog_service.load_active_catalog.return_value = ([], "v1", "checksum")
+    catalog_service.load_active_catalog.return_value = ([], "v4", "checksum")
     logger = Mock()
     settings_module = ModuleType("apps.common.configs.config")
     settings_module.get_settings = Mock(  # type: ignore[attr-defined]

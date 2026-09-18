@@ -5,7 +5,9 @@
 
 ## 범위
 
-- 체크인 canonical의 전역 합집합 기준으로 v1/v3 legacy mapping은 raw parameter 10개, v4 Lever binding은 raw parameter 16개에 도달할 수 있다. 요청 하나의 후보는 관련 lineage와 선택 value에 해당하는 하위 집합이다.
+- 체크인 전역 합집합 기준으로 v1/v3 legacy mapping은 raw Parameter 10개, 0030 v4 Lever catalog는 master
+  filtering 전 raw binding 이름 16개와 effective active Parameter 14개에 도달한다. 요청 하나의 후보는 관련
+  lineage와 선택 value에 해당하는 하위 집합이다.
 - 모든 버전은 raw matching 후 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개 runtime proposal allow-list를 Step1.5·LLM·persistence 전에 적용한다.
 - LLM 판단은 조건부 Step1.5, Step2, Step3으로 나뉘며 각 단계의 역할과 출력이 다르다.
 - Step2는 “어디를 바꿀지”, Step3는 “얼마로 바꾸고 왜 그런지”를 판단한다.
@@ -153,9 +155,9 @@ Step1.5는 runtime allow-list를 통과한 legacy routing 후보 또는 v4 routi
 `mapping_method`는 allow-list 적용 전 executable binding 수로 정해진다. 처음부터 executable primary 하나뿐인
 task는 허용 후보가 남으면 결정적으로 통과하지만, primary와 alternative가 함께 있어 `routing`으로 분류된
 task는 allow-list 적용 후 후보가 하나만 남아도 Step1.5를 거친다. 예를 들어
-`liquefaction_availability`는 `LiqUtilAdjustment` primary와 `LiqProdAdjustment` alternative 때문에
-`routing`이다. runtime에서 alternative를 제외한 뒤에도 Step1.5가 남은 `LiqUtilAdjustment`의 applicability와
-Scenario/Event/Lever 근거를 판단하므로, 이 후보도 선택되지 않을 수 있다. system prompt
+0030의 `liquefaction_utilization`은 `LiqUtilAdjustment` primary 하나만 binding하므로 allow-list 통과 시
+결정적으로 선택된다. `LiqProdAdjustment`는 별도 `liquefaction_production_override` primary이며 현재 runtime
+allow-list 밖이다. 두 Parameter 모두 이후 evidence/slot 단계에서 독립적으로 abstain할 수 있다. system prompt
 `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
 
 - scenario, ordered events, 현재 dimension/value와 source 또는 Lever provenance를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
@@ -233,7 +235,7 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
    `resources/basecase_v4/new-bc-v1/` authoritative source를 읽고 DB model target과 일치하는지 검증한다.
    최초 materialization은 sheet/header/range/변환/고정 record count를 전체 검증한 뒤 contract
    hash와 실제 파일 signature를 key로 process cache한다.
-3. LUT-backed parameter이면 같은 파라미터의 기존 LUT를 읽는다. Basecase-only 6개에는 LUT fallback을 만들지 않는다.
+3. LUT-backed parameter이면 같은 파라미터의 기존 LUT를 읽는다. Basecase-only 활성 4개에는 LUT fallback을 만들지 않는다.
 4. 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합을 만든다. 신규 source가 정상적으로
    비어 있을 때만 동일 exact LUT key를 허용하고, cached-value 오류·non-finite·상충 duplicate로 차단된 key는
    LUT가 있어도 합집합에 넣지 않는다.
@@ -257,7 +259,7 @@ PowerMix materialization은 월별로 반복된 annual row가 일치할 때만 d
 
 좌표를 compact하게 묶는 상세 방식은 뒤의 [compact slot catalog](#33-compact-slot-catalog)에 설명한다.
 
-LUT-backed 10개와 Basecase-only 6개는 체크인 canonical과 release 검증의 capability 기준선이다.
+LUT-backed 활성 10개와 Basecase-only 활성 4개는 0030 fixture와 release 검증의 capability 기준선이다.
 runtime startup은 v4 contract schema/path와 contract에 고정된 Workbook path/digest만 경량 검증한다.
 sheet/header/range/고정 record count와 source atomic 검증은 최초 exact v4 materialization에서
 fail closed하고, 성공 결과를 해당 process에 cache한다. 기존 v1/v3 Basecase preload의
@@ -646,15 +648,72 @@ GDP slot 처리 예시에서 Step2는 `candidate_key + Country + Year`를 반환
 
 서버는 `candidate_key`로 파라미터와 모델 대상을, `slot_key`로 좌표와 reference를 찾아 최종 API/DB 결과를 조립한다.
 
-### 3.5 호환성 경계와 배포 전제
+### 3.5 `uncovered_only` proposal-only campaign
+
+`tests/manual/model_parameter_agent/run_proposal_only.py`는 public proposal endpoint를 대체하지 않는 bounded
+운영 runner다. 기본 모드는 DB read-only discovery이며, `--execute`를 명시한 경우에만 uncovered Scenario의
+proposal graph를 순차 실행한다. Confirmation과 callback은 호출하지 않는다.
+
+```bash
+# Group 단위 read-only discovery
+python tests/manual/model_parameter_agent/run_proposal_only.py \
+  --scenario-group-id 282 \
+  --capability-release v4-proposal-capability-v1
+
+# 명시 Scenario 단위 proposal-only write; 별도 write 승인이 있을 때만 실행
+python tests/manual/model_parameter_agent/run_proposal_only.py \
+  --scenario-id 1374 \
+  --scenario-id 1375 \
+  --capability-release v4-proposal-capability-v1 \
+  --execute
+```
+
+초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
+
+- Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
+- `v4-proposal-capability-v1`은 임의 label이 아니라 0030 catalog `v4` / checksum
+  `835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51`, 기존 5종 allow-list와
+  `new-bc-v1` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
+  계약이다. 어느 하나라도 drift하면 Scenario DB 조회 또는 LLM 실행 전에 차단한다.
+- v4 `multi_event_model_lever_dimensions`, completed Group, created/realized Group·Scenario만 실행 후보가 된다.
+- Group에 저장된 catalog full pin, selected Lever lineage와 raw/runtime allow-list 경계는 기존 v4 quality oracle로
+  write 전에 검증한다.
+- lifecycle/capability skip을 포함한 명시 범위 전체에서 비삭제 proposal 이력을 조회한다. `CONFIRMED` 또는
+  `PROPOSED`가 하나라도 있으면 해당 Scenario를 skip한다.
+- stale 기준을 신뢰할 heartbeat/공통 threshold가 아직 없으므로 `PROCESSING`이 하나라도 있으면 stale 여부를
+  추정하지 않고 campaign 전체를 hard-stop해 수동 조사를 요구한다.
+- `FAILED` 이력만 있거나 이력이 없으면 uncovered다.
+- read-only는 DB write와 resource bootstrap을 실행하지 않고 체크인된 contract를 검증한다. `--execute`는
+  Scenario DB 조회 전에 runtime resource를 고정하고 실제 파일을 다시 hash한 source/schema/resource fingerprint를
+  manifest에 먼저 저장한다. 이어 proposal 전체 mapped column과 v4 `mi_event_id nullable`을 schema preflight한다.
+- 전체 cohort를 먼저 판정한 뒤, 각 write 직전에 runtime resource, Scenario/Group lifecycle, catalog pin,
+  prompt 입력 전체와 candidate digest를 다시 읽어 최초 input fingerprint와 비교하고, 명시 campaign 범위 전체의
+  proposal 이력을 다시 조회한다. graph가 실제로 사용한 context도 persistence 직전에 frozen context와 대조한다.
+  하나라도 바뀌면 proposal row를 쓰지 않고 남은 campaign을 중단한다.
+- Scenario당 최대 한 번, sequential single worker, outer retry 없음으로 실행하며 proposal ID 전후 snapshot과
+  정확히 한 행의 delta, 완료 시각, v4 response identity, runtime Parameter 경계와 API/DB proposal payload 일치를
+  검증한다. DB payload의 `lutValue` 저장은 실패로 판정한다.
+- evidence JSON에는 capability release, 실제 코드 allow-list, catalog pin, resource contract/fingerprint,
+  `uncovered-only-v1`, Scenario input fingerprint, 기존 proposal 상태와 skip/hard-stop 사유를 기록한다.
+
+이 가드는 단일 worker pilot의 best-effort 안전장치다. DB unique claim이나 logical run이 없으므로 여러 process가
+동시에 같은 Scenario를 실행하는 exactly-once 보장은 하지 않는다. multi-worker 확대 전에는 logical-run
+fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execute` 운영에서는 다른 runner와 public proposal
+요청이 같은 cohort를 동시에 처리하지 않도록 운영 singleton을 별도로 보장해야 한다.
+
+### 3.6 호환성 경계와 배포 전제
 
 - public proposal/confirmation request·response·callback와 저장 JSON shape은 바뀌지 않는다. v3/v4는 기존 optional `eventId`를 `null`로 반환하고 `scenarioGroupId`를 authoritative 식별자로 사용한다.
 - `new-bc-v1`은 v4 `multi_event_model_lever_dimensions`의 read-only proposal에만 적용한다. 기존
   `resources/basecase/`와 v1/v3 파싱은 유지하며 workbook write, Formula/Query 재계산과
   Demand/Supply/Trade engine 실행은 하지 않는다. read-only는 Workbook/reference 경계이며 기존 proposal
   persistence를 비활성화한다는 뜻이 아니다.
-- 체크인 v1/v3 129행 mapping의 direct/routing 전역 합집합은 raw 10개, v4 Lever-native executable binding 전역 합집합은 raw 16개에 도달할 수 있다. 요청 하나에서는 관련 하위 집합만 후보가 되며, 두 경로 모두 runtime allow-list 5개를 적용한 뒤에만 Basecase 우선/LUT fallback과 LLM 단계로 진입한다.
-- 체크인 v4 canonical 기준선은 master 21행·활성 16개, LUT-backed 10개·Basecase-only 6개이고 shared mapping 기준선은 129행·35/6/55/33이다. 이는 live DB 판정이 아니며 적용 후 read-back이 필요하다. v4는 shared mapping을 조회하지 않는다. `new-bc-v1`은 versioned contract/workbook resource와 manifest 항목만 추가하고 DB master·mapping, Lever catalog/checksum과 canonical JSON/SQL·업무용 mapping workbook을 변경하지 않는다.
+- 체크인 v1/v3 129행 mapping의 direct/routing 전역 합집합은 raw 10개, 0030 v4 Lever-native executable binding
+  전역 합집합은 raw 14개에 도달할 수 있다. 요청 하나에서는 관련 하위 집합만 후보가 되며, 두 경로 모두 runtime
+  allow-list 5개를 적용한 뒤에만 Basecase 우선/LUT fallback과 LLM 단계로 진입한다.
+- 0030 기준선은 master 21행·활성 14개, v4 active Lever 18개, raw/effective binding 16/14다. runtime은
+  Scenario 생성 시 `catalog_version=v4`를 명시하고, Model Parameter context에서는 Group에 저장된 version으로
+  catalog를 조회한 뒤 checksum을 검증한다. v4는 shared mapping을 조회하지 않는다.
 - 이 resource overlay는 DB schema와 master/catalog/mapping data, parameter master, Lever binding·catalog checksum과 legacy mapping을
   변경하지 않는다. 별도의 catalog 변경 release에서는 master와 Lever catalog를 한 transaction으로 적용하고,
   checksum이 바뀌면 신규 v4 Scenario를 생성한다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.

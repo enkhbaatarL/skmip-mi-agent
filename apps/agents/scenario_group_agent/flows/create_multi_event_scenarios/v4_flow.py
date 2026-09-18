@@ -63,6 +63,7 @@ from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
+V4_IMPACT_CATALOG_VERSION = "v4"
 
 
 def _analysis_as_of() -> str:
@@ -89,7 +90,9 @@ def prepare_v4_multi_event_scenarios(
     event_by_id = {int(event.mi_event_id): event for event in events}
     ordered_events = [event_by_id[event_id] for event_id in payload.mi_event_ids]
 
-    impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService().load_active_catalog()
+    impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService().load_active_catalog(
+        catalog_version=V4_IMPACT_CATALOG_VERSION,
+    )
     if not impact_levers:
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,

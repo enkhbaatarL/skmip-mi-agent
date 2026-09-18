@@ -58,9 +58,7 @@ def _normalize_persisted_parameter_values(
             if key == "proposedValue" and item is not None:
                 validated_item = strict_float(item, label=field_path)
                 normalized[key] = (
-                    item
-                    if isinstance(item, (int, float)) and not isinstance(item, bool)
-                    else validated_item
+                    item if isinstance(item, (int, float)) and not isinstance(item, bool) else validated_item
                 )
             elif key in field_precision and item is not None:
                 max_decimal_places, precision_mode = field_precision[key]
@@ -1249,10 +1247,20 @@ class ModelParameterService:
                 else:
                     strategy = str(getattr(group, "generation_strategy", None) or V1_GENERATION_STRATEGY)
                     if strategy == V4_GENERATION_STRATEGY:
+                        stored_catalog_version = str(
+                            getattr(group, "impact_catalog_version", None) or "",
+                        ).strip()
+                        if not stored_catalog_version:
+                            message = "v4 Scenario impact Lever catalog version is missing"
+                            raise _v4_catalog_integrity_error(
+                                message,
+                            )
                         parameter_definitions = model_parameter_repository.fetch_model_parameter_definitions()
                         impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService(
                             session=session,
-                        ).load_active_catalog()
+                        ).load_active_catalog(
+                            catalog_version=stored_catalog_version,
+                        )
                         context = _load_v4_context(
                             scenario=scenario,
                             group=group,

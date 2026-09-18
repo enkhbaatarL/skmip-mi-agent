@@ -163,6 +163,22 @@ def test_validate_final_presentation_checks_v4_ready_contract() -> None:
     )
 
 
+def test_validate_final_presentation_accepts_hidden_role_selection_rationale() -> None:
+    payload = _presentation()
+    sections = payload["sections"]
+    assert isinstance(sections, dict)
+    sections["roleSelectionRationale"] = None
+
+    validate_presentation(
+        payload,
+        scenario_group_id=366,
+        operation_id=OPERATION_ID,
+        minimum_sequence=4,
+        minimum_revision=2,
+        final=True,
+    )
+
+
 def test_validate_final_presentation_rejects_missing_dimension_rationale() -> None:
     payload = _presentation()
     sections = payload["sections"]

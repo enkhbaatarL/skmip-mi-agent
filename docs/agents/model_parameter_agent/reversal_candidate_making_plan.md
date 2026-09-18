@@ -1,6 +1,6 @@
 이 내용은 한마디로 말하면, **지금의 “Event → Scenario → Lever → Parameter” 흐름을 거꾸로 훑어서, 앞으로 모니터링할 만한 미래 Event 후보를 먼저 만들어보자는 아이디어**입니다.
 
-참고 자료상 현재 v4는 legacy dimension mapping이 아니라 **선택된 Dimension Value의 Lever state + active Impact Lever catalog binding**으로 raw Parameter capability를 결정합니다. v4 catalog는 active parameter 16개에 도달하고 v1/v3 mapping은 10개에 도달하지만, 실제 runtime proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용합니다. 이 gate를 통과한 뒤에도 exact slot이 있어야 합니다.
+참고 자료상 현재 v4는 legacy dimension mapping이 아니라 **선택된 Dimension Value의 Lever state + active Impact Lever catalog binding**으로 raw Parameter capability를 결정합니다. 0030 v4 catalog는 master filtering 전 raw binding 이름 16개, effective active Parameter 14개에 도달하고 v1/v3 mapping은 10개에 도달하지만, 실제 runtime proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용합니다. 이 gate를 통과한 뒤에도 exact slot이 있어야 합니다.
 
 allow-list gate는 Model Parameter Agent의 source matching 뒤, Step1.5·값 제안 LLM과 proposal
 persistence 전에만 적용됩니다. Scenario Group Agent를 비롯한 다른 Agent의 동작, confirmation,
@@ -233,7 +233,7 @@ Model Parameter Agent에서 `HurricaneIntensity` proposal까지 이어지는 실
 
 참고 자료에서도 source matching 직후 allow-list 밖 후보는 Step1.5 전에 제외하고, Step3에는 exact
 검증된 slot만 전달합니다. 부분 key·nearest·유사 시설 fallback은 사용하지 않습니다. 현재 허용된
-5개는 모두 LUT-backed이며, raw Basecase-only capability 6개는 allow-list 밖이므로 proposal에 진입하지
+5개는 모두 LUT-backed이며, Basecase-only 활성 capability 4개는 allow-list 밖이므로 proposal에 진입하지
 않습니다.
 
 따라서 여기서 말하는 “두 관문”은 사실상:
@@ -342,10 +342,10 @@ Future Event Candidate
 | ----------------------- | -------------------- | ----------------------------- | -------------------- | -------------------- |
 | 2026년 12월 동북아 7~14일 한파  | weather_demand       | Temperature                   | inventory_condition  | 높음                   |
 | 2027년 7월 남유럽 폭염         | weather_demand       | Temperature                   | power_generation_mix | 조건부 높음               |
-| 2027년 GoM 허리케인 시즌 시설 차질 | natural disaster 계열  | HurricaneIntensity            | liquefaction 계열      | 현재 proposal 차단       |
+| 2027년 GoM 허리케인 시즌 시설 차질 | us_gom_hurricane_disruption | HurricaneIntensity       | liquefaction 계열      | 현재 proposal 차단       |
 | 특정 국가 LNG 수입 규제 가능성     | trade restriction 계열 | RemainingUnrestrictedAmount 등 | 계약 조건                | 현재 proposal 차단       |
 
-여기서 마지막 컬럼이 중요합니다. v4의 **LUT-backed 10개와 Basecase-only 6개**는 raw resource
+여기서 마지막 컬럼이 중요합니다. 0030 v4의 **LUT-backed 활성 10개와 Basecase-only 활성 4개**는 raw resource
 capability 분류입니다. 현재 proposal은 그중 `GDP`, `PMI`, `PowerMix`, `Temperature`,
 `LiqUtilAdjustment`만 허용하므로, “Lever가 Parameter에 연결된다”거나 exact slot이 있다는 사실만으로
 현재 실행 가능하다고 판정하면 안 됩니다.

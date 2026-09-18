@@ -102,11 +102,21 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 - 현재 기준값을 바탕으로 제안값과 근거를 만든다.
 - 사용자가 검토·수정한 최종값을 확정 상태로 저장한다.
 
-체크인된 v4 canonical 기준선의 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `User-Adjusted Gas Demand`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `RegasAdjustment`, `SupplyDisruption`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`의 16개다. 이 중 LUT-backed는 10개, Basecase-only는 6개다. `CDD`, `HDD`, Coal/Gas Futures, `ElectrificationRate`는 비활성이다. CDD/HDD binding은 catalog capability 진단을 위해 남지만 v4 raw 후보에서는 `INACTIVE_MODEL_PARAMETER`로 제외된다. 이 수치는 저장소 기준선이며 live DB 상태를 뜻하지 않는다. 배포·검증 때는 DB read-back으로 실제 적용값을 확인해야 한다.
+0030 fixture 기준 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`,
+`User-Adjusted Gas Demand`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`,
+`PipelineAdjustment`, `RegasAdjustment`, `SupplyDisruption`, `PNG Contract Volume`, `ShippingCost`의 14개다.
+이 중 LUT-backed 활성은 10개, Basecase-only 활성은 4개다. `CDD`, `HDD`, Coal/Gas Futures,
+`ElectrificationRate`, `RemainingUnrestrictedAmount`, `VolumeCancelled`는 비활성이다. CDD/HDD binding은
+catalog capability 진단을 위해 남지만 v4 effective 후보에서는 `INACTIVE_MODEL_PARAMETER`로 제외되고, 두
+Trade Parameter는 active v4 binding도 없다. 이 수치는 저장소 fixture 기준선이며 live DB 상태를 뜻하지
+않는다. 배포·검증 때는 DB read-back으로 실제 적용값을 확인해야 한다.
 
 v1은 scenario group의 대표 event type과 scenario dimension key를 mapping에 대입한다. `generation_strategy=multi_event_composite_dimensions`인 v3는 `dimensionDefinitions[].sourceRefs`로 원본 `(event_type_l2_id, dimKey)`를 복원해 공유 legacy 129개 mapping을 재사용한다. `generation_strategy=multi_event_model_lever_dimensions`인 v4는 이 mapping, Event Type, 과거 `lever_mappings` 계열을 조회하거나 fallback으로 사용하지 않는다. 선택된 value의 `lever_states`와 active Lever catalog를 엄격히 검증한 뒤 executable binding으로 raw 후보를 만든다.
 
-모든 버전의 신규 proposal은 raw 후보 생성 후 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개 runtime allow-list를 공통으로 적용한다. 제한은 Step1.5·LLM 호출·proposal 행 생성 전에 적용한다. 체크인 canonical에 활성으로 남은 나머지 11개와 그 resource capability는 삭제하지 않지만 신규 proposal로는 제안하지 않는다.
+모든 버전의 신규 proposal은 raw 후보 생성 후 `GDP`, `PMI`, `PowerMix`, `Temperature`,
+`LiqUtilAdjustment` 5개 runtime allow-list를 공통으로 적용한다. 제한은 Step1.5·LLM 호출·proposal 행 생성
+전에 적용한다. 0030 fixture에 활성으로 남은 나머지 9개와 그 resource capability는 삭제하지 않지만 신규
+proposal로는 제안하지 않는다.
 
 ### v4 `new-bc-v1` read-only reference
 
@@ -138,11 +148,21 @@ LiqUtilAdjustment는 하나의 selected Lever provenance 안에 exact Plant와 e
 legacy mapping을 변경하지 않는다. 공개 proposal/confirmation endpoint·request/response field·status/action
 enum·callback shape와 proposal/confirmation persistence JSON shape도 그대로 유지한다.
 
-v4 master와 Lever의 저장소 판정 기준은 [parameter canonical](../../../scripts/model_parameter/model-parameter-canonical-v4.json)과 [Lever canonical](../../../scripts/model_parameter/model-impact-lever-canonical-v4.json)이다. v1/v3 체크인 목표 mapping은 [v1 canonical](../../../scripts/model_parameter/model-parameter-canonical-v1.json)의 `dimension_mappings` 129행이 기준이며, 해당 fixture의 master 활성 10개 정의를 v4 master 기준선에 덮어쓰지 않는다. 사람이 읽는 설명은 [canonical mapping 문서](../../../apps/agents/model_parameter_agent/resources/Model_Parameter_Base_Case_Mapping.md), 업무용 표는 [v4 canonical workbook](../../../apps/agents/model_parameter_agent/resources/mapping/260813_시나리오가정_MI수급모델_input_매핑_model-parameter-canonical-v4.xlsx)이다. workbook은 v4 master·Lever와 v1/v3 mapping 129행의 체크인 기준선을 함께 보여 준다. 2026-08-13 v4 적용 전 snapshot의 128행·25/2/55/46은 변경 전 증적이며, 어느 수치도 live DB를 조회한 결과로 간주하지 않는다.
+현재 DB 계약의 정본은 sibling mgmt repository revision `a378b54ef997`이며, Agent runtime 판정 fixture는
+[parameter 0030 successor](../../../scripts/model_parameter/model-parameter-canonical-v4-0030.json)와
+[Lever 0030 successor](../../../scripts/model_parameter/model-impact-lever-canonical-v4-0030.json)다. active catalog는
+`v4`, checksum은 `835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51`이다. 기존 이름의
+`model-*-canonical-v4.json`, 사람이 읽는 mapping 문서와 260813 workbook은 0029 역사 릴리스 증적으로 보존한다.
+v1/v3 체크인 목표 mapping은 [v1 canonical](../../../scripts/model_parameter/model-parameter-canonical-v1.json)의
+`dimension_mappings` 129행이며 v4는 이를 조회하지 않는다.
 
 ### v1·v3와 v4의 제안 가능 범위
 
-“master에서 활성”, “mapping/binding이 도달할 수 있음”, “신규 proposal에 제안할 수 있음”은 서로 다른 뜻이다. 체크인 canonical의 전역 합집합 기준으로 master 활성은 16개, v1/v3 raw mapping-reachable set은 LUT-backed 10개, v4 raw executable-binding set은 고유 활성 parameter 16개다. 이 수는 요청 하나에서 동시에 나오는 후보 수가 아니다. 실제 신규 proposal은 요청별 raw 후보와 runtime allow-list 5개의 교집합만 사용하고, 관련 분기·변화 state·routing 결과·exact Basecase/LUT slot 존재 여부에 따라 더 좁아진다.
+“master에서 활성”, “mapping/binding이 도달할 수 있음”, “신규 proposal에 제안할 수 있음”은 서로 다른 뜻이다.
+0030 기준 master 활성과 v4 raw executable-binding 고유 Parameter는 각각 14개이며, v1/v3 raw
+mapping-reachable set은 LUT-backed 10개다. 이 수는 요청 하나에서 동시에 나오는 후보 수가 아니다. 실제 신규
+proposal은 요청별 raw 후보와 runtime allow-list 5개의 교집합만 사용하고, 관련 분기·변화 state·routing 결과·exact
+Basecase/LUT slot 존재 여부에 따라 더 좁아진다.
 
 | Parameter | v1/v3 raw mapping | v4 raw binding | 신규 proposal | 기준값 | 판정 근거와 용도 |
 |---|---|---|---|---|---|
@@ -150,18 +170,18 @@ v4 master와 Lever의 저장소 판정 기준은 [parameter canonical](../../../
 | `PMI` | direct 1건 | `economic_activity` alternative | 허용 | LUT-backed | 월 단위 산업 경기를 GDP보다 세밀하게 표현한다. |
 | `PowerMix` | direct 12건 + routing 1건 | `power_generation_mix` primary | 허용 | LUT-backed | 발전소·연료전환 Event를 가스 발전 비중으로 연결한다. |
 | `Temperature` | direct 2건 | `weather_demand` primary | 허용 | LUT-backed | 한파·폭염을 중복 degree-day 입력 대신 최종 기온 입력으로 표현한다. |
-| `LiqUtilAdjustment` | direct 9건 + routing 1건 | `liquefaction_availability` primary | 허용 | LUT-backed | 기존 Train의 단기·부분 차질과 회복을 월별 가동률로 표현한다. |
-| `Population` | routing 1건 | `economic_activity` alternative | runtime 제외 | LUT-backed | 인구·이민·인구전망 변화용 capability는 보존한다. |
-| `HurricaneIntensity` | routing 1건 | `natural_disaster_disruption` primary | runtime 제외 | LUT-backed | 미국 GoM 허리케인·승인 시설·Year/Month capability를 보존한다. |
-| `LiqProdAdjustment` | direct 4건 + routing 1건 | `liquefaction_availability` alternative | runtime 제외 | LUT-backed | 대폭·영구 생산손실·신규 Train ramp-up capability를 보존한다. |
+| `LiqUtilAdjustment` | direct 9건 + routing 1건 | `liquefaction_utilization` primary | 허용 | LUT-backed | 기존 Train의 단기·부분 차질과 회복을 월별 가동률로 표현한다. |
+| `Population` | routing 1건 | `population_demographics` primary | runtime 제외 | LUT-backed | 인구·이민·인구전망 변화용 capability는 보존한다. |
+| `HurricaneIntensity` | routing 1건 | `us_gom_hurricane_disruption` primary | runtime 제외 | LUT-backed | 미국 GoM 허리케인·승인 시설·Year/Month capability를 보존한다. |
+| `LiqProdAdjustment` | direct 4건 + routing 1건 | `liquefaction_production_override` primary | runtime 제외 | LUT-backed | 대폭·영구 생산손실·신규 Train ramp-up capability를 보존한다. |
 | `PipelineAdjustment` | direct 2건 | `pipeline_capacity` primary | runtime 제외 | LUT-backed | 파이프라인 송출능력 exact-slot capability를 보존한다. |
 | `SupplyDisruption` | direct 4건 + routing 1건 | `upstream_production` primary | runtime 제외 | LUT-backed | upstream 생산·자연재해·지정학 공급량 capability를 보존한다. |
 | `User-Adjusted Gas Demand` | direct/routing 없음 | `direct_gas_demand` primary | runtime 제외 | Basecase-only | 검증된 workbook exact 좌표 capability를 보존한다. |
 | `RegasAdjustment` | direct/routing 없음 | `regasification_capacity` primary | runtime 제외 | Basecase-only | 재기화 workbook exact-slot capability를 보존한다. |
-| `PNG Contract Volume` | direct/routing 없음 | `contract_volume` alternative | runtime 제외 | Basecase-only | 계약량 변화의 exact-slot capability를 보존한다. |
-| `RemainingUnrestrictedAmount` | direct/routing 없음 | `trade_restriction` primary | runtime 제외 | Basecase-only | 제재 후 거래 가능 잔여 물량 capability를 보존한다. |
-| `ShippingCost` | direct/routing 없음 | `shipping_cost`, `route_disruption` primary | runtime 제외 | Basecase-only | 운임·항로 우회의 Trade exact-slot capability를 보존한다. |
-| `VolumeCancelled` | direct/routing 없음 | `contract_volume` primary, `trade_restriction` alternative | runtime 제외 | Basecase-only | 계약 취소·무역 제한 capability를 보존한다. |
+| `PNG Contract Volume` | direct/routing 없음 | `png_contract_volume` primary | runtime 제외 | Basecase-only | PNG 계약량 변화의 exact-slot capability를 보존한다. |
+| `ShippingCost` | direct/routing 없음 | `lng_charter_rate` primary | runtime 제외 | Basecase-only | 연간 전역 LNG charter rate capability를 보존한다. |
+| `RemainingUnrestrictedAmount` | direct/routing 없음 | binding 없음 | 비활성 | Basecase-only | 0030에서 inactive/unbound이며 신규 restriction 계약 전에는 제안하지 않는다. |
+| `VolumeCancelled` | direct/routing 없음 | binding 없음 | 비활성 | Basecase-only | 0030에서 inactive/unbound이며 신규 취소량 계약 전에는 제안하지 않는다. |
 | `CDD` | 불가 | raw alternative binding만 보존 | 비활성 | 독립 LUT 없음 | Temperature adapter 입력 원재료이며 `INACTIVE_MODEL_PARAMETER` 진단만 남긴다. |
 | `HDD` | 불가 | raw alternative binding만 보존 | 비활성 | 독립 LUT 없음 | CDD와 같이 Temperature adapter의 입력 원재료다. |
 | `Coal Futures Price` | 불가 | binding 없음 | 비활성 | disabled LUT | 2026년 이후 유효 strip이 없어 과거값을 이월하지 않는다. |

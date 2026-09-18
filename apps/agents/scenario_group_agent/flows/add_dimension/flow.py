@@ -39,14 +39,43 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     V4_ADDITIONAL_DIMENSION_SYSTEM_PROMPT,
     build_v4_additional_dimension_user_prompt,
 )
+from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import TraceContext, mlflow_trace_context, new_transaction_id
+from apps.common.values.error_codes import ErrorCode
 from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 
 
 MAX_ADDITIONAL_DIMENSION_ATTEMPTS = 3
 ADDITIONAL_DIMENSION_CANDIDATES_INVALID = "ADDITIONAL_DIMENSION_CANDIDATES_INVALID"
+ADDITIONAL_DIMENSION_CATALOG_PIN_STALE = "IMPACT_CATALOG_PIN_STALE"
 ADDITIONAL_DIMENSION_STALE_TIMEOUT = "STALE_TIMEOUT"
+
+
+class _ImpactCatalogPinError(MIBaseError):
+    """Raised when an Additional Dimension claim cannot use its stored catalog pin."""
+
+
+async def _load_pinned_impact_catalog(
+    started: dict[str, Any],
+) -> list[ModelImpactLeverPayload]:
+    stored_version = str(started.get("impact_catalog_version") or "").strip()
+    stored_checksum = str(started.get("impact_catalog_checksum") or "").strip()
+    if not stored_version or not stored_checksum:
+        msg = "Additional Dimension requires a complete impact catalog pin"
+        raise _ImpactCatalogPinError(ErrorCode.INVALID_REQUEST, detail=msg)
+    impact_levers, active_version, active_checksum = await asyncio.to_thread(
+        ModelImpactLeverService().load_active_catalog,
+        catalog_version=stored_version,
+    )
+    if active_version != stored_version or active_checksum != stored_checksum:
+        msg = (
+            "Additional Dimension impact catalog pin is stale: "
+            f"stored={stored_version}/{stored_checksum}, "
+            f"active={active_version}/{active_checksum}"
+        )
+        raise _ImpactCatalogPinError(ErrorCode.INVALID_REQUEST, detail=msg)
+    return impact_levers
 
 
 @contextmanager
@@ -290,9 +319,7 @@ async def run_additional_dimension_generation(
                     ADDITIONAL_DIMENSION_API_VERSION,
                 )
                 return
-            impact_levers, _version, _checksum = await asyncio.to_thread(
-                ModelImpactLeverService().load_active_catalog,
-            )
+            impact_levers = await _load_pinned_impact_catalog(started)
             hydration_result = await _generate_candidates_with_retries(
                 scenario_group_id=scenario_group_id,
                 transaction_id=transaction_id,
@@ -367,13 +394,18 @@ async def run_additional_dimension_generation(
         )
         raise
     except Exception as exc:
+        failure_error_code = (
+            ADDITIONAL_DIMENSION_CATALOG_PIN_STALE
+            if isinstance(exc, _ImpactCatalogPinError)
+            else "ADDITIONAL_DIMENSION_GENERATION_FAILED"
+        )
         try:
             await asyncio.to_thread(
                 service.fail_additional_dimension_generation,
                 scenario_group_id,
                 source_fingerprint=source_fingerprint,
                 run_id=active_run_id,
-                error_code="ADDITIONAL_DIMENSION_GENERATION_FAILED",
+                error_code=failure_error_code,
             )
         except Exception as status_exc:
             logger.error(
@@ -387,11 +419,12 @@ async def run_additional_dimension_generation(
             )
         logger.error(
             "Additional Dimension generation failed | scenario_group_id={} | transaction_id={} | "
-            "api_identifier={} | api_version={} | error={!r}",
+            "api_identifier={} | api_version={} | error_code={} | error={!r}",
             scenario_group_id,
             transaction_id,
             API_IDENTIFIER_ADD_DIMENSION,
             ADDITIONAL_DIMENSION_API_VERSION,
+            failure_error_code,
             exc,
         )
 

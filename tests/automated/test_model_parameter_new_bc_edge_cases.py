@@ -370,7 +370,7 @@ def _liq_provenance(*, scope: str) -> dict[str, Any]:
     return {
         "scenario_dimension_key": "facility_outage",
         "source_event_ids": [101],
-        "lever_code": "liquefaction_availability",
+        "lever_code": "liquefaction_utilization",
         "direction": "decrease",
         "scope": scope,
         "time_window": "2027 Q2",

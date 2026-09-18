@@ -906,9 +906,12 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     ]
 
                 with self.subTest(strategy=strategy, parameter_name=parameter_name):
-                    assert _has_mapping_candidates_from_db_rows(
-                        scenario_context=context,
-                    ) is expected
+                    assert (
+                        _has_mapping_candidates_from_db_rows(
+                            scenario_context=context,
+                        )
+                        is expected
+                    )
 
     def test_prepare_v4_callback_applies_runtime_scope_before_processing_row(self) -> None:
         context = {
@@ -3946,7 +3949,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "source_dimension_label": "액화 경로",
             "source_dimension_value": "단기 회복",
             "source_dimension_value_id": "short_recovery",
-            "lever_code": "liquefaction_availability",
+            "lever_code": "liquefaction_utilization",
             "lever_label": "액화시설 가용성",
             "model_file": "Supply",
             "model_sheet": "LiqProdAdjustment",
@@ -4874,9 +4877,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다" in (
-            error.exception.error_message
-        )
+        assert "현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다" in (error.exception.error_message)
         assert "모델 기준정보의 대상·기간 범위" in error.exception.error_message
 
     def test_v4_step2_empty_slots_explain_invalid_proposed_location_shape(self) -> None:
@@ -5017,9 +5018,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다" in (
-            error.exception.error_message
-        )
+        assert "현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다" in (error.exception.error_message)
         assert "등록된 모델 입력 위치와 일치하지 않았습니다" not in error.exception.error_message
 
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:

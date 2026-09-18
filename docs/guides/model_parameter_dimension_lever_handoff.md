@@ -19,7 +19,8 @@ Scenario Group이다. v1/v3 Model Parameter proposal에는 공유 DB의 129행 m
 
 v1/v3 mapping의 현재 method count는 direct 35, routing 6, indirect 55, na 33이며 direct/routing이
 도달하는 raw capability는 LUT-backed 10개다. v4는 이 테이블을 조회하거나 fallback으로 사용하지
-않으며 active Lever binding으로 raw parameter 16개에 도달할 수 있다. 실제 runtime proposal은 버전과
+않으며 active Lever의 master filtering 전 raw binding 이름 16개, effective active Parameter 14개에 도달한다.
+실제 runtime proposal은 버전과
 무관하게 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용한다. 이 제한은
 Model Parameter Agent가 source matching 후, Step1.5·값 제안 LLM과 persistence 전에 적용한다.
 DB·canonical·config를 바꾸지 않으며 Scenario Group Agent나 confirmation 동작에도 적용하지 않는다.
@@ -55,14 +56,15 @@ Event 소유권과 provenance는
 | Scenario | `ScenarioRepository.fetch_model_by_id(scenario_id)` | `del_yn = 'N'`인 `MiScenarioModel` |
 | Scenario Group | `ScenarioGroupRepository.fetch_by_id(scenario_group_id)` | `del_yn = 'N'`인 `MiScenarioGroupModel` |
 | Group–Event 관계 | `ScenarioGroupRepository.fetch_group_events(scenario_group_id)` | 활성 관계 전체, `display_order` 순 |
-| 활성 lever catalog | `ModelImpactLeverService.load_active_catalog()` | payload 목록, catalog version, checksum |
+| 활성 lever catalog | `ModelImpactLeverService.load_active_catalog(catalog_version=...)` | 지정 version의 payload 목록, catalog version, checksum |
 
-`ModelImpactLeverService.load_active_catalog()`의 공용 구현은
+`ModelImpactLeverService.load_active_catalog(catalog_version=...)`의 공용 구현은
 `apps/persistence/model_impact_lever/service.py`에 있다. Scenario/Model Parameter
 Agent는 이 service를 공유하며 flow/node가 repository를 직접 호출하지 않는다.
 이 함수는 다음 검증까지 수행하므로 단순 catalog row 조회보다 안전하다.
 
 - `use_yn = 'Y'`, `del_yn = 'N'`인 lever만 로드
+- 요청한 `catalog_version`만 로드하고 누락·혼합 version을 fail-close
 - binding의 `parameter_name`이 `tmm_mi_model_param_m`에 존재하는지 확인
 - 비활성 parameter에 대한 `executable` binding을
   `known_unsupported / INACTIVE_MODEL_PARAMETER`로 보정
@@ -99,8 +101,8 @@ DB JSON은 ORM 필드명 기준의 `snake_case`로 저장된다. presentation AP
     "source_event_ids": [101, 102],
     "source_impact_path_ids": ["path-1"],
     "source_uncertainty_ids": ["uncertainty-1"],
-    "primary_lever_code": "liquefaction_availability",
-    "primary_impact_lever_id": 12,
+    "primary_lever_code": "liquefaction_utilization",
+    "primary_impact_lever_id": 18,
     "model_support_status": "full",
     "values": [
       {
@@ -108,8 +110,8 @@ DB JSON은 ORM 필드명 기준의 `snake_case`로 저장된다. presentation AP
         "label": "회복 지연",
         "lever_states": [
           {
-            "lever_code": "liquefaction_availability",
-            "impact_lever_id": 12,
+            "lever_code": "liquefaction_utilization",
+            "impact_lever_id": 18,
             "direction": "decrease",
             "level": "material",
             "scope": "affected_region",
@@ -193,23 +195,21 @@ binding의 `role = 'primary'`는 기본 우선 후보, `alternative`는 적용 �
 우선하고 Step1.5에 applicability와 Scenario/Event/Lever 맥락을 제공해 alternative 또는 양쪽
 선택을 허용한다.
 
-v4 canonical은 active Lever 16개, binding occurrence 20개다. 비활성 CDD/HDD
-binding을 제외한 effective executable occurrence는 18개이고 고유 활성 parameter는
-16개다. 이 수치는 catalog의 raw capability이며 runtime proposal 범위가 아니다. LUT-backed 10개는
+0030 v4 runtime fixture는 active Lever 18개, raw binding occurrence 16개다. 비활성 CDD/HDD
+binding을 제외한 effective executable occurrence와 고유 활성 Parameter는 각각 14개다. 이 수치는
+catalog capability이며 runtime proposal 범위가 아니다. LUT-backed 활성 10개는
 Basecase 우선/LUT fallback capability를 가지고,
-`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`,
-`RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`는 검증된 Basecase
+`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`는 검증된 Basecase
 exact slot capability만 가진다.
 
 숫자를 쉽게 풀면 다음과 같다.
 
-- `20건`: Lever catalog에 적힌 “Lever → parameter 연결선”을 중복 포함해 모두 센 수다.
-- `18건`: 그중 현재 꺼져 있는 CDD와 HDD 연결선 2개를 실행 대상에서 뺀 수다.
-- `16개`: ShippingCost와 VolumeCancelled처럼 둘 이상의 Lever에서 다시 등장하는 이름을
-  하나로 합친 raw 고유 parameter 수다.
+- `16건`: Lever catalog에 적힌 “Lever → Parameter 연결선”을 중복 포함해 모두 센 수다.
+- `14건`: 그중 현재 꺼져 있는 CDD와 HDD 연결선 2개를 실행 대상에서 뺀 수다.
+- `14개`: effective executable 연결선이 가리키는 고유 활성 Parameter 수다.
 
-즉 “파라미터 20개를 제안한다”는 뜻이 아니라, **연결선은 20개이고 그중 유효한 연결선은
-18개이며, catalog에서 도달 가능한 서로 다른 활성 파라미터가 16개**라는 뜻이다.
+즉 “파라미터 16개를 제안한다”는 뜻이 아니라, **연결선은 16개이고 그중 유효한 연결선과 catalog에서
+도달 가능한 서로 다른 활성 Parameter는 각각 14개**라는 뜻이다.
 
 raw 후보를 만든 뒤 Model Parameter Agent는 다음 runtime proposal allow-list를 적용한다.
 
@@ -224,7 +224,7 @@ LiqUtilAdjustment
 allow-list 밖의 executable binding은 DB나 catalog에서 비활성으로 바꾸지 않고 proposal 경로에서만
 제외하며 내부 non-input evidence에는 `PROPOSAL_SCOPE_EXCLUDED` reason code를 남긴다. 따라서
 `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `PipelineAdjustment`,
-`SupplyDisruption`과 Basecase-only 6개는 raw capability와 startup 검증 대상으로 남지만 현재
+`SupplyDisruption`과 Basecase-only 활성 4개는 raw capability와 startup 검증 대상으로 남지만 현재
 Step1.5·Step2·Step3 및 proposal persistence에는 진입하지 않는다. v1/v3의 raw mapping 10개에도
 같은 gate를 적용한다. confirmation은 기존 proposal과 custom parameter 호환을 위해 이 gate의 대상이
 아니다.
@@ -249,7 +249,7 @@ Step1.5·Step2·Step3 및 proposal persistence에는 진입하지 않는다. v1/
 `lever_state.direction`은 현실 세계 lever 자체의 변화 방향이다. model parameter의
 숫자 부호와 동일하다는 보장은 없다.
 
-예를 들어 `liquefaction_availability = decrease`는 가격 압력에는 상승 요인이지만,
+예를 들어 `liquefaction_utilization = decrease`는 가격 압력에는 상승 요인이지만,
 실제 모델 입력이 가동률인지 공급 차질량인지에 따라 parameter의 증감 방향이 달라질
 수 있다. 따라서 다음과 같은 공통 하드코딩은 금지한다.
 
@@ -290,7 +290,9 @@ if group.generation_strategy != "multi_event_model_lever_dimensions":
 relations = group_repository.fetch_group_events(group.scenario_group_id)
 group_event_ids = {relation.mi_event_id for relation in relations}
 
-catalog, catalog_version, catalog_checksum = lever_service.load_active_catalog()
+catalog, catalog_version, catalog_checksum = lever_service.load_active_catalog(
+    catalog_version=group.impact_catalog_version,
+)
 catalog_by_code = {lever.lever_code: lever for lever in catalog}
 require_same_checksum(group.impact_catalog_checksum, catalog_checksum)
 
@@ -398,20 +400,21 @@ catalog·resource config와 startup validation을 변경하지 않으며, Scenar
 
 ### Step 1.5 이전: runtime allow-list 적용과 후보 선택
 
-catalog의 raw binding은 다음 두 개다.
+0030 catalog에서 `liquefaction_utilization` ID 18의 raw binding은 다음 하나다.
 
 ```json
 {
-  "leverCode": "liquefaction_availability",
+  "leverCode": "liquefaction_utilization",
   "state": {"direction": "decrease", "scope": "Angola LNG", "timeWindow": "2026-08"},
   "candidates": [
-    {"parameterName": "LiqUtilAdjustment", "role": "primary", "applicability": "기존 Train의 단기·부분 저가동"},
-    {"parameterName": "LiqProdAdjustment", "role": "alternative", "applicability": "대폭·영구 생산손실 또는 신규 Train ramp-up"}
+    {"parameterName": "LiqUtilAdjustment", "role": "primary", "applicability": "기존 Train의 단기·부분 저가동"}
   ]
 }
 ```
 
-runtime gate를 통과하면 `LiqProdAdjustment`는 현재 proposal 허용 범위 밖이므로 다음 후보만 남는다.
+`LiqProdAdjustment`는 이 Lever의 alternative가 아니다. 대폭·영구 생산손실 또는 신규 Train ramp-up은 별도
+`liquefaction_production_override` ID 19의 primary binding으로만 도달하며 현재 runtime allow-list 밖이다.
+위 ID 18 state는 runtime gate를 통과해 다음 후보만 남는다.
 
 ```text
 runtime proposal candidates: LiqUtilAdjustment

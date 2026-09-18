@@ -1,11 +1,12 @@
 # Copyright (c) 2026 SK Innovation E&S.
 # ruff: noqa: ANN401, C901, E402
 
-"""Run proposal-only Model Parameter evaluations once with durable evidence.
+"""Discover uncovered v4 scenarios and optionally run proposals once.
 
-This runner is intentionally narrower than the API/background workflows: it calls
-``_evaluate_scenario`` directly, never calls confirmation or callback code, and
-never retries a write-producing attempt.
+The default mode is DB read-only. ``--execute`` is intentionally narrower than
+the API/background workflows: it calls ``_evaluate_scenario`` directly, never
+calls confirmation or callback code, and never retries a write-producing
+attempt. The uncovered-only guard cannot be bypassed.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,15 +38,34 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
-from sqlalchemy import select
-
+from apps.agents.model_parameter_agent.constants import MODEL_PARAMETER_PROPOSAL_ALLOWLIST
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
+from apps.agents.model_parameter_agent.utils.resource_manifest import (
+    PACKAGE_RESOURCE_DIR,
+    load_model_parameter_resource_manifest,
+)
+from apps.agents.model_parameter_agent.utils.resource_runtime import (
+    get_registered_model_parameter_resource_paths,
+)
+from apps.agents.model_parameter_agent.utils.workbook_contract import (
+    DEFAULT_WORKBOOK_CONTRACT_PATH,
+    load_workbook_contract,
+    validate_workbook_hashes,
+)
+from apps.common.configs.config import CONFIG_FILE_PATH, get_settings
 from apps.common.configs.database.sync_database.connection import get_sync_session
 from apps.common.logging.logger_config import logger
-from apps.persistence.model_parameter.models import MiModelParamProposalModel
+from apps.persistence.model_parameter.repository import ModelParameterRepository
+from apps.persistence.scenario.repository import ScenarioRepository
+from apps.persistence.scenario_group.repository import ScenarioGroupRepository
+from tests.manual.model_parameter_agent.evaluate_multi_event_quality import (
+    _schema_preflight,
+    build_v4_scenario_evidence,
+)
 from tests.manual.model_parameter_agent.evaluate_proposals import (
+    _ensure_model_parameter_test_resource_runtime,
     _evaluate_scenario,
     _failure_trace_from_exception,
 )
@@ -57,8 +78,40 @@ from tests.manual.model_parameter_agent.runner_common import (
 
 V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
-EVIDENCE_SCHEMA_VERSION = 1
+EVIDENCE_SCHEMA_VERSION = 3
+UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
+BASELINE_CAPABILITY_RELEASE = "v4-proposal-capability-v1"
+EXPECTED_0030_CATALOG_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
+EXPECTED_NEW_BC_V1_CONTRACT_SHA256 = "4dcf21c6e93ea6e73c470b6b354daa68f2f79fe83e0e1d48550cdc9a87fdb0ed"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "5888099440a23202c55251fc1f682bb24fbd33f6f7325863b228b3b147d23c93"
+EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
+EXPECTED_BASELINE_ALLOWLIST = frozenset(
+    {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "LiqUtilAdjustment",
+    },
+)
+CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
+    BASELINE_CAPABILITY_RELEASE: {
+        "catalog_version": V4_API_VERSION,
+        "catalog_checksum": EXPECTED_0030_CATALOG_CHECKSUM,
+        "runtime_allowlist": EXPECTED_BASELINE_ALLOWLIST,
+        "resource_release_id": "new-bc-v1",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V1_CONTRACT_SHA256,
+        "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
+        "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
+        "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
+    },
+}
 DEFAULT_EVIDENCE_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
+ELIGIBLE_SCENARIO_STATUSES = frozenset({"created", "realized"})
+ELIGIBLE_GROUP_STATUSES = frozenset({"created", "realized"})
+ELIGIBLE_GROUP_STAGE = "completed"
+BLOCKING_PROPOSAL_STATUSES = frozenset({"PROCESSING", "PROPOSED", "CONFIRMED"})
+KNOWN_PROPOSAL_STATUSES = frozenset({*BLOCKING_PROPOSAL_STATUSES, "FAILED"})
 
 _SECRET_PATTERNS = (
     re.compile(
@@ -102,6 +155,7 @@ _PROPOSAL_ROW_FIELDS = (
     "proposal_parameters",
     "confirmation_parameters",
     "mod_usr_logn_id",
+    "crt_dtm",
     "mod_dtm",
     "fetch_status",
 )
@@ -111,34 +165,57 @@ _PROPOSAL_ROW_FIELDS = (
 class ProposalOnlyOptions:
     execute: bool
     scenario_ids: tuple[int, ...]
+    scenario_group_id: int | None
+    capability_release: str
     evidence_path: Path
 
 
 @dataclass(frozen=True)
 class RunnerDependencies:
     load_context: Callable[[int], Mapping[str, Any]]
-    snapshot_proposal_ids: Callable[[int], tuple[int, ...]]
+    snapshot_proposal_rows: Callable[[int, Sequence[int]], tuple[dict[str, Any], ...]]
     evaluate_scenario: Callable[[int], Awaitable[dict[str, Any]]]
     fetch_proposal: Callable[[int | None], dict[str, Any]]
     failure_trace: Callable[[BaseException], Mapping[str, Any]]
+    discover_scenario_ids: Callable[[int], tuple[int, ...]] = lambda _scenario_group_id: ()
+    build_quality_evidence: Callable[[int, Mapping[str, Any]], Any] | None = None
+    prepare_resources: Callable[[], Awaitable[Any]] | None = None
+    schema_preflight: Callable[[], Any] | None = None
+    evaluate_scenario_with_context: Callable[[int, Mapping[str, Any]], Awaitable[dict[str, Any]]] | None = None
+    require_registered_resources: bool = False
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run each explicitly selected v4 scenario proposal exactly once without confirmation/callback.",
+        description=(
+            "Discover uncovered v4 scenarios and optionally run each proposal exactly once "
+            "without confirmation/callback."
+        ),
     )
-    parser.add_argument(
-        "--execute",
-        action="store_true",
-        help="Required acknowledgement that proposal rows will be written.",
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument(
+        "--scenario-group-id",
+        type=int,
+        help="Discover scenarios inside one explicit Scenario Group.",
     )
-    parser.add_argument(
+    scope.add_argument(
         "--scenario-id",
         action="append",
         dest="scenario_ids",
         type=int,
         default=[],
-        help="Scenario ID to execute; repeat for additional scenarios.",
+        help="Explicit Scenario ID; repeat for additional scenarios.",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Write one proposal for each eligible uncovered scenario; omitted means read-only discovery.",
+    )
+    parser.add_argument(
+        "--capability-release",
+        required=True,
+        choices=tuple(sorted(CAPABILITY_RELEASES)),
+        help="Approved capability release contract; unknown labels are rejected.",
     )
     parser.add_argument("--evidence-path", type=Path)
     return parser
@@ -154,20 +231,27 @@ def _options_from_args(args: argparse.Namespace, started_at: datetime) -> Propos
     return ProposalOnlyOptions(
         execute=bool(args.execute),
         scenario_ids=tuple(args.scenario_ids),
+        scenario_group_id=args.scenario_group_id,
+        capability_release=str(args.capability_release or "").strip(),
         evidence_path=raw_path.expanduser().resolve(),
     )
 
 
 def _validate_options(options: ProposalOnlyOptions) -> None:
-    if not options.execute:
-        message = "--execute is required; this runner has no implicit write mode"
+    has_scenario_ids = bool(options.scenario_ids)
+    has_group_id = options.scenario_group_id is not None
+    if has_scenario_ids == has_group_id:
+        message = "exactly one explicit scope is required: --scenario-group-id or --scenario-id"
         raise ValueError(message)
-    if not options.scenario_ids:
-        message = "at least one --scenario-id is required"
+    if options.capability_release not in CAPABILITY_RELEASES:
+        message = f"unsupported --capability-release: {options.capability_release!r}"
         raise ValueError(message)
     invalid_ids = [scenario_id for scenario_id in options.scenario_ids if scenario_id <= 0]
     if invalid_ids:
         message = f"--scenario-id must be positive: {invalid_ids}"
+        raise ValueError(message)
+    if options.scenario_group_id is not None and options.scenario_group_id <= 0:
+        message = f"--scenario-group-id must be positive: {options.scenario_group_id}"
         raise ValueError(message)
     duplicate_ids = sorted(
         {scenario_id for scenario_id in options.scenario_ids if options.scenario_ids.count(scenario_id) > 1},
@@ -232,30 +316,224 @@ def _write_evidence(path: Path, evidence: Mapping[str, Any]) -> None:
     )
 
 
-def _snapshot_proposal_ids(scenario_id: int) -> tuple[int, ...]:
+def _discover_scenario_ids(scenario_group_id: int) -> tuple[int, ...]:
     session = get_sync_session()
     try:
-        proposal_ids = session.execute(
-            select(MiModelParamProposalModel.model_param_proposal_id)
-            .where(
-                MiModelParamProposalModel.scenario_id == scenario_id,
-                MiModelParamProposalModel.del_yn == "N",
+        group = ScenarioGroupRepository(session=session).fetch_by_id(scenario_group_id)
+        if group is None:
+            return ()
+        return tuple(
+            int(scenario.scenario_id)
+            for scenario in ScenarioRepository(session=session).fetch_models_by_group_id(
+                scenario_group_id,
             )
-            .order_by(MiModelParamProposalModel.model_param_proposal_id),
-        ).scalars()
-        return tuple(int(value) for value in proposal_ids.all())
+        )
     finally:
         session.close()
+
+
+def _snapshot_proposal_rows(
+    scenario_group_id: int,
+    scenario_ids: Sequence[int],
+) -> tuple[dict[str, Any], ...]:
+    session = get_sync_session()
+    try:
+        return tuple(
+            ModelParameterRepository(session=session).fetch_proposal_guard_rows(
+                scenario_group_id=scenario_group_id,
+                scenario_ids=list(scenario_ids),
+            ),
+        )
+    finally:
+        session.close()
+
+
+def _stable_file_sha256(path: Path) -> str:
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    after = path.stat()
+    before_signature = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_signature = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    if before_signature != after_signature:
+        message = f"resource file changed while hashing: {path.name}"
+        raise RuntimeError(message)
+    return digest.hexdigest()
+
+
+def _effective_resource_fingerprint(
+    *,
+    resource_root: Path,
+    resource_manifest: Any,
+    lut_enabled: bool,
+) -> str:
+    resolved_root = resource_root.resolve(strict=True)
+    digest = hashlib.sha256()
+    selected_by_target = {
+        item.target_relative_path: item for item in resource_manifest.selected_files(lut_enabled=lut_enabled)
+    }
+    for target_relative_path in sorted(selected_by_target):
+        path = (resolved_root / target_relative_path).resolve(strict=True)
+        if not path.is_relative_to(resolved_root):
+            message = f"resource path escapes the selected runtime root: {target_relative_path}"
+            raise RuntimeError(message)
+        digest.update(target_relative_path.encode("utf-8"))
+        digest.update(_stable_file_sha256(path).encode("ascii"))
+    return digest.hexdigest()
+
+
+def _resource_manifest() -> dict[str, Any]:
+    registered = get_registered_model_parameter_resource_paths()
+    settings = get_settings()
+    declared_resources = load_model_parameter_resource_manifest(
+        settings.model_parameter_resources,
+        source_path=CONFIG_FILE_PATH,
+    )
+    contract_path = (
+        registered.workbook_contract_path
+        if registered is not None and registered.workbook_contract_path is not None
+        else DEFAULT_WORKBOOK_CONTRACT_PATH
+    )
+    contract = (
+        registered.workbook_contract
+        if registered is not None and registered.workbook_contract is not None
+        else load_workbook_contract(contract_path)
+    )
+    validate_workbook_hashes(contract)
+    resource_root = registered.root if registered is not None else PACKAGE_RESOURCE_DIR
+    effective_resource_fingerprint = _effective_resource_fingerprint(
+        resource_root=resource_root,
+        resource_manifest=declared_resources,
+        lut_enabled=settings.model_parameter_lut_enabled,
+    )
+    manifest = {
+        "release_id": contract.release_id,
+        "contract_sha256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
+        "contract_parameter_names": sorted(contract.parameters),
+        "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "runtime_registered": registered is not None,
+        "runtime_source": registered.source if registered is not None else "not_registered",
+        "declared_semantic_schema_hash": declared_resources.semantic_schema_hash,
+        "semantic_schema_hash": registered.semantic_schema_hash if registered is not None else None,
+        "resource_config_fingerprint": (registered.resource_config_fingerprint if registered is not None else None),
+        "resource_fingerprint": registered.resource_fingerprint if registered is not None else None,
+        "fallback_reason": registered.fallback_reason if registered is not None else None,
+        "effective_resource_fingerprint": effective_resource_fingerprint,
+    }
+    manifest["identity_fingerprint"] = _semantic_sha256(manifest)
+    return manifest
+
+
+def _capability_contract(capability_release: str) -> Mapping[str, Any]:
+    contract = CAPABILITY_RELEASES.get(capability_release)
+    if contract is None:
+        message = f"unsupported capability release: {capability_release!r}"
+        raise ValueError(message)
+    return contract
+
+
+def _release_contract_errors(
+    *,
+    capability_release: str,
+    resource_manifest: Mapping[str, Any],
+    require_registered_resources: bool,
+) -> list[str]:
+    release = _capability_contract(capability_release)
+    errors: list[str] = []
+    expected_allowlist = frozenset(str(item) for item in release["runtime_allowlist"])
+    if expected_allowlist != MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+        errors.append(
+            "runtime allow-list drifted from the approved capability release: "
+            f"expected={sorted(expected_allowlist)}, actual={sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST)}",
+        )
+    if resource_manifest.get("release_id") != release["resource_release_id"]:
+        errors.append(
+            "resource release does not match the approved capability release: "
+            f"expected={release['resource_release_id']!r}, actual={resource_manifest.get('release_id')!r}",
+        )
+    if set(resource_manifest.get("contract_parameter_names") or ()) != expected_allowlist:
+        errors.append(
+            "Workbook contract parameters do not match the approved capability release: "
+            f"expected={sorted(expected_allowlist)}, "
+            f"actual={sorted(resource_manifest.get('contract_parameter_names') or ())}",
+        )
+    expected_contract_sha256 = str(release["workbook_contract_sha256"])
+    if resource_manifest.get("contract_sha256") != expected_contract_sha256:
+        errors.append(
+            "Workbook contract content drifted from the approved capability release: "
+            f"expected={expected_contract_sha256}, actual={resource_manifest.get('contract_sha256')}",
+        )
+    expected_semantic_schema_hash = str(release["resource_semantic_schema_hash"])
+    if resource_manifest.get("declared_semantic_schema_hash") != expected_semantic_schema_hash:
+        errors.append(
+            "resource semantic schema drifted from the approved capability release: "
+            f"expected={expected_semantic_schema_hash}, "
+            f"actual={resource_manifest.get('declared_semantic_schema_hash')}",
+        )
+    expected_resource_fingerprint = str(release["effective_resource_fingerprint"])
+    if resource_manifest.get("effective_resource_fingerprint") != expected_resource_fingerprint:
+        errors.append(
+            "effective resource content drifted from the approved capability release: "
+            f"expected={expected_resource_fingerprint}, "
+            f"actual={resource_manifest.get('effective_resource_fingerprint')}",
+        )
+    if require_registered_resources:
+        if resource_manifest.get("runtime_registered") is not True:
+            errors.append("execute mode requires a registered Model Parameter resource runtime")
+        if resource_manifest.get("runtime_source") not in {"object_storage", "packaged"}:
+            errors.append(
+                f"execute mode resource source is invalid: {resource_manifest.get('runtime_source')!r}",
+            )
+        if not resource_manifest.get("semantic_schema_hash"):
+            errors.append("execute mode resource semantic schema hash is missing")
+        elif resource_manifest.get("semantic_schema_hash") != expected_semantic_schema_hash:
+            errors.append(
+                "registered resource semantic schema does not match the approved capability release: "
+                f"expected={expected_semantic_schema_hash}, "
+                f"actual={resource_manifest.get('semantic_schema_hash')}",
+            )
+        object_storage_fingerprint_missing = resource_manifest.get(
+            "runtime_source"
+        ) == "object_storage" and not resource_manifest.get("resource_fingerprint")
+        if object_storage_fingerprint_missing:
+            errors.append("object-storage resource fingerprint is missing")
+        registered_fingerprint = resource_manifest.get("resource_fingerprint")
+        if registered_fingerprint and registered_fingerprint != expected_resource_fingerprint:
+            errors.append(
+                "registered resource fingerprint does not match the approved capability release: "
+                f"expected={expected_resource_fingerprint}, actual={registered_fingerprint}",
+            )
+    return errors
+
+
+async def _evaluate_scenario_with_frozen_context(
+    scenario_id: int,
+    scenario_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    return await _evaluate_scenario(
+        scenario_id,
+        expected_scenario_context=scenario_context,
+        require_pre_persistence_quality_pass=True,
+        allowed_parameter_names=EXPECTED_BASELINE_ALLOWLIST,
+    )
 
 
 def _runtime_dependencies() -> RunnerDependencies:
     service = ModelParameterService()
     return RunnerDependencies(
         load_context=service.load_context,
-        snapshot_proposal_ids=_snapshot_proposal_ids,
+        snapshot_proposal_rows=_snapshot_proposal_rows,
         evaluate_scenario=_evaluate_scenario,
         fetch_proposal=fetch_proposal_db_row,
         failure_trace=_failure_trace_from_exception,
+        discover_scenario_ids=_discover_scenario_ids,
+        build_quality_evidence=build_v4_scenario_evidence,
+        prepare_resources=_ensure_model_parameter_test_resource_runtime,
+        schema_preflight=_schema_preflight,
+        evaluate_scenario_with_context=_evaluate_scenario_with_frozen_context,
+        require_registered_resources=True,
     )
 
 
@@ -266,44 +544,335 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _semantic_sha256(payload: Mapping[str, Any]) -> str:
+    serialized = json.dumps(
+        json_safe(payload),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _candidate_parameter_names(candidates: Sequence[Any]) -> list[str]:
+    return sorted(
+        {
+            str(
+                item.get("canonical_parameter_name") or item.get("parameter_name") or item.get("parameterName") or "",
+            ).strip()
+            for item in candidates
+            if isinstance(item, Mapping)
+        }
+        - {""},
+    )
+
+
 def _preflight_scenario(
     scenario_id: int,
     load_context: Callable[[int], Mapping[str, Any]],
+    *,
+    capability_release: str,
+    resource_manifest: Mapping[str, Any],
+    build_quality_evidence: Callable[[int, Mapping[str, Any]], Any] | None = None,
+    include_context: bool = False,
 ) -> dict[str, Any]:
     try:
         context = load_context(scenario_id)
+        release = _capability_contract(capability_release)
         group = context.get("scenario_group") or {}
         scenario = context.get("scenario") or {}
         api_version = str(group.get("api_version") or "")
         strategy = str(group.get("generation_strategy") or "")
         loaded_scenario_id = _int_or_none(scenario.get("scenario_id"))
+        scenario_group_id = _int_or_none(scenario.get("scenario_group_id"))
+        loaded_group_id = _int_or_none(group.get("scenario_group_id"))
         errors: list[str] = []
+        skip_reasons: list[str] = []
         if loaded_scenario_id != scenario_id:
             errors.append(
                 f"scenario identity mismatch: requested={scenario_id}, loaded={loaded_scenario_id}",
+            )
+        if scenario_group_id is None or loaded_group_id is None or scenario_group_id != loaded_group_id:
+            errors.append(
+                "scenario/group identity mismatch: "
+                f"scenario_group_id={scenario_group_id}, loaded_group_id={loaded_group_id}",
             )
         if api_version != V4_API_VERSION:
             errors.append(f"api_version must be exactly {V4_API_VERSION!r}: actual={api_version!r}")
         if strategy != V4_STRATEGY:
             errors.append(f"generation_strategy must be exactly {V4_STRATEGY!r}: actual={strategy!r}")
-        return {
+        group_status = str(group.get("status") or "").lower()
+        group_stage = str(group.get("stage") or "").lower()
+        scenario_status = str(scenario.get("status") or "").lower()
+        if group_status not in ELIGIBLE_GROUP_STATUSES:
+            skip_reasons.append(f"group status is not execution eligible: {group_status or 'missing'}")
+        if group_stage != ELIGIBLE_GROUP_STAGE:
+            skip_reasons.append(f"group stage is not completed: {group_stage or 'missing'}")
+        if scenario_status not in ELIGIBLE_SCENARIO_STATUSES:
+            skip_reasons.append(f"scenario status is not execution eligible: {scenario_status or 'missing'}")
+
+        stored_catalog_version = str(group.get("impact_catalog_version") or "")
+        stored_catalog_checksum = str(group.get("impact_catalog_checksum") or "")
+        expected_catalog_version = str(release["catalog_version"])
+        expected_catalog_checksum = str(release["catalog_checksum"])
+        if stored_catalog_version != expected_catalog_version:
+            errors.append(
+                "stored catalog version does not match the approved capability release: "
+                f"expected={expected_catalog_version!r}, actual={stored_catalog_version!r}",
+            )
+        if stored_catalog_checksum != expected_catalog_checksum:
+            errors.append(
+                "stored catalog checksum does not match the approved capability release: "
+                f"expected={expected_catalog_checksum!r}, actual={stored_catalog_checksum!r}",
+            )
+        quality_payload: dict[str, Any] = {}
+        if build_quality_evidence is not None and not errors and not skip_reasons:
+            quality = build_quality_evidence(scenario_id, context)
+            quality_errors = [str(item) for item in getattr(quality, "errors", ())]
+            errors.extend(quality_errors)
+            runtime_candidates = tuple(getattr(quality, "runtime_candidates", ()))
+            blocked_candidates = tuple(getattr(quality, "blocked_candidates", ()))
+            raw_candidates = tuple(getattr(quality, "raw_candidates", ()))
+            runtime_parameter_names = _candidate_parameter_names(runtime_candidates)
+            approved_parameter_names = set(release["runtime_allowlist"])
+            contract_parameter_names = set(resource_manifest.get("contract_parameter_names") or ())
+            quality_payload = {
+                "active_catalog_version": getattr(quality, "active_catalog_version", ""),
+                "active_catalog_checksum": getattr(quality, "active_catalog_checksum", ""),
+                "raw_candidate_count": len(raw_candidates),
+                "runtime_candidate_count": len(runtime_candidates),
+                "blocked_candidate_count": len(blocked_candidates),
+                "raw_candidate_digest": _semantic_sha256({"candidates": list(raw_candidates)}),
+                "runtime_candidate_digest": _semantic_sha256({"candidates": list(runtime_candidates)}),
+                "blocked_candidate_digest": _semantic_sha256({"candidates": list(blocked_candidates)}),
+                "runtime_parameter_names": runtime_parameter_names,
+                "runtime_candidate_keys": sorted(
+                    str(item.get("candidate_key") or "") for item in runtime_candidates if isinstance(item, Mapping)
+                ),
+                "blocked_reason_codes": sorted(
+                    {
+                        str(item.get("reason_code") or item.get("reasonCode") or "")
+                        for item in blocked_candidates
+                        if isinstance(item, Mapping)
+                    }
+                    - {""},
+                ),
+                "dimension_lineage": list(getattr(quality, "dimension_lineage", ())),
+            }
+            if quality_payload["active_catalog_version"] != expected_catalog_version:
+                errors.append(
+                    "active catalog version does not match the approved capability release: "
+                    f"expected={expected_catalog_version!r}, "
+                    f"actual={quality_payload['active_catalog_version']!r}",
+                )
+            if quality_payload["active_catalog_checksum"] != expected_catalog_checksum:
+                errors.append(
+                    "active catalog checksum does not match the approved capability release: "
+                    f"expected={expected_catalog_checksum!r}, "
+                    f"actual={quality_payload['active_catalog_checksum']!r}",
+                )
+            unexpected_runtime_names = sorted(set(runtime_parameter_names) - approved_parameter_names)
+            if unexpected_runtime_names:
+                errors.append(
+                    f"runtime candidates escaped the approved capability release: {unexpected_runtime_names}",
+                )
+            missing_contract_names = sorted(set(runtime_parameter_names) - contract_parameter_names)
+            if missing_contract_names:
+                errors.append(
+                    f"runtime candidates are not covered by the Workbook contract: {missing_contract_names}",
+                )
+            if not runtime_candidates and not quality_errors:
+                skip_reasons.append("no runtime-allowed parameter candidate")
+
+        scenario_context_fingerprint = _semantic_sha256({"proposal_inputs": dict(context)})
+        fingerprint_payload = {
             "scenario_id": scenario_id,
-            "scenario_group_id": _int_or_none(group.get("scenario_group_id")),
+            "scenario_group_id": loaded_group_id,
+            "catalog_version": stored_catalog_version,
+            "catalog_checksum": stored_catalog_checksum,
+            "dimension_values": scenario.get("dimension_values") or {},
+            "scenario_context_fingerprint": scenario_context_fingerprint,
+            "quality": quality_payload,
+            "capability_release": capability_release,
+            "runtime_allowlist": sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST),
+            "resource": dict(resource_manifest),
+            "policy_version": UNCOVERED_POLICY_VERSION,
+        }
+        status = "FAIL" if errors else "SKIP" if skip_reasons else "PASS"
+        result = {
+            "scenario_id": scenario_id,
+            "scenario_group_id": loaded_group_id,
             "api_version": api_version,
             "generation_strategy": strategy,
-            "status": "PASS" if not errors else "FAIL",
+            "group_status": group_status,
+            "group_stage": group_stage,
+            "scenario_status": scenario_status,
+            "stored_catalog_version": stored_catalog_version,
+            "stored_catalog_checksum": stored_catalog_checksum,
+            "scenario_context_fingerprint": scenario_context_fingerprint,
+            **quality_payload,
+            "input_fingerprint": _semantic_sha256(fingerprint_payload),
+            "status": status,
             "errors": errors,
+            "skip_reasons": skip_reasons,
         }
+        if include_context:
+            result["_loaded_context"] = dict(context)
+        return result
     except Exception as exc:
         return {
             "scenario_id": scenario_id,
             "status": "FAIL",
             "errors": [f"context preflight failed: {_redact_text(repr(exc))}"],
+            "skip_reasons": [],
         }
 
 
 def _proposal_row_evidence(row: Mapping[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in _PROPOSAL_ROW_FIELDS if field in row}
+
+
+def _proposal_ids(rows: Sequence[Mapping[str, Any]]) -> tuple[int, ...]:
+    return tuple(
+        proposal_id for row in rows if (proposal_id := _int_or_none(row.get("model_param_proposal_id"))) is not None
+    )
+
+
+def _classify_uncovered_guard(
+    *,
+    scenario_id: int,
+    scenario_group_id: int,
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    history = [_proposal_row_evidence(row) for row in rows]
+    identity_errors = [
+        (
+            "proposal guard row identity mismatch: "
+            f"proposal_id={row.get('model_param_proposal_id')}, "
+            f"scenario_id={row.get('scenario_id')}, scenario_group_id={row.get('scenario_group_id')}"
+        )
+        for row in history
+        if _int_or_none(row.get("scenario_id")) != scenario_id
+        or _int_or_none(row.get("scenario_group_id")) != scenario_group_id
+    ]
+    statuses = [str(row.get("status") or "").upper() for row in history]
+    unknown_statuses = sorted({status for status in statuses if status not in KNOWN_PROPOSAL_STATUSES})
+    proposal_ids = list(_proposal_ids(history))
+
+    if identity_errors:
+        return {
+            "decision": "HARD_STOP",
+            "reason_code": "PROPOSAL_GUARD_IDENTITY_MISMATCH",
+            "eligible": False,
+            "hard_stop": True,
+            "proposal_ids": proposal_ids,
+            "statuses": statuses,
+            "history": history,
+            "errors": identity_errors,
+        }
+    if unknown_statuses:
+        return {
+            "decision": "HARD_STOP",
+            "reason_code": "UNKNOWN_PROPOSAL_STATUS",
+            "eligible": False,
+            "hard_stop": True,
+            "proposal_ids": proposal_ids,
+            "statuses": statuses,
+            "history": history,
+            "errors": [f"unknown active proposal statuses: {unknown_statuses}"],
+        }
+    if "PROCESSING" in statuses:
+        processing_error = (
+            "PROCESSING proposal exists; no authoritative stale threshold or heartbeat is available, "
+            "so the campaign must stop for manual review"
+        )
+        return {
+            "decision": "HARD_STOP",
+            "reason_code": "PROCESSING_REQUIRES_MANUAL_REVIEW",
+            "eligible": False,
+            "hard_stop": True,
+            "proposal_ids": proposal_ids,
+            "statuses": statuses,
+            "history": history,
+            "errors": [processing_error],
+        }
+    if "CONFIRMED" in statuses:
+        decision = "SKIP"
+        reason_code = "CONFIRMED_EXISTS"
+        eligible = False
+    elif "PROPOSED" in statuses:
+        decision = "SKIP"
+        reason_code = "PROPOSED_EXISTS"
+        eligible = False
+    elif statuses:
+        decision = "ELIGIBLE"
+        reason_code = "FAILED_ONLY"
+        eligible = True
+    else:
+        decision = "ELIGIBLE"
+        reason_code = "NO_PROPOSAL_HISTORY"
+        eligible = True
+    return {
+        "decision": decision,
+        "reason_code": reason_code,
+        "eligible": eligible,
+        "hard_stop": False,
+        "proposal_ids": proposal_ids,
+        "statuses": statuses,
+        "history": history,
+        "errors": [],
+    }
+
+
+def _snapshot_campaign_guards(
+    preflight: Sequence[Mapping[str, Any]],
+    dependencies: RunnerDependencies,
+) -> tuple[dict[int, dict[str, Any]], list[str]]:
+    errors: list[str] = []
+    guards: dict[int, dict[str, Any]] = {}
+    preflight_by_group: dict[int, list[Mapping[str, Any]]] = {}
+    for item in preflight:
+        scenario_group_id = _int_or_none(item.get("scenario_group_id"))
+        if scenario_group_id is None:
+            errors.append(f"scenario_id={item.get('scenario_id')}: scenario_group_id is missing")
+            continue
+        preflight_by_group.setdefault(scenario_group_id, []).append(item)
+
+    for scenario_group_id, group_items in preflight_by_group.items():
+        group_scenario_ids = [int(item["scenario_id"]) for item in group_items]
+        try:
+            rows = dependencies.snapshot_proposal_rows(
+                scenario_group_id,
+                group_scenario_ids,
+            )
+        except Exception as exc:
+            errors.append(
+                f"scenario_group_id={scenario_group_id}: proposal guard snapshot failed: {_redact_text(repr(exc))}",
+            )
+            continue
+        invalid_rows = [
+            row
+            for row in rows
+            if _int_or_none(row.get("scenario_id")) not in group_scenario_ids
+            or _int_or_none(row.get("scenario_group_id")) != scenario_group_id
+        ]
+        if invalid_rows:
+            errors.append(
+                f"scenario_group_id={scenario_group_id}: proposal guard returned "
+                f"{len(invalid_rows)} out-of-scope or invalid row(s)",
+            )
+        rows_by_scenario = {
+            scenario_id: [row for row in rows if _int_or_none(row.get("scenario_id")) == scenario_id]
+            for scenario_id in group_scenario_ids
+        }
+        for item in group_items:
+            scenario_id = int(item["scenario_id"])
+            guards[scenario_id] = _classify_uncovered_guard(
+                scenario_id=scenario_id,
+                scenario_group_id=scenario_group_id,
+                rows=rows_by_scenario[scenario_id],
+            )
+    return guards, errors
 
 
 def _public_final_response(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -430,6 +999,46 @@ def _safe_fetch_proposal(
         return {}, _redact_text(repr(exc))
 
 
+def _proposal_parameters_for_comparison(value: Any) -> Any:
+    safe = json_safe(value)
+    if isinstance(safe, Mapping):
+        return {
+            str(key): _proposal_parameters_for_comparison(item)
+            for key, item in safe.items()
+            if str(key) not in {"lutValue", "lut_value"}
+        }
+    if isinstance(safe, list | tuple):
+        return [_proposal_parameters_for_comparison(item) for item in safe]
+    return safe
+
+
+def _contains_parameter_key(value: Any, forbidden_keys: set[str]) -> bool:
+    safe = json_safe(value)
+    if isinstance(safe, Mapping):
+        return any(
+            str(key) in forbidden_keys or _contains_parameter_key(item, forbidden_keys) for key, item in safe.items()
+        )
+    if isinstance(safe, list | tuple):
+        return any(_contains_parameter_key(item, forbidden_keys) for item in safe)
+    return False
+
+
+def _proposal_parameter_names(value: Any) -> set[str]:
+    if not isinstance(value, list | tuple):
+        return set()
+    return {
+        str(
+            item.get("canonicalParameterName")
+            or item.get("canonical_parameter_name")
+            or item.get("parameterName")
+            or item.get("parameter_name")
+            or "",
+        ).strip()
+        for item in value
+        if isinstance(item, Mapping)
+    } - {""}
+
+
 def _success_integrity_errors(
     *,
     scenario_id: int,
@@ -438,8 +1047,41 @@ def _success_integrity_errors(
     new_proposal_ids: Sequence[int],
     proposal_row: Mapping[str, Any],
     readback_error: str | None,
+    final_response: Mapping[str, Any],
+    allowed_parameter_names: set[str],
 ) -> list[str]:
     errors: list[str] = []
+    response_status = str(final_response.get("status") or "")
+    response_data = final_response.get("data") if isinstance(final_response.get("data"), Mapping) else {}
+    response_proposal_parameters = response_data.get(
+        "proposalParameters",
+        response_data.get("proposal_parameters"),
+    )
+    if response_status != "success":
+        errors.append(f"proposal API response status is not success: {response_status!r}")
+    response_event_value = response_data.get("eventId", response_data.get("event_id"))
+    response_identity = {
+        "scenario_id": _int_or_none(response_data.get("scenarioId", response_data.get("scenario_id"))),
+        "scenario_group_id": _int_or_none(
+            response_data.get("scenarioGroupId", response_data.get("scenario_group_id")),
+        ),
+        "event_id": _int_or_none(response_event_value),
+    }
+    if response_identity["scenario_id"] != scenario_id:
+        errors.append(
+            f"proposal API scenario ID mismatch: actual={response_identity['scenario_id']}, expected={scenario_id}",
+        )
+    if response_identity["scenario_group_id"] != scenario_group_id:
+        errors.append(
+            "proposal API Scenario Group ID mismatch: "
+            f"actual={response_identity['scenario_group_id']}, expected={scenario_group_id}",
+        )
+    event_key_present = "eventId" in response_data or "event_id" in response_data
+    if not event_key_present or response_event_value is not None:
+        errors.append(
+            "v4 proposal API eventId must be present and null: "
+            f"present={event_key_present}, actual={response_identity['event_id']}",
+        )
     if model_param_proposal_id is None:
         errors.append("success response did not contain modelParamProposalId")
     if model_param_proposal_id is not None and tuple(new_proposal_ids) != (model_param_proposal_id,):
@@ -464,6 +1106,27 @@ def _success_integrity_errors(
     for field, expected in expected_fields.items():
         if proposal_row and proposal_row.get(field) != expected:
             errors.append(f"proposal DB field mismatch: {field}={proposal_row.get(field)!r}, expected={expected!r}")
+    if proposal_row and proposal_row.get("proposal_completed_dtm") is None:
+        errors.append("proposal DB row is missing proposal_completed_dtm")
+    persisted_parameters = proposal_row.get("proposal_parameters") if proposal_row else None
+    if not isinstance(persisted_parameters, list) or not persisted_parameters:
+        errors.append("proposal DB row contains no proposal_parameters")
+    if _contains_parameter_key(persisted_parameters, {"lutValue", "lut_value"}):
+        errors.append("proposal DB payload must not persist lutValue")
+    response_parameter_names = _proposal_parameter_names(response_proposal_parameters)
+    persisted_parameter_names = _proposal_parameter_names(persisted_parameters)
+    if not response_parameter_names:
+        errors.append("proposal API response contains no Parameter names")
+    unexpected_response_names = sorted(response_parameter_names - allowed_parameter_names)
+    if unexpected_response_names:
+        errors.append(f"proposal API response escaped the preflight runtime candidates: {unexpected_response_names}")
+    unexpected_persisted_names = sorted(persisted_parameter_names - allowed_parameter_names)
+    if unexpected_persisted_names:
+        errors.append(f"proposal DB payload escaped the preflight runtime candidates: {unexpected_persisted_names}")
+    if _proposal_parameters_for_comparison(persisted_parameters) != _proposal_parameters_for_comparison(
+        response_proposal_parameters,
+    ):
+        errors.append("proposal DB payload does not match the API response after excluding lutValue")
     return errors
 
 
@@ -471,6 +1134,11 @@ async def _execute_once(
     scenario_id: int,
     preflight: Mapping[str, Any],
     dependencies: RunnerDependencies,
+    *,
+    capability_release: str,
+    resource_manifest: Mapping[str, Any],
+    campaign_preflight: Sequence[Mapping[str, Any]],
+    initially_eligible_ids: Sequence[int],
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     started = time.perf_counter()
@@ -481,12 +1149,122 @@ async def _execute_once(
         "started_at": started_at.isoformat(),
         "status": "FAIL",
     }
+    scenario_group_id = _int_or_none(preflight.get("scenario_group_id"))
+    if scenario_group_id is None:
+        attempt.update(
+            {
+                "failed_stage": "uncovered guard recheck",
+                "error": "scenario_group_id is required for the proposal guard",
+                "finished_at": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": time.perf_counter() - started,
+            },
+        )
+        return attempt
+
+    current_resource_manifest = _resource_manifest()
+    resource_errors = _release_contract_errors(
+        capability_release=capability_release,
+        resource_manifest=current_resource_manifest,
+        require_registered_resources=dependencies.require_registered_resources,
+    )
+    fresh_preflight = _preflight_scenario(
+        scenario_id,
+        dependencies.load_context,
+        capability_release=capability_release,
+        resource_manifest=current_resource_manifest,
+        build_quality_evidence=dependencies.build_quality_evidence,
+        include_context=True,
+    )
+    frozen_scenario_context = fresh_preflight.pop("_loaded_context", None)
+    attempt["preflight_before_write"] = fresh_preflight
+    if resource_errors:
+        fresh_preflight.setdefault("errors", []).extend(resource_errors)
+        fresh_preflight["status"] = "FAIL"
+    initial_fingerprint = str(preflight.get("input_fingerprint") or "")
+    fresh_fingerprint = str(fresh_preflight.get("input_fingerprint") or "")
+    if fresh_preflight.get("status") != "PASS" or not initial_fingerprint or fresh_fingerprint != initial_fingerprint:
+        drift_errors = list(fresh_preflight.get("errors") or [])
+        if fresh_preflight.get("status") == "SKIP":
+            drift_errors.extend(str(item) for item in fresh_preflight.get("skip_reasons") or [])
+        if initial_fingerprint and fresh_fingerprint != initial_fingerprint:
+            drift_errors.append(
+                "proposal input fingerprint changed after campaign preflight: "
+                f"initial={initial_fingerprint}, current={fresh_fingerprint}",
+            )
+        attempt.update(
+            {
+                "status": "BLOCKED",
+                "failed_stage": "context/resource preflight recheck",
+                "error": "PREWRITE_INPUT_DRIFT_OR_INELIGIBLE",
+                "prewrite_errors": drift_errors,
+                "finished_at": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": time.perf_counter() - started,
+            },
+        )
+        return attempt
+    if dict(current_resource_manifest) != dict(resource_manifest):
+        attempt.update(
+            {
+                "status": "BLOCKED",
+                "failed_stage": "resource preflight recheck",
+                "error": "RESOURCE_MANIFEST_DRIFT",
+                "finished_at": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": time.perf_counter() - started,
+            },
+        )
+        return attempt
+    if dependencies.require_registered_resources and (
+        dependencies.evaluate_scenario_with_context is None or not isinstance(frozen_scenario_context, Mapping)
+    ):
+        attempt.update(
+            {
+                "status": "BLOCKED",
+                "failed_stage": "frozen context evaluator preflight",
+                "error": "FROZEN_CONTEXT_EVALUATOR_REQUIRED",
+                "finished_at": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": time.perf_counter() - started,
+            },
+        )
+        return attempt
+
+    campaign_guards, campaign_guard_errors = _snapshot_campaign_guards(
+        campaign_preflight,
+        dependencies,
+    )
+    attempt["campaign_guard_before_write"] = {
+        str(target_scenario_id): guard for target_scenario_id, guard in sorted(campaign_guards.items())
+    }
+    campaign_hard_stop_ids = sorted(
+        target_scenario_id for target_scenario_id, guard in campaign_guards.items() if guard.get("hard_stop") is True
+    )
+    newly_covered_ids = sorted(
+        target_scenario_id
+        for target_scenario_id in initially_eligible_ids
+        if campaign_guards.get(target_scenario_id, {}).get("eligible") is not True
+    )
+    if campaign_guard_errors or campaign_hard_stop_ids or newly_covered_ids:
+        attempt.update(
+            {
+                "status": "BLOCKED",
+                "failed_stage": "campaign-wide uncovered guard recheck",
+                "error": "CAMPAIGN_SCOPE_CHANGED_OR_BLOCKED",
+                "campaign_guard_errors": campaign_guard_errors,
+                "campaign_hard_stop_scenario_ids": campaign_hard_stop_ids,
+                "newly_covered_scenario_ids": newly_covered_ids,
+                "finished_at": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": time.perf_counter() - started,
+            },
+        )
+        return attempt
     try:
-        before_ids = dependencies.snapshot_proposal_ids(scenario_id)
+        before_rows = dependencies.snapshot_proposal_rows(
+            scenario_group_id,
+            (scenario_id,),
+        )
     except Exception as exc:
         attempt.update(
             {
-                "failed_stage": "proposal ID pre-snapshot",
+                "failed_stage": "uncovered guard recheck",
                 "error": _redact_text(repr(exc)),
                 "finished_at": datetime.now(UTC).isoformat(),
                 "elapsed_seconds": time.perf_counter() - started,
@@ -494,20 +1272,48 @@ async def _execute_once(
         )
         return attempt
 
+    guard = _classify_uncovered_guard(
+        scenario_id=scenario_id,
+        scenario_group_id=scenario_group_id,
+        rows=before_rows,
+    )
+    attempt["uncovered_guard_before_write"] = guard
+    if not guard["eligible"]:
+        attempt.update(
+            {
+                "status": "BLOCKED",
+                "failed_stage": "uncovered guard recheck",
+                "error": guard["reason_code"],
+                "finished_at": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": time.perf_counter() - started,
+            },
+        )
+        return attempt
+
+    before_ids = _proposal_ids(before_rows)
     attempt["proposal_ids_before"] = list(before_ids)
     attempt["execution_attempt_count"] = 1
     evaluation_record: dict[str, Any] = {}
     evaluation_error: Exception | None = None
     trace: Mapping[str, Any] = {}
+    final_response: Mapping[str, Any] = {}
     try:
-        evaluation_record = await dependencies.evaluate_scenario(scenario_id)
+        if dependencies.evaluate_scenario_with_context is not None and isinstance(frozen_scenario_context, Mapping):
+            evaluation_record = await dependencies.evaluate_scenario_with_context(
+                scenario_id,
+                frozen_scenario_context,
+            )
+        else:
+            evaluation_record = await dependencies.evaluate_scenario(scenario_id)
     except Exception as exc:
         evaluation_error = exc
         trace = dependencies.failure_trace(exc)
 
     if evaluation_error is None:
         attempt["evaluation"] = _record_summary(evaluation_record)
-        model_param_proposal_id = proposal_id(evaluation_record.get("final_response") or {})
+        raw_final_response = evaluation_record.get("final_response") or {}
+        final_response = raw_final_response if isinstance(raw_final_response, Mapping) else {}
+        model_param_proposal_id = proposal_id(dict(final_response))
     else:
         attempt["failed_stage"] = trace.get("failed_stage") or "proposal evaluation"
         attempt["error"] = _redact_text(repr(evaluation_error))
@@ -529,8 +1335,13 @@ async def _execute_once(
     after_ids: tuple[int, ...] = ()
     snapshot_after_error: str | None = None
     try:
-        after_ids = dependencies.snapshot_proposal_ids(scenario_id)
+        after_rows = dependencies.snapshot_proposal_rows(
+            scenario_group_id,
+            (scenario_id,),
+        )
+        after_ids = _proposal_ids(after_rows)
         attempt["proposal_ids_after"] = list(after_ids)
+        attempt["proposal_statuses_after"] = [str(row.get("status") or "") for row in after_rows]
     except Exception as exc:
         snapshot_after_error = _redact_text(repr(exc))
         attempt["proposal_id_post_snapshot_error"] = snapshot_after_error
@@ -561,6 +1372,11 @@ async def _execute_once(
                 new_proposal_ids=new_ids,
                 proposal_row=proposal_row,
                 readback_error=readback_error,
+                final_response=final_response,
+                allowed_parameter_names=set(
+                    fresh_preflight.get("runtime_parameter_names")
+                    or _capability_contract(capability_release)["runtime_allowlist"],
+                ),
             ),
         )
     else:
@@ -587,31 +1403,268 @@ async def run_campaign(
     _validate_options(options)
     dependencies = dependencies or _runtime_dependencies()
     started_at = datetime.now(UTC)
+    resource_manifest = _resource_manifest()
     evidence: dict[str, Any] = {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "runner": "model_parameter_proposal_only",
-        "mode": "execute",
+        "mode": "execute" if options.execute else "read-only",
         "status": "RESERVED",
         "started_at": started_at.isoformat(),
-        "requested_scenario_ids": list(options.scenario_ids),
+        "scope": {
+            "scenario_group_id": options.scenario_group_id,
+            "scenario_ids": list(options.scenario_ids),
+        },
+        "manifest": {
+            "capability_release": options.capability_release,
+            "capability_contract": {
+                "catalog_version": _capability_contract(options.capability_release)["catalog_version"],
+                "catalog_checksum": _capability_contract(options.capability_release)["catalog_checksum"],
+                "runtime_allowlist": sorted(
+                    _capability_contract(options.capability_release)["runtime_allowlist"],
+                ),
+                "resource_release_id": _capability_contract(options.capability_release)["resource_release_id"],
+                "workbook_contract_sha256": _capability_contract(options.capability_release)[
+                    "workbook_contract_sha256"
+                ],
+                "resource_semantic_schema_hash": _capability_contract(options.capability_release)[
+                    "resource_semantic_schema_hash"
+                ],
+                "effective_resource_fingerprint": _capability_contract(options.capability_release)[
+                    "effective_resource_fingerprint"
+                ],
+                "uncovered_policy_version": _capability_contract(options.capability_release)[
+                    "uncovered_policy_version"
+                ],
+            },
+            "runtime_allowlist": sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST),
+            "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
+            "resource": resource_manifest,
+        },
         "safety": {
+            "uncovered_only": True,
             "sequential": True,
+            "single_worker_best_effort": True,
             "max_attempts_per_scenario": 1,
             "automatic_retry": False,
             "confirmation_invoked": False,
             "callback_invoked": False,
             "required_api_version": V4_API_VERSION,
             "required_generation_strategy": V4_STRATEGY,
+            "processing_policy": "any active PROCESSING row hard-stops the entire campaign",
         },
         "preflight": [],
+        "selection": {},
         "attempts": [],
     }
     _reserve_evidence_path(options.evidence_path, evidence)
 
-    preflight = [_preflight_scenario(scenario_id, dependencies.load_context) for scenario_id in options.scenario_ids]
-    evidence["preflight"] = preflight
-    if any(item.get("status") != "PASS" for item in preflight):
+    resource_errors: list[str] = []
+    if options.execute and dependencies.prepare_resources is not None:
+        try:
+            await dependencies.prepare_resources()
+        except Exception as exc:
+            resource_errors.append(f"resource runtime preparation failed: {_redact_text(repr(exc))}")
+    resource_manifest = _resource_manifest()
+    evidence["manifest"]["resource"] = resource_manifest
+    resource_errors.extend(
+        _release_contract_errors(
+            capability_release=options.capability_release,
+            resource_manifest=resource_manifest,
+            require_registered_resources=(options.execute and dependencies.require_registered_resources),
+        ),
+    )
+    if resource_errors:
         evidence["status"] = "BLOCKED"
+        evidence["selection"] = {
+            "errors": resource_errors,
+            "counts": {
+                "discovered": 0,
+                "preflight_pass": 0,
+                "preflight_skip": 0,
+                "preflight_fail": 0,
+                "guarded": 0,
+                "eligible_uncovered": 0,
+                "covered_skip": 0,
+                "hard_stop": 0,
+                "attempted": 0,
+                "succeeded": 0,
+                "failed": 0,
+            },
+        }
+        evidence["finished_at"] = datetime.now(UTC).isoformat()
+        _write_evidence(options.evidence_path, evidence)
+        return evidence
+
+    evidence["status"] = "PREFLIGHT"
+    _write_evidence(options.evidence_path, evidence)
+    if options.execute:
+        if dependencies.schema_preflight is None:
+            schema_errors = (
+                ["execute mode requires the 0030 DB schema preflight"]
+                if dependencies.require_registered_resources
+                else []
+            )
+            schema_checks: list[str] = []
+            schema_verdict = "FAIL" if schema_errors else "NOT_CONFIGURED"
+        else:
+            try:
+                schema_result = dependencies.schema_preflight()
+                schema_checks = [str(item) for item in getattr(schema_result, "checks", ())]
+                schema_errors = [str(item) for item in getattr(schema_result, "errors", ())]
+                schema_verdict = str(getattr(schema_result, "verdict", "") or "FAIL")
+                if schema_verdict != "PASS" and not schema_errors:
+                    schema_errors.append(f"schema preflight verdict is not PASS: {schema_verdict}")
+            except Exception as exc:
+                schema_checks = []
+                schema_errors = [f"schema preflight failed: {_redact_text(repr(exc))}"]
+                schema_verdict = "FAIL"
+        evidence["schema_preflight"] = {
+            "verdict": schema_verdict,
+            "checks": schema_checks,
+            "errors": schema_errors,
+        }
+        _write_evidence(options.evidence_path, evidence)
+        if schema_errors:
+            evidence["status"] = "BLOCKED"
+            evidence["selection"] = {
+                "errors": schema_errors,
+                "counts": {
+                    "discovered": 0,
+                    "preflight_pass": 0,
+                    "preflight_skip": 0,
+                    "preflight_fail": 0,
+                    "guarded": 0,
+                    "eligible_uncovered": 0,
+                    "covered_skip": 0,
+                    "hard_stop": 0,
+                    "attempted": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                },
+            }
+            evidence["finished_at"] = datetime.now(UTC).isoformat()
+            _write_evidence(options.evidence_path, evidence)
+            return evidence
+
+    try:
+        scenario_ids = (
+            tuple(options.scenario_ids)
+            if options.scenario_group_id is None
+            else dependencies.discover_scenario_ids(options.scenario_group_id)
+        )
+    except Exception as exc:
+        evidence["status"] = "BLOCKED"
+        evidence["selection"] = {
+            "errors": [f"scenario discovery failed: {_redact_text(repr(exc))}"],
+        }
+        evidence["finished_at"] = datetime.now(UTC).isoformat()
+        _write_evidence(options.evidence_path, evidence)
+        return evidence
+    if not scenario_ids:
+        evidence["status"] = "BLOCKED"
+        evidence["selection"] = {
+            "discovered_scenario_ids": [],
+            "errors": ["explicit scope contains no non-deleted Scenario"],
+        }
+        evidence["finished_at"] = datetime.now(UTC).isoformat()
+        _write_evidence(options.evidence_path, evidence)
+        return evidence
+
+    evidence["selection"] = {"discovered_scenario_ids": list(scenario_ids)}
+    preflight = [
+        _preflight_scenario(
+            scenario_id,
+            dependencies.load_context,
+            capability_release=options.capability_release,
+            resource_manifest=resource_manifest,
+            build_quality_evidence=dependencies.build_quality_evidence,
+        )
+        for scenario_id in scenario_ids
+    ]
+    if options.scenario_group_id is not None:
+        for item in preflight:
+            if _int_or_none(item.get("scenario_group_id")) != options.scenario_group_id:
+                item.setdefault("errors", []).append(
+                    "loaded Scenario Group does not match the explicit campaign scope: "
+                    f"requested={options.scenario_group_id}, actual={item.get('scenario_group_id')}",
+                )
+                item["status"] = "FAIL"
+    evidence["preflight"] = preflight
+    if any(item.get("status") == "FAIL" for item in preflight):
+        preflight_pass_count = sum(item.get("status") == "PASS" for item in preflight)
+        preflight_skip_count = sum(item.get("status") == "SKIP" for item in preflight)
+        preflight_fail_count = sum(item.get("status") == "FAIL" for item in preflight)
+        evidence["status"] = "BLOCKED"
+        evidence["selection"].update(
+            {
+                "eligible_scenario_ids": [],
+                "skipped_scenario_ids": [item["scenario_id"] for item in preflight if item.get("status") == "SKIP"],
+                "errors": ["at least one Scenario failed context/catalog preflight"],
+                "counts": {
+                    "discovered": len(scenario_ids),
+                    "preflight_pass": preflight_pass_count,
+                    "preflight_skip": preflight_skip_count,
+                    "preflight_fail": preflight_fail_count,
+                    "guarded": 0,
+                    "eligible_uncovered": 0,
+                    "covered_skip": 0,
+                    "hard_stop": 0,
+                    "attempted": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                },
+            },
+        )
+        evidence["finished_at"] = datetime.now(UTC).isoformat()
+        _write_evidence(options.evidence_path, evidence)
+        return evidence
+
+    eligible_preflight = [item for item in preflight if item.get("status") == "PASS"]
+    guards, guard_errors = _snapshot_campaign_guards(preflight, dependencies)
+    for item in preflight:
+        scenario_id = int(item["scenario_id"])
+        if scenario_id in guards:
+            item["uncovered_guard"] = guards[scenario_id]
+
+    hard_stop_ids = sorted(scenario_id for scenario_id, guard in guards.items() if guard["hard_stop"])
+    eligible_ids = [
+        int(item["scenario_id"])
+        for item in eligible_preflight
+        if guards.get(int(item["scenario_id"]), {}).get("eligible") is True
+    ]
+    lifecycle_skipped_ids = [int(item["scenario_id"]) for item in preflight if item.get("status") == "SKIP"]
+    covered_ids = sorted(scenario_id for scenario_id, guard in guards.items() if guard["decision"] == "SKIP")
+    evidence["selection"].update(
+        {
+            "eligible_scenario_ids": eligible_ids,
+            "covered_scenario_ids": covered_ids,
+            "lifecycle_or_capability_skipped_scenario_ids": lifecycle_skipped_ids,
+            "hard_stop_scenario_ids": hard_stop_ids,
+            "errors": guard_errors,
+            "counts": {
+                "discovered": len(scenario_ids),
+                "preflight_pass": len(eligible_preflight),
+                "preflight_skip": len(lifecycle_skipped_ids),
+                "preflight_fail": 0,
+                "guarded": len(guards),
+                "eligible_uncovered": len(eligible_ids),
+                "covered_skip": len(covered_ids),
+                "lifecycle_or_capability_skip": len(lifecycle_skipped_ids),
+                "hard_stop": len(hard_stop_ids),
+                "attempted": 0,
+                "succeeded": 0,
+                "failed": 0,
+            },
+        },
+    )
+    if guard_errors or hard_stop_ids:
+        evidence["status"] = "BLOCKED"
+        evidence["finished_at"] = datetime.now(UTC).isoformat()
+        _write_evidence(options.evidence_path, evidence)
+        return evidence
+
+    if not options.execute:
+        evidence["status"] = "PASS"
         evidence["finished_at"] = datetime.now(UTC).isoformat()
         _write_evidence(options.evidence_path, evidence)
         return evidence
@@ -619,22 +1672,35 @@ async def run_campaign(
     evidence["status"] = "RUNNING"
     _write_evidence(options.evidence_path, evidence)
     preflight_by_id = {int(item["scenario_id"]): item for item in preflight}
-    for scenario_id in options.scenario_ids:
+    for scenario_index, scenario_id in enumerate(eligible_ids):
         attempt = await _execute_once(
             scenario_id,
             preflight_by_id[scenario_id],
             dependencies,
+            capability_release=options.capability_release,
+            resource_manifest=resource_manifest,
+            campaign_preflight=preflight,
+            initially_eligible_ids=eligible_ids[scenario_index:],
         )
         evidence["attempts"].append(attempt)
         _write_evidence(options.evidence_path, evidence)
-        if attempt.get("execution_attempt_count") == 0:
+        if attempt.get("status") != "PASS":
             break
 
-    evidence["status"] = (
-        "PASS"
-        if len(evidence["attempts"]) == len(options.scenario_ids)
-        and all(attempt.get("status") == "PASS" for attempt in evidence["attempts"])
-        else "FAIL"
+    if any(attempt.get("status") == "BLOCKED" for attempt in evidence["attempts"]):
+        evidence["status"] = "BLOCKED"
+    elif len(evidence["attempts"]) == len(eligible_ids) and all(
+        attempt.get("status") == "PASS" for attempt in evidence["attempts"]
+    ):
+        evidence["status"] = "PASS"
+    else:
+        evidence["status"] = "FAIL"
+    evidence["selection"]["counts"]["attempted"] = len(evidence["attempts"])
+    evidence["selection"]["counts"]["succeeded"] = sum(
+        attempt.get("status") == "PASS" for attempt in evidence["attempts"]
+    )
+    evidence["selection"]["counts"]["failed"] = sum(
+        attempt.get("status") not in {"PASS", "BLOCKED"} for attempt in evidence["attempts"]
     )
     evidence["finished_at"] = datetime.now(UTC).isoformat()
     _write_evidence(options.evidence_path, evidence)
@@ -657,7 +1723,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Proposal-only runner finished | status={} evidence_path={} scenarios={} attempts={}",
         evidence["status"],
         options.evidence_path,
-        len(options.scenario_ids),
+        len(evidence.get("selection", {}).get("discovered_scenario_ids", [])),
         len(evidence["attempts"]),
     )
     return 0 if evidence["status"] == "PASS" else 1

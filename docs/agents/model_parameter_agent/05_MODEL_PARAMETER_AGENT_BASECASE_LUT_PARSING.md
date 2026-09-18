@@ -5,16 +5,17 @@
 
 ## 1. 기준 범위
 
-체크인 v4 canonical 기준선은 master 21행 중 활성 16개이며, resource capability는 LUT-backed 10개와
-Basecase-only 6개로 나뉜다. 체크인 v1/v3 shared dimension mapping 129행의 direct/routing 전역
-합집합은 LUT-backed parameter 10개에 도달하고, v4 Lever-native binding 전역 합집합은 활성 16개에
-도달한다. 이 수치는 live DB나 요청 하나의 후보 수가 아니다. 실제 신규 proposal의 runtime allow-list는
-모든 버전에서 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개다.
+0030 v4 runtime fixture 기준선은 master 21행 중 활성 14개이며, active resource capability는
+LUT-backed 10개와 Basecase-only 4개로 나뉜다. 체크인 v1/v3 shared dimension mapping 129행의
+direct/routing 전역 합집합은 LUT-backed parameter 10개에 도달한다. v4는 active Lever 18개에 raw
+binding 16개를 가지며, 비활성 CDD/HDD를 제외한 effective executable 전역 합집합은 14개다. 이 수치는
+live DB나 요청 하나의 후보 수가 아니다. 실제 신규 proposal의 runtime allow-list는 모든 버전에서 `GDP`,
+`PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개다.
 
 Model Parameter Agent는 source matching으로 raw 후보를 만든 직후, Step1.5·Step2·Step3 LLM과 proposal
 persistence 전에 allow-list gate를 적용하고 통과한 파라미터에 대해서만 요청별 Basecase/LUT exact slot을
-만든다. runtime 시작 시 resource release와 mapping-reachable definition을 준비하지만, 활성 16개와
-Basecase-only 6개의 exact slot을 모두 검증해 0건이면 기동을 실패시키는 구조는 아니다. 체크인 mapping
+만든다. runtime 시작 시 resource release와 mapping-reachable definition을 준비하지만, 활성 14개와
+Basecase-only 활성 4개의 exact slot을 모두 검증해 0건이면 기동을 실패시키는 구조는 아니다. 체크인 mapping
 기준으로 KB/preload 대상은 도달 가능한 10개 정의이며, Basecase preload의 누락·파싱 오류·0건은 warning을
 남기고 계속한다. 공개 API payload와 confirmation 동작은 바뀌지 않는다.
 
@@ -107,13 +108,17 @@ LiqProd와 LiqUtil은 BCLiquefaction.csv를 공유한다. Closed 시설은 제�
 canonical과 raw mapping/binding에는 남지만 신규 proposal의 Step1.5·slot/value LLM에는 들어가지 않는다.
 현재 액화 가용성 proposal은 allow-list에 포함된 `LiqUtilAdjustment`만 통과한다.
 
-## 4. Basecase-only 활성 6개
+## 4. Basecase-only 활성 4개
 
-`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`는 별도 LUT adapter를 만들지 않는다. master의 Basecase 읽기 규칙으로 검증된 exact slot이 있을 때만 executable하다. Basecase record가 없거나 key/value 검증을 통과하지 못한 slot에는 LUT·유사 시설·부분 key fallback을 적용하지 않고 그 slot을 제외한다.
+`User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`는 별도 LUT adapter를
+만들지 않는다. master의 Basecase 읽기 규칙으로 검증된 exact slot이 있을 때만 executable하다. Basecase
+record가 없거나 key/value 검증을 통과하지 못한 slot에는 LUT·유사 시설·부분 key fallback을 적용하지 않고
+그 slot을 제외한다.
 
-이 6개 capability는 canonical과 release 검증 기준선에 유지되지만 runtime startup이 여섯 종류의 exact
+이 4개 capability는 0030 fixture와 release 검증 기준선에 유지되지만 runtime startup이 네 종류의 exact
 Basecase slot을 모두 강제하는 것은 아니다. 현재 runtime proposal allow-list 밖이므로 신규 proposal에는
-진입하지 않는다.
+진입하지 않는다. `RemainingUnrestrictedAmount`와 `VolumeCancelled`의 과거 Basecase 좌표는 남아 있어도
+0030 master 비활성·active binding 없음 상태이므로 future 계약 전에는 executable하지 않다.
 
 ## 5. 보류 LUT와 보조 reference
 
@@ -162,7 +167,7 @@ runtime startup과 release 검증은 실패 경계가 다르다.
 runtime은 resource manifest와 활성 LUT catalog의 파일·header·adapter 계약을 검증하고, DB mapping으로
 도달 가능한 parameter definition을 중심으로 KB/cache를 준비한다. 체크인 mapping 기준으로 이 집합은
 LUT-backed 10개다. Basecase workbook 누락, 개별 parser 오류 또는 preload record 0건은 warning에 남기고
-기동을 계속한다. 따라서 “활성 16개 또는 Basecase-only 6개의 모든 exact slot이 1개 이상이어야 startup
+기동을 계속한다. 따라서 “활성 14개 또는 Basecase-only 활성 4개의 모든 exact slot이 1개 이상이어야 startup
 성공”이라고 해석하면 안 된다.
 
 이 warning 정책은 기존 v1/v3 Basecase preload에 대한 설명이다. v4 `new-bc-v1` 계약 파일·Workbook 경로
@@ -173,7 +178,7 @@ contract hash와 실제 파일 signature를 key로 process cache한다. 구조�
 
 자동화·release acceptance에서는 runtime보다 넓은 체크인 기준선을 별도로 검증한다.
 
-- canonical master 21행·활성 16개, LUT-backed 10개·Basecase-only 6개 정의의 일관성
+- 0030 runtime fixture master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개 정의의 일관성
 - LUT-backed parameter의 horizon 내 selectable LUT record와 Basecase-only parameter의 검증된 exact Basecase slot
 - 필수 header 누락, 숫자 형식 오류, 필수 key/value 빈 값
 - 같은 exact key의 상충 값, join 누락, 허용되지 않은 시설 상태
@@ -185,6 +190,6 @@ byte 상한을 넘으면 LLM을 호출하지 않고 actual/limit byte와 paramet
 반환한다. catalog 크기와 token은 resource release와 선택 후보에 따라 달라지므로 실행마다 측정하고, 테스트
 보고서에는 provider가 반환한 input/output/total token과 실행시간을 기록한다.
 
-LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v1`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v1.json`이 기준이다. v4 master·Lever binding·공식은 `scripts/model_parameter/model-parameter-canonical-v4.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다. `resources/Model_Parameter_Base_Case_Mapping.md`는 이를 통합해 설명한다.
+LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v1`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v1.json`이 기준이다. 현재 v4 master·Lever binding·공식의 runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0030.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4-0030.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다. 기존 이름의 v4 canonical과 260813 workbook은 0029 역사 릴리스 재현용이다.
 
 runtime proposal 제한을 위해 DB·canonical·기존 v1/v3 Basecase·업무용 mapping workbook을 축소하거나 다시 생성하지 않는다. v4 신규 기준값은 별도 versioned contract/workbook resource로만 materialize한다.

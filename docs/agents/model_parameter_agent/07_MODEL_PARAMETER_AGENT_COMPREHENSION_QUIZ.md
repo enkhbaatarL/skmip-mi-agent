@@ -97,15 +97,23 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- 체크인 master 21행·활성 16개
+- 0030 runtime fixture master 21행·활성 14개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
-- resource LUT-backed 10개
-- Basecase-only 6개: `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `RemainingUnrestrictedAmount`, `ShippingCost`, `VolumeCancelled`
+- active resource LUT-backed 10개
+- Basecase-only 활성 4개: `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`
+- future inactive 2개: `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
-- v4 raw active catalog binding 16개
+- v4 active Lever 18개, raw binding occurrence 16개, effective executable 고유 Parameter 14개
 - proposal runtime allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
 
-이 수는 live DB 조회 결과가 아니라 체크인 canonical의 전역 합집합이다. v1/v3 raw reachability 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 raw 16개 binding 합집합은 Lever-native 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만 후보가 된다. 이 raw capability는 proposal 허용 범위와 다르다. allow-list 밖이면 active 또는 raw executable이어도 `active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. 전역 집합끼리 비교하면 v1/v3 10개 중 5개, v4 16개 중 11개가 allow-list 밖이다.
+이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
+합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`,
+`LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
+활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 14개는 Lever-native
+경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
+후보가 된다. 이 raw capability는 proposal 허용 범위와 다르다. allow-list 밖이면 active 또는 raw
+executable이어도 `active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. 전역 집합끼리 비교하면
+v1/v3 10개 중 5개, v4 14개 중 9개가 allow-list 밖이다.
 
 ### 정답 4
 
@@ -139,7 +147,11 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 
 ### 정답 9
 
-일반 v4 master·Lever rollout은 `model-parameter-canonical-v4`와 `model-impact-lever-canonical-v4`를 하나의 transaction에서 snapshot-or-final precondition, cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. 이번 변경은 proposal 후보의 runtime allow-list만 좁히므로 DB와 DB schema, config, canonical JSON/SQL, mapping workbook, master·Lever catalog/checksum, public API payload와 confirmation workflow를 변경하거나 5개 수치에 맞춰 다시 쓰지 않는다.
+일반 v4 master·Lever rollout은 mgmt migration을 정본으로 하나의 transaction에서 precondition,
+cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
+새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. 0030 runtime 동기화에서는 version-aware ORM·조회와
+별도 `model-*-canonical-v4-0030` fixture를 적용하되, 외부개발 DB에 0030을 재실행하거나 0029 canonical·정적
+SQL·workbook을 덮어쓰지 않는다. public API payload와 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10
 

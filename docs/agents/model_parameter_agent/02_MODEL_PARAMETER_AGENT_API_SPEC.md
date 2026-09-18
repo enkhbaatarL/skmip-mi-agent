@@ -15,7 +15,13 @@
 
 경로의 두 ID는 실제 숫자로 바꾼다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 된다.
 
-체크인 canonical 기준선은 master 21행·활성 16개, LUT-backed 10개·Basecase-only 6개, v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 raw executable-binding 전역 합집합 16개다. 이 수치는 live DB 조회 결과나 요청 하나의 후보 수가 아니다. 모든 버전의 신규 proposal runtime allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개이며, 실제 응답의 `proposalParameters`에는 요청별 raw matching, runtime allow-list, exact Basecase/LUT slot을 모두 통과한 하위 집합만 나타난다. endpoint, request body와 proposal/confirmation payload schema는 바뀌지 않는다.
+0030 runtime fixture 기준선은 master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개,
+v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 14개다.
+v4 active Lever는 18개이고 raw binding occurrence는 16개다. 이 수치는 live DB 조회 결과나 요청 하나의
+후보 수가 아니다. 모든 버전의 신규 proposal runtime allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`,
+`LiqUtilAdjustment` 5개이며, 실제 응답의 `proposalParameters`에는 요청별 raw matching, runtime allow-list,
+exact Basecase/LUT slot을 모두 통과한 하위 집합만 나타난다. endpoint, request body와
+proposal/confirmation payload schema는 바뀌지 않는다.
 
 같은 세 API가 v1 단일 이벤트, `generation_strategy=multi_event_composite_dimensions`인 v3, `generation_strategy=multi_event_model_lever_dimensions`인 v4를 모두 처리한다. 요청자는 버전 필드나 event ID를 추가로 보내지 않으며, path의 `scenario_id`가 속한 scenario group으로 서버가 분기한다.
 

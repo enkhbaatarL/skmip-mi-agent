@@ -186,7 +186,7 @@ def evaluate_liq_util_evidence(
         missing: set[str] = set()
         if not str(provenance.get("scenario_dimension_key") or "").strip():
             missing.add("scenario_dimension_lineage")
-        if str(provenance.get("lever_code") or "").strip() != "liquefaction_availability":
+        if str(provenance.get("lever_code") or "").strip() != "liquefaction_utilization":
             missing.add("direct_operational_lever")
         direction = str(provenance.get("direction") or "").strip().casefold()
         if direction not in _SUPPORTED_LIQ_UTIL_DIRECTIONS:

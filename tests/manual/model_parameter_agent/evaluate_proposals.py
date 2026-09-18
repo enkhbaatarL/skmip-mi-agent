@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -913,6 +914,10 @@ def _serialize_output_with_persistence_trace(
 
 async def _evaluate_scenario(
     scenario_id: int,
+    *,
+    expected_scenario_context: Mapping[str, Any] | None = None,
+    require_pre_persistence_quality_pass: bool = False,
+    allowed_parameter_names: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     resource_paths = await _ensure_model_parameter_test_resource_runtime()
     failure_trace = _initial_failure_trace(scenario_id)
@@ -920,6 +925,9 @@ async def _evaluate_scenario(
     try:
         context = ModelParameterService().load_context(scenario_id)
         failure_trace["context"] = context
+        if expected_scenario_context is not None and _normalize(context) != _normalize(expected_scenario_context):
+            message = "Scenario context changed after proposal-only preflight"
+            raise RuntimeError(message)
 
         failed_stage = "Step1 parameter candidate matching"
         mapping_resources = context.get("parameter_mapping_resources") or {}
@@ -932,9 +940,7 @@ async def _evaluate_scenario(
             mapping_rows=mapping_rows,
             parameter_rows=parameter_rows,
             basecase_dir_path=str(resource_paths.basecase_dir),
-            allow_empty_mapping_rows=(
-                generation_strategy == "multi_event_model_lever_dimensions"
-            ),
+            allow_empty_mapping_rows=(generation_strategy == "multi_event_model_lever_dimensions"),
         )
         candidates, non_inputs, mapping_warnings = match_parameter_candidates(
             kb,
@@ -953,6 +959,11 @@ async def _evaluate_scenario(
         payload: dict[str, Any] = {"scenario_id": scenario_id}
         raw_output = await RAW_GRAPH.ainvoke(to_state(payload))
         raw_state = _normalize(raw_output)
+        if expected_scenario_context is not None and _normalize(raw_state.get("scenario_context") or {}) != _normalize(
+            expected_scenario_context,
+        ):
+            message = "Scenario context changed during proposal graph execution"
+            raise RuntimeError(message)
         validated_candidates = raw_state.get("candidate_mappings") or []
         parameter_slots = raw_state.get("parameter_slots") or []
         slot_catalog = raw_state.get("slot_catalog") or []
@@ -1038,6 +1049,35 @@ async def _evaluate_scenario(
             "mapping_trace_captured": True,
             "partial_state_captured": True,
         }
+
+        if require_pre_persistence_quality_pass:
+            quality_errors: list[str] = []
+            if not candidate_coverage_ok:
+                quality_errors.extend(candidate_coverage_messages or ["candidate coverage failed"])
+            if not selected_ok:
+                quality_errors.extend(selected_messages or ["selected Parameter validation failed"])
+            if routing_status == "REVIEW":
+                quality_errors.extend(routing_messages or ["routing selection requires review"])
+            for status_field in ("parameter_status", "slot_status", "basecase_status"):
+                if step_summary.get(status_field) != "PASS":
+                    quality_errors.append(f"{status_field}={step_summary.get(status_field)}")
+            value_issues = _value_issue_messages(result["parameter_adjustments"])
+            if value_issues:
+                quality_errors.extend(value_issues)
+            if not _selected_adjustments(result):
+                quality_errors.append("selected parameter adjustment is empty")
+            if allowed_parameter_names is not None:
+                selected_parameter_names = {
+                    str(item.get("parameter_name") or "").strip() for item in _selected_adjustments(result)
+                } - {""}
+                unexpected_parameter_names = sorted(selected_parameter_names - allowed_parameter_names)
+                if unexpected_parameter_names:
+                    quality_errors.append(
+                        f"selected Parameters escaped the approved capability release: {unexpected_parameter_names}",
+                    )
+            if quality_errors:
+                message = "proposal pre-persistence quality gate failed: " + "; ".join(quality_errors)
+                raise RuntimeError(message)
 
         failed_stage = "output validation/persistence"
         # Match the public API serializer: optional fields remain present so a

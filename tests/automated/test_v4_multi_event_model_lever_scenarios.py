@@ -1754,7 +1754,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
             v4_flow_module.ModelImpactLeverService,
             "load_active_catalog",
             return_value=(_catalog(), "v1", "checksum-v1"),
-        ),
+        ) as load_active_catalog,
         patch.object(
             v4_flow_module.ScenarioGroupService,
             "prepare_v4_multi_event_group",
@@ -1765,6 +1765,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
 
     assert prepared["analysis_as_of"] == "2026-08-07"
     assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
+    load_active_catalog.assert_called_once_with(catalog_version="v4")
 
 
 def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:

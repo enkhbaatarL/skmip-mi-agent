@@ -129,6 +129,11 @@ Event ID 집합과 api version으로 계산한다.
 
 ### v4 graph
 
+graph 준비 단계는 0030 versioned table에서 `catalog_version='v4'`인 active Lever만 조회한다. version을 생략해
+`v0` 역사 row와 섞지 않으며, hydrated checksum을 Scenario Group의 `impact_catalog_version/checksum`에 저장한다.
+후속 Additional Dimension task도 claim 시 같은 version/checksum pin을 함께 가져와 현재 hydrated catalog와
+둘 다 일치할 때만 LLM을 호출한다. pin 누락·불일치는 `IMPACT_CATALOG_PIN_STALE`로 fail-close한다.
+
 ```mermaid
 flowchart TD
     A[Event + Impact Lever catalog] --> B[Event별 impact 분석]
@@ -222,6 +227,10 @@ TTF·HH 관련성이 명확한 경우만 `relatedMarkets`에 보조 근거를 �
 최종 persistence 후 Scenario Group·Scenario·`generation_diagnostics`가 Presentation의 정본이다.
 `completed`를 기록한 뒤 unused open question이 있으면 create operation과 독립적인 Additional Dimension
 task를 queue한다.
+
+Presentation의 Lever label 치환은 Group의 version만 보지 않고 저장된 checksum까지 현재 hydrated catalog와
+일치할 때만 수행한다. 0030 이전 `v4/a4af…` Group처럼 version 문자열은 같아도 checksum이 stale이면 신규
+`v4/835e…` label을 소급 적용하지 않고 raw 저장 내용을 유지한다.
 
 Additional Dimension 후보도 value별 `pressureContribution`으로 `bearish`, `balanced`, `bullish`만 사용한다.
 Choice가 2개면 bearish·bullish를 모두 포함하고, 3~4개면 bearish·balanced·bullish를 모두 포함해야 한다.

@@ -1,0 +1,676 @@
+{
+  "canonical_version": "model-impact-lever-canonical-v4-0030",
+  "catalog_version": "v4",
+  "audit_user": "model-impact-lever-canonical-v4-0030",
+  "generated_from_canonical": "scripts/model_parameter/model-impact-lever-canonical-v4.json",
+  "source_canonical_sha256": "d34f6e0c7d984ec83ad967f5c1c4b4adb48b9751b7870011bcd5220e8b0998e7",
+  "hydrated_catalog_checksum": "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51",
+  "impact_lever_count": 18,
+  "expected_counts": {
+    "impact_levers": 18,
+    "binding_occurrences": 16,
+    "raw_executable_binding_occurrences": 16,
+    "effective_executable_binding_occurrences": 14,
+    "effective_known_unsupported_binding_occurrences": 2,
+    "effective_executable_unique_parameter_names": 14
+  },
+  "active_parameter_names": [
+    "GDP",
+    "HurricaneIntensity",
+    "LiqProdAdjustment",
+    "LiqUtilAdjustment",
+    "PMI",
+    "PNG Contract Volume",
+    "PipelineAdjustment",
+    "Population",
+    "PowerMix",
+    "RegasAdjustment",
+    "ShippingCost",
+    "SupplyDisruption",
+    "Temperature",
+    "User-Adjusted Gas Demand"
+  ],
+  "impact_levers": [
+    {
+      "impact_lever_id": 26,
+      "lever_code": "direct_gas_demand",
+      "domain": "demand",
+      "label": "가스 수요 수동 Override",
+      "description": "다른 causal input으로 표현할 수 없는 국가·연월·수요 하위부문별 최종 가스수요 BCM 직접 입력",
+      "applicability_hint": "exact Country·Year·Month·Demand Sub-Sector가 있고 GDP·PMI·PowerMix·Weather 등으로 설명할 수 없을 때만 최후 수단으로 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "User-Adjusted Gas Demand",
+          "role": "primary",
+          "applicability": "국가·연·월·수요 하위부문별 가스 수요(BCM) 최종 절대값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 25,
+      "lever_code": "economic_activity",
+      "domain": "demand",
+      "label": "경기·산업 활동",
+      "description": "GDP 성장률 또는 월별 PMI로 표현되는 국가별 경기·산업활동 변화",
+      "applicability_hint": "연간 거시 전망은 GDP, 단기 제조업 활동은 PMI로 구분한다. 인구·이민 변화는 population_demographics를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "GDP",
+          "role": "primary",
+          "applicability": "국가·연도별 실질 GDP 성장률 최종값",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "applicability": "국가·연·월별 PMI 절대지수 최종값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 17,
+      "lever_code": "population_demographics",
+      "domain": "demand",
+      "label": "인구·이민 경로",
+      "description": "인구 전망·이민으로 인한 국가·연도별 구조적 수요 기반 변화",
+      "applicability_hint": "Event에 인구 또는 이민의 수치와 국가·연도가 명시된 경우에만 사용하고 일반 경기 변화에는 economic_activity를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "Population",
+          "role": "primary",
+          "applicability": "국가·연도별 인구(천 명) 최종 절대값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 24,
+      "lever_code": "power_generation_mix",
+      "domain": "demand",
+      "label": "발전원 구성과 가스발전 수요",
+      "description": "국가·연도·에너지원별 발전 비중 vector 변화에 따른 가스발전 수요 변화",
+      "applicability_hint": "영향 에너지원과 상쇄 전원을 함께 특정하고 Country·Year의 전체 발전 비중 vector를 합계 1인 atomic 값으로 적용할 때 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "PowerMix",
+          "role": "primary",
+          "applicability": "국가·연도·에너지원별 발전 비중 전체 vector의 최종값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 23,
+      "lever_code": "weather_demand",
+      "domain": "demand",
+      "label": "기상 민감 가스 수요",
+      "description": "국가·연월별 기온·도일 변화가 난방·냉방 및 가스발전 수요에 미치는 효과",
+      "applicability_hint": "한파·폭염의 국가·연월·계절을 특정하고 방향은 수요 효과로 기록한다. Temperature 값의 증감과 수요 방향을 동일하다고 가정하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "Temperature",
+          "role": "primary",
+          "applicability": "국가·연·월별 평균 기온(°C) 최종 절대값",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "HDD",
+          "role": "alternative",
+          "applicability": "국가·연·월별 난방도일 최종값; master 활성화 전에는 runtime known_unsupported",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "CDD",
+          "role": "alternative",
+          "applicability": "국가·연·월별 냉방도일 최종값; master 활성화 전에는 runtime known_unsupported",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 34,
+      "lever_code": "financial_market_sentiment",
+      "domain": "price_only",
+      "label": "금융시장 심리",
+      "description": "환율·금리·위험 프리미엄과 헷지 포지션이 가격·구매 여건에 미치는 간접 영향",
+      "applicability_hint": "세 Workbook의 직접 writable input은 없으며 Scenario 가격 조건으로만 사용한다. 별도 narrative catalog 분리는 Scenario owner가 결정한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 32,
+      "lever_code": "inventory_condition",
+      "domain": "price_only",
+      "label": "재고 여건",
+      "description": "재고 수준과 주입·인출 여건이 spot 구매 압력과 가격 민감도에 주는 조건",
+      "applicability_hint": "세 Workbook의 직접 writable input이 아니라 가격·구매 여건을 설명하는 price_only 경로로만 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 33,
+      "lever_code": "regional_price_spread",
+      "domain": "price_only",
+      "label": "지역 가격 스프레드",
+      "description": "JKM·TTF·Henry Hub 등 상대 가격 spread와 차익거래 유인의 변화",
+      "applicability_hint": "CoalGasAdjustment의 지역별 절대 Coal/Gas futures strip과 동일시하지 않고 price_only 시장 조건으로만 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 19,
+      "lever_code": "liquefaction_production_override",
+      "domain": "supply",
+      "label": "액화 생산량 직접 Override",
+      "description": "LNG Plant Train별 월 생산 절대량의 최종 override",
+      "applicability_hint": "대폭·장기 생산 손실 또는 신규 Train ramp-up처럼 이용률보다 절대 생산량 근거가 명확한 경우 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "LiqProdAdjustment",
+          "role": "primary",
+          "applicability": "Plant Train·연·월별 생산량(Mt LNG/month) 최종 절대값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 18,
+      "lever_code": "liquefaction_utilization",
+      "domain": "supply",
+      "label": "액화설비 가동률",
+      "description": "LNG Plant Train별 월 이용률의 최종 override",
+      "applicability_hint": "exact LNG Plant·Train·Year·Month가 있고 단기 또는 부분 가동률 변화인 경우 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "primary",
+          "applicability": "Plant Train·연·월별 utilization rate 최종값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 29,
+      "lever_code": "pipeline_capacity",
+      "domain": "supply",
+      "label": "PNG 파이프라인 송출용량",
+      "description": "Pipeline·From/To 국가·연월별 최종 송출용량(Bcm/y)의 변화",
+      "applicability_hint": "exact Pipeline·From Country·To Country·Year·Month가 확인될 때 사용한다. 계약 물량 또는 LNG 항로 상태와 혼동하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "PipelineAdjustment",
+          "role": "primary",
+          "applicability": "Pipeline·From/To·연·월별 최종 송출용량(Bcm/y)",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 28,
+      "lever_code": "regasification_capacity",
+      "domain": "supply",
+      "label": "재기화 수입 처리용량",
+      "description": "수입국 재기화 plant별 월 최종 처리용량 변화",
+      "applicability_hint": "exact Country·Regasification Plant·Year·Month와 시설 상태·용량이 확인되어 수입 흡수력 변화를 표현할 때 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "RegasAdjustment",
+          "role": "primary",
+          "applicability": "재기화 plant·연·월별 처리용량(Mt LNG/month) 최종 절대값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 27,
+      "lever_code": "upstream_production",
+      "domain": "supply",
+      "label": "Upstream 가스 생산량",
+      "description": "국가·연월별 upstream 최종 공급량의 증가·감소·차질·회복",
+      "applicability_hint": "차질량이 아니라 적용 후 최종 공급량(Bcm)을 제안하므로 exact 국가와 적용 연월이 있는 경우에만 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "SupplyDisruption",
+          "role": "primary",
+          "applicability": "국가·연·월별 upstream 가스 최종 공급량(Bcm); parameter 이름과 달리 delta가 아님",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 20,
+      "lever_code": "us_gom_hurricane_disruption",
+      "domain": "supply",
+      "label": "미국 GoM 허리케인 공급 차질",
+      "description": "미국 Gulf of Mexico 허리케인 강도 0~4가 upstream 또는 액화설비에 주는 월별 물리 차질",
+      "applicability_hint": "GoM, 적용 Year·Month와 영향 시설이 확인될 때만 사용한다. 기타 자연재해는 영향받는 asset 레버를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "HurricaneIntensity",
+          "role": "primary",
+          "applicability": "미국 GoM 연·월별 허리케인 강도 0~4 정수 최종값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 21,
+      "lever_code": "lng_charter_rate",
+      "domain": "trade",
+      "label": "LNG 선박 용선료",
+      "description": "연도별 LNG 선박 charter rate($/day)의 최종 절대값 변화",
+      "applicability_hint": "선박 charter 시장의 전역·연간 충격에만 사용한다. 특정 From/To 비용, 운하 봉쇄, 연료비 또는 항만비에는 사용하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "ShippingCost",
+          "role": "primary",
+          "applicability": "연도별 LNG 선박 charter rate($/day) 최종 절대값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 22,
+      "lever_code": "png_contract_volume",
+      "domain": "trade",
+      "label": "PNG 계약 물량",
+      "description": "연도·From Country·To Country별 PNG Unadjusted Gross Gas Import 계약 절대량(BCM)",
+      "applicability_hint": "PNG 장기계약 총량의 재개·재협상·감액에만 사용한다. LNG 계약, 제재 또는 취소량과 혼동하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "PNG Contract Volume",
+          "role": "primary",
+          "applicability": "연도·From/To 국가별 PNG 계약 물량(BCM) 최종 절대값",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 30,
+      "lever_code": "route_disruption",
+      "domain": "trade",
+      "label": "항로·운하 물리 차질",
+      "description": "Suez·Panama·해협·항만의 봉쇄·우회·지연이라는 물리적 운송 상태",
+      "applicability_hint": "물리적 transit 차질과 회복에만 사용한다. 특정 항로 차질을 연도별 LNG 선박 charter rate로 대체하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    },
+    {
+      "impact_lever_id": 31,
+      "lever_code": "trade_restriction",
+      "domain": "trade",
+      "label": "LNG·PNG 거래 제한",
+      "description": "월별 From/To와 Terminal·Train 또는 Pipeline, restriction scope, 제한 물량, Active 상태로 표현되는 거래 제한",
+      "applicability_hint": "계약 취소와 구분하고 LNG·PNG, 적용 연월, From/To, 대상 asset, scope가 확인될 때 사용한다. 전용 parameter contract 전에는 모델 입력 제안이 없다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [],
+      "catalog_version": "v4",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "crt_usr_logn_id": "system",
+      "crt_dtm": "2026-09-17T00:00:00+09:00",
+      "mod_usr_logn_id": "system",
+      "mod_dtm": null
+    }
+  ],
+  "model_parameter_review": [
+    {
+      "model_param_id": 1,
+      "parameter_name": "CDD",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "catalog_capability",
+      "lever_codes": [
+        "weather_demand"
+      ],
+      "reason": "0030 v4 Lever capability는 보존하지만 master 비활성 상태이므로 runtime에서 known_unsupported로 hydration한다."
+    },
+    {
+      "model_param_id": 2,
+      "parameter_name": "Coal Futures Price",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "0030 v4 active Lever binding이 없어 모델 입력 후보로 만들지 않는다."
+    },
+    {
+      "model_param_id": 3,
+      "parameter_name": "Gas Futures Price",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "0030 v4 active Lever binding이 없어 모델 입력 후보로 만들지 않는다."
+    },
+    {
+      "model_param_id": 4,
+      "parameter_name": "GDP",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "economic_activity"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 5,
+      "parameter_name": "HDD",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "catalog_capability",
+      "lever_codes": [
+        "weather_demand"
+      ],
+      "reason": "0030 v4 Lever capability는 보존하지만 master 비활성 상태이므로 runtime에서 known_unsupported로 hydration한다."
+    },
+    {
+      "model_param_id": 6,
+      "parameter_name": "PMI",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "economic_activity"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 7,
+      "parameter_name": "PowerMix",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "power_generation_mix"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 8,
+      "parameter_name": "Temperature",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "weather_demand"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 9,
+      "parameter_name": "User-Adjusted Gas Demand",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "direct_gas_demand"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 10,
+      "parameter_name": "ElectrificationRate",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "0030 v4 active Lever binding이 없어 모델 입력 후보로 만들지 않는다."
+    },
+    {
+      "model_param_id": 11,
+      "parameter_name": "Population",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "population_demographics"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 12,
+      "parameter_name": "HurricaneIntensity",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "us_gom_hurricane_disruption"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 13,
+      "parameter_name": "LiqProdAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "liquefaction_production_override"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 14,
+      "parameter_name": "LiqUtilAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "liquefaction_utilization"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 15,
+      "parameter_name": "PipelineAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "pipeline_capacity"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 16,
+      "parameter_name": "RegasAdjustment",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "regasification_capacity"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 17,
+      "parameter_name": "SupplyDisruption",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "upstream_production"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 18,
+      "parameter_name": "PNG Contract Volume",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "png_contract_volume"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 19,
+      "parameter_name": "RemainingUnrestrictedAmount",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "0030 v4 active Lever binding이 없어 모델 입력 후보로 만들지 않는다."
+    },
+    {
+      "model_param_id": 20,
+      "parameter_name": "ShippingCost",
+      "use_yn": "Y",
+      "del_yn": "N",
+      "binding_decision": "executable",
+      "lever_codes": [
+        "lng_charter_rate"
+      ],
+      "reason": "0030 v4 활성 master이며 실행 가능한 Lever binding을 유지한다. runtime 승격 여부는 별도 capability release로 관리한다."
+    },
+    {
+      "model_param_id": 21,
+      "parameter_name": "VolumeCancelled",
+      "use_yn": "N",
+      "del_yn": "N",
+      "binding_decision": "unbound",
+      "lever_codes": [],
+      "reason": "0030 v4 active Lever binding이 없어 모델 입력 후보로 만들지 않는다."
+    }
+  ],
+  "source_migration_revision": "a378b54ef997",
+  "source_migration": "skmip-mi-agent-mgmt/migrations/versions/0030_versioned_model_impact_lever_v4.py",
+  "baseline_hydrated_catalog_checksum": "a4af2e5bbb90f3a76e9e0aab3a16091015898031a97a271ebcf35ca67f4dc6cd"
+}

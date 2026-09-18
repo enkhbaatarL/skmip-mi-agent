@@ -142,6 +142,53 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             for proposal in latest.values()
         ]
 
+    def fetch_proposal_guard_rows(
+        self,
+        *,
+        scenario_group_id: int,
+        scenario_ids: list[int],
+    ) -> list[dict[str, Any]]:
+        """Return every non-deleted proposal row needed by execution guards.
+
+        The guard must see all lifecycle states, including failed and in-flight
+        attempts, before deciding whether a scenario is safe to execute.  Keep
+        this query scoped to one exact group and an explicit, non-empty scenario
+        set so callers cannot accidentally inspect or act on a broader cohort.
+        """
+        if not scenario_ids:
+            return []
+
+        stmt = (
+            select(MiModelParamProposalModel)
+            .where(
+                MiModelParamProposalModel.scenario_group_id == scenario_group_id,
+                MiModelParamProposalModel.scenario_id.in_(scenario_ids),
+                MiModelParamProposalModel.del_yn == "N",
+            )
+            .order_by(
+                MiModelParamProposalModel.scenario_id,
+                MiModelParamProposalModel.model_param_proposal_id,
+            )
+        )
+        rows = self.session.execute(stmt).scalars().all()
+        return [
+            {
+                "model_param_proposal_id": int(proposal.model_param_proposal_id),
+                "scenario_id": int(proposal.scenario_id),
+                "scenario_group_id": int(proposal.scenario_group_id),
+                "status": proposal.status,
+                "callback_status": proposal.callback_status,
+                "callback_sent_dtm": proposal.callback_sent_dtm,
+                "crt_dtm": proposal.crt_dtm,
+                "mod_dtm": proposal.mod_dtm,
+                "proposal_completed_dtm": proposal.proposal_completed_dtm,
+                "confirmed_dtm": proposal.confirmed_dtm,
+                "error_code": proposal.error_code,
+                "error_message": proposal.error_message,
+            }
+            for proposal in rows
+        ]
+
     def fetch_model_param_proposal(
         self,
         model_param_proposal_id: int,

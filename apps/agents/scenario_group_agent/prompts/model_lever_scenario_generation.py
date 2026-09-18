@@ -77,7 +77,7 @@ Choice의 pressure는 Dimension value의 `bearish`, `balanced`, `bullish`만 사
 direction은 {StateDirection.prompt_values()} 중 하나만 사용하십시오. 첫 번째 state의 lever는 반드시 Dimension의
 source Lever와 같아야 하며, 한 Choice 안에서 같은 Lever code를 두 번 사용하지 마십시오.
 올바른 예시는
-`liquefaction_availability|increase|feedgas 유입이 설비 가동으로 전환|미국 LNG 수출설비|2026-08-20 이후 단기`입니다.
+`liquefaction_utilization|increase|feedgas 유입이 설비 가동으로 전환|미국 LNG 수출설비|2026-08-20 이후 단기`입니다.
 Group 441에서 생성된 `LNG 수출 설비로의 가스 유입 증가가 실제 액화설비 가동률과 수출 가능 물량 증가로 이어지는 상태`처럼
 구분자 없이 자연어 문장만 넣은 states는 잘못된 출력입니다."""
 )
@@ -574,7 +574,7 @@ def build_v4_additional_dimension_user_prompt(
         f"- direction은 {StateDirection.prompt_values()} 중 하나만 사용합니다.\n"
         "- 첫 번째 state의 lever는 반드시 Dimension의 source Lever와 같아야 합니다. 한 Choice 안에서 같은 Lever "
         "code를 중복하지 않습니다.\n"
-        "- 올바른 states 예시: `liquefaction_availability|increase|feedgas 유입이 설비 가동으로 전환|미국 LNG "
+        "- 올바른 states 예시: `liquefaction_utilization|increase|feedgas 유입이 설비 가동으로 전환|미국 LNG "
         "수출설비|2026-08-20 이후 단기`\n"
         "- 잘못된 Group 441 형태: `LNG 수출 설비로의 가스 유입 증가가 실제 액화설비 가동률과 수출 가능 물량 "
         "증가로 이어지는 상태`처럼 자연어 문장만 작성하면 안 됩니다.\n"
