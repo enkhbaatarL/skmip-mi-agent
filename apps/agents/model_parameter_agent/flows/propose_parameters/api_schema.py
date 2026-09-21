@@ -22,6 +22,10 @@ class ProposeParametersData(ApiModel):
     scenario_id: int | None = None
     scenario_group_id: int | None = None
     event_id: int | None = None
+    status: Literal["PROPOSED", "ABSTAINED"] = "PROPOSED"
+    result_code: str | None = None
+    result_message: str | None = None
+    result_stage: str | None = None
     proposal_parameters: list[ProposalParameter] = Field(default_factory=list)
 
 
@@ -47,7 +51,10 @@ class ProposeParametersCallbackData(ApiModel):
     scenario_id: int | None = None
     scenario_group_id: int | None = None
     event_id: int | None = None
-    status: Literal["PROPOSED", "FAILED"]
+    status: Literal["PROPOSED", "ABSTAINED", "FAILED"]
+    result_code: str | None = None
+    result_message: str | None = None
+    result_stage: str | None = None
 
 
 class ProposeParametersCallbackOut(ApiModel):

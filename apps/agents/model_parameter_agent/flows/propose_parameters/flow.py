@@ -9,44 +9,44 @@ from typing import Any
 from langchain_core.runnables import Runnable, RunnableLambda
 from langgraph.graph import END, StateGraph
 
+from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
+    ProposeParametersCallbackOut,
+    ProposeParametersData,
+    ProposeParametersIn,
+    ProposeParametersOut,
+)
+from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
+    filter_basecase_records_by_slots,
+    finalize_empty_parameter_values,
+    load_basecase_samples,
+    load_scenario_context,
+    propose_parameter_slots,
+    propose_parameter_values,
+    select_parameter_candidates,
+    validate_parameter_candidates,
+)
+from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
+    ModelParameterProposalOutputState,
+    ModelParameterProposalState,
+)
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ModelParameterSemanticEmptyError,
+    _ensure_mapping_candidates,
+    _ensure_proposal_parameters,
+    _route_after_basecase_filter,
+    _route_after_candidate_validation,
+)
+from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
+    ModelParameterService,
+)
 from apps.agents.model_parameter_agent.presentation import (
+    _callback_abstained_output,
     _callback_error_output,
     _callback_success_output,
     _context_ids,
     _proposal_parameter_summary,
     _proposal_parameters_from_state,
     _to_response_data,
-)
-from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
-    _ensure_context_has_mapping_candidates,
-    _ensure_mapping_candidates,
-    _ensure_proposal_parameters,
-    _route_after_basecase_filter,
-    _route_after_candidate_validation,
-)
-from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
-    finalize_empty_parameter_values,
-    filter_basecase_records_by_slots,
-    load_basecase_samples,
-    propose_parameter_slots,
-    load_scenario_context,
-    propose_parameter_values,
-    select_parameter_candidates,
-    validate_parameter_candidates,
-)
-from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema import (
-    ProposeParametersAcceptedData,
-    ProposeParametersAcceptedOut,
-    ProposeParametersCallbackOut,
-    ProposeParametersIn,
-    ProposeParametersOut,
-)
-from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
-    ModelParameterService,
-)
-from apps.agents.model_parameter_agent.flows.propose_parameters.state import (
-    ModelParameterProposalOutputState,
-    ModelParameterProposalState,
 )
 from apps.agents.model_parameter_agent.utils.tracing import build_trace_context
 from apps.common.exceptions.custom import MIBaseError
@@ -83,6 +83,57 @@ def _debug_final_storage_payload(
             indent=2,
         ),
     )
+
+
+def _failure_result(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, MIBaseError):
+        error_code = exc.error_code.name
+    else:
+        error_code = ErrorCode.UNKNOWN_ERROR.name
+
+    if error_code == ErrorCode.LLM_RESPONSE_TIMEOUT.name:
+        detail = "제안 내용을 만드는 데 시간이 오래 걸려 처리를 완료하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    elif error_code in {
+        ErrorCode.LLM_INVOCATION_ERROR.name,
+        ErrorCode.LLM_INVALID_RESPONSE_ERROR.name,
+        ErrorCode.LLM_RESPONSE_ERROR.name,
+    }:
+        detail = "제안 내용을 생성하거나 확인하는 과정에서 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+    elif error_code == ErrorCode.ENTITY_NOT_FOUND.name:
+        detail = "제안에 필요한 정보를 찾지 못했습니다. 화면을 새로고침한 뒤 다시 시도해 주세요."
+    elif error_code == ErrorCode.INVALID_REQUEST.name:
+        detail = (
+            "제안에 필요한 정보가 올바르지 않거나 일부 항목이 누락되어 처리하지 못했습니다. "
+            "입력 내용을 확인해 주세요."
+        )
+    elif error_code in {
+        ErrorCode.RUNTIME_REGISTRY_NOT_READY.name,
+        ErrorCode.SEMAPHORE_MANAGEMENT_ERROR.name,
+    }:
+        detail = "제안 기능을 준비하는 과정에서 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
+    elif error_code in {
+        ErrorCode.DATA_RETRIEVAL_FAILED.name,
+        ErrorCode.RDB_DATA_FETCH_FAILED.name,
+        ErrorCode.RDB_ACCESS_DENIED.name,
+    }:
+        detail = "제안에 필요한 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+    elif error_code == ErrorCode.HTTP_CONNECTION_ERROR.name:
+        detail = "제안 처리에 필요한 정보를 연결하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    else:
+        detail = "제안 처리 중 예상하지 못한 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
+
+    message = f"파라미터 제안에 실패했습니다.\n{detail}"
+    return error_code, message
+
+
+def _public_failure_error(exc: Exception) -> MIBaseError:
+    error_code = exc.error_code if isinstance(exc, MIBaseError) else ErrorCode.UNKNOWN_ERROR
+    context = exc.context if isinstance(exc, MIBaseError) else None
+    public_error = MIBaseError(error_code, context=context)
+    _, public_message = _failure_result(exc)
+    public_error.error_message = public_message
+    public_error.args = (public_message,)
+    return public_error
 
 
 def build_graph() -> Runnable:
@@ -174,7 +225,8 @@ def to_output(state: dict[str, Any] | ModelParameterProposalState) -> ProposePar
         proposal_parameters=sync_proposal_parameters,
     )
     logger.info(
-        "[model-parameter] response ready | scenario_id={} proposal_id={} adjustment_count={} non_input_count={} warning_count={}",
+        "[model-parameter] response ready | scenario_id={} proposal_id={} "
+        "adjustment_count={} non_input_count={} warning_count={}",
         response_data.scenario_id,
         model_param_proposal_id,
         len(adjustments),
@@ -191,26 +243,25 @@ def prepare_propose_parameters_callback(
     *,
     user_id: int | None = None,
 ) -> dict[str, Any]:
-    model_parameter_service = ModelParameterService()
-    scenario_context = model_parameter_service.load_context(scenario_id)
-    _ensure_context_has_mapping_candidates(
-        scenario_id=scenario_id,
-        scenario_context=scenario_context,
-    )
-    model_param_proposal_id = model_parameter_service.create_processing_proposal(
-        scenario_context=scenario_context,
-        user_id=user_id,
-    )
-    scenario_id_value, scenario_group_id, event_id = _context_ids(
-        scenario_context,
-        scenario_id,
-    )
-    return {
-        "model_param_proposal_id": model_param_proposal_id,
-        "scenario_id": scenario_id_value,
-        "scenario_group_id": scenario_group_id,
-        "event_id": event_id,
-    }
+    try:
+        model_parameter_service = ModelParameterService()
+        scenario_context = model_parameter_service.load_context(scenario_id)
+        model_param_proposal_id = model_parameter_service.create_processing_proposal(
+            scenario_context=scenario_context,
+            user_id=user_id,
+        )
+        scenario_id_value, scenario_group_id, event_id = _context_ids(
+            scenario_context,
+            scenario_id,
+        )
+        return {
+            "model_param_proposal_id": model_param_proposal_id,
+            "scenario_id": scenario_id_value,
+            "scenario_group_id": scenario_group_id,
+            "event_id": event_id,
+        }
+    except Exception as exc:
+        raise _public_failure_error(exc) from exc
 
 
 async def run_propose_parameters_background(
@@ -269,14 +320,35 @@ async def run_propose_parameters_background(
             elapsed_ms,
             _proposal_parameter_summary(proposal_parameters),
         )
+    except ModelParameterSemanticEmptyError as exc:
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        logger.info(
+            "[BG][model-parameter] ABSTAINED | proposal_id={} scenario_id={} "
+            "elapsed={}ms reason_code={} stage={}",
+            model_param_proposal_id,
+            scenario_id,
+            elapsed_ms,
+            exc.reason_code,
+            exc.stage,
+        )
+        await asyncio.to_thread(
+            model_parameter_service.abstain_proposal_result,
+            model_param_proposal_id=model_param_proposal_id,
+            reason_code=exc.reason_code,
+            reason_message=exc.error_message,
+        )
+        callback_payload = _callback_abstained_output(
+            message=exc.error_message,
+            reason_code=exc.reason_code,
+            stage=exc.stage,
+            model_param_proposal_id=model_param_proposal_id,
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            event_id=event_id,
+        )
     except Exception as exc:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
-        message = str(exc)
-        error_code = (
-            exc.error_code.name
-            if isinstance(exc, MIBaseError)
-            else exc.__class__.__name__
-        )
+        error_code, message = _failure_result(exc)
         logger.error(
             "[BG][model-parameter] FAILED | proposal_id={} scenario_id={} elapsed={}ms error={!r}",
             model_param_proposal_id,
@@ -292,6 +364,7 @@ async def run_propose_parameters_background(
         )
         callback_payload = _callback_error_output(
             message=message,
+            error_code=error_code,
             model_param_proposal_id=model_param_proposal_id,
             scenario_id=scenario_id,
             scenario_group_id=scenario_group_id,
@@ -335,13 +408,50 @@ async def run_propose_parameters_background(
 async def run_propose_parameters_sync(payload: dict[str, Any]) -> ProposeParametersOut:
     # sync 테스트 경로는 proposal row가 실행 중에 생성되므로 session_id 없이(transaction 단위) 트레이싱
     trace_context = build_trace_context()
-    with mlflow_trace_context(trace_context):
-        final_state = await build_graph().ainvoke(
-            to_state(payload),
-            config=build_langgraph_config(trace_context),
-            context=trace_context,
-        )
-    return to_output(final_state)
+    try:
+        state = to_state(payload)
+    except Exception as exc:
+        raise _public_failure_error(exc) from exc
+    try:
+        with mlflow_trace_context(trace_context):
+            final_state = await build_graph().ainvoke(
+                state,
+                config=build_langgraph_config(trace_context),
+                context=trace_context,
+            )
+        return to_output(final_state)
+    except ModelParameterSemanticEmptyError as exc:
+        try:
+            model_parameter_service = ModelParameterService()
+            scenario_context = model_parameter_service.load_context(state.scenario_id)
+            model_param_proposal_id = model_parameter_service.save_abstained_result(
+                scenario_context=scenario_context,
+                reason_code=exc.reason_code,
+                reason_message=exc.error_message,
+                user_id=state.user_id,
+            )
+            scenario_id, scenario_group_id, event_id = _context_ids(
+                scenario_context,
+                state.scenario_id,
+            )
+            return ProposeParametersOut(
+                message=exc.error_message,
+                data=ProposeParametersData(
+                    model_param_proposal_id=model_param_proposal_id,
+                    scenario_id=scenario_id,
+                    scenario_group_id=scenario_group_id,
+                    event_id=event_id,
+                    status="ABSTAINED",
+                    result_code=exc.reason_code,
+                    result_message=exc.error_message,
+                    result_stage=exc.stage,
+                    proposal_parameters=[],
+                ),
+            )
+        except Exception as persistence_exc:
+            raise _public_failure_error(persistence_exc) from persistence_exc
+    except Exception as exc:
+        raise _public_failure_error(exc) from exc
 
 
 def build_runnable_graph() -> Runnable:

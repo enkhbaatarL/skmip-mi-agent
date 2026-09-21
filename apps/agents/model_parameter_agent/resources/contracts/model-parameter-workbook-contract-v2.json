@@ -1,0 +1,188 @@
+{
+  "schema_version": 2,
+  "release_id": "new-bc-v2",
+  "extends": "model-parameter-workbook-contract-v1.json",
+  "resource_directory": "basecase_v4/new-bc-v1",
+  "parameters": {
+    "PipelineAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": [
+          "PipelineScope",
+          "Direction",
+          "YearMonth"
+        ]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCPipeline",
+        "range": "B:F",
+        "parser": "annual_rows_to_months",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "B",
+          "Pipeline Name": "C",
+          "From Country": "D",
+          "To Country": "E",
+          "Pipeline Capacity": "F"
+        },
+        "column_headers": {
+          "Pipeline Name": "Major pipeline",
+          "From Country": "From country",
+          "To Country": "To country",
+          "Pipeline Capacity": "Pipeline capacity (Mt)"
+        },
+        "key_axes": [
+          "Pipeline Name",
+          "From Country",
+          "To Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "Pipeline Capacity",
+        "reference_unit": "Bcm/y",
+        "value_semantics": "absolute_final_value",
+        "expected_record_count": 420
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "PipelineAdjustment",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 7,
+        "data_start_row": 13,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Pipeline Name": "D",
+          "From Country": "E",
+          "To Country": "F",
+          "User adjusted capacity (Bcm/y)": "H"
+        },
+        "key_axes": [
+          "Pipeline Name",
+          "From Country",
+          "To Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "User adjusted capacity (Bcm/y)",
+        "write_unit": "Bcm/y",
+        "value_semantics": "absolute_final_value",
+        "observed_record_count": 188
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": false
+      }
+    },
+    "SupplyDisruption": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": [
+          "UpstreamSupplyScope",
+          "Direction",
+          "YearMonth"
+        ]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCProduction",
+        "range": "C:K",
+        "parser": "production_seasonality_monthly",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "C",
+          "Country": "E",
+          "Province/Basin": "F",
+          "Life Cycle Category": "H",
+          "PNG/LNG": "J",
+          "Base case supply (Mt)": "K"
+        },
+        "column_headers": {
+          "PNG/LNG": "Oil and gas detail"
+        },
+        "transforms": {
+          "Base case supply (Bcm)": {
+            "source_field": "Base case supply (Mt)",
+            "operation": "multiply",
+            "factor": 1.3605442176870748,
+            "provenance": "BCProduction!K million tonnes divided by the model Bcm_to_Mt_LNG factor 0.735"
+          }
+        },
+        "auxiliary_sources": {
+          "seasonality": {
+            "path": "lut/SeasonalityLogic.csv",
+            "sha256": "37c849b95e7cd5326d619fec57928dff39728724ca0cfb4d24ef76f1b74aa57c",
+            "required_columns": [
+              "Year",
+              "Month",
+              "Period",
+              "Province",
+              "PNG/LNG",
+              "Seasonality"
+            ]
+          }
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "Monthly Supply",
+        "reference_unit": "BCM",
+        "value_semantics": "absolute_final_value",
+        "expected_record_count": 4908
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "VolumeAdjustment",
+        "table": "table2",
+        "layout": "fixed_columns",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "I",
+          "Month": "J",
+          "Country": "K",
+          "Volumes (Bcm)": "M"
+        },
+        "key_axes": [
+          "Country",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "Volumes (Bcm)",
+        "write_unit": "BCM",
+        "value_semantics": "absolute_final_value",
+        "observed_record_count": 193
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": false
+      }
+    }
+  }
+}

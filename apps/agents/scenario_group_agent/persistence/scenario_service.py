@@ -66,7 +66,7 @@ class ScenarioSyncResult(TypedDict):
 
 
 class ValidationChangeSetAcceptanceResult(TypedDict):
-    operation_id: str
+    operation_id: str | None
     validation_operation_id: str
     signpost_target_scenario_ids: list[int]
     scenario_group: dict[str, Any]
@@ -613,6 +613,7 @@ class ScenarioService:
         *,
         scenario_group_id: int,
         user_id: int,
+        create_signpost_operation: bool = True,
     ) -> ValidationChangeSetAcceptanceResult:
         from apps.agents.scenario_group_agent.flows.validate_scenarios.v4_validation import (
             dimension_definition_fingerprint,
@@ -798,26 +799,28 @@ class ScenarioService:
                 session.commit()
                 raise MIBaseError(ErrorCode.SCENARIO_VALIDATION_STALE, detail=stale_detail)
 
-            signpost_operation_id = new_operation_id()
-            ScenarioGroupOperationService().create_accepted_in_session(
-                session,
-                scenario_group_id=scenario_group_id,
-                operation_id=signpost_operation_id,
-                operation_type="signpost",
-                engine_version=str(group.api_version or "v1"),
-                user_id=user_id,
-            )
-            signpost_operation = operation_repository.fetch_by_id(
-                scenario_group_id,
-                signpost_operation_id,
-                for_update=True,
-            )
-            if signpost_operation is None:
-                raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Signpost operation creation failed")
-            signpost_operation.result_payload = {
-                "schemaVersion": "v1",
-                "validationOperationId": validation_operation.operation_id,
-            }
+            signpost_operation_id: str | None = None
+            if create_signpost_operation:
+                signpost_operation_id = new_operation_id()
+                ScenarioGroupOperationService().create_accepted_in_session(
+                    session,
+                    scenario_group_id=scenario_group_id,
+                    operation_id=signpost_operation_id,
+                    operation_type="signpost",
+                    engine_version=str(group.api_version or "v1"),
+                    user_id=user_id,
+                )
+                signpost_operation = operation_repository.fetch_by_id(
+                    scenario_group_id,
+                    signpost_operation_id,
+                    for_update=True,
+                )
+                if signpost_operation is None:
+                    raise MIBaseError(ErrorCode.UNKNOWN_ERROR, detail="Signpost operation creation failed")
+                signpost_operation.result_payload = {
+                    "schemaVersion": "v1",
+                    "validationOperationId": validation_operation.operation_id,
+                }
             session.commit()
             return {
                 "operation_id": signpost_operation_id,

@@ -1762,7 +1762,10 @@ class ScenarioGroupService:
             group_repository.update_group(group, group_update)
             if not scenarios:
                 return {"status": "failure", "message": "No scenarios to confirm"}
-            if not signposts:
+            signposts_optional = (
+                getattr(group, "generation_strategy", None) == "multi_event_model_lever_dimensions"
+            )
+            if not signposts and not signposts_optional:
                 return {"status": "failure", "message": "No signposts to confirm"}
 
             session.commit()

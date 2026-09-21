@@ -119,11 +119,22 @@ def test_integrated_manifest_declares_expected_resources() -> None:
         get_settings().model_parameter_resources,
         source_path=CONFIG_FILE_PATH,
     )
-    assert integrated.schema_version == 3
-    assert integrated.workbook_contract.release_id == "new-bc-v1"
+    assert integrated.schema_version == 5
+    assert integrated.workbook_contract.release_id == "new-bc-v2"
     assert integrated.workbook_contract.public_api_unchanged is True
-    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v1.json"
+    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v2.json"
     assert len(integrated.workbook_contract_schema_hash) == 64
+    assert integrated.proposal_capability_contract.release_id == "extend7-v3"
+    assert {item.model_param_id for item in integrated.proposal_capability_contract.parameters} == {
+        4,
+        6,
+        7,
+        8,
+        14,
+        15,
+        17,
+    }
+    assert len(integrated.proposal_capability_contract_sha256) == 64
     assert len(integrated.semantic_schema_hash) == 64
     assert set(integrated.basecase_files) == {"demand", "supply", "trade"}
     assert {role: resource.object_storage_path for role, resource in integrated.basecase_files.items()} == {
@@ -323,7 +334,7 @@ def test_resource_startup_rejects_horizon_outside_workbook_contract(
     async def exercise() -> None:
         with pytest.raises(
             MIBaseError,
-            match="LUT horizon must match the new-bc-v1 workbook contract",
+            match="LUT horizon must match the active versioned workbook contract",
         ):
             await resolve_model_parameter_resources(
                 storage,

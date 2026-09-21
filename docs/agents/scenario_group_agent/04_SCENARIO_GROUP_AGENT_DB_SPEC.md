@@ -195,15 +195,18 @@ v4 closed enum Dimension과 `leverStates`는 이 자유값 mapping을 생성 경
 | Validation 통과 | `creating` | `scenario_validated` | `creating` |
 | Validation 차단 | `creating` | `scenario_created` | `creating` |
 | Signpost 완료 | `creating` | `signpost_created` | `created` |
-| Confirmation | `created` | `completed` | `created` |
+| v4 direct Confirmation | `created` | `completed` | `created` |
+| Signpost 후 Confirmation | `created` | `completed` | `created` |
 
 ## Transaction 경계
 
 - canonical create 접수: Group + Event 관계 + operation + `accepted`
 - Presentation 중간 갱신: operation projection + revision + `section_ready`
 - create 완료: Group/Scenario 일괄 저장 후 operation terminal event
-- Signpost prepare: Validation fingerprint 재검사 + Change Set 적용 + operation 생성
-- Confirmation: stale 검사 + Scenario·Signpost 변경 적용 + Group·Scenario 상태 변경
+- Validation 완료: Change Set 1회 적용 + application fingerprint 기록
+- Signpost prepare: Validation/application fingerprint 재검사 + operation 생성
+- v4 direct Confirmation: Validation/application fingerprint 재검사 + Signpost 0건 허용 + Group·Scenario 상태 변경
+- Signpost 후 Confirmation: stale 검사 + Scenario·Signpost 변경 적용 + Group·Scenario 상태 변경
 - soft delete: active operation 부재와 소유권 확인 후 Group 상태 변경
 
 긴 LLM 호출 동안 DB row lock을 유지하지 않는다. prepare와 최종 apply에서 fingerprint 또는 row lock으로

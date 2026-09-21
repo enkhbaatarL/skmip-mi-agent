@@ -38,9 +38,11 @@ if DEFAULT_DOTENV.exists():
 if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
     os.environ["APP_CONFIG"] = str(DEFAULT_APP_CONFIG)
 
-from apps.agents.model_parameter_agent.constants import MODEL_PARAMETER_PROPOSAL_ALLOWLIST
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
+)
+from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
+    load_proposal_capability_contract,
 )
 from apps.agents.model_parameter_agent.utils.resource_manifest import (
     PACKAGE_RESOURCE_DIR,
@@ -80,27 +82,41 @@ V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 EVIDENCE_SCHEMA_VERSION = 3
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
-BASELINE_CAPABILITY_RELEASE = "v4-proposal-capability-v1"
+BASELINE_CAPABILITY_RELEASE = "extend7-v3"
 EXPECTED_0030_CATALOG_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
-EXPECTED_NEW_BC_V1_CONTRACT_SHA256 = "4dcf21c6e93ea6e73c470b6b354daa68f2f79fe83e0e1d48550cdc9a87fdb0ed"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "5888099440a23202c55251fc1f682bb24fbd33f6f7325863b228b3b147d23c93"
+EXPECTED_NEW_BC_V2_CONTRACT_SHA256 = "71b239d3b4fc4efccf15ffd2da4446000b5cfaaf649f77983d1ee7b2b1f13795"
+EXPECTED_EXTEND7_CONTRACT_SHA256 = "1692a1d20b568e3aca95b411335d4208cb083116fc2c13a6ed730ce8c471c4d5"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "bd5a32e23fa4318828915d95318e648d44976ea5617eb3ee4491b83dfc9a2fc4"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
-EXPECTED_BASELINE_ALLOWLIST = frozenset(
+EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
         "GDP",
         "PMI",
         "PowerMix",
         "Temperature",
         "LiqUtilAdjustment",
+        "PipelineAdjustment",
+        "SupplyDisruption",
     },
 )
+EXPECTED_EXTEND7_ALLOWLIST = frozenset(
+    {
+        *EXPECTED_WORKBOOK_PARAMETER_NAMES,
+        "PipelineAdjustment",
+        "SupplyDisruption",
+    },
+)
+RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract().by_name)
 CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     BASELINE_CAPABILITY_RELEASE: {
         "catalog_version": V4_API_VERSION,
         "catalog_checksum": EXPECTED_0030_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_BASELINE_ALLOWLIST,
-        "resource_release_id": "new-bc-v1",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V1_CONTRACT_SHA256,
+        "runtime_allowlist": EXPECTED_EXTEND7_ALLOWLIST,
+        "proposal_capability_release_id": "extend7-v3",
+        "proposal_capability_sha256": EXPECTED_EXTEND7_CONTRACT_SHA256,
+        "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
+        "resource_release_id": "new-bc-v2",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V2_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
@@ -111,7 +127,7 @@ ELIGIBLE_SCENARIO_STATUSES = frozenset({"created", "realized"})
 ELIGIBLE_GROUP_STATUSES = frozenset({"created", "realized"})
 ELIGIBLE_GROUP_STAGE = "completed"
 BLOCKING_PROPOSAL_STATUSES = frozenset({"PROCESSING", "PROPOSED", "CONFIRMED"})
-KNOWN_PROPOSAL_STATUSES = frozenset({*BLOCKING_PROPOSAL_STATUSES, "FAILED"})
+KNOWN_PROPOSAL_STATUSES = frozenset({*BLOCKING_PROPOSAL_STATUSES, "ABSTAINED", "FAILED"})
 
 _SECRET_PATTERNS = (
     re.compile(
@@ -366,17 +382,30 @@ def _stable_file_sha256(path: Path) -> str:
 def _effective_resource_fingerprint(
     *,
     resource_root: Path,
+    basecase_dir: Path | None = None,
+    lut_root: Path | None = None,
     resource_manifest: Any,
     lut_enabled: bool,
 ) -> str:
     resolved_root = resource_root.resolve(strict=True)
+    resolved_basecase_dir = (basecase_dir or resolved_root / "basecase").resolve(strict=True)
+    resolved_lut_root = (lut_root or resolved_root / "lut").resolve(strict=True)
     digest = hashlib.sha256()
     selected_by_target = {
         item.target_relative_path: item for item in resource_manifest.selected_files(lut_enabled=lut_enabled)
     }
     for target_relative_path in sorted(selected_by_target):
-        path = (resolved_root / target_relative_path).resolve(strict=True)
-        if not path.is_relative_to(resolved_root):
+        relative_path = Path(target_relative_path)
+        if relative_path.parts and relative_path.parts[0] == "basecase":
+            allowed_root = resolved_basecase_dir
+            relative_path = Path(*relative_path.parts[1:])
+        elif relative_path.parts and relative_path.parts[0] == "lut":
+            allowed_root = resolved_lut_root
+            relative_path = Path(*relative_path.parts[1:])
+        else:
+            allowed_root = resolved_root
+        path = (allowed_root / relative_path).resolve(strict=True)
+        if not path.is_relative_to(allowed_root):
             message = f"resource path escapes the selected runtime root: {target_relative_path}"
             raise RuntimeError(message)
         digest.update(target_relative_path.encode("utf-8"))
@@ -405,6 +434,8 @@ def _resource_manifest() -> dict[str, Any]:
     resource_root = registered.root if registered is not None else PACKAGE_RESOURCE_DIR
     effective_resource_fingerprint = _effective_resource_fingerprint(
         resource_root=resource_root,
+        basecase_dir=registered.basecase_dir if registered is not None else None,
+        lut_root=registered.lut_root if registered is not None else None,
         resource_manifest=declared_resources,
         lut_enabled=settings.model_parameter_lut_enabled,
     )
@@ -412,6 +443,11 @@ def _resource_manifest() -> dict[str, Any]:
         "release_id": contract.release_id,
         "contract_sha256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
         "contract_parameter_names": sorted(contract.parameters),
+        "proposal_capability_release_id": declared_resources.proposal_capability_contract.release_id,
+        "proposal_capability_sha256": declared_resources.proposal_capability_contract_sha256,
+        "proposal_capability_parameter_names": sorted(
+            declared_resources.proposal_capability_contract.by_name,
+        ),
         "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "runtime_registered": registered is not None,
         "runtime_source": registered.source if registered is not None else "not_registered",
@@ -443,22 +479,29 @@ def _release_contract_errors(
     release = _capability_contract(capability_release)
     errors: list[str] = []
     expected_allowlist = frozenset(str(item) for item in release["runtime_allowlist"])
-    if expected_allowlist != MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+    if expected_allowlist != RUNTIME_PROPOSAL_CAPABILITY_NAMES:
         errors.append(
-            "runtime allow-list drifted from the approved capability release: "
-            f"expected={sorted(expected_allowlist)}, actual={sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST)}",
+            "runtime capability drifted from the approved capability release: "
+            f"expected={sorted(expected_allowlist)}, actual={sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES)}",
         )
     if resource_manifest.get("release_id") != release["resource_release_id"]:
         errors.append(
             "resource release does not match the approved capability release: "
             f"expected={release['resource_release_id']!r}, actual={resource_manifest.get('release_id')!r}",
         )
-    if set(resource_manifest.get("contract_parameter_names") or ()) != expected_allowlist:
+    expected_workbook_names = set(release["workbook_parameter_names"])
+    if set(resource_manifest.get("contract_parameter_names") or ()) != expected_workbook_names:
         errors.append(
             "Workbook contract parameters do not match the approved capability release: "
-            f"expected={sorted(expected_allowlist)}, "
+            f"expected={sorted(expected_workbook_names)}, "
             f"actual={sorted(resource_manifest.get('contract_parameter_names') or ())}",
         )
+    if resource_manifest.get("proposal_capability_release_id") != release["proposal_capability_release_id"]:
+        errors.append("proposal capability release ID does not match the approved capability release")
+    if resource_manifest.get("proposal_capability_sha256") != release["proposal_capability_sha256"]:
+        errors.append("proposal capability content drifted from the approved capability release")
+    if set(resource_manifest.get("proposal_capability_parameter_names") or ()) != expected_allowlist:
+        errors.append("proposal capability parameters do not match the approved capability release")
     expected_contract_sha256 = str(release["workbook_contract_sha256"])
     if resource_manifest.get("contract_sha256") != expected_contract_sha256:
         errors.append(
@@ -495,7 +538,7 @@ def _release_contract_errors(
                 f"actual={resource_manifest.get('semantic_schema_hash')}",
             )
         object_storage_fingerprint_missing = resource_manifest.get(
-            "runtime_source"
+            "runtime_source",
         ) == "object_storage" and not resource_manifest.get("resource_fingerprint")
         if object_storage_fingerprint_missing:
             errors.append("object-storage resource fingerprint is missing")
@@ -516,7 +559,7 @@ async def _evaluate_scenario_with_frozen_context(
         scenario_id,
         expected_scenario_context=scenario_context,
         require_pre_persistence_quality_pass=True,
-        allowed_parameter_names=EXPECTED_BASELINE_ALLOWLIST,
+        allowed_parameter_names=EXPECTED_EXTEND7_ALLOWLIST,
     )
 
 
@@ -635,7 +678,7 @@ def _preflight_scenario(
             raw_candidates = tuple(getattr(quality, "raw_candidates", ()))
             runtime_parameter_names = _candidate_parameter_names(runtime_candidates)
             approved_parameter_names = set(release["runtime_allowlist"])
-            contract_parameter_names = set(resource_manifest.get("contract_parameter_names") or ())
+            capability_parameter_names = set(resource_manifest.get("proposal_capability_parameter_names") or ())
             quality_payload = {
                 "active_catalog_version": getattr(quality, "active_catalog_version", ""),
                 "active_catalog_checksum": getattr(quality, "active_catalog_checksum", ""),
@@ -676,10 +719,10 @@ def _preflight_scenario(
                 errors.append(
                     f"runtime candidates escaped the approved capability release: {unexpected_runtime_names}",
                 )
-            missing_contract_names = sorted(set(runtime_parameter_names) - contract_parameter_names)
+            missing_contract_names = sorted(set(runtime_parameter_names) - capability_parameter_names)
             if missing_contract_names:
                 errors.append(
-                    f"runtime candidates are not covered by the Workbook contract: {missing_contract_names}",
+                    f"runtime candidates are not covered by the proposal capability contract: {missing_contract_names}",
                 )
             if not runtime_candidates and not quality_errors:
                 skip_reasons.append("no runtime-allowed parameter candidate")
@@ -694,7 +737,7 @@ def _preflight_scenario(
             "scenario_context_fingerprint": scenario_context_fingerprint,
             "quality": quality_payload,
             "capability_release": capability_release,
-            "runtime_allowlist": sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST),
+            "runtime_allowlist": sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES),
             "resource": dict(resource_manifest),
             "policy_version": UNCOVERED_POLICY_VERSION,
         }
@@ -718,7 +761,7 @@ def _preflight_scenario(
         }
         if include_context:
             result["_loaded_context"] = dict(context)
-        return result
+        return result  # noqa: TRY300 - preflight failures are normalized by the boundary below
     except Exception as exc:
         return {
             "scenario_id": scenario_id,
@@ -804,9 +847,17 @@ def _classify_uncovered_guard(
         decision = "SKIP"
         reason_code = "PROPOSED_EXISTS"
         eligible = False
-    elif statuses:
+    elif statuses and set(statuses) == {"FAILED"}:
         decision = "ELIGIBLE"
         reason_code = "FAILED_ONLY"
+        eligible = True
+    elif statuses and set(statuses) == {"ABSTAINED"}:
+        decision = "ELIGIBLE"
+        reason_code = "ABSTAINED_ONLY"
+        eligible = True
+    elif statuses:
+        decision = "ELIGIBLE"
+        reason_code = "ABSTAINED_OR_FAILED_ONLY"
         eligible = True
     else:
         decision = "ELIGIBLE"
@@ -1436,7 +1487,7 @@ async def run_campaign(
                     "uncovered_policy_version"
                 ],
             },
-            "runtime_allowlist": sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST),
+            "runtime_allowlist": sorted(RUNTIME_PROPOSAL_CAPABILITY_NAMES),
             "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
             "resource": resource_manifest,
         },

@@ -18,10 +18,11 @@
 0030 runtime fixture 기준선은 master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개,
 v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 14개다.
 v4 active Lever는 18개이고 raw binding occurrence는 16개다. 이 수치는 live DB 조회 결과나 요청 하나의
-후보 수가 아니다. 모든 버전의 신규 proposal runtime allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`,
-`LiqUtilAdjustment` 5개이며, 실제 응답의 `proposalParameters`에는 요청별 raw matching, runtime allow-list,
+후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend7은 DB ID/name/target과
+`model-parameter-proposal-capabilities-v2`가 일치하는 ID `{4, 6, 7, 8, 14, 15, 17}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
 exact Basecase/LUT slot을 모두 통과한 하위 집합만 나타난다. endpoint, request body와
-proposal/confirmation payload schema는 바뀌지 않는다.
+proposal/confirmation의 파라미터 JSON shape는 유지한다. proposal 결과에는 처리 결과를 명확히 구분하기 위한
+`status`, `resultCode`, `resultMessage`, `resultStage`가 추가된다.
 
 같은 세 API가 v1 단일 이벤트, `generation_strategy=multi_event_composite_dimensions`인 v3, `generation_strategy=multi_event_model_lever_dimensions`인 v4를 모두 처리한다. 요청자는 버전 필드나 event ID를 추가로 보내지 않으며, path의 `scenario_id`가 속한 scenario group으로 서버가 분기한다.
 
@@ -54,6 +55,10 @@ POST /model-parameters/scenarios/100/proposals/sync
     "scenarioId": 100,
     "scenarioGroupId": 20,
     "eventId": 30,
+    "status": "PROPOSED",
+    "resultCode": null,
+    "resultMessage": null,
+    "resultStage": null,
     "proposalParameters": [{
       "parameterName": "GDP",
       "modelTarget": {
@@ -103,7 +108,10 @@ POST /model-parameters/scenarios/100/proposals
 
 이 응답은 제안이 끝났다는 뜻이 아니라 **작업 접수 완료**라는 뜻이다. 현재 HTTP 상태는 `202`가 아니라 `200`이다.
 
-접수 전 preflight는 v1/v3 direct/routing 또는 v4 executable binding으로 raw 후보를 만든 뒤 runtime allow-list를 적용한다. raw 후보가 있어도 모두 allow-list 밖이면 `PROCESSING` proposal row와 background task를 만들지 않고 `INVALID_REQUEST`를 즉시 반환한다.
+접수 단계는 scenario context의 기본 무결성을 확인한 뒤 항상 `PROCESSING` proposal row를 만들고 background
+작업을 등록한다. 제안 범위 밖, 근거 부족, 입력 위치 미확정처럼 정상적으로 “제안하지 않음”을 판단해야 하는
+경우도 이 작업 이력에서 `ABSTAINED`로 종결한다. catalog checksum/ID 불일치나 필수 정의 누락처럼 실행 계약이
+깨진 경우는 `FAILED`다.
 
 이 preflight는 resource runtime 등록 여부까지 보장하지 않는다. 허용 후보가 있어 HTTP `200`과 `PROCESSING`을
 받은 뒤 background graph에서 Basecase/LUT runtime 미등록을 발견하면 proposal row는 `FAILED`가 되고 실패
@@ -115,6 +123,7 @@ callback이 전달된다. 같은 조건을 동기 API가 graph 실행 중 발견
 | 상태 | 의미 | 연동 측 조치 |
 |---|---|---|
 | `PROPOSED` | 제안 생성 성공 | 연동 시스템의 별도 조회 기능 또는 DB를 통해 저장 결과 확인 |
+| `ABSTAINED` | 정상 판단 결과 제안값을 만들지 않음 | `resultCode`와 `resultMessage`로 미제안 사유 표시 |
 | `FAILED` | 제안 생성 실패 | 연동 시스템의 별도 조회 기능 또는 DB에서 오류를 확인하고 재시도 여부 판단 |
 
 callback은 전체 제안값이 아니라 “처리가 끝났으니 저장 결과를 확인하라”는 알림이다. 이 Agent에는 proposal을 조회하는 `GET` API가 없으므로, 연동 시스템이 제공하는 조회 기능이나 저장 DB 확인 경로가 별도로 필요하다.
@@ -202,104 +211,99 @@ Model Parameter Agent 처리에서 주로 확인하게 되는 코드는 다음�
 
 HTTP `422`는 path/body 타입 오류나 잘못된 JSON처럼 FastAPI 요청 검증에서 실패한 경우다. 이 경우에는 공통 오류 body가 아니라 `{"detail": [...]}` 형식이 반환되므로 `data.error_code`, `data.error_name`, `message`가 없다.
 
-### 4.2 비동기 proposal API가 접수 전에 실패하는 경우
+### 4.2 접수 오류와 background 결과의 경계
 
-`POST /model-parameters/scenarios/{scenario_id}/proposals`는 scenario context에서 전략별 raw 후보를 확인하고 runtime allow-list 5개로 필터한 뒤에만 `PROCESSING` proposal row와 background 작업을 등록한다. 다음 오류는 background 작업을 시작하기 전에 즉시 반환된다.
+`POST /model-parameters/scenarios/{scenario_id}/proposals`는 scenario context가 조회되면 `PROCESSING` row를 먼저
+만든다. 후보가 없거나 제안 범위 밖인 경우도 background에서 판정해 `ABSTAINED` 이력과 callback을 남긴다.
+scenario/group 부재, 접수 row 생성 실패, path/body 검증 오류만 background 시작 전 HTTP 오류로 반환한다.
 
-v4에서 처리 결과가 의미상 비어 있는 경우의 `message`는 `유형 분류 1줄 + 개행 + 상세 사유 1줄`로 고정한다. 상세 사유는 1자 이상 300자 이하이며, Scenario/Event ID, `candidateKey`·`slotKey` 같은 내부 키와 재실행을 권하는 표현을 포함하지 않는다. `INVALID_REQUEST(-202)`, HTTP `400`, callback/DB 상태 및 payload 구조는 바뀌지 않는다.
+catalog checksum·Lever ID 불일치, 필수 parameter target 누락, 잘못된 lineage처럼 실행 계약 자체가 깨진 경우는
+정상적인 미제안이 아니므로 `FAILED`다. proposal row 생성 중 오류가 발생하면 transaction을 rollback한다.
 
-Step2 실패 상세는 한 가지 원인을 추측하지 않는다. 서버가 보유한 catalog 후보 수, LLM 원본·형식 검증 후·exact
-검증 후 slot 수를 이용해 `등록 위치 미준비`, `시나리오에서 위치 선택 불가`, `위치 형식 불일치`,
-`등록 좌표 불일치`를 구분한다. 위치 선택이 0건이면 선택된 Lever의 구조화된 `scope`와 `timeWindow`를
-참고해 대상 또는 시점 중 무엇을 더 구체적으로 확인하면 좋은지 안내한다. 이 진단 수치는 내부 state와 trace에만
-남고 public API나 callback에는 새 필드로 추가되지 않는다.
+### 4.3 Background 보류·실패 callback과 DB 결과
 
-| 실패 케이스 | HTTP | `data.error_code` | `data.error_name` | `message` |
-|---|---:|---:|---|---|
-| scenario 또는 scenario group을 찾지 못함 | `404` | `-201` | `ENTITY_NOT_FOUND` | `요청한 리소스를 찾을 수 없습니다 - Scenario context not found: scenario_id={scenario_id}` |
-| v1/v3 DB mapping rule 또는 parameter definition이 비어 있음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - parameter mapping resources not loaded from DB` |
-| v3 group relation이 2~5개 경계를 벗어나거나 group event가 선택 dimension lineage에서 orphan임 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 lineage 검증 사유}` |
-| v3 `sourceEventIds`가 그룹 밖 event를 가리키거나 `sourceRefs` template이 그룹 관계와 연결되지 않음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 lineage 검증 사유}` |
-| event type과 scenario dimension에 대응하는 유효 mapping 후보가 없음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - No model parameter mapping candidates found for scenario_id={scenario_id}` |
-| v1/v3 raw mapping 후보는 있지만 모두 runtime allow-list 밖임 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - No model parameter mapping candidates found for scenario_id={scenario_id}` |
-| v4 group의 API version/strategy 또는 catalog checksum이 현재 v4 catalog와 맞지 않음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 catalog 검증 사유}` |
-| v4 선택 value·primary Lever가 없거나 `sourceEventIds`가 그룹 밖 event를 가리킴 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 Lever lineage 검증 사유}` |
-| v4 Lever code/ID가 catalog와 일치하지 않음 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {구체적인 catalog 검증 사유}` |
-| v4 후보 생성에서 `unchanged`·`price_only`·binding 없음·known unsupported·runtime allow-list 제외만 남아 허용 변경 항목이 0개임 | `400` | `-202` | `INVALID_REQUEST` | `파라미터로 반영할 변경 항목이 없습니다.\n이벤트와 시나리오 분기값을 확인했지만, 현재 활성화된 수급모델 파라미터와 연결되는 변경 항목이 없습니다.` |
-| v4 executable binding의 active parameter target 정의가 누락됨 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - No model parameter mapping candidates found for scenario_id={scenario_id}; exclusion_reason_codes=['ACTIVE_PARAMETER_DEFINITION_MISSING']` |
-| proposal 저장에 필요한 scenario/group ID 또는 v1 대표 event ID가 비정상 | `400` | `-202` | `INVALID_REQUEST` | `요청이 유효하지 않습니다. - {field} is required for model parameter proposal persistence` |
-| DB 연결 또는 proposal row 생성 중 예상하지 못한 예외 | `500` | `-9999` | `UNKNOWN_ERROR` | `알 수 없는 오류가 발생했습니다. - {원본 예외 메시지}` |
-| `scenario_id`, `userId` 타입 또는 JSON 형식 오류 | `422` | 없음 | 없음 | 없음. `detail` 배열 반환 |
-
-전략별 raw 후보가 없거나 runtime allow-list 필터 후 후보가 없는 요청은 `PROCESSING` row를 만들기 전에 거절한다. proposal row 생성 중 오류가 발생하면 transaction을 rollback하므로 정상적으로 commit된 접수 row는 남지 않는다.
-
-v3의 `parameter_mapping_ready=false`, 승인 projection 부재, pending 또는 rejected projection은 접수 거절 조건이 아니다. 승인된 projection이 있으면 보조 근거로 사용하고 나머지는 validation warning과 trace에 남긴다. 다만 source lineage 자체가 잘못됐거나 lineage에서 복원한 모든 `(event_type_l2_id, dimKey)`에 유효한 DB mapping 후보가 없으면 위 표처럼 접수 전에 실패한다.
-
-v4는 선택된 dimension value의 `lever_states`만 읽는다. `price_only`, binding 없음, 비활성 parameter, catalog unsupported state와 `direction=unchanged`만 있는 state는 raw 변화 후보에서 제외하고 내부 reason code를 남긴다. 그 뒤 executable raw 후보에 runtime allow-list를 적용한다. 허용 후보가 0개면 proposal row를 저장하지 않는다. catalog checksum이 바뀐 경우 기존 v4 Scenario를 새 catalog로 재해석하지 않으므로, master와 Lever catalog를 원자적으로 적용한 뒤 v4 Scenario를 다시 생성해야 한다.
-
-배포 전 DB에는 scenario group의 전략·dimension·catalog checksum, event의 authoritative link인 group-event relation, v3 dimension-value mapping, v4 active Lever catalog와 proposal `mi_event_id` nullable schema가 먼저 적용되어 있어야 한다. Parameter master와 Lever catalog는 원자적으로 적용한다. Agent는 이 API 호출로 DDL이나 canonical DML을 수행하지 않으며, 필수 테이블·컬럼 또는 nullable 계약이 없으면 시작 시 schema validation이나 context 조회 단계에서 명확히 실패한다.
-
-### 4.3 Background 처리 실패 callback과 DB 오류
-
-접수 후 background 작업에서 실패하면 다음 callback을 보낸다.
+정상적으로 판단했지만 제안값을 만들지 않은 경우 callback 예시는 다음과 같다.
 
 ```json
 {
-  "status": "error",
-  "message": "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했고 대상 범위와 대략적인 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 확정하지 못했습니다. 적용 연도·월(또는 시작·종료 기간)이 명확한지 확인해 주세요.",
+  "status": "success",
+  "message": "파라미터를 적용할 위치를 찾지 못했습니다.\n관련 항목은 확인했지만 적용할 위치를 확정하지 못했습니다.",
   "data": {
     "modelParamProposalId": 42,
     "scenarioId": 100,
     "scenarioGroupId": 20,
     "eventId": null,
-    "status": "FAILED"
+    "status": "ABSTAINED",
+    "resultCode": "ABSTAINED_MODEL_INPUT_NOT_FOUND",
+    "resultMessage": "파라미터를 적용할 위치를 찾지 못했습니다.\n관련 항목은 확인했지만 적용할 위치를 확정하지 못했습니다.",
+    "resultStage": "step2"
   }
 }
 ```
 
-위 callback은 v4 Step2 실패 예시다. v3/v4 성공·실패 callback은 같은 필드를 유지하되 `eventId: null`을 보내고, `scenarioGroupId`로 대상 그룹을 식별한다.
+실패 callback은 최상위 `status=error`, `data.status=FAILED`이며 같은 `resultCode`와 `resultMessage` 필드를
+사용한다. `PROPOSED` callback은 `resultCode`, `resultMessage`, `resultStage`가 `null`이다.
 
-현재 실패 callback에는 별도의 `code` 또는 `errorCode` 필드가 없다.
-
-- callback `status`: `error`
-- callback `data.status`: `FAILED`
-- callback `message`: 발생한 예외의 `str(exc)`
-- callback code: 없음
-
-같은 실패를 `tmm_mi_model_param_proposal_m`에는 다음과 같이 저장한다.
-
-| DB 컬럼 | 저장값 |
-|---|---|
-| `status` | `FAILED` |
-| `proposal_parameters` | `[]` |
-| `error_code` | `MIBaseError`이면 `INVALID_REQUEST` 같은 `ErrorCode` 이름, 그 외에는 `ValueError` 같은 Python 예외 클래스명 |
-| `error_message` | callback `message`와 동일한 `str(exc)` |
-| `proposal_completed_dtm` | 실패 처리 시각 |
-
-대표적인 background 실패값은 다음과 같다.
-
-runtime allow-list에서 모두 제외된 요청은 background를 시작하지 않으므로 아래 표의 `FAILED` callback/DB 유형이 아니다.
-
-| 실패 케이스 | callback code | DB `error_code` | callback `message` / DB `error_message` |
+| 결과 | DB `status` | DB `error_code` | callback `data.resultCode` |
 |---|---|---|---|
-| background 재조회 시 scenario/group이 사라짐 | 없음 | `ENTITY_NOT_FOUND` | `[ENTITY_NOT_FOUND] 요청한 리소스를 찾을 수 없습니다 - Scenario context not found: scenario_id={scenario_id}` |
-| mapping 리소스가 비어 있음 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - parameter mapping resources not loaded from DB` |
-| v1/v3 후보 검증 후 유효 mapping 후보가 없음 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - No model parameter mapping candidates found for scenario_id={scenario_id}` |
-| v4 catalog checksum/code/ID 또는 primary Lever 검증 실패 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - {구체적인 catalog/Lever 검증 사유}` |
-| v4 후보 생성에서 의미상 변경 항목이 없음 | 없음 | `INVALID_REQUEST` | `파라미터로 반영할 변경 항목이 없습니다.\n이벤트와 시나리오 분기값을 확인했지만, 현재 활성화된 수급모델 파라미터와 연결되는 변경 항목이 없습니다.` |
-| v4 Step1.5에서 적용 조건을 충족하는 후보가 없음 | 없음 | `INVALID_REQUEST` | `파라미터로 반영할 변경 항목이 없습니다.\nGDP·PMI 파라미터 후보는 확인했지만, 시나리오·이벤트 근거와 파라미터 적용 조건을 함께 충족하는 항목을 확정하지 못했습니다.` |
-| v4 Step2 catalog에 선택 가능한 위치가 없음 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했지만, 현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다. 모델 기준정보의 대상·기간 범위를 확인해 주세요.` |
-| v4 Step2에서 대상 범위와 대략적인 시점은 있으나 위치를 선택하지 못함 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했고 대상 범위와 대략적인 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 확정하지 못했습니다. 적용 연도·월(또는 시작·종료 기간)이 명확한지 확인해 주세요.` |
-| v4 Step2 제안 위치가 입력 형식 검증에서 모두 제외됨 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했지만, 제안된 위치 정보가 모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다. 동일한 문제가 계속되면 담당자에게 확인해 주세요.` |
-| v4 Step2 제안 위치가 exact 등록 좌표와 모두 불일치함 | 없음 | `INVALID_REQUEST` | `파라미터를 적용할 모델 입력 위치를 찾지 못했습니다.\n액화설비 가동률 파라미터 후보는 확인했지만, 제안된 대상·기간 조합이 현재 등록된 모델 입력 위치와 일치하지 않았습니다. 국가·설비·트레인과 적용 연도·월(또는 시작·종료 기간)이 모델 기준 범위에 포함되는지 확인해 주세요.` |
-| v4 Step3에서 유효한 적용값이 없음 | 없음 | `INVALID_REQUEST` | `적용할 파라미터 값을 생성하지 못했습니다.\n액화설비 가동률 파라미터와 모델 입력 위치는 확인했지만, 시나리오·이벤트 근거와 기준값에 부합하는 유효한 적용 수치를 생성하지 못했습니다.` |
-| v1/v3 최종 유효 proposal parameter가 없음 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - No valid model parameter proposal parameters generated for scenario_id={scenario_id}`. 뒤에 최근 validation warning이 최대 3개 붙을 수 있음 |
-| Model Parameter 리소스 runtime이 등록되지 않음 | 없음 | `RUNTIME_REGISTRY_NOT_READY` | `[RUNTIME_REGISTRY_NOT_READY] Runtime Registry 준비 안됨 - model parameter resource runtime has not been registered` |
-| LLM 호출 또는 structured output 처리 실패 | 없음 | `LLM_INVOCATION_ERROR` | `[LLM_INVOCATION_ERROR] LLM 호출 후 비정상 오류가 발생했습니다. - {원본 원인}` |
-| Basecase/LUT 설정 또는 도메인 검증 실패 | 없음 | `INVALID_REQUEST` | `[INVALID_REQUEST] 요청이 유효하지 않습니다. - {구체적인 검증 사유}` |
-| 예상하지 못한 일반 예외 | 없음 | 예외 클래스명. 예: `ValueError`, `OperationalError` | 원본 `str(exc)`. 예: `value proposal failed` |
+| 제안 성공 | `PROPOSED` | `NULL` | `null` |
+| 정상 미제안 | `ABSTAINED` | 아래 `ABSTAINED_*` 사유 코드 | DB와 같은 사유 코드 |
+| 처리 오류 | `FAILED` | `ErrorCode` 이름 | DB와 같은 오류 코드 |
 
-일반 `MIBaseError`는 즉시 API가 `exc.error_message`, background가 `str(exc)`를 사용하므로 background message 앞에 `[INVALID_REQUEST]` 같은 오류 이름이 붙는다. 단, 위 v4 의미상 빈 결과 3개 유형은 전용 오류가 두 값을 같은 2줄 문구로 맞추므로 동기 API, background DB, callback에서 동일하게 출력된다. 즉시 응답의 숫자 코드 `-202`, `-5002` 등은 background DB와 callback에 저장하거나 전달하지 않는다.
+보류 사유 코드는 다음과 같다. 보류는 오류가 아니므로 별도 음수 숫자 오류 코드를 만들지 않는다.
+
+| 코드 | 의미 | 대표 단계 |
+|---|---|---|
+| `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` | 후보가 현재 제안 지원 범위 밖이거나 연결 가능한 후보가 없음 | `candidate_generation` |
+| `ABSTAINED_INSUFFICIENT_EVIDENCE` | 후보는 있지만 시나리오·이벤트 근거가 부족함 | `step1_5` 또는 `step2` |
+| `ABSTAINED_MODEL_INPUT_NOT_FOUND` | 제안 범위 안이지만 exact 모델 입력 위치를 찾지 못함 | `step2` |
+| `ABSTAINED_VALUE_NOT_GENERATED` | 입력 위치는 있으나 유효한 값을 생성하지 못함 | `step3` |
+| `ABSTAINED_VALUE_OUT_OF_RANGE` | 생성값이 허용 수치 범위를 벗어나 모두 제외됨 | `step3` |
+| `ABSTAINED_NO_CHANGE` | Lever가 모두 unchanged이거나 제안값이 기준값과 모두 같음 | `candidate_generation` 또는 `step3` |
+
+예를 들어 제안 범위 밖 결과의 화면 문구는 다음과 같다.
+
+```text
+파라미터로 반영할 변경 항목이 없습니다.
+시나리오에서 변경 가능성이 있는 항목을 확인했지만, 현재 자동 제안 대상에 포함되지 않아 제안에서 제외했습니다.
+```
+
+일부 항목만 제외되고 하나 이상의 유효 제안값이 남으면 전체 결과는 `PROPOSED`다. `ABSTAINED`는 최종 유효
+제안값이 0개인 정상 판단에만 사용한다. Step2/Step3 LLM이 응답을 반환했지만 선택 위치나 값이 모두 형식
+검증에서 탈락한 경우는 정상 미제안이 아니라 `LLM_INVALID_RESPONSE_ERROR`로 실패 처리한다.
+
+실패의 공통 숫자 코드는 기존 즉시 오류 응답 계약을 유지한다.
+
+| `resultCode` / DB `error_code` | 숫자 코드 | 의미 |
+|---|---:|---|
+| `LLM_RESPONSE_TIMEOUT` | `-5000` | LLM 응답 시간 초과 |
+| `LLM_INVALID_RESPONSE_ERROR` | `-5001` | LLM 응답 형식 또는 검증 오류 |
+| `LLM_INVOCATION_ERROR` | `-5002` | LLM 호출 처리 오류 |
+| `INVALID_REQUEST` | `-202` | 요청·도메인 계약 오류 |
+| `RDB_DATA_FETCH_FAILED` / `RDB_ACCESS_DENIED` | `-6000` / `-6001` | DB 조회 또는 권한 오류 |
+| `HTTP_CONNECTION_ERROR` | `-7000` | 외부 HTTP 연결 오류 |
+| `UNKNOWN_ERROR` | `-9999` | 분류되지 않은 내부 오류 |
+
+화면에 전달하는 실패 문구는 코드와 분리해 다음 사용자 표현을 사용한다.
+
+| 실패 유형 | `resultMessage` 상세 문구 |
+|---|---|
+| 처리 시간 초과 | `제안 내용을 만드는 데 시간이 오래 걸려 처리를 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.` |
+| 제안 내용 생성·검증 오류 | `제안 내용을 생성하거나 확인하는 과정에서 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.` |
+| 필요한 정보 없음 | `제안에 필요한 정보를 찾지 못했습니다. 화면을 새로고침한 뒤 다시 시도해 주세요.` |
+| 입력 정보 오류·누락 | `제안에 필요한 정보가 올바르지 않거나 일부 항목이 누락되어 처리하지 못했습니다. 입력 내용을 확인해 주세요.` |
+| 기능 준비 오류 | `제안 기능을 준비하는 과정에서 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.` |
+| 정보 조회 오류 | `제안에 필요한 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.` |
+| 연결 오류 | `제안 처리에 필요한 정보를 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.` |
+| 그 밖의 오류 | `제안 처리 중 예상하지 못한 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.` |
+
+모든 실패 문구는 첫 줄 `파라미터 제안에 실패했습니다.`와 위 표의 상세 문구만 사용한다. 관리자·담당자 확인을
+요구하는 문구는 화면에 표시하지 않는다.
+
+DB의 `proposal_parameters`는 `ABSTAINED`와 `FAILED` 모두 `[]`이고, `error_message`와 callback
+`resultMessage`에는 사용자가 바로 이해할 수 있는 동일한 안내 문구를 저장한다. 사용자 문구에는 `API`, `LLM`,
+내부 처리 단계·키·예외 이름 같은 개발 용어를 넣지 않는다. 플랫폼 개발자는 별도 `resultCode`로 원인을 추적하며,
+내부 예외 클래스명이나 원문 stack trace는 화면에 노출하지 않는다.
 
 ### 4.4 Callback 전송 자체가 실패한 경우
 
@@ -311,7 +315,8 @@ proposal 생성 실패와 callback 전송 실패는 별도로 관리한다.
 | `skip_callback=true` | `SKIPPED` |
 | callback URL 생성, 인증 또는 HTTP 전송 실패 | `FAILED` |
 
-callback 전송 실패 원인은 proposal의 `error_code`와 `error_message`에 저장하지 않는다. proposal 생성 결과인 `PROPOSED` 또는 `FAILED`도 그대로 유지한다.
+callback 전송 실패 원인은 proposal의 `error_code`와 `error_message`에 저장하지 않는다. proposal 생성 결과인
+`PROPOSED`, `ABSTAINED`, `FAILED`도 그대로 유지한다.
 
 background 실패를 proposal row에 기록하는 작업 자체가 실패하면 실패 callback 생성과 전송까지 진행되지 않는다. 이 경우 proposal row가 `PROCESSING`으로 남을 수 있으므로 서버 로그와 DB 상태를 함께 확인해야 한다.
 
@@ -319,12 +324,13 @@ background 실패를 proposal row에 기록하는 작업 자체가 실패하면 
 
 | HTTP | 주로 뜻하는 것 | 먼저 확인할 내용 |
 |---:|---|---|
-| `400` | 처리할 후보가 없거나 요청 내용이 올바르지 않음 | 파라미터명, 위치 필드, 빈 목록, 현재 상태 |
+| `400` | 요청 내용이나 도메인 계약이 올바르지 않음 | 파라미터명, 위치 필드, 빈 목록, 현재 상태 |
 | `404` | scenario 또는 proposal을 찾지 못함 | URL의 ID와 삭제 여부 |
 | `422` | JSON 형식이나 타입이 맞지 않음 | 필수 `data`, 숫자 ID, 배열·객체 구조 |
 | `500` | 제안 생성 과정에서 내부 처리 실패 | 서버 로그와 저장된 오류 정보 |
 | `503` | 동기 요청의 graph 실행 중 Basecase/LUT runtime이 준비되지 않음 | 전용 Agent 시작 및 리소스 준비 상태. 이미 접수된 비동기 요청은 HTTP를 다시 반환하지 않고 `FAILED` row와 callback을 남김 |
 
-즉시 오류 응답은 `message`, `data.error_code`, `data.error_name`을 함께 기록한다. background 오류는 callback에 code가 없으므로 callback `message`와 proposal DB row의 `error_code`, `error_message`를 함께 기록한다.
+즉시 오류 응답은 `message`, `data.error_code`, `data.error_name`을 함께 기록한다. background 결과는 callback의
+`data.resultCode`, `data.resultMessage`와 proposal DB row의 `status`, `error_code`, `error_message`를 함께 기록한다.
 
 제안 과정은 [Flow 문서](04_MODEL_PARAMETER_AGENT_FLOW.md)를 참고한다.

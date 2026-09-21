@@ -85,13 +85,15 @@ def _definition(
     model_file: str,
     model_sheet: str,
 ) -> dict[str, Any]:
+    model_param_ids = {"GDP": 4, "PMI": 6, "ShippingCost": 20}
     return {
+        "model_param_id": model_param_ids[parameter_name],
         "canonical_parameter_name": parameter_name,
         "parameter_name": parameter_name,
         "parameter_hint": f"{parameter_name} input",
         "model_file": model_file,
         "model_sheet": model_sheet,
-        "model_table": "InputTable",
+        "model_table": "table1",
         "semantic_axes": "Country, Year",
     }
 
@@ -153,11 +155,11 @@ def _context(*, event_count: int = 2) -> dict[str, Any]:
         "parameter_mapping_resources": {
             "mapping_rules": [],
             "parameter_definitions": [
-                _definition("GDP", model_file="Demand", model_sheet="Input"),
+                _definition("GDP", model_file="Demand", model_sheet="GDPPopulationAdjustment"),
                 _definition(
                     "ShippingCost",
                     model_file="Trade",
-                    model_sheet="ShippingInput",
+                    model_sheet="ShippingCostInput",
                 ),
             ],
         },
@@ -175,8 +177,8 @@ def _proposal_parameter(parameter_name: str = "GDP") -> dict[str, Any]:
         "parameterName": parameter_name,
         "modelTarget": {
             "modelFile": "Demand" if parameter_name == "GDP" else "Trade",
-            "modelSheet": "Input" if parameter_name == "GDP" else "ShippingInput",
-            "tableName": "InputTable",
+            "modelSheet": "GDPPopulationAdjustment" if parameter_name == "GDP" else "ShippingCostInput",
+            "tableName": "table1",
             "valueFieldNames": [parameter_name],
             "slotAxesFieldNames": ["Country", "Year"],
         },
@@ -603,7 +605,7 @@ def test_partial_routing_lineage_loss_is_review() -> None:
     assert any("routing raw lineage" in message for message in assessment.reviews)
     evidence.parameter_definitions = (
         *evidence.parameter_definitions,
-        _definition("PMI", model_file="Demand", model_sheet="Input"),
+        _definition("PMI", model_file="Demand", model_sheet="PMIAdjustment"),
     )
     rows = {
         row.parameter_name: row

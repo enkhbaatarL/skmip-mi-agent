@@ -90,7 +90,7 @@ def _options(
         execute=execute,
         scenario_ids=scenario_ids,
         scenario_group_id=scenario_group_id,
-        capability_release="v4-proposal-capability-v1",
+        capability_release=runner.BASELINE_CAPABILITY_RELEASE,
         evidence_path=tmp_path / "proposal-only.json",
     )
 
@@ -124,7 +124,7 @@ def test_parser_accepts_repeatable_scenario_ids_and_defaults_to_read_only(tmp_pa
             "--scenario-id",
             "102",
             "--capability-release",
-            "v4-proposal-capability-v1",
+            runner.BASELINE_CAPABILITY_RELEASE,
             "--evidence-path",
             str(tmp_path / "evidence.json"),
         ],
@@ -153,6 +153,16 @@ def test_evidence_path_is_reserved_exclusively(tmp_path: Path) -> None:
     [
         ((), "ELIGIBLE", "NO_PROPOSAL_HISTORY", False),
         ((_proposal_row(101, 1, status="FAILED"),), "ELIGIBLE", "FAILED_ONLY", False),
+        ((_proposal_row(101, 8, status="ABSTAINED"),), "ELIGIBLE", "ABSTAINED_ONLY", False),
+        (
+            (
+                _proposal_row(101, 9, status="ABSTAINED"),
+                _proposal_row(101, 10, status="FAILED"),
+            ),
+            "ELIGIBLE",
+            "ABSTAINED_OR_FAILED_ONLY",
+            False,
+        ),
         ((_proposal_row(101, 2),), "SKIP", "PROPOSED_EXISTS", False),
         (
             (
@@ -562,6 +572,37 @@ def test_input_fingerprint_covers_scenario_narrative_ordered_event_and_resource(
     assert fingerprint(base_context, changed_resource) != base_fingerprint
 
 
+def test_effective_resource_fingerprint_accepts_packaged_release_symlinks(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    package_basecase = package_root / "basecase"
+    package_lut = package_root / "lut"
+    package_basecase.mkdir(parents=True)
+    package_lut.mkdir()
+    (package_basecase / "Demand.xlsm").write_bytes(b"basecase")
+    (package_lut / "Demand.csv").write_bytes(b"lut")
+
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+    (release_root / "basecase").symlink_to(package_basecase, target_is_directory=True)
+    (release_root / "lut").symlink_to(package_lut, target_is_directory=True)
+    manifest = SimpleNamespace(
+        selected_files=lambda *, lut_enabled: (
+            SimpleNamespace(target_relative_path="basecase/Demand.xlsm"),
+            SimpleNamespace(target_relative_path="lut/Demand.csv"),
+        ),
+    )
+
+    fingerprint = runner._effective_resource_fingerprint(  # noqa: SLF001
+        resource_root=release_root,
+        basecase_dir=release_root / "basecase",
+        lut_root=release_root / "lut",
+        resource_manifest=manifest,
+        lut_enabled=True,
+    )
+
+    assert len(fingerprint) == 64
+
+
 def test_prewrite_guard_recheck_blocks_newly_covered_scenario(tmp_path: Path) -> None:
     snapshots = iter(
         (
@@ -699,8 +740,8 @@ def test_approved_release_blocks_runtime_allowlist_drift_before_database(
 ) -> None:
     monkeypatch.setattr(
         runner,
-        "MODEL_PARAMETER_PROPOSAL_ALLOWLIST",
-        frozenset({*runner.EXPECTED_BASELINE_ALLOWLIST, "PipelineAdjustment"}),
+        "RUNTIME_PROPOSAL_CAPABILITY_NAMES",
+        frozenset({*runner.EXPECTED_EXTEND7_ALLOWLIST, "ShippingCost"}),
     )
 
     dependencies = runner.RunnerDependencies(
@@ -719,7 +760,7 @@ def test_approved_release_blocks_runtime_allowlist_drift_before_database(
     )
 
     assert evidence["status"] == "BLOCKED"
-    assert "runtime allow-list drifted" in evidence["selection"]["errors"][0]
+    assert "runtime capability drifted" in evidence["selection"]["errors"][0]
 
 
 @pytest.mark.parametrize(

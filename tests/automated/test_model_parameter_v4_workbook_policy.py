@@ -210,6 +210,30 @@ def test_liq_util_evidence_ignores_facility_text_from_unlinked_event() -> None:
     assert "specific_facility_evidence" in decision.missing_components
 
 
+def test_liq_util_unique_inference_allows_one_exact_slot_without_explicit_facility_or_period() -> None:
+    candidate = _liq_candidate()
+    candidate["lever_provenance"][0].update(scope="United States", time_window="향후 공급 차질")
+    candidate["source_dimensions"][0]["source_dimension_description"] = "LNG 가동률 하락"
+    context = {
+        "events": [
+            {
+                "mi_event_id": 101,
+                "event_title": "미국 LNG 가동 차질",
+            },
+        ],
+    }
+
+    decision = evaluate_liq_util_evidence(
+        candidate,
+        _liq_slot(),
+        context,
+        exact_candidate_count=1,
+    )
+
+    assert decision.allowed is True
+    assert decision.missing_components == ()
+
+
 def test_liq_util_evidence_requires_explicit_lineage_and_matching_slot_period() -> None:
     context = {
         "events": [

@@ -445,7 +445,8 @@ Skill이 하는 일:
 
 - 가장 최근의 올바른 batch를 찾는다.
 - API pipeline 자체가 실패한 Event는 품질 대상에서 제외해 별도로 표시한다.
-- 표 구조, Baseline, 중복 조합, Signpost 필수값 등을 코드로 검사한다.
+- 표 구조, Baseline, 중복 조합과 Signpost 정합성을 코드로 검사한다. v4는 Signpost 0건을 허용하고,
+  v1/v3는 기존 필수값을 검사한다.
 - Event 반영, Scenario 다양성, Dimension 타당성, Signpost 품질을 Agent Judge가 평가한다.
 
 사용자가 받는 결과:

@@ -14,6 +14,11 @@ from apps.agents.model_parameter_agent.utils.lut.registry import (
     ParameterSpecRegistry,
     load_parameter_spec_registry,
 )
+from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
+    ProposalCapabilityContract,
+    load_proposal_capability_contract,
+    proposal_capability_contract_sha256,
+)
 from apps.agents.model_parameter_agent.utils.workbook_contract import (
     ModelParameterWorkbookContract,
     load_workbook_contract,
@@ -27,7 +32,7 @@ PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
 PACKAGE_BASECASE_DIR = PACKAGE_RESOURCE_DIR / "basecase"
 PACKAGE_LUT_ROOT = PACKAGE_RESOURCE_DIR / "lut"
-MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 3
+MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION = 5
 REQUIRED_BASECASE_ROLES = frozenset({"demand", "supply", "trade"})
 
 
@@ -73,6 +78,9 @@ class ModelParameterResourceManifest:
     workbook_contract_path: Path
     workbook_contract: ModelParameterWorkbookContract
     workbook_contract_schema_hash: str
+    proposal_capability_contract_path: Path
+    proposal_capability_contract: ProposalCapabilityContract
+    proposal_capability_contract_sha256: str
     canonical_yaml: bytes
     semantic_schema_hash: str
 
@@ -281,11 +289,41 @@ def _workbook_contract(
     return contract_path, load_workbook_contract(contract_path)
 
 
+def _proposal_capabilities(
+    raw_contract: object,
+) -> tuple[Path, ProposalCapabilityContract, str]:
+    if not isinstance(raw_contract, dict):
+        raise _manifest_error("manifest proposal_capabilities must be a mapping")
+    unknown_fields = sorted(set(raw_contract) - {"path", "release_id", "sha256"})
+    if unknown_fields:
+        raise _manifest_error(f"proposal_capabilities contains unknown fields: {unknown_fields}")
+    relative_path = _safe_relative_path(raw_contract.get("path"), label="proposal_capabilities")
+    contract_path = (PACKAGE_RESOURCE_DIR / relative_path).resolve()
+    if not contract_path.is_relative_to(PACKAGE_RESOURCE_DIR.resolve()):
+        raise _manifest_error(f"proposal capability path escapes package resources: {relative_path}")
+    contract = load_proposal_capability_contract(contract_path)
+    configured_release_id = str(raw_contract.get("release_id") or "")
+    if configured_release_id != contract.release_id:
+        raise _manifest_error(
+            "proposal capability release ID differs: "
+            f"configured={configured_release_id}, contract={contract.release_id}",
+        )
+    actual_sha256 = proposal_capability_contract_sha256(contract_path)
+    configured_sha256 = str(raw_contract.get("sha256") or "")
+    if configured_sha256 != actual_sha256:
+        raise _manifest_error(
+            "proposal capability fingerprint differs: "
+            f"configured={configured_sha256}, actual={actual_sha256}",
+        )
+    return contract_path, contract, actual_sha256
+
+
 def _semantic_schema_hash(
     *,
     basecase_files: Mapping[str, ManifestResourceFile],
     registry: ParameterSpecRegistry,
     workbook_contract: ModelParameterWorkbookContract,
+    proposal_capability_contract_sha256: str,
 ) -> str:
     payload = {
         "schema_version": MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
@@ -294,6 +332,7 @@ def _semantic_schema_hash(
         "workbook_contract_schema_hash": workbook_contract_schema_hash(
             workbook_contract,
         ),
+        "proposal_capability_contract_sha256": proposal_capability_contract_sha256,
     }
     canonical = json.dumps(
         payload,
@@ -317,7 +356,7 @@ def load_model_parameter_resource_manifest(
         raise _manifest_error(msg)
     document = dict(raw_document)
     unknown_fields = sorted(
-        set(document) - {"basecase", "lut", "references", "workbook_contract"},
+        set(document) - {"basecase", "lut", "references", "workbook_contract", "proposal_capabilities"},
     )
     if unknown_fields:
         msg = f"model_parameter_resources contains unknown fields: {unknown_fields}"
@@ -336,6 +375,9 @@ def load_model_parameter_resource_manifest(
     workbook_contract_path, workbook_contract = _workbook_contract(
         document.get("workbook_contract"),
     )
+    capability_path, capability_contract, capability_sha256 = _proposal_capabilities(
+        document.get("proposal_capabilities"),
+    )
     return ModelParameterResourceManifest(
         source_path=path,
         schema_version=MODEL_PARAMETER_RESOURCE_SCHEMA_VERSION,
@@ -348,11 +390,15 @@ def load_model_parameter_resource_manifest(
         workbook_contract_schema_hash=workbook_contract_schema_hash(
             workbook_contract,
         ),
+        proposal_capability_contract_path=capability_path,
+        proposal_capability_contract=capability_contract,
+        proposal_capability_contract_sha256=capability_sha256,
         canonical_yaml=canonical_yaml,
         semantic_schema_hash=_semantic_schema_hash(
             basecase_files=basecase_files,
             registry=registry,
             workbook_contract=workbook_contract,
+            proposal_capability_contract_sha256=capability_sha256,
         ),
     )
 

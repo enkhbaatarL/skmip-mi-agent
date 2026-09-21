@@ -1648,4 +1648,7 @@ def test_sync_and_callback_responses_do_not_expose_diagnostics() -> None:
         "scenarioGroupId": 2,
         "eventId": 3,
         "status": "PROPOSED",
+        "resultCode": None,
+        "resultMessage": None,
+        "resultStage": None,
     }

@@ -1435,6 +1435,53 @@ def test_signpost_accepts_unchanged_validation_without_scenario_write() -> None:
     session.commit.assert_called_once()
 
 
+def test_direct_confirmation_accepts_validation_without_creating_signpost_operation() -> None:
+    fixture = _acceptance_fixture()
+    session, scenarios, groups, signposts, operations, _signpost_operation = fixture
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "apps.common.configs.database.sync_database.connection": SimpleNamespace(
+                    get_sync_session=lambda: session,
+                ),
+            },
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_service.ScenarioRepository",
+            return_value=scenarios,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_service.ScenarioGroupRepository",
+            return_value=groups,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_service.SignpostRepository",
+            return_value=signposts,
+        ),
+        patch(
+            "apps.persistence.scenario_group_operation.repository.ScenarioGroupOperationRepository",
+            return_value=operations,
+        ),
+        patch.object(
+            ScenarioGroupOperationService,
+            "create_accepted_in_session",
+            return_value=Mock(),
+        ) as create_operation,
+    ):
+        accepted = ScenarioService().accept_validation_change_set(
+            scenario_group_id=10,
+            user_id=101,
+            create_signpost_operation=False,
+        )
+
+    assert accepted["operation_id"] is None
+    assert accepted["validation_operation_id"] == "validation-op"
+    create_operation.assert_not_called()
+    operations.fetch_by_id.assert_not_called()
+    session.commit.assert_called_once_with()
+
+
 def test_signpost_rejects_stale_validation_and_resets_stage() -> None:
     fixture = _acceptance_fixture(base_fingerprint="stale")
     session, scenarios, groups, signposts, operations, _signpost_operation = fixture

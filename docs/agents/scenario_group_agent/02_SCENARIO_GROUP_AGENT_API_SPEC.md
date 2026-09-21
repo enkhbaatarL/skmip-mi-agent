@@ -512,6 +512,10 @@ operation status가 아니라 `canProceed`로 결정한다.
 
 ## 4. Signpost 생성
 
+v4 Signpost 생성은 선택 단계다. Validation `canProceed=true`와 최신 fingerprint가 유효하면 아래 API로
+Signpost를 생성하거나, Signpost를 생략하고 바로 Confirmation을 호출할 수 있다. v1/v3 lifecycle은 기존처럼
+Signpost를 필수로 유지한다.
+
 ```http
 POST /scenario-groups/{scenarioGroupId}/signposts
 ```
@@ -523,7 +527,7 @@ v4 request는 다음 값만 필요하다.
 ```
 
 schema상 `table`은 optional이다. v4는 request table을 사용하지 않고 최신 Validation operation의
-fingerprint와 `canProceed=true`를 확인해 Change Set을 먼저 적용한다. stale이면 409
+fingerprint와 `canProceed=true`, 기록된 Change Set application을 확인한다. stale이면 409
 `SCENARIO_VALIDATION_STALE`을 반환하고 stage를 `scenario_created`로 되돌린다.
 
 즉시 응답 shape은 Validation 접수 응답과 같다. 최종 callback은 다음 핵심 필드를 가진다.
@@ -565,6 +569,10 @@ fingerprint와 `canProceed=true`를 확인해 Change Set을 먼저 적용한다.
 `POST /scenario-groups/{id}/confirmation`은 `userId`, 수정 가능한 `scenarioGroup`, 최종 `table`을 받는다.
 header 순서, 활성 Scenario ID 집합, `{dimensionId: valueId}` 조합이 DB와 같아야 한다. 불일치는 409
 `SCENARIO_CONFIRMATION_STALE`이며 Confirmation이 Dimension 조합을 덮어쓰지 않는다.
+
+v4 group이 `scenario_validated`에서 직접 Confirmation으로 들어오면 서버가 최신 성공 Validation,
+`canProceed`, Scenario/Dimension fingerprint와 Change Set application을 다시 확인한다. 검증이 유효하면
+Signpost row 0건을 허용한다. Signpost가 존재하면 기존 소유권·Scenario 정합성 검증과 편집 계약을 그대로 적용한다.
 
 성공하면 Scenario·Signpost 편집 내용과 함께 `status=created`, `stage=completed`를 한 transaction에서
 commit한다.

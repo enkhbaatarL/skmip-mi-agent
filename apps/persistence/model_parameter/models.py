@@ -25,7 +25,7 @@ class MiModelParamProposalModel(AuditColumnsMixin, ORMBase):
         Index("idx_tmm_mi_model_param_proposal_m_04", "scenario_group_id"),
         Index("idx_tmm_mi_model_param_proposal_m_05", "mi_event_id"),
         CheckConstraint(
-            "status IN ('PROCESSING','PROPOSED','CONFIRMED','FAILED')",
+            "status IN ('PROCESSING','PROPOSED','ABSTAINED','CONFIRMED','FAILED')",
             name="ck_tmm_mi_model_param_proposal_m_01",
         ),
         CheckConstraint(
@@ -88,7 +88,7 @@ class MiModelParamProposalModel(AuditColumnsMixin, ORMBase):
         sa.String(50, collation=BIN),
         nullable=False,
         server_default=sa.text("'PROCESSING'"),
-        comment="상태 (PROCESSING/PROPOSED/CONFIRMED/FAILED)",
+        comment="상태 (PROCESSING/PROPOSED/ABSTAINED/CONFIRMED/FAILED)",
     )
     proposal_parameters: Mapped[Any | None] = mapped_column(
         mysql.JSON(),

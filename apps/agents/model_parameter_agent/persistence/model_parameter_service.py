@@ -26,7 +26,7 @@ from apps.persistence.scenario_group.repository import ScenarioGroupRepository
 
 CONFIRMABLE_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED")
 PROCESSING_PROPOSAL_STATUSES = ("PROCESSING",)
-CALLBACK_READY_PROPOSAL_STATUSES = ("PROPOSED", "CONFIRMED", "FAILED")
+CALLBACK_READY_PROPOSAL_STATUSES = ("PROPOSED", "ABSTAINED", "CONFIRMED", "FAILED")
 CALLBACK_TARGET_STATUSES = {"SUCCEEDED", "FAILED", "SKIPPED"}
 ParameterValuePrecision = Mapping[str, tuple[int, NumericPrecisionMode]]
 V1_GENERATION_STRATEGY = "single_event_template_dimensions"
@@ -1419,6 +1419,51 @@ class ModelParameterService:
         finally:
             session.close()
 
+    def save_abstained_result(
+        self,
+        *,
+        scenario_context: dict[str, Any],
+        reason_code: str,
+        reason_message: str,
+        user_id: int | None = None,
+    ) -> int:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        scenario = scenario_context.get("scenario") or {}
+        scenario_group = scenario_context.get("scenario_group") or {}
+        event = scenario_context.get("event") or {}
+        scenario_id = _required_int(
+            scenario.get("scenario_id"),
+            field_name="scenario.scenario_id",
+        )
+        scenario_group_id = _required_int(
+            scenario.get("scenario_group_id") or scenario_group.get("scenario_group_id"),
+            field_name="scenario_group.scenario_group_id",
+        )
+        mi_event_id = _proposal_event_id(
+            scenario_group=scenario_group,
+            event=event,
+        )
+        session = get_sync_session()
+        try:
+            proposal_id = ModelParameterRepository(
+                session=session,
+            ).create_abstained_model_param_proposal(
+                scenario_id=scenario_id,
+                scenario_group_id=scenario_group_id,
+                mi_event_id=mi_event_id,
+                request_usr_id=_optional_int(user_id),
+                reason_code=reason_code,
+                reason_message=reason_message,
+            )
+            session.commit()
+            return proposal_id
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def complete_proposal_result(
         self,
         *,
@@ -1476,6 +1521,41 @@ class ModelParameterService:
                 model_param_proposal_id=model_param_proposal_id,
                 error_code=error_code,
                 error_message=error_message,
+            )
+            _ensure_transition_updated(
+                updated,
+                model_param_proposal_id=model_param_proposal_id,
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def abstain_proposal_result(
+        self,
+        *,
+        model_param_proposal_id: int,
+        reason_code: str,
+        reason_message: str,
+    ) -> None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            repository = ModelParameterRepository(session=session)
+            proposal = _proposal_for_update(repository, model_param_proposal_id)
+            _ensure_proposal_status(
+                proposal,
+                model_param_proposal_id=model_param_proposal_id,
+                allowed_statuses=PROCESSING_PROPOSAL_STATUSES,
+                action="abstention",
+            )
+            updated = repository.abstain_model_param_proposal(
+                model_param_proposal_id=model_param_proposal_id,
+                reason_code=reason_code,
+                reason_message=reason_message,
             )
             _ensure_transition_updated(
                 updated,

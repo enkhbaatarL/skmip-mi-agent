@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-import json
 import math
 from pathlib import Path
 
@@ -43,6 +42,9 @@ from apps.common.exceptions.custom import MIBaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
+    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v2.json"
+)
+V1_CONTRACT_PATH = (
     ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json"
 )
 EXPECTED_SOURCE_COUNTS = {
@@ -51,6 +53,8 @@ EXPECTED_SOURCE_COUNTS = {
     "PowerMix": 4_200,
     "Temperature": 5_040,
     "LiqUtilAdjustment": 23_820,
+    "PipelineAdjustment": 420,
+    "SupplyDisruption": 4_908,
 }
 OBSERVED_LEGACY_TARGET_COUNTS = {
     "GDP": 93,
@@ -58,6 +62,8 @@ OBSERVED_LEGACY_TARGET_COUNTS = {
     "PowerMix": 57,
     "Temperature": 150,
     "LiqUtilAdjustment": 33_348,
+    "PipelineAdjustment": 188,
+    "SupplyDisruption": 193,
 }
 
 
@@ -78,8 +84,8 @@ def _record_for(
 def test_contract_locks_v4_read_only_scope_targets_and_policies() -> None:
     contract = load_workbook_contract()
 
-    assert contract.schema_version == 1
-    assert contract.release_id == "new-bc-v1"
+    assert contract.schema_version == 2
+    assert contract.release_id == "new-bc-v2"
     assert contract.capability == "read_only_proposal"
     assert contract.api_version == "v4"
     assert contract.generation_strategy == "multi_event_model_lever_dimensions"
@@ -127,15 +133,46 @@ def test_contract_locks_v4_read_only_scope_targets_and_policies() -> None:
     assert transform.factor == 12
     assert "BCLiquefaction!I" in transform.provenance
 
-    weakened_document = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+    pipeline = contract.parameters["PipelineAdjustment"]
+    assert pipeline.reference_source.parser == "annual_rows_to_months"
+    assert pipeline.reference_source.key_axes == (
+        "Pipeline Name",
+        "From Country",
+        "To Country",
+        "Year",
+        "Month",
+    )
+    assert pipeline.constraints.minimum == 0
+
+    supply = contract.parameters["SupplyDisruption"]
+    assert supply.reference_source.parser == "production_seasonality_monthly"
+    assert set(supply.reference_source.auxiliary_sources) == {"seasonality"}
+    assert supply.reference_source.transforms["Base case supply (Bcm)"].factor == pytest.approx(1 / 0.735)
+    assert supply.constraints.minimum == 0
+
+    weakened_document = contract.model_dump(mode="json")
     weakened_document["parameters"]["LiqUtilAdjustment"]["constraints"]["minimum"] = None
     with pytest.raises(ValueError, match="zero minimum"):
         ModelParameterWorkbookContract.model_validate(weakened_document)
 
 
+def test_v1_contract_remains_an_immutable_five_parameter_compatibility_artifact() -> None:
+    contract = load_workbook_contract(V1_CONTRACT_PATH)
+
+    assert contract.schema_version == 1
+    assert contract.release_id == "new-bc-v1"
+    assert set(contract.parameters) == {
+        "GDP",
+        "PMI",
+        "PowerMix",
+        "Temperature",
+        "LiqUtilAdjustment",
+    }
+
+
 def test_contract_hash_is_canonical_and_workbook_hashes_match() -> None:
     contract = load_workbook_contract()
-    reordered_document = dict(reversed(list(json.loads(CONTRACT_PATH.read_text(encoding="utf-8")).items())))
+    reordered_document = dict(reversed(list(contract.model_dump(mode="json").items())))
     reordered_contract = ModelParameterWorkbookContract.model_validate(reordered_document)
 
     assert workbook_contract_schema_hash(contract) == workbook_contract_schema_hash(reordered_contract)
@@ -220,7 +257,7 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
 ) -> None:
     gdp = _record_for(reference_bundle, "GDP", ("United States", 2026))
     assert gdp.value == pytest.approx(0.020638022790823538)
-    assert gdp.reference_id.startswith("new-bc-v1:demand:BCInput:U")
+    assert gdp.reference_id.startswith("new-bc-v2:demand:BCInput:U")
     assert gdp.diagnostics == ("value_transform=gdp_year_over_year_growth",)
 
     pmi = _record_for(reference_bundle, "PMI", ("China", 2026, 1))
@@ -282,6 +319,18 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
     assert liq_util.value > 1
     assert "capacity_transform=mtpm_x_12" in liq_util.diagnostics
 
+    pipeline = _record_for(
+        reference_bundle,
+        "PipelineAdjustment",
+        ("MedGaz Pipeline", "Algeria", "Spain", 2026, 1),
+    )
+    assert pipeline.value == pytest.approx(8.5995)
+    assert "annual_capacity_expanded_to_month" in pipeline.diagnostics
+
+    supply = _record_for(reference_bundle, "SupplyDisruption", ("Algeria", 2026, 1))
+    assert supply.value == pytest.approx(8.811932337094467)
+    assert "seasonality_policy=raw_not_renormalized" in supply.diagnostics
+
 
 def test_gdp_invalid_source_keys_are_projected_to_the_matching_v4_candidate(
     reference_bundle: WorkbookReferenceBundle,
@@ -326,21 +375,27 @@ def test_gdp_invalid_source_keys_are_projected_to_the_matching_v4_candidate(
 def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
     reference_bundle: WorkbookReferenceBundle,
 ) -> None:
+    registry = get_model_parameter_resource_paths().lut_registry
     targets = {
         "GDP": ("Demand", "GDPPopulationAdjustment", "table1"),
         "PMI": ("Demand", "PMIAdjustment", "table1"),
         "PowerMix": ("Demand", "PowerMixAdjustment", "table1"),
         "Temperature": ("Demand", "WeatherAdjustment", "table2"),
         "LiqUtilAdjustment": ("Supply", "LiqUtilAdjustment", "table1"),
+        "PipelineAdjustment": ("Supply", "PipelineAdjustment", "table1"),
+        "SupplyDisruption": ("Supply", "VolumeAdjustment", "table2"),
     }
     candidates = [
         {
             "candidate_key": f"candidate-{parameter_name}",
+            "mapping_strategy": "v4",
             "canonical_parameter_name": parameter_name,
             "parameter_name": parameter_name,
             "model_file": model_file,
             "model_sheet": model_sheet,
             "model_table": model_table,
+            "proposal_reference_mode": "v4_workbook_then_lut",
+            "proposal_exact_axes": list(registry.specs[parameter_name].key_axes),
         }
         for parameter_name, (model_file, model_sheet, model_table) in targets.items()
     ]
@@ -350,7 +405,6 @@ def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
             "generation_strategy": "multi_event_model_lever_dimensions",
         },
     }
-    registry = get_model_parameter_resource_paths().lut_registry
     records, warnings = build_basecase_records(
         ParameterKnowledgeBase(
             mapping_source="test",

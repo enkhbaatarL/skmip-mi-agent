@@ -29,6 +29,20 @@ def load_scenario_group(state: ConfirmGenerationState) -> dict[str, object]:
             ErrorCode.SCENARIO_GROUP_OWNERSHIP_CONFLICT,
             detail=f"이미 사용자 {request_usr_id}가 점유하고 있습니다.",
         )
+    if group.get("generation_strategy") == "multi_event_model_lever_dimensions":
+        stage = str(group.get("stage") or "")
+        if stage == "scenario_validated":
+            accepted = ScenarioService().accept_validation_change_set(
+                scenario_group_id=state.scenario_group_id,
+                user_id=state.user_id,
+                create_signpost_operation=False,
+            )
+            group = accepted["scenario_group"]
+        elif stage not in {"signpost_created", "completed"}:
+            raise MIBaseError(
+                ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+                detail="Scenario Validation을 먼저 통과해야 합니다.",
+            )
     return {"scenario_group": group}
 
 
@@ -48,6 +62,11 @@ def load_signposts(state: ConfirmGenerationState) -> dict[str, object]:
         [int(scenario.scenario_id) for scenario in state.scenarios],
     )
     if not signposts:
+        if (
+            state.scenario_group is not None
+            and state.scenario_group.generation_strategy == "multi_event_model_lever_dimensions"
+        ):
+            return {"signposts": []}
         raise MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="No signposts found")
     return {"signposts": signposts}
 

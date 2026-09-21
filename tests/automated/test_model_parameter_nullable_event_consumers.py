@@ -156,6 +156,7 @@ def test_v3_api_and_callbacks_serialize_event_id_as_explicit_null() -> None:
     )
     error_payload = _callback_error_output(
         message="proposal failed",
+        error_code="UNKNOWN_ERROR",
         model_param_proposal_id=901,
         scenario_id=100,
         scenario_group_id=20,

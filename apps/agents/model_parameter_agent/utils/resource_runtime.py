@@ -11,6 +11,9 @@ from apps.common.values.error_codes import ErrorCode
 
 
 if TYPE_CHECKING:
+    from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
+        ProposalCapabilityContract,
+    )
     from apps.agents.model_parameter_agent.utils.workbook_contract import (
         ModelParameterWorkbookContract,
     )
@@ -30,6 +33,9 @@ class ModelParameterResourcePaths:
     fallback_reason: str | None = None
     workbook_contract_path: Path | None = None
     workbook_contract: ModelParameterWorkbookContract | None = None
+    proposal_capability_contract_path: Path | None = None
+    proposal_capability_contract: ProposalCapabilityContract | None = None
+    proposal_capability_contract_sha256: str | None = None
 
 
 _RUNTIME_LOCK = threading.Lock()
@@ -63,6 +69,13 @@ def register_model_parameter_resource_paths(paths: ModelParameterResourcePaths) 
             else None
         ),
         workbook_contract=paths.workbook_contract,
+        proposal_capability_contract_path=(
+            paths.proposal_capability_contract_path.resolve(strict=True)
+            if paths.proposal_capability_contract_path is not None
+            else None
+        ),
+        proposal_capability_contract=paths.proposal_capability_contract,
+        proposal_capability_contract_sha256=paths.proposal_capability_contract_sha256,
     )
     with _RUNTIME_LOCK:
         if _ACTIVE_RESOURCE_PATHS is not None and resolved != _ACTIVE_RESOURCE_PATHS:

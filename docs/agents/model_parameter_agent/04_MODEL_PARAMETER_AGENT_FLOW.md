@@ -8,8 +8,8 @@
 - 체크인 전역 합집합 기준으로 v1/v3 legacy mapping은 raw Parameter 10개, 0030 v4 Lever catalog는 master
   filtering 전 raw binding 이름 16개와 effective active Parameter 14개에 도달한다. 요청 하나의 후보는 관련
   lineage와 선택 value에 해당하는 하위 집합이다.
-- 모든 버전은 raw matching 후 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개 runtime proposal allow-list를 Step1.5·LLM·persistence 전에 적용한다.
-- LLM 판단은 조건부 Step1.5, Step2, Step3으로 나뉘며 각 단계의 역할과 출력이 다르다.
+- v1/v3는 기존 5종 이름 allow-list, v4는 ID `{4, 6, 7, 8, 14, 15, 17}` capability gate를 LLM·persistence 전에 적용한다.
+- LLM 판단은 v1/v3의 조건부 Step1.5와 공통 Step2·Step3으로 나뉜다. v4 candidate는 Step1.5 없이 deterministic하게 구성한다.
 - Step2는 “어디를 바꿀지”, Step3는 “얼마로 바꾸고 왜 그런지”를 판단한다.
 - 최종 확인은 LLM을 다시 호출하지 않고 서버 검증 후 `CONFIRMED`로 저장한다.
 
@@ -55,17 +55,15 @@ flowchart TD
     C1 --> C[기존 DB mapping으로\nraw 후보 결정]
     C2 --> C
     C3 --> C4[executable Lever binding으로\nraw 후보 결정]
-    C --> R1[runtime proposal\nallow-list 필터]
-    C4 --> R4[runtime proposal\nallow-list 필터]
+    C --> R1[legacy proposal\n5종 allow-list]
+    C4 --> R4[extend7 ID/name/target\ncapability gate]
     R1 --> D{routing 후보가<br/>하나라도 있는가?}
-    R4 --> D4{primary/alternative\nrouting이 필요한가?}
+    R4 --> G
     D -- 예 --> E[Step1.5<br/>routing 조건 검증·후보 선택]
     D -- 아니오 --> F[direct 후보 확정]
     E --> G[같은 파라미터 후보 병합]
     F --> G
-    D4 -- 예 --> E
-    D4 -- 아니오 --> G
-    G --> H[v1/v3 기존 Basecase 또는<br/>v4 new-bc-v1 materialization·source 검증]
+    G --> H[v1/v3 기존 Basecase 또는<br/>v4 capability별 reference source 검증]
     H --> H2[Basecase 우선·exact LUT fallback<br/>slot catalog 생성]
     H2 --> I[Step2<br/>적용할 slot 선택]
     I --> J[서버 exact 검증·slot_key 발급]
@@ -80,9 +78,9 @@ flowchart TD
 |---|---|---|---|
 | 문맥 조회 | 서버 | `scenario_id` | scenario, group strategy, ordered event, dimension과 lineage/Lever provenance |
 | raw 후보 결정 | 서버 | v1/v3 legacy key 또는 v4 selected Lever state | direct/routing 또는 executable primary/alternative raw 후보 |
-| runtime 범위 필터 | 서버 | raw 후보, proposal allow-list 5개 | Step1.5·LLM·저장으로 전달할 후보 |
-| Step1.5 | LLM, 조건부 | legacy routing 또는 v4 primary/alternative와 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
-| reference 준비 | 서버 | 확정 후보, v1/v3 Basecase 또는 v4 `new-bc-v1`, LUT | 값이 존재하고 차단되지 않은 exact slot catalog |
+| runtime 범위 필터 | 서버 | raw 후보, v1/v3 이름 5종 또는 v4 ID capability 7종 | LLM·저장으로 전달할 후보 |
+| Step1.5 | LLM, v1/v3 조건부 | legacy routing과 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
+| reference 준비 | 서버 | 확정 후보, v1/v3 Basecase 또는 v4 `new-bc-v2`, LUT | 값이 존재하고 차단되지 않은 exact slot catalog |
 | Step2 | LLM | 시나리오 문맥, 파라미터별 slot catalog | `candidate_key + slot_axes` |
 | 기준값 결정 | 서버 | Step2 좌표 | `slot_key + coordinates + reference_value` |
 | Step3 | LLM | 확정 slot, 기준값, hint/comment | 제안값, 파라미터 근거, slot별 근거 |
@@ -104,7 +102,11 @@ v4 loader는 group API version/strategy와 catalog checksum, dimension/value/pri
 
 v4 selector는 executable binding만 raw 후보화한다. `price_only`, binding 없음, 비활성 parameter와 catalog unsupported는 제외 reason을 내부 state/trace에 보존한다. `direction=unchanged`는 변화 후보가 아니라 supporting context다. parameter별 중복 raw 후보는 dimension, 선택 value, ordered Event, Lever state와 binding provenance를 모두 보존해 하나로 병합한다.
 
-전략별 raw matching 직후 서버는 공통 runtime allow-list를 적용한다. allow-list 밖의 active parameter는 `PROPOSAL_SCOPE_EXCLUDED` 진단 근거와 warning으로 분리하고 Step1.5·Step2·Step3 prompt에 보내지 않는다. 허용 후보가 하나도 없으면 동기·비동기 모두 `INVALID_REQUEST`로 접수를 거절하고, 비동기 API도 `PROCESSING` row를 만들지 않는다.
+전략별 raw matching 직후 서버는 version별 scope gate를 적용한다. v1/v3 이름 allow-list 또는 v4 capability
+contract 밖의 active parameter는 `PROPOSAL_SCOPE_EXCLUDED` 진단 근거와 warning으로 분리하고 LLM prompt에
+보내지 않는다. v4 contract 안의 후보도 DB ID/name/model target 중 하나가 다르면 fail closed한다. 허용 후보가
+하나도 없으면 오류가 아니라 `ABSTAINED_OUT_OF_PROPOSAL_SCOPE` 보류로 종결한다. 비동기 요청은 먼저
+`PROCESSING` row를 만든 뒤 background에서 `ABSTAINED`로 전환한다.
 
 v3 adapter는 composite `scenario_dimension_key`·label·선택 value와 원본 `mapping_dimension_key`·`event_type_l2_id`를 분리한다. 또한 `source_event_ids`, `source_refs`, 선택 value의 description·derivation rationale·pressure contribution, 승인 projection과 mapping readiness를 lineage에 보존한다. 선택 value가 definition의 `valueId` 또는 label과 일치하면 해당 metadata를 사용하고, 정의에 없는 자유 value이면 raw composite value를 유지한다.
 
@@ -149,27 +151,20 @@ catalog에는 값·기준값이 없고, v4에서만 hierarchy terminal의 적용
 `Life Cycle Category`를 `applicability_attributes`로 보존한다. Step3에는 exact 좌표별 단일
 `reference_value`와 병합된 전체 Lever provenance가 들어간다.
 
-### 1.2 Step1.5: routing 조건 검증·후보 선택
+### 1.2 Step1.5: v1/v3 routing 조건 검증·후보 선택
 
-Step1.5는 runtime allow-list를 통과한 legacy routing 후보 또는 v4 routing task를 판단할 때 호출한다. v4의
-`mapping_method`는 allow-list 적용 전 executable binding 수로 정해진다. 처음부터 executable primary 하나뿐인
-task는 허용 후보가 남으면 결정적으로 통과하지만, primary와 alternative가 함께 있어 `routing`으로 분류된
-task는 allow-list 적용 후 후보가 하나만 남아도 Step1.5를 거친다. 예를 들어
-0030의 `liquefaction_utilization`은 `LiqUtilAdjustment` primary 하나만 binding하므로 allow-list 통과 시
-결정적으로 선택된다. `LiqProdAdjustment`는 별도 `liquefaction_production_override` primary이며 현재 runtime
-allow-list 밖이다. 두 Parameter 모두 이후 evidence/slot 단계에서 독립적으로 abstain할 수 있다. system prompt
-`CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
+Step1.5는 legacy routing 후보에만 호출한다. v4 executable binding은 primary/alternative 여부와 무관하게
+deterministic candidate로 보존하고 binding applicability, Scenario branch, Event scope, 전체 lineage를 Step2의
+slot/evidence 판단으로 넘긴다. v4 후보는 exact slot이 하나로 좁혀지지 않거나 scope가 모순되면 후속 단계에서
+abstain한다. v1/v3 `CANDIDATE_VALIDATION_SYSTEM`의 핵심 역할은 다음과 같다.
 
 - scenario, ordered events, 현재 dimension/value와 source 또는 Lever provenance를 비교해 허용 후보 중 적합한 파라미터만 선택한다.
 - `parameter_hint`로 후보의 의미와 적용 제약을 이해한다.
 - v1/v3는 `mapping_comment`를 필수 조건으로 판단하고, 명시적 근거가 없으면 해당 후보를 제외한다.
-- v4는 selected Lever state와 primary binding 자체를 기본 적용 근거로 사용한다. Scenario/Event가
-  applicability와 명백히 모순되지 않으면 세부 조건 문구가 반복되지 않았다는 이유만으로 primary를 제외하지 않는다.
-  alternative는 대상·기간·영향 유형의 명시적 applicability 근거가 있을 때 선택한다.
 - dimension task별로 0개부터 설정된 최대 개수까지 선택할 수 있다.
 - 후보 밖의 파라미터나 key를 만들지 않고 Basecase 존재 여부를 선택 근거로 쓰지 않는다.
 
-v4 task에는 `parameter_hint`, semantic axes, binding role/applicability와 선택 value의 모든 Lever state가 들어간다. Lever `direction`, `pressure_contribution` 또는 domain을 숫자 부호로 직접 변환하지 않는다.
+v4 task에는 Step2부터 `parameter_hint`, semantic axes, binding role/applicability와 선택 value의 모든 Lever state가 들어간다. Lever `direction`, `pressure_contribution` 또는 domain을 숫자 부호로 직접 변환하지 않는다.
 
 실제 user message prefix는 다음과 같다.
 
@@ -232,7 +227,8 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
 
 1. v1/v3는 기존 DB `basecase_*` 설정으로 `resources/basecase/`를 읽는다.
 2. 정확히 v4 `multi_event_model_lever_dimensions`이면 `read_only_proposal` contract가 고정한
-   `resources/basecase_v4/new-bc-v1/` authoritative source를 읽고 DB model target과 일치하는지 검증한다.
+   `new-bc-v2` contract가 고정한 authoritative source를 읽고 DB model target과 일치하는지 검증한다.
+   변경되지 않은 Excel artifact는 `resources/basecase_v4/new-bc-v1/`의 고정 digest를 재사용한다.
    최초 materialization은 sheet/header/range/변환/고정 record count를 전체 검증한 뒤 contract
    hash와 실제 파일 signature를 key로 process cache한다.
 3. LUT-backed parameter이면 같은 파라미터의 기존 LUT를 읽는다. Basecase-only 활성 4개에는 LUT fallback을 만들지 않는다.
@@ -244,9 +240,9 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
    운영 상태를 구별하도록 값이 있는 `Life Cycle Category`만 판단용 `applicability_attributes`로 함께
    전달하며, 공란 metadata는 exact slot을 제외하지 않고 이 속성에서만 생략한다.
 
-`new-bc-v1`의 2026~2030 authoritative record 수는 GDP 815, PMI 5,040, PowerMix 4,200,
-Temperature 5,040, LiqUtilAdjustment 23,820이다. source mapping과 변환은
-[Basecase·LUT 문서](./05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md#11-v4-new-bc-v1-read-only-proposal-계약)를
+`new-bc-v2`의 2026~2030 authoritative record 수는 GDP 815, PMI 5,040, PowerMix 4,200,
+Temperature 5,040, LiqUtilAdjustment 23,820, PipelineAdjustment 420, SupplyDisruption 4,908이다. source mapping과 변환은
+[Basecase·LUT 문서](./05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md#11-v4-new-bc-v2-read-only-proposal-계약)를
 따른다.
 기존 adjustment write target에서 관찰된 93/48/57/150/33,348은 같은 순서의
 authoritative count가 아니며, 신규 source slot을 제한하는 whitelist로 사용하지 않는다.
@@ -263,8 +259,8 @@ LUT-backed 활성 10개와 Basecase-only 활성 4개는 0030 fixture와 release 
 runtime startup은 v4 contract schema/path와 contract에 고정된 Workbook path/digest만 경량 검증한다.
 sheet/header/range/고정 record count와 source atomic 검증은 최초 exact v4 materialization에서
 fail closed하고, 성공 결과를 해당 process에 cache한다. 기존 v1/v3 Basecase preload의
-누락·파싱 오류·0건은 warning을 남기고 계속한다. 현재 신규 proposal Flow의 이 단계에
-도달하는 파라미터는 allow-list의 LUT-backed 5개뿐이다.
+누락·파싱 오류·0건은 warning을 남기고 계속한다. 현재 v4 신규 proposal Flow의 이 단계에는 기존
+`new-bc-v2`에 선언된 extend7 7종이 동일한 contract reference→exact LUT fallback 경로로 도달한다.
 
 ### 1.4 Step2: 적용할 exact slot 선택
 
@@ -336,7 +332,7 @@ Step2가 위 lifecycle 계약으로 child를 고른다. 유효한 좌표에만 �
 | 값 없음 | 값 없음 | 해당 slot 제외 |
 
 Basecase-only parameter는 두 번째 행의 LUT fallback 대상이 아니므로 Basecase가 없으면 제외한다.
-v4 `new-bc-v1` source가 오류·non-finite·상충 duplicate로 exact key를 명시적으로 차단한 경우는 “값 없음”이
+v4 `new-bc-v2` source가 오류·non-finite·상충 duplicate로 exact key를 명시적으로 차단한 경우는 “값 없음”이
 아니며, 두 번째 행으로 내려가지 않고 해당 slot을 제외한다.
 
 서버는 각 유효 slot에 현재 요청의 파라미터 task 안에서만 사용하는 `slot_key`를 발급하고, Step3에 `slot_key + coordinates + reference_value`를 전달한다. Basecase와 LUT의 두 값이나 source 이름을 동시에 보내지 않는다. v4 PowerMix는 10개 effective reference가 모두 존재하고 각 값 0~1, 합 `1±1e-6`을 만족해야 이 단계에서 전체 group을 유지한다.
@@ -366,11 +362,10 @@ v4의 정량 근거가 부족할 때는 일반적으로 제안을 포기하지 �
 전용하지 않는다. 불확실성은 값 누락이나 제안 거절이 아니라 rationale의 모델링 가정과 사용자 검토 필요성으로
 표현한다. 서버는 여전히 exact slot과 유한 숫자를 검증하며 누락값을 임의로 보정하지 않는다.
 
-단, v4 `LiqUtilAdjustment`는 conditional 예외다. 하나의 동일한 selected Lever provenance에서
-직접적인 액화설비 운영 변화 방향, exact Plant와 exact Train 둘 모두, slot의 Year/Month와 일치하는
-구체적 `time_window`, 그 provenance의 `source_event_ids`로 Group의 실제 Event에 연결된 근거가
-모두 확인되지 않으면 Step3 전에
-`ABSTAINED_INSUFFICIENT_EVIDENCE`로 제외한다. 근거 부족을 임의 숫자로 채우지 않는다.
+v4 `LiqUtilAdjustment`는 selected Lever·Scenario/Event scope와 applicability 필터 뒤 exact 후보가 하나면
+시설·기간 문구 일부가 생략돼도 `UNIQUE_INFERRED`로 허용한다. exact 후보가 여러 개거나 명시 대상·기간이
+slot과 모순되면 `ABSTAINED_INSUFFICIENT_EVIDENCE`로 제외한다. 같은 원칙을 Pipeline/Supply slot에도 적용하며,
+정량 변화폭 없이 방향만 유효하면 reference 대비 작은 비영 최종값과 가정·사용자 검토 필요성을 rationale에 남긴다.
 절대 연월·분기·반기와 교차연도 범위는 연속 월 구간으로 해석하고, `N개월`·올해/내년·이번달/다음달은
 요청 처리 시점의 현재 연월을 기준으로 유한 범위만 인정한다. 올해/내년과 결합된 분기·반기도 해당 월만
 인정하며, 연도 없는 절대 분기·반기, 범위 밖 token, 역전 범위, 음수·소수 개월은 일치 근거가 아니다.
@@ -435,7 +430,11 @@ prompt는 파라미터 근거에 개별 slot 값을 나열하지 말고, slot �
 - 서버가 보관한 좌표, Basecase/LUT reference, 모델 대상을 key로 다시 결합한다.
 - 유효한 slot이 남은 결과만 proposal JSON으로 만든다.
 
-의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. raw 후보가 없거나 runtime allow-list 필터 후 허용 후보가 하나도 없으면 동기·비동기 요청 모두 `INVALID_REQUEST`로 접수 자체를 거절하고 proposal row를 만들지 않는다. 따라서 excluded-only 비동기 요청은 `PROCESSING` row나 callback을 남기지 않는다. 허용 후보가 있어 비동기 `PROCESSING` proposal을 만든 뒤 후속 단계에서 최종 유효 slot·제안값이 모두 사라지거나 오류가 발생하면 그 proposal을 `FAILED`로 갱신한다. 동기 요청은 빈 `PROPOSED`를 저장하지 않고 `INVALID_REQUEST`로 실패한다.
+의미 검증에 실패한 개별 항목은 제외하되 다른 유효 항목은 유지한다. 하나 이상의 유효값이 남으면 전체 결과는
+`PROPOSED`다. 최종 유효값이 0개이면서 정상적인 판단 결과이면 `ABSTAINED`로 저장하고, 제안 범위 밖·근거
+부족·입력 위치 미확정·값 미생성·허용 범위 이탈·변경 없음 중 하나의 `ABSTAINED_*` 사유를 남긴다. LLM 호출,
+LLM 응답 형식, DB 접근, 계약 무결성 등 실행 오류만 `FAILED`로 저장한다. 동기 요청도 빈 `PROPOSED` 대신
+`ABSTAINED` 행과 구조화된 결과를 반환한다.
 
 v4 Step2가 빈 결과로 끝나면 내부 `slot_selection_diagnostics`에 catalog 후보 수, LLM 원본 slot 수, 형식
 검증 통과 수, exact 검증 통과 수와 제외 수를 남긴다. 오류 문구는 이 구조화된 수치로 `catalog 위치 없음`,
@@ -448,9 +447,12 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 두 경로 모두
 설정 기반 소수 자릿수 정밀도 변환은 하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되,
 v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다.
-`new-bc-v1`의 PowerMix/LiqUtil validator와 진단은 server-side에만 두며 public JSON 필드를 추가하지 않는다.
+`new-bc-v2`의 파라미터별 validator와 진단은 server-side에만 두며 public JSON 필드를 추가하지 않는다.
 
-동기 요청은 처리가 끝난 `PROPOSED` 결과를 바로 반환한다. 비동기 요청은 먼저 HTTP `200`과 `PROCESSING`을 반환하고 백그라운드 성공 시 `PROPOSED`, 실패 시 `FAILED`로 갱신한 뒤 callback을 보낸다. preflight 후보 필터는 resource runtime 등록 여부를 보장하지 않으므로, 접수 뒤 graph에서 runtime 미등록을 발견하면 `RUNTIME_REGISTRY_NOT_READY`를 background 실패로 기록한다. 동기 요청은 같은 오류를 graph 실행 중 즉시 HTTP `503`으로 반환한다. 두 방식의 후보·slot·값 판단 규칙은 같다.
+동기 요청은 처리가 끝난 `PROPOSED` 또는 `ABSTAINED` 결과를 바로 반환한다. 비동기 요청은 먼저 HTTP `200`과
+`PROCESSING`을 반환하고 백그라운드에서 `PROPOSED`, `ABSTAINED`, `FAILED` 중 하나로 갱신한 뒤 callback을
+보낸다. resource runtime 미등록은 `RUNTIME_REGISTRY_NOT_READY` 실패로 기록한다. 동기 요청은 같은 오류를
+graph 실행 중 즉시 HTTP `503`으로 반환한다. 두 방식의 후보·slot·값 판단 규칙은 같다.
 
 저장 식별자는 버전에 따라 다르다. v1은 proposal의 `mi_event_id`에 대표 event ID를 저장한다. v3/v4는 여러 event 중 하나를 대표값으로 선택하지 않고 `mi_event_id=NULL`로 저장하며 `scenario_group_id`를 authoritative link로 사용한다. 기존 API와 callback의 optional `eventId`도 v3/v4에서 `null`로 반환한다.
 
@@ -474,7 +476,7 @@ flowchart LR
 
 | 구간 | 현재 구현 방식 |
 |---|---|
-| Step1.5 | legacy routing 또는 v4 primary/alternative applicability 판단이 필요할 때만 호출 |
+| Step1.5 | v1/v3 legacy routing applicability 판단이 필요할 때만 호출; v4는 호출하지 않음 |
 | 관련 문맥 | 각 단계와 현재 후보에 필요한 dimension/value/Event/Lever만 남기고 무관 정보와 상태·감사 컬럼 제외 |
 | 후보 task | 같은 파라미터의 여러 source를 한 task로 병합하고 legacy lineage 또는 v4 Lever provenance 보존 |
 | Step2 입력 | Basecase/LUT 원본 행·값·출처·일반 metadata를 제외한 compact 좌표 catalog. v4만 terminal별 값이 있는 `Life Cycle Category`를 판단 전용 `applicability_attributes`로 포함 |
@@ -529,7 +531,7 @@ prompt에 넣지 않는 대표 정보는 scenario의 상태·확률·baseline �
 
 | 단계 | `parameter_hint` 위치 | mapping `comment` 위치 |
 |---|---|---|
-| Step1.5 | `routing_tasks[].candidates[].parameter_hint` | legacy `mapping_comment` 또는 v4 binding applicability |
+| Step1.5 | `routing_tasks[].candidates[].parameter_hint` | legacy `mapping_comment` |
 | Step2 | `parameter_slot_tasks[].parameter.parameter_hint` | selection provenance의 legacy comment 또는 v4 applicability |
 | Step3 | `parameter_value_tasks[].parameter.parameter_hint` | 전체 selection/Lever provenance와 applicability |
 
@@ -672,8 +674,8 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
 - `v4-proposal-capability-v1`은 임의 label이 아니라 0030 catalog `v4` / checksum
-  `835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51`, 기존 5종 allow-list와
-  `new-bc-v1` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
+  `835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51`, extend7 capability와
+  `new-bc-v2` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
   계약이다. 어느 하나라도 drift하면 Scenario DB 조회 또는 LLM 실행 전에 차단한다.
 - v4 `multi_event_model_lever_dimensions`, completed Group, created/realized Group·Scenario만 실행 후보가 된다.
 - Group에 저장된 catalog full pin, selected Lever lineage와 raw/runtime allow-list 경계는 기존 v4 quality oracle로
@@ -682,7 +684,7 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
   `PROPOSED`가 하나라도 있으면 해당 Scenario를 skip한다.
 - stale 기준을 신뢰할 heartbeat/공통 threshold가 아직 없으므로 `PROCESSING`이 하나라도 있으면 stale 여부를
   추정하지 않고 campaign 전체를 hard-stop해 수동 조사를 요구한다.
-- `FAILED` 이력만 있거나 이력이 없으면 uncovered다.
+- `ABSTAINED`/`FAILED` 이력만 있거나 이력이 없으면 uncovered다.
 - read-only는 DB write와 resource bootstrap을 실행하지 않고 체크인된 contract를 검증한다. `--execute`는
   Scenario DB 조회 전에 runtime resource를 고정하고 실제 파일을 다시 hash한 source/schema/resource fingerprint를
   manifest에 먼저 저장한다. 이어 proposal 전체 mapped column과 v4 `mi_event_id nullable`을 schema preflight한다.
@@ -704,13 +706,13 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
 ### 3.6 호환성 경계와 배포 전제
 
 - public proposal/confirmation request·response·callback와 저장 JSON shape은 바뀌지 않는다. v3/v4는 기존 optional `eventId`를 `null`로 반환하고 `scenarioGroupId`를 authoritative 식별자로 사용한다.
-- `new-bc-v1`은 v4 `multi_event_model_lever_dimensions`의 read-only proposal에만 적용한다. 기존
+- `new-bc-v2`는 v4 `multi_event_model_lever_dimensions`의 read-only proposal에만 적용한다. 기존
   `resources/basecase/`와 v1/v3 파싱은 유지하며 workbook write, Formula/Query 재계산과
   Demand/Supply/Trade engine 실행은 하지 않는다. read-only는 Workbook/reference 경계이며 기존 proposal
   persistence를 비활성화한다는 뜻이 아니다.
 - 체크인 v1/v3 129행 mapping의 direct/routing 전역 합집합은 raw 10개, 0030 v4 Lever-native executable binding
-  전역 합집합은 raw 14개에 도달할 수 있다. 요청 하나에서는 관련 하위 집합만 후보가 되며, 두 경로 모두 runtime
-  allow-list 5개를 적용한 뒤에만 Basecase 우선/LUT fallback과 LLM 단계로 진입한다.
+  전역 합집합은 raw 14개에 도달할 수 있다. 요청 하나에서는 관련 하위 집합만 후보가 되며, v1/v3는 5종,
+  v4는 extend7 7종 scope gate를 적용한 뒤에만 Basecase 우선/LUT fallback과 LLM 단계로 진입한다.
 - 0030 기준선은 master 21행·활성 14개, v4 active Lever 18개, raw/effective binding 16/14다. runtime은
   Scenario 생성 시 `catalog_version=v4`를 명시하고, Model Parameter context에서는 Group에 저장된 version으로
   catalog를 조회한 뒤 checksum을 검증한다. v4는 shared mapping을 조회하지 않는다.
@@ -718,7 +720,7 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
   변경하지 않는다. 별도의 catalog 변경 release에서는 master와 Lever catalog를 한 transaction으로 적용하고,
   checksum이 바뀌면 신규 v4 Scenario를 생성한다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.
 - 시작 시 schema validation이 필수 테이블·컬럼과 nullable 계약을 검사한다. 누락된 schema를 임의로 우회하지 않고 startup 또는 context load에서 명확히 실패시킨다.
-- confirmation의 custom parameter와 항목 추가·삭제 허용, 기존 저장 데이터는 유지한다. `proposedValue` key는 필수지만 Confirmation 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다. proposal Step3 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 정밀도 변환은 적용하지 않으며 Basecase/LUT 기준값 정밀도 정책은 유지하되 v4 PowerMix source fraction은 원본 정밀도를 보존한다. v4 `new-bc-v1`의 PowerMix atomic 범위·합계와 LiqUtil 음수/evidence 검증은 proposal 내부 정책이며 Confirmation의 공통 공개 계약을 바꾸지 않는다.
+- confirmation의 custom parameter와 항목 추가·삭제 허용, 기존 저장 데이터는 유지한다. `proposedValue` key는 필수지만 Confirmation 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다. proposal Step3 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 정밀도 변환은 적용하지 않으며 Basecase/LUT 기준값 정밀도 정책은 유지하되 v4 PowerMix source fraction은 원본 정밀도를 보존한다. v4 `new-bc-v2`의 PowerMix atomic 범위·합계와 파라미터별 제약/evidence 검증은 proposal 내부 정책이며 Confirmation의 공통 공개 계약을 바꾸지 않는다.
 
 ## 관련 문서
 

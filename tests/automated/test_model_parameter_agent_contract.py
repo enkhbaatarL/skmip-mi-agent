@@ -35,8 +35,11 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.api_schema impor
     ProposeParametersRequest,
 )
 from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
+    _callback_abstained_output,
     _callback_error_output,
     _callback_success_output,
+    _failure_result,
+    _public_failure_error,
     _route_after_candidate_validation,
     build_graph,
     prepare_propose_parameters_callback,
@@ -45,7 +48,6 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.flow import (
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_basecase_slot_options,
     _coordinate_issues,
-    _partition_candidate_validation_work,
     _period_start_year_month,
     _scenario_brief_for_value_prompt,
     filter_basecase_records_by_slots,
@@ -107,8 +109,27 @@ from apps.common.values.error_codes import ErrorCode
 core_contract = pytest.mark.model_parameter_core
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 V4_NO_CHANGE_TITLE = "파라미터로 반영할 변경 항목이 없습니다."
-V4_NO_MODEL_INPUT_TITLE = "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다."
+V4_NO_MODEL_INPUT_TITLE = "파라미터를 적용할 위치를 찾지 못했습니다."
 V4_NO_PARAMETER_VALUE_TITLE = "적용할 파라미터 값을 생성하지 못했습니다."
+USER_FACING_DEVELOPMENT_TERMS = (
+    "API",
+    "LLM",
+    "Step",
+    "candidate",
+    "slot",
+    "runtime",
+    "DB",
+    "HTTP",
+    "INVALID_REQUEST",
+    "UNKNOWN_ERROR",
+    "관리자",
+    "담당자",
+)
+
+
+def _assert_user_facing_message(message: str) -> None:
+    for term in USER_FACING_DEVELOPMENT_TERMS:
+        assert term.lower() not in message.lower()
 
 
 def _assert_v4_semantic_empty_error(
@@ -145,6 +166,7 @@ def _assert_v4_semantic_empty_error(
     )
     for fragment in forbidden_fragments:
         assert fragment.lower() not in error.error_message.lower()
+    _assert_user_facing_message(error.error_message)
     for internal_id in ("501", "701", "101"):
         assert internal_id not in error.error_message
 
@@ -714,13 +736,17 @@ class ModelParameterAgentContractTest(unittest.TestCase):
 
         with self.assertRaises(MIBaseError) as state_error:
             _route_after_candidate_validation(state)
-        assert "No model parameter mapping candidates found" in (state_error.exception.error_message)
+        assert "현재 자동 제안 가능한 파라미터와 연결되는 변경 항목이 없습니다" in (
+            state_error.exception.error_message
+        )
 
         with self.assertRaises(MIBaseError) as dict_error:
             _route_after_candidate_validation(
                 {"scenario_id": 100, "candidate_mappings": []},
             )
-        assert "scenario_id=100" in dict_error.exception.error_message
+        assert "현재 자동 제안 가능한 파라미터와 연결되는 변경 항목이 없습니다" in (
+            dict_error.exception.error_message
+        )
         assert (
             _route_after_candidate_validation(
                 {"candidate_mappings": [{"candidate_key": "c1"}]},
@@ -953,10 +979,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         ):
             service_cls.return_value.load_context.return_value = context
 
-            with self.assertRaises(MIBaseError):
-                prepare_propose_parameters_callback(100)
+            service_cls.return_value.create_processing_proposal.return_value = 900
+            result = prepare_propose_parameters_callback(100)
 
-            service_cls.return_value.create_processing_proposal.assert_not_called()
+            assert result["model_param_proposal_id"] == 900
+            service_cls.return_value.create_processing_proposal.assert_called_once()
 
         with (
             patch(
@@ -1953,6 +1980,45 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             )
 
         repository.fail_model_param_proposal.assert_called_once()
+        fake_session.commit.assert_called_once()
+        fake_session.rollback.assert_not_called()
+
+    def test_model_parameter_service_abstains_only_locked_processing_row(self) -> None:
+        fake_session = SimpleNamespace(commit=Mock(), rollback=Mock(), close=Mock())
+        fake_connection_module = types.ModuleType(
+            "apps.common.configs.database.sync_database.connection",
+        )
+        fake_connection_module.get_sync_session = lambda: fake_session
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "apps.common.configs.database.sync_database.connection": (fake_connection_module),
+                },
+            ),
+            patch(
+                "apps.agents.model_parameter_agent.persistence.model_parameter_service.ModelParameterRepository",
+            ) as repository_cls,
+        ):
+            repository = repository_cls.return_value
+            repository.fetch_model_param_proposal_for_update.return_value = {
+                "model_param_proposal_id": 901,
+                "status": "PROCESSING",
+            }
+            repository.abstain_model_param_proposal.return_value = True
+
+            ModelParameterService().abstain_proposal_result(
+                model_param_proposal_id=901,
+                reason_code="ABSTAINED_INSUFFICIENT_EVIDENCE",
+                reason_message="제안 근거가 충분하지 않습니다.",
+            )
+
+        repository.abstain_model_param_proposal.assert_called_once_with(
+            model_param_proposal_id=901,
+            reason_code="ABSTAINED_INSUFFICIENT_EVIDENCE",
+            reason_message="제안 근거가 충분하지 않습니다.",
+        )
         fake_session.commit.assert_called_once()
         fake_session.rollback.assert_not_called()
 
@@ -3168,7 +3234,9 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                 },
             )
 
-        assert "No model parameter mapping candidates found" in (error.exception.error_message)
+        assert "현재 자동 제안 가능한 파라미터와 연결되는 변경 항목이 없습니다" in (
+            error.exception.error_message
+        )
 
     def test_prepare_callback_rejects_empty_mapping_before_processing_row(self) -> None:
         scenario_context = {
@@ -3207,11 +3275,11 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
 
-            with self.assertRaises(MIBaseError) as error:
-                prepare_propose_parameters_callback(100)
+            service_cls.return_value.create_processing_proposal.return_value = 901
+            result = prepare_propose_parameters_callback(100)
 
-        assert "No model parameter mapping candidates found" in (error.exception.error_message)
-        service_cls.return_value.create_processing_proposal.assert_not_called()
+        assert result["model_param_proposal_id"] == 901
+        service_cls.return_value.create_processing_proposal.assert_called_once()
 
     def test_prepare_callback_rejects_out_of_scope_mapping_before_processing_row(self) -> None:
         scenario_context = {
@@ -3250,11 +3318,30 @@ class ModelParameterAgentContractTest(unittest.TestCase):
         ) as service_cls:
             service_cls.return_value.load_context.return_value = scenario_context
 
-            with self.assertRaises(MIBaseError) as error:
+            service_cls.return_value.create_processing_proposal.return_value = 901
+            result = prepare_propose_parameters_callback(100)
+
+        assert result["model_param_proposal_id"] == 901
+        service_cls.return_value.create_processing_proposal.assert_called_once()
+
+    def test_prepare_callback_failure_exposes_user_wording_only(self) -> None:
+        with patch(
+            "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
+        ) as service_cls:
+            service_cls.return_value.load_context.side_effect = MIBaseError(
+                ErrorCode.ENTITY_NOT_FOUND,
+                detail="Scenario context not found: scenario_id=100",
+            )
+
+            with self.assertRaises(MIBaseError) as caught:
                 prepare_propose_parameters_callback(100)
 
-        assert "No model parameter mapping candidates found" in error.exception.error_message
-        service_cls.return_value.create_processing_proposal.assert_not_called()
+        assert caught.exception.error_code is ErrorCode.ENTITY_NOT_FOUND
+        assert caught.exception.error_message == (
+            "파라미터 제안에 실패했습니다.\n"
+            "제안에 필요한 정보를 찾지 못했습니다. 화면을 새로고침한 뒤 다시 시도해 주세요."
+        )
+        _assert_user_facing_message(caught.exception.error_message)
 
     def test_v4_candidate_generation_failure_uses_two_line_public_message(self) -> None:
         scenario_context = {
@@ -3307,14 +3394,42 @@ class ModelParameterAgentContractTest(unittest.TestCase):
             service_cls.return_value.load_context.return_value = scenario_context
 
             with self.assertRaises(MIBaseError) as error:
-                prepare_propose_parameters_callback(501)
+                _raise_v4_semantic_empty_if_applicable(
+                    stage="candidate_generation",
+                    scenario_context=scenario_context,
+                    non_input_items=non_input_items,
+                )
 
         _assert_v4_semantic_empty_error(
             error.exception,
             expected_title=V4_NO_CHANGE_TITLE,
         )
         assert "변화 없음" in error.exception.error_message
-        service_cls.return_value.create_processing_proposal.assert_not_called()
+
+    def test_v4_out_of_scope_abstention_uses_user_wording_only(self) -> None:
+        with self.assertRaises(MIBaseError) as caught:
+            _raise_v4_semantic_empty_if_applicable(
+                stage="candidate_generation",
+                scenario_context={
+                    "scenario_group": {
+                        "api_version": "v4",
+                        "generation_strategy": V4_GENERATION_STRATEGY,
+                    },
+                },
+                non_input_items=[
+                    {
+                        "reason_code": PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
+                        "parameter_name": "ShippingCost",
+                    },
+                ],
+            )
+
+        assert caught.exception.error_message == (
+            "파라미터로 반영할 변경 항목이 없습니다.\n"
+            "시나리오에서 변경 가능성이 있는 항목을 확인했지만, 현재 자동 제안 대상에 "
+            "포함되지 않아 제안에서 제외했습니다."
+        )
+        _assert_user_facing_message(caught.exception.error_message)
 
     def test_prepare_callback_creates_processing_row_when_mapping_exists(self) -> None:
         scenario_context = {
@@ -3705,7 +3820,7 @@ class ModelParameterAgentContractTest(unittest.TestCase):
                     },
                 )
 
-        assert "No valid model parameter proposal parameters generated" in (error.exception.error_message)
+        assert V4_NO_PARAMETER_VALUE_TITLE in error.exception.error_message
         service_cls.return_value.save_proposal_result.assert_not_called()
 
 
@@ -3938,7 +4053,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_v4_step1_5_empty_routing_result_uses_two_line_public_message(self) -> None:
+    async def test_v4_step1_5_skips_llm_and_preserves_catalog_binding(self) -> None:
         candidate = {
             "candidate_key": "candidate_key-internal",
             "mapping_strategy": "v4",
@@ -3957,19 +4072,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "parameter_name": "LiqProdAdjustment",
             "canonical_parameter_name": "LiqProdAdjustment",
         }
-        _, routing_tasks = _partition_candidate_validation_work([candidate])
-        candidate_response = LLMCandidateValidationResponse(
-            routing_decisions=[
-                RoutingDecision(
-                    dimension_key=str(routing_tasks[0]["dimension_key"]),
-                    selected_candidate_keys=[],
-                ),
-            ],
-        )
-
         async def fake_invoke(*args, **kwargs):  # noqa: ANN002, ANN003
-            assert kwargs["output_schema"] is LLMCandidateValidationResponse
-            return SimpleNamespace(result=candidate_response, usage=None)
+            raise AssertionError("v4 catalog binding은 Step1.5 LLM을 호출하지 않아야 합니다")
 
         state = ModelParameterProposalState(
             scenario_id=501,
@@ -3986,16 +4090,23 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(proposal_nodes, "_invoke_structured", side_effect=fake_invoke),
-            patch.object(proposal_nodes, "_debug_stage_payload"),
+            patch.object(proposal_nodes, "_debug_stage_payload") as debug_stage,
         ):
-            with self.assertRaises(MIBaseError) as error:
-                await validate_parameter_candidates(state)
+            result = await validate_parameter_candidates(state)
 
-        _assert_v4_semantic_empty_error(
-            error.exception,
-            expected_title=V4_NO_CHANGE_TITLE,
+        assert len(result["candidate_mappings"]) == 1
+        assert result["candidate_mappings"][0]["canonical_parameter_name"] == "LiqProdAdjustment"
+        assert result["candidate_mappings"][0]["binding_role"] == "alternative"
+        assert result["candidate_mappings"][0]["lever_code"] == "liquefaction_utilization"
+        assert result["validation_warnings"] == []
+        debug_stage.assert_called_once_with(
+            "step1.5.result",
+            501,
+            {
+                "selection_method": "skip_llm",
+                "selected_parameters": ["LiqProdAdjustment"],
+            },
         )
-        assert "액화설비 생산량 파라미터 후보" in error.exception.error_message
 
     @core_contract
     async def test_llm_candidate_validation_omitted_direct_candidate_is_kept(self) -> None:
@@ -4840,11 +4951,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "액화설비 가동률과 생산량 파라미터" in error.exception.error_message
-        assert "대상 범위와 대략적인 기간 정보도 확인" in error.exception.error_message
+        assert "액화설비 가동률과 생산량 관련 항목" in error.exception.error_message
+        assert "적용 대상도 찾았지만" in error.exception.error_message
         assert "적용 연도·월" in error.exception.error_message
-        assert "명확한지 확인해 주세요" in error.exception.error_message
-        assert "구체적이지 않아" not in error.exception.error_message
+        assert "적용 기간을 확인해 주세요" in error.exception.error_message
 
     def test_v4_step2_empty_slots_explain_missing_catalog_positions(self) -> None:
         candidate = {
@@ -4877,8 +4987,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다" in (error.exception.error_message)
-        assert "모델 기준정보의 대상·기간 범위" in error.exception.error_message
+        assert "현재 입력 가능한 대상·기간 목록에서 일치하는 위치" in error.exception.error_message
+        assert "적용 대상과 기간" in error.exception.error_message
 
     def test_v4_step2_empty_slots_explain_invalid_proposed_location_shape(self) -> None:
         candidate = {
@@ -4919,12 +5029,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MIBaseError) as error:
             finalize_empty_parameter_values(state)
 
-        _assert_v4_semantic_empty_error(
-            error.exception,
-            expected_title=V4_NO_MODEL_INPUT_TITLE,
-        )
-        assert "모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다" in error.exception.error_message
-        assert "담당자에게 확인" in error.exception.error_message
+        assert error.exception.error_code is ErrorCode.LLM_INVALID_RESPONSE_ERROR
+        assert "선택한 적용 위치가 모두 확인 기준을 통과하지 못했습니다" in error.exception.error_message
 
     def test_v4_step2_empty_slots_explain_exact_location_mismatch(self) -> None:
         candidate = {
@@ -4974,8 +5080,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "제안된 대상·기간 조합" in error.exception.error_message
-        assert "현재 등록된 모델 입력 위치와 일치하지 않았습니다" in error.exception.error_message
+        assert "시나리오의 대상·기간 조합" in error.exception.error_message
+        assert "현재 입력 가능한 위치와 일치하지 않아" in error.exception.error_message
         assert "국가·설비·트레인" in error.exception.error_message
         assert "적용 연도·월" in error.exception.error_message
 
@@ -5018,8 +5124,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다" in (error.exception.error_message)
-        assert "등록된 모델 입력 위치와 일치하지 않았습니다" not in error.exception.error_message
+        assert "시나리오 내용만으로 적용할 대상과 기간을 정할 근거가 부족" in error.exception.error_message
+        assert "현재 입력 가능한 위치와 일치하지 않아" not in error.exception.error_message
 
     async def test_llm_slot_sanitizer_rejects_ambiguous_axis_values(self) -> None:
         candidate = {
@@ -5198,8 +5304,72 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             error.exception,
             expected_title=V4_NO_PARAMETER_VALUE_TITLE,
         )
-        assert "액화설비 가동률 파라미터와 모델 입력 위치" in error.exception.error_message
+        assert "액화설비 가동률 항목과 적용 위치" in error.exception.error_message
         assert "기준값" in error.exception.error_message
+
+    def test_v4_step3_abstention_reason_distinguishes_value_outcome(self) -> None:
+        cases = [
+            (
+                {
+                    "generated_value_count": 0,
+                    "changed_value_count": 0,
+                    "unchanged_value_count": 0,
+                    "out_of_range_value_count": 1,
+                },
+                "ABSTAINED_VALUE_OUT_OF_RANGE",
+                "허용 수치 범위",
+            ),
+            (
+                {
+                    "generated_value_count": 1,
+                    "changed_value_count": 0,
+                    "unchanged_value_count": 1,
+                    "out_of_range_value_count": 0,
+                },
+                "ABSTAINED_NO_CHANGE",
+                "기준값과 동일",
+            ),
+        ]
+        for diagnostics, expected_code, expected_text in cases:
+            with self.subTest(expected_code=expected_code):
+                with pytest.raises(MIBaseError) as caught:
+                    _raise_v4_semantic_empty_if_applicable(
+                        stage="step3",
+                        scenario_context={
+                            "scenario_group": {
+                                "api_version": "v4",
+                                "generation_strategy": V4_GENERATION_STRATEGY,
+                            },
+                        },
+                        candidates=[{"parameter_name": "LiqUtilAdjustment"}],
+                        value_selection_diagnostics=diagnostics,
+                    )
+
+                assert caught.value.reason_code == expected_code  # type: ignore[attr-defined]
+                assert caught.value.stage == "step3"  # type: ignore[attr-defined]
+                assert expected_text in caught.value.error_message
+
+    def test_v4_step3_malformed_llm_values_are_failure_not_abstention(self) -> None:
+        with pytest.raises(MIBaseError) as caught:
+            _raise_v4_semantic_empty_if_applicable(
+                stage="step3",
+                scenario_context={
+                    "scenario_group": {
+                        "api_version": "v4",
+                        "generation_strategy": V4_GENERATION_STRATEGY,
+                    },
+                },
+                candidates=[{"parameter_name": "LiqUtilAdjustment"}],
+                value_selection_diagnostics={
+                    "generated_value_count": 0,
+                    "changed_value_count": 0,
+                    "unchanged_value_count": 0,
+                    "out_of_range_value_count": 0,
+                    "invalid_response_value_count": 1,
+                },
+            )
+
+        assert caught.value.error_code is ErrorCode.LLM_INVALID_RESPONSE_ERROR
 
     def test_confirmation_schema_accepts_valid_parameter_payload(self) -> None:
         payload = {
@@ -5650,12 +5820,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "scenarioGroupId": 61,
                 "eventId": 1378,
                 "status": "PROPOSED",
+                "resultCode": None,
+                "resultMessage": None,
+                "resultStage": None,
             },
         }
 
     def test_proposal_callback_error_payload_includes_failed_context(self) -> None:
         payload = _callback_error_output(
             message="insufficient dimension mapping for event 1378",
+            error_code="INVALID_REQUEST",
             model_param_proposal_id=10001,
             scenario_id=309,
             scenario_group_id=61,
@@ -5671,6 +5845,59 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 "scenarioGroupId": 61,
                 "eventId": 1378,
                 "status": "FAILED",
+                "resultCode": "INVALID_REQUEST",
+                "resultMessage": "insufficient dimension mapping for event 1378",
+                "resultStage": None,
+            },
+        }
+
+    def test_failure_messages_hide_development_terms_and_raw_details(self) -> None:
+        cases = [
+            (MIBaseError(ErrorCode.LLM_RESPONSE_TIMEOUT, detail="Step2 timeout"), "LLM_RESPONSE_TIMEOUT"),
+            (MIBaseError(ErrorCode.LLM_INVALID_RESPONSE_ERROR, detail="slotKey invalid"), "LLM_INVALID_RESPONSE_ERROR"),
+            (MIBaseError(ErrorCode.RUNTIME_REGISTRY_NOT_READY, detail="runtime missing"), "RUNTIME_REGISTRY_NOT_READY"),
+            (MIBaseError(ErrorCode.ENTITY_NOT_FOUND, detail="scenario_id=10"), "ENTITY_NOT_FOUND"),
+            (MIBaseError(ErrorCode.INVALID_REQUEST, detail="candidate_key missing"), "INVALID_REQUEST"),
+            (MIBaseError(ErrorCode.RDB_DATA_FETCH_FAILED, detail="DB unavailable"), "RDB_DATA_FETCH_FAILED"),
+            (MIBaseError(ErrorCode.HTTP_CONNECTION_ERROR, detail="HTTP 502"), "HTTP_CONNECTION_ERROR"),
+            (ValueError("raw internal exception"), "UNKNOWN_ERROR"),
+        ]
+
+        for error, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                result_code, message = _failure_result(error)
+                assert result_code == expected_code
+                assert message.startswith("파라미터 제안에 실패했습니다.\n")
+                assert "raw internal exception" not in message
+                _assert_user_facing_message(message)
+
+                public_error = _public_failure_error(error)
+                assert public_error.error_message == message
+                assert public_error.error_code.name == expected_code
+
+    def test_proposal_callback_abstained_payload_includes_reason_and_stage(self) -> None:
+        payload = _callback_abstained_output(
+            message="파라미터로 반영할 변경 항목이 없습니다.\n모든 제안값이 기준값과 같습니다.",
+            reason_code="ABSTAINED_NO_CHANGE",
+            stage="step3",
+            model_param_proposal_id=10001,
+            scenario_id=309,
+            scenario_group_id=61,
+            event_id=None,
+        )
+
+        assert payload.model_dump(by_alias=True) == {
+            "status": "success",
+            "message": "파라미터로 반영할 변경 항목이 없습니다.\n모든 제안값이 기준값과 같습니다.",
+            "data": {
+                "modelParamProposalId": 10001,
+                "scenarioId": 309,
+                "scenarioGroupId": 61,
+                "eventId": None,
+                "status": "ABSTAINED",
+                "resultCode": "ABSTAINED_NO_CHANGE",
+                "resultMessage": "파라미터로 반영할 변경 항목이 없습니다.\n모든 제안값이 기준값과 같습니다.",
+                "resultStage": "step3",
             },
         }
 
@@ -5717,6 +5944,25 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert response.data.model_param_proposal_id == 10001
         assert len(scheduled) == 1
 
+    async def test_sync_failure_exposes_user_wording_only(self) -> None:
+        class FakeGraph:
+            async def ainvoke(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+                raise MIBaseError(
+                    ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                    detail="Step3 candidate_key and slotKey validation failed",
+                )
+
+        with patch.object(propose_flow, "build_graph", return_value=FakeGraph()):
+            with self.assertRaises(MIBaseError) as caught:
+                await propose_flow.run_propose_parameters_sync({"scenario_id": 309})
+
+        assert caught.exception.error_code is ErrorCode.LLM_INVALID_RESPONSE_ERROR
+        assert caught.exception.error_message == (
+            "파라미터 제안에 실패했습니다.\n"
+            "제안 내용을 생성하거나 확인하는 과정에서 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+        )
+        _assert_user_facing_message(caught.exception.error_message)
+
     @core_contract
     async def test_background_failure_callback_contains_failed_context(self) -> None:
         class FakeGraph:
@@ -5727,6 +5973,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         class FakeModelParameterService:
             def __init__(self) -> None:
                 self.failures: list[dict[str, object]] = []
+                self.abstentions: list[dict[str, object]] = []
                 self.callback_statuses: list[str] = []
 
             def complete_proposal_result(self, **kwargs: object) -> None:
@@ -5734,6 +5981,9 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
             def fail_proposal_result(self, **kwargs: object) -> None:
                 self.failures.append(kwargs)
+
+            def abstain_proposal_result(self, **kwargs: object) -> None:
+                self.abstentions.append(kwargs)
 
             def update_callback_status(
                 self,
@@ -5771,24 +6021,23 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 event_id=1378,
             )
 
-        assert service.failures == [
-            {
-                "model_param_proposal_id": 10001,
-                "error_code": "ValueError",
-                "error_message": "value proposal failed",
-            },
-        ]
+        assert service.failures[0]["model_param_proposal_id"] == 10001
+        assert service.failures[0]["error_code"] == "UNKNOWN_ERROR"
+        assert "파라미터 제안에 실패" in str(service.failures[0]["error_message"])
         assert service.callback_statuses == ["SUCCEEDED"]
         assert sent_payloads == [
             {
                 "status": "error",
-                "message": "value proposal failed",
+                "message": service.failures[0]["error_message"],
                 "data": {
                     "modelParamProposalId": 10001,
                     "scenarioId": 309,
                     "scenarioGroupId": 61,
                     "eventId": 1378,
                     "status": "FAILED",
+                    "resultCode": "UNKNOWN_ERROR",
+                    "resultMessage": service.failures[0]["error_message"],
+                    "resultStage": None,
                 },
             },
         ]
@@ -5842,7 +6091,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             semantic_error,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "대상 범위와 대략적인 기간 정보도 확인" in semantic_error.error_message
+        assert "적용 대상도 찾았지만" in semantic_error.error_message
         assert "적용 연도·월" in semantic_error.error_message
 
         class FakeGraph:
@@ -5853,12 +6102,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         class FakeModelParameterService:
             def __init__(self) -> None:
                 self.failures: list[dict[str, object]] = []
+                self.abstentions: list[dict[str, object]] = []
 
             def complete_proposal_result(self, **kwargs: object) -> None:
                 raise AssertionError(f"unexpected proposal completion: {kwargs}")
 
             def fail_proposal_result(self, **kwargs: object) -> None:
                 self.failures.append(kwargs)
+
+            def abstain_proposal_result(self, **kwargs: object) -> None:
+                self.abstentions.append(kwargs)
 
             def update_callback_status(self, **kwargs: object) -> None:
                 assert kwargs == {
@@ -5893,11 +6146,12 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                 event_id=None,
             )
 
-        assert service.failures == [
+        assert service.failures == []
+        assert service.abstentions == [
             {
                 "model_param_proposal_id": 10001,
-                "error_code": "INVALID_REQUEST",
-                "error_message": semantic_error.error_message,
+                "reason_code": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+                "reason_message": semantic_error.error_message,
             },
         ]
         assert sent_payloads[0]["message"] == semantic_error.error_message
@@ -5906,7 +6160,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "scenarioId": 501,
             "scenarioGroupId": 701,
             "eventId": None,
-            "status": "FAILED",
+            "status": "ABSTAINED",
+            "resultCode": "ABSTAINED_INSUFFICIENT_EVIDENCE",
+            "resultMessage": semantic_error.error_message,
+            "resultStage": "step2",
         }
 
     async def test_background_marks_callback_skipped_when_skip_callback_enabled(self) -> None:

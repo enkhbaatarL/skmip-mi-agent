@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -26,7 +25,6 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_value_proposal_prompt_packet,
     _merge_candidates_by_parameter,
     _partition_candidate_validation_work,
-    _sanitize_routing_decisions,
     _scenario_brief_for_value_prompt,
 )
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
@@ -35,9 +33,6 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
     _proposal_event_id,
 )
 from apps.agents.model_parameter_agent.presentation import _context_ids
-from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
-    RoutingDecision,
-)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     MappingRule,
     ParameterDefinition,
@@ -551,7 +546,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
     session.close.assert_called_once_with()
 
 
-def test_v4_routing_prompt_packet_excludes_unselected_values_and_lever_states() -> None:
+def test_v4_candidates_skip_step15_routing_prompt() -> None:
     context = _load_context(selected_value_id="high")
     kb = _knowledge_base(
         _parameter_definition("GDP"),
@@ -559,24 +554,18 @@ def test_v4_routing_prompt_packet_excludes_unselected_values_and_lever_states() 
         _parameter_definition("User-Adjusted Gas Demand"),
     )
     candidates, non_inputs, warnings = match_parameter_candidates(kb, context)
-    _, routing_tasks = _partition_candidate_validation_work(candidates)
+    deterministic, routing_tasks = _partition_candidate_validation_work(candidates)
 
     packet = _build_candidate_validation_prompt_packet(
         context,
         routing_tasks,
         non_inputs,
     )
-    prompt_text = json.dumps(packet, ensure_ascii=False)
 
     assert warnings == []
-    assert len(routing_tasks) == 1
-    assert packet["scenario_brief"]["dimension_template"]["template_json"][0]["values"] == [
-        context["dimension_template"][0]["values"][0],
-    ]
-    assert "economic_activity" in prompt_text
-    assert "direct_gas_demand" in prompt_text
-    assert "Economic activity contracts." not in prompt_text
-    assert "shipping_cost" not in prompt_text
+    assert deterministic == candidates
+    assert routing_tasks == []
+    assert packet["routing_tasks"] == []
 
 
 def test_v4_context_rejects_catalog_checksum_mismatch() -> None:
@@ -787,7 +776,7 @@ def test_v4_unchanged_only_lineage_has_no_change_candidate() -> None:
     assert "UNCHANGED_LEVER_STATE" in warnings[0]
 
 
-def test_v4_primary_and_alternative_bindings_are_one_lever_routing_task() -> None:
+def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> None:
     economic_state = _lever_state(
         "economic_activity",
         101,
@@ -818,7 +807,7 @@ def test_v4_primary_and_alternative_bindings_are_one_lever_routing_task() -> Non
         candidates,
     )
 
-    assert deterministic == []
+    assert deterministic == candidates
     assert non_inputs == []
     assert warnings == []
     assert {(candidate["canonical_parameter_name"], candidate["binding_role"]) for candidate in candidates} == {
@@ -826,13 +815,10 @@ def test_v4_primary_and_alternative_bindings_are_one_lever_routing_task() -> Non
         ("Population", "alternative"),
     }
     assert all(candidate["mapping_method"] == "routing" for candidate in candidates)
-    assert len(routing_tasks) == 1
-    assert routing_tasks[0]["is_v4"] is True
-    assert routing_tasks[0]["lever_code"] == "economic_activity"
-    assert len(routing_tasks[0]["candidates"]) == 2
+    assert routing_tasks == []
 
 
-def test_v4_routing_accepts_each_binding_combination_and_defaults_primary() -> None:
+def test_v4_deterministic_candidates_preserve_each_binding_lineage() -> None:
     economic_state = _lever_state(
         "economic_activity",
         101,
@@ -854,58 +840,14 @@ def test_v4_routing_accepts_each_binding_combination_and_defaults_primary() -> N
         ),
         _matcher_context(_lineage("economic_pressure", [economic_state])),
     )
-    _, routing_tasks = _partition_candidate_validation_work(candidates)
-    task = routing_tasks[0]
-    task_key = str(task["dimension_key"])
-    candidate_key_by_role = {
-        str(candidate["binding_role"]): str(candidate["candidate_key"]) for candidate in task["candidates"]
+    deterministic, routing_tasks = _partition_candidate_validation_work(candidates)
+
+    assert routing_tasks == []
+    assert {(item["canonical_parameter_name"], item["binding_role"]) for item in deterministic} == {
+        ("GDP", "primary"),
+        ("Population", "alternative"),
     }
-
-    cases = [
-        (
-            [RoutingDecision(dimension_key=task_key, selected_candidate_keys=[candidate_key_by_role["primary"]])],
-            {candidate_key_by_role["primary"]},
-            False,
-        ),
-        (
-            [RoutingDecision(dimension_key=task_key, selected_candidate_keys=[candidate_key_by_role["alternative"]])],
-            {candidate_key_by_role["alternative"]},
-            False,
-        ),
-        (
-            [
-                RoutingDecision(
-                    dimension_key=task_key,
-                    selected_candidate_keys=[
-                        candidate_key_by_role["primary"],
-                        candidate_key_by_role["alternative"],
-                    ],
-                ),
-            ],
-            set(candidate_key_by_role.values()),
-            False,
-        ),
-        (
-            [RoutingDecision(dimension_key=task_key, selected_candidate_keys=[])],
-            {candidate_key_by_role["primary"]},
-            True,
-        ),
-        (
-            [],
-            {candidate_key_by_role["primary"]},
-            True,
-        ),
-    ]
-
-    for decisions, expected_keys, expects_default_warning in cases:
-        selected, warnings = _sanitize_routing_decisions(
-            decisions,
-            routing_tasks,
-            max_candidates_per_dimension=2,
-        )
-
-        assert {str(candidate["candidate_key"]) for candidate in selected} == expected_keys
-        assert any("primary binding 기본값" in warning for warning in warnings) is expects_default_warning
+    assert all(item["lever_code"] == "economic_activity" for item in deterministic)
 
 
 def test_v4_same_parameter_merges_all_event_dimension_and_lever_provenance() -> None:
@@ -1092,7 +1034,7 @@ def test_v4_lever_direction_is_provenance_not_a_numeric_sign() -> None:
         assert "adjustment_sign" not in candidate
 
 
-def test_v4_callback_rejects_missing_model_target_before_processing_row() -> None:
+def test_v4_callback_defers_missing_model_target_until_background() -> None:
     state = _lever_state(
         "economic_activity",
         101,
@@ -1120,13 +1062,15 @@ def test_v4_callback_rejects_missing_model_target_before_processing_row() -> Non
         "apps.agents.model_parameter_agent.flows.propose_parameters.flow.ModelParameterService",
     ) as service_cls:
         service_cls.return_value.load_context.return_value = scenario_context
+        service_cls.return_value.create_processing_proposal.return_value = 901
 
-        with pytest.raises(MIBaseError) as caught:
-            prepare_propose_parameters_callback(501)
+        result = prepare_propose_parameters_callback(501)
 
-    assert caught.value.error_code is ErrorCode.INVALID_REQUEST
-    assert "ACTIVE_PARAMETER_DEFINITION_MISSING" in caught.value.error_message
-    service_cls.return_value.create_processing_proposal.assert_not_called()
+    assert result["model_param_proposal_id"] == 901
+    service_cls.return_value.create_processing_proposal.assert_called_once_with(
+        scenario_context=scenario_context,
+        user_id=None,
+    )
 
 
 def test_v4_proposal_persistence_and_presentation_keep_event_id_null() -> None:

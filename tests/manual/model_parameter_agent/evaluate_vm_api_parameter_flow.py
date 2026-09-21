@@ -308,7 +308,7 @@ async def _poll_proposal_row(
     while True:
         row = _fetch_proposal_db_row(model_param_proposal_id)
         status = str(row.get("status") or "")
-        if status in {"PROPOSED", "CONFIRMED", "FAILED"}:
+        if status in {"PROPOSED", "ABSTAINED", "CONFIRMED", "FAILED"}:
             return row, time.perf_counter() - started
         elapsed = time.perf_counter() - started
         if elapsed > poll_timeout:
@@ -371,9 +371,10 @@ async def _evaluate_scenario_via_vm_api(
             "elapsed_seconds": round(poll_elapsed, 3),
         },
     )
-    if proposal_db_row.get("status") == "FAILED":
+    if proposal_db_row.get("status") in {"ABSTAINED", "FAILED"}:
         message = (
-            "proposal row failed: "
+            "proposal row has no confirmable result: "
+            f"status={proposal_db_row.get('status')}, "
             f"model_param_proposal_id={model_param_proposal_id}, "
             f"error_code={proposal_db_row.get('error_code')}, "
             f"error_message={proposal_db_row.get('error_message')}"

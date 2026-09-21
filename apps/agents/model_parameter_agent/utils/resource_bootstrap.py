@@ -138,7 +138,7 @@ def _validate_contract_horizon(
     contract_horizon = manifest.workbook_contract.horizon
     if lut_policy.start_year != contract_horizon.start_year or lut_policy.end_year != contract_horizon.end_year:
         msg = (
-            "Model Parameter LUT horizon must match the new-bc-v1 workbook contract: "
+            "Model Parameter LUT horizon must match the active versioned workbook contract: "
             f"configured={lut_policy.start_year}..{lut_policy.end_year}, "
             f"contract={contract_horizon.start_year}..{contract_horizon.end_year}"
         )
@@ -455,6 +455,9 @@ def _paths_from_release(
         fallback_reason=(str(payload["fallback_reason"]) if payload.get("fallback_reason") else None),
         workbook_contract_path=manifest.workbook_contract_path,
         workbook_contract=manifest.workbook_contract,
+        proposal_capability_contract_path=manifest.proposal_capability_contract_path,
+        proposal_capability_contract=manifest.proposal_capability_contract,
+        proposal_capability_contract_sha256=manifest.proposal_capability_contract_sha256,
     )
 
 
@@ -668,6 +671,9 @@ async def resolve_model_parameter_resources(
             semantic_schema_hash=manifest.semantic_schema_hash,
             workbook_contract_path=manifest.workbook_contract_path,
             workbook_contract=manifest.workbook_contract,
+            proposal_capability_contract_path=manifest.proposal_capability_contract_path,
+            proposal_capability_contract=manifest.proposal_capability_contract,
+            proposal_capability_contract_sha256=manifest.proposal_capability_contract_sha256,
         )
 
     local_root = Path(storage.local_root).expanduser().resolve()  # noqa: ASYNC240

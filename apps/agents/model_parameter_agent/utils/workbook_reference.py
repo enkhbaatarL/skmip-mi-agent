@@ -5,6 +5,7 @@ from __future__ import annotations
 # ruff: noqa: ANN401, C901, EM101, EM102, FBT001, TRY003
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+import csv
 from dataclasses import dataclass
 from functools import lru_cache
 import math
@@ -608,11 +609,208 @@ def _liq_util_records(
     return deduplicated, (*warnings, *duplicate_warnings), blocked_keys | frozenset(blocked_source_keys)
 
 
+def _pipeline_records(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
+    source = parameter.reference_source
+    start_column, end_column = _source_bounds(source)
+    columns = {name: _column_index(column) for name, column in source.columns.items()}
+    records: list[WorkbookReferenceRecord] = []
+    blocked_source_keys: set[CanonicalKey] = set()
+    warnings: list[str] = []
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=source.data_start_row,
+            min_col=start_column,
+            max_col=end_column,
+            values_only=True,
+        ),
+        start=source.data_start_row,
+    ):
+        year_value = values[columns["Year"] - start_column]
+        pipeline_value = values[columns["Pipeline Name"] - start_column]
+        if year_value is None and pipeline_value is None:
+            continue
+        try:
+            year = strict_int(year_value, label=f"{parameter_name}:{row_number}:Year")
+        except MIBaseError:
+            continue
+        if year not in contract.horizon.years:
+            continue
+        pipeline = str(pipeline_value or "").strip()
+        from_country = str(values[columns["From Country"] - start_column] or "").strip()
+        to_country = str(values[columns["To Country"] - start_column] or "").strip()
+        capacity = _finite_number(values[columns["Pipeline Capacity"] - start_column])
+        if not pipeline or not from_country or not to_country:
+            warnings.append(f"{parameter_name} invalid pipeline identity excluded at row {row_number}")
+            continue
+        fixed_key = (pipeline, from_country, to_country, year)
+        if capacity is None or capacity < 0:
+            blocked_source_keys.update((*fixed_key, month) for month in range(1, 13))
+            warnings.append(f"{parameter_name} invalid capacity excluded at row {row_number}")
+            continue
+        capacity_reference = _cell_reference_id(
+            contract,
+            parameter,
+            row=row_number,
+            column=columns["Pipeline Capacity"],
+        )
+        records.extend(
+            _record(
+                parameter_name,
+                parameter,
+                axes={
+                    "Pipeline Name": pipeline,
+                    "From Country": from_country,
+                    "To Country": to_country,
+                    "Year": year,
+                    "Month": month,
+                },
+                value=capacity,
+                metadata=None,
+                reference_id=f"{capacity_reference}:month:{month}",
+                diagnostics=(
+                    "annual_capacity_expanded_to_month",
+                    "source_header_legacy_unit_label=Pipeline capacity (Mt)",
+                ),
+            )
+            for month in range(1, 13)
+        )
+    deduplicated, duplicate_warnings, duplicate_blocked_keys = _deduplicate_records(parameter_name, records)
+    return (
+        deduplicated,
+        (*warnings, *duplicate_warnings),
+        frozenset(blocked_source_keys) | duplicate_blocked_keys,
+    )
+
+
+def _supply_disruption_records(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+    *,
+    resource_root: Path,
+) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
+    source = parameter.reference_source
+    seasonality_source = source.auxiliary_sources["seasonality"]
+    seasonality_path = (resource_root / seasonality_source.path).resolve(strict=True)
+    if not seasonality_path.is_relative_to(resource_root.resolve()):
+        raise _reference_error(f"{parameter_name} seasonality source escapes the resource root")
+
+    seasonality: dict[tuple[int, int, str, str], tuple[float, int]] = {}
+    with seasonality_path.open(encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        actual_columns = tuple(reader.fieldnames or ())
+        if not set(seasonality_source.required_columns).issubset(actual_columns):
+            raise _reference_error(
+                f"{parameter_name} seasonality headers differ: "
+                f"required={seasonality_source.required_columns}, actual={actual_columns}",
+            )
+        for row_number, row in enumerate(reader, start=2):
+            year = strict_int(row["Year"], label=f"{parameter_name}:seasonality:{row_number}:Year")
+            if year not in contract.horizon.years:
+                continue
+            month = strict_int(row["Month"], label=f"{parameter_name}:seasonality:{row_number}:Month")
+            period = strict_int(row["Period"], label=f"{parameter_name}:seasonality:{row_number}:Period")
+            province = str(canonical_axis_value("Province", row["Province"]))
+            supply_type = str(canonical_axis_value("PNG/LNG", row["PNG/LNG"]))
+            coefficient = _finite_number(row["Seasonality"])
+            if not 1 <= month <= 12 or period < 0 or coefficient is None or coefficient < 0:
+                raise _reference_error(f"{parameter_name} invalid seasonality row: {row_number}")
+            key = (year, month, province, supply_type)
+            previous = seasonality.get(key)
+            if previous is not None and previous[0] != coefficient:
+                raise _reference_error(f"{parameter_name} conflicting seasonality exact key: {key!r}")
+            seasonality.setdefault(key, (coefficient, row_number))
+
+    start_column, end_column = _source_bounds(source)
+    columns = {name: _column_index(column) for name, column in source.columns.items()}
+    transform = source.transforms["Base case supply (Bcm)"]
+    totals: dict[tuple[str, int, int], float] = defaultdict(float)
+    source_counts: dict[tuple[str, int, int], int] = defaultdict(int)
+    first_references: dict[tuple[str, int, int], str] = {}
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=source.data_start_row,
+            min_col=start_column,
+            max_col=end_column,
+            values_only=True,
+        ),
+        start=source.data_start_row,
+    ):
+        year_value = values[columns["Year"] - start_column]
+        if year_value is None:
+            continue
+        try:
+            year = strict_int(year_value, label=f"{parameter_name}:{row_number}:Year")
+        except MIBaseError:
+            continue
+        if year not in contract.horizon.years:
+            continue
+        life_cycle = str(values[columns["Life Cycle Category"] - start_column] or "").strip()
+        if not life_cycle:
+            raise _reference_error(f"{parameter_name} lifecycle is empty at workbook row {row_number}")
+        if life_cycle.casefold() == "closed":
+            continue
+        country = str(canonical_axis_value("Country", values[columns["Country"] - start_column]))
+        province = str(canonical_axis_value("Province", values[columns["Province/Basin"] - start_column]))
+        supply_type = str(canonical_axis_value("PNG/LNG", values[columns["PNG/LNG"] - start_column]))
+        annual_supply_mt = _finite_number(values[columns["Base case supply (Mt)"] - start_column])
+        if not country or not province or not supply_type or annual_supply_mt is None:
+            raise _reference_error(f"{parameter_name} invalid production row: {row_number}")
+        annual_supply_bcm = annual_supply_mt * transform.factor
+        for month in range(1, 13):
+            seasonality_key = (year, month, province, supply_type)
+            seasonality_record = seasonality.get(seasonality_key)
+            if seasonality_record is None:
+                raise _reference_error(
+                    f"{parameter_name} production/seasonality join is missing: key={seasonality_key!r}",
+                )
+            coefficient, seasonality_row = seasonality_record
+            output_key = (country, year, month)
+            totals[output_key] += annual_supply_bcm * coefficient
+            source_counts[output_key] += 1
+            first_references.setdefault(
+                output_key,
+                f"{_cell_reference_id(contract, parameter, row=row_number, column=columns['Base case supply (Mt)'])}"
+                f"|{contract.release_id}:seasonality:{seasonality_path.name}:row:{seasonality_row}",
+            )
+
+    negative_totals = {key: total for key, total in totals.items() if total < 0}
+    if negative_totals:
+        raise _reference_error(
+            f"{parameter_name} aggregated monthly supply must be non-negative: {next(iter(negative_totals.items()))!r}",
+        )
+    records = tuple(
+        _record(
+            parameter_name,
+            parameter,
+            axes={"Country": country, "Year": year, "Month": month},
+            value=total,
+            metadata=None,
+            reference_id=first_references[(country, year, month)],
+            diagnostics=(
+                "production_transform=mt_divided_by_0.735",
+                "seasonality_policy=raw_not_renormalized",
+                f"aggregated_production_rows={source_counts[(country, year, month)]}",
+            ),
+        )
+        for (country, year, month), total in sorted(totals.items())
+    )
+    return records, (), frozenset()
+
+
 def _extract_parameter_records(
     contract: ModelParameterWorkbookContract,
     parameter_name: str,
     parameter: WorkbookParameterContract,
     workbook: Any,
+    *,
+    resource_root: Path,
 ) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
     source = parameter.reference_source
     if source.sheet not in workbook.sheetnames:
@@ -627,6 +825,16 @@ def _extract_parameter_records(
         return _power_mix_records(contract, parameter_name, parameter, worksheet)
     if source.parser == "fixed_rows":
         return _liq_util_records(contract, parameter_name, parameter, worksheet)
+    if source.parser == "annual_rows_to_months":
+        return _pipeline_records(contract, parameter_name, parameter, worksheet)
+    if source.parser == "production_seasonality_monthly":
+        return _supply_disruption_records(
+            contract,
+            parameter_name,
+            parameter,
+            worksheet,
+            resource_root=resource_root,
+        )
     raise _reference_error(f"Unsupported workbook reference parser: {source.parser}")
 
 
@@ -659,6 +867,7 @@ def _extract_workbook_references_uncached(
                     parameter_name,
                     parameter,
                     workbook,
+                    resource_root=resource_root,
                 )
                 if enforce_expected_counts and len(records) != parameter.reference_source.expected_record_count:
                     raise _reference_error(
@@ -722,6 +931,16 @@ def extract_workbook_references(
             path.stat().st_mtime_ns,
         )
         for role, path in sorted(paths.items())
+    ) + tuple(
+        (
+            f"{parameter_name}:{source_name}",
+            str(path),
+            path.stat().st_size,
+            path.stat().st_mtime_ns,
+        )
+        for parameter_name, parameter in sorted(resolved_contract.parameters.items())
+        for source_name, source in sorted(parameter.reference_source.auxiliary_sources.items())
+        for path in ((resolved_root / source.path).resolve(strict=True),)
     )
     canonical_contract = workbook_contract_canonical_bytes(resolved_contract)
     return _extract_workbook_references_cached(

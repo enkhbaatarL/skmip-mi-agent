@@ -318,13 +318,16 @@ review에 맡긴다.
 
 | 결과 | stage | 후속 처리 |
 | --- | --- | --- |
-| PASS | `scenario_validated` | Signpost 진행 가능 |
-| PASS_WITH_WARNINGS | `scenario_validated` | 경고 확인 후 진행 가능 |
+| PASS | `scenario_validated` | v4는 Signpost 생성 또는 direct Confirmation 가능 |
+| PASS_WITH_WARNINGS | `scenario_validated` | 경고 확인 후 v4 Signpost 생성 또는 direct Confirmation 가능 |
 | BLOCK | `scenario_created` | 수정 후 재검증 |
 
 처리 오류는 failure callback이지만 콘텐츠 blocking은 정상 success callback이다.
 
 ## 3. Create Signposts
+
+v4에서 이 단계는 선택사항이다. 생략하면 Confirmation 시작 시 같은 Validation acceptance gate를 실행하되
+Signpost operation은 만들지 않는다. v1/v3에서는 기존 필수 lifecycle을 유지한다.
 
 ### 실행 구조
 
@@ -332,7 +335,7 @@ review에 맡긴다.
 flowchart LR
     A[POST signposts] --> B[prepare_create_signposts]
     B --> C[Validation 결과·fingerprint 확인]
-    C --> D[Change Set 원자 적용]
+    C --> D[Change Set application·fingerprint 재검증]
     D --> E[Signpost operation 생성]
     E --> F[Background graph]
     F --> G[Scenario별 병렬 생성]
@@ -345,7 +348,8 @@ v4 request table은 사용하지 않는다. prepare transaction이 최신 성공
 fingerprint, Dimension fingerprint를 확인한다. stale이면 Signpost를 시작하지 않고 stage를
 `scenario_created`로 되돌린다.
 
-Validation Change Set이 있으면 다음을 한 transaction에서 적용한다.
+Validation 완료 transaction은 Change Set이 있으면 다음을 적용하고 application fingerprint를 기록한다.
+Signpost prepare 또는 direct Confirmation은 이 결과를 다시 적용하지 않고 최신 상태와 fingerprint를 검증한다.
 
 - 신규 Scenario ID 발급
 - 기존 row update와 삭제 row soft delete
@@ -355,6 +359,12 @@ Validation Change Set이 있으면 다음을 한 transaction에서 적용한다.
 
 이후 graph는 적용된 DB Scenario를 다시 읽는다. v4에서는 과거 flow의 신규 row narrative 생성과 table sync
 node가 no-op이며 Validation에서 만든 저장 필드를 다시 생성하지 않는다.
+
+### Signpost 없는 v4 Confirmation
+
+`scenario_validated` v4 group은 Confirmation load 단계에서 최신 성공 Validation의 `canProceed`와 Scenario/
+Dimension fingerprint를 검사한다. stale이면 stage를 `scenario_created`로 되돌리고 차단한다. 유효하면
+Signpost 0건인 table도 허용해 Group을 `completed`로 만든다. Signpost가 있으면 기존 검증·편집 경계를 유지한다.
 
 ### Scenario context
 

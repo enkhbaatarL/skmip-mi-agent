@@ -9,12 +9,14 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 저장소 기준선의 파라미터는 몇 개인가? | 0030 fixture master 21개 중 활성은 14개이고 LUT-backed 활성 10개와 Basecase-only 활성 4개다. 신규 proposal runtime 허용은 5개다. live DB 값은 별도 read-back이 필요하다. |
+| 저장소 기준선의 파라미터는 몇 개인가? | 0030 fixture master 21개 중 활성은 14개이고 LUT-backed 활성 10개와 Basecase-only 활성 4개다. v4 extend7 신규 proposal 허용은 7개이고 v1/v3는 기존 5개다. live DB 값은 별도 read-back이 필요하다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
 
-> 모든 버전의 신규 proposal runtime allow-list는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`다. 이 응용 계층 제한은 DB master·mapping, Lever catalog/checksum, config·resource, canonical/workbook을 변경하지 않는다.
+> v1/v3 신규 proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 이름 allow-list를
+> 유지한다. v4는 ID `{4, 6, 7, 8, 14, 15, 17}`과 name/target이 capability contract와 일치해야 한다.
+> 정상 0030 DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum, canonical/workbook을 변경하지 않는다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -41,7 +43,7 @@ flowchart LR
     V -->|v4| L[선택 value의 Lever states와\nactive catalog binding 검증]
     C --> D[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
     L --> D
-    D --> P[runtime proposal\nallow-list 5개 필터]
+    D --> P[version별 proposal scope\nv1/v3 5개 · v4 7개]
     P --> E[Basecase와 LUT를 참고해\n값 제안]
     E --> F[제안 결과 저장]
     F --> G[사용자 검토·수정]
@@ -111,7 +113,9 @@ fixture는 `scripts/model_parameter/model-impact-lever-canonical-v4-0030.json`�
 
 정적 SQL `scripts/model_parameter/apply_model_parameter_canonical_v4.sql`은 격리된 MySQL 8.0에서 첫 적용, 두 번째 semantic idempotency, 강제 precondition 실패 rollback과 post-invariant 실패 rollback을 검증한다. 격리 재검증기는 `tests/manual/model_parameter_agent/verify_model_parameter_v4_sql_mysql.py`다.
 
-`direct`는 연결표가 가리키는 항목이 곧 raw 후보다. 같은 영향 항목에 `routing` 후보가 여러 개면 allow-list 필터 후 LLM이 적합한 후보를 고르지만, 연결표에 없는 새 파라미터를 만들 수는 없다.
+`direct`는 연결표가 가리키는 항목이 곧 raw 후보다. 같은 영향 항목에 `routing` 후보가 여러 개면 v1/v3
+allow-list 필터 후 LLM이 적합한 후보를 고르지만, 연결표에 없는 새 파라미터를 만들 수는 없다. v4 binding은
+Step1.5 LLM routing 없이 deterministic candidate로 구성한다.
 
 연결표의 `comment` 컬럼도 prompt 지침으로 사용한다. `direct`·`routing`이면 `mapping_comment`라는 이름으로 “이 dimension과 파라미터를 연결하고 값을 산정할 때 어떤 근거를 우선할지” 알려 준다. `indirect`이면 후보 선택 문구가 아니라 보조정보의 `reason`으로 들어가며, `na` comment는 prompt에 넣지 않는다. 단계별 JSON 위치와 실제 GDP 예시는 [Flow 문서의 parameter hint와 mapping comment 설명](04_MODEL_PARAMETER_AGENT_FLOW.md#parameter-hint와-mapping-comment)을 참고한다.
 
@@ -148,8 +152,8 @@ v4 loader는 Scenario, Group, `display_order`로 정렬한 Group–Event 관계,
 0030 active catalog 기준선은 Lever 18개, raw parameter binding occurrence 16개를 가지며, 비활성
 CDD/HDD binding을 제외한 effective executable occurrence와 고유 활성 Parameter는 각각 14개다. 요청
 하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. `price_only`, binding 없음,
-비활성 또는 catalog unsupported는 raw 후보에서 제외한다. 그 뒤 runtime allow-list를 적용해 신규 proposal
-후보를 5개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
+비활성 또는 catalog unsupported는 raw 후보에서 제외한다. 그 뒤 v4 capability contract의 ID/name/target을
+검증해 신규 proposal 후보를 7개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
 version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다.
 
 ## 4. 결과표: 제안부터 확정까지 남기는 표
@@ -169,8 +173,10 @@ v3/v4 proposal을 개별 event 하나에 귀속시키지 않는다. repository·
 stateDiagram-v2
     [*] --> PROCESSING: 비동기 요청 접수
     PROCESSING --> PROPOSED: 제안 성공
+    PROCESSING --> ABSTAINED: 정상 판단 결과 미제안
     PROCESSING --> FAILED: 제안 실패
     [*] --> PROPOSED: 동기 요청 성공
+    [*] --> ABSTAINED: 동기 요청 미제안
     PROPOSED --> CONFIRMED: 사용자 확정
     CONFIRMED --> CONFIRMED: 다시 확정하면 최신 내용으로 갱신
 ```
@@ -179,10 +185,20 @@ stateDiagram-v2
 |---|---|
 | `PROCESSING` | 비동기 제안 작업이 진행 중 |
 | `PROPOSED` | 제안값 생성과 저장이 끝남 |
+| `ABSTAINED` | 정상적으로 판단했지만 제안할 유효값이 없음 |
 | `CONFIRMED` | 사용자가 검토한 최종값이 저장됨 |
 | `FAILED` | 제안 중 오류가 발생함 |
 
 비동기 callback 상태는 `PENDING`(전송 전), `SUCCEEDED`(성공), `FAILED`(실패)이며, 동기 요청은 `SKIPPED`다.
+
+`ABSTAINED`와 `FAILED`는 모두 `proposal_parameters=[]`을 저장한다. `ABSTAINED`는 기존 `error_code`에
+`ABSTAINED_*` 사유 코드를, `error_message`에 사용자 표시용 두 줄 안내를 저장한다. `FAILED`는 기존
+`ErrorCode` 이름과 실패 안내를 저장한다. 즉 플랫폼 B.E는 `status`로 보류/실패를 먼저 구분하고,
+`error_code`로 세부 원인을 판별하면 된다. `ABSTAINED`는 확정 대상이 아니며 후속 모델 실행 입력에서도 제외한다.
+
+운영 DB의 `status` CHECK 제약에도 `ABSTAINED`를 추가해야 한다. 이 DDL 마이그레이션의 source of truth는
+형제 저장소 `skmip-mi-agent-mgmt`이며, Agent 배포보다 먼저 적용한다. 허용 상태는
+`PROCESSING / PROPOSED / ABSTAINED / CONFIRMED / FAILED`다.
 
 ## 5. 실제 저장 구조를 짧게 보기
 
@@ -222,10 +238,11 @@ stateDiagram-v2
 ## 6. 운영자가 기억할 점
 
 - 새 파라미터를 추가하려면 이름만 등록하는 것으로 끝나지 않는다. 모델 위치, Basecase/LUT capability와 v4 Lever binding이 함께 맞아야 한다. v1/v3 지원이 필요할 때만 별도로 legacy mapping을 변경한다.
-- v1/v3의 `direct`/`routing`과 v4의 executable Lever binding은 raw 후보 소스다. 신규 proposal은 각 raw set에 runtime allow-list 5개를 적용한 결과만 사용한다.
+- v1/v3의 `direct`/`routing`과 v4의 executable Lever binding은 raw 후보 소스다. 신규 proposal은 v1/v3
+  이름 allow-list 5종 또는 v4 ID capability 7종을 적용한 결과만 사용한다.
 - 같은 좌표에서는 Basecase 값이 LUT 값보다 우선한다. DB는 어느 파일과 위치를 읽을지 정하고, 실제 참고값은 Basecase/LUT에서 얻는다.
 - 확정은 새 결과 행을 추가하지 않고 기존 제안 행을 `CONFIRMED`로 갱신한다. 다시 확정하면 이전 확정 내용이 최신 요청으로 바뀐다.
-- 실패 원인은 결과표의 오류 정보에 남고, 비동기 요청은 callback 상태도 함께 확인해야 한다.
+- 보류·실패 원인은 결과표의 `error_code`, `error_message`에 남고, 비동기 요청은 callback 상태도 함께 확인해야 한다.
 - v4 배포에서는 parameter master와 Lever catalog를 원자적으로 적용한다. catalog checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다.
 - Agent는 이 기능에서 DDL이나 canonical DML을 수행하지 않는다. 시작 시 schema validation과 context 조회가 필수 테이블·컬럼·nullable 계약 누락을 명확히 차단한다.
 - runtime allow-list는 신규 proposal 생성에만 적용하며 기존 proposal 행·confirmation·custom parameter 호환 동작을 변경하지 않는다.

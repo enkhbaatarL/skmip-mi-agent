@@ -104,7 +104,8 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 - future inactive 2개: `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
 - v4 active Lever 18개, raw binding occurrence 16개, effective executable 고유 Parameter 14개
-- proposal runtime allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
+- v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
+- v4 extend7 ID capability 7개: 위 5개 + `PipelineAdjustment`, `SupplyDisruption`
 
 이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`,

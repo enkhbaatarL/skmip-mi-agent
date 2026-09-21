@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import date
 import json
+import math
 import re
 import time
 from typing import Any, Optional
@@ -230,6 +231,69 @@ def _adjustment_debug_summary(
                 },
             )
     return summaries
+
+
+def _value_selection_diagnostics(
+    adjustments: list[dict[str, Any]],
+    warnings: list[str],
+) -> dict[str, int]:
+    unchanged_value_count = 0
+    changed_value_count = 0
+    for adjustment in adjustments:
+        for cell in adjustment.get("value_grid") or []:
+            proposed_value = cell.get("proposed_value")
+            reference_value = cell.get("basecase_value")
+            if reference_value is None:
+                reference_value = cell.get("lut_value")
+            try:
+                proposed_number = strict_float(
+                    proposed_value,
+                    label="diagnostic proposed_value",
+                )
+                reference_number = strict_float(
+                    reference_value,
+                    label="diagnostic reference_value",
+                )
+            except MIBaseError:
+                changed_value_count += 1
+                continue
+            if math.isclose(
+                proposed_number,
+                reference_number,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                unchanged_value_count += 1
+            else:
+                changed_value_count += 1
+
+    out_of_range_value_count = sum(
+        1
+        for warning in warnings
+        if "proposedValue가 음수" in warning
+        or "capability 최소값보다 작아" in warning
+        or "full-vector 범위/합계 제약" in warning
+    )
+    invalid_response_value_count = sum(
+        1
+        for warning in warnings
+        if "알 수 없는 candidate_key" in warning
+        or "slotKey가 요청 목록에 없어" in warning
+        or "동일 slotKey를 중복 반환" in warning
+        or "유한한 숫자가 아니라" in warning
+        or "candidate_key가 누락" in warning
+    )
+    if not any("proposedValue가 null" in warning for warning in warnings):
+        invalid_response_value_count += sum(
+            1 for warning in warnings if "요청한 slotKey가 누락" in warning
+        )
+    return {
+        "generated_value_count": unchanged_value_count + changed_value_count,
+        "changed_value_count": changed_value_count,
+        "unchanged_value_count": unchanged_value_count,
+        "out_of_range_value_count": out_of_range_value_count,
+        "invalid_response_value_count": invalid_response_value_count,
+    }
 
 
 def get_settings() -> Any:
@@ -923,6 +987,12 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     liq_evidence_failure_counts: dict[str, int] = {}
 
     candidate_by_key = {str(candidate.get("candidate_key") or ""): candidate for candidate in state.candidate_mappings}
+    selected_slot_counts_by_candidate: dict[str, int] = {}
+    for selected_slot in selected_slots:
+        selected_candidate_key = str(selected_slot.get("candidate_key") or "")
+        selected_slot_counts_by_candidate[selected_candidate_key] = (
+            selected_slot_counts_by_candidate.get(selected_candidate_key, 0) + 1
+        )
     for raw_slot in selected_slots:
         slot = dict(raw_slot)
         candidate_key = str(slot.get("candidate_key") or "")
@@ -1005,6 +1075,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
                 candidate,
                 canonical_slot,
                 state.scenario_context,
+                exact_candidate_count=selected_slot_counts_by_candidate.get(candidate_key),
             )
             if not evidence.allowed:
                 policy_excluded_slot_count += 1
@@ -1339,8 +1410,13 @@ async def propose_parameter_values(
         scenario_context=state.scenario_context,
     )
     selected_adjustments = [adjustment for adjustment in adjustments if adjustment.get("selected", True)]
+    value_selection_diagnostics = _value_selection_diagnostics(
+        selected_adjustments,
+        validation_warnings,
+    )
     logger.info(
-        "[model-parameter] proposed parameter values | scenario_id={} adjustment_count={} selected_count={} value_counts_by_parameter={} warning_count={}",
+        "[model-parameter] proposed parameter values | scenario_id={} adjustment_count={} "
+        "selected_count={} value_counts_by_parameter={} warning_count={}",
         state.scenario_id,
         len(adjustments),
         len(selected_adjustments),
@@ -1349,6 +1425,7 @@ async def propose_parameter_values(
     )
     output = {
         "parameter_adjustments": adjustments,
+        "value_selection_diagnostics": value_selection_diagnostics,
         "validation_warnings": [
             *state.validation_warnings,
             *validation_warnings,
@@ -1361,12 +1438,16 @@ async def propose_parameter_values(
         state.scenario_id,
         {"slot_values": _adjustment_debug_summary(adjustments)},
     )
-    if not selected_adjustments:
+    if not selected_adjustments or (
+        value_selection_diagnostics["unchanged_value_count"] > 0
+        and value_selection_diagnostics["changed_value_count"] == 0
+    ):
         _raise_v4_semantic_empty_if_applicable(
             stage="step3",
             scenario_context=state.scenario_context,
             candidates=value_candidates,
             non_input_items=state.non_input_items,
+            value_selection_diagnostics=value_selection_diagnostics,
         )
     return output
 
@@ -1994,7 +2075,9 @@ def _partition_candidate_validation_work(
     routing_candidates: list[dict[str, Any]] = []
     for candidate in candidates:
         mapping_method = str(candidate.get("mapping_method") or "").lower()
-        if mapping_method == "direct":
+        if str(candidate.get("mapping_strategy") or "").lower() == "v4":
+            deterministic.append(candidate)
+        elif mapping_method == "direct":
             deterministic.append(candidate)
         elif mapping_method == "routing":
             routing_candidates.append(candidate)
@@ -3387,6 +3470,18 @@ def _sanitize_llm_adjustments(
                     "Step3 LiqUtilAdjustment proposedValue가 음수라 제외했습니다: "
                     f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
                     f"value={slot_value.proposed_value!r}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
+            capability_constraints = candidate.get("proposal_constraints") or {}
+            minimum = capability_constraints.get("minimum") if v4_contract_context else None
+            if isinstance(minimum, (int, float)) and validated_proposed_value < float(minimum):
+                invalid_slot_keys.add(slot_key)
+                warning = (
+                    "Step3 proposedValue가 extend7 capability 최소값보다 작아 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                    f"minimum={minimum}, value={slot_value.proposed_value!r}"
                 )
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)

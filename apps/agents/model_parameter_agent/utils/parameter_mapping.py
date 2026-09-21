@@ -12,6 +12,10 @@ from apps.agents.model_parameter_agent.constants import (
     MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
     PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
 )
+from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
+    EXPECTED_EXTEND7_RELEASE_ID,
+    validate_v4_candidate_capability,
+)
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
     RuntimeLruCache,
     file_signature,
@@ -121,6 +125,7 @@ class ParameterDefinition:
     basecase_value_start_col: str | None
     basecase_value_end_col: str | None
     basecase_stop_rule: str | None
+    model_param_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -765,6 +770,7 @@ def _v4_definition_fields(
     basecase_available: bool,
 ) -> dict[str, Any]:
     return {
+        "model_param_id": definition.model_param_id,
         "model_file": definition.model_file,
         "model_sheet": definition.model_sheet,
         "model_table": definition.model_table,
@@ -1258,6 +1264,22 @@ def build_basecase_records(
             extract_workbook_references,
         )
 
+        for candidate in candidates:
+            parameter_name = str(
+                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+            ).strip()
+            registry_spec = registry.get(parameter_name)
+            expected_axes = tuple(str(item) for item in candidate.get("proposal_exact_axes") or [])
+            if registry_spec is None or registry_spec.key_axes != expected_axes:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=(
+                        "extend7 capability and runtime exact axes differ: "
+                        f"parameter={parameter_name}, capability={expected_axes}, "
+                        f"runtime={registry_spec.key_axes if registry_spec is not None else None}"
+                    ),
+                )
+
         resource_paths = get_registered_model_parameter_resource_paths()
         contract = (
             resource_paths.workbook_contract
@@ -1266,7 +1288,23 @@ def build_basecase_records(
         )
         bundle = extract_workbook_references(contract)
         records: list[dict[str, Any]] = []
-        for candidate in candidates:
+        warnings = list(bundle.warnings)
+        contract_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.get("proposal_reference_mode") == "v4_workbook_then_lut"
+        ]
+        unknown_modes = [
+            str(candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "")
+            for candidate in candidates
+            if candidate not in contract_candidates
+        ]
+        if unknown_modes:
+            raise MIBaseError(
+                ErrorCode.INVALID_REQUEST,
+                detail=f"v4 proposal candidates have unknown reference modes: {sorted(unknown_modes)}",
+            )
+        for candidate in contract_candidates:
             parameter_contract = validate_candidate_write_target(contract, candidate)
             parameter_name = str(
                 candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
@@ -1321,8 +1359,23 @@ def build_basecase_records(
                 }
                 for reference in bundle.records_for(parameter_name)
             )
-        return records, list(bundle.warnings)
+        return records, warnings
 
+    return _build_legacy_basecase_records(
+        kb,
+        candidates,
+        scenario_context,
+        registry=registry,
+    )
+
+
+def _build_legacy_basecase_records(
+    kb: ParameterKnowledgeBase,
+    candidates: list[dict[str, Any]],
+    scenario_context: dict[str, Any],
+    *,
+    registry: ParameterSpecRegistry,
+) -> tuple[list[dict[str, Any]], list[str]]:
     workbook_loader = _require_workbook_loader()
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
@@ -1563,7 +1616,21 @@ def partition_proposal_parameter_candidates(
         parameter_name = normalize_parameter_name(
             candidate.get("canonical_parameter_name") or candidate.get("parameter_name"),
         )
-        if parameter_name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+        if str(candidate.get("mapping_strategy") or "").lower() == "v4":
+            capability = validate_v4_candidate_capability(candidate)
+            if capability is not None:
+                allowed.append(
+                    {
+                        **candidate,
+                        "proposal_capability_release_id": EXPECTED_EXTEND7_RELEASE_ID,
+                        "proposal_reference_mode": capability.reference_mode,
+                        "proposal_exact_axes": list(capability.exact_axes),
+                        "proposal_evidence_policy": capability.evidence_policy,
+                        "proposal_constraints": dict(capability.constraints),
+                    },
+                )
+                continue
+        elif parameter_name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
             allowed.append(candidate)
             continue
         excluded.append(
@@ -1638,6 +1705,7 @@ def _parameter_definitions_from_rows(
                 detail=f"{source_name} duplicate parameter_name: {canonical}",
             )
         definitions[canonical] = ParameterDefinition(
+            model_param_id=_int_or_none(row_map.get("model_param_id")),
             canonical_parameter_name=canonical,
             parameter_hint=_none_if_dash(row_map.get("parameter_hint")),
             model_file=_clean_text(row_map.get("model_file")),

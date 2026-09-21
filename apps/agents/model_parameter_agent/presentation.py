@@ -367,9 +367,36 @@ def _callback_success_output(
     )
 
 
+def _callback_abstained_output(
+    *,
+    message: str,
+    reason_code: str,
+    stage: str,
+    model_param_proposal_id: int,
+    scenario_id: int,
+    scenario_group_id: int | None,
+    event_id: int | None,
+) -> ProposeParametersCallbackOut:
+    return ProposeParametersCallbackOut(
+        status="success",
+        message=message,
+        data=ProposeParametersCallbackData(
+            model_param_proposal_id=model_param_proposal_id,
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            event_id=event_id,
+            status="ABSTAINED",
+            result_code=reason_code,
+            result_message=message,
+            result_stage=stage,
+        ),
+    )
+
+
 def _callback_error_output(
     *,
     message: str,
+    error_code: str,
     model_param_proposal_id: int,
     scenario_id: int,
     scenario_group_id: int | None,
@@ -384,6 +411,8 @@ def _callback_error_output(
             scenario_group_id=scenario_group_id,
             event_id=event_id,
             status="FAILED",
+            result_code=error_code,
+            result_message=message,
         ),
     )
 

@@ -92,6 +92,34 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         self.session.flush()
         return int(proposal.model_param_proposal_id)
 
+    def create_abstained_model_param_proposal(
+        self,
+        *,
+        scenario_id: int,
+        scenario_group_id: int,
+        mi_event_id: int | None,
+        request_usr_id: int | None,
+        reason_code: str,
+        reason_message: str,
+    ) -> int:
+        proposal = MiModelParamProposalModel(
+            scenario_id=scenario_id,
+            scenario_group_id=scenario_group_id,
+            mi_event_id=mi_event_id,
+            request_usr_id=request_usr_id,
+            crt_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
+            mod_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
+            status="ABSTAINED",
+            proposal_parameters=[],
+            proposal_completed_dtm=datetime.now(),
+            error_code=reason_code,
+            error_message=reason_message,
+            callback_status="SKIPPED",
+        )
+        self.session.add(proposal)
+        self.session.flush()
+        return int(proposal.model_param_proposal_id)
+
     def fetch_proposals_by_group(
         self,
         scenario_group_id: int,
@@ -230,6 +258,8 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             "callback_status": proposal.callback_status,
             "proposal_parameters": _json_safe(proposal.proposal_parameters),
             "confirmation_parameters": _json_safe(proposal.confirmation_parameters),
+            "error_code": getattr(proposal, "error_code", None),
+            "error_message": getattr(proposal, "error_message", None),
         }
 
     def confirm_model_param_proposal(
@@ -294,6 +324,27 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         proposal.error_message = error_message
         return True
 
+    def abstain_model_param_proposal(
+        self,
+        *,
+        model_param_proposal_id: int,
+        reason_code: str,
+        reason_message: str,
+    ) -> bool:
+        stmt = select(MiModelParamProposalModel).where(
+            MiModelParamProposalModel.model_param_proposal_id == model_param_proposal_id,
+            MiModelParamProposalModel.del_yn == "N",
+        )
+        proposal = self.session.execute(stmt).scalars().one_or_none()
+        if proposal is None:
+            return False
+        proposal.proposal_parameters = []
+        proposal.status = "ABSTAINED"
+        proposal.proposal_completed_dtm = datetime.now()
+        proposal.error_code = reason_code
+        proposal.error_message = reason_message
+        return True
+
     def update_model_param_callback_status(
         self,
         *,
@@ -352,6 +403,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
 
     def _parameter_definition_to_dict(self, parameter: MiModelParamModel) -> dict[str, Any]:
         return {
+            "model_param_id": parameter.model_param_id,
             "canonical_parameter_name": parameter.parameter_name,
             "parameter_hint": parameter.parameter_hint,
             "model_file": parameter.model_file,

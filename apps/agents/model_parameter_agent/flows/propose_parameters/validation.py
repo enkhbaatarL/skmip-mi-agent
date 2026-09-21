@@ -20,10 +20,16 @@ from apps.common.values.error_codes import ErrorCode
 
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
 V4_NO_CHANGE_TITLE = "파라미터로 반영할 변경 항목이 없습니다."
-V4_NO_MODEL_INPUT_TITLE = "파라미터를 적용할 모델 입력 위치를 찾지 못했습니다."
+V4_NO_MODEL_INPUT_TITLE = "파라미터를 적용할 위치를 찾지 못했습니다."
 V4_NO_PARAMETER_VALUE_TITLE = "적용할 파라미터 값을 생성하지 못했습니다."
 V4_FAILURE_DETAIL_MAX_LENGTH = 300
 V4_CANDIDATE_CONFIGURATION_ERROR_CODES = {"ACTIVE_PARAMETER_DEFINITION_MISSING"}
+ABSTAINED_OUT_OF_PROPOSAL_SCOPE = "ABSTAINED_OUT_OF_PROPOSAL_SCOPE"
+ABSTAINED_INSUFFICIENT_EVIDENCE = "ABSTAINED_INSUFFICIENT_EVIDENCE"
+ABSTAINED_MODEL_INPUT_NOT_FOUND = "ABSTAINED_MODEL_INPUT_NOT_FOUND"
+ABSTAINED_VALUE_NOT_GENERATED = "ABSTAINED_VALUE_NOT_GENERATED"
+ABSTAINED_VALUE_OUT_OF_RANGE = "ABSTAINED_VALUE_OUT_OF_RANGE"
+ABSTAINED_NO_CHANGE = "ABSTAINED_NO_CHANGE"
 V4_PARAMETER_PUBLIC_LABELS = {
     "GDP": "GDP",
     "PMI": "PMI",
@@ -92,17 +98,28 @@ _V4_GENERIC_SCOPE_VALUES = frozenset(
         "지역",
     },
 )
-class ModelParameterSemanticEmptyError(MIBaseError):
-    """V4의 의미상 빈 결과를 현업용 두 줄 메시지로 전달합니다."""
 
-    def __init__(self, *, title: str, detail: str) -> None:
+
+class ModelParameterSemanticEmptyError(MIBaseError):
+    """V4의 정상적인 미제안 결과를 구조화해 전달합니다."""
+
+    def __init__(
+        self,
+        *,
+        reason_code: str,
+        stage: V4SemanticEmptyStage,
+        title: str,
+        detail: str,
+    ) -> None:
         normalized_detail = " ".join(str(detail or "").split())
         if not normalized_detail:
-            normalized_detail = "처리 결과를 수급모델 파라미터 제안으로 확정하지 못했습니다."
+            normalized_detail = "제안할 값을 정할 수 있는 충분한 근거를 찾지 못했습니다."
         if len(normalized_detail) > V4_FAILURE_DETAIL_MAX_LENGTH:
             normalized_detail = normalized_detail[: V4_FAILURE_DETAIL_MAX_LENGTH - 1].rstrip() + "…"
         public_message = f"{title}\n{normalized_detail}"
         super().__init__(ErrorCode.INVALID_REQUEST)
+        self.reason_code = reason_code
+        self.stage = stage
         self.error_message = public_message
         self.args = (public_message,)
 
@@ -354,49 +371,49 @@ def _v4_step2_empty_detail(
     target_hint, time_hint = _step2_axis_guidance(slot_catalog)
     if failure_kind == "catalog_unavailable":
         return (
-            f"{subject} 확인했지만, 현재 모델 기준정보에 선택 가능한 입력 위치가 준비되어 있지 않습니다. "
-            "모델 기준정보의 대상·기간 범위를 확인해 주세요."
+            f"{subject} 확인했지만, 현재 입력 가능한 대상·기간 목록에서 일치하는 위치를 찾지 못해 "
+            "제안하지 않았습니다. 시나리오의 적용 대상과 기간을 확인해 주세요."
         )
     if failure_kind == "selection_invalid":
         return (
-            f"{subject} 확인했지만, 제안된 위치 정보가 모델 입력 형식과 맞지 않아 안전하게 적용하지 않았습니다. "
-            "동일한 문제가 계속되면 담당자에게 확인해 주세요."
+            f"{subject} 확인했지만, 선택된 적용 위치가 파라미터의 대상·기간 조건과 맞지 않아 "
+            "제안하지 않았습니다. 시나리오의 적용 대상과 기간을 확인해 주세요."
         )
     if failure_kind == "policy_excluded":
         return (
-            f"{subject} 확인했지만, 현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다. "
-            f"{target_hint}과 {time_hint}을 확인해 주세요."
+            f"{subject} 확인했지만, 시나리오 내용만으로 적용할 대상과 기간을 정할 근거가 부족해 "
+            f"제안하지 않았습니다. {target_hint}과 {time_hint}을 확인해 주세요."
         )
     if failure_kind == "exact_mismatch":
         return (
-            f"{subject} 확인했지만, 제안된 대상·기간 조합이 현재 등록된 모델 입력 위치와 일치하지 않았습니다. "
-            f"{target_hint}과 {time_hint}이 모델 기준 범위에 포함되는지 확인해 주세요."
+            f"{subject} 확인했지만, 시나리오의 대상·기간 조합이 현재 입력 가능한 위치와 일치하지 않아 "
+            "제안하지 않았습니다. "
+            f"{target_hint}과 {time_hint}이 사용 가능한 범위에 포함되는지 확인해 주세요."
         )
     if failure_kind == "selection_empty":
         has_specific_scope = _has_specific_scope_context(candidates)
-        has_time_context, has_specific_time = _time_context_status(candidates)
+        _, has_specific_time = _time_context_status(candidates)
         if has_specific_scope and not has_specific_time:
-            known_time = "와 대략적인 기간" if has_time_context else ""
             return (
-                f"{subject} 확인했고 대상 범위{known_time} 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 "
-                f"적용할 곳을 확정하지 못했습니다. {time_hint}이 명확한지 확인해 주세요."
+                f"{subject} 확인했고 적용 대상도 찾았지만, "
+                f"{time_hint}이 명확하지 않아 제안하지 않았습니다. 적용 기간을 확인해 주세요."
             )
         if has_specific_time and not has_specific_scope:
             return (
-                f"{subject} 확인했고 적용 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 "
-                f"확정하지 못했습니다. {target_hint}이 명확한지 확인해 주세요."
+                f"{subject} 확인했고 적용 기간도 찾았지만, "
+                f"{target_hint}이 명확하지 않아 제안하지 않았습니다. 적용 대상을 확인해 주세요."
             )
         if has_specific_scope and has_specific_time:
             return (
-                f"{subject} 확인했고 대상 범위와 기간 정보도 확인했습니다. 다만 등록된 위치 중 자동으로 적용할 곳을 "
-                f"확정하지 못했습니다. {target_hint}과 {time_hint}이 모델 기준 범위와 맞는지 확인해 주세요."
+                f"{subject} 확인했고 적용 대상과 기간도 찾았지만, 현재 입력 가능한 위치와 정확히 연결하지 못해 "
+                f"제안하지 않았습니다. {target_hint}과 {time_hint}이 사용 가능한 범위와 맞는지 확인해 주세요."
             )
         return (
-            f"{subject} 확인했지만, 등록된 위치 중 자동으로 적용할 곳을 확정하지 못했습니다. "
-            f"{target_hint}과 {time_hint}이 명확한지 확인해 주세요."
+            f"{subject} 확인했지만, 적용 대상과 기간이 충분히 구체적이지 않아 제안하지 않았습니다. "
+            f"{target_hint}과 {time_hint}을 확인해 주세요."
         )
     return (
-        f"{subject} 확인했지만, 현재 시나리오에 적용할 모델 입력 위치를 확정하지 못했습니다. "
+        f"{subject} 확인했지만, 시나리오 내용만으로 적용할 위치를 확정할 근거가 부족해 제안하지 않았습니다. "
         f"{target_hint}과 {time_hint}을 확인해 주세요."
     )
 
@@ -423,6 +440,7 @@ def _v4_semantic_empty_detail(
     non_input_items: list[dict[str, Any]],
     slot_catalog: list[dict[str, Any]],
     slot_selection_diagnostics: dict[str, int],
+    value_selection_diagnostics: dict[str, int],
 ) -> tuple[str, str]:
     lever_scope = _public_lever_scope(candidates or non_input_items)
     parameter_scope = _public_parameter_scope(candidates)
@@ -435,30 +453,37 @@ def _v4_semantic_empty_detail(
                 f'{subject} 확인했지만, 변화 방향이 모두 "변화 없음"으로 설정되어 '
                 "수급모델에 반영할 변경 항목이 없습니다.",
             )
+        if "PROPOSAL_SCOPE_EXCLUDED" in reason_codes:
+            return (
+                V4_NO_CHANGE_TITLE,
+                "시나리오에서 변경 가능성이 있는 항목을 확인했지만, 현재 자동 제안 대상에 "
+                "포함되지 않아 제안에서 제외했습니다.",
+            )
         return (
             V4_NO_CHANGE_TITLE,
-            "이벤트와 시나리오 분기값을 확인했지만, 현재 활성화된 수급모델 파라미터와 연결되는 변경 항목이 없습니다.",
+            "이벤트와 선택한 시나리오 조건을 확인했지만, 현재 자동 제안 가능한 파라미터와 "
+            "연결되는 변경 항목이 없습니다.",
         )
     if stage == "step1_5":
         subject = _public_scope_subject(
             parameter_scope=parameter_scope,
             lever_scope=lever_scope,
-            parameter_suffix=" 파라미터 후보는",
-            lever_suffix=" 관련 파라미터 후보는",
-            default="수급모델 파라미터 후보는",
+            parameter_suffix=" 관련 항목은",
+            lever_suffix=" 관련 항목은",
+            default="변경 가능성이 있는 항목은",
         )
         return (
             V4_NO_CHANGE_TITLE,
-            f"{subject} 확인했지만, 시나리오·이벤트 근거와 파라미터 적용 조건을 함께 "
-            "충족하는 항목을 확정하지 못했습니다.",
+            f"{subject} 확인했지만, 시나리오와 이벤트 내용만으로 실제 변경이 필요한지 판단할 "
+            "근거가 부족해 제안하지 않았습니다.",
         )
     if stage == "step2":
         subject = _public_scope_subject(
             parameter_scope=parameter_scope,
             lever_scope=lever_scope,
-            parameter_suffix=" 파라미터 후보는",
-            lever_suffix=" 관련 파라미터 후보는",
-            default="관련 파라미터 후보는",
+            parameter_suffix=" 관련 항목은",
+            lever_suffix=" 관련 항목은",
+            default="관련 항목은",
         )
         return (
             V4_NO_MODEL_INPUT_TITLE,
@@ -472,15 +497,65 @@ def _v4_semantic_empty_detail(
     subject = _public_scope_subject(
         parameter_scope=parameter_scope,
         lever_scope=lever_scope,
-        parameter_suffix=" 파라미터와",
-        lever_suffix=" 관련 파라미터와",
-        default="관련 파라미터와",
+        parameter_suffix=" 항목과",
+        lever_suffix=" 관련 항목과",
+        default="관련 항목과",
     )
+    if value_selection_diagnostics.get("out_of_range_value_count", 0) > 0:
+        return (
+            V4_NO_PARAMETER_VALUE_TITLE,
+            f"{subject} 적용 위치는 확인했지만, 생성된 값이 해당 파라미터의 "
+            "허용 수치 범위를 벗어나 제안에서 제외했습니다.",
+        )
+    if (
+        value_selection_diagnostics.get("unchanged_value_count", 0) > 0
+        and value_selection_diagnostics.get("changed_value_count", 0) == 0
+    ):
+        return (
+            V4_NO_CHANGE_TITLE,
+            f"{subject} 적용 위치와 값을 확인했지만, 모든 제안값이 현재 "
+            "기준값과 동일해 실제 변경 사항이 없습니다.",
+        )
     return (
         V4_NO_PARAMETER_VALUE_TITLE,
-        f"{subject} 모델 입력 위치는 확인했지만, 시나리오·이벤트 근거와 기준값에 부합하는 "
-        "유효한 적용 수치를 생성하지 못했습니다.",
+        f"{subject} 적용 위치는 확인했지만, 시나리오와 이벤트 내용만으로 기준값에서 얼마나 변경할지 "
+        "결정할 근거가 부족해 제안값을 만들지 않았습니다.",
     )
+
+
+def _v4_semantic_empty_reason_code(
+    *,
+    stage: V4SemanticEmptyStage,
+    non_input_items: list[dict[str, Any]],
+    slot_catalog: list[dict[str, Any]],
+    slot_selection_diagnostics: dict[str, int],
+    value_selection_diagnostics: dict[str, int],
+) -> str:
+    exclusion_codes = _candidate_exclusion_reason_codes(non_input_items)
+    if stage == "candidate_generation":
+        if exclusion_codes and exclusion_codes <= {"UNCHANGED_LEVER_STATE"}:
+            return ABSTAINED_NO_CHANGE
+        return ABSTAINED_OUT_OF_PROPOSAL_SCOPE
+    if stage == "step1_5":
+        return ABSTAINED_INSUFFICIENT_EVIDENCE
+    if stage == "step2":
+        if "ABSTAINED_INSUFFICIENT_EVIDENCE" in exclusion_codes:
+            return ABSTAINED_INSUFFICIENT_EVIDENCE
+        failure_kind = _step2_failure_kind(
+            slot_catalog=slot_catalog,
+            diagnostics=slot_selection_diagnostics,
+        )
+        if failure_kind in {"selection_empty", "policy_excluded"}:
+            return ABSTAINED_INSUFFICIENT_EVIDENCE
+        return ABSTAINED_MODEL_INPUT_NOT_FOUND
+    if value_selection_diagnostics.get("out_of_range_value_count", 0) > 0:
+        return ABSTAINED_VALUE_OUT_OF_RANGE
+    if (
+        value_selection_diagnostics.get("unchanged_value_count", 0) > 0
+        and value_selection_diagnostics.get("changed_value_count", 0) == 0
+    ):
+        return ABSTAINED_NO_CHANGE
+    return ABSTAINED_VALUE_NOT_GENERATED
 
 
 def _raise_v4_semantic_empty_if_applicable(
@@ -491,6 +566,7 @@ def _raise_v4_semantic_empty_if_applicable(
     non_input_items: list[dict[str, Any]] | None = None,
     slot_catalog: list[dict[str, Any]] | None = None,
     slot_selection_diagnostics: dict[str, int] | None = None,
+    value_selection_diagnostics: dict[str, int] | None = None,
 ) -> None:
     if not _is_v4_scenario_context(scenario_context):
         return
@@ -503,14 +579,45 @@ def _raise_v4_semantic_empty_if_applicable(
     )
     if stage == "candidate_generation" and set(reason_codes) & V4_CANDIDATE_CONFIGURATION_ERROR_CODES:
         return
+    if stage == "step2" and _step2_failure_kind(
+        slot_catalog=slot_catalog or [],
+        diagnostics=slot_selection_diagnostics or {},
+    ) == "selection_invalid":
+        raise MIBaseError(
+            ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+            detail="선택한 적용 위치가 모두 확인 기준을 통과하지 못했습니다.",
+        )
+    if (
+        stage == "step3"
+        and value_selection_diagnostics
+        and value_selection_diagnostics.get("generated_value_count", 0) == 0
+        and value_selection_diagnostics.get("invalid_response_value_count", 0) > 0
+    ):
+        raise MIBaseError(
+            ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+            detail="생성된 제안값이 모두 확인 기준을 통과하지 못했습니다.",
+        )
     title, detail = _v4_semantic_empty_detail(
         stage=stage,
         candidates=candidates or [],
         non_input_items=non_input_items or [],
         slot_catalog=slot_catalog or [],
         slot_selection_diagnostics=slot_selection_diagnostics or {},
+        value_selection_diagnostics=value_selection_diagnostics or {},
     )
-    raise ModelParameterSemanticEmptyError(title=title, detail=detail)
+    reason_code = _v4_semantic_empty_reason_code(
+        stage=stage,
+        non_input_items=non_input_items or [],
+        slot_catalog=slot_catalog or [],
+        slot_selection_diagnostics=slot_selection_diagnostics or {},
+        value_selection_diagnostics=value_selection_diagnostics or {},
+    )
+    raise ModelParameterSemanticEmptyError(
+        reason_code=reason_code,
+        stage=stage,
+        title=title,
+        detail=detail,
+    )
 
 
 def _route_after_candidate_validation(state: ModelParameterProposalState | dict[str, Any]) -> str:
@@ -557,10 +664,20 @@ def _raise_no_mapping_candidates(state: ModelParameterProposalState | dict[str, 
         scenario_context=_scenario_context_from_state(state),
         non_input_items=non_input_items,
     )
-    reason_detail = f"; exclusion_reason_codes={reason_codes}" if reason_codes else ""
-    raise MIBaseError(
-        ErrorCode.INVALID_REQUEST,
-        detail=(f"No model parameter mapping candidates found for scenario_id={scenario_id}{reason_detail}"),
+    if set(reason_codes) & V4_CANDIDATE_CONFIGURATION_ERROR_CODES:
+        reason_detail = f"; exclusion_reason_codes={reason_codes}" if reason_codes else ""
+        raise MIBaseError(
+            ErrorCode.INVALID_REQUEST,
+            detail=(f"No model parameter mapping candidates found for scenario_id={scenario_id}{reason_detail}"),
+        )
+    raise ModelParameterSemanticEmptyError(
+        reason_code=ABSTAINED_OUT_OF_PROPOSAL_SCOPE,
+        stage="candidate_generation",
+        title=V4_NO_CHANGE_TITLE,
+        detail=(
+            "이벤트와 선택한 시나리오 조건을 확인했지만, 현재 자동 제안 가능한 파라미터와 "
+            "연결되는 변경 항목이 없습니다."
+        ),
     )
 
 
@@ -578,19 +695,32 @@ def _raise_no_proposal_parameters(
     has_step3_input = bool(data.get("parameter_slots") or data.get("effective_references")) or any(
         isinstance(adjustment, dict) and adjustment.get("selected", True) is not False for adjustment in adjustments
     )
+    stage: V4SemanticEmptyStage = "step3" if has_step3_input else "step2"
     _raise_v4_semantic_empty_if_applicable(
-        stage="step3" if has_step3_input else "step2",
+        stage=stage,
         scenario_context=_scenario_context_from_state(data),
         candidates=data.get("slot_candidate_mappings") or data.get("candidate_mappings") or [],
         non_input_items=data.get("non_input_items") or [],
         slot_catalog=data.get("slot_catalog") or [],
         slot_selection_diagnostics=data.get("slot_selection_diagnostics") or {},
+        value_selection_diagnostics=data.get("value_selection_diagnostics") or {},
     )
-    scenario_id = _scenario_id_from_state(data)
-    detail = f"No valid model parameter proposal parameters generated for scenario_id={scenario_id}"
-    if reason:
-        detail = f"{detail}: {reason}"
-    raise MIBaseError(ErrorCode.INVALID_REQUEST, detail=detail)
+    raise ModelParameterSemanticEmptyError(
+        reason_code=(
+            ABSTAINED_VALUE_NOT_GENERATED
+            if has_step3_input
+            else ABSTAINED_MODEL_INPUT_NOT_FOUND
+        ),
+        stage=stage,
+        title=(V4_NO_PARAMETER_VALUE_TITLE if has_step3_input else V4_NO_MODEL_INPUT_TITLE),
+        detail=(
+            "변경 가능성이 있는 항목과 적용 위치는 확인했지만, 시나리오 근거만으로 기준값에서 얼마나 "
+            "변경할지 정할 수 없어 제안값을 만들지 않았습니다."
+            if has_step3_input
+            else "변경 가능성이 있는 항목은 확인했지만, 적용 대상과 기간을 확정할 근거가 부족해 "
+            "제안하지 않았습니다."
+        ),
+    )
 
 
 def _ensure_proposal_parameters(

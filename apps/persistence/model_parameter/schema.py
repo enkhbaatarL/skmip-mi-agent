@@ -8,6 +8,7 @@ from apps.persistence.schema_base import ApiModel
 
 
 class ModelParameterDefinitionPayload(ApiModel):
+    model_param_id: int | None = None
     canonical_parameter_name: str
     parameter_hint: str | None = None
     model_file: str

@@ -41,10 +41,7 @@ if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
 
 from sqlalchemy import inspect, select
 
-from apps.agents.model_parameter_agent.constants import (
-    MODEL_PARAMETER_PROPOSAL_ALLOWLIST,
-    PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
-)
+from apps.agents.model_parameter_agent.constants import PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -54,6 +51,9 @@ from apps.agents.model_parameter_agent.presentation import (
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     match_v4_parameter_candidates_from_rows,
     partition_proposal_parameter_candidates,
+)
+from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
+    load_proposal_capability_contract,
 )
 from apps.common.configs.database.sync_database.connection import get_sync_session
 from apps.persistence.model_impact_lever.models import MiModelImpactLeverModel
@@ -73,6 +73,7 @@ from tests.manual.model_parameter_agent.runner_common import (
 )
 
 
+V4_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract().by_name)
 V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 MIN_EVENT_COUNT = 1
@@ -1060,11 +1061,11 @@ def build_v4_scenario_evidence(
 
     for candidate in runtime_candidates:
         name = _parameter_name(candidate)
-        if name not in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+        if name not in V4_PROPOSAL_CAPABILITY_NAMES:
             errors.append(f"runtime allowlist 밖 후보가 허용됨: {name or '-'}")
     for candidate in blocked_candidates:
         name = _parameter_name(candidate)
-        if name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST:
+        if name in V4_PROPOSAL_CAPABILITY_NAMES:
             errors.append(f"runtime allowlist 후보가 차단됨: {name}")
         if candidate.get("reason_code") != PROPOSAL_SCOPE_EXCLUDED_REASON_CODE:
             errors.append(
@@ -2046,7 +2047,7 @@ def build_coverage_rows(
     for name in active_names:
         classification: Literal["runtime-allowed", "active-but-blocked"] = (
             "runtime-allowed"
-            if name in MODEL_PARAMETER_PROPOSAL_ALLOWLIST
+            if name in V4_PROPOSAL_CAPABILITY_NAMES
             else "active-but-blocked"
         )
         raw = sum(_parameter_name(item) == name for item in evidence.raw_candidates)
@@ -2171,7 +2172,7 @@ def render_report(
         f"- 종합 판정: **{verdict}**",
         f"- 대상 계약: `api_version={V4_API_VERSION}`, `generation_strategy={V4_STRATEGY}`",
         "- ordered event 경계: 1~5개",
-        "- runtime allowlist: " + ", ".join(sorted(MODEL_PARAMETER_PROPOSAL_ALLOWLIST)),
+        "- v4 proposal capability: " + ", ".join(sorted(V4_PROPOSAL_CAPABILITY_NAMES)),
         f"- blocked reason code: `{PROPOSAL_SCOPE_EXCLUDED_REASON_CODE}`",
         "",
         "## Preflight / automated gate",

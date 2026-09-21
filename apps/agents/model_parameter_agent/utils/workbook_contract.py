@@ -11,7 +11,7 @@ import re
 from types import MappingProxyType
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
@@ -19,8 +19,11 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v1.json"
-EXPECTED_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v2.json"
+V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
+EXPECTED_PARAMETER_NAMES = frozenset(
+    {*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"},
+)
 EXPECTED_WORKBOOK_ROLES = frozenset({"demand", "supply", "trade"})
 APPROVED_POWER_MIX_VECTOR_MEMBERS = (
     "Liquids",
@@ -40,8 +43,10 @@ _EXCEL_COLUMN_PATTERN = re.compile(r"^[A-Z]{1,3}$")
 WorkbookRole = Literal["demand", "supply", "trade"]
 ReferenceParser = Literal[
     "annual_deduplicated_rows",
+    "annual_rows_to_months",
     "fixed_rows",
     "gdp_growth_from_levels",
+    "production_seasonality_monthly",
     "year_columns",
 ]
 ProposalMode = Literal["auto", "conditional"]
@@ -59,6 +64,13 @@ def _safe_relative_path(value: str, *, label: str) -> str:
     if path.is_absolute() or "." in path.parts or ".." in path.parts:
         raise ValueError(f"{label} escapes the package resource directory: {value}")
     return path.as_posix()
+
+
+def _extends_basename(value: object) -> str:
+    extends = str(value)
+    if PurePosixPath(extends).name != extends or not extends.endswith(".json"):
+        raise ValueError("workbook contract extends must be a JSON basename")
+    return extends
 
 
 class _FrozenModel(BaseModel):
@@ -128,6 +140,31 @@ class ReferenceTransform(_FrozenModel):
         return self
 
 
+class ReferenceAuxiliarySource(_FrozenModel):
+    path: str
+    sha256: str
+    required_columns: tuple[str, ...]
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return _safe_relative_path(value, label="reference auxiliary source")
+
+    @field_validator("sha256")
+    @classmethod
+    def validate_sha256(cls, value: str) -> str:
+        if _SHA256_PATTERN.fullmatch(value) is None:
+            raise ValueError("reference auxiliary source sha256 must contain 64 lowercase hexadecimal characters")
+        return value
+
+    @field_validator("required_columns")
+    @classmethod
+    def validate_required_columns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or any(not item.strip() for item in value) or len(value) != len(set(value)):
+            raise ValueError("reference auxiliary source columns must be unique non-empty names")
+        return value
+
+
 class ReferenceSource(_FrozenModel):
     workbook_role: WorkbookRole
     sheet: str
@@ -138,6 +175,7 @@ class ReferenceSource(_FrozenModel):
     columns: dict[str, str]
     column_headers: dict[str, str] = Field(default_factory=dict)
     transforms: dict[str, ReferenceTransform] = Field(default_factory=dict)
+    auxiliary_sources: dict[str, ReferenceAuxiliarySource] = Field(default_factory=dict)
     key_axes: tuple[str, ...]
     metadata_axes: tuple[str, ...]
     value_field: str
@@ -164,6 +202,8 @@ class ReferenceSource(_FrozenModel):
             raise ValueError(f"transforms contain unknown source fields: {sorted(unknown_transform_fields)}")
         if any(not value.strip() for value in (self.sheet, self.range, self.value_field, self.reference_unit)):
             raise ValueError("reference source text fields must be non-empty")
+        if any(not name.strip() for name in self.auxiliary_sources):
+            raise ValueError("reference auxiliary source names must be non-empty")
         return self
 
 
@@ -240,8 +280,8 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1]
-    release_id: Literal["new-bc-v1"]
+    schema_version: Literal[1, 2]
+    release_id: Literal["new-bc-v1", "new-bc-v2"]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
     generation_strategy: Literal["multi_event_model_lever_dimensions"]
@@ -262,8 +302,11 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "workbook roles must be exactly demand, supply, and trade",
             )
-        if set(self.parameters) != EXPECTED_PARAMETER_NAMES:
-            raise ValueError(f"parameter names must be exactly {sorted(EXPECTED_PARAMETER_NAMES)}")
+        expected_parameters = V1_PARAMETER_NAMES if self.release_id == "new-bc-v1" else EXPECTED_PARAMETER_NAMES
+        if self.schema_version != (1 if self.release_id == "new-bc-v1" else 2):
+            raise ValueError("workbook contract schema version and release ID disagree")
+        if set(self.parameters) != expected_parameters:
+            raise ValueError(f"parameter names must be exactly {sorted(expected_parameters)}")
         power_mix = self.parameters["PowerMix"]
         if (
             power_mix.constraints.atomic_group_axes != ("Country", "Year")
@@ -293,6 +336,23 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 "LiqUtilAdjustment must retain its evidence gate, zero minimum, unbounded maximum, "
                 "and MTPM-to-MTPA transform",
             )
+        if self.release_id == "new-bc-v2":
+            pipeline = self.parameters["PipelineAdjustment"]
+            supply = self.parameters["SupplyDisruption"]
+            if (
+                pipeline.reference_source.parser != "annual_rows_to_months"
+                or pipeline.reference_source.key_axes
+                != ("Pipeline Name", "From Country", "To Country", "Year", "Month")
+                or pipeline.constraints.minimum != 0.0
+            ):
+                raise ValueError("PipelineAdjustment must retain the approved monthly exact-slot workbook contract")
+            if (
+                supply.reference_source.parser != "production_seasonality_monthly"
+                or supply.reference_source.key_axes != ("Country", "Year", "Month")
+                or set(supply.reference_source.auxiliary_sources) != {"seasonality"}
+                or supply.constraints.minimum != 0.0
+            ):
+                raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
         return self
 
 
@@ -310,11 +370,21 @@ def load_workbook_contract(
     path: Path = DEFAULT_WORKBOOK_CONTRACT_PATH,
 ) -> ModelParameterWorkbookContract:
     try:
-        raw = path.read_text(encoding="utf-8")
-        return ModelParameterWorkbookContract.model_validate_json(raw)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document.get("schema_version") == 2 and "extends" in document:
+            extends = _extends_basename(document.pop("extends"))
+            base_path = path.parent / extends
+            base_document = json.loads(base_path.read_text(encoding="utf-8"))
+            base_document.update({key: value for key, value in document.items() if key != "parameters"})
+            base_document["parameters"] = {
+                **base_document.get("parameters", {}),
+                **document.get("parameters", {}),
+            }
+            document = base_document
+        return ModelParameterWorkbookContract.model_validate(document)
     except OSError as exc:
         raise _contract_error(f"Unable to read workbook contract: {path}") from exc
-    except ValidationError as exc:
+    except ValueError as exc:
         raise _contract_error(f"Invalid workbook contract {path}: {exc}") from exc
 
 
@@ -375,6 +445,21 @@ def validate_workbook_hashes(
             raise _contract_error(
                 f"Workbook sha256 mismatch for {role}: expected={expected_sha256}, actual={actual_sha256}",
             )
+    resolved_root = resource_root.resolve()
+    for parameter_name, parameter in contract.parameters.items():
+        for source_name, source in parameter.reference_source.auxiliary_sources.items():
+            path = (resolved_root / source.path).resolve()
+            if not path.is_relative_to(resolved_root) or not path.is_file():
+                raise _contract_error(
+                    f"Workbook auxiliary source is missing: parameter={parameter_name}, source={source_name}",
+                )
+            actual_sha256 = workbook_sha256(path)
+            if actual_sha256 != source.sha256:
+                raise _contract_error(
+                    "Workbook auxiliary source sha256 mismatch: "
+                    f"parameter={parameter_name}, source={source_name}, "
+                    f"expected={source.sha256}, actual={actual_sha256}",
+                )
     return paths
 
 
@@ -415,6 +500,7 @@ __all__ = [
     "ModelParameterWorkbookContract",
     "ParameterConstraints",
     "ProposalPolicy",
+    "ReferenceAuxiliarySource",
     "ReferenceSource",
     "ReferenceTransform",
     "WorkbookArtifact",

@@ -172,6 +172,8 @@ def evaluate_liq_util_evidence(
     candidate: Mapping[str, Any],
     slot: Mapping[str, Any],
     scenario_context: Mapping[str, Any],
+    *,
+    exact_candidate_count: int | None = None,
 ) -> LiqUtilEvidenceDecision:
     """Require one coherent v4 Lever lineage item to ground an exact facility slot."""
 
@@ -198,11 +200,13 @@ def evaluate_liq_util_evidence(
             missing.add("source_event")
 
         time_window = str(provenance.get("time_window") or "").strip()
-        if not time_evidence_matches_slot(
+        time_matches = time_evidence_matches_slot(
             time_window,
             year=coordinates.get("Year"),
             month=coordinates.get("Month"),
-        ):
+        )
+        unique_inference = exact_candidate_count == 1
+        if not time_matches and (has_specific_time_evidence(time_window) or not unique_inference):
             missing.add("specific_time_window")
 
         facility_text = _json_text(
@@ -214,7 +218,9 @@ def evaluate_liq_util_evidence(
         )
         if not plant or not train:
             missing.add("exact_facility_slot")
-        elif not (_contains_exact_phrase(facility_text, plant) and _contains_exact_phrase(facility_text, train)):
+        elif not (
+            _contains_exact_phrase(facility_text, plant) and _contains_exact_phrase(facility_text, train)
+        ) and not unique_inference:
             missing.add("specific_facility_evidence")
 
         if not missing:

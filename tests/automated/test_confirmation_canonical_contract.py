@@ -10,6 +10,7 @@ import pytest
 from apps.agents.scenario_group_agent.persistence.scenario_group_service import (
     ScenarioGroupService,
 )
+from apps.agents.scenario_group_agent.persistence.scenario_service import ScenarioService
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.scenario_group.repository import ScenarioGroupRepository
@@ -243,6 +244,62 @@ def test_confirmation_commit_failure_rolls_back_all_changes() -> None:
     groups.update_group.assert_called_once()
     session.rollback.assert_called_once_with()
     session.close.assert_called_once_with()
+
+
+def test_v4_confirmation_accepts_zero_signposts() -> None:
+    session, groups, scenarios, signposts, _unused = _repositories()
+    signposts.fetch_models_by_scenario_ids.return_value = []
+    groups.model_to_dict.return_value = {
+        "scenario_group_id": 10,
+        "status": "created",
+        "stage": "completed",
+    }
+
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "apps.common.configs.database.sync_database.connection": _connection_module(
+                    session,
+                ),
+            },
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service."
+            "ScenarioGroupRepository",
+            return_value=groups,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service."
+            "ScenarioRepository",
+            return_value=scenarios,
+        ),
+        patch(
+            "apps.agents.scenario_group_agent.persistence.scenario_group_service."
+            "SignpostRepository",
+            return_value=signposts,
+        ),
+        patch.object(ScenarioService, "apply_baseline_by_probability"),
+    ):
+        result = ScenarioGroupService().apply_confirmation(
+            10,
+            {"title": "Signpost 없는 v4 확정"},
+            {
+                "headers": [{"key": "d1", "label": "공급", "display_order": 1}],
+                "rows": [
+                    {
+                        "scenario_id": 100,
+                        "cells": {"d1": "d1_v1"},
+                        "signposts": [],
+                    },
+                ],
+            },
+            user_id=7,
+        )
+
+    assert result["status"] == "success"
+    assert result["signpost_count"] == 0
+    session.commit.assert_called_once_with()
 
 
 def test_hard_delete_repository_deletes_only_master_tables() -> None:
