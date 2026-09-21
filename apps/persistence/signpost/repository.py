@@ -54,6 +54,7 @@ class SignpostRepository(BaseSyncSQLRepository):
             "probability_impact_score",
             "signpost_reason",
             "display_order",
+            "use_yn",
             "mod_usr_logn_id",
         ):
             if field in payload:
