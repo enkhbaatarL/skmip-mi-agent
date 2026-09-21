@@ -42,6 +42,14 @@ if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
 from sqlalchemy import inspect, select
 
 from apps.agents.model_parameter_agent.constants import PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ABSTAINED_INSUFFICIENT_EVIDENCE,
+    ABSTAINED_MODEL_INPUT_NOT_FOUND,
+    ABSTAINED_NO_CHANGE,
+    ABSTAINED_OUT_OF_PROPOSAL_SCOPE,
+    ABSTAINED_VALUE_NOT_GENERATED,
+    ABSTAINED_VALUE_OUT_OF_RANGE,
+)
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
@@ -83,6 +91,16 @@ DISCOVERY_SCAN_MULTIPLIER = 10
 MAX_DISCOVERY_SCAN = 100
 DEFAULT_CORE_SMOKE_TIMEOUT_SECONDS = 180
 MAX_EXECUTION_SECONDS = 180.0
+POST_SELECTION_ABSTENTION_REASON_CODES = frozenset(
+    {
+        ABSTAINED_OUT_OF_PROPOSAL_SCOPE,
+        ABSTAINED_INSUFFICIENT_EVIDENCE,
+        ABSTAINED_MODEL_INPUT_NOT_FOUND,
+        ABSTAINED_VALUE_NOT_GENERATED,
+        ABSTAINED_VALUE_OUT_OF_RANGE,
+        ABSTAINED_NO_CHANGE,
+    },
+)
 REPORT_DIR = ROOT_DIR / "tests" / "reports" / "model_parameter_agent"
 CORE_SMOKE_COMMAND = (
     sys.executable,
@@ -1613,17 +1631,46 @@ def assess_execution(
     actual_non_input_counts = Counter(
         _non_input_signature(item) for item in actual_non_inputs
     )
-    if actual_non_input_counts != expected_non_input_counts:
-        missing_non_inputs = sorted(
-            (expected_non_input_counts - actual_non_input_counts).elements(),
-        )
-        unexpected_non_inputs = sorted(
-            (actual_non_input_counts - expected_non_input_counts).elements(),
-        )
+    missing_non_inputs = sorted(
+        (expected_non_input_counts - actual_non_input_counts).elements(),
+    )
+    if missing_non_inputs:
         failures.append(
             "graph non_input_items identity/reason multiset 불일치: "
-            f"missing={missing_non_inputs}, unexpected={unexpected_non_inputs}",
+            f"missing={missing_non_inputs}, unexpected=[]",
         )
+    remaining_expected_non_inputs = expected_non_input_counts.copy()
+    post_selection_abstentions: list[dict[str, Any]] = []
+    for item in actual_non_inputs:
+        signature = _non_input_signature(item)
+        if remaining_expected_non_inputs[signature] > 0:
+            remaining_expected_non_inputs[signature] -= 1
+        else:
+            post_selection_abstentions.append(item)
+    selected_adjustment_keys = {_candidate_key(item) for item in selected_items}
+    abstention_candidate_keys: list[str] = []
+    for item in post_selection_abstentions:
+        candidate_key = _candidate_key(item)
+        parameter_name = _parameter_name(item)
+        reason_code = _text(item.get("reason_code") or item.get("reasonCode"))
+        abstention_candidate_keys.append(candidate_key)
+        if candidate_key not in actual_runtime_keys:
+            failures.append(
+                "post-selection abstention candidate가 runtime 후보에 없음: "
+                f"{candidate_key or '-'}",
+            )
+        if reason_code not in POST_SELECTION_ABSTENTION_REASON_CODES:
+            failures.append(
+                "post-selection abstention reason code 누락/불일치: "
+                f"candidate_key={candidate_key or '-'}, reason={reason_code or '-'}",
+            )
+        if candidate_key in selected_adjustment_keys or parameter_name in proposed_names:
+            failures.append(
+                "post-selection abstention parameter가 제안 결과에 동시에 포함됨: "
+                f"candidate_key={candidate_key or '-'}, parameter={parameter_name or '-'}",
+            )
+    if len(abstention_candidate_keys) != len(set(abstention_candidate_keys)):
+        failures.append("post-selection abstention candidate_key가 중복됨")
     actual_reason_by_key = {
         _candidate_key(item): _text(item.get("reason_code") or item.get("reasonCode"))
         for item in actual_non_inputs
@@ -2073,6 +2120,15 @@ def build_coverage_rows(
             if record is not None
             else None
         )
+        post_selection_abstention_reasons = sorted(
+            {
+                _text(item.get("reason_code") or item.get("reasonCode"))
+                for item in actual_non_inputs
+                if _parameter_name(item) == name
+                and _text(item.get("reason_code") or item.get("reasonCode"))
+                in POST_SELECTION_ABSTENTION_REASON_CODES
+            },
+        )
         if raw == 0:
             verdict: Verdict = "COVERAGE LIMIT"
             message = "selected Lever binding occurrence 없음"
@@ -2108,6 +2164,18 @@ def build_coverage_rows(
         elif record is None:
             verdict = "COVERAGE LIMIT"
             message = "read-only: execution chain 미실행"
+        elif (
+            runtime
+            and selected
+            and proposed == 0
+            and confirmed == 0
+            and post_selection_abstention_reasons
+        ):
+            verdict = assessment.verdict if assessment is not None else "PASS"
+            message = (
+                "post-selection abstention: "
+                f"{','.join(post_selection_abstention_reasons)}"
+            )
         elif assessment is not None and assessment.verdict == "FAIL":
             verdict = "FAIL"
             message = "scenario mandatory execution contract 실패"
@@ -2130,7 +2198,7 @@ def build_coverage_rows(
                 exclusion_reason=(
                     PROPOSAL_SCOPE_EXCLUDED_REASON_CODE
                     if classification == "active-but-blocked" and raw
-                    else ""
+                    else ",".join(post_selection_abstention_reasons)
                 ),
                 verdict=verdict,
                 evidence=message,

@@ -20,6 +20,9 @@ from apps.agents.model_parameter_agent.constants import (
 from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _merge_candidates_by_parameter,
 )
+from apps.agents.model_parameter_agent.flows.propose_parameters.validation import (
+    ABSTAINED_INSUFFICIENT_EVIDENCE,
+)
 from tests.manual.model_parameter_agent import evaluate_multi_event_quality as runner
 
 
@@ -514,6 +517,68 @@ def test_clean_execution_uses_merged_lineage_and_passes() -> None:
     assert set(record["expected_candidates"][0]["merged_candidate_keys"]) == {
         evidence.runtime_candidates[0]["candidate_key"],
     }
+
+
+def test_post_selection_abstention_is_valid_terminal_evidence() -> None:
+    evidence = _evidence()
+    gdp = dict(evidence.runtime_candidates[0])
+    pmi = deepcopy(gdp)
+    pmi["candidate_key"] = pmi["candidate_key"].replace("|gdp|", "|pmi|")
+    pmi["canonical_parameter_name"] = "PMI"
+    pmi["parameter_name"] = "PMI"
+    pmi["model_sheet"] = "PMIAdjustment"
+    evidence.runtime_candidates = (gdp, pmi)
+    evidence.raw_candidates = (gdp, pmi, *evidence.blocked_candidates)
+    evidence.parameter_definitions = (
+        *evidence.parameter_definitions,
+        _definition("PMI", model_file="Demand", model_sheet="PMIAdjustment"),
+    )
+    record = _execution_record(evidence)
+    record["step_summary"]["validated_candidate_count"] = 2
+    pmi_candidate = next(
+        item
+        for item in record["expected_candidates"]
+        if item["parameter_name"] == "PMI"
+    )
+    record["result"]["non_input_items"].append(
+        {
+            "candidate_key": pmi_candidate["candidate_key"],
+            "parameter_name": "PMI",
+            "lever_code": "economic_activity",
+            "source_event_ids": [101],
+            "reason_code": ABSTAINED_INSUFFICIENT_EVIDENCE,
+        },
+    )
+
+    assessment = runner.assess_execution(evidence, record)
+    rows = {
+        row.parameter_name: row
+        for row in runner.build_coverage_rows(evidence, record, assessment)
+    }
+
+    assert assessment.verdict == "PASS"
+    assert rows["GDP"].verdict == "PASS"
+    assert rows["PMI"].verdict == "PASS"
+    assert rows["PMI"].exclusion_reason == ABSTAINED_INSUFFICIENT_EVIDENCE
+
+
+def test_post_selection_abstention_rejects_unknown_reason() -> None:
+    evidence = _evidence()
+    record = _execution_record(evidence)
+    candidate = record["expected_candidates"][0]
+    record["result"]["parameter_adjustments"] = []
+    record["result"]["non_input_items"].append(
+        {
+            "candidate_key": candidate["candidate_key"],
+            "parameter_name": "GDP",
+            "reason_code": "UNKNOWN_ABSTENTION",
+        },
+    )
+
+    assessment = runner.assess_execution(evidence, record)
+
+    assert assessment.verdict == "FAIL"
+    assert any("reason code" in message for message in assessment.failures)
 
 
 def test_graph_v4_raw_trace_must_match_independent_raw_oracle() -> None:
