@@ -72,7 +72,7 @@ Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
 | `LiqProdAdjustment` | Supply / LiqProdAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | 가로로 펼쳐진 월별 값을 읽음 |
 | `LiqUtilAdjustment` | Supply / LiqUtilAdjustment | 국가, LNG 플랜트·트레인, 연도, 월 | 가로로 펼쳐진 월별 값을 읽음 |
 | `PipelineAdjustment` | Supply / PipelineAdjustment | 파이프라인, From·To 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
-| `SupplyDisruption` | Supply / VolumeAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
+| `SupplyDisruption` | Supply / ProductionAdjustment | 국가, 연도, 월 | 행마다 정해진 열을 읽음 |
 | `User-Adjusted Gas Demand` | Demand / DemandOutputOverwrite | 국가, 연도, 월, 수요 하위부문 | Basecase exact slot만 사용 |
 | `RegasAdjustment` | Supply / RegasAdjustment | 지역 계층, 재기화 Plant, 연도, 월 | Basecase exact slot만 사용 |
 | `PNG Contract Volume` | Trade / MidstreamContractInput | 연도, From·To 국가 | Basecase exact slot만 사용 |
@@ -102,9 +102,9 @@ Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PAR
 | `indirect` | 55 | 값을 직접 바꾸지는 않지만 판단에 참고할 배경 정보 | 아니요 |
 | `na` | 33 | 모델 입력 파라미터와 직접 연결되지 않는 항목 | 아니요 |
 
-0030 이후 현재 master/runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0030.json`, v4 Lever
-fixture는 `scripts/model_parameter/model-impact-lever-canonical-v4-0030.json`이다. DB migration 정본은 sibling
-`skmip-mi-agent-mgmt` revision `a378b54ef997`이며, active catalog는 `v4`, checksum은 `835e6f2d…be51`이다.
+0032 이후 현재 master/runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0032.json`, v4 Lever
+fixture는 `scripts/model_parameter/model-impact-lever-canonical-v4-0032.json`이다. DB migration 정본은 sibling
+`skmip-mi-agent-mgmt` revision `d9f4c2a81332`이며, active catalog는 `v4`, checksum은 `b9d8c051…000b`이다.
 기존 이름의 두 canonical과 `apply_model_parameter_v4.py`/정적 SQL은 0029 역사 릴리스 증적으로 보존하며 0030
 적용에 재사용하지 않는다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중
 `dimension_mappings`만 정본으로 사용한다. parameter 0030 successor에 상속된 128행 mapping payload는 0029

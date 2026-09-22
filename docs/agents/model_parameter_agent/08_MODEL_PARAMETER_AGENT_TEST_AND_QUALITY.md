@@ -61,7 +61,7 @@ rollout을 승인하지 않는다.
 
 ### Slot, 값과 저장
 
-- 정확히 v4 전략인 요청은 `new-bc-v2` versioned contract를 사용하고, 변경되지 않은 workbook artifact는
+- 정확히 v4 전략인 요청은 `new-bc-v3` versioned contract를 사용하고, 변경되지 않은 workbook artifact는
   `resources/basecase_v4/new-bc-v1/`의 digest를 재사용한다. v1/v3는
   기존 `resources/basecase/`를 계속 사용해야 한다. startup은 contract schema/path와 Workbook path/digest만 검증하며
   최초 exact v4 materialization이 sheet/header/range/count를 검증하고 process cache해야 한다.

@@ -1,0 +1,71 @@
+{
+  "schema_version": "model-parameter-proposal-capabilities-v3",
+  "release_id": "extend7-v4",
+  "catalog_version": "v4",
+  "catalog_checksum": "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b",
+  "parameters": [
+    {
+      "model_param_id": 4,
+      "parameter_name": "GDP",
+      "model_target": {"model_file": "Demand", "model_sheet": "GDPPopulationAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "fractional_yoy_growth"}
+    },
+    {
+      "model_param_id": 6,
+      "parameter_name": "PMI",
+      "model_target": {"model_file": "Demand", "model_sheet": "PMIAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "index"}
+    },
+    {
+      "model_param_id": 7,
+      "parameter_name": "PowerMix",
+      "model_target": {"model_file": "Demand", "model_sheet": "PowerMixAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Energy Source"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "fraction", "atomic_vector": true}
+    },
+    {
+      "model_param_id": 8,
+      "parameter_name": "Temperature",
+      "model_target": {"model_file": "Demand", "model_sheet": "WeatherAdjustment", "model_table": "table2"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "celsius"}
+    },
+    {
+      "model_param_id": 14,
+      "parameter_name": "LiqUtilAdjustment",
+      "model_target": {"model_file": "Supply", "model_sheet": "LiqUtilAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "utilization_fraction", "minimum": 0}
+    },
+    {
+      "model_param_id": 15,
+      "parameter_name": "PipelineAdjustment",
+      "model_target": {"model_file": "Supply", "model_sheet": "PipelineAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Pipeline Name", "From Country", "To Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt/y", "minimum": 0}
+    },
+    {
+      "model_param_id": 17,
+      "parameter_name": "SupplyDisruption",
+      "model_target": {"model_file": "Supply", "model_sheet": "ProductionAdjustment", "model_table": "table2"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt", "minimum": 0}
+    }
+  ]
+}

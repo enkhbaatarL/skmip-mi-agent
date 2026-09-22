@@ -2,8 +2,8 @@
 
 ## 1. 체크인 기준선
 
-현재 저장소의 runtime 판정 기준은 `model-parameter-canonical-v4-0030`과
-`model-impact-lever-canonical-v4-0030` successor다. 기존 이름의 canonical은 0029 역사 릴리스로 보존한다.
+현재 저장소의 runtime 판정 기준은 `model-parameter-canonical-v4-0032`와
+`model-impact-lever-canonical-v4-0032` successor다.
 아래 개수는 live DB 조회 결과가 아니라 체크인된 canonical 기준선이다. 실제 적용 상태는 runner preflight와
 적용 후 DB read-back으로 확인한다.
 
@@ -14,15 +14,15 @@
 - v1/v3 신규 proposal 이름 allow-list 5개: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment
 - v4 extend7 capability 7개: 위 5개 + PipelineAdjustment(ID 15), SupplyDisruption(ID 17)
 - extend7 7개의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
-  `model-parameter-workbook-contract-v2.json`을 사용한다. 변경되지 않은 Excel artifact는
+  `model-parameter-workbook-contract-v3.json`을 사용한다. 변경되지 않은 Excel artifact는
   `resources/basecase_v4/new-bc-v1/`의 digest를 재사용하고, v1/v3는 기존 `resources/basecase/`를 유지한다.
 - 추가 2개도 기존 5개와 같은 contract reference→exact LUT fallback→slot/evidence/value 절차를 사용하며,
   v4에는 별도 legacy Basecase reference mode를 두지 않는다.
 - source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4는 Step1.5를 호출하지 않는다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
-- DB migration 정본은 sibling mgmt revision `a378b54ef997`이며, Agent fixture는
-  `scripts/model_parameter/model-parameter-canonical-v4-0030.json`과
-  `scripts/model_parameter/model-impact-lever-canonical-v4-0030.json`이다.
+- DB migration 정본은 sibling mgmt revision `d9f4c2a81332`이며, Agent fixture는
+  `scripts/model_parameter/model-parameter-canonical-v4-0032.json`과
+  `scripts/model_parameter/model-impact-lever-canonical-v4-0032.json`이다.
 - 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0029 역사 기준선이다. 0030 적용 입력이나
   현재 binding 판정에 사용하지 않는다.
 
@@ -97,13 +97,13 @@ adapter는 필수 header, horizon, 숫자 형식, 빈 값, exact-key 충돌, joi
 runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다.
 v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. 기존 v1/v3 Basecase
 preload의 누락·파싱 오류·0건은 warning으로 남기며, 활성 14개 capability 전체는 자동화·release
-acceptance에서 별도로 검증한다. v4 `new-bc-v2` startup은 contract schema/path와 contract에 고정된
+acceptance에서 별도로 검증한다. v4 `new-bc-v3` startup은 contract schema/path와 contract에 고정된
 Workbook path/digest만 경량 검증한다. sheet·header·range·변환·고정 record count는 최초 exact v4 materialization에서
 fail closed하고 성공 결과를 process cache한다.
 
 ### versioned workbook 계약을 변경하거나 확장할 때
 
-현재 extend7의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v2.json`이 소유한다.
+현재 extend7의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v3.json`이 소유한다.
 변경되지 않은 workbook은 `resources/basecase_v4/new-bc-v1/` digest를 재사용할 수 있지만, 계약 coverage·parser·hash가
 바뀌면 새 release ID와 새 contract 파일을 만든다. 기존 `resources/basecase/` 파일을 덮어쓰거나
 `new_resources/`를 runtime path로 연결하지 않는다.
@@ -213,7 +213,7 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 4개의 exact
    Basecase slot을 확인한다. v4 신규 proposal은 7개만 허용하고 나머지 활성 7개는 `PROPOSAL_SCOPE_EXCLUDED`,
    비활성 7개는 후보 없음으로 검증한다.
-6. v4 `new-bc-v2` contract의 세 workbook·auxiliary digest/header와
+6. v4 `new-bc-v3` contract의 세 workbook·auxiliary digest/header와
    815/5,040/4,200/5,040/23,820/420/4,908 record를 확인하고,
    invalid exact-key LUT 차단, PowerMix atomic vector와 LiqUtil evidence/1 초과 보존 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.

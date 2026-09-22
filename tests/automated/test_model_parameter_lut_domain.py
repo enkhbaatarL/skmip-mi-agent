@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 # ruff: noqa: S101
 
 from __future__ import annotations
@@ -189,15 +191,19 @@ def test_exact_new_parameter_transforms(
     for month in (1, 12):
         pipeline = catalog.lookup("PipelineAdjustment", {**pipeline_axes, "Month": month})
         assert pipeline is not None
-        assert pipeline.value == 38
-        assert pipeline.diagnostics == ("annual_capacity_expanded_to_month",)
+        assert pipeline.value == pytest.approx(27.93)
+        assert pipeline.diagnostics == (
+            "unit_conversion=bcm_to_mt_lng_x_0.735",
+            "annual_capacity_expanded_to_month",
+        )
 
     supply = catalog.lookup(
         "SupplyDisruption",
         {"Country": "Mexico", "Year": 2026, "Month": 12},
     )
     assert supply is not None
-    assert supply.value == 1.81221
+    assert supply.value == pytest.approx(1.33197)
+    assert "unit_conversion=bcm_to_mt_lng_x_0.735" in supply.diagnostics
     assert "seasonality_policy=raw_not_renormalized" in supply.diagnostics
     assert "aggregated_production_rows=37" in supply.diagnostics
 
@@ -1340,8 +1346,9 @@ SupplyDisruption:
         {"Country": "Mexico", "Year": 2026, "Month": 1},
     )
     assert january is not None
-    assert january.value == 2
+    assert january.value == pytest.approx(1.47)
     assert january.diagnostics == (
+        "unit_conversion=bcm_to_mt_lng_x_0.735",
         "seasonality_policy=raw_not_renormalized",
         "aggregated_production_rows=2",
     )

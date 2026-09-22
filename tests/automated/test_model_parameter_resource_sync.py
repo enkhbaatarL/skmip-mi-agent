@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-# ruff: noqa: ASYNC240, S101, S105, S106
+# ruff: noqa: S101, S105, S106
 import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -120,11 +120,11 @@ def test_integrated_manifest_declares_expected_resources() -> None:
         source_path=CONFIG_FILE_PATH,
     )
     assert integrated.schema_version == 5
-    assert integrated.workbook_contract.release_id == "new-bc-v2"
+    assert integrated.workbook_contract.release_id == "new-bc-v3"
     assert integrated.workbook_contract.public_api_unchanged is True
-    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v2.json"
+    assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v3.json"
     assert len(integrated.workbook_contract_schema_hash) == 64
-    assert integrated.proposal_capability_contract.release_id == "extend7-v3"
+    assert integrated.proposal_capability_contract.release_id == "extend7-v4"
     assert {item.model_param_id for item in integrated.proposal_capability_contract.parameters} == {
         4,
         6,
@@ -530,7 +530,7 @@ class _FakeObjectStorageClient(ObjectStorageReader):
         self.download_calls.append((bucket, object_key))
         content = self.objects[(bucket, object_key)]
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(content)
+        destination.write_bytes(content)  # noqa: ASYNC240
         return DownloadedObject(
             path=destination,
             size=len(content),

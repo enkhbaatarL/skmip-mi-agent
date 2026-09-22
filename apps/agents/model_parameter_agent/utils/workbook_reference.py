@@ -729,7 +729,6 @@ def _supply_disruption_records(
 
     start_column, end_column = _source_bounds(source)
     columns = {name: _column_index(column) for name, column in source.columns.items()}
-    transform = source.transforms["Base case supply (Bcm)"]
     totals: dict[tuple[str, int, int], float] = defaultdict(float)
     source_counts: dict[tuple[str, int, int], int] = defaultdict(int)
     first_references: dict[tuple[str, int, int], str] = {}
@@ -762,7 +761,6 @@ def _supply_disruption_records(
         annual_supply_mt = _finite_number(values[columns["Base case supply (Mt)"] - start_column])
         if not country or not province or not supply_type or annual_supply_mt is None:
             raise _reference_error(f"{parameter_name} invalid production row: {row_number}")
-        annual_supply_bcm = annual_supply_mt * transform.factor
         for month in range(1, 13):
             seasonality_key = (year, month, province, supply_type)
             seasonality_record = seasonality.get(seasonality_key)
@@ -772,7 +770,7 @@ def _supply_disruption_records(
                 )
             coefficient, seasonality_row = seasonality_record
             output_key = (country, year, month)
-            totals[output_key] += annual_supply_bcm * coefficient
+            totals[output_key] += annual_supply_mt * coefficient
             source_counts[output_key] += 1
             first_references.setdefault(
                 output_key,
@@ -794,7 +792,7 @@ def _supply_disruption_records(
             metadata=None,
             reference_id=first_references[(country, year, month)],
             diagnostics=(
-                "production_transform=mt_divided_by_0.735",
+                "source_unit=Mt",
                 "seasonality_policy=raw_not_renormalized",
                 f"aggregated_production_rows={source_counts[(country, year, month)]}",
             ),
@@ -838,6 +836,26 @@ def _extract_parameter_records(
     raise _reference_error(f"Unsupported workbook reference parser: {source.parser}")
 
 
+def _validate_write_target_headers(
+    workbook: Any,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+) -> None:
+    target = parameter.write_target
+    if target.sheet not in workbook.sheetnames:
+        raise _reference_error(f"{parameter_name} write target sheet is missing: {target.sheet}")
+    worksheet = workbook[target.sheet]
+    for expected_header, column in target.columns.items():
+        if expected_header in {"value_start", "value_end", "year_row", "month_row", "period_row"}:
+            continue
+        actual_header = worksheet[f"{column}{target.header_row}"].value
+        if str(actual_header or "").strip() != expected_header:
+            raise _reference_error(
+                f"{parameter_name} write target header differs: "
+                f"cell={column}{target.header_row}, expected={expected_header!r}, actual={actual_header!r}",
+            )
+
+
 def _extract_workbook_references_uncached(
     resolved_contract: ModelParameterWorkbookContract,
     *,
@@ -862,6 +880,7 @@ def _extract_workbook_references_uncached(
         )
         try:
             for parameter_name, parameter in sorted(parameters_by_role[role]):
+                _validate_write_target_headers(workbook, parameter_name, parameter)
                 records, parameter_warnings, blocked_keys = _extract_parameter_records(
                     resolved_contract,
                     parameter_name,

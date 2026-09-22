@@ -19,7 +19,7 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v2.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v3.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
 EXPECTED_PARAMETER_NAMES = frozenset(
     {*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"},
@@ -220,7 +220,7 @@ class WriteTarget(_FrozenModel):
     value_field: str
     write_unit: str
     value_semantics: str
-    observed_record_count: int = Field(gt=0)
+    observed_record_count: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_target_shape(self) -> WriteTarget:
@@ -280,8 +280,8 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2]
-    release_id: Literal["new-bc-v1", "new-bc-v2"]
+    schema_version: Literal[1, 2, 3]
+    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3"]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
     generation_strategy: Literal["multi_event_model_lever_dimensions"]
@@ -303,7 +303,8 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 "workbook roles must be exactly demand, supply, and trade",
             )
         expected_parameters = V1_PARAMETER_NAMES if self.release_id == "new-bc-v1" else EXPECTED_PARAMETER_NAMES
-        if self.schema_version != (1 if self.release_id == "new-bc-v1" else 2):
+        expected_schema_version = {"new-bc-v1": 1, "new-bc-v2": 2, "new-bc-v3": 3}[self.release_id]
+        if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
         if set(self.parameters) != expected_parameters:
             raise ValueError(f"parameter names must be exactly {sorted(expected_parameters)}")
@@ -336,7 +337,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 "LiqUtilAdjustment must retain its evidence gate, zero minimum, unbounded maximum, "
                 "and MTPM-to-MTPA transform",
             )
-        if self.release_id == "new-bc-v2":
+        if self.release_id in {"new-bc-v2", "new-bc-v3"}:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
             if (
@@ -353,6 +354,14 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.constraints.minimum != 0.0
             ):
                 raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
+            if self.release_id == "new-bc-v3" and (
+                pipeline.reference_source.reference_unit != pipeline.write_target.write_unit
+                or supply.reference_source.reference_unit != supply.write_target.write_unit
+                or pipeline.write_target.value_field != "User adjusted capacity (Mt/y)"
+                or supply.write_target.sheet != "ProductionAdjustment"
+                or supply.write_target.value_field != "Volumes (Mt)"
+            ):
+                raise ValueError("new-bc-v3 must use the final workbook target sheets and Mt units")
         return self
 
 
@@ -371,7 +380,7 @@ def load_workbook_contract(
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") == 2 and "extends" in document:
+        if document.get("schema_version") in {2, 3} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
             base_path = path.parent / extends
             base_document = json.loads(base_path.read_text(encoding="utf-8"))

@@ -24,6 +24,8 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
 LEGACY_MAPPING_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
 IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
+CURRENT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4-0032.json"
+CURRENT_IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4-0032.json"
 SNAPSHOT_PATH = ROOT_DIR / "scripts/model_parameter/snapshots/external_dev_before_model_parameter_v4_20260813.json"
 CANONICAL_DOC_PATH = ROOT_DIR / "apps/agents/model_parameter_agent/resources/Model_Parameter_Base_Case_Mapping.md"
 LUT_ROOT = ROOT_DIR / "apps/agents/model_parameter_agent/resources/lut"
@@ -60,6 +62,10 @@ EXPECTED_ACTIVE_PARAMETER_NAMES = frozenset(
         "VolumeCancelled",
     },
 )
+EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES = EXPECTED_ACTIVE_PARAMETER_NAMES - {
+    "RemainingUnrestrictedAmount",
+    "VolumeCancelled",
+}
 EXPECTED_LUT_BACKED_PARAMETER_NAMES = frozenset(
     {
         "GDP",
@@ -346,7 +352,7 @@ def test_shared_v1_v3_mapping_invariants_against_v4_master() -> None:
 
 
 def test_configmap_and_local_resource_manifests_match_canonical() -> None:
-    canonical = _load_json(CANONICAL_PATH)
+    canonical = _load_json(CURRENT_CANONICAL_PATH)
     local = _load_yaml(ROOT_DIR / "envs/config.yaml")
     configmap = _load_yaml(ROOT_DIR / "devops/k8s/configmap.yaml")
     embedded = yaml.safe_load(configmap["data"]["config.yaml"])
@@ -373,9 +379,12 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     lut = local_resources["lut"]
     enabled_names = {name for name, spec in lut.items() if spec.get("enabled", True)}
     disabled_names = {name for name, spec in lut.items() if not spec.get("enabled", True)}
-    assert active_names == EXPECTED_ACTIVE_PARAMETER_NAMES
+    assert active_names == EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES
     assert enabled_names == EXPECTED_LUT_BACKED_PARAMETER_NAMES
-    assert active_names >= EXPECTED_BASECASE_ONLY_PARAMETER_NAMES
+    assert active_names >= EXPECTED_BASECASE_ONLY_PARAMETER_NAMES - {
+        "RemainingUnrestrictedAmount",
+        "VolumeCancelled",
+    }
     assert not (EXPECTED_BASECASE_ONLY_PARAMETER_NAMES & set(lut))
     assert disabled_names == DEFERRED_SPECS
     assert {"CDD", "HDD", "ElectrificationRate"}.isdisjoint(lut)
@@ -456,9 +465,9 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
 
 
 def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
-    canonical = _load_json(CANONICAL_PATH)
+    canonical = _load_json(CURRENT_CANONICAL_PATH)
     mapping_canonical = _load_json(LEGACY_MAPPING_CANONICAL_PATH)
-    impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
+    impact_canonical = _load_json(CURRENT_IMPACT_CANONICAL_PATH)
     assert {path.name for path in MAPPING_ROOT.glob("*.xlsx")} == {CURRENT_MAPPING_WORKBOOK_PATH.name}
     archive_root = MAPPING_ROOT / "archive"
     assert {path.name for path in archive_root.glob("*.xlsx")} == ARCHIVED_MAPPING_WORKBOOK_NAMES
@@ -482,7 +491,7 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     assert len(parameter_sheet.tables) == 1
     assert parameter_rows == canonical["master"]
     assert {row["parameter_name"] for row in parameter_rows if row["use_yn"] == "Y"} == (
-        EXPECTED_ACTIVE_PARAMETER_NAMES
+        EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES
     )
 
     parameter_names = {row["model_param_id"]: row["parameter_name"] for row in canonical["master"]}
@@ -508,7 +517,7 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     assert Counter(row["mapping_method"] for row in dimension_rows) == EXPECTED_SHARED_METHOD_COUNTS
 
     overview = workbook["0. Canonical Overview"]
-    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [21, 16, 129, 10]
+    assert [overview[cell].value for cell in ("A12", "B12", "C12", "D12")] == [21, 14, 129, 10]
     lut_rows = _worksheet_dicts(workbook["LUT Resource Manifest"])
     assert {row["parameter_or_resource"] for row in lut_rows if row["classification"] == "active"} == (
         EXPECTED_LUT_BACKED_PARAMETER_NAMES
@@ -522,14 +531,14 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
     }
 
     lever_rows = _worksheet_dicts(workbook["Impact Lever Bindings"])
-    assert len(lever_rows) == impact_canonical["expected_counts"]["binding_occurrences"] == 20
+    assert len(lever_rows) == impact_canonical["expected_counts"]["binding_occurrences"] == 16
     assert Counter(row["effective_support_status"] for row in lever_rows) == {
-        "executable": 18,
+        "executable": 14,
         "known_unsupported:INACTIVE_MODEL_PARAMETER": 2,
     }
     assert {
         row["parameter_name"] for row in lever_rows if row["effective_support_status"] == "executable"
-    } == EXPECTED_ACTIVE_PARAMETER_NAMES
+    } == EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES
     assert {row["parameter_name"] for row in lever_rows if row["effective_support_status"] != "executable"} == {
         "CDD",
         "HDD",
@@ -561,19 +570,18 @@ def test_canonical_mapping_workbook_and_archive_match_fixture() -> None:
 
 
 def test_canonical_document_and_combined_apply_runner_are_versioned_and_complete() -> None:
-    canonical = _load_json(CANONICAL_PATH)
-    impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
+    canonical = _load_json(CURRENT_CANONICAL_PATH)
     document = CANONICAL_DOC_PATH.read_text(encoding="utf-8")
     runner_path = ROOT_DIR / "scripts/model_parameter/apply_model_parameter_v4.py"
     runner = runner_path.read_text(encoding="utf-8")
 
     assert "model-parameter-canonical-v4" in document
     assert "model-impact-lever-canonical-v4" in document
-    assert "master: 21행, 활성 16행" in document
+    assert "master 21행·활성 14개" in document
     assert "shared legacy dimension mapping: 129행" in document
     assert "direct 35, routing 6, indirect 55, na 33" in document
-    assert "LUT-backed 10개, Basecase-only 6개" in document
-    assert "binding occurrence 20개, effective executable occurrence 18개/고유 활성 parameter 16개" in document
+    assert "LUT-backed 10개, Basecase-only 4개 활성" in document
+    assert "binding occurrence 16개" in document
     document_master_rows = _parse_markdown_table(document, "## 최종 master")
     document_master_by_id = {int(row["ID"]): row for row in document_master_rows}
     assert len(document_master_by_id) == len(document_master_rows) == canonical["master_count"]
@@ -601,20 +609,22 @@ def test_canonical_document_and_combined_apply_runner_are_versioned_and_complete
     assert "FOR SHARE" in runner
     assert "dry-run rollback did not preserve the exact pre-transaction table state" in runner
 
+    historical_canonical = _load_json(CANONICAL_PATH)
+    historical_impact_canonical = _load_json(IMPACT_CANONICAL_PATH)
     snapshot = _load_json(SNAPSHOT_PATH)
     validated = _validate_documents(
-        canonical,
-        impact_canonical,
+        historical_canonical,
+        historical_impact_canonical,
         snapshot,
         snapshot_path=SNAPSHOT_PATH,
     )
     assert tuple(len(rows) for rows in validated) == (21, 128, 16, 21, 128, 16, 21)
 
-    invalid_impact = deepcopy(impact_canonical)
+    invalid_impact = deepcopy(historical_impact_canonical)
     invalid_impact["impact_levers"][0]["parameter_bindings"][0]["parameter_name"] = "UnknownParameter"
     with pytest.raises(RuntimeError):
         _validate_documents(
-            canonical,
+            historical_canonical,
             invalid_impact,
             snapshot,
             snapshot_path=SNAPSHOT_PATH,
@@ -641,8 +651,8 @@ def test_operator_docs_do_not_reintroduce_pre_v4_active_or_legacy_mapping_state(
         assert not any(phrase in content for phrase in stale_phrases)
 
     canonical_summary = CANONICAL_DOC_PATH.read_text(encoding="utf-8")
-    assert "master 21행·활성 16개" in canonical_summary
+    assert "master 21행·활성 14개" in canonical_summary
     assert all(parameter_name in canonical_summary for parameter_name in EXPECTED_BASECASE_ONLY_PARAMETER_NAMES)
     for path in canonical_docs:
         content = path.read_text(encoding="utf-8")
-        assert all(parameter_name in content for parameter_name in EXPECTED_ACTIVE_PARAMETER_NAMES)
+        assert all(parameter_name in content for parameter_name in EXPECTED_CURRENT_ACTIVE_PARAMETER_NAMES)

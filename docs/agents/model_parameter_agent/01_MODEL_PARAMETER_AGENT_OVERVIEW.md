@@ -71,7 +71,7 @@ Agent는 모델 Excel을 직접 수정하거나 Demand→Supply→Trade→Output
 
 Demand·Supply·Trade workbook에 들어 있는 현재 모델 입력값이다. 같은 exact slot에 Basecase가 있으면
 LUT보다 우선하는 기준값이 된다. 정확히 v4 `multi_event_model_lever_dimensions`인 요청은 versioned
-`new-bc-v2` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
+`new-bc-v3` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
 
 ### LUT
 
@@ -121,18 +121,19 @@ LLM 호출·proposal 행 생성 전에 적용한다. 나머지 활성 7개와 re
 proposal로는 제안하지 않는다. v4 catalog binding은 Step1.5 LLM으로 다시 routing하지 않고 deterministic
 candidate로 보존하며 primary/alternative lineage는 후속 evidence 판단에 함께 전달한다.
 
-### v4 `new-bc-v2` read-only reference
+### v4 `new-bc-v3` read-only reference
 
 extend7 일곱 Parameter의 v4 proposal은
-`resources/contracts/model-parameter-workbook-contract-v2.json`이 고정한 authoritative source를 모두
-동일한 reference pipeline으로 사용한다. v2 계약은 내용이 바뀌지 않은
+`resources/contracts/model-parameter-workbook-contract-v3.json`이 고정한 authoritative source를 모두
+동일한 reference pipeline으로 사용한다. v3 계약은 내용이 바뀌지 않은
 `resources/basecase_v4/new-bc-v1/` Demand·Supply·Trade workbook digest를 재사용한다. capability는
 `read_only_proposal`이며, 여기서 read-only는 Workbook/reference에 대한 경계다. workbook을 수정하거나
 Formula/Query를 재계산하거나 model engine을 실행하지 않되 기존 proposal persistence는 유지한다.
 기존 `resources/basecase/`는 그대로 남아 v1/v3 동작을 보존한다.
 
-ID 15는 Supply `BCPipeline` 연간 값을 월 slot으로 확장하고, ID 17은 Supply `BCProduction`을 model 변환계수와
-digest-pinned `SeasonalityLogic.csv`로 월별 집계한다. 이 authoritative record 뒤에 기존 exact LUT fallback,
+ID 15는 Supply `BCPipeline`의 Mt/y 연간 값을 월 slot으로 확장하고, ID 17은 Supply `BCProduction`의 Mt 값을
+digest-pinned `SeasonalityLogic.csv`로 월별 집계한다. 기존 Bcm LUT fallback 값은 0.735를 곱해 동일한 Mt 단위로 변환한다.
+이 authoritative record 뒤에 기존 exact LUT fallback,
 slot/evidence/value 검증을 공통 적용한다. capability contract는 각각
 `Pipeline Name/From Country/To Country/Year/Month`, `Country/Year/Month`를 exact axes로 고정한다.
 
@@ -156,15 +157,14 @@ LiqUtilAdjustment는 selected Lever, Scenario/Event scope와 applicability 필�
 값은 음수만 차단하며 정상 관측된 1 초과값을 보존한다. lifecycle metadata 공란은 exact record를 버리는
 사유가 아니며 Step2 판단용 applicability에서만 생략한다.
 
-이 overlay는 DB schema와 master/catalog/mapping data, model target, v4 Parameter master·Impact Lever binding/catalog checksum,
-legacy mapping을 변경하지 않는다. 공개 proposal/confirmation endpoint·request/response field·status/action
+이 release는 DB schema와 legacy mapping을 변경하지 않지만, 최종 workbook에 맞춰 v4 Parameter master·Impact Lever
+metadata, catalog checksum과 model target을 갱신한다. 공개 proposal/confirmation endpoint·request/response field·status/action
 enum·callback shape와 proposal/confirmation persistence JSON shape도 그대로 유지한다.
 
-현재 DB 계약의 정본은 sibling mgmt repository revision `a378b54ef997`이며, Agent runtime 판정 fixture는
-[parameter 0030 successor](../../../scripts/model_parameter/model-parameter-canonical-v4-0030.json)와
-[Lever 0030 successor](../../../scripts/model_parameter/model-impact-lever-canonical-v4-0030.json)다. active catalog는
-`v4`, checksum은 `835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51`이다. 기존 이름의
-`model-*-canonical-v4.json`, 사람이 읽는 mapping 문서와 260813 workbook은 0029 역사 릴리스 증적으로 보존한다.
+현재 DB 계약의 정본은 sibling mgmt repository revision `d9f4c2a81332`이며, Agent runtime 판정 fixture는
+[parameter 0032 successor](../../../scripts/model_parameter/model-parameter-canonical-v4-0032.json)와
+[Lever 0032 successor](../../../scripts/model_parameter/model-impact-lever-canonical-v4-0032.json)다. active catalog는
+`v4`, checksum은 `b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b`이다.
 v1/v3 체크인 목표 mapping은 [v1 canonical](../../../scripts/model_parameter/model-parameter-canonical-v1.json)의
 `dimension_mappings` 129행이며 v4는 이를 조회하지 않는다.
 
@@ -186,8 +186,8 @@ Basecase/LUT slot 존재 여부에 따라 더 좁아진다.
 | `Population` | routing 1건 | `population_demographics` primary | runtime 제외 | LUT-backed | 인구·이민·인구전망 변화용 capability는 보존한다. |
 | `HurricaneIntensity` | routing 1건 | `us_gom_hurricane_disruption` primary | runtime 제외 | LUT-backed | 미국 GoM 허리케인·승인 시설·Year/Month capability를 보존한다. |
 | `LiqProdAdjustment` | direct 4건 + routing 1건 | `liquefaction_production_override` primary | runtime 제외 | LUT-backed | 대폭·영구 생산손실·신규 Train ramp-up capability를 보존한다. |
-| `PipelineAdjustment` | direct 2건 | `pipeline_capacity` primary | v4 허용, v1/v3 제외 | LUT-backed | 파이프라인 송출능력을 Bcm/y 최종값으로 제안한다. |
-| `SupplyDisruption` | direct 4건 + routing 1건 | `upstream_production` primary | v4 허용, v1/v3 제외 | LUT-backed | upstream 국가·월 공급량을 BCM 최종값으로 제안한다. |
+| `PipelineAdjustment` | direct 2건 | `pipeline_capacity` primary | v4 허용, v1/v3 제외 | LUT-backed | 파이프라인 송출능력을 Mt/y 최종값으로 제안한다. |
+| `SupplyDisruption` | direct 4건 + routing 1건 | `upstream_production` primary | v4 허용, v1/v3 제외 | LUT-backed | upstream 국가·월 공급량을 Mt 최종값으로 제안한다. |
 | `User-Adjusted Gas Demand` | direct/routing 없음 | `direct_gas_demand` primary | runtime 제외 | Basecase-only | 검증된 workbook exact 좌표 capability를 보존한다. |
 | `RegasAdjustment` | direct/routing 없음 | `regasification_capacity` primary | runtime 제외 | Basecase-only | 재기화 workbook exact-slot capability를 보존한다. |
 | `PNG Contract Volume` | direct/routing 없음 | `png_contract_volume` primary | runtime 제외 | Basecase-only | PNG 계약량 변화의 exact-slot capability를 보존한다. |
@@ -306,7 +306,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 허용 후보만 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v2`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. DB DDL·master·mapping, Lever catalog/checksum, canonical JSON/SQL·업무용 mapping workbook과 writer/recalculation/engine은 변경하지 않는다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v3`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. 0032는 최종 workbook target·단위에 맞춰 master와 Lever metadata를 갱신하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md),
 [Python conventions](../../../.claude/rules/python-conventions.md)와

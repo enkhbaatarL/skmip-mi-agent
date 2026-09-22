@@ -35,7 +35,7 @@ def _candidate(entry: object) -> dict[str, object]:
 def test_extend7_contract_has_exact_release_scope_and_reference_policies() -> None:
     contract = load_proposal_capability_contract()
 
-    assert contract.release_id == "extend7-v3"
+    assert contract.release_id == "extend7-v4"
     assert contract.catalog_version == "v4"
     assert contract.catalog_checksum == EXPECTED_EXTEND7_CATALOG_CHECKSUM
     assert frozenset(contract.by_id) == EXPECTED_EXTEND7_PARAMETER_IDS
@@ -48,9 +48,12 @@ def test_extend7_contract_has_exact_release_scope_and_reference_policies() -> No
         "Year",
         "Month",
     )
+    assert contract.by_id[15].constraints["unit"] == "Mt/y"
     assert contract.by_id[17].parameter_name == "SupplyDisruption"
     assert contract.by_id[17].reference_mode == "v4_workbook_then_lut"
     assert contract.by_id[17].exact_axes == ("Country", "Year", "Month")
+    assert contract.by_id[17].model_target.model_sheet == "ProductionAdjustment"
+    assert contract.by_id[17].constraints["unit"] == "Mt"
     assert {entry.reference_mode for entry in contract.parameters} == {"v4_workbook_then_lut"}
 
 
@@ -62,7 +65,7 @@ def test_v4_scope_accepts_exactly_the_extend7_id_name_target_tuples() -> None:
 
     assert {int(item["model_param_id"]) for item in allowed} == EXPECTED_EXTEND7_PARAMETER_IDS
     assert excluded == []
-    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend7-v3"}
+    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend7-v4"}
     assert all(item["proposal_evidence_policy"] == "explicit_or_unique_inferred" for item in allowed)
 
 

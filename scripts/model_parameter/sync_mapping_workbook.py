@@ -22,9 +22,9 @@ import yaml
 LOGGER = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4.json"
+PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4-0032.json"
 LEGACY_MAPPING_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v1.json"
-IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4.json"
+IMPACT_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4-0032.json"
 CONFIG_PATH = ROOT_DIR / "envs/config.yaml"
 MAPPING_DIR = ROOT_DIR / "apps/agents/model_parameter_agent/resources/mapping"
 ARCHIVE_DIR = MAPPING_DIR / "archive"
@@ -169,8 +169,8 @@ def _compose_workbook_canonical(  # noqa: C901
     legacy_mapping_canonical: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Combine the v4 master with only the approved shared v1/v3 mapping payload."""
-    if parameter_canonical.get("canonical_version") != "model-parameter-canonical-v4":
-        msg = "Workbook parameter source must be model-parameter-canonical-v4"
+    if parameter_canonical.get("canonical_version") != "model-parameter-canonical-v4-0032":
+        msg = "Workbook parameter source must be model-parameter-canonical-v4-0032"
         raise ValueError(msg)
     if legacy_mapping_canonical.get("canonical_version") != "model-parameter-canonical-v1":
         msg = "Workbook legacy mapping source must be model-parameter-canonical-v1"
@@ -214,6 +214,7 @@ def _compose_workbook_canonical(  # noqa: C901
         raise ValueError(msg)
 
     canonical = dict(parameter_canonical)
+    canonical["generated_from_snapshot"] = parameter_canonical["generated_from_canonical"]
     canonical["dimension_mappings"] = [dict(row) for row in mappings]
     canonical["mapping_count"] = len(mappings)
     canonical["expected_counts"] = dict(parameter_canonical["expected_counts"])
@@ -782,10 +783,14 @@ def validate_workbook(
         len(lever.get("parameter_bindings") or []) for lever in impact_canonical["impact_levers"]
     )
     _assert_equal(len(lever_rows), expected_binding_count, label="Lever binding row count")
-    _assert_equal(expected_binding_count, 20, label="v4 raw Lever binding count")
+    _assert_equal(
+        expected_binding_count,
+        impact_canonical["expected_counts"]["raw_executable_binding_occurrences"],
+        label="v4 raw Lever binding count",
+    )
     _assert_equal(
         sum(row["effective_support_status"] == "executable" for row in lever_rows),
-        18,
+        impact_canonical["expected_counts"]["effective_executable_binding_occurrences"],
         label="v4 executable Lever binding count",
     )
 

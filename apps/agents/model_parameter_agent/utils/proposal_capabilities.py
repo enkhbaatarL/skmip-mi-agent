@@ -16,11 +16,11 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
 DEFAULT_PROPOSAL_CAPABILITY_CONTRACT_PATH = (
-    PACKAGE_RESOURCE_DIR / "contracts/model-parameter-proposal-capabilities-v2.json"
+    PACKAGE_RESOURCE_DIR / "contracts/model-parameter-proposal-capabilities-v3.json"
 )
 EXPECTED_EXTEND7_PARAMETER_IDS = frozenset({4, 6, 7, 8, 14, 15, 17})
-EXPECTED_EXTEND7_RELEASE_ID = "extend7-v3"
-EXPECTED_EXTEND7_CATALOG_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
+EXPECTED_EXTEND7_RELEASE_ID = "extend7-v4"
+EXPECTED_EXTEND7_CATALOG_CHECKSUM = "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b"
 
 
 class ProposalModelTarget(BaseModel):
@@ -53,8 +53,8 @@ class ProposalCapabilityEntry(BaseModel):
 class ProposalCapabilityContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["model-parameter-proposal-capabilities-v2"]
-    release_id: Literal["extend7-v3"]
+    schema_version: Literal["model-parameter-proposal-capabilities-v3"]
+    release_id: Literal["extend7-v4"]
     catalog_version: Literal["v4"]
     catalog_checksum: str
     parameters: tuple[ProposalCapabilityEntry, ...] = Field(min_length=1)
@@ -76,7 +76,7 @@ class ProposalCapabilityContract(BaseModel):
             )
             raise ValueError(msg)
         if self.catalog_checksum != EXPECTED_EXTEND7_CATALOG_CHECKSUM:
-            msg = "extend7 proposal capability catalog checksum differs from the 0030 contract"
+            msg = "extend7 proposal capability catalog checksum differs from the 0032 contract"
             raise ValueError(msg)
         return self
 

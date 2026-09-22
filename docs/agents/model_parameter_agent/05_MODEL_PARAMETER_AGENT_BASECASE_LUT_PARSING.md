@@ -22,14 +22,14 @@ Basecase-only 활성 4개의 exact slot을 모두 검증해 0건이면 기동을
 
 Basecase는 Demand·Supply·Trade workbook의 모델 입력값이고, LUT는 Basecase가 없는 exact slot의 기준값을
 제공한다. 둘 다 후보 파라미터를 새로 만들지는 않는다. 다만 정확히 v4
-`multi_event_model_lever_dimensions`인 요청은 아래 `new-bc-v2` 계약의 authoritative reference를
+`multi_event_model_lever_dimensions`인 요청은 아래 `new-bc-v3` 계약의 authoritative reference를
 Basecase로 사용하고, v1/v3는 기존 `resources/basecase/`와 DB `basecase_*` 파서를 그대로 사용한다.
 
-### 1.1 v4 `new-bc-v2` read-only proposal 계약
+### 1.1 v4 `new-bc-v3` read-only proposal 계약
 
 계약 파일은
-`apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v2.json`이며, 변경되지 않은
-세 workbook은 `resources/basecase_v4/new-bc-v1/`의 고정 digest를 재사용한다. v2는 v1 계약을 상속한 뒤
+`apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v3.json`이며, 변경되지 않은
+세 workbook은 `resources/basecase_v4/new-bc-v1/`의 고정 digest를 재사용한다. v3는 v1 계약을 상속한 뒤
 PipelineAdjustment와 SupplyDisruption source를 추가한다. 기존
 `resources/basecase/{Demand,Supply,Trade} Model_Input.xlsm`을 교체하지 않으므로 v1/v3 Basecase 파싱은
 영향받지 않는다. `new_resources/`는 incoming staging일 뿐 runtime이 탐색하지 않는다.
@@ -79,7 +79,7 @@ DB의 model target은 write-target identity 검증과 공개 응답 조립에 �
 | tmm_mi_model_param_m | parameter 이름·hint, 모델 target, Basecase Sheet·행·열 규칙 |
 | proposal capability gate | raw source matching 뒤 실제 신규 proposal에 전달할 v1/v3 5종 또는 v4 extend7 7종 |
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
-| config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v2` repo-side contract path |
+| config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v3` repo-side contract path |
 | config.yaml > model_parameter_resources.lut | enabled, adapter, files, required header, key_axes, metadata_axes |
 | config.yaml > model_parameter_resources.references | runtime 보조 CSV; 독립 parameter record는 만들지 않음 |
 | 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도(v4 PowerMix raw fraction 제외), 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
@@ -108,7 +108,7 @@ schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checks
 
 LiqProd와 LiqUtil은 BCLiquefaction.csv를 공유한다. Closed 시설은 제외하며 생산능력·이용률의 숫자/결측을 검증한다. SupplyDisruption은 Seasonality 값을 재정규화하지 않고 동일 Country/Year/Month로 귀결되는 생산 row는 합산한다.
 
-extend7의 ID 15·17도 `new-bc-v2` workbook contract에서 authoritative source를 먼저 materialize하고, 정상적으로
+extend7의 ID 15·17도 `new-bc-v3` workbook contract에서 authoritative source를 먼저 materialize하고, 정상적으로
 없는 exact key에만 위 Pipeline 또는 production×seasonality LUT를 사용한다. Pipeline은
 `Pipeline Name/From Country/To Country/Year/Month`, Supply는 `Country/Year/Month`가 모두 일치해야 하며
 nearest·부분 key fallback은 허용하지 않는다. v4 capability에는 별도 legacy Basecase reference mode가 없다.
@@ -140,7 +140,7 @@ Basecase slot을 모두 강제하는 것은 아니다. 현재 runtime proposal a
 
 1. v1/v3는 direct/routing mapping, v4는 선택 value의 executable Lever binding과 활성 master로 raw 후보를 만든다.
 2. source matching 직후 v1/v3 5종 또는 v4 extend7 7종 capability만 남긴다.
-3. v4 contract context는 `new-bc-v2` authoritative record를, v1/v3는 기존 master `basecase_*` record를 읽는다.
+3. v4 contract context는 `new-bc-v3` authoritative record를, v1/v3는 기존 master `basecase_*` record를 읽는다.
 4. key_axes 전체가 같은 exact slot끼리만 결합한다. nearest·부분 key·서로 다른 시설의 축 조합은 금지한다.
 5. 같은 slot에 authoritative Basecase 값이 있으면 그것을 effective reference로 쓴다.
 6. authoritative source에 exact key가 정상적으로 없을 때만 기존 LUT의 동일 exact key를 fallback으로 쓴다.
@@ -179,7 +179,7 @@ LUT-backed 10개다. Basecase workbook 누락, 개별 parser 오류 또는 prelo
 기동을 계속한다. 따라서 “활성 14개 또는 Basecase-only 활성 4개의 모든 exact slot이 1개 이상이어야 startup
 성공”이라고 해석하면 안 된다.
 
-이 warning 정책은 기존 v1/v3 Basecase preload에 대한 설명이다. v4 `new-bc-v2` 계약 파일·Workbook 경로
+이 warning 정책은 기존 v1/v3 Basecase preload에 대한 설명이다. v4 `new-bc-v3` 계약 파일·Workbook 경로
 누락 또는 digest 불일치는 startup에서 fail closed한다. sheet·header·range·변환과
 위 다섯 source의 고정 record 수 불일치는 최초 exact v4 materialization에서 fail closed하며, 성공 결과는
 contract hash와 실제 파일 signature를 key로 process cache한다. 구조는 맞지만 개별 source cell이 잘못된
@@ -199,6 +199,6 @@ byte 상한을 넘으면 LLM을 호출하지 않고 actual/limit byte와 paramet
 반환한다. catalog 크기와 token은 resource release와 선택 후보에 따라 달라지므로 실행마다 측정하고, 테스트
 보고서에는 provider가 반환한 input/output/total token과 실행시간을 기록한다.
 
-LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v2`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v2.json`이 기준이다. 현재 v4 master·Lever binding·공식의 runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0030.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4-0030.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다. 기존 이름의 v4 canonical과 260813 workbook은 0029 역사 릴리스 재현용이다.
+LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v3`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v3.json`이 기준이다. 현재 v4 master·Lever binding·공식의 runtime fixture는 `scripts/model_parameter/model-parameter-canonical-v4-0032.json`과 `scripts/model_parameter/model-impact-lever-canonical-v4-0032.json`, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`가 canonical 기준이다.
 
 runtime proposal 제한을 위해 DB·canonical·기존 v1/v3 Basecase·업무용 mapping workbook을 축소하거나 다시 생성하지 않는다. v4 신규 기준값은 별도 versioned contract/workbook resource로만 materialize한다.

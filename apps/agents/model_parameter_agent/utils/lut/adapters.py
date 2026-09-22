@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -33,6 +35,7 @@ ADAPTER_SCHEMA_VERSION = "model-parameter-lut-adapters-v3"
 TEMPERATURE_BASE = 18.0
 DEGREE_DAY_DIVISOR = 30.0
 MTPM_TO_MTPA = 12.0
+BCM_TO_MT_LNG = 0.735
 LUT_NAMEPLATE_MAX_DECIMAL_PLACES = 2
 
 GDP_POPULATION_COUNTRY_COLUMN = "RE Base Case GDP and Population Data_Country"
@@ -841,11 +844,11 @@ def _pipeline_records(
     records: list[LutRecord] = []
     for line_number, row in rows:
         year = strict_int(row["Year"], label=f"{file_spec.relative_path}:{line_number}:Year")
-        capacity = strict_float(
+        capacity_bcm = strict_float(
             row["Pipeline capacity (Bcm)"],
             label=f"{file_spec.relative_path}:{line_number}:Pipeline capacity (Bcm)",
         )
-        if capacity < 0:
+        if capacity_bcm < 0:
             msg = f"Pipeline capacity must be non-negative: {file_spec.relative_path}:{line_number}"
             raise domain_error(msg)
         if not policy.contains_year(year):
@@ -862,10 +865,10 @@ def _pipeline_records(
                     spec,
                     policy=policy,
                     axes={**fixed_axes, "Month": month},
-                    value=capacity,
+                    value=capacity_bcm * BCM_TO_MT_LNG,
                     metadata=None,
                     reference_id=f"{_reference_id(file_spec, line_number)}:month:{month}",
-                    diagnostics=("annual_capacity_expanded_to_month",),
+                    diagnostics=("unit_conversion=bcm_to_mt_lng_x_0.735", "annual_capacity_expanded_to_month"),
                 )
                 for month in range(1, 13)
             ],
@@ -935,10 +938,11 @@ def _supply_disruption_records(  # noqa: C901
         country = str(canonical_axis_value("Country", row["Country"]))
         province = str(canonical_axis_value("Province", row["Province/Basin"]))
         supply_type = str(canonical_axis_value("PNG/LNG", row["Oil and gas detail"]))
-        annual_supply = strict_float(
+        annual_supply_bcm = strict_float(
             row["Base case supply (Bcm)"],
             label=f"{production_spec.relative_path}:{line_number}:Base case supply (Bcm)",
         )
+        annual_supply_mt = annual_supply_bcm * BCM_TO_MT_LNG
         for month in range(1, 13):
             seasonality_key = (year, month, province, supply_type)
             coefficient = seasonality.get(seasonality_key)
@@ -949,7 +953,7 @@ def _supply_disruption_records(  # noqa: C901
                     )
                 continue
             output_key = (country, year, month)
-            totals[output_key] = totals.get(output_key, 0.0) + annual_supply * coefficient
+            totals[output_key] = totals.get(output_key, 0.0) + annual_supply_mt * coefficient
             source_counts[output_key] = source_counts.get(output_key, 0) + 1
             first_references.setdefault(
                 output_key,
@@ -976,6 +980,7 @@ def _supply_disruption_records(  # noqa: C901
             metadata=None,
             reference_id=first_references[(country, year, month)],
             diagnostics=(
+                "unit_conversion=bcm_to_mt_lng_x_0.735",
                 "seasonality_policy=raw_not_renormalized",
                 f"aggregated_production_rows={source_counts[(country, year, month)]}",
             ),

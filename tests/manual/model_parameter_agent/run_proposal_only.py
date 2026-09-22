@@ -82,11 +82,11 @@ V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 EVIDENCE_SCHEMA_VERSION = 3
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
-BASELINE_CAPABILITY_RELEASE = "extend7-v3"
-EXPECTED_0030_CATALOG_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
-EXPECTED_NEW_BC_V2_CONTRACT_SHA256 = "71b239d3b4fc4efccf15ffd2da4446000b5cfaaf649f77983d1ee7b2b1f13795"
-EXPECTED_EXTEND7_CONTRACT_SHA256 = "1692a1d20b568e3aca95b411335d4208cb083116fc2c13a6ed730ce8c471c4d5"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "bd5a32e23fa4318828915d95318e648d44976ea5617eb3ee4491b83dfc9a2fc4"
+BASELINE_CAPABILITY_RELEASE = "extend7-v4"
+EXPECTED_0032_CATALOG_CHECKSUM = "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b"
+EXPECTED_NEW_BC_V3_CONTRACT_SHA256 = "3cd5bde83dae158b30e1881004db997c756436b25b2700f770217f5412d3a030"
+EXPECTED_EXTEND7_V4_CONTRACT_SHA256 = "6eca2fe50b10ed39a801d4071b0ac646c41d554e8d92c3bc932a4ddc8cf5f0a7"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "456496b6d800d22dd803a98ab7515ed830ef69d252d64da86a29583fd2283ebf"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
 EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
@@ -110,13 +110,13 @@ RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract(
 CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     BASELINE_CAPABILITY_RELEASE: {
         "catalog_version": V4_API_VERSION,
-        "catalog_checksum": EXPECTED_0030_CATALOG_CHECKSUM,
+        "catalog_checksum": EXPECTED_0032_CATALOG_CHECKSUM,
         "runtime_allowlist": EXPECTED_EXTEND7_ALLOWLIST,
-        "proposal_capability_release_id": "extend7-v3",
-        "proposal_capability_sha256": EXPECTED_EXTEND7_CONTRACT_SHA256,
+        "proposal_capability_release_id": "extend7-v4",
+        "proposal_capability_sha256": EXPECTED_EXTEND7_V4_CONTRACT_SHA256,
         "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v2",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V2_CONTRACT_SHA256,
+        "resource_release_id": "new-bc-v3",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V3_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,

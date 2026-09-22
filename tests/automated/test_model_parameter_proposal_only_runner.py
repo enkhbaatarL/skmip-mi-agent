@@ -38,7 +38,7 @@ def _context(
             "status": "created",
             "stage": "completed",
             "impact_catalog_version": "v4",
-            "impact_catalog_checksum": runner.EXPECTED_0030_CATALOG_CHECKSUM,
+            "impact_catalog_checksum": runner.EXPECTED_0032_CATALOG_CHECKSUM,
         },
         "events": [
             {
@@ -49,7 +49,7 @@ def _context(
             },
         ],
         "impact_catalog_version": "v4",
-        "impact_catalog_checksum": runner.EXPECTED_0030_CATALOG_CHECKSUM,
+        "impact_catalog_checksum": runner.EXPECTED_0032_CATALOG_CHECKSUM,
     }
 
 
@@ -108,7 +108,7 @@ def _quality_evidence(
     return SimpleNamespace(
         errors=errors,
         active_catalog_version="v4",
-        active_catalog_checksum=runner.EXPECTED_0030_CATALOG_CHECKSUM,
+        active_catalog_checksum=runner.EXPECTED_0032_CATALOG_CHECKSUM,
         raw_candidates=runtime_candidates,
         runtime_candidates=runtime_candidates,
         blocked_candidates=(),
@@ -710,7 +710,7 @@ def test_exact_v4_strategy_preflight_blocks_every_write(tmp_path: Path) -> None:
     assert [item["status"] for item in evidence["preflight"]] == ["PASS", "FAIL"]
 
 
-def test_approved_release_requires_exact_0030_catalog_pin(tmp_path: Path) -> None:
+def test_approved_release_requires_exact_0032_catalog_pin(tmp_path: Path) -> None:
     stale_context = _context(101)
     stale_context["scenario_group"]["impact_catalog_checksum"] = "a" * 64  # type: ignore[index]
     dependencies = runner.RunnerDependencies(

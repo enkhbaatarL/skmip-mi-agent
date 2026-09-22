@@ -10,14 +10,14 @@ from typing import Any
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-IMPACT_LEVER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4-0030.json"
-MODEL_PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4-0030.json"
+IMPACT_LEVER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-impact-lever-canonical-v4-0032.json"
+MODEL_PARAMETER_CANONICAL_PATH = ROOT_DIR / "scripts/model_parameter/model-parameter-canonical-v4-0032.json"
 
-EXPECTED_CANONICAL_VERSION = "model-impact-lever-canonical-v4-0030"
+EXPECTED_CANONICAL_VERSION = "model-impact-lever-canonical-v4-0032"
 EXPECTED_CATALOG_VERSION = "v4"
-EXPECTED_BASELINE_CHECKSUM = "a4af2e5bbb90f3a76e9e0aab3a16091015898031a97a271ebcf35ca67f4dc6cd"
-EXPECTED_FINAL_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
-EXPECTED_MIGRATION_REVISION = "a378b54ef997"
+EXPECTED_BASELINE_CHECKSUM = "835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51"
+EXPECTED_FINAL_CHECKSUM = "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b"
+EXPECTED_MIGRATION_REVISION = "d9f4c2a81332"
 EXPECTED_IMPACT_LEVER_IDS = frozenset(range(17, 35))
 EXPECTED_LEVER_DOMAINS = {
     "population_demographics": "demand",
@@ -159,7 +159,7 @@ def test_impact_lever_canonical_v4_catalog_rows_are_complete_and_unique() -> Non
         ).hexdigest()
     )
     assert canonical["source_migration_revision"] == EXPECTED_MIGRATION_REVISION
-    assert canonical["source_migration"].endswith("0030_versioned_model_impact_lever_v4.py")
+    assert canonical["source_migration"].endswith("0032_model_parameter_final_workbook_targets.py")
     assert canonical["baseline_hydrated_catalog_checksum"] == EXPECTED_BASELINE_CHECKSUM
     assert canonical["hydrated_catalog_checksum"] == EXPECTED_FINAL_CHECKSUM
     assert canonical["expected_counts"] == EXPECTED_COUNTS
@@ -200,10 +200,10 @@ def test_raw_bindings_preserve_catalog_capability_and_match_master_authority() -
     master_rows = master_canonical["master"]
     master_by_name = {row["parameter_name"]: row for row in master_rows}
 
-    assert master_canonical["canonical_version"] == "model-parameter-canonical-v4-0030"
+    assert master_canonical["canonical_version"] == "model-parameter-canonical-v4-0032"
     assert master_canonical["source_migration_revision"] == EXPECTED_MIGRATION_REVISION
     assert master_canonical["runtime_scope"] == {
-        "master": "0030 authority",
+        "master": "0032 authority",
         "dimension_mappings": "inherited 0029 history; not runtime authority",
         "dimension_mapping_authority": "scripts/model_parameter/model-parameter-canonical-v1.json",
     }
