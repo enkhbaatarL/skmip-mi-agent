@@ -9,12 +9,32 @@ Implement one reproducible v4 release set and propagate it through the parameter
 
 ## Establish scope and authority
 
-1. Work from the repository root, read `AGENTS.md`, and read [references/repository-map.md](references/repository-map.md) completely.
+1. Work from the repository root, read `AGENTS.md`, [references/repository-map.md](references/repository-map.md), and
+   `docs/agents/model_parameter_agent/06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md` completely. The addition
+   guide is mandatory whenever a parameter is added to or removed from proposal scope, even if the requested change
+   appears to be config-only or DB-only.
 2. Read `.claude/rules/python-conventions.md` before changing Python and `docs/architectures/project_directory_structure.md` before changing ownership or package boundaries.
 3. Inspect `git status --short` and preserve unrelated user changes.
 4. State the requested parameter, Lever binding, LUT/Basecase, formula, or runtime-boundary changes; the new canonical and catalog versions; the target DB environment; and public API compatibility.
 5. Record authorization separately for target DB commit, remote resource upload or deployment, live Scenario creation, LLM execution, and proposal/confirmation writes. A transactional dry-run may still lock rows and execute rolled-back DML, so confirm DB access and an acceptable lock window before running it.
 6. Separate reversible repository implementation, release acceptance, external mutation, and live quality execution in the plan. Do not widen this workflow to schema changes, unrelated tables, or legacy dimension mapping. Stop and establish a separately owned workflow if any is requested; DB migrations remain owned by the sibling `skmip-mi-agent-mgmt` repository.
+
+## Prove per-parameter alignment before activation
+
+1. Before editing an allow-list or capability contract, create the per-parameter alignment matrix required by the
+   addition guide. It must independently identify the DB master and Lever binding, proposal capability, authoritative
+   Excel source, transformed non-Excel/LUT source, final workbook write target, runtime config, and exact output tuple.
+2. Keep `reference_source` and `write_target` as separate roles. A source sheet such as `BCProduction` is not evidence
+   that a similarly named or historical target sheet exists. Verify the exact final `(model_file, model_sheet,
+   model_table, exact_axes, value_field, unit, value_semantics)` tuple against the current workbook and platform contract.
+3. Treat sheet/table/header/axis names as exact identifiers. Do not infer aliases or silently substitute an archived
+   name such as `VolumeAdjustment` for `ProductionAdjustment`. A missing or mismatched target is a release `FAIL`, not
+   a reason to route through a LUT or legacy parser.
+4. Do not activate a parameter until DB/canonical DML, Lever binding, capability contract, workbook contract, source
+   workbook, LUT/auxiliary transformations, local/Kubernetes config, and runtime output agree. Aggregate count tests do
+   not replace one focused source-to-output test for every newly enabled parameter.
+5. Record the completed matrix and the focused evidence in the release report. If any cell is unknown, keep the
+   parameter inactive or outside proposal scope; do not fill it from an old fixture, prose document, or name similarity.
 
 ## Build the canonical v4 release set
 

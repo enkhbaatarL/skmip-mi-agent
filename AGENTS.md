@@ -28,6 +28,8 @@ If the task touches one of these areas, read the linked document before changing
   `.claude/rules/python-conventions.md`
 - Model Parameter canonical DB/LUT/config/Excel/docs implementation:
   `.claude/skills/rollout-model-parameters/SKILL.md`
+- Model Parameter 신규 제안 파라미터 추가·활성화와 DB/Excel/LUT/출력 대상 정합성:
+  `docs/agents/model_parameter_agent/06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md`
 - Model Parameter v4 multi-event discovery and live proposal/confirmation quality:
   `.claude/skills/model-parameter-multi-event-quality/SKILL.md`
 - Model Parameter release, DB safety, proposal/confirmation, or integrated verification:

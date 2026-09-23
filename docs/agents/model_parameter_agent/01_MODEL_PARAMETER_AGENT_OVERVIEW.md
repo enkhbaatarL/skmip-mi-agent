@@ -48,6 +48,14 @@ Agent는 모델 Excel을 직접 수정하거나 Demand→Supply→Trade→Output
 `PROPOSED`, `ABSTAINED`, `FAILED` 중 하나가 되면 제안 처리가 끝난다. 사용자가 확인할 제안값이 있는
 `PROPOSED`만 `CONFIRMED`로 전환할 수 있다.
 
+### 파라미터를 확대할 때 반드시 먼저 읽을 문서
+
+신규 제안 파라미터를 추가하거나 허용 범위를 넓힐 때는
+[Model Parameter 추가·활성화 가이드](06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)의
+파라미터별 정합성 게이트를 먼저 수행한다. DB 등록값, Lever binding, proposal capability, 원본 Excel,
+변형 데이터/LUT, 최종 Excel 쓰기 대상과 배포 설정 중 하나라도 정확히 맞지 않으면 활성화하지 않는다.
+파라미터명, 참조 시트명과 출력 시트명은 서로 대신할 수 있는 식별자가 아니다.
+
 ## 먼저 알아둘 용어
 
 ### Model Parameter
@@ -93,7 +101,7 @@ fallback으로 사용하지 않는다.
 
 DB에서 활성인 파라미터, mapping 또는 binding으로 도달할 수 있는 파라미터, 지금 신규 proposal에 허용되는
 파라미터는 서로 다른 집합이다. v1/v3는 raw 후보와 기존 이름 allow-list 5종의 교집합을 사용한다. v4는
-`model-parameter-proposal-capabilities-v2`의 ID/name/target이 DB 정의와 모두 일치하는 extend7 7종만 허용한다.
+`model-parameter-proposal-capabilities-v3`의 ID/name/target이 DB 정의와 모두 일치하는 extend7 7종만 허용한다.
 
 ## 현재 구현 범위
 
@@ -104,7 +112,7 @@ Model Parameter Agent는 시나리오가 수급모델에 미치는 영향을 모
 - 현재 기준값을 바탕으로 제안값과 근거를 만든다.
 - 사용자가 검토·수정한 최종값을 확정 상태로 저장한다.
 
-0030 fixture 기준 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`,
+0032 canonical fixture 기준 활성 대상은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`,
 `User-Adjusted Gas Demand`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`,
 `PipelineAdjustment`, `RegasAdjustment`, `SupplyDisruption`, `PNG Contract Volume`, `ShippingCost`의 14개다.
 이 중 LUT-backed 활성은 10개, Basecase-only 활성은 4개다. `CDD`, `HDD`, Coal/Gas Futures,

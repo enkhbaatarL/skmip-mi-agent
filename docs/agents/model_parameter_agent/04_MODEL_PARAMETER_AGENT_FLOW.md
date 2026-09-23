@@ -5,7 +5,7 @@
 
 ## 범위
 
-- 체크인 전역 합집합 기준으로 v1/v3 legacy mapping은 raw Parameter 10개, 0030 v4 Lever catalog는 master
+- 체크인 전역 합집합 기준으로 v1/v3 legacy mapping은 raw Parameter 10개, 0032 canonical v4 Lever catalog는 master
   filtering 전 raw binding 이름 16개와 effective active Parameter 14개에 도달한다. 요청 하나의 후보는 관련
   lineage와 선택 value에 해당하는 하위 집합이다.
 - v1/v3는 기존 5종 이름 allow-list, v4는 ID `{4, 6, 7, 8, 14, 15, 17}` capability gate를 LLM·persistence 전에 적용한다.
@@ -255,7 +255,7 @@ PowerMix materialization은 월별로 반복된 annual row가 일치할 때만 d
 
 좌표를 compact하게 묶는 상세 방식은 뒤의 [compact slot catalog](#33-compact-slot-catalog)에 설명한다.
 
-LUT-backed 활성 10개와 Basecase-only 활성 4개는 0030 fixture와 release 검증의 capability 기준선이다.
+LUT-backed 활성 10개와 Basecase-only 활성 4개는 0032 canonical fixture와 release 검증의 capability 기준선이다.
 runtime startup은 v4 contract schema/path와 contract에 고정된 Workbook path/digest만 경량 검증한다.
 sheet/header/range/고정 record count와 source atomic 검증은 최초 exact v4 materialization에서
 fail closed하고, 성공 결과를 해당 process에 cache한다. 기존 v1/v3 Basecase preload의
@@ -660,21 +660,21 @@ proposal graph를 순차 실행한다. Confirmation과 callback은 호출하지 
 # Group 단위 read-only discovery
 python tests/manual/model_parameter_agent/run_proposal_only.py \
   --scenario-group-id 282 \
-  --capability-release v4-proposal-capability-v1
+  --capability-release extend7-v4
 
 # 명시 Scenario 단위 proposal-only write; 별도 write 승인이 있을 때만 실행
 python tests/manual/model_parameter_agent/run_proposal_only.py \
   --scenario-id 1374 \
   --scenario-id 1375 \
-  --capability-release v4-proposal-capability-v1 \
+  --capability-release extend7-v4 \
   --execute
 ```
 
 초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
-- `v4-proposal-capability-v1`은 임의 label이 아니라 0030 catalog `v4` / checksum
-  `835e6f2d4eb77f5e7aedc9ffe8b90bc73288242d2e9dc764a019f1bea962be51`, extend7 capability와
+- `extend7-v4`는 임의 label이 아니라 0032 canonical catalog `v4` / checksum
+  `b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b`, extend7 capability와
   `new-bc-v3` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
   계약이다. 어느 하나라도 drift하면 Scenario DB 조회 또는 LLM 실행 전에 차단한다.
 - v4 `multi_event_model_lever_dimensions`, completed Group, created/realized Group·Scenario만 실행 후보가 된다.
@@ -710,10 +710,10 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
   `resources/basecase/`와 v1/v3 파싱은 유지하며 workbook write, Formula/Query 재계산과
   Demand/Supply/Trade engine 실행은 하지 않는다. read-only는 Workbook/reference 경계이며 기존 proposal
   persistence를 비활성화한다는 뜻이 아니다.
-- 체크인 v1/v3 129행 mapping의 direct/routing 전역 합집합은 raw 10개, 0030 v4 Lever-native executable binding
+- 체크인 v1/v3 129행 mapping의 direct/routing 전역 합집합은 raw 10개, 0032 canonical v4 Lever-native executable binding
   전역 합집합은 raw 14개에 도달할 수 있다. 요청 하나에서는 관련 하위 집합만 후보가 되며, v1/v3는 5종,
   v4는 extend7 7종 scope gate를 적용한 뒤에만 Basecase 우선/LUT fallback과 LLM 단계로 진입한다.
-- 0030 기준선은 master 21행·활성 14개, v4 active Lever 18개, raw/effective binding 16/14다. runtime은
+- 0032 canonical 기준선은 master 21행·활성 14개, v4 active Lever 18개, raw/effective binding 16/14다. runtime은
   Scenario 생성 시 `catalog_version=v4`를 명시하고, Model Parameter context에서는 Group에 저장된 version으로
   catalog를 조회한 뒤 checksum을 검증한다. v4는 shared mapping을 조회하지 않는다.
 - 이 resource overlay는 DB schema와 master/catalog/mapping data, parameter master, Lever binding·catalog checksum과 legacy mapping을
@@ -727,3 +727,4 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
 - API 호출 방법과 응답: [API 문서](./02_MODEL_PARAMETER_AGENT_API_SPEC.md)
 - DB 관계와 저장 구조: [DB 문서](./03_MODEL_PARAMETER_AGENT_DB_SPEC.md)
 - Basecase/LUT와 Object Storage 구조: [Basecase·LUT 문서](./05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md)
+- 신규 파라미터 추가·활성화 정합성 게이트: [파라미터 추가 가이드](./06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)

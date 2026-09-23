@@ -5,7 +5,7 @@
 
 ## 1. 기준 범위
 
-0030 v4 runtime fixture 기준선은 master 21행 중 활성 14개이며, active resource capability는
+0032 canonical v4 runtime fixture 기준선은 master 21행 중 활성 14개이며, active resource capability는
 LUT-backed 10개와 Basecase-only 4개로 나뉜다. 체크인 v1/v3 shared dimension mapping 129행의
 direct/routing 전역 합집합은 LUT-backed parameter 10개에 도달한다. v4는 active Lever 18개에 raw
 binding 16개를 가지며, 비활성 CDD/HDD를 제외한 effective executable 전역 합집합은 14개다. 이 수치는
@@ -47,7 +47,19 @@ sheet·header·range·변환과 아래 2026~2030 record 수를 전체 검증하�
 | `Temperature` | Demand `WeatherInput` EI:EY | Country, Year, Month; Base Case year columns | 5,040 |
 | `LiqUtilAdjustment` | Supply `BCLiquefaction` B:N | Country, LNG Plant, LNG Plant Train, Year, Month; Period/lifecycle/nameplate는 metadata이며 lifecycle 공란은 허용 | 23,820 |
 | `PipelineAdjustment` | Supply `BCPipeline` B:F | Pipeline Name, From/To Country, Year, Month; 연간 capacity를 12개월로 확장 | 420 |
-| `SupplyDisruption` | Supply `BCProduction` C:K + `SeasonalityLogic.csv` | Country, Year, Month; Mt를 BCM으로 변환하고 원본 월 계수로 집계 | 4,908 |
+| `SupplyDisruption` | Supply `BCProduction` C:K + `SeasonalityLogic.csv` | Country, Year, Month; 원본 Mt 연간값에 월 계수를 적용해 집계 | 4,908 |
+
+위 표는 값을 읽는 `reference_source`이며 결과를 쓸 `write_target` 표가 아니다. 두 역할은 별도로 검증한다.
+
+| Parameter | reference source | write target |
+|---|---|---|
+| `PipelineAdjustment` | Supply `BCPipeline` | Supply `PipelineAdjustment` / `table1` |
+| `SupplyDisruption` | Supply `BCProduction` + `SeasonalityLogic.csv` | Supply `ProductionAdjustment` / `table2` |
+
+`BCProduction`이 존재한다는 사실만으로 `ProductionAdjustment`가 검증되는 것은 아니다. 반대로 과거 workbook에
+있던 `VolumeAdjustment` 같은 이름을 현재 write target의 별칭으로 추정해서도 안 된다. contract, DB/canonical,
+capability와 실제 workbook의 sheet/table/header가 exact match하지 않으면 해당 파라미터 release는 실패다. LUT는
+동일 exact key의 기준값 fallback일 뿐, 없는 write target이나 잘못된 DB target을 대체하지 않는다.
 
 기존 adjustment write target에서 관찰된 GDP/PMI/PowerMix/Temperature/LiqUtilAdjustment 좌표 수
 93/48/57/150/33,348은 위 authoritative count가 아니며, source slot whitelist로 사용하지 않는다.
@@ -124,10 +136,10 @@ canonical과 raw mapping/binding에는 남지만 신규 proposal의 Step1.5·slo
 record가 없거나 key/value 검증을 통과하지 못한 slot에는 LUT·유사 시설·부분 key fallback을 적용하지 않고
 그 slot을 제외한다.
 
-이 4개 capability는 0030 fixture와 release 검증 기준선에 유지되지만 runtime startup이 네 종류의 exact
+이 4개 capability는 0032 canonical fixture와 release 검증 기준선에 유지되지만 runtime startup이 네 종류의 exact
 Basecase slot을 모두 강제하는 것은 아니다. 현재 runtime proposal allow-list 밖이므로 신규 proposal에는
 진입하지 않는다. `RemainingUnrestrictedAmount`와 `VolumeCancelled`의 과거 Basecase 좌표는 남아 있어도
-0030 master 비활성·active binding 없음 상태이므로 future 계약 전에는 executable하지 않다.
+0032 canonical master 비활성·active binding 없음 상태이므로 future 계약 전에는 executable하지 않다.
 
 ## 5. 보류 LUT와 보조 reference
 
@@ -187,7 +199,7 @@ contract hash와 실제 파일 signature를 key로 process cache한다. 구조�
 
 자동화·release acceptance에서는 runtime보다 넓은 체크인 기준선을 별도로 검증한다.
 
-- 0030 runtime fixture master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개 정의의 일관성
+- 0032 canonical runtime fixture master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개 정의의 일관성
 - LUT-backed parameter의 horizon 내 selectable LUT record와 Basecase-only parameter의 검증된 exact Basecase slot
 - 필수 header 누락, 숫자 형식 오류, 필수 key/value 빈 값
 - 같은 exact key의 상충 값, join 누락, 허용되지 않은 시설 상태

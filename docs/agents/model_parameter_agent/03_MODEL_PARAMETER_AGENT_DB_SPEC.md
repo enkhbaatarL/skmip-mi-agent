@@ -9,14 +9,14 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 저장소 기준선의 파라미터는 몇 개인가? | 0030 fixture master 21개 중 활성은 14개이고 LUT-backed 활성 10개와 Basecase-only 활성 4개다. v4 extend7 신규 proposal 허용은 7개이고 v1/v3는 기존 5개다. live DB 값은 별도 read-back이 필요하다. |
+| 저장소 기준선의 파라미터는 몇 개인가? | 0032 canonical fixture master 21개 중 활성은 14개이고 LUT-backed 활성 10개와 Basecase-only 활성 4개다. v4 extend7 신규 proposal 허용은 7개이고 v1/v3는 기존 5개다. live DB 값은 별도 read-back이 필요하다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
 
 > v1/v3 신규 proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 이름 allow-list를
 > 유지한다. v4는 ID `{4, 6, 7, 8, 14, 15, 17}`과 name/target이 capability contract와 일치해야 한다.
-> 정상 0030 DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum, canonical/workbook을 변경하지 않는다.
+> 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum, canonical/workbook을 변경하지 않는다.
 
 ## 1. 핵심 테이블을 한 문장으로 이해하기
 
@@ -58,7 +58,7 @@ v3 context 테이블은 동적 composite dimension의 lineage를 기존 연결�
 
 `tmm_mi_model_param_m`에는 파라미터의 이름, 설명, 값을 넣을 모델 파일·시트·테이블, Basecase를 읽는 기준이 있다.
 Agent는 live DB에서 사용 중이며 삭제되지 않은 항목만 읽는다.
-0030 fixture 21개 중 활성 기준선은 다음 14개다. 앞의 10개는 LUT-backed이고 뒤의 4개는 Basecase-only다.
+0032 canonical fixture 21개 중 활성 기준선은 다음 14개다. 앞의 10개는 LUT-backed이고 뒤의 4개는 Basecase-only다.
 아래 표는 canonical과 resource capability 기준선을 설명한다. 표의 활성 상태와 별개로 신규 proposal 허용 여부는 위 runtime allow-list를 따르며, 실제 DB 적용 여부는 read-back으로 확인한다.
 
 | 파라미터 | 적용 대상 | 주요 좌표 | Basecase 읽기 방식 |
@@ -86,6 +86,34 @@ capability로 보지 않는다.
 Basecase와 LUT를 읽는 자세한 기준은 [Basecase/LUT 문서](05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md)를 참고한다.
 
 이 표의 `parameter_hint` 컬럼은 Excel을 파싱하는 설정이 아니라, LLM에 “이 값의 의미·단위·스케일과 제안 시 제약”을 알려 주는 설명이다. runtime allow-list를 통과한 후보의 routing, slot 선택, value 제안 단계에 같은 파라미터 설명으로 들어간다.
+
+### 2.1 신규 파라미터 DB 정합성 게이트
+
+신규 제안 파라미터는 DB 이름이나 `use_yn`만 추가해서는 안 된다. sibling mgmt의 versioned DML과 Agent
+canonical에서 다음 필드를 파라미터별로 대조하고, capability·workbook contract·실제 최종 workbook과 같은
+값인지 확인한다.
+
+| 구분 | 반드시 일치시킬 내용 |
+|---|---|
+| 식별·활성 | `model_param_id`, `parameter_name`, `use_yn`, `del_yn` |
+| 최종 쓰기 대상 | `model_file`, `model_sheet`, `model_table` |
+| 값 의미 | `parameter_hint`, 단위, 절대값/증감값 의미, 최소·최대 범위 |
+| exact 좌표 | `semantic_axes`, capability `exact_axes`, write-target key/value field |
+| 기준값 읽기 | `basecase_read_mode`, 모든 `basecase_*` 컬럼, reference source 또는 LUT adapter |
+| v4 후보 경로 | active Impact Lever ID/code, binding role, applicability, catalog version/checksum |
+
+DB의 `basecase_*`는 기준값을 **읽는 위치**, `model_*`는 결과를 **쓰는 위치**다. 두 위치가 다를 수 있으므로
+시트명 유사성으로 합치거나 과거 이름을 대입하지 않는다. 현재 대표 예시는 다음과 같다.
+
+| Parameter | 기준값 원본 | 최종 쓰기 대상 | 금지되는 해석 |
+|---|---|---|---|
+| `PipelineAdjustment` | Supply `BCPipeline` | Supply `PipelineAdjustment` / `table1` | From/To 축을 생략하거나 원본 시트에 쓰는 것으로 해석 |
+| `SupplyDisruption` | Supply `BCProduction` + `SeasonalityLogic.csv` | Supply `ProductionAdjustment` / `table2` | 과거 `VolumeAdjustment`를 현재 target 별칭으로 사용 |
+
+이 중 하나라도 DML·canonical·계약·실제 workbook과 다르면 신규 proposal scope에 넣지 않는다. DML만 준비한
+단계에서는 versioned DML 최종값과 canonical diff를 증적으로 남기고, 실제 환경 적용이 승인된 release에서는
+적용 후 DB read-back까지 완료해야 한다. 자세한 전체 매트릭스와 완료 조건은
+[파라미터 추가 가이드](06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)를 따른다.
 
 ## 3. Legacy 연결표: v1/v3에서 어떤 파라미터를 검토할지 알려주는 표
 

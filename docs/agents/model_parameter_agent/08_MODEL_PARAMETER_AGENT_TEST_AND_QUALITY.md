@@ -38,6 +38,36 @@ rollout을 승인하지 않는다.
 앞 단계의 승인이 뒤 단계의 승인을 포함하지 않는다. 계획이나 문서 검토만 요청받았으면 DB, API, LLM을
 호출하지 않는다. credential, token, 전체 prompt와 DB 접속 정보는 보고서에 남기지 않는다.
 
+## 신규 파라미터 확장 정합성 게이트
+
+제안 파라미터를 추가·활성화하거나 allow-list를 넓히는 release는 일반 회귀 전에
+[파라미터 추가 가이드](06_MODEL_PARAMETER_AGENT_PARAMETER_ADDITION_GUIDE.md)의 파라미터별 정합성
+매트릭스를 완성해야 한다. 다음 다섯 데이터 경계를 서로 독립적으로 확인한다.
+
+1. DB 데이터: mgmt versioned DML, Agent canonical master, active Lever binding과 checksum
+2. Agent 데이터: proposal capability, workbook contract, runtime allow-list와 출력 `modelTarget`
+3. 원본 Excel 데이터: digest가 고정된 workbook의 실제 source sheet/range/header/record
+4. 원본의 변형 데이터: CSV/LUT/auxiliary source, adapter·공식·join과 exact-key 결과
+5. 최종 모델 입력: 실제 write-target sheet/table/header/key/value field와 단위
+
+원본 reference와 write target을 같은 시트로 가정하지 않는다. 예를 들어 `SupplyDisruption`은
+`BCProduction`을 읽지만 결과 target은 `ProductionAdjustment/table2`다. 과거 `VolumeAdjustment` 같은 시트명이
+다른 자료에 있어도 현재 target의 별칭으로 허용하지 않는다. sheet/table/header/axis가 exact match하지 않으면
+LLM 실행 전 `FAIL`이다. LUT는 정상적으로 원본 exact key가 없을 때의 기준값 fallback일 뿐, 없는 target이나
+parser/contract 오류를 복구하는 수단이 아니다.
+
+신규 파라미터마다 최소한 다음 focused test를 개별 실행한다.
+
+- 대표 exact source record의 좌표·값·단위와 원본 cell을 대조한다.
+- 같은 좌표의 변형/LUT 값과 공식 또는 join을 재현하고 fallback 허용·차단 조건을 확인한다.
+- runtime proposal의 `parameterName`, `modelTarget`, 전체 axes와 최종 절대값 단위를 write target과 대조한다.
+- target sheet/table/header의 실제 존재와 capability·DB tuple의 exact match를 확인한다.
+- missing key, duplicate/non-finite source, evidence 부족, 범위 위반과 no-change/보류 경계를 확인한다.
+
+DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 수만 맞으면 release `PASS`가 아니다. target DB
+적용을 포함하는 release는 별도 승인 후 read-back까지, DML 작성만 포함하는 작업은 DML/canonical 정적 비교까지
+증적으로 구분한다.
+
 ## v4 품질 평가 기준
 
 ### 입력과 lineage
@@ -53,7 +83,7 @@ rollout을 승인하지 않는다.
 
 - executable Impact Lever binding에서 raw candidate를 만든다.
 - v1/v3는 production `MODEL_PARAMETER_PROPOSAL_ALLOWLIST` 5종을, v4는
-  `model-parameter-proposal-capabilities-v2`의 ID `{4, 6, 7, 8, 14, 15, 17}`과 name/target을 읽어
+  `model-parameter-proposal-capabilities-v3`의 ID `{4, 6, 7, 8, 14, 15, 17}`과 name/target을 읽어
   `runtime-allowed`와 `active-but-blocked`를 나눈다.
 - blocked candidate는 Step1.5·Step2·Step3·신규 proposal과 그 결과에서 파생된 Confirmation에 도달하면 안 되며
   `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 한다.
@@ -185,6 +215,8 @@ idempotency/rollback을 검증하고 미실행 단계와 필요한 별도 승인
 - ordered Event와 catalog version/checksum
 - raw active, runtime-allowed, active-but-blocked 단계별 수와 reason code
 - candidate, slot, lifecycle/applicability 근거, effective reference, proposal/Confirmation DB read-back
+- 신규 파라미터별 DB/canonical, Lever, capability, source Excel, transformed/LUT, write target, config,
+  runtime output 정합성 PASS/FAIL 행
 - 실행 명령, test collected/passed/failed/skipped, token·시간·retry
 - `PASS | REVIEW | FAIL | COVERAGE LIMIT` 및 미실행 사유
 

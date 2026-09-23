@@ -23,8 +23,8 @@
 - DB migration 정본은 sibling mgmt revision `d9f4c2a81332`이며, Agent fixture는
   `scripts/model_parameter/model-parameter-canonical-v4-0032.json`과
   `scripts/model_parameter/model-impact-lever-canonical-v4-0032.json`이다.
-- 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0029 역사 기준선이다. 0030 적용 입력이나
-  현재 binding 판정에 사용하지 않는다.
+- 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0032의 최종 target·unit 정합성을
+  사람이 검토하기 위한 자료다. DB 적용과 runtime 판정은 versioned canonical·contract·mgmt DML을 기준으로 한다.
 
 새 파라미터의 DB/canonical/resource capability 활성화는 이름이나 `use_yn` 하나만 바꾸는 작업이 아니다. master, v4 Lever binding, Basecase/LUT capability, resource manifest, prompt 크기, proposal/confirmation 검증을 한 단위로 다룬다. legacy mapping은 신규 v4 rollout의 입력이나 fallback으로 사용하지 않는다. capability를 활성화해도 runtime proposal allow-list에 자동으로 추가되지 않으며, 신규 proposal 허용은 별도 정책 변경과 검증이 필요하다.
 
@@ -48,6 +48,50 @@
 
 자료가 부족하면 master `use_yn=N`, binding 미등록 또는 LUT `enabled=false`로 두며 과거값을 임의 이월하지 않는다. Basecase-only는 검증된 exact Basecase slot이 없으면 executable하지 않다.
 
+### 2.1 파라미터별 정합성 매트릭스 — 활성화 전 필수 산출물
+
+제안 범위를 확대하기 전에 신규 파라미터마다 아래 표의 한 행을 완성한다. 개수 합계나 공통 테스트 통과만으로
+개별 행을 대신할 수 없다. 값은 설명 문서에서 추정하지 않고 현재 versioned artifact와 실제 원본에서 확인한다.
+
+| 검증 축 | 파라미터별로 기록할 값 | 판정 기준 |
+|---|---|---|
+| DB master/canonical | ID·name·활성, `model_file/sheet/table`, `semantic_axes`, 모든 `basecase_*`, hint·unit·값 의미·범위 | mgmt DML과 Agent canonical exact match |
+| v4 Lever catalog | Lever ID/code, catalog version/checksum, binding role·applicability·support | active hydrated binding과 exact match |
+| proposal capability | schema/release, ID·name·target, exact axes, reference mode, evidence policy, constraints | DB/canonical과 exact match |
+| 원본 Excel | workbook role/path/digest, source sheet/range/header/columns, parser, record count | sheet·header가 실제 artifact에 존재하고 파싱 수가 계약과 일치 |
+| 변형 데이터/LUT | 파일/path/digest/header, adapter/formula/join, exact axes, 단위, record count | 원본→변형 계산과 same-exact-key fallback을 대표값으로 재현 |
+| 최종 쓰기 대상 | workbook role, sheet/table/header, key/value columns, unit·값 의미 | 실제 최종 workbook과 플랫폼 입력 계약에 exact match |
+| 배포 설정 | local/Kubernetes contract·capability path, release ID, SHA/schema | 두 설정이 동일하고 실제 파일을 가리킴 |
+| runtime 출력 | `parameterName`, `modelTarget`, `slot_axes`, `proposedValue` 단위·의미 | capability와 최종 쓰기 대상 tuple이 그대로 출력됨 |
+
+현재 0032의 대표 행은 역할 분리를 다음처럼 보여 준다.
+
+| Parameter | authoritative reference | transformed fallback | final write target |
+|---|---|---|---|
+| `PipelineAdjustment` | Supply `BCPipeline` B:F | pipeline LUT, 동일 5축 exact key | Supply `PipelineAdjustment` / `table1`, B/C/D/E/F/H |
+| `SupplyDisruption` | Supply `BCProduction` C:K + `SeasonalityLogic.csv` | production×seasonality LUT, 동일 3축 exact key | Supply `ProductionAdjustment` / `table2`, I/J/K/M |
+
+`reference_source`와 `write_target`은 의도적으로 다른 계약이다. `BCProduction`을 읽는다고 결과를 그 시트에
+쓰는 것이 아니며, `SupplyDisruption`이라는 파라미터명에서 시트명을 유추하지 않는다. 특히 과거
+`VolumeAdjustment` 시트가 다른 workbook이나 역사 자료에 있더라도 현재 target인
+`ProductionAdjustment`의 별칭이나 fallback으로 사용할 수 없다.
+
+### 2.2 즉시 실패시키는 불일치
+
+다음 중 하나라도 있으면 구현 완료나 release PASS로 판정하지 않고, 파라미터를 비활성 또는 proposal scope
+밖에 둔다.
+
+1. DB/canonical/capability의 ID·name·`model_file/sheet/table` 중 하나가 다르다.
+2. 원본 reference sheet는 있지만 최종 write-target sheet/table/header가 실제 workbook에 없다.
+3. exact axes의 이름·개수·순서·의미가 DB, contract, LUT와 runtime 출력에서 다르다.
+4. 단위 또는 absolute/delta 의미가 변환 전후나 write target에서 달라지는데 명시적 변환 계약이 없다.
+5. 원본이 정상적으로 없어서 LUT를 쓰는 경우가 아닌데, parser 오류·중복 충돌·잘못된 target을 LUT로 가린다.
+6. local config와 Kubernetes config가 다른 contract/capability release 또는 SHA를 가리킨다.
+7. 신규 파라미터별 source→fallback→runtime output focused test 없이 전체 개수 테스트만 통과했다.
+
+시트명 대소문자·공백·복수형을 비롯한 식별자는 fuzzy match하지 않는다. 불일치를 발견했을 때 과거 fixture,
+archive workbook, legacy mapping 또는 설명 문구를 근거로 자동 보정하지 않는다.
+
 ## 3. DB canonical 변경
 
 tmm_mi_model_param_m에는 다음을 모두 명시한다.
@@ -56,6 +100,10 @@ tmm_mi_model_param_m에는 다음을 모두 명시한다.
 - model_file, model_sheet, model_table, semantic_axes
 - basecase_read_mode와 모든 basecase_* 컬럼
 - 수정 감사 컬럼과 del_yn
+
+sibling mgmt에는 새 versioned migration으로 최종 DML을 두고, 이 저장소의 canonical과 같은 tuple인지 정적
+검증한다. DML 준비만 요청된 경우에는 DML/canonical diff까지가 증적이며 DB 적용을 주장하지 않는다. target DB
+적용이 승인된 경우에만 transaction·read-back으로 최종 행과 hydrated catalog checksum을 확인한다.
 
 기본키와 생성 감사 컬럼은 변경하지 않는다. v4 binding은 active Impact Lever catalog가 parameter name, role과 applicability를 소유한다. legacy mapping 전체는 transaction 전후 digest가 같은지 확인하는 invariant로만 취급한다. Flow/node에서 직접 SQL을 작성하지 않고 persistence service를 사용한다.
 
@@ -152,7 +200,7 @@ v4에서는 `liquefaction_utilization`과 `liquefaction_production_override`를 
 LiqProdAdjustment를 제외하므로 현재는 LiqUtilAdjustment만 이후 단계에 진입한다. legacy mapping은 후보 source나
 fallback으로 사용하지 않는다.
 
-## 6. 0030 v4 raw Lever binding과 extend7 밖 활성 7개의 핵심 규칙
+## 6. 0032 canonical v4 raw Lever binding과 extend7 밖 활성 7개의 핵심 규칙
 
 | Lever | Parameter binding |
 |---|---|
@@ -173,7 +221,7 @@ fallback으로 사용하지 않는다.
 
 `price_only` Lever는 binding을 두지 않는다. CDD/HDD binding은 capability로 보존하지만 master가 비활성이므로 executable candidate가 아니다.
 
-위 표는 0030 raw Lever binding이다. 현재 v4 신규 proposal에서는 capability gate를 통과한 GDP, PMI,
+위 표는 0032 canonical raw Lever binding이다. 현재 v4 신규 proposal에서는 capability gate를 통과한 GDP, PMI,
 PowerMix, Temperature, LiqUtilAdjustment, PipelineAdjustment, SupplyDisruption만 이후 단계로 전달한다. 나머지 활성 7개는 capability와 provenance를
 유지하지만 `PROPOSAL_SCOPE_EXCLUDED`로 제외한다.
 
@@ -187,7 +235,7 @@ PowerMix, Temperature, LiqUtilAdjustment, PipelineAdjustment, SupplyDisruption�
 | ShippingCost | 검증된 Basecase exact slot | `lng_charter_rate` primary |
 
 별도 LUT fallback을 추가하지 않는다. Basecase와 LUT가 모두 없는 slot은 제외한다. 이 4개는 현재 runtime proposal
-allow-list 밖이다. `RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0030에서 inactive/unbound이므로 새 contract와
+allow-list 밖이다. `RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0032 canonical에서 inactive/unbound이므로 새 contract와
 forward canonical release 없이 후보화하지 않는다.
 
 ## 7. prompt·token 보호
@@ -207,8 +255,8 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 
 1. canonical consistency와 resource release·LUT adapter 자동화 테스트가 통과한다.
 2. config.yaml과 ConfigMap manifest가 같다.
-3. 0030 기준선의 master 21행·활성 14개와 active Lever 18개·binding 16/14/14를 확인하고, DB 적용 작업이면
-   hydrated checksum `835e6f2d…be51`을 read-back한다.
+3. 0032 canonical 기준선의 master 21행·활성 14개와 active Lever 18개·binding 16/14/14를 확인하고, DB 적용 작업이면
+   hydrated checksum `b9d8c051…000b`을 read-back한다.
 4. v4 canonical JSON·SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
 5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 4개의 exact
    Basecase slot을 확인한다. v4 신규 proposal은 7개만 허용하고 나머지 활성 7개는 `PROPOSAL_SCOPE_EXCLUDED`,
@@ -218,6 +266,13 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
    invalid exact-key LUT 차단, PowerMix atomic vector와 LiqUtil evidence/1 초과 보존 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
 8. 실제 리포트에 parameter, candidate, slot, effective reference, proposal, token, 시간·retry와 confirmation ID를 남긴다.
+
+신규 파라미터마다 아래 결과를 별도 행으로 남긴다. 모든 칸이 PASS이거나 승인된 N/A 사유가 있어야 하며,
+기존 파라미터를 포함한 총 개수만 맞는 것으로 완료 처리하지 않는다.
+
+| Parameter | DB/canonical | Lever | capability | source Excel | transformed/LUT | write target | config | runtime output |
+|---|---|---|---|---|---|---|---|---|
+| `<new parameter>` | PASS/FAIL | PASS/FAIL | PASS/FAIL | PASS/FAIL | PASS/FAIL/N/A | PASS/FAIL | PASS/FAIL | PASS/FAIL |
 
 검증 전후 DB·canonical·catalog와 기존 v1/v3 Basecase·업무용 mapping workbook fingerprint가 같아야 한다. 별도로 추가한 v4 contract/config path와 재사용한 `new-bc-v1` workbook artifact는 선언된 digest·header·record count와 일치해야 한다.
 
