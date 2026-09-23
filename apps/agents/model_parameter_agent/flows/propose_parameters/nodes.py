@@ -854,10 +854,6 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.scenario_context or {},
         registry=registry,
     )
-    blocked_exact_keys_by_candidate = build_authoritative_blocked_keys(
-        state.candidate_mappings,
-        state.scenario_context or {},
-    )
     lut_catalog = (
         get_lut_catalog(
             policy,
@@ -868,6 +864,11 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         )
         if cfg.model_parameter_lut_enabled
         else None
+    )
+    blocked_exact_keys_by_candidate = build_authoritative_blocked_keys(
+        state.candidate_mappings,
+        state.scenario_context or {},
+        lut_catalog=lut_catalog,
     )
     basecase_index = build_basecase_index(
         records,

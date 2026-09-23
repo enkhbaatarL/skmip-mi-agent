@@ -54,14 +54,27 @@ class WorkbookReferenceRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkbookWriteTargetSlot:
+    parameter_name: str
+    canonical_key: CanonicalKey
+    axes: Mapping[str, CanonicalValue]
+    metadata: Mapping[str, CanonicalValue]
+    reference_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkbookReferenceBundle:
     contract: ModelParameterWorkbookContract
     records_by_parameter: Mapping[str, tuple[WorkbookReferenceRecord, ...]]
     blocked_keys_by_parameter: Mapping[str, frozenset[CanonicalKey]]
+    write_target_slots_by_parameter: Mapping[str, tuple[WorkbookWriteTargetSlot, ...]]
     warnings: tuple[str, ...] = ()
 
     def records_for(self, parameter_name: str) -> tuple[WorkbookReferenceRecord, ...]:
         return self.records_by_parameter.get(parameter_name, ())
+
+    def write_target_slots_for(self, parameter_name: str) -> tuple[WorkbookWriteTargetSlot, ...]:
+        return self.write_target_slots_by_parameter.get(parameter_name, ())
 
 
 def _require_workbook_loader() -> Any:
@@ -549,15 +562,18 @@ def _liq_util_records(
         life_cycle = str(values[columns["Infra Life Cycle"] - start_column] or "").strip()
         capacity_mtpm = _finite_number(values[columns["Monthly Capacity (MTPM)"] - start_column])
         utilisation = _finite_number(values[columns["LNG plant utilisation %"] - start_column])
+        nameplate_transform = source.transforms.get("Nameplate Capacity (MTPA)")
         if (
             not country
             or not plant
             or not train
             or not 1 <= month <= 12
-            or capacity_mtpm is None
+            or (nameplate_transform is not None and capacity_mtpm is None)
             or utilisation is None
         ):
-            if country and plant and train and 1 <= month <= 12 and (capacity_mtpm is None or utilisation is None):
+            if country and plant and train and 1 <= month <= 12 and (
+                (nameplate_transform is not None and capacity_mtpm is None) or utilisation is None
+            ):
                 blocked_source_keys.add(exact_key)
             warnings.append(f"{parameter_name} invalid source row excluded at row {row_number}")
             continue
@@ -569,11 +585,14 @@ def _liq_util_records(
                 f"{parameter_name} out-of-range source value excluded at row {row_number}",
             )
             continue
-        nameplate_transform = source.transforms["Nameplate Capacity (MTPA)"]
-        nameplate_mtpa = truncate_numeric_value(
-            capacity_mtpm * nameplate_transform.factor,
-            label=f"{parameter_name}:{row_number}:Nameplate Capacity (MTPA)",
-            max_decimal_places=NAMEPLATE_MAX_DECIMAL_PLACES,
+        nameplate_mtpa = (
+            truncate_numeric_value(
+                capacity_mtpm * nameplate_transform.factor,
+                label=f"{parameter_name}:{row_number}:Nameplate Capacity (MTPA)",
+                max_decimal_places=NAMEPLATE_MAX_DECIMAL_PLACES,
+            )
+            if nameplate_transform is not None and capacity_mtpm is not None
+            else None
         )
         records.append(
             _record(
@@ -590,7 +609,7 @@ def _liq_util_records(
                 metadata={
                     "Period": period,
                     **({"Life Cycle Category": life_cycle} if life_cycle else {}),
-                    "Nameplate Capacity (MTPA)": nameplate_mtpa,
+                    **({"Nameplate Capacity (MTPA)": nameplate_mtpa} if nameplate_mtpa is not None else {}),
                 },
                 reference_id=_cell_reference_id(
                     contract,
@@ -599,8 +618,14 @@ def _liq_util_records(
                     column=columns["LNG plant utilisation %"],
                 ),
                 diagnostics=(
-                    "capacity_transform=mtpm_x_12",
-                    f"transform_provenance={nameplate_transform.provenance}",
+                    *(
+                        (
+                            "capacity_transform=mtpm_x_12",
+                            f"transform_provenance={nameplate_transform.provenance}",
+                        )
+                        if nameplate_transform is not None
+                        else ("metadata_authority=write_target",)
+                    ),
                     *(("missing_metadata=Life Cycle Category",) if not life_cycle else ()),
                 ),
             ),
@@ -856,6 +881,204 @@ def _validate_write_target_headers(
             )
 
 
+def _extract_matrix_write_target_slots(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+) -> tuple[WorkbookWriteTargetSlot, ...]:
+    target = parameter.write_target
+    if target.layout != "matrix_time_columns" or target.row_policy != "existing_exact":
+        return ()
+
+    try:
+        value_start = _column_index(target.columns["value_start"])
+        value_end = _column_index(target.columns["value_end"])
+        year_row = int(target.columns["year_row"])
+        month_row = int(target.columns["month_row"])
+        period_row = int(target.columns["period_row"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _reference_error(f"{parameter_name} matrix write target controls are invalid") from exc
+    if value_start > value_end:
+        raise _reference_error(f"{parameter_name} matrix write target value range is reversed")
+
+    header_start_row = min(year_row, month_row, period_row)
+    header_end_row = max(year_row, month_row, period_row)
+    header_values = dict(
+        enumerate(
+            worksheet.iter_rows(
+                min_row=header_start_row,
+                max_row=header_end_row,
+                min_col=value_start,
+                max_col=value_end,
+                values_only=True,
+            ),
+            start=header_start_row,
+        ),
+    )
+    time_columns: list[tuple[int, int, int, int]] = []
+    for column in range(value_start, value_end + 1):
+        offset = column - value_start
+        raw_year = header_values[year_row][offset]
+        raw_month = header_values[month_row][offset]
+        raw_period = header_values[period_row][offset]
+        if raw_year is None and raw_month is None and raw_period is None:
+            continue
+        try:
+            year = strict_int(
+                raw_year,
+                label=f"{parameter_name}:target:{_column_letter(column)}:Year",
+            )
+            month = strict_int(
+                raw_month,
+                label=f"{parameter_name}:target:{_column_letter(column)}:Month",
+            )
+            period = strict_int(
+                raw_period,
+                label=f"{parameter_name}:target:{_column_letter(column)}:Period",
+            )
+        except MIBaseError as exc:
+            raise _reference_error(
+                f"{parameter_name} matrix write target has an invalid time header at {_column_letter(column)}",
+            ) from exc
+        if not 1 <= month <= 12:
+            raise _reference_error(
+                f"{parameter_name} matrix write target has an invalid month at {_column_letter(column)}: {month}",
+            )
+        time_columns.append((column, year, month, period))
+
+    non_time_axes = tuple(axis_name for axis_name in target.key_axes if axis_name not in {"Year", "Month"})
+    row_metadata_axes = tuple(axis_name for axis_name in target.metadata_axes if axis_name != "Period")
+    required_row_fields = (*non_time_axes, *row_metadata_axes)
+    missing_columns = [field for field in required_row_fields if field not in target.columns]
+    if missing_columns:
+        raise _reference_error(
+            f"{parameter_name} matrix write target columns are missing: {missing_columns}",
+        )
+
+    row_columns = {field: _column_index(target.columns[field]) for field in required_row_fields}
+    row_start_column = min(row_columns.values())
+    row_end_column = max(row_columns.values())
+    slots_by_key: dict[CanonicalKey, WorkbookWriteTargetSlot] = {}
+    populated_row_count = 0
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=target.data_start_row,
+            max_row=worksheet.max_row,
+            min_col=row_start_column,
+            max_col=row_end_column,
+            values_only=True,
+        ),
+        start=target.data_start_row,
+    ):
+        raw_row = {
+            field: values[column - row_start_column] for field, column in row_columns.items()
+        }
+        if all(value is None or (isinstance(value, str) and not value.strip()) for value in raw_row.values()):
+            continue
+        missing_key_axes = [
+            axis_name
+            for axis_name in non_time_axes
+            if raw_row.get(axis_name) is None
+            or (isinstance(raw_row.get(axis_name), str) and not str(raw_row[axis_name]).strip())
+        ]
+        if missing_key_axes:
+            raise _reference_error(
+                f"{parameter_name} matrix write target row {row_number} is missing key axes: {missing_key_axes}",
+            )
+        populated_row_count += 1
+        for column, year, month, period in time_columns:
+            if year not in contract.horizon.years:
+                continue
+            axes = MappingProxyType(
+                {
+                    axis_name: canonical_axis_value(
+                        axis_name,
+                        year if axis_name == "Year" else month if axis_name == "Month" else raw_row[axis_name],
+                    )
+                    for axis_name in target.key_axes
+                },
+            )
+            metadata_values: dict[str, CanonicalValue] = {}
+            for axis_name in target.metadata_axes:
+                raw_value = period if axis_name == "Period" else raw_row.get(axis_name)
+                if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
+                    continue
+                metadata_values[axis_name] = canonical_axis_value(axis_name, raw_value)
+            missing_metadata = set(target.metadata_axes) - set(metadata_values) - {"Life Cycle Category"}
+            if missing_metadata:
+                raise _reference_error(
+                    f"{parameter_name} matrix write target row {row_number} is missing metadata: "
+                    f"{sorted(missing_metadata)}",
+                )
+            canonical_key = canonical_key_from_axes(axes, target.key_axes)
+            slot = WorkbookWriteTargetSlot(
+                parameter_name=parameter_name,
+                canonical_key=canonical_key,
+                axes=axes,
+                metadata=MappingProxyType(metadata_values),
+                reference_id=(
+                    f"{contract.release_id}:{target.workbook_role}:{target.sheet}:"
+                    f"{_column_letter(column)}{row_number}"
+                ),
+            )
+            previous = slots_by_key.get(canonical_key)
+            if previous is not None and (
+                dict(previous.axes) != dict(slot.axes) or dict(previous.metadata) != dict(slot.metadata)
+            ):
+                raise _reference_error(
+                    f"{parameter_name} matrix write target has conflicting duplicate exact key: {canonical_key!r}",
+                )
+            slots_by_key[canonical_key] = slot
+
+    observed_record_count = populated_row_count * len(time_columns)
+    if observed_record_count != target.observed_record_count:
+        raise _reference_error(
+            f"{parameter_name} write target count mismatch: "
+            f"expected={target.observed_record_count}, actual={observed_record_count}",
+        )
+    return tuple(slots_by_key[key] for key in sorted(slots_by_key))
+
+
+def _align_records_to_write_target(
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    records: Sequence[WorkbookReferenceRecord],
+    target_slots: Sequence[WorkbookWriteTargetSlot],
+) -> tuple[WorkbookReferenceRecord, ...]:
+    target = parameter.write_target
+    if target.row_policy != "existing_exact":
+        return tuple(records)
+    slots_by_key = {slot.canonical_key: slot for slot in target_slots}
+    missing_keys = sorted(record.canonical_key for record in records if record.canonical_key not in slots_by_key)
+    if missing_keys:
+        raise _reference_error(
+            f"{parameter_name} authoritative source contains slots absent from the write target: "
+            f"count={len(missing_keys)}, first={missing_keys[:3]!r}",
+        )
+    aligned: list[WorkbookReferenceRecord] = []
+    for record in records:
+        target_slot = slots_by_key[record.canonical_key]
+        metadata = (
+            target_slot.metadata if target.metadata_authority == "write_target" else record.metadata
+        )
+        diagnostics = (*record.diagnostics, "write_target_exact_slot_verified")
+        if dict(metadata) != dict(record.metadata):
+            diagnostics = (*diagnostics, "write_target_metadata_canonicalized")
+        aligned.append(
+            WorkbookReferenceRecord(
+                parameter_name=record.parameter_name,
+                canonical_key=record.canonical_key,
+                axes=target_slot.axes,
+                value=record.value,
+                metadata=metadata,
+                reference_id=record.reference_id,
+                diagnostics=diagnostics,
+            ),
+        )
+    return tuple(aligned)
+
+
 def _extract_workbook_references_uncached(
     resolved_contract: ModelParameterWorkbookContract,
     *,
@@ -870,6 +1093,7 @@ def _extract_workbook_references_uncached(
     loader = _require_workbook_loader()
     records_by_parameter: dict[str, tuple[WorkbookReferenceRecord, ...]] = {}
     blocked_keys_by_parameter: dict[str, frozenset[CanonicalKey]] = {}
+    write_target_slots_by_parameter: dict[str, tuple[WorkbookWriteTargetSlot, ...]] = {}
     warnings: list[str] = []
     for role in sorted(parameters_by_role):
         workbook = loader(
@@ -888,6 +1112,18 @@ def _extract_workbook_references_uncached(
                     workbook,
                     resource_root=resource_root,
                 )
+                target_slots = _extract_matrix_write_target_slots(
+                    resolved_contract,
+                    parameter_name,
+                    parameter,
+                    workbook[parameter.write_target.sheet],
+                )
+                records = _align_records_to_write_target(
+                    parameter_name,
+                    parameter,
+                    records,
+                    target_slots,
+                )
                 if enforce_expected_counts and len(records) != parameter.reference_source.expected_record_count:
                     raise _reference_error(
                         f"{parameter_name} reference count mismatch: "
@@ -895,6 +1131,7 @@ def _extract_workbook_references_uncached(
                     )
                 records_by_parameter[parameter_name] = records
                 blocked_keys_by_parameter[parameter_name] = blocked_keys
+                write_target_slots_by_parameter[parameter_name] = target_slots
                 warnings.extend(parameter_warnings)
         finally:
             workbook.close()
@@ -902,6 +1139,7 @@ def _extract_workbook_references_uncached(
         contract=resolved_contract,
         records_by_parameter=MappingProxyType(records_by_parameter),
         blocked_keys_by_parameter=MappingProxyType(blocked_keys_by_parameter),
+        write_target_slots_by_parameter=MappingProxyType(write_target_slots_by_parameter),
         warnings=tuple(warnings),
     )
 
@@ -978,6 +1216,7 @@ def clear_workbook_reference_cache() -> None:
 __all__ = [
     "WorkbookReferenceBundle",
     "WorkbookReferenceRecord",
+    "WorkbookWriteTargetSlot",
     "clear_workbook_reference_cache",
     "extract_workbook_references",
 ]

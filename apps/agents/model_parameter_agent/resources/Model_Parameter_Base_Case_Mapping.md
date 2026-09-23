@@ -21,15 +21,16 @@
 - proposal scope: v1/v3는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5종; v4 extend7은 이 5종과 `PipelineAdjustment`, `SupplyDisruption`을 DB ID/name/target capability로 허용하며 나머지 활성 후보는 `active-but-blocked`로 분류
 - 기존 v1/v3 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
-- `new-bc-v3`는 최종 workbook의 대상 시트·헤더·Mt 단위를 고정하고, 0032 DB master·Lever metadata와 업무용 mapping workbook을 함께 정합화함
+- `new-bc-v4`는 최종 workbook의 대상 시트·헤더·Mt 단위를 고정하고, 0032 DB master·Lever metadata와 업무용 mapping workbook을 함께 정합화함
+- LiqUtilAdjustment는 `existing_exact` 행 정책을 사용해 최종 시트에 없는 LUT 시설명을 제외하고, Plant/Train/Lifecycle/Nameplate/Period를 최종 대상 행의 표기로 반환함
 - audit user/version: `model-parameter-canonical-v4`, impact catalog version `v4`
 
-## v4 `new-bc-v3` read-only proposal overlay
+## v4 `new-bc-v4` read-only proposal overlay
 
 이 overlay는 정확히 `api_version=v4`, `generation_strategy=multi_event_model_lever_dimensions`인 신규
 proposal에만 적용한다. `read_only`는 Workbook/reference capability이며 기존 proposal persistence를
 비활성화한다는 뜻이 아니다. 계약은
-`resources/contracts/model-parameter-workbook-contract-v3.json`이며, workbook artifact는 digest가 변하지 않아
+`resources/contracts/model-parameter-workbook-contract-v4.json`이며, workbook artifact는 digest가 변하지 않아
 `resources/basecase_v4/new-bc-v1/`을 재사용한다. 기존 `resources/basecase/`와 v1/v3 parser는 유지한다.
 
 | Parameter | authoritative source | exact key·변환 | 2026~2030 records |
@@ -52,7 +53,7 @@ LiqUtilAdjustment는 하나의 Lever provenance 안에 exact Plant와 exact Trai
 차단하며 1 초과값을 보존한다. `Life Cycle Category` 공란은 exact record를 제외하지 않고 metadata와
 Step2 판단용 applicability에서만 생략한다.
 
-아래 master 표의 `parameter_hint`와 model target은 0032 DB canonical을 그대로 설명한다. `new-bc-v3`는
+아래 master 표의 `parameter_hint`와 model target은 0032 DB canonical을 그대로 설명한다. `new-bc-v4`는
 최종 workbook target과 단위를 검증하며 공개 API/persistence shape, legacy mapping, workbook writer·Formula/Query
 recalc·model engine은 변경하지 않는다.
 
@@ -274,7 +275,7 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 아래 DB 명령은 기존 mapping rollout 절차다. 역사적 runtime allow-list-only v0.2.4에서는 실행하지 않았으며,
 당시 DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인했다. 현재
-`new-bc-v3`와 0032 migration은 final workbook target·unit metadata를 함께 정합화한다.
+`new-bc-v4`와 0032 migration은 final workbook target·unit metadata를 함께 정합화한다.
 
 1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
 2. 승인된 DB에는 mgmt 0032 migration을 적용한다. 적용 후 master 21행·활성 14개와 새 catalog checksum을 확인한다.

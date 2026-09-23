@@ -19,7 +19,7 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v3.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v4.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
 EXPECTED_PARAMETER_NAMES = frozenset(
     {*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"},
@@ -51,6 +51,8 @@ ReferenceParser = Literal[
 ]
 ProposalMode = Literal["auto", "conditional"]
 TargetLayout = Literal["fixed_columns", "matrix_time_columns"]
+TargetRowPolicy = Literal["appendable", "existing_exact"]
+TargetMetadataAuthority = Literal["reference_source", "write_target"]
 
 
 def _contract_error(detail: str) -> MIBaseError:
@@ -221,6 +223,8 @@ class WriteTarget(_FrozenModel):
     write_unit: str
     value_semantics: str
     observed_record_count: int = Field(ge=0)
+    row_policy: TargetRowPolicy = "appendable"
+    metadata_authority: TargetMetadataAuthority = "reference_source"
 
     @model_validator(mode="after")
     def validate_target_shape(self) -> WriteTarget:
@@ -229,6 +233,8 @@ class WriteTarget(_FrozenModel):
         _validate_named_axes(self.key_axes, self.metadata_axes)
         if any(not value.strip() for value in (self.sheet, self.table, self.value_field, self.write_unit)):
             raise ValueError("write target text fields must be non-empty")
+        if self.metadata_authority == "write_target" and self.row_policy != "existing_exact":
+            raise ValueError("write-target metadata authority requires an existing-exact row policy")
         return self
 
 
@@ -280,8 +286,8 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2, 3]
-    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3"]
+    schema_version: Literal[1, 2, 3, 4]
+    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3", "new-bc-v4"]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
     generation_strategy: Literal["multi_event_model_lever_dimensions"]
@@ -297,13 +303,15 @@ class ModelParameterWorkbookContract(_FrozenModel):
         return _safe_relative_path(value, label="resource_directory")
 
     @model_validator(mode="after")
-    def validate_release_invariants(self) -> ModelParameterWorkbookContract:
+    def validate_release_invariants(self) -> ModelParameterWorkbookContract:  # noqa: C901
         if set(self.workbooks) != EXPECTED_WORKBOOK_ROLES:
             raise ValueError(
                 "workbook roles must be exactly demand, supply, and trade",
             )
         expected_parameters = V1_PARAMETER_NAMES if self.release_id == "new-bc-v1" else EXPECTED_PARAMETER_NAMES
-        expected_schema_version = {"new-bc-v1": 1, "new-bc-v2": 2, "new-bc-v3": 3}[self.release_id]
+        expected_schema_version = {"new-bc-v1": 1, "new-bc-v2": 2, "new-bc-v3": 3, "new-bc-v4": 4}[
+            self.release_id
+        ]
         if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
         if set(self.parameters) != expected_parameters:
@@ -328,16 +336,27 @@ class ModelParameterWorkbookContract(_FrozenModel):
             or not liq_util.constraints.direct_evidence_required
             or liq_util.constraints.minimum != 0.0
             or liq_util.constraints.maximum is not None
-            or nameplate_transform is None
+        ):
+            raise ValueError(
+                "LiqUtilAdjustment must retain its evidence gate, zero minimum, and unbounded maximum",
+            )
+        if self.release_id == "new-bc-v4":
+            if (
+                nameplate_transform is not None
+                or liq_util.write_target.row_policy != "existing_exact"
+                or liq_util.write_target.metadata_authority != "write_target"
+            ):
+                raise ValueError(
+                    "new-bc-v4 LiqUtilAdjustment must use exact existing target rows and target-owned metadata",
+                )
+        elif (
+            nameplate_transform is None
             or nameplate_transform.source_field != "Monthly Capacity (MTPM)"
             or nameplate_transform.operation != "multiply"
             or nameplate_transform.factor != 12.0
         ):
-            raise ValueError(
-                "LiqUtilAdjustment must retain its evidence gate, zero minimum, unbounded maximum, "
-                "and MTPM-to-MTPA transform",
-            )
-        if self.release_id in {"new-bc-v2", "new-bc-v3"}:
+            raise ValueError("legacy workbook contracts must retain the MTPM-to-MTPA transform")
+        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4"}:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
             if (
@@ -354,14 +373,14 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.constraints.minimum != 0.0
             ):
                 raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
-            if self.release_id == "new-bc-v3" and (
+            if self.release_id in {"new-bc-v3", "new-bc-v4"} and (
                 pipeline.reference_source.reference_unit != pipeline.write_target.write_unit
                 or supply.reference_source.reference_unit != supply.write_target.write_unit
                 or pipeline.write_target.value_field != "User adjusted capacity (Mt/y)"
                 or supply.write_target.sheet != "ProductionAdjustment"
                 or supply.write_target.value_field != "Volumes (Mt)"
             ):
-                raise ValueError("new-bc-v3 must use the final workbook target sheets and Mt units")
+                raise ValueError("new-bc-v3+ must use the final workbook target sheets and Mt units")
         return self
 
 
@@ -380,10 +399,10 @@ def load_workbook_contract(
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") in {2, 3} and "extends" in document:
+        if document.get("schema_version") in {2, 3, 4} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
             base_path = path.parent / extends
-            base_document = json.loads(base_path.read_text(encoding="utf-8"))
+            base_document = load_workbook_contract(base_path).model_dump(mode="json")
             base_document.update({key: value for key, value in document.items() if key != "parameters"})
             base_document["parameters"] = {
                 **base_document.get("parameters", {}),

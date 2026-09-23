@@ -14,7 +14,7 @@
 - v1/v3 신규 proposal 이름 allow-list 5개: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment
 - v4 extend7 capability 7개: 위 5개 + PipelineAdjustment(ID 15), SupplyDisruption(ID 17)
 - extend7 7개의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
-  `model-parameter-workbook-contract-v3.json`을 사용한다. 변경되지 않은 Excel artifact는
+  `model-parameter-workbook-contract-v4.json`을 사용한다. 변경되지 않은 Excel artifact는
   `resources/basecase_v4/new-bc-v1/`의 digest를 재사용하고, v1/v3는 기존 `resources/basecase/`를 유지한다.
 - 추가 2개도 기존 5개와 같은 contract reference→exact LUT fallback→slot/evidence/value 절차를 사용하며,
   v4에는 별도 legacy Basecase reference mode를 두지 않는다.
@@ -92,6 +92,32 @@
 시트명 대소문자·공백·복수형을 비롯한 식별자는 fuzzy match하지 않는다. 불일치를 발견했을 때 과거 fixture,
 archive workbook, legacy mapping 또는 설명 문구를 근거로 자동 보정하지 않는다.
 
+### 2.3 최종 행 매핑 게이트 — 모든 파라미터 확대 시 필수
+
+시트·table·header가 존재한다는 검사만으로는 충분하지 않다. write target의 layout에 따라 아래 정책을 계약에
+명시하고, Agent가 반환할 모든 exact slot에 적용한다.
+
+| write target 정책 | 적용 기준 | 필수 검증 |
+|---|---|---|
+| `appendable` | `fixed_columns`처럼 플랫폼이 새 행을 추가할 수 있는 대상 | key/value header, exact axes, 단위와 값 의미가 일치해야 한다. 기존 행 개수는 source whitelist가 아니다. |
+| `existing_exact` | `matrix_time_columns`처럼 이미 존재하는 행과 월 열을 찾아 쓰는 대상 | 제안 key가 실제 대상 행·기간에 정확히 하나 존재해야 한다. 반환 식별자와 metadata는 대상 행 표기를 정본으로 사용한다. |
+
+`existing_exact`에서는 authoritative source와 LUT의 합집합을 그대로 후보로 만들지 않는다. 최종 target과
+교집합을 먼저 취하고 다음을 모두 지킨다.
+
+1. source key가 target에 없으면 release를 실패시킨다. 유사명·부분 축·용량 일치로 자동 연결하지 않는다.
+2. LUT key가 target에 없으면 runtime 후보에서 제외한다. LUT-only 값을 target 부재의 우회로로 사용하지 않는다.
+3. source에 값이 없고 target과 LUT에는 같은 exact key가 있으면 target의 식별자·metadata와 LUT의 값만 결합한다.
+4. row identity에 쓰이는 metadata는 source 계산값보다 target cell을 우선한다. 단위 변환으로 target 식별값을
+   역산하지 않는다.
+5. 각 parameter마다 “모든 selectable slot이 target에서 1건에 매핑되는가”를 전수 검사하고, 과거 명칭이 남은
+   대표 LUT-only key가 제외되는 회귀 테스트를 추가한다.
+
+`LiqUtilAdjustment`의 재발 방지 기준은 다음과 같다. 현재 target의 정식 식별자인
+`Cove Point Export / Cove Point Export / Operational / 5.25`만 반환할 수 있다. 과거 LUT의
+`Cove Point LNG / Cove Point LNG T1`은 명시적으로 승인된 일대일 alias가 없는 한 제안할 수 없다.
+Country·Lifecycle·Capacity 세 항목만 같다는 이유로 매핑해서는 안 된다.
+
 ## 3. DB canonical 변경
 
 tmm_mi_model_param_m에는 다음을 모두 명시한다.
@@ -145,13 +171,13 @@ adapter는 필수 header, horizon, 숫자 형식, 빈 값, exact-key 충돌, joi
 runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다.
 v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. 기존 v1/v3 Basecase
 preload의 누락·파싱 오류·0건은 warning으로 남기며, 활성 14개 capability 전체는 자동화·release
-acceptance에서 별도로 검증한다. v4 `new-bc-v3` startup은 contract schema/path와 contract에 고정된
+acceptance에서 별도로 검증한다. v4 `new-bc-v4` startup은 contract schema/path와 contract에 고정된
 Workbook path/digest만 경량 검증한다. sheet·header·range·변환·고정 record count는 최초 exact v4 materialization에서
 fail closed하고 성공 결과를 process cache한다.
 
 ### versioned workbook 계약을 변경하거나 확장할 때
 
-현재 extend7의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v3.json`이 소유한다.
+현재 extend7의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v4.json`이 소유한다.
 변경되지 않은 workbook은 `resources/basecase_v4/new-bc-v1/` digest를 재사용할 수 있지만, 계약 coverage·parser·hash가
 바뀌면 새 release ID와 새 contract 파일을 만든다. 기존 `resources/basecase/` 파일을 덮어쓰거나
 `new_resources/`를 runtime path로 연결하지 않는다.
@@ -170,6 +196,8 @@ fail closed하고 성공 결과를 process cache한다.
 
 - 계약 capability는 writer/engine 승인 전까지 `read_only_proposal`로 유지한다.
 - authoritative source와 기존 DB write target, key/metadata axes, 단위·absolute-value 의미를 분리해 선언한다.
+- write target이 `appendable`인지 `existing_exact`인지 선언하고, `existing_exact`이면 target-backed slot 전수
+  검증과 target-owned metadata 회귀 테스트를 추가한다.
 - 신규 source가 정상적으로 없는 exact key에만 기존 LUT fallback을 허용한다. non-finite·cached error·상충
   duplicate key는 명시적으로 차단해 LUT로 복구하지 않는다.
 - PowerMix는 authoritative raw source fraction의 원본 정밀도를 보존하고 재정규화하지 않는다. Country/Year별
@@ -261,7 +289,7 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 4개의 exact
    Basecase slot을 확인한다. v4 신규 proposal은 7개만 허용하고 나머지 활성 7개는 `PROPOSAL_SCOPE_EXCLUDED`,
    비활성 7개는 후보 없음으로 검증한다.
-6. v4 `new-bc-v3` contract의 세 workbook·auxiliary digest/header와
+6. v4 `new-bc-v4` contract의 세 workbook·auxiliary digest/header와
    815/5,040/4,200/5,040/23,820/420/4,908 record를 확인하고,
    invalid exact-key LUT 차단, PowerMix atomic vector와 LiqUtil evidence/1 초과 보존 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.

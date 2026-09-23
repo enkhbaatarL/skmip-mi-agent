@@ -80,7 +80,7 @@ flowchart TD
 | raw 후보 결정 | 서버 | v1/v3 legacy key 또는 v4 selected Lever state | direct/routing 또는 executable primary/alternative raw 후보 |
 | runtime 범위 필터 | 서버 | raw 후보, v1/v3 이름 5종 또는 v4 ID capability 7종 | LLM·저장으로 전달할 후보 |
 | Step1.5 | LLM, v1/v3 조건부 | legacy routing과 관련 시나리오 문맥 | 허용된 `candidate_key` 0개 이상 선택 |
-| reference 준비 | 서버 | 확정 후보, v1/v3 Basecase 또는 v4 `new-bc-v3`, LUT | 값이 존재하고 차단되지 않은 exact slot catalog |
+| reference 준비 | 서버 | 확정 후보, v1/v3 Basecase 또는 v4 `new-bc-v4`, LUT | 값이 존재하고 차단되지 않은 exact slot catalog |
 | Step2 | LLM | 시나리오 문맥, 파라미터별 slot catalog | `candidate_key + slot_axes` |
 | 기준값 결정 | 서버 | Step2 좌표 | `slot_key + coordinates + reference_value` |
 | Step3 | LLM | 확정 slot, 기준값, hint/comment | 제안값, 파라미터 근거, slot별 근거 |
@@ -227,7 +227,7 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
 
 1. v1/v3는 기존 DB `basecase_*` 설정으로 `resources/basecase/`를 읽는다.
 2. 정확히 v4 `multi_event_model_lever_dimensions`이면 `read_only_proposal` contract가 고정한
-   `new-bc-v3` contract가 고정한 authoritative source를 읽고 DB model target과 일치하는지 검증한다.
+   `new-bc-v4` contract가 고정한 authoritative source를 읽고 DB model target과 일치하는지 검증한다.
    변경되지 않은 Excel artifact는 `resources/basecase_v4/new-bc-v1/`의 고정 digest를 재사용한다.
    최초 materialization은 sheet/header/range/변환/고정 record count를 전체 검증한 뒤 contract
    hash와 실제 파일 signature를 key로 process cache한다.
@@ -240,9 +240,9 @@ system prompt는 dimension별 선택 개수를 0개부터 최대 2개 사이로 
    운영 상태를 구별하도록 값이 있는 `Life Cycle Category`만 판단용 `applicability_attributes`로 함께
    전달하며, 공란 metadata는 exact slot을 제외하지 않고 이 속성에서만 생략한다.
 
-`new-bc-v3`의 2026~2030 authoritative record 수는 GDP 815, PMI 5,040, PowerMix 4,200,
+`new-bc-v4`의 2026~2030 authoritative record 수는 GDP 815, PMI 5,040, PowerMix 4,200,
 Temperature 5,040, LiqUtilAdjustment 23,820, PipelineAdjustment 420, SupplyDisruption 4,908이다. source mapping과 변환은
-[Basecase·LUT 문서](./05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md#11-v4-new-bc-v3-read-only-proposal-계약)를
+[Basecase·LUT 문서](./05_MODEL_PARAMETER_AGENT_BASECASE_LUT_PARSING.md#11-v4-new-bc-v4-read-only-proposal-계약)를
 따른다.
 기존 adjustment write target에서 관찰된 93/48/57/150/33,348은 같은 순서의
 authoritative count가 아니며, 신규 source slot을 제한하는 whitelist로 사용하지 않는다.
@@ -260,7 +260,7 @@ runtime startup은 v4 contract schema/path와 contract에 고정된 Workbook pat
 sheet/header/range/고정 record count와 source atomic 검증은 최초 exact v4 materialization에서
 fail closed하고, 성공 결과를 해당 process에 cache한다. 기존 v1/v3 Basecase preload의
 누락·파싱 오류·0건은 warning을 남기고 계속한다. 현재 v4 신규 proposal Flow의 이 단계에는 기존
-`new-bc-v3`에 선언된 extend7 7종이 동일한 contract reference→exact LUT fallback 경로로 도달한다.
+`new-bc-v4`에 선언된 extend7 7종이 동일한 contract reference→exact LUT fallback 경로로 도달한다.
 
 ### 1.4 Step2: 적용할 exact slot 선택
 
@@ -332,7 +332,7 @@ Step2가 위 lifecycle 계약으로 child를 고른다. 유효한 좌표에만 �
 | 값 없음 | 값 없음 | 해당 slot 제외 |
 
 Basecase-only parameter는 두 번째 행의 LUT fallback 대상이 아니므로 Basecase가 없으면 제외한다.
-v4 `new-bc-v3` source가 오류·non-finite·상충 duplicate로 exact key를 명시적으로 차단한 경우는 “값 없음”이
+v4 `new-bc-v4` source가 오류·non-finite·상충 duplicate로 exact key를 명시적으로 차단한 경우는 “값 없음”이
 아니며, 두 번째 행으로 내려가지 않고 해당 slot을 제외한다.
 
 서버는 각 유효 slot에 현재 요청의 파라미터 task 안에서만 사용하는 `slot_key`를 발급하고, Step3에 `slot_key + coordinates + reference_value`를 전달한다. Basecase와 LUT의 두 값이나 source 이름을 동시에 보내지 않는다. v4 PowerMix는 10개 effective reference가 모두 존재하고 각 값 0~1, 합 `1±1e-6`을 만족해야 이 단계에서 전체 group을 유지한다.
@@ -447,7 +447,7 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 두 경로 모두
 설정 기반 소수 자릿수 정밀도 변환은 하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되,
 v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다.
-`new-bc-v3`의 파라미터별 validator와 진단은 server-side에만 두며 public JSON 필드를 추가하지 않는다.
+`new-bc-v4`의 파라미터별 validator와 진단은 server-side에만 두며 public JSON 필드를 추가하지 않는다.
 
 동기 요청은 처리가 끝난 `PROPOSED` 또는 `ABSTAINED` 결과를 바로 반환한다. 비동기 요청은 먼저 HTTP `200`과
 `PROCESSING`을 반환하고 백그라운드에서 `PROPOSED`, `ABSTAINED`, `FAILED` 중 하나로 갱신한 뒤 callback을
@@ -675,7 +675,7 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
 - `extend7-v4`는 임의 label이 아니라 0032 canonical catalog `v4` / checksum
   `b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b`, extend7 capability와
-  `new-bc-v3` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
+  `new-bc-v4` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
   계약이다. 어느 하나라도 drift하면 Scenario DB 조회 또는 LLM 실행 전에 차단한다.
 - v4 `multi_event_model_lever_dimensions`, completed Group, created/realized Group·Scenario만 실행 후보가 된다.
 - Group에 저장된 catalog full pin, selected Lever lineage와 raw/runtime allow-list 경계는 기존 v4 quality oracle로
@@ -706,7 +706,7 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
 ### 3.6 호환성 경계와 배포 전제
 
 - public proposal/confirmation request·response·callback와 저장 JSON shape은 바뀌지 않는다. v3/v4는 기존 optional `eventId`를 `null`로 반환하고 `scenarioGroupId`를 authoritative 식별자로 사용한다.
-- `new-bc-v3`는 v4 `multi_event_model_lever_dimensions`의 read-only proposal에만 적용한다. 기존
+- `new-bc-v4`는 v4 `multi_event_model_lever_dimensions`의 read-only proposal에만 적용한다. 기존
   `resources/basecase/`와 v1/v3 파싱은 유지하며 workbook write, Formula/Query 재계산과
   Demand/Supply/Trade engine 실행은 하지 않는다. read-only는 Workbook/reference 경계이며 기존 proposal
   persistence를 비활성화한다는 뜻이 아니다.
@@ -720,7 +720,7 @@ fingerprint와 DB uniqueness를 별도 도입해야 한다. 그 전의 `--execut
   변경하지 않는다. 별도의 catalog 변경 release에서는 master와 Lever catalog를 한 transaction으로 적용하고,
   checksum이 바뀌면 신규 v4 Scenario를 생성한다. Agent runtime은 DDL이나 canonical DML을 실행하지 않는다.
 - 시작 시 schema validation이 필수 테이블·컬럼과 nullable 계약을 검사한다. 누락된 schema를 임의로 우회하지 않고 startup 또는 context load에서 명확히 실패시킨다.
-- confirmation의 custom parameter와 항목 추가·삭제 허용, 기존 저장 데이터는 유지한다. `proposedValue` key는 필수지만 Confirmation 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다. proposal Step3 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 정밀도 변환은 적용하지 않으며 Basecase/LUT 기준값 정밀도 정책은 유지하되 v4 PowerMix source fraction은 원본 정밀도를 보존한다. v4 `new-bc-v3`의 PowerMix atomic 범위·합계와 파라미터별 제약/evidence 검증은 proposal 내부 정책이며 Confirmation의 공통 공개 계약을 바꾸지 않는다.
+- confirmation의 custom parameter와 항목 추가·삭제 허용, 기존 저장 데이터는 유지한다. `proposedValue` key는 필수지만 Confirmation 값은 `null`일 수 있고, non-null 값만 persistence에서 유한 숫자로 검증한다. proposal Step3 값은 유한 숫자여야 한다. 설정 기반 소수 자릿수 정밀도 변환은 적용하지 않으며 Basecase/LUT 기준값 정밀도 정책은 유지하되 v4 PowerMix source fraction은 원본 정밀도를 보존한다. v4 `new-bc-v4`의 PowerMix atomic 범위·합계와 파라미터별 제약/evidence 검증은 proposal 내부 정책이며 Confirmation의 공통 공개 계약을 바꾸지 않는다.
 
 ## 관련 문서
 

@@ -30,6 +30,7 @@ from apps.common.values.error_codes import ErrorCode
 
 
 if TYPE_CHECKING:
+    from apps.agents.model_parameter_agent.utils.lut.catalog import LutCatalog
     from apps.agents.model_parameter_agent.utils.lut.registry import (
         ParameterSpecRegistry,
     )
@@ -1333,6 +1334,7 @@ def build_basecase_records(
                     ErrorCode.INVALID_REQUEST,
                     detail=f"Workbook contract candidate_key is required: {parameter_name}",
                 )
+            parameter_references = bundle.records_for(parameter_name)
             records.extend(
                 {
                     "candidate_key": candidate_key,
@@ -1357,7 +1359,27 @@ def build_basecase_records(
                         else {}
                     ),
                 }
-                for reference in bundle.records_for(parameter_name)
+                for reference in parameter_references
+            )
+            source_keys = {reference.canonical_key for reference in parameter_references}
+            records.extend(
+                {
+                    "candidate_key": candidate_key,
+                    "parameter_name": parameter_name,
+                    "reference_id": target_slot.reference_id,
+                    "axes": {
+                        **dict(target_slot.axes),
+                        **dict(target_slot.metadata),
+                    },
+                    "value": None,
+                    **(
+                        {"_allow_missing_metadata_axes": ("Life Cycle Category",)}
+                        if parameter_name == "LiqUtilAdjustment"
+                        else {}
+                    ),
+                }
+                for target_slot in bundle.write_target_slots_for(parameter_name)
+                if target_slot.canonical_key not in source_keys
             )
         return records, warnings
 
@@ -1424,6 +1446,8 @@ def _build_legacy_basecase_records(
 def build_authoritative_blocked_keys(
     candidates: list[dict[str, Any]],
     scenario_context: dict[str, Any],
+    *,
+    lut_catalog: LutCatalog | None = None,
 ) -> dict[str, frozenset[tuple[Any, ...]]]:
     """Return exact v4 source keys that must not fall back to the LUT.
 
@@ -1467,10 +1491,16 @@ def build_authoritative_blocked_keys(
                 ErrorCode.INVALID_REQUEST,
                 detail=f"Workbook contract candidate_key is required: {parameter_name}",
             )
-        blocked_by_candidate[candidate_key] = bundle.blocked_keys_by_parameter.get(
-            parameter_name,
-            frozenset(),
-        )
+        blocked_keys = set(bundle.blocked_keys_by_parameter.get(parameter_name, frozenset()))
+        target_slots = bundle.write_target_slots_for(parameter_name)
+        if target_slots and lut_catalog is not None:
+            writable_keys = {slot.canonical_key for slot in target_slots}
+            blocked_keys.update(
+                record.canonical_key
+                for record in lut_catalog.records_for_parameter(parameter_name)
+                if record.canonical_key not in writable_keys
+            )
+        blocked_by_candidate[candidate_key] = frozenset(blocked_keys)
     return blocked_by_candidate
 
 
