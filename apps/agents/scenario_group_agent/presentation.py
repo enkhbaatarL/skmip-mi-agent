@@ -223,7 +223,9 @@ def build_common_scenario_group_query_data(
         "generationDiagnostics": scenario_group.generation_diagnostics,
     }
     if latest_operation is not None and latest_operation.presentation_snapshot:
-        presentation_snapshot.update(latest_operation.presentation_snapshot)
+        stored_snapshot = dict(latest_operation.presentation_snapshot)
+        stored_snapshot.pop("events", None) # events는 operation 완료 시점이 아니라, 그룹 생성 시점에 고정된 mi_event_snapshot_id 기반 값을 항상 우선한다
+        presentation_snapshot.update(stored_snapshot)
     detail.presentation_snapshot = presentation_snapshot
     return detail
 

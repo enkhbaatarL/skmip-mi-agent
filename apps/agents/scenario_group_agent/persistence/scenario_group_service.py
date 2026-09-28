@@ -648,11 +648,15 @@ class ScenarioGroupService:
         *,
         groups: list[MiScenarioGroupModel],
         event_ids_by_group_id: dict[int, list[int]],
-        latest_operations: dict[int, MiScenarioGroupOperationModel],
         active_operations: dict[int, MiScenarioGroupOperationModel],
         requested_event_ids: list[int],
         user_id: int,
     ) -> None:
+        """동일 이벤트 조합으로 현재 진행 중(active)인 operation이 있을 때만 재생성을 막는다.
+
+        completed되지 않은(예: confirmation 대기) 과거 그룹은 더 이상 막지 않음 —
+        Event 내용이 계속 갱신되므로 동일 조합으로 다시 생성하는 것은 유효한 케이스.
+        """
         requested_set = sorted(requested_event_ids)
         exact_groups = [
             group
@@ -668,36 +672,18 @@ class ScenarioGroupService:
                     group=group,
                     operation=active_operation,
                     user_id=user_id,
-                    active=True,
-                )
-
-        for group in exact_groups:
-            group_id = int(group.scenario_group_id)
-            latest_operation = latest_operations.get(group_id)
-            if latest_operation is not None and latest_operation.status in {"failed", "interrupted"}:
-                continue
-            stage = group.stage.value if hasattr(group.stage, "value") else group.stage
-            if stage != ScenarioGroupStage.COMPLETED.value:
-                ScenarioGroupService._raise_existing_group_conflict(
-                    group=group,
-                    operation=latest_operation,
-                    user_id=user_id,
-                    active=False,
                 )
 
     @staticmethod
     def _raise_existing_group_conflict(
         *,
         group: MiScenarioGroupModel,
-        operation: MiScenarioGroupOperationModel | None,
+        operation: MiScenarioGroupOperationModel,
         user_id: int,
-        active: bool,
     ) -> None:
         group_id = int(group.scenario_group_id)
-        operation_id = str(operation.operation_id) if operation is not None else None
-        context: dict[str, Any] = {"scenarioGroupId": group_id}
-        if operation_id is not None:
-            context["operationId"] = operation_id
+        operation_id = str(operation.operation_id)
+        context: dict[str, Any] = {"scenarioGroupId": group_id, "operationId": operation_id}
         same_owner = group.request_usr_id is not None and int(group.request_usr_id) == user_id
         if not same_owner:
             raise MIBaseError(
@@ -705,15 +691,9 @@ class ScenarioGroupService:
                 detail=f"Scenario group {group_id} is owned by another user",
                 context=context,
             )
-        if active:
-            raise MIBaseError(
-                ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
-                detail=f"Scenario group {group_id} operation {operation_id} is still active",
-                context=context,
-            )
         raise MIBaseError(
-            ErrorCode.SCENARIO_GROUP_ALREADY_CREATED,
-            detail=f"Scenario group {group_id} is awaiting confirmation",
+            ErrorCode.SCENARIO_GROUP_OPERATION_CONFLICT,
+            detail=f"Scenario group {group_id} operation {operation_id} is still active",
             context=context,
         )
 
@@ -897,10 +877,10 @@ class ScenarioGroupService:
         )
 
         detail = self.load_detail(scenario_group_id, include_deleted=include_deleted)
-        event_ids = self.load_event_ids(scenario_group_id)
+        event_refs = self.load_event_refs(scenario_group_id)
         return {
             **detail,
-            "events": EventService().load_events(event_ids) if event_ids else [],
+            "events": EventService().load_events_with_snapshot_fallback(event_refs) if event_refs else [],
             "latest_operation": ScenarioGroupOperationService().get_latest(scenario_group_id),
         }
 
@@ -920,7 +900,7 @@ class ScenarioGroupService:
 
         detail = self.load_detail(scenario_group_id)
         group = detail["group"]
-        event_ids = self.load_event_ids(scenario_group_id)
+        event_refs = self.load_event_refs(scenario_group_id)
         operation_service = ScenarioGroupOperationService()
         operation = (
             operation_service.get_operation(scenario_group_id, operation_id)
@@ -929,7 +909,7 @@ class ScenarioGroupService:
         )
         return {
             **detail,
-            "events": EventService().load_events(event_ids) if event_ids else [],
+            "events": EventService().load_events_with_snapshot_fallback(event_refs) if event_refs else [],
             "operation": operation,
             "lever_labels": (
                 ModelImpactLeverService().load_display_labels(
@@ -1015,6 +995,25 @@ class ScenarioGroupService:
         finally:
             session.close()
 
+    def load_event_refs(self, scenario_group_id: int) -> list[tuple[int, int | None]]:
+        """(mi_event_id, 생성 시점 고정 mi_event_snapshot_id) 목록을 display_order 순으로 반환."""
+        from apps.common.configs.database.sync_database.connection import (
+            get_sync_session,
+        )
+
+        session = get_sync_session()
+        try:
+            relations = ScenarioGroupRepository(session=session).fetch_group_events(scenario_group_id)
+            return [
+                (
+                    int(relation.mi_event_id),
+                    int(relation.mi_event_snapshot_id) if relation.mi_event_snapshot_id is not None else None,
+                )
+                for relation in relations
+            ]
+        finally:
+            session.close()
+
     def prepare_multi_event_group(
         self,
         *,
@@ -1069,14 +1068,17 @@ class ScenarioGroupService:
                     "mod_usr_logn_id": user_id,
                 },
             )
+            event_repository = EventRepository(session=session)
             for display_order, (event, template) in enumerate(
                 zip(events, templates, strict=True),
                 start=1,
             ):
+                mi_event_id = int(event["mi_event_id"])
                 repository.insert_group_event(
                     {
                         "scenario_group_id": scenario_group_id,
-                        "mi_event_id": int(event["mi_event_id"]),
+                        "mi_event_id": mi_event_id,
+                        "mi_event_snapshot_id": event_repository.fetch_latest_snapshot_id(mi_event_id),
                         "event_type_l2_id": int(event["event_type_l2_id"]),
                         "scenario_dimension_template_id": int(
                             template["scenario_dimension_template_id"],
@@ -1146,10 +1148,6 @@ class ScenarioGroupService:
                 self._raise_for_event_set_conflict(
                     groups=candidates,
                     event_ids_by_group_id=repository.fetch_event_ids_by_group_ids(candidate_group_ids),
-                    latest_operations=operation_repository.fetch_latest_by_group_ids(
-                        candidate_group_ids,
-                        for_update=True,
-                    ),
                     active_operations=operation_repository.fetch_active_by_group_ids(
                         candidate_group_ids,
                         for_update=True,
@@ -1181,11 +1179,14 @@ class ScenarioGroupService:
                     "mod_usr_logn_id": user_id,
                 },
             )
+            event_repository = EventRepository(session=session)
             for display_order, event in enumerate(events, start=1):
+                mi_event_id = int(event["mi_event_id"])
                 repository.insert_group_event(
                     {
                         "scenario_group_id": scenario_group_id,
-                        "mi_event_id": int(event["mi_event_id"]),
+                        "mi_event_id": mi_event_id,
+                        "mi_event_snapshot_id": event_repository.fetch_latest_snapshot_id(mi_event_id),
                         "event_type_l2_id": int(event["event_type_l2_id"]),
                         "scenario_dimension_template_id": None,
                         "template_checksum": None,
