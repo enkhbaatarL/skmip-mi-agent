@@ -166,6 +166,7 @@ class MiScenarioGroupEventModel(AuditColumnsMixin, ORMBase):
     __table_args__ = (
         Index("idx_tmm_mi_scenario_group_event_m_01", "scenario_group_id"),
         Index("idx_tmm_mi_scenario_group_event_m_02", "mi_event_id"),
+        Index("idx_tmm_mi_scenario_group_event_m_03", "mi_event_snapshot_id"),
         sa.UniqueConstraint(
             "scenario_group_id",
             "mi_event_id",
@@ -202,5 +203,11 @@ class MiScenarioGroupEventModel(AuditColumnsMixin, ORMBase):
     template_checksum: Mapped[str | None] = mapped_column(
         sa.String(64, collation=BIN),
         nullable=True,
+    )
+    mi_event_snapshot_id: Mapped[int | None] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        ForeignKey("tmm_mi_mievent_snapshot_m.mi_event_snapshot_id"),
+        nullable=True,
+        comment="생성 시점 고정 MI Event Snapshot ID",
     )
     display_order: Mapped[int] = mapped_column(sa.Integer, nullable=False)

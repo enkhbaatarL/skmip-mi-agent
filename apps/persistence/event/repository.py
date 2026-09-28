@@ -11,6 +11,7 @@ from apps.common.configs.database.sync_database.base import BaseSyncSQLRepositor
 from apps.persistence.event.models import (
     MiEventModel,
     MiEventRecordMapModel,
+    MiEventSnapshotModel,
     MiEventTypeL2Model,
 )
 
@@ -304,6 +305,67 @@ class EventRepository(BaseSyncSQLRepository):
             },
         )
         return payload
+
+    def fetch_latest_snapshot_id(self, mi_event_id: int) -> int | None:
+        """생성 시점에 고정할 스냅샷 ID 조회 (해당 Event에 대한 가장 최근 스냅샷)."""
+        stmt = (
+            select(MiEventSnapshotModel.mi_event_snapshot_id)
+            .where(MiEventSnapshotModel.mi_event_id == mi_event_id)
+            .order_by(MiEventSnapshotModel.mi_event_snapshot_id.desc())
+            .limit(1)
+        )
+        return self.session.execute(stmt).scalars().first()
+
+    def fetch_snapshot_by_id(self, mi_event_snapshot_id: int) -> dict[str, Any] | None:
+        stmt = select(MiEventSnapshotModel).where(
+            MiEventSnapshotModel.mi_event_snapshot_id == mi_event_snapshot_id,
+        )
+        snapshot = self.session.execute(stmt).scalars().one_or_none()
+        if snapshot is None:
+            return None
+        return self._snapshot_to_pipeline_dict(snapshot)
+
+    def _snapshot_to_pipeline_dict(self, snapshot: MiEventSnapshotModel) -> dict[str, Any]:
+        """스냅샷 row를 `_event_to_pipeline_dict()`와 동일한 shape으로 변환 (EventPayload 재사용 목적).
+
+        record_maps는 스냅샷이 없어 항상 live 조회로 대체하며, event_type_l2_id는
+        FK가 없어 live 카탈로그(tmm_mi_event_type_l2_m)를 별도 조회한다.
+        """
+        event_type = self.fetch_event_type_by_l2_id(int(snapshot.event_type_l2_id)) or {}
+        return {
+            "mi_event_id": str(snapshot.mi_event_id),
+            "event_type_l2_id": int(snapshot.event_type_l2_id),
+            "event_title_ko": snapshot.event_title or "",
+            "one_line_summary": snapshot.one_line_summary or "",
+            "key_bullets": [
+                str(item).strip()
+                for item in self._parse_json_list(snapshot.key_bullets_json, wrapper_key="bullets")
+                if item
+            ],
+            "detail_analysis": snapshot.detail_analysis or "",
+            "source_mi_record_ids": self.fetch_source_record_ids(int(snapshot.mi_event_id)),
+            "created_at": snapshot.event_crt_dtm.isoformat() if snapshot.event_crt_dtm else "",
+            "updated_at": snapshot.event_mod_dtm.isoformat() if snapshot.event_mod_dtm else "",
+            "latest_record_first_created": (
+                snapshot.latest_record_first_created.isoformat() if snapshot.latest_record_first_created else ""
+            ),
+            "oldest_record_first_created": (
+                snapshot.oldest_record_first_created.isoformat() if snapshot.oldest_record_first_created else ""
+            ),
+            "event_type": {
+                "event_type_l1_id": event_type.get("event_type_l1_id"),
+                "event_type_l2_id": event_type.get("event_type_l2_id", int(snapshot.event_type_l2_id)),
+                "level_1_code": event_type.get("level_1_code", ""),
+                "level_1_label": event_type.get("level_1_label", ""),
+                "level_2_code": event_type.get("level_2_code", ""),
+                "level_2_label": event_type.get("level_2_label", ""),
+            },
+            "language": "ko",
+            "occurred_at": snapshot.occurred_at.isoformat() if snapshot.occurred_at else "",
+            "tags": [
+                str(item).strip() for item in self._parse_json_list(snapshot.tags_json, wrapper_key="tags") if item
+            ],
+        }
 
     def fetch_source_record_ids(self, mi_event_id: int) -> list[int]:
         stmt = (

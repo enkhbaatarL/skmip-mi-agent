@@ -47,14 +47,12 @@ def _check_conflict(
     *,
     groups: list[SimpleNamespace],
     event_ids_by_group_id: dict[int, list[int]],
-    latest_operations: dict[int, SimpleNamespace] | None = None,
     active_operations: dict[int, SimpleNamespace] | None = None,
     user_id: int = 7,
 ) -> None:
     ScenarioGroupService._raise_for_event_set_conflict(
         groups=groups,
         event_ids_by_group_id=event_ids_by_group_id,
-        latest_operations=latest_operations or {},
         active_operations=active_operations or {},
         requested_event_ids=[3, 1, 2],
         user_id=user_id,
@@ -83,7 +81,6 @@ def test_active_operation_blocks_same_owner_with_operation_context(status: str) 
         _check_conflict(
             groups=[group],
             event_ids_by_group_id={407: [1, 2, 3]},
-            latest_operations={407: operation},
             active_operations={407: operation},
         )
 
@@ -95,18 +92,16 @@ def test_active_operation_blocks_same_owner_with_operation_context(status: str) 
     }
 
 
-@pytest.mark.parametrize("status", ["queued", "running", "succeeded"])
+@pytest.mark.parametrize("status", ["queued", "running"])
 def test_blocking_group_owned_by_another_user_returns_ownership_conflict(status: str) -> None:
     group = _group(407, owner_id=8)
     operation = _operation(407, status)
-    active = {407: operation} if status in {"queued", "running"} else {}
 
     with pytest.raises(MIBaseError) as caught:
         _check_conflict(
             groups=[group],
             event_ids_by_group_id={407: [1, 2, 3]},
-            latest_operations={407: operation},
-            active_operations=active,
+            active_operations={407: operation},
             user_id=7,
         )
 
@@ -116,32 +111,17 @@ def test_blocking_group_owned_by_another_user_returns_ownership_conflict(status:
     assert caught.value.context["operationId"] == operation.operation_id
 
 
-@pytest.mark.parametrize("latest_status", [None, "succeeded"])
-def test_unconfirmed_group_blocks_same_owner(latest_status: str | None) -> None:
+@pytest.mark.parametrize("latest_status", [None, "succeeded", "failed", "interrupted"])
+def test_unconfirmed_group_without_active_operation_allows_recreation(latest_status: str | None) -> None:
+    """Completed되지 않은 과거 그룹이라도, 지금 진행 중인 operation이 없으면 재생성을 막지 않는다.
+
+    Event 내용이 계속 갱신되므로 동일 이벤트 조합으로 다시 생성하는 것 자체는 유효한 케이스.
+    """
     group = _group(407)
-    operation = _operation(407, latest_status) if latest_status is not None else None
-
-    with pytest.raises(MIBaseError) as caught:
-        _check_conflict(
-            groups=[group],
-            event_ids_by_group_id={407: [1, 2, 3]},
-            latest_operations={407: operation} if operation is not None else {},
-        )
-
-    assert caught.value.error_code is ErrorCode.SCENARIO_GROUP_ALREADY_CREATED
-    assert caught.value.context["scenarioGroupId"] == 407
-    assert caught.value.context.get("operationId") == (operation.operation_id if operation else None)
-
-
-@pytest.mark.parametrize("latest_status", ["failed", "interrupted"])
-def test_failed_or_interrupted_latest_operation_allows_recreation(latest_status: str) -> None:
-    group = _group(407)
-    operation = _operation(407, latest_status)
 
     _check_conflict(
         groups=[group],
         event_ids_by_group_id={407: [1, 2, 3]},
-        latest_operations={407: operation},
     )
 
 
@@ -156,23 +136,18 @@ def test_hash_collision_candidate_with_different_linked_event_set_is_ignored() -
     _check_conflict(
         groups=[_group(407)],
         event_ids_by_group_id={407: [3, 4, 5]},
-        latest_operations={407: _operation(407, "succeeded")},
     )
 
 
-def test_active_operation_has_precedence_over_unconfirmed_history() -> None:
+def test_active_operation_conflict_ignores_other_matching_groups_without_active_operation() -> None:
     active_group = _group(406)
-    unconfirmed_group = _group(407)
+    inactive_group = _group(407)
     active_operation = _operation(406, "running")
 
     with pytest.raises(MIBaseError) as caught:
         _check_conflict(
-            groups=[unconfirmed_group, active_group],
+            groups=[inactive_group, active_group],
             event_ids_by_group_id={406: [1, 2, 3], 407: [1, 2, 3]},
-            latest_operations={
-                406: active_operation,
-                407: _operation(407, "succeeded"),
-            },
             active_operations={406: active_operation},
         )
 
@@ -246,7 +221,6 @@ def test_loser_transaction_rolls_back_before_inserting_temporary_group() -> None
     event_repository.lock_events.return_value = [1, 2, 3]
     operation = _operation(407, "running")
     operation_repository = Mock()
-    operation_repository.fetch_latest_by_group_ids.return_value = {407: operation}
     operation_repository.fetch_active_by_group_ids.return_value = {407: operation}
     connection_module = ModuleType("apps.common.configs.database.sync_database.connection")
     connection_module.get_sync_session = Mock(return_value=session)  # type: ignore[attr-defined]
@@ -296,8 +270,8 @@ def test_group_links_operation_and_accepted_event_are_committed_atomically() -> 
     group_repository.fetch_by_id.return_value = created_model
     event_repository = Mock()
     event_repository.lock_events.return_value = [1, 2, 3]
+    event_repository.fetch_latest_snapshot_id.return_value = None
     operation_repository = Mock()
-    operation_repository.fetch_latest_by_group_ids.return_value = {}
     operation_repository.fetch_active_by_group_ids.return_value = {}
     operation_service = Mock()
     expected = ScenarioGroupPayload(scenario_group_id=408)
@@ -344,6 +318,7 @@ def test_group_links_operation_and_accepted_event_are_committed_atomically() -> 
             {
                 "scenario_group_id": 408,
                 "mi_event_id": 3,
+                "mi_event_snapshot_id": None,
                 "event_type_l2_id": 30,
                 "scenario_dimension_template_id": None,
                 "template_checksum": None,
@@ -356,6 +331,7 @@ def test_group_links_operation_and_accepted_event_are_committed_atomically() -> 
             {
                 "scenario_group_id": 408,
                 "mi_event_id": 1,
+                "mi_event_snapshot_id": None,
                 "event_type_l2_id": 10,
                 "scenario_dimension_template_id": None,
                 "template_checksum": None,
@@ -368,6 +344,7 @@ def test_group_links_operation_and_accepted_event_are_committed_atomically() -> 
             {
                 "scenario_group_id": 408,
                 "mi_event_id": 2,
+                "mi_event_snapshot_id": None,
                 "event_type_l2_id": 20,
                 "scenario_dimension_template_id": None,
                 "template_checksum": None,
