@@ -15,11 +15,11 @@
 
 경로의 두 ID는 실제 숫자로 바꾼다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 된다.
 
-0032 canonical runtime fixture 기준선은 master 21행·활성 14개, LUT-backed 활성 10개·Basecase-only 활성 4개,
-v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 14개다.
-v4 active Lever는 18개이고 raw binding occurrence는 16개다. 이 수치는 live DB 조회 결과나 요청 하나의
-후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend7은 DB ID/name/target과
-`model-parameter-proposal-capabilities-v3`가 일치하는 ID `{4, 6, 7, 8, 14, 15, 17}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
+외부개발 DB v4.0 기준선은 master 24행·활성 16개, Agent LUT-backed proposal capability 10개,
+v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 16개다.
+v4.0 active Lever는 21개이고 binding occurrence는 19개다. 이 수치는 요청 하나의
+후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend10은 DB ID/name/target과
+`model-parameter-proposal-capabilities-v4`가 일치하는 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 17}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,
 exact Basecase/LUT slot을 모두 통과한 하위 집합만 나타난다. endpoint, request body와
 proposal/confirmation의 파라미터 JSON shape는 유지한다. proposal 결과에는 처리 결과를 명확히 구분하기 위한
 `status`, `resultCode`, `resultMessage`, `resultStage`가 추가된다.

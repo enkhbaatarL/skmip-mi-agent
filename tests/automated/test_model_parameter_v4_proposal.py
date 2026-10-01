@@ -25,6 +25,7 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_value_proposal_prompt_packet,
     _merge_candidates_by_parameter,
     _partition_candidate_validation_work,
+    _sanitize_llm_adjustments,
     _scenario_brief_for_value_prompt,
 )
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
@@ -33,6 +34,10 @@ from apps.agents.model_parameter_agent.persistence.model_parameter_service impor
     _proposal_event_id,
 )
 from apps.agents.model_parameter_agent.presentation import _context_ids
+from apps.agents.model_parameter_agent.schemas.model_parameter_proposal import (
+    LLMValueAdjustment,
+    LLMValueCell,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     MappingRule,
     ParameterDefinition,
@@ -47,6 +52,63 @@ from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 CATALOG_VERSION = "v4"
 CATALOG_CHECKSUM = "catalog-checksum-v4"
+
+
+@pytest.mark.parametrize(
+    ("proposed_value", "warning_fragment"),
+    [(4.5, "최대값"), (3.5, "정수 제약")],
+)
+def test_hurricane_step3_rejects_out_of_range_or_non_integer_values(
+    proposed_value: float,
+    warning_fragment: str,
+) -> None:
+    candidate_key = "parameter|12"
+    sanitized, warnings = _sanitize_llm_adjustments(
+        [
+            LLMValueAdjustment(
+                candidate_key=candidate_key,
+                slot_values=[
+                    LLMValueCell(slot_key="slot-1", proposed_value=proposed_value, rationale_ko="test"),
+                ],
+                rationale_ko="test",
+            ),
+        ],
+        [
+            {
+                "candidate_key": candidate_key,
+                "canonical_parameter_name": "HurricaneIntensity",
+                "proposal_constraints": {"minimum": 0, "maximum": 4, "integer_only": True},
+            },
+        ],
+        [
+            {
+                "candidate_key": candidate_key,
+                "slot_key": "slot-1",
+                "slot_axes": [
+                    {"axis_name": "Year", "axis_value": 2027},
+                    {"axis_name": "Month", "axis_value": 8},
+                ],
+            },
+        ],
+        [
+            {
+                "candidate_key": candidate_key,
+                "slot_key": "slot-1",
+                "axes": {"Year": 2027, "Month": 8},
+                "value": 0,
+                "reference_id": "test:hurricane",
+            },
+        ],
+        scenario_context={
+            "scenario_group": {
+                "api_version": "v4",
+                "generation_strategy": V4_STRATEGY,
+            },
+        },
+    )
+
+    assert sanitized == []
+    assert any(warning_fragment in warning for warning in warnings)
 
 
 def _parameter_definition(

@@ -37,8 +37,8 @@ def _context(
             "generation_strategy": strategy,
             "status": "created",
             "stage": "completed",
-            "impact_catalog_version": "v4",
-            "impact_catalog_checksum": runner.EXPECTED_0032_CATALOG_CHECKSUM,
+            "impact_catalog_version": "v4.0",
+            "impact_catalog_checksum": runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
         },
         "events": [
             {
@@ -48,8 +48,8 @@ def _context(
                 "detail_analysis": "baseline event detail",
             },
         ],
-        "impact_catalog_version": "v4",
-        "impact_catalog_checksum": runner.EXPECTED_0032_CATALOG_CHECKSUM,
+        "impact_catalog_version": "v4.0",
+        "impact_catalog_checksum": runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
     }
 
 
@@ -107,8 +107,8 @@ def _quality_evidence(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         errors=errors,
-        active_catalog_version="v4",
-        active_catalog_checksum=runner.EXPECTED_0032_CATALOG_CHECKSUM,
+        active_catalog_version="v4.0",
+        active_catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
         raw_candidates=runtime_candidates,
         runtime_candidates=runtime_candidates,
         blocked_candidates=(),
@@ -710,7 +710,7 @@ def test_exact_v4_strategy_preflight_blocks_every_write(tmp_path: Path) -> None:
     assert [item["status"] for item in evidence["preflight"]] == ["PASS", "FAIL"]
 
 
-def test_approved_release_requires_exact_0032_catalog_pin(tmp_path: Path) -> None:
+def test_approved_release_requires_exact_v4_0_catalog_pin(tmp_path: Path) -> None:
     stale_context = _context(101)
     stale_context["scenario_group"]["impact_catalog_checksum"] = "a" * 64  # type: ignore[index]
     dependencies = runner.RunnerDependencies(
@@ -741,7 +741,7 @@ def test_approved_release_blocks_runtime_allowlist_drift_before_database(
     monkeypatch.setattr(
         runner,
         "RUNTIME_PROPOSAL_CAPABILITY_NAMES",
-        frozenset({*runner.EXPECTED_EXTEND7_ALLOWLIST, "ShippingCost"}),
+        frozenset({*runner.EXPECTED_EXTEND10_ALLOWLIST, "ShippingCost"}),
     )
 
     dependencies = runner.RunnerDependencies(

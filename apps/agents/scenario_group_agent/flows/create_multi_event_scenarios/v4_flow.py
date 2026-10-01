@@ -63,7 +63,7 @@ from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
-V4_IMPACT_CATALOG_VERSION = "v4"
+V4_IMPACT_CATALOG_VERSION = "v4.0"
 
 
 def _analysis_as_of() -> str:

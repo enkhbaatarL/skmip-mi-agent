@@ -60,9 +60,10 @@ Agent는 모델 Excel을 직접 수정하거나 Demand→Supply→Trade→Output
 
 ### Model Parameter
 
-수급모델의 한 입력 종류다. v4 extend7 신규 proposal에서 허용하는 ID는 `GDP(4)`, `PMI(6)`,
-`PowerMix(7)`, `Temperature(8)`, `LiqUtilAdjustment(14)`, `PipelineAdjustment(15)`,
-`SupplyDisruption(17)`이다. v1/v3의 legacy 이름 allow-list 5종은 그대로 유지한다.
+수급모델의 한 입력 종류다. v4 extend10 신규 proposal에서 허용하는 ID는 `GDP(4)`, `PMI(6)`,
+`PowerMix(7)`, `Temperature(8)`, `Population(11)`, `HurricaneIntensity(12)`,
+`LiqProdAdjustment(13)`, `LiqUtilAdjustment(14)`, `PipelineAdjustment(15)`, `SupplyDisruption(17)`이다.
+v1/v3의 legacy 이름 allow-list 5종은 그대로 유지한다.
 
 ### Model target
 
@@ -79,7 +80,7 @@ Agent는 모델 Excel을 직접 수정하거나 Demand→Supply→Trade→Output
 
 Demand·Supply·Trade workbook에 들어 있는 현재 모델 입력값이다. 같은 exact slot에 Basecase가 있으면
 LUT보다 우선하는 기준값이 된다. 정확히 v4 `multi_event_model_lever_dimensions`인 요청은 versioned
-`new-bc-v4` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
+`new-bc-v5` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
 
 ### LUT
 
@@ -101,7 +102,7 @@ fallback으로 사용하지 않는다.
 
 DB에서 활성인 파라미터, mapping 또는 binding으로 도달할 수 있는 파라미터, 지금 신규 proposal에 허용되는
 파라미터는 서로 다른 집합이다. v1/v3는 raw 후보와 기존 이름 allow-list 5종의 교집합을 사용한다. v4는
-`model-parameter-proposal-capabilities-v3`의 ID/name/target이 DB 정의와 모두 일치하는 extend7 7종만 허용한다.
+`model-parameter-proposal-capabilities-v4`의 ID/name/target이 DB 정의와 모두 일치하는 extend10 10종만 허용한다.
 
 ## 현재 구현 범위
 
@@ -124,15 +125,15 @@ Trade Parameter는 active v4 binding도 없다. 이 수치는 저장소 fixture 
 v1은 scenario group의 대표 event type과 scenario dimension key를 mapping에 대입한다. `generation_strategy=multi_event_composite_dimensions`인 v3는 `dimensionDefinitions[].sourceRefs`로 원본 `(event_type_l2_id, dimKey)`를 복원해 공유 legacy 129개 mapping을 재사용한다. `generation_strategy=multi_event_model_lever_dimensions`인 v4는 이 mapping, Event Type, 과거 `lever_mappings` 계열을 조회하거나 fallback으로 사용하지 않는다. 선택된 value의 `lever_states`와 active Lever catalog를 엄격히 검증한 뒤 executable binding으로 raw 후보를 만든다.
 
 v1/v3 신규 proposal은 raw 후보 생성 후 기존 `GDP`, `PMI`, `PowerMix`, `Temperature`,
-`LiqUtilAdjustment` 이름 allow-list를 적용한다. v4는 ID `{4, 6, 7, 8, 14, 15, 17}`의 capability contract를
-LLM 호출·proposal 행 생성 전에 적용한다. 나머지 활성 7개와 resource capability는 삭제하지 않지만 v4 신규
+`LiqUtilAdjustment` 이름 allow-list를 적용한다. v4는 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 17}`의 capability contract를
+LLM 호출·proposal 행 생성 전에 적용한다. 나머지 활성 6개와 resource capability는 삭제하지 않지만 v4 신규
 proposal로는 제안하지 않는다. v4 catalog binding은 Step1.5 LLM으로 다시 routing하지 않고 deterministic
 candidate로 보존하며 primary/alternative lineage는 후속 evidence 판단에 함께 전달한다.
 
-### v4 `new-bc-v4` read-only reference
+### v4 `new-bc-v5` read-only reference
 
-extend7 일곱 Parameter의 v4 proposal은
-`resources/contracts/model-parameter-workbook-contract-v4.json`이 고정한 authoritative source를 모두
+extend10 열 Parameter의 v4 proposal은
+`resources/contracts/model-parameter-workbook-contract-v5.json`이 고정한 authoritative source를 모두
 동일한 reference pipeline으로 사용한다. v3 계약은 내용이 바뀌지 않은
 `resources/basecase_v4/new-bc-v1/` Demand·Supply·Trade workbook digest를 재사용한다. capability는
 `read_only_proposal`이며, 여기서 read-only는 Workbook/reference에 대한 경계다. workbook을 수정하거나
@@ -151,6 +152,9 @@ slot/evidence/value 검증을 공통 적용한다. capability contract는 각각
 | `PMI` | Demand `PMIInput` V:AL Base Case block | 5,040 |
 | `PowerMix` | Demand `BCInput` Z:AF annual mix | 4,200 |
 | `Temperature` | Demand `WeatherInput` EI:EY Base Case block | 5,040 |
+| `Population` | Demand `BCInput` Q:V population absolute value | 845 |
+| `HurricaneIntensity` | Supply `BCHurricanes` 강도·영향시설 검증 후 no-hurricane baseline | 60 |
+| `LiqProdAdjustment` | Supply `BCLiquefaction` capacity × utilization, exact target 정렬 | 23,820 |
 | `LiqUtilAdjustment` | Supply `BCLiquefaction` B:N utilization | 23,820 |
 | `PipelineAdjustment` | Supply `BCPipeline` B:F annual capacity를 12개월로 확장 | 420 |
 | `SupplyDisruption` | Supply `BCProduction` C:K × digest-pinned `SeasonalityLogic.csv` | 4,908 |
@@ -169,10 +173,10 @@ LiqUtilAdjustment는 selected Lever, Scenario/Event scope와 applicability 필�
 metadata, catalog checksum과 model target을 갱신한다. 공개 proposal/confirmation endpoint·request/response field·status/action
 enum·callback shape와 proposal/confirmation persistence JSON shape도 그대로 유지한다.
 
-현재 DB 계약의 정본은 sibling mgmt repository revision `d9f4c2a81332`이며, Agent runtime 판정 fixture는
-[parameter 0032 successor](../../../scripts/model_parameter/model-parameter-canonical-v4-0032.json)와
-[Lever 0032 successor](../../../scripts/model_parameter/model-impact-lever-canonical-v4-0032.json)다. active catalog는
-`v4`, checksum은 `b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b`이다.
+현재 외부개발 DB의 신규 그룹용 active catalog는 `v4.0`, checksum은
+`416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`이다. master 16개 활성 정의와
+v4.0 binding 중 위 10종만 Agent proposal capability로 허용한다. `tmm_mi_model_param_m`은 이 release에서
+변경하지 않으며, 기존 그룹은 저장된 catalog pin을 계속 사용한다.
 v1/v3 체크인 목표 mapping은 [v1 canonical](../../../scripts/model_parameter/model-parameter-canonical-v1.json)의
 `dimension_mappings` 129행이며 v4는 이를 조회하지 않는다.
 
@@ -191,9 +195,9 @@ Basecase/LUT slot 존재 여부에 따라 더 좁아진다.
 | `PowerMix` | direct 12건 + routing 1건 | `power_generation_mix` primary | 허용 | LUT-backed | 발전소·연료전환 Event를 가스 발전 비중으로 연결한다. |
 | `Temperature` | direct 2건 | `weather_demand` primary | 허용 | LUT-backed | 한파·폭염을 중복 degree-day 입력 대신 최종 기온 입력으로 표현한다. |
 | `LiqUtilAdjustment` | direct 9건 + routing 1건 | `liquefaction_utilization` primary | 허용 | LUT-backed | 기존 Train의 단기·부분 차질과 회복을 월별 가동률로 표현한다. |
-| `Population` | routing 1건 | `population_demographics` primary | runtime 제외 | LUT-backed | 인구·이민·인구전망 변화용 capability는 보존한다. |
-| `HurricaneIntensity` | routing 1건 | `us_gom_hurricane_disruption` primary | runtime 제외 | LUT-backed | 미국 GoM 허리케인·승인 시설·Year/Month capability를 보존한다. |
-| `LiqProdAdjustment` | direct 4건 + routing 1건 | `liquefaction_production_override` primary | runtime 제외 | LUT-backed | 대폭·영구 생산손실·신규 Train ramp-up capability를 보존한다. |
+| `Population` | routing 1건 | `population_demographics` primary | v4 허용, v1/v3 제외 | LUT-backed | 인구·이민·인구전망 변화가 명시된 경우 국가·연도별 절대값을 제안한다. |
+| `HurricaneIntensity` | routing 1건 | `us_gom_hurricane_disruption` primary | v4 허용, v1/v3 제외 | LUT-backed | 미국 GoM 허리케인·승인 시설·Year/Month·강도 1~4 근거를 요구한다. |
+| `LiqProdAdjustment` | direct 4건 + routing 1건 | `liquefaction_production_override` primary | v4 허용, v1/v3 제외 | LUT-backed | 대폭·영구 생산손실·신규 Train ramp-up의 월 생산량 절대값을 제안한다. |
 | `PipelineAdjustment` | direct 2건 | `pipeline_capacity` primary | v4 허용, v1/v3 제외 | LUT-backed | 파이프라인 송출능력을 Mt/y 최종값으로 제안한다. |
 | `SupplyDisruption` | direct 4건 + routing 1건 | `upstream_production` primary | v4 허용, v1/v3 제외 | LUT-backed | upstream 국가·월 공급량을 Mt 최종값으로 제안한다. |
 | `User-Adjusted Gas Demand` | direct/routing 없음 | `direct_gas_demand` primary | runtime 제외 | Basecase-only | 검증된 workbook exact 좌표 capability를 보존한다. |
@@ -314,7 +318,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 허용 후보만 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v4`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. 0032는 최종 workbook target·단위에 맞춰 master와 Lever metadata를 갱신하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v5`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. 이 release는 이미 적용된 v4.0 master·Lever binding을 소비하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md),
 [Python conventions](../../../.claude/rules/python-conventions.md)와

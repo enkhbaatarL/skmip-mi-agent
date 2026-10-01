@@ -1,0 +1,204 @@
+{
+  "schema_version": 5,
+  "release_id": "new-bc-v5",
+  "extends": "model-parameter-workbook-contract-v4.json",
+  "resource_directory": "basecase_v4/new-bc-v1",
+  "parameters": {
+    "Population": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["PopulationOrMigrationChange", "Country", "Year"]
+      },
+      "reference_source": {
+        "workbook_role": "demand",
+        "sheet": "BCInput",
+        "range": "Q:V",
+        "parser": "annual_value_rows",
+        "header_row": 3,
+        "data_start_row": 4,
+        "columns": {
+          "Year": "Q",
+          "Country": "T",
+          "Population (thousands)": "V"
+        },
+        "key_axes": ["Country", "Year"],
+        "metadata_axes": [],
+        "value_field": "Population (thousands)",
+        "reference_unit": "thousand_people",
+        "value_semantics": "absolute_final_population",
+        "expected_record_count": 845
+      },
+      "write_target": {
+        "workbook_role": "demand",
+        "sheet": "GDPPopulationAdjustment",
+        "table": "table2",
+        "layout": "fixed_columns",
+        "header_row": 6,
+        "data_start_row": 12,
+        "columns": {
+          "Year": "J",
+          "Country": "K",
+          "Population (Thousands)": "M"
+        },
+        "key_axes": ["Country", "Year"],
+        "metadata_axes": [],
+        "value_field": "Population (Thousands)",
+        "write_unit": "thousand_people",
+        "value_semantics": "absolute_final_population",
+        "observed_record_count": 0,
+        "row_policy": "appendable",
+        "metadata_authority": "reference_source"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "HurricaneIntensity": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["USGoMHurricane", "ApprovedImpactedFacility", "YearMonth", "Intensity1To4"]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCHurricanes",
+        "range": "B:K",
+        "parser": "hurricane_no_event_baseline",
+        "header_row": 15,
+        "data_start_row": 16,
+        "columns": {
+          "Intensity": "B",
+          "Net Impact": "G",
+          "LNG Plant": "I",
+          "Impacted": "K"
+        },
+        "column_headers": {
+          "Net Impact": "Net impact (Monthly LNG production decrease by %)",
+          "LNG Plant": "Liquefaction plants impacted by a hurricane in GoM",
+          "Impacted": "Impacted by hurricane?"
+        },
+        "key_axes": ["Year", "Month"],
+        "metadata_axes": [],
+        "value_field": "Hurricane intensity",
+        "reference_unit": "integer_intensity",
+        "value_semantics": "absolute_final_intensity",
+        "expected_record_count": 60
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "{USA}Hurricanes",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 7,
+        "data_start_row": 13,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Hurricane intensity": "D"
+        },
+        "key_axes": ["Year", "Month"],
+        "metadata_axes": [],
+        "value_field": "Hurricane intensity",
+        "write_unit": "integer_intensity",
+        "value_semantics": "absolute_final_intensity",
+        "observed_record_count": 0,
+        "row_policy": "appendable",
+        "metadata_authority": "reference_source"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": 4.0,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "LiqProdAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["Plant", "Train", "YearMonth", "DirectProductionOverride"]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "BCLiquefaction",
+        "range": "B:N",
+        "parser": "liquefaction_production_rows",
+        "header_row": 7,
+        "data_start_row": 8,
+        "columns": {
+          "Year": "B",
+          "Month": "C",
+          "Period": "D",
+          "Country": "E",
+          "Plant Name": "F",
+          "Plant Train": "G",
+          "Infra Life Cycle": "H",
+          "Monthly Capacity (MTPM)": "I",
+          "LNG plant utilisation %": "N"
+        },
+        "column_headers": {
+          "Monthly Capacity (MTPM)": "LNG train capacity (Million tonnes LNG per month)"
+        },
+        "key_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "metadata_axes": ["Period", "Life Cycle Category", "Nameplate Capacity (MTPA)"],
+        "value_field": "Monthly LNG production",
+        "reference_unit": "Mt LNG/month",
+        "value_semantics": "absolute_final_production",
+        "expected_record_count": 23820
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "LiqProdAdjustment",
+        "table": "table1",
+        "layout": "matrix_time_columns",
+        "header_row": 10,
+        "data_start_row": 11,
+        "columns": {
+          "Country": "B",
+          "LNG Plant": "C",
+          "LNG Plant Train": "D",
+          "Life Cycle Category": "E",
+          "Nameplate Capacity (MTPA)": "F",
+          "value_start": "G",
+          "value_end": "DA",
+          "year_row": "7",
+          "month_row": "8",
+          "period_row": "9"
+        },
+        "key_axes": ["Country", "LNG Plant", "LNG Plant Train", "Year", "Month"],
+        "metadata_axes": ["Period", "Life Cycle Category", "Nameplate Capacity (MTPA)"],
+        "value_field": "Production (Mt LNG/month)",
+        "write_unit": "Mt LNG/month",
+        "value_semantics": "absolute_final_production",
+        "observed_record_count": 33348,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    }
+  }
+}

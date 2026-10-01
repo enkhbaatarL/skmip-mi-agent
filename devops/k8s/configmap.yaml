@@ -123,12 +123,12 @@ data:
           object_storage_path: fundamental_model_artifact/input_template/복호화_(Base) Trade Model_Input.xlsm
 
       workbook_contract:
-        path: contracts/model-parameter-workbook-contract-v4.json
+        path: contracts/model-parameter-workbook-contract-v5.json
 
       proposal_capabilities:
-        path: contracts/model-parameter-proposal-capabilities-v3.json
-        release_id: extend7-v4
-        sha256: 6eca2fe50b10ed39a801d4071b0ac646c41d554e8d92c3bc932a4ddc8cf5f0a7
+        path: contracts/model-parameter-proposal-capabilities-v4.json
+        release_id: extend10-v5
+        sha256: 7ef7b9bd8690d473298e8116983cad1d5307f60b38cd427400b021ca3393bafd
 
       lut:
         Coal Futures Price:

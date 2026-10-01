@@ -13,7 +13,7 @@ from apps.agents.model_parameter_agent.constants import (
     PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
 )
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
-    EXPECTED_EXTEND7_RELEASE_ID,
+    EXPECTED_EXTEND10_RELEASE_ID,
     validate_v4_candidate_capability,
 )
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
@@ -1350,12 +1350,12 @@ def build_basecase_records(
                     # break an otherwise valid sum-to-one vector, so retain
                     # source precision until the proposal is produced.
                     "_preserve_reference_precision": parameter_name == "PowerMix",
-                    # One source train has no lifecycle label.  This source-only
-                    # field is omitted without weakening any other metadata axis
-                    # or the strict legacy record path.
+                    # One source train has no lifecycle label.  The two exact
+                    # liquefaction targets own this metadata, so the blank field
+                    # is omitted without weakening any other metadata axis.
                     **(
                         {"_allow_missing_metadata_axes": ("Life Cycle Category",)}
-                        if parameter_name == "LiqUtilAdjustment"
+                        if parameter_name in {"LiqProdAdjustment", "LiqUtilAdjustment"}
                         else {}
                     ),
                 }
@@ -1374,7 +1374,7 @@ def build_basecase_records(
                     "value": None,
                     **(
                         {"_allow_missing_metadata_axes": ("Life Cycle Category",)}
-                        if parameter_name == "LiqUtilAdjustment"
+                        if parameter_name in {"LiqProdAdjustment", "LiqUtilAdjustment"}
                         else {}
                     ),
                 }
@@ -1652,7 +1652,7 @@ def partition_proposal_parameter_candidates(
                 allowed.append(
                     {
                         **candidate,
-                        "proposal_capability_release_id": EXPECTED_EXTEND7_RELEASE_ID,
+                        "proposal_capability_release_id": EXPECTED_EXTEND10_RELEASE_ID,
                         "proposal_reference_mode": capability.reference_mode,
                         "proposal_exact_axes": list(capability.exact_axes),
                         "proposal_evidence_policy": capability.evidence_policy,

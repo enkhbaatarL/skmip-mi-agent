@@ -83,7 +83,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 
 - executable Impact Lever binding에서 raw candidate를 만든다.
 - v1/v3는 production `MODEL_PARAMETER_PROPOSAL_ALLOWLIST` 5종을, v4는
-  `model-parameter-proposal-capabilities-v3`의 ID `{4, 6, 7, 8, 14, 15, 17}`과 name/target을 읽어
+  `model-parameter-proposal-capabilities-v4`의 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 17}`과 name/target을 읽어
   `runtime-allowed`와 `active-but-blocked`를 나눈다.
 - blocked candidate는 Step1.5·Step2·Step3·신규 proposal과 그 결과에서 파생된 Confirmation에 도달하면 안 되며
   `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 한다.
@@ -91,7 +91,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 
 ### Slot, 값과 저장
 
-- 정확히 v4 전략인 요청은 `new-bc-v4` versioned contract를 사용하고, 변경되지 않은 workbook artifact는
+- 정확히 v4 전략인 요청은 `new-bc-v5` versioned contract를 사용하고, 변경되지 않은 workbook artifact는
   `resources/basecase_v4/new-bc-v1/`의 digest를 재사용한다. v1/v3는
   기존 `resources/basecase/`를 계속 사용해야 한다. startup은 contract schema/path와 Workbook path/digest만 검증하며
   최초 exact v4 materialization이 sheet/header/range/count를 검증하고 process cache해야 한다.
@@ -99,7 +99,7 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
   LiqUtilAdjustment 23,820, PipelineAdjustment 420, SupplyDisruption 4,908이어야 한다. legacy adjustment target 관찰치는
   authoritative count나 slot whitelist로 평가하지 않는다.
 - v4 ordered Event의 `detail_analysis`는 event당 앞 6,000자까지 Step2·Step3 brief에 포함되고,
-  5개 Event와 현재 extend7 catalog를 합친 compact Step2 packet이 byte guard 안인지 자동화로 확인한다.
+  5개 Event와 현재 extend10 catalog를 합친 compact Step2 packet이 byte guard 안인지 자동화로 확인한다.
 - Step2 slot은 exact Basecase+LUT union 안에 있어야 한다.
 - v4 Step2 compact catalog는 값·reference 없이 terminal별 값이 있는 `Life Cycle Category`를 판단 전용
   `applicability_attributes`로 보존하며, v1/v3와 반환 `slot_axes`에는 이 속성이 없어야 한다.

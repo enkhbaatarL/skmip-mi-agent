@@ -2767,6 +2767,7 @@ def _parameter_prompt_payload(
             "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
             "parameter_hint": candidate.get("parameter_hint"),
             "semantic_axes": candidate.get("semantic_axes"),
+            "proposal_constraints": candidate.get("proposal_constraints"),
             "lever_provenance": candidate.get("lever_provenance"),
             "binding_provenance": candidate.get("binding_provenance"),
             "allowed_slot_axes_field_names": (
@@ -3480,9 +3481,34 @@ def _sanitize_llm_adjustments(
             if isinstance(minimum, (int, float)) and validated_proposed_value < float(minimum):
                 invalid_slot_keys.add(slot_key)
                 warning = (
-                    "Step3 proposedValue가 extend7 capability 최소값보다 작아 제외했습니다: "
+                    "Step3 proposedValue가 capability 최소값보다 작아 제외했습니다: "
                     f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
                     f"minimum={minimum}, value={slot_value.proposed_value!r}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
+            maximum = capability_constraints.get("maximum") if v4_contract_context else None
+            if isinstance(maximum, (int, float)) and validated_proposed_value > float(maximum):
+                invalid_slot_keys.add(slot_key)
+                warning = (
+                    "Step3 proposedValue가 capability 최대값보다 커 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                    f"maximum={maximum}, value={slot_value.proposed_value!r}"
+                )
+                logger.warning("[model-parameter] {}", warning)
+                warnings.append(warning)
+                continue
+            if (
+                v4_contract_context
+                and capability_constraints.get("integer_only") is True
+                and not validated_proposed_value.is_integer()
+            ):
+                invalid_slot_keys.add(slot_key)
+                warning = (
+                    "Step3 proposedValue가 capability 정수 제약을 위반해 제외했습니다: "
+                    f"candidate={adjustment.candidate_key}, slotKey={slot_key}, "
+                    f"value={slot_value.proposed_value!r}"
                 )
                 logger.warning("[model-parameter] {}", warning)
                 warnings.append(warning)

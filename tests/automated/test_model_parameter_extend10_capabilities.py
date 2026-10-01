@@ -11,8 +11,8 @@ from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     partition_proposal_parameter_candidates,
 )
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
-    EXPECTED_EXTEND7_CATALOG_CHECKSUM,
-    EXPECTED_EXTEND7_PARAMETER_IDS,
+    EXPECTED_EXTEND10_CATALOG_CHECKSUM,
+    EXPECTED_EXTEND10_PARAMETER_IDS,
     load_proposal_capability_contract,
 )
 from apps.common.exceptions.custom import MIBaseError
@@ -32,13 +32,29 @@ def _candidate(entry: object) -> dict[str, object]:
     }
 
 
-def test_extend7_contract_has_exact_release_scope_and_reference_policies() -> None:
+def test_extend10_contract_has_exact_release_scope_and_reference_policies() -> None:
     contract = load_proposal_capability_contract()
 
-    assert contract.release_id == "extend7-v4"
-    assert contract.catalog_version == "v4"
-    assert contract.catalog_checksum == EXPECTED_EXTEND7_CATALOG_CHECKSUM
-    assert frozenset(contract.by_id) == EXPECTED_EXTEND7_PARAMETER_IDS
+    assert contract.release_id == "extend10-v5"
+    assert contract.catalog_version == "v4.0"
+    assert contract.catalog_checksum == EXPECTED_EXTEND10_CATALOG_CHECKSUM
+    assert frozenset(contract.by_id) == EXPECTED_EXTEND10_PARAMETER_IDS
+    assert contract.by_id[11].parameter_name == "Population"
+    assert contract.by_id[11].exact_axes == ("Country", "Year")
+    assert contract.by_id[11].constraints["minimum"] == 0
+    assert contract.by_id[12].parameter_name == "HurricaneIntensity"
+    assert contract.by_id[12].exact_axes == ("Year", "Month")
+    assert contract.by_id[12].constraints["maximum"] == 4
+    assert contract.by_id[12].constraints["integer_only"] is True
+    assert contract.by_id[13].parameter_name == "LiqProdAdjustment"
+    assert contract.by_id[13].exact_axes == (
+        "Country",
+        "LNG Plant",
+        "LNG Plant Train",
+        "Year",
+        "Month",
+    )
+    assert contract.by_id[13].constraints["unit"] == "Mt LNG/month"
     assert contract.by_id[15].parameter_name == "PipelineAdjustment"
     assert contract.by_id[15].reference_mode == "v4_workbook_then_lut"
     assert contract.by_id[15].exact_axes == (
@@ -57,15 +73,15 @@ def test_extend7_contract_has_exact_release_scope_and_reference_policies() -> No
     assert {entry.reference_mode for entry in contract.parameters} == {"v4_workbook_then_lut"}
 
 
-def test_v4_scope_accepts_exactly_the_extend7_id_name_target_tuples() -> None:
+def test_v4_scope_accepts_exactly_the_extend10_id_name_target_tuples() -> None:
     contract = load_proposal_capability_contract()
     allowed, excluded = partition_proposal_parameter_candidates(
         [_candidate(entry) for entry in contract.parameters],
     )
 
-    assert {int(item["model_param_id"]) for item in allowed} == EXPECTED_EXTEND7_PARAMETER_IDS
+    assert {int(item["model_param_id"]) for item in allowed} == EXPECTED_EXTEND10_PARAMETER_IDS
     assert excluded == []
-    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend7-v4"}
+    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend10-v5"}
     assert all(item["proposal_evidence_policy"] == "explicit_or_unique_inferred" for item in allowed)
 
 
@@ -113,6 +129,9 @@ def test_legacy_scope_remains_the_existing_five_names() -> None:
         "LiqUtilAdjustment",
     }
     assert {item["canonical_parameter_name"] for item in excluded} == {
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
         "PipelineAdjustment",
         "SupplyDisruption",
     }

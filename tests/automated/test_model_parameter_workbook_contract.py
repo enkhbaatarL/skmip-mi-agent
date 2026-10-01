@@ -48,7 +48,7 @@ from apps.common.exceptions.custom import MIBaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
-    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v4.json"
+    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v5.json"
 )
 V1_CONTRACT_PATH = (
     ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json"
@@ -58,6 +58,9 @@ EXPECTED_SOURCE_COUNTS = {
     "PMI": 5_040,
     "PowerMix": 4_200,
     "Temperature": 5_040,
+    "Population": 845,
+    "HurricaneIntensity": 60,
+    "LiqProdAdjustment": 23_820,
     "LiqUtilAdjustment": 23_820,
     "PipelineAdjustment": 420,
     "SupplyDisruption": 4_908,
@@ -67,6 +70,9 @@ OBSERVED_LEGACY_TARGET_COUNTS = {
     "PMI": 48,
     "PowerMix": 57,
     "Temperature": 150,
+    "Population": 0,
+    "HurricaneIntensity": 0,
+    "LiqProdAdjustment": 33_348,
     "LiqUtilAdjustment": 33_348,
     "PipelineAdjustment": 60,
     "SupplyDisruption": 0,
@@ -87,11 +93,11 @@ def _record_for(
     return next(record for record in bundle.records_for(parameter_name) if record.canonical_key == canonical_key)
 
 
-def test_contract_locks_v4_read_only_scope_targets_and_policies() -> None:
+def test_contract_locks_v5_read_only_scope_targets_and_policies() -> None:
     contract = load_workbook_contract()
 
-    assert contract.schema_version == 4
-    assert contract.release_id == "new-bc-v4"
+    assert contract.schema_version == 5
+    assert contract.release_id == "new-bc-v5"
     assert contract.capability == "read_only_proposal"
     assert contract.api_version == "v4"
     assert contract.generation_strategy == "multi_event_model_lever_dimensions"
@@ -159,6 +165,28 @@ def test_contract_locks_v4_read_only_scope_targets_and_policies() -> None:
     assert supply.write_target.sheet == "ProductionAdjustment"
     assert supply.write_target.value_field == "Volumes (Mt)"
     assert supply.constraints.minimum == 0
+
+    population = contract.parameters["Population"]
+    assert population.reference_source.parser == "annual_value_rows"
+    assert population.reference_source.key_axes == ("Country", "Year")
+    assert population.write_target.table == "table2"
+    assert population.constraints.minimum == 0
+
+    hurricane = contract.parameters["HurricaneIntensity"]
+    assert hurricane.reference_source.parser == "hurricane_no_event_baseline"
+    assert hurricane.reference_source.key_axes == ("Year", "Month")
+    assert hurricane.write_target.sheet == "{USA}Hurricanes"
+    assert hurricane.constraints.minimum == 0
+    assert hurricane.constraints.maximum == 4
+    assert hurricane.constraints.direct_evidence_required is True
+
+    liq_prod = contract.parameters["LiqProdAdjustment"]
+    assert liq_prod.reference_source.parser == "liquefaction_production_rows"
+    assert liq_prod.reference_source.reference_unit == "Mt LNG/month"
+    assert liq_prod.write_target.row_policy == "existing_exact"
+    assert liq_prod.write_target.metadata_authority == "write_target"
+    assert liq_prod.constraints.minimum == 0
+    assert liq_prod.constraints.direct_evidence_required is True
 
     weakened_document = contract.model_dump(mode="json")
     weakened_document["parameters"]["LiqUtilAdjustment"]["constraints"]["minimum"] = None
@@ -231,7 +259,7 @@ def test_candidate_write_target_validation_is_fail_closed() -> None:
         validate_candidate_write_target(
             contract,
             {
-                "canonical_parameter_name": "Population",
+                "canonical_parameter_name": "RegasAdjustment",
                 "model_file": "Demand",
                 "model_sheet": "GDPPopulationAdjustment",
                 "model_table": "table1",
@@ -262,10 +290,11 @@ def test_authoritative_sources_extract_expected_horizon_records(
     assert {slot.canonical_key for slot in liq_target_slots} == {
         record.canonical_key for record in reference_bundle.records_for("LiqUtilAdjustment")
     }
+    assert len(reference_bundle.write_target_slots_for("LiqProdAdjustment")) == 23_820
     assert all(
         not target_slots
         for parameter_name, target_slots in reference_bundle.write_target_slots_by_parameter.items()
-        if parameter_name != "LiqUtilAdjustment"
+        if parameter_name not in {"LiqUtilAdjustment", "LiqProdAdjustment"}
     )
 
     with pytest.raises(TypeError):
@@ -277,7 +306,7 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
 ) -> None:
     gdp = _record_for(reference_bundle, "GDP", ("United States", 2026))
     assert gdp.value == pytest.approx(0.020638022790823538)
-    assert gdp.reference_id.startswith("new-bc-v4:demand:BCInput:U")
+    assert gdp.reference_id.startswith("new-bc-v5:demand:BCInput:U")
     assert gdp.diagnostics == ("value_transform=gdp_year_over_year_growth",)
 
     pmi = _record_for(reference_bundle, "PMI", ("China", 2026, 1))
@@ -353,6 +382,26 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
     assert supply.value == pytest.approx(6.476770267764433)
     assert "seasonality_policy=raw_not_renormalized" in supply.diagnostics
 
+    population = _record_for(reference_bundle, "Population", ("China", 2026))
+    assert population.value == pytest.approx(1_400_888.9166666667)
+
+    hurricane = _record_for(reference_bundle, "HurricaneIntensity", (2026, 1))
+    assert hurricane.value == 0
+    assert hurricane.diagnostics == (
+        "hurricane_baseline=no_hurricane",
+        "validated_intensity_count=4",
+        "validated_impacted_plant_count=16",
+    )
+
+    liq_prod = _record_for(
+        reference_bundle,
+        "LiqProdAdjustment",
+        ("Australia", "Australia Pacific LNG", "Australia Pacific LNG T1", 2026, 1),
+    )
+    assert liq_prod.value == pytest.approx(0.382191780821917 * 1.00333333333333)
+    assert "production_transform=capacity_mtpm_x_utilisation" in liq_prod.diagnostics
+    assert "write_target_exact_slot_verified" in liq_prod.diagnostics
+
 
 def test_gdp_invalid_source_keys_are_projected_to_the_matching_v4_candidate(
     reference_bundle: WorkbookReferenceBundle,
@@ -403,6 +452,9 @@ def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
         "PMI": ("Demand", "PMIAdjustment", "table1"),
         "PowerMix": ("Demand", "PowerMixAdjustment", "table1"),
         "Temperature": ("Demand", "WeatherAdjustment", "table2"),
+        "Population": ("Demand", "GDPPopulationAdjustment", "table2"),
+        "HurricaneIntensity": ("Supply", "{USA}Hurricanes", "table1"),
+        "LiqProdAdjustment": ("Supply", "LiqProdAdjustment", "table1"),
         "LiqUtilAdjustment": ("Supply", "LiqUtilAdjustment", "table1"),
         "PipelineAdjustment": ("Supply", "PipelineAdjustment", "table1"),
         "SupplyDisruption": ("Supply", "ProductionAdjustment", "table2"),

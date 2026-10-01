@@ -19,10 +19,17 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v4.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v5.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
 EXPECTED_PARAMETER_NAMES = frozenset(
-    {*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"},
+    {
+        *V1_PARAMETER_NAMES,
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
+        "PipelineAdjustment",
+        "SupplyDisruption",
+    },
 )
 EXPECTED_WORKBOOK_ROLES = frozenset({"demand", "supply", "trade"})
 APPROVED_POWER_MIX_VECTOR_MEMBERS = (
@@ -46,6 +53,9 @@ ReferenceParser = Literal[
     "annual_rows_to_months",
     "fixed_rows",
     "gdp_growth_from_levels",
+    "hurricane_no_event_baseline",
+    "liquefaction_production_rows",
+    "annual_value_rows",
     "production_seasonality_monthly",
     "year_columns",
 ]
@@ -286,8 +296,8 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2, 3, 4]
-    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3", "new-bc-v4"]
+    schema_version: Literal[1, 2, 3, 4, 5]
+    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5"]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
     generation_strategy: Literal["multi_event_model_lever_dimensions"]
@@ -308,10 +318,20 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "workbook roles must be exactly demand, supply, and trade",
             )
-        expected_parameters = V1_PARAMETER_NAMES if self.release_id == "new-bc-v1" else EXPECTED_PARAMETER_NAMES
-        expected_schema_version = {"new-bc-v1": 1, "new-bc-v2": 2, "new-bc-v3": 3, "new-bc-v4": 4}[
-            self.release_id
-        ]
+        expected_parameters = (
+            V1_PARAMETER_NAMES
+            if self.release_id == "new-bc-v1"
+            else frozenset({*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"})
+            if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4"}
+            else EXPECTED_PARAMETER_NAMES
+        )
+        expected_schema_version = {
+            "new-bc-v1": 1,
+            "new-bc-v2": 2,
+            "new-bc-v3": 3,
+            "new-bc-v4": 4,
+            "new-bc-v5": 5,
+        }[self.release_id]
         if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
         if set(self.parameters) != expected_parameters:
@@ -340,7 +360,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "LiqUtilAdjustment must retain its evidence gate, zero minimum, and unbounded maximum",
             )
-        if self.release_id == "new-bc-v4":
+        if self.release_id in {"new-bc-v4", "new-bc-v5"}:
             if (
                 nameplate_transform is not None
                 or liq_util.write_target.row_policy != "existing_exact"
@@ -356,7 +376,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             or nameplate_transform.factor != 12.0
         ):
             raise ValueError("legacy workbook contracts must retain the MTPM-to-MTPA transform")
-        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4"}:
+        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5"}:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
             if (
@@ -373,7 +393,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.constraints.minimum != 0.0
             ):
                 raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
-            if self.release_id in {"new-bc-v3", "new-bc-v4"} and (
+            if self.release_id in {"new-bc-v3", "new-bc-v4", "new-bc-v5"} and (
                 pipeline.reference_source.reference_unit != pipeline.write_target.write_unit
                 or supply.reference_source.reference_unit != supply.write_target.write_unit
                 or pipeline.write_target.value_field != "User adjusted capacity (Mt/y)"
@@ -381,6 +401,34 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.write_target.value_field != "Volumes (Mt)"
             ):
                 raise ValueError("new-bc-v3+ must use the final workbook target sheets and Mt units")
+        if self.release_id == "new-bc-v5":
+            population = self.parameters["Population"]
+            hurricane = self.parameters["HurricaneIntensity"]
+            liq_prod = self.parameters["LiqProdAdjustment"]
+            if (
+                population.reference_source.parser != "annual_value_rows"
+                or population.reference_source.key_axes != ("Country", "Year")
+                or population.constraints.minimum != 0.0
+            ):
+                raise ValueError("Population must use the approved non-negative annual workbook contract")
+            if (
+                hurricane.reference_source.parser != "hurricane_no_event_baseline"
+                or hurricane.reference_source.key_axes != ("Year", "Month")
+                or hurricane.constraints.minimum != 0.0
+                or hurricane.constraints.maximum != 4.0
+                or not hurricane.constraints.direct_evidence_required
+            ):
+                raise ValueError("HurricaneIntensity must retain its GoM evidence gate and integer 0..4 range")
+            if (
+                liq_prod.reference_source.parser != "liquefaction_production_rows"
+                or liq_prod.reference_source.key_axes
+                != ("Country", "LNG Plant", "LNG Plant Train", "Year", "Month")
+                or liq_prod.constraints.minimum != 0.0
+                or not liq_prod.constraints.direct_evidence_required
+                or liq_prod.write_target.row_policy != "existing_exact"
+                or liq_prod.write_target.metadata_authority != "write_target"
+            ):
+                raise ValueError("LiqProdAdjustment must retain its exact-slot production override contract")
         return self
 
 
@@ -399,7 +447,7 @@ def load_workbook_contract(
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") in {2, 3, 4} and "extends" in document:
+        if document.get("schema_version") in {2, 3, 4, 5} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
             base_path = path.parent / extends
             base_document = load_workbook_contract(base_path).model_dump(mode="json")

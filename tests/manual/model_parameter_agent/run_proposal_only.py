@@ -82,11 +82,11 @@ V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 EVIDENCE_SCHEMA_VERSION = 3
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
-BASELINE_CAPABILITY_RELEASE = "extend7-v4"
-EXPECTED_0032_CATALOG_CHECKSUM = "b9d8c051872b39903cc3b4d2f19cd00570156eecd82295f0d2b02fd042c4000b"
-EXPECTED_NEW_BC_V4_CONTRACT_SHA256 = "8f976303c9404b03945dafb9b7b871b6ac6eb6335d5e5b084ad9d7939f842a2d"
-EXPECTED_EXTEND7_V4_CONTRACT_SHA256 = "6eca2fe50b10ed39a801d4071b0ac646c41d554e8d92c3bc932a4ddc8cf5f0a7"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "cf174dd6e9cae7ee464563d996e503ce1adccad44878fc644b86d19c63f43952"
+BASELINE_CAPABILITY_RELEASE = "extend10-v5"
+EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
+EXPECTED_NEW_BC_V5_CONTRACT_SHA256 = "44e556e2b36cf6ee7806737057339594d4e9d39062a2853e2d44f7bce7f0fcc9"
+EXPECTED_EXTEND10_V5_CONTRACT_SHA256 = "7ef7b9bd8690d473298e8116983cad1d5307f60b38cd427400b021ca3393bafd"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "171dd50fca95b759d572a29f1b1c61090085430d92a59e69754bfe41bfd4b17c"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
 EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
@@ -94,29 +94,26 @@ EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
         "PMI",
         "PowerMix",
         "Temperature",
+        "Population",
+        "HurricaneIntensity",
+        "LiqProdAdjustment",
         "LiqUtilAdjustment",
         "PipelineAdjustment",
         "SupplyDisruption",
     },
 )
-EXPECTED_EXTEND7_ALLOWLIST = frozenset(
-    {
-        *EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "PipelineAdjustment",
-        "SupplyDisruption",
-    },
-)
+EXPECTED_EXTEND10_ALLOWLIST = EXPECTED_WORKBOOK_PARAMETER_NAMES
 RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract().by_name)
 CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     BASELINE_CAPABILITY_RELEASE: {
-        "catalog_version": V4_API_VERSION,
-        "catalog_checksum": EXPECTED_0032_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_EXTEND7_ALLOWLIST,
-        "proposal_capability_release_id": "extend7-v4",
-        "proposal_capability_sha256": EXPECTED_EXTEND7_V4_CONTRACT_SHA256,
+        "catalog_version": "v4.0",
+        "catalog_checksum": EXPECTED_V4_0_CATALOG_CHECKSUM,
+        "runtime_allowlist": EXPECTED_EXTEND10_ALLOWLIST,
+        "proposal_capability_release_id": "extend10-v5",
+        "proposal_capability_sha256": EXPECTED_EXTEND10_V5_CONTRACT_SHA256,
         "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v4",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V4_CONTRACT_SHA256,
+        "resource_release_id": "new-bc-v5",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V5_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
@@ -559,7 +556,7 @@ async def _evaluate_scenario_with_frozen_context(
         scenario_id,
         expected_scenario_context=scenario_context,
         require_pre_persistence_quality_pass=True,
-        allowed_parameter_names=EXPECTED_EXTEND7_ALLOWLIST,
+        allowed_parameter_names=EXPECTED_EXTEND10_ALLOWLIST,
     )
 
 
