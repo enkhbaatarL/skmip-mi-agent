@@ -82,11 +82,11 @@ V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
 EVIDENCE_SCHEMA_VERSION = 3
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
-BASELINE_CAPABILITY_RELEASE = "extend10-v5"
+BASELINE_CAPABILITY_RELEASE = "extend14-v6"
 EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
-EXPECTED_NEW_BC_V5_CONTRACT_SHA256 = "44e556e2b36cf6ee7806737057339594d4e9d39062a2853e2d44f7bce7f0fcc9"
-EXPECTED_EXTEND10_V5_CONTRACT_SHA256 = "7ef7b9bd8690d473298e8116983cad1d5307f60b38cd427400b021ca3393bafd"
-EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "171dd50fca95b759d572a29f1b1c61090085430d92a59e69754bfe41bfd4b17c"
+EXPECTED_NEW_BC_V6_CONTRACT_SHA256 = "a86a820f855adf59450eea45db3409771a6cc48b43b82f3b89b6aea1a210fc2b"
+EXPECTED_EXTEND14_V6_CONTRACT_SHA256 = "808cb294204794adf91a01259ef8e41e856cd396b9534194792707e26074bc85"
+EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH = "e94b0fdcfefe7e78e6da50d28534bc244bc19f328b644d3ba5ad0e68f7ad921d"
 EXPECTED_PACKAGED_RESOURCE_FINGERPRINT = "b1686b6308e8ba094277417bb79bfd85bfe05bb8013c20ed20545b9b2f9c1a44"
 EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
     {
@@ -100,20 +100,24 @@ EXPECTED_WORKBOOK_PARAMETER_NAMES = frozenset(
         "LiqUtilAdjustment",
         "PipelineAdjustment",
         "SupplyDisruption",
+        "User-Adjusted Gas Demand",
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "ShippingCost",
     },
 )
-EXPECTED_EXTEND10_ALLOWLIST = EXPECTED_WORKBOOK_PARAMETER_NAMES
+EXPECTED_EXTEND14_ALLOWLIST = EXPECTED_WORKBOOK_PARAMETER_NAMES
 RUNTIME_PROPOSAL_CAPABILITY_NAMES = frozenset(load_proposal_capability_contract().by_name)
 CAPABILITY_RELEASES: dict[str, dict[str, Any]] = {
     BASELINE_CAPABILITY_RELEASE: {
         "catalog_version": "v4.0",
         "catalog_checksum": EXPECTED_V4_0_CATALOG_CHECKSUM,
-        "runtime_allowlist": EXPECTED_EXTEND10_ALLOWLIST,
-        "proposal_capability_release_id": "extend10-v5",
-        "proposal_capability_sha256": EXPECTED_EXTEND10_V5_CONTRACT_SHA256,
+        "runtime_allowlist": EXPECTED_EXTEND14_ALLOWLIST,
+        "proposal_capability_release_id": "extend14-v6",
+        "proposal_capability_sha256": EXPECTED_EXTEND14_V6_CONTRACT_SHA256,
         "workbook_parameter_names": EXPECTED_WORKBOOK_PARAMETER_NAMES,
-        "resource_release_id": "new-bc-v5",
-        "workbook_contract_sha256": EXPECTED_NEW_BC_V5_CONTRACT_SHA256,
+        "resource_release_id": "new-bc-v6",
+        "workbook_contract_sha256": EXPECTED_NEW_BC_V6_CONTRACT_SHA256,
         "resource_semantic_schema_hash": EXPECTED_RESOURCE_SEMANTIC_SCHEMA_HASH,
         "effective_resource_fingerprint": EXPECTED_PACKAGED_RESOURCE_FINGERPRINT,
         "uncovered_policy_version": UNCOVERED_POLICY_VERSION,
@@ -556,7 +560,7 @@ async def _evaluate_scenario_with_frozen_context(
         scenario_id,
         expected_scenario_context=scenario_context,
         require_pre_persistence_quality_pass=True,
-        allowed_parameter_names=EXPECTED_EXTEND10_ALLOWLIST,
+        allowed_parameter_names=EXPECTED_EXTEND14_ALLOWLIST,
     )
 
 

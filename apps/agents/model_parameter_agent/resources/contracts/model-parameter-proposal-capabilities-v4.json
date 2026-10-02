@@ -1,6 +1,6 @@
 {
   "schema_version": "model-parameter-proposal-capabilities-v4",
-  "release_id": "extend10-v5",
+  "release_id": "extend14-v6",
   "catalog_version": "v4.0",
   "catalog_checksum": "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763",
   "parameters": [
@@ -39,6 +39,15 @@
       "exact_axes": ["Country", "Year", "Month"],
       "evidence_policy": "explicit_or_unique_inferred",
       "constraints": {"value_semantics": "absolute", "unit": "celsius"}
+    },
+    {
+      "model_param_id": 9,
+      "parameter_name": "User-Adjusted Gas Demand",
+      "model_target": {"model_file": "Demand", "model_sheet": "DemandOutputOverwrite", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Country", "Year", "Month", "Demand Sub-Sector"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "BCM", "minimum": 0, "basecase_only": true}
     },
     {
       "model_param_id": 11,
@@ -86,6 +95,15 @@
       "constraints": {"value_semantics": "absolute", "unit": "Mt/y", "minimum": 0}
     },
     {
+      "model_param_id": 16,
+      "parameter_name": "RegasAdjustment",
+      "model_target": {"model_file": "Supply", "model_sheet": "RegasAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Continent", "Region", "Country", "Regasification plant", "Life Cycle Category", "Nameplate capacity (MTPA)", "Year", "Month"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt LNG/month", "minimum": 0, "basecase_only": true}
+    },
+    {
       "model_param_id": 17,
       "parameter_name": "SupplyDisruption",
       "model_target": {"model_file": "Supply", "model_sheet": "ProductionAdjustment", "model_table": "table2"},
@@ -93,6 +111,24 @@
       "exact_axes": ["Country", "Year", "Month"],
       "evidence_policy": "explicit_or_unique_inferred",
       "constraints": {"value_semantics": "absolute", "unit": "Mt", "minimum": 0}
+    },
+    {
+      "model_param_id": 18,
+      "parameter_name": "PNG Contract Volume",
+      "model_target": {"model_file": "Trade", "model_sheet": "MidstreamContractInput", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year", "From Country", "To Country"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Mt LNG", "minimum": 0, "basecase_only": true}
+    },
+    {
+      "model_param_id": 20,
+      "parameter_name": "ShippingCost",
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/d", "minimum": 0, "basecase_only": true}
     }
   ]
 }

@@ -79,7 +79,7 @@ Lever의 `direction`, `pressure_contribution`, domain을 숫자 부호로 직접
 
 ### 문제 9. Canonical rollout과 runtime-only 변경
 
-master와 Lever catalog를 어떻게 적용해야 하는지, checksum이 바뀐 기존 v4 Scenario를 어떻게 처리해야 하는지 설명하시오. 이번 runtime allow-list 변경에서 불변이어야 하는 DB, config, canonical, workbook, confirmation 범위도 포함하시오.
+master와 Lever catalog를 어떻게 적용해야 하는지, checksum이 바뀐 기존 v4 Scenario를 어떻게 처리해야 하는지 설명하시오. 이번 extend14 변경에서 불변인 DB·canonical·workbook artifact·confirmation 범위와 새 contract/capability를 가리키도록 함께 바뀌는 config 범위도 포함하시오.
 
 ### 문제 10. 실패와 저장 호환성
 
@@ -97,7 +97,7 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- 0030 runtime fixture master 21행·활성 14개
+- 0032 runtime fixture master 21행·활성 14개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
 - active resource LUT-backed 10개
 - Basecase-only 활성 4개: `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`
@@ -105,16 +105,17 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 - v1/v3 raw direct/routing reachability 10개
 - v4 active Lever 18개, raw binding occurrence 16개, effective executable 고유 Parameter 14개
 - v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
-- v4 extend10 ID capability 10개: 위 5개 + `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `PipelineAdjustment`, `SupplyDisruption`
+- v4 extend14 ID capability 14개: LUT-backed 10개 + `User-Adjusted Gas Demand`, `RegasAdjustment`,
+  `PNG Contract Volume`, `ShippingCost`
 
 이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`,
 `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
 활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 14개는 Lever-native
 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
-후보가 된다. 이 raw capability는 proposal 허용 범위와 다르다. allow-list 밖이면 active 또는 raw
-executable이어도 `active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. 전역 집합끼리 비교하면
-v1/v3 10개 중 5개, v4 14개 중 9개가 allow-list 밖이다.
+후보가 된다. 이 raw capability와 proposal 허용 범위는 별도 계약이지만, 0032 fixture의 v4 effective 14개는
+현재 extend14와 모두 일치한다. 외부개발 DB read-back의 active/executable 16개 중 capability에 없는 항목은
+`active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. v1/v3는 raw 10개 중 5개만 허용한다.
 
 ### 정답 4
 
@@ -123,9 +124,9 @@ v1/v3 10개 중 5개, v4 14개 중 9개가 allow-list 밖이다.
 ### 정답 5
 
 allow-list 적용 전 executable binding이 primary 하나뿐이면 `direct`로 분류되어, 그 후보가 allow-list를
-통과할 때 결정적으로 선택한다. primary와 alternative가 함께 있으면 먼저 `routing`으로 분류되며,
-allow-list가 alternative를 제외해 후보가 하나만 남더라도 Step1.5가 applicability와 Scenario/Event/Lever
-맥락을 판단한다. 따라서 남은 primary도 선택되지 않을 수 있다. `price_only`, binding 없음,
+통과할 때 결정적으로 선택한다. primary와 alternative가 함께 있으면 lineage를 모두 보존한 deterministic
+candidate로 구성하고 후속 exact slot/evidence 단계가 applicability와 Scenario/Event/Lever 맥락을 판단한다.
+v4는 Step1.5 LLM으로 다시 routing하지 않는다. `price_only`, binding 없음,
 비활성·unsupported parameter는 제외하며 reason code를 내부 증적에 보존한다. raw candidate가
 active/executable이어도 runtime allow-list 밖이면 `PROPOSAL_SCOPE_EXCLUDED`로 분류해 Step1.5 LLM 전에
 제외한다. `unchanged`는 변화 candidate가 아니다.
@@ -150,9 +151,11 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 
 일반 v4 master·Lever rollout은 mgmt migration을 정본으로 하나의 transaction에서 precondition,
 cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
-새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. 0030 runtime 동기화에서는 version-aware ORM·조회와
-별도 `model-*-canonical-v4-0030` fixture를 적용하되, 외부개발 DB에 0030을 재실행하거나 0029 canonical·정적
-SQL·workbook을 덮어쓰지 않는다. public API payload와 confirmation workflow도 변경하지 않는다.
+새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. extend14는 이미 활성·binding된 ID 9·16·18·20을
+proposal scope에 추가하는 응용 계층 변경이므로 외부개발 DB DML, catalog checksum, canonical master/Lever,
+legacy mapping과 XLSM artifact를 바꾸지 않는다. 대신 versioned capability를 `extend14-v6`, workbook contract를
+`new-bc-v6`로 추가하고 local/Kubernetes config의 path·release·hash를 함께 갱신한다. public API payload와
+confirmation workflow도 변경하지 않는다.
 
 ### 정답 10
 

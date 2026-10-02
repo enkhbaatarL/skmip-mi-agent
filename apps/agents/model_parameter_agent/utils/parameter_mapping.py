@@ -13,7 +13,7 @@ from apps.agents.model_parameter_agent.constants import (
     PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
 )
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
-    EXPECTED_EXTEND10_RELEASE_ID,
+    EXPECTED_EXTEND14_RELEASE_ID,
     validate_v4_candidate_capability,
 )
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
@@ -1265,28 +1265,35 @@ def build_basecase_records(
             extract_workbook_references,
         )
 
-        for candidate in candidates:
-            parameter_name = str(
-                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
-            ).strip()
-            registry_spec = registry.get(parameter_name)
-            expected_axes = tuple(str(item) for item in candidate.get("proposal_exact_axes") or [])
-            if registry_spec is None or registry_spec.key_axes != expected_axes:
-                raise MIBaseError(
-                    ErrorCode.INVALID_REQUEST,
-                    detail=(
-                        "extend7 capability and runtime exact axes differ: "
-                        f"parameter={parameter_name}, capability={expected_axes}, "
-                        f"runtime={registry_spec.key_axes if registry_spec is not None else None}"
-                    ),
-                )
-
         resource_paths = get_registered_model_parameter_resource_paths()
         contract = (
             resource_paths.workbook_contract
             if resource_paths is not None and resource_paths.workbook_contract is not None
             else load_workbook_contract()
         )
+        for candidate in candidates:
+            parameter_name = str(
+                candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
+            ).strip()
+            registry_spec = registry.get(parameter_name)
+            parameter_contract = contract.parameters.get(parameter_name)
+            if registry_spec is not None:
+                runtime_axes = registry_spec.key_axes
+            elif parameter_contract is not None:
+                runtime_axes = parameter_contract.reference_source.key_axes
+            else:
+                runtime_axes = None
+            expected_axes = tuple(str(item) for item in candidate.get("proposal_exact_axes") or [])
+            if runtime_axes != expected_axes:
+                raise MIBaseError(
+                    ErrorCode.INVALID_REQUEST,
+                    detail=(
+                        "proposal capability and runtime exact axes differ: "
+                        f"parameter={parameter_name}, capability={expected_axes}, "
+                        f"runtime={runtime_axes}"
+                    ),
+                )
+
         bundle = extract_workbook_references(contract)
         records: list[dict[str, Any]] = []
         warnings = list(bundle.warnings)
@@ -1311,21 +1318,18 @@ def build_basecase_records(
                 candidate.get("canonical_parameter_name") or candidate.get("parameter_name") or "",
             ).strip()
             registry_spec = registry.get(parameter_name)
-            if registry_spec is None:
-                raise MIBaseError(
-                    ErrorCode.INVALID_REQUEST,
-                    detail=f"Workbook contract parameter has no registered exact-key schema: {parameter_name}",
-                )
             target = parameter_contract.write_target
-            if registry_spec.key_axes != target.key_axes or registry_spec.metadata_axes != target.metadata_axes:
+            runtime_key_axes = registry_spec.key_axes if registry_spec is not None else target.key_axes
+            runtime_metadata_axes = registry_spec.metadata_axes if registry_spec is not None else target.metadata_axes
+            if runtime_key_axes != target.key_axes or runtime_metadata_axes != target.metadata_axes:
                 raise MIBaseError(
                     ErrorCode.INVALID_REQUEST,
                     detail=(
-                        "Workbook write target and LUT registry axes differ: "
+                        "Workbook write target and runtime exact axes differ: "
                         f"parameter={parameter_name}, target_keys={target.key_axes}, "
-                        f"registry_keys={registry_spec.key_axes}, "
+                        f"registry_keys={runtime_key_axes}, "
                         f"target_metadata={target.metadata_axes}, "
-                        f"registry_metadata={registry_spec.metadata_axes}"
+                        f"registry_metadata={runtime_metadata_axes}"
                     ),
                 )
             candidate_key = str(candidate.get("candidate_key") or "").strip()
@@ -1652,7 +1656,7 @@ def partition_proposal_parameter_candidates(
                 allowed.append(
                     {
                         **candidate,
-                        "proposal_capability_release_id": EXPECTED_EXTEND10_RELEASE_ID,
+                        "proposal_capability_release_id": EXPECTED_EXTEND14_RELEASE_ID,
                         "proposal_reference_mode": capability.reference_mode,
                         "proposal_exact_axes": list(capability.exact_axes),
                         "proposal_evidence_policy": capability.evidence_policy,

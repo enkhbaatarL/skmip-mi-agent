@@ -225,6 +225,7 @@ def _gdp_growth_records(
     for row_number, values in enumerate(
         worksheet.iter_rows(
             min_row=source.data_start_row,
+            max_row=source.data_end_row,
             min_col=start_column,
             max_col=end_column,
             values_only=True,
@@ -1077,6 +1078,247 @@ def _supply_disruption_records(
     return records, (), frozenset()
 
 
+def _exact_row_records(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
+    source = parameter.reference_source
+    start_column, end_column = _source_bounds(source)
+    axis_columns = {axis: _column_index(source.columns[axis]) for axis in source.key_axes}
+    metadata_columns = {axis: _column_index(source.columns[axis]) for axis in source.metadata_axes}
+    value_column = _column_index(source.columns[source.value_field])
+    records: list[WorkbookReferenceRecord] = []
+    blocked_source_keys: set[CanonicalKey] = set()
+    warnings: list[str] = []
+
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=source.data_start_row,
+            max_row=source.data_end_row,
+            min_col=start_column,
+            max_col=end_column,
+            values_only=True,
+        ),
+        start=source.data_start_row,
+    ):
+        raw_axes = {axis: values[column - start_column] for axis, column in axis_columns.items()}
+        raw_value = values[value_column - start_column]
+        if all(value is None or (isinstance(value, str) and not value.strip()) for value in raw_axes.values()) and (
+            raw_value is None or (isinstance(raw_value, str) and not raw_value.strip())
+        ):
+            continue
+
+        axes: dict[str, object] = {}
+        try:
+            for axis_name, raw_axis in raw_axes.items():
+                if raw_axis is None or (isinstance(raw_axis, str) and not raw_axis.strip()):
+                    raise _reference_error(f"{parameter_name}:{row_number}:{axis_name} is empty")
+                if axis_name == "Year":
+                    year = strict_int(raw_axis, label=f"{parameter_name}:{row_number}:Year")
+                    if year not in contract.horizon.years:
+                        axes = {}
+                        break
+                    axes[axis_name] = year
+                elif axis_name == "Month":
+                    month = strict_int(raw_axis, label=f"{parameter_name}:{row_number}:Month")
+                    if not 1 <= month <= 12:
+                        raise _reference_error(f"{parameter_name}:{row_number}:Month is outside 1..12")
+                    axes[axis_name] = month
+                else:
+                    axes[axis_name] = raw_axis
+        except MIBaseError:
+            warnings.append(f"{parameter_name} invalid exact axes excluded at row {row_number}")
+            continue
+        if not axes:
+            continue
+
+        canonical_axes = {
+            axis_name: canonical_axis_value(axis_name, axes[axis_name]) for axis_name in source.key_axes
+        }
+        exact_key = canonical_key_from_axes(canonical_axes, source.key_axes)
+        value = _finite_number(raw_value)
+        if (
+            value is None
+            or (parameter.constraints.minimum is not None and value < parameter.constraints.minimum)
+            or (parameter.constraints.maximum is not None and value > parameter.constraints.maximum)
+        ):
+            blocked_source_keys.add(exact_key)
+            warnings.append(f"{parameter_name} invalid exact value excluded at row {row_number}")
+            continue
+
+        metadata = {
+            axis_name: values[column - start_column] for axis_name, column in metadata_columns.items()
+        }
+        records.append(
+            _record(
+                parameter_name,
+                parameter,
+                axes=axes,
+                value=value,
+                metadata=metadata,
+                reference_id=_cell_reference_id(
+                    contract,
+                    parameter,
+                    row=row_number,
+                    column=value_column,
+                ),
+                diagnostics=("reference_policy=existing_exact_basecase_only",),
+            ),
+        )
+
+    deduplicated, duplicate_warnings, duplicate_blocked = _deduplicate_records(parameter_name, records)
+    return (
+        deduplicated,
+        (*warnings, *duplicate_warnings),
+        frozenset(blocked_source_keys) | duplicate_blocked,
+    )
+
+
+def _matrix_time_column_records(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
+    source = parameter.reference_source
+    if source.value_start is None or source.value_end is None or source.year_row is None or source.month_row is None:
+        raise _reference_error(f"{parameter_name} matrix source controls are incomplete")
+    value_start = _column_index(source.value_start)
+    value_end = _column_index(source.value_end)
+    if value_start > value_end:
+        raise _reference_error(f"{parameter_name} matrix source value range is reversed")
+
+    time_header_rows = (
+        source.year_row,
+        source.month_row,
+        *((source.period_row,) if source.period_row is not None else ()),
+    )
+    header_start_row = min(time_header_rows)
+    header_end_row = max(time_header_rows)
+    header_values = dict(
+        enumerate(
+            worksheet.iter_rows(
+                min_row=header_start_row,
+                max_row=header_end_row,
+                min_col=value_start,
+                max_col=value_end,
+                values_only=True,
+            ),
+            start=header_start_row,
+        ),
+    )
+    time_columns: list[tuple[int, int, int, int | None]] = []
+    for column in range(value_start, value_end + 1):
+        offset = column - value_start
+        raw_year = header_values[source.year_row][offset]
+        raw_month = header_values[source.month_row][offset]
+        raw_period = header_values[source.period_row][offset] if source.period_row is not None else None
+        if raw_year is None and raw_month is None and raw_period is None:
+            continue
+        try:
+            year = strict_int(raw_year, label=f"{parameter_name}:source:{_column_letter(column)}:Year")
+            month = strict_int(raw_month, label=f"{parameter_name}:source:{_column_letter(column)}:Month")
+            period = (
+                strict_int(raw_period, label=f"{parameter_name}:source:{_column_letter(column)}:Period")
+                if source.period_row is not None
+                else None
+            )
+        except MIBaseError as exc:
+            raise _reference_error(
+                f"{parameter_name} matrix source has an invalid time header at {_column_letter(column)}",
+            ) from exc
+        if not 1 <= month <= 12:
+            raise _reference_error(
+                f"{parameter_name} matrix source has an invalid month at {_column_letter(column)}: {month}",
+            )
+        if year in contract.horizon.years:
+            time_columns.append((column, year, month, period))
+
+    non_time_axes = tuple(axis for axis in source.key_axes if axis not in {"Year", "Month"})
+    row_metadata_axes = tuple(axis for axis in source.metadata_axes if axis != "Period")
+    required_row_fields = (*non_time_axes, *row_metadata_axes)
+    row_columns = {field: _column_index(source.columns[field]) for field in required_row_fields}
+    row_start_column = min(row_columns.values())
+    row_end_column = max((*row_columns.values(), value_end))
+    records: list[WorkbookReferenceRecord] = []
+    blocked_source_keys: set[CanonicalKey] = set()
+    warnings: list[str] = []
+
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=source.data_start_row,
+            max_row=source.data_end_row or worksheet.max_row,
+            min_col=row_start_column,
+            max_col=row_end_column,
+            values_only=True,
+        ),
+        start=source.data_start_row,
+    ):
+        raw_row = {field: values[column - row_start_column] for field, column in row_columns.items()}
+        if all(value is None or (isinstance(value, str) and not value.strip()) for value in raw_row.values()):
+            continue
+        missing_axes = [
+            axis
+            for axis in non_time_axes
+            if raw_row.get(axis) is None
+            or (isinstance(raw_row.get(axis), str) and not str(raw_row[axis]).strip())
+        ]
+        if missing_axes:
+            warnings.append(
+                f"{parameter_name} matrix source row {row_number} is missing axes: {missing_axes}",
+            )
+            continue
+
+        for column, year, month, period in time_columns:
+            axes = {
+                axis: year if axis == "Year" else month if axis == "Month" else raw_row[axis]
+                for axis in source.key_axes
+            }
+            canonical_axes = {
+                axis: canonical_axis_value(axis, axes[axis]) for axis in source.key_axes
+            }
+            exact_key = canonical_key_from_axes(canonical_axes, source.key_axes)
+            value = _finite_number(values[column - row_start_column])
+            if (
+                value is None
+                or (parameter.constraints.minimum is not None and value < parameter.constraints.minimum)
+                or (parameter.constraints.maximum is not None and value > parameter.constraints.maximum)
+            ):
+                blocked_source_keys.add(exact_key)
+                warnings.append(
+                    f"{parameter_name} invalid matrix value excluded at {_column_letter(column)}{row_number}",
+                )
+                continue
+            metadata = {
+                axis: period if axis == "Period" else raw_row.get(axis) for axis in source.metadata_axes
+            }
+            records.append(
+                _record(
+                    parameter_name,
+                    parameter,
+                    axes=axes,
+                    value=value,
+                    metadata=metadata,
+                    reference_id=_cell_reference_id(
+                        contract,
+                        parameter,
+                        row=row_number,
+                        column=column,
+                    ),
+                    diagnostics=("reference_policy=existing_exact_basecase_only",),
+                ),
+            )
+
+    deduplicated, duplicate_warnings, duplicate_blocked = _deduplicate_records(parameter_name, records)
+    return (
+        deduplicated,
+        (*warnings, *duplicate_warnings),
+        frozenset(blocked_source_keys) | duplicate_blocked,
+    )
+
+
 def _extract_parameter_records(
     contract: ModelParameterWorkbookContract,
     parameter_name: str,
@@ -1114,6 +1356,10 @@ def _extract_parameter_records(
             worksheet,
             resource_root=resource_root,
         )
+    if source.parser == "exact_rows":
+        return _exact_row_records(contract, parameter_name, parameter, worksheet)
+    if source.parser == "matrix_time_columns":
+        return _matrix_time_column_records(contract, parameter_name, parameter, worksheet)
     raise _reference_error(f"Unsupported workbook reference parser: {source.parser}")
 
 
@@ -1137,6 +1383,98 @@ def _validate_write_target_headers(
             )
 
 
+def _extract_fixed_write_target_slots(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+) -> tuple[WorkbookWriteTargetSlot, ...]:
+    target = parameter.write_target
+    if target.layout != "fixed_columns" or target.row_policy != "existing_exact":
+        return ()
+
+    key_columns = {axis: _column_index(target.columns[axis]) for axis in target.key_axes}
+    metadata_columns = {axis: _column_index(target.columns[axis]) for axis in target.metadata_axes}
+    required_columns = {**key_columns, **metadata_columns}
+    start_column = min(required_columns.values())
+    end_column = max(required_columns.values())
+    slots_by_key: dict[CanonicalKey, WorkbookWriteTargetSlot] = {}
+
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=target.data_start_row,
+            max_row=target.data_end_row or worksheet.max_row,
+            min_col=start_column,
+            max_col=end_column,
+            values_only=True,
+        ),
+        start=target.data_start_row,
+    ):
+        raw_axes = {axis: values[column - start_column] for axis, column in key_columns.items()}
+        if all(value is None or (isinstance(value, str) and not value.strip()) for value in raw_axes.values()):
+            continue
+        axes: dict[str, CanonicalValue] = {}
+        try:
+            for axis_name, raw_axis in raw_axes.items():
+                if raw_axis is None or (isinstance(raw_axis, str) and not raw_axis.strip()):
+                    raise _reference_error(
+                        f"{parameter_name} fixed write target row {row_number} is missing {axis_name}",
+                    )
+                if axis_name == "Year":
+                    year = strict_int(raw_axis, label=f"{parameter_name}:target:{row_number}:Year")
+                    if year not in contract.horizon.years:
+                        axes = {}
+                        break
+                    axes[axis_name] = year
+                elif axis_name == "Month":
+                    month = strict_int(raw_axis, label=f"{parameter_name}:target:{row_number}:Month")
+                    if not 1 <= month <= 12:
+                        raise _reference_error(
+                            f"{parameter_name} fixed write target row {row_number} has invalid Month",
+                        )
+                    axes[axis_name] = month
+                else:
+                    axes[axis_name] = canonical_axis_value(axis_name, raw_axis)
+        except MIBaseError as exc:
+            raise _reference_error(
+                f"{parameter_name} fixed write target row {row_number} has invalid exact axes",
+            ) from exc
+        if not axes:
+            continue
+
+        metadata = MappingProxyType(
+            {
+                axis: canonical_axis_value(axis, values[column - start_column])
+                for axis, column in metadata_columns.items()
+                if values[column - start_column] is not None
+                and str(values[column - start_column]).strip()
+            },
+        )
+        canonical_key = canonical_key_from_axes(axes, target.key_axes)
+        slot = WorkbookWriteTargetSlot(
+            parameter_name=parameter_name,
+            canonical_key=canonical_key,
+            axes=MappingProxyType(axes),
+            metadata=metadata,
+            reference_id=f"{contract.release_id}:{target.workbook_role}:{target.sheet}:row{row_number}",
+        )
+        previous = slots_by_key.get(canonical_key)
+        if previous is not None and (
+            dict(previous.axes) != dict(slot.axes) or dict(previous.metadata) != dict(slot.metadata)
+        ):
+            raise _reference_error(
+                f"{parameter_name} fixed write target has conflicting duplicate exact key: {canonical_key!r}",
+            )
+        slots_by_key[canonical_key] = slot
+
+    if len(slots_by_key) != target.observed_record_count:
+        raise _reference_error(
+            f"{parameter_name} write target count mismatch: "
+            f"expected={target.observed_record_count}, actual={len(slots_by_key)}",
+        )
+    return tuple(slots_by_key[key] for key in sorted(slots_by_key))
+
+
 def _extract_matrix_write_target_slots(
     contract: ModelParameterWorkbookContract,
     parameter_name: str,
@@ -1152,14 +1490,15 @@ def _extract_matrix_write_target_slots(
         value_end = _column_index(target.columns["value_end"])
         year_row = int(target.columns["year_row"])
         month_row = int(target.columns["month_row"])
-        period_row = int(target.columns["period_row"])
+        period_row = int(target.columns["period_row"]) if "period_row" in target.columns else None
     except (KeyError, TypeError, ValueError) as exc:
         raise _reference_error(f"{parameter_name} matrix write target controls are invalid") from exc
     if value_start > value_end:
         raise _reference_error(f"{parameter_name} matrix write target value range is reversed")
 
-    header_start_row = min(year_row, month_row, period_row)
-    header_end_row = max(year_row, month_row, period_row)
+    time_header_rows = (year_row, month_row, *((period_row,) if period_row is not None else ()))
+    header_start_row = min(time_header_rows)
+    header_end_row = max(time_header_rows)
     header_values = dict(
         enumerate(
             worksheet.iter_rows(
@@ -1172,12 +1511,12 @@ def _extract_matrix_write_target_slots(
             start=header_start_row,
         ),
     )
-    time_columns: list[tuple[int, int, int, int]] = []
+    time_columns: list[tuple[int, int, int, int | None]] = []
     for column in range(value_start, value_end + 1):
         offset = column - value_start
         raw_year = header_values[year_row][offset]
         raw_month = header_values[month_row][offset]
-        raw_period = header_values[period_row][offset]
+        raw_period = header_values[period_row][offset] if period_row is not None else None
         if raw_year is None and raw_month is None and raw_period is None:
             continue
         try:
@@ -1189,9 +1528,13 @@ def _extract_matrix_write_target_slots(
                 raw_month,
                 label=f"{parameter_name}:target:{_column_letter(column)}:Month",
             )
-            period = strict_int(
-                raw_period,
-                label=f"{parameter_name}:target:{_column_letter(column)}:Period",
+            period = (
+                strict_int(
+                    raw_period,
+                    label=f"{parameter_name}:target:{_column_letter(column)}:Period",
+                )
+                if period_row is not None
+                else None
             )
         except MIBaseError as exc:
             raise _reference_error(
@@ -1220,7 +1563,7 @@ def _extract_matrix_write_target_slots(
     for row_number, values in enumerate(
         worksheet.iter_rows(
             min_row=target.data_start_row,
-            max_row=worksheet.max_row,
+            max_row=target.data_end_row or worksheet.max_row,
             min_col=row_start_column,
             max_col=row_end_column,
             values_only=True,
@@ -1374,6 +1717,13 @@ def _extract_workbook_references_uncached(
                     parameter,
                     workbook[parameter.write_target.sheet],
                 )
+                if not target_slots:
+                    target_slots = _extract_fixed_write_target_slots(
+                        resolved_contract,
+                        parameter_name,
+                        parameter,
+                        workbook[parameter.write_target.sheet],
+                    )
                 records = _align_records_to_write_target(
                     parameter_name,
                     parameter,

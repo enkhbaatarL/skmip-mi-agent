@@ -48,7 +48,7 @@ from apps.common.exceptions.custom import MIBaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
-    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v5.json"
+    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v6.json"
 )
 V1_CONTRACT_PATH = (
     ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json"
@@ -64,6 +64,10 @@ EXPECTED_SOURCE_COUNTS = {
     "LiqUtilAdjustment": 23_820,
     "PipelineAdjustment": 420,
     "SupplyDisruption": 4_908,
+    "User-Adjusted Gas Demand": 12,
+    "RegasAdjustment": 22_320,
+    "PNG Contract Volume": 684,
+    "ShippingCost": 5,
 }
 OBSERVED_LEGACY_TARGET_COUNTS = {
     "GDP": 93,
@@ -76,6 +80,10 @@ OBSERVED_LEGACY_TARGET_COUNTS = {
     "LiqUtilAdjustment": 33_348,
     "PipelineAdjustment": 60,
     "SupplyDisruption": 0,
+    "User-Adjusted Gas Demand": 12,
+    "RegasAdjustment": 40_176,
+    "PNG Contract Volume": 684,
+    "ShippingCost": 5,
 }
 
 
@@ -93,11 +101,82 @@ def _record_for(
     return next(record for record in bundle.records_for(parameter_name) if record.canonical_key == canonical_key)
 
 
-def test_contract_locks_v5_read_only_scope_targets_and_policies() -> None:
+@pytest.mark.parametrize(
+    ("parameter_name", "expected_count", "expected_axes", "expected_target", "expected_unit"),
+    [
+        (
+            "User-Adjusted Gas Demand",
+            12,
+            ("Country", "Year", "Month", "Demand Sub-Sector"),
+            ("demand", "DemandOutputOverwrite", "table1"),
+            "BCM",
+        ),
+        (
+            "RegasAdjustment",
+            22_320,
+            (
+                "Continent",
+                "Region",
+                "Country",
+                "Regasification plant",
+                "Life Cycle Category",
+                "Nameplate capacity (MTPA)",
+                "Year",
+                "Month",
+            ),
+            ("supply", "RegasAdjustment", "table1"),
+            "Mt LNG/month",
+        ),
+        (
+            "PNG Contract Volume",
+            684,
+            ("Year", "From Country", "To Country"),
+            ("trade", "MidstreamContractInput", "table1"),
+            "Mt LNG",
+        ),
+        (
+            "ShippingCost",
+            5,
+            ("Year",),
+            ("trade", "ShippingCostInput", "table1"),
+            "$/d",
+        ),
+    ],
+)
+def test_extend14_basecase_only_source_to_output_alignment(
+    reference_bundle: WorkbookReferenceBundle,
+    parameter_name: str,
+    expected_count: int,
+    expected_axes: tuple[str, ...],
+    expected_target: tuple[str, str, str],
+    expected_unit: str,
+) -> None:
+    parameter = reference_bundle.contract.parameters[parameter_name]
+    records = reference_bundle.records_for(parameter_name)
+    target_slots = reference_bundle.write_target_slots_for(parameter_name)
+
+    assert len(records) == expected_count
+    assert parameter.reference_source.key_axes == expected_axes
+    assert parameter.write_target.key_axes == expected_axes
+    assert (
+        parameter.write_target.workbook_role,
+        parameter.write_target.sheet,
+        parameter.write_target.table,
+    ) == expected_target
+    assert parameter.reference_source.reference_unit == expected_unit
+    assert parameter.write_target.write_unit == expected_unit
+    assert parameter.reference_source.value_semantics == parameter.write_target.value_semantics
+    assert all(record.value >= 0 for record in records)
+    assert {record.canonical_key for record in records} <= {
+        target_slot.canonical_key for target_slot in target_slots
+    }
+
+
+def test_contract_locks_v6_read_only_scope_targets_and_policies() -> None:
     contract = load_workbook_contract()
 
-    assert contract.schema_version == 5
-    assert contract.release_id == "new-bc-v5"
+    assert contract.schema_version == 6
+    assert contract.release_id == "new-bc-v6"
     assert contract.capability == "read_only_proposal"
     assert contract.api_version == "v4"
     assert contract.generation_strategy == "multi_event_model_lever_dimensions"
@@ -188,6 +267,34 @@ def test_contract_locks_v5_read_only_scope_targets_and_policies() -> None:
     assert liq_prod.constraints.minimum == 0
     assert liq_prod.constraints.direct_evidence_required is True
 
+    demand_override = contract.parameters["User-Adjusted Gas Demand"]
+    assert demand_override.reference_source.parser == "exact_rows"
+    assert demand_override.reference_source.key_axes == (
+        "Country",
+        "Year",
+        "Month",
+        "Demand Sub-Sector",
+    )
+    assert demand_override.write_target.row_policy == "existing_exact"
+
+    regas = contract.parameters["RegasAdjustment"]
+    assert regas.reference_source.parser == "matrix_time_columns"
+    assert regas.reference_source.value_start == "H"
+    assert regas.reference_source.value_end == "DK"
+    assert regas.reference_source.year_row == 9
+    assert regas.reference_source.month_row == 10
+    assert regas.write_target.row_policy == "existing_exact"
+
+    png = contract.parameters["PNG Contract Volume"]
+    assert png.reference_source.reference_unit == "Mt LNG"
+    assert png.write_target.write_unit == "Mt LNG"
+    assert png.write_target.row_policy == "existing_exact"
+
+    shipping = contract.parameters["ShippingCost"]
+    assert shipping.reference_source.key_axes == ("Year",)
+    assert shipping.reference_source.reference_unit == "$/d"
+    assert shipping.write_target.row_policy == "existing_exact"
+
     weakened_document = contract.model_dump(mode="json")
     weakened_document["parameters"]["LiqUtilAdjustment"]["constraints"]["minimum"] = None
     with pytest.raises(ValueError, match="zero minimum"):
@@ -259,7 +366,7 @@ def test_candidate_write_target_validation_is_fail_closed() -> None:
         validate_candidate_write_target(
             contract,
             {
-                "canonical_parameter_name": "RegasAdjustment",
+                "canonical_parameter_name": "RemainingUnrestrictedAmount",
                 "model_file": "Demand",
                 "model_sheet": "GDPPopulationAdjustment",
                 "model_table": "table1",
@@ -291,11 +398,18 @@ def test_authoritative_sources_extract_expected_horizon_records(
         record.canonical_key for record in reference_bundle.records_for("LiqUtilAdjustment")
     }
     assert len(reference_bundle.write_target_slots_for("LiqProdAdjustment")) == 23_820
-    assert all(
-        not target_slots
+    assert {
+        parameter_name: len(target_slots)
         for parameter_name, target_slots in reference_bundle.write_target_slots_by_parameter.items()
-        if parameter_name not in {"LiqUtilAdjustment", "LiqProdAdjustment"}
-    )
+        if target_slots
+    } == {
+        "LiqProdAdjustment": 23_820,
+        "LiqUtilAdjustment": 23_820,
+        "PNG Contract Volume": 684,
+        "RegasAdjustment": 22_320,
+        "ShippingCost": 5,
+        "User-Adjusted Gas Demand": 12,
+    }
 
     with pytest.raises(TypeError):
         reference_bundle.records_by_parameter["GDP"] = ()  # type: ignore[index]
@@ -306,7 +420,7 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
 ) -> None:
     gdp = _record_for(reference_bundle, "GDP", ("United States", 2026))
     assert gdp.value == pytest.approx(0.020638022790823538)
-    assert gdp.reference_id.startswith("new-bc-v5:demand:BCInput:U")
+    assert gdp.reference_id.startswith("new-bc-v6:demand:BCInput:U")
     assert gdp.diagnostics == ("value_transform=gdp_year_over_year_growth",)
 
     pmi = _record_for(reference_bundle, "PMI", ("China", 2026, 1))
@@ -457,7 +571,11 @@ def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
         "LiqProdAdjustment": ("Supply", "LiqProdAdjustment", "table1"),
         "LiqUtilAdjustment": ("Supply", "LiqUtilAdjustment", "table1"),
         "PipelineAdjustment": ("Supply", "PipelineAdjustment", "table1"),
+        "RegasAdjustment": ("Supply", "RegasAdjustment", "table1"),
         "SupplyDisruption": ("Supply", "ProductionAdjustment", "table2"),
+        "User-Adjusted Gas Demand": ("Demand", "DemandOutputOverwrite", "table1"),
+        "PNG Contract Volume": ("Trade", "MidstreamContractInput", "table1"),
+        "ShippingCost": ("Trade", "ShippingCostInput", "table1"),
     }
     candidates = [
         {
@@ -469,7 +587,11 @@ def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
             "model_sheet": model_sheet,
             "model_table": model_table,
             "proposal_reference_mode": "v4_workbook_then_lut",
-            "proposal_exact_axes": list(registry.specs[parameter_name].key_axes),
+            "proposal_exact_axes": list(
+                registry.specs[parameter_name].key_axes
+                if parameter_name in registry.specs
+                else reference_bundle.contract.parameters[parameter_name].reference_source.key_axes,
+            ),
         }
         for parameter_name, (model_file, model_sheet, model_table) in targets.items()
     ]

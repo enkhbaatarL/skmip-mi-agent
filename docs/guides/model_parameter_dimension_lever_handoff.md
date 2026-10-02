@@ -20,10 +20,11 @@ Scenario Group이다. v1/v3 Model Parameter proposal에는 공유 DB의 129행 m
 v1/v3 mapping의 현재 method count는 direct 35, routing 6, indirect 55, na 33이며 direct/routing이
 도달하는 raw capability는 LUT-backed 10개다. v4는 이 테이블을 조회하거나 fallback으로 사용하지
 않으며 active Lever의 master filtering 전 raw binding 이름 16개, effective active Parameter 14개에 도달한다.
-실제 runtime proposal은 버전과
-무관하게 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용한다. 이 제한은
-Model Parameter Agent가 source matching 후, Step1.5·값 제안 LLM과 persistence 전에 적용한다.
-DB·canonical·config를 바꾸지 않으며 Scenario Group Agent나 confirmation 동작에도 적용하지 않는다.
+실제 runtime proposal은 v1/v3에서 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개를
+유지하고, v4에서는 LUT-backed 10개와 exact Basecase-only 4개를 합친 `extend14-v6` capability를 허용한다.
+이 제한은 Model Parameter Agent가 source matching 후, 값 제안 LLM과 persistence 전에 적용한다.
+이번 확장은 DB·canonical·catalog checksum과 workbook artifact를 바꾸지 않으며 Scenario Group Agent나
+confirmation 동작에도 적용하지 않는다. capability/workbook contract와 이를 가리키는 config는 새 release로 갱신한다.
 
 ## 2. 결론: 어디를 정본으로 볼 것인가
 
@@ -191,9 +192,9 @@ catalog에 없는 code나 ID 불일치는 후보 없음으로 숨기지 말고 �
 binding의 `role = 'primary'`는 기본 우선 후보, `alternative`는 적용 조건에 따른
 대체 후보로 사용한다. 둘 다 `executable`이면 raw 후보가 될 수 있지만, runtime allow-list를
 통과한 후보만 routing 대상으로 사용한다. 통과 후보를 동일 조건에서 무작위로 선택하지 않는다.
-단일 primary는 결정적으로 선택한다. primary와 alternative가 함께 통과하면 primary를 기본
-우선하고 Step1.5에 applicability와 Scenario/Event/Lever 맥락을 제공해 alternative 또는 양쪽
-선택을 허용한다.
+단일 primary는 결정적으로 선택한다. primary와 alternative가 함께 통과하면 lineage를 모두 보존하고,
+v4에서는 Step1.5로 다시 routing하지 않은 채 후속 exact slot/evidence 단계가 applicability와
+Scenario/Event/Lever 맥락을 판단한다.
 
 0030 v4 runtime fixture는 active Lever 18개, raw binding occurrence 16개다. 비활성 CDD/HDD
 binding을 제외한 effective executable occurrence와 고유 활성 Parameter는 각각 14개다. 이 수치는
@@ -218,16 +219,23 @@ GDP
 PMI
 PowerMix
 Temperature
+User-Adjusted Gas Demand
+Population
+HurricaneIntensity
+LiqProdAdjustment
 LiqUtilAdjustment
+PipelineAdjustment
+RegasAdjustment
+SupplyDisruption
+PNG Contract Volume
+ShippingCost
 ```
 
 allow-list 밖의 executable binding은 DB나 catalog에서 비활성으로 바꾸지 않고 proposal 경로에서만
-제외하며 내부 non-input evidence에는 `PROPOSAL_SCOPE_EXCLUDED` reason code를 남긴다. 따라서
-`Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `PipelineAdjustment`,
-`SupplyDisruption`과 Basecase-only 활성 4개는 raw capability와 startup 검증 대상으로 남지만 현재
-Step1.5·Step2·Step3 및 proposal persistence에는 진입하지 않는다. v1/v3의 raw mapping 10개에도
-같은 gate를 적용한다. confirmation은 기존 proposal과 custom parameter 호환을 위해 이 gate의 대상이
-아니다.
+제외하며 내부 non-input evidence에는 `PROPOSAL_SCOPE_EXCLUDED` reason code를 남긴다. 현재 0032 fixture의
+effective executable 14개는 v4 allow-list와 일치한다. 외부개발 DB에서 추가로 활성·binding됐지만 capability에
+없는 Parameter는 같은 방식으로 제외한다. v1/v3 raw mapping 10개에는 기존 5종 gate를 유지한다.
+confirmation은 기존 proposal과 custom parameter 호환을 위해 이 gate의 대상이 아니다.
 
 동일 `parameter_name`이 여러 dimension 또는 lever에서 나오면 proposal parameter는
 하나로 중복 제거하되 다음 provenance는 합쳐서 보존한다.
@@ -371,8 +379,8 @@ v4 handoff 구현은 최소한 다음 회귀를 계속 만족해야 한다.
 - multi-event Group의 모든 관계와 `source_event_ids` provenance가 보존되는지
 - price-only, binding 없음, inactive parameter, catalog unsupported가 각각 후보에서
   제외되고 reason이 남는지
-- raw v4 binding 16개와 v1/v3 reachable 10개를 유지하면서 runtime proposal에는 정확히
-  `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는지
+- raw v4 binding 16개와 v1/v3 reachable 10개를 유지하면서 runtime proposal에는 v1/v3 5종과
+  v4 extend14 14종이 각각 정확히 남는지
 - allow-list 밖의 executable binding만 있는 요청은 Step1.5·값 제안 LLM과 persistence 전에
   종료되는지
 - 동일 parameter가 여러 lever에서 나올 때 parameter는 중복되지 않고 provenance는
@@ -389,7 +397,8 @@ catalog checksum이 바뀌면 parameter master와 Lever catalog를 한 transacti
 재해석하지 않는다. 이 변경은 public proposal/confirmation endpoint·payload와 저장
 JSON shape을 변경하지 않으며 provenance와 미지원 진단은 내부 state, trace,
 validation warning 또는 실패 detail에만 둔다. runtime allow-list 적용도 DB·canonical·Lever
-catalog·resource config와 startup validation을 변경하지 않으며, Scenario Group Agent를 포함한
+catalog와 workbook artifact를 변경하지 않으며, versioned resource config와 startup validation은
+`extend14-v6`/`new-bc-v6` 계약으로 갱신한다. Scenario Group Agent를 포함한
 다른 Agent와 confirmation flow는 기존 동작을 유지한다.
 
 ## 12. Model Parameter v4 LLM 입출력 예시
@@ -413,7 +422,7 @@ catalog·resource config와 startup validation을 변경하지 않으며, Scenar
 ```
 
 `LiqProdAdjustment`는 이 Lever의 alternative가 아니다. 대폭·영구 생산손실 또는 신규 Train ramp-up은 별도
-`liquefaction_production_override` ID 19의 primary binding으로만 도달하며 현재 runtime allow-list 밖이다.
+`liquefaction_production_override` ID 19의 primary binding으로만 도달하며 현재 v4 runtime allow-list 안이다.
 위 ID 18 state는 runtime gate를 통과해 다음 후보만 남는다.
 
 ```text
@@ -540,7 +549,7 @@ set(group.dimension_definitions[].dimension_id)
 | 신규 행용 Scenario LLM | 선택값을 바꾸지 않은 narrative와 probability/likelihood; 완전한 v4 품질이 필요하면 pressure band·rationale, related market 설명도 생성 |
 | Scenario 서버 | label→value ID 변환, 모든 Dimension exact 선택, 중복 조합·scenario 수·display order 검증, baseline/role 재계산, Scenario insert와 group count 갱신 |
 | Signpost LLM | 신규·수정 Scenario에 대한 관측 가능한 Signpost 3~6개와 strength·근거·검색 keyword |
-| Model Parameter Agent | 선택 value에서 Lever를 추출하고 runtime allow-list 5개로 제한한 뒤 parameter routing, exact slot 선택, 기준값 기반 최종 절대값과 근거 생성 |
+| Model Parameter Agent | 선택 value에서 Lever를 추출하고 version별 runtime allow-list(v1/v3 5개, v4 14개)로 제한한 뒤 parameter routing, exact slot 선택, 기준값 기반 최종 절대값과 근거 생성 |
 
 Model Parameter proposal의 최소 실행 조건에는 pressure band·role이 직접 포함되지 않지만, 공식 v4
 Scenario 화면·비교·품질 계약을 완성하려면 이를 비워 둔 채 “정상 완료”로 간주하지 않는다.

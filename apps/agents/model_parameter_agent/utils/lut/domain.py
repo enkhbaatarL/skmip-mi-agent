@@ -1,3 +1,5 @@
+# Copyright (c) 2026 SK Innovation E&S.
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -65,6 +67,12 @@ def canonical_axes_for_candidate(
     spec = active_registry.get(_parameter_name(candidate))
     if spec is not None:
         return spec.key_axes
+    proposal_axes = tuple(str(axis_name) for axis_name in candidate.get("proposal_exact_axes") or ())
+    if proposal_axes:
+        if len(proposal_axes) != len(set(proposal_axes)):
+            msg = f"candidate proposal exact axes contain duplicates: {proposal_axes!r}"
+            raise domain_error(msg)
+        return proposal_axes
     axes = tuple(basecase_slot_axis_names_from_candidate(dict(candidate)))
     if len(axes) != len(set(axes)):
         msg = f"candidate canonical axes contain duplicates: {axes!r}"

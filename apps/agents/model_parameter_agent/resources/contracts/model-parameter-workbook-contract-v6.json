@@ -1,0 +1,285 @@
+{
+  "schema_version": 6,
+  "release_id": "new-bc-v6",
+  "extends": "model-parameter-workbook-contract-v5.json",
+  "resource_directory": "basecase_v4/new-bc-v1",
+  "parameters": {
+    "User-Adjusted Gas Demand": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["DirectGasDemandChange", "Country", "YearMonth", "DemandSubSector"]
+      },
+      "reference_source": {
+        "workbook_role": "demand",
+        "sheet": "DemandOutputOverwrite",
+        "range": "D:H",
+        "parser": "exact_rows",
+        "header_row": 7,
+        "data_start_row": 8,
+        "data_end_row": 19,
+        "columns": {
+          "Country": "D",
+          "Year": "E",
+          "Month": "F",
+          "Demand Sub-Sector": "G",
+          "User-Adjusted Gas Demand [BCM]": "H"
+        },
+        "key_axes": ["Country", "Year", "Month", "Demand Sub-Sector"],
+        "metadata_axes": [],
+        "value_field": "User-Adjusted Gas Demand [BCM]",
+        "reference_unit": "BCM",
+        "value_semantics": "absolute_final_demand",
+        "expected_record_count": 12
+      },
+      "write_target": {
+        "workbook_role": "demand",
+        "sheet": "DemandOutputOverwrite",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 7,
+        "data_start_row": 8,
+        "data_end_row": 19,
+        "columns": {
+          "Country": "D",
+          "Year": "E",
+          "Month": "F",
+          "Demand Sub-Sector": "G",
+          "User-Adjusted Gas Demand [BCM]": "H"
+        },
+        "key_axes": ["Country", "Year", "Month", "Demand Sub-Sector"],
+        "metadata_axes": [],
+        "value_field": "User-Adjusted Gas Demand [BCM]",
+        "write_unit": "BCM",
+        "value_semantics": "absolute_final_demand",
+        "observed_record_count": 12,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "RegasAdjustment": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["RegasificationPlant", "Country", "YearMonth", "CapacityChange"]
+      },
+      "reference_source": {
+        "workbook_role": "supply",
+        "sheet": "RegasAdjustment",
+        "range": "B:DK",
+        "parser": "matrix_time_columns",
+        "header_row": 10,
+        "data_start_row": 11,
+        "data_end_row": 382,
+        "columns": {
+          "Continent": "B",
+          "Region": "C",
+          "Country": "D",
+          "Regasification plant": "E",
+          "Life Cycle Category": "F",
+          "Nameplate capacity (MTPA)": "G"
+        },
+        "value_start": "H",
+        "value_end": "DK",
+        "year_row": 9,
+        "month_row": 10,
+        "period_row": null,
+        "key_axes": [
+          "Continent",
+          "Region",
+          "Country",
+          "Regasification plant",
+          "Life Cycle Category",
+          "Nameplate capacity (MTPA)",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "RegasAdjustment (Mt LNG/month)",
+        "reference_unit": "Mt LNG/month",
+        "value_semantics": "absolute_final_regasification_capacity",
+        "expected_record_count": 22320
+      },
+      "write_target": {
+        "workbook_role": "supply",
+        "sheet": "RegasAdjustment",
+        "table": "table1",
+        "layout": "matrix_time_columns",
+        "header_row": 10,
+        "data_start_row": 11,
+        "data_end_row": 382,
+        "columns": {
+          "Continent": "B",
+          "Region": "C",
+          "Country": "D",
+          "Regasification plant": "E",
+          "Life Cycle Category": "F",
+          "Nameplate capacity (MTPA)": "G",
+          "value_start": "H",
+          "value_end": "DK",
+          "year_row": "9",
+          "month_row": "10"
+        },
+        "key_axes": [
+          "Continent",
+          "Region",
+          "Country",
+          "Regasification plant",
+          "Life Cycle Category",
+          "Nameplate capacity (MTPA)",
+          "Year",
+          "Month"
+        ],
+        "metadata_axes": [],
+        "value_field": "RegasAdjustment (Mt LNG/month)",
+        "write_unit": "Mt LNG/month",
+        "value_semantics": "absolute_final_regasification_capacity",
+        "observed_record_count": 40176,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "PNG Contract Volume": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["PNGContractChange", "FromCountry", "ToCountry", "Year"]
+      },
+      "reference_source": {
+        "workbook_role": "trade",
+        "sheet": "MidstreamContractInput",
+        "range": "A:D",
+        "parser": "exact_rows",
+        "header_row": 4,
+        "data_start_row": 5,
+        "data_end_row": 1104,
+        "columns": {
+          "Year": "A",
+          "From Country": "B",
+          "To Country": "C",
+          "Unadjusted Gross Gas Import [Mt LNG]": "D"
+        },
+        "key_axes": ["Year", "From Country", "To Country"],
+        "metadata_axes": [],
+        "value_field": "Unadjusted Gross Gas Import [Mt LNG]",
+        "reference_unit": "Mt LNG",
+        "value_semantics": "absolute_final_png_contract_volume",
+        "expected_record_count": 684
+      },
+      "write_target": {
+        "workbook_role": "trade",
+        "sheet": "MidstreamContractInput",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 4,
+        "data_start_row": 5,
+        "data_end_row": 1104,
+        "columns": {
+          "Year": "A",
+          "From Country": "B",
+          "To Country": "C",
+          "Unadjusted Gross Gas Import [Mt LNG]": "D"
+        },
+        "key_axes": ["Year", "From Country", "To Country"],
+        "metadata_axes": [],
+        "value_field": "Unadjusted Gross Gas Import [Mt LNG]",
+        "write_unit": "Mt LNG",
+        "value_semantics": "absolute_final_png_contract_volume",
+        "observed_record_count": 684,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    },
+    "ShippingCost": {
+      "proposal_policy": {
+        "mode": "conditional",
+        "may_abstain": true,
+        "evidence_required": ["GlobalLNGCharterRateChange", "Year"]
+      },
+      "reference_source": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "range": "B:F",
+        "parser": "exact_rows",
+        "header_row": 5,
+        "data_start_row": 6,
+        "data_end_row": 13,
+        "columns": {
+          "Year": "B",
+          "User Input Absolute Value ($/d)": "F"
+        },
+        "key_axes": ["Year"],
+        "metadata_axes": [],
+        "value_field": "User Input Absolute Value ($/d)",
+        "reference_unit": "$/d",
+        "value_semantics": "absolute_final_shipping_cost",
+        "expected_record_count": 5
+      },
+      "write_target": {
+        "workbook_role": "trade",
+        "sheet": "ShippingCostInput",
+        "table": "table1",
+        "layout": "fixed_columns",
+        "header_row": 5,
+        "data_start_row": 6,
+        "data_end_row": 13,
+        "columns": {
+          "Year": "B",
+          "User Input Absolute Value ($/d)": "F"
+        },
+        "key_axes": ["Year"],
+        "metadata_axes": [],
+        "value_field": "User Input Absolute Value ($/d)",
+        "write_unit": "$/d",
+        "value_semantics": "absolute_final_shipping_cost",
+        "observed_record_count": 5,
+        "row_policy": "existing_exact",
+        "metadata_authority": "write_target"
+      },
+      "constraints": {
+        "minimum": 0.0,
+        "maximum": null,
+        "atomic_group_axes": [],
+        "vector_axis": null,
+        "vector_members": [],
+        "sum": null,
+        "sum_tolerance": null,
+        "require_complete_vector": false,
+        "direct_evidence_required": true
+      }
+    }
+  }
+}

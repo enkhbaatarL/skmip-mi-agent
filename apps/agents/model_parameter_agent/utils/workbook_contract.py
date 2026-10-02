@@ -19,9 +19,9 @@ from apps.common.values.error_codes import ErrorCode
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 PACKAGE_RESOURCE_DIR = PACKAGE_DIR / "resources"
-DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v5.json"
+DEFAULT_WORKBOOK_CONTRACT_PATH = PACKAGE_RESOURCE_DIR / "contracts" / "model-parameter-workbook-contract-v6.json"
 V1_PARAMETER_NAMES = frozenset({"GDP", "PMI", "PowerMix", "Temperature", "LiqUtilAdjustment"})
-EXPECTED_PARAMETER_NAMES = frozenset(
+EXTEND10_PARAMETER_NAMES = frozenset(
     {
         *V1_PARAMETER_NAMES,
         "Population",
@@ -29,6 +29,15 @@ EXPECTED_PARAMETER_NAMES = frozenset(
         "LiqProdAdjustment",
         "PipelineAdjustment",
         "SupplyDisruption",
+    },
+)
+EXPECTED_PARAMETER_NAMES = frozenset(
+    {
+        *EXTEND10_PARAMETER_NAMES,
+        "User-Adjusted Gas Demand",
+        "RegasAdjustment",
+        "PNG Contract Volume",
+        "ShippingCost",
     },
 )
 EXPECTED_WORKBOOK_ROLES = frozenset({"demand", "supply", "trade"})
@@ -58,6 +67,8 @@ ReferenceParser = Literal[
     "annual_value_rows",
     "production_seasonality_monthly",
     "year_columns",
+    "exact_rows",
+    "matrix_time_columns",
 ]
 ProposalMode = Literal["auto", "conditional"]
 TargetLayout = Literal["fixed_columns", "matrix_time_columns"]
@@ -184,7 +195,13 @@ class ReferenceSource(_FrozenModel):
     parser: ReferenceParser
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
+    data_end_row: int | None = Field(default=None, ge=1)
     columns: dict[str, str]
+    value_start: str | None = None
+    value_end: str | None = None
+    year_row: int | None = Field(default=None, ge=1)
+    month_row: int | None = Field(default=None, ge=1)
+    period_row: int | None = Field(default=None, ge=1)
     column_headers: dict[str, str] = Field(default_factory=dict)
     transforms: dict[str, ReferenceTransform] = Field(default_factory=dict)
     auxiliary_sources: dict[str, ReferenceAuxiliarySource] = Field(default_factory=dict)
@@ -196,9 +213,11 @@ class ReferenceSource(_FrozenModel):
     expected_record_count: int = Field(gt=0)
 
     @model_validator(mode="after")
-    def validate_source_shape(self) -> ReferenceSource:
+    def validate_source_shape(self) -> ReferenceSource:  # noqa: C901
         if self.data_start_row <= self.header_row:
             raise ValueError("reference data_start_row must follow header_row")
+        if self.data_end_row is not None and self.data_end_row < self.data_start_row:
+            raise ValueError("reference data_end_row must not precede data_start_row")
         _validate_named_axes(self.key_axes, self.metadata_axes)
         if any(_EXCEL_COLUMN_PATTERN.fullmatch(column) is None for column in self.columns.values()):
             raise ValueError("reference source columns must be Excel column labels")
@@ -216,6 +235,16 @@ class ReferenceSource(_FrozenModel):
             raise ValueError("reference source text fields must be non-empty")
         if any(not name.strip() for name in self.auxiliary_sources):
             raise ValueError("reference auxiliary source names must be non-empty")
+        if self.parser == "matrix_time_columns":
+            if self.value_start is None or self.value_end is None or self.year_row is None or self.month_row is None:
+                raise ValueError(
+                    "matrix_time_columns requires value_start, value_end, year_row, and month_row",
+                )
+            if (
+                _EXCEL_COLUMN_PATTERN.fullmatch(self.value_start) is None
+                or _EXCEL_COLUMN_PATTERN.fullmatch(self.value_end) is None
+            ):
+                raise ValueError("matrix_time_columns value bounds must be Excel column labels")
         return self
 
 
@@ -226,6 +255,7 @@ class WriteTarget(_FrozenModel):
     layout: TargetLayout
     header_row: int = Field(ge=1)
     data_start_row: int = Field(ge=1)
+    data_end_row: int | None = Field(default=None, ge=1)
     columns: dict[str, str]
     key_axes: tuple[str, ...]
     metadata_axes: tuple[str, ...]
@@ -240,6 +270,8 @@ class WriteTarget(_FrozenModel):
     def validate_target_shape(self) -> WriteTarget:
         if self.data_start_row <= self.header_row:
             raise ValueError("write target data_start_row must follow header_row")
+        if self.data_end_row is not None and self.data_end_row < self.data_start_row:
+            raise ValueError("write target data_end_row must not precede data_start_row")
         _validate_named_axes(self.key_axes, self.metadata_axes)
         if any(not value.strip() for value in (self.sheet, self.table, self.value_field, self.write_unit)):
             raise ValueError("write target text fields must be non-empty")
@@ -296,8 +328,8 @@ class WorkbookParameterContract(_FrozenModel):
 
 
 class ModelParameterWorkbookContract(_FrozenModel):
-    schema_version: Literal[1, 2, 3, 4, 5]
-    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5"]
+    schema_version: Literal[1, 2, 3, 4, 5, 6]
+    release_id: Literal["new-bc-v1", "new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5", "new-bc-v6"]
     capability: Literal["read_only_proposal"]
     api_version: Literal["v4"]
     generation_strategy: Literal["multi_event_model_lever_dimensions"]
@@ -323,6 +355,8 @@ class ModelParameterWorkbookContract(_FrozenModel):
             if self.release_id == "new-bc-v1"
             else frozenset({*V1_PARAMETER_NAMES, "PipelineAdjustment", "SupplyDisruption"})
             if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4"}
+            else EXTEND10_PARAMETER_NAMES
+            if self.release_id == "new-bc-v5"
             else EXPECTED_PARAMETER_NAMES
         )
         expected_schema_version = {
@@ -331,6 +365,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             "new-bc-v3": 3,
             "new-bc-v4": 4,
             "new-bc-v5": 5,
+            "new-bc-v6": 6,
         }[self.release_id]
         if self.schema_version != expected_schema_version:
             raise ValueError("workbook contract schema version and release ID disagree")
@@ -360,7 +395,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             raise ValueError(
                 "LiqUtilAdjustment must retain its evidence gate, zero minimum, and unbounded maximum",
             )
-        if self.release_id in {"new-bc-v4", "new-bc-v5"}:
+        if self.release_id in {"new-bc-v4", "new-bc-v5", "new-bc-v6"}:
             if (
                 nameplate_transform is not None
                 or liq_util.write_target.row_policy != "existing_exact"
@@ -376,7 +411,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
             or nameplate_transform.factor != 12.0
         ):
             raise ValueError("legacy workbook contracts must retain the MTPM-to-MTPA transform")
-        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5"}:
+        if self.release_id in {"new-bc-v2", "new-bc-v3", "new-bc-v4", "new-bc-v5", "new-bc-v6"}:
             pipeline = self.parameters["PipelineAdjustment"]
             supply = self.parameters["SupplyDisruption"]
             if (
@@ -393,7 +428,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.constraints.minimum != 0.0
             ):
                 raise ValueError("SupplyDisruption must retain the approved production-seasonality workbook contract")
-            if self.release_id in {"new-bc-v3", "new-bc-v4", "new-bc-v5"} and (
+            if self.release_id in {"new-bc-v3", "new-bc-v4", "new-bc-v5", "new-bc-v6"} and (
                 pipeline.reference_source.reference_unit != pipeline.write_target.write_unit
                 or supply.reference_source.reference_unit != supply.write_target.write_unit
                 or pipeline.write_target.value_field != "User adjusted capacity (Mt/y)"
@@ -401,7 +436,7 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or supply.write_target.value_field != "Volumes (Mt)"
             ):
                 raise ValueError("new-bc-v3+ must use the final workbook target sheets and Mt units")
-        if self.release_id == "new-bc-v5":
+        if self.release_id in {"new-bc-v5", "new-bc-v6"}:
             population = self.parameters["Population"]
             hurricane = self.parameters["HurricaneIntensity"]
             liq_prod = self.parameters["LiqProdAdjustment"]
@@ -429,6 +464,42 @@ class ModelParameterWorkbookContract(_FrozenModel):
                 or liq_prod.write_target.metadata_authority != "write_target"
             ):
                 raise ValueError("LiqProdAdjustment must retain its exact-slot production override contract")
+        if self.release_id == "new-bc-v6":
+            basecase_only = {
+                "User-Adjusted Gas Demand": ("exact_rows", ("Country", "Year", "Month", "Demand Sub-Sector")),
+                "RegasAdjustment": (
+                    "matrix_time_columns",
+                    (
+                        "Continent",
+                        "Region",
+                        "Country",
+                        "Regasification plant",
+                        "Life Cycle Category",
+                        "Nameplate capacity (MTPA)",
+                        "Year",
+                        "Month",
+                    ),
+                ),
+                "PNG Contract Volume": ("exact_rows", ("Year", "From Country", "To Country")),
+                "ShippingCost": ("exact_rows", ("Year",)),
+            }
+            for parameter_name, (parser, exact_axes) in basecase_only.items():
+                parameter = self.parameters[parameter_name]
+                if (
+                    parameter.reference_source.parser != parser
+                    or parameter.reference_source.key_axes != exact_axes
+                    or parameter.reference_source.data_end_row is None
+                    or parameter.write_target.key_axes != exact_axes
+                    or parameter.write_target.data_end_row is None
+                    or parameter.write_target.row_policy != "existing_exact"
+                    or parameter.reference_source.reference_unit != parameter.write_target.write_unit
+                    or parameter.constraints.minimum != 0.0
+                    or parameter.constraints.maximum is not None
+                    or not parameter.constraints.direct_evidence_required
+                ):
+                    raise ValueError(
+                        f"{parameter_name} must retain its non-negative existing-exact Basecase-only contract",
+                    )
         return self
 
 
@@ -447,7 +518,7 @@ def load_workbook_contract(
 ) -> ModelParameterWorkbookContract:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
-        if document.get("schema_version") in {2, 3, 4, 5} and "extends" in document:
+        if document.get("schema_version") in {2, 3, 4, 5, 6} and "extends" in document:
             extends = _extends_basename(document.pop("extends"))
             base_path = path.parent / extends
             base_document = load_workbook_contract(base_path).model_dump(mode="json")

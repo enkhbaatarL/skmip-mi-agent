@@ -1,10 +1,11 @@
 이 내용은 한마디로 말하면, **지금의 “Event → Scenario → Lever → Parameter” 흐름을 거꾸로 훑어서, 앞으로 모니터링할 만한 미래 Event 후보를 먼저 만들어보자는 아이디어**입니다.
 
-참고 자료상 현재 v4는 legacy dimension mapping이 아니라 **선택된 Dimension Value의 Lever state + active Impact Lever catalog binding**으로 raw Parameter capability를 결정합니다. 0030 v4 catalog는 master filtering 전 raw binding 이름 16개, effective active Parameter 14개에 도달하고 v1/v3 mapping은 10개에 도달하지만, 실제 runtime proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개만 허용합니다. 이 gate를 통과한 뒤에도 exact slot이 있어야 합니다.
+참고 자료상 현재 v4는 legacy dimension mapping이 아니라 **선택된 Dimension Value의 Lever state + active Impact Lever catalog binding**으로 raw Parameter capability를 결정합니다. 0032 v4 catalog는 master filtering 전 raw binding 이름 16개, effective active Parameter 14개에 도달하고 v1/v3 mapping은 10개에 도달합니다. 실제 runtime proposal은 v1/v3의 기존 5개와 달리 v4에서 LUT-backed 10개와 exact Basecase-only 4개를 합친 `extend14-v6` 14개를 허용합니다. 이 gate를 통과한 뒤에도 exact slot이 있어야 합니다.
 
-allow-list gate는 Model Parameter Agent의 source matching 뒤, Step1.5·값 제안 LLM과 proposal
+allow-list gate는 Model Parameter Agent의 source matching 뒤, exact slot·값 제안 LLM과 proposal
 persistence 전에만 적용됩니다. Scenario Group Agent를 비롯한 다른 Agent의 동작, confirmation,
-DB·canonical·config와 전체 resource startup 검증은 바꾸지 않습니다.
+DB·canonical·catalog checksum과 workbook artifact는 바꾸지 않습니다. capability/workbook contract와 이를
+가리키는 config는 `extend14-v6`/`new-bc-v6`로 갱신됩니다.
 
 ## 1. “현재 체계를 거꾸로 사용한다”는 의미
 
@@ -15,7 +16,7 @@ DB·canonical·config와 전체 resource startup 검증은 바꾸지 않습니�
 → Scenario / Dimension / Value
 → Lever state
 → executable Parameter binding의 raw 후보
-→ runtime proposal allow-list 5개
+→ v4 runtime proposal allow-list 14개
 → Basecase/LUT exact slot
 → Parameter proposal
 ```
@@ -23,7 +24,7 @@ DB·canonical·config와 전체 resource startup 검증은 바꾸지 않습니�
 본문에서 제안하는 것은 이것을 반대로 탐색하는 것입니다.
 
 ```text
-runtime proposal에서 허용된 Parameter 5개
+v4 runtime proposal에서 허용된 Parameter 14개
 → 그 Parameter로 연결되는 executable Lever
 → 그 Lever가 반복적으로 움직일 만한 조건
 → 그 조건이 나타날 수 있는 미래 시기·지역
@@ -212,9 +213,9 @@ Severe
 > 2027년 GoM 허리케인 시즌에 LNG 시설 영향이
 > Mild / Base / Severe 중 어느 수준일까?
 
-`HurricaneIntensity`는 master/LUT/Lever binding의 raw capability에는 남아 있지만 현재 runtime proposal
-allow-list에는 없습니다. 따라서 GoM 허리케인 후보는 시장 모니터링 주제로는 유효해도 지금 배포된
-Model Parameter Agent에서 `HurricaneIntensity` proposal까지 이어지는 실행 가능 후보로 평가하면 안 됩니다.
+`HurricaneIntensity`는 `extend14-v6` runtime proposal allow-list에 포함됩니다. 다만 GoM Year/Month,
+승인된 영향 시설, 직접 재해 근거와 0~4 정수 계약을 모두 충족해야 하므로, 일반적인 허리케인 전망만으로
+실행 가능 후보라고 평가하면 안 됩니다.
 
 ### 2차 관문 — 실제 모델 Parameter로 실행 가능한가
 
@@ -225,16 +226,16 @@ Model Parameter Agent에서 `HurricaneIntensity` proposal까지 이어지는 실
 → Lever state
 → executable binding 존재?
 → active Parameter인가?
-→ runtime proposal allow-list 5개에 포함되는가?
+→ v4 runtime proposal allow-list 14개에 포함되는가?
 → Basecase/LUT exact slot 존재?
 ```
 
 여기까지 통과해야 **정식 미래 Event 후보**로 승격합니다.
 
-참고 자료에서도 source matching 직후 allow-list 밖 후보는 Step1.5 전에 제외하고, Step3에는 exact
-검증된 slot만 전달합니다. 부분 key·nearest·유사 시설 fallback은 사용하지 않습니다. 현재 허용된
-5개는 모두 LUT-backed이며, Basecase-only 활성 capability 4개는 allow-list 밖이므로 proposal에 진입하지
-않습니다.
+참고 자료에서도 source matching 직후 allow-list 밖 후보는 값 제안 전에 제외하고, Step3에는 exact 검증된
+slot만 전달합니다. 부분 key·nearest·유사 시설 fallback은 사용하지 않습니다. 현재 v4 허용 14개 중 10개는
+LUT-backed이고, Basecase-only 4개는 등록 LUT 없이 existing-exact workbook slot과 직접 증적이 있을 때만
+proposal에 진입합니다.
 
 따라서 여기서 말하는 “두 관문”은 사실상:
 
@@ -342,12 +343,15 @@ Future Event Candidate
 | ----------------------- | -------------------- | ----------------------------- | -------------------- | -------------------- |
 | 2026년 12월 동북아 7~14일 한파  | weather_demand       | Temperature                   | inventory_condition  | 높음                   |
 | 2027년 7월 남유럽 폭염         | weather_demand       | Temperature                   | power_generation_mix | 조건부 높음               |
-| 2027년 GoM 허리케인 시즌 시설 차질 | us_gom_hurricane_disruption | HurricaneIntensity       | liquefaction 계열      | 현재 proposal 차단       |
+| 2027년 GoM 허리케인 시즌 시설 차질 | us_gom_hurricane_disruption | HurricaneIntensity       | liquefaction 계열      | 영향 시설·강도 근거 시 가능 |
+| 특정 국가·부문의 직접 수요 절감 정책 | direct_gas_demand | User-Adjusted Gas Demand | 경기·발전믹스 변화와 중복 여부 | exact 부문·월·BCM 필요 |
+| 재기화 터미널 증설·가동 지연 | regasification_capacity | RegasAdjustment | 프로젝트 lifecycle | exact 설비·월 matrix 필요 |
+| 국가 간 PNG 계약 갱신 | png_contract_volume | PNG Contract Volume | 실제 flow·capacity 구분 | exact From/To·연도·Mt LNG 필요 |
+| 연평균 LNG charter rate 전망 | lng_charter_rate | ShippingCost | 항로별 운임과 구분 | exact 연도·$/d benchmark 필요 |
 | 특정 국가 LNG 수입 규제 가능성     | trade restriction 계열 | RemainingUnrestrictedAmount 등 | 계약 조건                | 현재 proposal 차단       |
 
-여기서 마지막 컬럼이 중요합니다. 0030 v4의 **LUT-backed 활성 10개와 Basecase-only 활성 4개**는 raw resource
-capability 분류입니다. 현재 proposal은 그중 `GDP`, `PMI`, `PowerMix`, `Temperature`,
-`LiqUtilAdjustment`만 허용하므로, “Lever가 Parameter에 연결된다”거나 exact slot이 있다는 사실만으로
+여기서 마지막 컬럼이 중요합니다. 0032 v4의 **LUT-backed 활성 10개와 Basecase-only 활성 4개**는 raw resource
+capability이자 현재 `extend14-v6` proposal 범위입니다. 그렇더라도 “Lever가 Parameter에 연결된다”거나 exact slot이 있다는 사실만으로
 현재 실행 가능하다고 판정하면 안 됩니다.
 
 ## 핵심 의미
@@ -356,7 +360,7 @@ capability 분류입니다. 현재 proposal은 그중 `GDP`, `PMI`, `PowerMix`, 
 
 즉,
 
-> **현재 runtime proposal에서 허용된 Parameter 5개를 출발점으로 삼고 → 그것을 움직이는 Lever를 찾고 → 그 Lever가 반복적으로 변할 만한 미래 조건을 구성하고 → 마지막으로 exact slot까지 존재하는 후보만 우선 모니터링한다.**
+> **현재 v4 runtime proposal에서 허용된 Parameter 14개를 출발점으로 삼고 → 그것을 움직이는 Lever를 찾고 → 그 Lever가 반복적으로 변할 만한 미래 조건을 구성하고 → 마지막으로 exact slot과 증적까지 존재하는 후보만 우선 모니터링한다.**
 
 는 구조입니다.
 

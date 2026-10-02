@@ -2,24 +2,27 @@
 
 ## 1. 체크인 기준선
 
-현재 Agent runtime 판정 기준은 proposal capability `extend10-v5`, workbook contract `new-bc-v5`,
+현재 Agent runtime 판정 기준은 proposal capability `extend14-v6`, workbook contract `new-bc-v6`,
 신규 Scenario Group catalog `v4.0` full pin이다. DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 
-- 외부개발 DB master 24행, 활성 16개이며 이 중 Agent proposal capability는 LUT-backed 10개다.
+- 외부개발 DB master 24행, 활성 16개이며 이 중 Agent proposal capability는 14개다. 앞선 10개는
+  LUT-backed이고 추가 4개는 검증된 exact Basecase-only capability다.
 - 신규 Scenario Group용 v4.0 active Lever 21개, binding occurrence 19개, executable 고유 Parameter 16개다.
 - legacy dimension mapping 129행은 v4가 읽거나 변경하지 않는 보호 대상 invariant다.
 - v1/v3 신규 proposal 이름 allow-list 5개: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment
-- v4 extend10 capability 10개: 위 5개 + Population(ID 11), HurricaneIntensity(ID 12),
-  LiqProdAdjustment(ID 13), PipelineAdjustment(ID 15), SupplyDisruption(ID 17)
-- extend10 10개의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
-  `model-parameter-workbook-contract-v5.json`을 사용한다. 변경되지 않은 Excel artifact는
+- v4 extend14 capability 14개: 위 5개 + User-Adjusted Gas Demand(ID 9), Population(ID 11),
+  HurricaneIntensity(ID 12), LiqProdAdjustment(ID 13), PipelineAdjustment(ID 15),
+  RegasAdjustment(ID 16), SupplyDisruption(ID 17), PNG Contract Volume(ID 18), ShippingCost(ID 20)
+- extend14 14개의 v4 `multi_event_model_lever_dimensions` 기준값은 하나의 `read_only_proposal` contract
+  `model-parameter-workbook-contract-v6.json`을 사용한다. 변경되지 않은 Excel artifact는
   `resources/basecase_v4/new-bc-v1/`의 digest를 재사용하고, v1/v3는 기존 `resources/basecase/`를 유지한다.
-- 추가 5개도 기존 5개와 같은 contract reference→exact LUT fallback→slot/evidence/value 절차를 사용하며,
-  v4에는 별도 legacy Basecase reference mode를 두지 않는다.
+- LUT-backed 10개는 contract reference→same-exact-key LUT fallback→slot/evidence/value 절차를 사용한다.
+  추가 Basecase-only 4개도 같은 `v4_workbook_then_lut` mode를 쓰지만 등록 LUT가 없으므로 검증된 workbook
+  exact slot만 사용하며, v4에는 별도 legacy Basecase reference mode를 두지 않는다.
 - source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4는 Step1.5를 호출하지 않는다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
-- DB migration 정본은 sibling mgmt repository다. 외부개발 DB에는 master ID 11·12·13과 v4.0 binding이
-  이미 활성화되어 있어 이 release는 `tmm_mi_model_param_m` 변경이나 신규 0036 migration을 만들지 않는다.
+- DB migration 정본은 sibling mgmt repository다. 외부개발 DB에는 이번 추가 ID 9·16·18·20과 해당 v4.0
+  binding이 이미 활성화되어 있어 이 release는 `tmm_mi_model_param_m` 변경이나 신규 migration을 만들지 않는다.
 - 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0032의 최종 target·unit 정합성을
   사람이 검토하기 위한 자료다. DB 적용과 runtime 판정은 versioned canonical·contract·mgmt DML을 기준으로 한다.
 
@@ -115,6 +118,25 @@ archive workbook, legacy mapping 또는 설명 문구를 근거로 자동 보정
 `Cove Point LNG / Cove Point LNG T1`은 명시적으로 승인된 일대일 alias가 없는 한 제안할 수 없다.
 Country·Lifecycle·Capacity 세 항목만 같다는 이유로 매핑해서는 안 된다.
 
+### 2.4 extend14 추가 4개 정합성 매트릭스
+
+`extend14-v6`에서 새로 proposal scope에 들어가는 네 Parameter는 신규 DB row가 아니라 0032 current
+canonical과 v4 catalog에 이미 활성·binding된 Basecase-only capability다. 아래 tuple을 하나의 release
+계약으로 고정한다.
+
+| Parameter | DB master/current canonical | v4 Lever | authoritative source → final write target | exact axes·단위 | runtime 계약 |
+|---|---|---|---|---|---|
+| `User-Adjusted Gas Demand` | ID 9, active; Demand / `DemandOutputOverwrite` / `table1` | ID 26 `direct_gas_demand`, primary executable | Demand `DemandOutputOverwrite` D:H → 동일 target, 기존 exact row만 | Country, Year, Month, Demand Sub-Sector; BCM absolute, 12 records | `exact_rows`, Basecase-only, minimum 0 |
+| `RegasAdjustment` | ID 16, active; Supply / `RegasAdjustment` / `table1` | ID 28 `regasification_capacity`, primary executable | Supply `RegasAdjustment` B:DK → 동일 target, 기존 exact matrix cell만 | Continent, Region, Country, Regasification plant, Life Cycle Category, Nameplate capacity (MTPA), Year, Month; Mt LNG/month absolute, 22,320 records | `matrix_time_columns`, Basecase-only, minimum 0 |
+| `PNG Contract Volume` | ID 18, active; Trade / `MidstreamContractInput` / `table1` | ID 22 `png_contract_volume`, primary executable | Trade `MidstreamContractInput` A:D → 동일 target, 기존 exact row만 | Year, From Country, To Country; Mt LNG absolute, 684 records | `exact_rows`, Basecase-only, minimum 0 |
+| `ShippingCost` | ID 20, active; Trade / `ShippingCostInput` / `table1` | ID 21 `lng_charter_rate`, primary executable | Trade `ShippingCostInput` B:F → 동일 target, 기존 exact row만 | Year; $/d absolute, 5 records | `exact_rows`, Basecase-only, minimum 0 |
+
+네 Parameter 모두 proposal capability는 공통 `v4_workbook_then_lut` reference mode를 사용하되 등록된 LUT가
+없으므로 실제 fallback은 발생하지 않는다. source와 target이 같은 `existing_exact` 계약이며 빈 값, non-finite,
+중복 exact key, horizon 밖 좌표는 제안 slot이 아니다. 특히 `PNG Contract Volume`은 0032 current canonical과
+최종 workbook의 `Mt LNG`를 정본으로 사용한다. 오래된 비버전 fixture의 BCM 문구를 alias나 변환 근거로
+사용하지 않는다.
+
 ## 3. DB canonical 변경
 
 tmm_mi_model_param_m에는 다음을 모두 명시한다.
@@ -168,13 +190,13 @@ adapter는 필수 header, horizon, 숫자 형식, 빈 값, exact-key 충돌, joi
 runtime proposal 범위를 제한하기 위해 DB, canonical JSON/SQL, config, LUT, Basecase workbook을 축소하지 않는다.
 v4 runtime은 active parameter definition과 catalog binding에 필요한 resource를 사용한다. 기존 v1/v3 Basecase
 preload의 누락·파싱 오류·0건은 warning으로 남기며, 활성 14개 capability 전체는 자동화·release
-acceptance에서 별도로 검증한다. v4 `new-bc-v5` startup은 contract schema/path와 contract에 고정된
+acceptance에서 별도로 검증한다. v4 `new-bc-v6` startup은 contract schema/path와 contract에 고정된
 Workbook path/digest만 경량 검증한다. sheet·header·range·변환·고정 record count는 최초 exact v4 materialization에서
 fail closed하고 성공 결과를 process cache한다.
 
 ### versioned workbook 계약을 변경하거나 확장할 때
 
-현재 extend10의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v5.json`이 소유한다.
+현재 extend14의 v4-only reference는 `resources/contracts/model-parameter-workbook-contract-v6.json`이 소유한다.
 변경되지 않은 workbook은 `resources/basecase_v4/new-bc-v1/` digest를 재사용할 수 있지만, 계약 coverage·parser·hash가
 바뀌면 새 release ID와 새 contract 파일을 만든다. 기존 `resources/basecase/` 파일을 덮어쓰거나
 `new_resources/`를 runtime path로 연결하지 않는다.
@@ -207,12 +229,13 @@ fail closed하고 성공 결과를 process cache한다.
 
 현재 고정 source 회귀 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
 Population 845, HurricaneIntensity 60, LiqProdAdjustment 23,820, LiqUtilAdjustment 23,820,
-PipelineAdjustment 420, SupplyDisruption 4,908이다. 변경 release에서는 새 digest와 실제 count를 함께 검토하되, count를 맞추기 위해
+PipelineAdjustment 420, SupplyDisruption 4,908, User-Adjusted Gas Demand 12, RegasAdjustment 22,320,
+PNG Contract Volume 684, ShippingCost 5다. 변경 release에서는 새 digest와 실제 count를 함께 검토하되, count를 맞추기 위해
 invalid key를 임의 보간하거나 nearest/fuzzy fallback하지 않는다.
 
 ## 5. LiqProdAdjustment 적용 사례
 
-LiqProdAdjustment는 체크인 canonical/resource capability와 v4 extend10 proposal allow-list에서 활성이다.
+LiqProdAdjustment는 체크인 canonical/resource capability와 v4 extend14 proposal allow-list에서 활성이다.
 
 - master ID 13, use_yn=Y
 - adapter liq_prod
@@ -226,7 +249,7 @@ v4에서는 `liquefaction_utilization`과 `liquefaction_production_override`를 
 LiqUtilAdjustment, 생산량 직접 override·대폭/영구 손실·신규 Train ramp-up은 LiqProdAdjustment를 사용한다.
 legacy mapping은 후보 source나 fallback으로 사용하지 않는다.
 
-## 6. v4.0 raw Lever binding과 extend10 밖 활성 Parameter의 핵심 규칙
+## 6. v4.0 raw Lever binding과 extend14 proposal 범위의 핵심 규칙
 
 | Lever | Parameter binding |
 |---|---|
@@ -248,8 +271,9 @@ legacy mapping은 후보 source나 fallback으로 사용하지 않는다.
 `price_only` Lever는 binding을 두지 않는다. CDD/HDD binding은 capability로 보존하지만 master가 비활성이므로 executable candidate가 아니다.
 
 현재 v4 신규 proposal에서는 capability gate를 통과한 GDP, PMI, PowerMix, Temperature, Population,
-HurricaneIntensity, LiqProdAdjustment, LiqUtilAdjustment, PipelineAdjustment, SupplyDisruption만 이후 단계로
-전달한다. 그 밖의 활성 Parameter는 capability와 provenance를 유지하지만 `PROPOSAL_SCOPE_EXCLUDED`로 제외한다.
+HurricaneIntensity, LiqProdAdjustment, LiqUtilAdjustment, PipelineAdjustment, SupplyDisruption,
+User-Adjusted Gas Demand, RegasAdjustment, PNG Contract Volume, ShippingCost만 이후 단계로 전달한다. 그 밖의
+활성 Parameter는 capability와 provenance를 유지하지만 `PROPOSAL_SCOPE_EXCLUDED`로 제외한다.
 
 ### Basecase-only 활성 4개
 
@@ -260,8 +284,9 @@ HurricaneIntensity, LiqProdAdjustment, LiqUtilAdjustment, PipelineAdjustment, Su
 | PNG Contract Volume | 검증된 Basecase exact slot | `png_contract_volume` primary |
 | ShippingCost | 검증된 Basecase exact slot | `lng_charter_rate` primary |
 
-별도 LUT fallback을 추가하지 않는다. Basecase와 LUT가 모두 없는 slot은 제외한다. 이 4개는 현재 runtime proposal
-allow-list 밖이다. `RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0032 canonical에서 inactive/unbound이므로 새 contract와
+별도 LUT fallback을 추가하지 않는다. 검증된 Basecase exact slot이 없는 좌표는 제외한다. 이 4개는
+`extend14-v6`부터 runtime proposal allow-list 안에 있으며, direct evidence와 exact 좌표가 없으면 abstain한다.
+`RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0032 canonical에서 inactive/unbound이므로 새 contract와
 forward canonical release 없이 후보화하지 않는다.
 
 ## 7. prompt·token 보호
@@ -285,10 +310,10 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
    hydrated checksum `416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`을 read-back한다.
 4. v4 canonical JSON·SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
 5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 4개의 exact
-   Basecase slot을 확인한다. v4 신규 proposal은 10개만 허용하고 그 밖의 활성 항목은
+   Basecase slot을 확인한다. v4 신규 proposal은 정확히 14개를 허용하고 그 밖의 활성 항목은
    `PROPOSAL_SCOPE_EXCLUDED`로 검증한다.
-6. v4 `new-bc-v5` contract의 세 workbook·auxiliary digest/header와
-   815/5,040/4,200/5,040/845/60/23,820/23,820/420/4,908 record를 확인하고,
+6. v4 `new-bc-v6` contract의 세 workbook·auxiliary digest/header와
+   815/5,040/4,200/5,040/845/60/23,820/23,820/420/4,908/12/22,320/684/5 record를 확인하고,
    invalid exact-key LUT 차단, PowerMix atomic vector, HurricaneIntensity 0~4 정수,
    LiqProd/LiqUtil target·evidence 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
