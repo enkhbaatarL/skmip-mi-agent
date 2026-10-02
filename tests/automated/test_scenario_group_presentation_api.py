@@ -1094,9 +1094,9 @@ def test_presentation_service_uses_latest_operation_when_query_is_omitted() -> N
     }
     with (
         patch.object(service, "load_detail", return_value=detail),
-        patch.object(service, "load_event_ids", return_value=[101]),
+        patch.object(service, "load_event_refs", return_value=[(101, None)]),
         patch(
-            "apps.agents.scenario_group_agent.persistence.event_service.EventService.load_events",
+            "apps.agents.scenario_group_agent.persistence.event_service.EventService.load_events_with_snapshot_fallback",
             return_value=[_event(101)],
         ),
         patch(
