@@ -13,7 +13,7 @@ from apps.agents.model_parameter_agent.constants import (
     PROPOSAL_SCOPE_EXCLUDED_REASON_CODE,
 )
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
-    EXPECTED_EXTEND14_RELEASE_ID,
+    EXPECTED_EXTEND16_RELEASE_ID,
     validate_v4_candidate_capability,
 )
 from apps.agents.model_parameter_agent.utils.runtime_cache import (
@@ -1656,7 +1656,7 @@ def partition_proposal_parameter_candidates(
                 allowed.append(
                     {
                         **candidate,
-                        "proposal_capability_release_id": EXPECTED_EXTEND14_RELEASE_ID,
+                        "proposal_capability_release_id": EXPECTED_EXTEND16_RELEASE_ID,
                         "proposal_reference_mode": capability.reference_mode,
                         "proposal_exact_axes": list(capability.exact_axes),
                         "proposal_evidence_policy": capability.evidence_policy,

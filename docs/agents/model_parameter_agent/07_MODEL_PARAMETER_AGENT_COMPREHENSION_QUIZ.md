@@ -97,25 +97,26 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- 0032 runtime fixture master 21행·활성 14개
+- 외부개발 v4.0 master 24행·활성 16개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
 - active resource LUT-backed 10개
-- Basecase-only 활성 4개: `User-Adjusted Gas Demand`, `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`
-- future inactive 2개: `RemainingUnrestrictedAmount`, `VolumeCancelled`
+- Basecase-only 활성 6개: `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`,
+  `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
+- inactive 3개: `User-Adjusted Gas Demand`, `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
-- v4 active Lever 18개, raw binding occurrence 16개, effective executable 고유 Parameter 14개
+- v4.0 active Lever 21개, binding occurrence 19개, effective executable 고유 Parameter 16개
 - v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
-- v4 extend14 ID capability 14개: LUT-backed 10개 + `User-Adjusted Gas Demand`, `RegasAdjustment`,
-  `PNG Contract Volume`, `ShippingCost`
+- v4 extend16 ID capability 16개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
+  `ShippingCost`, `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
 
 이 수는 live DB 조회 결과가 아니라 체크인 runtime fixture의 전역 합집합이다. v1/v3 raw reachability
 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`,
 `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
-활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 14개는 Lever-native
+활성 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 16개는 Lever-native
 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
-후보가 된다. 이 raw capability와 proposal 허용 범위는 별도 계약이지만, 0032 fixture의 v4 effective 14개는
-현재 extend14와 모두 일치한다. 외부개발 DB read-back의 active/executable 16개 중 capability에 없는 항목은
-`active-but-blocked`로 분류해 LLM·proposal 입력 전에 제외한다. v1/v3는 raw 10개 중 5개만 허용한다.
+후보가 된다. 외부개발 DB의 v4.0 executable 16개와 extend16 capability는 ID/name/target set equality로
+일치해야 한다. 하나라도 capability에서 빠지면 release 실패이며 LLM·proposal 입력으로 진행하지 않는다.
+v1/v3는 raw 10개 중 5개만 허용한다.
 
 ### 정답 4
 
@@ -151,10 +152,10 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 
 일반 v4 master·Lever rollout은 mgmt migration을 정본으로 하나의 transaction에서 precondition,
 cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
-새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. extend14는 이미 활성·binding된 ID 9·16·18·20을
-proposal scope에 추가하는 응용 계층 변경이므로 외부개발 DB DML, catalog checksum, canonical master/Lever,
-legacy mapping과 XLSM artifact를 바꾸지 않는다. 대신 versioned capability를 `extend14-v6`, workbook contract를
-`new-bc-v6`로 추가하고 local/Kubernetes config의 path·release·hash를 함께 갱신한다. public API payload와
+새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. extend16은 이미 활성·binding된 ID 22·23·24를
+proposal scope에 포함하는 Agent release이므로 외부개발 DB DML, catalog checksum, legacy mapping과 XLSM
+artifact를 바꾸지 않는다. 대신 versioned capability를 `extend16-v7`, workbook contract를
+`new-bc-v7`로 추가하고 local/Kubernetes config의 path·release·hash를 함께 갱신한다. public API payload와
 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10

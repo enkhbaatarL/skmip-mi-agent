@@ -741,7 +741,7 @@ def test_approved_release_blocks_runtime_allowlist_drift_before_database(
     monkeypatch.setattr(
         runner,
         "RUNTIME_PROPOSAL_CAPABILITY_NAMES",
-        frozenset({*runner.EXPECTED_EXTEND14_ALLOWLIST, "RemainingUnrestrictedAmount"}),
+        frozenset({*runner.EXPECTED_EXTEND16_ALLOWLIST, "RemainingUnrestrictedAmount"}),
     )
 
     dependencies = runner.RunnerDependencies(

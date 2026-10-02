@@ -1,6 +1,6 @@
 {
   "schema_version": "model-parameter-proposal-capabilities-v4",
-  "release_id": "extend14-v6",
+  "release_id": "extend16-v7",
   "catalog_version": "v4.0",
   "catalog_checksum": "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763",
   "parameters": [
@@ -39,15 +39,6 @@
       "exact_axes": ["Country", "Year", "Month"],
       "evidence_policy": "explicit_or_unique_inferred",
       "constraints": {"value_semantics": "absolute", "unit": "celsius"}
-    },
-    {
-      "model_param_id": 9,
-      "parameter_name": "User-Adjusted Gas Demand",
-      "model_target": {"model_file": "Demand", "model_sheet": "DemandOutputOverwrite", "model_table": "table1"},
-      "reference_mode": "v4_workbook_then_lut",
-      "exact_axes": ["Country", "Year", "Month", "Demand Sub-Sector"],
-      "evidence_policy": "explicit_or_unique_inferred",
-      "constraints": {"value_semantics": "absolute", "unit": "BCM", "minimum": 0, "basecase_only": true}
     },
     {
       "model_param_id": 11,
@@ -129,6 +120,33 @@
       "exact_axes": ["Year"],
       "evidence_policy": "explicit_or_unique_inferred",
       "constraints": {"value_semantics": "absolute", "unit": "$/d", "minimum": 0, "basecase_only": true}
+    },
+    {
+      "model_param_id": 22,
+      "parameter_name": "RegionalProductionAdjustment",
+      "model_target": {"model_file": "Supply", "model_sheet": "ProductionAdjustment", "model_table": "table1"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year", "Province/Country"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "Bcm", "minimum": 0, "basecase_only": true, "annual_regional_production_evidence_required": true}
+    },
+    {
+      "model_param_id": 23,
+      "parameter_name": "ShippingFuelCost",
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table3"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/tonne", "minimum": 0, "basecase_only": true, "shipping_fuel_evidence_required": true}
+    },
+    {
+      "model_param_id": 24,
+      "parameter_name": "CanalToll",
+      "model_target": {"model_file": "Trade", "model_sheet": "ShippingCostInput", "model_table": "table4"},
+      "reference_mode": "v4_workbook_then_lut",
+      "exact_axes": ["Canal", "Year"],
+      "evidence_policy": "explicit_or_unique_inferred",
+      "constraints": {"value_semantics": "absolute", "unit": "$/crossing", "minimum": 0, "basecase_only": true, "canal_toll_evidence_required": true}
     }
   ]
 }

@@ -9,13 +9,13 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | master 24개 중 활성 16개이고, v4.0 executable 고유 Parameter는 16개다. Agent v4 extend14 신규 proposal 허용은 14개이고 v1/v3는 기존 5개다. |
+| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | master 24개 중 활성 16개이고, v4.0 executable 고유 Parameter와 Agent v4 extend16 신규 proposal 허용은 모두 16개다. v1/v3는 기존 5개다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
 
 > v1/v3 신규 proposal은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 이름 allow-list를
-> 유지한다. v4는 ID `{4, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20}`과 name/target이
+> 유지한다. v4는 ID `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`과 name/target이
 > capability contract와 일치해야 한다.
 > 정상 0032 canonical DB에서는 이 응용 계층 확장으로 master·mapping, Lever catalog/checksum, canonical/workbook을 변경하지 않는다.
 
@@ -44,7 +44,7 @@ flowchart LR
     V -->|v4| L[선택 value의 Lever states와\nactive catalog binding 검증]
     C --> D[파라미터 사전에서\n모델 위치와 읽기 기준 확인]
     L --> D
-    D --> P[version별 proposal scope\nv1/v3 5개 · v4 7개]
+    D --> P[version별 proposal scope\nv1/v3 5개 · v4 16개]
     P --> E[Basecase와 LUT를 참고해\n값 제안]
     E --> F[제안 결과 저장]
     F --> G[사용자 검토·수정]
@@ -269,7 +269,7 @@ stateDiagram-v2
 
 - 새 파라미터를 추가하려면 이름만 등록하는 것으로 끝나지 않는다. 모델 위치, Basecase/LUT capability와 v4 Lever binding이 함께 맞아야 한다. v1/v3 지원이 필요할 때만 별도로 legacy mapping을 변경한다.
 - v1/v3의 `direct`/`routing`과 v4의 executable Lever binding은 raw 후보 소스다. 신규 proposal은 v1/v3
-  이름 allow-list 5종 또는 v4 ID capability 14종을 적용한 결과만 사용한다.
+  이름 allow-list 5종 또는 v4 ID capability 16종을 적용한 결과만 사용한다.
 - 같은 좌표에서는 Basecase 값이 LUT 값보다 우선한다. DB는 어느 파일과 위치를 읽을지 정하고, 실제 참고값은 Basecase/LUT에서 얻는다.
 - 확정은 새 결과 행을 추가하지 않고 기존 제안 행을 `CONFIRMED`로 갱신한다. 다시 확정하면 이전 확정 내용이 최신 요청으로 바뀐다.
 - 보류·실패 원인은 결과표의 `error_code`, `error_message`에 남고, 비동기 요청은 callback 상태도 함께 확인해야 한다.

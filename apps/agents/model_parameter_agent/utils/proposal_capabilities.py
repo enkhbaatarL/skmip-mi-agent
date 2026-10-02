@@ -18,9 +18,11 @@ PACKAGE_RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
 DEFAULT_PROPOSAL_CAPABILITY_CONTRACT_PATH = (
     PACKAGE_RESOURCE_DIR / "contracts/model-parameter-proposal-capabilities-v4.json"
 )
-EXPECTED_EXTEND14_PARAMETER_IDS = frozenset({4, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20})
-EXPECTED_EXTEND14_RELEASE_ID = "extend14-v6"
-EXPECTED_EXTEND14_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
+EXPECTED_EXTEND16_PARAMETER_IDS = frozenset(
+    {4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24},
+)
+EXPECTED_EXTEND16_RELEASE_ID = "extend16-v7"
+EXPECTED_EXTEND16_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
 
 
 class ProposalModelTarget(BaseModel):
@@ -54,7 +56,7 @@ class ProposalCapabilityContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["model-parameter-proposal-capabilities-v4"]
-    release_id: Literal["extend14-v6"]
+    release_id: Literal["extend16-v7"]
     catalog_version: Literal["v4.0"]
     catalog_checksum: str
     parameters: tuple[ProposalCapabilityEntry, ...] = Field(min_length=1)
@@ -69,14 +71,14 @@ class ProposalCapabilityContract(BaseModel):
         if len(names) != len(set(names)):
             msg = "duplicate parameterName in proposal capability contract"
             raise ValueError(msg)
-        if frozenset(ids) != EXPECTED_EXTEND14_PARAMETER_IDS:
+        if frozenset(ids) != EXPECTED_EXTEND16_PARAMETER_IDS:
             msg = (
-                "extend14 proposal capability IDs differ: "
-                f"expected={sorted(EXPECTED_EXTEND14_PARAMETER_IDS)}, actual={sorted(ids)}"
+                "extend16 proposal capability IDs differ: "
+                f"expected={sorted(EXPECTED_EXTEND16_PARAMETER_IDS)}, actual={sorted(ids)}"
             )
             raise ValueError(msg)
-        if self.catalog_checksum != EXPECTED_EXTEND14_CATALOG_CHECKSUM:
-            msg = "extend14 proposal capability catalog checksum differs from the v4.0 catalog contract"
+        if self.catalog_checksum != EXPECTED_EXTEND16_CATALOG_CHECKSUM:
+            msg = "extend16 proposal capability catalog checksum differs from the v4.0 catalog contract"
             raise ValueError(msg)
         return self
 
@@ -149,7 +151,7 @@ def validate_v4_candidate_capability(
         raise MIBaseError(
             ErrorCode.INVALID_REQUEST,
             detail=(
-                "v4 proposal candidate does not match the extend14 capability contract: "
+                "v4 proposal candidate does not match the extend16 capability contract: "
                 f"parameter={parameter_name}, expectedId={capability.model_param_id}, actualId={model_param_id}, "
                 f"expectedTarget={expected_target}, actualTarget={actual_target}"
             ),

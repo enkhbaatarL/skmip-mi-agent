@@ -22,6 +22,7 @@ from apps.agents.model_parameter_agent.utils.lut.keys import (
 from apps.agents.model_parameter_agent.utils.lut.models import CanonicalKey, CanonicalValue, NumericValue
 from apps.agents.model_parameter_agent.utils.workbook_contract import (
     PACKAGE_RESOURCE_DIR,
+    AxisTransform,
     ModelParameterWorkbookContract,
     ReferenceSource,
     WorkbookParameterContract,
@@ -127,6 +128,95 @@ def _validate_source_headers(worksheet: Any, source: ReferenceSource, *, paramet
                 f"{parameter_name} source header mismatch at {source.sheet}!{column_label}{source.header_row}: "
                 f"expected={expected_header!r}, actual={actual_header!r}",
             )
+    _validate_required_cell_values(
+        worksheet,
+        source.required_cells,
+        parameter_name=parameter_name,
+        area="source",
+    )
+
+
+def _validate_required_cell_values(
+    worksheet: Any,
+    required_cells: Mapping[str, str],
+    *,
+    parameter_name: str,
+    area: str,
+) -> None:
+    for cell, expected in required_cells.items():
+        actual = worksheet[cell].value
+        if str(actual or "").strip() != expected:
+            raise _reference_error(
+                f"{parameter_name} {area} required cell mismatch at {worksheet.title}!{cell}: "
+                f"expected={expected!r}, actual={actual!r}",
+            )
+
+
+def _axis_source_columns(
+    columns: Mapping[str, str],
+    key_axes: Sequence[str],
+    axis_transforms: Mapping[str, AxisTransform],
+) -> dict[str, int]:
+    try:
+        return {
+            axis_name: _column_index(
+                columns[
+                    axis_transforms[axis_name].source_field
+                    if axis_name in axis_transforms
+                    else axis_name
+                ],
+            )
+            for axis_name in key_axes
+        }
+    except KeyError as exc:
+        raise _reference_error(f"Workbook contract is missing an axis source column: {exc.args[0]}") from exc
+
+
+def _resolve_axes(
+    raw_axes: Mapping[str, object],
+    *,
+    axis_transforms: Mapping[str, AxisTransform],
+    label: str,
+    horizon_years: Sequence[int],
+) -> dict[str, object]:
+    axes: dict[str, object] = {}
+    for axis_name, raw_axis in raw_axes.items():
+        if raw_axis is None or (isinstance(raw_axis, str) and not raw_axis.strip()):
+            raise _reference_error(f"{label}:{axis_name} is empty")
+        if axis_name == "Year":
+            year = strict_int(raw_axis, label=f"{label}:Year")
+            if year not in horizon_years:
+                return {}
+            axes[axis_name] = year
+            continue
+        if axis_name == "Month":
+            month = strict_int(raw_axis, label=f"{label}:Month")
+            if not 1 <= month <= 12:
+                raise _reference_error(f"{label}:Month is outside 1..12")
+            axes[axis_name] = month
+            continue
+        transform = axis_transforms.get(axis_name)
+        if transform is None:
+            axes[axis_name] = raw_axis
+            continue
+        if transform.operation == "strip_leading_year":
+            raw_year = raw_axes.get("Year")
+            year = strict_int(raw_year, label=f"{label}:Year")
+            text_value = str(raw_axis).strip()
+            year_prefix = str(year)
+            if not text_value.startswith(year_prefix):
+                raise _reference_error(
+                    f"{label}:{axis_name} does not start with its Year: {text_value!r}",
+                )
+            transformed = text_value[len(year_prefix) :].strip()
+            if transformed not in transform.allowed_values:
+                raise _reference_error(
+                    f"{label}:{axis_name} is outside allowed values: {transformed!r}",
+                )
+            axes[axis_name] = transformed
+            continue
+        raise _reference_error(f"Unsupported axis transform: {transform.operation}")
+    return axes
 
 
 def _finite_number(value: object) -> float | None:
@@ -1078,6 +1168,107 @@ def _supply_disruption_records(
     return records, (), frozenset()
 
 
+def _regional_production_records(
+    contract: ModelParameterWorkbookContract,
+    parameter_name: str,
+    parameter: WorkbookParameterContract,
+    worksheet: Any,
+) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
+    source = parameter.reference_source
+    start_column, end_column = _source_bounds(source)
+    columns = {name: _column_index(column) for name, column in source.columns.items()}
+    transform = source.transforms.get(source.value_field)
+    if transform is None or transform.operation != "multiply":
+        raise _reference_error(
+            f"{parameter_name} requires a multiply transform for {source.value_field}",
+        )
+    value_column = columns[transform.source_field]
+    totals: dict[tuple[int, str], float] = defaultdict(float)
+    first_rows: dict[tuple[int, str], int] = {}
+    source_counts: dict[tuple[int, str], int] = defaultdict(int)
+    blocked_keys: set[CanonicalKey] = set()
+    warnings: list[str] = []
+
+    for row_number, values in enumerate(
+        worksheet.iter_rows(
+            min_row=source.data_start_row,
+            max_row=source.data_end_row or worksheet.max_row,
+            min_col=start_column,
+            max_col=end_column,
+            values_only=True,
+        ),
+        start=source.data_start_row,
+    ):
+        raw_year = values[columns["Year"] - start_column]
+        raw_identifier = values[columns["Identifier"] - start_column]
+        if raw_year is None and raw_identifier is None:
+            continue
+        try:
+            year = strict_int(raw_year, label=f"{parameter_name}:{row_number}:Year")
+        except MIBaseError:
+            continue
+        if year not in contract.horizon.years:
+            continue
+        identifier = str(raw_identifier or "").strip()
+        value_mt = _finite_number(values[value_column - start_column])
+        if not identifier or value_mt is None:
+            if identifier:
+                blocked_keys.add(
+                    canonical_key_from_axes(
+                        {"Year": year, "Province/Country": identifier},
+                        source.key_axes,
+                    ),
+                )
+            warnings.append(f"{parameter_name} invalid regional production row excluded at row {row_number}")
+            continue
+        key = (year, identifier)
+        totals[key] += value_mt
+        first_rows.setdefault(key, row_number)
+        source_counts[key] += 1
+
+    for (year, identifier), total_mt in totals.items():
+        if total_mt < 0:
+            blocked_keys.add(
+                canonical_key_from_axes(
+                    {"Year": year, "Province/Country": identifier},
+                    source.key_axes,
+                ),
+            )
+            warnings.append(
+                f"{parameter_name} negative aggregated regional production excluded for "
+                f"{(year, identifier)!r}",
+            )
+
+    records = tuple(
+        _record(
+            parameter_name,
+            parameter,
+            axes={"Year": year, "Province/Country": identifier},
+            value=total_mt * transform.factor,
+            metadata=None,
+            reference_id=_cell_reference_id(
+                contract,
+                parameter,
+                row=first_rows[(year, identifier)],
+                column=value_column,
+            ),
+            diagnostics=(
+                "source_unit=Mt",
+                "value_transform=mt_to_bcm",
+                f"transform_provenance={transform.provenance}",
+                f"aggregated_production_rows={source_counts[(year, identifier)]}",
+            ),
+        )
+        for (year, identifier), total_mt in sorted(totals.items())
+        if canonical_key_from_axes(
+            {"Year": year, "Province/Country": identifier},
+            source.key_axes,
+        )
+        not in blocked_keys
+    )
+    return records, tuple(warnings), frozenset(blocked_keys)
+
+
 def _exact_row_records(
     contract: ModelParameterWorkbookContract,
     parameter_name: str,
@@ -1086,7 +1277,7 @@ def _exact_row_records(
 ) -> tuple[tuple[WorkbookReferenceRecord, ...], tuple[str, ...], frozenset[CanonicalKey]]:
     source = parameter.reference_source
     start_column, end_column = _source_bounds(source)
-    axis_columns = {axis: _column_index(source.columns[axis]) for axis in source.key_axes}
+    axis_columns = _axis_source_columns(source.columns, source.key_axes, source.axis_transforms)
     metadata_columns = {axis: _column_index(source.columns[axis]) for axis in source.metadata_axes}
     value_column = _column_index(source.columns[source.value_field])
     records: list[WorkbookReferenceRecord] = []
@@ -1103,6 +1294,8 @@ def _exact_row_records(
         ),
         start=source.data_start_row,
     ):
+        if source.included_rows and row_number not in source.included_rows:
+            continue
         raw_axes = {axis: values[column - start_column] for axis, column in axis_columns.items()}
         raw_value = values[value_column - start_column]
         if all(value is None or (isinstance(value, str) and not value.strip()) for value in raw_axes.values()) and (
@@ -1110,24 +1303,13 @@ def _exact_row_records(
         ):
             continue
 
-        axes: dict[str, object] = {}
         try:
-            for axis_name, raw_axis in raw_axes.items():
-                if raw_axis is None or (isinstance(raw_axis, str) and not raw_axis.strip()):
-                    raise _reference_error(f"{parameter_name}:{row_number}:{axis_name} is empty")
-                if axis_name == "Year":
-                    year = strict_int(raw_axis, label=f"{parameter_name}:{row_number}:Year")
-                    if year not in contract.horizon.years:
-                        axes = {}
-                        break
-                    axes[axis_name] = year
-                elif axis_name == "Month":
-                    month = strict_int(raw_axis, label=f"{parameter_name}:{row_number}:Month")
-                    if not 1 <= month <= 12:
-                        raise _reference_error(f"{parameter_name}:{row_number}:Month is outside 1..12")
-                    axes[axis_name] = month
-                else:
-                    axes[axis_name] = raw_axis
+            axes = _resolve_axes(
+                raw_axes,
+                axis_transforms=source.axis_transforms,
+                label=f"{parameter_name}:{row_number}",
+                horizon_years=contract.horizon.years,
+            )
         except MIBaseError:
             warnings.append(f"{parameter_name} invalid exact axes excluded at row {row_number}")
             continue
@@ -1356,6 +1538,8 @@ def _extract_parameter_records(
             worksheet,
             resource_root=resource_root,
         )
+    if source.parser == "regional_production_annual":
+        return _regional_production_records(contract, parameter_name, parameter, worksheet)
     if source.parser == "exact_rows":
         return _exact_row_records(contract, parameter_name, parameter, worksheet)
     if source.parser == "matrix_time_columns":
@@ -1372,15 +1556,22 @@ def _validate_write_target_headers(
     if target.sheet not in workbook.sheetnames:
         raise _reference_error(f"{parameter_name} write target sheet is missing: {target.sheet}")
     worksheet = workbook[target.sheet]
-    for expected_header, column in target.columns.items():
-        if expected_header in {"value_start", "value_end", "year_row", "month_row", "period_row"}:
+    for target_field, column in target.columns.items():
+        if target_field in {"value_start", "value_end", "year_row", "month_row", "period_row"}:
             continue
+        expected_header = target.column_headers.get(target_field, target_field)
         actual_header = worksheet[f"{column}{target.header_row}"].value
         if str(actual_header or "").strip() != expected_header:
             raise _reference_error(
                 f"{parameter_name} write target header differs: "
                 f"cell={column}{target.header_row}, expected={expected_header!r}, actual={actual_header!r}",
             )
+    _validate_required_cell_values(
+        worksheet,
+        target.required_cells,
+        parameter_name=parameter_name,
+        area="write target",
+    )
 
 
 def _extract_fixed_write_target_slots(
@@ -1393,7 +1584,7 @@ def _extract_fixed_write_target_slots(
     if target.layout != "fixed_columns" or target.row_policy != "existing_exact":
         return ()
 
-    key_columns = {axis: _column_index(target.columns[axis]) for axis in target.key_axes}
+    key_columns = _axis_source_columns(target.columns, target.key_axes, target.axis_transforms)
     metadata_columns = {axis: _column_index(target.columns[axis]) for axis in target.metadata_axes}
     required_columns = {**key_columns, **metadata_columns}
     start_column = min(required_columns.values())
@@ -1410,37 +1601,28 @@ def _extract_fixed_write_target_slots(
         ),
         start=target.data_start_row,
     ):
+        if target.included_rows and row_number not in target.included_rows:
+            continue
         raw_axes = {axis: values[column - start_column] for axis, column in key_columns.items()}
         if all(value is None or (isinstance(value, str) and not value.strip()) for value in raw_axes.values()):
             continue
-        axes: dict[str, CanonicalValue] = {}
         try:
-            for axis_name, raw_axis in raw_axes.items():
-                if raw_axis is None or (isinstance(raw_axis, str) and not raw_axis.strip()):
-                    raise _reference_error(
-                        f"{parameter_name} fixed write target row {row_number} is missing {axis_name}",
-                    )
-                if axis_name == "Year":
-                    year = strict_int(raw_axis, label=f"{parameter_name}:target:{row_number}:Year")
-                    if year not in contract.horizon.years:
-                        axes = {}
-                        break
-                    axes[axis_name] = year
-                elif axis_name == "Month":
-                    month = strict_int(raw_axis, label=f"{parameter_name}:target:{row_number}:Month")
-                    if not 1 <= month <= 12:
-                        raise _reference_error(
-                            f"{parameter_name} fixed write target row {row_number} has invalid Month",
-                        )
-                    axes[axis_name] = month
-                else:
-                    axes[axis_name] = canonical_axis_value(axis_name, raw_axis)
+            resolved_axes = _resolve_axes(
+                raw_axes,
+                axis_transforms=target.axis_transforms,
+                label=f"{parameter_name}:target:{row_number}",
+                horizon_years=contract.horizon.years,
+            )
         except MIBaseError as exc:
             raise _reference_error(
                 f"{parameter_name} fixed write target row {row_number} has invalid exact axes",
             ) from exc
-        if not axes:
+        if not resolved_axes:
             continue
+        axes: dict[str, CanonicalValue] = {
+            axis_name: canonical_axis_value(axis_name, resolved_axes[axis_name])
+            for axis_name in target.key_axes
+        }
 
         metadata = MappingProxyType(
             {

@@ -19,9 +19,9 @@ Scenario Group이다. v1/v3 Model Parameter proposal에는 공유 DB의 129행 m
 
 v1/v3 mapping의 현재 method count는 direct 35, routing 6, indirect 55, na 33이며 direct/routing이
 도달하는 raw capability는 LUT-backed 10개다. v4는 이 테이블을 조회하거나 fallback으로 사용하지
-않으며 active Lever의 master filtering 전 raw binding 이름 16개, effective active Parameter 14개에 도달한다.
+않으며 v4.0 active Lever의 effective executable Parameter 16개에 도달한다.
 실제 runtime proposal은 v1/v3에서 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5개를
-유지하고, v4에서는 LUT-backed 10개와 exact Basecase-only 4개를 합친 `extend14-v6` capability를 허용한다.
+유지하고, v4에서는 LUT-backed 10개와 Basecase-only 6개를 합친 `extend16-v7` capability를 허용한다.
 이 제한은 Model Parameter Agent가 source matching 후, 값 제안 LLM과 persistence 전에 적용한다.
 이번 확장은 DB·canonical·catalog checksum과 workbook artifact를 바꾸지 않으며 Scenario Group Agent나
 confirmation 동작에도 적용하지 않는다. capability/workbook contract와 이를 가리키는 config는 새 release로 갱신한다.
@@ -379,8 +379,8 @@ v4 handoff 구현은 최소한 다음 회귀를 계속 만족해야 한다.
 - multi-event Group의 모든 관계와 `source_event_ids` provenance가 보존되는지
 - price-only, binding 없음, inactive parameter, catalog unsupported가 각각 후보에서
   제외되고 reason이 남는지
-- raw v4 binding 16개와 v1/v3 reachable 10개를 유지하면서 runtime proposal에는 v1/v3 5종과
-  v4 extend14 14종이 각각 정확히 남는지
+- v4.0 executable Parameter 16개와 v1/v3 reachable 10개를 유지하면서 runtime proposal에는 v1/v3 5종과
+  v4 extend16 16종이 각각 정확히 남는지
 - allow-list 밖의 executable binding만 있는 요청은 Step1.5·값 제안 LLM과 persistence 전에
   종료되는지
 - 동일 parameter가 여러 lever에서 나올 때 parameter는 중복되지 않고 provenance는
@@ -398,7 +398,7 @@ catalog checksum이 바뀌면 parameter master와 Lever catalog를 한 transacti
 JSON shape을 변경하지 않으며 provenance와 미지원 진단은 내부 state, trace,
 validation warning 또는 실패 detail에만 둔다. runtime allow-list 적용도 DB·canonical·Lever
 catalog와 workbook artifact를 변경하지 않으며, versioned resource config와 startup validation은
-`extend14-v6`/`new-bc-v6` 계약으로 갱신한다. Scenario Group Agent를 포함한
+`extend16-v7`/`new-bc-v7` 계약으로 갱신한다. Scenario Group Agent를 포함한
 다른 Agent와 confirmation flow는 기존 동작을 유지한다.
 
 ## 12. Model Parameter v4 LLM 입출력 예시

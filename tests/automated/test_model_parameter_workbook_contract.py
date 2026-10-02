@@ -48,7 +48,7 @@ from apps.common.exceptions.custom import MIBaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
-    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v6.json"
+    ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v7.json"
 )
 V1_CONTRACT_PATH = (
     ROOT_DIR / "apps/agents/model_parameter_agent/resources/contracts/model-parameter-workbook-contract-v1.json"
@@ -68,6 +68,9 @@ EXPECTED_SOURCE_COUNTS = {
     "RegasAdjustment": 22_320,
     "PNG Contract Volume": 684,
     "ShippingCost": 5,
+    "RegionalProductionAdjustment": 2_187,
+    "ShippingFuelCost": 5,
+    "CanalToll": 10,
 }
 OBSERVED_LEGACY_TARGET_COUNTS = {
     "GDP": 93,
@@ -84,6 +87,9 @@ OBSERVED_LEGACY_TARGET_COUNTS = {
     "RegasAdjustment": 40_176,
     "PNG Contract Volume": 684,
     "ShippingCost": 5,
+    "RegionalProductionAdjustment": 0,
+    "ShippingFuelCost": 5,
+    "CanalToll": 10,
 }
 
 
@@ -141,9 +147,23 @@ def _record_for(
             ("trade", "ShippingCostInput", "table1"),
             "$/d",
         ),
+        (
+            "ShippingFuelCost",
+            5,
+            ("Year",),
+            ("trade", "ShippingCostInput", "table3"),
+            "$/tonne",
+        ),
+        (
+            "CanalToll",
+            10,
+            ("Canal", "Year"),
+            ("trade", "ShippingCostInput", "table4"),
+            "$/crossing",
+        ),
     ],
 )
-def test_extend14_basecase_only_source_to_output_alignment(
+def test_existing_exact_basecase_only_source_to_output_alignment(
     reference_bundle: WorkbookReferenceBundle,
     parameter_name: str,
     expected_count: int,
@@ -172,11 +192,32 @@ def test_extend14_basecase_only_source_to_output_alignment(
     }
 
 
-def test_contract_locks_v6_read_only_scope_targets_and_policies() -> None:
+def test_regional_production_appendable_source_to_output_alignment(
+    reference_bundle: WorkbookReferenceBundle,
+) -> None:
+    parameter = reference_bundle.contract.parameters["RegionalProductionAdjustment"]
+    records = reference_bundle.records_for("RegionalProductionAdjustment")
+
+    assert len(records) == 2_187
+    assert parameter.reference_source.key_axes == ("Year", "Province/Country")
+    assert parameter.write_target.key_axes == ("Year", "Province/Country")
+    assert (
+        parameter.write_target.workbook_role,
+        parameter.write_target.sheet,
+        parameter.write_target.table,
+    ) == ("supply", "ProductionAdjustment", "table1")
+    assert parameter.reference_source.reference_unit == "Bcm"
+    assert parameter.write_target.write_unit == "Bcm"
+    assert parameter.write_target.row_policy == "appendable"
+    assert reference_bundle.write_target_slots_for("RegionalProductionAdjustment") == ()
+    assert all(record.value >= 0 for record in records)
+
+
+def test_contract_locks_v7_read_only_scope_targets_and_policies() -> None:
     contract = load_workbook_contract()
 
-    assert contract.schema_version == 6
-    assert contract.release_id == "new-bc-v6"
+    assert contract.schema_version == 7
+    assert contract.release_id == "new-bc-v7"
     assert contract.capability == "read_only_proposal"
     assert contract.api_version == "v4"
     assert contract.generation_strategy == "multi_event_model_lever_dimensions"
@@ -295,6 +336,23 @@ def test_contract_locks_v6_read_only_scope_targets_and_policies() -> None:
     assert shipping.reference_source.reference_unit == "$/d"
     assert shipping.write_target.row_policy == "existing_exact"
 
+    regional = contract.parameters["RegionalProductionAdjustment"]
+    assert regional.reference_source.parser == "regional_production_annual"
+    assert regional.reference_source.transforms["Volumes (Bcm)"].factor == pytest.approx(1 / 0.735)
+    assert regional.write_target.value_field == "Volumes (Bcm)"
+    assert regional.write_target.row_policy == "appendable"
+
+    shipping_fuel = contract.parameters["ShippingFuelCost"]
+    assert shipping_fuel.reference_source.key_axes == ("Year",)
+    assert shipping_fuel.reference_source.required_cells == {"C3": "Absolute"}
+    assert shipping_fuel.write_target.table == "table3"
+
+    canal = contract.parameters["CanalToll"]
+    assert canal.reference_source.key_axes == ("Canal", "Year")
+    assert canal.reference_source.axis_transforms["Canal"].allowed_values == ("Suez", "Panama")
+    assert canal.reference_source.required_cells["C49"] == "RE Base Case ($/Crossing"
+    assert canal.write_target.table == "table4"
+
     weakened_document = contract.model_dump(mode="json")
     weakened_document["parameters"]["LiqUtilAdjustment"]["constraints"]["minimum"] = None
     with pytest.raises(ValueError, match="zero minimum"):
@@ -408,6 +466,8 @@ def test_authoritative_sources_extract_expected_horizon_records(
         "PNG Contract Volume": 684,
         "RegasAdjustment": 22_320,
         "ShippingCost": 5,
+        "ShippingFuelCost": 5,
+        "CanalToll": 10,
         "User-Adjusted Gas Demand": 12,
     }
 
@@ -420,7 +480,7 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
 ) -> None:
     gdp = _record_for(reference_bundle, "GDP", ("United States", 2026))
     assert gdp.value == pytest.approx(0.020638022790823538)
-    assert gdp.reference_id.startswith("new-bc-v6:demand:BCInput:U")
+    assert gdp.reference_id.startswith("new-bc-v7:demand:BCInput:U")
     assert gdp.diagnostics == ("value_transform=gdp_year_over_year_growth",)
 
     pmi = _record_for(reference_bundle, "PMI", ("China", 2026, 1))
@@ -516,6 +576,24 @@ def test_authoritative_sources_preserve_representative_values_and_power_vector(
     assert "production_transform=capacity_mtpm_x_utilisation" in liq_prod.diagnostics
     assert "write_target_exact_slot_verified" in liq_prod.diagnostics
 
+    regional = _record_for(
+        reference_bundle,
+        "RegionalProductionAdjustment",
+        (2026, "Abu Dhabi, UAE"),
+    )
+    assert regional.value == pytest.approx(31.29234566325 / 0.735)
+    assert "value_transform=mt_to_bcm" in regional.diagnostics
+
+    shipping_fuel = _record_for(reference_bundle, "ShippingFuelCost", (2026,))
+    assert shipping_fuel.value == 522
+    assert "write_target_exact_slot_verified" in shipping_fuel.diagnostics
+
+    suez = _record_for(reference_bundle, "CanalToll", ("Suez", 2026))
+    panama = _record_for(reference_bundle, "CanalToll", ("Panama", 2026))
+    assert suez.value == pytest.approx(408_415.55)
+    assert panama.value == 717_000
+    assert "write_target_exact_slot_verified" in suez.diagnostics
+
 
 def test_gdp_invalid_source_keys_are_projected_to_the_matching_v4_candidate(
     reference_bundle: WorkbookReferenceBundle,
@@ -576,6 +654,9 @@ def test_v4_runtime_adapter_preserves_counts_and_blocked_keys(
         "User-Adjusted Gas Demand": ("Demand", "DemandOutputOverwrite", "table1"),
         "PNG Contract Volume": ("Trade", "MidstreamContractInput", "table1"),
         "ShippingCost": ("Trade", "ShippingCostInput", "table1"),
+        "RegionalProductionAdjustment": ("Supply", "ProductionAdjustment", "table1"),
+        "ShippingFuelCost": ("Trade", "ShippingCostInput", "table3"),
+        "CanalToll": ("Trade", "ShippingCostInput", "table4"),
     }
     candidates = [
         {
