@@ -1,6 +1,6 @@
 ---
 name: model-parameter-multi-event-quality
-description: MI Model Parameter Agent의 Scenario API v4 multi_event_model_lever_dimensions 그룹을 동적으로 발견하고 ordered Event, catalog version/checksum, selected Lever state와 hydrated parameter binding, runtime allowlist 경계, proposal/confirmation persistence를 통합 평가한다. v4 멀티 이벤트 모델 파라미터 품질 테스트, catalog-pinned Lever 검증, active-but-blocked leakage 진단, active parameter coverage 보고서 요청에 사용한다.
+description: MI Model Parameter Agent의 Scenario API v4 multi_event_model_lever_dimensions 그룹을 동적으로 발견하고 ordered Event, catalog version/checksum, selected Lever state와 hydrated parameter binding, runtime allowlist 경계, proposal/confirmation persistence를 통합 평가한다. v4 멀티 이벤트 품질 테스트, catalog-pinned Lever 검증, active-but-blocked leakage 진단, active parameter coverage 및 동일 Scenario Before/After coverage 개선 campaign 요청에 사용한다.
 ---
 
 # Model Parameter v4 Multi-Event Quality
@@ -14,6 +14,8 @@ Scenario API v4의 선택 Dimension/Lever lineage를 active impact Lever catalog
 1. `references/quality-matrix.md`: v4 판정 기준과 보고서 증적 계약
 2. `tests/manual/model_parameter_agent/runner_common.py`: 공유 proposal/confirmation 실행·DB read-back 계약
 3. release acceptance가 범위에 있으면 `.claude/skills/verify-model-parameter-release/SKILL.md`
+4. 동일 Scenario Before/After 또는 coverage 확대 campaign이면
+   `references/same-cohort-coverage-campaign.md`
 
 공통 workflow나 release 검증 절차를 이 skill에 복제하지 않는다.
 
@@ -128,6 +130,19 @@ read-only는 resource runtime을 bootstrap하지 않는다. `--execute`는 Scena
 사용한 context는 persistence 직전에 frozen preflight context와 다시 비교한다. execute 증적의 runtime/schema가
 미등록이거나 승인된 release contract와 다르면 fail-closed한다. DB uniqueness가 도입되기 전 write pilot은 같은
 cohort에 대한 다른 runner/public proposal 요청이 없도록 운영 singleton을 별도로 보장한다.
+
+### 6. 동일 Scenario Before/After coverage campaign
+
+동일 cohort에서 proposal 결과만 비교하거나, Event 유형을 늘려 proposal count·coverage를 개선하는 작업은
+`references/same-cohort-coverage-campaign.md` 절차를 따른다. 핵심 불변 조건은 다음과 같다.
+
+- Before/After의 catalog pin, Group IDs, Scenario IDs, runtime candidate IDs가 동일해야 한다.
+- 유효 model input과 Lever Full set을 coverage를 위해 변경하지 않는다.
+- 표기 alias와 기간 해석은 완화할 수 있지만 출력은 exact model coordinate이며 다중 slot은 명시 근거를 요구한다.
+- After는 Before uncovered 후보만 Scenario별 1회 실행하고 DB 전체 read-back으로 KPI를 다시 계산한다.
+- 비교에는 `scripts/compare_same_cohort.py`를 사용하고 전체 coverage와 후보 성공률을 분리해 보고한다.
+- logic/config 변경은 `rollout-model-parameters`, release 검증은 `verify-model-parameter-release`, 배포는
+  `mi-vm-deploy`에 handoff한다. 이 quality mode 자체가 DB binding/config를 임의 수정하지 않는다.
 
 ## Release gate
 
