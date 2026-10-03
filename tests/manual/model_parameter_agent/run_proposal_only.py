@@ -41,6 +41,7 @@ if "APP_CONFIG" not in os.environ and DEFAULT_APP_CONFIG.exists():
 from apps.agents.model_parameter_agent.persistence.model_parameter_service import (
     ModelParameterService,
 )
+from apps.agents.model_parameter_agent.utils.lut.keys import apply_numeric_precision
 from apps.agents.model_parameter_agent.utils.proposal_capabilities import (
     load_proposal_capability_contract,
 )
@@ -1059,11 +1060,22 @@ def _safe_fetch_proposal(
 def _proposal_parameters_for_comparison(value: Any) -> Any:
     safe = json_safe(value)
     if isinstance(safe, Mapping):
-        return {
-            str(key): _proposal_parameters_for_comparison(item)
-            for key, item in safe.items()
-            if str(key) not in {"lutValue", "lut_value"}
-        }
+        normalized: dict[str, Any] = {}
+        for key, item in safe.items():
+            key_text = str(key)
+            if key_text in {"lutValue", "lut_value"}:
+                continue
+            if key_text in {"basecaseValue", "basecase_value"} and item is not None:
+                settings = get_settings()
+                normalized[key_text] = apply_numeric_precision(
+                    item,
+                    label=key_text,
+                    max_decimal_places=settings.model_parameter_basecase_value_max_decimal_places,
+                    mode=settings.model_parameter_basecase_value_precision_mode,
+                )
+            else:
+                normalized[key_text] = _proposal_parameters_for_comparison(item)
+        return normalized
     if isinstance(safe, list | tuple):
         return [_proposal_parameters_for_comparison(item) for item in safe]
     return safe

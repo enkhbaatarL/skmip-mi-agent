@@ -249,6 +249,9 @@ def test_step2_prompt_explains_period_group_hierarchy_contract() -> None:
     assert "FID·Planned·Under Construction" in SLOT_PROPOSAL_SYSTEM
     assert "FID·착공·COD·startup·commissioning·ramp-up" in SLOT_PROPOSAL_SYSTEM
     assert "applicability_attributes 자체를 slot_axes로 반환하지 마십시오" in SLOT_PROPOSAL_SYSTEM
+    assert "Stage/단계, Train/T/호기" in SLOT_PROPOSAL_SYSTEM
+    assert "상위 Plant명만으로 하위 Train을 추정하지 마십시오" in SLOT_PROPOSAL_SYSTEM
+    assert "각 Train 번호(명시적 범위 포함)와 각 기간" in SLOT_PROPOSAL_SYSTEM
     assert "leaves[]" not in SLOT_PROPOSAL_SYSTEM
 
 

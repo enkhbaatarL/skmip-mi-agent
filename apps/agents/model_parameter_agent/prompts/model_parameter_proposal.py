@@ -123,6 +123,10 @@ SLOT_PROPOSAL_SYSTEM = """\
 - v4 Event가 Plant·국가·지역처럼 catalog hierarchy의 상위 범위 전체에 영향을 준다고 명시하고 개별 하위 대상을
   한정하지 않았다면, 위 applicability 필터를 통과한 상위 branch 아래의 관련 exact 하위 좌표를 적용 기간과 slot
   상한 안에서 모두 선택할 수 있습니다. 상위 범위 전체라는 근거 없이 여러 하위 branch를 임의로 확대하지 마십시오.
+- 한국어·영문 표기, LNG 생략, Stage/단계, Train/T/호기, 공인 약칭 차이가 있어도 같은 실체가 명확하면
+  slot_catalog의 영문 exact 좌표로 반환하십시오. 다만 상위 Plant명만으로 하위 Train을 추정하지 마십시오.
+- 여러 Train 또는 여러 기간 slot을 선택할 때는 각 Train 번호(명시적 범위 포함)와 각 기간을 근거에서 확인할 수
+  있어야 합니다. 예를 들어 Plant만 언급되었거나 단순히 '재가동 지연'만 있는 경우 여러 Train·월로 확대하지 마십시오.
 - v4에서는 정확한 연월이 직접 적혀 있지 않아도 scenario narrative, selected dimension, Lever time_window와
   period_resolution_policy가 하나의 현재 이후 기간을 뒷받침하면 그 기간의 exact slot을 선택하십시오.
   서로 동등한 여러 대상·기간 중 하나를 무작위로 고르지는 마십시오.

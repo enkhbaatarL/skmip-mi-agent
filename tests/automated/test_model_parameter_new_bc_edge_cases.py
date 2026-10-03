@@ -397,6 +397,44 @@ def test_liq_evidence_does_not_merge_plant_and_train_across_provenance() -> None
     assert "specific_facility_evidence" in decision.missing_components
 
 
+def test_liq_entity_resolution_note_is_preserved_for_service_user() -> None:
+    candidate = _candidate("LiqUtilAdjustment", "liq")
+    axes = {
+        "Country": "United States",
+        "LNG Plant": "Corpus Christi LNG Stage 3",
+        "LNG Plant Train": "Corpus Christi LNG Stage 3 T1",
+        "Year": 2026,
+        "Month": 10,
+    }
+    slot = _slot("liq", axes, slot_key="slot-1")
+    slot["_user_notes"] = [
+        "근거의 한국어 설비/호기 표기를 Basecase 영문 좌표와 동일 실체로 정규화해 연결했습니다.",
+    ]
+    adjustment = LLMValueAdjustment(
+        candidate_key="liq",
+        rationale_ko="가동률 차질을 반영했습니다.",
+        slot_values=[
+            LLMValueCell(
+                slot_key="slot-1",
+                proposed_value=0.8,
+                rationale_ko="단기 차질 반영",
+            ),
+        ],
+    )
+
+    sanitized, warnings = nodes._sanitize_llm_adjustments(
+        [adjustment],
+        [candidate],
+        [slot],
+        [_reference("liq", "LiqUtilAdjustment", axes, 0.9, slot_key="slot-1")],
+        scenario_context=V4_CONTEXT,
+    )
+
+    assert warnings == []
+    assert "참고:" in sanitized[0]["parameter_selection_rationale_ko"]
+    assert "동일 실체로 정규화" in sanitized[0]["parameter_selection_rationale_ko"]
+
+
 @pytest.mark.parametrize(
     ("mutation", "missing_component"),
     [

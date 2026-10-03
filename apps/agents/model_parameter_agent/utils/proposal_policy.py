@@ -46,15 +46,34 @@ _SPECIFIC_TIME_PATTERN = re.compile(
     r"(?:(?<!\d)20\d{2}(?!\d)|\bq[1-4]\b|\bh[12]\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|"
     r"may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|"
     r"\d+\s*(?:일|주|개월|달|년|days?|weeks?|months?|years?)|\d{1,2}\s*월|"
-    r"[1-4]\s*분기|상반기|하반기|올해|내년|다음\s*달|이번\s*달|\d{4}\s*[-./년]\s*\d{1,2})",
+    r"[1-4]\s*분기|상반기|하반기|올해|내년|다음\s*달|이번\s*달|단기|short[- ]?term|"
+    r"\d{4}\s*[-./년]\s*\d{1,2})",
     re.IGNORECASE,
 )
+_SHORT_TERM_PATTERN = re.compile(r"단기|short[- ]?term", re.IGNORECASE)
+_ENTITY_ALIAS_REPLACEMENTS = (
+    (re.compile(r"코브\s*포인트", re.IGNORECASE), "cove point"),
+    (re.compile(r"코퍼스\s*크리스티", re.IGNORECASE), "corpus christi"),
+    (re.compile(r"에너지아\s*코스타\s*아술", re.IGNORECASE), "energia costa azul"),
+    (re.compile(r"코스타\s*아술", re.IGNORECASE), "costa azul"),
+    (re.compile(r"미국", re.IGNORECASE), "united states"),
+    (re.compile(r"멕시코", re.IGNORECASE), "mexico"),
+    (re.compile(r"앙골라", re.IGNORECASE), "angola"),
+)
+_ENTITY_GENERIC_TOKENS = frozenset({"lng", "plant", "terminal"})
+_PLANT_EVIDENCE_ALIASES = {
+    "cove point export": ("cove point lng",),
+}
+_TRAIN_EVIDENCE_ALIASES = {
+    ("cove point export", "cove point export"): ("cove point lng t1",),
+}
 
 
 @dataclass(frozen=True, slots=True)
 class LiqUtilEvidenceDecision:
     allowed: bool
     missing_components: tuple[str, ...]
+    user_notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,11 +117,113 @@ def _canonical_text(value: object) -> str:
     return " ".join(re.sub(r"[^0-9a-z가-힣]+", " ", normalized).split())
 
 
+def _canonical_entity_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    for pattern, replacement in _ENTITY_ALIAS_REPLACEMENTS:
+        normalized = pattern.sub(replacement, normalized)
+    normalized = re.sub(r"(?<!\d)(\d+)\s*단계", r" stage \1 ", normalized)
+    normalized = re.sub(r"(?:train|트레인)\s*(\d+)", r" t\1 ", normalized)
+    normalized = re.sub(r"(?<![a-z0-9])t\s+(\d+)", r" t\1 ", normalized)
+    return " ".join(re.sub(r"[^0-9a-z가-힣~\-–—∼]+", " ", normalized).split())
+
+
+def _canonical_evidence_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(re.sub(r"[^0-9a-z가-힣~\-–—∼]+", " ", normalized).split())
+
+
 def _contains_exact_phrase(text: str, phrase: object) -> bool:
-    normalized_phrase = _canonical_text(phrase)
+    normalized_text = _canonical_entity_text(text)
+    normalized_phrase = _canonical_entity_text(phrase)
     if not normalized_phrase:
         return False
-    return f" {normalized_phrase} " in f" {text} "
+    return f" {normalized_phrase} " in f" {normalized_text} "
+
+
+def _entity_tokens(value: object) -> set[str]:
+    return {
+        token
+        for token in _canonical_entity_text(value).split()
+        if token not in _ENTITY_GENERIC_TOKENS
+    }
+
+
+def _entity_acronym(value: object) -> str:
+    words = [
+        token
+        for token in _canonical_entity_text(value).split()
+        if token not in _ENTITY_GENERIC_TOKENS and token not in {"phase", "stage"} and not token.isdigit()
+    ]
+    return "".join(word[0] for word in words if word and word[0].isalpha())
+
+
+def _plant_evidence_match(text: str, plant: object) -> tuple[bool, bool]:
+    if _contains_exact_phrase(text, plant):
+        literal_plant = _canonical_evidence_text(plant)
+        literal_match = f" {literal_plant} " in f" {_canonical_evidence_text(text)} "
+        return True, not literal_match
+    canonical_plant = _canonical_entity_text(plant)
+    if any(
+        _contains_exact_phrase(text, alias)
+        for alias in _PLANT_EVIDENCE_ALIASES.get(canonical_plant, ())
+    ):
+        return True, True
+    plant_tokens = _entity_tokens(plant)
+    text_tokens = _entity_tokens(text)
+    if len(plant_tokens) >= 2 and plant_tokens <= text_tokens:
+        return True, True
+    acronym = _entity_acronym(plant)
+    if len(acronym) >= 3 and acronym in text_tokens and "lng" in _canonical_entity_text(text).split():
+        return True, True
+    return False, False
+
+
+def _train_number(value: object) -> int | None:
+    match = re.search(r"\bt0*(\d+)\b", _canonical_entity_text(value))
+    return int(match.group(1)) if match else None
+
+
+def _train_number_is_explicit(text: str, train_number: int) -> bool:
+    text = _canonical_entity_text(text)
+    if re.search(rf"\b(?:t|train)\s*0*{train_number}\b", text):
+        return True
+    if re.search(rf"(?<!\d)0*{train_number}\s*호기", text):
+        return True
+    for raw_start, raw_end in re.findall(
+        r"(?<!\d)(\d+)\s*(?:~|-|–|—|∼|부터)\s*(\d+)\s*호기",
+        text,
+    ):
+        start, end = int(raw_start), int(raw_end)
+        if start <= train_number <= end:
+            return True
+    return False
+
+
+def _train_evidence_match(
+    text: str,
+    *,
+    plant: object,
+    train: object,
+) -> tuple[bool, bool]:
+    plant_matches, _ = _plant_evidence_match(text, plant)
+    if not plant_matches:
+        return False, False
+    if _contains_exact_phrase(text, train):
+        literal_train = _canonical_evidence_text(train)
+        literal_match = f" {literal_train} " in f" {_canonical_evidence_text(text)} "
+        return True, not literal_match
+    alias_key = (_canonical_entity_text(plant), _canonical_entity_text(train))
+    if any(
+        _contains_exact_phrase(text, alias)
+        for alias in _TRAIN_EVIDENCE_ALIASES.get(alias_key, ())
+    ):
+        return True, True
+    train_number = _train_number(train)
+    if train_number is None:
+        return False, False
+    if _train_number_is_explicit(text, train_number):
+        return True, True
+    return False, False
 
 
 def _json_text(value: object) -> str:
@@ -120,7 +241,7 @@ def _json_text(value: object) -> str:
                 visit(nested)
             return
         if item is not None:
-            text = _canonical_text(item)
+            text = _canonical_evidence_text(item)
             if text:
                 parts.append(text)
 
@@ -175,7 +296,15 @@ def evaluate_liq_util_evidence(
     *,
     exact_candidate_count: int | None = None,
 ) -> LiqUtilEvidenceDecision:
-    """Require one coherent v4 Lever lineage item to ground an exact facility slot."""
+    """Require one coherent v4 Lever lineage item to ground an exact facility slot.
+
+    ``exact_candidate_count`` is retained for caller compatibility only.  A
+    single candidate no longer bypasses explicit Plant, Train, and period
+    evidence because that shortcut could expand a parent facility mention into
+    unsupported slots.
+    """
+
+    _ = exact_candidate_count
 
     coordinates = slot_coordinates(slot)
     plant = coordinates.get("LNG Plant") or coordinates.get("Plant")
@@ -205,8 +334,7 @@ def evaluate_liq_util_evidence(
             year=coordinates.get("Year"),
             month=coordinates.get("Month"),
         )
-        unique_inference = exact_candidate_count == 1
-        if not time_matches and (has_specific_time_evidence(time_window) or not unique_inference):
+        if not time_matches:
             missing.add("specific_time_window")
 
         facility_text = _json_text(
@@ -216,20 +344,40 @@ def evaluate_liq_util_evidence(
                 "events": linked_events,
             },
         )
+        user_notes: list[str] = []
         if not plant or not train:
             missing.add("exact_facility_slot")
-        elif not (
-            _contains_exact_phrase(facility_text, plant) and _contains_exact_phrase(facility_text, train)
-        ) and not unique_inference:
-            missing.add("specific_facility_evidence")
+        else:
+            plant_matches, plant_uses_alias = _plant_evidence_match(facility_text, plant)
+            train_matches, train_uses_alias = _train_evidence_match(
+                facility_text,
+                plant=plant,
+                train=train,
+            )
+            if not (plant_matches and train_matches):
+                missing.add("specific_facility_evidence")
+            elif plant_uses_alias or train_uses_alias:
+                user_notes.append(
+                    "근거의 한국어·영문 별칭·단계·호기 표기를 Basecase 영문 설비 "
+                    f"'{plant}'의 Train 좌표와 동일 실체로 정규화해 연결했습니다.",
+                )
+        if time_matches and _SHORT_TERM_PATTERN.search(time_window):
+            user_notes.append(
+                "'단기' 기간은 분석 기준일이 속한 월의 단일 모델 slot으로 보수적으로 해석했습니다.",
+            )
 
         if not missing:
-            return LiqUtilEvidenceDecision(allowed=True, missing_components=())
+            return LiqUtilEvidenceDecision(
+                allowed=True,
+                missing_components=(),
+                user_notes=tuple(user_notes),
+            )
         observed_missing.update(missing)
 
     return LiqUtilEvidenceDecision(
         allowed=False,
         missing_components=tuple(sorted(observed_missing or {"lever_provenance"})),
+        user_notes=(),
     )
 
 
@@ -476,6 +624,9 @@ def time_evidence_matches_slot(  # noqa: C901
             and (not allowed_months or slot_month in allowed_months)
             and (not relative_period_months or slot_month in relative_period_months)
         )
+
+    if _SHORT_TERM_PATTERN.search(normalized):
+        return (slot_year, slot_month) == (resolved_anchor_year, resolved_anchor_month)
 
     duration_match = re.search(
         r"(?<!\d)(\d+)\s*(?:개월|months?)(?![a-z])",

@@ -1107,6 +1107,58 @@ def test_success_integrity_rejects_empty_or_mismatched_persisted_payload() -> No
     assert "proposal DB payload does not match the API response after excluding lutValue" in errors
 
 
+def test_success_integrity_applies_persistence_precision_to_basecase_values() -> None:
+    row = _proposal_row(101, 779)
+    row["proposal_parameters"] = [
+        {
+            "parameterName": "PowerMix",
+            "values": [
+                {
+                    "Country": "Japan",
+                    "Year": 2026,
+                    "basecaseValue": 0.03562,
+                    "proposedValue": 0.04062525965932699,
+                },
+            ],
+        },
+    ]
+
+    errors = runner._success_integrity_errors(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        model_param_proposal_id=779,
+        new_proposal_ids=(779,),
+        proposal_row=row,
+        readback_error=None,
+        final_response={
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 779,
+                "scenarioId": 101,
+                "scenarioGroupId": 1_101,
+                "eventId": None,
+                "proposalParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "values": [
+                            {
+                                "Country": "Japan",
+                                "Year": 2026,
+                                "basecaseValue": 0.03562525965932699,
+                                "lutValue": 0.03562525965932699,
+                                "proposedValue": 0.04062525965932699,
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        allowed_parameter_names={"PowerMix"},
+    )
+
+    assert errors == []
+
+
 def test_success_integrity_rejects_response_identity_scope_and_persisted_lut_value() -> None:
     row = _proposal_row(101, 778)
     row["proposal_parameters"] = [

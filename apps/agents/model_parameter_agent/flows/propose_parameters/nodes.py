@@ -1085,6 +1085,8 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
                 )
                 liq_evidence_failure_counts[candidate_key] = liq_evidence_failure_counts.get(candidate_key, 0) + 1
                 continue
+            if evidence.user_notes:
+                slot["_user_notes"] = list(evidence.user_notes)
 
         selected_key = (
             candidate_key,
@@ -2074,17 +2076,34 @@ def _partition_candidate_validation_work(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     deterministic: list[dict[str, Any]] = []
     routing_candidates: list[dict[str, Any]] = []
+    v4_candidates_by_task: dict[str, list[dict[str, Any]]] = {}
     for candidate in candidates:
         mapping_method = str(candidate.get("mapping_method") or "").lower()
         if str(candidate.get("mapping_strategy") or "").lower() == "v4":
-            deterministic.append(candidate)
+            v4_candidates_by_task.setdefault(
+                _v4_routing_task_key(candidate),
+                [],
+            ).append(candidate)
         elif mapping_method == "direct":
             deterministic.append(candidate)
         elif mapping_method == "routing":
             routing_candidates.append(candidate)
 
     routing_tasks: list[dict[str, Any]] = []
-    for group_candidates in _routing_groups_by_dimension(routing_candidates).values():
+    routing_groups = [
+        group_candidates
+        for group_candidates in v4_candidates_by_task.values()
+        if len(group_candidates) > 1
+    ]
+    deterministic.extend(
+        group_candidates[0]
+        for group_candidates in v4_candidates_by_task.values()
+        if len(group_candidates) == 1
+    )
+    routing_groups.extend(
+        _routing_groups_by_dimension(routing_candidates).values(),
+    )
+    for group_candidates in routing_groups:
         first = group_candidates[0]
         first_source = _source_dimensions_for_prompt(first)[0]
         is_v4 = str(first.get("mapping_strategy") or "").lower() == "v4"
@@ -3139,8 +3158,20 @@ def _sanitize_routing_decisions(  # noqa: C901
         returned_dimensions.add(dimension_key)
         allowed_keys = {str(candidate.get("candidate_key") or "") for candidate in task.get("candidates") or []}
         selected_dimension_keys: set[str] = set()
-        for raw_candidate_key in decision.selected_candidate_keys:
-            candidate_key = str(raw_candidate_key or "")
+        requested_keys = [str(item or "") for item in decision.selected_candidate_keys]
+        selection_limit = 1 if task.get("is_v4") else max_candidates_per_dimension
+        if task.get("is_v4") and len(set(requested_keys)) > 1:
+            primary_keys = {
+                str(candidate.get("candidate_key") or "")
+                for candidate in task.get("candidates") or []
+                if str(candidate.get("binding_role") or "primary").lower() == "primary"
+            }
+            requested_keys.sort(key=lambda candidate_key: candidate_key not in primary_keys)
+            warnings.append(
+                "v4 primary/alternative binding은 동시에 제안하지 않아 primary를 우선한 "
+                f"단일 후보로 제한했습니다: task={dimension_key}",
+            )
+        for candidate_key in requested_keys:
             if candidate_key not in allowed_keys:
                 warning = (
                     "LLM이 해당 routing task에 없는 candidate_key를 반환해 제외했습니다: "
@@ -3151,10 +3182,10 @@ def _sanitize_routing_decisions(  # noqa: C901
                 continue
             if candidate_key in selected_dimension_keys:
                 continue
-            if len(selected_dimension_keys) >= max_candidates_per_dimension:
+            if len(selected_dimension_keys) >= selection_limit:
                 warning = (
                     "LLM routing_decisions가 dimension별 선택 상한을 초과해 후속 후보를 제외했습니다: "
-                    f"dimension={dimension_key}, limit={max_candidates_per_dimension}, "
+                    f"dimension={dimension_key}, limit={selection_limit}, "
                     f"candidate={candidate_key}"
                 )
                 logger.warning("[model-parameter] {}", warning)
@@ -3165,7 +3196,7 @@ def _sanitize_routing_decisions(  # noqa: C901
         if not selected_dimension_keys:
             default_keys = _v4_default_primary_candidate_keys(
                 task,
-                limit=max_candidates_per_dimension,
+                limit=selection_limit,
             )
             if default_keys:
                 selected_keys.update(default_keys)
@@ -3179,7 +3210,7 @@ def _sanitize_routing_decisions(  # noqa: C901
     for dimension_key in missing_dimensions:
         default_keys = _v4_default_primary_candidate_keys(
             task_by_dimension[dimension_key],
-            limit=max_candidates_per_dimension,
+            limit=(1 if task_by_dimension[dimension_key].get("is_v4") else max_candidates_per_dimension),
         )
         if default_keys:
             selected_keys.update(default_keys)
@@ -3257,6 +3288,16 @@ def _group_selected_slots_by_candidate(
             continue
         grouped.setdefault(candidate_key, []).append(slot)
     return grouped
+
+
+def _slot_user_notes(slots: list[dict[str, Any]]) -> list[str]:
+    notes: list[str] = []
+    for slot in slots:
+        for note in slot.get("_user_notes") or []:
+            normalized = " ".join(str(note or "").split())
+            if normalized and normalized not in notes:
+                notes.append(normalized)
+    return notes
 
 
 def _assign_slot_keys(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3558,6 +3599,10 @@ def _sanitize_llm_adjustments(
             warnings.append(warning)
             continue
 
+        parameter_rationale = adjustment.rationale_ko
+        user_notes = _slot_user_notes(selected_slots)
+        if user_notes:
+            parameter_rationale = f"{parameter_rationale}\n\n참고: {' '.join(user_notes)}"
         sanitized.append(
             ParameterAdjustment(
                 candidate_key=adjustment.candidate_key,
@@ -3569,7 +3614,7 @@ def _sanitize_llm_adjustments(
                 selected=True,
                 slot_axes=slot_axes,
                 value_grid=value_grid,
-                parameter_selection_rationale_ko=adjustment.rationale_ko,
+                parameter_selection_rationale_ko=parameter_rationale,
             ).model_dump()
         )
 

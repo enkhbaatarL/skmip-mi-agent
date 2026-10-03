@@ -210,7 +210,7 @@ def test_liq_util_evidence_ignores_facility_text_from_unlinked_event() -> None:
     assert "specific_facility_evidence" in decision.missing_components
 
 
-def test_liq_util_unique_inference_allows_one_exact_slot_without_explicit_facility_or_period() -> None:
+def test_liq_util_unique_inference_does_not_bypass_explicit_facility_or_period() -> None:
     candidate = _liq_candidate()
     candidate["lever_provenance"][0].update(scope="United States", time_window="향후 공급 차질")
     candidate["source_dimensions"][0]["source_dimension_description"] = "LNG 가동률 하락"
@@ -230,8 +230,104 @@ def test_liq_util_unique_inference_allows_one_exact_slot_without_explicit_facili
         exact_candidate_count=1,
     )
 
-    assert decision.allowed is True
-    assert decision.missing_components == ()
+    assert decision.allowed is False
+    assert set(decision.missing_components) == {
+        "specific_facility_evidence",
+        "specific_time_window",
+    }
+
+
+def test_liq_util_korean_stage_and_train_range_match_only_supported_english_slots() -> None:
+    candidate = _liq_candidate()
+    candidate["lever_provenance"][0].update(
+        scope="Corpus Christi 3단계 1~6호기",
+        time_window="2027 Q2",
+    )
+    candidate["source_dimensions"][0]["source_dimension_description"] = (
+        "Corpus Christi 3단계 1~6호기 램프업"
+    )
+    context = {
+        "events": [
+            {
+                "mi_event_id": 101,
+                "event_title": "Corpus Christi LNG 3단계 1~6호기 회복",
+            },
+        ],
+    }
+
+    def corpus_slot(train_number: int) -> dict[str, Any]:
+        return _slot(
+            "liq",
+            {
+                "Country": "United States",
+                "LNG Plant": "Corpus Christi LNG Stage 3",
+                "LNG Plant Train": f"Corpus Christi LNG Stage 3 T{train_number}",
+                "Year": 2027,
+                "Month": 5,
+            },
+        )
+
+    supported = evaluate_liq_util_evidence(candidate, corpus_slot(6), context)
+    unsupported = evaluate_liq_util_evidence(candidate, corpus_slot(7), context)
+
+    assert supported.allowed is True
+    assert supported.user_notes
+    assert unsupported.allowed is False
+    assert "specific_facility_evidence" in unsupported.missing_components
+
+
+def test_liq_util_korean_alias_requires_full_train_entity_and_single_period() -> None:
+    candidate = _liq_candidate()
+    candidate["lever_provenance"][0].update(
+        scope="Cove Point LNG와 Cove Point LNG T1",
+        time_window="2027년 10월 하순 이후",
+    )
+    candidate["source_dimensions"][0]["source_dimension_description"] = (
+        "Cove Point LNG T1 재가동"
+    )
+    context = {
+        "events": [
+            {
+                "mi_event_id": 101,
+                "event_title": "Cove Point LNG T1 재가동 지연",
+            },
+        ],
+    }
+    october_slot = _slot(
+        "liq",
+        {
+            "Country": "United States",
+            "LNG Plant": "Cove Point Export",
+            "LNG Plant Train": "Cove Point Export",
+            "Year": 2027,
+            "Month": 10,
+        },
+    )
+    november_slot = _slot(
+        "liq",
+        {
+            "Country": "United States",
+            "LNG Plant": "Cove Point Export",
+            "LNG Plant Train": "Cove Point Export",
+            "Year": 2027,
+            "Month": 11,
+        },
+    )
+
+    october = evaluate_liq_util_evidence(candidate, october_slot, context)
+    november = evaluate_liq_util_evidence(candidate, november_slot, context)
+
+    assert october.allowed is True
+    assert october.user_notes
+    assert november.allowed is False
+    assert "specific_time_window" in november.missing_components
+
+    candidate["lever_provenance"][0]["scope"] = "Cove Point LNG"
+    candidate["source_dimensions"][0]["source_dimension_description"] = "Cove Point LNG 재가동"
+    context["events"][0]["event_title"] = "Cove Point LNG 재가동 지연"
+    missing_train = evaluate_liq_util_evidence(candidate, october_slot, context)
+    assert missing_train.allowed is False
+    assert "specific_facility_evidence" in missing_train.missing_components
 
 
 def test_liq_util_evidence_requires_explicit_lineage_and_matching_slot_period() -> None:
@@ -372,6 +468,8 @@ def test_specific_time_policy_accepts_supported_clear_periods(
         ("내년 Q2", 2026, 9, 2027, 10, False),
         ("올해 2분기", 2026, 9, 2026, 4, True),
         ("올해 2분기", 2026, 9, 2026, 10, False),
+        ("분석 기준일 이후 단기", 2026, 9, 2026, 9, True),
+        ("분석 기준일 이후 단기", 2026, 9, 2026, 10, False),
     ],
 )
 def test_relative_time_policy_is_bounded_by_calendar_anchor(

@@ -4330,6 +4330,58 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert len(warnings) == 1
         assert "중복 dimension task" in warnings[0]
 
+    async def test_v4_primary_and_alternative_bindings_route_to_one_parameter(self) -> None:
+        primary = {
+            "candidate_key": "gdp",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_role": "primary",
+            "scenario_dimension_key": "d1",
+            "source_dimension_id": "d1",
+            "source_dimension_value_id": "d1_v1",
+            "lever_code": "economic_activity",
+            "canonical_parameter_name": "GDP",
+            "source_dimensions": [{"scenario_dimension_key": "d1"}],
+        }
+        alternative = {
+            **primary,
+            "candidate_key": "pmi",
+            "binding_role": "alternative",
+            "canonical_parameter_name": "PMI",
+        }
+
+        deterministic, routing_tasks = proposal_nodes._partition_candidate_validation_work(
+            [primary, alternative],
+        )
+
+        assert deterministic == []
+        assert len(routing_tasks) == 1
+        task = routing_tasks[0]
+        selected, warnings = proposal_nodes._sanitize_routing_decisions(
+            [
+                RoutingDecision(
+                    dimension_key=task["dimension_key"],
+                    selected_candidate_keys=["pmi", "gdp"],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=3,
+        )
+        assert [candidate["candidate_key"] for candidate in selected] == ["gdp"]
+        assert any("primary/alternative binding" in warning for warning in warnings)
+
+        selected_alternative, _ = proposal_nodes._sanitize_routing_decisions(
+            [
+                RoutingDecision(
+                    dimension_key=task["dimension_key"],
+                    selected_candidate_keys=["pmi"],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=3,
+        )
+        assert [candidate["candidate_key"] for candidate in selected_alternative] == ["pmi"]
+
     async def test_routing_decision_is_not_overridden_by_server_comment_logic(self) -> None:
         supply_candidate = {
             "candidate_key": "11|affectedfacilitytype|supplydisruption|supply|volumeadjustment",
@@ -4952,9 +5004,9 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
         assert "액화설비 가동률과 생산량 관련 항목" in error.exception.error_message
-        assert "적용 대상도 찾았지만" in error.exception.error_message
+        assert "적용 대상과 기간도 찾았지만" in error.exception.error_message
         assert "적용 연도·월" in error.exception.error_message
-        assert "적용 기간을 확인해 주세요" in error.exception.error_message
+        assert "사용 가능한 범위와 맞는지 확인해 주세요" in error.exception.error_message
 
     def test_v4_step2_empty_slots_explain_missing_catalog_positions(self) -> None:
         candidate = {
@@ -6091,7 +6143,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             semantic_error,
             expected_title=V4_NO_MODEL_INPUT_TITLE,
         )
-        assert "적용 대상도 찾았지만" in semantic_error.error_message
+        assert "적용 대상과 기간도 찾았지만" in semantic_error.error_message
         assert "적용 연도·월" in semantic_error.error_message
 
         class FakeGraph:

@@ -22,7 +22,8 @@
 - LUT-backed 10개는 contract reference→same-exact-key LUT fallback→slot/evidence/value 절차를 사용한다.
   Basecase-only 6개도 같은 `v4_workbook_then_lut` mode를 쓰지만 등록 LUT가 없으므로 검증된 workbook
   exact slot만 사용하며, v4에는 별도 legacy Basecase reference mode를 두지 않는다.
-- source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4는 Step1.5를 호출하지 않는다.
+- source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4의 단일 binding은
+  결정적으로 통과시키고, 동일 Lever state에 primary/alternative가 함께 있으면 Step1.5에서 정확히 하나만 선택한다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
 - DB migration 정본은 sibling mgmt repository다. 외부개발 DB에는 mgmt 0033/0034의 ID 22·23·24와 해당
   v4.0 binding이 이미 활성화되어 있어 이 release는 `tmm_mi_model_param_m` 변경이나 신규 migration을 만들지 않는다.
@@ -43,8 +44,9 @@
 3. exact key axes와 horizon 2026~2030의 기준값이 있는지 확인한다.
 4. v4 Lever code와 parameter binding role(primary/alternative), applicability가 승인되었는지 확인한다. legacy direct/routing/indirect/na mapping은 변경하지 않는다.
 5. 신규 proposal을 허용할 parameter인지 별도 승인하고 ID 기반 capability contract 변경 범위와 회귀 테스트를 확정한다.
-6. 동일 Lever의 primary/alternative가 raw 후보가 되는 것이 의도인지 확인한다. v4는 Step1.5 없이 lineage를
-   모두 보존하고 exact slot/evidence 단계에서 applicability와 Scenario/Event/Lever 맥락을 판정한다.
+6. 동일 Lever의 primary/alternative가 raw 후보가 되는 것이 의도인지 확인한다. v4 단일 binding은 lineage를
+   그대로 보존하지만, primary/alternative가 함께 있으면 Step1.5에 applicability와 Scenario/Event/Lever 맥락을
+   제공하고 한 후보만 남긴다. 동시 선택·응답 누락 시에는 primary 한 건으로 제한한다.
 7. 대규모 시설 catalog가 slot·prompt byte 상한 안에 들어오는지 측정한다.
 8. v4 workbook contract 대상이면 authoritative source와 write target을 분리하고, digest·sheet·header·range,
    expected record 수, exact-key 오류 차단, fallback·evidence·atomic 정책을 함께 확정한다.
@@ -117,9 +119,27 @@ archive workbook, legacy mapping 또는 설명 문구를 근거로 자동 보정
    대표 LUT-only key가 제외되는 회귀 테스트를 추가한다.
 
 `LiqUtilAdjustment`의 재발 방지 기준은 다음과 같다. 현재 target의 정식 식별자인
-`Cove Point Export / Cove Point Export / Operational / 5.25`만 반환할 수 있다. 과거 LUT의
-`Cove Point LNG / Cove Point LNG T1`은 명시적으로 승인된 일대일 alias가 없는 한 제안할 수 없다.
-Country·Lifecycle·Capacity 세 항목만 같다는 이유로 매핑해서는 안 된다.
+`Cove Point Export / Cove Point Export / Operational / 5.25`만 반환할 수 있다. 근거 텍스트에 쓰이는
+`Cove Point LNG / Cove Point LNG T1`은 이 target에 한해 승인된 **근거측 일대일 alias**로 인식한다.
+이는 과거 LUT 좌표의 반환을 허용하는 것이 아니며, Agent 출력은 항상 `Cove Point Export / Cove Point Export`여야
+한다. Country·Lifecycle·Capacity 세 항목만 같다는 이유로 다른 시설을 매핑해서는 안 된다.
+
+### 2.3.1 근거 좌표명 완화와 다중 slot 확장 경계
+
+근거 문구와 Basecase 좌표의 표기 차이는 조건부로 완화한다. 한국어/영문 승인 alias, `Stage↔단계`,
+`Train/T↔호기`, 명시된 호기 범위(`1~6호기`)를 같은 실체로 정규화할 수 있다. 이 정규화는 근거 판정에만
+사용하고 반환 좌표는 slot catalog의 exact 값을 유지한다. alias 또는 상대기간 해석을 사용한 경우
+`parameterSelectionRationale`의 참고 문구로 사용자에게 알린다.
+
+완화가 근거 없는 다중 선택으로 이어져서는 안 된다.
+
+1. LiqUtilAdjustment는 하나의 coherent Lever provenance 안에 Plant와 Train 수준 근거가 모두 있어야 한다.
+   Plant만 언급된 경우 후보 slot이 하나여도 Train을 추론하지 않는다.
+2. 복수 Train은 각 Train이 직접 명시되거나 `1~6호기`처럼 닫힌 범위가 있을 때만 선택한다. 범위 밖 Train은 제외한다.
+3. 명시 월은 그 월 한 건만 선택한다. `단기`는 분석 기준일이 속한 월 한 건으로 보수적으로 해석한다.
+   `재가동 지연`, `10월 하순 이후` 같은 표현만으로 이후 여러 월을 자동 확장하지 않는다.
+4. `Cove Point Export` 좌표는 근거에 `Cove Point LNG`와 Train 수준의 `Cove Point LNG T1`이 확인될 때만
+   승인 alias를 적용한다. Plant 문구만 있으면 거절한다.
 
 ### 2.4 v4.0 extend16 신규 3개 정합성 매트릭스
 
@@ -246,9 +266,11 @@ fail closed하고 성공 결과를 process cache한다.
 - PowerMix는 authoritative raw source fraction의 원본 정밀도를 보존하고 재정규화하지 않는다. Country/Year별
   승인된 10-member 완전성·중복·유한성·0~1·합 1로 atomic 검증하며, Basecase/LUT 결합 effective vector와
   Step3 proposed vector에도 합 1과 `1e-6` 허용오차를 다시 적용한다.
-- LiqUtilAdjustment는 한 Lever provenance 안에서 exact Plant와 exact Train 둘 모두, slot과 일치하는
-  Year/Month, Group에 실제로 연결된 source Event와 직접 운영 근거가 있어야 하며, 음수만 차단하고
-  1 초과값을 보존한다. lifecycle 공란은 exact record를 제외하지 않고 metadata/applicability에서만 생략한다.
+- LiqUtilAdjustment는 한 Lever provenance 안에서 Plant와 Train 둘 모두, slot과 일치하는 Year/Month,
+  Group에 실제로 연결된 source Event와 직접 운영 근거가 있어야 한다. 승인된 한국어/영문·Stage·Train
+  표기 정규화는 허용하지만 출력은 exact catalog 좌표를 사용한다. 단일 후보라는 이유로 Plant·Train·기간
+  근거를 생략하지 않는다. 음수만 차단하고 1 초과값을 보존하며, lifecycle 공란은 exact record를 제외하지
+  않고 metadata/applicability에서만 생략한다.
 - contract schema/hash 또는 workbook digest가 달라지면 같은 release ID를 재사용하지 않고 version을 올린다.
 
 현재 고정 source 회귀 수는 GDP 815, PMI 5,040, PowerMix 4,200, Temperature 5,040,
@@ -323,7 +345,8 @@ forward canonical release 없이 후보화하지 않는다.
 
 resource release에서 준비된 LUT record는 서버 cache/index에 보관한다. v4 runtime은 지정 version의 active catalog
 binding으로 도달 가능한 definition을 사용하며, 활성 16개 capability 전체 검증은 자동화·release acceptance의
-책임이다. runtime allow-list gate는 source matching 직후, Step1.5·Step2·Step3 LLM과 proposal persistence 전에 적용한다.
+책임이다. runtime allow-list gate는 source matching 직후, 조건부 Step1.5·Step2·Step3 LLM과 proposal
+persistence 전에 적용한다. v4 Step1.5는 동일 Lever state에서 여러 binding이 충돌할 때만 호출하며 한 후보만 남긴다.
 
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
