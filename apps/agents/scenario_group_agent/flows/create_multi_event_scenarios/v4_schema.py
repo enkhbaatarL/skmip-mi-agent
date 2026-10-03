@@ -1077,15 +1077,26 @@ def _lever_support_status(
     catalog_by_code: dict[str, ModelImpactLeverPayload],
 ) -> Literal["full", "partial", "none", "price_only"]:
     levers = [catalog_by_code[code] for code in lever_codes]
-    if all(lever.domain == "price_only" for lever in levers):
-        return "price_only"
     executable = [
         binding for lever in levers for binding in lever.parameter_bindings if binding.support_status == "executable"
     ]
     unsupported = [
         binding for lever in levers for binding in lever.parameter_bindings if binding.support_status != "executable"
     ]
-    if executable and not unsupported and not any(lever.domain == "price_only" for lever in levers):
+    if all(lever.domain == "price_only" for lever in levers) and not executable:
+        return "price_only"
+    has_conditional = any(
+        binding.selection_mode == "conditional"
+        for lever in levers
+        for binding in lever.parameter_bindings
+        if binding.support_status == "executable"
+    )
+    if (
+        executable
+        and not unsupported
+        and not has_conditional
+        and not any(lever.domain == "price_only" for lever in levers)
+    ):
         return "full"
     if executable:
         return "partial"
@@ -1823,7 +1834,7 @@ def finalize_v4_generation_result(
 
 
 def _lever_support_issues(lever: ModelImpactLeverPayload) -> list[ModelImpactLeverSupportIssue]:
-    if lever.domain == "price_only":
+    if lever.domain == "price_only" and not lever.parameter_bindings:
         return [ModelImpactLeverSupportIssue(lever_code=lever.lever_code, reason_code="PRICE_ONLY")]
     if not lever.parameter_bindings:
         return [ModelImpactLeverSupportIssue(lever_code=lever.lever_code, reason_code="NO_PARAMETER_BINDING")]

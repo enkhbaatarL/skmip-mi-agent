@@ -9,7 +9,7 @@
 |---|---|
 | DB에는 무엇이 있나? | 파라미터 기준, legacy 연결 규칙, v3 event lineage, v4 Lever catalog와 제안·확정 결과가 있다. |
 | Agent는 어떻게 사용하나? | 파라미터·scenario lineage 기준은 읽고, 제안 결과표에는 처리 결과를 저장한다. |
-| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | master 24개 중 활성 16개이고, v4.0 executable 고유 Parameter와 Agent v4 extend16 신규 proposal 허용은 모두 16개다. v1/v3는 기존 5개다. |
+| 현재 외부개발 DB와 Agent 제안 범위는 몇 개인가? | master 24개 중 활성 16개이고, v4.1 executable 고유 Parameter와 Agent v4 extend16 신규 proposal 허용은 모두 16개다. v1/v3는 기존 5개다. |
 | 이 문서의 범위는 무엇인가? | 기능 이해에 필요한 관계와 주요 데이터 모양을 설명한다. |
 
 > 이 문서의 개수는 체크인된 v4 master·Lever canonical과 v1/v3 canonical의 `dimension_mappings` 129행을 센 저장소 기준선이다. live DB 적용 상태를 뜻하지 않으며 운영 판정은 runner의 preflight와 DB read-back으로 확인한다. 2026-08-13 snapshot의 128행은 변경 전 증적이다.
@@ -132,9 +132,9 @@ DB의 `basecase_*`는 기준값을 **읽는 위치**, `model_*`는 결과를 **�
 | `na` | 33 | 모델 입력 파라미터와 직접 연결되지 않는 항목 | 아니요 |
 
 DB migration 정본은 sibling `skmip-mi-agent-mgmt`다. 외부개발 DB의 신규 Scenario Group용 active catalog는
-`v4.0`, checksum은 `416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`이다.
-이 Agent release는 이미 활성인 master ID 11 `Population`, 12 `HurricaneIntensity`, 13 `LiqProdAdjustment`와
-v4.0 binding을 소비하므로 `tmm_mi_model_param_m` 변경이나 신규 0036 migration을 요구하지 않는다.
+`v4.1`, checksum은 `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`이다.
+이 Agent release는 master를 변경하지 않고 기존 v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을
+추가하므로 mgmt 0036 migration과 exact match해야 한다.
 기존 이름의 두 canonical과 `apply_model_parameter_v4.py`/정적 SQL은 0029 역사 릴리스 증적으로 보존하며 0030
 적용에 재사용하지 않는다. v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json` 중
 `dimension_mappings`만 정본으로 사용한다. parameter 0030 successor에 상속된 128행 mapping payload는 0029
@@ -167,7 +167,7 @@ v3 group relation은 2~5개여야 하고, 각 group event는 선택된 composite
 
 선택 value가 정의 밖 자유 value이면 `tmm_mi_dimension_value_mapping_m`에서 같은 group·composite dimension·display value의 projection을 확인한다. `status=approved` projection만 보조 근거로 사용한다. mapping row가 없거나 pending/rejected여도 proposal은 허용하고 warning을 남긴다. group의 `parameter_mapping_ready=false`도 실행 gate가 아니다.
 
-이 역투영은 v1/v3 전용이며 live DB의 dimension mapping을 사용한다. 체크인 129행 기준선에서 direct/routing이 도달하는 전역 raw mapping-reachable 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 요청 하나에서는 관련 lineage에 연결된 하위 집합만 raw 후보가 된다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 활성 4개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
+이 역투영은 v1/v3 전용이며 live DB의 dimension mapping을 사용한다. 체크인 129행 기준선에서 direct/routing이 도달하는 전역 raw mapping-reachable 합집합은 `GDP`, `PMI`, `PowerMix`, `Temperature`, `Population`, `HurricaneIntensity`, `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. 요청 하나에서는 관련 lineage에 연결된 하위 집합만 raw 후보가 된다. 이 중 신규 proposal에는 allow-list에 있는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`만 남는다. Basecase-only 활성 6개에는 legacy direct/routing row를 추가하지 않았다. v4는 이 테이블을 조회하지 않으므로 v1/v3 raw 후보 생성과 v4 raw 후보 결정은 독립적이다.
 
 ### 3.2 v4가 Lever catalog를 사용하는 방법
 
@@ -179,11 +179,12 @@ v4 loader는 Scenario, Group, `display_order`로 정렬한 Group–Event 관계,
 4. `source_event_ids`가 group event 집합의 부분집합인지 여부
 5. 각 Lever code/ID가 catalog와 일치하는지 여부
 
-외부개발 DB v4.0 active catalog는 Lever 21개, parameter binding occurrence 19개를 가지며, 비활성
-CDD/HDD binding을 제외한 effective executable occurrence와 고유 활성 Parameter는 각각 14개다. 요청
-하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. `price_only`, binding 없음,
-비활성 또는 catalog unsupported는 raw 후보에서 제외한다. 그 뒤 v4 capability contract의 ID/name/target을
-검증해 신규 proposal 후보를 7개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
+외부개발 DB v4.1 active catalog는 Lever 21개, parameter binding occurrence 56개를 가지며, 37개가
+conditional이다. 비활성 이력 binding을 제외한 executable occurrence는 53개, 고유 활성 Parameter는 16개다.
+요청 하나에서는 선택 value와 변화 state에 해당하는 하위 집합만 raw 후보가 된다. binding 없는 `price_only`,
+binding 없음, 비활성 또는 catalog unsupported는 raw 후보에서 제외하지만 conditional binding이 있는
+`price_only`는 Step1.5 근거 판정으로 진행한다. 그 뒤 v4 capability contract의 ID/name/target을 검증해 신규
+proposal 후보를 활성 16개 범위로 제한한다. `direction=unchanged`는 supporting context일 뿐 변화 후보가 아니다.
 version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다.
 
 ## 4. 결과표: 제안부터 확정까지 남기는 표

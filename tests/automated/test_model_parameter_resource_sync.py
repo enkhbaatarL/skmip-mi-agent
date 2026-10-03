@@ -124,7 +124,7 @@ def test_integrated_manifest_declares_expected_resources() -> None:
     assert integrated.workbook_contract.public_api_unchanged is True
     assert integrated.workbook_contract_path.name == "model-parameter-workbook-contract-v7.json"
     assert len(integrated.workbook_contract_schema_hash) == 64
-    assert integrated.proposal_capability_contract.release_id == "extend16-v7"
+    assert integrated.proposal_capability_contract.release_id == "extend16-v8"
     assert {item.model_param_id for item in integrated.proposal_capability_contract.parameters} == {
         4,
         6,
@@ -166,6 +166,7 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
 
     assert embedded_config["model_parameter_resources"] == get_settings().model_parameter_resources
     for setting_name in (
+        "scenario_group_v4_impact_catalog_version",
         "model_parameter_max_total_selected_slots",
         "model_parameter_max_step2_prompt_bytes",
         "model_parameter_max_step3_prompt_bytes",

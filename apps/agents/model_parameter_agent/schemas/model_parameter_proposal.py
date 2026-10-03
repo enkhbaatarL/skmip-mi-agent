@@ -128,9 +128,16 @@ class LLMValueAdjustment(ApiModel):
         return value or []
 
 
+class LLMEntityCoordinateResolution(ApiModel):
+    plant_evidence_text: str = Field(min_length=1, max_length=240)
+    train_evidence_text: str = Field(min_length=1, max_length=240)
+    coordinate_match_note_ko: str = Field(min_length=1, max_length=400)
+
+
 class LLMSlotProposal(ApiModel):
     candidate_key: str
     slot_axes: list[LLMSlotAxis] = Field(default_factory=list)
+    entity_coordinate_resolution: LLMEntityCoordinateResolution | None = None
 
     @field_validator("slot_axes", mode="before")
     @classmethod

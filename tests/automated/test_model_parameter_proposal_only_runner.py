@@ -20,6 +20,8 @@ def _context(
     api_version: str = "v4",
     strategy: str = runner.V4_STRATEGY,
     scenario_group_id: int | None = None,
+    catalog_version: str = "v4.1",
+    catalog_checksum: str = runner.EXPECTED_V4_1_CATALOG_CHECKSUM,
 ) -> dict[str, object]:
     resolved_group_id = scenario_group_id or scenario_id + 1_000
     return {
@@ -37,8 +39,8 @@ def _context(
             "generation_strategy": strategy,
             "status": "created",
             "stage": "completed",
-            "impact_catalog_version": "v4.0",
-            "impact_catalog_checksum": runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+            "impact_catalog_version": catalog_version,
+            "impact_catalog_checksum": catalog_checksum,
         },
         "events": [
             {
@@ -48,8 +50,8 @@ def _context(
                 "detail_analysis": "baseline event detail",
             },
         ],
-        "impact_catalog_version": "v4.0",
-        "impact_catalog_checksum": runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+        "impact_catalog_version": catalog_version,
+        "impact_catalog_checksum": catalog_checksum,
     }
 
 
@@ -98,6 +100,8 @@ def _options(
 def _quality_evidence(
     *,
     errors: tuple[str, ...] = (),
+    catalog_version: str = "v4.1",
+    catalog_checksum: str = runner.EXPECTED_V4_1_CATALOG_CHECKSUM,
     runtime_candidates: tuple[dict[str, object], ...] = (
         {
             "candidate_key": "gdp-candidate",
@@ -107,8 +111,8 @@ def _quality_evidence(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         errors=errors,
-        active_catalog_version="v4.0",
-        active_catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+        active_catalog_version=catalog_version,
+        active_catalog_checksum=catalog_checksum,
         raw_candidates=runtime_candidates,
         runtime_candidates=runtime_candidates,
         blocked_candidates=(),
@@ -710,7 +714,7 @@ def test_exact_v4_strategy_preflight_blocks_every_write(tmp_path: Path) -> None:
     assert [item["status"] for item in evidence["preflight"]] == ["PASS", "FAIL"]
 
 
-def test_approved_release_requires_exact_v4_0_catalog_pin(tmp_path: Path) -> None:
+def test_approved_release_requires_exact_v4_1_catalog_pin(tmp_path: Path) -> None:
     stale_context = _context(101)
     stale_context["scenario_group"]["impact_catalog_checksum"] = "a" * 64  # type: ignore[index]
     dependencies = runner.RunnerDependencies(
@@ -732,6 +736,42 @@ def test_approved_release_requires_exact_v4_0_catalog_pin(tmp_path: Path) -> Non
 
     assert evidence["status"] == "BLOCKED"
     assert any("approved capability release" in error for error in evidence["preflight"][0]["errors"])
+
+
+def test_v8_compat_release_accepts_existing_v4_0_catalog_pin(tmp_path: Path) -> None:
+    context = _context(
+        101,
+        catalog_version="v4.0",
+        catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+    )
+    options = runner.ProposalOnlyOptions(
+        execute=False,
+        scenario_ids=(101,),
+        scenario_group_id=None,
+        capability_release="extend16-v8-v4.0-compat",
+        evidence_path=tmp_path / "v4-0-compat.json",
+    )
+    dependencies = runner.RunnerDependencies(
+        load_context=lambda _scenario_id: context,
+        snapshot_proposal_rows=lambda _group_id, _scenario_ids: (),
+        evaluate_scenario=lambda _scenario_id: (_ for _ in ()).throw(
+            AssertionError("read-only campaign must not execute"),
+        ),
+        fetch_proposal=lambda _proposal_id: {},
+        failure_trace=lambda _exc: {},
+        build_quality_evidence=lambda _scenario_id, _context_value: _quality_evidence(
+            catalog_version="v4.0",
+            catalog_checksum=runner.EXPECTED_V4_0_CATALOG_CHECKSUM,
+        ),
+    )
+
+    evidence = asyncio.run(
+        runner.run_campaign(options, dependencies=dependencies),
+    )
+
+    assert evidence["status"] == "PASS"
+    assert evidence["preflight"][0]["stored_catalog_version"] == "v4.0"
+    assert evidence["preflight"][0]["active_catalog_version"] == "v4.0"
 
 
 def test_approved_release_blocks_runtime_allowlist_drift_before_database(

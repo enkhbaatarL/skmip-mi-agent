@@ -15,10 +15,10 @@
 
 경로의 두 ID는 실제 숫자로 바꾼다. 배포 환경에 따라 경로 앞에 별도 공통 prefix가 붙을 수 있다. `userId`는 선택 항목이며, 제안 API는 body 자체를 생략해도 된다.
 
-외부개발 DB v4.0 기준선은 master 24행·활성 16개, Agent proposal capability 16개
+외부개발 DB v4.1 기준선은 master 24행·활성 16개, Agent proposal capability 16개
 (LUT-backed 10개 + Basecase-only 6개),
 v1/v3 raw mapping-reachable 전역 합집합 10개와 v4 effective executable-binding 전역 합집합 16개다.
-v4.0 active Lever는 21개이고 binding occurrence는 19개다. 이 수치는 요청 하나의
+v4.1 active Lever는 21개이고 binding occurrence는 56개(conditional 37개)다. 이 수치는 요청 하나의
 후보 수가 아니다. v1/v3는 기존 5종 이름 allow-list를 유지하고, v4 extend16은 DB ID/name/target과
 `model-parameter-proposal-capabilities-v4`가 일치하는 ID
 `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`을 허용한다. 실제 응답의 `proposalParameters`에는 요청별 raw matching, version별 capability gate,

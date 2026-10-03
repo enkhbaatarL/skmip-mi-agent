@@ -9,8 +9,8 @@ proposal capability가 요구하는 대상·기간·수치 근거를 잃지 않�
 
 - Scenario API `v4`
 - `generation_strategy=multi_event_model_lever_dimensions`
-- Impact Lever catalog `v4.0`
-- Model Parameter proposal capability `extend16-v7`
+- Impact Lever catalog `v4.1`
+- Model Parameter proposal capability `extend16-v8`
 - 현재 신규 proposal 대상 16종: LUT-backed 10종과 Basecase-only 6종
 
 이 문서는 Event 구조화 단계가 Model Parameter를 직접 선택하도록 요구하지 않는다. Event 구조화의 책임은

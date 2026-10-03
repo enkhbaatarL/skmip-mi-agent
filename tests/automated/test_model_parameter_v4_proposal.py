@@ -156,6 +156,7 @@ def _binding(
     parameter_name: str,
     *,
     role: str = "primary",
+    selection_mode: str = "deterministic",
     applicability: str = "",
     support_status: str = "executable",
     unsupported_reason_code: str | None = None,
@@ -163,6 +164,7 @@ def _binding(
     return {
         "parameter_name": parameter_name,
         "role": role,
+        "selection_mode": selection_mode,
         "applicability": applicability,
         "support_status": support_status,
         "unsupported_reason_code": unsupported_reason_code,
@@ -608,7 +610,7 @@ def test_v4_service_load_context_skips_legacy_mapping_repository_and_uses_active
     session.close.assert_called_once_with()
 
 
-def test_v4_candidates_skip_step15_routing_prompt() -> None:
+def test_v4_multiple_deterministic_bindings_use_step15_routing_prompt() -> None:
     context = _load_context(selected_value_id="high")
     kb = _knowledge_base(
         _parameter_definition("GDP"),
@@ -625,9 +627,12 @@ def test_v4_candidates_skip_step15_routing_prompt() -> None:
     )
 
     assert warnings == []
-    assert deterministic == candidates
-    assert routing_tasks == []
-    assert packet["routing_tasks"] == []
+    assert [candidate["canonical_parameter_name"] for candidate in deterministic] == [
+        "User-Adjusted Gas Demand",
+    ]
+    assert len(routing_tasks) == 1
+    assert routing_tasks[0]["selection_mode"] == "deterministic"
+    assert len(packet["routing_tasks"]) == 1
 
 
 def test_v4_context_rejects_catalog_checksum_mismatch() -> None:
@@ -838,7 +843,7 @@ def test_v4_unchanged_only_lineage_has_no_change_candidate() -> None:
     assert "UNCHANGED_LEVER_STATE" in warnings[0]
 
 
-def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> None:
+def test_v4_primary_and_alternative_bindings_form_one_deterministic_routing_task() -> None:
     economic_state = _lever_state(
         "economic_activity",
         101,
@@ -869,7 +874,7 @@ def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> N
         candidates,
     )
 
-    assert deterministic == candidates
+    assert deterministic == []
     assert non_inputs == []
     assert warnings == []
     assert {(candidate["canonical_parameter_name"], candidate["binding_role"]) for candidate in candidates} == {
@@ -877,10 +882,12 @@ def test_v4_primary_and_alternative_bindings_are_deterministic_candidates() -> N
         ("Population", "alternative"),
     }
     assert all(candidate["mapping_method"] == "routing" for candidate in candidates)
-    assert routing_tasks == []
+    assert len(routing_tasks) == 1
+    assert routing_tasks[0]["selection_mode"] == "deterministic"
+    assert routing_tasks[0]["candidates"] == candidates
 
 
-def test_v4_deterministic_candidates_preserve_each_binding_lineage() -> None:
+def test_v4_deterministic_routing_task_preserves_each_binding_lineage() -> None:
     economic_state = _lever_state(
         "economic_activity",
         101,
@@ -904,12 +911,45 @@ def test_v4_deterministic_candidates_preserve_each_binding_lineage() -> None:
     )
     deterministic, routing_tasks = _partition_candidate_validation_work(candidates)
 
-    assert routing_tasks == []
-    assert {(item["canonical_parameter_name"], item["binding_role"]) for item in deterministic} == {
+    assert deterministic == []
+    assert len(routing_tasks) == 1
+    assert {(item["canonical_parameter_name"], item["binding_role"]) for item in routing_tasks[0]["candidates"]} == {
         ("GDP", "primary"),
         ("Population", "alternative"),
     }
-    assert all(item["lever_code"] == "economic_activity" for item in deterministic)
+    assert all(
+        item["lever_code"] == "economic_activity"
+        for item in routing_tasks[0]["candidates"]
+    )
+
+
+def test_v4_single_conditional_price_only_binding_routes_without_default() -> None:
+    state = _lever_state(
+        "inventory_condition",
+        110,
+        direction="decrease",
+        domain="price_only",
+        bindings=[
+            _binding(
+                "SupplyDisruption",
+                role="alternative",
+                selection_mode="conditional",
+                applicability="Country/Year/Month upstream supply cause is explicit.",
+            ),
+        ],
+    )
+    candidates, non_inputs, warnings = match_parameter_candidates(
+        _knowledge_base(_parameter_definition("SupplyDisruption")),
+        _matcher_context(_lineage("inventory_path", [state])),
+    )
+    deterministic, routing_tasks = _partition_candidate_validation_work(candidates)
+
+    assert non_inputs == []
+    assert warnings == []
+    assert deterministic == []
+    assert len(routing_tasks) == 1
+    assert routing_tasks[0]["selection_mode"] == "conditional"
+    assert candidates[0]["binding_selection_mode"] == "conditional"
 
 
 def test_v4_same_parameter_merges_all_event_dimension_and_lever_provenance() -> None:

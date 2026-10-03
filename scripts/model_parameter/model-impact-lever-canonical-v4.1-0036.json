@@ -1,0 +1,730 @@
+{
+  "canonical_version": "model-impact-lever-canonical-v4.1-0036",
+  "catalog_version": "v4.1",
+  "source_catalog_version": "v4.0",
+  "audit_user": "model-impact-lever-v4.1-v0036",
+  "generated_from_snapshot": "scripts/model_parameter/snapshots/external_dev_before_model_impact_lever_v4_1_20261003.json",
+  "snapshot_sha256": "50e23af9e9695006b8bf2f2b1dabfa82564c0373959f776fc96c4e8a21566192",
+  "source_catalog_checksum": "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763",
+  "hydrated_catalog_checksum": "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69",
+  "impact_lever_count": 21,
+  "binding_occurrence_count": 56,
+  "conditional_binding_occurrence_count": 37,
+  "conditional_binding_lever_count": 5,
+  "lever_full_set": [
+    "canal_toll",
+    "direct_gas_demand",
+    "economic_activity",
+    "financial_market_sentiment",
+    "inventory_condition",
+    "liquefaction_production_override",
+    "liquefaction_utilization",
+    "lng_charter_rate",
+    "lng_vessel_fuel_cost",
+    "pipeline_capacity",
+    "png_contract_volume",
+    "population_demographics",
+    "power_generation_mix",
+    "regasification_capacity",
+    "regional_price_spread",
+    "regional_upstream_production",
+    "route_disruption",
+    "trade_restriction",
+    "upstream_production",
+    "us_gom_hurricane_disruption",
+    "weather_demand"
+  ],
+  "impact_levers": [
+    {
+      "source_impact_lever_id": 44,
+      "target_impact_lever_id": 56,
+      "lever_code": "direct_gas_demand",
+      "domain": "demand",
+      "label": "가스 수요 수동 Override",
+      "description": "다른 causal input으로 표현할 수 없는 국가·연월·수요 하위부문별 최종 가스수요 BCM 직접 입력",
+      "applicability_hint": "exact Country·Year·Month·Demand Sub-Sector가 있고 GDP·PMI·PowerMix·Weather 등으로 설명할 수 없을 때만 최후 수단으로 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연·월·수요 하위부문별 가스 수요(BCM) 최종 절대값",
+          "parameter_name": "User-Adjusted Gas Demand",
+          "role": "primary",
+          "support_status": "known_unsupported",
+          "unsupported_reason_code": "INACTIVE_MODEL_PARAMETER"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 43,
+      "target_impact_lever_id": 57,
+      "lever_code": "economic_activity",
+      "domain": "demand",
+      "label": "경기·산업 활동",
+      "description": "GDP 성장률 또는 월별 PMI로 표현되는 국가별 경기·산업활동 변화",
+      "applicability_hint": "연간 거시 전망은 GDP, 단기 제조업 활동은 PMI로 구분한다. 인구·이민 변화는 population_demographics를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연도별 실질 GDP 성장률 최종값",
+          "parameter_name": "GDP",
+          "role": "primary",
+          "support_status": "executable"
+        },
+        {
+          "applicability": "국가·연·월별 PMI 절대지수 최종값",
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 35,
+      "target_impact_lever_id": 58,
+      "lever_code": "population_demographics",
+      "domain": "demand",
+      "label": "인구·이민 경로",
+      "description": "인구 전망·이민으로 인한 국가·연도별 구조적 수요 기반 변화",
+      "applicability_hint": "Event에 인구 또는 이민의 수치와 국가·연도가 명시된 경우에만 사용하고 일반 경기 변화에는 economic_activity를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연도별 인구(천 명) 최종 절대값",
+          "parameter_name": "Population",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 42,
+      "target_impact_lever_id": 59,
+      "lever_code": "power_generation_mix",
+      "domain": "demand",
+      "label": "발전원 구성과 가스발전 수요",
+      "description": "국가·연도·에너지원별 발전 비중 vector 변화에 따른 가스발전 수요 변화",
+      "applicability_hint": "영향 에너지원과 상쇄 전원을 함께 특정하고 Country·Year의 전체 발전 비중 vector를 합계 1인 atomic 값으로 적용할 때 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연도·에너지원별 발전 비중 전체 vector의 최종값",
+          "parameter_name": "PowerMix",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 41,
+      "target_impact_lever_id": 60,
+      "lever_code": "weather_demand",
+      "domain": "demand",
+      "label": "기상 민감 가스 수요",
+      "description": "국가·연월별 기온·도일 변화가 난방·냉방 및 가스발전 수요에 미치는 효과",
+      "applicability_hint": "한파·폭염의 국가·연월·계절을 특정하고 방향은 수요 효과로 기록한다. Temperature 값의 증감과 수요 방향을 동일하다고 가정하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연·월별 평균 기온(°C) 최종 절대값",
+          "parameter_name": "Temperature",
+          "role": "primary",
+          "support_status": "executable"
+        },
+        {
+          "applicability": "국가·연·월별 난방도일 최종값; master 활성화 전에는 runtime known_unsupported",
+          "parameter_name": "HDD",
+          "role": "alternative",
+          "support_status": "known_unsupported",
+          "unsupported_reason_code": "INACTIVE_MODEL_PARAMETER"
+        },
+        {
+          "applicability": "국가·연·월별 냉방도일 최종값; master 활성화 전에는 runtime known_unsupported",
+          "parameter_name": "CDD",
+          "role": "alternative",
+          "support_status": "known_unsupported",
+          "unsupported_reason_code": "INACTIVE_MODEL_PARAMETER"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 52,
+      "target_impact_lever_id": 61,
+      "lever_code": "financial_market_sentiment",
+      "domain": "price_only",
+      "label": "금융시장 심리",
+      "description": "환율·금리·위험 프리미엄과 헷지 포지션이 가격·구매 여건에 미치는 간접 영향",
+      "applicability_hint": "환율·금리·위험 프리미엄 자체의 writable input은 없다. Country·Year GDP 또는 Country·Year·Month PMI 경로가 직접 제시된 경우에만 조건부 binding을 검토한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "GDP",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격 자체가 아니라 원인 경로에 Country·Year별 실질 GDP 성장률과 적용 기간이 명시되어 economic_activity input으로 직접 연결되는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격 자체가 아니라 원인 경로에 Country·Year·Month별 제조업 PMI와 적용 기간이 명시되어 economic_activity input으로 직접 연결되는 경우",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 50,
+      "target_impact_lever_id": 62,
+      "lever_code": "inventory_condition",
+      "domain": "price_only",
+      "label": "재고 여건",
+      "description": "재고 수준과 주입·인출 여건이 spot 구매 압력과 가격 민감도에 주는 조건",
+      "applicability_hint": "재고량 자체의 writable input은 없다. 재고 변화의 명시된 원인이 기온·발전믹스·경기 또는 upstream·액화·pipeline·재기화·PNG 계약의 실제 모델 축으로 연결될 때만 해당 조건부 binding을 검토한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "GDP",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격 자체가 아니라 원인 경로에 Country·Year별 실질 GDP 성장률과 적용 기간이 명시되어 economic_activity input으로 직접 연결되는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격 자체가 아니라 원인 경로에 Country·Year·Month별 제조업 PMI와 적용 기간이 명시되어 economic_activity input으로 직접 연결되는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PowerMix",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 재고·가격 상태의 원인으로 Country·Year와 영향·상쇄 에너지원의 발전 비중 경로가 명시되어 전체 합계 1 vector를 구성할 수 있는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "Temperature",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 재고·가격 상태의 원인으로 Country·Year·Month별 기온 경로가 명시된 경우; 수요 방향을 기온 방향으로 대체 추론하지 않음",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "SupplyDisruption",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 Country·Year·Month별 upstream 최종 공급량(Mt) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "RegionalProductionAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 Province/Basin/Country·Year별 upstream 생산량(Bcm) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Basecase LNG Plant·Train·Year·Month와 가동률 변화가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqProdAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Basecase LNG Plant·Train·Year·Month와 생산량 변화가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PipelineAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Pipeline·From/To Country·Year·Month와 최종 송출용량(Mt/y) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "RegasAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Regasification Plant·Year·Month와 처리용량 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PNG Contract Volume",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향이 LNG가 아닌 PNG 장기계약이며 Year·From/To Country별 계약 물량 경로로 직접 연결되는 경우",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 51,
+      "target_impact_lever_id": 63,
+      "lever_code": "regional_price_spread",
+      "domain": "price_only",
+      "label": "지역 가격 스프레드",
+      "description": "JKM·TTF·Henry Hub 등 상대 가격 spread와 차익거래 유인의 변화",
+      "applicability_hint": "가격 spread 자체의 writable input은 없다. spread의 명시된 원인이 수요·공급·운송의 실제 모델 축으로 연결될 때만 조건부 binding을 검토하고 가격 방향을 수급 입력 방향으로 대체하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "GDP",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격 자체가 아니라 원인 경로에 Country·Year별 실질 GDP 성장률과 적용 기간이 명시되어 economic_activity input으로 직접 연결되는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PMI",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격 자체가 아니라 원인 경로에 Country·Year·Month별 제조업 PMI와 적용 기간이 명시되어 economic_activity input으로 직접 연결되는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PowerMix",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 재고·가격 상태의 원인으로 Country·Year와 영향·상쇄 에너지원의 발전 비중 경로가 명시되어 전체 합계 1 vector를 구성할 수 있는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "Temperature",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 재고·가격 상태의 원인으로 Country·Year·Month별 기온 경로가 명시된 경우; 수요 방향을 기온 방향으로 대체 추론하지 않음",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "SupplyDisruption",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 Country·Year·Month별 upstream 최종 공급량(Mt) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "RegionalProductionAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 Province/Basin/Country·Year별 upstream 생산량(Bcm) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Basecase LNG Plant·Train·Year·Month와 가동률 변화가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqProdAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Basecase LNG Plant·Train·Year·Month와 생산량 변화가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PipelineAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Pipeline·From/To Country·Year·Month와 최종 송출용량(Mt/y) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "RegasAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Regasification Plant·Year·Month와 처리용량 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PNG Contract Volume",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향이 LNG가 아닌 PNG 장기계약이며 Year·From/To Country별 계약 물량 경로로 직접 연결되는 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "ShippingCost",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 특정 항로 지연비가 아니라 Year별 전역 LNG 선박 charter rate($/day) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "ShippingFuelCost",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: LNG·가스 가격 자체가 아니라 Year별 LNG 선박 IFO380 연료가격($/tonne) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "CanalToll",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 봉쇄·우회·지연 자체가 아니라 Suez 또는 Panama·Year별 통항료($/crossing) 경로가 명시된 경우",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 37,
+      "target_impact_lever_id": 64,
+      "lever_code": "liquefaction_production_override",
+      "domain": "supply",
+      "label": "액화 생산량 직접 Override",
+      "description": "LNG Plant Train별 월 생산 절대량의 최종 override",
+      "applicability_hint": "대폭·장기 생산 손실 또는 신규 Train ramp-up처럼 이용률보다 절대 생산량 근거가 명확한 경우 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "Plant Train·연·월별 생산량(Mt LNG/month) 최종 절대값",
+          "parameter_name": "LiqProdAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 36,
+      "target_impact_lever_id": 65,
+      "lever_code": "liquefaction_utilization",
+      "domain": "supply",
+      "label": "액화설비 가동률",
+      "description": "LNG Plant Train별 월 이용률의 최종 override",
+      "applicability_hint": "exact LNG Plant·Train·Year·Month가 있고 단기 또는 부분 가동률 변화인 경우 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "Plant Train·연·월별 utilization rate 최종값",
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 47,
+      "target_impact_lever_id": 66,
+      "lever_code": "pipeline_capacity",
+      "domain": "supply",
+      "label": "PNG 파이프라인 송출용량",
+      "description": "Pipeline·From/To 국가·연월별 최종 송출용량(Mt/y)의 변화",
+      "applicability_hint": "exact Pipeline·From Country·To Country·Year·Month가 확인될 때 사용한다. 계약 물량 또는 LNG 항로 상태와 혼동하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "Pipeline·From/To·연·월별 최종 송출용량(Mt/y)",
+          "parameter_name": "PipelineAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 46,
+      "target_impact_lever_id": 67,
+      "lever_code": "regasification_capacity",
+      "domain": "supply",
+      "label": "재기화 수입 처리용량",
+      "description": "수입국 재기화 plant별 월 최종 처리용량 변화",
+      "applicability_hint": "exact Country·Regasification Plant·Year·Month와 시설 상태·용량이 확인되어 수입 흡수력 변화를 표현할 때 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "재기화 plant·연·월별 처리용량(Mt LNG/month) 최종 절대값",
+          "parameter_name": "RegasAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 53,
+      "target_impact_lever_id": 68,
+      "lever_code": "regional_upstream_production",
+      "domain": "supply",
+      "label": "권역별 연간 Upstream 생산량",
+      "description": "Province·Basin·Country/Year별 upstream 가스 생산량(Bcm)의 구조적 연간 최종 절대값",
+      "applicability_hint": "증설·감산·장기 생산 전망처럼 권역별 연간 공급 경로가 명시된 경우 사용한다. 일시적 국가·월별 차질에는 upstream_production을 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "Province·Basin·Country/Year별 upstream 생산량(Bcm) 최종 절대값",
+          "parameter_name": "RegionalProductionAdjustment",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 45,
+      "target_impact_lever_id": 69,
+      "lever_code": "upstream_production",
+      "domain": "supply",
+      "label": "Upstream 가스 생산량",
+      "description": "국가·연월별 upstream 최종 공급량의 증가·감소·차질·회복",
+      "applicability_hint": "차질량이 아니라 적용 후 최종 공급량(Mt)을 제안하므로 exact 국가와 적용 연월이 있는 경우에만 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "국가·연·월별 upstream 가스 최종 공급량(Mt); parameter 이름과 달리 delta가 아님",
+          "parameter_name": "SupplyDisruption",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 38,
+      "target_impact_lever_id": 70,
+      "lever_code": "us_gom_hurricane_disruption",
+      "domain": "supply",
+      "label": "미국 GoM 허리케인 공급 차질",
+      "description": "미국 Gulf of Mexico 허리케인 강도 0~4가 upstream 또는 액화설비에 주는 월별 물리 차질",
+      "applicability_hint": "GoM, 적용 Year·Month와 영향 시설이 확인될 때만 사용한다. 기타 자연재해는 영향받는 asset 레버를 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "미국 GoM 연·월별 허리케인 강도 0~4 정수 최종값",
+          "parameter_name": "HurricaneIntensity",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 55,
+      "target_impact_lever_id": 71,
+      "lever_code": "canal_toll",
+      "domain": "trade",
+      "label": "운하 통항료",
+      "description": "Suez·Panama 운하·연도별 통항료($/crossing)의 최종 절대값",
+      "applicability_hint": "운하별 통항료 금액 변화에만 사용한다. 봉쇄·우회·지연 같은 물리 차질에는 route_disruption을 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "Suez·Panama 운하·연도별 통항료($/crossing) 최종 절대값",
+          "parameter_name": "CanalToll",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 39,
+      "target_impact_lever_id": 72,
+      "lever_code": "lng_charter_rate",
+      "domain": "trade",
+      "label": "LNG 선박 용선료",
+      "description": "연도별 LNG 선박 charter rate($/day)의 최종 절대값 변화",
+      "applicability_hint": "선박 charter 시장의 전역·연간 충격에만 사용한다. 특정 From/To 비용, 운하 봉쇄, 연료비 또는 항만비에는 사용하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "연도별 LNG 선박 charter rate($/day) 최종 절대값",
+          "parameter_name": "ShippingCost",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 54,
+      "target_impact_lever_id": 73,
+      "lever_code": "lng_vessel_fuel_cost",
+      "domain": "trade",
+      "label": "LNG 선박 연료비",
+      "description": "연도별 LNG 선박 IFO380 연료비($/tonne)의 최종 절대값",
+      "applicability_hint": "LNG 선박 연료가격 변화에만 사용한다. 용선료에는 lng_charter_rate, 운하 통항료에는 canal_toll을 사용한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "연도별 IFO380 연료비($/tonne) 최종 절대값",
+          "parameter_name": "ShippingFuelCost",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 40,
+      "target_impact_lever_id": 74,
+      "lever_code": "png_contract_volume",
+      "domain": "trade",
+      "label": "PNG 계약 물량",
+      "description": "연도·From Country·To Country별 PNG Unadjusted Gross Gas Import 계약 절대량(Mt LNG)",
+      "applicability_hint": "PNG 장기계약 총량의 재개·재협상·감액에만 사용한다. LNG 계약, 제재 또는 취소량과 혼동하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "applicability": "연도·From/To 국가별 PNG 계약 물량(Mt LNG) 최종 절대값",
+          "parameter_name": "PNG Contract Volume",
+          "role": "primary",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 48,
+      "target_impact_lever_id": 75,
+      "lever_code": "route_disruption",
+      "domain": "trade",
+      "label": "항로·운하 물리 차질",
+      "description": "Suez·Panama·해협·항만의 봉쇄·우회·지연이라는 물리적 운송 상태",
+      "applicability_hint": "물리적 transit 차질과 회복을 기록한다. v4.1에서는 동일 근거에 전역 LNG charter rate, IFO380 연료가격 또는 Suez/Panama 통항료의 해당 모델 축이 직접 있으면 조건부 binding을 검토한다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "ShippingCost",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 특정 항로 지연비가 아니라 Year별 전역 LNG 선박 charter rate($/day) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "ShippingFuelCost",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: LNG·가스 가격 자체가 아니라 Year별 LNG 선박 IFO380 연료가격($/tonne) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "CanalToll",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 봉쇄·우회·지연 자체가 아니라 Suez 또는 Panama·Year별 통항료($/crossing) 경로가 명시된 경우",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    },
+    {
+      "source_impact_lever_id": 49,
+      "target_impact_lever_id": 76,
+      "lever_code": "trade_restriction",
+      "domain": "trade",
+      "label": "LNG·PNG 거래 제한",
+      "description": "월별 From/To와 Terminal·Train 또는 Pipeline, restriction scope, 제한 물량, Active 상태로 표현되는 거래 제한",
+      "applicability_hint": "LNG·PNG, 적용 연월, From/To와 대상 asset·scope를 확인한다. 제한의 직접 결과가 기존 공급·시설·PNG 계약 model input 축으로 특정될 때만 조건부 binding을 검토하고 제한량을 다른 입력으로 대체하지 않는다.",
+      "parent_lever_code": null,
+      "parameter_bindings": [
+        {
+          "parameter_name": "SupplyDisruption",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 Country·Year·Month별 upstream 최종 공급량(Mt) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "RegionalProductionAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 Province/Basin/Country·Year별 upstream 생산량(Bcm) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqUtilAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Basecase LNG Plant·Train·Year·Month와 가동률 변화가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "LiqProdAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Basecase LNG Plant·Train·Year·Month와 생산량 변화가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PipelineAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Pipeline·From/To Country·Year·Month와 최종 송출용량(Mt/y) 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "RegasAdjustment",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향으로 실제 Regasification Plant·Year·Month와 처리용량 경로가 명시된 경우",
+          "support_status": "executable"
+        },
+        {
+          "parameter_name": "PNG Contract Volume",
+          "role": "alternative",
+          "selection_mode": "conditional",
+          "applicability": "조건부: 상태·가격·거래 제한의 원인 또는 직접 영향이 LNG가 아닌 PNG 장기계약이며 Year·From/To Country별 계약 물량 경로로 직접 연결되는 경우",
+          "support_status": "executable"
+        }
+      ],
+      "catalog_version": "v4.1",
+      "use_yn": "Y",
+      "del_yn": "N"
+    }
+  ]
+}

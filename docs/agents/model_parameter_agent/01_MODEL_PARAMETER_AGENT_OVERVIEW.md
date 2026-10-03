@@ -174,9 +174,9 @@ slot/evidence/value 검증을 공통 적용한다. capability contract는 각각
 오류, non-finite 값이나 상충 duplicate로 차단된 key는 LUT로 fallback하지 않는다. PowerMix는 raw source와
 Basecase/LUT 결합 effective reference, Step3 각각에서 Country/Year별 10개 Energy Source를 하나의 atomic
 vector로 검증한다. raw source fraction에는 기존 5자리 정밀도 변환이나 재정규화를 적용하지 않는다.
-LiqUtilAdjustment는 selected Lever, Scenario/Event scope와 applicability 필터 뒤 exact 후보가 하나면 시설·기간
-문구가 일부 생략되어도 unique-inferred로 제안할 수 있다. 동등한 후보가 여러 개거나 명시 근거가 slot과
-충돌하면 abstain한다. LiqUtil
+LiqUtilAdjustment는 selected Lever, Scenario/Event scope와 applicability 필터 뒤에도 Plant·Train·기간 근거가
+필요하다. 표기가 actual coordinate와 다르면 Step2 LLM이 원문 Plant/Train 문구와 좌표 일치 이유를 구조화하고,
+서버가 서로 다른 원문 span과 exact target을 검증한다. 후보가 하나라는 이유만으로 근거를 생략하지 않는다. LiqUtil
 값은 음수만 차단하며 정상 관측된 1 초과값을 보존한다. lifecycle metadata 공란은 exact record를 버리는
 사유가 아니며 Step2 판단용 applicability에서만 생략한다.
 
@@ -184,10 +184,10 @@ LiqUtilAdjustment는 selected Lever, Scenario/Event scope와 applicability 필�
 metadata, catalog checksum과 model target을 갱신한다. 공개 proposal/confirmation endpoint·request/response field·status/action
 enum·callback shape와 proposal/confirmation persistence JSON shape도 그대로 유지한다.
 
-현재 외부개발 DB의 신규 그룹용 active catalog는 `v4.0`, checksum은
-`416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`이다. master 16개 활성 정의와
-v4.0 executable binding 16종을 Agent proposal capability로 허용한다. `tmm_mi_model_param_m`은 이 release에서
-변경하지 않으며, 기존 그룹은 저장된 catalog pin을 계속 사용한다.
+신규 그룹용 active catalog는 `v4.1`, checksum은
+`7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`이다. master 16개 활성 정의와
+v4.1 executable binding 고유 16종을 `extend16-v8` proposal capability로 허용한다. `tmm_mi_model_param_m`은
+변경하지 않으며, 기존 그룹은 저장된 v4.0 catalog pin을 계속 사용한다.
 v1/v3 체크인 목표 mapping은 [v1 canonical](../../../scripts/model_parameter/model-parameter-canonical-v1.json)의
 `dimension_mappings` 129행이며 v4는 이를 조회하지 않는다.
 
@@ -329,7 +329,7 @@ skmip-mi-agent/
 
 API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 허용 후보만 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
-확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v7`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. 이 release는 이미 적용된 v4.0 master·Lever binding을 소비하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
+확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v7`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. v4.1은 같은 master·model input을 유지한 채 side-by-side Lever binding만 확대하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
 
 코드를 변경하기 전에는 [AGENTS.md](../../../AGENTS.md),
 [Python conventions](../../../.claude/rules/python-conventions.md)와

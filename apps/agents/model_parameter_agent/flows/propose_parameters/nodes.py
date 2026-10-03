@@ -72,6 +72,8 @@ from apps.agents.model_parameter_agent.utils.proposal_policy import (
     POWER_MIX_ENERGY_SOURCES,
     POWER_MIX_PARAMETER,
     POWER_MIX_SUM_TOLERANCE,
+    ApprovedCoordinateAliasIndex,
+    build_approved_coordinate_alias_index,
     evaluate_liq_util_evidence,
     expand_power_mix_atomic_slots,
     is_v4_contract_context,
@@ -986,6 +988,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
     reserved_atomic_groups: set[str] = set()
     liq_evidence_failures: dict[str, set[str]] = {}
     liq_evidence_failure_counts: dict[str, int] = {}
+    liq_alias_indexes: dict[str, ApprovedCoordinateAliasIndex] = {}
 
     candidate_by_key = {str(candidate.get("candidate_key") or ""): candidate for candidate in state.candidate_mappings}
     selected_slot_counts_by_candidate: dict[str, int] = {}
@@ -1065,6 +1068,12 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
 
         candidate = candidate_by_key.get(candidate_key) or {}
         if is_v4_contract_context(state.scenario_context) and parameter_name(candidate) == LIQ_UTIL_PARAMETER:
+            coordinate_alias_index = liq_alias_indexes.get(candidate_key)
+            if coordinate_alias_index is None:
+                coordinate_alias_index = build_approved_coordinate_alias_index(
+                    list(state.basecase_index.records_for_candidate(candidate_key)),
+                )
+                liq_alias_indexes[candidate_key] = coordinate_alias_index
             canonical_slot = {
                 **slot,
                 "slot_axes": [
@@ -1077,6 +1086,7 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
                 canonical_slot,
                 state.scenario_context,
                 exact_candidate_count=selected_slot_counts_by_candidate.get(candidate_key),
+                coordinate_alias_index=coordinate_alias_index,
             )
             if not evidence.allowed:
                 policy_excluded_slot_count += 1
@@ -1795,6 +1805,7 @@ def _source_dimension_for_prompt(candidate: dict[str, Any]) -> dict[str, Any]:
         "lever_time_window": candidate.get("time_window"),
         "is_primary_lever": candidate.get("is_primary_lever"),
         "binding_role": candidate.get("binding_role"),
+        "binding_selection_mode": candidate.get("binding_selection_mode"),
         "binding_applicability": candidate.get("binding_applicability"),
         "binding_provenance": candidate.get("binding_provenance"),
         "lever_provenance": candidate.get("lever_provenance"),
@@ -2049,6 +2060,7 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
             "lever_scope": candidate.get("scope"),
             "lever_time_window": candidate.get("time_window"),
             "binding_role": candidate.get("binding_role"),
+            "binding_selection_mode": candidate.get("binding_selection_mode"),
             "binding_applicability": candidate.get("binding_applicability"),
             "binding_provenance": candidate.get("binding_provenance"),
             "lever_provenance": candidate.get("lever_provenance"),
@@ -2094,11 +2106,18 @@ def _partition_candidate_validation_work(
         group_candidates
         for group_candidates in v4_candidates_by_task.values()
         if len(group_candidates) > 1
+        or any(
+            str(candidate.get("binding_selection_mode") or "deterministic").lower()
+            == "conditional"
+            for candidate in group_candidates
+        )
     ]
     deterministic.extend(
         group_candidates[0]
         for group_candidates in v4_candidates_by_task.values()
         if len(group_candidates) == 1
+        and str(group_candidates[0].get("binding_selection_mode") or "deterministic").lower()
+        != "conditional"
     )
     routing_groups.extend(
         _routing_groups_by_dimension(routing_candidates).values(),
@@ -2125,6 +2144,16 @@ def _partition_candidate_validation_work(
                 "dimension_value": (first.get("source_dimension_value") or first_source.get("source_dimension_value")),
                 "lever_code": first.get("lever_code"),
                 "is_v4": is_v4,
+                "selection_mode": (
+                    "conditional"
+                    if is_v4
+                    and any(
+                        str(candidate.get("binding_selection_mode") or "deterministic").lower()
+                        == "conditional"
+                        for candidate in group_candidates
+                    )
+                    else "deterministic"
+                ),
                 "candidates": group_candidates,
             },
         )
@@ -2201,7 +2230,15 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
             "scenario_dimension_key": task.get("scenario_dimension_key"),
             "lever_code": task.get("lever_code"),
             "default_selection_rule": (
-                "primary binding을 기본 선택하고 applicability 근거가 있으면 alternative 또는 둘 다 선택"
+                (
+                    "각 applicability의 실제 모델 대상·필수 좌표·기간 인과 근거가 독립적으로 확인된 후보만 "
+                    "설정 상한까지 선택하고, 근거가 없으면 0개를 선택"
+                    if task.get("selection_mode") == "conditional"
+                    else (
+                        "primary binding을 기본 선택하되 applicability 근거가 독립적으로 확인된 "
+                        "alternative는 설정 상한까지 함께 선택"
+                    )
+                )
                 if task.get("is_v4")
                 else None
             ),
@@ -3119,6 +3156,8 @@ def _v4_default_primary_candidate_keys(
 ) -> list[str]:
     if not task.get("is_v4"):
         return []
+    if str(task.get("selection_mode") or "deterministic").lower() == "conditional":
+        return []
     keys = [
         str(candidate.get("candidate_key") or "")
         for candidate in task.get("candidates") or []
@@ -3159,18 +3198,7 @@ def _sanitize_routing_decisions(  # noqa: C901
         allowed_keys = {str(candidate.get("candidate_key") or "") for candidate in task.get("candidates") or []}
         selected_dimension_keys: set[str] = set()
         requested_keys = [str(item or "") for item in decision.selected_candidate_keys]
-        selection_limit = 1 if task.get("is_v4") else max_candidates_per_dimension
-        if task.get("is_v4") and len(set(requested_keys)) > 1:
-            primary_keys = {
-                str(candidate.get("candidate_key") or "")
-                for candidate in task.get("candidates") or []
-                if str(candidate.get("binding_role") or "primary").lower() == "primary"
-            }
-            requested_keys.sort(key=lambda candidate_key: candidate_key not in primary_keys)
-            warnings.append(
-                "v4 primary/alternative binding은 동시에 제안하지 않아 primary를 우선한 "
-                f"단일 후보로 제한했습니다: task={dimension_key}",
-            )
+        selection_limit = max_candidates_per_dimension
         for candidate_key in requested_keys:
             if candidate_key not in allowed_keys:
                 warning = (
@@ -3193,6 +3221,12 @@ def _sanitize_routing_decisions(  # noqa: C901
                 continue
             selected_dimension_keys.add(candidate_key)
             selected_keys.add(candidate_key)
+        if task.get("is_v4") and len(selected_dimension_keys) > 1:
+            warnings.append(
+                "v4 동일 Lever state의 복수 binding을 독립 applicability 근거 선택으로 유지했습니다: "
+                f"task={dimension_key}, selected={sorted(selected_dimension_keys)}, "
+                f"limit={selection_limit}",
+            )
         if not selected_dimension_keys:
             default_keys = _v4_default_primary_candidate_keys(
                 task,
@@ -3210,7 +3244,7 @@ def _sanitize_routing_decisions(  # noqa: C901
     for dimension_key in missing_dimensions:
         default_keys = _v4_default_primary_candidate_keys(
             task_by_dimension[dimension_key],
-            limit=(1 if task_by_dimension[dimension_key].get("is_v4") else max_candidates_per_dimension),
+            limit=max_candidates_per_dimension,
         )
         if default_keys:
             selected_keys.update(default_keys)
@@ -3266,7 +3300,7 @@ def _sanitize_llm_slots(
 
 
 def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
-    return ParameterSlotProposal(
+    payload = ParameterSlotProposal(
         candidate_key=slot.candidate_key,
         slot_axes=[
             ParameterSlotAxis(
@@ -3276,6 +3310,11 @@ def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
             for axis in slot.slot_axes
         ],
     ).model_dump()
+    if slot.entity_coordinate_resolution is not None:
+        payload["_llm_entity_coordinate_resolution"] = (
+            slot.entity_coordinate_resolution.model_dump()
+        )
+    return payload
 
 
 def _group_selected_slots_by_candidate(

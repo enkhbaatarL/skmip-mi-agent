@@ -47,7 +47,7 @@
 
 ### 문제 5. Candidate routing
 
-v4의 단일 primary binding과 primary/alternative 동시 binding을 각각 어떻게 처리하는지 설명하시오. `price_only`, binding 없음, 비활성 parameter, `unchanged` state와 raw candidate가 runtime allow-list 밖인 경우도 함께 설명하시오.
+v4의 단일 deterministic binding, 복수 primary/alternative, conditional binding을 각각 어떻게 처리하는지 설명하시오. `price_only`, binding 없음, 비활성 parameter, `unchanged` state와 raw candidate가 runtime allow-list 밖인 경우도 함께 설명하시오.
 
 ### 문제 6. Step1.5·Step2·Step3
 
@@ -97,14 +97,14 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 
 ### 정답 3
 
-- 외부개발 v4.0 master 24행·활성 16개
+- 외부개발 v4.1 master 24행·활성 16개
 - 체크인 legacy mapping 129행: direct 35, routing 6, indirect 55, na 33
 - active resource LUT-backed 10개
 - Basecase-only 활성 6개: `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`,
   `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
 - inactive 3개: `User-Adjusted Gas Demand`, `RemainingUnrestrictedAmount`, `VolumeCancelled`
 - v1/v3 raw direct/routing reachability 10개
-- v4.0 active Lever 21개, binding occurrence 19개, effective executable 고유 Parameter 16개
+- v4.1 active Lever 21개, binding occurrence 56개(conditional 37개), effective executable 고유 Parameter 16개
 - v1/v3 proposal 이름 allow-list 5개: `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment`
 - v4 extend16 ID capability 16개: LUT-backed 10개 + `RegasAdjustment`, `PNG Contract Volume`,
   `ShippingCost`, `RegionalProductionAdjustment`, `ShippingFuelCost`, `CanalToll`
@@ -114,7 +114,7 @@ raw active/executable candidate가 있어도 모두 runtime allow-list 밖인 �
 `LiqProdAdjustment`, `LiqUtilAdjustment`, `PipelineAdjustment`, `SupplyDisruption` 10개다. Basecase-only
 활성 6개에는 legacy direct/routing row를 추가하지 않았다. v4의 effective executable 16개는 Lever-native
 경로이며 shared mapping을 조회하지 않는다. 요청 하나에서는 관련 lineage·선택 value에 해당하는 하위 집합만
-후보가 된다. 외부개발 DB의 v4.0 executable 16개와 extend16 capability는 ID/name/target set equality로
+후보가 된다. 외부개발 DB의 v4.1 executable 고유 16개와 extend16 capability는 ID/name/target set equality로
 일치해야 한다. 하나라도 capability에서 빠지면 release 실패이며 LLM·proposal 입력으로 진행하지 않는다.
 v1/v3는 raw 10개 중 5개만 허용한다.
 
@@ -124,11 +124,12 @@ v1/v3는 raw 10개 중 5개만 허용한다.
 
 ### 정답 5
 
-allow-list 적용 전 executable binding이 primary 하나뿐이면 `direct`로 분류되어, 그 후보가 allow-list를
-통과할 때 결정적으로 선택한다. primary와 alternative가 함께 있으면 lineage를 모두 보존한 deterministic
-candidate로 구성하고 후속 exact slot/evidence 단계가 applicability와 Scenario/Event/Lever 맥락을 판단한다.
-v4는 Step1.5 LLM으로 다시 routing하지 않는다. `price_only`, binding 없음,
-비활성·unsupported parameter는 제외하며 reason code를 내부 증적에 보존한다. raw candidate가
+allow-list 적용 전 executable deterministic binding이 하나뿐이면 `direct`로 분류되어, 그 후보가 allow-list를
+통과할 때 결정적으로 선택한다. 복수 primary/alternative와 단일을 포함한 conditional binding은 Step1.5가
+applicability를 독립 판정한다. 각각 근거가 있으면 설정 상한까지 복수 선택하고, deterministic 빈 응답은 primary
+1건으로 복구하지만 conditional 빈 응답은 0건을 유지한다. binding 없는 `price_only`는 제외하지만 v4.1의
+conditional binding이 있는 `price_only`는 후보 판정으로 진행한다. binding 없음, 비활성·unsupported parameter는
+제외하며 reason code를 내부 증적에 보존한다. raw candidate가
 active/executable이어도 runtime allow-list 밖이면 `PROPOSAL_SCOPE_EXCLUDED`로 분류해 Step1.5 LLM 전에
 제외한다. `unchanged`는 변화 candidate가 아니다.
 
@@ -152,11 +153,10 @@ Lever 방향은 시장·운영 문맥이지 각 모델 입력 필드의 수학�
 
 일반 v4 master·Lever rollout은 mgmt migration을 정본으로 하나의 transaction에서 precondition,
 cross-table active binding, checksum/read-back과 함께 검증·적용한다. checksum이 바뀌면 기존 v4 Scenario를
-새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. extend16은 이미 활성·binding된 ID 22·23·24를
-proposal scope에 포함하는 Agent release이므로 외부개발 DB DML, catalog checksum, legacy mapping과 XLSM
-artifact를 바꾸지 않는다. 대신 versioned capability를 `extend16-v7`, workbook contract를
-`new-bc-v7`로 추가하고 local/Kubernetes config의 path·release·hash를 함께 갱신한다. public API payload와
-confirmation workflow도 변경하지 않는다.
+새 catalog로 재해석하지 않고 신규 Scenario를 생성한다. v4.1은 master와 legacy mapping을 바꾸지 않고 기존
+v4.0 옆에 같은 Lever Full Set 21행과 conditional binding을 추가한다. versioned capability는 `extend16-v8`,
+workbook contract는 model input이 같아 `new-bc-v7`을 유지하며 local/Kubernetes config의
+catalog version·capability release·hash를 함께 갱신한다. public API payload와 confirmation workflow도 변경하지 않는다.
 
 ### 정답 10
 

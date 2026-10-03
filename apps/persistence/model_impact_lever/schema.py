@@ -23,6 +23,7 @@ ModelSupportIssueReasonCode = Literal[
 class ModelImpactLeverParameterBinding(ApiModel):
     parameter_name: str
     role: Literal["primary", "alternative"] = "primary"
+    selection_mode: Literal["deterministic", "conditional"] = "deterministic"
     applicability: str = ""
     support_status: Literal["executable", "known_unsupported"]
     unsupported_reason_code: (
@@ -61,8 +62,11 @@ class ModelImpactLeverPayload(ApiModel):
         if len(names) != len(set(names)):
             message = f"duplicate parameter binding: leverCode={self.lever_code}"
             raise ValueError(message)
-        if self.domain == "price_only" and self.parameter_bindings:
-            message = "price_only lever must not define parameter bindings"
+        if self.domain == "price_only" and any(
+            binding.selection_mode != "conditional"
+            for binding in self.parameter_bindings
+        ):
+            message = "price_only lever bindings must use conditional selection_mode"
             raise ValueError(message)
         return self
 

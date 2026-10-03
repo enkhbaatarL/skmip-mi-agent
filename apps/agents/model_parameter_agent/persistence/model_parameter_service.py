@@ -1013,7 +1013,7 @@ def _normalize_v4_dimension_lineage(  # noqa: C901
                     },
                 )
                 continue
-            if lever.domain == "price_only":
+            if lever.domain == "price_only" and not lever.parameter_bindings:
                 support_issues.append(
                     {
                         "dimension_id": dimension_id,

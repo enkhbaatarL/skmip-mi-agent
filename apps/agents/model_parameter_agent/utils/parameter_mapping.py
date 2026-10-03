@@ -856,12 +856,15 @@ def _match_v4_parameter_candidates(  # noqa: C901
                     },
                 )
                 continue
-            if domain == "price_only":
+            if domain == "price_only" and not raw_bindings:
                 non_inputs.append(
                     {
                         **common_payload,
                         "reason_code": "PRICE_ONLY",
-                        "reason": "price_only Lever는 수급모델 input 후보에서 제외합니다.",
+                        "reason": (
+                            "조건부 model input binding이 없는 price_only Lever는 "
+                            "수급모델 input 후보에서 제외합니다."
+                        ),
                     },
                 )
                 continue
@@ -886,6 +889,7 @@ def _match_v4_parameter_candidates(  # noqa: C901
                             **common_payload,
                             "parameter_name": parameter_name or None,
                             "binding_role": binding.get("role"),
+                            "binding_selection_mode": binding.get("selection_mode") or "deterministic",
                             "binding_applicability": binding.get(
                                 "applicability",
                             ),
@@ -902,6 +906,7 @@ def _match_v4_parameter_candidates(  # noqa: C901
                             **common_payload,
                             "parameter_name": parameter_name or None,
                             "binding_role": binding.get("role"),
+                            "binding_selection_mode": binding.get("selection_mode") or "deterministic",
                             "binding_applicability": binding.get(
                                 "applicability",
                             ),
@@ -911,7 +916,12 @@ def _match_v4_parameter_candidates(  # noqa: C901
                     )
                     continue
 
-                mapping_method = "direct" if len(executable_bindings) == 1 else "routing"
+                selection_mode = str(binding.get("selection_mode") or "deterministic")
+                mapping_method = (
+                    "direct"
+                    if len(executable_bindings) == 1 and selection_mode == "deterministic"
+                    else "routing"
+                )
                 source_payload = _v4_source_payload(
                     lineage,
                     lever_state,
@@ -925,6 +935,7 @@ def _match_v4_parameter_candidates(  # noqa: C901
                     "impact_lever_id": lever_state.get("impact_lever_id"),
                     "parameter_name": parameter_name,
                     "role": binding.get("role") or "primary",
+                    "selection_mode": selection_mode,
                     "applicability": binding.get("applicability") or "",
                     "support_status": "executable",
                 }
@@ -948,6 +959,7 @@ def _match_v4_parameter_candidates(  # noqa: C901
                         "mapping_strategy": "v4",
                         **source_payload,
                         "binding_role": binding.get("role") or "primary",
+                        "binding_selection_mode": selection_mode,
                         "binding_applicability": binding.get(
                             "applicability",
                         )

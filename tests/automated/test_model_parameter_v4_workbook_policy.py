@@ -33,6 +33,7 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
 )
 from apps.agents.model_parameter_agent.utils.proposal_policy import (
     POWER_MIX_ENERGY_SOURCES,
+    build_approved_coordinate_alias_index,
     evaluate_liq_util_evidence,
     expand_power_mix_atomic_slots,
     has_specific_time_evidence,
@@ -328,6 +329,126 @@ def test_liq_util_korean_alias_requires_full_train_entity_and_single_period() ->
     missing_train = evaluate_liq_util_evidence(candidate, october_slot, context)
     assert missing_train.allowed is False
     assert "specific_facility_evidence" in missing_train.missing_components
+
+    candidate["lever_provenance"][0]["scope"] = "Cove Point LNG T1"
+    candidate["source_dimensions"][0]["source_dimension_description"] = (
+        "Cove Point LNG T1 재가동"
+    )
+    context["events"][0]["event_title"] = "Cove Point LNG T1 재가동 지연"
+    missing_standalone_plant = evaluate_liq_util_evidence(
+        candidate,
+        october_slot,
+        context,
+    )
+    assert missing_standalone_plant.allowed is False
+    assert "specific_facility_evidence" in missing_standalone_plant.missing_components
+
+
+def test_actual_coordinate_alias_index_rejects_colliding_generated_acronyms() -> None:
+    alias_index = build_approved_coordinate_alias_index(
+        [
+            {
+                "axes": {
+                    "LNG Plant": "Energia Costa Azul LNG",
+                    "LNG Plant Train": "Energia Costa Azul LNG T1",
+                },
+            },
+            {
+                "axes": {
+                    "LNG Plant": "East Coast Atlantic LNG",
+                    "LNG Plant Train": "East Coast Atlantic LNG T1",
+                },
+            },
+        ],
+    )
+
+    assert "eca" not in alias_index.plant_aliases_by_target["Energia Costa Azul LNG"]
+    assert "eca" not in alias_index.plant_aliases_by_target["East Coast Atlantic LNG"]
+
+
+def test_actual_coordinate_alias_index_generalizes_single_train_t1_aliases() -> None:
+    alias_index = build_approved_coordinate_alias_index(
+        [
+            {
+                "axes": {
+                    "LNG Plant": "Blue Harbor Export",
+                    "LNG Plant Train": "Blue Harbor Export",
+                },
+            },
+        ],
+    )
+
+    assert "blue harbor lng" in alias_index.plant_aliases_by_target[
+        "Blue Harbor Export"
+    ]
+    assert "blue harbor lng t1" in alias_index.train_aliases_by_target[
+        ("Blue Harbor Export", "Blue Harbor Export")
+    ]
+    assert alias_index.strict_alias_pairs_by_target[
+        ("Blue Harbor Export", "Blue Harbor Export")
+    ]
+
+
+def test_llm_entity_resolution_generalizes_bilingual_facility_match_with_exact_evidence() -> None:
+    candidate = _liq_candidate()
+    candidate["lever_provenance"][0].update(
+        scope="푸른 항구 LNG와 푸른 항구 LNG 1호기",
+        time_window="2027 Q2",
+    )
+    candidate["source_dimensions"][0]["source_dimension_description"] = (
+        "푸른 항구 LNG 1호기 가동 차질"
+    )
+    context = {
+        "events": [
+            {
+                "mi_event_id": 101,
+                "event_title": "푸른 항구 LNG와 푸른 항구 LNG 1호기 재가동 지연",
+            },
+        ],
+    }
+    slot = _slot(
+        "liq",
+        {
+            "Country": "United States",
+            "LNG Plant": "Blue Harbor Export",
+            "LNG Plant Train": "Blue Harbor Export",
+            "Year": 2027,
+            "Month": 5,
+        },
+    )
+    slot["_llm_entity_coordinate_resolution"] = {
+        "plant_evidence_text": "푸른 항구 LNG",
+        "train_evidence_text": "푸른 항구 LNG 1호기",
+        "coordinate_match_note_ko": "한글 설비명을 영문 모델 좌표와 같은 실체로 해석",
+    }
+
+    decision = evaluate_liq_util_evidence(candidate, slot, context)
+
+    assert decision.allowed is True
+    assert any("LLM" in note and "Blue Harbor Export" in note for note in decision.user_notes)
+
+    slot["_llm_entity_coordinate_resolution"]["train_evidence_text"] = (
+        "원문에 없는 2호기"
+    )
+    rejected = evaluate_liq_util_evidence(candidate, slot, context)
+    assert rejected.allowed is False
+    assert "specific_facility_evidence" in rejected.missing_components
+
+    slot["_llm_entity_coordinate_resolution"]["train_evidence_text"] = (
+        "푸른 항구 LNG 1호기"
+    )
+    candidate["lever_provenance"][0]["scope"] = (
+        "푸른 항구 LNG 1호기, 푸른 항구 LNG 1호기"
+    )
+    candidate["source_dimensions"][0]["source_dimension_description"] = (
+        "푸른 항구 LNG 1호기 재가동"
+    )
+    context["events"][0]["event_title"] = (
+        "푸른 항구 LNG 1호기 재가동 지연, 푸른 항구 LNG 1호기 점검"
+    )
+    repeated_train_only = evaluate_liq_util_evidence(candidate, slot, context)
+    assert repeated_train_only.allowed is False
+    assert "specific_facility_evidence" in repeated_train_only.missing_components
 
 
 def test_liq_util_evidence_requires_explicit_lineage_and_matching_slot_period() -> None:

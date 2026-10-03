@@ -40,11 +40,17 @@ CANDIDATE_VALIDATION_SYSTEM = """\
   후보 선택 근거로 확대 해석하지 마십시오.
 - v1/v3에서는 mapping_comment의 조건을 scenario/event 맥락에서 명시적으로 확인할 수 없으면 해당 후보를
   선택하지 마십시오.
-- v4에서는 선택된 Lever state와 primary binding 자체를 유효한 적용 근거로 봅니다. scenario/event가
-  applicability와 명백히 모순되지 않으면 세부 조건을 같은 문구로 반복하지 않았다는 이유만으로 primary를
-  제외하지 마십시오. alternative는 해당 applicability를 뒷받침하는 대상·기간·영향 유형 근거가 있을 때 선택하십시오.
-- v4는 primary binding을 기본 우선합니다. applicability가 더 정확하면 alternative만 선택할 수 있고,
-  두 parameter가 동시에 필요하면 primary와 alternative를 함께 선택할 수 있습니다.
+- v4 deterministic task에서는 선택된 Lever state와 primary binding 자체를 유효한 적용 근거로 봅니다.
+  scenario/event가 applicability와 명백히 모순되지 않으면 세부 조건을 같은 문구로 반복하지 않았다는 이유만으로 primary를
+  제외하지 마십시오. alternative는 해당 applicability를 뒷받침하는 대상·기간·영향 유형 근거가 있을 때만
+  선택하십시오.
+- v4 conditional task는 Lever 방향만으로 parameter를 선택하지 마십시오. applicability에 명시된 실제 모델 대상,
+  필수 좌표와 기간이 scenario/event의 명시된 원인·영향 경로와 직접 연결될 때만 선택하십시오. 최종값은 후속
+  단계에서 산정할 수 있지만, 대상·좌표를 다른 proxy로 치환하거나 단순 가격 방향만으로 수급 입력을 만들면 안 됩니다.
+  조건을 충족하는 후보가 없으면 빈 배열을 반환하십시오.
+- v4에서도 서로 다른 parameter의 applicability 근거가 각각 확인되면 설정된 최대 개수까지 함께 선택할 수 있습니다.
+  deterministic task의 primary는 빈 응답을 복구하는 기본값일 뿐, 근거가 확인된 alternative와의 동시 선택을 막는
+  배타 규칙이 아닙니다. conditional task에는 빈 응답 기본값을 적용하지 마십시오.
 - task의 모든 후보가 조건을 충족하지 않으면 selected_candidate_keys를 빈 배열로 반환하십시오.
 - 여러 parameter가 실제로 동시에 필요할 때만 설정된 최대 개수까지 선택하십시오.
 - 단순히 가능성이 있거나 근거가 약한 후보를 최대 개수를 채우기 위해 선택하지 마십시오.
@@ -123,8 +129,13 @@ SLOT_PROPOSAL_SYSTEM = """\
 - v4 Event가 Plant·국가·지역처럼 catalog hierarchy의 상위 범위 전체에 영향을 준다고 명시하고 개별 하위 대상을
   한정하지 않았다면, 위 applicability 필터를 통과한 상위 branch 아래의 관련 exact 하위 좌표를 적용 기간과 slot
   상한 안에서 모두 선택할 수 있습니다. 상위 범위 전체라는 근거 없이 여러 하위 branch를 임의로 확대하지 마십시오.
-- 한국어·영문 표기, LNG 생략, Stage/단계, Train/T/호기, 공인 약칭 차이가 있어도 같은 실체가 명확하면
-  slot_catalog의 영문 exact 좌표로 반환하십시오. 다만 상위 Plant명만으로 하위 Train을 추정하지 마십시오.
+- 한국어·영문 표기, LNG/Export/Terminal 표기, Stage/단계, Train/T/호기, 약칭 차이가 있어도 전체 맥락상
+  같은 실체가 명확하면 slot_catalog의 exact 좌표로 반환하십시오. 고정 별칭 사전이 있다고 가정하지 말고
+  scenario/event/dimension 문맥과 실제 slot hierarchy를 직접 비교해 판단하십시오.
+- LNG Plant와 Train 축이 있는 slot을 표기 차이 추론으로 선택한 경우 `entity_coordinate_resolution`에
+  `plant_evidence_text`, `train_evidence_text`, `coordinate_match_note_ko`를 반환하십시오. 두 evidence text는
+  입력 원문에서 각각 그대로 복사하며 Plant와 Train을 입증하는 서로 다른 문구여야 합니다.
+  상위 Plant명만으로 하위 Train을 추정하지 마십시오. 같은 한 번의 문구를 Plant와 Train 근거로 중복 사용하지 마십시오.
 - 여러 Train 또는 여러 기간 slot을 선택할 때는 각 Train 번호(명시적 범위 포함)와 각 기간을 근거에서 확인할 수
   있어야 합니다. 예를 들어 Plant만 언급되었거나 단순히 '재가동 지연'만 있는 경우 여러 Train·월로 확대하지 마십시오.
 - v4에서는 정확한 연월이 직접 적혀 있지 않아도 scenario narrative, selected dimension, Lever time_window와
@@ -155,8 +166,9 @@ SLOT_PROPOSAL_SYSTEM = """\
 
 출력 규칙:
 - 실제 사용할 slot만 parameter_slots에 반환하십시오.
-- 각 항목에는 candidate_key와 slot_axes만 반환하십시오.
-- rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오.
+- 각 항목에는 candidate_key와 slot_axes를 반환하십시오. 위 설비 표기 추론을 사용한 경우에만
+  entity_coordinate_resolution을 함께 반환하십시오.
+- 별도 rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오.
 """
 
 

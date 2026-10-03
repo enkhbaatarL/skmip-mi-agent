@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from openai import pydantic_function_tool
@@ -1749,6 +1750,13 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
     payload = V4MultiEventCreateScenariosIn(miEventIds=[202, 101], userId=7)
     with (
         patch.object(v4_flow_module, "_analysis_as_of", return_value="2026-08-07"),
+        patch.object(
+            v4_flow_module,
+            "get_settings",
+            return_value=SimpleNamespace(
+                scenario_group_v4_impact_catalog_version="v4.1",
+            ),
+        ),
         patch.object(v4_flow_module.EventService, "load_events", return_value=events),
         patch.object(
             v4_flow_module.ModelImpactLeverService,
@@ -1765,7 +1773,7 @@ def test_prepare_v4_fixes_analysis_as_of_for_the_run() -> None:
 
     assert prepared["analysis_as_of"] == "2026-08-07"
     assert [event.mi_event_id for event in prepared["events"]] == [202, 101]
-    load_active_catalog.assert_called_once_with(catalog_version="v4.0")
+    load_active_catalog.assert_called_once_with(catalog_version="v4.1")
 
 
 def test_v4_event_timeout_is_retried_without_blocking_the_batch() -> None:

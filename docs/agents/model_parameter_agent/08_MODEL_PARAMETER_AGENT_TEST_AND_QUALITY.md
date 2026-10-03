@@ -84,11 +84,12 @@ DB/canonical만 맞거나 LUT 테스트만 통과하거나 전체 파라미터 �
 - executable Impact Lever binding에서 raw candidate를 만든다.
 - v1/v3는 production `MODEL_PARAMETER_PROPOSAL_ALLOWLIST` 5종을, v4는
   `model-parameter-proposal-capabilities-v4`의 ID
-  `{4, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20}`과 name/target을 읽어
+  `{4, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 23, 24}`과 name/target을 읽어
   `runtime-allowed`와 `active-but-blocked`를 나눈다.
 - blocked candidate는 Step1.5·Step2·Step3·신규 proposal과 그 결과에서 파생된 Confirmation에 도달하면 안 되며
   `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 한다.
-- `unchanged`, `price_only`, binding 없음과 catalog상 unsupported 상태를 서로 다른 reason code로 보존한다.
+- `unchanged`, binding 없는 `price_only`, binding 없음과 catalog상 unsupported 상태를 서로 다른 reason code로
+  보존한다. conditional binding이 있는 `price_only`는 근거가 없을 때 Step1.5에서 0건으로 탈락한다.
 
 ### Slot, 값과 저장
 

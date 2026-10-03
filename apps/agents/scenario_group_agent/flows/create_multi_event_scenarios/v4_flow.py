@@ -48,6 +48,7 @@ from apps.agents.scenario_group_agent.persistence.scenario_group_service import 
 )
 from apps.agents.scenario_group_agent.presentation import build_scenario_group_table_data
 from apps.agents.scenario_group_agent.schemas.endpoint import CreateScenariosOut
+from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.logging.logger_config import logger
 from apps.common.tracing.context import (
@@ -63,7 +64,6 @@ from apps.persistence.scenario_group.schema import ScenarioGroupPayload
 
 
 V4_GENERATION_STRATEGY = "multi_event_model_lever_dimensions"
-V4_IMPACT_CATALOG_VERSION = "v4.0"
 
 
 def _analysis_as_of() -> str:
@@ -91,7 +91,7 @@ def prepare_v4_multi_event_scenarios(
     ordered_events = [event_by_id[event_id] for event_id in payload.mi_event_ids]
 
     impact_levers, catalog_version, catalog_checksum = ModelImpactLeverService().load_active_catalog(
-        catalog_version=V4_IMPACT_CATALOG_VERSION,
+        catalog_version=get_settings().scenario_group_v4_impact_catalog_version,
     )
     if not impact_levers:
         raise MIBaseError(

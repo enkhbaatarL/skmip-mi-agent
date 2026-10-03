@@ -4330,7 +4330,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert len(warnings) == 1
         assert "중복 dimension task" in warnings[0]
 
-    async def test_v4_primary_and_alternative_bindings_route_to_one_parameter(self) -> None:
+    async def test_v4_primary_and_alternative_bindings_keep_grounded_multiple_parameters(self) -> None:
         primary = {
             "candidate_key": "gdp",
             "mapping_strategy": "v4",
@@ -4367,8 +4367,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             routing_tasks,
             max_candidates_per_dimension=3,
         )
-        assert [candidate["candidate_key"] for candidate in selected] == ["gdp"]
-        assert any("primary/alternative binding" in warning for warning in warnings)
+        assert [candidate["candidate_key"] for candidate in selected] == ["gdp", "pmi"]
+        assert any("복수 binding" in warning for warning in warnings)
 
         selected_alternative, _ = proposal_nodes._sanitize_routing_decisions(
             [
@@ -4381,6 +4381,40 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             max_candidates_per_dimension=3,
         )
         assert [candidate["candidate_key"] for candidate in selected_alternative] == ["pmi"]
+
+    async def test_v4_single_conditional_binding_empty_response_has_no_primary_default(self) -> None:
+        candidate = {
+            "candidate_key": "inventory-supply",
+            "mapping_strategy": "v4",
+            "mapping_method": "routing",
+            "binding_role": "alternative",
+            "binding_selection_mode": "conditional",
+            "scenario_dimension_key": "inventory_path",
+            "source_dimension_id": "inventory_path",
+            "source_dimension_value_id": "low_inventory",
+            "lever_code": "inventory_condition",
+            "canonical_parameter_name": "SupplyDisruption",
+            "source_dimensions": [{"scenario_dimension_key": "inventory_path"}],
+        }
+
+        deterministic, routing_tasks = proposal_nodes._partition_candidate_validation_work(  # noqa: SLF001
+            [candidate],
+        )
+        selected, warnings = proposal_nodes._sanitize_routing_decisions(  # noqa: SLF001
+            [
+                RoutingDecision(
+                    dimension_key=routing_tasks[0]["dimension_key"],
+                    selected_candidate_keys=[],
+                ),
+            ],
+            routing_tasks,
+            max_candidates_per_dimension=3,
+        )
+
+        assert deterministic == []
+        assert routing_tasks[0]["selection_mode"] == "conditional"
+        assert selected == []
+        assert not any("기본값" in warning for warning in warnings)
 
     async def test_routing_decision_is_not_overridden_by_server_comment_logic(self) -> None:
         supply_candidate = {
@@ -4605,6 +4639,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                             axis_value="Plant-42",
                         ),
                     ],
+                    entity_coordinate_resolution={
+                        "plantEvidenceText": "플랜트 42",
+                        "trainEvidenceText": "플랜트 42 1호기",
+                        "coordinateMatchNoteKo": "문맥상 동일 설비로 판단",
+                    },
                 ),
             ],
         )
@@ -4656,6 +4695,11 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             result = await propose_parameter_slots(state)
 
         assert result["parameter_slots"][0]["candidate_key"] == "c1"
+        assert result["parameter_slots"][0]["_llm_entity_coordinate_resolution"] == {
+            "plant_evidence_text": "플랜트 42",
+            "train_evidence_text": "플랜트 42 1호기",
+            "coordinate_match_note_ko": "문맥상 동일 설비로 판단",
+        }
         assert result["slot_selection_diagnostics"] == {
             "catalog_candidate_count": 1,
             "raw_slot_count": 1,
@@ -4673,7 +4717,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "연관된 slot이 하나 이상 있으면 해당 parameter에서 최소 1개" in system_prompt
         assert "Cartesian product를 만들지 마십시오" in system_prompt
         assert "axis_name이 Year, Month, Period이면 axis_value를 JSON integer" in system_prompt
-        assert "각 항목에는 candidate_key와 slot_axes만 반환하십시오" in system_prompt
+        assert "entity_coordinate_resolution" in system_prompt
+        assert "입력 원문에서 각각 그대로 복사" in system_prompt
         assert "rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오" in system_prompt
         assert "rationale_ko에는" not in system_prompt
         payload = json.loads(captured_contents[0].split("\n", 1)[1])

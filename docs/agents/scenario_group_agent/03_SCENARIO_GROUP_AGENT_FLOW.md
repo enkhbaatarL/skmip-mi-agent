@@ -129,8 +129,9 @@ Event ID 집합과 api version으로 계산한다.
 
 ### v4 graph
 
-graph 준비 단계는 0030 versioned table에서 `catalog_version='v4'`인 active Lever만 조회한다. version을 생략해
-`v0` 역사 row와 섞지 않으며, hydrated checksum을 Scenario Group의 `impact_catalog_version/checksum`에 저장한다.
+graph 준비 단계는 설정의 `scenario_group_v4_impact_catalog_version`과 일치하는 active Lever만 조회한다.
+현재 신규 Group 값은 `v4.1`이다. version을 생략해 역사 row와 섞지 않으며, hydrated checksum을 Scenario
+Group의 `impact_catalog_version/checksum`에 저장한다.
 후속 Additional Dimension task도 claim 시 같은 version/checksum pin을 함께 가져와 현재 hydrated catalog와
 둘 다 일치할 때만 LLM을 호출한다. pin 누락·불일치는 `IMPACT_CATALOG_PIN_STALE`로 fail-close한다.
 

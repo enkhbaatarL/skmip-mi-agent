@@ -6,7 +6,7 @@
 
 - 동일 Scenario 기준 Model Parameter 제안 Before/After 비교
 - proposal count·coverage 확대와 실패 원인 분석
-- Event 유형을 넓힌 v4.0 Scenario Group campaign
+- Event 유형을 넓힌 version-pinned v4 Scenario Group campaign
 - 좌표명·slot·conditional binding 로직 수정 후 실제 외부개발 DB 재평가
 
 일반 단일 proposal/confirmation 검증은 기본 `SKILL.md` 절차를 사용한다. canonical parameter, binding,
@@ -36,11 +36,11 @@ Scenario 생성이 끝나면 다음을 immutable cohort identity로 저장한다
 
 1. lifecycle complete
 2. stored catalog pin과 active catalog가 exact match
-3. selected Lever direction이 `unchanged`가 아니며 `price_only`가 아님
+3. selected Lever direction이 `unchanged`가 아니며, `price_only`이면 executable conditional binding이 있음
 4. executable binding, active master, runtime allowlist, valid model target을 모두 만족
 5. active-but-blocked leakage, catalog mismatch, in-flight proposal 등 hard-stop이 없음
 
-후보가 아닌 Scenario도 삭제하지 말고 `UNCHANGED_LEVER_STATE`, `PRICE_ONLY`,
+후보가 아닌 Scenario도 삭제하지 말고 `UNCHANGED_LEVER_STATE`, binding 없는 `PRICE_ONLY`,
 `INACTIVE_MODEL_PARAMETER`, `NO_PARAMETER_BINDING` 등 exact reason과 함께 보존한다. 후보 pool과 실제 proposal
 성공을 섞지 않는다.
 
@@ -52,8 +52,10 @@ Before 실행은 `run_proposal_only.py`로 명시 Group/Scenario만 실행한다
 성공률을 높이기 위해 유효 model input을 수정하거나 존재하지 않는 model 좌표를 만들지 않는다. 다음 개선은
 근거와 회귀 테스트가 있을 때 허용한다.
 
-- 같은 v4 Lever state의 primary/alternative binding을 applicability로 정확히 하나 선택
-- 근거측 한국어/영문 승인 alias, 약칭, `Stage↔단계`, `Train/T↔호기`, 명시 범위 정규화
+- 같은 v4 Lever state의 binding을 applicability별로 독립 판정하고, 근거가 각각 있으면 설정 상한까지 복수 선택
+- 실제 slot hierarchy를 본 LLM이 원문의 Plant·Train 문구와 좌표 일치 이유를 구조화하고, 서버가 원문 span과
+  exact target을 검증하는 일반 좌표 추론
+- 실제 좌표에서 자동 생성한 충돌 없는 공통어·약칭·`Stage↔단계`·`Train/T↔호기` 정규화는 보조 안전망으로 사용
 - 상대기간을 단일·bounded model period로 보수적으로 해석
 - alias/기간 해석을 사용자 rationale note에 표시
 - persistence 정밀도 때문에 생기는 test-runner false negative 교정
@@ -71,7 +73,10 @@ catalog version을 유지한다.
 
 ## 4. After 실행 안전
 
-- Before와 **같은 Group/Scenario ID 및 runtime candidate ID**를 사용한다.
+- matcher/config만 바뀐 비교는 Before와 **같은 Group/Scenario ID 및 runtime candidate ID**를 사용한다.
+- binding catalog가 바뀌면 저장된 pin을 수정하지 않는다. 같은 Scenario payload를 두 catalog로 hydrate한
+  read-only matcher 비교를 만들고, 실제 end-to-end는 같은 ordered Event cohort로 새 catalog version Group을
+  생성한다. 이 두 결과를 `same_stored_ids`와 `same_logical_inputs`로 구분한다.
 - 기본적으로 Before의 uncovered 실행 후보만 Scenario별 격리 프로세스로 한 번 실행한다.
 - 실행 evidence가 생기면 자동 retry하지 않는다.
 - sandbox/network 차단으로 `attempted=0`인 경우 DB write가 없음을 확인하고, 별도 evidence 파일명으로 승인된 외부 실행을 할 수 있다.
@@ -100,7 +105,8 @@ python .claude/skills/model-parameter-multi-event-quality/scripts/compare_same_c
 
 - alias와 exact output coordinate
 - Plant-only/범위 밖 Train/근거 없는 다중 기간 거절
-- primary/alternative 단일 선택
+- primary/alternative·conditional의 근거 기반 복수 선택, deterministic 빈 응답 primary 복구와 conditional 0건 유지
+- LLM 좌표 추론의 원문 Plant/Train span, exact target, 사용자 note
 - 사용자 note 전파
 - proposal/API/DB 비교 정밀도
 - capability/workbook/canonical 및 local/Kubernetes config parity

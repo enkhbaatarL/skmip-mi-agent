@@ -1,7 +1,7 @@
 # Model Parameter Base Case Mapping
 
-> 현재 runtime 계약은 proposal capability `extend16-v7`, workbook contract `new-bc-v7`, 신규 Scenario
-> Group catalog `v4.0`(checksum `41601735…c763`)을 따른다. 이 문서의 역사 표를 DB 적용 입력으로 사용하지 않는다.
+> 현재 runtime 계약은 proposal capability `extend16-v8`, workbook contract `new-bc-v7`, 신규 Scenario
+> Group catalog `v4.1`(checksum `7f4ef0b7…4d69`)을 따른다. 이 문서의 역사 표를 DB 적용 입력으로 사용하지 않는다.
 
 ## 기준과 범위
 
@@ -14,16 +14,16 @@
 
 - 외부개발 DB master 24행·활성 16개
 - Agent proposal capability: LUT-backed 10개 + Basecase-only 6개
-- 신규 그룹 v4.0 impact Lever 21개, binding occurrence 19개, 고유 활성 parameter 16개
+- 신규 그룹 v4.1 impact Lever 21개, binding occurrence 56개(conditional 37개), 고유 활성 parameter 16개
 - 역사 0032 fixture 기준은 master 21행·활성 14개, LUT-backed 10개, Basecase-only 4개 활성,
   v4 binding occurrence 16개다.
 - v1/v3 shared legacy dimension mapping: 129행 (direct 35, routing 6, indirect 55, na 33), 최대 후보 10개
 - proposal scope: v1/v3는 `GDP`, `PMI`, `PowerMix`, `Temperature`, `LiqUtilAdjustment` 5종; v4 extend16은 LUT-backed 10종과 Basecase-only 6종을 DB ID/name/target capability로 허용
 - 기존 v1/v3 mapping rollout의 수정 대상: `tmm_mi_model_param_dimension_map`만; master, Impact Lever, Scenario/proposal, DB schema는 변경하지 않음
 - 공개 proposal/confirmation API와 payload: 변경 없음
-- `new-bc-v7`는 최종 workbook의 대상 시트·헤더·단위를 고정하고 v4.0 DB master·Lever metadata와 정합화함
+- `new-bc-v7`는 최종 workbook의 대상 시트·헤더·단위를 고정하고 v4.1 DB master·Lever metadata와 정합화함
 - LiqUtilAdjustment는 `existing_exact` 행 정책을 사용해 최종 시트에 없는 LUT 시설명을 제외하고, Plant/Train/Lifecycle/Nameplate/Period를 최종 대상 행의 표기로 반환함
-- impact catalog version: 신규 그룹 `v4.0`; 기존 그룹은 저장된 pin 유지
+- impact catalog version: 신규 그룹 `v4.1`; 기존 그룹은 저장된 pin 유지
 
 ## v4 `new-bc-v7` read-only proposal overlay
 
@@ -70,8 +70,8 @@ recalc·model engine은 변경하지 않는다.
 
 ## 최종 master
 
-> 아래 표는 이 저장소의 0032 canonical 재현용 역사 master다. 현재 외부개발 v4.0 활성 집합은 문서 상단과
-> proposal capability `extend16-v7`을 따른다.
+> 아래 표는 이 저장소의 0032 canonical 재현용 역사 master다. 현재 외부개발 v4.1 활성 집합은 문서 상단과
+> proposal capability `extend16-v8`을 따른다.
 
 
 | ID  | use_yn | parameter_name              | parameter_hint                                                                                                                                                                                                                                                                                                                                    |
@@ -215,9 +215,14 @@ v4는 선택 dimension value의 `lever_states`와 아래 active catalog binding�
 | `regional_upstream_production` | RegionalProductionAdjustment primary |
 | `lng_vessel_fuel_cost` | ShippingFuelCost primary |
 | `canal_toll` | CanalToll primary |
-| `route_disruption`, `trade_restriction` | binding 없음 |
+| `route_disruption` | ShippingCost, ShippingFuelCost, CanalToll conditional |
+| `trade_restriction` | 공급·시설 6종과 PNG Contract Volume conditional |
+| `inventory_condition` | 수요 4종·공급 6종·PNG Contract Volume conditional |
+| `regional_price_spread` | 수요 4종·공급 6종·PNG 1종·운송 3종 conditional |
+| `financial_market_sentiment` | GDP, PMI conditional |
 
-세 `price_only` Lever는 binding이 없다. 현재 v4 extend16은 활성 16개 ID를 proposal 후보로 허용하며 v4 binding은 Step1.5 없이 deterministic candidate로 보존한다.
+세 `price_only` Lever도 원인·직접 영향이 실제 model input과 연결될 때만 conditional 후보가 된다. 현재 v4
+extend16은 활성 16개 ID를 proposal 후보로 허용하며 복수·conditional binding은 Step1.5 근거 판정을 거친다.
 
 ### 보류와 보조 resource
 
@@ -293,7 +298,7 @@ legacy direct/routing mapping은 모두 활성·미삭제 master만 참조해야
 
 아래 DB 명령은 기존 mapping rollout 절차다. 역사적 runtime allow-list-only v0.2.4에서는 실행하지 않았으며,
 당시 DB·canonical·config·workbook은 repository diff와 read-only fingerprint로 불변을 확인했다. 현재
-`new-bc-v7`는 이미 적용된 v4.0 master·binding과 final workbook target·unit metadata를 함께 정합화한다.
+`new-bc-v7`는 v4.1에서도 변경되지 않은 master·model input과 final workbook target·unit metadata를 정합화한다.
 
 1. `poetry run python scripts/model_parameter/apply_model_parameter_v1_v3_mapping.py`로 dry-run한다. live v4 master·Lever canonical을 선검증하고 mapping만 DML한 뒤 129행·35/6/55/33, exact 후보 10개와 전체 불변식을 검증하고 rollback한다.
 2. 승인된 DB에는 mgmt 0032 migration을 적용한다. 적용 후 master 21행·활성 14개와 새 catalog checksum을 확인한다.

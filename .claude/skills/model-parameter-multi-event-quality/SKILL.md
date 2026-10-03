@@ -113,15 +113,16 @@ uncovered-only runner를 사용한다. 기본은 read-only이며 capability rele
 ```bash
 python tests/manual/model_parameter_agent/run_proposal_only.py \
   --scenario-group-id 123 \
-  --capability-release v4-proposal-capability-v1
+  --capability-release extend16-v8
 ```
 
 명시적인 proposal write 승인 후에만 같은 명령에 `--execute`를 추가한다. 이 runner는 비삭제 proposal 전체
 이력에서 `PROPOSED`/`CONFIRMED` Scenario를 skip하고, `PROCESSING`이 하나라도 있으면 campaign 전체를
 hard-stop한다. lifecycle/capability skip Scenario도 history guard 범위에서 제외하지 않는다. `FAILED` 이력만
 있거나 이력이 없는 실행 가능 Scenario만 대상으로 하며 write 직전에 resource/context/catalog/input fingerprint와
-proposal history를 다시 판정한다. `v4-proposal-capability-v1`은 0030 full checksum, 기존 5종 allow-list와
-`new-bc-v1` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다. 각 write
+proposal history를 다시 판정한다. `extend16-v8`은 v4.1 full checksum, 활성 16종 allow-list와
+`new-bc-v7` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다. 기존 v4.0
+Group 검증에는 명시적인 `extend16-v8-v4.0-compat` release를 사용한다. 각 write
 직전에는 현재 Scenario뿐 아니라 명시 cohort 전체의 in-flight 상태를 다시 확인한다. Confirmation, callback,
 outer retry와 uncovered guard 우회는 제공하지 않는다.
 
@@ -136,9 +137,12 @@ cohort에 대한 다른 runner/public proposal 요청이 없도록 운영 single
 동일 cohort에서 proposal 결과만 비교하거나, Event 유형을 늘려 proposal count·coverage를 개선하는 작업은
 `references/same-cohort-coverage-campaign.md` 절차를 따른다. 핵심 불변 조건은 다음과 같다.
 
-- Before/After의 catalog pin, Group IDs, Scenario IDs, runtime candidate IDs가 동일해야 한다.
+- matcher/config만 바뀌면 Before/After의 catalog pin, Group IDs, Scenario IDs, runtime candidate IDs가 동일해야 한다.
+- binding catalog가 바뀌면 기존 pinned Scenario를 덮어쓰지 않는다. 동일 Scenario payload의 read-only matcher
+  비교와 같은 Event cohort로 새 version Group을 생성한 end-to-end 비교를 분리해 보고한다.
 - 유효 model input과 Lever Full set을 coverage를 위해 변경하지 않는다.
-- 표기 alias와 기간 해석은 완화할 수 있지만 출력은 exact model coordinate이며 다중 slot은 명시 근거를 요구한다.
+- 표기 차이는 Step2 LLM의 구조화된 원문 Plant/Train 근거와 server-side span/exact-target 검증으로 완화할 수
+  있지만 출력은 exact model coordinate이며 다중 slot은 명시 근거를 요구한다.
 - After는 Before uncovered 후보만 Scenario별 1회 실행하고 DB 전체 read-back으로 KPI를 다시 계산한다.
 - 비교에는 `scripts/compare_same_cohort.py`를 사용하고 전체 coverage와 후보 성공률을 분리해 보고한다.
 - logic/config 변경은 `rollout-model-parameters`, release 검증은 `verify-model-parameter-release`, 배포는

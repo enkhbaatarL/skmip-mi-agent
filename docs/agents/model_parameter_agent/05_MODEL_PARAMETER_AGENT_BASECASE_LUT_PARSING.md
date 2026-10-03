@@ -5,10 +5,10 @@
 
 ## 1. 기준 범위
 
-외부개발 v4.0 기준선은 master 24행 중 활성 16개이며, active resource capability는
+외부개발 v4.1 기준선은 master 24행 중 활성 16개이며, active resource capability는
 LUT-backed 10개와 Basecase-only 6개로 나뉜다. 체크인 v1/v3 shared dimension mapping 129행의
-direct/routing 전역 합집합은 LUT-backed parameter 10개에 도달한다. v4.0은 active Lever 21개와
-binding occurrence 19개를 가지며 effective executable 전역 합집합은 16개다. 이 수치는
+direct/routing 전역 합집합은 LUT-backed parameter 10개에 도달한다. v4.1은 active Lever 21개와
+binding occurrence 56개를 가지며 effective executable 전역 합집합은 16개다. 이 수치는
 live DB나 요청 하나의 후보 수가 아니다. 실제 신규 proposal은 v1/v3에서 기존 `GDP`, `PMI`, `PowerMix`,
 `Temperature`, `LiqUtilAdjustment` 5종을 유지하고, v4 extend16은 LUT-backed 10종에
 `RegasAdjustment`, `PNG Contract Volume`, `ShippingCost`, `RegionalProductionAdjustment`,
@@ -165,10 +165,10 @@ applicability, exact slot과 evidence gate를 통과한 하위 집합만 Step2·
 record가 없거나 key/value 검증을 통과하지 못한 slot에는 LUT·유사 시설·부분 key fallback을 적용하지 않고
 그 slot을 제외한다.
 
-이 6개 capability는 v4.0 release 검증 기준선에 유지되고 `extend16-v7` 신규 proposal에 진입한다. 단, 등록
+이 6개 capability는 v4.1 release 검증 기준선에 유지되고 `extend16-v8` 신규 proposal에 진입한다. 단, 등록
 LUT가 없으므로 검증된 Basecase slot과 직접 증적이 없는 좌표는 abstain한다. runtime startup은 여섯 종류의
 Basecase slot을 모두 미리 materialize하지 않고 최초 v4 조회에서 fail closed한다.
-`User-Adjusted Gas Demand`는 v6 reference 이력을 보존하지만 v4.0 master 비활성이므로 proposal scope가 아니다.
+`User-Adjusted Gas Demand`는 v6 reference 이력을 보존하지만 master 비활성이므로 proposal scope가 아니다.
 `RemainingUnrestrictedAmount`와 `VolumeCancelled`의 과거 Basecase 좌표는 남아 있어도
 0032 canonical master 비활성·active binding 없음 상태이므로 future 계약 전에는 executable하지 않다.
 
@@ -233,7 +233,7 @@ contract hash와 실제 파일 signature를 key로 process cache한다. 구조�
 
 자동화·release acceptance에서는 runtime보다 넓은 체크인 기준선을 별도로 검증한다.
 
-- 외부개발 v4.0 master 24행·활성 16개, LUT-backed 활성 10개·Basecase-only 활성 6개 정의의 일관성
+- 외부개발 v4.1 master 24행·활성 16개, LUT-backed 활성 10개·Basecase-only 활성 6개 정의의 일관성
 - LUT-backed parameter의 horizon 내 selectable LUT record와 Basecase-only parameter의 검증된 exact Basecase slot
 - 필수 header 누락, 숫자 형식 오류, 필수 key/value 빈 값
 - 같은 exact key의 상충 값, join 누락, 허용되지 않은 시설 상태
@@ -245,6 +245,6 @@ byte 상한을 넘으면 LLM을 호출하지 않고 actual/limit byte와 paramet
 반환한다. catalog 크기와 token은 resource release와 선택 후보에 따라 달라지므로 실행마다 측정하고, 테스트
 보고서에는 provider가 반환한 input/output/total token과 실행시간을 기록한다.
 
-LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v7`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v7.json`이 기준이다. 신규 Scenario Group은 외부개발 DB catalog `v4.0` full pin을 사용하며, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`를 유지한다.
+LUT 파일명·header·object key는 `envs/config.yaml`, v4 `new-bc-v7`의 workbook digest·sheet·header·range·record count는 `resources/contracts/model-parameter-workbook-contract-v7.json`이 기준이다. 신규 Scenario Group은 외부개발 DB catalog `v4.1` full pin을 사용하며, v1/v3 mapping은 `scripts/model_parameter/model-parameter-canonical-v1.json`의 `dimension_mappings`를 유지한다.
 
 runtime proposal 제한을 위해 DB·canonical·기존 v1/v3 Basecase·업무용 mapping workbook을 축소하거나 다시 생성하지 않는다. v4 신규 기준값은 별도 versioned contract/workbook resource로만 materialize한다.

@@ -61,7 +61,7 @@ blocked 후보에는 exact `PROPOSAL_SCOPE_EXCLUDED` reason code가 있어야 �
 
 raw/runtime/blocked candidate key는 각 집합 내에서 고유해야 하며 `runtime ∩ blocked = ∅`, `runtime ∪ blocked = raw`여야 한다.
 
-catalog의 `known_unsupported`, `unchanged`, `price_only`, no-binding state는 matcher non-input occurrence identity와 exact reason code multiset으로 graph까지 보존하며 raw executable 후보로 세지 않는다. 누락·중복·reason 변경은 `FAIL`이다.
+catalog의 `known_unsupported`, `unchanged`, binding 없는 `price_only`, no-binding state는 matcher non-input occurrence identity와 exact reason code multiset으로 graph까지 보존하며 raw executable 후보로 세지 않는다. conditional binding이 있는 `price_only`는 Step1.5 근거 판정 대상으로 세며, 누락·중복·reason 변경은 `FAIL`이다.
 
 ## 4. 선택, 수렴, 확장
 

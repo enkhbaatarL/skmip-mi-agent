@@ -35,8 +35,8 @@ def _candidate(entry: object) -> dict[str, object]:
 def test_extend16_contract_has_exact_release_scope_and_reference_policies() -> None:
     contract = load_proposal_capability_contract()
 
-    assert contract.release_id == "extend16-v7"
-    assert contract.catalog_version == "v4.0"
+    assert contract.release_id == "extend16-v8"
+    assert contract.catalog_version == "v4.1"
     assert contract.catalog_checksum == EXPECTED_EXTEND16_CATALOG_CHECKSUM
     assert frozenset(contract.by_id) == EXPECTED_EXTEND16_PARAMETER_IDS
     assert 9 not in contract.by_id
@@ -119,7 +119,7 @@ def test_v4_scope_accepts_exactly_the_extend16_id_name_target_tuples() -> None:
 
     assert {int(item["model_param_id"]) for item in allowed} == EXPECTED_EXTEND16_PARAMETER_IDS
     assert excluded == []
-    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend16-v7"}
+    assert {item["proposal_capability_release_id"] for item in allowed} == {"extend16-v8"}
     assert all(item["proposal_evidence_policy"] == "explicit_or_unique_inferred" for item in allowed)
 
 

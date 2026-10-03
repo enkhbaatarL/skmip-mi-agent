@@ -51,22 +51,10 @@ _SPECIFIC_TIME_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SHORT_TERM_PATTERN = re.compile(r"단기|short[- ]?term", re.IGNORECASE)
-_ENTITY_ALIAS_REPLACEMENTS = (
-    (re.compile(r"코브\s*포인트", re.IGNORECASE), "cove point"),
-    (re.compile(r"코퍼스\s*크리스티", re.IGNORECASE), "corpus christi"),
-    (re.compile(r"에너지아\s*코스타\s*아술", re.IGNORECASE), "energia costa azul"),
-    (re.compile(r"코스타\s*아술", re.IGNORECASE), "costa azul"),
-    (re.compile(r"미국", re.IGNORECASE), "united states"),
-    (re.compile(r"멕시코", re.IGNORECASE), "mexico"),
-    (re.compile(r"앙골라", re.IGNORECASE), "angola"),
-)
 _ENTITY_GENERIC_TOKENS = frozenset({"lng", "plant", "terminal"})
-_PLANT_EVIDENCE_ALIASES = {
-    "cove point export": ("cove point lng",),
-}
-_TRAIN_EVIDENCE_ALIASES = {
-    ("cove point export", "cove point export"): ("cove point lng t1",),
-}
+_ALIAS_REMOVABLE_TOKENS = _ENTITY_GENERIC_TOKENS | {"export"}
+_FACILITY_TYPE_ALIAS_TOKENS = ("lng", "plant", "terminal", "export")
+_KOREAN_POSTPOSITION_SUFFIXES = ("와", "과", "은", "는", "이", "가", "을", "를", "의")
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +62,18 @@ class LiqUtilEvidenceDecision:
     allowed: bool
     missing_components: tuple[str, ...]
     user_notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovedCoordinateAliasIndex:
+    """Aliases derived from actual model coordinates and accepted only when unique."""
+
+    plant_aliases_by_target: Mapping[str, tuple[str, ...]]
+    train_aliases_by_target: Mapping[tuple[str, str], tuple[str, ...]]
+    strict_alias_pairs_by_target: Mapping[
+        tuple[str, str],
+        tuple[tuple[str, str], ...],
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +119,11 @@ def _canonical_text(value: object) -> str:
 
 def _canonical_entity_text(value: object) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    for pattern, replacement in _ENTITY_ALIAS_REPLACEMENTS:
-        normalized = pattern.sub(replacement, normalized)
+    normalized = re.sub(
+        r"(?<=[a-z0-9])(?:와|과|은|는|이|가|을|를|의)(?=\s|$)",
+        " ",
+        normalized,
+    )
     normalized = re.sub(r"(?<!\d)(\d+)\s*단계", r" stage \1 ", normalized)
     normalized = re.sub(r"(?:train|트레인)\s*(\d+)", r" t\1 ", normalized)
     normalized = re.sub(r"(?<![a-z0-9])t\s+(\d+)", r" t\1 ", normalized)
@@ -140,14 +143,6 @@ def _contains_exact_phrase(text: str, phrase: object) -> bool:
     return f" {normalized_phrase} " in f" {normalized_text} "
 
 
-def _entity_tokens(value: object) -> set[str]:
-    return {
-        token
-        for token in _canonical_entity_text(value).split()
-        if token not in _ENTITY_GENERIC_TOKENS
-    }
-
-
 def _entity_acronym(value: object) -> str:
     words = [
         token
@@ -157,23 +152,253 @@ def _entity_acronym(value: object) -> str:
     return "".join(word[0] for word in words if word and word[0].isalpha())
 
 
-def _plant_evidence_match(text: str, plant: object) -> tuple[bool, bool]:
+def _coordinate_axes(value: object) -> Mapping[str, Any]:
+    axes = getattr(value, "axes", None)
+    if isinstance(axes, Mapping):
+        return axes
+    if isinstance(value, Mapping):
+        nested_axes = value.get("axes")
+        if isinstance(nested_axes, Mapping):
+            return nested_axes
+        return slot_coordinates(value)
+    return {}
+
+
+def _alias_without_generic_tokens(value: object) -> str:
+    return " ".join(
+        token
+        for token in _canonical_entity_text(value).split()
+        if token not in _ALIAS_REMOVABLE_TOKENS
+    )
+
+
+def _plant_alias_candidates(plant: str) -> set[str]:
+    aliases = {_canonical_entity_text(plant)}
+    generic_free = _alias_without_generic_tokens(plant)
+    if len(generic_free) >= 4:
+        aliases.add(generic_free)
+        aliases.update(
+            f"{generic_free} {facility_type}"
+            for facility_type in _FACILITY_TYPE_ALIAS_TOKENS
+        )
+    acronym = _entity_acronym(plant)
+    if len(acronym) >= 3:
+        aliases.add(acronym)
+    return {alias for alias in aliases if alias}
+
+
+def _train_alias_candidates(
+    *,
+    plant: str,
+    train: str,
+    implicit_train_number: int | None = None,
+) -> tuple[set[str], set[str]]:
+    canonical_plant = _canonical_entity_text(plant)
+    canonical_train = _canonical_entity_text(train)
+    aliases = set() if canonical_train == canonical_plant else {canonical_train}
+    generic_free = _alias_without_generic_tokens(train)
+    if generic_free and canonical_train != canonical_plant:
+        aliases.add(generic_free)
+    train_number = _train_number(train) or implicit_train_number
+    synthesized_train_aliases: set[str] = set()
+    if train_number is not None:
+        for plant_alias in _plant_alias_candidates(plant):
+            if plant_alias:
+                train_alias = f"{plant_alias} t{train_number}"
+                aliases.add(train_alias)
+                if implicit_train_number is not None:
+                    synthesized_train_aliases.add(train_alias)
+    return (
+        {alias for alias in aliases if alias},
+        {alias for alias in synthesized_train_aliases if alias},
+    )
+
+
+def _unique_aliases_by_target(
+    aliases_by_target: Mapping[Any, set[str]],
+) -> dict[Any, tuple[str, ...]]:
+    targets_by_alias: dict[str, set[Any]] = {}
+    for target, aliases in aliases_by_target.items():
+        for alias in aliases:
+            targets_by_alias.setdefault(alias, set()).add(target)
+    return {
+        target: tuple(
+            sorted(
+                alias
+                for alias in aliases
+                if len(targets_by_alias.get(alias, ())) == 1
+            ),
+        )
+        for target, aliases in aliases_by_target.items()
+    }
+
+
+def _phrase_token_spans(text: str, phrase: str) -> tuple[tuple[int, int], ...]:
+    text_tokens = _canonical_entity_text(text).split()
+    phrase_tokens = _canonical_entity_text(phrase).split()
+    if not phrase_tokens or len(phrase_tokens) > len(text_tokens):
+        return ()
+    width = len(phrase_tokens)
+    return tuple(
+        (index, index + width)
+        for index in range(len(text_tokens) - width + 1)
+        if text_tokens[index : index + width] == phrase_tokens
+    )
+
+
+def _contains_distinct_phrase_pair(
+    text: str,
+    first_phrase: str,
+    second_phrase: str,
+) -> bool:
+    first_spans = _phrase_token_spans(text, first_phrase)
+    second_spans = _phrase_token_spans(text, second_phrase)
+    return bool(second_spans) and any(
+        all(
+            first_end <= second_start or second_end <= first_start
+            for second_start, second_end in second_spans
+        )
+        for first_start, first_end in first_spans
+    )
+
+
+def _evidence_phrase_token_spans(
+    text: str,
+    phrase: str,
+) -> tuple[tuple[int, int], ...]:
+    text_tokens = _canonical_evidence_text(text).split()
+    phrase_tokens = _canonical_evidence_text(phrase).split()
+    if not phrase_tokens or len(phrase_tokens) > len(text_tokens):
+        return ()
+    width = len(phrase_tokens)
+
+    def matches(candidate_tokens: list[str]) -> bool:
+        for index, (candidate_token, phrase_token) in enumerate(
+            zip(candidate_tokens, phrase_tokens, strict=True),
+        ):
+            if candidate_token == phrase_token:
+                continue
+            if index == width - 1 and any(
+                candidate_token == f"{phrase_token}{suffix}"
+                for suffix in _KOREAN_POSTPOSITION_SUFFIXES
+            ):
+                continue
+            return False
+        return True
+
+    return tuple(
+        (index, index + width)
+        for index in range(len(text_tokens) - width + 1)
+        if matches(text_tokens[index : index + width])
+    )
+
+
+def _validated_llm_entity_resolution(
+    slot: Mapping[str, Any],
+    facility_text: str,
+) -> tuple[bool, str | None]:
+    raw_resolution = slot.get("_llm_entity_coordinate_resolution")
+    if not isinstance(raw_resolution, Mapping):
+        return False, None
+    plant_evidence = str(raw_resolution.get("plant_evidence_text") or "").strip()
+    train_evidence = str(raw_resolution.get("train_evidence_text") or "").strip()
+    note = str(raw_resolution.get("coordinate_match_note_ko") or "").strip()
+    if not plant_evidence or not train_evidence or not note:
+        return False, None
+    if _canonical_evidence_text(plant_evidence) == _canonical_evidence_text(
+        train_evidence,
+    ):
+        return False, None
+    plant_spans = _evidence_phrase_token_spans(facility_text, plant_evidence)
+    train_spans = _evidence_phrase_token_spans(facility_text, train_evidence)
+    has_distinct_evidence = bool(train_spans) and any(
+        all(
+            plant_end <= train_start or train_end <= plant_start
+            for train_start, train_end in train_spans
+        )
+        for plant_start, plant_end in plant_spans
+    )
+    if not has_distinct_evidence:
+        return False, None
+    return True, note
+
+
+def build_approved_coordinate_alias_index(
+    coordinates: Sequence[object],
+) -> ApprovedCoordinateAliasIndex:
+    """Build a collision-safe alias dictionary from the loaded model coordinates.
+
+    This is a deterministic fallback after structured LLM entity inference.
+    It derives only generic facility-word, stage/train-notation, and unique-acronym
+    variants from the supplied exact coordinates; no target-specific dictionary is
+    consulted.
+    """
+
+    coordinate_pairs: set[tuple[str, str]] = set()
+    for coordinate in coordinates:
+        axes = _coordinate_axes(coordinate)
+        plant = str(axes.get("LNG Plant") or axes.get("Plant") or "").strip()
+        train = str(axes.get("LNG Plant Train") or axes.get("Train") or "").strip()
+        if plant and train:
+            coordinate_pairs.add((plant, train))
+
+    trains_by_plant: dict[str, set[str]] = {}
+    for plant, train in coordinate_pairs:
+        trains_by_plant.setdefault(plant, set()).add(train)
+
+    plant_aliases: dict[str, set[str]] = {}
+    train_aliases: dict[tuple[str, str], set[str]] = {}
+    synthesized_train_aliases: dict[tuple[str, str], set[str]] = {}
+    for plant, train in sorted(coordinate_pairs):
+        plant_aliases.setdefault(plant, set()).update(_plant_alias_candidates(plant))
+        implicit_train_number = (
+            1
+            if len(trains_by_plant[plant]) == 1
+            and _canonical_entity_text(plant) == _canonical_entity_text(train)
+            and _train_number(train) is None
+            else None
+        )
+        aliases, synthesized = _train_alias_candidates(
+            plant=plant,
+            train=train,
+            implicit_train_number=implicit_train_number,
+        )
+        train_aliases[(plant, train)] = aliases
+        synthesized_train_aliases[(plant, train)] = synthesized
+
+    unique_plant_aliases = _unique_aliases_by_target(plant_aliases)
+    unique_train_aliases = _unique_aliases_by_target(train_aliases)
+    strict_alias_pairs = {
+        target: tuple(
+            (plant_alias, train_alias)
+            for plant_alias in unique_plant_aliases.get(target[0], ())
+            for train_alias in unique_train_aliases.get(target, ())
+            if train_alias in synthesized_train_aliases.get(target, set())
+        )
+        for target in sorted(coordinate_pairs)
+        if synthesized_train_aliases.get(target)
+    }
+
+    return ApprovedCoordinateAliasIndex(
+        plant_aliases_by_target=unique_plant_aliases,
+        train_aliases_by_target=unique_train_aliases,
+        strict_alias_pairs_by_target=strict_alias_pairs,
+    )
+
+
+def _plant_evidence_match(
+    text: str,
+    plant: object,
+    alias_index: ApprovedCoordinateAliasIndex,
+) -> tuple[bool, bool]:
     if _contains_exact_phrase(text, plant):
         literal_plant = _canonical_evidence_text(plant)
         literal_match = f" {literal_plant} " in f" {_canonical_evidence_text(text)} "
         return True, not literal_match
-    canonical_plant = _canonical_entity_text(plant)
     if any(
         _contains_exact_phrase(text, alias)
-        for alias in _PLANT_EVIDENCE_ALIASES.get(canonical_plant, ())
+        for alias in alias_index.plant_aliases_by_target.get(str(plant), ())
     ):
-        return True, True
-    plant_tokens = _entity_tokens(plant)
-    text_tokens = _entity_tokens(text)
-    if len(plant_tokens) >= 2 and plant_tokens <= text_tokens:
-        return True, True
-    acronym = _entity_acronym(plant)
-    if len(acronym) >= 3 and acronym in text_tokens and "lng" in _canonical_entity_text(text).split():
         return True, True
     return False, False
 
@@ -204,18 +429,21 @@ def _train_evidence_match(
     *,
     plant: object,
     train: object,
+    alias_index: ApprovedCoordinateAliasIndex,
 ) -> tuple[bool, bool]:
-    plant_matches, _ = _plant_evidence_match(text, plant)
+    plant_matches, _ = _plant_evidence_match(text, plant, alias_index)
     if not plant_matches:
         return False, False
     if _contains_exact_phrase(text, train):
         literal_train = _canonical_evidence_text(train)
         literal_match = f" {literal_train} " in f" {_canonical_evidence_text(text)} "
         return True, not literal_match
-    alias_key = (_canonical_entity_text(plant), _canonical_entity_text(train))
     if any(
         _contains_exact_phrase(text, alias)
-        for alias in _TRAIN_EVIDENCE_ALIASES.get(alias_key, ())
+        for alias in alias_index.train_aliases_by_target.get(
+            (str(plant), str(train)),
+            (),
+        )
     ):
         return True, True
     train_number = _train_number(train)
@@ -295,6 +523,7 @@ def evaluate_liq_util_evidence(
     scenario_context: Mapping[str, Any],
     *,
     exact_candidate_count: int | None = None,
+    coordinate_alias_index: ApprovedCoordinateAliasIndex | None = None,
 ) -> LiqUtilEvidenceDecision:
     """Require one coherent v4 Lever lineage item to ground an exact facility slot.
 
@@ -309,6 +538,9 @@ def evaluate_liq_util_evidence(
     coordinates = slot_coordinates(slot)
     plant = coordinates.get("LNG Plant") or coordinates.get("Plant")
     train = coordinates.get("LNG Plant Train") or coordinates.get("Train")
+    alias_index = coordinate_alias_index or build_approved_coordinate_alias_index(
+        [slot],
+    )
     events = [item for item in scenario_context.get("events") or [] if isinstance(item, Mapping)]
     events_by_id = {event_id: event for event in events if (event_id := _event_id(event)) is not None}
 
@@ -348,18 +580,52 @@ def evaluate_liq_util_evidence(
         if not plant or not train:
             missing.add("exact_facility_slot")
         else:
-            plant_matches, plant_uses_alias = _plant_evidence_match(facility_text, plant)
+            plant_matches, plant_uses_alias = _plant_evidence_match(
+                facility_text,
+                plant,
+                alias_index,
+            )
             train_matches, train_uses_alias = _train_evidence_match(
                 facility_text,
                 plant=plant,
                 train=train,
+                alias_index=alias_index,
             )
-            if not (plant_matches and train_matches):
+            llm_resolution_matches, llm_resolution_note = (
+                _validated_llm_entity_resolution(slot, facility_text)
+            )
+            strict_pairs = alias_index.strict_alias_pairs_by_target.get(
+                (str(plant), str(train)),
+                (),
+            )
+            strict_alias_pair_matches = (
+                not (plant_uses_alias or train_uses_alias)
+                or not strict_pairs
+                or any(
+                    _contains_distinct_phrase_pair(
+                        facility_text,
+                        plant_alias,
+                        train_alias,
+                    )
+                    for plant_alias, train_alias in strict_pairs
+                )
+            )
+            deterministic_matches = (
+                plant_matches and train_matches and strict_alias_pair_matches
+            )
+            if not (llm_resolution_matches or deterministic_matches):
                 missing.add("specific_facility_evidence")
+            elif llm_resolution_matches:
+                user_notes.append(
+                    "근거 원문의 Plant·Train 문구를 LLM이 실제 Basecase 좌표 "
+                    f"'{plant} / {train}'와 같은 실체로 해석했습니다. "
+                    f"원문 존재·서로 다른 근거 span·exact target을 서버가 검증했습니다: "
+                    f"{llm_resolution_note}",
+                )
             elif plant_uses_alias or train_uses_alias:
                 user_notes.append(
-                    "근거의 한국어·영문 별칭·단계·호기 표기를 Basecase 영문 설비 "
-                    f"'{plant}'의 Train 좌표와 동일 실체로 정규화해 연결했습니다.",
+                    "근거의 공통어·단계·호기 표기를 실제 Basecase 좌표에서 "
+                    f"유일하게 승인된 영문 설비 '{plant}'의 Train 좌표로 정규화해 연결했습니다.",
                 )
         if time_matches and _SHORT_TERM_PATTERN.search(time_window):
             user_notes.append(

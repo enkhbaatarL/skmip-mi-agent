@@ -245,6 +245,7 @@ class Settings(BaseSettings):
     scenario_group_operation_reaper_interval_seconds: float = Field(default=30.0, gt=0)
     additional_dimension_stale_after_seconds: float = Field(default=240.0, gt=0)
     hide_price_pressure: bool = True
+    scenario_group_v4_impact_catalog_version: str = Field(default="v4.1", min_length=1)
 
     @model_validator(mode="after")
     def validate_scenario_group_operation_timing(self) -> Settings:
@@ -256,6 +257,15 @@ class Settings(BaseSettings):
             )
             raise ValueError(msg)
         return self
+
+    @field_validator("scenario_group_v4_impact_catalog_version")
+    @classmethod
+    def validate_v4_impact_catalog_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if re.fullmatch(r"v\d+(?:\.\d+)?", normalized) is None:
+            message = "scenario_group_v4_impact_catalog_version must look like v4 or v4.1"
+            raise ValueError(message)
+        return normalized
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod

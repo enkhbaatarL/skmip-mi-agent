@@ -2,12 +2,14 @@
 
 ## 1. 체크인 기준선
 
-현재 Agent runtime 판정 기준은 proposal capability `extend16-v7`, workbook contract `new-bc-v7`,
-신규 Scenario Group catalog `v4.0` full pin이다. DB 적용 상태는 runner preflight와 read-back으로 확인한다.
+현재 Agent runtime 판정 기준은 proposal capability `extend16-v8`, workbook contract `new-bc-v7`,
+신규 Scenario Group catalog `v4.1` full pin이다. 기존 v4.0 Scenario는 저장된 v4.0 pin을 그대로 읽는다.
+DB 적용 상태는 runner preflight와 read-back으로 확인한다.
 
 - 외부개발 DB master 24행, 활성 16개이며 Agent proposal capability도 같은 16개다. 10개는
   LUT-backed이고 6개는 검증된 exact Basecase-only capability다.
-- 신규 Scenario Group용 v4.0 active Lever 21개, binding occurrence 19개, executable 고유 Parameter 16개다.
+- 신규 Scenario Group용 v4.1 active Lever는 v4.0과 같은 Full Set 21개다. binding occurrence는 56개이며,
+  이 중 37개는 근거가 없으면 0개를 선택하는 `conditional` binding이다. executable 고유 Parameter는 16개로 같다.
 - legacy dimension mapping 129행은 v4가 읽거나 변경하지 않는 보호 대상 invariant다.
 - v1/v3 신규 proposal 이름 allow-list 5개: GDP, PMI, PowerMix, Temperature, LiqUtilAdjustment
 - v4 extend16 capability 16개: 위 5개 + Population(ID 11),
@@ -22,11 +24,13 @@
 - LUT-backed 10개는 contract reference→same-exact-key LUT fallback→slot/evidence/value 절차를 사용한다.
   Basecase-only 6개도 같은 `v4_workbook_then_lut` mode를 쓰지만 등록 LUT가 없으므로 검증된 workbook
   exact slot만 사용하며, v4에는 별도 legacy Basecase reference mode를 두지 않는다.
-- source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4의 단일 binding은
-  결정적으로 통과시키고, 동일 Lever state에 primary/alternative가 함께 있으면 Step1.5에서 정확히 하나만 선택한다.
+- source matching 뒤 LLM과 proposal persistence 전에 version별 capability gate를 적용한다. v4의 단일
+  `deterministic` binding은 결정적으로 통과시킨다. 복수 binding 또는 단일 `conditional` binding은 Step1.5에서
+  각 applicability 근거를 독립 판정한다. 복수 Parameter가 각각 근거를 만족하면 설정 상한까지 함께 유지한다.
+  deterministic 빈 응답은 primary 1건으로 복구하지만 conditional 빈 응답은 자동 보정하지 않는다.
 - 공개 proposal/confirmation API와 payload, confirmation 동작은 변경하지 않는다.
-- DB migration 정본은 sibling mgmt repository다. 외부개발 DB에는 mgmt 0033/0034의 ID 22·23·24와 해당
-  v4.0 binding이 이미 활성화되어 있어 이 release는 `tmm_mi_model_param_m` 변경이나 신규 migration을 만들지 않는다.
+- DB migration 정본은 sibling mgmt repository다. v4.1은 기존 master·legacy mapping·v4.0 행을 수정하지 않고
+  `tmm_mi_model_impact_lever_m`에 21행을 side-by-side로 추가하며 mgmt migration 0036과 동일해야 한다.
 - 260813 workbook과 `resources/Model_Parameter_Base_Case_Mapping.md`는 0032의 최종 target·unit 정합성을
   사람이 검토하기 위한 자료다. DB 적용과 runtime 판정은 versioned canonical·contract·mgmt DML을 기준으로 한다.
 
@@ -37,6 +41,9 @@
 `$model-parameter-multi-event-quality`를 사용한다. 핵심 Skill은 v4
 `multi_event_model_lever_dimensions` 경로만 지원한다.
 
+v4.1 conditional binding의 전체 매트릭스, runtime 선택 규칙, 좌표 추론, 적용 순서는
+`09_MODEL_PARAMETER_V4_1_CONDITIONAL_BINDING.md`를 따른다.
+
 ## 2. 변경 전 확인
 
 1. parameter_name과 모델 target이 수급모델 workbook에 실제로 존재하는지 확인한다.
@@ -44,9 +51,9 @@
 3. exact key axes와 horizon 2026~2030의 기준값이 있는지 확인한다.
 4. v4 Lever code와 parameter binding role(primary/alternative), applicability가 승인되었는지 확인한다. legacy direct/routing/indirect/na mapping은 변경하지 않는다.
 5. 신규 proposal을 허용할 parameter인지 별도 승인하고 ID 기반 capability contract 변경 범위와 회귀 테스트를 확정한다.
-6. 동일 Lever의 primary/alternative가 raw 후보가 되는 것이 의도인지 확인한다. v4 단일 binding은 lineage를
-   그대로 보존하지만, primary/alternative가 함께 있으면 Step1.5에 applicability와 Scenario/Event/Lever 맥락을
-   제공하고 한 후보만 남긴다. 동시 선택·응답 누락 시에는 primary 한 건으로 제한한다.
+6. 동일 Lever의 primary/alternative가 raw 후보가 되는 것이 의도인지 확인한다. Step1.5에는
+   applicability와 Scenario/Event/Lever 맥락을 제공한다. 각 binding의 근거가 독립적으로 확인되면 복수 후보를
+   설정 상한까지 유지한다. deterministic 응답 누락만 primary 한 건으로 복구하며 conditional은 0건을 허용한다.
 7. 대규모 시설 catalog가 slot·prompt byte 상한 안에 들어오는지 측정한다.
 8. v4 workbook contract 대상이면 authoritative source와 write target을 분리하고, digest·sheet·header·range,
    expected record 수, exact-key 오류 차단, fallback·evidence·atomic 정책을 함께 확정한다.
@@ -119,16 +126,20 @@ archive workbook, legacy mapping 또는 설명 문구를 근거로 자동 보정
    대표 LUT-only key가 제외되는 회귀 테스트를 추가한다.
 
 `LiqUtilAdjustment`의 재발 방지 기준은 다음과 같다. 현재 target의 정식 식별자인
-`Cove Point Export / Cove Point Export / Operational / 5.25`만 반환할 수 있다. 근거 텍스트에 쓰이는
-`Cove Point LNG / Cove Point LNG T1`은 이 target에 한해 승인된 **근거측 일대일 alias**로 인식한다.
-이는 과거 LUT 좌표의 반환을 허용하는 것이 아니며, Agent 출력은 항상 `Cove Point Export / Cove Point Export`여야
-한다. Country·Lifecycle·Capacity 세 항목만 같다는 이유로 다른 시설을 매핑해서는 안 된다.
+실제 target의 식별자만 반환할 수 있다. 근거 텍스트의 별칭은 로드된 전체 Basecase 좌표에서 자동 생성한
+collision-safe alias index가 정확히 한 target에만 연결할 때 사용한다. 예를 들어 실제 좌표가
+`Cove Point Export / Cove Point Export`이면 근거의 `Cove Point LNG / Cove Point LNG T1`을 정규화할 수 있지만,
+Agent 출력은 항상 원래 target 좌표여야 한다. Country·Lifecycle·Capacity만 같거나 같은 alias가 둘 이상의 target에
+걸리면 연결하지 않는다.
 
 ### 2.3.1 근거 좌표명 완화와 다중 slot 확장 경계
 
-근거 문구와 Basecase 좌표의 표기 차이는 조건부로 완화한다. 한국어/영문 승인 alias, `Stage↔단계`,
-`Train/T↔호기`, 명시된 호기 범위(`1~6호기`)를 같은 실체로 정규화할 수 있다. 이 정규화는 근거 판정에만
-사용하고 반환 좌표는 slot catalog의 exact 값을 유지한다. alias 또는 상대기간 해석을 사용한 경우
+근거 문구와 Basecase 좌표의 표기 차이는 조건부로 완화한다. Step2 LLM이 실제 slot hierarchy와 연결된
+Event/Lever 원문을 비교하고, 원문에서 그대로 복사한 Plant·Train 근거 문구와 좌표 일치 이유를 구조화한다.
+서버는 두 문구의 원문 존재·서로 다른 span·exact target을 검증한다. 설비 공통어
+(`LNG/Export/Plant/Terminal`), 유일 약칭, `Stage↔단계`, `Train/T↔호기`, 단일 Train의 `T1`처럼 실제 좌표에서
+자동 생성한 deterministic alias는 보조 안전망으로만 사용한다. 이 추론과 정규화는 근거 판정에만 사용하고 반환
+좌표는 slot catalog의 exact 값을 유지한다. LLM 좌표 추론, alias 또는 상대기간 해석을 사용한 경우
 `parameterSelectionRationale`의 참고 문구로 사용자에게 알린다.
 
 완화가 근거 없는 다중 선택으로 이어져서는 안 된다.
@@ -138,13 +149,16 @@ archive workbook, legacy mapping 또는 설명 문구를 근거로 자동 보정
 2. 복수 Train은 각 Train이 직접 명시되거나 `1~6호기`처럼 닫힌 범위가 있을 때만 선택한다. 범위 밖 Train은 제외한다.
 3. 명시 월은 그 월 한 건만 선택한다. `단기`는 분석 기준일이 속한 월 한 건으로 보수적으로 해석한다.
    `재가동 지연`, `10월 하순 이후` 같은 표현만으로 이후 여러 월을 자동 확장하지 않는다.
-4. `Cove Point Export` 좌표는 근거에 `Cove Point LNG`와 Train 수준의 `Cove Point LNG T1`이 확인될 때만
-   승인 alias를 적용한다. Plant 문구만 있으면 거절한다.
+4. 실제 좌표의 Plant와 Train이 같은 단일-Train 설비에 자동 생성된 `T1` alias를 쓰려면 Plant 문구와 Train 문구가
+   서로 다른 span으로 모두 있어야 한다. `... LNG T1` 한 번만 쓴 문구를 Plant+Train 두 근거로 중복 계산하지 않는다.
+5. 자동 alias가 둘 이상의 실제 좌표와 충돌하면 전부 거절한다. target별 예외 코드나 설비별 한·영 dictionary를
+   추가하지 말고 LLM의 구조화 근거와 exact-slot 검증으로 처리한다.
 
-### 2.4 v4.0 extend16 신규 3개 정합성 매트릭스
+### 2.4 v4.1 extend16 신규 3개 정합성 매트릭스
 
-`extend16-v7`에서 proposal scope에 들어오는 세 Parameter는 mgmt 0033 master와 0034 v4.0 catalog에 이미
-활성·binding된 Basecase-only capability다. 아래 tuple을 하나의 release 계약으로 고정한다.
+`extend16-v8`에서 proposal scope에 들어오는 세 Parameter는 mgmt 0033 master와 0034 v4.0 catalog의 직접
+binding을 그대로 보존하고, v4.1 conditional binding에서도 재사용하는 Basecase-only capability다. 아래 tuple을
+하나의 release 계약으로 고정한다.
 
 | Parameter | DB master/current canonical | v4 Lever | authoritative source → final write target | exact axes·단위 | runtime 계약 |
 |---|---|---|---|---|---|
@@ -167,11 +181,11 @@ capability 누락이 아니므로 release 실패와 분리해 보고한다.
 
 ### 2.5 이번 누락의 원인과 재발 방지 게이트
 
-이번 누락은 DB master와 v4.0 Lever catalog에는 ID 22·23·24가 있었지만 Agent의 proposal capability와 workbook
+기존 누락은 DB master와 v4.0 Lever catalog에는 ID 22·23·24가 있었지만 Agent의 proposal capability와 workbook
 contract가 이전 `extend14-v6/new-bc-v6`에 머물러 발생했다. Lever가 executable이라는 사실만으로 runtime
 allow-list와 기준값 contract가 자동 확장되지 않으므로, 다음 검사를 릴리스 필수 조건으로 둔다.
 
-1. v4.0 hydrated catalog의 executable binding이 가리키는 활성 Parameter ID/name/target 집합과 proposal
+1. v4.1 hydrated catalog의 executable binding이 가리키는 활성 Parameter ID/name/target 집합과 proposal
    capability 집합을 **set equality**로 비교한다. 개수만 같거나 일부 표본만 성공하는 것으로 대체하지 않는다.
 2. 각 행에 대해 `ID + name + model_file/sheet/table + exact axes + unit`을 full outer diff하고 하나라도 빠지거나
    더 있으면 startup/release를 실패시킨다. 비활성 ID 9는 workbook reference를 보존해도 proposal contract에는 넣지 않는다.
@@ -179,7 +193,7 @@ allow-list와 기준값 contract가 자동 확장되지 않으므로, 다음 검
    검증한다. `existing_exact`은 source key가 target slot에 모두 존재해야 하고 `appendable`은 target header와 단위를 고정한다.
 4. local config와 Kubernetes ConfigMap의 capability release/SHA 및 workbook path를 동시에 갱신하고 equality test를 실행한다.
 5. 신규 Parameter별 focused regression과 대표값 검증 없이 전체 allow-list 개수 테스트만 통과시켜서는 안 된다.
-6. 실제 v4.0 proposal campaign에서 세 Lever의 candidate provenance와 성공·abstain 사유를 별도 행으로 보고한다.
+6. 실제 v4.1 proposal campaign에서 세 Lever의 candidate provenance와 성공·abstain 사유를 별도 행으로 보고한다.
 
 ## 3. DB canonical 변경
 
@@ -296,7 +310,7 @@ v4에서는 `liquefaction_utilization`과 `liquefaction_production_override`를 
 LiqUtilAdjustment, 생산량 직접 override·대폭/영구 손실·신규 Train ramp-up은 LiqProdAdjustment를 사용한다.
 legacy mapping은 후보 source나 fallback으로 사용하지 않는다.
 
-## 6. v4.0 raw Lever binding과 extend16 proposal 범위의 핵심 규칙
+## 6. v4.1 raw Lever binding과 extend16 proposal 범위의 핵심 규칙
 
 | Lever | Parameter binding |
 |---|---|
@@ -316,14 +330,20 @@ legacy mapping은 후보 source나 fallback으로 사용하지 않는다.
 | `regional_upstream_production` | RegionalProductionAdjustment primary |
 | `lng_vessel_fuel_cost` | ShippingFuelCost primary |
 | `canal_toll` | CanalToll primary |
-| `route_disruption`, `trade_restriction` | binding 없음 |
+| `route_disruption` | ShippingCost, ShippingFuelCost, CanalToll conditional |
+| `trade_restriction` | 공급·시설 6종과 PNG Contract Volume conditional |
+| `inventory_condition` | 수요 4종·공급 6종·PNG Contract Volume conditional |
+| `regional_price_spread` | 수요 4종·공급 6종·PNG 1종·운송 3종 conditional |
+| `financial_market_sentiment` | GDP, PMI conditional |
 
-`price_only` Lever는 binding을 두지 않는다. CDD/HDD binding은 capability로 보존하지만 master가 비활성이므로 executable candidate가 아니다.
+`price_only` Lever도 상태의 명시된 원인·직접 영향이 실제 model input과 연결되면 conditional 후보가 된다.
+가격·재고·심리 방향 자체를 model input 방향으로 바꾸지 않으며, 근거가 없으면 0건을 유지한다. CDD/HDD binding은
+capability로 보존하지만 master가 비활성이므로 executable candidate가 아니다.
 
 현재 v4 신규 proposal에서는 capability gate를 통과한 GDP, PMI, PowerMix, Temperature, Population,
 HurricaneIntensity, LiqProdAdjustment, LiqUtilAdjustment, PipelineAdjustment, SupplyDisruption,
 RegasAdjustment, PNG Contract Volume, ShippingCost, RegionalProductionAdjustment, ShippingFuelCost,
-CanalToll만 이후 단계로 전달한다. v4.0 executable 활성 Parameter가 capability에서 빠지면 release 오류다.
+CanalToll만 이후 단계로 전달한다. v4.1 executable 활성 Parameter가 capability에서 빠지면 release 오류다.
 
 ### Basecase-only 활성 6개
 
@@ -337,7 +357,7 @@ CanalToll만 이후 단계로 전달한다. v4.0 executable 활성 Parameter가 
 | CanalToll | 검증된 Basecase exact slot | `canal_toll` primary |
 
 별도 LUT fallback을 추가하지 않는다. 검증된 Basecase exact slot이 없는 좌표는 제외한다. 이 6개는
-`extend16-v7` runtime proposal allow-list 안에 있으며, direct evidence와 exact 좌표가 없으면 abstain한다.
+`extend16-v8` runtime proposal allow-list 안에 있으며, direct evidence와 exact 좌표가 없으면 abstain한다.
 `RemainingUnrestrictedAmount`와 `VolumeCancelled`는 0032 canonical에서 inactive/unbound이므로 새 contract와
 forward canonical release 없이 후보화하지 않는다.
 
@@ -346,7 +366,8 @@ forward canonical release 없이 후보화하지 않는다.
 resource release에서 준비된 LUT record는 서버 cache/index에 보관한다. v4 runtime은 지정 version의 active catalog
 binding으로 도달 가능한 definition을 사용하며, 활성 16개 capability 전체 검증은 자동화·release acceptance의
 책임이다. runtime allow-list gate는 source matching 직후, 조건부 Step1.5·Step2·Step3 LLM과 proposal
-persistence 전에 적용한다. v4 Step1.5는 동일 Lever state에서 여러 binding이 충돌할 때만 호출하며 한 후보만 남긴다.
+persistence 전에 적용한다. v4 Step1.5는 동일 Lever state의 복수 binding과 모든 conditional binding에 적용한다.
+각 applicability가 독립적으로 근거 있으면 설정 상한까지 복수 Parameter를 유지한다.
 
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
@@ -359,17 +380,25 @@ proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은
 
 1. canonical consistency와 resource release·LUT adapter 자동화 테스트가 통과한다.
 2. config.yaml과 ConfigMap manifest가 같다.
-3. 외부개발 DB의 master 24행·활성 16개와 v4.0 active Lever 21개·binding occurrence 19개를 확인하고,
-   hydrated checksum `416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`을 read-back한다.
+3. 외부개발 DB의 master 24행·활성 16개, v4.0 active Lever 21개·binding occurrence 19개와 v4.1 active
+   Lever 21개·binding occurrence 56개를 확인한다. v4.0 checksum
+   `416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763`과 v4.1 checksum
+   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`을 모두 read-back한다.
 4. v4 canonical JSON·SQL, LUT manifest, workbook/archive와 legacy mapping 비변경 digest를 확인한다.
 5. resource capability 기준으로 LUT-backed 활성 10개의 selectable LUT slot과 Basecase-only 활성 6개의
-   Basecase slot을 확인한다. v4 신규 proposal capability가 v4.0 executable 활성 16개와 정확히 일치하는지 검증한다.
+   Basecase slot을 확인한다. v4 신규 proposal capability가 v4.1 executable 활성 16개와 정확히 일치하는지 검증한다.
 6. v4 `new-bc-v7` contract의 세 workbook·auxiliary digest/header와
    815/5,040/4,200/5,040/845/60/23,820/23,820/420/4,908/12/22,320/684/5/2,187/5/10 record를 확인하고,
    invalid exact-key LUT 차단, PowerMix atomic vector, HurricaneIntensity 0~4 정수,
    LiqProd/LiqUtil target·evidence 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
 8. 실제 리포트에 parameter, candidate, slot, effective reference, proposal, token, 시간·retry와 confirmation ID를 남긴다.
+
+DB seed의 Git 작성자와 audit principal은 분리한다. Git author는 작업자 계정을 사용하더라도
+`crt_usr_logn_id`/`mod_usr_logn_id`에는 개인명을 넣지 말고 release 식별자(예:
+`model-impact-lever-v4.1-v0036`)를 사용한다. 또한 dry-run INSERT를 AUTO_INCREMENT에 맡기면 MySQL은
+rollback 뒤에도 번호를 소비한다. release canonical과 migration/seed에는 검증된 ID를 명시하고,
+dry-run에서 우연히 할당된 ID를 기준값으로 채택하지 않는다.
 
 신규 파라미터마다 아래 결과를 별도 행으로 남긴다. 모든 칸이 PASS이거나 승인된 N/A 사유가 있어야 하며,
 기존 파라미터를 포함한 총 개수만 맞는 것으로 완료 처리하지 않는다.

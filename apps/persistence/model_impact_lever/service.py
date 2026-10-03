@@ -84,6 +84,7 @@ def _hydrate_catalog(
                 {
                     "parameter_name": parameter_name,
                     "role": raw_binding.get("role") or "primary",
+                    "selection_mode": raw_binding.get("selection_mode") or "deterministic",
                     "applicability": raw_binding.get("applicability") or "",
                     "support_status": support_status,
                     "unsupported_reason_code": unsupported_reason_code,
@@ -110,7 +111,13 @@ def _hydrate_catalog(
             ),
         )
     version = requested_version
-    checksum_payload = [lever.model_dump(mode="json", exclude={"impact_lever_id"}) for lever in hydrated]
+    checksum_payload: list[dict[str, Any]] = []
+    for lever in hydrated:
+        lever_payload = lever.model_dump(mode="json", exclude={"impact_lever_id"})
+        for binding in lever_payload.get("parameter_bindings") or []:
+            if binding.get("selection_mode") == "deterministic":
+                binding.pop("selection_mode", None)
+        checksum_payload.append(lever_payload)
     checksum = hashlib.sha256(
         json.dumps(
             checksum_payload,

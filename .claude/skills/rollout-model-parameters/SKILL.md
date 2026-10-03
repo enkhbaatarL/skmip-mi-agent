@@ -42,7 +42,7 @@ Implement one reproducible v4 release set and propagate it through the parameter
 2. Capture an immutable, versioned pre-apply snapshot before any DML. It must include the affected master and Impact Lever rows plus digests of protected legacy dimension mappings and active v4 Scenario templates. Do not expose credentials or connection details, and never regenerate a pre-apply snapshot from final state.
 3. Treat `model-parameter-canonical-v4.json` and `model-impact-lever-canonical-v4.json` as one release set:
    - the parameter fixture owns every master domain field, activation state, Basecase metadata, audit expectations, source snapshot, and expected counts;
-   - the Impact Lever fixture owns Lever identity and hierarchy, domain, primary/alternative bindings, applicability, support state, catalog version, binding counts, and hydrated catalog checksum.
+   - the Impact Lever fixture owns Lever identity and hierarchy, domain, primary/alternative bindings, deterministic/conditional selection mode, applicability, support state, catalog version, binding counts, and hydrated catalog checksum.
 4. Record every parameter and binding as active, pending, unsupported, or excluded with an evidence-backed reason. Keep raw catalog capability distinct from the runtime proposal allow-list and from exact executable slot coverage.
 5. Resolve conflicts using current DB, workbook, Basecase/LUT, and runtime evidence. Do not inherit an old fixture, archived workbook, historical report, or prose table without verification.
 6. Derive the transactional runner and SQL, workbook, Impact Lever/catalog expectations, LUT classification, configuration markers, documentation tables, and consistency tests from this release set. Avoid independent hand-maintained value copies.
@@ -56,7 +56,12 @@ Implement one reproducible v4 release set and propagate it through the parameter
 3. Validate selected-value completeness; Event membership and order; Lever code/ID/catalog identity; active and non-deleted state; primary Lever presence; duplicate Lever states; direction, domain, role, applicability, and support status; bound parameter identity and activation; and exact Basecase/LUT slot availability.
 4. Build raw candidates only from the selected values' hydrated Lever states and current active catalog bindings. Unselected values must not contribute candidates or prompt payloads.
 5. Never query or mutate legacy dimension mapping to serve v4, and never fall back to representative Event Type mapping, v3 composite `sourceRefs`, historical `lever_mappings`, or another API version when v4 input is incomplete. Fail with the existing domain/API error contract.
-6. Preserve lineage when multiple Events, dimensions, or Lever states converge on one parameter, and keep primary/alternative bindings together as one deterministic routing task.
+6. Preserve lineage when multiple Events, dimensions, or Lever states converge on one parameter. Keep same-Lever
+   primary/alternative bindings together as one routing task; independently grounded bindings may survive together up to
+   the configured limit. Route even a single conditional binding through applicability selection, allow zero, and never
+   fill a missing conditional decision with a primary default.
+7. Do not reject `price_only` by domain alone when it has executable conditional bindings. Keep price direction from being
+   used as a proxy for a supply/demand input; require the actual model target, coordinates, period, and causal path.
 
 ## Implement DB artifacts safely
 

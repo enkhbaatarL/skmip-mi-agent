@@ -1,8 +1,8 @@
 {
   "schema_version": "model-parameter-proposal-capabilities-v4",
-  "release_id": "extend16-v7",
-  "catalog_version": "v4.0",
-  "catalog_checksum": "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763",
+  "release_id": "extend16-v8",
+  "catalog_version": "v4.1",
+  "catalog_checksum": "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69",
   "parameters": [
     {
       "model_param_id": 4,
