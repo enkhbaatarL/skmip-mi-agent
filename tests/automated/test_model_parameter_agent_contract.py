@@ -3955,7 +3955,7 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
 
         assert captured_kwargs["stream"] is True
         assert captured_kwargs["reasoning_effort"] == "high"
-        assert captured_kwargs["max_retries"] == 3
+        assert captured_kwargs["max_retries"] == 0
         log_args = logger.debug.call_args.args
         assert log_args[1:] == (
             "LLMValueProposalResponse",
@@ -3964,8 +3964,102 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "high",
             310,
             10,
-            3,
+            0,
+            2,
+            0.5,
+            0.25,
         )
+
+    async def test_transient_llm_failure_retries_once_with_jitter_and_records_attempts(self) -> None:
+        calls = 0
+
+        async def fake_invoke(**kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            assert kwargs["max_retries"] == 0
+            if calls == 1:
+                try:
+                    raise TimeoutError("gateway timeout")
+                except TimeoutError as cause:
+                    raise MIBaseError(
+                        ErrorCode.LLM_INVOCATION_ERROR,
+                        detail="wrapped transport failure",
+                    ) from cause
+            return SimpleNamespace(result="ok", usage=None, model="quality-model")
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=False,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=2,
+            model_parameter_transient_retry_base_delay_seconds=0.5,
+            model_parameter_transient_retry_max_jitter_seconds=0.25,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.random, "uniform", return_value=0.1),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            result = await proposal_nodes._invoke_structured(
+                output_schema=LLMValueProposalResponse,
+                messages=[{"role": "user", "content": "test"}],
+                model_name="test-model",
+            )
+
+        assert calls == 2
+        assert result.result == "ok"
+        assert result.attempt_count == 2
+        assert result.retry_count == 1
+        assert result.retry_reasons == ("TimeoutError",)
+        assert result.retry_delays_seconds == (0.6,)
+        sleep.assert_awaited_once_with(0.6)
+
+    async def test_semantic_llm_failure_is_never_retried(self) -> None:
+        calls = 0
+
+        async def fake_invoke(**_kwargs):  # noqa: ANN003
+            nonlocal calls
+            calls += 1
+            raise MIBaseError(
+                ErrorCode.LLM_INVALID_RESPONSE_ERROR,
+                detail="invalid structured response",
+            )
+
+        fake_module = types.ModuleType("apps.connectors.llm.llm_client")
+        fake_module.invoke_llm_structured_output = fake_invoke
+        settings = SimpleNamespace(
+            llm_stream_enabled=False,
+            llm_reasoning_effort="default",
+            llm_timeout_sec=310,
+            http_connect_timeout=10,
+            model_parameter_transient_retry_max_attempts=3,
+            model_parameter_transient_retry_base_delay_seconds=0.0,
+            model_parameter_transient_retry_max_jitter_seconds=0.0,
+        )
+        with (
+            patch.dict(sys.modules, {"apps.connectors.llm.llm_client": fake_module}),
+            patch.object(proposal_nodes, "get_settings", return_value=settings),
+            patch.object(proposal_nodes.asyncio, "sleep", new=AsyncMock()) as sleep,
+        ):
+            with self.assertRaises(MIBaseError) as caught:
+                await proposal_nodes._invoke_structured(
+                    output_schema=LLMValueProposalResponse,
+                    messages=[{"role": "user", "content": "test"}],
+                    model_name="test-model",
+                )
+
+        assert calls == 1
+        assert caught.exception.context["model_parameter_llm_retry"] == {
+            "attempt_count": 1,
+            "retry_count": 0,
+            "retry_reasons": [],
+            "retry_delays_seconds": [],
+        }
+        sleep.assert_not_awaited()
 
     async def test_single_population_route_can_be_excluded_by_candidate_validation(self) -> None:
         direct_candidate = {
@@ -4643,6 +4737,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                         "plantEvidenceText": "플랜트 42",
                         "trainEvidenceText": "플랜트 42 1호기",
                         "coordinateMatchNoteKo": "문맥상 동일 설비로 판단",
+                        "periodEvidenceText": "2026년",
+                        "periodMatchNoteKo": "2026년 좌표와 일치",
                     },
                 ),
             ],
@@ -4699,6 +4795,8 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
             "plant_evidence_text": "플랜트 42",
             "train_evidence_text": "플랜트 42 1호기",
             "coordinate_match_note_ko": "문맥상 동일 설비로 판단",
+            "period_evidence_text": "2026년",
+            "period_match_note_ko": "2026년 좌표와 일치",
         }
         assert result["slot_selection_diagnostics"] == {
             "catalog_candidate_count": 1,
@@ -4718,7 +4816,10 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
         assert "Cartesian product를 만들지 마십시오" in system_prompt
         assert "axis_name이 Year, Month, Period이면 axis_value를 JSON integer" in system_prompt
         assert "entity_coordinate_resolution" in system_prompt
-        assert "입력 원문에서 각각 그대로 복사" in system_prompt
+        assert "세 evidence text는 입력 원문에서 그대로 복사" in system_prompt
+        assert "period_evidence_text" in system_prompt
+        assert "서버는 동일한" in system_prompt
+        assert "Plant·Train evidence 조합" in system_prompt
         assert "rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오" in system_prompt
         assert "rationale_ko에는" not in system_prompt
         payload = json.loads(captured_contents[0].split("\n", 1)[1])

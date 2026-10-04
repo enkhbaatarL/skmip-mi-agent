@@ -200,6 +200,10 @@ class Settings(BaseSettings):
     llm_structured_output_strict: bool = Field(default=False)
 
     # Model parameter proposal
+    model_parameter_proposal_flow_release: str = Field(default="v4.1.1", min_length=1)
+    model_parameter_transient_retry_max_attempts: int = Field(default=2, ge=1, le=5)
+    model_parameter_transient_retry_base_delay_seconds: float = Field(default=0.5, ge=0.0, le=30.0)
+    model_parameter_transient_retry_max_jitter_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
     model_parameter_lut_enabled: bool = Field(default=False)
     model_parameter_lut_horizon_start_year: int = Field(default=2026)
     model_parameter_lut_horizon_end_year: int = Field(default=2030)

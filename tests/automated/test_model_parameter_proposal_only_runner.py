@@ -1057,10 +1057,65 @@ def test_successful_scenarios_execute_once_sequentially_and_update_sanitized_evi
         "processing_policy": "any active PROCESSING row hard-stops the entire campaign",
         "required_api_version": "v4",
         "required_generation_strategy": runner.V4_STRATEGY,
+        "scenario_failure_policy": "isolate FAIL and continue; BLOCKED hard-stops the campaign",
         "sequential": True,
         "single_worker_best_effort": True,
         "uncovered_only": True,
     }
+
+
+def test_scenario_failure_is_isolated_and_later_candidate_executes_once(tmp_path: Path) -> None:
+    history = {
+        101: [_proposal_row(101, 400, status="FAILED")],
+        102: [_proposal_row(102, 401, status="FAILED")],
+    }
+    evaluated: list[int] = []
+
+    def snapshot(_scenario_group_id: int, scenario_ids: object) -> tuple[dict[str, object], ...]:
+        scenario_id = int(next(iter(scenario_ids)))  # type: ignore[arg-type]
+        return tuple(history[scenario_id])
+
+    async def evaluate(scenario_id: int) -> dict[str, object]:
+        evaluated.append(scenario_id)
+        if scenario_id == 101:
+            message = "semantic proposal failure"
+            raise RuntimeError(message)
+        history[scenario_id].append(_proposal_row(scenario_id, 502))
+        return {
+            "final_response": {
+                "status": "success",
+                "message": "done",
+                "data": {
+                    "modelParamProposalId": 502,
+                    "scenarioId": scenario_id,
+                    "scenarioGroupId": scenario_id + 1_000,
+                    "eventId": None,
+                    "proposalParameters": [{"parameterName": "GDP"}],
+                },
+            },
+        }
+
+    dependencies = runner.RunnerDependencies(
+        load_context=_context,
+        snapshot_proposal_rows=snapshot,
+        evaluate_scenario=evaluate,
+        fetch_proposal=lambda proposal_id: _proposal_row(102, int(proposal_id or 0)),
+        failure_trace=lambda _exc: {},
+    )
+
+    evidence = asyncio.run(
+        runner.run_campaign(
+            _options(tmp_path, 101, 102),
+            dependencies=dependencies,
+        ),
+    )
+
+    assert evidence["status"] == "FAIL"
+    assert evaluated == [101, 102]
+    assert [attempt["status"] for attempt in evidence["attempts"]] == ["FAIL", "PASS"]
+    assert evidence["selection"]["counts"]["attempted"] == 2
+    assert evidence["selection"]["counts"]["succeeded"] == 1
+    assert evidence["selection"]["counts"]["failed"] == 1
 
 
 def test_second_campaign_skips_proposed_row_created_by_first_campaign(tmp_path: Path) -> None:

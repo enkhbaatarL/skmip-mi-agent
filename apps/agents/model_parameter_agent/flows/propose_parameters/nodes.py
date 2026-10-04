@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date
 import json
 import math
+import random
 import re
 import time
 from typing import Any, Optional
@@ -96,6 +99,20 @@ DEFAULT_MAX_TOTAL_SELECTED_SLOTS = 300
 DEFAULT_MAX_PROMPT_BYTES = 262_144
 V3_EVENT_DETAIL_MAX_CHARS = 1_200
 V4_EVENT_DETAIL_MAX_CHARS = 6_000
+DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS = 2
+DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS = 0.5
+DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS = 0.25
+
+
+@dataclass(frozen=True, slots=True)
+class _StructuredInvocationResult:
+    result: Any
+    usage: Any
+    model: str | None
+    attempt_count: int
+    retry_count: int
+    retry_reasons: tuple[str, ...]
+    retry_delays_seconds: tuple[float, ...]
 
 
 def _debug_stage_payload(
@@ -768,6 +785,10 @@ async def validate_parameter_candidates(
                 prompt_bytes=prompt_bytes,
                 prompt_limit_bytes=prompt_limit_bytes,
                 parameter_bytes=parameter_bytes,
+                attempt_count=getattr(result, "attempt_count", 1),
+                retry_count=getattr(result, "retry_count", 0),
+                retry_reasons=getattr(result, "retry_reasons", ()),
+                retry_delays_seconds=getattr(result, "retry_delays_seconds", ()),
             )
         except Exception as exc:
             logger.warning(
@@ -906,6 +927,32 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         "slot_candidate_mappings": [],
         "lut_version": lut_catalog.version if lut_catalog is not None else None,
         "resolved_config": {
+            "model_parameter_proposal_flow_release": getattr(
+                cfg,
+                "model_parameter_proposal_flow_release",
+                "v4.1.1",
+            ),
+            "model_parameter_transient_retry_max_attempts": (
+                getattr(
+                    cfg,
+                    "model_parameter_transient_retry_max_attempts",
+                    DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS,
+                )
+            ),
+            "model_parameter_transient_retry_base_delay_seconds": (
+                getattr(
+                    cfg,
+                    "model_parameter_transient_retry_base_delay_seconds",
+                    DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS,
+                )
+            ),
+            "model_parameter_transient_retry_max_jitter_seconds": (
+                getattr(
+                    cfg,
+                    "model_parameter_transient_retry_max_jitter_seconds",
+                    DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS,
+                )
+            ),
             "model_parameter_lut_enabled": cfg.model_parameter_lut_enabled,
             "model_parameter_lut_horizon_start_year": policy.start_year,
             "model_parameter_lut_horizon_end_year": policy.end_year,
@@ -938,6 +985,43 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         "validation_warnings": [*state.validation_warnings, *warnings],
     }
     return output
+
+
+def _llm_entity_resolution_evidence_key(
+    slot: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    resolution = slot.get("_llm_entity_coordinate_resolution")
+    if not isinstance(resolution, dict):
+        return None
+    plant_evidence = _field_key(resolution.get("plant_evidence_text"))
+    train_evidence = _field_key(resolution.get("train_evidence_text"))
+    if not plant_evidence or not train_evidence:
+        return None
+    return (
+        str(slot.get("candidate_key") or ""),
+        plant_evidence,
+        train_evidence,
+    )
+
+
+def _conflicted_llm_entity_resolution_keys(
+    slots: list[dict[str, Any]],
+) -> set[tuple[str, str, str]]:
+    targets_by_evidence: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
+    for slot in slots:
+        evidence_key = _llm_entity_resolution_evidence_key(slot)
+        if evidence_key is None:
+            continue
+        coordinates = _coordinates_for_selected_slot(slot)
+        plant = str(coordinates.get("LNG Plant") or coordinates.get("Plant") or "").strip()
+        train = str(coordinates.get("LNG Plant Train") or coordinates.get("Train") or "").strip()
+        if plant and train:
+            targets_by_evidence.setdefault(evidence_key, set()).add((plant, train))
+    return {
+        evidence_key
+        for evidence_key, targets in targets_by_evidence.items()
+        if len(targets) > 1
+    }
 
 
 def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict[str, Any]:
@@ -997,6 +1081,9 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
         selected_slot_counts_by_candidate[selected_candidate_key] = (
             selected_slot_counts_by_candidate.get(selected_candidate_key, 0) + 1
         )
+    conflicted_resolution_keys = _conflicted_llm_entity_resolution_keys(
+        selected_slots,
+    )
     for raw_slot in selected_slots:
         slot = dict(raw_slot)
         candidate_key = str(slot.get("candidate_key") or "")
@@ -1087,6 +1174,10 @@ def filter_basecase_records_by_slots(state: ModelParameterProposalState) -> dict
                 state.scenario_context,
                 exact_candidate_count=selected_slot_counts_by_candidate.get(candidate_key),
                 coordinate_alias_index=coordinate_alias_index,
+                llm_resolution_conflicted=(
+                    _llm_entity_resolution_evidence_key(slot)
+                    in conflicted_resolution_keys
+                ),
             )
             if not evidence.allowed:
                 policy_excluded_slot_count += 1
@@ -1406,6 +1497,10 @@ async def propose_parameter_values(
             prompt_bytes=prompt_bytes,
             prompt_limit_bytes=prompt_limit_bytes,
             parameter_bytes=parameter_bytes,
+            attempt_count=getattr(result, "attempt_count", 1),
+            retry_count=getattr(result, "retry_count", 0),
+            retry_reasons=getattr(result, "retry_reasons", ()),
+            retry_delays_seconds=getattr(result, "retry_delays_seconds", ()),
         )
     except Exception as exc:
         logger.warning(
@@ -1541,6 +1636,10 @@ async def propose_parameter_slots(
             prompt_bytes=prompt_bytes,
             prompt_limit_bytes=prompt_limit_bytes,
             parameter_bytes=parameter_bytes,
+            attempt_count=getattr(result, "attempt_count", 1),
+            retry_count=getattr(result, "retry_count", 0),
+            retry_reasons=getattr(result, "retry_reasons", ()),
+            retry_delays_seconds=getattr(result, "retry_delays_seconds", ()),
         )
     except Exception as exc:
         logger.warning(
@@ -1603,13 +1702,23 @@ def _llm_call_trace(
     prompt_bytes: int | None = None,
     prompt_limit_bytes: int | None = None,
     parameter_bytes: dict[str, int] | None = None,
+    attempt_count: int = 1,
+    retry_count: int = 0,
+    retry_reasons: tuple[str, ...] = (),
+    retry_delays_seconds: tuple[float, ...] = (),
 ) -> dict[str, Any]:
     trace: dict[str, Any] = {
         "step": step,
         "success": success,
         "model_name": model_name,
         "elapsed_seconds": round(max(0.0, elapsed_seconds), 3),
+        "attempt_count": max(1, attempt_count),
+        "retry_count": max(0, retry_count),
     }
+    if retry_reasons:
+        trace["retry_reasons"] = list(retry_reasons)
+    if retry_delays_seconds:
+        trace["retry_delays_seconds"] = [round(max(0.0, value), 3) for value in retry_delays_seconds]
     if usage is not None:
         trace["usage"] = usage
     if prompt_bytes is not None:
@@ -1621,12 +1730,15 @@ def _llm_call_trace(
     if error:
         trace["error"] = error
     logger.info(
-        "[model-parameter] LLM call timing | step={} model_name={} success={} elapsed_seconds={} total_tokens={}",
+        "[model-parameter] LLM call timing | step={} model_name={} success={} "
+        "elapsed_seconds={} total_tokens={} attempt_count={} retry_count={}",
         step,
         model_name,
         success,
         trace["elapsed_seconds"],
         (usage or {}).get("total_tokens"),
+        trace["attempt_count"],
+        trace["retry_count"],
     )
     return trace
 
@@ -1657,6 +1769,84 @@ def _value_counts_by_parameter(adjustments: list[dict[str, Any]]) -> dict[str, i
     return counts
 
 
+def _exception_chain(exc: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return tuple(chain)
+
+
+def _transient_llm_error_reason(exc: BaseException) -> str | None:
+    transient_error_codes = {
+        ErrorCode.LLM_RESPONSE_TIMEOUT,
+        ErrorCode.HTTP_CONNECTION_ERROR,
+    }
+    transient_class_names = {
+        "APIConnectionError",
+        "APITimeoutError",
+        "ConnectError",
+        "ConnectTimeout",
+        "ConnectionError",
+        "InternalServerError",
+        "PoolTimeout",
+        "RateLimitError",
+        "ReadError",
+        "ReadTimeout",
+        "RemoteProtocolError",
+        "TimeoutError",
+        "WriteError",
+        "WriteTimeout",
+    }
+    for item in _exception_chain(exc):
+        if isinstance(item, MIBaseError):
+            if item.error_code in transient_error_codes:
+                return item.error_code.name
+            # Domain/semantic errors may use an HTTP 5xx public status. That
+            # status alone must never make them retryable; inspect only an
+            # attached transport cause on the next loop iteration.
+            continue
+        status_code = getattr(item, "status_code", None)
+        response = getattr(item, "response", None)
+        if status_code is None and response is not None:
+            status_code = getattr(response, "status_code", None)
+        try:
+            status = int(status_code)
+        except (TypeError, ValueError):
+            status = None
+        if status in {408, 425, 429} or (status is not None and status >= 500):
+            return f"HTTP_{status}"
+        class_name = type(item).__name__
+        if class_name in transient_class_names:
+            return class_name
+    return None
+
+
+def _attach_llm_retry_context(
+    exc: BaseException,
+    *,
+    attempt_count: int,
+    retry_reasons: list[str],
+    retry_delays_seconds: list[float],
+) -> None:
+    retry_context = {
+        "attempt_count": attempt_count,
+        "retry_count": len(retry_reasons),
+        "retry_reasons": list(retry_reasons),
+        "retry_delays_seconds": [round(max(0.0, value), 3) for value in retry_delays_seconds],
+    }
+    if isinstance(exc, MIBaseError):
+        exc.context["model_parameter_llm_retry"] = retry_context
+        return
+    try:
+        exc.__dict__["_model_parameter_llm_retry"] = retry_context
+    except Exception:  # Third-party exceptions may reject attributes.
+        return
+
+
 async def _invoke_structured(
     *,
     output_schema: type[Any],
@@ -1670,6 +1860,36 @@ async def _invoke_structured(
     cfg = get_settings()
     stream = cfg.llm_stream_enabled
     reasoning_effort = cfg.llm_reasoning_effort
+    max_attempts = max(
+        1,
+        int(
+            getattr(
+                cfg,
+                "model_parameter_transient_retry_max_attempts",
+                DEFAULT_TRANSIENT_RETRY_MAX_ATTEMPTS,
+            ),
+        ),
+    )
+    base_delay_seconds = max(
+        0.0,
+        float(
+            getattr(
+                cfg,
+                "model_parameter_transient_retry_base_delay_seconds",
+                DEFAULT_TRANSIENT_RETRY_BASE_DELAY_SECONDS,
+            ),
+        ),
+    )
+    max_jitter_seconds = max(
+        0.0,
+        float(
+            getattr(
+                cfg,
+                "model_parameter_transient_retry_max_jitter_seconds",
+                DEFAULT_TRANSIENT_RETRY_MAX_JITTER_SECONDS,
+            ),
+        ),
+    )
     # LangGraph 노드 config의 callbacks를 전파해야 LLM 호출이 그래프 trace의 child span으로 묶임
     callbacks = config.get("callbacks") if isinstance(config, dict) else None
     logger.debug(
@@ -1681,27 +1901,72 @@ async def _invoke_structured(
     logger.debug(
         "[model-parameter][llm] invoke | output_schema={} model_name={} "
         "stream={} reasoning_effort={} timeout_sec={} connect_timeout_sec={} "
-        "max_retries={}",
+        "connector_max_retries={} transient_max_attempts={} transient_base_delay_seconds={} "
+        "transient_max_jitter_seconds={}",
         output_schema.__name__,
         model_name,
         stream,
         reasoning_effort,
         getattr(cfg, "llm_timeout_sec", None),
         getattr(cfg, "http_connect_timeout", None),
-        cfg.llm_max_retries,
+        0,
+        max_attempts,
+        base_delay_seconds,
+        max_jitter_seconds,
     )
-    with langchain_callbacks_context(callbacks):
-        return await invoke_llm_structured_output(
-            output_schema=output_schema,
-            messages=messages,
-            model_name=model_name,
-            preference=ModelPreference.QUALITY,
-            temperature=0.0,
-            max_retries=cfg.llm_max_retries,
-            trace_context=trace_context,
-            stream=stream,
-            reasoning_effort=reasoning_effort,
-        )
+    retry_reasons: list[str] = []
+    retry_delays_seconds: list[float] = []
+    for attempt_index in range(1, max_attempts + 1):
+        try:
+            with langchain_callbacks_context(callbacks):
+                result = await invoke_llm_structured_output(
+                    output_schema=output_schema,
+                    messages=messages,
+                    model_name=model_name,
+                    preference=ModelPreference.QUALITY,
+                    temperature=0.0,
+                    max_retries=0,
+                    trace_context=trace_context,
+                    stream=stream,
+                    reasoning_effort=reasoning_effort,
+                )
+            return _StructuredInvocationResult(
+                result=result.result,
+                usage=result.usage,
+                model=getattr(result, "model", None),
+                attempt_count=attempt_index,
+                retry_count=len(retry_reasons),
+                retry_reasons=tuple(retry_reasons),
+                retry_delays_seconds=tuple(retry_delays_seconds),
+            )
+        except Exception as exc:
+            transient_reason = _transient_llm_error_reason(exc)
+            if transient_reason is None or attempt_index >= max_attempts:
+                _attach_llm_retry_context(
+                    exc,
+                    attempt_count=attempt_index,
+                    retry_reasons=retry_reasons,
+                    retry_delays_seconds=retry_delays_seconds,
+                )
+                raise
+            retry_reasons.append(transient_reason)
+            delay_seconds = base_delay_seconds * (2 ** (attempt_index - 1))
+            if max_jitter_seconds:
+                delay_seconds += random.uniform(0.0, max_jitter_seconds)  # noqa: S311 - retry jitter only.
+            retry_delays_seconds.append(delay_seconds)
+            logger.warning(
+                "[model-parameter][llm] transient failure; retrying one LLM call | "
+                "output_schema={} attempt={} max_attempts={} reason={} delay_seconds={}",
+                output_schema.__name__,
+                attempt_index,
+                max_attempts,
+                transient_reason,
+                round(delay_seconds, 3),
+            )
+            await asyncio.sleep(delay_seconds)
+
+    message = "unreachable Model Parameter transient retry state"
+    raise RuntimeError(message)
 
 
 def _field_key(value: Any) -> str:
@@ -3344,7 +3609,7 @@ def _parameter_slot_from_llm(slot: LLMSlotProposal) -> dict[str, Any]:
     ).model_dump()
     if slot.entity_coordinate_resolution is not None:
         payload["_llm_entity_coordinate_resolution"] = (
-            slot.entity_coordinate_resolution.model_dump()
+            slot.entity_coordinate_resolution.model_dump(exclude_none=True)
         )
     return payload
 

@@ -85,7 +85,7 @@ python -m pytest -q -m model_parameter_core \
   tests/automated/test_model_parameter_runner_common.py
 ```
 
-`--execute`는 반드시 `--scenario-id` 또는 `--scenario-group-id`로 write 범위를 명시해야 하며, 미지정 시 DB preflight 전에 `FAIL`한다. smoke 실패 시 proposal/confirmation을 하나도 실행하지 않고 `FAIL`한다. 통과하면 `runner_common.execute_proposal_and_confirmation()`을 scenario마다 정확히 한 번 호출한다. 자동 retry 옵션은 제공하지 않는다. 실패 후 재실행이 필요하면 기존 proposal ID와 실패 증적을 먼저 보존하고 사용자가 별도 실행한다.
+`--execute`는 반드시 `--scenario-id` 또는 `--scenario-group-id`로 write 범위를 명시해야 하며, 미지정 시 DB preflight 전에 `FAIL`한다. smoke 실패 시 proposal/confirmation을 하나도 실행하지 않고 `FAIL`한다. 통과하면 `runner_common.execute_proposal_and_confirmation()`을 scenario마다 정확히 한 번 호출한다. Scenario/DB write를 다시 수행하는 outer retry 옵션은 제공하지 않는다. Agent 내부의 bounded transient LLM retry는 별도 정책이며 attempt/retry 관측성을 남긴다. 실패 후 Scenario 재실행이 필요하면 기존 proposal ID와 실패 증적을 먼저 보존하고 사용자가 별도 실행한다.
 
 v4 persistence의 authoritative link는 `scenario_group_id`이며 API `eventId=null`, DB `mi_event_id=NULL`이어야 한다. empty payload rollback, valid confirmation, reconfirmation, payload 보존은 공유 workflow 결과를 그대로 판정한다.
 
@@ -124,7 +124,9 @@ proposal history를 다시 판정한다. `extend16-v8`은 v4.1 full checksum, �
 `new-bc-v7` contract SHA, semantic schema와 실제 resource content fingerprint를 묶은 고정 계약이다. 기존 v4.0
 Group 검증에는 명시적인 `extend16-v8-v4.0-compat` release를 사용한다. 각 write
 직전에는 현재 Scenario뿐 아니라 명시 cohort 전체의 in-flight 상태를 다시 확인한다. Confirmation, callback,
-outer retry와 uncovered guard 우회는 제공하지 않는다.
+outer retry와 uncovered guard 우회는 제공하지 않는다. 일반 Scenario `FAIL`은 해당 Scenario에 격리해 뒤의 eligible
+후보를 계속 실행하지만, resource/context/catalog/input drift, in-flight row와 persistence integrity 위반으로 인한
+`BLOCKED`는 campaign 전체를 즉시 중단한다.
 
 Group 단위 검증이 앞 Scenario 실패에서 중단된 뒤, graph 실행 횟수가 0인 뒤쪽 runtime candidate만
 Scenario별로 최초 1회 실행하는 보충 실행은 test orchestration으로 명시한다. 이는 Parameter Agent 운영
@@ -143,11 +145,14 @@ cohort에 대한 다른 runner/public proposal 요청이 없도록 운영 single
 `references/same-cohort-coverage-campaign.md` 절차를 따른다. 핵심 불변 조건은 다음과 같다.
 
 - matcher/config만 바뀌면 Before/After의 catalog pin, Group IDs, Scenario IDs, runtime candidate IDs가 동일해야 한다.
+- 사용자가 Event 입력 cohort를 고정 불변조건으로 선언하면 후속 logic/config release에서도 Event·Group·Scenario를
+  재생성하거나 교체하지 않는다. 동일 저장 ID의 proposal 결과만 비교한다.
 - binding catalog가 바뀌면 기존 pinned Scenario를 덮어쓰지 않는다. 동일 Scenario payload의 read-only matcher
   비교와 같은 Event cohort로 새 version Group을 생성한 end-to-end 비교를 분리해 보고한다.
 - 유효 model input과 Lever Full set을 coverage를 위해 변경하지 않는다.
 - 표기 차이는 Step2 LLM의 구조화된 원문 Plant/Train 근거와 server-side span/exact-target 검증으로 완화할 수
-  있지만 출력은 exact model coordinate이며 다중 slot은 명시 근거를 요구한다.
+  있지만 출력은 exact model coordinate다. 동일 evidence의 복수 target 승인을 거절하고 다중 slot은 slot별
+  exact 기간 근거 또는 해당 slot을 직접 포함하는 명시 연월·분기·닫힌 범위를 요구한다.
 - After는 Before uncovered 후보만 Scenario별 1회 실행하고 DB 전체 read-back으로 KPI를 다시 계산한다.
 - 실패 원인은 error code/message 기준으로 집계하고 해결책을 연결한다. 운영 개선안은 원인 분석 뒤에 제시하며,
   Scenario별 실패 격리와 transient-only bounded retry를 semantic abstain 및 integrity fail-closed와 구분한다.
@@ -165,7 +170,8 @@ release acceptance까지 요청받으면 이 보고서의 mandatory `FAIL`이 0�
 - `--execute` 전 preflight 또는 automated gate 실패가 하나라도 있으면 모든 live write를 막는다.
 - unscoped read-only discovery만 허용하고 unscoped `--execute`는 DB 접속 전에 차단한다.
 - 기존 보고서 경로는 덮어쓰지 않으며 보고서 예약 실패도 DB 접속 전에 차단한다.
-- write-producing workflow를 자동 retry하지 않는다.
+- write-producing Scenario workflow를 자동 retry하지 않는다. 내부 LLM retry는 timeout·transport·HTTP
+  408/425/429/5xx로 제한하고 semantic/schema/좌표/integrity 오류에는 적용하지 않는다.
 - catalog checksum, Lever ID/binding, group Event membership 오류를 경고로 낮추지 않는다.
 - valid but unmapped/non-executable catalog state는 reason code와 함께 coverage 증적으로 보존한다.
 - 보고서에 비밀값, DB 자격증명, 전체 prompt 원문을 기록하지 않는다.

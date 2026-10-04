@@ -18,6 +18,14 @@ side-by-side로 추가한다. 신규 Scenario Group만 설정의 `scenario_group
 Lever Full Set, code·domain·label·description·parent는 v4.0과 동일하다. 조건부 후보가 실제 모델
 대상·좌표·기간을 남기도록 5개 고빈도 Lever의 `applicability_hint`만 binding과 함께 보강한다.
 
+### v4.1.1 proposal Flow release
+
+`v4.1.1`은 새 Impact Lever catalog가 아니라 v4.1 catalog를 그대로 사용하는 Model Parameter proposal Flow
+release다. 따라서 catalog version/checksum, 21개 Lever, 56개 binding, Parameter master/capability와 기존
+v4.1 Scenario Group/Scenario ID는 변경하지 않는다. 비교 코호트가 고정된 작업에서는 Scenario를 재생성하지 않고
+동일한 20 Event·20 Group·82 Scenario를 재사용한다. 배포 설정은
+`model_parameter_proposal_flow_release=v4.1.1`로 식별한다.
+
 ## 2. 확장 binding
 
 모든 추가 binding은 `role=alternative`, `selection_mode=conditional`, `support_status=executable`이다.
@@ -49,14 +57,19 @@ reference와 유한 숫자 검증은 그대로 적용한다.
 ## 4. 설비 좌표 추론
 
 Step2 LLM이 실제 slot hierarchy와 연결된 Event/Lever 문맥을 비교해 exact Basecase 좌표를 선택한다. 표기 차이로
-선택했다면 다음 세 필드를 구조화해 반환한다.
+선택했다면 다음 다섯 필드를 구조화해 반환한다.
 
 - `plantEvidenceText`: 입력 원문에서 그대로 복사한 Plant 근거
 - `trainEvidenceText`: 입력 원문에서 그대로 복사한 Train 근거
 - `coordinateMatchNoteKo`: 실제 좌표와 같은 실체로 판단한 이유
+- `periodEvidenceText`: 입력 원문에서 그대로 복사한 기간 근거
+- `periodMatchNoteKo`: exact Year/Month를 포함한다고 판단한 이유
 
 서버는 선택 좌표가 실제 catalog exact slot인지, 두 근거 문구가 연결된 Event/Lever 원문에 실제 존재하는지,
-두 문구가 서로 다른 span인지 검증한다. 통과한 경우에도 output 좌표는 LLM 표현이 아니라 Basecase canonical
+두 문구가 서로 다른 span인지 검증한다. Scenario narrative도 근거 corpus에 포함하되 source Event·Lever lineage는
+필수다. 동일 Plant·Train evidence가 서로 다른 exact target을 승인하면 LLM 승인을 거절하고, 복수 slot은 각
+기간 근거가 exact Year/Month를 포함해야 한다. 단, Lever lineage의 명시 연월·분기·닫힌 범위가 exact slot을
+직접 포함하면 그 근거를 인정한다. 통과한 경우에도 output 좌표는 LLM 표현이 아니라 Basecase canonical
 좌표다. 일반 표기 정규화와 실제 좌표에서 자동 생성한 alias는 안전 보조 수단일 뿐이며, target별 hard-coded
 mapping을 추가하지 않는다. 자동 alias가 둘 이상 target에 충돌하면 사용하지 않는다.
 
@@ -110,11 +123,12 @@ bounded period만 허용하며, `재가동 지연`, `10월 하순 이후`만으�
 
 ## 7. proposal campaign 재실행 원칙
 
-Group runner가 앞 Scenario 실패에서 중단되어 뒤 Scenario가 graph를 한 번도 실행하지 못한 경우, 그 뒤 후보를
-Scenario별로 격리해 최초 1회 실행하는 것은 **보충 실행(test orchestration)** 이다. Parameter Agent 운영 Flow의
-retry가 아니며, 이미 실패한 동일 Scenario를 다시 호출하지 않는다. 확정적 코드 수정의 효과를 검증하려고 같은
-Scenario를 다시 실행할 때만 최초 실패 증적, 수정 항목, 새 code revision을 함께 남겨 `post-fix re-test`로 구분한다.
+v4.1.1 proposal-only runner는 Scenario `FAIL`을 격리해 같은 명시 cohort의 뒤 후보까지 각각 최초 1회 실행한다.
+resource/context/catalog/input fingerprint, in-flight proposal 또는 persistence integrity 변경은 `BLOCKED`로 분류해
+campaign 전체를 즉시 중단한다. Scenario 전체 proposal/DB write의 outer retry는 없다.
 
-운영 Flow 고도화 시에는 Scenario별 실패 격리와 제한된 transient retry를 별도 설계할 수 있다. timeout·일시적
-transport 오류만 횟수 제한을 두고 재시도하며, semantic empty, exact 좌표 불일치, basecase 동일값은 자동
-재시도하지 않는다. catalog/schema/checksum/integrity 오류는 항상 fail closed한다.
+Step1.5·Step2·Step3 내부 LLM 호출만 timeout·transport·HTTP 408/425/429/5xx에 대해 기본 최대 2회 시도한다.
+semantic empty, schema invalid, exact 좌표 불일치, basecase 동일값은 자동 재시도하지 않는다. 이는 Parameter Agent
+운영 Flow의 validation & transient retry 개선이며, 실패한 Scenario를 다시 실행하는 보충 실행과 다르다.
+확정적 코드 수정 효과로 이미 실패한 동일 Scenario를 다시 호출하면 최초 증적·수정 항목·새 revision을 남긴
+`post-fix re-test`로 구분한다.

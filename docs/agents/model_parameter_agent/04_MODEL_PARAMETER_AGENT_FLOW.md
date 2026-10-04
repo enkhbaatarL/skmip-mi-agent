@@ -295,6 +295,11 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
   선택할 수 있지만, 전체 범위 근거가 없으면 임의의 대표 시설이나 하위 branch로 확대하지 않는다.
 - v4의 명시 연월이 없더라도 scenario narrative, selected dimension, Lever `time_window`와 기간 해석 정책이
   하나의 현재 이후 기간을 뒷받침하면 해당 exact 기간을 사용할 수 있다.
+- LNG Plant/Train 좌표는 hard-coded 설비 사전이 아니라 실제 slot hierarchy를 target으로 LLM이 원문의
+  Plant·Train·기간 문구를 구조화한다. 서버는 Scenario/Event/Lever evidence corpus 안의 서로 다른 Plant/Train
+  span, exact Year/Month 포함 여부와 동일 evidence 조합의 target 충돌을 검증한다. 명시 연월·분기·닫힌 범위가
+  exact slot을 직접 포함하면 기존 Lever 기간 근거를 인정하고, 그렇지 않은 복수 선택은 각 slot의
+  `period_evidence_text`가 해당 exact 기간을 포함해야 한다.
 - v4 PowerMix가 한 `(Country, Year)` member를 선택하면 서버가 contract의 10개 Energy Source 전체를 같은
   atomic group으로 확장한다. 확장 전 seed는 `Country, Year, Energy Source` 3축의 중복·누락·추가 축,
   정수 Year와 승인 member를 검증하며, member 하나라도 유효한 exact reference가 없으면 group 전체를 제외한다.
@@ -312,7 +317,8 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
 | `slot_selection_limits` | 파라미터별 반환 slot 상한과 우선순위 |
 | `parameter_slot_tasks` | 파라미터, 선택·보조 dimension, 실제 slot catalog와 v4 terminal의 판단 전용 `applicability_attributes` |
 
-응답은 각 선택 좌표의 `candidate_key`와 `slot_axes`만 받는다.
+응답은 각 선택 좌표의 `candidate_key`와 `slot_axes`를 받는다. LNG Plant/Train 축이 있는 v4 slot은 실제 좌표
+승인 근거를 `entity_coordinate_resolution`에 함께 반환한다.
 
 ```json
 {
@@ -320,9 +326,19 @@ system prompt `SLOT_PROPOSAL_SYSTEM`은 “값을 판단하지 말고 실제 cat
     {
       "candidate_key": "<입력 candidate_key>",
       "slot_axes": [
-        {"axis_name": "Country", "axis_value": "China"},
-        {"axis_name": "Year", "axis_value": 2026}
-      ]
+        {"axis_name": "Country", "axis_value": "United States"},
+        {"axis_name": "LNG Plant", "axis_value": "Cove Point Export"},
+        {"axis_name": "LNG Plant Train", "axis_value": "Cove Point Export"},
+        {"axis_name": "Year", "axis_value": 2026},
+        {"axis_name": "Month", "axis_value": 10}
+      ],
+      "entity_coordinate_resolution": {
+        "plantEvidenceText": "입력 원문의 Plant 문구",
+        "trainEvidenceText": "입력 원문의 별도 Train 문구",
+        "coordinateMatchNoteKo": "실제 model target과 같은 실체인 이유",
+        "periodEvidenceText": "입력 원문의 기간 문구",
+        "periodMatchNoteKo": "exact Year/Month를 포함하는 이유"
+      }
     }
   ]
 }
@@ -661,6 +677,15 @@ GDP slot 처리 예시에서 Step2는 `candidate_key + Country + Year`를 반환
 
 서버는 `candidate_key`로 파라미터와 모델 대상을, `slot_key`로 좌표와 reference를 찾아 최종 API/DB 결과를 조립한다.
 
+### 1.7 LLM transient retry 경계
+
+Step1.5·Step2·Step3의 구조화 LLM 호출은 `model_parameter_transient_retry_*` 설정으로 호출 단위 재시도를
+수행한다. 기본값은 최대 2회 시도(최초 1회 + 재시도 1회), 0.5초 exponential backoff와 최대 0.25초 jitter다.
+timeout, transport 연결 오류, HTTP 408/425/429/5xx만 재시도하며 structured schema/semantic 오류,
+exact 좌표·근거 실패, unchanged/no-change와 DB/catalog/integrity 오류는 재시도하지 않는다. 공통 connector의
+내부 retry는 0으로 두어 이 정책과 중첩되지 않게 한다. 성공 trace와 실패 context에는 attempt/retry 수, 분류 사유,
+delay를 남기되 prompt 원문은 남기지 않는다. 이는 proposal graph나 DB write 전체를 다시 실행하는 outer retry가 아니다.
+
 ### 3.5 `uncovered_only` proposal-only campaign
 
 `tests/manual/model_parameter_agent/run_proposal_only.py`는 public proposal endpoint를 대체하지 않는 bounded
@@ -684,7 +709,8 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
-- `extend16-v8`는 임의 label이 아니라 catalog `v4.1` / checksum
+- runner의 `proposal_flow_release=v4.1.1`은 로직 release이며 Impact Lever catalog version이 아니다.
+  `extend16-v8`는 임의 label이 아니라 catalog `v4.1` / checksum
   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`, extend16 capability와
   `new-bc-v7` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정
   계약이다. 어느 하나라도 drift하면 Scenario DB 조회 또는 LLM 실행 전에 차단한다.
@@ -703,7 +729,9 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
   prompt 입력 전체와 candidate digest를 다시 읽어 최초 input fingerprint와 비교하고, 명시 campaign 범위 전체의
   proposal 이력을 다시 조회한다. graph가 실제로 사용한 context도 persistence 직전에 frozen context와 대조한다.
   하나라도 바뀌면 proposal row를 쓰지 않고 남은 campaign을 중단한다.
-- Scenario당 최대 한 번, sequential single worker, outer retry 없음으로 실행하며 proposal ID 전후 snapshot과
+- Scenario당 최대 한 번, sequential single worker, outer retry 없음으로 실행한다. 일반 Scenario `FAIL`은 해당
+  Scenario에 격리하고 다음 eligible Scenario를 계속 처리한다. 단, resource/context/catalog/input fingerprint,
+  in-flight proposal 또는 persistence integrity가 바뀐 `BLOCKED`는 campaign 전체를 즉시 중단한다. proposal ID 전후 snapshot과
   정확히 한 행의 delta, 완료 시각, v4 response identity, runtime Parameter 경계와 API/DB proposal payload 일치를
   검증한다. DB payload의 `lutValue` 저장은 실패로 판정한다.
 - evidence JSON에는 capability release, 실제 코드 allow-list, catalog pin, resource contract/fingerprint,

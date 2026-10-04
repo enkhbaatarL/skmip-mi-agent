@@ -167,6 +167,10 @@ def test_k8s_single_config_file_uses_same_resource_mapping() -> None:
     assert embedded_config["model_parameter_resources"] == get_settings().model_parameter_resources
     for setting_name in (
         "scenario_group_v4_impact_catalog_version",
+        "model_parameter_proposal_flow_release",
+        "model_parameter_transient_retry_max_attempts",
+        "model_parameter_transient_retry_base_delay_seconds",
+        "model_parameter_transient_retry_max_jitter_seconds",
         "model_parameter_max_total_selected_slots",
         "model_parameter_max_step2_prompt_bytes",
         "model_parameter_max_step3_prompt_bytes",

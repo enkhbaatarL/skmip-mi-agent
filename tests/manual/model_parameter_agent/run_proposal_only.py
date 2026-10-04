@@ -6,7 +6,9 @@
 The default mode is DB read-only. ``--execute`` is intentionally narrower than
 the API/background workflows: it calls ``_evaluate_scenario`` directly, never
 calls confirmation or callback code, and never retries a write-producing
-attempt. The uncovered-only guard cannot be bypassed.
+attempt. A Scenario-level proposal failure is isolated so later eligible
+Scenarios still receive their one attempt; integrity or scope drift remains a
+campaign-wide hard stop. The uncovered-only guard cannot be bypassed.
 """
 
 from __future__ import annotations
@@ -82,9 +84,10 @@ from tests.manual.model_parameter_agent.runner_common import (
 
 V4_API_VERSION = "v4"
 V4_STRATEGY = "multi_event_model_lever_dimensions"
-EVIDENCE_SCHEMA_VERSION = 3
+EVIDENCE_SCHEMA_VERSION = 4
 UNCOVERED_POLICY_VERSION = "uncovered-only-v1"
 BASELINE_CAPABILITY_RELEASE = "extend16-v8"
+PROPOSAL_FLOW_RELEASE = "v4.1.1"
 EXPECTED_V4_0_CATALOG_CHECKSUM = "416017351f2b9539370963a3ca413914876da55a1db3f41e3dacd34bd466c763"
 EXPECTED_V4_1_CATALOG_CHECKSUM = "7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69"
 EXPECTED_NEW_BC_V7_CONTRACT_SHA256 = "e8bea11883e7e796938a994f6415aa0c294a8eccbb9181981a213fcdb0aec7bb"
@@ -462,6 +465,9 @@ def _resource_manifest() -> dict[str, Any]:
         lut_enabled=settings.model_parameter_lut_enabled,
     )
     manifest = {
+        "proposal_flow_release": str(
+            getattr(settings, "model_parameter_proposal_flow_release", ""),
+        ),
         "release_id": contract.release_id,
         "contract_sha256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
         "contract_parameter_names": sorted(contract.parameters),
@@ -501,6 +507,12 @@ def _release_contract_errors(
     release = _capability_contract(capability_release)
     errors: list[str] = []
     expected_allowlist = frozenset(str(item) for item in release["runtime_allowlist"])
+    if resource_manifest.get("proposal_flow_release") != PROPOSAL_FLOW_RELEASE:
+        errors.append(
+            "proposal flow release does not match this runner: "
+            f"expected={PROPOSAL_FLOW_RELEASE!r}, "
+            f"actual={resource_manifest.get('proposal_flow_release')!r}",
+        )
     if expected_allowlist != RUNTIME_PROPOSAL_CAPABILITY_NAMES:
         errors.append(
             "runtime capability drifted from the approved capability release: "
@@ -1002,6 +1014,8 @@ def _llm_call_evidence(value: Any) -> list[dict[str, Any]]:
                 "prompt_limit_bytes",
                 "parameter_bytes",
                 "retry_count",
+                "retry_reasons",
+                "retry_delays_seconds",
                 "internal_retry_count",
                 "attempt",
                 "attempt_count",
@@ -1059,6 +1073,25 @@ def _failure_summary(trace: Mapping[str, Any]) -> dict[str, Any]:
     }
     summary["llm_calls"] = _llm_call_evidence(trace.get("llm_calls"))
     return summary
+
+
+def _llm_retry_evidence_from_exception(exc: BaseException) -> dict[str, Any]:
+    context = getattr(exc, "context", None)
+    raw = context.get("model_parameter_llm_retry") if isinstance(context, Mapping) else None
+    if not isinstance(raw, Mapping):
+        raw = getattr(exc, "_model_parameter_llm_retry", None)
+    if not isinstance(raw, Mapping):
+        return {}
+    return {
+        field: raw.get(field)
+        for field in (
+            "attempt_count",
+            "retry_count",
+            "retry_reasons",
+            "retry_delays_seconds",
+        )
+        if field in raw
+    }
 
 
 def _safe_fetch_proposal(
@@ -1417,6 +1450,9 @@ async def _execute_once(
         attempt["failed_stage"] = trace.get("failed_stage") or "proposal evaluation"
         attempt["error"] = _redact_text(repr(evaluation_error))
         attempt["failure_trace"] = _failure_summary(trace)
+        retry_evidence = _llm_retry_evidence_from_exception(evaluation_error)
+        if retry_evidence:
+            attempt["llm_retry"] = retry_evidence
         model_param_proposal_id = _int_or_none(trace.get("model_param_proposal_id"))
     attempt["model_param_proposal_id"] = model_param_proposal_id
 
@@ -1545,6 +1581,7 @@ async def run_campaign(
             "single_worker_best_effort": True,
             "max_attempts_per_scenario": 1,
             "automatic_retry": False,
+            "scenario_failure_policy": "isolate FAIL and continue; BLOCKED hard-stops the campaign",
             "confirmation_invoked": False,
             "callback_invoked": False,
             "required_api_version": V4_API_VERSION,
@@ -1783,7 +1820,7 @@ async def run_campaign(
         )
         evidence["attempts"].append(attempt)
         _write_evidence(options.evidence_path, evidence)
-        if attempt.get("status") != "PASS":
+        if attempt.get("status") == "BLOCKED":
             break
 
     if any(attempt.get("status") == "BLOCKED" for attempt in evidence["attempts"]):

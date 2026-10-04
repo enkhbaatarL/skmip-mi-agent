@@ -132,12 +132,18 @@ SLOT_PROPOSAL_SYSTEM = """\
 - 한국어·영문 표기, LNG/Export/Terminal 표기, Stage/단계, Train/T/호기, 약칭 차이가 있어도 전체 맥락상
   같은 실체가 명확하면 slot_catalog의 exact 좌표로 반환하십시오. 고정 별칭 사전이 있다고 가정하지 말고
   scenario/event/dimension 문맥과 실제 slot hierarchy를 직접 비교해 판단하십시오.
-- LNG Plant와 Train 축이 있는 slot을 표기 차이 추론으로 선택한 경우 `entity_coordinate_resolution`에
-  `plant_evidence_text`, `train_evidence_text`, `coordinate_match_note_ko`를 반환하십시오. 두 evidence text는
-  입력 원문에서 각각 그대로 복사하며 Plant와 Train을 입증하는 서로 다른 문구여야 합니다.
+- LNG Plant와 Train 축이 있는 v4 slot은 실제 slot hierarchy 좌표를 target으로 삼아
+  `entity_coordinate_resolution`에 `plant_evidence_text`, `train_evidence_text`,
+  `coordinate_match_note_ko`, `period_evidence_text`, `period_match_note_ko`를 반환하십시오.
+  고정 alias 사전을 가정하지 말고 입력 문맥과 실제 target 좌표를 비교해 동일 실체인지 판단하십시오.
+  세 evidence text는 입력 원문에서 그대로 복사해야 하며, Plant와 Train evidence는 각각을 입증하는
+  서로 다른 문구여야 합니다. period evidence는 선택한 Year/Month를 직접 포함하거나 그 slot을 포함하는
+  연·월·분기·반기·상대기간 문구여야 합니다.
   상위 Plant명만으로 하위 Train을 추정하지 마십시오. 같은 한 번의 문구를 Plant와 Train 근거로 중복 사용하지 마십시오.
-- 여러 Train 또는 여러 기간 slot을 선택할 때는 각 Train 번호(명시적 범위 포함)와 각 기간을 근거에서 확인할 수
-  있어야 합니다. 예를 들어 Plant만 언급되었거나 단순히 '재가동 지연'만 있는 경우 여러 Train·월로 확대하지 마십시오.
+- 여러 target 또는 여러 기간 slot을 선택할 때는 각 slot마다 target과 기간 근거를 반환하십시오. 서버는 동일한
+  Plant·Train evidence 조합이 서로 다른 model target을 승인하는지, period evidence가 해당 exact Year/Month를
+  포함하는지를 다시 검사합니다. 각 Train 번호(명시적 범위 포함)와 각 기간을 근거에서 확인할 수 있어야 합니다.
+  예를 들어 Plant만 언급되었거나 단순히 '재가동 지연'만 있는 경우 여러 Train·월로 확대하지 마십시오.
 - v4에서는 정확한 연월이 직접 적혀 있지 않아도 scenario narrative, selected dimension, Lever time_window와
   period_resolution_policy가 하나의 현재 이후 기간을 뒷받침하면 그 기간의 exact slot을 선택하십시오.
   서로 동등한 여러 대상·기간 중 하나를 무작위로 고르지는 마십시오.
@@ -166,7 +172,7 @@ SLOT_PROPOSAL_SYSTEM = """\
 
 출력 규칙:
 - 실제 사용할 slot만 parameter_slots에 반환하십시오.
-- 각 항목에는 candidate_key와 slot_axes를 반환하십시오. 위 설비 표기 추론을 사용한 경우에만
+- 각 항목에는 candidate_key와 slot_axes를 반환하십시오. LNG Plant와 Train 축이 있는 v4 slot에는
   entity_coordinate_resolution을 함께 반환하십시오.
 - 별도 rationale_ko, selected, metadata, warning 필드는 반환하지 마십시오.
 """

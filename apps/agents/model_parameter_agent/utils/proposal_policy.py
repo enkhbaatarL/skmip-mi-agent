@@ -65,6 +65,14 @@ class LiqUtilEvidenceDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class LLMEntityResolutionValidation:
+    entity_matches: bool
+    coordinate_note: str | None = None
+    period_evidence: str | None = None
+    period_note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ApprovedCoordinateAliasIndex:
     """Aliases derived from actual model coordinates and accepted only when unique."""
 
@@ -295,22 +303,24 @@ def _evidence_phrase_token_spans(
 
 def _validated_llm_entity_resolution(
     slot: Mapping[str, Any],
-    facility_text: str,
-) -> tuple[bool, str | None]:
+    evidence_text: str,
+    *,
+    resolution_conflicted: bool = False,
+) -> LLMEntityResolutionValidation:
     raw_resolution = slot.get("_llm_entity_coordinate_resolution")
-    if not isinstance(raw_resolution, Mapping):
-        return False, None
+    if not isinstance(raw_resolution, Mapping) or resolution_conflicted:
+        return LLMEntityResolutionValidation(entity_matches=False)
     plant_evidence = str(raw_resolution.get("plant_evidence_text") or "").strip()
     train_evidence = str(raw_resolution.get("train_evidence_text") or "").strip()
     note = str(raw_resolution.get("coordinate_match_note_ko") or "").strip()
     if not plant_evidence or not train_evidence or not note:
-        return False, None
+        return LLMEntityResolutionValidation(entity_matches=False)
     if _canonical_evidence_text(plant_evidence) == _canonical_evidence_text(
         train_evidence,
     ):
-        return False, None
-    plant_spans = _evidence_phrase_token_spans(facility_text, plant_evidence)
-    train_spans = _evidence_phrase_token_spans(facility_text, train_evidence)
+        return LLMEntityResolutionValidation(entity_matches=False)
+    plant_spans = _evidence_phrase_token_spans(evidence_text, plant_evidence)
+    train_spans = _evidence_phrase_token_spans(evidence_text, train_evidence)
     has_distinct_evidence = bool(train_spans) and any(
         all(
             plant_end <= train_start or train_end <= plant_start
@@ -319,8 +329,21 @@ def _validated_llm_entity_resolution(
         for plant_start, plant_end in plant_spans
     )
     if not has_distinct_evidence:
-        return False, None
-    return True, note
+        return LLMEntityResolutionValidation(entity_matches=False)
+
+    period_evidence = str(raw_resolution.get("period_evidence_text") or "").strip()
+    period_note = str(raw_resolution.get("period_match_note_ko") or "").strip()
+    period_spans = (
+        _evidence_phrase_token_spans(evidence_text, period_evidence)
+        if period_evidence and period_note
+        else ()
+    )
+    return LLMEntityResolutionValidation(
+        entity_matches=True,
+        coordinate_note=note,
+        period_evidence=period_evidence if period_spans else None,
+        period_note=period_note if period_spans else None,
+    )
 
 
 def build_approved_coordinate_alias_index(
@@ -524,6 +547,7 @@ def evaluate_liq_util_evidence(
     *,
     exact_candidate_count: int | None = None,
     coordinate_alias_index: ApprovedCoordinateAliasIndex | None = None,
+    llm_resolution_conflicted: bool = False,
 ) -> LiqUtilEvidenceDecision:
     """Require one coherent v4 Lever lineage item to ground an exact facility slot.
 
@@ -532,8 +556,6 @@ def evaluate_liq_util_evidence(
     evidence because that shortcut could expand a parent facility mention into
     unsupported slots.
     """
-
-    _ = exact_candidate_count
 
     coordinates = slot_coordinates(slot)
     plant = coordinates.get("LNG Plant") or coordinates.get("Plant")
@@ -560,39 +582,52 @@ def evaluate_liq_util_evidence(
         if not source_event_ids or not linked_events:
             missing.add("source_event")
 
-        time_window = str(provenance.get("time_window") or "").strip()
-        time_matches = time_evidence_matches_slot(
-            time_window,
-            year=coordinates.get("Year"),
-            month=coordinates.get("Month"),
-        )
-        if not time_matches:
-            missing.add("specific_time_window")
-
-        facility_text = _json_text(
+        evidence_text = _json_text(
             {
                 "scope": provenance.get("scope"),
                 "source_dimensions": _matching_source_dimensions(candidate, provenance),
                 "events": linked_events,
+                "scenario": scenario_context.get("scenario"),
+                "scenario_group": scenario_context.get("scenario_group"),
             },
         )
+        resolution = _validated_llm_entity_resolution(
+            slot,
+            evidence_text,
+            resolution_conflicted=llm_resolution_conflicted,
+        )
+        time_window = str(provenance.get("time_window") or "").strip()
+        lineage_time_matches = time_evidence_matches_slot(
+            time_window,
+            year=coordinates.get("Year"),
+            month=coordinates.get("Month"),
+        )
+        llm_period_matches = bool(resolution.period_evidence) and time_evidence_matches_slot(
+            resolution.period_evidence,
+            year=coordinates.get("Year"),
+            month=coordinates.get("Month"),
+        )
+        requires_slot_period_evidence = (exact_candidate_count or 0) > 1
+        time_matches = lineage_time_matches or llm_period_matches
+        if not time_matches:
+            missing.add("specific_time_window")
+            if requires_slot_period_evidence:
+                missing.add("slot_specific_period_evidence")
+
         user_notes: list[str] = []
         if not plant or not train:
             missing.add("exact_facility_slot")
         else:
             plant_matches, plant_uses_alias = _plant_evidence_match(
-                facility_text,
+                evidence_text,
                 plant,
                 alias_index,
             )
             train_matches, train_uses_alias = _train_evidence_match(
-                facility_text,
+                evidence_text,
                 plant=plant,
                 train=train,
                 alias_index=alias_index,
-            )
-            llm_resolution_matches, llm_resolution_note = (
-                _validated_llm_entity_resolution(slot, facility_text)
             )
             strict_pairs = alias_index.strict_alias_pairs_by_target.get(
                 (str(plant), str(train)),
@@ -603,7 +638,7 @@ def evaluate_liq_util_evidence(
                 or not strict_pairs
                 or any(
                     _contains_distinct_phrase_pair(
-                        facility_text,
+                        evidence_text,
                         plant_alias,
                         train_alias,
                     )
@@ -613,20 +648,25 @@ def evaluate_liq_util_evidence(
             deterministic_matches = (
                 plant_matches and train_matches and strict_alias_pair_matches
             )
-            if not (llm_resolution_matches or deterministic_matches):
+            if not (resolution.entity_matches or deterministic_matches):
                 missing.add("specific_facility_evidence")
-            elif llm_resolution_matches:
+            elif resolution.entity_matches:
                 user_notes.append(
                     "근거 원문의 Plant·Train 문구를 LLM이 실제 Basecase 좌표 "
                     f"'{plant} / {train}'와 같은 실체로 해석했습니다. "
                     f"원문 존재·서로 다른 근거 span·exact target을 서버가 검증했습니다: "
-                    f"{llm_resolution_note}",
+                    f"{resolution.coordinate_note}",
                 )
             elif plant_uses_alias or train_uses_alias:
                 user_notes.append(
                     "근거의 공통어·단계·호기 표기를 실제 Basecase 좌표에서 "
                     f"유일하게 승인된 영문 설비 '{plant}'의 Train 좌표로 정규화해 연결했습니다.",
                 )
+        if llm_period_matches:
+            user_notes.append(
+                "근거 원문의 기간 문구를 exact Year/Month 좌표와 대조해 검증했습니다: "
+                f"{resolution.period_note}",
+            )
         if time_matches and _SHORT_TERM_PATTERN.search(time_window):
             user_notes.append(
                 "'단기' 기간은 분석 기준일이 속한 월의 단일 모델 slot으로 보수적으로 해석했습니다.",

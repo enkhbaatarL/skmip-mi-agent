@@ -397,6 +397,120 @@ def test_liq_evidence_does_not_merge_plant_and_train_across_provenance() -> None
     assert "specific_facility_evidence" in decision.missing_components
 
 
+def test_liq_llm_resolution_uses_scenario_text_and_exact_period_quote() -> None:
+    candidate = _candidate("LiqUtilAdjustment", "liq")
+    provenance = _liq_provenance(scope="미국 Gulf Coast 설비")
+    provenance["time_window"] = ""
+    candidate["lever_provenance"] = [provenance]
+    candidate["source_dimensions"] = [
+        {
+            "scenario_dimension_key": "facility_outage",
+            "source_dimension_description": "가동 차질",
+        },
+    ]
+    slot = _liq_slot()
+    slot["_llm_entity_coordinate_resolution"] = {
+        "plant_evidence_text": "알파 LNG",
+        "train_evidence_text": "1호기",
+        "coordinate_match_note_ko": "한국어 표기를 실제 Alpha LNG / Train 1 좌표와 연결",
+        "period_evidence_text": "2027년 5월까지",
+        "period_match_note_ko": "2027-05 exact slot과 일치",
+    }
+    context = {
+        "scenario": {
+            "title": "알파 LNG 재가동 지연",
+            "narrative": "알파 LNG 설비의 1호기는 2027년 5월까지 차질이 예상됩니다.",
+        },
+        "scenario_group": {"title": "미국 액화설비 차질"},
+        "events": [{"mi_event_id": 101, "event_title": "미국 Gulf Coast outage"}],
+    }
+
+    decision = evaluate_liq_util_evidence(candidate, slot, context)
+
+    assert decision.allowed is True
+    assert any("실제 Basecase 좌표" in note for note in decision.user_notes)
+    assert any("exact Year/Month" in note for note in decision.user_notes)
+
+
+def test_liq_multi_slot_requires_slot_specific_period_evidence() -> None:
+    candidate = _candidate("LiqUtilAdjustment", "liq")
+    provenance = _liq_provenance(scope="Alpha LNG / Train 1")
+    provenance["time_window"] = "재가동 지연"
+    candidate["lever_provenance"] = [provenance]
+    candidate["source_dimensions"] = [
+        {
+            "scenario_dimension_key": "facility_outage",
+            "source_dimension_description": "Alpha LNG Train 1 outage",
+        },
+    ]
+    context = {"events": [{"mi_event_id": 101, "event_title": "Alpha LNG Train 1 outage"}]}
+
+    decision = evaluate_liq_util_evidence(
+        candidate,
+        _liq_slot(),
+        context,
+        exact_candidate_count=2,
+    )
+
+    assert decision.allowed is False
+    assert "slot_specific_period_evidence" in decision.missing_components
+
+
+def test_liq_conflicted_llm_resolution_cannot_approve_a_different_target() -> None:
+    candidate = _candidate("LiqUtilAdjustment", "liq")
+    candidate["lever_provenance"] = [_liq_provenance(scope="미국 Gulf Coast 설비")]
+    candidate["source_dimensions"] = [
+        {
+            "scenario_dimension_key": "facility_outage",
+            "source_dimension_description": "가동 차질",
+        },
+    ]
+    slot = _liq_slot()
+    slot["_llm_entity_coordinate_resolution"] = {
+        "plant_evidence_text": "알파 LNG",
+        "train_evidence_text": "1호기",
+        "coordinate_match_note_ko": "동일 실체",
+        "period_evidence_text": "2027년 5월",
+        "period_match_note_ko": "exact slot과 일치",
+    }
+    context = {
+        "scenario": {"narrative": "알파 LNG 설비의 1호기는 2027년 5월까지 차질"},
+        "events": [{"mi_event_id": 101, "event_title": "generic outage"}],
+    }
+
+    decision = evaluate_liq_util_evidence(
+        candidate,
+        slot,
+        context,
+        llm_resolution_conflicted=True,
+    )
+
+    assert decision.allowed is False
+    assert "specific_facility_evidence" in decision.missing_components
+
+
+def test_llm_resolution_collision_is_derived_from_selected_exact_targets() -> None:
+    shared_resolution = {
+        "plant_evidence_text": "코브 포인트 LNG",
+        "train_evidence_text": "1호기",
+        "coordinate_match_note_ko": "동일 실체",
+        "period_evidence_text": "2027년 5월",
+        "period_match_note_ko": "exact slot과 일치",
+    }
+    first = _liq_slot()
+    first["_llm_entity_coordinate_resolution"] = shared_resolution
+    second = _liq_slot()
+    second["slot_axes"][1]["axis_value"] = "Different LNG"
+    second["slot_axes"][2]["axis_value"] = "Different LNG T1"
+    second["_llm_entity_coordinate_resolution"] = shared_resolution
+
+    conflicts = nodes._conflicted_llm_entity_resolution_keys([first, second])
+
+    assert conflicts == {
+        nodes._llm_entity_resolution_evidence_key(first),
+    }
+
+
 def test_liq_entity_resolution_note_is_preserved_for_service_user() -> None:
     candidate = _candidate("LiqUtilAdjustment", "liq")
     axes = {

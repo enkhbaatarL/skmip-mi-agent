@@ -455,7 +455,13 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
             reference["path"],
         )
 
+    assert local["model_parameter_proposal_flow_release"] == embedded[
+        "model_parameter_proposal_flow_release"
+    ] == "v4.1.1"
     for setting_name in (
+        "model_parameter_transient_retry_max_attempts",
+        "model_parameter_transient_retry_base_delay_seconds",
+        "model_parameter_transient_retry_max_jitter_seconds",
         "model_parameter_max_total_selected_slots",
         "model_parameter_max_step2_prompt_bytes",
         "model_parameter_max_step3_prompt_bytes",

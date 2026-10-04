@@ -132,6 +132,8 @@ class LLMEntityCoordinateResolution(ApiModel):
     plant_evidence_text: str = Field(min_length=1, max_length=240)
     train_evidence_text: str = Field(min_length=1, max_length=240)
     coordinate_match_note_ko: str = Field(min_length=1, max_length=400)
+    period_evidence_text: str | None = Field(default=None, min_length=1, max_length=240)
+    period_match_note_ko: str | None = Field(default=None, min_length=1, max_length=400)
 
 
 class LLMSlotProposal(ApiModel):

@@ -203,6 +203,10 @@ def test_prompt_and_request_limit_settings_have_safe_defaults() -> None:
     assert Settings.model_fields["model_parameter_max_total_selected_slots"].default == 300
     assert Settings.model_fields["model_parameter_max_step2_prompt_bytes"].default == 262_144
     assert Settings.model_fields["model_parameter_max_step3_prompt_bytes"].default == 262_144
+    assert Settings.model_fields["model_parameter_proposal_flow_release"].default == "v4.1.1"
+    assert Settings.model_fields["model_parameter_transient_retry_max_attempts"].default == 2
+    assert Settings.model_fields["model_parameter_transient_retry_base_delay_seconds"].default == 0.5
+    assert Settings.model_fields["model_parameter_transient_retry_max_jitter_seconds"].default == 0.25
 
 
 def test_v4_power_mix_lut_fallback_preserves_raw_vector_precision(

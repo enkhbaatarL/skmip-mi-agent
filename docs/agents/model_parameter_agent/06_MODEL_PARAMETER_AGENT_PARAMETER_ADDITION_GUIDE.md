@@ -135,8 +135,9 @@ Agent 출력은 항상 원래 target 좌표여야 한다. Country·Lifecycle·Ca
 ### 2.3.1 근거 좌표명 완화와 다중 slot 확장 경계
 
 근거 문구와 Basecase 좌표의 표기 차이는 조건부로 완화한다. Step2 LLM이 실제 slot hierarchy와 연결된
-Event/Lever 원문을 비교하고, 원문에서 그대로 복사한 Plant·Train 근거 문구와 좌표 일치 이유를 구조화한다.
-서버는 두 문구의 원문 존재·서로 다른 span·exact target을 검증한다. 설비 공통어
+Scenario/Event/Lever 원문을 비교하고, 원문에서 그대로 복사한 Plant·Train·기간 근거 문구와 좌표 일치 이유를
+구조화한다. 서버는 Plant·Train 두 문구의 원문 존재·서로 다른 span·exact target과 기간 문구의 exact Year/Month
+포함 여부를 검증한다. 설비 공통어
 (`LNG/Export/Plant/Terminal`), 유일 약칭, `Stage↔단계`, `Train/T↔호기`, 단일 Train의 `T1`처럼 실제 좌표에서
 자동 생성한 deterministic alias는 보조 안전망으로만 사용한다. 이 추론과 정규화는 근거 판정에만 사용하고 반환
 좌표는 slot catalog의 exact 값을 유지한다. LLM 좌표 추론, alias 또는 상대기간 해석을 사용한 경우
@@ -153,6 +154,11 @@ Event/Lever 원문을 비교하고, 원문에서 그대로 복사한 Plant·Trai
    서로 다른 span으로 모두 있어야 한다. `... LNG T1` 한 번만 쓴 문구를 Plant+Train 두 근거로 중복 계산하지 않는다.
 5. 자동 alias가 둘 이상의 실제 좌표와 충돌하면 전부 거절한다. target별 예외 코드나 설비별 한·영 dictionary를
    추가하지 말고 LLM의 구조화 근거와 exact-slot 검증으로 처리한다.
+6. 동일한 Plant·Train evidence 조합을 서로 다른 exact target에 반환하면 해당 LLM 승인은 전부 거절한다.
+   같은 target의 여러 기간은 허용하되, 명시 연월·분기·닫힌 범위로 직접 판정되지 않는 복수 slot은 각
+   `period_evidence_text`가 해당 exact Year/Month를 포함해야 한다.
+7. Scenario narrative를 evidence corpus에 포함할 수 있지만 연결된 source Event와 coherent Lever lineage 요건은
+   그대로 유지한다. Scenario text만으로 source provenance를 새로 만들지 않는다.
 
 ### 2.4 v4.1 extend16 신규 3개 정합성 매트릭스
 
@@ -378,6 +384,9 @@ applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 b
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
+- proposal Flow release: model_parameter_proposal_flow_release=v4.1.1
+- transient LLM 호출: model_parameter_transient_retry_max_attempts=2,
+  base delay 0.5초, max jitter 0.25초; semantic/좌표/DB 오류는 retry 금지
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
 proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
@@ -403,6 +412,8 @@ floating-point noise에만 `1e-12` 절대·상대 허용오차를 적용한다. 
    LiqProd/LiqUtil target·evidence 회귀를 통과한다.
 7. v4 multi-event quality runner로 실제 선택 value에서 도달한 allow-list parameter를 proposal하고, 빈 confirmation rollback, 정상 confirmation, reconfirmation, DB read-back을 수행한다.
 8. 실제 리포트에 parameter, candidate, slot, effective reference, proposal, token, 시간·retry와 confirmation ID를 남긴다.
+9. logic-only release는 Impact Lever catalog version/checksum과 Scenario ID를 변경하지 않는다. 같은 고정 cohort로
+   Before/After를 비교하고, catalog/binding 변경 release와 명확히 구분한다.
 
 DB seed의 Git 작성자와 audit principal은 분리한다. Git author는 작업자 계정을 사용하더라도
 `crt_usr_logn_id`/`mod_usr_logn_id`에는 개인명을 넣지 말고 release 식별자(예:
