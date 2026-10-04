@@ -25,6 +25,8 @@ from apps.agents.model_parameter_agent.flows.propose_parameters.nodes import (
     _build_value_proposal_prompt_packet,
     _merge_candidates_by_parameter,
     _partition_candidate_validation_work,
+    _routing_candidate_prompt_payload,
+    _routing_task_for_prompt,
     _sanitize_llm_adjustments,
     _scenario_brief_for_value_prompt,
 )
@@ -950,6 +952,67 @@ def test_v4_single_conditional_price_only_binding_routes_without_default() -> No
     assert len(routing_tasks) == 1
     assert routing_tasks[0]["selection_mode"] == "conditional"
     assert candidates[0]["binding_selection_mode"] == "conditional"
+
+
+def test_v4_routing_prompt_deduplicates_large_binding_provenance() -> None:
+    repeated_provenance = [{"evidence": "x" * 8_000}]
+    candidate = {
+        "candidate_key": "inventory-supply",
+        "mapping_strategy": "v4",
+        "canonical_parameter_name": "SupplyDisruption",
+        "parameter_hint": "country/year/month upstream supply",
+        "semantic_axes": ["Country", "Year", "Month"],
+        "binding_role": "alternative",
+        "binding_selection_mode": "conditional",
+        "binding_applicability": "Explicit upstream supply cause only.",
+        "source_refs": repeated_provenance,
+        "approved_source_projections": repeated_provenance,
+        "binding_provenance": repeated_provenance,
+        "lever_provenance": repeated_provenance,
+    }
+
+    payload = _routing_candidate_prompt_payload(candidate)
+
+    assert payload["candidate_key"] == "inventory-supply"
+    assert payload["binding_applicability"] == "Explicit upstream supply cause only."
+    assert "source_refs" not in payload
+    assert "approved_source_projections" not in payload
+    assert "binding_provenance" not in payload
+    assert "lever_provenance" not in payload
+
+
+def test_v4_routing_prompt_keeps_shared_evidence_once_per_lever_task() -> None:
+    repeated_source = {"evidence": "x" * 8_000}
+    candidates = [
+        {
+            "candidate_key": f"inventory-{index}",
+            "mapping_strategy": "v4",
+            "canonical_parameter_name": parameter_name,
+            "binding_selection_mode": "conditional",
+            "binding_applicability": f"Applicability {index}",
+            "source_refs": [repeated_source],
+            "approved_source_projections": [repeated_source],
+            "lever_provenance": [repeated_source],
+            "source_dimensions": [{"source_dimension_id": "d1"}],
+        }
+        for index, parameter_name in enumerate(
+            ["GDP", "PMI", "PowerMix", "SupplyDisruption"],
+            start=1,
+        )
+    ]
+    task = {
+        "is_v4": True,
+        "selection_mode": "conditional",
+        "dimension_key": "v4|d1|d1v3|inventory_condition",
+        "lever_code": "inventory_condition",
+        "candidates": candidates,
+    }
+
+    payload = _routing_task_for_prompt(task)
+
+    assert payload["lever_context"]["source_refs"] == [repeated_source]
+    assert all("source_refs" not in candidate for candidate in payload["candidates"])
+    assert str(payload).count("x" * 8_000) == 3
 
 
 def test_v4_same_parameter_merges_all_event_dimension_and_lever_provenance() -> None:

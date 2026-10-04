@@ -126,6 +126,11 @@ Group 검증에는 명시적인 `extend16-v8-v4.0-compat` release를 사용한�
 직전에는 현재 Scenario뿐 아니라 명시 cohort 전체의 in-flight 상태를 다시 확인한다. Confirmation, callback,
 outer retry와 uncovered guard 우회는 제공하지 않는다.
 
+Group 단위 검증이 앞 Scenario 실패에서 중단된 뒤, graph 실행 횟수가 0인 뒤쪽 runtime candidate만
+Scenario별로 최초 1회 실행하는 보충 실행은 test orchestration으로 명시한다. 이는 Parameter Agent 운영
+Flow 변경이나 retry가 아니다. 이미 graph를 실행해 실패한 동일 Scenario는 자동 재실행하지 않는다. 확정적
+코드 수정 뒤 검증 재실행은 최초 증적·수정 이유·새 revision을 보존한 `post-fix re-test`로 별도 집계한다.
+
 read-only는 resource runtime을 bootstrap하지 않는다. `--execute`는 Scenario DB 조회 전에 resource runtime을
 고정하고 실제 파일 hash와 등록된 source/schema/fingerprint를 증적한 뒤 0030 proposal schema를 검사한다. graph가
 사용한 context는 persistence 직전에 frozen preflight context와 다시 비교한다. execute 증적의 runtime/schema가
@@ -144,6 +149,8 @@ cohort에 대한 다른 runner/public proposal 요청이 없도록 운영 single
 - 표기 차이는 Step2 LLM의 구조화된 원문 Plant/Train 근거와 server-side span/exact-target 검증으로 완화할 수
   있지만 출력은 exact model coordinate이며 다중 slot은 명시 근거를 요구한다.
 - After는 Before uncovered 후보만 Scenario별 1회 실행하고 DB 전체 read-back으로 KPI를 다시 계산한다.
+- 실패 원인은 error code/message 기준으로 집계하고 해결책을 연결한다. 운영 개선안은 원인 분석 뒤에 제시하며,
+  Scenario별 실패 격리와 transient-only bounded retry를 semantic abstain 및 integrity fail-closed와 구분한다.
 - 비교에는 `scripts/compare_same_cohort.py`를 사용하고 전체 coverage와 후보 성공률을 분리해 보고한다.
 - logic/config 변경은 `rollout-model-parameters`, release 검증은 `verify-model-parameter-release`, 배포는
   `mi-vm-deploy`에 handoff한다. 이 quality mode 자체가 DB binding/config를 임의 수정하지 않는다.

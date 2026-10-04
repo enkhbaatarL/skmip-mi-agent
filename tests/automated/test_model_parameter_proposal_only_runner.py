@@ -1199,6 +1199,95 @@ def test_success_integrity_applies_persistence_precision_to_basecase_values() ->
     assert errors == []
 
 
+def test_success_integrity_tolerates_json_float_round_trip_noise() -> None:
+    row = _proposal_row(101, 780)
+    row["proposal_parameters"] = [
+        {
+            "parameterName": "PowerMix",
+            "values": [
+                {
+                    "Country": "Japan",
+                    "Year": 2026,
+                    "basecaseValue": 0.11247,
+                    "proposedValue": 0.11247403406730376,
+                },
+            ],
+        },
+    ]
+
+    errors = runner._success_integrity_errors(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        model_param_proposal_id=780,
+        new_proposal_ids=(780,),
+        proposal_row=row,
+        readback_error=None,
+        final_response={
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 780,
+                "scenarioId": 101,
+                "scenarioGroupId": 1_101,
+                "eventId": None,
+                "proposalParameters": [
+                    {
+                        "parameterName": "PowerMix",
+                        "values": [
+                            {
+                                "Country": "Japan",
+                                "Year": 2026,
+                                "basecaseValue": 0.11247403406730375,
+                                "lutValue": 0.11247403406730375,
+                                "proposedValue": 0.11247403406730375,
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+        allowed_parameter_names={"PowerMix"},
+    )
+
+    assert errors == []
+
+
+def test_success_integrity_rejects_material_proposed_value_difference() -> None:
+    row = _proposal_row(101, 781)
+    row["proposal_parameters"] = [
+        {
+            "parameterName": "GDP",
+            "values": [{"Year": 2026, "proposedValue": 4.1}],
+        },
+    ]
+
+    errors = runner._success_integrity_errors(  # noqa: SLF001
+        scenario_id=101,
+        scenario_group_id=1_101,
+        model_param_proposal_id=781,
+        new_proposal_ids=(781,),
+        proposal_row=row,
+        readback_error=None,
+        final_response={
+            "status": "success",
+            "data": {
+                "modelParamProposalId": 781,
+                "scenarioId": 101,
+                "scenarioGroupId": 1_101,
+                "eventId": None,
+                "proposalParameters": [
+                    {
+                        "parameterName": "GDP",
+                        "values": [{"Year": 2026, "proposedValue": 4.2}],
+                    },
+                ],
+            },
+        },
+        allowed_parameter_names={"GDP"},
+    )
+
+    assert "proposal DB payload does not match the API response after excluding lutValue" in errors
+
+
 def test_success_integrity_rejects_response_identity_scope_and_persisted_lut_value() -> None:
     row = _proposal_row(101, 778)
     row["proposal_parameters"] = [

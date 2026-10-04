@@ -755,6 +755,21 @@ def _compare_candidate_coverage(
     return not messages, messages
 
 
+def _persistence_quality_candidates(
+    *,
+    generation_strategy: str,
+    validated_candidates: list[dict[str, Any]],
+    slot_candidate_mappings: list[dict[str, Any]],
+    slot_candidate_mappings_captured: bool,
+) -> list[dict[str, Any]]:
+    if generation_strategy == "multi_event_model_lever_dimensions" and slot_candidate_mappings_captured:
+        # v4 deliberately drops conditional candidates that cannot establish an exact slot.
+        # The persistence gate must validate the post-Step2 candidate set, otherwise one
+        # safely abstained conditional binding rejects another independently grounded result.
+        return slot_candidate_mappings
+    return validated_candidates
+
+
 def _review_selected_parameters(
     candidates: list[dict[str, Any]],
     result: dict[str, Any],
@@ -969,6 +984,12 @@ async def _evaluate_scenario(
         slot_catalog = raw_state.get("slot_catalog") or []
         effective_references = raw_state.get("effective_references") or []
         slot_candidate_mappings = raw_state.get("slot_candidate_mappings") or []
+        persistence_candidates = _persistence_quality_candidates(
+            generation_strategy=generation_strategy,
+            validated_candidates=validated_candidates,
+            slot_candidate_mappings=slot_candidate_mappings,
+            slot_candidate_mappings_captured="slot_candidate_mappings" in raw_state,
+        )
         llm_calls = raw_state.get("llm_calls") or []
         result = {
             "parameter_adjustments": raw_state.get("parameter_adjustments") or [],
@@ -977,7 +998,7 @@ async def _evaluate_scenario(
         }
         failure_trace.update(
             {
-                "expected_candidates": validated_candidates,
+                "expected_candidates": persistence_candidates,
                 "parameter_slots": parameter_slots,
                 "slot_catalog": slot_catalog,
                 "effective_references": effective_references,
@@ -991,24 +1012,24 @@ async def _evaluate_scenario(
         failed_stage = "post-graph trace enrichment"
         slot_basecase_records, basecase_warnings = build_basecase_records(
             kb,
-            validated_candidates,
+            persistence_candidates,
             context,
         )
         slot_options = _build_basecase_slot_options(slot_basecase_records)
         value_reference_records = _value_reference_records(raw_state)
         candidate_coverage_ok, candidate_coverage_messages = _compare_candidate_coverage(
-            validated_candidates,
+            persistence_candidates,
             result,
         )
-        selected_ok, selected_messages = _review_selected_parameters(validated_candidates, result)
+        selected_ok, selected_messages = _review_selected_parameters(persistence_candidates, result)
         routing_status, routing_messages = _review_routing_selection(
             scenario_id,
-            validated_candidates,
+            persistence_candidates,
             result,
         )
         step_summary = _build_step_summary(
             rule_candidates=candidates,
-            validated_candidates=validated_candidates,
+            validated_candidates=persistence_candidates,
             parameter_slots=parameter_slots,
             slot_basecase_records=slot_basecase_records,
             slot_options=slot_options,
@@ -1022,7 +1043,7 @@ async def _evaluate_scenario(
             "scenario_id": scenario_id,
             "context": context,
             "rule_candidates": candidates,
-            "expected_candidates": validated_candidates,
+            "expected_candidates": persistence_candidates,
             "non_input_items": non_inputs,
             "mapping_warnings": mapping_warnings,
             "basecase_warnings": basecase_warnings,
@@ -1089,7 +1110,7 @@ async def _evaluate_scenario(
         record["final_response"] = final_response
         record["step_summary"] = _build_step_summary(
             rule_candidates=candidates,
-            validated_candidates=validated_candidates,
+            validated_candidates=persistence_candidates,
             parameter_slots=parameter_slots,
             slot_basecase_records=slot_basecase_records,
             slot_options=slot_options,

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -1106,6 +1107,20 @@ def _contains_parameter_key(value: Any, forbidden_keys: set[str]) -> bool:
     return False
 
 
+def _proposal_parameters_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left == right
+    if isinstance(left, int | float) and isinstance(right, int | float):
+        return math.isclose(float(left), float(right), rel_tol=1e-12, abs_tol=1e-12)
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return set(left) == set(right) and all(_proposal_parameters_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list | tuple) and isinstance(right, list | tuple):
+        return len(left) == len(right) and all(
+            _proposal_parameters_equal(left_item, right_item) for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
 def _proposal_parameter_names(value: Any) -> set[str]:
     if not isinstance(value, list | tuple):
         return set()
@@ -1206,8 +1221,9 @@ def _success_integrity_errors(
     unexpected_persisted_names = sorted(persisted_parameter_names - allowed_parameter_names)
     if unexpected_persisted_names:
         errors.append(f"proposal DB payload escaped the preflight runtime candidates: {unexpected_persisted_names}")
-    if _proposal_parameters_for_comparison(persisted_parameters) != _proposal_parameters_for_comparison(
-        response_proposal_parameters,
+    if not _proposal_parameters_equal(
+        _proposal_parameters_for_comparison(persisted_parameters),
+        _proposal_parameters_for_comparison(response_proposal_parameters),
     ):
         errors.append("proposal DB payload does not match the API response after excluding lutValue")
     return errors

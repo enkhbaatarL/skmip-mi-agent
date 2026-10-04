@@ -34,6 +34,7 @@ from tests.manual.model_parameter_agent.evaluate_event_type_proposals import (
 )
 from tests.manual.model_parameter_agent.evaluate_proposals import (
     _build_step_summary,
+    _persistence_quality_candidates,
     _value_reference_records,
 )
 
@@ -45,6 +46,30 @@ TARGET_PARAMETERS = (
     "Temperature",
     "LiqUtilAdjustment",
 )
+
+
+def test_v4_persistence_quality_uses_post_slot_candidate_set() -> None:
+    validated = [{"candidate_key": "hurricane"}, {"candidate_key": "liq-util"}]
+    exact_slot_candidates = [validated[0]]
+
+    assert (
+        _persistence_quality_candidates(
+            generation_strategy="multi_event_model_lever_dimensions",
+            validated_candidates=validated,
+            slot_candidate_mappings=exact_slot_candidates,
+            slot_candidate_mappings_captured=True,
+        )
+        == exact_slot_candidates
+    )
+    assert (
+        _persistence_quality_candidates(
+            generation_strategy="multi_event_composite_dimensions",
+            validated_candidates=validated,
+            slot_candidate_mappings=exact_slot_candidates,
+            slot_candidate_mappings_captured=True,
+        )
+        == validated
+    )
 
 
 def test_report_uses_runtime_proposal_values_to_preserve_lut_reference() -> None:

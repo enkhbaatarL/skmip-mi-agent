@@ -2032,12 +2032,25 @@ def _merge_candidates_by_parameter(  # noqa: C901
 
 
 def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "candidate_key": candidate.get("candidate_key"),
+        "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
+        "parameter_hint": candidate.get("parameter_hint"),
+        "semantic_axes": candidate.get("semantic_axes"),
+        "mapping_comment": candidate.get("mapping_comment"),
+        "binding_role": candidate.get("binding_role"),
+        "binding_selection_mode": candidate.get("binding_selection_mode"),
+        "binding_applicability": candidate.get("binding_applicability"),
+    }
+    if str(candidate.get("mapping_strategy") or "").lower() == "v4":
+        # v4 source/dimension/Lever evidence is identical across a task's bindings and is
+        # emitted once in task.lever_context below. Repeating the full provenance for every
+        # conditional binding can exceed the prompt byte guard without adding evidence,
+        # especially for inventory/price-spread tasks with 11-14 bindings.
+        return _drop_none_or_empty(payload)
     return _drop_none_or_empty(
         {
-            "candidate_key": candidate.get("candidate_key"),
-            "parameter_name": (candidate.get("canonical_parameter_name") or candidate.get("parameter_name")),
-            "parameter_hint": candidate.get("parameter_hint"),
-            "semantic_axes": candidate.get("semantic_axes"),
+            **payload,
             "scenario_dimension_key": candidate.get(
                 "scenario_dimension_key",
             ),
@@ -2051,7 +2064,6 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
                 "approved_source_projections",
             ),
             "source_dimensions": _source_dimensions_for_prompt(candidate),
-            "mapping_comment": candidate.get("mapping_comment"),
             "lever_code": candidate.get("lever_code"),
             "impact_lever_id": candidate.get("impact_lever_id"),
             "lever_domain": candidate.get("lever_domain"),
@@ -2059,9 +2071,6 @@ def _routing_candidate_prompt_payload(candidate: dict[str, Any]) -> dict[str, An
             "lever_level": candidate.get("level"),
             "lever_scope": candidate.get("scope"),
             "lever_time_window": candidate.get("time_window"),
-            "binding_role": candidate.get("binding_role"),
-            "binding_selection_mode": candidate.get("binding_selection_mode"),
-            "binding_applicability": candidate.get("binding_applicability"),
             "binding_provenance": candidate.get("binding_provenance"),
             "lever_provenance": candidate.get("lever_provenance"),
         },
@@ -2222,6 +2231,8 @@ def _merge_v3_routing_candidates_for_validation(
 
 
 def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
+    candidates = [candidate for candidate in task.get("candidates") or [] if isinstance(candidate, dict)]
+    first_candidate = candidates[0] if candidates else {}
     return _drop_none_or_empty(
         {
             "dimension_key": task.get("dimension_key"),
@@ -2229,6 +2240,27 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
             "dimension_value": task.get("dimension_value"),
             "scenario_dimension_key": task.get("scenario_dimension_key"),
             "lever_code": task.get("lever_code"),
+            "lever_context": (
+                {
+                    "impact_lever_id": first_candidate.get("impact_lever_id"),
+                    "domain": first_candidate.get("lever_domain"),
+                    "direction": first_candidate.get("direction"),
+                    "level": first_candidate.get("level"),
+                    "scope": first_candidate.get("scope"),
+                    "time_window": first_candidate.get("time_window"),
+                    "source_event_ids": first_candidate.get("source_event_ids"),
+                    "source_refs": first_candidate.get("source_refs"),
+                    "approved_source_projections": first_candidate.get(
+                        "approved_source_projections",
+                    ),
+                    "source_dimensions": _source_dimensions_for_prompt(
+                        first_candidate,
+                    ),
+                    "lever_provenance": first_candidate.get("lever_provenance"),
+                }
+                if task.get("is_v4")
+                else None
+            ),
             "default_selection_rule": (
                 (
                     "각 applicability의 실제 모델 대상·필수 좌표·기간 인과 근거가 독립적으로 확인된 후보만 "
@@ -2242,7 +2274,7 @@ def _routing_task_for_prompt(task: dict[str, Any]) -> dict[str, Any]:
                 if task.get("is_v4")
                 else None
             ),
-            "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in task.get("candidates") or []],
+            "candidates": [_routing_candidate_prompt_payload(candidate) for candidate in candidates],
         },
     )
 

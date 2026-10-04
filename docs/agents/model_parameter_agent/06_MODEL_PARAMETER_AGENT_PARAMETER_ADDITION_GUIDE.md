@@ -369,12 +369,22 @@ binding으로 도달 가능한 definition을 사용하며, 활성 16개 capabili
 persistence 전에 적용한다. v4 Step1.5는 동일 Lever state의 복수 binding과 모든 conditional binding에 적용한다.
 각 applicability가 독립적으로 근거 있으면 설정 상한까지 복수 Parameter를 유지한다.
 
+conditional binding 수가 많은 Lever는 Event/Dimension/Lever 공통 provenance를 후보별로 반복하지 않는다.
+Step1.5의 `lever_context`에 공통 근거를 한 번만 싣고, 각 후보의 Parameter hint·semantic axes·mapping comment·
+applicability는 보존한다. 대표 worst-case prompt를 직렬화해 설정 byte 상한 아래인지 확인하며, 단순히 상한을
+늘려 해결하지 않는다. Step2 exact-slot 선택 뒤 proposal 품질 검증은 v4의 post-slot 후보 집합을 기준으로 하여,
+근거가 없어 안전하게 탈락한 conditional 후보가 다른 유효 후보의 persistence를 막지 않게 한다.
+
 - 파라미터별 반환 상한: model_parameter_max_parameter_slots=100
 - 요청 전체 선택 slot 상한: model_parameter_max_total_selected_slots
 - 직렬화 상한: model_parameter_max_step2_prompt_bytes, model_parameter_max_step3_prompt_bytes
 - 상한 초과: LLM 호출 전 actual/limit과 parameter별 크기를 포함해 실패
 
 proposal Step3의 `proposedValue`는 유한 숫자여야 한다. Confirmation은 `proposedValue` key가 필수지만 값은 `null`일 수 있고, non-null 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 같아야 한다는 비교는 없다. 두 경로 모두 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 adapter 정밀도 정책은 이와 별개로 유지하되 v4 PowerMix source fraction은 atomic sum을 보존하도록 정밀도 변환에서 제외한다. 기존 proposed precision 설정 키는 배포 설정 호환용이며 runtime 제안값을 변환하지 않는다.
+
+proposal-only evidence runner가 API 응답과 DB JSON을 비교할 때는 JSON/DB 왕복으로 생기는 최하위
+floating-point noise에만 `1e-12` 절대·상대 허용오차를 적용한다. Parameter명, slot 좌표, payload 구조 또는
+의미 있는 값 차이는 허용하지 않는다.
 
 ## 8. 완료 판정
 

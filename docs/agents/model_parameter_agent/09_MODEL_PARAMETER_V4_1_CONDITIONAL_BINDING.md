@@ -94,8 +94,27 @@ bounded period만 허용하며, `재가동 지연`, `10월 하순 이후`만으�
 - 기존 pinned Scenario를 v4.1로 덮어쓰지 않는다. 같은 논리 입력 비교는 read-only matcher에서 수행하고,
   실제 end-to-end는 같은 Event cohort로 새 v4.1 Group을 생성한다.
 - `.env`에 shell 문법이 아닌 값이 있을 수 있으므로 직접 `source`하지 말고 애플리케이션의 dotenv/config loader를 쓴다.
+- 한 Lever state에 conditional binding이 11~14개면 동일한 Event/Dimension/Lever provenance를 후보마다
+  반복 직렬화하지 않는다. Step1.5 prompt에는 공통 근거를 `lever_context`에 한 번만 두고, 후보별로는
+  Parameter hint·axes·applicability를 유지한다. 압축 후에도 byte guard는 그대로 적용한다.
+- Step1.5를 통과했어도 Step2에서 exact slot 근거가 없는 conditional 후보는 안전하게 abstain할 수 있다.
+  proposal 직전 품질 gate는 v4에 한해 `slot_candidate_mappings`에 남은 후보를 검증해야 하며, 탈락 후보 하나가
+  독립적으로 근거를 확보한 다른 Parameter까지 전체 실패시키면 안 된다.
+- API JSON과 DB decimal 왕복에서 최하위 부동소수점 표현만 달라질 수 있다. evidence runner는 `1e-12`
+  절대·상대 허용오차로 숫자를 비교하되, 좌표·Parameter·구조 차이와 의미 있는 값 차이는 계속 실패시킨다.
 - Git commit author와 DB audit principal을 혼동하지 않는다. Git author는 작업자 설정을 따르되,
   v4.1 DB audit은 비개인 식별자 `model-impact-lever-v4.1-v0036`으로 고정한다.
 - `impact_lever_id`는 56~76을 canonical에 명시한다. MySQL은 transaction rollback 뒤에도
   AUTO_INCREMENT 소비값을 되돌리지 않으므로, dry-run에서 자동 할당된 ID를 release 기준으로 삼지 않는다.
   apply 전 snapshot drift, ID 충돌 또는 부분 v4.1 행이 있으면 fail closed한다.
+
+## 7. proposal campaign 재실행 원칙
+
+Group runner가 앞 Scenario 실패에서 중단되어 뒤 Scenario가 graph를 한 번도 실행하지 못한 경우, 그 뒤 후보를
+Scenario별로 격리해 최초 1회 실행하는 것은 **보충 실행(test orchestration)** 이다. Parameter Agent 운영 Flow의
+retry가 아니며, 이미 실패한 동일 Scenario를 다시 호출하지 않는다. 확정적 코드 수정의 효과를 검증하려고 같은
+Scenario를 다시 실행할 때만 최초 실패 증적, 수정 항목, 새 code revision을 함께 남겨 `post-fix re-test`로 구분한다.
+
+운영 Flow 고도화 시에는 Scenario별 실패 격리와 제한된 transient retry를 별도 설계할 수 있다. timeout·일시적
+transport 오류만 횟수 제한을 두고 재시도하며, semantic empty, exact 좌표 불일치, basecase 동일값은 자동
+재시도하지 않는다. catalog/schema/checksum/integrity 오류는 항상 fail closed한다.
