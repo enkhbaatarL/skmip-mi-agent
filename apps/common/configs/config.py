@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -293,23 +293,6 @@ class Settings(BaseSettings):
     callback_price_interpretations_path: str = Field(default="")
     callback_model_parameter_proposals_path: str = Field(default="")
     skip_callback: bool = Field(default=False)
-
-    mcp_database_base: str = "mimcp://database"
-
-    @computed_field
-    @property
-    def mcp_metadata_uri(self) -> str:
-        return self.mcp_database_base + "/metas"
-
-    @computed_field
-    @property
-    def mcp_table_schema_uri(self) -> str:
-        return self.mcp_database_base + "/schemas/midb/tables"
-
-    @computed_field
-    @property
-    def mcp_table_codes_uri(self) -> str:
-        return self.mcp_database_base + "/metas/codes"
 
     # Swagger
     title: str = "Query Knowledge Base Builder"
