@@ -302,3 +302,56 @@ def test_v4_interaction_prompt_marks_first_path_per_event_as_primary() -> None:
     assert "역할: Primary Impact" in p3
     assert prompt.index("[E101-P1]") < prompt.index("[E101-P2]") < prompt.index("[E202-P1]")
     assert "실제 추가 효과가 있을 때만" in prompt
+
+
+def test_v4_interaction_prompt_separates_copyable_lever_code_from_state() -> None:
+    prompt = build_v4_interaction_analysis_user_prompt(
+        impact_paths=[
+            {
+                "event_id": 101,
+                "mechanism": "스프레드 경로",
+                "lever_steps": [
+                    {
+                        "lever_code": "regional_price_spread",
+                        "path_role": "driver",
+                        "state_direction": "increase",
+                        "scope": "유럽 프리미엄",
+                        "timing": "단기",
+                    },
+                    {
+                        "lever_code": "trade_restriction",
+                        "path_role": "primary",
+                        "state_direction": "decrease",
+                        "scope": "아시아 접근 물량",
+                        "timing": "단기",
+                    },
+                ],
+                "materiality": "high",
+            },
+            {
+                "event_id": 202,
+                "mechanism": "운임 경로",
+                "lever_steps": [
+                    {
+                        "lever_code": "lng_charter_rate",
+                        "path_role": "primary",
+                        "state_direction": "decrease",
+                        "scope": "대서양 용선",
+                        "timing": "단기",
+                    },
+                ],
+                "materiality": "medium",
+            },
+        ],
+    )
+
+    p1 = prompt.split("### [E101-P1]", maxsplit=1)[1].split("## Event 202", maxsplit=1)[0]
+
+    assert "- Lever code: regional_price_spread, trade_restriction\n" in p1
+    assert (
+        "- Lever 상태: regional_price_spread increase (유럽 프리미엄, 단기); "
+        "trade_restriction decrease (아시아 접근 물량, 단기)"
+    ) in p1
+    assert "- Lever: " not in prompt
+    assert "`Lever code` 줄에 있는 code 하나만 글자까지 그대로 복사합니다" in prompt
+    assert "`Lever 상태` 줄의 방향·범위·시점 설명은 lever 값에 넣지 않습니다" in prompt

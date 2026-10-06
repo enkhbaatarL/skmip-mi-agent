@@ -311,9 +311,12 @@ def build_v4_interaction_analysis_user_prompt(
             else "Supporting Impact"
         )
         seen_event_ids.add(event_id)
-        lever_text = ", ".join(
+        # Keep the copyable code separate from the readable state so the LLM does not
+        # copy "code direction (scope, timing)" into openQuestions[].lever.
+        lever_codes = ", ".join(dict.fromkeys(str(step.get("lever_code")) for step in lever_steps))
+        lever_states = "; ".join(
             f"{step.get('lever_code')} {step.get('state_direction')} ({step.get('scope')}, {step.get('timing')})"
-            for step in path.get("lever_steps") or []
+            for step in lever_steps
         )
         path_cards_by_event.setdefault(event_id, []).append(
             "\n".join(
@@ -321,7 +324,8 @@ def build_v4_interaction_analysis_user_prompt(
                     f"### [{alias}]",
                     f"- 역할: {path_role}",
                     f"- 영향: {str(path.get('mechanism') or '')[:240]}",
-                    f"- Lever: {lever_text}",
+                    f"- Lever code: {lever_codes}",
+                    f"- Lever 상태: {lever_states}",
                     f"- 중요도: {path.get('materiality')}",
                 ],
             ),
@@ -376,7 +380,8 @@ def build_v4_interaction_analysis_user_prompt(
         "  목표보다 적더라도 의미가 중복되거나 분기력이 낮은 질문을 추가하지 않습니다. 상한을 넘는 질문은\n"
         "  서버가 출력 순서대로 제거합니다.\n"
         "  interaction은 Interaction 배열의 1부터 시작하는 번호입니다.\n"
-        "  lever는 해당 Interaction의 paths 카드에 표시된 Lever code 중 하나를 글자까지 그대로 복사합니다.\n"
+        "  lever는 해당 Interaction의 paths 카드 `Lever code` 줄에 있는 code 하나만 글자까지 그대로 복사합니다.\n"
+        "  `Lever 상태` 줄의 방향·범위·시점 설명은 lever 값에 넣지 않습니다. 예: `regional_price_spread`\n"
         "  질문에 필요한 Lever가 그 paths에 없으면 다른 Lever로 바꾸지 말고 그 질문을 생략합니다.\n"
         f"{feedback}"
     )
