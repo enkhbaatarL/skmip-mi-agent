@@ -61,6 +61,8 @@ Dimension rationale은 question의 구체적인 관측 시점·수치·신호·�
 문장 끝의 `가정`으로 불확실성을 표시하는 간결한 문장입니다. `상태를 ... 가정`처럼 가정이라는
 뜻을 한 문장 안에서 반복하지 마십시오.
 Dimension rationale에서 구체적 근거를 생략하거나 Choice why를 `답`, `응답`, `선택`으로 부르면 잘못된 출력입니다.
+Dimension을 만들기 전에 겹치는 질문은 MERGE하고, Interaction에서 나온 질문은 EXCLUDE해 Interaction으로 남기며,
+Choice에는 개별 효과만 두고 결합 효과는 Interaction에 남겨(SEPARATE_EFFECT) 같은 효과가 두 번 계산되지 않게 하십시오.
 """
 )
 
@@ -418,11 +420,20 @@ def _render_validation_warnings(validation_warnings: list[dict[str, Any]]) -> st
     )
 
 
+def _interaction_aliases(impact_analysis: dict[str, Any]) -> dict[str, str]:
+    """Map interaction ids to the I1, I2 … aliases shown in the Dimension and Scenario prompts."""
+    return {
+        str(interaction.get("interaction_id")): f"I{index}"
+        for index, interaction in enumerate(impact_analysis.get("interactions") or [], start=1)
+    }
+
+
 def _render_uncertainty_cards(impact_analysis: dict[str, Any]) -> str:
     paths = {path.get("impact_path_id"): path for path in impact_analysis.get("impact_paths") or []}
     interactions = {
         interaction.get("interaction_id"): interaction for interaction in impact_analysis.get("interactions") or []
     }
+    interaction_aliases = _interaction_aliases(impact_analysis)
     uncertainties = [
         *(impact_analysis.get("path_uncertainties") or []),
         *(impact_analysis.get("interaction_uncertainties") or []),
@@ -438,6 +449,8 @@ def _render_uncertainty_cards(impact_analysis: dict[str, Any]) -> str:
             f"- 근거 영향: {path_text}",
         ]
         if interaction_text:
+            alias = interaction_aliases.get(str(uncertainty.get("interaction_id")), "Interaction")
+            lines.append(f"- 출처: Interaction {alias} 질문")
             lines.append(f"- 근거 Interaction: {interaction_text}")
         lines.extend(
             [
@@ -490,6 +503,9 @@ def build_v4_dimension_design_user_prompt(
         f"{_render_decision_basis(impact_analysis)}\n\n"
         "## Dimension 후보가 되는 열린 질문\n"
         f"{_render_uncertainty_cards(impact_analysis)}\n\n"
+        "## 이벤트 간 Interaction (참고)\n"
+        f"{_render_interaction_cards(impact_analysis)}\n"
+        "- 위 Interaction은 Scenario 단계에서 조합 조건이 맞을 때 추가 결합 효과로 적용됩니다.\n\n"
         "## 개수 권장\n"
         f"- 실제 open question 수: {question_count}개\n"
         f"- 초기 Dimension 권장 범위: {dimension_recommendation}\n"
@@ -531,7 +547,18 @@ def build_v4_dimension_design_user_prompt(
         "  예: `2026년 7월 2일 JKM-NWE 계절물 스프레드의 약화·폐쇄 신호가 관측된 사실을 기반으로, 9월 "
         "이후물에서 JKM-NWE 스프레드가 다시 벌어지고 아시아가 대서양 화물을 끌어올 가격 신호를 회복해 JKM "
         "상승 압력이 커지는 가정.`\n"
-        "- 사용하지 않은 질문은 notUsed에 자연어 이유를 남깁니다.\n"
+        "- Dimension을 만들기 전에 질문끼리, 그리고 질문과 Interaction이 겹치는지 먼저 판단하고 결과를 설계에\n"
+        "  반영합니다.\n"
+        "  - MERGE: 같은 Lever의 같은 상태(예: 같은 가격차·화물 흐름의 지속·규모)를 반복해 묻는 질문은 하나의\n"
+        "    Dimension으로 합쳐 from에 함께 넣습니다. 같은 상태를 서로 다른 Dimension으로 나누지 않습니다.\n"
+        "  - EXCLUDE: `출처: Interaction` 질문은 원칙적으로 Dimension으로 만들지 않습니다. 그 결합 효과는\n"
+        "    Scenario 단계의 Interaction이 담당하므로, Dimension으로 만들면 같은 효과가 두 번 계산됩니다.\n"
+        "  - SEPARATE_EFFECT: Choice에는 각 경로의 개별 상태만 쓰고, 두 경로가 함께 성립할 때 생기는 추가 효과는\n"
+        "    Interaction에 남깁니다. Choice why에 Interaction의 결합 효과를 다시 쓰지 않습니다.\n"
+        "  - `출처: Interaction` 질문을 예외적으로 Dimension으로 쓰는 경우, 그 질문이 다른 질문으로 표현할 수 없는\n"
+        "    독립 판단 축일 때만 허용하며 해당 Interaction은 Scenario에서 적용되지 않습니다.\n"
+        "- 사용하지 않은 질문은 notUsed에 `[MERGE] U2: …`, `[EXCLUDE] U8: Interaction I1로 반영 …`처럼 결정 코드\n"
+        "  (MERGE, EXCLUDE, SEPARATE_EFFECT, KEEP 중 하나)와 질문 번호를 앞에 붙여 자연어 이유를 남깁니다.\n"
         f"{feedback}"
     )
 
@@ -647,13 +674,33 @@ def _render_group_metadata_event_cards(events: list[dict[str, Any]]) -> str:
     return "\n\n".join(cards) or "- 없음"
 
 
-def _render_dimension_matrix(dimension_definitions: list[dict[str, Any]]) -> str:
+def _render_dimension_matrix(
+    dimension_definitions: list[dict[str, Any]],
+    impact_analysis: dict[str, Any] | None = None,
+) -> str:
+    interaction_aliases = _interaction_aliases(impact_analysis or {})
+    interaction_by_question = {
+        str(item.get("uncertainty_id")): interaction_aliases.get(str(item.get("interaction_id")))
+        for item in (impact_analysis or {}).get("interaction_uncertainties") or []
+    }
     cards = []
     for dimension_index, dimension in enumerate(dimension_definitions, start=1):
         lines = [
             f"### [D{dimension_index}] {dimension.get('description') or dimension.get('label')}",
             f"- Lever/축: {dimension.get('primary_lever_code')} / {dimension.get('dimension_type')}",
         ]
+        covered = sorted(
+            {
+                alias
+                for source in dimension.get("source_uncertainty_ids") or []
+                if (alias := interaction_by_question.get(str(source)))
+            },
+        )
+        if covered:
+            lines.append(
+                f"- 출처: Interaction {', '.join(covered)} 질문 — 이 Dimension 선택지가 그 결합 효과를 이미 담고 있으므로 "
+                f"해당 Interaction({', '.join(covered)})은 Scenario에 적용하지 않습니다."
+            )
         for value_index, value in enumerate(dimension.get("values") or [], start=1):
             states = ", ".join(
                 f"{state.get('lever_code')} {state.get('direction')} {state.get('level')} "
@@ -691,7 +738,7 @@ def build_v4_scenario_synthesis_user_prompt(
         "## 적용 가능한 Interaction\n"
         f"{_render_interaction_cards(impact_analysis)}\n\n"
         "## Dimension 질문과 선택지\n"
-        f"{_render_dimension_matrix(dimension_definitions)}\n\n"
+        f"{_render_dimension_matrix(dimension_definitions, impact_analysis)}\n\n"
         "## 검증 참고사항\n"
         f"{_render_validation_warnings(validation_warnings)}\n\n"
         "## 이번 단계의 질문\n"
@@ -718,6 +765,10 @@ def build_v4_scenario_synthesis_user_prompt(
         "- 발생 가능성이 낮아 제외하면 reasonCode는 LOW_PROBABILITY로 작성합니다. 조합이 독립적인 검토 가치가\n"
         "  없어 제외하는 경우에는 NOT_INDEPENDENT를 사용합니다.\n"
         "- interactions에는 실제로 추가 효과를 적용한 I 번호만 넣습니다.\n"
+        "  Interaction은 그 결합 효과를 만드는 두 경로의 상태가 선택한 Choice에서 모두 유지·성립할 때만 적용합니다.\n"
+        "  선택한 Choice가 한쪽 경로를 반전·해소시키면(예: 유럽행 중단, 운임 반등으로 상쇄 소멸) 적용하지 않습니다.\n"
+        "  Dimension에 `출처: Interaction` 표시가 있으면 그 Interaction은 어떤 Scenario에도 적용하지 않습니다.\n"
+        "  Choice 효과와 Interaction 효과를 같은 내용으로 두 번 설명하거나 합산하지 않습니다.\n"
         "- 각 Scenario는 다른 Scenario와 구분되는 핵심 전제 조합과 결과 전달 경로를 가져야 합니다.\n"
         "- 공급·수요·운송·회복 같은 미리 정한 유형에 맞추지 말고, 입력된 Dimension과 Interaction에서\n"
         "  Scenario별 구분 요인을 선택합니다. pressure 단계만 한 칸씩 바꾼 유사 조합을 반복하지 않습니다.\n"

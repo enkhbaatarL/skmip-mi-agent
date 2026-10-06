@@ -16,7 +16,9 @@ from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation im
     MODEL_LEVER_SYSTEM_PROMPT,
     V4_DETAIL_ANALYSIS_MAX_CHARS,
     build_model_lever_user_prompt,
+    build_v4_dimension_design_user_prompt,
     build_v4_interaction_analysis_user_prompt,
+    build_v4_scenario_synthesis_user_prompt,
 )
 from apps.agents.scenario_group_agent.prompts.multi_event_scenario_generation import (
     build_multi_event_user_prompt,
@@ -383,3 +385,74 @@ def test_v4_interaction_prompt_separates_copyable_lever_code_from_state() -> Non
     assert "- Lever: " not in prompt
     assert "`Lever code` 줄에 있는 code 하나만 글자까지 그대로 복사합니다" in prompt
     assert "`Lever 상태` 줄의 방향·범위·시점 설명은 lever 값에 넣지 않습니다" in prompt
+
+
+def _analysis_with_interaction_question() -> dict[str, object]:
+    return {
+        "impact_paths": [
+            {"impact_path_id": "e1_p1", "event_id": 1, "mechanism": "스프레드 축소 경로"},
+            {"impact_path_id": "e3_p1", "event_id": 3, "mechanism": "유럽행 화물 경로"},
+        ],
+        "interactions": [
+            {"interaction_id": "i1", "relation": "causal_link", "mechanism": "가격 신호가 화물 배분으로 이어짐"},
+        ],
+        "path_uncertainties": [
+            {
+                "uncertainty_id": "e1_u1",
+                "subject": "가격차가 얼마나 지속되는가?",
+                "impact_path_ids": ["e1_p1"],
+                "affected_lever_code": "regional_price_spread",
+                "axis_type": "duration",
+                "reason": "지속 기간",
+            },
+        ],
+        "interaction_uncertainties": [
+            {
+                "uncertainty_id": "iu1",
+                "interaction_id": "i1",
+                "subject": "유럽행이 아시아 조달 제약을 얼마나 고착시키는가?",
+                "impact_path_ids": ["e1_p1", "e3_p1"],
+                "affected_lever_code": "regional_price_spread",
+                "axis_type": "duration",
+                "reason": "결합 효과 지속",
+            },
+        ],
+        "decision_basis": [],
+    }
+
+
+def test_v4_dimension_prompt_shows_interactions_and_combination_decisions() -> None:
+    prompt = build_v4_dimension_design_user_prompt(
+        impact_analysis=_analysis_with_interaction_question(),
+        validation_warnings=[],
+        analysis_as_of="2026-10-06",
+    )
+
+    u2 = prompt.split("### [U2]", maxsplit=1)[1].split("## 이벤트 간 Interaction", maxsplit=1)[0]
+    assert "- 출처: Interaction I1 질문" in u2
+    assert "- 출처: Interaction" not in prompt.split("### [U1]", maxsplit=1)[1].split("### [U2]", maxsplit=1)[0]
+    assert "## 이벤트 간 Interaction (참고)\n- [I1] 가격 신호가 화물 배분으로 이어짐 (causal_link)" in prompt
+    for expected in ("MERGE:", "EXCLUDE: `출처: Interaction` 질문은 원칙적으로 Dimension으로 만들지 않습니다", "SEPARATE_EFFECT:"):
+        assert expected in prompt
+    assert "`[EXCLUDE] U8: Interaction I1로 반영 …`" in prompt
+
+
+def test_v4_scenario_prompt_blocks_interaction_already_covered_by_dimension() -> None:
+    dimensions = [
+        {"dimension_id": "d1", "label": "가격차 지속", "source_uncertainty_ids": ["e1_u1"], "values": []},
+        {"dimension_id": "d2", "label": "유럽행 고착", "source_uncertainty_ids": ["iu1"], "values": []},
+    ]
+    prompt = build_v4_scenario_synthesis_user_prompt(
+        events=[],
+        impact_analysis=_analysis_with_interaction_question(),
+        dimension_definitions=dimensions,
+        validation_warnings=[],
+    )
+
+    d1 = prompt.split("### [D1]", maxsplit=1)[1].split("### [D2]", maxsplit=1)[0]
+    d2 = prompt.split("### [D2]", maxsplit=1)[1].split("## 검증 참고사항", maxsplit=1)[0]
+    assert "출처: Interaction" not in d1
+    assert "- 출처: Interaction I1 질문" in d2
+    assert "해당 Interaction(I1)은 Scenario에 적용하지 않습니다" in d2
+    assert "두 경로의 상태가 선택한 Choice에서 모두 유지·성립할 때만 적용합니다" in prompt
+    assert "Dimension에 `출처: Interaction` 표시가 있으면 그 Interaction은 어떤 Scenario에도 적용하지 않습니다" in prompt
