@@ -14,6 +14,7 @@ from apps.agents.scenario_group_agent.prompts.event_context import (
 )
 from apps.agents.scenario_group_agent.prompts.model_lever_scenario_generation import (
     MODEL_LEVER_SYSTEM_PROMPT,
+    V4_DETAIL_ANALYSIS_MAX_CHARS,
     build_model_lever_user_prompt,
     build_v4_interaction_analysis_user_prompt,
 )
@@ -267,6 +268,29 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
     assert "parameterBindings" not in prompt
     assert "둘째 Event" not in prompt
     assert "detailAnalysis" not in prompt
+    # v4 Event analysis (unlike the shared v1~v3 compact context) receives detail_analysis as reference only.
+    assert "## 상세 분석 (참고)\n절대 포함하면 안 되는 상세 분석\n" in prompt
+    assert prompt.index("## 핵심 사실 후보") < prompt.index("## 상세 분석 (참고)") < prompt.index("## 사용할 수 있는 Lever")
+    assert "상세 분석 문장을 eventFacts로 쓰지 않습니다" in prompt
+
+
+def test_v4_event_prompt_omits_empty_detail_and_caps_long_detail() -> None:
+    lever = {"lever_code": "weather_demand", "domain": "demand", "applicability_hint": "한파·폭염"}
+    empty = _raw_event(202, title="상세 없음")
+    empty["detail_analysis"] = "   "
+    long_event = _raw_event(303, title="긴 상세")
+    long_event["detail_analysis"] = "나" * (V4_DETAIL_ANALYSIS_MAX_CHARS + 500)
+
+    without_detail = build_model_lever_user_prompt(
+        events=[empty], impact_levers=[lever], catalog_version="v4", analysis_as_of="2026-10-06"
+    )
+    with_long_detail = build_model_lever_user_prompt(
+        events=[long_event], impact_levers=[lever], catalog_version="v4", analysis_as_of="2026-10-06"
+    )
+
+    assert "## 상세 분석 (참고)" not in without_detail
+    assert "나" * V4_DETAIL_ANALYSIS_MAX_CHARS in with_long_detail
+    assert "나" * (V4_DETAIL_ANALYSIS_MAX_CHARS + 1) not in with_long_detail
 
 
 def test_v4_interaction_prompt_marks_first_path_per_event_as_primary() -> None:

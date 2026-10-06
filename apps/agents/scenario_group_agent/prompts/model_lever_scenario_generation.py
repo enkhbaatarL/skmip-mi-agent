@@ -99,6 +99,8 @@ probability는 0~100 정수 백분율로 작성하고 모든 Scenario probabilit
 
 
 _IMPACT_DOMAINS = ("demand", "supply", "trade", "price_only")
+# Event detail_analysis is reference context for v4 Event analysis only (2026-10: max 1,622 / avg 715 chars).
+V4_DETAIL_ANALYSIS_MAX_CHARS = 2000
 
 
 def _render_impact_catalog(impact_levers: list[dict[str, Any]]) -> str:
@@ -192,6 +194,18 @@ def build_v4_event_impact_analysis_user_prompt(
     fact_candidates = build_v4_event_fact_candidates(events[0])
     fact_lines = "\n".join(f"{index}. {fact}" for index, fact in enumerate(fact_candidates.values(), start=1))
     question_budget = open_question_budget or event_open_question_budgets(selected_event_count)[0]
+    detail_analysis = str(events[0].get("detail_analysis") or "").strip()[:V4_DETAIL_ANALYSIS_MAX_CHARS]
+    detail_section = (
+        "## 상세 분석 (참고)\n"
+        f"{detail_analysis}\n\n"
+        "- 상세 분석은 핵심 사실 후보의 맥락·수치·시점을 이해하기 위한 참고 자료입니다.\n"
+        "- eventFacts는 여전히 위 핵심 사실 후보 문장에서만 고릅니다. 상세 분석 문장을 eventFacts로 쓰지 않습니다.\n"
+        "- 상세 분석의 수치·일정·전달 경로는 decisionBasis와 impacts.analysis의 근거로 사용할 수 있습니다.\n"
+        "- 상세 분석에서 다른 사건, 보조 맥락, '이번 Event의 핵심은 아님'으로 표시된 내용은 Impact나\n"
+        "  열린 질문으로 만들지 않습니다.\n\n"
+        if detail_analysis
+        else ""
+    )
     return (
         "## 목적\n"
         "Event에서 LNG 시장에 중요한 사실을 고르고, 그 사실이 JKM까지 전달되는 경로와 열린 질문을 설명합니다.\n\n"
@@ -205,6 +219,7 @@ def build_v4_event_impact_analysis_user_prompt(
         f"- 이번 Event openQuestions 목표·상한: {question_budget}개\n\n"
         "## 핵심 사실 후보\n"
         f"{fact_lines}\n\n"
+        f"{detail_section}"
         f"## 사용할 수 있는 Lever · catalog {catalog_version}\n"
         f"{_render_impact_catalog(impact_levers)}\n\n"
         "## 이번 단계의 질문\n"
@@ -725,6 +740,7 @@ __all__ = [
     "V4_EVENT_IMPACT_SYSTEM_PROMPT",
     "V4_INTERACTION_SYSTEM_PROMPT",
     "V4_SCENARIO_SYSTEM_PROMPT",
+    "V4_DETAIL_ANALYSIS_MAX_CHARS",
     "build_model_lever_user_prompt",
     "build_v4_dimension_design_user_prompt",
     "build_v4_additional_dimension_user_prompt",
