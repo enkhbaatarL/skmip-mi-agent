@@ -246,8 +246,8 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
         "decisionBasis는 Primary Fact나 Primary Impact를 대신할 수 없습니다",
         "Primary Impact의 규모·기간·회복 시점",
         "impacts.analysis",
-        "eventFacts는 가급적 1~2개만 선택",
-        "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용",
+        "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택",
+        "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며",
         "impacts는 가급적 1~2개만 작성",
         "leverStates",
         "openQuestions",
@@ -272,6 +272,10 @@ def test_v4_prompt_matches_fact_path_analysis_contract() -> None:
     assert "## 상세 분석 (참고)\n절대 포함하면 안 되는 상세 분석\n" in prompt
     assert prompt.index("## 핵심 사실 후보") < prompt.index("## 상세 분석 (참고)") < prompt.index("## 사용할 수 있는 Lever")
     assert "상세 분석 문장을 eventFacts로 쓰지 않습니다" in prompt
+    assert "eventFacts는 가급적 1~2개만 선택" not in combined
+    assert "Primary Fact와 다른 주체·대상(예: 아시아 구매자, 특정 수입국·설비)" in prompt
+    assert "`가격 방향은…`, `가격 측면에서는…`처럼 앞의 사실을 요약하거나 가격 영향을 해석한 후보는 후순위" in prompt
+    assert "중요한 후보를\n  개수를 줄이려고 빼지 않습니다" in prompt
 
 
 def test_v4_event_prompt_omits_empty_detail_and_caps_long_detail() -> None:

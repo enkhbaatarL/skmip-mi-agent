@@ -25,9 +25,10 @@ V4_EVENT_IMPACT_SYSTEM_PROMPT = (
 Event 한 건에서 LNG 시장에 필요한 핵심 사실 문장을 최대 3개 선택하고, 그 사실이 LNG 수급과
 JKM 가격에 전달되는 영향 문장을 최대 3개 작성하십시오. eventFacts[0]과 impacts[0]에는 Event 제목과
 요약의 핵심 주제·상태·변화를 직접 반영하십시오. 영향 문장에는 JKM 방향과 기간을 포함하십시오.
-eventFacts와 impacts는 가급적 1~2개만 작성하고 의미적으로 필요한 경우에만 세 번째 항목을 추가하십시오.
-각 Impact의 evidence도 가급적 1~2개만 포함하고, 같은 경로에 중요한 세 Fact가 모두 필요할 때만 3개를
-사용하십시오. 별도 전달 경로를 만드는 Fact는 다른 Impact로 분리하십시오.
+eventFacts는 Impact 근거가 되는 후보를 최대 3개까지 모두 선택하고, 중요한 근거를 개수를 줄이려고 빼지
+마십시오. impacts는 가급적 1~2개만 작성하고 의미적으로 필요한 경우에만 세 번째 항목을 추가하십시오.
+각 Impact의 evidence에는 그 경로를 뒷받침하는 선택 Fact를 모두 포함하십시오. 별도 전달 경로를 만드는
+Fact는 다른 Impact로 분리하십시오.
 각 Impact의 leverStates 안에서는 같은 Lever code를 두 번 이상 사용하지 마십시오. 하나의 Lever가 여러 역할이나
 시점에 걸쳐 작동하더라도 가장 대표적인 role·direction·scope·timing 하나로 통합하십시오.
 Fact 후보 문장은 그대로 복사하십시오. 중요한 수치·기간과 분석 기준일을 함께 해석한 판단 근거는
@@ -230,10 +231,16 @@ def build_v4_event_impact_analysis_user_prompt(
         "- eventFacts에는 위 후보 문장을 글자까지 그대로 복사합니다. 새 사실을 작성하지 않습니다.\n"
         "- eventFacts[0]은 Primary Fact입니다. Event 제목과 요약의 핵심 주체·지표·상태·변화를 가장 직접적으로\n"
         "  담은 후보를 선택합니다. 배경 사실이 JKM과 더 직접 연결되더라도 Primary Fact를 밀어내지 않습니다.\n"
-        "- eventFacts는 가급적 1~2개만 선택하고, 세 번째 Fact는 앞의 Fact와 중복되지 않는 중요한 근거가\n"
-        "  시나리오 결과를 실질적으로 바꿀 때만 추가합니다.\n"
-        "- eventFacts[1]과 eventFacts[2]는 서로 다른 Lever·방향·기간을 추가하거나 Primary Fact의 영향을\n"
-        "  실질적으로 증폭·상쇄할 때만 선택합니다. 같은 주제를 반복하거나 배열을 채우기 위해 선택하지 않습니다.\n"
+        "- eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택합니다. 근거가 되는 중요한 후보를\n"
+        "  개수를 줄이려고 빼지 않습니다. 3개를 넘으면 Event 제목·요약의 핵심, JKM 전달 경로, 수치·시점 정보가\n"
+        "  가장 직접적인 순서로 고릅니다.\n"
+        "- eventFacts[1]과 eventFacts[2]는 다음 우선순위로 고릅니다.\n"
+        "  1) Primary Fact와 다른 주체·대상(예: 아시아 구매자, 특정 수입국·설비)이나 JKM까지의 다른 전달 경로를\n"
+        "     담은 후보\n"
+        "  2) Primary Fact의 수치·시점을 보강하는 후보(예: 최저치, 급락 폭, 관측일)\n"
+        "  3) `가격 방향은…`, `가격 측면에서는…`처럼 앞의 사실을 요약하거나 가격 영향을 해석한 후보는 후순위로 둡니다.\n"
+        "  문장만 바꾼 같은 내용은 중복 선택하지 않고, Event 범위 밖 보조 맥락으로 명시된 후보는 선택하지 않습니다.\n"
+        "  선택하지 못한 후보의 중요한 수치·일정은 decisionBasis에 보존합니다.\n"
         "- decisionBasis에는 시나리오를 구분하는 중요한 수치·비율·가격·용량·기간·목표일과 분석 기준일을\n"
         "  함께 해석한 완결된 한국어 판단 근거를 최대 3개 작성합니다. 문장만 읽어도 어느 Event의 어떤\n"
         "  사실을 근거로 했는지 알 수 있게 쓰고, 별도 ID나 Fact 참조 필드는 만들지 않습니다.\n"
@@ -249,8 +256,8 @@ def build_v4_event_impact_analysis_user_prompt(
         "  JKM의 상승·하락·혼조 방향과 단기·중기·장기 중 영향 기간을 반드시 문장 안에 포함합니다.\n"
         "- impacts[0]은 Primary Impact입니다. evidence에 eventFacts[0]을 반드시 포함하고, analysis에 Primary Fact의\n"
         "  핵심 주체·지표를 보존해 해당 변화가 Lever와 JKM으로 전달되는 대표 경로를 설명합니다.\n"
-        "- impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용합니다. 같은 경로의\n"
-        "  중요한 근거가 세 Fact 모두에 있고 하나를 빼면 전달 경로가 불완전해질 때만 3개를 사용합니다.\n"
+        "- impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며, 그 경로를 뒷받침하는 선택 Fact는 모두\n"
+        "  넣습니다. 같은 Fact를 근거가 아닌 Impact에 억지로 넣지는 않습니다.\n"
         "- impacts는 가급적 1~2개만 작성합니다. 세 번째 Impact는 서로 다른 Lever·방향·기간 또는 실질적인\n"
         "  증폭·상쇄 경로를 앞의 Impact로 설명할 수 없을 때만 추가합니다.\n"
         "  세 번째 Fact가 별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인을 나타내면 별도 Impact로\n"

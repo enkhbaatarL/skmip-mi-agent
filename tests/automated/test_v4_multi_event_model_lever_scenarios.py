@@ -2089,8 +2089,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "eventFacts에는 위 후보 문장을 글자까지 그대로 복사" in first
     assert "decisionBasis" in first
     assert "이번 Event openQuestions 목표·상한: 3개" in first
-    assert "eventFacts는 가급적 1~2개만 선택" in first
-    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in first
+    assert "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택" in first
+    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며" in first
     assert "impacts는 가급적 1~2개만 작성" in first
     assert "별도 주요 Lever, 반대 방향, 구분되는 기간 또는 독립 원인" in first
     assert "leverStates는 Impact마다 가급적 1~2개만 작성" in first
@@ -2119,8 +2119,8 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert "세 단계가 모두 중요한 전달 경로일 때만 최대 3개" in retry
     assert "같은 Impact의 leverStates 안에서 `lever` code는 반드시 서로 달라야 합니다" in retry
     assert "leverStates List should have at most 3 items" in retry
-    assert "eventFacts는 가급적 1~2개만 선택" in retry
-    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하되 가급적 1~2개만 사용" in retry
+    assert "eventFacts는 Impact의 근거가 되는 후보를 최대 3개까지 모두 선택" in retry
+    assert "impacts[].evidence에는 선택한 eventFacts를 1~3개 포함하며" in retry
     assert "impacts는 가급적 1~2개만 작성" in retry
     assert "잘못된 영향 경로·Lever·balance·열린 질문만 수정" in retry
     assert "48시간 사전 요청처럼 반복되는 운영 조건" in first
