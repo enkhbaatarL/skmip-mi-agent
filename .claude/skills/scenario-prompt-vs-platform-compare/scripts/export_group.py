@@ -112,8 +112,15 @@ def main() -> int:
     )
     dump_json(out / "group.json", group)
     dump_json(out / "scenarios.json", scenarios)
-    dump_json(out / "group_events.json",
-              query("SELECT * FROM tmm_mi_scenario_group_event_m WHERE scenario_group_id=%s", (args.group_id,)))
+    group_events = query("SELECT * FROM tmm_mi_scenario_group_event_m WHERE scenario_group_id=%s", (args.group_id,))
+    dump_json(out / "group_events.json", group_events)
+    event_ids = [int(row["mi_event_id"]) for row in group_events]
+    if event_ids:
+        # Source events (live rows) so structural_checks.py can compare selected Facts with key bullets offline.
+        dump_json(out / "events.json", query(
+            "SELECT mi_event_id, event_title, one_line_summary, key_bullets_json, occurred_at FROM tmm_mi_mievent_m "
+            f"WHERE mi_event_id IN ({','.join(str(i) for i in event_ids)})"
+        ))
     dump_json(out / "operations.json",
               query("SELECT * FROM tmm_mi_scenario_group_operation_m WHERE scenario_group_id=%s", (args.group_id,)))
     (out / "platform_result.md").write_text(render(group, scenarios), encoding="utf-8")
