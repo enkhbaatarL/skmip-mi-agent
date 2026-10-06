@@ -15,7 +15,8 @@ from apps.agents.scenario_group_agent.prompts.event_context import CompactEventC
 
 MODEL_LEVER_SYSTEM_PROMPT = """하나 이상의 MI Event로 JKM 시나리오를 설계합니다. 입력 사실과 가정을 구분하고,
 Catalog 밖 Lever를 만들지 마십시오. 모든 설명과 label은 한국어로 작성하고 단계별 출력 규칙의 길이와
-정보 밀도를 따르십시오."""
+정보 밀도를 따르십시오. LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은 원문 표기 그대로 쓰고
+한글로 음역하지 마십시오."""
 
 
 V4_EVENT_IMPACT_SYSTEM_PROMPT = (
@@ -91,7 +92,7 @@ V4_SCENARIO_SYSTEM_PROMPT = (
 3~5개를 합성하십시오. 각 Scenario는 모든 질문에 정확히 하나씩 답하고, 서로 구분되는 핵심 전제 조합과
 결과 전달 경로를 가져야 합니다. narrative는 주요 조건과 최종 JKM 전달 경로를 두 문장으로 설명하십시오.
 루트 그룹 title·description은 원본 이벤트와 검증된 분석을 대표하는 한국어 메타데이터로 작성하십시오.
-영문 Event·Scenario를 사용하지 말고 description에는 `입력 사실`과 `JKM`을 사용하지 마십시오.
+영문 Event·Scenario를 사용하지 말고 description에는 `입력 사실`을 사용하지 마십시오.
 probability는 0~100 정수 백분율로 작성하고 모든 Scenario probability의 합계를 정확히 100으로 맞추십시오.
 """
 )
@@ -681,8 +682,9 @@ def build_v4_scenario_synthesis_user_prompt(
         "- description의 인과 관계는 검증된 Event fact, impact path, interaction, Dimension에 있는 내용만 사용합니다.\n"
         "  독립 이벤트에는 임의의 상호작용을 만들지 않습니다. 발생한 사건은 `이벤트`, 미래 분기는 `시나리오`로\n"
         "  지칭합니다. 영문 `Event`, `Scenario`를 쓰지 않습니다. 이 규칙은 루트 title과 description에\n"
-        "  모두 적용합니다. description에는\n"
-        "  `입력 사실`과 `JKM`을 쓰지 않습니다.\n"
+        "  모두 적용합니다. description에는 `입력 사실`을 쓰지 않습니다.\n"
+        "- LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은 title, description, Scenario를 포함한 모든\n"
+        "  문장에서 원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다.\n"
         "- Scenario 3~5개를 만들고 생성·제외 결과를 합쳐 다섯 pressure band를 한 번씩 다룹니다.\n"
         "- choices에는 각 D의 V를 정확히 하나씩 `D1.V1` 형식으로 선택합니다.\n"
         "- 제외 후보도 choices에 각 D의 V를 정확히 하나씩 선택해, 제외된 실제 조합을 보존합니다.\n"

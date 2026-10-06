@@ -2153,7 +2153,10 @@ def test_v4_prompts_follow_fact_path_uncertainty_contract() -> None:
     assert scenario.index("[이벤트 1]") < scenario.index("[이벤트 2]")
     assert "루트 title은 20~60자의 한국어" in scenario
     assert "영문 `Event`, `Scenario`를 쓰지 않습니다" in scenario
-    assert "description에는\n  `입력 사실`과 `JKM`을 쓰지 않습니다" in scenario
+    assert "description에는 `입력 사실`을 쓰지 않습니다" in scenario
+    assert "`JKM`을 쓰지 않습니다" not in scenario
+    assert "LNG·JKM·TTF·HH 등 시장·상품 약어와 시설·기업 고유명은" in scenario
+    assert "원문 표기 그대로 쓰고 `엘엔지`, `제이케이엠`처럼 한글로 음역하지 않습니다" in scenario
     assert "[U1]" in dimension
     assert "label은 핵심 대상과 변화 축을 담되 30자를 넘지 않습니다" in dimension
     assert "rationale은 최대 200자의 구체적인 한국어 한 문장" in dimension
@@ -2403,7 +2406,8 @@ def test_v4_scenario_group_metadata_schema_describes_korean_event_wording() -> N
     assert "선택한 이벤트" in properties["title"]["description"]
     assert "summary" not in properties
     assert "영문 Event/Scenario" in properties["description"]["description"]
-    assert "'입력 사실', JKM은 사용하지 않음" in properties["description"]["description"]
+    assert "영문 Event/Scenario와 '입력 사실'은 사용하지 않음" in properties["description"]["description"]
+    assert "원문 표기 그대로 쓰고 한글로 음역하지 않음" in properties["description"]["description"]
     assert "0~100 정수 백분율" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]
     assert "합계는 100" in schema["$defs"]["V4ReadableScenario"]["properties"]["probability"]["description"]
 

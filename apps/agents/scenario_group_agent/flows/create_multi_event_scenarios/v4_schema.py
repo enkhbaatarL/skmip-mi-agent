@@ -636,7 +636,8 @@ class V4ReadableScenarioSynthesisDraft(ApiModel):
         description=(
             "첫 문장은 관측된 이벤트 사실을 직접 서술하고, 둘째 문장은 검증된 충격의 지속·전달·증폭과 "
             "대체·회복·상쇄를 중심으로 핵심 분기를 설명하는 두 문장. Dimension 이름을 나열하거나 독립 이벤트의 "
-            "상호작용을 만들지 않으며 영문 Event/Scenario, '입력 사실', JKM은 사용하지 않음"
+            "상호작용을 만들지 않으며 영문 Event/Scenario와 '입력 사실'은 사용하지 않음. LNG·JKM·TTF·HH 등 "
+            "약어와 시설·기업 고유명은 원문 표기 그대로 쓰고 한글로 음역하지 않음"
         ),
     )
     scenarios: list[V4ReadableScenario] = Field(min_length=3, max_length=5)
