@@ -232,18 +232,26 @@ system prompt는 dimension별 선택 개수를 0개부터 설정 상한 사이�
 
 이 단계는 LLM을 호출하지 않는다.
 
-1. v1/v3는 기존 DB `basecase_*` 설정으로 `resources/basecase/`를 읽는다.
-2. 정확히 v4 `multi_event_model_lever_dimensions`이면 `read_only_proposal` contract가 고정한
+1. 접수 시점의 활성 MI Base `case_id`를 proposal 행에 고정하고, background는 그 값을
+   다시 읽는다. 동기 경로도 graph 진입 전 한 번 선택한 값을 유지한다.
+2. 선택한 Base의 `last_run_id`로 `tmd_mdl_scnrcaseh.run_id`를 조회해 `run_seq`를 얻고,
+   `SCNRCASE + case_id`와 `SCNRCASEH/HI/HTF + run_seq`의 연결 파일 metadata를 읽는다.
+3. 계산에는 `SCNRCASE` Demand·Supply·Trade 입력 workbook 3종만 내려받아 사용한다.
+   결과·중간·Trade Flow 파일은 존재 건수만 내부 log에 남기고 제안값을 계산하는 데 읽지 않는다.
+4. 활성 Base가 없거나 입력 3종·Object Storage·workbook contract를 안전하게 준비하지
+   못하면 기존 설정 resource로 fallback한다. 활성 Base가 복수이면 임의 선택하지 않고 실패한다.
+5. v1/v3는 선택된 request-local Basecase 경로에 DB `basecase_*` 설정을 적용해 읽는다.
+6. 정확히 v4 `multi_event_model_lever_dimensions`이면 `read_only_proposal` contract가 고정한
    `new-bc-v7` contract가 고정한 authoritative source를 읽고 DB model target과 일치하는지 검증한다.
    변경되지 않은 Excel artifact는 `resources/basecase_v4/new-bc-v1/`의 고정 digest를 재사용한다.
    최초 materialization은 sheet/header/range/변환/고정 record count를 전체 검증한 뒤 contract
    hash와 실제 파일 signature를 key로 process cache한다.
-3. LUT-backed parameter이면 같은 파라미터의 기존 LUT를 읽는다. Basecase-only 활성 6개에는 LUT fallback을 만들지 않는다.
-4. 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합을 만든다. 신규 source가 정상적으로
+7. LUT-backed parameter이면 같은 파라미터의 기존 LUT를 읽는다. Basecase-only 활성 6개에는 LUT fallback을 만들지 않는다.
+8. 설정 기간 안에서 값이 존재하는 Basecase와 LUT exact 좌표의 합집합을 만든다. 신규 source가 정상적으로
    비어 있을 때만 동일 exact LUT key를 허용하고, cached-value 오류·non-finite·상충 duplicate로 차단된 key는
    LUT가 있어도 합집합에 넣지 않는다.
-5. 같은 좌표가 양쪽에 있어도 Step2 선택 좌표는 하나로 만든다.
-6. Step2에는 값과 출처를 빼고 선택 가능한 좌표 catalog만 전달한다. v4는 상위 범위 확장 시 child의
+9. 같은 좌표가 양쪽에 있어도 Step2 선택 좌표는 하나로 만든다.
+10. Step2에는 값과 출처를 빼고 선택 가능한 좌표 catalog만 전달한다. v4는 상위 범위 확장 시 child의
    운영 상태를 구별하도록 값이 있는 `Life Cycle Category`만 판단용 `applicability_attributes`로 함께
    전달하며, 공란 metadata는 exact slot을 제외하지 않고 이 속성에서만 생략한다.
 
@@ -709,7 +717,7 @@ python tests/manual/model_parameter_agent/run_proposal_only.py \
 초기 `uncovered-only-v1` 정책은 우회 옵션을 제공하지 않는다.
 
 - Group 또는 Scenario ID 중 한 종류의 명시 범위가 필수다.
-- runner의 `proposal_flow_release=v4.1.1`은 로직 release이며 Impact Lever catalog version이 아니다.
+- runner의 `proposal_flow_release=v4.1.2`는 로직 release이며 Impact Lever catalog version이 아니다.
   `extend16-v8`는 임의 label이 아니라 catalog `v4.1` / checksum
   `7f4ef0b7aa60efb550b9175654fd82350f0c293debf880a9180e7e935db54d69`, extend16 capability와
   `new-bc-v7` contract SHA, resource semantic schema와 실제 Basecase/LUT content fingerprint를 묶은 고정

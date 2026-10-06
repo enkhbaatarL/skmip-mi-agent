@@ -78,6 +78,8 @@ router / flow / node
 - 여러 repository를 조합하는 Agent 유스케이스는 Agent package의 `persistence/` service가 소유한다.
 - persistence DTO는 `apps/persistence/<domain>/schema.py`, 공통 base와 enum은
   `apps/persistence/schema_base.py`, `apps/persistence/enums.py`에 둔다.
+- 외부 모델 영역이 소유하는 테이블을 read-only로 조합하는 `model_result`, `mi_base`
+  domain은 raw SQL repository를 사용하며 Agent `APPLICATION_TABLES`·ORM schema 소유권에 추가하지 않는다.
 - DB schema 변경의 migration 정본이 별도 관리 저장소에 있으면 Agent DB 문서에 그 위치를 명시한다.
 
 ## 공통 구현 규칙

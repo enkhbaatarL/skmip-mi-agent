@@ -17,6 +17,8 @@ from apps.common.configs.config import get_settings
 from apps.common.exceptions.custom import MIBaseError
 from apps.common.values.error_codes import ErrorCode
 from apps.persistence.event.repository import EventRepository
+from apps.persistence.mi_base.schema import MiBaseSnapshot
+from apps.persistence.mi_base.service import MiBaseService
 from apps.persistence.model_impact_lever.schema import ModelImpactLeverPayload
 from apps.persistence.model_impact_lever.service import ModelImpactLeverService
 from apps.persistence.model_parameter.repository import ModelParameterRepository
@@ -1314,6 +1316,35 @@ class ModelParameterService:
             )
         return context
 
+    def load_active_mi_base_case_id(self) -> int | None:
+        return MiBaseService().load_active_case_id()
+
+    def load_mi_base_snapshot(self, case_id: int) -> MiBaseSnapshot:
+        return MiBaseService().load_snapshot(case_id)
+
+    def load_proposal_mi_base_case_id(
+        self,
+        model_param_proposal_id: int,
+    ) -> int | None:
+        from apps.common.configs.database.sync_database.connection import get_sync_session
+
+        session = get_sync_session()
+        try:
+            proposal = ModelParameterRepository(
+                session=session,
+            ).fetch_model_param_proposal(model_param_proposal_id)
+            if proposal is None:
+                raise MIBaseError(
+                    ErrorCode.ENTITY_NOT_FOUND,
+                    detail=(
+                        "Model parameter proposal not found: "
+                        f"model_param_proposal_id={model_param_proposal_id}"
+                    ),
+                )
+            return _optional_int(proposal.get("mi_base_case_id"))
+        finally:
+            session.close()
+
     def load_parameter_mapping_resources(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         from apps.common.configs.database.sync_database.connection import get_sync_session
 
@@ -1357,6 +1388,7 @@ class ModelParameterService:
             event=event,
         )
         request_usr_id = _optional_int(user_id)
+        mi_base_case_id = _optional_int(scenario_context.get("mi_base_case_id"))
         payload = _parameter_json_payload(proposal_parameters)
 
         session = get_sync_session()
@@ -1365,6 +1397,7 @@ class ModelParameterService:
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 mi_event_id=mi_event_id,
+                mi_base_case_id=mi_base_case_id,
                 request_usr_id=request_usr_id,
                 proposal_parameters=payload,
             )
@@ -1400,6 +1433,7 @@ class ModelParameterService:
             event=event,
         )
         request_usr_id = _optional_int(user_id)
+        mi_base_case_id = _optional_int(scenario_context.get("mi_base_case_id"))
 
         session = get_sync_session()
         try:
@@ -1409,6 +1443,7 @@ class ModelParameterService:
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 mi_event_id=mi_event_id,
+                mi_base_case_id=mi_base_case_id,
                 request_usr_id=request_usr_id,
             )
             session.commit()
@@ -1444,6 +1479,7 @@ class ModelParameterService:
             scenario_group=scenario_group,
             event=event,
         )
+        mi_base_case_id = _optional_int(scenario_context.get("mi_base_case_id"))
         session = get_sync_session()
         try:
             proposal_id = ModelParameterRepository(
@@ -1452,6 +1488,7 @@ class ModelParameterService:
                 scenario_id=scenario_id,
                 scenario_group_id=scenario_group_id,
                 mi_event_id=mi_event_id,
+                mi_base_case_id=mi_base_case_id,
                 request_usr_id=_optional_int(user_id),
                 reason_code=reason_code,
                 reason_message=reason_message,

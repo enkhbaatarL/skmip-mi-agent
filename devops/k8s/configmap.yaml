@@ -84,7 +84,7 @@ data:
 
     llm_concurrency: 10
     llm_max_retries: 1
-    model_parameter_proposal_flow_release: v4.1.1
+    model_parameter_proposal_flow_release: v4.1.2
     model_parameter_transient_retry_max_attempts: 2
     model_parameter_transient_retry_base_delay_seconds: 0.5
     model_parameter_transient_retry_max_jitter_seconds: 0.25

@@ -26,6 +26,15 @@ v4.1 Scenario Group/Scenario ID는 변경하지 않는다. 비교 코호트가 �
 동일한 20 Event·20 Group·82 Scenario를 재사용한다. 배포 설정은
 `model_parameter_proposal_flow_release=v4.1.1`로 식별한다.
 
+### v4.1.2 proposal Flow release
+
+`v4.1.2`는 v4.1.1의 catalog·binding·workbook 계약을 바꾸지 않고, 요청 접수 시점의 활성
+MI Base `case_id`를 proposal에 고정한다. `SCNRCASE` Demand·Supply·Trade 입력 3종만
+기준값 계산에 사용하고, 최신 `run_seq`에 연결된 `SCNRCASEH/HI/HTF`는 metadata만
+조회한다. 활성 Base 입력을 안전하게 준비하지 못하면 기존 설정 resource로 fallback한다.
+이 변경은 public API JSON을 늘리지 않으며 sibling mgmt v0037의 nullable
+`tmm_mi_model_param_proposal_m.mi_base_case_id`로 요청별 선택을 저장한다.
+
 ## 2. 확장 binding
 
 모든 추가 binding은 `role=alternative`, `selection_mode=conditional`, `support_status=executable`이다.
@@ -123,7 +132,7 @@ bounded period만 허용하며, `재가동 지연`, `10월 하순 이후`만으�
 
 ## 7. proposal campaign 재실행 원칙
 
-v4.1.1 proposal-only runner는 Scenario `FAIL`을 격리해 같은 명시 cohort의 뒤 후보까지 각각 최초 1회 실행한다.
+v4.1.1부터 proposal-only runner는 Scenario `FAIL`을 격리해 같은 명시 cohort의 뒤 후보까지 각각 최초 1회 실행한다.
 resource/context/catalog/input fingerprint, in-flight proposal 또는 persistence integrity 변경은 `BLOCKED`로 분류해
 campaign 전체를 즉시 중단한다. Scenario 전체 proposal/DB write의 outer retry는 없다.
 

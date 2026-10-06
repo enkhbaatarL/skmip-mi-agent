@@ -115,6 +115,11 @@ POST /model-parameters/scenarios/100/proposals
 경우도 이 작업 이력에서 `ABSTAINED`로 종결한다. catalog checksum/ID 불일치나 필수 정의 누락처럼 실행 계약이
 깨진 경우는 `FAILED`다.
 
+접수 시 `tmd_mdl_scnrcasem.actv_base_yn='Y'` 행을 최대 1건으로 확정해 proposal의
+`mi_base_case_id`에 저장한다. background 작업은 그 저장값을 다시 읽으므로 처리 중 활성 Base가
+바뀌어도 요청의 기준은 바뀌지 않는다. 활성 Base가 없으면 `NULL`을 저장하고 기존 설정
+Basecase를 사용한다. 이 식별자는 내부 추적용이며 기존 요청·응답·callback JSON은 변경하지 않는다.
+
 이 preflight는 resource runtime 등록 여부까지 보장하지 않는다. 허용 후보가 있어 HTTP `200`과 `PROCESSING`을
 받은 뒤 background graph에서 Basecase/LUT runtime 미등록을 발견하면 proposal row는 `FAILED`가 되고 실패
 callback이 전달된다. 같은 조건을 동기 API가 graph 실행 중 발견하면 즉시 HTTP `503`과

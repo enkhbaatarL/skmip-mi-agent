@@ -24,6 +24,7 @@ class MiModelParamProposalModel(AuditColumnsMixin, ORMBase):
         Index("idx_tmm_mi_model_param_proposal_m_03", "callback_status", "model_param_proposal_id"),
         Index("idx_tmm_mi_model_param_proposal_m_04", "scenario_group_id"),
         Index("idx_tmm_mi_model_param_proposal_m_05", "mi_event_id"),
+        Index("idx_tmm_mi_model_param_proposal_m_06", "mi_base_case_id"),
         CheckConstraint(
             "status IN ('PROCESSING','PROPOSED','ABSTAINED','CONFIRMED','FAILED')",
             name="ck_tmm_mi_model_param_proposal_m_01",
@@ -78,6 +79,11 @@ class MiModelParamProposalModel(AuditColumnsMixin, ORMBase):
         ),
         nullable=True,
         comment="대표 MI 이벤트 ID (다중 이벤트 그룹은 NULL)",
+    )
+    mi_base_case_id: Mapped[int | None] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        nullable=True,
+        comment="제안 생성 시 선택된 MI Base case ID",
     )
     request_usr_id: Mapped[int | None] = mapped_column(
         mysql.INTEGER(unsigned=True),

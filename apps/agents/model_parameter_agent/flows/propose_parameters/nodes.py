@@ -62,6 +62,9 @@ from apps.agents.model_parameter_agent.utils.lut.models import (
     CanonicalValue,
     SlotCatalog,
 )
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    resolve_mi_base_resources,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import (
     ParameterKnowledgeBase,
     get_parameter_knowledge_base_from_resources,
@@ -581,7 +584,14 @@ def _effective_reference_to_state(
 
 
 def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
-    context = ModelParameterService().load_context(state.scenario_id)
+    service = ModelParameterService()
+    context = service.load_context(state.scenario_id)
+    mi_base_case_id = state.mi_base_case_id
+    if not state.mi_base_selection_resolved:
+        mi_base_case_id = _valid_mi_base_case_id(
+            service.load_active_mi_base_case_id(),
+        )
+    context = {**context, "mi_base_case_id": mi_base_case_id}
     scenario = context.get("scenario") or {}
     kb = _knowledge_base_from_context(state, context)
     logger.info(
@@ -599,6 +609,8 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
     )
     return {
         "scenario_context": context,
+        "mi_base_case_id": mi_base_case_id,
+        "mi_base_selection_resolved": True,
         "parameter_knowledge_base": kb,
         "validation_warnings": [
             *state.validation_warnings,
@@ -610,6 +622,8 @@ def load_scenario_context(state: ModelParameterProposalState) -> dict[str, Any]:
 def _knowledge_base_from_context(
     _state: ModelParameterProposalState,
     context: dict[str, Any],
+    *,
+    basecase_dir_path: str | None = None,
 ) -> ParameterKnowledgeBase:
     resources = context.get("parameter_mapping_resources") or {}
     mapping_rules = resources.get("mapping_rules") or []
@@ -624,9 +638,61 @@ def _knowledge_base_from_context(
     return get_parameter_knowledge_base_from_resources(
         mapping_rows=mapping_rules,
         parameter_rows=parameter_definitions,
-        basecase_dir_path=str(resource_paths.basecase_dir),
+        basecase_dir_path=(
+            basecase_dir_path
+            if basecase_dir_path is not None
+            else str(resource_paths.basecase_dir)
+        ),
         allow_empty_mapping_rows=is_v4,
     )
+
+
+def _valid_mi_base_case_id(value: Any) -> int | None:  # noqa: ANN401
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+async def prepare_mi_base_resources(
+    state: ModelParameterProposalState,
+) -> dict[str, Any]:
+    snapshot = None
+    if state.mi_base_case_id is not None:
+        snapshot = await asyncio.to_thread(
+            ModelParameterService().load_mi_base_snapshot,
+            state.mi_base_case_id,
+        )
+    selection = await resolve_mi_base_resources(snapshot)
+    context = state.scenario_context or {}
+    knowledge_base = _knowledge_base_from_context(
+        state,
+        context,
+        basecase_dir_path=str(selection.basecase_dir),
+    )
+    warnings = list(state.validation_warnings)
+    if selection.source == "configured_fallback":
+        if state.mi_base_case_id is None:
+            warnings.append(
+                "활성 MI Base가 없어 기존 Basecase 리소스를 사용했습니다.",
+            )
+        else:
+            warnings.append(
+                "현재 MI Base 입력을 사용할 수 없어 기존 Basecase 리소스를 사용했습니다.",
+            )
+    logger.info(
+        "[model-parameter] resolved Basecase resources | scenario_id={} case_id={} "
+        "run_seq={} source={} linked_file_counts={}",
+        state.scenario_id,
+        selection.case_id,
+        selection.run_seq,
+        selection.source,
+        dict(selection.linked_file_counts),
+    )
+    return {
+        "parameter_knowledge_base": knowledge_base,
+        "mi_base_resources": selection,
+        "validation_warnings": warnings,
+    }
 
 
 def resolve_event_type_l2_id(scenario_context: dict[str, Any] | None) -> int | None:
@@ -871,11 +937,22 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
     )
     resource_paths = get_model_parameter_resource_paths()
     registry = resource_paths.lut_registry
+    selected_resources = state.mi_base_resources
     records, warnings = build_basecase_records(
         state.parameter_knowledge_base,
         state.candidate_mappings,
         state.scenario_context or {},
         registry=registry,
+        workbook_contract=(
+            selected_resources.workbook_contract
+            if selected_resources is not None
+            else None
+        ),
+        workbook_resource_root=(
+            selected_resources.workbook_resource_root
+            if selected_resources is not None
+            else None
+        ),
     )
     lut_catalog = (
         get_lut_catalog(
@@ -892,6 +969,16 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
         state.candidate_mappings,
         state.scenario_context or {},
         lut_catalog=lut_catalog,
+        workbook_contract=(
+            selected_resources.workbook_contract
+            if selected_resources is not None
+            else None
+        ),
+        workbook_resource_root=(
+            selected_resources.workbook_resource_root
+            if selected_resources is not None
+            else None
+        ),
     )
     basecase_index = build_basecase_index(
         records,
@@ -930,7 +1017,7 @@ def load_basecase_samples(state: ModelParameterProposalState) -> dict[str, Any]:
             "model_parameter_proposal_flow_release": getattr(
                 cfg,
                 "model_parameter_proposal_flow_release",
-                "v4.1.1",
+                "v4.1.2",
             ),
             "model_parameter_transient_retry_max_attempts": (
                 getattr(

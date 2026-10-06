@@ -6150,7 +6150,16 @@ class ModelParameterAgentLLMTest(unittest.IsolatedAsyncioTestCase):
                     detail="Step3 candidate_key and slotKey validation failed",
                 )
 
-        with patch.object(propose_flow, "build_graph", return_value=FakeGraph()):
+        model_parameter_service = Mock()
+        model_parameter_service.load_active_mi_base_case_id.return_value = None
+        with (
+            patch.object(propose_flow, "build_graph", return_value=FakeGraph()),
+            patch.object(
+                propose_flow,
+                "ModelParameterService",
+                return_value=model_parameter_service,
+            ),
+        ):
             with self.assertRaises(MIBaseError) as caught:
                 await propose_flow.run_propose_parameters_sync({"scenario_id": 309})
 

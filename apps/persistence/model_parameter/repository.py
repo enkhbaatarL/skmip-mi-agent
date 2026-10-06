@@ -50,6 +50,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         scenario_id: int,
         scenario_group_id: int,
         mi_event_id: int | None,
+        mi_base_case_id: int | None = None,
         request_usr_id: int | None,
         proposal_parameters: list[dict[str, Any]],
     ) -> int:
@@ -57,6 +58,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             scenario_id=scenario_id,
             scenario_group_id=scenario_group_id,
             mi_event_id=mi_event_id,
+            mi_base_case_id=mi_base_case_id,
             request_usr_id=request_usr_id,
             crt_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
             mod_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
@@ -75,12 +77,14 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         scenario_id: int,
         scenario_group_id: int,
         mi_event_id: int | None,
+        mi_base_case_id: int | None = None,
         request_usr_id: int | None,
     ) -> int:
         proposal = MiModelParamProposalModel(
             scenario_id=scenario_id,
             scenario_group_id=scenario_group_id,
             mi_event_id=mi_event_id,
+            mi_base_case_id=mi_base_case_id,
             request_usr_id=request_usr_id,
             crt_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
             mod_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
@@ -98,6 +102,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
         scenario_id: int,
         scenario_group_id: int,
         mi_event_id: int | None,
+        mi_base_case_id: int | None = None,
         request_usr_id: int | None,
         reason_code: str,
         reason_message: str,
@@ -106,6 +111,7 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             scenario_id=scenario_id,
             scenario_group_id=scenario_group_id,
             mi_event_id=mi_event_id,
+            mi_base_case_id=mi_base_case_id,
             request_usr_id=request_usr_id,
             crt_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
             mod_usr_logn_id=request_usr_id if request_usr_id is not None else "system",
@@ -160,6 +166,11 @@ class ModelParameterRepository(BaseSyncSQLRepository):
                 "scenario_id": int(proposal.scenario_id),
                 "scenario_group_id": int(proposal.scenario_group_id),
                 "mi_event_id": (int(proposal.mi_event_id) if proposal.mi_event_id is not None else None),
+                "mi_base_case_id": (
+                    int(proposal.mi_base_case_id)
+                    if getattr(proposal, "mi_base_case_id", None) is not None
+                    else None
+                ),
                 "status": proposal.status,
                 "proposal_parameters": _json_safe(
                     proposal.confirmation_parameters
@@ -254,6 +265,11 @@ class ModelParameterRepository(BaseSyncSQLRepository):
             "scenario_id": int(proposal.scenario_id),
             "scenario_group_id": int(proposal.scenario_group_id),
             "mi_event_id": (int(proposal.mi_event_id) if proposal.mi_event_id is not None else None),
+            "mi_base_case_id": (
+                int(proposal.mi_base_case_id)
+                if getattr(proposal, "mi_base_case_id", None) is not None
+                else None
+            ),
             "status": proposal.status,
             "callback_status": proposal.callback_status,
             "proposal_parameters": _json_safe(proposal.proposal_parameters),

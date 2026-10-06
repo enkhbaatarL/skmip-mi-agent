@@ -5,6 +5,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from apps.agents.model_parameter_agent.utils.lut.models import BasecaseIndex
+from apps.agents.model_parameter_agent.utils.mi_base_resources import (
+    MiBaseResourceSelection,
+)
 from apps.agents.model_parameter_agent.utils.parameter_mapping import ParameterKnowledgeBase
 
 
@@ -34,6 +37,8 @@ class ModelParameterProposalOutputState(BaseModel):
 
 
 class ModelParameterProposalState(ModelParameterProposalOutputState):
+    mi_base_case_id: int | None = Field(default=None, exclude=True)
+    mi_base_selection_resolved: bool = Field(default=False, exclude=True)
     # Request-local runtime objects are omitted from Pydantic dumps and the
     # graph output schema so full workbook rows never become API/trace output.
     parameter_knowledge_base: ParameterKnowledgeBase | None = Field(
@@ -42,6 +47,11 @@ class ModelParameterProposalState(ModelParameterProposalOutputState):
         repr=False,
     )
     basecase_index: BasecaseIndex | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
+    mi_base_resources: MiBaseResourceSelection | None = Field(
         default=None,
         exclude=True,
         repr=False,

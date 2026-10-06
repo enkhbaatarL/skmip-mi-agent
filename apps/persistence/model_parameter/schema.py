@@ -43,6 +43,7 @@ class ModelParameterProposalPayload(ApiModel):
     scenario_id: int
     scenario_group_id: int
     mi_event_id: int | None = None
+    mi_base_case_id: int | None = None
     status: str
     proposal_parameters: list[dict[str, Any]] = Field(default_factory=list)
     confirmation_parameters: list[dict[str, Any]] | None = None

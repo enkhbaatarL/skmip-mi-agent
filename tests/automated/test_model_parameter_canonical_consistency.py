@@ -362,6 +362,16 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
     local_resources = local["model_parameter_resources"]
     cluster_resources = embedded["model_parameter_resources"]
     assert local_resources == cluster_resources
+    local_storage = local["model_parameter_resource_storage"]
+    cluster_storage = embedded["model_parameter_resource_storage"]
+    assert set(local_storage) == set(cluster_storage)
+    environment_specific_storage_fields = {
+        "endpoint_url",
+        "access_key_id",
+        "secret_access_key",
+    }
+    for field_name in set(local_storage) - environment_specific_storage_fields:
+        assert local_storage[field_name] == cluster_storage[field_name]
 
     master_by_name = {row["parameter_name"]: row for row in canonical["master"]}
     assert len(master_by_name) == canonical["master_count"]
@@ -457,7 +467,10 @@ def test_configmap_and_local_resource_manifests_match_canonical() -> None:
 
     assert local["model_parameter_proposal_flow_release"] == embedded[
         "model_parameter_proposal_flow_release"
-    ] == "v4.1.1"
+    ] == "v4.1.2"
+    assert local["scenario_group_v4_impact_catalog_version"] == embedded[
+        "scenario_group_v4_impact_catalog_version"
+    ] == "v4.1"
     for setting_name in (
         "model_parameter_transient_retry_max_attempts",
         "model_parameter_transient_retry_base_delay_seconds",

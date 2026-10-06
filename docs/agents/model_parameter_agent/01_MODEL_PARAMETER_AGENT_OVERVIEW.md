@@ -83,6 +83,10 @@ v1/v3의 legacy 이름 allow-list 5종은 그대로 유지한다.
 Demand·Supply·Trade workbook에 들어 있는 현재 모델 입력값이다. 같은 exact slot에 Basecase가 있으면
 LUT보다 우선하는 기준값이 된다. 정확히 v4 `multi_event_model_lever_dimensions`인 요청은 versioned
 `new-bc-v7` workbook contract의 authoritative source를 사용하고, v1/v3는 기존 Basecase workbook 파서를 유지한다.
+제안 요청은 접수 시점의 활성 MI Base `case_id`를 고정하고 `SCNRCASE`에 연결된
+Demand·Supply·Trade 입력 workbook 3개를 우선 사용한다. 현재 Base의 파일을 안전하게 준비하지
+못하면 기존 설정 resource로 fallback하며, 그 선택과 무관하게 접수 시의 `case_id`는 제안 이력에
+남긴다.
 
 ### LUT
 
@@ -307,6 +311,7 @@ skmip-mi-agent/
 │   │   │   ├── workbook_contract.py       # v4 versioned workbook 계약
 │   │   │   ├── workbook_reference.py      # authoritative source adapter
 │   │   │   ├── proposal_policy.py         # v4 evidence·atomic 검증
+│   │   │   ├── mi_base_resources.py       # 요청별 MI Base 입력 준비·fallback
 │   │   │   └── resource_*.py              # 파일 준비·runtime 경로
 │   │   ├── resources/
 │   │   │   ├── basecase/                  # v1/v3 호환 packaged Basecase
@@ -317,7 +322,8 @@ skmip-mi-agent/
 │   ├── connectors/object_storage/         # S3 호환 Object Storage 연결
 │   └── persistence/
 │       ├── model_parameter/               # 공용 parameter ORM·repository·DTO
-│       └── model_impact_lever/             # 공용 Lever catalog service·repository·DTO
+│       ├── model_impact_lever/             # 공용 Lever catalog service·repository·DTO
+│       └── mi_base/                       # 외부 MI Base·연결 파일 read-only 조회
 ├── docs/agents/model_parameter_agent/      # 공식 Agent 문서
 ├── envs/config.yaml                       # 로컬 실행·resource 설정
 ├── devops/k8s/configmap.yaml              # 배포 환경 설정
@@ -327,7 +333,7 @@ skmip-mi-agent/
     └── reports/model_parameter_agent/     # 시나리오 테스트 리포트
 ```
 
-API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 허용 후보만 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 새 필드는 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
+API는 `api.py`에서 시작해 `flows/`로 들어간다. 제안 Flow는 전략에 따라 v1/v3 legacy mapping adapter 또는 v4 Lever-native context loader로 raw 후보를 만든 뒤, version별 scope gate를 LLM·저장보다 먼저 적용한다. 활성 MI Base는 요청별로 선택해 `mi_base_case_id`로 저장하고, 허용 후보만 그 요청의 Basecase/LUT, prompt와 저장 service로 전달한다. v1 proposal은 대표 event ID를 저장하지만 v3/v4 proposal은 `mi_event_id=NULL`로 저장하고 `scenario_group_id`를 authoritative link로 사용한다. 외부 API의 기존 optional `eventId`도 v3/v4에서는 `null`이며 MI Base 식별자를 public payload에 추가하지 않는다. DB query는 flow/node가 직접 작성하지 않고 Agent service와 `apps/persistence/`의 domain service/repository를 통해 실행한다.
 
 확정 단계의 custom parameter 허용 동작, 기존 저장 데이터와 JSON shape은 그대로 유지한다. proposal 생성의 Step3는 `proposedValue`를 유한 숫자로 검증한다. Confirmation은 각 value 객체에 `proposedValue` key가 있어야 하지만 값은 `null`일 수 있고, `null`이 아닌 값만 persistence 경계에서 엄격한 유한 숫자로 정규화한다. 원래 proposal과 동일한 항목·값인지 비교하지 않으므로 사용자는 구조 계약과 알려진 정의 검증 범위 안에서 항목을 수정·추가·삭제할 수 있으며, custom parameter도 공통 구조 검증을 통과하면 저장할 수 있다. 어느 경로도 설정 기반 소수 자릿수 round/trunc/ceil을 적용하지 않는다. Basecase/LUT 기준값의 기존 정밀도 정책은 유지하되, v4 PowerMix authoritative fraction은 atomic sum을 훼손하지 않도록 원본 정밀도를 보존한다. runtime allow-list는 신규 proposal 생성에만 적용하며 confirmation을 추가로 제한하지 않는다. v4 provenance와 미지원 진단은 request state, trace, validation warning 또는 실패 detail에만 둔다. `new-bc-v7`는 versioned contract와 그 경로를 가리키는 manifest/config를 추가하고 기존 workbook digest를 재사용한다. v4.1은 같은 master·model input을 유지한 채 side-by-side Lever binding만 확대하며 DB DDL, legacy mapping, writer/recalculation/engine은 변경하지 않는다.
 

@@ -34,6 +34,9 @@ if TYPE_CHECKING:
     from apps.agents.model_parameter_agent.utils.lut.registry import (
         ParameterSpecRegistry,
     )
+    from apps.agents.model_parameter_agent.utils.workbook_contract import (
+        ModelParameterWorkbookContract,
+    )
 
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -1248,6 +1251,8 @@ def build_basecase_records(
     scenario_context: dict[str, Any],
     *,
     registry: ParameterSpecRegistry | None = None,
+    workbook_contract: ModelParameterWorkbookContract | None = None,
+    workbook_resource_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Return simple row/value records from each mapped basecase sheet.
 
@@ -1278,10 +1283,13 @@ def build_basecase_records(
         )
 
         resource_paths = get_registered_model_parameter_resource_paths()
-        contract = (
+        contract = workbook_contract or (
             resource_paths.workbook_contract
             if resource_paths is not None and resource_paths.workbook_contract is not None
             else load_workbook_contract()
+        )
+        resource_root = workbook_resource_root or (
+            resource_paths.root if resource_paths is not None else DEFAULT_INPUT_DIR
         )
         for candidate in candidates:
             parameter_name = str(
@@ -1306,7 +1314,10 @@ def build_basecase_records(
                     ),
                 )
 
-        bundle = extract_workbook_references(contract)
+        bundle = extract_workbook_references(
+            contract,
+            resource_root=resource_root,
+        )
         records: list[dict[str, Any]] = []
         warnings = list(bundle.warnings)
         contract_candidates = [
@@ -1464,6 +1475,8 @@ def build_authoritative_blocked_keys(
     scenario_context: dict[str, Any],
     *,
     lut_catalog: LutCatalog | None = None,
+    workbook_contract: ModelParameterWorkbookContract | None = None,
+    workbook_resource_root: Path | None = None,
 ) -> dict[str, frozenset[tuple[Any, ...]]]:
     """Return exact v4 source keys that must not fall back to the LUT.
 
@@ -1489,12 +1502,18 @@ def build_authoritative_blocked_keys(
     )
 
     resource_paths = get_registered_model_parameter_resource_paths()
-    contract = (
+    contract = workbook_contract or (
         resource_paths.workbook_contract
         if resource_paths is not None and resource_paths.workbook_contract is not None
         else load_workbook_contract()
     )
-    bundle = extract_workbook_references(contract)
+    resource_root = workbook_resource_root or (
+        resource_paths.root if resource_paths is not None else DEFAULT_INPUT_DIR
+    )
+    bundle = extract_workbook_references(
+        contract,
+        resource_root=resource_root,
+    )
     blocked_by_candidate: dict[str, frozenset[tuple[Any, ...]]] = {}
     for candidate in candidates:
         validate_candidate_write_target(contract, candidate)

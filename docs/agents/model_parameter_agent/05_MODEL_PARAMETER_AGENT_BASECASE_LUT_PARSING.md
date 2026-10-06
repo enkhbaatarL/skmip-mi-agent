@@ -107,6 +107,25 @@ key만 보충하며 target 밖 시설을 새로 열지 않는다.
 
 모든 LUT object key는 fundamental_model_artifact/LUT/demand/... 또는 fundamental_model_artifact/LUT/supply/supply_bc/... 규칙을 사용한다. 같은 BCLiquefaction.csv를 LiqProd와 LiqUtil이 공유해도 한 번만 동기화한다.
 
+### 1.3 최신 MI Base request-local overlay
+
+제안 요청은 접수 시 `tmd_mdl_scnrcasem.actv_base_yn='Y' AND del_yn='N'`인 Base를
+최대 1건으로 선택한다. 선택한 `case_id`는 proposal의 `mi_base_case_id`에 즉시 저장하고
+background는 이 값을 다시 읽어 활성 Base 변경에 영향받지 않는다. 활성 행이 복수이면
+무작위로 선택하지 않고 무결성 오류로 차단한다.
+
+`tcm_filel` 연결은 `SCNRCASE + case_id`와, `last_run_id`로 얻은 최신 `run_seq`의
+`SCNRCASEH/SCNRCASEHI/SCNRCASEHTF + run_seq`를 함께 조회한다. 그러나 제안값 계산에
+실제로 읽는 것은 `SCNRCASE` Demand·Supply·Trade `.xlsm` 3종뿐이다. 결과·중간·Trade Flow
+파일은 존재 건수를 서버 log에 남기는 metadata이며 계산 입력으로 다운로드하지 않는다.
+
+입력 3종은 기존 `model_parameter_resource_storage` endpoint·bucket·credential·timeout·local cache
+설정을 그대로 사용한다. 요청별 immutable cache에 받은 뒤 기존 v1/v3 경로와 v4
+`new-bc-v7` contract에 동일하게 연결한다. 활성 Base가 없거나 파일 3종 구성, Object Storage,
+download 정합성, workbook contract 검증이 실패하면 기존 등록 resource로 fallback한다.
+이 경우에도 접수 시 선택한 `mi_base_case_id`는 재현을 위해 유지하고, 실제 resource 선택은
+request-local state와 서버 log의 `source=mi_base|configured_fallback`으로 구분한다.
+
 ## 2. 설정의 역할
 
 ### 2.1 DB와 config.yaml은 각각 무엇을 정하나
@@ -116,6 +135,7 @@ key만 보충하며 target 밖 시설을 새로 열지 않는다.
 | tmm_mi_model_param_dimension_map | v1/v3 event type·dimension에서 허용되는 direct/routing 후보와 comment, indirect 보조정보 |
 | tmm_mi_model_impact_lever_m | v4 selected Lever state에서 허용되는 primary/alternative parameter binding과 applicability |
 | tmm_mi_model_param_m | parameter 이름·hint, 모델 target, Basecase Sheet·행·열 규칙 |
+| tmd_mdl_scnrcasem / tmd_mdl_scnrcaseh / tcm_filel | 요청별 활성 `case_id`, 최신 `run_seq`, 입력·실행 결과 파일 연결 |
 | proposal capability gate | raw source matching 뒤 실제 신규 proposal에 전달할 v1/v3 5종 또는 v4 extend16 16종 |
 | config.yaml > model_parameter_resources.basecase | workbook local path와 Object Storage key |
 | config.yaml > model_parameter_resources.workbook_contract | v4 `new-bc-v7` repo-side contract path |
@@ -124,6 +144,9 @@ key만 보충하며 target 밖 시설을 새로 열지 않는다.
 | 공통 설정 | 2026~2030 horizon, Basecase/LUT 기준값 숫자 정밀도(v4 PowerMix raw fraction 제외), 파라미터별/요청 전체 slot 상한, Step2·Step3 byte 상한 |
 
 envs/config.yaml과 devops/k8s/configmap.yaml의 model_parameter_resources 및 관련 limit은 동일해야 한다.
+`model_parameter_resource_storage`는 두 설정에 같은 field set을 유지하고 bucket·region·timeout·cache·retry
+계약을 맞춘다. endpoint와 credential 값은 로컬 MinIO와 Kubernetes Secret 주입 차이로 환경별로
+다를 수 있다. MI Base용으로 별도 설정 key나 credential을 추가하지 않는다.
 resource schema v7의 semantic hash에는 workbook contract hash와 고정 digest가 포함된다. Workbook reference
 cache는 contract hash와 실제 파일 signature를 포함해 다른 release를 재사용하지 않는다. 기존 LUT adapter
 schema `model-parameter-lut-adapters-v3`과 Impact Lever hydrated catalog checksum은 각각 별도 authority다.

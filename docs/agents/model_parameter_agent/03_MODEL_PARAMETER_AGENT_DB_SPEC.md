@@ -31,6 +31,9 @@
 | `tmm_mi_scenario_group_event_m` | v3/v4 그룹의 ordered event 관계 | 읽기 |
 | `tmm_mi_dimension_value_mapping_m` | v3 자유 value의 source projection, 승인 상태와 version | 읽기 |
 | `tmm_mi_model_param_proposal_m` | Agent의 제안과 사용자의 최종 확정을 보관하는 작업 결과표 | 읽기·쓰기 |
+| `tmd_mdl_scnrcasem` | 현재 활성 MI Base와 `last_run_id` | 읽기 |
+| `tmd_mdl_scnrcaseh` | MI Base 실행 이력의 `run_id`·`run_seq` | 읽기 |
+| `tcm_filel` | MI Base·최신 실행에 연결된 파일 metadata | 읽기 |
 
 업무 흐름으로 보면 다음과 같다.
 
@@ -197,8 +200,32 @@ version/checksum/code/ID 불일치나 primary 누락은 proposal을 차단한다
 | `scenario_id` | 요청 scenario ID | 요청 scenario ID |
 | `scenario_group_id` | scenario가 속한 그룹 ID | authoritative multi-event group ID |
 | `mi_event_id` | 대표 event ID | `NULL` |
+| `mi_base_case_id` | 접수 시 선택한 활성 MI Base `case_id`, 없으면 `NULL` | 접수 시 선택한 활성 MI Base `case_id`, 없으면 `NULL` |
 
 v3/v4 proposal을 개별 event 하나에 귀속시키지 않는다. repository·DTO·serializer 소비자는 `mi_event_id`를 nullable로 처리하고 그룹 연결을 기준으로 조회해야 한다.
+
+`mi_base_case_id`는 요청 재현·추적을 위한 nullable unsigned integer다. MI Base 테이블은 별도 모델
+영역이 소유하므로 Agent ORM에 foreign key를 추가하지 않고 index만 둔다. 컬럼·인덱스
+마이그레이션 정본은 sibling `skmip-mi-agent-mgmt` v0037이다.
+
+### 4.1 MI Base와 연결 파일 조회
+
+1. `tmd_mdl_scnrcasem`의 `actv_base_yn='Y' AND del_yn='N'`을 조회한다.
+2. 0건이면 기존 설정 Basecase로 fallback하고, 1건이면 그 `case_id`를 제안 행에 고정한다.
+3. 2건 이상은 활성 기준이 애매하므로 임의의 하나를 고르지 않고 요청을 실패시킨다.
+4. `last_run_id = tmd_mdl_scnrcaseh.run_id`로 최신 실행의 `run_seq`를 얻는다.
+5. `tcm_filel`에서 다음 복합 키로 연결 파일을 조회한다.
+
+| `file_rel_obj_spt_cd` | `file_rel_obj_dstg_no` | 사용 |
+|---|---:|---|
+| `SCNRCASE` | `case_id` | Demand·Supply·Trade 입력 3종을 제안값 계산에 사용 |
+| `SCNRCASEH` | `run_seq` | 결과 파일 metadata만 조회 |
+| `SCNRCASEHI` | `run_seq` | 중간 파일 metadata만 조회 |
+| `SCNRCASEHTF` | `run_seq` | Trade Flow 결과 파일 metadata만 조회 |
+
+`SCNRCASEH/HI/HTF`가 없어도 입력 workbook 3종이 유효하면 제안 계산은 계속한다.
+반대로 `SCNRCASE` 3종을 완전하게 식별·검증하지 못하면 저장된 `mi_base_case_id`는 유지하되
+기존 설정 Basecase로 fallback한다.
 
 ```mermaid
 stateDiagram-v2
@@ -275,6 +302,7 @@ stateDiagram-v2
 - 확정은 새 결과 행을 추가하지 않고 기존 제안 행을 `CONFIRMED`로 갱신한다. 다시 확정하면 이전 확정 내용이 최신 요청으로 바뀐다.
 - 보류·실패 원인은 결과표의 `error_code`, `error_message`에 남고, 비동기 요청은 callback 상태도 함께 확인해야 한다.
 - v4 배포에서는 parameter master와 Lever catalog를 원자적으로 적용한다. catalog checksum이 바뀌면 기존 v4 Scenario를 새 catalog로 재해석하지 않고 신규 Scenario를 생성한다.
+- Agent 배포 전 sibling mgmt v0037을 적용해 `mi_base_case_id`·index와 ORM을 먼저 맞춘다.
 - Agent는 이 기능에서 DDL이나 canonical DML을 수행하지 않는다. 시작 시 schema validation과 context 조회가 필수 테이블·컬럼·nullable 계약 누락을 명확히 차단한다.
 - runtime allow-list는 신규 proposal 생성에만 적용하며 기존 proposal 행·confirmation·custom parameter 호환 동작을 변경하지 않는다.
 
