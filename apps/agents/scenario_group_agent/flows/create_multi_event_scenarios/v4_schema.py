@@ -1754,6 +1754,27 @@ def _validate_scenarios(
             ),
         ).scenario_role = "mixed"
     max(scenarios, key=lambda scenario: scenario.probability_score).baseline_yn = True
+
+    # Base는 확률 최고로 선정된 뒤에도 LLM이 매긴 절대 pressure_band를 그대로 유지했다.
+    # 그 결과 Base가 bearish/bullish/strong_* 로 동시에 라벨링되는 사례가 실제 운영 데이터에서 확인됐다.
+    # Base 선정 이후에는 band를 LLM의 자유 라벨이 아니라 "Base 대비 contribution 합산 차이"로
+    # 서버가 결정적으로 재계산한다. Base 자신은 자기 자신과의 차이이므로 항상 0이 되어
+    # 정의상 balanced가 되고, 다른 어떤 band와도 동시에 라벨링될 수 없다.
+    base_scenario = next(scenario for scenario in scenarios if scenario.baseline_yn)
+    base_sum = sum(contribution_by_scenario[id(base_scenario)])
+    for scenario in scenarios:
+        delta = sum(contribution_by_scenario[id(scenario)]) - base_sum
+        if delta == 0:
+            scenario.pressure_band = "balanced"
+        elif delta >= 2:
+            scenario.pressure_band = "strong_bullish"
+        elif delta > 0:
+            scenario.pressure_band = "bullish"
+        elif delta <= -2:
+            scenario.pressure_band = "strong_bearish"
+        else:
+            scenario.pressure_band = "bearish"
+
     scenarios.sort(key=lambda scenario: PRESSURE_RANK[scenario.pressure_band], reverse=True)
 
 
