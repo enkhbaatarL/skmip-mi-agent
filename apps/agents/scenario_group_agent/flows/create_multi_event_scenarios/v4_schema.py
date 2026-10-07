@@ -1762,8 +1762,11 @@ def _validate_scenarios(
     # 정의상 balanced가 되고, 다른 어떤 band와도 동시에 라벨링될 수 없다.
     base_scenario = next(scenario for scenario in scenarios if scenario.baseline_yn)
     base_sum = sum(contribution_by_scenario[id(base_scenario)])
+    deltas = {
+        id(scenario): sum(contribution_by_scenario[id(scenario)]) - base_sum for scenario in scenarios
+    }
     for scenario in scenarios:
-        delta = sum(contribution_by_scenario[id(scenario)]) - base_sum
+        delta = deltas[id(scenario)]
         if delta == 0:
             scenario.pressure_band = "balanced"
         elif delta >= 2:
@@ -1774,6 +1777,24 @@ def _validate_scenarios(
             scenario.pressure_band = "strong_bearish"
         else:
             scenario.pressure_band = "bearish"
+
+    # strong band가 겹치면(동일 임계값을 여러 시나리오가 동시에 넘으면), Base 대비 편차의 절댓값이
+    # 가장 큰 시나리오만 strong을 유지하고 나머지는 같은 방향의 완화된 band로 내린다(상대적 극단성 순서는 보존).
+    for strong_band, moderate_band in (("strong_bullish", "bullish"), ("strong_bearish", "bearish")):
+        holders = [scenario for scenario in scenarios if scenario.pressure_band == strong_band]
+        if len(holders) > 1:
+            holders.sort(key=lambda scenario: abs(deltas[id(scenario)]), reverse=True)
+            for demoted in holders[1:]:
+                demoted.pressure_band = moderate_band
+
+    # 안전망: 위 완화 로직으로도 band 중복이 해소되지 않으면(예: 같은 방향에 3개 이상 몰린 경우)
+    # 에러를 발생시켜 기존 재시도 메커니즘이 다른 조합을 다시 생성하도록 한다.
+    non_base_bands = [scenario.pressure_band for scenario in scenarios if not scenario.baseline_yn]
+    if len(set(non_base_bands)) != len(non_base_bands):
+        raise ValueError(
+            "Base 재계산 이후에도 Base가 아닌 시나리오의 pressure_band가 서로 겹칩니다: "
+            f"{non_base_bands}"
+        )
 
     scenarios.sort(key=lambda scenario: PRESSURE_RANK[scenario.pressure_band], reverse=True)
 
